@@ -1,7 +1,7 @@
 [package]
 name = "neko-finance"
 version = "0.1.0"
-description = "A Tauri App"
+description = "Local-first, forecast-first personal finance desktop app (Google Sheets + deterministic projection engine + AI copilot)"
 authors = ["John"]
 edition = "2024"
 

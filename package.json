@@ -23,6 +23,7 @@
     "ui:audit": "bash scripts/impeccable-check.sh",
     "anonymize": "node scripts/anonymize-methodology.mjs",
     "build": "tsc && vite build",
+    "build:windows": "bash scripts/build-windows.sh",
     "rust:fmt": "cargo fmt --manifest-path src-tauri/Cargo.toml --check",
     "rust:clippy": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings",
     "rust:test": "cargo test --manifest-path src-tauri/Cargo.toml --all-targets --all-features",
