@@ -1,45 +1,62 @@
 # Building the Windows .exe
 
-Two supported paths produce the Windows desktop binary.
+Two supported paths produce the Windows desktop binary. Both yield a **single-file portable
+`neko-finance.exe`** (MSVC target): `webview2-com-sys` links the WebView2 loader statically on
+`target_env = "msvc"`, and `tauri-build` links the VC runtime statically (`STATIC_VCRUNTIME`,
+set by the tauri CLI and exported explicitly in `scripts/build-windows.sh`). The exe needs no
+companion DLL and no VC++ Redistributable. _(Full `+crt-static` was evaluated and rejected: it
+breaks the bundled SQLite link under cargo-xwin, and the only thing it would add is staticizing
+ucrt — already an OS component on Windows 10/11.)_
 
-## 1. CI release (canonical)
+The only runtime dependency is the **WebView2 Runtime** — a system component preinstalled on
+up-to-date Windows 10/11. The NSIS installer bootstraps it automatically on machines that lack it;
+the portable exe assumes it is present.
 
-`.github/workflows/release.yml` builds Windows (NSIS installer) and Linux bundles via
-`tauri-action` on every `v*.*.*` tag (or manual `workflow_dispatch`) and attaches the artifacts to
-a draft GitHub Release. This is the path for distributable, versioned builds.
+## 1. CI release (canonical for distribution)
 
-## 2. Local cross-compile from WSL2/Linux (development)
+`.github/workflows/release.yml` runs on every `v*.*.*` tag (or manual `workflow_dispatch`):
 
-The repo cross-compiles a runnable `neko-finance.exe` from Linux using the MinGW-w64 toolchain and
-the `x86_64-pc-windows-gnu` Rust target:
+- `windows-latest` (MSVC): NSIS installer + MSI via `tauri-action`, attached to a draft GitHub
+  Release, **plus** the portable single-file exe (workflow artifact, and attached to the release
+  on tag builds as `neko-finance-<tag>-windows-x64-portable.exe`).
+- `ubuntu-24.04`: Linux bundles (deb/AppImage/rpm).
+
+## 2. Local cross-compile from WSL2/Linux (default: MSVC via cargo-xwin)
 
 ```bash
 # one-time setup
-sudo apt install gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
-rustup target add x86_64-pc-windows-gnu
+sudo apt install clang lld llvm nsis
+cargo install --locked cargo-xwin
+rustup target add x86_64-pc-windows-msvc
 
-# build (frontend + Rust, no bundler) + copy WebView2Loader.dll next to the exe
+# build the single-file exe
 npm run build:windows
-# → src-tauri/target/x86_64-pc-windows-gnu/release/neko-finance.exe
-#   src-tauri/target/x86_64-pc-windows-gnu/release/WebView2Loader.dll
+# → src-tauri/target/x86_64-pc-windows-msvc/release/neko-finance.exe
+
+# optionally also build the NSIS installer locally
+npm run build:windows -- --installer
 ```
 
 Notes:
 
-- `--no-bundle` skips installer generation (NSIS is not available cross-OS here). Frontend assets,
-  migrations, and icons are embedded in the `.exe` at compile time; the **only** companion file is
-  `WebView2Loader.dll` — the windows-gnu target cannot static-link the loader (the static lib is
-  MSVC-only), so `scripts/build-windows.sh` copies it from the `webview2-com-sys` package. Ship
-  the two files together.
-- The MinGW runtime itself links statically (verified with `objdump -p … | grep "DLL Name"`:
-  besides `WebView2Loader.dll`, only Windows system DLLs appear — no `libgcc_s_seh-1.dll` /
-  `libwinpthread-1.dll`).
-- WebView2 is required at runtime; it ships with Windows 10/11 by default. The NSIS installer from
-  the CI path bootstraps it on machines that lack it.
-- From WSL2 you can launch the result directly on the Windows side
-  (`./src-tauri/target/x86_64-pc-windows-gnu/release/neko-finance.exe`) thanks to interop.
+- The first MSVC build downloads the Windows SDK/CRT through `xwin` (~1.5 GB, cached in
+  `~/.cache/cargo-xwin`); the script auto-accepts the Microsoft SDK license
+  (`XWIN_ACCEPT_LICENSE=1`).
+- `webview2-com-sys` links `WebView2LoaderStatic.lib` on `target_env = "msvc"` and falls back to
+  a dynamic `WebView2Loader.dll` import on every other target — that is why the MSVC target is
+  the default here and why the gnu build needs a side file.
+- Verify portability after a build:
+  `x86_64-w64-mingw32-objdump -p …/neko-finance.exe | grep "DLL Name"` — only Windows system
+  DLLs should appear: no `WebView2Loader.dll`, no `vcruntime140.dll`. (`api-ms-win-crt-*`
+  imports are fine — that is ucrt, shipped with Windows 10/11.)
+- From WSL2 you can launch the exe directly on the Windows side thanks to interop.
 - The app database lives in the per-user app-data directory
   (`%APPDATA%/app.neko.finance` on Windows), not next to the executable.
-- Official Tauri guidance for Windows-on-Linux builds is the experimental `cargo-xwin` (MSVC)
-  route; the MinGW route above is simpler in this repo's WSL2 environment and is validated by the
-  checks in this document. If MSVC-specific issues appear, switch to `cargo-xwin` or the CI path.
+
+### Legacy fallback: MinGW (`--gnu`)
+
+`npm run build:windows -- --gnu` builds `x86_64-pc-windows-gnu` with the system MinGW toolchain
+(no SDK download; setup: `sudo apt install gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64` +
+`rustup target add x86_64-pc-windows-gnu`). The windows-gnu target cannot static-link the
+WebView2 loader, so the script copies `WebView2Loader.dll` next to the exe — **ship both files
+together**. Useful when the xwin toolchain is unavailable; otherwise prefer the MSVC default.

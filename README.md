@@ -54,8 +54,10 @@ Optional: connect Google Sheets by setting `VITE_GOOGLE_CLIENT_ID` in `.env` (se
 
 ### Windows build
 
-`npm run build:windows` cross-compiles `neko-finance.exe` from Linux/WSL2 (MinGW); tagged releases
-build installers in CI. Details: `docs/building-windows.md`.
+`npm run build:windows` cross-compiles a **single-file portable** `neko-finance.exe` from
+Linux/WSL2 (MSVC target via cargo-xwin; WebView2 loader and VC runtime statically linked).
+Tagged releases build the NSIS/MSI installers plus the portable exe in CI.
+Details: `docs/building-windows.md`.
 
 ## Engineering approach
 

@@ -36,6 +36,10 @@ jobs:
         with:
           toolchain: 1.96.0
 
+      - uses: swatinem/rust-cache@v2.9.1
+        with:
+          workspaces: src-tauri
+
       - name: Install Linux Tauri dependencies
         if: matrix.platform == 'ubuntu-24.04'
         run: |
@@ -59,3 +63,23 @@ jobs:
           uploadUpdaterJson: false
           uploadWorkflowArtifacts: true
           args: ${{ matrix.args }}
+
+      # The bundles above are installers (NSIS/MSI). Also publish the portable
+      # single-file exe: the WebView2 loader and the VC runtime are statically
+      # linked on the msvc target (webview2-com-sys + tauri-build defaults),
+      # so the binary runs standalone on Windows 10/11.
+      - name: Upload portable single-file exe (workflow artifact)
+        if: matrix.platform == 'windows-latest'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: neko-finance-windows-x64-portable
+          path: src-tauri/target/release/neko-finance.exe
+
+      - name: Attach portable exe to the release
+        if: matrix.platform == 'windows-latest' && startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          Copy-Item "src-tauri/target/release/neko-finance.exe" "neko-finance-${{ github.ref_name }}-windows-x64-portable.exe"
+          gh release upload "${{ github.ref_name }}" "neko-finance-${{ github.ref_name }}-windows-x64-portable.exe" --clobber
