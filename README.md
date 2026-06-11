@@ -38,7 +38,14 @@ tokens, spreadsheet data, or personal finance caches are committed — see Priva
 
 See `docs/version-matrix.md` for version decisions.
 
-## Getting started
+## Install
+
+Grab the latest build from [Releases](https://github.com/johnlaff/NekoFinance/releases):
+`*-setup.exe` (Windows installer), the portable single-file `*.exe`, or the Linux
+`.deb`/`.AppImage`/`.rpm`. Every artifact ships with SLSA provenance — verify with
+`gh attestation verify <file> --repo johnlaff/NekoFinance`.
+
+## Developing
 
 ```bash
 npm ci
