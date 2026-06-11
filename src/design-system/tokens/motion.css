@@ -1,0 +1,36 @@
+/* ============================================================
+   Neko Finance — Motion Tokens
+   Calm, precise, never bouncy. Money UIs should feel composed.
+   ============================================================ */
+
+:root {
+  /* Durations */
+  --dur-instant: 80ms; /* @kind other */
+  --dur-fast: 130ms; /* @kind other */
+  --dur-base: 200ms; /* @kind other */
+  --dur-slow: 320ms; /* @kind other */
+  --dur-deliberate: 480ms; /* @kind other */
+
+  /* Easing — composed, restrained */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1); /* @kind other */
+  --ease-entrance: cubic-bezier(0.16, 1, 0.3, 1); /* @kind other */
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1); /* @kind other */
+  --ease-calm: cubic-bezier(0.33, 0, 0.2, 1); /* @kind other */
+
+  /* Common composites */
+  --t-hover:
+    background-color var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard); /* @kind other */
+  --t-press: transform var(--dur-instant) var(--ease-standard); /* @kind other */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-instant: 0ms; /* @kind other */
+    --dur-fast: 0ms; /* @kind other */
+    --dur-base: 0ms; /* @kind other */
+    --dur-slow: 0ms; /* @kind other */
+    --dur-deliberate: 0ms; /* @kind other */
+  }
+}

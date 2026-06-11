@@ -1,0 +1,88 @@
+<!-- @dsCard group="Type" viewport="700x210" name="Money — tabular mono" subtitle="Geist Mono, tabular-nums. Always right-aligned, sign-colored" -->
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--font-sans);
+        padding: 22px;
+      }
+      .hero {
+        font-family: var(--font-money);
+        font-variant-numeric: tabular-nums;
+        font-size: var(--fs-money-xl);
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      .sub {
+        color: var(--text-muted);
+        font-size: 12px;
+        margin-top: 2px;
+      }
+      .tbl {
+        width: 320px;
+        margin-top: 16px;
+      }
+      .tr {
+        display: flex;
+        justify-content: space-between;
+        padding: 5px 0;
+        border-bottom: 1px solid var(--border);
+        font-size: 13px;
+      }
+      .tr:last-child {
+        border-bottom: none;
+      }
+      .amt {
+        font-family: var(--font-money);
+        font-variant-numeric: tabular-nums;
+        font-weight: 500;
+      }
+      .wrap {
+        display: flex;
+        gap: 48px;
+        align-items: flex-start;
+      }
+      .spec {
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        color: var(--text-faint);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div>
+        <div class="spec" style="margin-bottom: 8px">money-xl · 34</div>
+        <div class="hero">$12,408<span style="color: var(--text-faint)">.52</span></div>
+        <div class="sub">Available across 4 accounts</div>
+      </div>
+      <div class="tbl">
+        <div class="spec" style="margin-bottom: 8px">
+          money-sm · 13 · aligned column
+        </div>
+        <div class="tr">
+          <span>Salary</span
+          ><span class="amt" style="color: var(--money-pos)">+ 6,200.00</span>
+        </div>
+        <div class="tr">
+          <span>Rent</span
+          ><span class="amt" style="color: var(--money-neg)">− 2,150.00</span>
+        </div>
+        <div class="tr">
+          <span>Groceries</span
+          ><span class="amt" style="color: var(--money-neg)">− 642.18</span>
+        </div>
+        <div class="tr">
+          <span>Transfer</span
+          ><span class="amt" style="color: var(--money-neutral)">0.00</span>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

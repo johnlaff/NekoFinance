@@ -1,0 +1,71 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+coverage
+playwright-report
+test-results
+
+# Environment and credentials
+.env
+.env.*
+!.env.example
+.private-forbidden-patterns
+credentials.json
+client_secret*.json
+token*.json
+oauth*.json
+oauth*.enc
+storage-state.json
+
+# Local-first private data
+.neko-data/
+.methodology-pack/
+.rag-cache/
+.lancedb/
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.parquet
+*.arrow
+
+# Private source materials must never enter this repo
+.circle-auth/
+.circle-data/
+private-data/
+raw-scrape/
+transcripts/
+videos/
+embeddings/
+indexes/
+
+# Session context (ephemeral, contains private paths)
+docs/example/
+SESSION-CONTEXT.md
+
+# Windows download artifacts (WSL)
+*Zone.Identifier
+
+# Design-system raw font downloads (the build uses design-system/assets/fonts)
+src/design-system/uploads/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

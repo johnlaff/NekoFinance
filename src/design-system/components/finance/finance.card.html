@@ -1,0 +1,180 @@
+<!-- @dsCard group="Components" viewport="700x560" name="Finance — tiles, owners, rows, approvals" subtitle="MetricTile · HealthBadge · OwnerChip · TransactionRow · ApprovalDiffCard" -->
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <style>
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--font-sans);
+        padding: 20px;
+      }
+      .stack {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .lbl {
+        font-size: 10.5px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-faint);
+        margin-bottom: 8px;
+      }
+      .rowx {
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+        flex-wrap: wrap;
+      }
+      .tbl {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+        background: var(--surface);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script
+      src="https://unpkg.com/react@18.3.1/umd/react.development.js"
+      integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"
+      integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"
+      integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y"
+      crossorigin="anonymous"
+    ></script>
+    <script src="../../_ds_bundle.js"></script>
+    <script type="text/babel">
+      const {
+        MetricTile,
+        HealthBadge,
+        OwnerChip,
+        TransactionRow,
+        ApprovalDiffCard,
+        Button,
+      } = window.NekoFinanceDesignSystem_9bd1cd;
+      function Demo() {
+        return (
+          <div className="stack">
+            <div>
+              <div className="lbl">Metric tiles & health</div>
+              <div className="rowx">
+                <div style={{ width: 230 }}>
+                  <MetricTile
+                    label="Net cashflow"
+                    value="$4,820.00"
+                    delta="+12.4%"
+                    deltaDir="up"
+                    sublabel="vs. last month"
+                    spark={[40, 55, 48, 70, 62, 88, 100]}
+                  />
+                </div>
+                <div style={{ width: 230 }}>
+                  <MetricTile
+                    label="Spending"
+                    value="$3,142.18"
+                    delta="6.1%"
+                    deltaDir="down"
+                    sublabel="under budget"
+                  />
+                </div>
+                <HealthBadge level="strong" sublabel="3.1 months runway" size="lg" />
+              </div>
+            </div>
+            <div>
+              <div className="lbl">Owner chips · payer / beneficiary / responsible</div>
+              <div className="rowx">
+                <OwnerChip name="Alex Tan" type="personal" />
+                <OwnerChip name="Sam Okafor" type="partner" role="Payer" />
+                <OwnerChip name="Household" type="shared" role="Responsible" />
+              </div>
+            </div>
+            <div>
+              <div className="lbl">Transaction rows</div>
+              <div className="tbl">
+                <TransactionRow
+                  date="08 Jun"
+                  merchant="Whole Foods Market"
+                  category="Groceries"
+                  categoryColor="var(--chart-1)"
+                  owner={<OwnerChip name="Household" type="shared" bare />}
+                  amount="642.18"
+                  status="needs-owner"
+                  confidence="low"
+                />
+                <TransactionRow
+                  date="07 Jun"
+                  merchant="Acme Payroll"
+                  category="Income"
+                  categoryColor="var(--chart-6)"
+                  owner={<OwnerChip name="Alex Tan" type="personal" bare />}
+                  amount="6,200.00"
+                  positive
+                  status="reconciled"
+                />
+                <TransactionRow
+                  date="06 Jun"
+                  merchant="Spotify"
+                  category="Subscriptions"
+                  categoryColor="var(--chart-4)"
+                  owner={<OwnerChip name="Sam Okafor" type="partner" bare />}
+                  amount="14.99"
+                  status="imported"
+                  confidence="high"
+                  selected
+                />
+              </div>
+            </div>
+            <div>
+              <div className="lbl">Approval diff card</div>
+              <ApprovalDiffCard
+                title="Re-categorize 3 transactions"
+                sheet="Expenses 2025"
+                range="D1204:E1206"
+                changes={[
+                  { field: "Category", before: "Uncategorized", after: "Groceries" },
+                  { field: "Owner", after: "Household (shared)" },
+                ]}
+                note={
+                  <span>
+                    Matched merchant <b>“Whole Foods”</b> to your Groceries rule (3
+                    prior rows).
+                  </span>
+                }
+                status="pending"
+                actions={
+                  <>
+                    <Button variant="primary" size="sm">
+                      Approve &amp; write
+                    </Button>
+                    <Button variant="ghost" size="sm">
+                      Edit
+                    </Button>
+                    <span style={{ flex: 1 }} />
+                    <Button variant="danger" size="sm">
+                      Reject
+                    </Button>
+                  </>
+                }
+              />
+            </div>
+          </div>
+        );
+      }
+      ReactDOM.createRoot(document.getElementById("root")).render(<Demo />);
+    </script>
+  </body>
+</html>

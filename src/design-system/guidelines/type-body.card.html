@@ -1,0 +1,65 @@
+<!-- @dsCard group="Type" viewport="700x210" name="Body, labels & eyebrow" subtitle="Reading text, dense table text, uppercase labels & overlines" -->
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--font-sans);
+        padding: 22px;
+      }
+      .line {
+        display: flex;
+        align-items: baseline;
+        gap: 16px;
+        padding: 7px 0;
+        border-bottom: 1px solid var(--border);
+      }
+      .line:last-child {
+        border-bottom: none;
+      }
+      .spec {
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        color: var(--text-faint);
+        width: 130px;
+        flex: none;
+      }
+      .muted {
+        color: var(--text-muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="line">
+      <span class="spec">body · 14/1.45</span
+      ><span class="t-body"
+        >Mia reconciles every figure to its source row before showing it to you.</span
+      >
+    </div>
+    <div class="line">
+      <span class="spec">sm · 13/1.45</span
+      ><span class="t-sm muted"
+        >Imported 248 transactions from “Aug 2025” — 6 need an owner.</span
+      >
+    </div>
+    <div class="line">
+      <span class="spec">label · 12/500</span
+      ><span class="t-label">RESPONSIBLE OWNER</span>
+    </div>
+    <div class="line">
+      <span class="spec">eyebrow · 11/600</span
+      ><span class="t-eyebrow" style="color: var(--primary)">Methodology</span>
+    </div>
+    <div class="line">
+      <span class="spec">micro · 11/400</span
+      ><span class="t-sm muted" style="font-size: 11px"
+        >Source: Sheet “Expenses 2025” · row 1,204 · updated 2m ago</span
+      >
+    </div>
+  </body>
+</html>

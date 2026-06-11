@@ -1,0 +1,106 @@
+<!-- @dsCard group="Colors" viewport="700x150" name="Chart series" subtitle="Six harmonized series colors for category breakdowns" -->
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--font-sans);
+        padding: 20px;
+      }
+      .bars {
+        display: flex;
+        align-items: flex-end;
+        gap: 10px;
+        height: 70px;
+        margin-bottom: 14px;
+      }
+      .bar {
+        flex: 1;
+        border-radius: var(--radius-xs) var(--radius-xs) 0 0;
+      }
+      .row {
+        display: flex;
+        gap: 10px;
+      }
+      .sw {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+      }
+      .dot {
+        width: 11px;
+        height: 11px;
+        border-radius: 3px;
+      }
+      .name {
+        font-size: 10.5px;
+        font-weight: 600;
+      }
+      .hex {
+        font-family: var(--font-mono);
+        font-size: 9.5px;
+        color: var(--text-muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="bars">
+      <div class="bar" style="background: var(--chart-1); height: 100%"></div>
+      <div class="bar" style="background: var(--chart-2); height: 74%"></div>
+      <div class="bar" style="background: var(--chart-3); height: 58%"></div>
+      <div class="bar" style="background: var(--chart-4); height: 46%"></div>
+      <div class="bar" style="background: var(--chart-5); height: 34%"></div>
+      <div class="bar" style="background: var(--chart-6); height: 24%"></div>
+    </div>
+    <div class="row">
+      <div class="sw">
+        <span class="dot" style="background: var(--chart-1)"></span>
+        <div>
+          <div class="name">chart-1</div>
+          <div class="hex">#3FBF8F</div>
+        </div>
+      </div>
+      <div class="sw">
+        <span class="dot" style="background: var(--chart-2)"></span>
+        <div>
+          <div class="name">chart-2</div>
+          <div class="hex">#E0A33E</div>
+        </div>
+      </div>
+      <div class="sw">
+        <span class="dot" style="background: var(--chart-3)"></span>
+        <div>
+          <div class="name">chart-3</div>
+          <div class="hex">#5FA8DC</div>
+        </div>
+      </div>
+      <div class="sw">
+        <span class="dot" style="background: var(--chart-4)"></span>
+        <div>
+          <div class="name">chart-4</div>
+          <div class="hex">#C98BD4</div>
+        </div>
+      </div>
+      <div class="sw">
+        <span class="dot" style="background: var(--chart-5)"></span>
+        <div>
+          <div class="name">chart-5</div>
+          <div class="hex">#E0625B</div>
+        </div>
+      </div>
+      <div class="sw">
+        <span class="dot" style="background: var(--chart-6)"></span>
+        <div>
+          <div class="name">chart-6</div>
+          <div class="hex">#6FC7B8</div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,117 @@
+<!-- @dsCard group="Brand" viewport="700x200" name="Mia & feline cues" subtitle="Calm copilot avatar + the four restrained feline signals" -->
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--font-sans);
+        padding: 22px;
+        display: flex;
+        gap: 24px;
+        align-items: center;
+      }
+      .mia {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding-right: 24px;
+        border-right: 1px solid var(--border);
+      }
+      .av {
+        width: 48px;
+        height: 48px;
+      }
+      .mia-name {
+        font-weight: 700;
+        font-size: 16px;
+      }
+      .mia-role {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-top: 2px;
+      }
+      .cues {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px 28px;
+      }
+      .cue {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+      }
+      .glyph {
+        width: 22px;
+        flex: none;
+        display: flex;
+        justify-content: center;
+        color: var(--primary);
+        margin-top: 1px;
+      }
+      .ct {
+        font-size: 12.5px;
+        font-weight: 600;
+      }
+      .cd {
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-top: 1px;
+        line-height: 1.35;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="mia">
+      <div class="av">
+        <svg viewBox="0 0 40 40" fill="none">
+          <rect width="40" height="40" rx="12" fill="var(--surface-elevated)" />
+          <path
+            fill-rule="evenodd"
+            clip-rule="evenodd"
+            fill="var(--primary)"
+            d="M11 15 L9 5 L17.5 11.5 C19 11 21 11 22.5 11.5 L31 5 L29 15 C31.5 17.5 32.5 20.3 32.5 23 C32.5 29 27.5 33.5 20 33.5 C12.5 33.5 7.5 29 7.5 23 C7.5 20.3 8.5 17.5 11 15 Z M16.6 22 C16.6 23.3 15.9 24.3 15 24.3 C14.1 24.3 13.4 23.3 13.4 22 C13.4 20.7 14.1 19.7 15 19.7 C15.9 19.7 16.6 20.7 16.6 22 Z M26.6 22 C26.6 23.3 25.9 24.3 25 24.3 C24.1 24.3 23.4 23.3 23.4 22 C23.4 20.7 24.1 19.7 25 19.7 C25.9 19.7 26.6 20.7 26.6 22 Z M20 26 L18.4 24.7 C18.9 24.3 21.1 24.3 21.6 24.7 Z"
+          />
+        </svg>
+      </div>
+      <div>
+        <div class="mia-name">Mia</div>
+        <div class="mia-role">Calm financial copilot</div>
+      </div>
+    </div>
+    <div class="cues">
+      <div class="cue">
+        <span class="glyph">●</span>
+        <div>
+          <div class="ct">Reading indicator</div>
+          <div class="cd">Soft jade dot blinks while Mia works</div>
+        </div>
+      </div>
+      <div class="cue">
+        <span class="glyph">⌇</span>
+        <div>
+          <div class="ct">Whisker hairlines</div>
+          <div class="cd">1px dividers in tables & panels</div>
+        </div>
+      </div>
+      <div class="cue">
+        <span class="glyph">▲</span>
+        <div>
+          <div class="ct">Rounded ears</div>
+          <div class="cd">Cat geometry lives only in the mark</div>
+        </div>
+      </div>
+      <div class="cue">
+        <span class="glyph">"</span>
+        <div>
+          <div class="ct">Quiet voice</div>
+          <div class="cd">Language warmth, no cat puns or emoji</div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

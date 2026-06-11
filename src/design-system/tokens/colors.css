@@ -1,0 +1,177 @@
+/* ============================================================
+   Neko Finance — Color Tokens
+   Direction: "Midnight Ledger" — deep graphite-ink cockpit,
+   calm jade primary (money/growth without cliché), brass-amber
+   warmth (the subtle feline cue), restrained semantic statuses.
+
+   :root = DARK theme (the primary, presented-first theme).
+   [data-theme="light"] = light "vellum-cool" theme.
+   ============================================================ */
+
+:root {
+  /* ---- Base palette (dark) ---- */
+  --ink-900: #0e1413; /* app background, deepest */
+  --ink-850: #121a18;
+  --ink-800: #161d1c; /* surface / card */
+  --ink-750: #1b2322;
+  --ink-700: #1f2827; /* elevated surface */
+  --ink-650: #28332f;
+  --ink-600: #2a3433; /* border */
+  --ink-500: #3a4644; /* border-strong */
+  --ink-400: #566461;
+  --ink-300: #6b7572; /* faint text */
+  --ink-200: #9aa5a2; /* muted text */
+  --ink-100: #c9d2cf;
+  --ink-050: #e8edeb; /* primary text */
+  --ink-000: #f4f7f5; /* high-emphasis text / pure */
+
+  /* ---- Brand: Jade (primary) ---- */
+  --jade-700: #1c5c45;
+  --jade-600: #237a57;
+  --jade-500: #2e9b6f; /* primary base */
+  --jade-400: #3fbf8f; /* primary on-dark, interactive */
+  --jade-300: #6cd8ac;
+  --jade-200: #a7e9cd;
+  --jade-tint: rgba(63, 191, 143, 0.12); /* wash / selected bg */
+
+  /* ---- Brand: Brass (secondary / feline warmth) ---- */
+  --brass-700: #8a5e1c;
+  --brass-600: #b07e28;
+  --brass-500: #d29b3a;
+  --brass-400: #e0a33e; /* secondary base */
+  --brass-300: #ecc57e;
+  --brass-tint: rgba(224, 163, 62, 0.13);
+
+  /* ---- Semantic statuses ---- */
+  --success-500: #34b981;
+  --success-400: #4fd39a;
+  --success-tint: rgba(52, 185, 129, 0.14);
+
+  --warning-500: #e0a33e;
+  --warning-400: #efbe63;
+  --warning-tint: rgba(224, 163, 62, 0.15);
+
+  --danger-500: #e0625b;
+  --danger-400: #ed7e78;
+  --danger-tint: rgba(224, 98, 91, 0.14);
+
+  --info-500: #4fa6ce;
+  --info-400: #74c0e2;
+  --info-tint: rgba(79, 166, 206, 0.14);
+
+  /* ---- Chart series (6, harmonized, color-blind aware ordering) ---- */
+  --chart-1: #3fbf8f; /* jade */
+  --chart-2: #e0a33e; /* brass */
+  --chart-3: #5fa8dc; /* sky */
+  --chart-4: #c98bd4; /* orchid */
+  --chart-5: #e0625b; /* coral */
+  --chart-6: #6fc7b8; /* teal */
+  --chart-grid: rgba(154, 165, 162, 0.16);
+  --chart-axis: var(--ink-300);
+
+  /* ---- Money-specific (positive / negative cashflow) ---- */
+  --money-pos: #4fd39a;
+  --money-neg: #ed7e78;
+  --money-neutral: var(--ink-100);
+
+  /* ---- Semantic aliases (use these in components) ---- */
+  --bg: var(--ink-900);
+  --bg-subtle: var(--ink-850);
+  --surface: var(--ink-800);
+  --surface-2: var(--ink-750);
+  --surface-elevated: var(--ink-700);
+  --surface-hover: var(--ink-750);
+  --surface-selected: var(--jade-tint);
+
+  --border: var(--ink-600);
+  --border-strong: var(--ink-500);
+  --border-focus: var(--jade-400);
+
+  --text: var(--ink-050);
+  --text-strong: var(--ink-000);
+  --text-muted: var(--ink-200);
+  --text-faint: var(--ink-300);
+  --text-on-primary: #06140e;
+  --text-on-brass: #1f1505;
+
+  --primary: var(--jade-400);
+  --primary-hover: var(--jade-300);
+  --primary-press: var(--jade-500);
+  --primary-quiet: var(--jade-tint);
+
+  --secondary: var(--brass-400);
+  --secondary-quiet: var(--brass-tint);
+
+  --focus-ring: rgba(63, 191, 143, 0.55);
+
+  /* Owner-type accents (personal / partner / shared) */
+  --owner-personal: #3fbf8f;
+  --owner-partner: #c98bd4;
+  --owner-shared: #5fa8dc;
+}
+
+/* ============================================================
+   LIGHT THEME — "Vellum Cool"
+   Cool calm paper, NOT warm cream. White surfaces, ink text.
+   ============================================================ */
+[data-theme="light"] {
+  --bg: #eaeeec;
+  --bg-subtle: #e2e7e5;
+  --surface: #ffffff;
+  --surface-2: #f4f7f5;
+  --surface-elevated: #ffffff;
+  --surface-hover: #f1f4f2;
+  --surface-selected: rgba(46, 155, 111, 0.1);
+
+  --border: #d7dedb;
+  --border-strong: #c2cbc7;
+  --border-focus: #2e9b6f;
+
+  --text: #142019;
+  --text-strong: #0a100d;
+  --text-muted: #56635e;
+  --text-faint: #7c8782;
+  --text-on-primary: #ffffff;
+  --text-on-brass: #2a1c05;
+
+  --primary: #228764;
+  --primary-hover: #1c6f52;
+  --primary-press: #15543e;
+  --primary-quiet: rgba(34, 135, 100, 0.1);
+
+  --secondary: #b07e28;
+  --secondary-quiet: rgba(176, 126, 40, 0.12);
+
+  --success-500: #1e9466;
+  --warning-500: #b8801f;
+  --danger-500: #cb463e;
+  --info-500: #2e83ac;
+  /* *-400 are the on-tint TEXT colors. On light tints they must be dark. */
+  --success-400: #157a52;
+  --warning-400: #875812;
+  --danger-400: #b23a32;
+  --info-400: #1e6b91;
+  --success-tint: rgba(30, 148, 102, 0.12);
+  --warning-tint: rgba(184, 128, 31, 0.13);
+  --danger-tint: rgba(203, 70, 62, 0.1);
+  --info-tint: rgba(46, 131, 172, 0.11);
+
+  --money-pos: #1e9466;
+  --money-neg: #cb463e;
+  --money-neutral: var(--text);
+
+  --chart-1: #228764;
+  --chart-2: #b8801f;
+  --chart-3: #2e83ac;
+  --chart-4: #9a55a8;
+  --chart-5: #cb463e;
+  --chart-6: #2e9488;
+  --chart-grid: rgba(20, 32, 25, 0.1);
+  --chart-axis: #7c8782;
+
+  --focus-ring: rgba(34, 135, 100, 0.45);
+
+  --owner-personal: #228764;
+  --owner-partner: #9a55a8;
+  --owner-shared: #2e83ac;
+}

@@ -1,0 +1,167 @@
+<!-- @startingPoint section="Neko App" subtitle="Full app — dashboard, transactions, copilot (self-contained)" viewport="1440x900" -->
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <title>Neko Finance</title>
+    <script>
+      // Restore persisted theme before paint (dark is default/primary).
+      try {
+        var t = localStorage.getItem("neko-theme");
+        if (t) document.documentElement.setAttribute("data-theme", t);
+      } catch (e) {}
+    </script>
+    <link rel="stylesheet" href="styles.css" />
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        background: var(--bg);
+      }
+      #app {
+        height: 100vh;
+      }
+      #boot {
+        height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-faint);
+        font-family: var(--font-sans);
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"><div id="boot">Loading Neko…</div></div>
+
+    <template id="__bundler_thumbnail">
+      <div
+        style="
+          width: 100%;
+          height: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: #0e1413;
+        "
+      >
+        <svg viewBox="0 0 48 48" width="46%" height="46%" fill="none">
+          <path
+            fill="#3FBF8F"
+            fill-rule="evenodd"
+            clip-rule="evenodd"
+            d="M12 17 L9.2 5.4 L20 13.2 C22 12.6 26 12.6 28 13.2 L38.8 5.4 L36 17 C39.4 20 40.5 23.5 40.5 27 C40.5 35 33.5 41.5 24 41.5 C14.5 41.5 7.5 35 7.5 27 C7.5 23.5 8.6 20 12 17 Z M18.5 25.5 C18.5 27.2 17.6 28.5 16.4 28.5 C15.2 28.5 14.3 27.2 14.3 25.5 C14.3 23.8 15.2 22.5 16.4 22.5 C17.6 22.5 18.5 23.8 18.5 25.5 Z M33.7 25.5 C33.7 27.2 32.8 28.5 31.6 28.5 C30.4 28.5 29.5 27.2 29.5 25.5 C29.5 23.8 30.4 22.5 31.6 22.5 C32.8 22.5 33.7 23.8 33.7 25.5 Z M24 30.2 L22 28.6 C22.6 28.1 25.4 28.1 26 28.6 Z"
+          />
+        </svg>
+      </div>
+    </template>
+
+    <script
+      src="https://unpkg.com/react@18.3.1/umd/react.development.js"
+      integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"
+      integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"
+      integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y"
+      crossorigin="anonymous"
+    ></script>
+    <script>
+      // Self-contained loader: builds the component namespace from source so this
+      // front door works in any preview (not only the Design System tab's bundle server).
+      const COMPONENTS = [
+        "components/core/Button.jsx",
+        "components/core/Input.jsx",
+        "components/core/SegmentedControl.jsx",
+        "components/core/Badge.jsx",
+        "components/core/Switch.jsx",
+        "components/finance/MetricTile.jsx",
+        "components/finance/HealthBadge.jsx",
+        "components/finance/OwnerChip.jsx",
+        "components/finance/TransactionRow.jsx",
+        "components/finance/ApprovalDiffCard.jsx",
+        "components/copilot/ChatBubble.jsx",
+        "components/copilot/Citation.jsx",
+        "components/copilot/EmptyState.jsx",
+      ];
+      const PLAIN = ["ui_kits/shared/icons.jsx", "ui_kits/dashboard/AppShell.jsx"];
+      const BABEL = [
+        "ui_kits/dashboard/DashboardScreen.jsx",
+        "ui_kits/transactions/TransactionsScreen.jsx",
+        "ui_kits/copilot/CopilotScreen.jsx",
+        "ui_kits/settings/SettingsScreen.jsx",
+        "ui_kits/methodology/MethodologyScreen.jsx",
+      ];
+
+      function appendCode(code) {
+        const s = document.createElement("script");
+        s.textContent = code;
+        document.head.appendChild(s);
+      }
+      async function fetchText(u) {
+        const r = await fetch(u);
+        if (!r.ok) throw new Error("fetch " + u + " " + r.status);
+        return r.text();
+      }
+
+      async function buildNS() {
+        const NS = {};
+        for (const f of COMPONENTS) {
+          let src = await fetchText(f);
+          const names = [...src.matchAll(/export function (\w+)/g)].map((m) => m[1]);
+          if (!names.length) continue;
+          src = src
+            .replace(/import\s+React\s+from\s+["']react["'];?/g, "")
+            .replace(/export\s+function/g, "function");
+          const code = Babel.transform(src, { presets: ["react"] }).code;
+          Object.assign(
+            NS,
+            new Function("React", code + "\nreturn {" + names.join(",") + "};")(React),
+          );
+        }
+        window.NekoFinanceDesignSystem_9bd1cd = NS;
+      }
+
+      const APP = `
+function NekoApp(){
+  const [route,setRoute]=React.useState('dashboard');
+  window.__nekoRoute=setRoute;
+  if(route==='transactions') return React.createElement(window.TransactionsApp);
+  if(route==='copilot') return React.createElement(window.CopilotApp);
+  if(route==='settings') return React.createElement(window.SettingsApp);
+  if(route==='methodology') return React.createElement(window.MethodologyApp);
+  return React.createElement(window.AppShell,{active:'dashboard',onNav:setRoute,title:'Dashboard',crumb:'June 2025 · all accounts'},
+    React.createElement(window.DashboardScreen,{onAskMia:()=>setRoute('copilot')}));
+}
+ReactDOM.createRoot(document.getElementById('app')).render(React.createElement(NekoApp));
+`;
+
+      (async () => {
+        try {
+          await buildNS();
+          for (const p of PLAIN) appendCode(await fetchText(p));
+          for (const b of BABEL) {
+            const code = Babel.transform(await fetchText(b), {
+              presets: ["react"],
+            }).code;
+            appendCode("(function(){\n" + code + "\n})();");
+          }
+          appendCode(Babel.transform(APP, { presets: ["react"] }).code);
+        } catch (e) {
+          document.getElementById("app").innerHTML =
+            '<div id="boot">Error: ' + e.message + "</div>";
+          console.error(e);
+        }
+      })();
+    </script>
+  </body>
+</html>

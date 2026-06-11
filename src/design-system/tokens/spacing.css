@@ -1,0 +1,55 @@
+/* ============================================================
+   Neko Finance — Spacing & Radius Tokens
+   Base unit: 4px. Dense desktop financial cockpit.
+   ============================================================ */
+
+:root {
+  /* ---- Spacing scale (4px base) ---- */
+  --space-0: 0;
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 12px;
+  --space-6: 16px;
+  --space-7: 20px;
+  --space-8: 24px;
+  --space-9: 32px;
+  --space-10: 40px;
+  --space-11: 48px;
+  --space-12: 64px;
+  --space-14: 80px;
+  --space-16: 96px;
+
+  /* ---- Radii ---- */
+  --radius-xs: 4px; /* chips, inline tags */
+  --radius-sm: 6px; /* inputs, buttons, rows */
+  --radius-md: 10px; /* cards, metric tiles */
+  --radius-lg: 14px; /* panels, dialogs */
+  --radius-xl: 20px; /* large surfaces */
+  --radius-pill: 999px; /* owner chips, switches */
+  --radius-circle: 50%;
+
+  /* ---- Layout constants ---- */
+  --sidebar-w: 248px;
+  --sidebar-w-collapsed: 64px;
+  --topbar-h: 56px;
+  --copilot-w: 400px;
+  --content-max: 1440px;
+  --gutter: var(--space-8);
+
+  /* ---- Density: table row heights ---- */
+  --row-h-compact: 36px;
+  --row-h-default: 44px;
+  --row-h-comfortable: 52px;
+
+  /* ---- Hit target minimum (a11y) ---- */
+  --hit-min: 36px; /* desktop dense control min */
+  --hit-touch: 44px; /* touch / mobile width */
+
+  /* ---- Border widths ---- */
+  --bw-hair: 1px; /* whisker-thin hairline divider */
+  --bw-default: 1px;
+  --bw-strong: 1.5px;
+  --bw-accent: 2px; /* left accent on active nav */
+}

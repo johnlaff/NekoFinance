@@ -1,0 +1,34 @@
+title = "Neko Finance secret scanning"
+
+[allowlist]
+description = "Generated and local-only paths"
+paths = [
+  '''node_modules/''',
+  '''dist/''',
+  '''src-tauri/target/''',
+  '''package-lock\.json''',
+]
+
+[[rules]]
+id = "google-api-key"
+description = "Google API key"
+regex = '''AIza[0-9A-Za-z\-_]{35}'''
+tags = ["key", "google"]
+
+[[rules]]
+id = "generic-bearer-token"
+description = "Bearer token"
+regex = '''(?i)bearer\s+[a-z0-9._\-]{24,}'''
+tags = ["token"]
+
+[[rules]]
+id = "private-key"
+description = "Private key block"
+regex = '''-----BEGIN [A-Z ]*PRIVATE KEY-----'''
+tags = ["key"]
+
+[[rules]]
+id = "oauth-client-secret-file"
+description = "OAuth client secret material"
+regex = '''(?i)client_secret[^\n]{0,40}[=:]\s*["'][^"']{12,}["']'''
+tags = ["oauth", "secret"]

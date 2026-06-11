@@ -1,0 +1,130 @@
+<!-- @dsCard group="Components" viewport="700x360" name="Core — buttons, inputs, toggles" subtitle="Button · Input · SegmentedControl · Badge · Switch" -->
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../styles.css" />
+    <style>
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--font-sans);
+        padding: 22px;
+      }
+      .grid {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+      .group {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .lbl {
+        font-size: 10.5px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-faint);
+      }
+      .rowx {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script
+      src="https://unpkg.com/react@18.3.1/umd/react.development.js"
+      integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"
+      integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"
+      integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y"
+      crossorigin="anonymous"
+    ></script>
+    <script src="../../_ds_bundle.js"></script>
+    <script type="text/babel">
+      const { Button, Input, SegmentedControl, Badge, Switch } =
+        window.NekoFinanceDesignSystem_9bd1cd;
+      function Demo() {
+        const [scope, setScope] = React.useState("personal");
+        const [on, setOn] = React.useState(true);
+        return (
+          <div className="grid">
+            <div className="group">
+              <div className="lbl">Buttons</div>
+              <div className="rowx">
+                <Button variant="primary">Approve change</Button>
+                <Button variant="secondary">Add account</Button>
+                <Button variant="ghost">Cancel</Button>
+                <Button variant="danger">Disconnect</Button>
+                <Button variant="primary" disabled>
+                  Disabled
+                </Button>
+                <Button variant="secondary" size="sm">
+                  Small
+                </Button>
+              </div>
+            </div>
+            <div className="group">
+              <div className="lbl">Inputs</div>
+              <div className="rowx" style={{ alignItems: "flex-start" }}>
+                <div style={{ width: 200 }}>
+                  <Input label="Account name" placeholder="Joint checking" />
+                </div>
+                <div style={{ width: 160 }}>
+                  <Input label="Balance" money prefix="$" defaultValue="12408.52" />
+                </div>
+                <div style={{ width: 200 }}>
+                  <Input label="Sheet ID" error="Not shared with Neko." />
+                </div>
+              </div>
+            </div>
+            <div className="group">
+              <div className="lbl">Segmented · Badges · Switch</div>
+              <div className="rowx">
+                <SegmentedControl
+                  value={scope}
+                  onChange={setScope}
+                  options={[
+                    { value: "all", label: "All" },
+                    {
+                      value: "personal",
+                      label: "Personal",
+                      dot: "var(--owner-personal)",
+                    },
+                    { value: "partner", label: "Partner", dot: "var(--owner-partner)" },
+                    { value: "shared", label: "Shared", dot: "var(--owner-shared)" },
+                  ]}
+                />
+                <Badge tone="success" dot>
+                  Reconciled
+                </Badge>
+                <Badge tone="warning" dot>
+                  Needs owner
+                </Badge>
+                <Badge tone="primary" square>
+                  AI
+                </Badge>
+                <Switch checked={on} onChange={setOn} label="Require approval" />
+              </div>
+            </div>
+          </div>
+        );
+      }
+      ReactDOM.createRoot(document.getElementById("root")).render(<Demo />);
+    </script>
+  </body>
+</html>

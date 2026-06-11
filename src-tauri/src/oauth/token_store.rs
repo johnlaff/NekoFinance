@@ -1,0 +1,384 @@
+use aes_gcm::{
+    Aes256Gcm, Key, Nonce,
+    aead::{Aead, KeyInit, OsRng},
+};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::path::PathBuf;
+
+const KEYRING_SERVICE: &str = "neko-finance";
+const KEYRING_USERNAME: &str = "google-oauth";
+const ENCRYPTED_FILE: &str = "oauth-token.enc";
+const SALT_FILE: &str = "oauth-salt";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredToken {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub expires_at: u64,
+    pub scope: String,
+}
+
+fn encrypted_token_path(app_dir: &std::path::Path) -> PathBuf {
+    app_dir.join(ENCRYPTED_FILE)
+}
+
+fn salt_path(app_dir: &std::path::Path) -> PathBuf {
+    app_dir.join(SALT_FILE)
+}
+
+fn derive_key(app_dir: &std::path::Path) -> Result<[u8; 32], String> {
+    let salt_file = salt_path(app_dir);
+    let salt = if salt_file.exists() {
+        std::fs::read(&salt_file).map_err(|e| format!("read salt: {e}"))?
+    } else {
+        let mut s = [0u8; 16];
+        use rand::RngCore;
+        OsRng.fill_bytes(&mut s);
+        std::fs::write(&salt_file, s).map_err(|e| format!("write salt: {e}"))?;
+        s.to_vec()
+    };
+
+    let machine_id = get_machine_id();
+    let mut hasher = Sha256::new();
+    hasher.update(machine_id.as_bytes());
+    hasher.update(&salt);
+    let result = hasher.finalize();
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&result);
+    Ok(key)
+}
+
+fn get_machine_id() -> String {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(id) = std::fs::read_to_string("/etc/machine-id") {
+            return id.trim().to_string();
+        }
+        if let Ok(id) = std::fs::read_to_string("/var/lib/dbus/machine-id") {
+            return id.trim().to_string();
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = std::process::Command::new("ioreg")
+            .args(["-rd1", "-c", "IOPlatformExpertDevice"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if line.contains("IOPlatformUUID") {
+                    if let Some(uuid) = line.split('"').nth(3) {
+                        return uuid.to_string();
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(output) = std::process::Command::new("wmic")
+            .args(["csproduct", "get", "UUID"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines().skip(1) {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    return trimmed.to_string();
+                }
+            }
+        }
+    }
+    "neko-finance-default-machine-id".to_string()
+}
+
+fn encrypt_token(token: &StoredToken, key: &[u8; 32]) -> Result<Vec<u8>, String> {
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
+    let json = serde_json::to_vec(token).map_err(|e| format!("serialize: {e}"))?;
+
+    let mut nonce_bytes = [0u8; 12];
+    use rand::RngCore;
+    OsRng.fill_bytes(&mut nonce_bytes);
+    let nonce = Nonce::from_slice(&nonce_bytes);
+
+    let ciphertext = cipher
+        .encrypt(nonce, json.as_slice())
+        .map_err(|e| format!("encrypt: {e}"))?;
+
+    let mut result = nonce_bytes.to_vec();
+    result.extend_from_slice(&ciphertext);
+    Ok(result)
+}
+
+fn decrypt_token(data: &[u8], key: &[u8; 32]) -> Result<StoredToken, String> {
+    if data.len() < 12 {
+        return Err("encrypted data too short".to_string());
+    }
+
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
+    let nonce = Nonce::from_slice(&data[..12]);
+    let ciphertext = &data[12..];
+
+    let plaintext = cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|e| format!("decrypt: {e}"))?;
+
+    serde_json::from_slice(&plaintext).map_err(|e| format!("deserialize: {e}"))
+}
+
+fn try_keyring_store(token: &StoredToken) -> Result<(), String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USERNAME)
+        .map_err(|e| format!("keyring entry: {e}"))?;
+    let json = serde_json::to_string(token).map_err(|e| format!("serialize: {e}"))?;
+    entry
+        .set_password(&json)
+        .map_err(|e| format!("keyring set: {e}"))
+}
+
+fn try_keyring_load() -> Result<Option<StoredToken>, String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USERNAME)
+        .map_err(|e| format!("keyring entry: {e}"))?;
+    match entry.get_password() {
+        Ok(json) => {
+            let token: StoredToken =
+                serde_json::from_str(&json).map_err(|e| format!("deserialize: {e}"))?;
+            Ok(Some(token))
+        }
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(format!("keyring get: {e}")),
+    }
+}
+
+fn try_keyring_delete() -> Result<(), String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USERNAME)
+        .map_err(|e| format!("keyring entry: {e}"))?;
+    match entry.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(format!("keyring delete: {e}")),
+    }
+}
+
+pub fn store_token(app_dir: &std::path::Path, token: &StoredToken) -> Result<(), String> {
+    if try_keyring_store(token).is_ok() {
+        return Ok(());
+    }
+
+    let key = derive_key(app_dir)?;
+    let encrypted = encrypt_token(token, &key)?;
+    let path = encrypted_token_path(app_dir);
+    std::fs::write(&path, &encrypted).map_err(|e| format!("write encrypted: {e}"))
+}
+
+pub fn load_token(app_dir: &std::path::Path) -> Result<Option<StoredToken>, String> {
+    if let Ok(Some(token)) = try_keyring_load() {
+        return Ok(Some(token));
+    }
+
+    let path = encrypted_token_path(app_dir);
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let key = derive_key(app_dir)?;
+    let data = std::fs::read(&path).map_err(|e| format!("read encrypted: {e}"))?;
+    let token = decrypt_token(&data, &key)?;
+    Ok(Some(token))
+}
+
+pub fn delete_token(app_dir: &std::path::Path) -> Result<(), String> {
+    let _ = try_keyring_delete();
+
+    let path = encrypted_token_path(app_dir);
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|e| format!("delete encrypted: {e}"))?;
+    }
+    Ok(())
+}
+
+pub fn is_token_expired(token: &StoredToken) -> bool {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    token.expires_at <= now
+}
+
+pub async fn refresh_access_token(
+    app_dir: &std::path::Path,
+    client_id: &str,
+) -> Result<StoredToken, String> {
+    let token = load_token(app_dir)?.ok_or("no token to refresh".to_string())?;
+
+    if token.refresh_token.is_empty() {
+        return Err("no refresh token available".to_string());
+    }
+
+    let client = reqwest::Client::new();
+    let params = [
+        ("client_id", client_id.to_string()),
+        ("refresh_token", token.refresh_token.clone()),
+        ("grant_type", "refresh_token".to_string()),
+    ];
+
+    let resp = client
+        .post("https://oauth2.googleapis.com/token")
+        .form(&params)
+        .send()
+        .await
+        .map_err(|e| format!("refresh request: {e}"))?;
+
+    if !resp.status().is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("refresh failed: {body}"));
+    }
+
+    let json: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {e}"))?;
+
+    let access_token = json["access_token"]
+        .as_str()
+        .ok_or("no access_token in refresh response")?
+        .to_string();
+    let expires_in: u64 = json["expires_in"].as_u64().unwrap_or(3600);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let new_token = StoredToken {
+        access_token,
+        refresh_token: token.refresh_token,
+        expires_at: now + expires_in - 60,
+        scope: token.scope,
+    };
+
+    store_token(app_dir, &new_token)?;
+    Ok(new_token)
+}
+
+pub async fn ensure_valid_token(
+    app_dir: &std::path::Path,
+    client_id: &str,
+) -> Result<StoredToken, String> {
+    let token = load_token(app_dir)?.ok_or("not authenticated".to_string())?;
+
+    if !is_token_expired(&token) {
+        return Ok(token);
+    }
+
+    refresh_access_token(app_dir, client_id).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env::temp_dir;
+
+    fn temp_app_dir() -> PathBuf {
+        let dir = temp_dir().join(format!("neko-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_token_store_roundtrip() {
+        let dir = temp_app_dir();
+        let token = StoredToken {
+            access_token: "ya29.test".into(),
+            refresh_token: "1//test".into(),
+            expires_at: 1717977600,
+            scope: "spreadsheets.readonly".into(),
+        };
+        store_token(&dir, &token).unwrap();
+        let loaded = load_token(&dir).unwrap().unwrap();
+        assert_eq!(loaded.access_token, token.access_token);
+        assert_eq!(loaded.refresh_token, token.refresh_token);
+        delete_token(&dir).unwrap();
+        assert!(load_token(&dir).unwrap().is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_token_serialization_roundtrip() {
+        let token = StoredToken {
+            access_token: "ya29.test".into(),
+            refresh_token: "1//test".into(),
+            expires_at: 1717977600,
+            scope: "spreadsheets.readonly".into(),
+        };
+        let json = serde_json::to_string(&token).unwrap();
+        let restored: StoredToken = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.access_token, token.access_token);
+    }
+
+    #[test]
+    fn test_is_token_expired() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let expired = StoredToken {
+            access_token: "test".into(),
+            refresh_token: "test".into(),
+            expires_at: now - 100,
+            scope: "".into(),
+        };
+        assert!(is_token_expired(&expired));
+
+        let valid = StoredToken {
+            access_token: "test".into(),
+            refresh_token: "test".into(),
+            expires_at: now + 3600,
+            scope: "".into(),
+        };
+        assert!(!is_token_expired(&valid));
+    }
+
+    #[test]
+    fn test_encrypt_decrypt_roundtrip() {
+        let dir = temp_app_dir();
+        let key = derive_key(&dir).unwrap();
+        let token = StoredToken {
+            access_token: "ya29.secret".into(),
+            refresh_token: "1//secret".into(),
+            expires_at: 1717977600,
+            scope: "spreadsheets.readonly".into(),
+        };
+
+        let encrypted = encrypt_token(&token, &key).unwrap();
+        assert!(!encrypted.is_empty());
+
+        let decrypted = decrypt_token(&encrypted, &key).unwrap();
+        assert_eq!(decrypted.access_token, token.access_token);
+        assert_eq!(decrypted.refresh_token, token.refresh_token);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_encrypt_produces_different_ciphertext() {
+        let dir = temp_app_dir();
+        let key = derive_key(&dir).unwrap();
+        let token = StoredToken {
+            access_token: "ya29.test".into(),
+            refresh_token: "1//test".into(),
+            expires_at: 1717977600,
+            scope: "".into(),
+        };
+
+        let enc1 = encrypt_token(&token, &key).unwrap();
+        let enc2 = encrypt_token(&token, &key).unwrap();
+        assert_ne!(enc1, enc2);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_derive_key_consistent() {
+        let dir = temp_app_dir();
+        let key1 = derive_key(&dir).unwrap();
+        let key2 = derive_key(&dir).unwrap();
+        assert_eq!(key1, key2);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
