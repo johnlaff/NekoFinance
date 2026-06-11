@@ -6,8 +6,12 @@ on:
     tags:
       - "v*.*.*"
 
+# contents: write — create/update the draft release and upload assets
+# id-token + attestations — SLSA build provenance for the released binaries
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -24,21 +28,21 @@ jobs:
           - platform: windows-latest
             args: ""
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v6.4.0
+      # No `cache:` input on purpose — caches are disabled in this publishing
+      # workflow (cache-poisoning hardening); setup-node does not cache without it.
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0 # zizmor: ignore[cache-poisoning]
         with:
           node-version-file: .node-version
-          cache: npm
 
-      - uses: dtolnay/rust-toolchain@v1
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
           toolchain: 1.96.0
-
-      - uses: swatinem/rust-cache@v2.9.1
-        with:
-          workspaces: src-tauri
 
       - name: Install Linux Tauri dependencies
         if: matrix.platform == 'ubuntu-24.04'
@@ -50,7 +54,7 @@ jobs:
         run: npm ci
 
       - name: Build Tauri bundle
-        uses: tauri-apps/tauri-action@v0.6.2
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -64,13 +68,31 @@ jobs:
           uploadWorkflowArtifacts: true
           args: ${{ matrix.args }}
 
+      # SLSA build provenance for everything we ship (verifiable with
+      # `gh attestation verify <file> --repo <owner>/<repo>`).
+      - name: Attest build provenance (bundles)
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: |
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.rpm
+            src-tauri/target/release/bundle/**/*.AppImage
+
+      - name: Attest build provenance (portable exe)
+        if: matrix.platform == 'windows-latest'
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: src-tauri/target/release/neko-finance.exe
+
       # The bundles above are installers (NSIS/MSI). Also publish the portable
       # single-file exe: the WebView2 loader and the VC runtime are statically
       # linked on the msvc target (webview2-com-sys + tauri-build defaults),
       # so the binary runs standalone on Windows 10/11.
       - name: Upload portable single-file exe (workflow artifact)
         if: matrix.platform == 'windows-latest'
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: neko-finance-windows-x64-portable
           path: src-tauri/target/release/neko-finance.exe
@@ -80,6 +102,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
         run: |
-          Copy-Item "src-tauri/target/release/neko-finance.exe" "neko-finance-${{ github.ref_name }}-windows-x64-portable.exe"
-          gh release upload "${{ github.ref_name }}" "neko-finance-${{ github.ref_name }}-windows-x64-portable.exe" --clobber
+          Copy-Item "src-tauri/target/release/neko-finance.exe" "neko-finance-$env:TAG-windows-x64-portable.exe"
+          gh release upload "$env:TAG" "neko-finance-$env:TAG-windows-x64-portable.exe" --clobber
