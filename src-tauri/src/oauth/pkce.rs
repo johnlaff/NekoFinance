@@ -1,7 +1,7 @@
 use oauth2::{
     AuthUrl, ClientId, CsrfToken, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenUrl,
 };
-use rand::Rng;
+use rand::RngExt;
 
 pub fn generate_code_verifier() -> PkceCodeVerifier {
     PkceCodeVerifier::new(generate_random_string(64))
