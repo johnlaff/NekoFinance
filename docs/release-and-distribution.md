@@ -21,7 +21,11 @@ Neko Finance is a personal MVP. Releases should be reliable, but not overbuilt. 
 
 ## Windows Builds
 
-The release workflow builds on `windows-latest` using `tauri-apps/tauri-action@v0.6.2`. For personal use, unsigned installers are acceptable but Windows SmartScreen warnings are expected.
+The release workflow builds on `windows-latest` using `tauri-apps/tauri-action` (SHA-pinned) and
+publishes NSIS/MSI installers plus a portable single-file exe, all with SLSA build-provenance
+attestations (`gh attestation verify <file> --repo <owner>/<repo>`). Local cross-compiled builds
+from WSL2 are also supported — see `docs/building-windows.md`. For personal use, unsigned
+installers are acceptable but Windows SmartScreen warnings are expected.
 
 Before public distribution, decide:
 

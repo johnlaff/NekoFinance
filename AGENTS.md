@@ -20,6 +20,7 @@ The public repo must stay source-neutral and data-free. Do not commit private so
 - Playwright report: `npm run e2e:report`
 - React Doctor advisory scan: `npm run doctor`
 - Frontend build: `npm run build`
+- Windows exe (cross-compile, single file): `npm run build:windows`
 - Rust checks: `npm run rust:check`
 - Privacy scan: `npm run privacy:scan`
 

@@ -2,6 +2,14 @@
 
 Use this directory for Spec-Driven Development artifacts.
 
+Implemented so far:
+
+- `001-sqlite-local-schema` — normalized local schema (18 migrations) + FTS5.
+- `002-google-oauth-pkce` — OAuth desktop flow, Sheets/local-xlsx import, layout detection.
+- `003-forecast-core` — pure projected-running-balance engine (TDD).
+- `004-app-shell-navigation` — five navigable screens, typed API layer, PT-BR copy.
+- `005-forecast-view` — safe-to-spend, deficit warning, daily projection table.
+
 Recommended shape:
 
 ```text

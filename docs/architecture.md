@@ -8,10 +8,13 @@ Neko Finance is designed as a local-first desktop app. The repo is public-safe; 
 | ---------------- | ------------------------------------------------------------------------------------------------- |
 | React UI         | Dashboards, chat/captain panel, approval dialogs, data mapping screens.                           |
 | Tauri shell      | Desktop runtime, local file access, secure OS integrations, command bridge.                       |
+| Forecast core    | Pure Rust projection engine (`src-tauri/src/forecast/`): chained daily balance, month-end,        |
+|                  | future deficit, safe-to-spend, monthly metrics. No IO; commands are thin adapters (spec 003/005). |
 | Local storage    | SQLite for normalized finance data, settings, sync state, and FTS5 text search.                   |
-| Local retrieval  | LanceDB for anonymized methodology chunks and future semantic retrieval.                          |
+| Local retrieval  | LanceDB for anonymized methodology chunks and future semantic retrieval (not built yet).          |
 | Google connector | OAuth desktop flow, Google Sheets read/write, sync checkpoints.                                   |
-| Copilot          | Tool-using agent that reads local state, calls deterministic finance tools, and proposes actions. |
+| Copilot          | Tool-using agent that reads local state, calls deterministic finance tools, and proposes actions  |
+|                  | (not built yet; the deterministic tools it will call exist in the forecast core).                 |
 
 ## Data Boundaries
 
@@ -35,13 +38,21 @@ Neko Finance is designed as a local-first desktop app. The repo is public-safe; 
 
 ## MVP Slices
 
-1. Scaffold and privacy guardrails.
-2. Local SQLite schema for accounts, transactions, categories, owners, and sheet sync metadata.
-3. Google OAuth desktop flow and read-only Sheets import.
-4. Dashboard over cached data with owner separation for personal, additional-card, and shared expenses.
-5. Private methodology pack loader with schema validation and privacy scan.
-6. Copilot with deterministic tools, RAG, and human-approved sheet diffs.
-7. Evals for diagnoses, category ownership, and safe write behavior.
+Done (see `specs/` for the full spec/plan/tasks of each):
+
+1. ✅ Scaffold and privacy guardrails.
+2. ✅ Local SQLite schema (spec 001): accounts, transactions, splits, daily check-ins, reserve, sheet sync metadata, FTS5.
+3. ✅ Google OAuth desktop flow + Sheets/local-xlsx import with layout detection (spec 002).
+4. ✅ Forecast core (spec 003): pure projection engine; the dashboard hero is the projected month-end balance.
+5. ✅ Navigable app shell, five screens, PT-BR copy (spec 004).
+6. ✅ Forecast view (spec 005): safe-to-spend, deficit warning, daily projection table.
+
+Next:
+
+7. Account liquidity classes (restricted vouchers, illiquid funds) feeding a correct projection seed.
+8. First-class invoice entity with per-owner splits and net-zero reimbursement links.
+9. Copilot (Mia) with deterministic tools first (read-only), then human-approved sheet diffs.
+10. Evals for diagnoses and safe write behavior; what-if scenarios.
 
 ## Naming Note
 
