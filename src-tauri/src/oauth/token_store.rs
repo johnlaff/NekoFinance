@@ -33,7 +33,7 @@ fn derive_key(app_dir: &std::path::Path) -> Result<[u8; 32], String> {
         std::fs::read(&salt_file).map_err(|e| format!("read salt: {e}"))?
     } else {
         let mut s = [0u8; 16];
-        use rand::RngCore;
+        use aes_gcm::aead::rand_core::RngCore;
         OsRng.fill_bytes(&mut s);
         std::fs::write(&salt_file, s).map_err(|e| format!("write salt: {e}"))?;
         s.to_vec()
@@ -98,7 +98,7 @@ fn encrypt_token(token: &StoredToken, key: &[u8; 32]) -> Result<Vec<u8>, String>
     let json = serde_json::to_vec(token).map_err(|e| format!("serialize: {e}"))?;
 
     let mut nonce_bytes = [0u8; 12];
-    use rand::RngCore;
+    use aes_gcm::aead::rand_core::RngCore;
     OsRng.fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
 
