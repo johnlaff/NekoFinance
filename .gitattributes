@@ -1,0 +1,19 @@
+# Normalize line endings to LF on checkout everywhere (including Windows CI
+# runners, where autocrlf=true would otherwise embed CRLF into build artifacts —
+# sqlx hashes migration files, so EOL drift breaks databases across builds).
+* text=auto eol=lf
+
+# Windows scripts that genuinely need CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary assets
+*.png binary
+*.ico binary
+*.icns binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+*.xlsx binary
+*.db binary
