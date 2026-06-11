@@ -1,5 +1,10 @@
 # Neko Finance
 
+[![CI](https://github.com/johnlaff/NekoFinance/actions/workflows/ci.yml/badge.svg)](https://github.com/johnlaff/NekoFinance/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/johnlaff/NekoFinance/actions/workflows/codeql.yml/badge.svg)](https://github.com/johnlaff/NekoFinance/actions/workflows/codeql.yml)
+[![Security](https://github.com/johnlaff/NekoFinance/actions/workflows/security.yml/badge.svg)](https://github.com/johnlaff/NekoFinance/actions/workflows/security.yml)
+[![Release](https://github.com/johnlaff/NekoFinance/actions/workflows/release.yml/badge.svg)](https://github.com/johnlaff/NekoFinance/actions/workflows/release.yml)
+
 Neko Finance is a **local-first desktop app** for forecast-first personal finance: a Google
 Sheets-connected dashboard with a deterministic projection engine and an AI copilot (Mia, in
 development). Built with Tauri 2 + React 19 + Rust.
