@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
 import { FileUp, HardDrive, Link2, type LucideIcon } from "lucide-react";
 import { GoogleSheetsPanel } from "../features/sheets/GoogleSheetsPanel";
 import { LocalXlsxImport } from "../features/sheets/LocalXlsxImport";
-import { getAppInfo, isTauri, type AppInfo, type AuthStatus } from "../lib/api";
+import { getAppInfo, type AuthStatus } from "../lib/api";
+import { useCommand } from "../lib/useCommand";
 
 function Section({
   icon: Icon,
@@ -36,14 +36,7 @@ export function SettingsScreen({
   authStatus: AuthStatus;
   onAuthChange: (status: AuthStatus) => void;
 }) {
-  const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
-
-  useEffect(() => {
-    if (!isTauri) return;
-    getAppInfo()
-      .then(setAppInfo)
-      .catch(() => setAppInfo(null));
-  }, []);
+  const appInfo = useCommand("get_app_info", getAppInfo).data ?? null;
 
   return (
     <div className="set">

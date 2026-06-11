@@ -34,17 +34,19 @@ function App() {
       onSearch={handleSearch}
       authStatus={authStatus}
     >
-      {screen === "dashboard" && (
-        <DashboardScreen onAskMia={() => setScreen("copilot")} />
-      )}
-      {screen === "transactions" && (
-        <TransactionsScreen query={searchQuery} onQueryChange={setSearchQuery} />
-      )}
-      {screen === "copilot" && <CopilotScreen />}
-      {screen === "methodology" && <MethodologyScreen />}
-      {screen === "settings" && (
-        <SettingsScreen authStatus={authStatus} onAuthChange={setAuthStatus} />
-      )}
+      <div key={screen} className="ak-screen">
+        {screen === "dashboard" && (
+          <DashboardScreen onAskMia={() => setScreen("copilot")} />
+        )}
+        {screen === "transactions" && (
+          <TransactionsScreen query={searchQuery} onQueryChange={setSearchQuery} />
+        )}
+        {screen === "copilot" && <CopilotScreen />}
+        {screen === "methodology" && <MethodologyScreen />}
+        {screen === "settings" && (
+          <SettingsScreen authStatus={authStatus} onAuthChange={setAuthStatus} />
+        )}
+      </div>
     </AppShell>
   );
 }

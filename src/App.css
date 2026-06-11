@@ -1255,6 +1255,101 @@ h3,
   color: var(--primary);
 }
 
+/* ============================================================
+   Motion layer (spec 006) — design-system tokens only.
+   Entrance-only, compositor-friendly (opacity/transform/clip-path);
+   durations collapse to 0ms under prefers-reduced-motion via tokens.
+   ============================================================ */
+
+/* Theme switch: the View Transition is a single circular reveal driven from
+   ThemeToggle via WAAPI; kill the default crossfade so it is the only effect. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+@keyframes screen-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.ak-screen {
+  animation: screen-enter var(--dur-base) var(--ease-entrance);
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* Dashboard choreography: tiles stagger in one calm pass.
+   Delay steps derive from --dur-instant so reduced motion zeroes them too. */
+.dash-grid4 > * {
+  animation: rise-in var(--dur-slow) var(--ease-entrance) backwards;
+}
+
+.dash-grid4 > *:nth-child(2) {
+  animation-delay: calc(var(--dur-instant) / 2);
+}
+
+.dash-grid4 > *:nth-child(3) {
+  animation-delay: var(--dur-instant);
+}
+
+.dash-grid4 > *:nth-child(4) {
+  animation-delay: calc(var(--dur-instant) * 1.5);
+}
+
+.dash-grid4 > article {
+  transition:
+    transform var(--dur-fast) var(--ease-standard),
+    box-shadow var(--dur-fast) var(--ease-standard);
+}
+
+.dash-grid4 > article:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--elev-raised);
+}
+
+@keyframes deficit-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.99);
+  }
+}
+
+.dash-deficit {
+  animation: deficit-in var(--dur-slow) var(--ease-entrance);
+}
+
+@keyframes indicator-in {
+  from {
+    transform: scaleY(0);
+  }
+}
+
+.ak-item--active::before {
+  animation: indicator-in var(--dur-base) var(--ease-entrance);
+}
+
+/* ---- ⌘K hint ---- */
+.ak-kbd {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+  background: var(--surface-2);
+  border: var(--bw-hair) solid var(--border);
+  border-radius: var(--radius-xs);
+  padding: 1px 5px;
+  line-height: 1.4;
+}
+
 /* ---- Reduced motion ---- */
 @media (prefers-reduced-motion: reduce) {
   .gs-spin {
@@ -1263,6 +1358,10 @@ h3,
 
   .ak-item:active,
   .ak-iconbtn:active {
+    transform: none;
+  }
+
+  .dash-grid4 > article:hover {
     transform: none;
   }
 }

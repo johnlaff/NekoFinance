@@ -1,6 +1,7 @@
 import type { Mock } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import type { DashboardSummary, Forecast, TransactionRow } from "../lib/api";
+import { invalidateCommands } from "../lib/useCommand";
 
 type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 
@@ -12,6 +13,7 @@ type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown
 export const mockInvoke = invoke as unknown as Mock<InvokeFn>;
 
 export function mockCommands(handlers: Record<string, unknown>) {
+  invalidateCommands(); // each scenario starts with a cold command cache
   mockInvoke.mockImplementation((cmd) => {
     if (cmd in handlers) {
       const value = handlers[cmd];

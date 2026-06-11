@@ -3,6 +3,7 @@ import { AlertCircle, CheckCircle2, FileUp, Loader2 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Button } from "../../design-system/components/Button";
 import { importLocalXlsx, isTauri } from "../../lib/api";
+import { invalidateCommands } from "../../lib/useCommand";
 
 /**
  * Imports a local .xlsx copy of the spreadsheet through a native file dialog.
@@ -26,6 +27,7 @@ export function LocalXlsxImport() {
       setImporting(true);
       const profileId = crypto.randomUUID();
       const summary = await importLocalXlsx(selected, profileId);
+      invalidateCommands(); // finance numbers changed — drop every cached screen
       setResult(summary);
     } catch (e) {
       setError(String(e));

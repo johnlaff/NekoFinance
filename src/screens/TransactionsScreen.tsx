@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { Badge } from "../design-system/components/Badge";
 import { Button } from "../design-system/components/Button";
@@ -6,6 +6,7 @@ import { EmptyState } from "../design-system/components/EmptyState";
 import { SegmentedControl } from "../design-system/components/SegmentedControl";
 import { getRecentTransactions, isTauri, type TransactionRow } from "../lib/api";
 import { fmtBRL, fmtDate } from "../lib/format";
+import { useCommand } from "../lib/useCommand";
 
 /** Explicit seam: server-side pagination/FTS5 search replaces this in a later slice. */
 const FETCH_LIMIT = 500;
@@ -35,17 +36,11 @@ export function TransactionsScreen({
   onQueryChange: (query: string) => void;
 }) {
   const [scope, setScope] = useState<TransactionScope>("all");
-  const [transactions, setTransactions] = useState<TransactionRow[]>([]);
-  const [loading, setLoading] = useState(isTauri);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!isTauri) return;
-    getRecentTransactions(FETCH_LIMIT)
-      .then(setTransactions)
-      .catch((e: unknown) => setError(String(e)))
-      .finally(() => setLoading(false));
-  }, []);
+  const {
+    data: transactions = [],
+    loading,
+    error,
+  } = useCommand("get_recent_transactions", () => getRecentTransactions(FETCH_LIMIT));
 
   const visible = useMemo(
     () => filterTransactions(transactions, scope, query),

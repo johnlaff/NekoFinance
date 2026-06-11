@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   CalendarRange,
@@ -12,36 +11,19 @@ import { Button } from "../design-system/components/Button";
 import { EmptyState } from "../design-system/components/EmptyState";
 import { MetricTile } from "../design-system/components/MetricTile";
 import { MiaAvatar } from "../design-system/components/MiaAvatar";
-import {
-  getDashboardSummary,
-  getForecast,
-  isTauri,
-  type DashboardSummary,
-  type Forecast,
-} from "../lib/api";
+import { getDashboardSummary, getForecast, isTauri } from "../lib/api";
 import { fmtBRL, fmtDayMonth, monthNamePtBR } from "../lib/format";
+import { useCommand } from "../lib/useCommand";
+import { useCountUp } from "../lib/useCountUp";
 
 export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
-  const [summary, setSummary] = useState<DashboardSummary | null>(null);
-  const [forecast, setForecast] = useState<Forecast | null>(null);
-  const [loading, setLoading] = useState(isTauri);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!isTauri) return;
-    async function load() {
-      try {
-        const [s, f] = await Promise.all([getDashboardSummary(), getForecast()]);
-        setSummary(s);
-        setForecast(f);
-      } catch (e) {
-        setError(String(e));
-      } finally {
-        setLoading(false);
-      }
-    }
-    void load();
-  }, []);
+  const summaryQ = useCommand("get_dashboard_summary", getDashboardSummary);
+  const forecastQ = useCommand("get_forecast", getForecast);
+  const summary = summaryQ.data ?? null;
+  const forecast = forecastQ.data ?? null;
+  const loading = summaryQ.loading || forecastQ.loading;
+  const error = summaryQ.error ?? forecastQ.error;
+  const animatedBalance = useCountUp(summary?.balance ?? 0, "saldo-projetado");
 
   if (!isTauri) {
     return (
@@ -144,7 +126,7 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
       <div className="dash-grid4">
         <MetricTile
           label="Saldo projetado"
-          value={summary ? fmtBRL(summary.balance) : "—"}
+          value={summary ? fmtBRL(animatedBalance) : "—"}
           icon={<TrendingUp size={15} strokeWidth={1.75} />}
           sublabel={forecast ? `Fim de ${monthNamePtBR(forecast.today)}` : "Fim do mês"}
         />

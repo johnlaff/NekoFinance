@@ -29,6 +29,7 @@ import {
   type SheetPreview,
   type UserSpreadsheet,
 } from "../../lib/api";
+import { invalidateCommands } from "../../lib/useCommand";
 
 export function GoogleSheetsPanel({
   authStatus,
@@ -177,6 +178,7 @@ export function GoogleSheetsPanel({
         profileId,
         GOOGLE_CLIENT_ID,
       );
+      invalidateCommands(); // finance numbers changed — drop every cached screen
       setImportResult(
         count === 0
           ? "Dados já importados anteriormente (dedup)."

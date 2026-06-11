@@ -72,4 +72,22 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     await expect(page.getByText("Assinatura streaming")).toBeVisible();
     await expect(page.getByText("Café + mercado")).not.toBeVisible();
   });
+
+  test("ctrl/cmd+k focuses the header search", async ({ page }) => {
+    await page.keyboard.press("ControlOrMeta+k");
+    await expect(page.getByLabel("Buscar transações")).toBeFocused();
+  });
+});
+
+test.describe("theme switch (View Transitions path, motion enabled)", () => {
+  test("circular reveal lands on the light theme and back", async ({ page }) => {
+    await mockTauri(page);
+    await page.goto("/");
+
+    await page.getByRole("button", { name: "Alternar para tema claro" }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+
+    await page.getByRole("button", { name: "Alternar para tema escuro" }).click();
+    await expect(page.locator("html")).not.toHaveAttribute("data-theme", "light");
+  });
 });

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   BookOpen,
   LayoutDashboard,
@@ -50,8 +50,23 @@ export function AppShell({
   children: React.ReactNode;
 }) {
   const [searchDraft, setSearchDraft] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
   const meta = SCREEN_META[active];
   const connected = authStatus === "connected";
+  const isMac =
+    typeof navigator !== "undefined" && /mac/i.test(navigator.platform ?? "");
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   return (
     <div className="ak">
@@ -141,12 +156,16 @@ export function AppShell({
           >
             <Search size={15} strokeWidth={1.75} />
             <input
+              ref={searchRef}
               aria-label="Buscar transações"
               placeholder="Buscar transações…"
               type="search"
               value={searchDraft}
               onChange={(e) => setSearchDraft(e.target.value)}
             />
+            <kbd className="ak-kbd" aria-hidden="true">
+              {isMac ? "⌘K" : "Ctrl K"}
+            </kbd>
           </form>
           <ThemeToggle />
         </header>
