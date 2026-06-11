@@ -1,24 +1,29 @@
 import { useEffect, useState } from "react";
-import { Minus, Receipt, Sparkles, TrendingDown, TrendingUp } from "lucide-react";
+import {
+  AlertTriangle,
+  CalendarRange,
+  Minus,
+  Sparkles,
+  TrendingDown,
+  TrendingUp,
+} from "lucide-react";
 import { Badge } from "../design-system/components/Badge";
 import { Button } from "../design-system/components/Button";
 import { EmptyState } from "../design-system/components/EmptyState";
 import { MetricTile } from "../design-system/components/MetricTile";
-import { SegmentedControl } from "../design-system/components/SegmentedControl";
 import { MiaAvatar } from "../design-system/components/MiaAvatar";
 import {
   getDashboardSummary,
-  getRecentTransactions,
+  getForecast,
   isTauri,
   type DashboardSummary,
-  type TransactionRow,
+  type Forecast,
 } from "../lib/api";
-import { fmtBRL, fmtDate } from "../lib/format";
+import { fmtBRL, fmtDayMonth, monthNamePtBR } from "../lib/format";
 
 export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
-  const [scope, setScope] = useState("overview");
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
-  const [transactions, setTransactions] = useState<TransactionRow[]>([]);
+  const [forecast, setForecast] = useState<Forecast | null>(null);
   const [loading, setLoading] = useState(isTauri);
   const [error, setError] = useState<string | null>(null);
 
@@ -26,12 +31,9 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
     if (!isTauri) return;
     async function load() {
       try {
-        const [s, t] = await Promise.all([
-          getDashboardSummary(),
-          getRecentTransactions(20),
-        ]);
+        const [s, f] = await Promise.all([getDashboardSummary(), getForecast()]);
         setSummary(s);
-        setTransactions(t);
+        setForecast(f);
       } catch (e) {
         setError(String(e));
       } finally {
@@ -87,17 +89,10 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
         ? "▼"
         : "—";
 
-  const dailyPercent = summary
-    ? summary.daily_budget > 0
-      ? Math.round((summary.daily_spend_today / summary.daily_budget) * 100)
-      : 0
-    : 0;
-
-  const filteredTransactions = transactions.filter((t) => {
-    if (scope === "credito") return t.payment_method === "credit";
-    if (scope === "projecoes") return t.is_projection;
-    return true;
-  });
+  const deficit =
+    forecast?.deepest_deficit && forecast.deepest_deficit.balance_cents < 0
+      ? forecast.deepest_deficit
+      : null;
 
   return (
     <div className="dash">
@@ -116,6 +111,15 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
               "Nenhuma transação ainda. Conecte o Google Sheets e importe sua planilha."
             )}
           </div>
+          {forecast && (
+            <div className="dash-hero__line dash-safe">
+              Pode gastar até{" "}
+              <b className="dash-hero__money">
+                {fmtBRL(forecast.safe_to_spend_today_cents)}
+              </b>{" "}
+              hoje sem furar o mês.
+            </div>
+          )}
         </div>
         <Button
           variant="secondary"
@@ -126,18 +130,27 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
         </Button>
       </div>
 
+      {deficit && (
+        <div className="dash-deficit" role="status">
+          <AlertTriangle size={15} strokeWidth={1.75} />
+          <span>
+            Buraco previsto:{" "}
+            <b className="dash-hero__money">{fmtBRL(deficit.balance_cents)}</b> em{" "}
+            {fmtDayMonth(deficit.date)} — é preciso entrada nova ou corte até lá.
+          </span>
+        </div>
+      )}
+
       <div className="dash-grid4">
         <MetricTile
           label="Saldo projetado"
           value={summary ? fmtBRL(summary.balance) : "—"}
           icon={<TrendingUp size={15} strokeWidth={1.75} />}
-          sublabel="Fim do mês"
+          sublabel={forecast ? `Fim de ${monthNamePtBR(forecast.today)}` : "Fim do mês"}
         />
         <MetricTile
           label="Diário hoje"
           value={summary ? fmtBRL(summary.daily_spend_today) : "—"}
-          delta={`${dailyPercent}%`}
-          deltaDir={dailyPercent > 100 ? "down" : "up"}
           sublabel={summary ? `de ${fmtBRL(summary.daily_budget)}` : ""}
         />
         <MetricTile
@@ -165,56 +178,58 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
         <div className="dash-card">
           <div className="dash-card__head">
             <span className="dash-card__title">
-              <Receipt size={16} strokeWidth={1.75} className="dash-card__ic" />
-              {scope === "overview"
-                ? "Transações recentes"
-                : scope === "credito"
-                  ? "Apenas crédito"
-                  : "Projeções futuras"}
+              <CalendarRange size={16} strokeWidth={1.75} className="dash-card__ic" />
+              Previsão diária — {forecast ? monthNamePtBR(forecast.today) : "mês atual"}
             </span>
-            <SegmentedControl
-              size="sm"
-              value={scope}
-              onChange={setScope}
-              options={[
-                { value: "overview", label: "Todas" },
-                { value: "credito", label: "Crédito" },
-                { value: "projecoes", label: "Futuro" },
-              ]}
-            />
           </div>
           <div className="dash-card__body" style={{ padding: 0 }}>
-            {filteredTransactions.length === 0 ? (
+            {!forecast || (summary?.transaction_count ?? 0) === 0 ? (
               <EmptyState
                 variant="empty"
                 title="Nenhuma transação"
                 description="Conecte o Google Sheets e importe sua planilha."
               />
             ) : (
-              <table className="txn-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Data</th>
-                    <th scope="col">Descrição</th>
-                    <th scope="col">Valor</th>
-                    <th scope="col">Método</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredTransactions.map((t) => (
-                    <tr className={t.is_projection ? "projection" : ""} key={t.id}>
-                      <td>{fmtDate(t.date)}</td>
-                      <td>{t.description || "—"}</td>
-                      <td
-                        className={`money ${t.type === "income" ? "positive" : "negative"}`}
-                      >
-                        {fmtBRL(Math.abs(t.amount))}
-                      </td>
-                      <td>{t.payment_method || t.type}</td>
+              <div className="fc-scroll">
+                <table className="txn-table fc-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Data</th>
+                      <th scope="col">Entrada</th>
+                      <th scope="col">Saída</th>
+                      <th scope="col">Diário</th>
+                      <th scope="col">Saldo</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {forecast.daily.map((d) => {
+                      const isToday = d.date === forecast.today;
+                      return (
+                        <tr key={d.date} className={isToday ? "fc-today" : ""}>
+                          <td>
+                            {fmtDayMonth(d.date)}
+                            {isToday && <span className="fc-today__tag">hoje</span>}
+                          </td>
+                          <td className={d.income_cents ? "money positive" : "money"}>
+                            {d.income_cents ? fmtBRL(d.income_cents) : "—"}
+                          </td>
+                          <td className="money">
+                            {d.fixed_out_cents ? fmtBRL(d.fixed_out_cents) : "—"}
+                          </td>
+                          <td className="money">
+                            {d.daily_out_cents ? fmtBRL(d.daily_out_cents) : "—"}
+                          </td>
+                          <td
+                            className={d.balance_cents < 0 ? "money negative" : "money"}
+                          >
+                            {fmtBRL(d.balance_cents)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>

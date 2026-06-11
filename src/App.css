@@ -1204,6 +1204,57 @@ h3,
   align-items: flex-end;
 }
 
+/* ---- Forecast (previsão diária) ---- */
+.dash-safe {
+  margin-top: var(--space-2);
+}
+
+.dash-deficit {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--danger-tint);
+  border: var(--bw-hair) solid color-mix(in srgb, var(--danger-400) 25%, transparent);
+  border-radius: var(--radius-sm);
+  color: var(--danger-400);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-normal);
+}
+
+.dash-deficit svg {
+  flex: none;
+}
+
+.fc-scroll {
+  max-height: 480px;
+  overflow: auto;
+}
+
+.fc-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.fc-table th:not(:first-child),
+.fc-table td:not(:first-child) {
+  text-align: right;
+}
+
+.fc-today td {
+  background: var(--primary-quiet);
+}
+
+.fc-today__tag {
+  margin-left: var(--space-2);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+  color: var(--primary);
+}
+
 /* ---- Reduced motion ---- */
 @media (prefers-reduced-motion: reduce) {
   .gs-spin {

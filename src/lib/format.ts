@@ -13,3 +13,20 @@ export function fmtDate(iso: string): string {
   const [y, m, d] = iso.split("-");
   return `${d}/${m}/${y}`;
 }
+
+/** Formats an ISO 8601 date (YYYY-MM-DD) as DD/MM. Empty input stays empty. */
+export function fmtDayMonth(iso: string): string {
+  if (!iso) return "";
+  const [, m, d] = iso.split("-");
+  return `${d}/${m}`;
+}
+
+/** Lower-case pt-BR month name ("junho") for an ISO 8601 date. */
+export function monthNamePtBR(iso: string): string {
+  const [y, m] = iso.split("-").map(Number);
+  if (!y || !m) return "";
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("pt-BR", {
+    month: "long",
+    timeZone: "UTC",
+  });
+}

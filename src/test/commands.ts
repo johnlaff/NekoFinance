@@ -1,6 +1,6 @@
 import type { Mock } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import type { DashboardSummary, TransactionRow } from "../lib/api";
+import type { DashboardSummary, Forecast, TransactionRow } from "../lib/api";
 
 type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 
@@ -74,4 +74,75 @@ export const TXNS: TransactionRow[] = [
 export const APP_INFO = {
   version: "0.1.0",
   db_path: "/tmp/neko-test/neko-finance.db",
+};
+
+export const FORECAST: Forecast = {
+  today: "2026-06-10",
+  horizon_end: "2026-06-30",
+  safe_to_spend_today_cents: 35000,
+  deepest_deficit: { date: "2026-06-15", balance_cents: 587700 },
+  daily: [
+    {
+      date: "2026-06-10",
+      income_cents: 0,
+      fixed_out_cents: 0,
+      daily_out_cents: 0,
+      balance_cents: 842000,
+    },
+    {
+      date: "2026-06-15",
+      income_cents: 0,
+      fixed_out_cents: 250000,
+      daily_out_cents: 4300,
+      balance_cents: 587700,
+    },
+    {
+      date: "2026-06-25",
+      income_cents: 700000,
+      fixed_out_cents: 0,
+      daily_out_cents: 0,
+      balance_cents: 1287700,
+    },
+    {
+      date: "2026-06-30",
+      income_cents: 0,
+      fixed_out_cents: 0,
+      daily_out_cents: 0,
+      balance_cents: 1287700,
+    },
+  ],
+  month_end: [{ year: 2026, month: 6, balance_cents: 1287700 }],
+};
+
+export const DEFICIT_FORECAST: Forecast = {
+  ...FORECAST,
+  safe_to_spend_today_cents: 0,
+  deepest_deficit: { date: "2026-06-28", balance_cents: -42000 },
+  daily: [
+    ...FORECAST.daily.slice(0, 2),
+    {
+      date: "2026-06-28",
+      income_cents: 0,
+      fixed_out_cents: 629700,
+      daily_out_cents: 0,
+      balance_cents: -42000,
+    },
+  ],
+};
+
+export const EMPTY_FORECAST: Forecast = {
+  today: "2026-06-10",
+  horizon_end: "2026-06-30",
+  safe_to_spend_today_cents: 0,
+  deepest_deficit: { date: "2026-06-10", balance_cents: 0 },
+  daily: [
+    {
+      date: "2026-06-10",
+      income_cents: 0,
+      fixed_out_cents: 0,
+      daily_out_cents: 0,
+      balance_cents: 0,
+    },
+  ],
+  month_end: [{ year: 2026, month: 6, balance_cents: 0 }],
 };

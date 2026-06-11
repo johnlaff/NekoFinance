@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fmtBRL, fmtDate } from "./format";
+import { fmtBRL, fmtDate, fmtDayMonth, monthNamePtBR } from "./format";
 
 describe("fmtBRL", () => {
   it("formats cents as BRL with pt-BR grouping", () => {
@@ -26,5 +26,26 @@ describe("fmtDate", () => {
 
   it("returns empty string for empty input", () => {
     expect(fmtDate("")).toBe("");
+  });
+});
+
+describe("fmtDayMonth", () => {
+  it("converts ISO 8601 to DD/MM", () => {
+    expect(fmtDayMonth("2026-06-28")).toBe("28/06");
+  });
+
+  it("returns empty string for empty input", () => {
+    expect(fmtDayMonth("")).toBe("");
+  });
+});
+
+describe("monthNamePtBR", () => {
+  it("returns the lower-case pt-BR month name", () => {
+    expect(monthNamePtBR("2026-06-10")).toBe("junho");
+    expect(monthNamePtBR("2026-03-01")).toBe("março");
+  });
+
+  it("returns empty string for malformed input", () => {
+    expect(monthNamePtBR("")).toBe("");
   });
 });

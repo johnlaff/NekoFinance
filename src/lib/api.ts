@@ -77,6 +77,35 @@ export interface AppInfo {
   db_path: string;
 }
 
+export interface ForecastDay {
+  date: string;
+  income_cents: number;
+  fixed_out_cents: number;
+  daily_out_cents: number;
+  balance_cents: number;
+}
+
+export interface DayPoint {
+  date: string;
+  balance_cents: number;
+}
+
+export interface MonthEnd {
+  year: number;
+  month: number;
+  balance_cents: number;
+}
+
+/** Projection DTO from the deterministic engine (spec 005). All money in cents. */
+export interface Forecast {
+  today: string;
+  horizon_end: string;
+  safe_to_spend_today_cents: number;
+  deepest_deficit: DayPoint | null;
+  daily: ForecastDay[];
+  month_end: MonthEnd[];
+}
+
 export function getDashboardSummary(): Promise<DashboardSummary> {
   return invoke("get_dashboard_summary");
 }
@@ -87,6 +116,10 @@ export function getRecentTransactions(limit: number): Promise<TransactionRow[]> 
 
 export function getAppInfo(): Promise<AppInfo> {
   return invoke("get_app_info");
+}
+
+export function getForecast(): Promise<Forecast> {
+  return invoke("get_forecast");
 }
 
 export function checkAuthStatus(): Promise<AuthStatus> {

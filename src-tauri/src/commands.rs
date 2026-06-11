@@ -290,6 +290,206 @@ fn app_info_for_dir(app_dir: &std::path::Path) -> AppInfo {
     }
 }
 
+// --- Forecast projection (spec 005) ---
+
+/// Sum of liquid cash accounts — the projection seed (spec 003 US2).
+async fn liquid_seed(pool: &SqlitePool) -> Result<i64, String> {
+    let seed: (i64,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(balance), 0) FROM account WHERE type IN ('bank','wallet','savings')",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("query: {e}"))?;
+    Ok(seed.0)
+}
+
+/// Loads forward cashflow events for the projection window: future transactions (date > today,
+/// avoiding double-counting today's already-realized spending baked into the balance snapshot)
+/// plus credit-cycle lumps aggregated from `daily_checkin` at the card due date (Régua 2).
+/// Single source of row→event mapping, shared by `dashboard_summary` and `forecast_dto`.
+async fn load_cashflow_events(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+    horizon_end: NaiveDate,
+) -> Result<Vec<CashflowEvent>, String> {
+    let today = today_naive.format("%Y-%m-%d").to_string();
+    let horizon = horizon_end.format("%Y-%m-%d").to_string();
+
+    let txn_rows: Vec<(String, i64, String, String, i64, i64)> = sqlx::query_as(
+        "SELECT type, amount, date, COALESCE(payment_method,''), is_fixed, is_projection \
+         FROM \"transaction\" WHERE date > ?1 AND date <= ?2",
+    )
+    .bind(&today)
+    .bind(&horizon)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("query: {e}"))?;
+
+    let mut all_events: Vec<CashflowEvent> = txn_rows
+        .into_iter()
+        .filter_map(|(ttype, amount, date_str, pm, is_fixed, is_proj)| {
+            let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d").ok()?;
+            let pm = (!pm.is_empty()).then_some(pm);
+            let kind = forecast::classify(&ttype, is_fixed != 0, pm.as_deref())?;
+            Some(CashflowEvent {
+                date,
+                kind,
+                amount_cents: amount,
+                realized: is_proj == 0,
+            })
+        })
+        .collect();
+
+    let credit_cards: Vec<(i32, i32)> =
+        sqlx::query_as("SELECT closing_day, due_day FROM account WHERE type = 'credit_card'")
+            .fetch_all(pool)
+            .await
+            .map_err(|e| format!("query credit cards: {e}"))?;
+
+    if !credit_cards.is_empty() {
+        // Use the first card's closing/due days (multi-card aggregation is a later slice)
+        let (closing_day, due_day) = credit_cards[0];
+        let closing_day = closing_day as u32;
+        let due_day = due_day as u32;
+
+        let checkins: Vec<(String, i64, i64)> = sqlx::query_as(
+            "SELECT date, daily_spend, credit_spend FROM daily_checkin WHERE date > ?1 AND date <= ?2",
+        )
+        .bind(&today)
+        .bind(&horizon)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("query checkins: {e}"))?;
+
+        let mut credit_by_due: std::collections::HashMap<NaiveDate, i64> =
+            std::collections::HashMap::new();
+
+        for (date_str, daily_spend, credit_spend) in checkins {
+            if let Ok(checkin_date) = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d") {
+                // Daily spend (Régua 1) → Daily event on its day
+                if daily_spend > 0 {
+                    all_events.push(CashflowEvent {
+                        date: checkin_date,
+                        kind: forecast::EventKind::Daily,
+                        amount_cents: daily_spend,
+                        realized: true,
+                    });
+                }
+
+                // Credit spend (Régua 2) → aggregate by due_date
+                if credit_spend > 0 {
+                    let due_date = forecast::cycle_due_date(checkin_date, closing_day, due_day);
+                    *credit_by_due.entry(due_date).or_insert(0) += credit_spend;
+                }
+            }
+        }
+
+        for (due_date, total_credit) in credit_by_due {
+            all_events.push(CashflowEvent {
+                date: due_date,
+                kind: forecast::EventKind::FixedOut,
+                amount_cents: total_credit,
+                realized: false, // future projection
+            });
+        }
+    }
+
+    Ok(all_events)
+}
+
+#[derive(serde::Serialize)]
+pub struct ForecastDayDto {
+    pub date: String,
+    pub income_cents: i64,
+    pub fixed_out_cents: i64,
+    pub daily_out_cents: i64,
+    pub balance_cents: i64,
+}
+
+#[derive(serde::Serialize)]
+pub struct DayPointDto {
+    pub date: String,
+    pub balance_cents: i64,
+}
+
+#[derive(serde::Serialize)]
+pub struct MonthEndDto {
+    pub year: i32,
+    pub month: u32,
+    pub balance_cents: i64,
+}
+
+#[derive(serde::Serialize)]
+pub struct ForecastDto {
+    pub today: String,
+    pub horizon_end: String,
+    pub safe_to_spend_today_cents: i64,
+    pub deepest_deficit: Option<DayPointDto>,
+    pub daily: Vec<ForecastDayDto>,
+    pub month_end: Vec<MonthEndDto>,
+}
+
+#[tauri::command]
+pub async fn get_forecast(pool: State<'_, SqlitePool>) -> Result<ForecastDto, String> {
+    forecast_dto(pool.inner(), chrono::Local::now().date_naive()).await
+}
+
+/// Inner implementation with an injected `today` (deterministic, integration-testable).
+/// Maps the pure engine output to ISO-8601-string DTOs; the core stays serde-free.
+async fn forecast_dto(pool: &SqlitePool, today_naive: NaiveDate) -> Result<ForecastDto, String> {
+    let horizon_end = forecast::last_day_of_month(today_naive.year(), today_naive.month());
+    let seed = liquid_seed(pool).await?;
+    let events = load_cashflow_events(pool, today_naive, horizon_end).await?;
+    let fc = forecast::project(seed, today_naive, &events, horizon_end);
+
+    // Per-day flow sums (income, fixed out, daily out), keyed by the same dates the engine emits.
+    let mut flows: std::collections::HashMap<NaiveDate, (i64, i64, i64)> =
+        std::collections::HashMap::new();
+    for e in &events {
+        let entry = flows.entry(e.date).or_default();
+        match e.kind {
+            forecast::EventKind::Income => entry.0 += e.amount_cents,
+            forecast::EventKind::FixedOut => entry.1 += e.amount_cents,
+            forecast::EventKind::Daily => entry.2 += e.amount_cents,
+        }
+    }
+
+    let daily = fc
+        .daily
+        .iter()
+        .map(|p| {
+            let (income, fixed_out, daily_out) = flows.get(&p.date).copied().unwrap_or_default();
+            ForecastDayDto {
+                date: p.date.format("%Y-%m-%d").to_string(),
+                income_cents: income,
+                fixed_out_cents: fixed_out,
+                daily_out_cents: daily_out,
+                balance_cents: p.balance_cents,
+            }
+        })
+        .collect();
+
+    Ok(ForecastDto {
+        today: today_naive.format("%Y-%m-%d").to_string(),
+        horizon_end: horizon_end.format("%Y-%m-%d").to_string(),
+        safe_to_spend_today_cents: fc.safe_to_spend_today_cents,
+        deepest_deficit: fc.deepest_deficit.as_ref().map(|p| DayPointDto {
+            date: p.date.format("%Y-%m-%d").to_string(),
+            balance_cents: p.balance_cents,
+        }),
+        daily,
+        month_end: fc
+            .month_end
+            .iter()
+            .map(|m| MonthEndDto {
+                year: m.year,
+                month: m.month,
+                balance_cents: m.balance_cents,
+            })
+            .collect(),
+    })
+}
+
 // --- Dashboard query commands ---
 
 #[derive(serde::Serialize)]
@@ -318,114 +518,21 @@ async fn dashboard_summary(
 ) -> Result<DashboardSummary, String> {
     let today = today_naive.format("%Y-%m-%d").to_string();
 
-    // Seed = current cash balance from liquid accounts (bank/wallet/savings). Slice scope keeps this
-    // account set; richer liquidity classes (vale/previdência/FGTS) are a later slice.
-    let seed: (i64,) = sqlx::query_as(
-        "SELECT COALESCE(SUM(balance), 0) FROM account WHERE type IN ('bank','wallet','savings')",
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| format!("query: {e}"))?;
-
-    // Projected balance: run the forecast engine over FUTURE events (date > today) seeded from the
-    // current cash balance. Future-only avoids double-counting today's already-realized spending
-    // (already baked into the snapshot). `balance` becomes the projected end-of-current-month figure
-    // (the method's hero), not the raw current sum. Per-cycle credit lumps from daily_checkin and a
-    // richer multi-month horizon are later slices.
+    // Seed + forward events: shared with `forecast_dto` (single source of event mapping).
+    let seed = liquid_seed(pool).await?;
     let horizon_end = forecast::last_day_of_month(today_naive.year(), today_naive.month());
-    let horizon = horizon_end.format("%Y-%m-%d").to_string();
-    let txn_rows: Vec<(String, i64, String, String, i64, i64)> = sqlx::query_as(
-        "SELECT type, amount, date, COALESCE(payment_method,''), is_fixed, is_projection \
-         FROM \"transaction\" WHERE date > ?1 AND date <= ?2",
-    )
-    .bind(&today)
-    .bind(&horizon)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| format!("query: {e}"))?;
+    let all_events = load_cashflow_events(pool, today_naive, horizon_end).await?;
 
-    let events: Vec<CashflowEvent> = txn_rows
-        .into_iter()
-        .filter_map(|(ttype, amount, date_str, pm, is_fixed, is_proj)| {
-            let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d").ok()?;
-            let pm = (!pm.is_empty()).then_some(pm);
-            let kind = forecast::classify(&ttype, is_fixed != 0, pm.as_deref())?;
-            Some(CashflowEvent {
-                date,
-                kind,
-                amount_cents: amount,
-                realized: is_proj == 0,
-            })
-        })
-        .collect();
-
-    // T7.2: Aggregate credit_spend from daily_checkin into lumps at card due_days (Régua 2)
-    let credit_cards: Vec<(i32, i32)> =
-        sqlx::query_as("SELECT closing_day, due_day FROM account WHERE type = 'credit_card'")
-            .fetch_all(pool)
-            .await
-            .map_err(|e| format!("query credit cards: {e}"))?;
-
-    let mut all_events = events;
-
-    if !credit_cards.is_empty() {
-        // Use the first card's closing/due days (multi-card aggregation is a later slice)
-        let (closing_day, due_day) = credit_cards[0];
-        let closing_day = closing_day as u32;
-        let due_day = due_day as u32;
-
-        let checkins: Vec<(String, i64, i64)> = sqlx::query_as(
-            "SELECT date, daily_spend, credit_spend FROM daily_checkin WHERE date > ?1 AND date <= ?2",
-        )
-        .bind(&today)
-        .bind(&horizon)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| format!("query checkins: {e}"))?;
-
-        // Aggregate credit_spend by due_date
-        let mut credit_by_due: std::collections::HashMap<NaiveDate, i64> =
-            std::collections::HashMap::new();
-
-        for (date_str, daily_spend, credit_spend) in checkins {
-            if let Ok(checkin_date) = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d") {
-                // Daily spend (Régua 1) → Daily event on its day
-                if daily_spend > 0 {
-                    all_events.push(CashflowEvent {
-                        date: checkin_date,
-                        kind: forecast::EventKind::Daily,
-                        amount_cents: daily_spend,
-                        realized: true,
-                    });
-                }
-
-                // Credit spend (Régua 2) → aggregate by due_date
-                if credit_spend > 0 {
-                    let due_date = forecast::cycle_due_date(checkin_date, closing_day, due_day);
-                    *credit_by_due.entry(due_date).or_insert(0) += credit_spend;
-                }
-            }
-        }
-
-        // Add credit lumps as FixedOut events
-        for (due_date, total_credit) in credit_by_due {
-            all_events.push(CashflowEvent {
-                date: due_date,
-                kind: forecast::EventKind::FixedOut,
-                amount_cents: total_credit,
-                realized: false, // future projection
-            });
-        }
-    }
-
-    let fc = forecast::project(seed.0, today_naive, &all_events, horizon_end);
+    // `balance` is the projected end-of-current-month figure (the method's hero, spec 003 US8),
+    // not the raw current account sum.
+    let fc = forecast::project(seed, today_naive, &all_events, horizon_end);
     let projected_balance = fc
         .month_end
         .iter()
         .find(|m| m.year == today_naive.year() && m.month == today_naive.month())
         .map(|m| m.balance_cents)
         .or_else(|| fc.daily.last().map(|p| p.balance_cents))
-        .unwrap_or(seed.0);
+        .unwrap_or(seed);
 
     // Active daily budget
     let daily_budget: (i64,) = sqlx::query_as(
@@ -742,6 +849,129 @@ mod tests {
 
         // Raw sum is 100000; the projected end-of-March is 100000 − 30000 = 70000.
         assert_eq!(summary.balance, 70_000);
+    }
+
+    // --- 005 get_forecast (TDD) ---
+
+    async fn fixture_pool() -> sqlx::SqlitePool {
+        use sqlx::sqlite::SqlitePoolOptions;
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        pool
+    }
+
+    async fn insert_liquid_account(pool: &sqlx::SqlitePool, balance: i64) {
+        let pid = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO person (id, name) VALUES (?1, ?2)")
+            .bind(&pid)
+            .bind("Tester")
+            .execute(pool)
+            .await
+            .unwrap();
+        let aid = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, balance) VALUES (?1,?2,'bank',?3,?4)",
+        )
+        .bind(&aid)
+        .bind("Conta")
+        .bind(&pid)
+        .bind(balance)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn insert_projection(
+        pool: &sqlx::SqlitePool,
+        ttype: &str,
+        amount: i64,
+        date: &str,
+        payment_method: &str,
+        is_fixed: i64,
+    ) {
+        let tid = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, payment_method, is_fixed, is_projection) VALUES (?1,?2,?3,?4,?5,?6,1)"
+        )
+        .bind(&tid).bind(ttype).bind(amount).bind(date)
+        .bind((!payment_method.is_empty()).then_some(payment_method))
+        .bind(is_fixed)
+        .execute(pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn forecast_dto_chains_daily_flows_and_safe_to_spend() {
+        let pool = fixture_pool().await;
+        insert_liquid_account(&pool, 100_000).await; // R$ 1.000,00
+        // Future fixed expense R$ 300,00 on the 20th; future income R$ 200,00 on the 25th.
+        insert_projection(&pool, "expense", 30_000, "2026-03-20", "debit", 1).await;
+        insert_projection(&pool, "income", 20_000, "2026-03-25", "", 0).await;
+
+        let today = NaiveDate::from_ymd_opt(2026, 3, 10).unwrap();
+        let fc = forecast_dto(&pool, today).await.unwrap();
+
+        assert_eq!(fc.today, "2026-03-10");
+        assert_eq!(fc.horizon_end, "2026-03-31");
+        // One row per day, today through month-end inclusive.
+        assert_eq!(fc.daily.len(), 22);
+        assert_eq!(fc.daily[0].date, "2026-03-10");
+        assert_eq!(fc.daily[0].balance_cents, 100_000);
+
+        let d20 = fc.daily.iter().find(|d| d.date == "2026-03-20").unwrap();
+        assert_eq!(d20.fixed_out_cents, 30_000);
+        assert_eq!(d20.income_cents, 0);
+        assert_eq!(d20.balance_cents, 70_000);
+
+        let d25 = fc.daily.iter().find(|d| d.date == "2026-03-25").unwrap();
+        assert_eq!(d25.income_cents, 20_000);
+        assert_eq!(d25.balance_cents, 90_000);
+
+        // Trough is R$ 700,00 (between the expense and the income) → safe to spend today.
+        assert_eq!(fc.safe_to_spend_today_cents, 70_000);
+        // Positive horizon: deepest point reported, but not negative.
+        let trough = fc.deepest_deficit.as_ref().unwrap();
+        assert_eq!(trough.balance_cents, 70_000);
+
+        // Current month-end matches the dashboard hero.
+        assert_eq!(fc.month_end.len(), 1);
+        assert_eq!(fc.month_end[0].year, 2026);
+        assert_eq!(fc.month_end[0].month, 3);
+        assert_eq!(fc.month_end[0].balance_cents, 90_000);
+    }
+
+    #[tokio::test]
+    async fn forecast_dto_reports_negative_deficit_and_zero_safe_to_spend() {
+        let pool = fixture_pool().await;
+        insert_liquid_account(&pool, 10_000).await; // R$ 100,00
+        insert_projection(&pool, "expense", 50_000, "2026-03-15", "debit", 1).await;
+
+        let today = NaiveDate::from_ymd_opt(2026, 3, 10).unwrap();
+        let fc = forecast_dto(&pool, today).await.unwrap();
+
+        let deficit = fc.deepest_deficit.as_ref().unwrap();
+        assert_eq!(deficit.balance_cents, -40_000);
+        assert_eq!(deficit.date, "2026-03-15");
+        assert_eq!(fc.safe_to_spend_today_cents, 0);
+    }
+
+    #[tokio::test]
+    async fn forecast_dto_empty_db_is_flat_zero() {
+        let pool = fixture_pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 3, 10).unwrap();
+        let fc = forecast_dto(&pool, today).await.unwrap();
+
+        assert_eq!(fc.daily.len(), 22);
+        assert!(fc.daily.iter().all(|d| d.balance_cents == 0));
+        assert!(
+            fc.daily
+                .iter()
+                .all(|d| d.income_cents == 0 && d.fixed_out_cents == 0 && d.daily_out_cents == 0)
+        );
+        assert_eq!(fc.safe_to_spend_today_cents, 0);
     }
 
     // T7.2 — credit cycle aggregation: credit_spend from daily_checkin lands as a lump at due_day.

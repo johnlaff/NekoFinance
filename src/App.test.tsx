@@ -2,9 +2,10 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import App from "./App";
 import {
+  EMPTY_FORECAST,
   EMPTY_SUMMARY,
+  FORECAST,
   SUMMARY,
-  TXNS,
   mockCommands,
   mockInvoke,
 } from "./test/commands";
@@ -22,7 +23,7 @@ describe("App (dashboard)", () => {
     mockCommands({
       check_auth_status: "disconnected",
       get_dashboard_summary: SUMMARY,
-      get_recent_transactions: TXNS,
+      get_forecast: FORECAST,
     });
 
     render(<App />);
@@ -31,9 +32,10 @@ describe("App (dashboard)", () => {
       expect(screen.getByText("42 transações")).toBeInTheDocument();
     });
 
-    expect(screen.getByText(/8\.420/)).toBeInTheDocument();
-    expect(screen.getByText("Café + mercado")).toBeInTheDocument();
+    expect(screen.getAllByText(/8\.420/).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Saldo projetado")).toBeInTheDocument();
+    expect(screen.getByText(/Previsão diária — junho/)).toBeInTheDocument();
+    expect(screen.getByText(/Pode gastar até/)).toBeInTheDocument();
   });
 
   it("shows loading state", () => {
@@ -46,7 +48,7 @@ describe("App (dashboard)", () => {
     mockCommands({
       check_auth_status: "disconnected",
       get_dashboard_summary: new Error("database not found"),
-      get_recent_transactions: [],
+      get_forecast: FORECAST,
     });
     render(<App />);
     await waitFor(() => {
@@ -59,7 +61,7 @@ describe("App (dashboard)", () => {
     mockCommands({
       check_auth_status: "disconnected",
       get_dashboard_summary: EMPTY_SUMMARY,
-      get_recent_transactions: [],
+      get_forecast: EMPTY_FORECAST,
     });
 
     render(<App />);

@@ -24,6 +24,7 @@ pub fn run() {
             commands::import_sheet_data,
             commands::import_local_xlsx,
             commands::get_dashboard_summary,
+            commands::get_forecast,
             commands::get_recent_transactions,
             commands::detect_sheet_layout,
             commands::save_sheet_mapping,

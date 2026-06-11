@@ -2,7 +2,14 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import App from "./App";
-import { APP_INFO, SUMMARY, TXNS, mockCommands, mockInvoke } from "./test/commands";
+import {
+  APP_INFO,
+  FORECAST,
+  SUMMARY,
+  TXNS,
+  mockCommands,
+  mockInvoke,
+} from "./test/commands";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -16,6 +23,7 @@ function mockAll() {
   mockCommands({
     check_auth_status: "disconnected",
     get_dashboard_summary: SUMMARY,
+    get_forecast: FORECAST,
     get_recent_transactions: TXNS,
     get_app_info: APP_INFO,
   });
