@@ -12,6 +12,8 @@ development). Built with Tauri 2 + React 19 + Rust.
 The repo is public and **data-free by design**: no private methodology source material, OAuth
 tokens, spreadsheet data, or personal finance caches are committed — see Privacy Rules below.
 
+![Dashboard — projected balance, safe-to-spend, and the daily projection table](docs/screenshots/dashboard.png)
+
 ## What it does today (v0.1)
 
 - **Projected running balance** — a pure, TDD'd Rust engine chains income/outflow events day by
