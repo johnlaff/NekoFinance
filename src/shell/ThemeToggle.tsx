@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import { Moon, Sun } from "lucide-react";
 
@@ -36,52 +36,47 @@ export function ThemeToggle() {
     applyTheme(theme);
   }, [theme]);
 
-  const toggle = useCallback(
-    (event: React.MouseEvent<HTMLButtonElement>) => {
-      const next: Theme = theme === "dark" ? "light" : "dark";
+  // React Compiler memoizes; no manual useCallback needed.
+  const toggle = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const next: Theme = theme === "dark" ? "light" : "dark";
 
-      // Fallback path: no View Transitions (WebKitGTK dev shell, jsdom) or
-      // reduced motion → instant, correct swap.
-      if (
-        typeof document.startViewTransition !== "function" ||
-        prefersReducedMotion()
-      ) {
-        setTheme(next);
-        return;
-      }
+    // Fallback path: no View Transitions (WebKitGTK dev shell, jsdom) or
+    // reduced motion → instant, correct swap.
+    if (typeof document.startViewTransition !== "function" || prefersReducedMotion()) {
+      setTheme(next);
+      return;
+    }
 
-      // Circular reveal from the interaction point (button center on
-      // keyboard activation, where clientX/Y are 0).
-      const rect = event.currentTarget.getBoundingClientRect();
-      const x = event.clientX || rect.left + rect.width / 2;
-      const y = event.clientY || rect.top + rect.height / 2;
-      const radius = Math.hypot(
-        Math.max(x, window.innerWidth - x),
-        Math.max(y, window.innerHeight - y),
+    // Circular reveal from the interaction point (button center on
+    // keyboard activation, where clientX/Y are 0).
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = event.clientX || rect.left + rect.width / 2;
+    const y = event.clientY || rect.top + rect.height / 2;
+    const radius = Math.hypot(
+      Math.max(x, window.innerWidth - x),
+      Math.max(y, window.innerHeight - y),
+    );
+
+    const transition = document.startViewTransition(() => {
+      flushSync(() => setTheme(next));
+    });
+
+    void transition.ready.then(() => {
+      document.documentElement.animate(
+        {
+          clipPath: [
+            `circle(0px at ${x}px ${y}px)`,
+            `circle(${radius}px at ${x}px ${y}px)`,
+          ],
+        },
+        {
+          duration: 480, // --dur-deliberate
+          easing: "cubic-bezier(0.16, 1, 0.3, 1)", // --ease-entrance
+          pseudoElement: "::view-transition-new(root)",
+        },
       );
-
-      const transition = document.startViewTransition(() => {
-        flushSync(() => setTheme(next));
-      });
-
-      void transition.ready.then(() => {
-        document.documentElement.animate(
-          {
-            clipPath: [
-              `circle(0px at ${x}px ${y}px)`,
-              `circle(${radius}px at ${x}px ${y}px)`,
-            ],
-          },
-          {
-            duration: 480, // --dur-deliberate
-            easing: "cubic-bezier(0.16, 1, 0.3, 1)", // --ease-entrance
-            pseudoElement: "::view-transition-new(root)",
-          },
-        );
-      });
-    },
-    [theme],
-  );
+    });
+  };
 
   return (
     <button

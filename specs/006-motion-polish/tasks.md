@@ -12,3 +12,9 @@
 - [x] T5 ⌘K focuses header search + kbd hint (e2e)
 - [x] T6 e2e: View Transitions path test, ⌘K test; screenshots refreshed
 - [x] T7 `npm run check` green; commit + push
+- [x] T8 App icon: Neko mark (jade on graphite tile) replacing the create-tauri-app
+      defaults — `icons/icon-source.svg` + `npx tauri icon`; embedded icon group
+      verified inside the built exe (wrestool/icotool extraction)
+- [x] T9 Startup fluidity: window backgroundColor matches --ink-900 (kills the white
+      flash); React Compiler enabled (auto-memoization, stable v1) with redundant
+      manual useCallback/useMemo removed per React Doctor advisory

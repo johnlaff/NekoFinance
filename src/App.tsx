@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import "./App.css";
 import { AppShell, type Screen } from "./shell/AppShell";
 import { DashboardScreen } from "./screens/DashboardScreen";
@@ -22,10 +22,11 @@ function App() {
       .catch(() => setAuthStatus("disconnected"));
   }, []);
 
-  const handleSearch = useCallback((query: string) => {
+  // React Compiler memoizes; no manual useCallback needed.
+  const handleSearch = (query: string) => {
     setSearchQuery(query);
     setScreen("transactions");
-  }, []);
+  };
 
   return (
     <AppShell

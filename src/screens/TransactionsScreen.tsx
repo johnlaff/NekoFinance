@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Search } from "lucide-react";
 import { Badge } from "../design-system/components/Badge";
 import { Button } from "../design-system/components/Button";
@@ -42,10 +42,8 @@ export function TransactionsScreen({
     error,
   } = useCommand("get_recent_transactions", () => getRecentTransactions(FETCH_LIMIT));
 
-  const visible = useMemo(
-    () => filterTransactions(transactions, scope, query),
-    [transactions, scope, query],
-  );
+  // React Compiler memoizes; no manual useMemo needed.
+  const visible = filterTransactions(transactions, scope, query);
 
   if (!isTauri) {
     return (
