@@ -123,7 +123,12 @@ completo: `enabled → paused → revoked → removed`, sempre sem perda de hist
      projetado (spec 007).
 4. **Crédito que casa com uma `Entrada` de reembolso PREVISTA** (contraparte conhecida,
    valor total **ou parcial**, janela ampla — semanas, ver EC15) → **abate o saldo devedor
-   da contraparte** (EC12) e substitui/realiza a Entrada prevista correspondente. **Nunca
+   da contraparte** (EC12) e substitui/realiza a Entrada prevista correspondente.
+   **Condição de disparo (dupla, obrigatória)**: (a) existe `counterparty_balance` com
+   residual > 0 dentro da janela E (b) a descrição normalizada do crédito casa com o
+   matcher da contraparte (`classification_rule` de **tipo reembolso** — distinto dos
+   matchers de renda). Sem os DOIS sinais, o crédito cai na regra 5 — um salário nunca é
+   casado contra um saldo devedor só por coincidência de valor. **Nunca
    cria Entrada nova em paralelo à prevista** — sem esta regra, a parte da contraparte
    contaria duas vezes (a prevista net-zero + o crédito real da regra 5).
 5. Crédito em conta corrente → `Entrada` (salário, rendimentos, reembolsos avulsos).
@@ -197,8 +202,13 @@ A planilha só registra o lump; o Neko mostra o que a nota da célula não conse
 colunas `mês | Entradas | Economia | %`; `Entradas` de cada mês é **fórmula com referência
 própria por mês** (stride de 6 colunas na aba-ano: `'<ano>'!B38`, `H38`, `N38`, …); `%` é
 majoritariamente fórmula `Economia/Entradas`, mas **células históricas podem ser literais**.
-O write-back resolve **ano→bloco e mês→linha dinamicamente** (mesma abordagem do
-`detect_sheet_layout` da aba-ano) — nunca assume coluna fixa.
+O write-back resolve **ano→bloco e mês→linha dinamicamente** — nunca assume coluna fixa.
+**Algoritmo de detecção**: varrer a linha de cabeçalho da aba procurando células cujo valor
+é o NÚMERO do ano; cada bloco-ano = a célula do ano + as três colunas seguintes
+(`Entradas | Economia | %`), com os meses nas linhas abaixo em ordem (jan..dez + TOTAL).
+`Economia` é sempre a **2ª coluna após a célula do ano** — é essa que o write-back localiza
+antes de qualquer escrita. (O cabeçalho aqui é numérico — detecção própria, não reutiliza o
+matcher de nomes de mês do `detect_sheet_layout` da aba-ano.)
 
 Semântica (fiel ao método):
 
@@ -212,7 +222,9 @@ Semântica (fiel ao método):
   com folga; a faixa "20–30 %" é **média anual**, não gate mensal) — o % mensal é exibido
   informativo/neutro, sem pintar de vermelho meses estruturalmente fora da faixa.
 - Tela Totais/Reserva mostra a série mensal e a régua; deriva também **Custo de vida**
-  (fixas + diário + cartão) e **Diário médio real** (gasto real / dias — "a estrela da
+  (definição canônica do método: **Saída total − investimentos/economia** — a mesma do gate
+  do simulador; "fixas + diário + cartão" é a expansão equivalente quando o investimento
+  está lançado em Saída) e **Diário médio real** (gasto real / dias — "a estrela da
   casa"), os dois indicadores da aba Totais do método. Uso de reserva segue a regra
   **usar↔repor** do método (uso = Entrada; repor = Saída futura obrigatória).
 - Write-back: **apenas a célula `Economia` do bloco-ano correto**, e **apenas para meses
@@ -303,8 +315,9 @@ dia × coluna**, não item a item:
 1. Import da planilha marca transações com `source='sheet'` (lump do dia por coluna).
 2. No sync, o pipeline classifica os itens bancários e computa a soma esperada por
    dia × coluna.
-3. **Soma bancária ≈ lump da planilha** (tolerância: |Δ| ≤ R$ 0,02 — a planilha carrega
-   floats de 4 casas e resíduos de arredondamento; comparação sempre em centavos, nunca
+3. **Soma bancária ≈ lump da planilha** (tolerância: |Δ| ≤ max(R$ 0,02; R$ 0,01 × nº de
+   itens bancários do dia×coluna) — a planilha carrega floats de 4 casas e resíduos de
+   arredondamento que crescem com o número de termos; comparação sempre em centavos, nunca
    `==` de float) → itens bancários são gravados como o detalhamento e o lump vira
    `reconciled_by` deles (forecast conta UMA vez; o lump deixa de pontuar). **A célula NÃO
    é reescrita** — o lump manual é preservado na planilha; o detalhamento vive só no SQLite.
@@ -516,7 +529,10 @@ aprendidas congeladas para transações `classification_locked`).
   e `transaction.source` (**novo**: sheet/openfinance/ofx/manual) — exige **retrofit do
   importador de planilha existente** para marcar `source='sheet'` (hoje ele insere sem
   origem; ver §Sequência, passo 1).
-- `classification_rule` (matcher, destino, origem builtin/user-correction) +
+- `classification_rule` (matcher, destino, **tipo**: renda/reembolso/encargo/genérica — a
+  regra 4 só casa matchers de tipo reembolso; o matcher builtin de encargos da regra 8 é
+  tipo encargo, e o item resultante leva a marca `encargo_financeiro` na invoice para o
+  módulo Crédito separar encargo de consumo; origem builtin/user-correction) +
   `transaction.classification_locked` (classificação já escrita em lote aprovado).
 - `sync_batch` (**novo** — snapshot before/after por célula + `cell_checksum` do preview,
   para gate de conflito e rollback; distinto do `sync_log` existente, que só deduplica
@@ -526,6 +542,9 @@ aprendidas congeladas para transações `classification_locked`).
   (null/shadowed/partially_reconciled, EC1) + `reconciliation_link` (lump_id, detail_id,
   matched_amount — casamento parcial), `transfer` interno (EC4), `tombstone` de exclusões
   (fingerprint + provider_txn_id, EC10), fingerprint de dedup (EC3).
+- `transaction.is_projection` (**já existe** — migração 006, sem migração nova): o
+  importador de planilha passa a setá-lo em lançamentos com data futura (projeção do dono,
+  EC14).
 - `split.owner_person_id` (já existe) + `split.reimbursed_by_transaction_id` (**novo** —
   link da parte da contraparte à Entrada de reembolso) + `counterparty_balance`
   (view/entidade: contraparte, total devido, pago, residual, data reprojetada — EC12/EC15).
@@ -552,8 +571,9 @@ cada regra de classificação + o pré-filtro por tipo de conta; agregação de 
 (recalculada, item atrasado não duplica); ciclo de fatura (closing/due, virada de mês/ano);
 reconciliação pagamento↔invoice (incluindo parcial: lump = pago, residual projetado);
 reembolso do adicional (matching real↔previsto, EC15); agenda de parcelados; simulador
-(puro, gate de 12 meses + heurísticas); Economia (aporte deliberado, farol anual, mapeamento
-ano→bloco→linha, nunca escrever com Entradas=0); render da nota (golden tests contra a
+(puro, gate de 12 meses + heurísticas); Economia (aporte deliberado, farol anual, detecção
+ano→bloco→linha pelo cabeçalho numérico, nunca escrever com Entradas=0); Custo de vida
+(Saída total − investimentos/economia) e Diário médio real derivados idempotentemente; render da nota (golden tests contra a
 gramática real POR ANO, incluindo células sem cabeçalho e literal vs `=SUM` com quebras);
 snapshot/rollback de `sync_batch` (incluindo rollback bloqueado por edição posterior);
 conflito por `cell_checksum`; **migrações das tabelas/colunas novas** (connection, invoice,
@@ -563,13 +583,17 @@ prevalece).
 
 ## Sequência de implementação (vertical slices)
 
-1. **Migrações base** (transaction.source/provider_txn_id + invoice + installment_plan) +
-   **retrofit do importador de planilha** (marcar `source='sheet'`; parser das notas
-   estruturadas → itens de invoice, usando a gramática do anexo privado) + tela Crédito
-   sobre esses itens. _(sem o parser de notas, a planilha só dá o lump e a tela Crédito
-   nasceria vazia)_
-2. Parser OFX/CSV + pipeline normalizar→dedup→classificar→revisão (fonte B primeiro: sem
-   dependência externa, valida o pipeline inteiro offline).
+1. **Migrações base** (TODAS as colunas/tabelas novas do §Modelo de dados:
+   transaction.source/provider_txn_id/status/shadow_status/classification_locked, invoice,
+   installment_plan, reconciliation_link, counterparty_balance,
+   split.reimbursed_by_transaction_id, sync_batch, connection, tombstone) + **retrofit do
+   importador de planilha** (marcar `source='sheet'` e `is_projection` em datas futuras;
+   parser das notas estruturadas → itens de invoice, usando a gramática do anexo privado) +
+   tela Crédito sobre esses itens, incluindo o saldo devedor por contraparte. _(sem o
+   parser de notas, a planilha só dá o lump e a tela Crédito nasceria vazia)_
+2. Parser OFX/CSV + pipeline normalizar→dedup→classificar→revisão, **incluindo o matcher de
+   reembolso real↔previsto (regra 4 + EC15)** (fonte B primeiro: sem dependência externa,
+   valida o pipeline inteiro offline).
 3. Conector Pluggy/Meu Pluggy (fonte A) reusando o pipeline — **validar aqui os limites de
    conta dev/trial e o fluxo de credenciais no shell Rust** (ver §Rota A).
 4. Write-back gated (preview/aprovação/rollback, `sync_batch` + `cell_checksum`) para as
