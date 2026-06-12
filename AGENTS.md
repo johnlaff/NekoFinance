@@ -44,7 +44,6 @@ The public repo must stay source-neutral and data-free. Do not commit private so
 
 ## Privacy
 
-- Never read or copy private scrape archives into this repo.
 - Keep `.methodology-pack/`, `.neko-data/`, `.lancedb/`, and OAuth/token files local and gitignored.
 - Keep `.private-forbidden-patterns` local. It should include private names/domains that must not appear in public files.
 - Do not print secrets in logs, test snapshots, manifests, or docs.
