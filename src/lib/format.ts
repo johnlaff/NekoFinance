@@ -7,6 +7,19 @@ export function fmtBRL(cents: number): string {
   });
 }
 
+/**
+ * Parses a pt-BR money string ("1.234,56", "R$ 950", "42,5") into INTEGER cents.
+ * Returns null when the input has no parseable amount.
+ */
+export function parseBRLToCents(input: string): number | null {
+  const cleaned = input
+    .replace(/[R$\s]/g, "")
+    .replace(/\./g, "")
+    .replace(",", ".");
+  if (!cleaned || !/^-?\d+(\.\d+)?$/.test(cleaned)) return null;
+  return Math.round(Number(cleaned) * 100);
+}
+
 /** Formats an ISO 8601 date (YYYY-MM-DD) as DD/MM/YYYY. Empty input stays empty. */
 export function fmtDate(iso: string): string {
   if (!iso) return "";

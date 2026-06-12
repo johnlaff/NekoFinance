@@ -106,6 +106,53 @@ export interface Forecast {
   month_end: MonthEnd[];
 }
 
+/** Pocket types accepted by `create_account` (credit_card is the invoice slice). */
+export type PocketType =
+  | "bank"
+  | "wallet"
+  | "business"
+  | "savings"
+  | "meal_voucher"
+  | "pension"
+  | "fgts";
+
+export interface PocketAccount {
+  id: string;
+  name: string;
+  type: string;
+  liquidity: string | null;
+  balance: number;
+  institution: string | null;
+}
+
+/** Liquidity-grouped balances (spec 007). All money in cents. */
+export interface Pockets {
+  liquid_cents: number;
+  reserve_cents: number;
+  restricted_cents: number;
+  illiquid_cents: number;
+  net_worth_cents: number;
+  accounts: PocketAccount[];
+}
+
+export function getPockets(): Promise<Pockets> {
+  return invoke("get_pockets");
+}
+
+export function createAccount(
+  name: string,
+  accountType: PocketType,
+  balanceCents: number,
+  institution?: string,
+): Promise<string> {
+  return invoke("create_account", {
+    name,
+    accountType,
+    balanceCents,
+    institution: institution ?? null,
+  });
+}
+
 export function getDashboardSummary(): Promise<DashboardSummary> {
   return invoke("get_dashboard_summary");
 }

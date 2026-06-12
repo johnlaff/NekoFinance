@@ -1350,6 +1350,126 @@ h3,
   line-height: 1.4;
 }
 
+/* ---- Bolsos & patrimônio (spec 007) ---- */
+.pockets-networth {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.pockets-networth b {
+  font-family: var(--font-money);
+  color: var(--text-strong);
+}
+
+.pockets-empty,
+.pockets-error {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  margin: 0;
+  padding: var(--space-4);
+}
+
+.pockets-error {
+  color: var(--danger-400);
+  padding: var(--space-2) 0 0;
+}
+
+.pockets-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
+.pockets-cell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.pockets-cell__label {
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: var(--ls-caps);
+  color: var(--text-faint);
+}
+
+.pockets-cell__value {
+  font-family: var(--font-money);
+  font-size: var(--fs-money-sm);
+  color: var(--text-strong);
+}
+
+.pockets-cell__hint {
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+}
+
+.pockets-list {
+  list-style: none;
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.pockets-list__item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  font-size: var(--fs-sm);
+}
+
+.pockets-list__name {
+  color: var(--text);
+}
+
+.pockets-list__type {
+  color: var(--text-faint);
+  flex: 1;
+}
+
+.pockets-list__balance {
+  font-family: var(--font-money);
+  color: var(--text-strong);
+}
+
+.pockets-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.pockets-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--fs-micro);
+  color: var(--text-muted);
+}
+
+.pockets-input {
+  background: var(--surface-2);
+  border: var(--bw-hair) solid var(--border);
+  border-radius: var(--radius-xs);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  padding: 6px 10px;
+  min-width: 160px;
+}
+
+.pockets-input:focus {
+  outline: none;
+  border-color: var(--primary-500, var(--text-muted));
+}
+
+.pockets-select {
+  min-width: 200px;
+}
+
 /* ---- Reduced motion ---- */
 @media (prefers-reduced-motion: reduce) {
   .gs-spin {

@@ -7,6 +7,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { Badge } from "../design-system/components/Badge";
+import { PocketsCard } from "../features/pockets/PocketsCard";
 import { Button } from "../design-system/components/Button";
 import { EmptyState } from "../design-system/components/EmptyState";
 import { MetricTile } from "../design-system/components/MetricTile";
@@ -237,6 +238,8 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
           <Badge tone="secondary">Chat em desenvolvimento</Badge>
         </aside>
       </div>
+
+      <PocketsCard />
     </div>
   );
 }
