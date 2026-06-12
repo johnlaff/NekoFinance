@@ -293,13 +293,14 @@ fn app_info_for_dir(app_dir: &std::path::Path) -> AppInfo {
 // --- Forecast projection (spec 005) ---
 
 /// Sum of liquid cash accounts — the projection seed (spec 003 US2).
+/// Spec 007: only `liquidity = 'liquid'` pockets are cash; reserve/restricted/illiquid
+/// money must not inflate the projected balance.
 async fn liquid_seed(pool: &SqlitePool) -> Result<i64, String> {
-    let seed: (i64,) = sqlx::query_as(
-        "SELECT COALESCE(SUM(balance), 0) FROM account WHERE type IN ('bank','wallet','savings')",
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| format!("query: {e}"))?;
+    let seed: (i64,) =
+        sqlx::query_as("SELECT COALESCE(SUM(balance), 0) FROM account WHERE liquidity = 'liquid'")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("query: {e}"))?;
     Ok(seed.0)
 }
 
@@ -585,6 +586,156 @@ async fn dashboard_summary(
         reserve_trend: reserve.1,
         transaction_count: count.0,
     })
+}
+
+// --- Pockets & liquidity (spec 007) ---
+
+#[derive(serde::Serialize)]
+pub struct PocketAccount {
+    pub id: String,
+    pub name: String,
+    pub r#type: String,
+    pub liquidity: Option<String>,
+    pub balance: i64,
+    pub institution: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct Pockets {
+    pub liquid_cents: i64,
+    pub reserve_cents: i64,
+    pub restricted_cents: i64,
+    pub illiquid_cents: i64,
+    /// liquid + reserve + illiquid; restricted (vale) is tracked apart and the
+    /// credit-card liability belongs to the invoice slice.
+    pub net_worth_cents: i64,
+    pub accounts: Vec<PocketAccount>,
+}
+
+/// Deterministic liquidity class per account type (spec 007 contract).
+fn liquidity_for_type(account_type: &str) -> Option<&'static str> {
+    match account_type {
+        "bank" | "wallet" | "business" => Some("liquid"),
+        "savings" => Some("reserve"),
+        "meal_voucher" => Some("restricted"),
+        "pension" | "fgts" => Some("illiquid"),
+        _ => None, // credit_card: liability, not a pocket
+    }
+}
+
+/// Pure aggregation over the account list (functional core, unit-tested).
+fn aggregate_pockets(accounts: Vec<PocketAccount>) -> Pockets {
+    let sum = |class: &str| -> i64 {
+        accounts
+            .iter()
+            .filter(|a| a.liquidity.as_deref() == Some(class))
+            .map(|a| a.balance)
+            .sum()
+    };
+    let (liquid, reserve, restricted, illiquid) = (
+        sum("liquid"),
+        sum("reserve"),
+        sum("restricted"),
+        sum("illiquid"),
+    );
+    Pockets {
+        liquid_cents: liquid,
+        reserve_cents: reserve,
+        restricted_cents: restricted,
+        illiquid_cents: illiquid,
+        net_worth_cents: liquid + reserve + illiquid,
+        accounts,
+    }
+}
+
+#[tauri::command]
+pub async fn get_pockets(pool: State<'_, SqlitePool>) -> Result<Pockets, String> {
+    pockets(pool.inner()).await
+}
+
+async fn pockets(pool: &SqlitePool) -> Result<Pockets, String> {
+    type PocketRow = (String, String, String, Option<String>, i64, Option<String>);
+    let rows: Vec<PocketRow> = sqlx::query_as(
+        "SELECT id, name, type, liquidity, balance, institution FROM account \
+         WHERE type != 'credit_card' ORDER BY created_at, name",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("query: {e}"))?;
+
+    Ok(aggregate_pockets(
+        rows.into_iter()
+            .map(
+                |(id, name, t, liquidity, balance, institution)| PocketAccount {
+                    id,
+                    name,
+                    r#type: t,
+                    liquidity,
+                    balance,
+                    institution,
+                },
+            )
+            .collect(),
+    ))
+}
+
+#[tauri::command]
+pub async fn create_account(
+    pool: State<'_, SqlitePool>,
+    name: String,
+    account_type: String,
+    balance_cents: i64,
+    institution: Option<String>,
+) -> Result<String, String> {
+    create_account_inner(pool.inner(), name, account_type, balance_cents, institution).await
+}
+
+async fn create_account_inner(
+    pool: &SqlitePool,
+    name: String,
+    account_type: String,
+    balance_cents: i64,
+    institution: Option<String>,
+) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("nome obrigatório".into());
+    }
+    let liquidity = liquidity_for_type(&account_type)
+        .ok_or_else(|| format!("tipo inválido: {account_type}"))?;
+
+    // Pockets exist before any sheet import; ensure the default owner person.
+    // Atomic insert-if-empty so concurrent calls cannot both bootstrap an "Eu".
+    sqlx::query(
+        "INSERT INTO person (id, name) SELECT ?1, 'Eu' WHERE NOT EXISTS (SELECT 1 FROM person)",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .execute(pool)
+    .await
+    .map_err(|e| format!("create person: {e}"))?;
+    let (owner_id,): (String,) =
+        sqlx::query_as("SELECT id FROM person ORDER BY created_at LIMIT 1")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("query person: {e}"))?;
+
+    let id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO account (id, name, type, owner_person_id, institution, balance, liquidity) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    )
+    .bind(&id)
+    .bind(name)
+    .bind(&account_type)
+    .bind(&owner_id)
+    .bind(&institution)
+    .bind(balance_cents)
+    .bind(liquidity)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("create account: {e}"))?;
+
+    Ok(id)
 }
 
 #[derive(serde::Serialize)]
@@ -972,6 +1123,110 @@ mod tests {
                 .all(|d| d.income_cents == 0 && d.fixed_out_cents == 0 && d.daily_out_cents == 0)
         );
         assert_eq!(fc.safe_to_spend_today_cents, 0);
+    }
+
+    // --- 007 pockets & liquidity (TDD) ---
+
+    #[test]
+    fn liquidity_is_derived_deterministically_per_type() {
+        assert_eq!(liquidity_for_type("bank"), Some("liquid"));
+        assert_eq!(liquidity_for_type("wallet"), Some("liquid"));
+        assert_eq!(liquidity_for_type("business"), Some("liquid"));
+        assert_eq!(liquidity_for_type("savings"), Some("reserve"));
+        assert_eq!(liquidity_for_type("meal_voucher"), Some("restricted"));
+        assert_eq!(liquidity_for_type("pension"), Some("illiquid"));
+        assert_eq!(liquidity_for_type("fgts"), Some("illiquid"));
+        assert_eq!(liquidity_for_type("credit_card"), None);
+        assert_eq!(liquidity_for_type("nope"), None);
+    }
+
+    #[tokio::test]
+    async fn savings_no_longer_inflates_the_projection_seed() {
+        let pool = fixture_pool().await;
+        insert_liquid_account(&pool, 100_000).await; // bank → liquid
+        // Savings R$ 5.000,00 — reserve money, must stay out of the cash seed.
+        let aid = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, balance) \
+             SELECT ?1, 'Poupança', 'savings', owner_person_id, 500000 FROM account LIMIT 1",
+        )
+        .bind(&aid)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(liquid_seed(&pool).await.unwrap(), 100_000);
+    }
+
+    #[tokio::test]
+    async fn create_account_derives_liquidity_and_default_person() {
+        let pool = fixture_pool().await;
+        // No person yet — command must bootstrap "Eu".
+        let id = create_account_inner(&pool, "Vale".into(), "meal_voucher".into(), 42_000, None)
+            .await
+            .unwrap();
+        let (liq, owner): (String, String) =
+            sqlx::query_as("SELECT liquidity, owner_person_id FROM account WHERE id = ?1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(liq, "restricted");
+        let (owner_name,): (String,) = sqlx::query_as("SELECT name FROM person WHERE id = ?1")
+            .bind(&owner)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(owner_name, "Eu");
+
+        // Invalid type and empty name are rejected at the boundary.
+        assert!(
+            create_account_inner(&pool, "X".into(), "credit_card".into(), 0, None)
+                .await
+                .is_err()
+        );
+        assert!(
+            create_account_inner(&pool, "  ".into(), "bank".into(), 0, None)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn pockets_groups_and_net_worth_follow_the_contract() {
+        let pool = fixture_pool().await;
+        for (name, t, balance) in [
+            ("Conta", "bank", 100_000i64),
+            ("Poupança", "savings", 500_000),
+            ("Vale", "meal_voucher", 42_000),
+            ("Previdência", "pension", 900_000),
+            ("FGTS", "fgts", 300_000),
+        ] {
+            create_account_inner(&pool, name.into(), t.into(), balance, None)
+                .await
+                .unwrap();
+        }
+        let p = pockets(&pool).await.unwrap();
+        assert_eq!(p.liquid_cents, 100_000);
+        assert_eq!(p.reserve_cents, 500_000);
+        assert_eq!(p.restricted_cents, 42_000);
+        assert_eq!(p.illiquid_cents, 1_200_000);
+        // Net worth excludes the restricted vale ledger.
+        assert_eq!(p.net_worth_cents, 1_800_000);
+        assert_eq!(p.accounts.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn migration_trigger_backfills_liquidity_on_plain_inserts() {
+        let pool = fixture_pool().await;
+        // Mirrors legacy import paths that insert without the liquidity column.
+        insert_liquid_account(&pool, 1).await;
+        let (liq,): (Option<String>,) =
+            sqlx::query_as("SELECT liquidity FROM account WHERE type = 'bank'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(liq.as_deref(), Some("liquid"));
     }
 
     // T7.2 — credit cycle aggregation: credit_spend from daily_checkin lands as a lump at due_day.

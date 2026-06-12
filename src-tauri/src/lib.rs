@@ -25,6 +25,8 @@ pub fn run() {
             commands::get_dashboard_summary,
             commands::get_forecast,
             commands::get_recent_transactions,
+            commands::get_pockets,
+            commands::create_account,
             commands::detect_sheet_layout,
             commands::save_sheet_mapping,
             commands::get_sheet_mappings,

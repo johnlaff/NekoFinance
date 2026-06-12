@@ -1,4 +1,5 @@
-import { FileUp, HardDrive, Link2, type LucideIcon } from "lucide-react";
+import { FileUp, HardDrive, Landmark, Link2, type LucideIcon } from "lucide-react";
+import { PocketsManager } from "../features/pockets/PocketsManager";
 import { GoogleSheetsPanel } from "../features/sheets/GoogleSheetsPanel";
 import { LocalXlsxImport } from "../features/sheets/LocalXlsxImport";
 import { getAppInfo, type AuthStatus } from "../lib/api";
@@ -69,6 +70,14 @@ export function SettingsScreen({
             </div>
           </div>
         </div>
+      </Section>
+
+      <Section
+        icon={Landmark}
+        title="Bolsos"
+        sub="Conta, poupança, vale, previdência e FGTS — só dinheiro líquido entra no saldo projetado."
+      >
+        <PocketsManager />
       </Section>
 
       <Section

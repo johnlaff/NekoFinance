@@ -1,5 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { fmtBRL, fmtDate, fmtDayMonth, monthNamePtBR } from "./format";
+import { fmtBRL, fmtDate, fmtDayMonth, monthNamePtBR, parseBRLToCents } from "./format";
+
+describe("parseBRLToCents", () => {
+  it("parses pt-BR formatted amounts into cents", () => {
+    expect(parseBRLToCents("1.234,56")).toBe(123456);
+    expect(parseBRLToCents("R$ 950")).toBe(95000);
+    expect(parseBRLToCents("42,5")).toBe(4250);
+    expect(parseBRLToCents("0")).toBe(0);
+    expect(parseBRLToCents("-12,30")).toBe(-1230);
+  });
+
+  it("rejects garbage", () => {
+    expect(parseBRLToCents("")).toBeNull();
+    expect(parseBRLToCents("abc")).toBeNull();
+    expect(parseBRLToCents("1,2,3")).toBeNull();
+  });
+});
 
 describe("fmtBRL", () => {
   it("formats cents as BRL with pt-BR grouping", () => {

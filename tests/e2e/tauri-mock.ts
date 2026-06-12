@@ -222,6 +222,48 @@ export async function mockTauri(page: Page) {
       },
     ];
 
+    const POCKETS = {
+      liquid_cents: 842000,
+      reserve_cents: 1500000,
+      restricted_cents: 42000,
+      illiquid_cents: 1200000,
+      net_worth_cents: 3542000,
+      accounts: [
+        {
+          id: "a1",
+          name: "Conta corrente",
+          type: "bank",
+          liquidity: "liquid",
+          balance: 842000,
+          institution: null,
+        },
+        {
+          id: "a2",
+          name: "Poupança",
+          type: "savings",
+          liquidity: "reserve",
+          balance: 1500000,
+          institution: null,
+        },
+        {
+          id: "a3",
+          name: "Vale refeição",
+          type: "meal_voucher",
+          liquidity: "restricted",
+          balance: 42000,
+          institution: null,
+        },
+        {
+          id: "a4",
+          name: "Previdência",
+          type: "pension",
+          liquidity: "illiquid",
+          balance: 1200000,
+          institution: null,
+        },
+      ],
+    };
+
     const APP_INFO = {
       version: "0.1.0",
       db_path: "C:\\Users\\you\\AppData\\Roaming\\app.neko.finance\\neko-finance.db",
@@ -233,6 +275,8 @@ export async function mockTauri(page: Page) {
       get_forecast: FORECAST,
       get_recent_transactions: TXNS,
       get_app_info: APP_INFO,
+      get_pockets: POCKETS,
+      create_account: "e2e-account-id",
     };
 
     Object.defineProperty(window, "__TAURI_INTERNALS__", {

@@ -1,6 +1,6 @@
 import type { Mock } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import type { DashboardSummary, Forecast, TransactionRow } from "../lib/api";
+import type { DashboardSummary, Forecast, Pockets, TransactionRow } from "../lib/api";
 import { invalidateCommands } from "../lib/useCommand";
 
 type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -72,6 +72,57 @@ export const TXNS: TransactionRow[] = [
     is_projection: true,
   },
 ];
+
+export const POCKETS: Pockets = {
+  liquid_cents: 842000,
+  reserve_cents: 1500000,
+  restricted_cents: 42000,
+  illiquid_cents: 1200000,
+  net_worth_cents: 3542000,
+  accounts: [
+    {
+      id: "a1",
+      name: "Conta corrente",
+      type: "bank",
+      liquidity: "liquid",
+      balance: 842000,
+      institution: null,
+    },
+    {
+      id: "a2",
+      name: "Poupança",
+      type: "savings",
+      liquidity: "reserve",
+      balance: 1500000,
+      institution: null,
+    },
+    {
+      id: "a3",
+      name: "Vale refeição",
+      type: "meal_voucher",
+      liquidity: "restricted",
+      balance: 42000,
+      institution: null,
+    },
+    {
+      id: "a4",
+      name: "Previdência",
+      type: "pension",
+      liquidity: "illiquid",
+      balance: 1200000,
+      institution: null,
+    },
+  ],
+};
+
+export const EMPTY_POCKETS: Pockets = {
+  liquid_cents: 0,
+  reserve_cents: 0,
+  restricted_cents: 0,
+  illiquid_cents: 0,
+  net_worth_cents: 0,
+  accounts: [],
+};
 
 export const APP_INFO = {
   version: "0.1.0",

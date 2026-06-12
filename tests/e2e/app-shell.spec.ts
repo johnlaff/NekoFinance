@@ -11,7 +11,10 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
   test("dashboard renders the forecast-first reading surface", async ({
     page,
   }, testInfo) => {
-    await expect(page.getByText("Saldo projetado")).toBeVisible();
+    await expect(page.getByText("Saldo projetado", { exact: true })).toBeVisible();
+    // Pockets card (spec 007): grouped balances + net worth
+    await expect(page.getByText("Bolsos & patrimônio")).toBeVisible();
+    await expect(page.getByText("R$ 35.420,00")).toBeVisible();
     await expect(page.getByText(/Pode gastar até/)).toBeVisible();
     await expect(page.getByText(/Previsão diária — junho/)).toBeVisible();
     await expect(page.getByText("42 transações")).toBeVisible();

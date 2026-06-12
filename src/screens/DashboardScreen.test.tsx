@@ -3,7 +3,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { DashboardScreen } from "./DashboardScreen";
 import {
   DEFICIT_FORECAST,
+  EMPTY_POCKETS,
   FORECAST,
+  POCKETS,
   SUMMARY,
   mockCommands,
   mockInvoke,
@@ -62,6 +64,53 @@ describe("DashboardScreen (forecast view)", () => {
     // Appears in the warning AND in the table's negative saldo row.
     expect(screen.getAllByText("-R$ 420,00")).toHaveLength(2);
     expect(screen.getByText("28/06")).toBeInTheDocument();
+  });
+
+  it("shows liquidity-grouped pockets and the net worth (spec 007)", async () => {
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: FORECAST,
+      get_pockets: POCKETS,
+    });
+    render(<DashboardScreen onAskMia={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Caixa")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Bolsos & patrimônio")).toBeInTheDocument();
+    expect(screen.getByText("R$ 15.000,00")).toBeInTheDocument(); // reserva
+    expect(screen.getByText("R$ 420,00")).toBeInTheDocument(); // vale
+    expect(screen.getByText("R$ 12.000,00")).toBeInTheDocument(); // ilíquido
+    expect(screen.getByText("R$ 35.420,00")).toBeInTheDocument(); // patrimônio
+  });
+
+  it("hints at Ajustes when no pocket exists yet", async () => {
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: FORECAST,
+      get_pockets: EMPTY_POCKETS,
+    });
+    render(<DashboardScreen onAskMia={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Nenhum bolso cadastrado/)).toBeInTheDocument();
+    });
+  });
+
+  it("shows an explicit error in the pockets card instead of the empty state", async () => {
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: FORECAST,
+      get_pockets: new Error("db locked"),
+    });
+    render(<DashboardScreen onAskMia={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Não foi possível carregar os bolsos/),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/Nenhum bolso cadastrado/)).not.toBeInTheDocument();
   });
 
   it("uses the forecast month in the hero tile sublabel", async () => {
