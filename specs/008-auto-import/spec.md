@@ -32,11 +32,11 @@ padrão que o dono já usa** (lump por coluna + nota estruturada na célula).
 
 ## Fontes de dados
 
-| Rota                                                                                 | Para quê                                                   | Trade-off                                                                                  |
-| ------------------------------------------------------------------------------------ | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| **A. Open Finance via Meu Pluggy** (conta PF gratuita + conta dev linkada via OAuth) | Sync de contas, cartões, transações e faturas              | Melhor cobertura; depende de terceiro; limites de conta dev (ver §Rota A)                  |
-| **B. OFX/CSV local** (extrato/fatura do internet banking)                            | Fallback offline-first **onde a instituição exporta**      | Esforço manual mensal (~min), parser próprio; cobertura varia por instituição/produto      |
-| Benefício (vale)                                                                     | **Sem conector** (benefício fora do Open Finance regulado; agregadores não cobrem operadoras de benefício — verificado 2026-06) | Saldo manual no bolso restrito |
+| Rota                                                                                 | Para quê                                                                                                                        | Trade-off                                                                             |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| **A. Open Finance via Meu Pluggy** (conta PF gratuita + conta dev linkada via OAuth) | Sync de contas, cartões, transações e faturas                                                                                   | Melhor cobertura; depende de terceiro; limites de conta dev (ver §Rota A)             |
+| **B. OFX/CSV local** (extrato/fatura do internet banking)                            | Fallback offline-first **onde a instituição exporta**                                                                           | Esforço manual mensal (~min), parser próprio; cobertura varia por instituição/produto |
+| Benefício (vale)                                                                     | **Sem conector** (benefício fora do Open Finance regulado; agregadores não cobrem operadoras de benefício — verificado 2026-06) | Saldo manual no bolso restrito                                                        |
 
 A como caminho feliz, B como fallback, **mesmo pipeline** (a fonte é um adapter).
 
@@ -584,13 +584,14 @@ prevalece).
 ## Sequência de implementação (vertical slices)
 
 1. **Migrações base** (TODAS as colunas/tabelas novas do §Modelo de dados:
-   transaction.source/provider_txn_id/status/shadow_status/classification_locked, invoice,
-   installment_plan, reconciliation_link, counterparty_balance,
-   split.reimbursed_by_transaction_id, sync_batch, connection, tombstone) + **retrofit do
-   importador de planilha** (marcar `source='sheet'` e `is_projection` em datas futuras;
-   parser das notas estruturadas → itens de invoice, usando a gramática do anexo privado) +
-   tela Crédito sobre esses itens, incluindo o saldo devedor por contraparte. _(sem o
-   parser de notas, a planilha só dá o lump e a tela Crédito nasceria vazia)_
+   `transaction.source`/`provider_txn_id`/`status`/`shadow_status`/`classification_locked`,
+   `invoice`, `installment_plan`, `reconciliation_link`, `counterparty_balance`,
+   `split.reimbursed_by_transaction_id`, `sync_batch`, `connection`, `tombstone`) +
+   **retrofit do importador de planilha** (marcar `source='sheet'` e `is_projection` em
+   datas futuras; parser das notas estruturadas → itens de invoice, usando a gramática do
+   anexo privado) + tela Crédito sobre esses itens, incluindo o saldo devedor por
+   contraparte. _(sem o parser de notas, a planilha só dá o lump e a tela Crédito nasceria
+   vazia)_
 2. Parser OFX/CSV + pipeline normalizar→dedup→classificar→revisão, **incluindo o matcher de
    reembolso real↔previsto (regra 4 + EC15)** (fonte B primeiro: sem dependência externa,
    valida o pipeline inteiro offline).
