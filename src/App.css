@@ -624,7 +624,8 @@ h3,
     left: -4px;
   }
 
-  .dash-grid4 {
+  .dash-grid4,
+  .pockets-grid {
     grid-template-columns: repeat(2, 1fr);
   }
 
@@ -638,7 +639,8 @@ h3,
 }
 
 @media (max-width: 680px) {
-  .dash-grid4 {
+  .dash-grid4,
+  .pockets-grid {
     grid-template-columns: 1fr;
   }
 

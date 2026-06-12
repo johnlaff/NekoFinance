@@ -705,23 +705,19 @@ async fn create_account_inner(
         .ok_or_else(|| format!("tipo inválido: {account_type}"))?;
 
     // Pockets exist before any sheet import; ensure the default owner person.
-    let owner: Option<(String,)> =
+    // Atomic insert-if-empty so concurrent calls cannot both bootstrap an "Eu".
+    sqlx::query(
+        "INSERT INTO person (id, name) SELECT ?1, 'Eu' WHERE NOT EXISTS (SELECT 1 FROM person)",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .execute(pool)
+    .await
+    .map_err(|e| format!("create person: {e}"))?;
+    let (owner_id,): (String,) =
         sqlx::query_as("SELECT id FROM person ORDER BY created_at LIMIT 1")
-            .fetch_optional(pool)
+            .fetch_one(pool)
             .await
             .map_err(|e| format!("query person: {e}"))?;
-    let owner_id = match owner {
-        Some((id,)) => id,
-        None => {
-            let id = uuid::Uuid::new_v4().to_string();
-            sqlx::query("INSERT INTO person (id, name) VALUES (?1, 'Eu')")
-                .bind(&id)
-                .execute(pool)
-                .await
-                .map_err(|e| format!("create person: {e}"))?;
-            id
-        }
-    };
 
     let id = uuid::Uuid::new_v4().to_string();
     sqlx::query(

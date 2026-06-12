@@ -97,6 +97,22 @@ describe("DashboardScreen (forecast view)", () => {
     });
   });
 
+  it("shows an explicit error in the pockets card instead of the empty state", async () => {
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: FORECAST,
+      get_pockets: new Error("db locked"),
+    });
+    render(<DashboardScreen onAskMia={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Não foi possível carregar os bolsos/),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/Nenhum bolso cadastrado/)).not.toBeInTheDocument();
+  });
+
   it("uses the forecast month in the hero tile sublabel", async () => {
     mockCommands({ get_dashboard_summary: SUMMARY, get_forecast: FORECAST });
     render(<DashboardScreen onAskMia={vi.fn()} />);

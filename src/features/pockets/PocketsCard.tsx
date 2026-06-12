@@ -29,7 +29,11 @@ export function PocketsCard() {
         )}
       </div>
       <div className="dash-card__body">
-        {!pockets || pockets.accounts.length === 0 ? (
+        {pocketsQ.error ? (
+          <p className="pockets-error" role="alert">
+            Não foi possível carregar os bolsos: {pocketsQ.error}
+          </p>
+        ) : !pockets || pockets.accounts.length === 0 ? (
           <p className="pockets-empty">
             Nenhum bolso cadastrado. Adicione conta, poupança, vale, previdência e FGTS
             em Ajustes para o saldo projetado considerar só dinheiro líquido.

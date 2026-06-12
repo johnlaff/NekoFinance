@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "../../design-system/components/Button";
 import {
   createAccount,
@@ -11,47 +11,54 @@ import { fmtBRL, parseBRLToCents } from "../../lib/format";
 import { invalidateCommands } from "../../lib/useCommand";
 import { LIQUIDITY_LABELS, POCKET_TYPE_LABELS } from "./pocketLabels";
 
+interface FormState {
+  name: string;
+  type: PocketType;
+  balance: string;
+}
+
+const EMPTY_FORM: FormState = { name: "", type: "bank", balance: "" };
+
 /** Settings panel: list pockets and register new ones (spec 007 US2). */
 export function PocketsManager() {
   const [pockets, setPockets] = useState<Pockets | null>(null);
-  const [name, setName] = useState("");
-  const [type, setType] = useState<PocketType>("bank");
-  const [balance, setBalance] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [status, setStatus] = useState<{ error: string | null; saving: boolean }>({
+    error: null,
+    saving: false,
+  });
 
-  const reload = useCallback(() => {
+  function reload() {
     if (!isTauri) return;
     getPockets()
       .then(setPockets)
-      .catch((e: unknown) => setError(String(e)));
-  }, []);
+      .catch((e: unknown) => setStatus({ error: String(e), saving: false }));
+  }
 
-  useEffect(reload, [reload]);
+  // Load once on mount; subsequent reloads happen after each successful create.
+  useEffect(reload, []);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const cents = parseBRLToCents(balance || "0");
-    if (!name.trim()) {
-      setError("Informe um nome para o bolso.");
+    if (!isTauri) return;
+    const cents = parseBRLToCents(form.balance || "0");
+    if (!form.name.trim()) {
+      setStatus({ error: "Informe um nome para o bolso.", saving: false });
       return;
     }
     if (cents === null) {
-      setError("Saldo inválido. Use o formato 1.234,56.");
+      setStatus({ error: "Saldo inválido. Use o formato 1.234,56.", saving: false });
       return;
     }
-    setSaving(true);
-    setError(null);
+    setStatus({ error: null, saving: true });
     try {
-      await createAccount(name.trim(), type, cents);
+      await createAccount(form.name.trim(), form.type, cents);
       invalidateCommands(); // projected balance and pockets card must refresh
-      setName("");
-      setBalance("");
+      setForm(EMPTY_FORM);
+      setStatus({ error: null, saving: false });
       reload();
     } catch (err) {
-      setError(String(err));
-    } finally {
-      setSaving(false);
+      setStatus({ error: String(err), saving: false });
     }
   }
 
@@ -79,17 +86,19 @@ export function PocketsManager() {
           <span>Nome</span>
           <input
             className="pockets-input"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
+            value={form.name}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
             placeholder="Ex.: Vale refeição"
+            disabled={!isTauri}
           />
         </label>
         <label className="pockets-form__field">
           <span>Tipo</span>
           <select
             className="gs-select pockets-select"
-            value={type}
-            onChange={(e) => setType(e.target.value as PocketType)}
+            value={form.type}
+            onChange={(e) => setForm({ ...form, type: e.target.value as PocketType })}
+            disabled={!isTauri}
           >
             {(Object.keys(POCKET_TYPE_LABELS) as PocketType[]).map((t) => (
               <option key={t} value={t}>
@@ -102,19 +111,20 @@ export function PocketsManager() {
           <span>Saldo (R$)</span>
           <input
             className="pockets-input"
-            value={balance}
-            onChange={(e) => setBalance(e.target.value)}
+            value={form.balance}
+            onChange={(e) => setForm({ ...form, balance: e.target.value })}
             placeholder="0,00"
             inputMode="decimal"
+            disabled={!isTauri}
           />
         </label>
-        <Button variant="primary" type="submit" disabled={saving}>
-          {saving ? "Salvando…" : "Adicionar bolso"}
+        <Button variant="primary" type="submit" disabled={status.saving || !isTauri}>
+          {status.saving ? "Salvando…" : "Adicionar bolso"}
         </Button>
       </form>
-      {error && (
+      {status.error && (
         <p className="pockets-error" role="alert">
-          {error}
+          {status.error}
         </p>
       )}
     </div>
