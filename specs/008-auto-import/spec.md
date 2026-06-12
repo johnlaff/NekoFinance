@@ -64,17 +64,40 @@ import manual/planilha.
 
 ## Classificação (regras em ordem; primeira que casa vence; auditável)
 
-1. Crédito em conta corrente → `Entrada` (salário, rendimentos, reembolsos). Rendimentos
+> A ordem importa: pagamento de fatura e transferências internas são débitos/créditos em
+> conta e seriam classificados errado pelas regras genéricas se avaliados depois.
+
+1. **Pagamento de fatura** (débito em conta que casa com fatura fechada/aberta de cartão
+   conectado) → `Saída` (bloco CARTÕES) e **reconcilia a `invoice`** (paid/partially_paid).
+2. **Transferência entre contas próprias da MESMA classe de liquidez** → `transfer` interno,
+   neutro (não é Entrada nem Saída).
+3. **Transferência entre classes de liquidez segue a regra usar↔repor do método**:
+   - `reserve → liquid` = **`Entrada` "uso de reserva"** na planilha + o app **sugere a
+     `Saída` futura de reposição** (obrigatória no método);
+   - `liquid → reserve` = **aporte de economia** (alimenta a aba `Economia` do mês), não é
+     Saída de consumo;
+   - movimentos envolvendo bolso `restricted`/`illiquid` não tocam a planilha (fora do
+     método), só o ledger do bolso.
+4. Crédito em conta corrente → `Entrada` (salário, rendimentos, reembolsos). Rendimentos
    diários da mesma origem **agregados por dia**.
-2. Débito que casa com despesa fixa conhecida → `Saída` (bloco CONTAS).
-3. Débito de pagamento de fatura (casa com fatura fechada de cartão conectado) → `Saída`
-   (bloco CARTÕES) e **reconcilia a `invoice`** (status paid).
-4. **Demais débitos e Pix avulsos → `Diário`** (decisão do dono: sem limiar de revisão).
-5. Transação de cartão de crédito → item da `invoice` aberta (NUNCA Diário); itens do
+5. Débito que casa com despesa fixa conhecida → `Saída` (bloco CONTAS).
+6. **Demais débitos e Pix avulsos → `Diário`** (decisão do dono: sem limiar de revisão).
+   O método confirma: **Diário reflete só débito/dinheiro**; crédito nunca entra aqui.
+7. Transação de cartão de crédito → item da `invoice` aberta (NUNCA Diário); itens do
    **cartão adicional** → `split.owner_person_id` do titular → **Entrada de reembolso
    prevista** no vencimento (net-zero).
-6. Correções do usuário viram `classification_rule` (matcher instituição+descrição→destino),
+8. Correções do usuário viram `classification_rule` (matcher instituição+descrição→destino),
    aplicadas antes das genéricas — categorização que "aprende" sem ML.
+9. **Tags do método** (`reembolso`, `dividir com alguém`, `pago-por-terceiro`…): qualquer
+   `Entrada` pode ser marcada como reembolso **linkado** a uma Saída/parcela (contrapartes
+   recorrentes além do cartão adicional: empréstimos a terceiros, rachas, pagamento por
+   terceiro — padrão comprovado no uso real da planilha).
+
+### Integração com as Réguas (dual-tracking da spec 001)
+
+O pipeline alimenta o `daily_checkin`: débitos classificados como Diário somam em
+`daily_spend` (Régua 1) e itens de cartão do dia somam em `credit_spend` (Régua 2) — o
+velocímetro diário passa a se preencher sozinho.
 
 ## Módulo Crédito (visão dedicada — requisito central)
 
@@ -88,9 +111,10 @@ A planilha só registra o lump; o Neko mostra o que a nota da célula não conse
 - **Parcelados**: agenda completa (`n/total`, valor, cartão, término), total comprometido por
   mês futuro — o "salário futuro sequestrado" visível.
 - **Limites**: limite, usado e disponível por cartão (dados do agregador).
-- **Simulador de compra**: à vista vs parcelado em N× → impacto no forecast encadeado
-  (regra do método: parcela só se o fluxo futuro não fica negativo; só bem durável).
-  Simulação é cenário, não escreve em lugar nenhum.
+- **Simulador de compra**: à vista vs parcelado em N× → impacto no forecast encadeado,
+  com o **gate determinístico do método**: (1) a reserva cai abaixo da meta de meses?
+  (2) a nova parcela impede economizar 20–30 %? Ambos "não" → pode; fluxo futuro negativo →
+  não. Só bem durável. Simulação é cenário, não escreve em lugar nenhum.
 
 ## Economia (aba `Economia` — ativar o pilar não usado)
 
@@ -122,6 +146,19 @@ O Neko passa a calcular automaticamente:
 - `Diário` = soma do dia; a nota de orçamento mensal do dono não é tocada.
 - Parcelados mantêm sufixo `n/total` na descrição.
 
+### Invariantes de célula (a planilha é uma engine, não uma tabela)
+
+- O valor escrito **reconstrói o idioma `=SUM(v1+v2+…)`** do dono (não valor seco) — a
+  célula continua editável à mão no formato canônico. _(resolve a decisão em aberto do
+  plano §7)_
+- **NUNCA tocar as colunas `Data` e `Saldo`** — `Saldo` é a fórmula encadeada da
+  previsibilidade (`prev + Entrada − (Saída + Diário)`); sobrescrever quebra a engine.
+- Na aba `Economia`, escrever **apenas a coluna `Economia`** — `Entradas` é fórmula
+  (`'<ano>'!B38`) e `%` é derivada.
+- **Merge de nota, nunca replace**: itens novos são apensados ao bloco correto da nota
+  existente, preservando 100 % do texto manual do dono; o diff do preview mostra a nota
+  final inteira.
+
 ## Edge cases & reconciliação (padrão de mercado aplicado)
 
 Estado da arte (Actual Budget/YNAB): **(1)** id do provedor como 1ª defesa de dedup;
@@ -140,6 +177,8 @@ dia × coluna**, não item a item:
    dia × coluna.
 3. **Soma bancária == lump da planilha** → itens bancários são gravados como o detalhamento
    e o lump vira `reconciled_by` deles (forecast conta UMA vez; o lump deixa de pontuar).
+   O casamento tenta o dia exato e depois **janela de ±2 dias** (o dono lança no dia da
+   compra; o banco posta D+1/fim de semana — sem janela, todo lump manual divergiria).
 4. **Somas divergem** → fila de revisão com diff (itens bancários vs lump), o dono decide:
    aceitar detalhamento (write-back propõe corrigir a célula), manter lump (itens ficam
    `shadowed`), ou casar parcialmente.
@@ -208,11 +247,33 @@ o que o dono apagou (configurável, default ligado — espelho da opção do Act
 Já coberto pelo `sync_log_checksum`: o lote só aplica se a célula ainda tem o checksum do
 preview; senão, re-gera o diff.
 
+### EC12 — Reembolso parcial/atrasado da contraparte (comprovado no uso real)
+
+A parte do cartão adicional (ou outra contraparte) pode ser paga **parcial** e/ou **fora do
+vencimento** ("pagamento parcial" + "restante" em meses distintos acontece na planilha
+real). A Entrada de reembolso prevista vira **saldo devedor por contraparte**: pagamentos
+parciais abatem; o residual reprojeta para data futura (visível no módulo Crédito e no
+forecast). Reembolso no mês errado muda a projeção — o timing é parte do método.
+
+### EC13 — Primeiro sync (backfill do ano) × planilha já preenchida
+
+O backfill desde 1º de janeiro encontra a planilha INTEIRA já lançada à mão → é o EC1 em
+escala: a reconciliação roda mês a mês, dia × coluna, e divergências entram na fila de
+revisão agrupadas por mês (não uma avalanche de itens soltos).
+
+**Chá-revelação preservado**: o backfill é registro histórico (médias, Economia,
+reconciliação) — a regra do método "começar HOJE, nunca retroativo" continua valendo para a
+PROJEÇÃO: a âncora do forecast é o **saldo real reconciliado de hoje** (spec 003), nunca a
+soma do histórico.
+
 ### Testes exigidos (além dos do §TDD)
 
-Golden tests para CADA EC acima; EC1 com os três desfechos (igual, divergente, parcial);
-EC3 com multiplicidade 2 no mesmo dia; EC4 com datas D+1; propriedade global: re-rodar o
-sync N vezes é **idempotente** (estado final idêntico).
+Golden tests para CADA EC acima; EC1 com os três desfechos (igual, divergente, parcial) e
+com lump em D±2; EC3 com multiplicidade 2 no mesmo dia; transferências (regras 2–3) nas
+quatro combinações de liquidez; EC12 com pagamento parcial + restante em mês seguinte;
+EC13 com ano inteiro pré-lançado; write-back nunca emite range que toque `Data`/`Saldo`/
+`Entradas` da aba Economia; merge de nota preserva byte a byte o texto manual; propriedade
+global: re-rodar o sync N vezes é **idempotente** (estado final idêntico).
 
 ## Modelo de dados (estende, não recria)
 
