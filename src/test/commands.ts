@@ -129,10 +129,57 @@ export const APP_INFO = {
   db_path: "/tmp/neko-test/neko-finance.db",
 };
 
+const ANNUAL_SAVINGS = {
+  realized_income_cents: 6500000,
+  realized_savings_cents: 221000,
+  realized_rate_bps: 340,
+  projected_income_cents: 11846000,
+  projected_savings_cents: 2268000,
+  projected_rate_bps: 1910,
+  target_bps: 2500,
+};
+
 export const FORECAST: Forecast = {
   today: "2026-06-10",
-  horizon_end: "2026-06-30",
+  horizon_end: "2026-12-31",
+  annual_savings: ANNUAL_SAVINGS,
+  coverage: [
+    {
+      year: 2026,
+      month: 8,
+      projected_outflow_cents: 416500,
+      baseline_outflow_cents: 1064900,
+      coverage_bps: 3911,
+      is_complete: false,
+      estimated_missing_cents: 648400,
+    },
+  ],
+  baseline_outflow_cents: 1064900,
+  trusted_through_month: "2026-07",
+  total_missing_cents: 648400,
   safe_to_spend_today_cents: 35000,
+  cash_headroom_cents: 587700,
+  savings_headroom_cents: 35000,
+  binding_guardrail: "savings",
+  savings_target_bps: 2500,
+  months: [
+    {
+      year: 2026,
+      month: 6,
+      income_cents: 700000,
+      performance_cents: 445700,
+      cost_of_living_cents: 254300,
+      savings_rate_bps: 6367,
+    },
+    {
+      year: 2026,
+      month: 7,
+      income_cents: 899331,
+      performance_cents: 87645,
+      cost_of_living_cents: 811686,
+      savings_rate_bps: 974,
+    },
+  ],
   deepest_deficit: { date: "2026-06-15", balance_cents: 587700 },
   daily: [
     {
@@ -186,7 +233,25 @@ export const DEFICIT_FORECAST: Forecast = {
 export const EMPTY_FORECAST: Forecast = {
   today: "2026-06-10",
   horizon_end: "2026-06-30",
+  annual_savings: {
+    realized_income_cents: 0,
+    realized_savings_cents: 0,
+    realized_rate_bps: 0,
+    projected_income_cents: 0,
+    projected_savings_cents: 0,
+    projected_rate_bps: 0,
+    target_bps: 2500,
+  },
+  coverage: [],
+  baseline_outflow_cents: 0,
+  trusted_through_month: null,
+  total_missing_cents: 0,
   safe_to_spend_today_cents: 0,
+  cash_headroom_cents: 0,
+  savings_headroom_cents: 0,
+  binding_guardrail: "cash",
+  savings_target_bps: 2500,
+  months: [],
   deepest_deficit: { date: "2026-06-10", balance_cents: 0 },
   daily: [
     {

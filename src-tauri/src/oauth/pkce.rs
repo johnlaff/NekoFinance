@@ -24,14 +24,19 @@ fn generate_random_string(length: usize) -> String {
 
 pub struct OAuthConfig {
     pub client_id: String,
+    /// Client secret de app "Desktop" do Google — exigido no token exchange mesmo com PKCE.
+    /// Não é confidencial nesse tipo de client (vive embutido em qualquer app desktop);
+    /// fica no .env local gitignored, nunca no repo.
+    pub client_secret: Option<String>,
     pub auth_url: String,
     pub token_url: String,
 }
 
 impl OAuthConfig {
-    pub fn google(client_id: String) -> Self {
+    pub fn google(client_id: String, client_secret: Option<String>) -> Self {
         Self {
             client_id,
+            client_secret: client_secret.filter(|s| !s.trim().is_empty()),
             auth_url: "https://accounts.google.com/o/oauth2/v2/auth".to_string(),
             token_url: "https://oauth2.googleapis.com/token".to_string(),
         }
@@ -74,6 +79,15 @@ impl OAuthState {
             .authorize_url(|| self.csrf_token.clone())
             .add_scope(Scope::new(
                 "https://www.googleapis.com/auth/spreadsheets.readonly".to_string(),
+            ))
+            // Listagem de planilhas (list_user_spreadsheets) usa o Drive v3 — sem este
+            // scope o picker devolve 403 (spec 010, slice 2).
+            // Nota: access_type=offline/prompt=consent NÃO se aplicam ao fluxo de app
+            // instalado — "refresh tokens are always returned for installed applications"
+            // (doc oficial native-app). Se o dogfooding mostrar refresh_token vazio,
+            // a contingência registrada na spec 010 é adicioná-los aqui.
+            .add_scope(Scope::new(
+                "https://www.googleapis.com/auth/drive.metadata.readonly".to_string(),
             ))
             .set_pkce_challenge(compute_challenge(&self.verifier()))
             .url();
@@ -130,7 +144,7 @@ mod tests {
 
     #[test]
     fn test_build_auth_url_contains_params() {
-        let config = OAuthConfig::google("test-client-id.apps.googleusercontent.com".into());
+        let config = OAuthConfig::google("test-client-id.apps.googleusercontent.com".into(), None);
         let state = OAuthState::new(48080);
         let url = state.build_auth_url(&config);
         eprintln!("AUTH URL: {url}");
@@ -139,5 +153,17 @@ mod tests {
         assert!(url.contains("code_challenge="));
         assert!(url.contains("code_challenge_method=S256"));
         assert!(url.contains("spreadsheets.readonly"));
+        // Spec 010 slice 2: scope do Drive para o picker de planilhas.
+        assert!(url.contains("drive.metadata.readonly"));
+    }
+
+    #[test]
+    fn test_config_normalizes_empty_secret_to_none() {
+        let with = OAuthConfig::google("id".into(), Some("s3cret".into()));
+        assert_eq!(with.client_secret.as_deref(), Some("s3cret"));
+        let blank = OAuthConfig::google("id".into(), Some("  ".into()));
+        assert!(blank.client_secret.is_none());
+        let none = OAuthConfig::google("id".into(), None);
+        assert!(none.client_secret.is_none());
     }
 }
