@@ -208,6 +208,7 @@ pub fn is_token_expired(token: &StoredToken) -> bool {
 pub async fn refresh_access_token(
     app_dir: &std::path::Path,
     client_id: &str,
+    client_secret: Option<&str>,
 ) -> Result<StoredToken, String> {
     let token = load_token(app_dir)?.ok_or("no token to refresh".to_string())?;
 
@@ -216,11 +217,14 @@ pub async fn refresh_access_token(
     }
 
     let client = reqwest::Client::new();
-    let params = [
+    let mut params = vec![
         ("client_id", client_id.to_string()),
         ("refresh_token", token.refresh_token.clone()),
         ("grant_type", "refresh_token".to_string()),
     ];
+    if let Some(secret) = client_secret.filter(|s| !s.trim().is_empty()) {
+        params.push(("client_secret", secret.to_string()));
+    }
 
     let resp = client
         .post("https://oauth2.googleapis.com/token")
@@ -260,6 +264,7 @@ pub async fn refresh_access_token(
 pub async fn ensure_valid_token(
     app_dir: &std::path::Path,
     client_id: &str,
+    client_secret: Option<&str>,
 ) -> Result<StoredToken, String> {
     let token = load_token(app_dir)?.ok_or("not authenticated".to_string())?;
 
@@ -267,7 +272,7 @@ pub async fn ensure_valid_token(
         return Ok(token);
     }
 
-    refresh_access_token(app_dir, client_id).await
+    refresh_access_token(app_dir, client_id, client_secret).await
 }
 
 #[cfg(test)]

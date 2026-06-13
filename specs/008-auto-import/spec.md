@@ -1,6 +1,17 @@
 # Spec 008 — Import automático (Open Finance + OFX) + módulo Crédito
 
-> Status: **validado com o usuário em 2026-06-12** (instituições, gates, rollback, toggle,
+> Status: **DESIGN APROVADO — IMPLEMENTAÇÃO ADIADA** (decidido em 2026-06-12, após segunda
+> opinião). O conteúdo permanece como referência de design validada, mas **nenhum slice desta
+> spec deve ser implementado antes do dogfooding do fluxo manual** — pré-requisitos em
+> [`specs/010-import-manual-robusto/`](../010-import-manual-robusto/spec.md). Motivo: a spec
+> foi escrita antes de o app jamais ter sido usado com a planilha real; a análise de
+> 2026-06-12 encontrou o importador manual quebrado (JANEIRO dropado, range A:Z cortando 8
+> meses, parse 100×, re-import duplicando tudo, OAuth sem refresh) — automatizar sobre essa
+> fundação seria construir o segundo andar sem o primeiro. O dogfooding da 010 valida de
+> graça premissas centrais daqui: gramática de notas (§Formato escrito), EC14 (lumps futuros),
+> tolerâncias de float (EC1), geometria da aba Economia, volume real da caixa de revisão.
+>
+> Histórico: validado com o usuário em 2026-06-12 (instituições, gates, rollback, toggle,
 > Crédito dedicado, Economia, Pix→Diário). **Revisão 2 (2026-06-12):** correções do review
 > multi-agente aplicadas — reconciliação de projeções futuras (EC14), matching de reembolso
 > real↔previsto (EC15), pré-filtro por tipo de conta, geometria real da aba Economia,
@@ -582,6 +593,12 @@ reconciliation_link, counterparty_balance); upsert do `daily_checkin` (recalcula
 prevalece).
 
 ## Sequência de implementação (vertical slices)
+
+> **BLOQUEADO pela spec 010 (dogfooding do fluxo manual).** Antes de qualquer slice abaixo, o
+> dogfooding precisa confirmar: gramática real das notas por ano (→ slices 1 e 4), tolerâncias
+> de reconciliação EC1 sobre floats de 4 casas (→ slice 2), comportamento do EC14 com os lumps
+> futuros pré-lançados (→ slices 1–2), geometria da aba Economia (→ slice 5) e o volume real
+> de divergências por mês, que dimensiona a UX da caixa de revisão (→ slices 2–4).
 
 1. **Migrações base** (TODAS as colunas/tabelas novas do §Modelo de dados:
    `transaction.source`/`provider_txn_id`/`status`/`shadow_status`/`classification_locked`,

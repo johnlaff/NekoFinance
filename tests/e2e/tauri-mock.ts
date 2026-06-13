@@ -172,6 +172,51 @@ export async function mockTauri(page: Page) {
         },
       ],
       month_end: [{ year: 2026, month: 6, balance_cents: 1234000 }],
+      months: [
+        {
+          year: 2026,
+          month: 6,
+          income_cents: 700000,
+          performance_cents: 445700,
+          cost_of_living_cents: 254300,
+          savings_rate_bps: 6367,
+        },
+        {
+          year: 2026,
+          month: 7,
+          income_cents: 899331,
+          performance_cents: 87645,
+          cost_of_living_cents: 811686,
+          savings_rate_bps: 974,
+        },
+      ],
+      cash_headroom_cents: 587700,
+      savings_headroom_cents: 35000,
+      binding_guardrail: "cash",
+      savings_target_bps: 2500,
+      annual_savings: {
+        realized_income_cents: 6500000,
+        realized_savings_cents: 400000,
+        realized_rate_bps: 615,
+        projected_income_cents: 11800000,
+        projected_savings_cents: 2200000,
+        projected_rate_bps: 1864,
+        target_bps: 2500,
+      },
+      coverage: [
+        {
+          year: 2026,
+          month: 8,
+          projected_outflow_cents: 416500,
+          baseline_outflow_cents: 1064900,
+          coverage_bps: 3911,
+          is_complete: false,
+          estimated_missing_cents: 648400,
+        },
+      ],
+      baseline_outflow_cents: 1064900,
+      trusted_through_month: "2026-07",
+      total_missing_cents: 648400,
     };
 
     const TXNS = [

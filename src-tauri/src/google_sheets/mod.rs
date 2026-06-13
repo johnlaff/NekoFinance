@@ -10,6 +10,27 @@ pub struct SheetValues {
     pub values: Vec<Vec<String>>,
 }
 
+#[derive(Debug, Deserialize)]
+struct RawSheetValues {
+    #[serde(default)]
+    values: Vec<Vec<serde_json::Value>>,
+}
+
+/// Números do Sheets chegam crus (UNFORMATTED_VALUE) e são normalizados com 4 casas fixas,
+/// exatamente como as células do xlsx (`xlsx_cell_to_string`) — o `parse_number` nunca vê
+/// string dependente do locale da planilha (spec 010, slice 0).
+fn json_cell_to_string(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::Number(n) => match n.as_f64() {
+            Some(f) => format!("{f:.4}"),
+            None => n.to_string(),
+        },
+        serde_json::Value::String(s) => s.trim().to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        _ => String::new(),
+    }
+}
+
 pub struct SheetsClient {
     token: StoredToken,
 }
@@ -24,8 +45,10 @@ impl SheetsClient {
         spreadsheet_id: &str,
         range: &str,
     ) -> Result<SheetValues, String> {
+        // UNFORMATTED_VALUE: valores numéricos crus, independentes do locale da planilha —
+        // com FORMATTED, um locale pt-BR exibindo 3 casas ("65,280") viraria milhar (100×).
         let url = format!(
-            "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{range}",
+            "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{range}?valueRenderOption=UNFORMATTED_VALUE",
         );
 
         let client = reqwest::Client::new();
@@ -42,9 +65,70 @@ impl SheetsClient {
             return Err(format!("Sheets API error {status}: {body}"));
         }
 
-        resp.json::<SheetValues>()
+        let raw = resp
+            .json::<RawSheetValues>()
             .await
-            .map_err(|e| format!("parse error: {e}"))
+            .map_err(|e| format!("parse error: {e}"))?;
+
+        Ok(SheetValues {
+            values: raw
+                .values
+                .iter()
+                .map(|row| row.iter().map(json_cell_to_string).collect())
+                .collect(),
+        })
+    }
+
+    /// Notas de célula da aba, alinhadas por `[linha][coluna]` (A1-based, "" quando sem nota).
+    /// O método guarda o detalhe real de cada lançamento (quem, o quê, quanto por item) nas
+    /// NOTAS — o endpoint `values` não as devolve, então usamos `spreadsheets.get` com
+    /// `includeGridData`, pedindo só o campo `note` para o payload ficar enxuto.
+    pub async fn get_sheet_notes(
+        &self,
+        spreadsheet_id: &str,
+        sheet_name: &str,
+    ) -> Result<Vec<Vec<String>>, String> {
+        // Encode mínimo do nome da aba (espaços) — as abas-ano são alfanuméricas e seguras.
+        let range = sheet_name.replace(' ', "%20");
+        let url = format!(
+            "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}?ranges={range}&includeGridData=true&fields=sheets.data.rowData.values.note",
+        );
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(&url)
+            .bearer_auth(&self.token.access_token)
+            .send()
+            .await
+            .map_err(|e| format!("notes request: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("Sheets notes error {status}: {body}"));
+        }
+
+        let json: serde_json::Value = resp.json().await.map_err(|e| format!("notes parse: {e}"))?;
+
+        let rows = json["sheets"][0]["data"][0]["rowData"]
+            .as_array()
+            .map(|rows| {
+                rows.iter()
+                    .map(|row| {
+                        row["values"]
+                            .as_array()
+                            .map(|cells| {
+                                cells
+                                    .iter()
+                                    .map(|c| c["note"].as_str().unwrap_or("").to_string())
+                                    .collect()
+                            })
+                            .unwrap_or_default()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(rows)
     }
 
     pub async fn get_sheet_metadata(
@@ -121,5 +205,18 @@ mod tests {
         let metadata = serde_json::json!({"sheets": []});
         let sheets = parse_sheet_names(&metadata);
         assert!(sheets.is_empty());
+    }
+
+    // Spec 010 slice 0: o path ao vivo normaliza números cru → 4 casas fixas, sem locale.
+    #[test]
+    fn json_cells_normalize_numbers_to_fixed_decimals() {
+        use serde_json::json;
+        assert_eq!(json_cell_to_string(&json!(65.28)), "65.2800");
+        assert_eq!(json_cell_to_string(&json!(6012.73)), "6012.7300");
+        assert_eq!(json_cell_to_string(&json!(10805.5048)), "10805.5048");
+        assert_eq!(json_cell_to_string(&json!(1)), "1.0000");
+        assert_eq!(json_cell_to_string(&json!(" JANEIRO ")), "JANEIRO");
+        assert_eq!(json_cell_to_string(&json!("")), "");
+        assert_eq!(json_cell_to_string(&serde_json::Value::Null), "");
     }
 }

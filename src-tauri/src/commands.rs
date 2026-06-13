@@ -10,13 +10,15 @@ pub async fn start_oauth_flow(
     state: tauri::State<'_, OAuthStateStore>,
     app_dir: tauri::State<'_, AppDataDir>,
     client_id: String,
+    client_secret: Option<String>,
 ) -> Result<String, String> {
-    let config = oauth::pkce::OAuthConfig::google(client_id);
+    let config = oauth::pkce::OAuthConfig::google(client_id, client_secret);
     let port = find_available_port()?;
     let oauth_state = oauth::pkce::OAuthState::new(port);
 
     let app_dir_path = app_dir.0.clone();
-    let config_for_bg = oauth::pkce::OAuthConfig::google(config.client_id.clone());
+    let config_for_bg =
+        oauth::pkce::OAuthConfig::google(config.client_id.clone(), config.client_secret.clone());
 
     // Store state and spawn flow
     {
@@ -25,7 +27,7 @@ pub async fn start_oauth_flow(
         *guard = Some(oauth_state);
 
         tokio::spawn(async move {
-            match oauth::run_oauth_flow(config_for_bg, flow_state, app_dir_path) {
+            match oauth::run_oauth_flow(config_for_bg, flow_state, app_dir_path).await {
                 Ok(_token) => {}
                 Err(e) => eprintln!("OAuth flow error: {e}"),
             }
@@ -43,9 +45,14 @@ pub async fn start_oauth_flow(
 
 #[tauri::command]
 pub async fn check_auth_status(app_dir: tauri::State<'_, AppDataDir>) -> Result<String, String> {
-    match crate::oauth::token_store::load_token(&app_dir.0) {
+    // DEBUG TEMPORÁRIO (dogfooding): visível no stderr do tauri dev.
+    eprintln!("check_auth_status: app_dir={:?}", app_dir.0);
+    let result = match crate::oauth::token_store::load_token(&app_dir.0) {
         Ok(Some(token)) => {
-            if crate::oauth::token_store::is_token_expired(&token) {
+            // Access token expirado mas com refresh_token disponível segue "connected":
+            // ensure_valid_token renova sob demanda no próximo uso (spec 010, slice 2).
+            if crate::oauth::token_store::is_token_expired(&token) && token.refresh_token.is_empty()
+            {
                 Ok("expired".to_string())
             } else {
                 Ok("connected".to_string())
@@ -53,7 +60,9 @@ pub async fn check_auth_status(app_dir: tauri::State<'_, AppDataDir>) -> Result<
         }
         Ok(None) => Ok("disconnected".to_string()),
         Err(e) => Err(e),
-    }
+    };
+    eprintln!("check_auth_status -> {result:?}");
+    result
 }
 
 #[tauri::command]
@@ -83,8 +92,11 @@ pub async fn list_sheet_names(
     app_dir: State<'_, AppDataDir>,
     spreadsheet_id: String,
     client_id: String,
+    client_secret: Option<String>,
 ) -> Result<Vec<SheetInfo>, String> {
-    let token = oauth::token_store::ensure_valid_token(&app_dir.0, &client_id).await?;
+    let token =
+        oauth::token_store::ensure_valid_token(&app_dir.0, &client_id, client_secret.as_deref())
+            .await?;
     let client = SheetsClient::new(token);
     let metadata = client.get_sheet_metadata(&spreadsheet_id).await?;
     let sheets = google_sheets::parse_sheet_names(&metadata);
@@ -110,11 +122,16 @@ pub async fn fetch_sheet_preview(
     spreadsheet_id: String,
     sheet_name: String,
     client_id: String,
+    client_secret: Option<String>,
 ) -> Result<SheetPreview, String> {
-    let token = oauth::token_store::ensure_valid_token(&app_dir.0, &client_id).await?;
+    let token =
+        oauth::token_store::ensure_valid_token(&app_dir.0, &client_id, client_secret.as_deref())
+            .await?;
     let client = SheetsClient::new(token);
 
-    let range = format!("'{}'!A1:Z21", sheet_name);
+    // Grade inteira (não A1:Z21) — a planilha real vai até a coluna BO (~71 col); A:Z cortaria
+    // JUNHO–DEZEMBRO no preview, como no import (auditoria vs planilha oficial, P1).
+    let range = format!("'{}'", sheet_name);
     let values = client.get_sheet_values(&spreadsheet_id, &range).await?;
 
     let mut rows = values.values;
@@ -125,6 +142,9 @@ pub async fn fetch_sheet_preview(
     } else {
         rows.remove(0)
     };
+
+    // O preview exibe só as primeiras linhas; o range completo garante todas as colunas/meses.
+    rows.truncate(20);
 
     Ok(SheetPreview {
         headers,
@@ -141,11 +161,22 @@ pub async fn import_sheet_data(
     sheet_name: String,
     profile_id: String,
     client_id: String,
+    client_secret: Option<String>,
 ) -> Result<usize, String> {
-    let token = oauth::token_store::ensure_valid_token(&app_dir.0, &client_id).await?;
+    if layout_detect::is_metric_tab(&sheet_name) {
+        return Err(format!(
+            "'{sheet_name}' é uma aba de métricas do método (não tem transações). \
+             Importe as abas-ano; o import de métricas chega na spec 010."
+        ));
+    }
+    let token =
+        oauth::token_store::ensure_valid_token(&app_dir.0, &client_id, client_secret.as_deref())
+            .await?;
     let client = SheetsClient::new(token);
 
-    let range = format!("'{}'!A:Z", sheet_name);
+    // Grade usada inteira: a planilha real tem 12 blocos mensais até a coluna BO (~71
+    // colunas) — um range A:Z cortaria JUNHO–DEZEMBRO em silêncio (spec 010, slice 0).
+    let range = format!("'{}'", sheet_name);
     let values = client.get_sheet_values(&spreadsheet_id, &range).await?;
     let rows = values.values;
 
@@ -184,9 +215,33 @@ pub async fn import_sheet_data(
     };
 
     let mappings = import::get_active_mappings_for_sheet(&pool, &sheet_name).await?;
-    let imported_rows = import::parse_rows_with_layout(&rows, &layout, &mappings);
+    // Notas de célula = a descrição real de cada lançamento (quem/o quê/quanto por item). Sem
+    // elas todo lançamento virava "Entrada/Saída 2026" e a trilha de auditoria se perdia
+    // (auditoria vs planilha oficial). Falha de notas não bloqueia o import dos valores.
+    let notes = client
+        .get_sheet_notes(&spreadsheet_id, &sheet_name)
+        .await
+        .unwrap_or_default();
+    let imported_rows = import::parse_rows_with_layout(&rows, &layout, &mappings, &notes);
     let count = import::import_rows(&pool, &sheet_name, &imported_rows, &profile_id).await?;
+
+    // Captura a coluna Saldo (o saldo corrente do método) → semente da projeção + visão
+    // histórica. Sem isto a semente era 0 e o saldo de hoje aparecia zerado.
+    let balance_offset = import::get_balance_offset_for_sheet(&pool, &sheet_name).await?;
+    let balances = import::parse_balance_series(&rows, &layout, balance_offset);
+    import::store_balance_series(&pool, &sheet_name, &balances).await?;
+
     Ok(count)
+}
+
+/// Células numéricas do calamine viram string decimal-com-ponto de 4 casas fixas: `123.456`
+/// vira `123.4560`, que o `parse_number` nunca confunde com agrupamento de milhar
+/// (spec 010, slice 0 — antes, `65.28` perdia o ponto e inflava 100×).
+fn xlsx_cell_to_string(cell: &calamine::Data) -> String {
+    match cell {
+        calamine::Data::Float(f) => format!("{f:.4}"),
+        other => other.to_string().trim().to_string(),
+    }
 }
 
 #[tauri::command]
@@ -205,14 +260,13 @@ pub async fn import_local_xlsx(
     let mut sheets_imported = Vec::new();
 
     for sheet_name in &sheet_names {
+        if layout_detect::is_metric_tab(sheet_name) {
+            continue;
+        }
         if let Ok(range) = workbook.worksheet_range(sheet_name) {
             let rows: Vec<Vec<String>> = range
                 .rows()
-                .map(|row| {
-                    row.iter()
-                        .map(|cell| cell.to_string().trim().to_string())
-                        .collect()
-                })
+                .map(|row| row.iter().map(xlsx_cell_to_string).collect())
                 .collect();
 
             if rows.len() < 3 {
@@ -252,13 +306,20 @@ pub async fn import_local_xlsx(
             };
 
             let mappings = import::get_active_mappings_for_sheet(&pool, sheet_name).await?;
-            let imported_rows = import::parse_rows_with_layout(&rows, &layout, &mappings);
+            // xlsx (calamine) não expõe notas de célula → fallback "Entrada/Saída {data}". As
+            // notas só vêm pelo caminho ao vivo (Sheets API). Limitação documentada na spec 010.
+            let imported_rows = import::parse_rows_with_layout(&rows, &layout, &mappings, &[]);
             if !imported_rows.is_empty() {
                 let count =
                     import::import_rows(&pool, sheet_name, &imported_rows, &profile_id).await?;
                 total += count;
                 sheets_imported.push(format!("{sheet_name} ({count} rows)"));
             }
+
+            // Série de Saldo da aba (semente da projeção + visão histórica do livro-razão).
+            let balance_offset = import::get_balance_offset_for_sheet(&pool, sheet_name).await?;
+            let balances = import::parse_balance_series(&rows, &layout, balance_offset);
+            import::store_balance_series(&pool, sheet_name, &balances).await?;
         }
     }
 
@@ -302,6 +363,190 @@ async fn liquid_seed(pool: &SqlitePool) -> Result<i64, String> {
             .await
             .map_err(|e| format!("query: {e}"))?;
     Ok(seed.0)
+}
+
+/// Semente da projeção — o saldo de partida do qual a engine encadeia o futuro.
+///
+/// Método da planilha: a coluna `Saldo` É o saldo que "bate com o banco". Quando há série
+/// importada, a semente = `Saldo` do dia mais recente ≤ hoje; quaisquer lançamentos realizados
+/// ENTRE esse dia e hoje são somados (cobre o caso de a planilha ainda não ter hoje preenchido),
+/// de modo que o carregador de eventos pode seguir usando `date > today` sem perder o intervalo.
+/// Sem planilha importada, cai nos Bolsos líquidos (spec 007). Precedência: planilha > bolsos —
+/// quem importa a planilha quer que a projeção continue a própria linha dela.
+async fn projection_seed(pool: &SqlitePool, today_naive: NaiveDate) -> Result<i64, String> {
+    let today = today_naive.format("%Y-%m-%d").to_string();
+
+    let latest: Option<(String, i64)> = sqlx::query_as(
+        "SELECT date, balance_cents FROM sheet_daily_balance WHERE date <= ?1 ORDER BY date DESC LIMIT 1",
+    )
+    .bind(&today)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("seed query: {e}"))?;
+
+    let Some((seed_date, balance)) = latest else {
+        return liquid_seed(pool).await;
+    };
+
+    let gap: (i64,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE -amount END), 0) \
+         FROM \"transaction\" WHERE date > ?1 AND date <= ?2 AND type IN ('income','expense')",
+    )
+    .bind(&seed_date)
+    .bind(&today)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("seed gap: {e}"))?;
+
+    Ok(balance + gap.0)
+}
+
+/// Meta de poupança do método: piso de 25% (faixa 20–30%, "média ANUAL" — "o ano tem que ser de
+/// 20 a 30", aula "Como viver abaixo do que ganha"). Régua do guardrail "pode gastar".
+const SAVINGS_TARGET_BPS: i64 = 2500;
+
+/// Limiar de cobertura: um mês futuro com menos de 60% do gasto típico já lançado é tratado como
+/// INCOMPLETO (projeção otimista demais — o "chá revelação" do método). Margem ampla porque o
+/// método aceita variação mês a mês; abaixo disso é quase certo que falta fatura/variável.
+const COVERAGE_COMPLETE_BPS: i64 = 6_000;
+
+/// Renda e poupança REALIZADAS do ano corrente até hoje (`is_projection = 0`). Proxy de
+/// Entradas/Economia da aba Economia (que ainda não é importada — slice 7): a poupança é o net
+/// `renda − saída` realizado. Usada no guardrail anual: o ano PROJETADO mente quando os meses
+/// futuros estão incompletos (só fixas/salário), então a régua olha só o que já aconteceu.
+/// `transfer` é IGNORADO (não há linha Economia explícita ainda) — a poupança real virá do saldo
+/// da reserva quando o slice de Economia existir; até lá o net é um proxy conservador (review P2).
+///
+/// Conta só **meses COMPLETOS** do ano (`substr(date) < mês corrente`), nunca o mês em andamento.
+/// Meio do mês as contas já entraram (dias 10–12) mas o salário não (dia ~29), o que daria um
+/// net negativo de timing e um "pode gastar R$ 0" de falso pânico (auditoria vs planilha oficial).
+///
+/// NÃO filtra `is_projection`: ele é congelado no import (data vs hoje DAQUELE dia) e fica STALE
+/// quando o dono não re-importa por dias/meses. Um mês completo já passou — é realizado por
+/// definição —, então a janela de DATA é a fonte de verdade, não o flag congelado.
+async fn realized_annual_savings(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+) -> Result<(i64, i64), String> {
+    let year_start = format!("{}-01-01", today_naive.year());
+    let cur_ym = today_naive.format("%Y-%m").to_string();
+    let row: (i64, i64) = sqlx::query_as(
+        "SELECT \
+           COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END), 0), \
+           COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END), 0) \
+         FROM \"transaction\" WHERE date >= ?1 AND substr(date,1,7) < ?2 \
+           AND type IN ('income','expense')",
+    )
+    .bind(&year_start)
+    .bind(&cur_ym)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("realized annual: {e}"))?;
+    Ok((row.0, row.0 - row.1)) // (renda, poupança=net) dos meses completos
+}
+
+/// Renda e net do ANO INTEIRO projetado (todas as linhas do ano). Exibido só como contraste com
+/// o realizado — é OTIMISTA quando os meses futuros estão incompletos (não usar no guardrail).
+async fn projected_annual_savings(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+) -> Result<(i64, i64), String> {
+    // Range explícito (não `LIKE 'YYYY%'`) — consistente com o realizado e rejeita data
+    // malformada que começa com o ano mas não é ISO válida (review P2).
+    let start = format!("{}-01-01", today_naive.year());
+    let end = format!("{}-12-31", today_naive.year());
+    let row: (i64, i64) = sqlx::query_as(
+        "SELECT \
+           COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END), 0), \
+           COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END), 0) \
+         FROM \"transaction\" WHERE date >= ?1 AND date <= ?2 AND type IN ('income','expense')",
+    )
+    .bind(&start)
+    .bind(&end)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("projected annual: {e}"))?;
+    Ok((row.0, row.0 - row.1))
+}
+
+/// Gasto típico de um mês = MEDIANA da saída dos meses realizados COMPLETOS (anteriores ao mês
+/// corrente), dos **últimos 6 meses** (recentes representam melhor o padrão atual que meses
+/// antigos de anos anteriores — review ui-vs-planilha). Mediana para ser robusta a um mês atípico.
+async fn realized_monthly_baseline(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+) -> Result<i64, String> {
+    let cur_ym = today_naive.format("%Y-%m").to_string();
+    // Sem filtro `is_projection` (congelado/stale): meses completos já passaram, a data decide.
+    let rows: Vec<(i64,)> = sqlx::query_as(
+        "SELECT SUM(amount) FROM \"transaction\" \
+         WHERE type='expense' AND substr(date,1,7) < ?1 \
+         GROUP BY substr(date,1,7) ORDER BY substr(date,1,7) DESC LIMIT 6",
+    )
+    .bind(&cur_ym)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("baseline: {e}"))?;
+    let mut vals: Vec<i64> = rows.into_iter().map(|(s,)| s).collect();
+    if vals.is_empty() {
+        return Ok(0);
+    }
+    vals.sort_unstable();
+    let mid = vals.len() / 2;
+    let median = if vals.len() % 2 == 1 {
+        vals[mid]
+    } else {
+        (vals[mid - 1] + vals[mid]) / 2
+    };
+    Ok(median)
+}
+
+/// Piso de reserva = colchão intocável que a folga de caixa não pode comer. Por ora = soma dos
+/// Bolsos marcados como reserva (spec 007, `liquidity = 'reserve'`); esses NÃO entram na semente
+/// líquida, então subtraí-los aqui não dobra. O ideal metodológico (custo de vida × 12) fica
+/// para quando a reserva for modelada como meta — ver limitações na spec 010. Hoje, sem reserva
+/// configurada, retorna 0 e a régua de poupança é a que morde.
+async fn reserve_floor(pool: &SqlitePool) -> Result<i64, String> {
+    let floor: (i64,) =
+        sqlx::query_as("SELECT COALESCE(SUM(balance), 0) FROM account WHERE liquidity = 'reserve'")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("reserve floor: {e}"))?;
+    Ok(floor.0)
+}
+
+/// Fim do horizonte da projeção = o último dia com dado pré-lançado (transação futura ou Saldo
+/// importado) ≥ hoje. A planilha do método já lança o ano inteiro à frente, então varremos ATÉ
+/// O FIM DOS DADOS, não só o mês corrente — senão o "pode gastar" fica cego ao buraco do futuro
+/// e às faturas dos meses seguintes (decisão do dono). Piso: fim do mês corrente.
+async fn forecast_horizon_end(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+) -> Result<NaiveDate, String> {
+    let today = today_naive.format("%Y-%m-%d").to_string();
+    let max_txn: (Option<String>,) =
+        sqlx::query_as("SELECT MAX(date) FROM \"transaction\" WHERE date >= ?1")
+            .bind(&today)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("horizon txn: {e}"))?;
+    let max_bal: (Option<String>,) =
+        sqlx::query_as("SELECT MAX(date) FROM sheet_daily_balance WHERE date >= ?1")
+            .bind(&today)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("horizon bal: {e}"))?;
+
+    let mut horizon = forecast::last_day_of_month(today_naive.year(), today_naive.month());
+    for (candidate,) in [max_txn, max_bal] {
+        if let Some(date_str) = candidate
+            && let Ok(d) = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d")
+            && d > horizon
+        {
+            horizon = d;
+        }
+    }
+    Ok(horizon)
 }
 
 /// Loads forward cashflow events for the projection window: future transactions (date > today,
@@ -398,6 +643,58 @@ async fn load_cashflow_events(
     Ok(all_events)
 }
 
+/// Eventos JÁ REALIZADOS do mês corrente (`month_start..=today`), classificados como os futuros.
+/// O encadeamento de caixa não os usa (a semente já os embute), mas a performance do mês precisa
+/// deles — senão o mês corrente aparece pela metade (review adversarial P0). Só transações; os
+/// lumps de fatura realizados deste mês já estão na coluna Saída da planilha como transação.
+async fn load_realized_month_events(
+    pool: &SqlitePool,
+    month_start: NaiveDate,
+    today_naive: NaiveDate,
+) -> Result<Vec<CashflowEvent>, String> {
+    let start = month_start.format("%Y-%m-%d").to_string();
+    let today = today_naive.format("%Y-%m-%d").to_string();
+
+    let rows: Vec<(String, i64, String, String, i64, i64)> = sqlx::query_as(
+        "SELECT type, amount, date, COALESCE(payment_method,''), is_fixed, is_projection \
+         FROM \"transaction\" WHERE date >= ?1 AND date <= ?2",
+    )
+    .bind(&start)
+    .bind(&today)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("query realized month: {e}"))?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|(ttype, amount, date_str, pm, is_fixed, is_proj)| {
+            let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d").ok()?;
+            let pm = (!pm.is_empty()).then_some(pm);
+            let kind = forecast::classify(&ttype, is_fixed != 0, pm.as_deref())?;
+            Some(CashflowEvent {
+                date,
+                kind,
+                amount_cents: amount,
+                realized: is_proj == 0,
+            })
+        })
+        .collect())
+}
+
+/// Eventos para as MÉTRICAS por mês = futuros (encadeamento) + realizados do mês corrente.
+/// Cobre o mês inteiro de hoje (realizado + projetado); meses à frente já são todos futuros.
+async fn load_metric_events(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+    future_events: &[CashflowEvent],
+) -> Result<Vec<CashflowEvent>, String> {
+    let month_start =
+        NaiveDate::from_ymd_opt(today_naive.year(), today_naive.month(), 1).expect("valid month");
+    let mut metric = load_realized_month_events(pool, month_start, today_naive).await?;
+    metric.extend_from_slice(future_events);
+    Ok(metric)
+}
+
 #[derive(serde::Serialize)]
 pub struct ForecastDayDto {
     pub date: String,
@@ -421,13 +718,69 @@ pub struct MonthEndDto {
 }
 
 #[derive(serde::Serialize)]
+pub struct MonthMetricDto {
+    pub year: i32,
+    pub month: u32,
+    pub income_cents: i64,
+    pub performance_cents: i64,
+    pub cost_of_living_cents: i64,
+    pub savings_rate_bps: i64,
+}
+
+/// Poupança do ano: realizada (honesta) vs projetada (otimista quando o futuro está incompleto).
+#[derive(serde::Serialize)]
+pub struct AnnualSavingsDto {
+    pub realized_income_cents: i64,
+    pub realized_savings_cents: i64,
+    pub realized_rate_bps: i64,
+    pub projected_income_cents: i64,
+    pub projected_savings_cents: i64,
+    pub projected_rate_bps: i64,
+    pub target_bps: i64,
+}
+
+/// Cobertura de um mês futuro (quanto do gasto típico já está lançado).
+#[derive(serde::Serialize)]
+pub struct MonthCoverageDto {
+    pub year: i32,
+    pub month: u32,
+    pub projected_outflow_cents: i64,
+    pub baseline_outflow_cents: i64,
+    pub coverage_bps: i64,
+    pub is_complete: bool,
+    pub estimated_missing_cents: i64,
+}
+
+#[derive(serde::Serialize)]
 pub struct ForecastDto {
     pub today: String,
     pub horizon_end: String,
+    /// Poupança do ano — realizada vs projetada (previsibilidade).
+    pub annual_savings: AnnualSavingsDto,
+    /// Cobertura por mês futuro (vazio se a projeção está completa).
+    pub coverage: Vec<MonthCoverageDto>,
+    /// Gasto típico/mês (mediana realizada). `0` = sem histórico → previsibilidade indeterminada.
+    pub baseline_outflow_cents: i64,
+    /// Último mês cuja projeção é confiável ("YYYY-MM"); `null` se não há baseline para avaliar.
+    pub trusted_through_month: Option<String>,
+    /// Soma do que falta lançar nos meses incompletos (fatura + variáveis).
+    pub total_missing_cents: i64,
+    /// "Pode gastar hoje" honesto: o MAIS APERTADO de caixa × poupança (guardrail duplo).
     pub safe_to_spend_today_cents: i64,
+    /// Folga de caixa (menor saldo projetado no horizonte − piso de reserva).
+    pub cash_headroom_cents: i64,
+    /// Folga da meta de poupança do mês corrente (negativa = já abaixo da meta). `null` quando a
+    /// régua de poupança está inativa (mês sem renda) → só o caixa decide.
+    pub savings_headroom_cents: Option<i64>,
+    /// Qual régua limita: "cash" ou "savings".
+    pub binding_guardrail: String,
+    /// Meta de poupança em basis points (2500 = 25%).
+    pub savings_target_bps: i64,
     pub deepest_deficit: Option<DayPointDto>,
     pub daily: Vec<ForecastDayDto>,
     pub month_end: Vec<MonthEndDto>,
+    /// Performance/poupança por mês (Caixa ≠ Performance; expõe meses futuros magros).
+    pub months: Vec<MonthMetricDto>,
 }
 
 #[tauri::command]
@@ -438,10 +791,86 @@ pub async fn get_forecast(pool: State<'_, SqlitePool>) -> Result<ForecastDto, St
 /// Inner implementation with an injected `today` (deterministic, integration-testable).
 /// Maps the pure engine output to ISO-8601-string DTOs; the core stays serde-free.
 async fn forecast_dto(pool: &SqlitePool, today_naive: NaiveDate) -> Result<ForecastDto, String> {
-    let horizon_end = forecast::last_day_of_month(today_naive.year(), today_naive.month());
-    let seed = liquid_seed(pool).await?;
+    let horizon_end = forecast_horizon_end(pool, today_naive).await?;
+    let seed = projection_seed(pool, today_naive).await?;
     let events = load_cashflow_events(pool, today_naive, horizon_end).await?;
-    let fc = forecast::project(seed, today_naive, &events, horizon_end);
+    let metric_events = load_metric_events(pool, today_naive, &events).await?;
+    let fc =
+        forecast::project_with_metrics(seed, today_naive, &events, &metric_events, horizon_end);
+
+    let reserve_floor_cents = reserve_floor(pool).await?;
+    // Poupança ANUAL realizada (não o mês isolado, não o ano projetado-incompleto).
+    let (annual_income, annual_savings_amt) = realized_annual_savings(pool, today_naive).await?;
+    let sts = forecast::safe_to_spend_today(
+        &fc,
+        annual_income,
+        annual_savings_amt,
+        SAVINGS_TARGET_BPS,
+        reserve_floor_cents,
+    );
+    let binding_guardrail = match sts.binding {
+        forecast::Guardrail::Cash => "cash",
+        forecast::Guardrail::Savings => "savings",
+    }
+    .to_string();
+
+    // Previsibilidade: poupança realizada vs projetada + cobertura dos meses futuros.
+    let (proj_income, proj_savings) = projected_annual_savings(pool, today_naive).await?;
+    // Taxa em bps para EXIBIÇÃO (round half-up, não trunca — senão 25,00% vira 2499/abaixo da
+    // meta; review P3). Nunca usada em decisão (o guardrail compara centavos diretos).
+    let rate_bps = |save: i64, inc: i64| {
+        if inc > 0 {
+            (save * 10_000 + inc / 2) / inc
+        } else {
+            0
+        }
+    };
+    let annual_savings = AnnualSavingsDto {
+        realized_income_cents: annual_income,
+        realized_savings_cents: annual_savings_amt,
+        realized_rate_bps: rate_bps(annual_savings_amt, annual_income),
+        projected_income_cents: proj_income,
+        projected_savings_cents: proj_savings,
+        projected_rate_bps: rate_bps(proj_savings, proj_income),
+        target_bps: SAVINGS_TARGET_BPS,
+    };
+
+    let baseline = realized_monthly_baseline(pool, today_naive).await?;
+    let coverage_raw =
+        forecast::month_coverage(&fc.months, today_naive, baseline, COVERAGE_COMPLETE_BPS);
+    // Sem baseline (nenhum mês realizado) não dá para afirmar "confiável até X" → `None`. Com
+    // baseline, o mês corrente é sempre confiável (tem o realizado) e estende pelos meses futuros
+    // completos até o primeiro incompleto.
+    let trusted_through_month = if baseline <= 0 {
+        None
+    } else {
+        let mut trusted = format!("{:04}-{:02}", today_naive.year(), today_naive.month());
+        for c in coverage_raw.iter() {
+            if c.is_complete {
+                trusted = format!("{:04}-{:02}", c.year, c.month);
+            } else {
+                break;
+            }
+        }
+        Some(trusted)
+    };
+    let total_missing_cents = coverage_raw
+        .iter()
+        .filter(|c| !c.is_complete)
+        .map(|c| c.estimated_missing_cents)
+        .sum();
+    let coverage: Vec<MonthCoverageDto> = coverage_raw
+        .iter()
+        .map(|c| MonthCoverageDto {
+            year: c.year,
+            month: c.month,
+            projected_outflow_cents: c.projected_outflow_cents,
+            baseline_outflow_cents: c.baseline_outflow_cents,
+            coverage_bps: c.coverage_bps,
+            is_complete: c.is_complete,
+            estimated_missing_cents: c.estimated_missing_cents,
+        })
+        .collect();
 
     // Per-day flow sums (income, fixed out, daily out), keyed by the same dates the engine emits.
     let mut flows: std::collections::HashMap<NaiveDate, (i64, i64, i64)> =
@@ -473,7 +902,16 @@ async fn forecast_dto(pool: &SqlitePool, today_naive: NaiveDate) -> Result<Forec
     Ok(ForecastDto {
         today: today_naive.format("%Y-%m-%d").to_string(),
         horizon_end: horizon_end.format("%Y-%m-%d").to_string(),
-        safe_to_spend_today_cents: fc.safe_to_spend_today_cents,
+        annual_savings,
+        coverage,
+        baseline_outflow_cents: baseline,
+        trusted_through_month,
+        total_missing_cents,
+        safe_to_spend_today_cents: sts.amount_cents,
+        cash_headroom_cents: sts.cash_headroom_cents,
+        savings_headroom_cents: sts.savings_headroom_cents,
+        binding_guardrail,
+        savings_target_bps: SAVINGS_TARGET_BPS,
         deepest_deficit: fc.deepest_deficit.as_ref().map(|p| DayPointDto {
             date: p.date.format("%Y-%m-%d").to_string(),
             balance_cents: p.balance_cents,
@@ -486,6 +924,18 @@ async fn forecast_dto(pool: &SqlitePool, today_naive: NaiveDate) -> Result<Forec
                 year: m.year,
                 month: m.month,
                 balance_cents: m.balance_cents,
+            })
+            .collect(),
+        months: fc
+            .months
+            .iter()
+            .map(|m| MonthMetricDto {
+                year: m.year,
+                month: m.month,
+                income_cents: m.income_cents(),
+                performance_cents: m.performance_cents,
+                cost_of_living_cents: m.cost_of_living_cents,
+                savings_rate_bps: m.savings_rate_bps,
             })
             .collect(),
     })
@@ -520,8 +970,8 @@ async fn dashboard_summary(
     let today = today_naive.format("%Y-%m-%d").to_string();
 
     // Seed + forward events: shared with `forecast_dto` (single source of event mapping).
-    let seed = liquid_seed(pool).await?;
-    let horizon_end = forecast::last_day_of_month(today_naive.year(), today_naive.month());
+    let seed = projection_seed(pool, today_naive).await?;
+    let horizon_end = forecast_horizon_end(pool, today_naive).await?;
     let all_events = load_cashflow_events(pool, today_naive, horizon_end).await?;
 
     // `balance` is the projected end-of-current-month figure (the method's hero, spec 003 US8),
@@ -570,12 +1020,13 @@ async fn dashboard_summary(
     .map_err(|e| format!("query: {e}"))?
     .unwrap_or((0.0, "flat".to_string()));
 
-    // Transaction count
-    let count: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE is_projection = 0")
-            .fetch_one(pool)
-            .await
-            .map_err(|e| format!("query: {e}"))?;
+    // Transações já realizadas: por DATA (≤ hoje), não pelo `is_projection` congelado (stale
+    // quando o dono não re-importa por dias — auditoria de robustez a edições).
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE date <= ?1")
+        .bind(&today)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| format!("query: {e}"))?;
 
     Ok(DashboardSummary {
         balance: projected_balance,
@@ -783,11 +1234,15 @@ pub async fn detect_sheet_layout(
     spreadsheet_id: String,
     sheet_name: String,
     client_id: String,
+    client_secret: Option<String>,
 ) -> Result<layout_detect::SheetLayout, String> {
-    let token = oauth::token_store::ensure_valid_token(&app_dir.0, &client_id).await?;
+    let token =
+        oauth::token_store::ensure_valid_token(&app_dir.0, &client_id, client_secret.as_deref())
+            .await?;
     let client = SheetsClient::new(token);
 
-    let range = format!("'{}'!A1:Z10", sheet_name);
+    // Grade inteira — A1:Z10 podia cortar a linha de dados/cabeçalhos da detecção (P1).
+    let range = format!("'{}'", sheet_name);
     let values = client.get_sheet_values(&spreadsheet_id, &range).await?;
     let rows = values.values;
 
@@ -892,8 +1347,11 @@ pub struct UserSpreadsheet {
 pub async fn list_user_spreadsheets(
     app_dir: State<'_, AppDataDir>,
     client_id: String,
+    client_secret: Option<String>,
 ) -> Result<Vec<UserSpreadsheet>, String> {
-    let token = oauth::token_store::ensure_valid_token(&app_dir.0, &client_id).await?;
+    let token =
+        oauth::token_store::ensure_valid_token(&app_dir.0, &client_id, client_secret.as_deref())
+            .await?;
 
     let url = "https://www.googleapis.com/drive/v3/files?q=mimeType%3D'application%2Fvnd.google-apps.spreadsheet'&fields=files(id,name,modifiedTime)&orderBy=modifiedTime%20desc&pageSize=50";
 
@@ -952,6 +1410,41 @@ mod tests {
         }];
         let checksum = compute_checksum(&rows);
         assert!(!checksum.is_empty());
+    }
+
+    // Spec 010 slice 0: floats do calamine chegam ao parse_number sem ambiguidade de
+    // separador — regressão do bug de 100× (65.28 → R$ 6.528,00).
+    #[test]
+    fn xlsx_float_cells_parse_to_correct_cents() {
+        assert_eq!(
+            xlsx_cell_to_string(&calamine::Data::Float(65.28)),
+            "65.2800"
+        );
+        assert_eq!(
+            xlsx_cell_to_string(&calamine::Data::Float(6012.73)),
+            "6012.7300"
+        );
+        assert_eq!(xlsx_cell_to_string(&calamine::Data::Int(1370)), "1370");
+        assert_eq!(
+            xlsx_cell_to_string(&calamine::Data::String(" Entrada ".into())),
+            "Entrada"
+        );
+        assert_eq!(xlsx_cell_to_string(&calamine::Data::Empty), "");
+
+        use google_sheets::import::parse_number;
+        assert_eq!(
+            parse_number(&xlsx_cell_to_string(&calamine::Data::Float(65.28))),
+            6528
+        );
+        assert_eq!(
+            parse_number(&xlsx_cell_to_string(&calamine::Data::Float(10805.5048))),
+            1080550
+        );
+        // float que parece milhar (3 dígitos após o ponto) — o {:.4} blinda o caso.
+        assert_eq!(
+            parse_number(&xlsx_cell_to_string(&calamine::Data::Float(123.456))),
+            12346
+        );
     }
 
     // T7.6 — get_dashboard_summary returns the PROJECTED balance, not the raw account sum.
@@ -1081,7 +1574,12 @@ mod tests {
         assert_eq!(d25.income_cents, 20_000);
         assert_eq!(d25.balance_cents, 90_000);
 
-        // Trough is R$ 700,00 (between the expense and the income) → safe to spend today.
+        // Guardrail duplo: tudo aqui é projetado (nenhum realizado no ano) → a régua de poupança
+        // ANUAL está inativa, manda o CAIXA: pode gastar = o vale de R$ 700,00. A régua de
+        // poupança anual é exercitada no teste `forecast_dual_guardrail_savings_binds_for_joao`.
+        assert_eq!(fc.cash_headroom_cents, 70_000);
+        assert_eq!(fc.binding_guardrail, "cash");
+        assert_eq!(fc.savings_headroom_cents, None);
         assert_eq!(fc.safe_to_spend_today_cents, 70_000);
         // Positive horizon: deepest point reported, but not negative.
         let trough = fc.deepest_deficit.as_ref().unwrap();
@@ -1107,6 +1605,178 @@ mod tests {
         assert_eq!(deficit.balance_cents, -40_000);
         assert_eq!(deficit.date, "2026-03-15");
         assert_eq!(fc.safe_to_spend_today_cents, 0);
+    }
+
+    async fn insert_sheet_balance(pool: &sqlx::SqlitePool, sheet: &str, date: &str, cents: i64) {
+        sqlx::query(
+            "INSERT INTO sheet_daily_balance (sheet_name, date, balance_cents) VALUES (?1,?2,?3)",
+        )
+        .bind(sheet)
+        .bind(date)
+        .bind(cents)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn insert_realized(pool: &sqlx::SqlitePool, ttype: &str, amount: i64, date: &str) {
+        let tid = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_projection) VALUES (?1,?2,?3,?4,0)",
+        )
+        .bind(&tid).bind(ttype).bind(amount).bind(date)
+        .execute(pool).await.unwrap();
+    }
+
+    // Previsibilidade: meses futuros esparsos (só fixas) são detectados como incompletos, e a
+    // poupança realizada (honesta) difere da projetada (otimista). O caso do João.
+    #[tokio::test]
+    async fn forecast_flags_incomplete_future_and_honest_annual_savings() {
+        let pool = fixture_pool().await;
+        // Meses realizados (jan–mai) com gasto típico R$ 1.000/mês e dissaving (renda 900 < 1000).
+        for m in [1, 2, 3, 4, 5] {
+            insert_realized(&pool, "income", 90_000, &format!("2026-{m:02}-05")).await;
+            insert_realized(&pool, "expense", 100_000, &format!("2026-{m:02}-10")).await;
+        }
+        // Junho corrente: realizado parcial.
+        insert_realized(&pool, "income", 90_000, "2026-06-05").await;
+        insert_realized(&pool, "expense", 100_000, "2026-06-10").await;
+        // Julho COMPLETO (salário + gasto típico) e agosto ESPARSO (salário + só fixa) — como na
+        // planilha real: o futuro tem salário mas falta a fatura/variável → projeção otimista.
+        insert_projection(&pool, "income", 90_000, "2026-07-05", "", 0).await;
+        insert_projection(&pool, "expense", 100_000, "2026-07-10", "debit", 0).await;
+        insert_projection(&pool, "income", 90_000, "2026-08-05", "", 0).await;
+        insert_projection(&pool, "expense", 30_000, "2026-08-10", "debit", 1).await;
+        insert_sheet_balance(&pool, "2026", "2026-12-31", 50_000).await; // estende horizonte
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let fc = forecast_dto(&pool, today).await.unwrap();
+
+        // Cobertura: julho completo (~100% do típico), agosto esparso (~30%).
+        let jul = fc.coverage.iter().find(|c| c.month == 7).unwrap();
+        let ago = fc.coverage.iter().find(|c| c.month == 8).unwrap();
+        assert!(jul.is_complete);
+        assert!(!ago.is_complete);
+        assert!(ago.estimated_missing_cents > 0);
+        assert_eq!(fc.trusted_through_month.as_deref(), Some("2026-07")); // confiável até julho
+        assert!(fc.total_missing_cents > 0);
+
+        // Poupança realizada (honesta) negativa; a projetada parece melhor (futuro esparso).
+        assert!(fc.annual_savings.realized_rate_bps < fc.annual_savings.projected_rate_bps);
+        assert_eq!(fc.annual_savings.target_bps, 2500);
+    }
+
+    // Staleness: um mês COMPLETO conta na poupança anual mesmo se as transações ainda têm
+    // is_projection=1 congelado (dono importou quando era futuro e não re-importou). A janela
+    // de DATA é a fonte de verdade, não o flag (auditoria: edições em dias passados).
+    #[tokio::test]
+    async fn realized_annual_ignores_stale_is_projection_flag() {
+        let pool = fixture_pool().await;
+        // Maio (mês completo) lançado como PROJEÇÃO (stale) — hoje é junho.
+        insert_projection(&pool, "income", 500_000, "2026-05-05", "", 0).await;
+        insert_projection(&pool, "expense", 480_000, "2026-05-10", "debit", 0).await;
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let (income, savings) = realized_annual_savings(&pool, today).await.unwrap();
+        assert_eq!(income, 500_000); // maio conta apesar do is_projection=1
+        assert_eq!(savings, 20_000); // 500.000 − 480.000
+    }
+
+    // Semente: o Saldo da planilha vence os Bolsos quando há série importada.
+    #[tokio::test]
+    async fn projection_seed_prefers_sheet_saldo_over_pockets() {
+        let pool = fixture_pool().await;
+        insert_liquid_account(&pool, 100_000).await; // bolso de R$ 1.000,00
+        insert_sheet_balance(&pool, "2026", "2026-06-12", 801_889).await; // Saldo de hoje
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 12).unwrap();
+        // Saldo de hoje na planilha vence o bolso; sem lacuna (hoje está na série).
+        assert_eq!(projection_seed(&pool, today).await.unwrap(), 801_889);
+    }
+
+    // Sem planilha importada, a semente continua sendo os Bolsos líquidos (spec 007).
+    #[tokio::test]
+    async fn projection_seed_falls_back_to_pockets_without_sheet() {
+        let pool = fixture_pool().await;
+        insert_liquid_account(&pool, 250_000).await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 12).unwrap();
+        assert_eq!(projection_seed(&pool, today).await.unwrap(), 250_000);
+    }
+
+    // Planilha sem o dia de hoje preenchido: semente = último Saldo ≤ hoje + lançamentos
+    // realizados no intervalo (não pode perder o que aconteceu entre o último saldo e hoje).
+    #[tokio::test]
+    async fn projection_seed_folds_realized_gap_up_to_today() {
+        let pool = fixture_pool().await;
+        insert_sheet_balance(&pool, "2026", "2026-06-10", 500_000).await;
+        insert_realized(&pool, "income", 20_000, "2026-06-11").await;
+        insert_realized(&pool, "expense", 5_000, "2026-06-12").await;
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 12).unwrap();
+        // 500.000 + 20.000 − 5.000 = 515.000
+        assert_eq!(projection_seed(&pool, today).await.unwrap(), 515_000);
+    }
+
+    // Regressão do bug do 1º dogfooding: import OK (226 txns) mas saldo de hoje aparecia
+    // ZERADO e surgia um déficit ("buraco") falso, porque a semente era 0 (nenhum bolso) e o
+    // Saldo da planilha era descartado. Com a série de Saldo, o saldo de hoje bate com o Sheets.
+    #[tokio::test]
+    async fn forecast_seeds_from_sheet_saldo_no_false_deficit() {
+        let pool = fixture_pool().await;
+        // Saldo de hoje na planilha = R$ 8.018,89; uma saída futura pequena no dia 26.
+        insert_sheet_balance(&pool, "2026", "2026-06-12", 801_889).await;
+        insert_projection(&pool, "expense", 4_633, "2026-06-26", "debit", 0).await;
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 12).unwrap();
+        let fc = forecast_dto(&pool, today).await.unwrap();
+
+        // Antes: daily[0] = 0 (saldo zerado). Agora bate com o Saldo de hoje da planilha.
+        assert_eq!(fc.daily[0].date, "2026-06-12");
+        assert_eq!(fc.daily[0].balance_cents, 801_889);
+        // Antes: deepest_deficit = −R$ 46,33 (o "buraco que não existe"). Agora positivo.
+        let trough = fc.deepest_deficit.as_ref().unwrap();
+        assert_eq!(trough.balance_cents, 801_889 - 4_633);
+        assert!(trough.balance_cents > 0);
+        assert!(fc.safe_to_spend_today_cents > 0);
+    }
+
+    // Guardrail duplo end-to-end com os números do João: Saldo de hoje R$ 8.018,89 (caixa
+    // cheio e crescendo), mas junho com performance negativa → "pode gastar" honesto = 0,
+    // limitado pela poupança. O horizonte varre até o fim dos dados pré-lançados (dez).
+    // Crava o P0 do review: a performance de junho inclui o REALIZADO antes de hoje (não só
+    // os eventos futuros), senão o mês aparece com sinal trocado e o guardrail decide errado.
+    #[tokio::test]
+    async fn forecast_dual_guardrail_savings_binds_for_joao() {
+        let pool = fixture_pool().await;
+        insert_sheet_balance(&pool, "2026", "2026-06-13", 801_889).await; // Saldo de hoje
+        insert_sheet_balance(&pool, "2026", "2026-12-31", 2_754_616).await; // estende horizonte
+        // Meses COMPLETOS (jan–mai) abaixo da meta → a poupança ANUAL morde. Sem isto, o mês
+        // corrente (junho, em andamento) NÃO conta — evita o falso pânico de meio de mês.
+        for m in [1, 2, 3, 4, 5] {
+            insert_realized(&pool, "income", 200_000, &format!("2026-{m:02}-05")).await;
+            insert_realized(&pool, "expense", 220_000, &format!("2026-{m:02}-10")).await;
+        }
+        // Junho (corrente) — metade realizada antes de hoje, metade projetada: testa que a
+        // PERFORMANCE do mês inclui o realizado (o P0), mesmo o mês não contando na poupança anual.
+        insert_realized(&pool, "income", 400_000, "2026-06-05").await;
+        insert_realized(&pool, "expense", 700_000, "2026-06-10").await;
+        insert_realized(&pool, "income", 583_712, "2026-06-29").await;
+        insert_projection(&pool, "expense", 370_169, "2026-06-30", "debit", 1).await;
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let fc = forecast_dto(&pool, today).await.unwrap();
+
+        assert_eq!(fc.horizon_end, "2026-12-31");
+        // Performance de junho = MÊS INTEIRO (realizado + projetado): inclui os R$ 700k já
+        // realizados em 10/jun, que o cálculo antigo (só futuros) ignorava (o P0).
+        let jun = fc.months.iter().find(|m| m.month == 6).unwrap();
+        assert_eq!(jun.performance_cents, 983_712 - 1_070_169); // −86.457
+        // Poupança ANUAL (meses completos jan–mai, abaixo da meta) manda → pode gastar 0.
+        assert_eq!(fc.binding_guardrail, "savings");
+        assert_eq!(fc.safe_to_spend_today_cents, 0);
+        assert!(fc.savings_headroom_cents.unwrap() < 0);
+        assert!(fc.cash_headroom_cents > 0); // mas há caixa (é a reserva)
+        assert_eq!(fc.savings_target_bps, 2500);
     }
 
     #[tokio::test]
