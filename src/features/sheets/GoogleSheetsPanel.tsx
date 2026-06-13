@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -29,6 +29,8 @@ import {
   type SheetPreview,
   type UserSpreadsheet,
 } from "../../lib/api";
+import { extractSpreadsheetId } from "../../lib/spreadsheet-url";
+import { isMetricTab } from "../../lib/sheet-tabs";
 import { invalidateCommands } from "../../lib/useCommand";
 
 export function GoogleSheetsPanel({
@@ -40,6 +42,7 @@ export function GoogleSheetsPanel({
 }) {
   const [spreadsheets, setSpreadsheets] = useState<UserSpreadsheet[]>([]);
   const [selectedSpreadsheet, setSelectedSpreadsheet] = useState<string>("");
+  const [pastedUrl, setPastedUrl] = useState<string>("");
   const [sheets, setSheets] = useState<SheetInfo[]>([]);
   const [selectedSheet, setSelectedSheet] = useState<string>("");
   const [preview, setPreview] = useState<SheetPreview | null>(null);
@@ -52,6 +55,12 @@ export function GoogleSheetsPanel({
     "connect",
   );
 
+  // App aberto já conectado (token persistido): o passo efetivo é a escolha de
+  // planilha — sem isso o painel fica preso em "Conectar Google" para sempre, porque
+  // o step local só avançava dentro do handleConnect (achado do dogfooding).
+  const effectiveStep =
+    authStatus === "connected" && step === "connect" ? "pick" : step;
+
   const handleConnect = async () => {
     if (!GOOGLE_CLIENT_ID) {
       setError(
@@ -63,14 +72,19 @@ export function GoogleSheetsPanel({
     setError(null);
     try {
       await startOAuthFlow(GOOGLE_CLIENT_ID);
-      setTimeout(async () => {
+      // O consentimento no navegador leva o tempo que o usuário levar — sondar até
+      // conectar (ou desistir após 2 min), em vez de uma única checagem em 3 s.
+      for (let attempt = 0; attempt < 60; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
         const status = await checkAuthStatus();
-        onAuthChange(status);
         if (status === "connected") {
+          onAuthChange(status);
           setStep("pick");
           await loadSpreadsheets();
+          return;
         }
-      }, 3000);
+      }
+      setError("Tempo esgotado aguardando o consentimento. Tente conectar de novo.");
     } catch (e) {
       setError(String(e));
     } finally {
@@ -97,10 +111,34 @@ export function GoogleSheetsPanel({
     try {
       const list = await listUserSpreadsheets(GOOGLE_CLIENT_ID);
       setSpreadsheets(list);
-    } catch (e) {
-      setError(String(e));
+    } catch {
+      // Sem scope do Drive (token antigo) a listagem dá 403 — o campo de URL colada
+      // continua funcionando, então a falha do picker não bloqueia o fluxo.
+      setSpreadsheets([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Tenta listar as planilhas UMA vez quando o painel nasce já conectado; o ref
+  // impede retry em loop quando o Drive falha (o campo de URL colada cobre o resto).
+  const triedAutoLoad = useRef(false);
+  useEffect(() => {
+    if (
+      authStatus === "connected" &&
+      effectiveStep === "pick" &&
+      !triedAutoLoad.current
+    ) {
+      triedAutoLoad.current = true;
+      void loadSpreadsheets();
+    }
+  }, [authStatus, effectiveStep]);
+
+  const handlePastedUrl = async (value: string) => {
+    setPastedUrl(value);
+    const id = extractSpreadsheetId(value);
+    if (id && id !== selectedSpreadsheet) {
+      await handleSpreadsheetSelect(id);
     }
   };
 
@@ -191,7 +229,7 @@ export function GoogleSheetsPanel({
     }
   };
 
-  if (authStatus === "connected" && step !== "connect") {
+  if (authStatus === "connected") {
     return (
       <div className="gs-panel">
         <div className="gs-header">
@@ -209,28 +247,54 @@ export function GoogleSheetsPanel({
           </button>
         </div>
 
-        {step === "pick" && (
+        {effectiveStep === "pick" && (
           <div className="gs-step">
-            <label className="gs-label" htmlFor="gs-spreadsheet">
-              Planilha
+            {spreadsheets.length > 0 && (
+              <>
+                <label className="gs-label" htmlFor="gs-spreadsheet">
+                  Planilha
+                </label>
+                <div className="gs-select-wrap">
+                  <select
+                    id="gs-spreadsheet"
+                    className="gs-select"
+                    value={selectedSpreadsheet}
+                    onChange={(e) => void handleSpreadsheetSelect(e.target.value)}
+                    disabled={loading}
+                  >
+                    <option value="">Selecionar planilha…</option>
+                    {spreadsheets.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown size={14} className="gs-select__arrow" />
+                </div>
+              </>
+            )}
+
+            <label
+              className="gs-label"
+              htmlFor="gs-spreadsheet-url"
+              style={
+                spreadsheets.length > 0 ? { marginTop: "var(--space-4)" } : undefined
+              }
+            >
+              {spreadsheets.length > 0
+                ? "Ou cole a URL da planilha"
+                : "URL da planilha"}
             </label>
-            <div className="gs-select-wrap">
-              <select
-                id="gs-spreadsheet"
-                className="gs-select"
-                value={selectedSpreadsheet}
-                onChange={(e) => void handleSpreadsheetSelect(e.target.value)}
-                disabled={loading}
-              >
-                <option value="">Selecionar planilha…</option>
-                {spreadsheets.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown size={14} className="gs-select__arrow" />
-            </div>
+            <input
+              id="gs-spreadsheet-url"
+              className="gs-select"
+              type="text"
+              placeholder="https://docs.google.com/spreadsheets/d/…"
+              value={pastedUrl}
+              onChange={(e) => void handlePastedUrl(e.target.value)}
+              disabled={loading}
+              spellCheck={false}
+            />
 
             {selectedSpreadsheet && sheets.length > 0 && (
               <>
@@ -238,18 +302,30 @@ export function GoogleSheetsPanel({
                   Aba
                 </span>
                 <div className="gs-sheets">
-                  {sheets.map((s) => (
-                    <button
-                      key={s.sheet_id}
-                      type="button"
-                      className={`gs-sheet-btn ${selectedSheet === s.title ? "gs-sheet-btn--active" : ""}`}
-                      onClick={() => void handleSheetSelect(s.title)}
-                      disabled={loading}
-                    >
-                      <FileSpreadsheet size={14} strokeWidth={1.75} />
-                      {s.title}
-                    </button>
-                  ))}
+                  {sheets.map((s) => {
+                    // Abas de métricas (Economia/Totais) têm layout próprio, não o
+                    // de blocos mensais — importá-las como transações geraria lixo.
+                    // Terão importador de métricas dedicado (spec 010).
+                    const metric = isMetricTab(s.title);
+                    return (
+                      <button
+                        key={s.sheet_id}
+                        type="button"
+                        className={`gs-sheet-btn ${selectedSheet === s.title ? "gs-sheet-btn--active" : ""}`}
+                        onClick={() => void handleSheetSelect(s.title)}
+                        disabled={loading || metric}
+                        title={
+                          metric
+                            ? "Aba de métricas do método — import dedicado em breve"
+                            : undefined
+                        }
+                      >
+                        <FileSpreadsheet size={14} strokeWidth={1.75} />
+                        {s.title}
+                        {metric && <span className="gs-sheet-btn__tag">métricas</span>}
+                      </button>
+                    );
+                  })}
                 </div>
               </>
             )}
@@ -263,7 +339,7 @@ export function GoogleSheetsPanel({
           </div>
         )}
 
-        {step === "preview" && preview && (
+        {effectiveStep === "preview" && preview && (
           <div className="gs-step">
             <div className="gs-preview-head">
               <span className="gs-preview-title">
@@ -319,7 +395,7 @@ export function GoogleSheetsPanel({
           </div>
         )}
 
-        {step === "mapping" && mappings.length > 0 && (
+        {effectiveStep === "mapping" && mappings.length > 0 && (
           <div className="gs-step">
             <div className="gs-mapping-head">
               <span className="gs-mapping-title">Mapeamento de colunas</span>

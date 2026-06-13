@@ -7,7 +7,11 @@ use std::sync::Mutex;
 pub struct OAuthStateStore(pub Mutex<Option<pkce::OAuthState>>);
 pub struct AppDataDir(pub std::path::PathBuf);
 
-pub fn run_oauth_flow(
+/// Roda dentro do runtime do Tauri (`tokio::spawn` em commands.rs) — por isso é `async`
+/// de ponta a ponta. A versão anterior criava um runtime tokio aninhado e chamava
+/// `block_on` dentro do contexto async, o que PANICA ("cannot start a runtime from within
+/// a runtime") — o fluxo OAuth nunca completava (descoberto no 1º dogfooding, 2026-06-12).
+pub async fn run_oauth_flow(
     config: pkce::OAuthConfig,
     state: pkce::OAuthState,
     app_dir: std::path::PathBuf,
@@ -16,19 +20,12 @@ pub fn run_oauth_flow(
     let auth_url = state.build_auth_url(&config);
     open::that(&auth_url).map_err(|e| format!("browser: {e}"))?;
 
-    // Block until redirect arrives
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| format!("runtime: {e}"))?;
-
-    let code = rt.block_on(async {
-        let server = server::OAuthServer::new(state.redirect_port);
-        server.listen_for_code().await
-    })?;
+    // Wait for the redirect with the authorization code
+    let server = server::OAuthServer::new(state.redirect_port);
+    let code = server.listen_for_code().await?;
 
     // Exchange code for token
-    let token = exchange_token_sync(&config, &state, &code)?;
+    let token = exchange_token(&config, &state, &code).await?;
 
     // Store token
     token_store::store_token(&app_dir, &token)?;
@@ -36,60 +33,58 @@ pub fn run_oauth_flow(
     Ok(token)
 }
 
-fn exchange_token_sync(
+async fn exchange_token(
     config: &pkce::OAuthConfig,
     state: &pkce::OAuthState,
     code: &str,
 ) -> Result<token_store::StoredToken, String> {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| format!("runtime: {e}"))?;
+    let client = reqwest::Client::new();
+    let mut params = vec![
+        ("code", code.to_string()),
+        ("client_id", config.client_id.clone()),
+        ("code_verifier", state.verifier().secret().to_string()),
+        (
+            "redirect_uri",
+            format!("http://127.0.0.1:{}", state.redirect_port),
+        ),
+        ("grant_type", "authorization_code".to_string()),
+    ];
+    // Opcional no fluxo de app instalado (doc oficial); enviado quando configurado —
+    // o secret de client "Desktop" não é confidencial, vive no .env local gitignored.
+    if let Some(secret) = &config.client_secret {
+        params.push(("client_secret", secret.clone()));
+    }
 
-    rt.block_on(async {
-        let client = reqwest::Client::new();
-        let params = [
-            ("code", code.to_string()),
-            ("client_id", config.client_id.clone()),
-            ("code_verifier", state.verifier().secret().to_string()),
-            (
-                "redirect_uri",
-                format!("http://127.0.0.1:{}", state.redirect_port),
-            ),
-            ("grant_type", "authorization_code".to_string()),
-        ];
+    let resp = client
+        .post(&config.token_url)
+        .form(&params)
+        .send()
+        .await
+        .map_err(|e| format!("token request: {e}"))?;
 
-        let resp = client
-            .post(&config.token_url)
-            .form(&params)
-            .send()
-            .await
-            .map_err(|e| format!("token request: {e}"))?;
+    if !resp.status().is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("token exchange failed: {body}"));
+    }
 
-        if !resp.status().is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(format!("token exchange failed: {body}"));
-        }
+    let json: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {e}"))?;
 
-        let json: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {e}"))?;
+    let access_token = json["access_token"]
+        .as_str()
+        .ok_or("no access_token")?
+        .to_string();
+    let refresh_token = json["refresh_token"].as_str().unwrap_or("").to_string();
+    let expires_in: u64 = json["expires_in"].as_u64().unwrap_or(3600);
+    let scope = json["scope"].as_str().unwrap_or("").to_string();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
 
-        let access_token = json["access_token"]
-            .as_str()
-            .ok_or("no access_token")?
-            .to_string();
-        let refresh_token = json["refresh_token"].as_str().unwrap_or("").to_string();
-        let expires_in: u64 = json["expires_in"].as_u64().unwrap_or(3600);
-        let scope = json["scope"].as_str().unwrap_or("").to_string();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        Ok(token_store::StoredToken {
-            access_token,
-            refresh_token,
-            expires_at: now + expires_in - 60, // 60s safety margin
-            scope,
-        })
+    Ok(token_store::StoredToken {
+        access_token,
+        refresh_token,
+        expires_at: now + expires_in - 60, // 60s safety margin
+        scope,
     })
 }

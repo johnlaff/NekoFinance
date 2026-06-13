@@ -9,7 +9,7 @@
 //! Totais). Remaining slice work is in the shell: wire the row→event mapping + seed into
 //! `get_dashboard_summary` (Phase 7) and add a demo fixture (Phase 8).
 
-// Public engine API. Some outputs (`deepest_deficit`, `safe_to_spend_today_cents`, `months`) are
+// Public engine API. Some outputs (`deepest_deficit`, `cash_floor_cents`, `months`) are
 // consumed by later slices (Mia decision tools, the Totais screen), so allow unread-for-now.
 #![allow(dead_code)]
 
@@ -58,6 +58,14 @@ pub struct MonthMetric {
     pub savings_rate_bps: i64,
 }
 
+impl MonthMetric {
+    /// Renda do mês. Não é guardada à parte: `performance = renda − custo de vida`, então a
+    /// renda é a soma dos dois. Fonte única para todos os consumidores (DRY — review P3).
+    pub fn income_cents(&self) -> i64 {
+        self.performance_cents + self.cost_of_living_cents
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Forecast {
     /// Projected balance for each day from `today` to `horizon_end` inclusive.
@@ -66,10 +74,137 @@ pub struct Forecast {
     pub month_end: Vec<MonthEnd>,
     /// Lowest projected balance in the horizon and the day it occurs.
     pub deepest_deficit: Option<DayPoint>,
-    /// Max extra outflow today keeping every future day's balance >= 0.
-    pub safe_to_spend_today_cents: i64,
+    /// SÓ o piso de caixa (menor saldo do horizonte, ≥ 0) — NÃO é o "pode gastar" exibido. O
+    /// guardrail real (duplo: caixa × poupança) é [`safe_to_spend_today`]; o DTO expõe o dele.
+    /// Nome explícito para não ser confundido com o número do dashboard (review P2).
+    pub cash_floor_cents: i64,
     /// Per-month decision metrics (Totais).
     pub months: Vec<MonthMetric>,
+}
+
+/// Qual régua limita o "pode gastar hoje".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Guardrail {
+    /// Limitado pelo caixa: gastar mais empurraria algum dia futuro abaixo do piso de reserva.
+    Cash,
+    /// Limitado pela meta de poupança: o mês corrente já está no limite (ou abaixo) dos 20–30%.
+    Savings,
+}
+
+/// "Pode gastar hoje" decomposto nas duas réguas do método.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SafeToSpend {
+    /// O número honesto exibido: o MAIS APERTADO das duas réguas, nunca negativo.
+    pub amount_cents: i64,
+    /// Folga de caixa: menor saldo projetado no horizonte − piso de reserva. Pode ser a reserva
+    /// inteira (alta) mesmo quando a poupança do mês já estourou — é o "Caixa ≠ Performance".
+    pub cash_headroom_cents: i64,
+    /// Folga de poupança do mês corrente: `performance − meta×renda`. Negativa = já abaixo da
+    /// meta (gastar mais afunda a performance). `None` = régua de poupança INATIVA (mês sem
+    /// renda) → só o caixa decide. Tipado como Option para o compilador forçar o tratamento
+    /// (antes era um sentinela `i64::MAX` que vazava — review P1/P2).
+    pub savings_headroom_cents: Option<i64>,
+    /// Qual régua manda.
+    pub binding: Guardrail,
+}
+
+/// O "pode gastar hoje" fiel ao método: o mais apertado de duas réguas.
+///
+/// 1. **Caixa** — `menor saldo projetado no horizonte − piso de reserva`. É o padrão de mercado
+///    ("não fique negativo"), mas frouxo para quem tem colchão: o caixa pode crescer enquanto a
+///    poupança despenca.
+/// 2. **Poupança** — quanto cabe mantendo a taxa de poupança **do ANO** ≥ `savings_target_bps`:
+///    `poupança_ano − meta×renda_ano`. A meta de 20–30% é **média ANUAL** ("o ano tem que ser de
+///    20 a 30; tem mês que é mais, tem mês que é menos" — aula "Como viver abaixo do que ganha"),
+///    então um mês isolado não pode mandar. As figuras anuais são do REALIZADO (o ano projetado
+///    mente quando os meses futuros estão incompletos). `None` = sem renda no ano → só o caixa.
+///
+/// Espelha o gate determinístico do método: só pode gastar se a reserva continua acima do piso
+/// **E** a poupança 20–30% (no ano) se mantém.
+pub fn safe_to_spend_today(
+    fc: &Forecast,
+    annual_income_cents: i64,
+    annual_savings_cents: i64,
+    savings_target_bps: i64,
+    reserve_floor_cents: i64,
+) -> SafeToSpend {
+    let cash_headroom_cents =
+        fc.deepest_deficit.map(|p| p.balance_cents).unwrap_or(0) - reserve_floor_cents;
+
+    // Folga de poupança ANUAL = `poupança_ano − meta×renda_ano`. `None` sem renda (régua inativa).
+    let savings_headroom_cents = (annual_income_cents > 0)
+        .then(|| annual_savings_cents - savings_target_bps * annual_income_cents / 10_000);
+
+    // Régua de poupança só morde se estiver ativa E for mais apertada que o caixa.
+    let binding = match savings_headroom_cents {
+        Some(s) if s < cash_headroom_cents => Guardrail::Savings,
+        _ => Guardrail::Cash,
+    };
+    let limit = savings_headroom_cents
+        .unwrap_or(i64::MAX)
+        .min(cash_headroom_cents);
+    let amount_cents = limit.max(0);
+
+    SafeToSpend {
+        amount_cents,
+        cash_headroom_cents,
+        savings_headroom_cents,
+        binding,
+    }
+}
+
+/// Cobertura de um mês FUTURO: quanto do gasto típico já está lançado.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MonthCoverage {
+    pub year: i32,
+    pub month: u32,
+    /// Saída já lançada para o mês (fixas + diário + fatura).
+    pub projected_outflow_cents: i64,
+    /// Gasto típico de um mês (mediana dos meses realizados).
+    pub baseline_outflow_cents: i64,
+    /// `projected / baseline` em basis points (10000 = 100% do típico).
+    pub coverage_bps: i64,
+    /// Acima do limiar de confiança → a projeção do mês é crível.
+    pub is_complete: bool,
+    /// Quanto provavelmente FALTA lançar (fatura/variáveis) para o mês ficar realista.
+    pub estimated_missing_cents: i64,
+}
+
+/// Cobertura de cada mês FUTURO (estritamente após o mês corrente): quanto do gasto típico
+/// (`baseline`, a mediana dos meses realizados) já está lançado. É o "chá revelação" do método
+/// virado em métrica: um mês quase vazio projeta saldo otimista demais. O mercado não faz isso —
+/// é o diferencial. `complete_threshold_bps` = a partir de quanto o mês é confiável (ex.: 7000 =
+/// 70% do gasto típico). O mês corrente é parcial (realizado+projetado) e fica de fora.
+pub fn month_coverage(
+    months: &[MonthMetric],
+    today: NaiveDate,
+    baseline_outflow_cents: i64,
+    complete_threshold_bps: i64,
+) -> Vec<MonthCoverage> {
+    // Sem baseline (nenhum mês realizado) não dá para julgar nada — devolve vazio para o caller
+    // sinalizar "sem histórico", em vez de marcar tudo como completo (review P1).
+    if baseline_outflow_cents <= 0 {
+        return Vec::new();
+    }
+    months
+        .iter()
+        .filter(|m| (m.year, m.month) > (today.year(), today.month()))
+        .map(|m| {
+            let projected_outflow_cents = m.cost_of_living_cents;
+            // `.max(0)`: crédito/estorno pode deixar a saída do mês negativa; cobertura nunca < 0.
+            let coverage_bps =
+                (projected_outflow_cents.max(0) * 10_000 / baseline_outflow_cents).max(0);
+            MonthCoverage {
+                year: m.year,
+                month: m.month,
+                projected_outflow_cents,
+                baseline_outflow_cents,
+                coverage_bps,
+                is_complete: coverage_bps >= complete_threshold_bps,
+                estimated_missing_cents: (baseline_outflow_cents - projected_outflow_cents).max(0),
+            }
+        })
+        .collect()
 }
 
 /// Net signed effect of an event on the balance (income adds, outflows subtract).
@@ -247,11 +382,33 @@ pub fn project(
     events: &[CashflowEvent],
     horizon_end: NaiveDate,
 ) -> Forecast {
+    project_with_metrics(seed_cents, today, events, events, horizon_end)
+}
+
+/// Como [`project`], mas as MÉTRICAS por mês (performance/poupança) usam um conjunto de eventos
+/// SEPARADO do encadeamento de caixa.
+///
+/// O encadeamento diário parte da semente (que já embute todo o passado) e por isso só consome
+/// `chain_events` com `date > hoje` — somar o realizado de novo dobraria. Mas a performance do
+/// mês corrente PRECISA do realizado de hoje-pra-trás no mês (renda e saídas já lançadas), senão
+/// junho aparece com sinal trocado e o guardrail de poupança decide sobre o mês pela metade
+/// (P0 do review adversarial). Por isso `metric_events` cobre o mês inteiro (realizado + projetado).
+pub fn project_with_metrics(
+    seed_cents: i64,
+    today: NaiveDate,
+    chain_events: &[CashflowEvent],
+    metric_events: &[CashflowEvent],
+    horizon_end: NaiveDate,
+) -> Forecast {
     let mut daily = Vec::new();
     let mut balance = seed_cents;
     let mut day = today;
     while day <= horizon_end {
-        let net: i64 = events.iter().filter(|e| e.date == day).map(signed).sum();
+        let net: i64 = chain_events
+            .iter()
+            .filter(|e| e.date == day)
+            .map(signed)
+            .sum();
         balance += net;
         daily.push(DayPoint {
             date: day,
@@ -264,14 +421,14 @@ pub fn project(
     }
     let month_end = month_end_points(&daily);
     let deepest_deficit = deepest(&daily);
-    let safe_to_spend_today_cents = deepest_deficit.map(|p| p.balance_cents.max(0)).unwrap_or(0);
-    let months = month_metrics(today, events, &month_end);
+    let cash_floor_cents = deepest_deficit.map(|p| p.balance_cents.max(0)).unwrap_or(0);
+    let months = month_metrics(today, metric_events, &month_end);
 
     Forecast {
         daily,
         month_end,
         deepest_deficit,
-        safe_to_spend_today_cents,
+        cash_floor_cents,
         months,
     }
 }
@@ -402,7 +559,7 @@ mod tests {
     fn safe_to_spend_equals_min_balance() {
         let events = [ev("2026-01-03", EventKind::FixedOut, 200000)];
         let f = project(500000, d("2026-01-01"), &events, d("2026-01-04"));
-        assert_eq!(f.safe_to_spend_today_cents, 300000); // min over horizon
+        assert_eq!(f.cash_floor_cents, 300000); // min over horizon
     }
 
     // T4.2 — already negative ahead → safe-to-spend clamps to 0, never negative.
@@ -410,7 +567,114 @@ mod tests {
     fn safe_to_spend_zero_when_negative() {
         let events = [ev("2026-01-02", EventKind::FixedOut, 800000)];
         let f = project(500000, d("2026-01-01"), &events, d("2026-01-03"));
-        assert_eq!(f.safe_to_spend_today_cents, 0);
+        assert_eq!(f.cash_floor_cents, 0);
+    }
+
+    // ---- Guardrail duplo (poupança ANUAL 25% + caixa) — o furo do 1º dogfooding ----
+
+    // Caso do João: caixa cheio (colchão) MAS a poupança do ANO já estourou → pode gastar = 0,
+    // limitado pela POUPANÇA, não pelo caixa. É o "Caixa ≠ Performance" do método.
+    #[test]
+    fn safe_to_spend_savings_binds_when_cash_is_high() {
+        let events = [
+            ev("2026-06-01", EventKind::Income, 983_712),
+            ev("2026-06-02", EventKind::FixedOut, 1_070_169),
+        ];
+        let f = project(800_000, d("2026-06-01"), &events, d("2026-06-30"));
+        // Poupança do ANO (realizado) = renda 983.712, sobra −86.457 (dissaving).
+        let s = safe_to_spend_today(&f, 983_712, -86_457, 2500, 0);
+
+        // Caixa positivo e alto: 800.000 + 983.712 − 1.070.169 = 713.543, estável até fim do mês.
+        assert_eq!(s.cash_headroom_cents, 713_543);
+        // Meta 25% × renda anual = 245.928. Folga = −86.457 − 245.928 = −332.385 (abaixo da meta).
+        assert_eq!(s.savings_headroom_cents, Some(-332_385));
+        assert_eq!(s.binding, Guardrail::Savings);
+        assert_eq!(s.amount_cents, 0); // honesto: 0, não os R$ 7.135 de caixa
+    }
+
+    // Conta futura pré-lançada (fatura/salário) num mês à frente limita o gasto de HOJE pelo
+    // caixa — só visível porque o horizonte varre além do mês corrente.
+    #[test]
+    fn safe_to_spend_cash_binds_on_future_month_commitment() {
+        let events = [
+            ev("2026-06-01", EventKind::Income, 1_000_000),
+            ev("2026-07-15", EventKind::FixedOut, 900_000), // fatura lá na frente
+        ];
+        let f = project(0, d("2026-06-01"), &events, d("2026-07-31"));
+        // Poupança do ano folgada: renda 1.000.000, sobra 1.000.000 → folga +750.000.
+        let s = safe_to_spend_today(&f, 1_000_000, 1_000_000, 2500, 0);
+
+        // Caixa cai para 100.000 em 15/jul (o "buraco do futuro").
+        assert_eq!(s.cash_headroom_cents, 100_000);
+        // Poupança de junho está folgada (só renda no mês): 1.000.000 − 250.000 = 750.000.
+        assert_eq!(s.savings_headroom_cents, Some(750_000));
+        assert_eq!(s.binding, Guardrail::Cash);
+        assert_eq!(s.amount_cents, 100_000);
+    }
+
+    // O piso de reserva reduce a folga de caixa (não pode comer a reserva).
+    #[test]
+    fn safe_to_spend_reserve_floor_subtracts_from_cash() {
+        let events = [
+            ev("2026-06-01", EventKind::Income, 1_000_000),
+            ev("2026-07-15", EventKind::FixedOut, 900_000),
+        ];
+        let f = project(0, d("2026-06-01"), &events, d("2026-07-31"));
+        let s = safe_to_spend_today(&f, 1_000_000, 1_000_000, 2500, 50_000);
+        assert_eq!(s.cash_headroom_cents, 50_000); // 100.000 − 50.000 de piso
+        assert_eq!(s.amount_cents, 50_000);
+    }
+
+    // Cobertura: meses futuros esparsos (só fixas) vs gasto típico → sinaliza incompleto.
+    #[test]
+    fn month_coverage_flags_sparse_future_months() {
+        let mm = |year, month, cost: i64| MonthMetric {
+            year,
+            month,
+            performance_cents: 0,
+            cost_of_living_cents: cost,
+            real_daily_avg_cents: 0,
+            savings_rate_bps: 0,
+        };
+        // Mês corrente (jun) ignorado; jul completo (R$ 1.000), ago esparso (R$ 380).
+        let months = [mm(2026, 6, 900), mm(2026, 7, 1_000), mm(2026, 8, 380)];
+        let cov = month_coverage(&months, d("2026-06-13"), 1_000, 7_000);
+        assert_eq!(cov.len(), 2); // só jul e ago (jun corrente fora)
+        assert_eq!(cov[0].month, 7);
+        assert_eq!(cov[0].coverage_bps, 10_000); // 100%
+        assert!(cov[0].is_complete);
+        assert_eq!(cov[0].estimated_missing_cents, 0);
+        assert_eq!(cov[1].month, 8);
+        assert_eq!(cov[1].coverage_bps, 3_800); // 38% do típico
+        assert!(!cov[1].is_complete);
+        assert_eq!(cov[1].estimated_missing_cents, 620); // 1000 − 380
+    }
+
+    // Sem baseline (nenhum mês realizado) → cobertura VAZIA, não "tudo completo" (review P1).
+    #[test]
+    fn month_coverage_empty_without_baseline() {
+        let mm = |year, month, cost: i64| MonthMetric {
+            year,
+            month,
+            performance_cents: 0,
+            cost_of_living_cents: cost,
+            real_daily_avg_cents: 0,
+            savings_rate_bps: 0,
+        };
+        let months = [mm(2026, 7, 1_000), mm(2026, 8, 380)];
+        let cov = month_coverage(&months, d("2026-06-13"), 0, 6_000);
+        assert!(cov.is_empty());
+    }
+
+    // Sem renda no ano: régua de poupança INATIVA (None), só o caixa decide.
+    #[test]
+    fn safe_to_spend_savings_inactive_without_income() {
+        let events = [ev("2026-06-10", EventKind::Daily, 30_000)];
+        let f = project(200_000, d("2026-06-01"), &events, d("2026-06-30"));
+        let s = safe_to_spend_today(&f, 0, -30_000, 2500, 0);
+        assert_eq!(s.savings_headroom_cents, None);
+        assert_eq!(s.binding, Guardrail::Cash);
+        assert_eq!(s.amount_cents, 170_000); // 200.000 − 30.000, só caixa
     }
 
     // ---- Phase 5: monthly metrics / Totais (US6) ----

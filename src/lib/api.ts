@@ -7,6 +7,15 @@ export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in
 export const GOOGLE_CLIENT_ID =
   (import.meta.env["VITE_GOOGLE_CLIENT_ID"] as string) ?? "";
 
+/**
+ * Desktop-app client secret (optional in Google's installed-app token exchange).
+ * Not confidential for this client type; lives only in the gitignored local .env.
+ * Injected into the OAuth invoke payloads here so callers never handle it.
+ */
+const GOOGLE_CLIENT_SECRET =
+  (import.meta.env["VITE_GOOGLE_CLIENT_SECRET"] as string) ?? "";
+const clientSecretOrNull = GOOGLE_CLIENT_SECRET || null;
+
 export type AuthStatus = "connected" | "expired" | "disconnected" | "loading";
 
 export interface DashboardSummary {
@@ -96,14 +105,63 @@ export interface MonthEnd {
   balance_cents: number;
 }
 
+/** Per-month decision metrics (Caixa ≠ Performance). All money in cents. */
+export interface MonthMetric {
+  year: number;
+  month: number;
+  income_cents: number;
+  performance_cents: number;
+  cost_of_living_cents: number;
+  savings_rate_bps: number;
+}
+
+/** Poupança do ano: realizada (honesta) vs projetada (otimista se o futuro está incompleto). */
+export interface AnnualSavings {
+  realized_income_cents: number;
+  realized_savings_cents: number;
+  realized_rate_bps: number;
+  projected_income_cents: number;
+  projected_savings_cents: number;
+  projected_rate_bps: number;
+  target_bps: number;
+}
+
+/** Cobertura de um mês futuro: quanto do gasto típico já está lançado (previsibilidade). */
+export interface MonthCoverage {
+  year: number;
+  month: number;
+  projected_outflow_cents: number;
+  baseline_outflow_cents: number;
+  coverage_bps: number;
+  is_complete: boolean;
+  estimated_missing_cents: number;
+}
+
 /** Projection DTO from the deterministic engine (spec 005). All money in cents. */
 export interface Forecast {
   today: string;
   horizon_end: string;
+  /** Poupança do ano — realizada vs projetada. */
+  annual_savings: AnnualSavings;
+  /** Cobertura por mês futuro (vazio se a projeção está completa). */
+  coverage: MonthCoverage[];
+  /** Gasto típico/mês (mediana realizada). 0 = sem histórico → previsibilidade indeterminada. */
+  baseline_outflow_cents: number;
+  /** Último mês cuja projeção é confiável ("YYYY-MM"); null se não há baseline para avaliar. */
+  trusted_through_month: string | null;
+  /** Soma do que falta lançar nos meses incompletos. */
+  total_missing_cents: number;
+  /** "Pode gastar hoje" honesto: o mais apertado de caixa × poupança. */
   safe_to_spend_today_cents: number;
+  cash_headroom_cents: number;
+  /** `null` quando a régua de poupança está inativa (mês sem renda) → só o caixa decide. */
+  savings_headroom_cents: number | null;
+  binding_guardrail: "cash" | "savings";
+  savings_target_bps: number;
   deepest_deficit: DayPoint | null;
   daily: ForecastDay[];
   month_end: MonthEnd[];
+  months: MonthMetric[];
 }
 
 /** Pocket types accepted by `create_account` (credit_card is the invoice slice). */
@@ -174,7 +232,7 @@ export function checkAuthStatus(): Promise<AuthStatus> {
 }
 
 export function startOAuthFlow(clientId: string): Promise<string> {
-  return invoke("start_oauth_flow", { clientId });
+  return invoke("start_oauth_flow", { clientId, clientSecret: clientSecretOrNull });
 }
 
 export function disconnectGoogle(): Promise<void> {
@@ -182,14 +240,21 @@ export function disconnectGoogle(): Promise<void> {
 }
 
 export function listUserSpreadsheets(clientId: string): Promise<UserSpreadsheet[]> {
-  return invoke("list_user_spreadsheets", { clientId });
+  return invoke("list_user_spreadsheets", {
+    clientId,
+    clientSecret: clientSecretOrNull,
+  });
 }
 
 export function listSheetNames(
   spreadsheetId: string,
   clientId: string,
 ): Promise<SheetInfo[]> {
-  return invoke("list_sheet_names", { spreadsheetId, clientId });
+  return invoke("list_sheet_names", {
+    spreadsheetId,
+    clientId,
+    clientSecret: clientSecretOrNull,
+  });
 }
 
 export function fetchSheetPreview(
@@ -197,7 +262,12 @@ export function fetchSheetPreview(
   sheetName: string,
   clientId: string,
 ): Promise<SheetPreview> {
-  return invoke("fetch_sheet_preview", { spreadsheetId, sheetName, clientId });
+  return invoke("fetch_sheet_preview", {
+    spreadsheetId,
+    sheetName,
+    clientId,
+    clientSecret: clientSecretOrNull,
+  });
 }
 
 export function getSheetMappings(sheetName: string): Promise<SheetMappingEntry[]> {
@@ -209,7 +279,12 @@ export function detectSheetLayout(
   sheetName: string,
   clientId: string,
 ): Promise<SheetLayout> {
-  return invoke("detect_sheet_layout", { spreadsheetId, sheetName, clientId });
+  return invoke("detect_sheet_layout", {
+    spreadsheetId,
+    sheetName,
+    clientId,
+    clientSecret: clientSecretOrNull,
+  });
 }
 
 export function saveSheetMapping(
@@ -231,6 +306,7 @@ export function importSheetData(
     sheetName,
     profileId,
     clientId,
+    clientSecret: clientSecretOrNull,
   });
 }
 

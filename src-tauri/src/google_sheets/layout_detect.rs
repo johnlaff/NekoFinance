@@ -13,20 +13,20 @@ pub struct SheetLayout {
     pub date_direction: String,
 }
 
-const MONTH_NAMES_PT: &[&str] = &[
-    "JANEIRO",
-    "FEVEREIRO",
-    "MARÇO",
-    "MARCO",
-    "ABRIL",
-    "MAIO",
-    "JUNHO",
-    "JULHO",
-    "AGOSTO",
-    "SETEMBRO",
-    "OUTUBRO",
-    "NOVEMBRO",
-    "DEZEMBRO",
+const MONTH_NAMES_PT: &[(&str, u32)] = &[
+    ("JANEIRO", 1),
+    ("FEVEREIRO", 2),
+    ("MARÇO", 3),
+    ("MARCO", 3),
+    ("ABRIL", 4),
+    ("MAIO", 5),
+    ("JUNHO", 6),
+    ("JULHO", 7),
+    ("AGOSTO", 8),
+    ("SETEMBRO", 9),
+    ("OUTUBRO", 10),
+    ("NOVEMBRO", 11),
+    ("DEZEMBRO", 12),
 ];
 
 const HEADER_KEYWORDS: &[&str] = &[
@@ -134,10 +134,34 @@ fn calculate_block_size(rows: &[Vec<String>], month_names_row: usize) -> Result<
 }
 
 fn is_month_name(cell: &str) -> bool {
+    month_number_from_name(cell).is_some()
+}
+
+/// Mapeia o nome de um mês PT-BR para o seu número (1–12). Aceita o nome exato, a
+/// abreviação exata de 3 letras ("FEV") ou o nome completo como prefixo ("JANEIRO 2026") —
+/// mas nunca prefixo solto de 3 letras, senão "OUTROS" viraria OUTUBRO.
+/// É a âncora do parse por bloco: o mês vem do NOME na célula, nunca da posição do bloco,
+/// para que JANEIRO na coluna 0 e células espúrias entre blocos não desloquem os meses.
+pub fn month_number_from_name(cell: &str) -> Option<u32> {
     let upper = cell.trim().to_uppercase();
+    if upper.len() < 3 {
+        return None;
+    }
     MONTH_NAMES_PT
         .iter()
-        .any(|&m| upper == m || upper.starts_with(&m[..3]))
+        .find(|(name, _)| upper == *name || upper == name[..3] || upper.starts_with(*name))
+        .map(|(_, n)| *n)
+}
+
+/// Abas de métricas do método (`Economia`, `Totais`): layout `mês|Entradas|Economia|%`,
+/// não blocos mensais — nunca importar como transações. A detecção estrutural já as rejeita
+/// (exige ≥2 nomes de mês na MESMA linha; nelas os meses ficam um por linha), mas o skip
+/// por nome é a garantia explícita. Importador de métricas dedicado: spec 010.
+pub fn is_metric_tab(sheet_name: &str) -> bool {
+    matches!(
+        sheet_name.trim().to_lowercase().as_str(),
+        "economia" | "totais" | "total"
+    )
 }
 
 fn is_header_keyword(cell: &str) -> bool {
@@ -196,6 +220,38 @@ pub struct SheetMappingEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metric_tabs_are_never_importable_as_transactions() {
+        assert!(is_metric_tab("Economia"));
+        assert!(is_metric_tab("ECONOMIA"));
+        assert!(is_metric_tab(" Totais "));
+        assert!(!is_metric_tab("2026"));
+        assert!(!is_metric_tab("Economia Doméstica"));
+    }
+
+    /// A aba Economia tem meses um por linha (`mês|Entradas|Economia|%`) — a detecção
+    /// estrutural deve rejeitá-la mesmo sem o filtro por nome.
+    #[test]
+    fn economia_layout_fails_structural_detection() {
+        let rows: Vec<Vec<String>> = vec![
+            vec![
+                "mês".into(),
+                "Entradas".into(),
+                "Economia".into(),
+                "%".into(),
+            ],
+            vec!["JANEIRO".into(), "5000".into(), "1500".into(), "30%".into()],
+            vec![
+                "FEVEREIRO".into(),
+                "5200".into(),
+                "1000".into(),
+                "19%".into(),
+            ],
+            vec!["MARÇO".into(), "5100".into(), "1200".into(), "24%".into()],
+        ];
+        assert!(detect_layout(&rows, "Economia").is_err());
+    }
 
     fn fixture_cashflow_rows() -> Vec<Vec<String>> {
         vec![
@@ -306,6 +362,22 @@ mod tests {
         assert!(is_month_name("MARÇO"));
         assert!(!is_month_name(""));
         assert!(!is_month_name("foo"));
+    }
+
+    #[test]
+    fn test_month_number_from_name() {
+        assert_eq!(month_number_from_name("JANEIRO"), Some(1));
+        assert_eq!(month_number_from_name("janeiro"), Some(1));
+        assert_eq!(month_number_from_name("MARÇO"), Some(3));
+        assert_eq!(month_number_from_name("MARCO"), Some(3));
+        assert_eq!(month_number_from_name("DEZEMBRO"), Some(12));
+        assert_eq!(month_number_from_name("DEZ"), Some(12));
+        assert_eq!(month_number_from_name("JANEIRO 2026"), Some(1));
+        assert_eq!(month_number_from_name("TOTAL"), None);
+        assert_eq!(month_number_from_name(""), None);
+        assert_eq!(month_number_from_name("Saldo"), None);
+        // "OUTROS" é cabeçalho real de bloco de notas — não pode virar OUTUBRO.
+        assert_eq!(month_number_from_name("OUTROS"), None);
     }
 
     #[test]

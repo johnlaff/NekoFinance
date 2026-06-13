@@ -16,6 +16,9 @@ import { getDashboardSummary, getForecast, isTauri } from "../lib/api";
 import { fmtBRL, fmtDayMonth, monthNamePtBR } from "../lib/format";
 import { useCommand } from "../lib/useCommand";
 import { useCountUp } from "../lib/useCountUp";
+import { PrevisibilidadeCard } from "./dashboard/PrevisibilidadeCard";
+import { ColchaoCard } from "./dashboard/ColchaoCard";
+import { PerformanceCard } from "./dashboard/PerformanceCard";
 
 export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
   const summaryQ = useCommand("get_dashboard_summary", getDashboardSummary);
@@ -77,6 +80,21 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
       ? forecast.deepest_deficit
       : null;
 
+  // Guardrail duplo (caixa × poupança). "Pode gastar" honesto = o mais apertado dos dois.
+  const savingsBinds = forecast?.binding_guardrail === "savings";
+  const targetPct = forecast ? Math.round(forecast.savings_target_bps / 100) : 25;
+  const ym = forecast ? forecast.today.slice(0, 7) : "";
+  // Tabela diária mostra só o mês corrente; o histórico completo é o Livro-razão (slice 8).
+  const dailyThisMonth = (forecast?.daily ?? []).filter(
+    (d) => d.date.slice(0, 7) === ym,
+  );
+  // Poupança realizada do ano (para a frase de contexto do "pode gastar"). Os cards de
+  // Previsibilidade/Colchão/Performance derivam o resto internamente (componentes próprios).
+  const realizedRatePct = forecast
+    ? (forecast.annual_savings.realized_rate_bps / 100).toFixed(1)
+    : "0.0";
+  const hasData = (summary?.transaction_count ?? 0) > 0;
+
   return (
     <div className="dash">
       <div className="dash-hero">
@@ -100,9 +118,26 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
               <b className="dash-hero__money">
                 {fmtBRL(forecast.safe_to_spend_today_cents)}
               </b>{" "}
-              hoje sem furar o mês.
+              hoje{" "}
+              {savingsBinds
+                ? `sem furar sua meta de poupança do ano (${targetPct}%).`
+                : "antes do menor saldo do futuro."}
             </div>
           )}
+          {forecast &&
+            savingsBinds &&
+            forecast.savings_headroom_cents !== null &&
+            forecast.savings_headroom_cents < 0 && (
+              <div className="dash-hero__line dash-safe__ctx">
+                Sua poupança do ano está em {realizedRatePct}% (meta {targetPct}%). Em
+                caixa há{" "}
+                <b className="dash-hero__money">
+                  {fmtBRL(forecast.cash_headroom_cents)}
+                </b>
+                , mas isso é sua reserva — gastar no cartão hoje vira fatura e afunda os
+                meses à frente.
+              </div>
+            )}
         </div>
         <Button
           variant="secondary"
@@ -123,6 +158,10 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
           </span>
         </div>
       )}
+
+      {forecast && hasData && <PrevisibilidadeCard forecast={forecast} />}
+
+      {forecast && hasData && <ColchaoCard forecast={forecast} />}
 
       <div className="dash-grid4">
         <MetricTile
@@ -153,9 +192,11 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
                 ? "down"
                 : "neutral"
           }
-          sublabel="Meta: 6 meses de gastos"
+          sublabel="Meta: 12 meses de gastos"
         />
       </div>
+
+      {forecast && <PerformanceCard forecast={forecast} />}
 
       <div className="dash-2col">
         <div className="dash-card">
@@ -172,6 +213,12 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
                 title="Nenhuma transação"
                 description="Conecte o Google Sheets e importe sua planilha."
               />
+            ) : dailyThisMonth.length === 0 ? (
+              <EmptyState
+                variant="empty"
+                title="Sem projeção para este mês"
+                description="Não há dias projetados no mês corrente."
+              />
             ) : (
               <div className="fc-scroll">
                 <table className="txn-table fc-table">
@@ -185,7 +232,7 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {forecast.daily.map((d) => {
+                    {dailyThisMonth.map((d) => {
                       const isToday = d.date === forecast.today;
                       return (
                         <tr key={d.date} className={isToday ? "fc-today" : ""}>

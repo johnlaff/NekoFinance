@@ -792,6 +792,21 @@ h3,
   font-weight: var(--fw-semibold);
 }
 
+.gs-sheet-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.gs-sheet-btn__tag {
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  border: var(--bw-hair) solid var(--border);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--text-muted);
+}
+
 .gs-loading {
   display: flex;
   align-items: center;
@@ -1209,6 +1224,235 @@ h3,
 /* ---- Forecast (previsão diária) ---- */
 .dash-safe {
   margin-top: var(--space-2);
+}
+
+.dash-safe__ctx {
+  margin-top: var(--space-1);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  line-height: var(--lh-normal);
+}
+
+/* Previsibilidade — cobertura dos meses futuros */
+.dash-predict {
+  margin-top: var(--space-4);
+}
+
+.dash-predict.is-incomplete {
+  border-color: color-mix(in srgb, var(--brass-400, var(--primary)) 30%, transparent);
+}
+
+.dash-predict__trusted {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.dash-predict__ok {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--money-pos);
+}
+
+.dash-predict__neutral {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  line-height: var(--lh-normal);
+}
+
+.dash-predict__warn {
+  margin: 0 0 var(--space-3);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  line-height: var(--lh-normal);
+}
+
+.dash-predict__rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.dash-predict__row {
+  display: grid;
+  grid-template-columns: 84px 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.dash-predict__month {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  text-transform: capitalize;
+}
+
+.dash-predict__bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-hover);
+  overflow: hidden;
+}
+
+.dash-predict__fill {
+  display: block;
+  height: 100%;
+  /* Progresso de preenchimento (mais = mais completo) — tom de atenção quente, NÃO vermelho
+     (vermelho cresceria com o "bom", sinal invertido — review P2). */
+  background: var(--brass-400, var(--primary));
+  border-radius: 999px;
+}
+
+.dash-predict__pct {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-predict__hint {
+  margin: var(--space-3) 0 0;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  line-height: var(--lh-normal);
+}
+
+.dash-predict__savings {
+  margin: var(--space-3) 0 0;
+  padding-top: var(--space-3);
+  border-top: var(--bw-hair) solid var(--border);
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+.dash-predict__muted {
+  color: var(--text-faint);
+}
+
+/* Coaching de adaptação — colchão */
+.dash-colchao {
+  margin-top: var(--space-4);
+}
+
+.dash-colchao__phase {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.dash-colchao__nums {
+  display: flex;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+}
+
+.dash-colchao__num {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dash-colchao__label {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.dash-colchao__val {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-colchao__val.positive {
+  color: var(--money-pos);
+}
+
+.dash-colchao__val.negative {
+  color: var(--money-neg);
+}
+
+.dash-colchao__val--muted {
+  color: var(--text-faint);
+}
+
+.dash-colchao__text {
+  margin: var(--space-3) 0 0;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  line-height: var(--lh-normal);
+}
+
+.dash-colchao__next {
+  margin: var(--space-2) 0 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  line-height: var(--lh-normal);
+}
+
+/* Performance por mês (Caixa ≠ Performance) */
+.dash-perf {
+  margin-top: var(--space-4);
+}
+
+.dash-perf__hint {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+
+.dash-perf__row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--space-2);
+  padding: 8px 16px 16px;
+}
+
+.dash-perf__cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3);
+  border: var(--bw-hair) solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.dash-perf__cell.is-below {
+  border-color: color-mix(in srgb, var(--money-neg) 35%, transparent);
+  background: var(--danger-tint);
+}
+
+.dash-perf__month {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  text-transform: capitalize;
+}
+
+.dash-perf__val {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-perf__val.positive {
+  color: var(--money-pos);
+}
+
+.dash-perf__val.negative {
+  color: var(--money-neg);
+}
+
+.dash-perf__val--muted {
+  color: var(--text-faint);
+}
+
+.dash-perf__cell.is-incomplete {
+  opacity: 0.7;
+  border-style: dashed;
+}
+
+.dash-perf__rate {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
 }
 
 .dash-deficit {
