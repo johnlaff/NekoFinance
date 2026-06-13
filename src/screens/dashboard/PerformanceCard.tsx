@@ -14,11 +14,13 @@ export function PerformanceCard({ forecast }: { forecast: Forecast }) {
     .slice(0, 4);
   if (monthsAhead.length === 0) return null;
 
-  const incompleteKeys = new Set(
-    forecast.coverage
-      .filter((c) => !c.is_complete)
-      .map((c) => `${c.year}-${String(c.month).padStart(2, "0")}`),
-  );
+  // Chaves YYYY-MM dos meses incompletos, em uma única passada (sem filter().map()).
+  const incompleteKeys = new Set<string>();
+  for (const c of forecast.coverage) {
+    if (!c.is_complete) {
+      incompleteKeys.add(`${c.year}-${String(c.month).padStart(2, "0")}`);
+    }
+  }
 
   return (
     <section aria-labelledby="dash-perf-title" className="dash-card dash-perf">
