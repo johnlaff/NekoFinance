@@ -2,7 +2,9 @@
 
 Use this prompt in Claude Design or a design-focused Claude session. It assumes the repo already has an initial design system and asks Claude Design to refine it into a production-ready, domain-specific system.
 
-Updated 2026-06-12 with repo/spec analysis, the public example workbook structure, source-neutral methodology synthesis, and 2026 market/state-of-the-art design-system research.
+Updated 2026-06-13 after live dogfooding against the real workbook: the design system must now reflect what the spreadsheet actually contains (cell notes as the real ledger detail, an unused savings column, credit-first daily spend, third-party pass-throughs), the deeper method (annual savings average, predictability/coverage, cash ≠ performance), an adaptation-coaching layer, the owner's motion taste (animated, fluid, "wow" reveals), and a hard product lesson: the dashboard accreted bolt-on cards and now needs a coherent information architecture, not more cards.
+
+Earlier pass (2026-06-12): repo/spec analysis, public example workbook structure, source-neutral methodology synthesis, 2026 market/state-of-the-art design-system research.
 
 Do not attach raw private methodology/source files to Claude Design. If methodology input is needed, provide only a source-neutral summary of rules, workflows, examples, and edge cases.
 
@@ -20,6 +22,7 @@ Language/locale: PT-BR UI copy, BRL currency, Brazilian financial concepts.
 Brand: precisa, discreta, confiável, amigável.
 Anti-references: traditional banks, gamified apps, corporate ERPs, neon neobanks, generic purple AI dashboards, childish mascots.
 Current design direction: dark-first “Midnight Ledger”: graphite background, jade primary, brass warmth, Hanken Grotesk UI, Geist Mono money, Newsreader only for methodology/editorial content.
+Motion taste (owner, explicit): the product should feel animated and fluid, with deliberate “wow” reveals. The app already ships a circular-reveal theme switch via the View Transitions API; treat that as the motion signature to extend, not a one-off. Motion is chrome over a calm dark surface; it never animates a critical money value into existence and always has a `prefers-reduced-motion` fallback. The goal is a reading surface that feels alive, not a dashboard that twitches.
 </context>
 
 <research_basis>
@@ -49,6 +52,8 @@ Problems to fix:
 - Production has honest current/future separation: Dashboard, Transações, Configurações/import, Metodologia, and a Mia placeholder exist; full chat, write-back approval flow, Crédito/Fatura, Caixa de revisão, and advanced reconciliation are future/partial.
 - Current tokens cover brand, text, surfaces, money, owners, motion, spacing, elevation, and charts, but not enough semantic state tokens for review/confidence, source cells, checksum conflicts, rollback, privacy, connection lifecycle, liquidity, invoice pressure, or density.
 - Some production components still use inline styles or screen-local classes; the updated DS should define migration targets, not demand a big-bang rewrite.
+- Dogfooding lesson (the central UX problem to solve): the Dashboard accreted feature cards one at a time (forecast hero, safe-to-spend, deficit notice, a predictability/coverage card, an adaptation/“colchão” card, a four-tile metric grid, a per-month performance strip, the daily projection table, a Mia placeholder, a pockets card). Each was correct in isolation; stacked, they degraded into an incoherent vertical pile with no information hierarchy. The redesign’s first job is a real Dashboard IA — decide what is the single hero, what is secondary, what collapses behind disclosure, what moves to a dedicated screen — not to style more cards. Card stacking is the failure mode here; reach for sectioning, progressive disclosure, and a deliberate reading order instead.
+- New production concepts that emerged from dogfooding and need first-class DS contracts: a predictability/coverage indicator (per future month: how much of typical spend is already entered, “trusted through month X”, what is missing), a “pode gastar hoje” guardrail that is the tighter of cash floor and annual savings, a cash-vs-performance distinction surfaced per month, and an adaptation-coaching surface (see the adaptation_coaching section). These currently live as bespoke cards with ad-hoc classes; the DS must give them stable, accessible, motion-aware contracts.
 </repo_findings>
 
 <current_repo_snapshot>
@@ -110,6 +115,12 @@ Method principles the UI must embody:
 - A red forecast is a signal for action, not a moral failure. A green forecast can still be unhealthy if the savings/reserve rate is structurally too low.
 - Do not encourage cutting risk protections such as health, housing, insurance, or other high-consequence commitments casually.
 - Income increases should default to protecting/saving first, then intentional lifestyle expansion.
+- The savings target (20–30% of income) is an ANNUAL average, not a monthly pass/fail. Some months are above, some below; what matters is the year. UI must never shame a single weak month as “below target”; it judges the year-to-date / annual position and treats monthly variance as normal.
+- Predictability is the core of the method: the user looks at the present and the future at the same time. A future left empty produces a falsely optimistic projection (the balance climbs as if the user stops eating). Surfacing “how complete is each future month, and what is still missing to make it real” is a first-class job, and a differentiator no mainstream app does.
+- Cash is not performance. The running balance can grow on an accumulated buffer while a given month’s performance (income minus outflow) is thin or negative. Show both, and never let a healthy cash balance hide a structurally weak savings rate.
+- Cost of living = total outflow minus deliberate savings/investment. The emergency reserve is expressed as cost-of-living × N months (commonly a 12-month “at peace” target), and is a manual decision gate for big purchases, not an automatic block. Reserve coverage should be derived (reserve ÷ monthly cost), not a static number.
+- Credit hijacks future salary: today’s card spend becomes a fixed outflow at the invoice due date, so a future month’s performance can already be negative before it arrives. Make that pressure visible without shame, and never double-count it (the lump lands once, at the due date).
+- A correct daily number is the tighter of two limits: cash floor (won’t drive any future day below the reserve) and the annual savings room. Present “you can spend up to X today” as the honest minimum of both, with the binding reason stated.
 
 Source-neutral methodology domains the design must support:
 - Onboarding from real current cash, known income dates, fixed bills, current card bills, future installments, reserve amount, target reserve months, and daily-spend baseline.
@@ -132,6 +143,40 @@ Methodology support-answer pattern:
 - Suggest the next check-in or review gate.
 </source_neutral_methodology>
 
+<adaptation_coaching>
+The user is adapting their real habits to the method and will diverge from it in legitimate ways. The app’s job is to detect those gaps from the data and coach toward the method, never to scold. This is a first-class product surface, not a tooltip.
+
+Core principle: recognize before you teach. Name what the user already does (and validate it) before suggesting the next step. The copilot never says “you should” without first saying “you already do X.”
+
+Named adaptation period with three phases the UI makes explicit, so the learning curve is expected and visible:
+- Map: import and see the real picture; expect gaps.
+- Calibrate: fill the future, classify income, surface the gaps; numbers stabilize.
+- Operate: the daily check-in and the guardrails run cleanly.
+Each gap belongs to a phase; show the user where they are and what closes the gap.
+
+Worked gap the design must support (the “cushion” case): the user keeps the surplus from good months as a cash buffer to cover bad months, instead of moving money into a formal savings line and later withdrawing it. This is a valid adaptation. The surface shows, side by side, “registered savings: R$ 0” (muted) and “cushion built this year (realized): R$ X · Y%” (primary), states plainly that the user saves via the cushion rather than a formal line, and offers the next step (formalize savings + a named reserve) as an opt-in, calm invitation — “next level, when you want” — not a correction. Negative-buffer months read as “the cushion did its job,” not as failure.
+
+Other gaps detected the same way: credit-first (no daily speedometer) → teach the invoice/credit-pressure view; future months under-filled → the coverage indicator plus a concrete “enter X, Y, Z to make this month real” checklist; pass-throughs inflating cost of living → the owner/net affordance; untyped variable income → a one-time classification.
+
+Market state of the art to draw from (source-neutral): structural friction that won’t let a period “close” with method steps unreconciled (YNAB-style); proactive, opt-in-tone intervention before damage with a chosen voice (honest vs gentle) (Cleo-style); and an explicitly named, expectation-setting adaptation period. No competitor combines all three; doing so is the defensible difference. Tone is always calm guidance: a red/negative month is a GPS signal, not a moral verdict; progress is shown without gamification (no streaks, confetti, badges).
+</adaptation_coaching>
+
+<motion_and_wow>
+The owner explicitly wants the product to feel animated and fluid, with deliberate “wow” moments. Treat motion as part of the build, designed up front, not a final polish pass.
+
+Signature: the app already does a circular-reveal theme switch via the View Transitions API. Extend that language. Good places for expressive, content-aware motion: theme/screen transitions (circular or directional reveals), the daily check-in confirmation, a forecast/coverage value resolving, staggered entrance of a list’s rows, a lump expanding into its noted sub-items, the cushion/adaptation card revealing its breakdown.
+
+Non-negotiable guardrails (this is a finance reading surface):
+- Data is king, motion is chrome. Never animate a critical money figure into existence in a way that delays the user reading it; the value is present and correct first, motion decorates the arrival.
+- Every animation has a `prefers-reduced-motion: reduce` alternative (crossfade or instant). The circular reveal degrades to a clean theme swap.
+- Ease out with exponential curves; no bounce, no elastic, nothing playful-gamified (that hits the anti-reference wall).
+- Stagger is per-content and purposeful, not one uniform entrance bolted onto every section. The reveal should fit what it reveals.
+- Reveals enhance an already-visible default; never gate finance content behind a class-triggered transition that could fail to fire (hidden tab, headless render) and ship blank.
+- Premium materials are allowed where they stay smooth and serve meaning: blur/backdrop-filter, clip-path/mask for reveals, soft glow on a focused/positive state. Use View Transitions and a real motion library (e.g. Motion/GSAP) rather than hand-rolled keyframes for anything non-trivial; validate performance on the Tauri WebView.
+
+Deliverable: a motion system in the token set (durations, easing curves, named transition presets like theme-reveal, row-stagger, value-resolve, lump-expand), each with its reduced-motion fallback, and guidance on where motion is encouraged vs where it is forbidden (never on a number the user is trying to read, never as decorative idle loops on finance-critical surfaces).
+</motion_and_wow>
+
 <spreadsheet_context>
 The public example workbook is formula-heavy, not a clean transaction database.
 
@@ -147,6 +192,14 @@ Observed structure:
 - The `Economia` sheet uses year blocks with `mês | Entradas | Economia | %`. `Entradas` and `%` are formula/literal history fields; write-back targets only the correct `Economia` cell after validation.
 - The app must distinguish imported/realized data, manual projections from the spreadsheet, app-generated projections, reconciled lumps, shadowed items, and review-required conflicts.
 - Never design as if the app owns a perfect normalized source from day one.
+
+Verified against the real workbook during dogfooding (design for THIS reality, source-neutral):
+- The real ledger detail lives in CELL NOTES, not in cell values. Hundreds of notes hold the human breakdown of each entry: who it was for, what it was, the per-line amounts inside one lump. A single `Saída` cell can be a fatura whose note lists many items by person and category. The DS must treat notes as the primary record-keeping layer: show them, let the user read/expand a lump into its noted breakdown, and never reduce an entry to a generic “Saída <month>” label. Design a TransactionRow / lump-expander that surfaces noted sub-items.
+- The savings (`Economia`) column is commonly left at 0 even when the user is in fact saving. The deliberate-savings line is often unused; the real saving shows up as a growing balance buffer (a “cushion”) instead. Design must not read `Economia = 0` as “saves nothing”; it is an adaptation state to coach (see adaptation_coaching), with the cushion measured from realized net.
+- The daily-variable (`Diário`) column can be all zeros for a credit-first user: daily spend goes on the card and lands as an invoice lump at the due date, so the daily “speedometer” is empty by design. Don’t show `Diário hoje R$ 0` as a measured metric when the user simply doesn’t track daily debit; show it as not-applicable / credit-first, and lean into a credit/invoice-pressure view instead.
+- Third-party pass-throughs are mixed into the raw rows: an amount that appears as both an inflow and a matching outflow (a bill paid by/for another person, an installment in the user’s name paid by a relative). They are net-zero on performance but inflate gross inflow/outflow and the cost-of-living base. The DS needs an owner/pass-through affordance (a chip + an expandable net view) so the user can see “gross vs net” without surveillance framing.
+- Income is variable: a stable base salary plus occasional extras (13th, profit-share, freelance) that swing monthly totals. Design conservative-income patterns: forecast on the base, show the extra as a separate “if it arrives” layer, and let the user classify an extra once.
+- Future months are frequently UNDER-filled (only fixed bills and salary, missing the card invoice and variable spend), which makes the projected year look far healthier than the realized one. The DS must make “this future month is incomplete, so its projection is optimistic” legible (coverage indicator), and keep the realized figure as the honest one.
 </spreadsheet_context>
 
 <privacy_policy>
@@ -171,6 +224,8 @@ Follow current best practice:
 - AI UX must show provenance, citations, capabilities/limits, uncertainty/review states, deterministic tool output, before/after diffs, rollback, and explicit approval.
 - Local-first UX must make device/local DB, offline readiness, sync freshness, export/backup, connection lifecycle, and “data leaves this device” moments visible without alarmism.
 - React 19 optimistic/pending patterns may make interactions feel faster, but final finance state must remain conservative: proposals can be optimistic; writes, approvals, and reconciliation are not final until validated.
+- Motion/transitions: the View Transitions API (already used for the circular-reveal theme switch) plus a real motion library are the current baseline for fluid, content-aware transitions; always paired with `prefers-reduced-motion` fallbacks and validated on the Tauri WebView. Expressive but never gamified.
+- Method-adherence coaching is its own state of the art: structural friction (YNAB), proactive opt-in-tone intervention (Cleo), and a named, expectation-setting adaptation period. Combine all three; keep it calm, recognition-first, and gamification-free.
 </state_of_the_art_2026>
 
 <task>
@@ -220,8 +275,13 @@ Specify production-ready React/TypeScript component contracts for:
 - DataTable
 - MetricTile
 - ForecastHero
-- SafeToSpendCallout
+- SafeToSpendCallout (the “pode gastar hoje” guardrail: shows the honest minimum of cash floor and annual-savings room, states the binding reason)
 - DeficitNotice
+- PredictabilityCard / CoverageIndicator (per future month: % of typical spend entered, “trusted through month X”, total still missing, the “enter X/Y/Z” checklist)
+- CashVsPerformanceStrip (per month: performance value + savings rate, with incomplete months marked optimistic, never shamed)
+- AdaptationCard / CushionCallout (registered savings vs realized cushion, the recognize-then-teach copy, opt-in next step)
+- AdaptationPhaseBadge (Map / Calibrate / Operate)
+- LumpBreakdown / NotedSubItems (expand one entry into its noted per-person, per-item detail)
 - DailyProjectionTable
 - DailyCheckInSpeedometer
 - ReguaCard
@@ -252,7 +312,7 @@ Specify production-ready React/TypeScript component contracts for:
 
 4. Required screens
 Describe implementation-ready layouts for:
-- Dashboard forecast view.
+- Dashboard forecast view. PRIORITY: this screen currently fails as a stack of bolt-on cards. Deliver a real information architecture first — name the single hero (the forecast/“pode gastar” reading), the secondary band, what collapses behind disclosure (predictability detail, adaptation/cushion coaching, per-month performance), and what graduates to its own screen. Specify the reading order and the responsive behavior. Do not solve it by restyling more cards.
 - Transactions/import review.
 - Caixa de revisão.
 - Crédito/Fatura.
@@ -295,6 +355,11 @@ Design how to show:
 - Deliberate economy/savings vs leftover cash.
 - Scenario copies/sandboxes before mutating the real plan.
 - Current cash as transit layer vs reserve/restricted/illiquid wealth layers.
+- Annual savings position (the 20–30% as a yearly average), realized vs optimistic-projected, without monthly pass/fail shaming.
+- Predictability/coverage of each future month and the concrete gaps to fill, distinct from the realized picture.
+- Cash ≠ performance: a growing buffer alongside a thin or negative monthly performance, both honest and visible.
+- Adaptation gaps and the recognize-then-teach coaching for each (the cushion case as the worked example), with the named Map/Calibrate/Operate phase.
+- A lump entry expanded into its noted per-person, per-item breakdown; pass-through gross vs net.
 
 7. Mia rules
 Define Mia’s UI behavior:
@@ -347,7 +412,12 @@ Provide a practical migration matrix with:
 - accessibility behavior to add
 - tests or Storybook/specimen coverage needed
 - deprecated English/USD/generic examples to replace
-</deliverables>
+
+12. Motion system
+Define the motion layer per the motion_and_wow section: duration and easing tokens, named transition presets (theme-reveal, screen-transition, row-stagger, value-resolve, lump-expand, coverage-fill), each with its `prefers-reduced-motion` fallback. State where motion is encouraged (transitions, check-in confirmation, list entrance, reveals) and where it is forbidden (animating a critical money value into existence, idle decorative loops on finance-critical surfaces). Extend the existing View Transitions circular-reveal language rather than inventing a competing one.
+
+13. Dashboard information architecture
+Before any card styling, deliver a Dashboard IA: the single hero, the secondary band, what collapses behind disclosure, what graduates to a dedicated screen, the reading order, and responsive behavior. The current screen is a degraded card stack; the redesign’s primary job is hierarchy and progressive disclosure, not more cards.</deliverables>
 
 <quality_bar>
 Before finalizing, self-check:
@@ -365,7 +435,12 @@ Before finalizing, self-check:
 - Every methodology reference is source-neutral and implementation-oriented.
 - Every artifact labels current production vs near-term implementation vs future reference.
 - No design asks the app to overwrite protected spreadsheet structure or meaningful manual notes.
-</quality_bar>
+- The Dashboard is delivered as an information architecture with a clear hero and disclosure, not as another vertical stack of equal-weight cards.
+- Cell notes are treated as real ledger detail, not discarded; no entry is reduced to a generic “Saída <month>” label in any mock.
+- `Economia = 0` / `Diário = 0` are shown as adaptation/credit-first states, never as “measured zero”.
+- Savings is judged on the annual position; no single month is shamed as “below target”.
+- Every motion has a reduced-motion fallback, and no animation delays the reading of a critical money value; motion never crosses into gamified bounce/confetti/streak territory.
+- Coaching copy recognizes before it teaches; no “you should / you failed / you missed” voice.</quality_bar>
 
 <output_format>
 Use clear headings and tables where useful.
