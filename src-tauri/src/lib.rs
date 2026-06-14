@@ -36,6 +36,8 @@ pub fn run() {
             commands::preview_write_back,
             commands::write_back_enabled,
             commands::apply_write_back,
+            commands::get_app_setting,
+            commands::set_app_setting,
             commands::save_sheet_mapping,
             commands::get_sheet_mappings,
             commands::list_user_spreadsheets,
@@ -170,6 +172,7 @@ mod tests {
             "sheet_layout",
             "sync_log",
             "transaction_fts",
+            "app_setting",
         ];
         for table_name in &tables {
             let (name,): (String,) =

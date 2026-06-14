@@ -1618,6 +1618,44 @@ pub fn write_back_enabled() -> bool {
     write_back::WRITE_BACK_ENABLED
 }
 
+/// Lê uma preferência local (KV). `None` quando a chave nunca foi gravada.
+#[tauri::command]
+pub async fn get_app_setting(
+    pool: State<'_, SqlitePool>,
+    key: String,
+) -> Result<Option<String>, String> {
+    app_setting_get(pool.inner(), &key).await
+}
+
+async fn app_setting_get(pool: &SqlitePool, key: &str) -> Result<Option<String>, String> {
+    let row: Option<(String,)> = sqlx::query_as("SELECT value FROM app_setting WHERE key = ?1")
+        .bind(key)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| format!("get setting: {e}"))?;
+    Ok(row.map(|(v,)| v))
+}
+
+/// Grava uma preferência local (KV), sobrescrevendo.
+#[tauri::command]
+pub async fn set_app_setting(
+    pool: State<'_, SqlitePool>,
+    key: String,
+    value: String,
+) -> Result<(), String> {
+    app_setting_set(pool.inner(), &key, &value).await
+}
+
+async fn app_setting_set(pool: &SqlitePool, key: &str, value: &str) -> Result<(), String> {
+    sqlx::query("INSERT OR REPLACE INTO app_setting (key, value) VALUES (?1, ?2)")
+        .bind(key)
+        .bind(value)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("set setting: {e}"))?;
+    Ok(())
+}
+
 /// Aplica o write-back ao Sheets. Atrás da flag: enquanto desligada, falha cedo com mensagem clara
 /// e NÃO escreve nada. O envio real só será implementado quando a flag for explicitamente ligada.
 #[tauri::command]
@@ -2023,6 +2061,31 @@ mod tests {
         )
         .bind(&tid).bind(ttype).bind(amount).bind(date)
         .execute(pool).await.unwrap();
+    }
+
+    // KV de preferências: grava e lê; chave ausente → None.
+    #[tokio::test]
+    async fn app_setting_roundtrip() {
+        let pool = fixture_pool().await;
+        assert_eq!(
+            app_setting_get(&pool, "onboarding_done").await.unwrap(),
+            None
+        );
+        app_setting_set(&pool, "onboarding_done", "true")
+            .await
+            .unwrap();
+        assert_eq!(
+            app_setting_get(&pool, "onboarding_done").await.unwrap(),
+            Some("true".to_string())
+        );
+        // Sobrescreve.
+        app_setting_set(&pool, "onboarding_done", "false")
+            .await
+            .unwrap();
+        assert_eq!(
+            app_setting_get(&pool, "onboarding_done").await.unwrap(),
+            Some("false".to_string())
+        );
     }
 
     // Multi-titular: get_recent_transactions traz os titulares distintos das parcelas (sem N+1),

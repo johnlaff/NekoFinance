@@ -5,8 +5,8 @@ import type { Page } from "@playwright/test";
  * real frontend renders with deterministic data in a plain browser. Commands
  * mirror the fixtures used by the vitest suite (src/test/commands.ts).
  */
-export async function mockTauri(page: Page) {
-  await page.addInitScript(() => {
+export async function mockTauri(page: Page, overrides: Record<string, unknown> = {}) {
+  await page.addInitScript((ov: Record<string, unknown>) => {
     const SUMMARY = {
       balance: 842000,
       daily_budget: 4300,
@@ -377,6 +377,10 @@ export async function mockTauri(page: Page) {
       get_app_info: APP_INFO,
       get_pockets: POCKETS,
       create_account: "e2e-account-id",
+      // Onboarding já concluído nestes cenários — o overlay não cobre o app.
+      get_app_setting: "true",
+      set_app_setting: null,
+      ...ov,
     };
 
     Object.defineProperty(window, "__TAURI_INTERNALS__", {
@@ -389,5 +393,5 @@ export async function mockTauri(page: Page) {
       },
       configurable: true,
     });
-  });
+  }, overrides);
 }

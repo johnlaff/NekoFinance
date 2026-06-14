@@ -10,13 +10,19 @@ import { TransactionsScreen } from "./screens/TransactionsScreen";
 import { CopilotScreen } from "./screens/CopilotScreen";
 import { MethodologyScreen } from "./screens/MethodologyScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
-import { checkAuthStatus, isTauri, type AuthStatus } from "./lib/api";
+import { OnboardingFlow, ONBOARDING_KEY } from "./features/onboarding/OnboardingFlow";
+import { checkAuthStatus, getAppSetting, isTauri, type AuthStatus } from "./lib/api";
 
 function App() {
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [searchQuery, setSearchQuery] = useState("");
   const [authStatus, setAuthStatus] = useState<AuthStatus>(
     isTauri ? "loading" : "disconnected",
+  );
+  // `null` = ainda carregando a preferência; evita um flash do onboarding já concluído.
+  // Fora do Tauri (preview web) não há onboarding.
+  const [showOnboarding, setShowOnboarding] = useState<boolean | null>(
+    isTauri ? null : false,
   );
 
   useEffect(() => {
@@ -26,6 +32,13 @@ function App() {
       .catch(() => setAuthStatus("disconnected"));
   }, []);
 
+  useEffect(() => {
+    if (!isTauri) return;
+    getAppSetting(ONBOARDING_KEY)
+      .then((v) => setShowOnboarding(v !== "true"))
+      .catch(() => setShowOnboarding(false));
+  }, []);
+
   // React Compiler memoizes; no manual useCallback needed.
   const handleSearch = (query: string) => {
     setSearchQuery(query);
@@ -33,30 +46,38 @@ function App() {
   };
 
   return (
-    <AppShell
-      active={screen}
-      onNavigate={setScreen}
-      onSearch={handleSearch}
-      authStatus={authStatus}
-    >
-      <div key={screen} className="ak-screen">
-        {screen === "dashboard" && (
-          <DashboardScreen onAskMia={() => setScreen("copilot")} />
-        )}
-        {screen === "totais" && <TotaisScreen />}
-        {screen === "anuais" && <AnnualScreen />}
-        {screen === "horizonte" && <HorizonteScreen />}
-        {screen === "tags" && <TagsScreen />}
-        {screen === "transactions" && (
-          <TransactionsScreen query={searchQuery} onQueryChange={setSearchQuery} />
-        )}
-        {screen === "copilot" && <CopilotScreen />}
-        {screen === "methodology" && <MethodologyScreen />}
-        {screen === "settings" && (
-          <SettingsScreen authStatus={authStatus} onAuthChange={setAuthStatus} />
-        )}
-      </div>
-    </AppShell>
+    <>
+      {showOnboarding && (
+        <OnboardingFlow
+          onDone={() => setShowOnboarding(false)}
+          onGoToSettings={() => setScreen("settings")}
+        />
+      )}
+      <AppShell
+        active={screen}
+        onNavigate={setScreen}
+        onSearch={handleSearch}
+        authStatus={authStatus}
+      >
+        <div key={screen} className="ak-screen">
+          {screen === "dashboard" && (
+            <DashboardScreen onAskMia={() => setScreen("copilot")} />
+          )}
+          {screen === "totais" && <TotaisScreen />}
+          {screen === "anuais" && <AnnualScreen />}
+          {screen === "horizonte" && <HorizonteScreen />}
+          {screen === "tags" && <TagsScreen />}
+          {screen === "transactions" && (
+            <TransactionsScreen query={searchQuery} onQueryChange={setSearchQuery} />
+          )}
+          {screen === "copilot" && <CopilotScreen />}
+          {screen === "methodology" && <MethodologyScreen />}
+          {screen === "settings" && (
+            <SettingsScreen authStatus={authStatus} onAuthChange={setAuthStatus} />
+          )}
+        </div>
+      </AppShell>
+    </>
   );
 }
 

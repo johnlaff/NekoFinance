@@ -153,6 +153,33 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
   });
 });
 
+test.describe("onboarding de primeiro uso", () => {
+  test("mostra os 5 passos e fecha ao concluir", async ({ page }, testInfo) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    // Onboarding ainda não feito → overlay aparece.
+    await mockTauri(page, { get_app_setting: null });
+    await page.goto("/");
+
+    await expect(page.getByRole("dialog", { name: /Boas-vindas/ })).toBeVisible();
+    await expect(page.getByText("Bem-vindo ao Neko")).toBeVisible();
+    await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath("onboarding.png"),
+    });
+
+    // Avança pelos passos até "Começar".
+    for (let i = 0; i < 4; i++) {
+      await page.getByRole("button", { name: /Avançar/ }).click();
+    }
+    await expect(page.getByText("Sua meta de poupança")).toBeVisible();
+    await page.getByRole("button", { name: /Começar/ }).click();
+
+    // Overlay fecha; o app fica acessível.
+    await expect(page.getByRole("dialog", { name: /Boas-vindas/ })).not.toBeVisible();
+    await expect(page.getByText("Saldo projetado", { exact: true })).toBeVisible();
+  });
+});
+
 test.describe("theme switch (View Transitions path, motion enabled)", () => {
   test("circular reveal lands on the light theme and back", async ({ page }) => {
     await mockTauri(page);

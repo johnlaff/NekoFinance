@@ -357,6 +357,18 @@ export function applyWriteBack(): Promise<void> {
   return invoke("apply_write_back");
 }
 
+// --- Preferências locais (KV) ---
+
+/** Lê uma preferência local. `null` quando nunca foi gravada. */
+export function getAppSetting(key: string): Promise<string | null> {
+  return invoke("get_app_setting", { key });
+}
+
+/** Grava uma preferência local (sobrescreve). */
+export function setAppSetting(key: string, value: string): Promise<void> {
+  return invoke("set_app_setting", { key, value });
+}
+
 export function importSheetData(
   spreadsheetId: string,
   sheetName: string,
