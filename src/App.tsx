@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import "./App.css";
 import { AppShell, type Screen } from "./shell/AppShell";
 import { DashboardScreen } from "./screens/DashboardScreen";
+import { TotaisScreen } from "./screens/TotaisScreen";
 import { TransactionsScreen } from "./screens/TransactionsScreen";
 import { CopilotScreen } from "./screens/CopilotScreen";
 import { MethodologyScreen } from "./screens/MethodologyScreen";
@@ -39,6 +40,7 @@ function App() {
         {screen === "dashboard" && (
           <DashboardScreen onAskMia={() => setScreen("copilot")} />
         )}
+        {screen === "totais" && <TotaisScreen />}
         {screen === "transactions" && (
           <TransactionsScreen query={searchQuery} onQueryChange={setSearchQuery} />
         )}
