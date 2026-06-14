@@ -3,6 +3,7 @@ import "./App.css";
 import { AppShell, type Screen } from "./shell/AppShell";
 import { DashboardScreen } from "./screens/DashboardScreen";
 import { TotaisScreen } from "./screens/TotaisScreen";
+import { HorizonteScreen } from "./screens/HorizonteScreen";
 import { TransactionsScreen } from "./screens/TransactionsScreen";
 import { CopilotScreen } from "./screens/CopilotScreen";
 import { MethodologyScreen } from "./screens/MethodologyScreen";
@@ -41,6 +42,7 @@ function App() {
           <DashboardScreen onAskMia={() => setScreen("copilot")} />
         )}
         {screen === "totais" && <TotaisScreen />}
+        {screen === "horizonte" && <HorizonteScreen />}
         {screen === "transactions" && (
           <TransactionsScreen query={searchQuery} onQueryChange={setSearchQuery} />
         )}
