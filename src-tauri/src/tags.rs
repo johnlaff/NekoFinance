@@ -194,18 +194,18 @@ mod tests {
         insert_txn(&p, "t2", "expense", -35000, "2026-06-10").await;
         insert_txn(&p, "t3", "expense", -99900, "2026-07-01").await; // outro mês
 
-        set_transaction_tags(&p, "t1", &[viagem.clone()])
+        set_transaction_tags(&p, "t1", std::slice::from_ref(&viagem))
             .await
             .unwrap();
-        set_transaction_tags(&p, "t2", &[delivery.clone()])
+        set_transaction_tags(&p, "t2", std::slice::from_ref(&delivery))
             .await
             .unwrap();
-        set_transaction_tags(&p, "t3", &[viagem.clone()])
+        set_transaction_tags(&p, "t3", std::slice::from_ref(&viagem))
             .await
             .unwrap();
 
         // Substituição: re-set de t1 troca a tag, não acumula.
-        set_transaction_tags(&p, "t1", &[delivery.clone()])
+        set_transaction_tags(&p, "t1", std::slice::from_ref(&delivery))
             .await
             .unwrap();
 
