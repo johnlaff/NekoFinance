@@ -177,9 +177,15 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
         />
         <MetricTile
           label="Crédito no mês"
-          value={summary ? fmtBRL(summary.credit_spend_month) : "—"}
+          value={
+            summary?.has_credit ? fmtBRL(summary.credit_spend_month) : "—"
+          }
           icon={<TrendingDown size={15} strokeWidth={1.75} />}
-          sublabel="Régua 2 — fatura acumulada"
+          sublabel={
+            summary && !summary.has_credit
+              ? "Sem cartão rastreado"
+              : "Régua 2 — fatura acumulada"
+          }
         />
         <MetricTile
           label="Reserva"

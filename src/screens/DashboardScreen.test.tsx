@@ -120,4 +120,16 @@ describe("DashboardScreen (forecast view)", () => {
       expect(screen.getByText("Fim de junho")).toBeInTheDocument();
     });
   });
+
+  it('credit tile shows "—" / "Sem cartão rastreado" when no credit is tracked', async () => {
+    mockCommands({
+      get_dashboard_summary: { ...SUMMARY, has_credit: false },
+      get_forecast: FORECAST,
+    });
+    render(<DashboardScreen onAskMia={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getByText("Sem cartão rastreado")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Crédito no mês")).toBeInTheDocument();
+  });
 });

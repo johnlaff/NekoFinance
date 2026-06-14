@@ -24,6 +24,8 @@ export interface DashboardSummary {
   daily_budget: number;
   daily_spend_today: number;
   credit_spend_month: number;
+  /** Há rastreio de crédito (cartão ou gasto). `false` → mostrar "—" no tile, não R$0. */
+  has_credit: boolean;
   reserve_months: number;
   reserve_trend: string;
   transaction_count: number;

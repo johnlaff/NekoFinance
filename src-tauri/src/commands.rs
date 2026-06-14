@@ -988,6 +988,9 @@ pub struct DashboardSummary {
     pub daily_budget: i64,
     pub daily_spend_today: i64,
     pub credit_spend_month: i64,
+    /// Há rastreio de crédito (cartão ou gasto de crédito). `false` → a UI mostra "—" no tile,
+    /// não um R$0 estrutural.
+    pub has_credit: bool,
     pub reserve_months: f64,
     pub reserve_trend: String,
     pub transaction_count: i64,
@@ -1033,22 +1036,41 @@ async fn dashboard_summary(
     .map_err(|e| format!("query: {e}"))?
     .unwrap_or((0,));
 
-    // Today's daily spend
-    let daily_spend: (i64,) =
-        sqlx::query_as("SELECT COALESCE(SUM(daily_spend), 0) FROM daily_checkin WHERE date = ?1")
-            .bind(&today)
-            .fetch_one(pool)
-            .await
-            .map_err(|e| format!("query: {e}"))?;
+    // Diário de HOJE: check-ins (app) + transações Diário realizadas (planilha/import). Antes lia
+    // só `daily_checkin` (nunca populada) → R$0 estrutural enganoso mesmo havendo Diário no dia.
+    let daily_spend: (i64,) = sqlx::query_as(
+        "SELECT COALESCE((SELECT SUM(daily_spend) FROM daily_checkin WHERE date = ?1), 0) \
+              + COALESCE((SELECT SUM(amount) FROM \"transaction\" \
+                          WHERE type='expense' AND is_fixed=0 AND date = ?1 \
+                            AND (payment_method IS NULL OR payment_method <> 'credit')), 0)",
+    )
+    .bind(&today)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("query daily spend: {e}"))?;
 
-    // Credit spend this month
+    // Crédito no mês (Régua 2): check-ins + transações de crédito do mês.
     let month_start = format!("{}-01", today_naive.format("%Y-%m"));
-    let credit_spend: (i64,) =
-        sqlx::query_as("SELECT COALESCE(SUM(credit_spend), 0) FROM daily_checkin WHERE date >= ?1")
-            .bind(&month_start)
-            .fetch_one(pool)
-            .await
-            .map_err(|e| format!("query: {e}"))?;
+    let credit_spend: (i64,) = sqlx::query_as(
+        "SELECT COALESCE((SELECT SUM(credit_spend) FROM daily_checkin WHERE date >= ?1), 0) \
+              + COALESCE((SELECT SUM(amount) FROM \"transaction\" \
+                          WHERE type='expense' AND payment_method='credit' AND date >= ?1), 0)",
+    )
+    .bind(&month_start)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("query credit spend: {e}"))?;
+
+    // Há rastreio de crédito? (cartão configurado ou algum gasto de crédito). Sem isso a UI mostra
+    // "—" no tile de crédito, em vez de um R$0 estrutural enganoso.
+    let has_credit: (i64,) = sqlx::query_as(
+        "SELECT CASE WHEN EXISTS(SELECT 1 FROM account WHERE type='credit_card') \
+                  OR COALESCE((SELECT SUM(credit_spend) FROM daily_checkin), 0) > 0 \
+                THEN 1 ELSE 0 END",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("query has_credit: {e}"))?;
 
     // Reserve
     let reserve: (f64, String) = sqlx::query_as(
@@ -1072,6 +1094,7 @@ async fn dashboard_summary(
         daily_budget: daily_budget.0,
         daily_spend_today: daily_spend.0,
         credit_spend_month: credit_spend.0,
+        has_credit: has_credit.0 != 0,
         reserve_months: reserve.0,
         reserve_trend: reserve.1,
         transaction_count: count.0,
@@ -1533,6 +1556,25 @@ mod tests {
 
         // Raw sum is 100000; the projected end-of-March is 100000 − 30000 = 70000.
         assert_eq!(summary.balance, 70_000);
+    }
+
+    // Bug: tiles do dashboard mostravam R$0 estrutural porque liam só `daily_checkin` (vazia).
+    // Agora o Diário de hoje vem das transações realizadas; e `has_credit=false` sem cartão.
+    #[tokio::test]
+    async fn dashboard_daily_spend_comes_from_transactions_and_credit_flag() {
+        let pool = fixture_pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        // Diário realizado de hoje (expense, is_fixed=0) — sem nenhum check-in.
+        insert_realized(&pool, "expense", 4_271, "2026-06-13").await;
+        // Despesa de outro dia não conta no "hoje".
+        insert_realized(&pool, "expense", 9_999, "2026-06-12").await;
+
+        let s = dashboard_summary(&pool, today).await.unwrap();
+        assert_eq!(
+            s.daily_spend_today, 4_271,
+            "Diário de hoje vem das transações, não R$0 estrutural"
+        );
+        assert!(!s.has_credit, "sem cartão nem crédito → has_credit false");
     }
 
     // --- 005 get_forecast (TDD) ---
