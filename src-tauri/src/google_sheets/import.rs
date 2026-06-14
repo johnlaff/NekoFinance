@@ -1,6 +1,50 @@
 use super::layout_detect::{SheetLayout, month_number_from_name};
+use super::reconcile;
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
+
+/// Registra (ou limpa) o conflito de um campo. Conflito presente → UPSERT idempotente por
+/// (transação, campo); ausente → apaga o conflito (re-import resolveu ou convergiu).
+#[allow(clippy::too_many_arguments)]
+async fn record_conflict(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    txn_id: &str,
+    field: &str,
+    conflict: bool,
+    base_value: Option<String>,
+    local_value: &str,
+    sheet_value: &str,
+    now: &str,
+) -> Result<(), String> {
+    if conflict {
+        let id = format!("conf:{txn_id}:{field}");
+        sqlx::query(
+            "INSERT INTO import_conflict (id, transaction_id, field, base_value, local_value, sheet_value, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+             ON CONFLICT(transaction_id, field) DO UPDATE SET base_value=excluded.base_value, \
+               local_value=excluded.local_value, sheet_value=excluded.sheet_value, \
+               created_at=excluded.created_at, resolved_at=NULL, resolution=NULL",
+        )
+        .bind(&id)
+        .bind(txn_id)
+        .bind(field)
+        .bind(&base_value)
+        .bind(local_value)
+        .bind(sheet_value)
+        .bind(now)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| format!("record conflict: {e}"))?;
+    } else {
+        sqlx::query("DELETE FROM import_conflict WHERE transaction_id = ?1 AND field = ?2")
+            .bind(txn_id)
+            .bind(field)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| format!("clear conflict: {e}"))?;
+    }
+    Ok(())
+}
 
 /// Coluna do método de onde a linha veio. Define o tipo/is_fixed na transação E ancora a
 /// identidade determinística (a posição estável: aba + dia + coluna).
@@ -140,25 +184,88 @@ pub async fn import_rows(
         let txn_id = row_id(sheet_name, &row.date, row.kind, slot);
         current_ids.insert(txn_id.clone());
 
-        // UPSERT só das colunas que o import possui — preserva payment_method/contas/splits.
-        sqlx::query(
-            "INSERT INTO \"transaction\" (id, type, amount, description, date, is_fixed, is_projection, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8) \
-             ON CONFLICT(id) DO UPDATE SET type=excluded.type, amount=excluded.amount, \
-               description=excluded.description, date=excluded.date, is_fixed=excluded.is_fixed, \
-               is_projection=excluded.is_projection, updated_at=excluded.updated_at"
+        let sheet_amount = row.amount.abs();
+        let sheet_desc = row.description.clone();
+
+        // Merge de 3 vias (spec 013): a planilha não vence cego. Carrega o estado atual + o base
+        // (source_*) e decide por campo — preservando edição local e abrindo conflito quando ambos
+        // divergem, em vez de sobrescrever em silêncio. `is_fixed`/`is_projection`/`type` são
+        // estruturais (seguem a planilha).
+        let existing: Option<(i64, String, Option<i64>, Option<String>)> = sqlx::query_as(
+            "SELECT amount, COALESCE(description,''), source_amount, source_description \
+             FROM \"transaction\" WHERE id = ?1",
         )
         .bind(&txn_id)
-        .bind(row.kind.txn_type())
-        .bind(row.amount.abs())
-        .bind(&row.description)
-        .bind(&row.date)
-        .bind(row.kind.is_fixed() as i64)
-        .bind(row.is_projection as i64)
-        .bind(&now)
-        .execute(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await
-        .map_err(|e| format!("upsert row {row:?}: {e}"))?;
+        .map_err(|e| format!("load existing txn: {e}"))?;
+
+        match existing {
+            None => {
+                // Linha nova: a planilha semeia valor e base.
+                sqlx::query(
+                    "INSERT INTO \"transaction\" (id, type, amount, description, date, is_fixed, is_projection, source_amount, source_description, created_at, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?3, ?4, ?8, ?8)",
+                )
+                .bind(&txn_id)
+                .bind(row.kind.txn_type())
+                .bind(sheet_amount)
+                .bind(&sheet_desc)
+                .bind(&row.date)
+                .bind(row.kind.is_fixed() as i64)
+                .bind(row.is_projection as i64)
+                .bind(&now)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("insert row {row:?}: {e}"))?;
+            }
+            Some((local_amount, local_desc, src_amount, src_desc)) => {
+                let amt = reconcile::apply(src_amount.as_ref(), &local_amount, &sheet_amount);
+                let desc = reconcile::apply(src_desc.as_ref(), &local_desc, &sheet_desc);
+
+                sqlx::query(
+                    "UPDATE \"transaction\" SET type=?2, amount=?3, description=?4, date=?5, \
+                       is_fixed=?6, is_projection=?7, source_amount=?8, source_description=?9, updated_at=?10 \
+                     WHERE id=?1",
+                )
+                .bind(&txn_id)
+                .bind(row.kind.txn_type())
+                .bind(amt.value)
+                .bind(&desc.value)
+                .bind(&row.date)
+                .bind(row.kind.is_fixed() as i64)
+                .bind(row.is_projection as i64)
+                .bind(amt.source)
+                .bind(&desc.source)
+                .bind(&now)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("update row {row:?}: {e}"))?;
+
+                record_conflict(
+                    &mut tx,
+                    &txn_id,
+                    "amount",
+                    amt.conflict,
+                    src_amount.map(|v| v.to_string()),
+                    &local_amount.to_string(),
+                    &sheet_amount.to_string(),
+                    &now,
+                )
+                .await?;
+                record_conflict(
+                    &mut tx,
+                    &txn_id,
+                    "description",
+                    desc.conflict,
+                    src_desc,
+                    &local_desc,
+                    &sheet_desc,
+                    &now,
+                )
+                .await?;
+            }
+        }
 
         // sync_log com id determinístico (1:1 com o txn) → UPSERT idempotente.
         let log_id = format!("log:{txn_id}");
@@ -202,6 +309,12 @@ pub async fn import_rows(
             .execute(&mut *tx)
             .await
             .map_err(|e| format!("delete removed sync_log: {e}"))?;
+            // Conflitos órfãos somem com a transação removida.
+            sqlx::query("DELETE FROM import_conflict WHERE transaction_id = ?1")
+                .bind(&eid)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("delete removed conflicts: {e}"))?;
         }
     }
 
@@ -1095,6 +1208,115 @@ mod tests {
 
         assert_eq!(count_transactions(&pool).await, 2);
         assert_eq!(count_sync_log(&pool, "2026").await, 2);
+    }
+
+    // --- Spec 013: merge de 3 vias (drift por célula + gate de conflito) ---
+
+    async fn amount_by_date(pool: &SqlitePool, date: &str) -> i64 {
+        sqlx::query_as::<_, (i64,)>("SELECT amount FROM \"transaction\" WHERE date = ?1")
+            .bind(date)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+            .0
+    }
+    async fn set_local_amount(pool: &SqlitePool, date: &str, amount: i64) {
+        sqlx::query("UPDATE \"transaction\" SET amount = ?1 WHERE date = ?2")
+            .bind(amount)
+            .bind(date)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    async fn conflict_count(pool: &SqlitePool) -> i64 {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM import_conflict")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+            .0
+    }
+
+    #[tokio::test]
+    async fn local_edit_preserved_when_only_local_changed() {
+        let pool = test_pool().await;
+        // rowB existe só para mudar o checksum do batch no re-import (rowA fica igual na planilha).
+        let v1 = vec![
+            imported("2026-01-05", 10_000),
+            imported("2026-01-06", -1_000),
+        ];
+        import_rows(&pool, "2026", &v1, "p1").await.unwrap();
+
+        // Usuário corrige o valor de A localmente (base=10000 → local=15000).
+        set_local_amount(&pool, "2026-01-05", 15_000).await;
+
+        // Re-import: A com a MESMA célula (10000), B mudou → batch difere, merge roda em A.
+        let v2 = vec![
+            imported("2026-01-05", 10_000),
+            imported("2026-01-06", -2_000),
+        ];
+        import_rows(&pool, "2026", &v2, "p1").await.unwrap();
+
+        assert_eq!(
+            amount_by_date(&pool, "2026-01-05").await,
+            15_000,
+            "edição local preservada"
+        );
+        assert_eq!(
+            conflict_count(&pool).await,
+            0,
+            "sem conflito: só o local mudou"
+        );
+    }
+
+    #[tokio::test]
+    async fn sheet_update_applied_when_no_local_edit() {
+        let pool = test_pool().await;
+        import_rows(&pool, "2026", &[imported("2026-01-05", 10_000)], "p1")
+            .await
+            .unwrap();
+        // Planilha mudou a célula; local intacto → aplica a planilha.
+        import_rows(&pool, "2026", &[imported("2026-01-05", 12_000)], "p1")
+            .await
+            .unwrap();
+        assert_eq!(amount_by_date(&pool, "2026-01-05").await, 12_000);
+        assert_eq!(conflict_count(&pool).await, 0);
+    }
+
+    #[tokio::test]
+    async fn conflict_recorded_when_both_changed() {
+        let pool = test_pool().await;
+        import_rows(&pool, "2026", &[imported("2026-01-05", 10_000)], "p1")
+            .await
+            .unwrap();
+        set_local_amount(&pool, "2026-01-05", 15_000).await; // edição local
+
+        // Planilha foi para outro valor (20000) → ambos divergem do base (10000) → conflito.
+        import_rows(&pool, "2026", &[imported("2026-01-05", 20_000)], "p1")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            amount_by_date(&pool, "2026-01-05").await,
+            15_000,
+            "não sobrescreve o local"
+        );
+        let conflicts = crate::conflicts::list_conflicts(&pool).await.unwrap();
+        let amt = conflicts.iter().find(|c| c.field == "amount").unwrap();
+        assert_eq!(amt.base_value.as_deref(), Some("10000"));
+        assert_eq!(amt.local_value, "15000");
+        assert_eq!(amt.sheet_value, "20000");
+
+        // Resolvendo pela planilha, o valor passa a 20000 e o conflito some.
+        crate::conflicts::resolve(&pool, &amt.id, "sheet")
+            .await
+            .unwrap();
+        assert_eq!(amount_by_date(&pool, "2026-01-05").await, 20_000);
+        assert!(
+            crate::conflicts::list_conflicts(&pool)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 
     // Regressão do bloqueador nº 1 do dogfooding: re-importar a planilha com QUALQUER

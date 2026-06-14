@@ -357,6 +357,31 @@ export function applyWriteBack(): Promise<void> {
   return invoke("apply_write_back");
 }
 
+// --- Conciliação avançada: gate de conflito (spec 013) ---
+
+/** Um conflito de import: um campo onde local e planilha divergiram do base (merge de 3 vias). */
+export interface ImportConflict {
+  id: string;
+  transaction_id: string;
+  field: string;
+  base_value: string | null;
+  local_value: string;
+  sheet_value: string;
+}
+
+/** Conflitos de import pendentes para o gate humano. */
+export function getImportConflicts(): Promise<ImportConflict[]> {
+  return invoke("get_import_conflicts");
+}
+
+/** Resolve um conflito: "sheet" (planilha vence) ou "local" (mantém a edição). */
+export function resolveImportConflict(
+  id: string,
+  choice: "sheet" | "local",
+): Promise<void> {
+  return invoke("resolve_import_conflict", { id, choice });
+}
+
 // --- Preferências locais (KV) ---
 
 /** Lê uma preferência local. `null` quando nunca foi gravada. */

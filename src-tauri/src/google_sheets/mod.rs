@@ -1,5 +1,6 @@
 pub mod import;
 pub mod layout_detect;
+pub mod reconcile;
 pub mod write_back;
 
 use crate::oauth::token_store::StoredToken;

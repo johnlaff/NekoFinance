@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod conflicts;
 mod forecast;
 mod google_sheets;
 mod oauth;
@@ -52,6 +53,8 @@ pub fn run() {
             recurrence::update_series_all_cmd,
             splits::splits_for_transaction_cmd,
             splits::owner_totals_for_month_cmd,
+            conflicts::get_import_conflicts,
+            conflicts::resolve_import_conflict,
         ])
         .setup(|app| {
             use tauri::Manager;
@@ -173,6 +176,7 @@ mod tests {
             "sync_log",
             "transaction_fts",
             "app_setting",
+            "import_conflict",
         ];
         for table_name in &tables {
             let (name,): (String,) =
