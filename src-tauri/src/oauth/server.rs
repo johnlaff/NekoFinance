@@ -2,24 +2,25 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 
 pub struct OAuthServer {
-    port: u16,
+    listener: TcpListener,
 }
 
 impl OAuthServer {
-    pub fn new(port: u16) -> Self {
-        Self { port }
+    /// Recebe o listener JÁ ligado (mesma porta do redirect_uri) — sem rebind, sem janela TOCTOU
+    /// entre descobrir a porta e voltar a ligá-la.
+    pub fn new(listener: TcpListener) -> Self {
+        Self { listener }
     }
 
     /// Devolve `(code, state)` do callback de loopback. O `state` (CSRF) é validado pelo chamador
     /// contra o csrf_token gerado — sem isso, um redirect forjado injetaria um code de terceiro.
     pub async fn listen_for_code(self) -> Result<(String, Option<String>), String> {
-        let addr = format!("127.0.0.1:{}", self.port);
-        let listener = TcpListener::bind(&addr).map_err(|e| format!("bind error: {e}"))?;
-        listener
+        self.listener
             .set_nonblocking(false)
             .map_err(|e| format!("nonblocking error: {e}"))?;
 
-        let stream = listener
+        let stream = self
+            .listener
             .incoming()
             .next()
             .ok_or("no incoming connection")?

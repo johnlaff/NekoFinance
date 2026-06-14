@@ -130,8 +130,27 @@ pub fn plan_write_back(
     };
     let month_blocks = month_blocks_for(header, block_size);
 
-    let mut out = Vec::new();
+    // Agrega por célula-alvo (data, kind): a planilha guarda UM valor por célula, então duas
+    // transações do mesmo dia/tipo SOMAM — senão emitiríamos dois CellWrites para a mesma célula,
+    // um sobrescrevendo o outro silenciosamente. `amount_cents` vira magnitude (abs).
+    let mut aggregated: Vec<WriteBackTxn> = Vec::new();
     for txn in txns {
+        if let Some(e) = aggregated
+            .iter_mut()
+            .find(|e| e.date == txn.date && e.kind == txn.kind)
+        {
+            e.amount_cents += txn.amount_cents.abs();
+        } else {
+            aggregated.push(WriteBackTxn {
+                date: txn.date.clone(),
+                kind: txn.kind,
+                amount_cents: txn.amount_cents.abs(),
+            });
+        }
+    }
+
+    let mut out = Vec::new();
+    for txn in &aggregated {
         let parts: Vec<&str> = txn.date.split('-').collect();
         let (Some(y), Some(m), Some(d)) = (
             parts.first().and_then(|s| s.parse::<i32>().ok()),
@@ -277,6 +296,27 @@ mod tests {
         assert_eq!(plan[0].a1, "D3"); // Saída = col 3 (D)
         assert_eq!(plan[0].current, "");
         assert!(plan[0].changed);
+    }
+
+    #[test]
+    fn aggregates_transactions_on_the_same_cell() {
+        // Dois Diários no MESMO dia 1 → UMA célula (E3) com a SOMA, não dois CellWrites.
+        let txns = vec![
+            WriteBackTxn {
+                date: "2026-01-01".into(),
+                kind: RowKind::Diario,
+                amount_cents: 3000,
+            },
+            WriteBackTxn {
+                date: "2026-01-01".into(),
+                kind: RowKind::Diario,
+                amount_cents: 4500,
+            },
+        ];
+        let plan = plan_write_back(&grid(), &layout(), &mappings(), &txns);
+        assert_eq!(plan.len(), 1, "uma célula-alvo, não duas");
+        assert_eq!(plan[0].a1, "E3");
+        assert_eq!(plan[0].proposed, "75,00"); // 30,00 + 45,00
     }
 
     #[test]

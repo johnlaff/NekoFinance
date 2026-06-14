@@ -39,8 +39,11 @@ commit_msgs="$(git log ${commit_range} --format='%B' 2>/dev/null || true)"
 while IFS= read -r pattern || [[ -n "$pattern" ]]; do
   [[ -z "$pattern" || "$pattern" =~ ^[[:space:]]*# ]] && continue
 
-  # (1) Arquivos da árvore de trabalho (exclui .git/: binário/histórico, lento e ruidoso — o
-  #     histórico de mensagens é coberto pelo passo (2)).
+  # (1) Arquivos da árvore de trabalho (exclui .git/: binário/histórico, lento e ruidoso). O
+  #     histórico de MENSAGENS é coberto pelo passo (2). O histórico de CONTEÚDO (versões antigas
+  #     de arquivos) é intencionalmente fora de escopo: senão REMOVER um vazamento já versionado
+  #     faria o próprio diff de remoção disparar o scan para sempre. O que importa para o repo
+  #     público é a árvore atual + as mensagens — ambas cobertas aqui.
   if rg --hidden --no-ignore-vcs --fixed-strings --ignore-case --line-number \
     --glob '!.git/**' \
     --glob '!node_modules/**' \

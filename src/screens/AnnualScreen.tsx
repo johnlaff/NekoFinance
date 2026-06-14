@@ -3,6 +3,7 @@ import { getAnnualMetrics } from "../lib/api";
 import { useCommand } from "../lib/useCommand";
 import { Money } from "../design-system/components/Money";
 import { MonthNav } from "../design-system/components/MonthNav";
+import { InfoPopover } from "../design-system/components/InfoPopover";
 
 const MONTHS_PT = [
   "Jan",
@@ -74,6 +75,8 @@ export function AnnualScreen() {
           onNext={() => setYear((y) => y + 1)}
           onToday={() => setYear(thisYear)}
           atToday={year === thisYear}
+          prevLabel="Ano anterior"
+          nextLabel="Próximo ano"
         />
       </header>
 
@@ -93,7 +96,9 @@ export function AnnualScreen() {
                 <th style={{ ...th, textAlign: "left" }}>Mês</th>
                 <th style={th}>Performance</th>
                 <th style={th}>Custo de vida</th>
-                <th style={th}>Economizado</th>
+                <th style={th}>
+                  <InfoPopover term="economizado">Economizado</InfoPopover>
+                </th>
                 <th style={th}>Diário médio</th>
               </tr>
             </thead>

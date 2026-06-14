@@ -77,8 +77,6 @@ interface InfoPopoverProps {
   /** Chave do glossário OU o conteúdo direto ({title?, body}). */
   term: string | GlossaryEntry;
   children: ReactNode;
-  /** `span` para termos inline, `button` quando o trigger já é um controle. */
-  as?: "span" | "button";
   /** Esconde o marcador "i" (quando o trigger já é visualmente distinto). */
   hideMarker?: boolean;
   width?: number;
@@ -88,7 +86,6 @@ interface InfoPopoverProps {
 export function InfoPopover({
   term,
   children,
-  as = "span",
   hideMarker = false,
   width = 280,
   className = "",
@@ -162,30 +159,6 @@ export function InfoPopover({
     clearTimeout(hoverTimer.current);
     hoverTimer.current = setTimeout(() => setOpen(false), 140);
   };
-  const toggle = () => setOpen((o) => !o);
-
-  const triggerProps = {
-    className: ["nk-term", hideMarker ? "nk-term--plain" : "", className]
-      .filter(Boolean)
-      .join(" "),
-    tabIndex: 0,
-    role: "button",
-    "aria-expanded": open,
-    "aria-describedby": open ? id : undefined,
-    // Clique ABRE (o hover já pode ter aberto; evita o conflito hover-abre/clique-fecha). Fecha
-    // por Esc, clique-fora ou ao tirar o mouse. Teclado (sem hover) alterna normalmente.
-    onClick: (e: React.MouseEvent) => {
-      e.stopPropagation();
-      setOpen(true);
-    },
-    onKeyDown: (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        toggle();
-      }
-    },
-  };
-
   const marker = !hideMarker ? (
     <span className="nk-term__i" aria-hidden="true">
       i
@@ -199,17 +172,24 @@ export function InfoPopover({
       onMouseEnter={show}
       onMouseLeave={hideSoon}
     >
-      {as === "button" ? (
-        <button type="button" {...triggerProps}>
-          {children}
-          {marker}
-        </button>
-      ) : (
-        <span {...triggerProps}>
-          {children}
-          {marker}
-        </span>
-      )}
+      {/* Botão NATIVO (não <span role=button>): foco e Enter/Espaço vêm de graça. `.nk-term` é
+          inline-flex sem borda/fundo, então flui inline dentro do texto. Clique/teclado ABRE; o
+          hover também abre; fecha por Esc/clique-fora/tirar o mouse. */}
+      <button
+        type="button"
+        className={["nk-term", hideMarker ? "nk-term--plain" : "", className]
+          .filter(Boolean)
+          .join(" ")}
+        aria-expanded={open}
+        aria-describedby={open ? id : undefined}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(true);
+        }}
+      >
+        {children}
+        {marker}
+      </button>
       {open &&
         pos &&
         createPortal(

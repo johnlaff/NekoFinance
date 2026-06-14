@@ -16,7 +16,9 @@ pub async fn start_oauth_flow(
     // Shell: o secret pode vir do env do processo (não do bundle do frontend) — ver resolve_*.
     let client_secret = oauth::pkce::resolve_client_secret(client_secret);
     let config = oauth::pkce::OAuthConfig::google(client_id, client_secret);
-    let port = find_available_port()?;
+    // Liga o listener UMA vez e o mantém: a porta do redirect_uri e a que vamos escutar são a
+    // mesma conexão — sem janela TOCTOU entre descobrir a porta e voltar a ligá-la.
+    let (listener, port) = bind_loopback_listener()?;
     let oauth_state = oauth::pkce::OAuthState::new(port);
 
     let app_dir_path = app_dir.0.clone();
@@ -30,7 +32,7 @@ pub async fn start_oauth_flow(
         *guard = Some(oauth_state);
 
         tokio::spawn(async move {
-            match oauth::run_oauth_flow(config_for_bg, flow_state, app_dir_path).await {
+            match oauth::run_oauth_flow(config_for_bg, flow_state, app_dir_path, listener).await {
                 Ok(_token) => {}
                 Err(e) => eprintln!("OAuth flow error: {e}"),
             }
@@ -73,15 +75,15 @@ pub async fn disconnect_google(app_dir: tauri::State<'_, AppDataDir>) -> Result<
     crate::oauth::token_store::delete_token(&app_dir.0)
 }
 
-fn find_available_port() -> Result<u16, String> {
-    use std::net::TcpListener;
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("port: {e}"))?;
+/// Liga um socket de loopback numa porta efêmera e devolve `(listener, porta)`. O listener NÃO é
+/// dropado: quem chama o usa para escutar o callback — eliminando o rebind (TOCTOU) do fluxo OAuth.
+fn bind_loopback_listener() -> Result<(std::net::TcpListener, u16), String> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| format!("port: {e}"))?;
     let port = listener
         .local_addr()
         .map_err(|e| format!("addr: {e}"))?
         .port();
-    drop(listener);
-    Ok(port)
+    Ok((listener, port))
 }
 
 #[derive(serde::Serialize)]
@@ -464,7 +466,7 @@ async fn realized_annual_economia(
     let year_start = format!("{}-01-01", today_naive.year());
     let cur_ym = today_naive.format("%Y-%m").to_string();
     let row: (i64,) = sqlx::query_as(
-        "SELECT COALESCE(SUM(t.amount), 0) FROM \"transaction\" t \
+        "SELECT COALESCE(SUM(ABS(t.amount)), 0) FROM \"transaction\" t \
          LEFT JOIN account a ON a.id = t.to_account_id \
          WHERE t.date >= ?1 AND substr(t.date,1,7) < ?2 \
            AND t.type='transfer' AND a.liquidity IN ('reserve','illiquid')",
@@ -1024,7 +1026,7 @@ async fn forecast_dto(pool: &SqlitePool, today_naive: NaiveDate) -> Result<Forec
     })
 }
 
-// --- Visão anual (spec 016/visões anuais) ---
+// --- Visão anual (spec 019 month-views) ---
 
 /// Todos os eventos do ANO (realizado + projetado), classificados — sem o teto de diário (que só
 /// vale para o mês corrente no forecast). Para a visão anual das 4 métricas.
@@ -1207,6 +1209,7 @@ async fn dashboard_summary(
     // "—" no tile de crédito, em vez de um R$0 estrutural enganoso.
     let has_credit: (i64,) = sqlx::query_as(
         "SELECT CASE WHEN EXISTS(SELECT 1 FROM account WHERE type='credit_card') \
+                  OR EXISTS(SELECT 1 FROM \"transaction\" WHERE payment_method='credit') \
                   OR COALESCE((SELECT SUM(credit_spend) FROM daily_checkin), 0) > 0 \
                 THEN 1 ELSE 0 END",
     )

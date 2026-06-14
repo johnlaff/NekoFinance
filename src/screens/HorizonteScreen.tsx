@@ -240,8 +240,10 @@ export function HorizonteScreen() {
                   <span
                     aria-hidden="true"
                     style={{
+                      // --text (não --text-muted): garante >=4.5:1 sobre TODAS as faixas-fundo
+                      // do heatmap (as faixas verdes/vermelhas fortes derrubavam o muted < AA).
                       fontSize: "var(--fs-sm)",
-                      color: "var(--text-muted)",
+                      color: "var(--text)",
                       width: 22,
                     }}
                   >

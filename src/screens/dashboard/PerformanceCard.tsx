@@ -41,7 +41,9 @@ export function PerformanceCard({ forecast }: { forecast: Forecast }) {
         {monthsAhead.map((m) => {
           const key = `${m.year}-${String(m.month).padStart(2, "0")}`;
           const iso = `${key}-01`;
-          const ratePct = Math.floor(m.savings_rate_bps / 100);
+          // Math.round (não floor) — mesma convenção das outras telas e do backend (round-half-up),
+          // senão o mesmo mês mostra 24% aqui e 25% em Totais/Anual.
+          const ratePct = Math.round(m.savings_rate_bps / 100);
           const incompleto = incompleteKeys.has(key);
           const monthLabel = monthNamePtBR(iso);
           return (

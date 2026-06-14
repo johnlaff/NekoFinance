@@ -15,13 +15,14 @@ pub async fn run_oauth_flow(
     config: pkce::OAuthConfig,
     state: pkce::OAuthState,
     app_dir: std::path::PathBuf,
+    listener: std::net::TcpListener,
 ) -> Result<token_store::StoredToken, String> {
     // Open browser
     let auth_url = state.build_auth_url(&config);
     open::that(&auth_url).map_err(|e| format!("browser: {e}"))?;
 
-    // Wait for the redirect with the authorization code
-    let server = server::OAuthServer::new(state.redirect_port);
+    // Escuta no listener JÁ ligado (mesma porta do redirect_uri) — sem rebind/TOCTOU.
+    let server = server::OAuthServer::new(listener);
     let (code, returned_state) = server.listen_for_code().await?;
 
     // Valida o state (CSRF, RFC 6749 §10.12): o `state` do callback tem que casar com o csrf_token

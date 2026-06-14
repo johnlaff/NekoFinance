@@ -15,6 +15,9 @@ interface MonthNavProps {
   canNext?: boolean;
   /** Quando já está no mês corrente, esconde o botão "Hoje". */
   atToday?: boolean;
+  /** aria-labels das setas — sobrescreva quando a navegação não for por mês (ex.: ano). */
+  prevLabel?: string;
+  nextLabel?: string;
   className?: string;
 }
 
@@ -41,6 +44,8 @@ export function MonthNav({
   canPrev = true,
   canNext = true,
   atToday = true,
+  prevLabel = "Mês anterior",
+  nextLabel = "Próximo mês",
   className = "",
 }: MonthNavProps) {
   return (
@@ -50,7 +55,7 @@ export function MonthNav({
     >
       <button
         type="button"
-        aria-label="Mês anterior"
+        aria-label={prevLabel}
         disabled={!canPrev}
         onClick={onPrev}
         style={arrowBtn(canPrev)}
@@ -71,7 +76,7 @@ export function MonthNav({
       </span>
       <button
         type="button"
-        aria-label="Próximo mês"
+        aria-label={nextLabel}
         disabled={!canNext}
         onClick={onNext}
         style={arrowBtn(canNext)}
