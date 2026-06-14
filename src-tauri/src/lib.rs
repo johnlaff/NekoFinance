@@ -4,6 +4,7 @@ mod commands;
 mod forecast;
 mod google_sheets;
 mod oauth;
+mod recurrence;
 mod tags;
 
 use oauth::AppDataDir;
@@ -36,6 +37,9 @@ pub fn run() {
             tags::list_tags_cmd,
             tags::set_transaction_tags_cmd,
             tags::tag_totals_for_month_cmd,
+            recurrence::create_recurring_series_cmd,
+            recurrence::delete_series_from_cmd,
+            recurrence::delete_series_all_cmd,
         ])
         .setup(|app| {
             use tauri::Manager;
