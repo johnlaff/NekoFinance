@@ -321,3 +321,45 @@ export function importSheetData(
 export function importLocalXlsx(filePath: string, profileId: string): Promise<string> {
   return invoke("import_local_xlsx", { filePath, profileId });
 }
+
+// --- Tags (spec 014) ---
+
+export interface Tag {
+  id: string;
+  name: string;
+  color: string;
+  emoji: string | null;
+  is_special: boolean;
+}
+
+export interface TagTotal extends Tag {
+  /** Soma (centavos, valor absoluto) dos lançamentos do mês com esta tag. */
+  total_cents: number;
+}
+
+export function listTags(): Promise<Tag[]> {
+  return invoke("list_tags_cmd");
+}
+
+export function createTag(
+  name: string,
+  color: string,
+  emoji: string | null,
+  isSpecial: boolean,
+): Promise<string> {
+  return invoke("create_tag_cmd", { name, color, emoji, isSpecial });
+}
+
+export function setTransactionTags(
+  transactionId: string,
+  tagIds: string[],
+): Promise<void> {
+  return invoke("set_transaction_tags_cmd", { transactionId, tagIds });
+}
+
+export function tagTotalsForMonth(
+  year: number,
+  month: number,
+): Promise<TagTotal[]> {
+  return invoke("tag_totals_for_month_cmd", { year, month });
+}

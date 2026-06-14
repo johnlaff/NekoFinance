@@ -10,6 +10,7 @@ import {
   Settings,
   Sparkles,
   Table2,
+  Tags as TagsIcon,
   Unlink,
 } from "lucide-react";
 import { NekoMark } from "../design-system/components/NekoMark";
@@ -21,6 +22,7 @@ export type Screen =
   | "totais"
   | "horizonte"
   | "transactions"
+  | "tags"
   | "copilot"
   | "methodology"
   | "settings";
@@ -30,6 +32,7 @@ export const SCREEN_META: Record<Screen, { title: string; crumb: string }> = {
   totais: { title: "Totais", crumb: "Cálculos do mês" },
   horizonte: { title: "Horizonte de saldos", crumb: "Projeção mês a mês" },
   transactions: { title: "Transações", crumb: "Histórico completo" },
+  tags: { title: "Tags", crumb: "Rótulos do mês" },
   copilot: { title: "Mia", crumb: "Copiloto" },
   methodology: { title: "Metodologia", crumb: "Como o Neko calcula" },
   settings: { title: "Configurações e privacidade", crumb: "Local · este dispositivo" },
@@ -40,6 +43,7 @@ const NAV_ITEMS: { key: Screen; label: string; icon: typeof LayoutDashboard }[] 
   { key: "totais", label: "Totais", icon: Calculator },
   { key: "horizonte", label: "Horizonte", icon: CalendarRange },
   { key: "transactions", label: "Transações", icon: Receipt },
+  { key: "tags", label: "Tags", icon: TagsIcon },
   { key: "copilot", label: "Perguntar à Mia", icon: Sparkles },
   { key: "methodology", label: "Metodologia", icon: BookOpen },
 ];
