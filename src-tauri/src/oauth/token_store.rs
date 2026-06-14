@@ -27,6 +27,12 @@ fn salt_path(app_dir: &std::path::Path) -> PathBuf {
     app_dir.join(SALT_FILE)
 }
 
+/// Chave do fallback de arquivo cifrado. AVISO de segurança: é OFUSCAÇÃO BEST-EFFORT, não proteção
+/// forte — o sal fica em claro ao lado do ciphertext e a chave deriva de machine-id + sal, ambos
+/// legíveis por qualquer processo do mesmo usuário. Só protege contra leitura casual do arquivo, não
+/// contra um atacante local. O caminho preferido é o keychain do SO; este fallback existe para
+/// ambientes sem keychain. Endurecimento futuro: falhar fechado (recusar persistir) sem keychain,
+/// ou derivar de um segredo protegido pelo SO (DPAPI/libsecret).
 fn derive_key(app_dir: &std::path::Path) -> Result<[u8; 32], String> {
     let salt_file = salt_path(app_dir);
     let salt = if salt_file.exists() {
@@ -250,9 +256,17 @@ pub async fn refresh_access_token(
         .unwrap_or_default()
         .as_secs();
 
+    // Rotação de refresh token: se a resposta trouxer um novo refresh_token, ADOTA-O (Google pode
+    // rotacionar; reusar o antigo quebraria o próximo refresh). No-op quando não há rotação.
+    let refresh_token = json["refresh_token"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .unwrap_or(token.refresh_token);
+
     let new_token = StoredToken {
         access_token,
-        refresh_token: token.refresh_token,
+        refresh_token,
         expires_at: now + expires_in - 60,
         scope: token.scope,
     };

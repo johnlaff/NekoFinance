@@ -33,9 +33,16 @@ export function OnboardingFlow({
   const [saving, setSaving] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
 
-  // Foca o diálogo ao abrir. O focus-trap em si vive no `onKeyDown` (Tab/Shift+Tab fazem o wrap).
+  // Foca o diálogo ao abrir e DEVOLVE o foco ao elemento anterior quando fecha (cleanup cobre
+  // finish/Esc/qualquer caminho). O focus-trap em si vive no `onKeyDown` (Tab/Shift+Tab fazem wrap).
+  const previouslyFocused = useRef<HTMLElement | null>(null);
   useEffect(() => {
+    previouslyFocused.current = document.activeElement as HTMLElement | null;
     cardRef.current?.focus();
+    return () => {
+      const el = previouslyFocused.current;
+      if (el?.isConnected) el.focus();
+    };
   }, []);
 
   async function finish() {

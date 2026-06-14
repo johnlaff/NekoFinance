@@ -180,6 +180,9 @@ export function InfoPopover({
         className={["nk-term", hideMarker ? "nk-term--plain" : "", className]
           .filter(Boolean)
           .join(" ")}
+        // `aria-haspopup` sinaliza ao leitor de tela que o termo ABRE uma definição (afordância
+        // anunciada mesmo antes de abrir); o nome acessível é o próprio termo (children).
+        aria-haspopup="dialog"
         aria-expanded={open}
         aria-describedby={open ? id : undefined}
         onClick={(e) => {

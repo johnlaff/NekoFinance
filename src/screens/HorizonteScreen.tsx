@@ -249,8 +249,11 @@ export function HorizonteScreen() {
                   >
                     {d.day}
                   </span>
-                  <span aria-hidden="true">
-                    <Money cents={d.balance} size="sm" sign="auto" />
+                  {/* `sign="none"` + --text: o saldo herda alto contraste (>=4.5:1 em TODAS as
+                      faixas). O sinal +/− já é carregado pela COR da faixa-fundo; colorir o número
+                      por cima caía abaixo de AA nas faixas fortes (vermelho/verde 0.3+). */}
+                  <span aria-hidden="true" style={{ color: "var(--text)" }}>
+                    <Money cents={d.balance} size="sm" sign="none" />
                   </span>
                 </div>
               ))}

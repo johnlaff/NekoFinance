@@ -85,7 +85,7 @@ Important concepts:
 - Reserve: first-class emergency fund metric with target months, current months, and trend.
 - Liquidity pockets: liquid, restricted, illiquid, reserve, and other account classes that change projection meaning.
 - Sheet Mapping and Sync Log.
-- SQLite is the system of record; the spreadsheet remains the canonical view of the method.
+- System of record is phased: during the current import-only phase the spreadsheet is the system of record and SQLite is the local mirror + enrichment layer; SQLite becomes the system of record only in the future gated bidirectional write-back phase (see `docs/adr/0003`).
 - All material Google Sheets writes require structured diff, validation, checksum verification, explicit human approval, and rollback visibility.
 </domain_model>
 

@@ -168,7 +168,7 @@
   --danger-tint: rgba(203, 70, 62, 0.1);
   --info-tint: rgba(46, 131, 172, 0.11);
 
-  --money-pos: #1e9466;
+  --money-pos: #157a52; /* WCAG AA (>=4.5:1) p/ valores 13–15px sobre --surface no tema claro */
   --money-neg: #cb463e;
   --money-neutral: var(--text);
 

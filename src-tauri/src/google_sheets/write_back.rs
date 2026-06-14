@@ -119,7 +119,11 @@ pub fn plan_write_back(
     mappings: &[(String, i32)],
     txns: &[WriteBackTxn],
 ) -> Vec<CellWrite> {
-    let year = layout.year.unwrap_or(2025);
+    // Ano não detectado → não há onde escrever com segurança: melhor um plano VAZIO do que assumir
+    // um ano e tocar a planilha errada em silêncio.
+    let Some(year) = layout.year else {
+        return Vec::new();
+    };
     let data_start = layout.data_start_row as usize;
     let day_col = layout.day_column as usize;
     let block_size = layout.block_size as usize;
@@ -296,6 +300,19 @@ mod tests {
         assert_eq!(plan[0].a1, "D3"); // Saída = col 3 (D)
         assert_eq!(plan[0].current, "");
         assert!(plan[0].changed);
+    }
+
+    #[test]
+    fn empty_plan_when_year_undetected() {
+        // Ano não detectado (None) → plano vazio (não assume um ano e escreve na planilha errada).
+        let mut l = layout();
+        l.year = None;
+        let txns = vec![WriteBackTxn {
+            date: "2026-01-01".into(),
+            kind: RowKind::Diario,
+            amount_cents: 3000,
+        }];
+        assert!(plan_write_back(&grid(), &l, &mappings(), &txns).is_empty());
     }
 
     #[test]
