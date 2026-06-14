@@ -1,6 +1,6 @@
-//! Tags livres (spec 014): cor + emoji, transversais a qualquer lançamento, somam por mês.
-//! A tag especial "! Pagar" (`is_special`) ordena no topo. Funções puras-de-IO no shell;
-//! determinísticas e testáveis com um pool injetado.
+//! Tags livres (spec 014): nome + cor, transversais a qualquer lançamento, somam por mês.
+//! `emoji` e `is_special` (fixa a tag no topo) são afordâncias próprias do Neko, não do modelo de
+//! tags do método. Funções puras-de-IO no shell; determinísticas e testáveis com um pool injetado.
 
 use serde::Serialize;
 use sqlx::SqlitePool;
@@ -82,7 +82,7 @@ pub async fn set_transaction_tags(
     Ok(())
 }
 
-/// Total por tag no mês (`YYYY-MM`). Inclui tags sem lançamento (total 0). "! Pagar" no topo.
+/// Total por tag no mês (`YYYY-MM`). Inclui tags sem lançamento (total 0). `is_special` no topo.
 pub async fn tag_totals_for_month(
     pool: &SqlitePool,
     year: i32,

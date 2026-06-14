@@ -1114,25 +1114,40 @@ async fn dashboard_summary(
     .map_err(|e| format!("query: {e}"))?
     .unwrap_or((0,));
 
-    // Diário de HOJE: check-ins (app) + transações Diário realizadas (planilha/import). Antes lia
-    // só `daily_checkin` (nunca populada) → R$0 estrutural enganoso mesmo havendo Diário no dia.
+    // Diário de HOJE como MAGNITUDE positiva (o card faz `teto - gasto` e `gasto/teto`).
+    // - Sinal: por convenção, `amount` é gravado como magnitude positiva (import faz `.abs()`,
+    //   `create_transaction` exige `> 0`); o sinal vem do `type`. `ABS()` é defesa-em-profundidade,
+    //   espelhando o `amount.abs()` do forecast — robusto caso algum writer grave com sinal.
+    // - Fonte única (sem double-count, o achado real): se há transação Diário no dia, ela vence;
+    //   o check-in (`daily_checkin`, sem writer em produção hoje) só preenche dias SEM transação.
+    //   Invariante: um dia nunca contabiliza check-in E transação Diário ao mesmo tempo (mesmo
+    //   dinheiro, Régua 1). Mesma regra no crédito abaixo e no forecast (`load_cashflow_events`).
     let daily_spend: (i64,) = sqlx::query_as(
-        "SELECT COALESCE((SELECT SUM(daily_spend) FROM daily_checkin WHERE date = ?1), 0) \
-              + COALESCE((SELECT SUM(amount) FROM \"transaction\" \
-                          WHERE type='expense' AND is_fixed=0 AND date = ?1 \
-                            AND (payment_method IS NULL OR payment_method <> 'credit')), 0)",
+        "SELECT CASE WHEN EXISTS(SELECT 1 FROM \"transaction\" \
+                                 WHERE type='expense' AND is_fixed=0 AND date = ?1 \
+                                   AND (payment_method IS NULL OR payment_method <> 'credit')) \
+                     THEN ABS(COALESCE((SELECT SUM(amount) FROM \"transaction\" \
+                                        WHERE type='expense' AND is_fixed=0 AND date = ?1 \
+                                          AND (payment_method IS NULL OR payment_method <> 'credit')), 0)) \
+                     ELSE COALESCE((SELECT SUM(daily_spend) FROM daily_checkin WHERE date = ?1), 0) \
+                END",
     )
     .bind(&today)
     .fetch_one(pool)
     .await
     .map_err(|e| format!("query daily spend: {e}"))?;
 
-    // Crédito no mês (Régua 2): check-ins + transações de crédito do mês.
+    // Crédito no mês (Régua 2) como MAGNITUDE positiva, mesma regra do Diário: `ABS` por
+    // defesa-em-profundidade (amount é positivo por convenção) e fonte única — se há transação de
+    // crédito no mês, ela vence; o check-in só preenche meses sem transação de crédito.
     let month_start = format!("{}-01", today_naive.format("%Y-%m"));
     let credit_spend: (i64,) = sqlx::query_as(
-        "SELECT COALESCE((SELECT SUM(credit_spend) FROM daily_checkin WHERE date >= ?1), 0) \
-              + COALESCE((SELECT SUM(amount) FROM \"transaction\" \
-                          WHERE type='expense' AND payment_method='credit' AND date >= ?1), 0)",
+        "SELECT CASE WHEN EXISTS(SELECT 1 FROM \"transaction\" \
+                                 WHERE type='expense' AND payment_method='credit' AND date >= ?1) \
+                     THEN ABS(COALESCE((SELECT SUM(amount) FROM \"transaction\" \
+                                        WHERE type='expense' AND payment_method='credit' AND date >= ?1), 0)) \
+                     ELSE COALESCE((SELECT SUM(credit_spend) FROM daily_checkin WHERE date >= ?1), 0) \
+                END",
     )
     .bind(&month_start)
     .fetch_one(pool)
@@ -1924,6 +1939,52 @@ mod tests {
             "Diário de hoje vem das transações, não R$0 estrutural"
         );
         assert!(!s.has_credit, "sem cartão nem crédito → has_credit false");
+    }
+
+    // Defesa-em-profundidade (review adversarial): `amount` é magnitude positiva por convenção, mas
+    // `daily_spend_today` usa ABS espelhando o forecast — então um amount negativo (não-canônico)
+    // ainda rende magnitude positiva, jamais um "gasto negativo" que quebraria `teto - gasto`.
+    #[tokio::test]
+    async fn dashboard_daily_spend_is_positive_magnitude_even_if_amount_negative() {
+        let pool = fixture_pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        insert_realized(&pool, "expense", -4_271, "2026-06-13").await; // sinal não-canônico
+        let s = dashboard_summary(&pool, today).await.unwrap();
+        assert_eq!(
+            s.daily_spend_today, 4_271,
+            "ABS garante magnitude positiva mesmo com amount negativo"
+        );
+    }
+
+    // Regressão (review adversarial): um dia com check-in E transação Diário não pode somar os dois
+    // (mesmo dinheiro, Régua 1). A transação realizada vence; o check-in só preenche dias sem ela.
+    #[tokio::test]
+    async fn dashboard_daily_spend_no_double_count_checkin_and_txn() {
+        let pool = fixture_pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let pid = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO person (id, name) VALUES (?1, 'Tester')")
+            .bind(&pid)
+            .execute(&pool)
+            .await
+            .unwrap();
+        insert_realized(&pool, "expense", 4_271, "2026-06-13").await; // magnitude positiva (canônico)
+        // Check-in no mesmo dia com daily_spend 9_999 — NÃO pode ser somado por cima.
+        sqlx::query(
+            "INSERT INTO daily_checkin (id, person_id, date, daily_spend, credit_spend) VALUES (?1,?2,?3,?4,0)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&pid)
+        .bind("2026-06-13")
+        .bind(9_999i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let s = dashboard_summary(&pool, today).await.unwrap();
+        assert_eq!(
+            s.daily_spend_today, 4_271,
+            "transação Diário vence; check-in não soma por cima (sem double-count)"
+        );
     }
 
     // Visão anual: agrega as 4 métricas por mês a partir das transações do ano (realizado +

@@ -211,6 +211,7 @@ export function HorizonteScreen() {
               {col.days.map((d) => (
                 <div
                   key={d.day}
+                  role="img"
                   aria-current={d.isToday ? "date" : undefined}
                   aria-label={`Dia ${d.day}: saldo ${formatBRL(d.balance)} (${BAND_LABEL[saldoBand(d.balance)]})`}
                   style={{

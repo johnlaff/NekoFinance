@@ -78,6 +78,12 @@ interface Status {
   label: string;
 }
 
+// Proveniência dos rótulos (fidelidade ao método):
+// - Performance: "Sobrou dinheiro" / "Faltou dinheiro" — AMBOS verbatim do método (par confirmado).
+// - "Dentro do ideal" (economizado) e "Dentro da renda" (custo de vida): os ESTADOS POSITIVOS são
+//   verbatim do método. Os estados negativos abaixo ("Abaixo do ideal", "Acima da renda") são copy
+//   PRÓPRIA do Neko para o estado vermelho — o método só registra o rótulo positivo. Mantidos
+//   porque a UI precisa nomear o estado ruim; não os atribua ao método.
 export function performanceStatus(cents: number): Status {
   return cents >= 0
     ? { level: "strong", label: "Sobrou dinheiro" }
@@ -86,14 +92,14 @@ export function performanceStatus(cents: number): Status {
 
 export function economizadoStatus(bps: number): Status {
   return bps >= SAVINGS_TARGET_BPS
-    ? { level: "strong", label: "Dentro do ideal" }
-    : { level: "watch", label: "Abaixo do ideal" };
+    ? { level: "strong", label: "Dentro do ideal" } // verbatim do método
+    : { level: "watch", label: "Abaixo do ideal" }; // copy do Neko (estado vermelho)
 }
 
 export function custoVidaStatus(cost: number, income: number): Status {
   return cost <= income
-    ? { level: "steady", label: "Dentro da renda" }
-    : { level: "watch", label: "Acima da renda" };
+    ? { level: "steady", label: "Dentro da renda" } // verbatim do método
+    : { level: "watch", label: "Acima da renda" }; // copy do Neko (estado vermelho)
 }
 
 function MetricRow({

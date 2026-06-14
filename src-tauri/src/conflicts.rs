@@ -34,50 +34,72 @@ pub async fn resolve(pool: &SqlitePool, id: &str, choice: &str) -> Result<(), St
     if choice != "sheet" && choice != "local" {
         return Err(format!("escolha inválida: {choice}"));
     }
-    let row: Option<(String, String, String, String)> = sqlx::query_as(
-        "SELECT transaction_id, field, local_value, sheet_value FROM import_conflict WHERE id = ?1 AND resolved_at IS NULL",
+    // Não selecionamos `local_value`: em "local" mantemos o valor ATUAL da linha (que pode ter sido
+    // editado depois da detecção), nunca o snapshot do conflito. Gravar o snapshot descartaria
+    // edições mais novas — o bug que a review adversarial pegou.
+    let row: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT transaction_id, field, sheet_value FROM import_conflict WHERE id = ?1 AND resolved_at IS NULL",
     )
     .bind(id)
     .fetch_optional(pool)
     .await
     .map_err(|e| format!("load conflict: {e}"))?;
-    let Some((txn_id, field, local_value, sheet_value)) = row else {
+    let Some((txn_id, field, sheet_value)) = row else {
         return Ok(()); // já resolvido ou inexistente
     };
 
-    let chosen = if choice == "sheet" {
-        &sheet_value
-    } else {
-        &local_value
-    };
     let now = chrono::Utc::now().to_rfc3339();
+    let sheet_wins = choice == "sheet";
 
     match field.as_str() {
         "amount" => {
-            let value: i64 = chosen.parse().map_err(|_| "amount inválido")?;
             let source: i64 = sheet_value.parse().map_err(|_| "sheet amount inválido")?;
-            sqlx::query(
-                "UPDATE \"transaction\" SET amount=?1, source_amount=?2, updated_at=?3 WHERE id=?4",
-            )
-            .bind(value)
-            .bind(source)
-            .bind(&now)
-            .bind(&txn_id)
-            .execute(pool)
-            .await
-            .map_err(|e| format!("apply amount: {e}"))?;
+            if sheet_wins {
+                // Planilha vence: grava o valor da planilha e realinha o base num só lugar.
+                sqlx::query(
+                    "UPDATE \"transaction\" SET amount=?1, source_amount=?1, updated_at=?2 WHERE id=?3",
+                )
+                .bind(source)
+                .bind(&now)
+                .bind(&txn_id)
+                .execute(pool)
+                .await
+                .map_err(|e| format!("apply amount: {e}"))?;
+            } else {
+                // Mantém a edição local (o que estiver AGORA na linha) e só realinha o base.
+                sqlx::query(
+                    "UPDATE \"transaction\" SET source_amount=?1, updated_at=?2 WHERE id=?3",
+                )
+                .bind(source)
+                .bind(&now)
+                .bind(&txn_id)
+                .execute(pool)
+                .await
+                .map_err(|e| format!("align amount base: {e}"))?;
+            }
         }
         "description" => {
-            sqlx::query(
-                "UPDATE \"transaction\" SET description=?1, source_description=?2, updated_at=?3 WHERE id=?4",
-            )
-            .bind(chosen)
-            .bind(&sheet_value)
-            .bind(&now)
-            .bind(&txn_id)
-            .execute(pool)
-            .await
-            .map_err(|e| format!("apply description: {e}"))?;
+            if sheet_wins {
+                sqlx::query(
+                    "UPDATE \"transaction\" SET description=?1, source_description=?1, updated_at=?2 WHERE id=?3",
+                )
+                .bind(&sheet_value)
+                .bind(&now)
+                .bind(&txn_id)
+                .execute(pool)
+                .await
+                .map_err(|e| format!("apply description: {e}"))?;
+            } else {
+                sqlx::query(
+                    "UPDATE \"transaction\" SET source_description=?1, updated_at=?2 WHERE id=?3",
+                )
+                .bind(&sheet_value)
+                .bind(&now)
+                .bind(&txn_id)
+                .execute(pool)
+                .await
+                .map_err(|e| format!("align description base: {e}"))?;
+            }
         }
         other => return Err(format!("campo desconhecido: {other}")),
     }
@@ -181,6 +203,20 @@ mod tests {
         resolve(&p, "c1", "local").await.unwrap();
         // Mantém o local (15000), mas base vai para a planilha (20000) → não reconflita.
         assert_eq!(amount_of(&p, "t1").await, (15000, Some(20000)));
+        assert!(list_conflicts(&p).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn resolve_local_preserves_newer_edit_not_the_snapshot() {
+        // Regressão da review adversarial: o usuário editou a linha (18000) DEPOIS de o conflito
+        // ser detectado (snapshot local_value=15000). "Manter local" deve preservar 18000, não
+        // ressuscitar o snapshot velho de 15000. O base realinha para a planilha (20000).
+        let p = pool().await;
+        seed_txn(&p, "t1", 18000, "x").await;
+        seed_conflict(&p, "c1", "t1", "amount", "10000", "15000", "20000").await;
+
+        resolve(&p, "c1", "local").await.unwrap();
+        assert_eq!(amount_of(&p, "t1").await, (18000, Some(20000)));
         assert!(list_conflicts(&p).await.unwrap().is_empty());
     }
 

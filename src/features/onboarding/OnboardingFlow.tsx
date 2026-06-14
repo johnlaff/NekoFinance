@@ -173,8 +173,9 @@ export function OnboardingFlow({
                 flex: 1,
                 height: 4,
                 borderRadius: "var(--radius-pill)",
-                background: i <= step ? "var(--primary)" : "var(--bg-subtle)",
-                transition: "background var(--t-hover)",
+                backgroundColor: i <= step ? "var(--primary)" : "var(--bg-subtle)",
+                // `--t-hover` é shorthand multi-prop (inválido em `transition`); usar dur+ease.
+                transition: "background-color var(--dur-fast) var(--ease-standard)",
               }}
             />
           ))}

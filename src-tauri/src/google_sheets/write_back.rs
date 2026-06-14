@@ -81,6 +81,17 @@ fn kind_offset(kind: RowKind, mappings: &[(String, i32)]) -> Option<usize> {
         .map(|(_, off)| *off as usize)
 }
 
+/// Lê a célula do dia (1..=31). Planilhas reais entregam o dia como float ("1.0000"), não inteiro,
+/// então parseamos como `f64` antes de truncar — `parse::<u32>()` falharia e nenhuma linha casaria.
+fn parse_day_cell(cell: &str) -> Option<u32> {
+    cell.trim()
+        .replace(',', ".")
+        .parse::<f64>()
+        .ok()
+        .filter(|d| (1.0..=31.0).contains(d))
+        .map(|d| d as u32)
+}
+
 /// Linha da grade (0-based) cujo `day_column` é o dia `day`, a partir de `data_start`.
 fn find_day_row(
     rows: &[Vec<String>],
@@ -93,7 +104,7 @@ fn find_day_row(
         .skip(data_start)
         .find(|(_, row)| {
             row.get(day_col)
-                .and_then(|c| c.trim().parse::<u32>().ok())
+                .and_then(|c| parse_day_cell(c))
                 .is_some_and(|d| d == day)
         })
         .map(|(r, _)| r)
@@ -266,6 +277,33 @@ mod tests {
         assert_eq!(plan[0].a1, "D3"); // Saída = col 3 (D)
         assert_eq!(plan[0].current, "");
         assert!(plan[0].changed);
+    }
+
+    #[test]
+    fn finds_day_row_when_cells_are_floats() {
+        // Regressão da review adversarial: planilhas reais dão o dia como float ("1.0000").
+        // O parse `u32` antigo falhava e NENHUMA célula era encontrada (write-back vazio).
+        let mut g = grid();
+        g[2][0] = "1.0000".into();
+        g[3][0] = "2,0000".into(); // vírgula decimal também ocorre
+        let txns = vec![WriteBackTxn {
+            date: "2026-01-02".into(),
+            kind: RowKind::Saida,
+            amount_cents: 20_000,
+        }];
+        let plan = plan_write_back(&g, &layout(), &mappings(), &txns);
+        assert_eq!(plan.len(), 1, "o dia em float precisa casar a linha");
+        assert_eq!(plan[0].a1, "D4"); // Saída do dia 2 → linha índice 3 → row 4
+    }
+
+    #[test]
+    fn parse_day_cell_handles_floats_and_bounds() {
+        assert_eq!(parse_day_cell("1.0000"), Some(1));
+        assert_eq!(parse_day_cell("31,0000"), Some(31));
+        assert_eq!(parse_day_cell(" 15 "), Some(15));
+        assert_eq!(parse_day_cell("0"), None); // fora de 1..=31
+        assert_eq!(parse_day_cell("32"), None);
+        assert_eq!(parse_day_cell("Saldo"), None);
     }
 
     #[test]

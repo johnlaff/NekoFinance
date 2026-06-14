@@ -115,25 +115,37 @@ pub async fn create_recurring_series(
     Ok(rec_id)
 }
 
+/// Índice da ocorrência embutido no id `{rec_id}:{i}`. Cortar "deste ponto em diante" pelo ÍNDICE
+/// (não pela data) é order-independent — robusto se uma janela rolante futura gerar datas não
+/// estritamente crescentes, onde `date >= pivot` apagaria/editaria ocorrências erradas.
+fn occurrence_index(transaction_id: &str) -> Option<i64> {
+    transaction_id
+        .rsplit_once(':')
+        .and_then(|(_, i)| i.parse().ok())
+}
+
 /// Apaga a ocorrência indicada e TODAS as posteriores da mesma série ("deste ponto em diante").
 pub async fn delete_series_from(pool: &SqlitePool, transaction_id: &str) -> Result<u64, String> {
-    let row: Option<(String, String)> = sqlx::query_as(
-        "SELECT recurrence_id, date FROM \"transaction\" WHERE id = ?1 AND recurrence_id IS NOT NULL",
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT recurrence_id FROM \"transaction\" WHERE id = ?1 AND recurrence_id IS NOT NULL",
     )
     .bind(transaction_id)
     .fetch_optional(pool)
     .await
     .map_err(|e| format!("lookup: {e}"))?;
-    let (rec_id, date) = match row {
-        Some(v) => v,
-        None => return Ok(0),
+    let (Some((rec_id,)), Some(pivot)) = (row, occurrence_index(transaction_id)) else {
+        return Ok(0);
     };
-    let res = sqlx::query("DELETE FROM \"transaction\" WHERE recurrence_id = ?1 AND date >= ?2")
-        .bind(&rec_id)
-        .bind(&date)
-        .execute(pool)
-        .await
-        .map_err(|e| format!("delete from: {e}"))?;
+    // `substr(id, length(recurrence_id) + 2)` = parte após o ':' → o índice como inteiro.
+    let res = sqlx::query(
+        "DELETE FROM \"transaction\" WHERE recurrence_id = ?1 \
+         AND CAST(substr(id, length(recurrence_id) + 2) AS INTEGER) >= ?2",
+    )
+    .bind(&rec_id)
+    .bind(pivot)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("delete from: {e}"))?;
     Ok(res.rows_affected())
 }
 
@@ -154,21 +166,22 @@ pub async fn update_series_from(
     transaction_id: &str,
     edit: &SeriesEdit,
 ) -> Result<u64, String> {
-    let row: Option<(String, String)> = sqlx::query_as(
-        "SELECT recurrence_id, date FROM \"transaction\" WHERE id = ?1 AND recurrence_id IS NOT NULL",
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT recurrence_id FROM \"transaction\" WHERE id = ?1 AND recurrence_id IS NOT NULL",
     )
     .bind(transaction_id)
     .fetch_optional(pool)
     .await
     .map_err(|e| format!("lookup: {e}"))?;
-    let (rec_id, date) = match row {
-        Some(v) => v,
-        None => return Ok(0),
+    let (Some((rec_id,)), Some(pivot)) = (row, occurrence_index(transaction_id)) else {
+        return Ok(0);
     };
     let now = chrono::Utc::now().to_rfc3339();
+    // Corte por índice (ver `occurrence_index`), não por data.
     let res = sqlx::query(
         "UPDATE \"transaction\" SET amount = ?1, description = ?2, payment_method = ?3, \
-         is_fixed = ?4, updated_at = ?5 WHERE recurrence_id = ?6 AND date >= ?7",
+         is_fixed = ?4, updated_at = ?5 WHERE recurrence_id = ?6 \
+         AND CAST(substr(id, length(recurrence_id) + 2) AS INTEGER) >= ?7",
     )
     .bind(edit.amount)
     .bind(&edit.description)
@@ -176,7 +189,7 @@ pub async fn update_series_from(
     .bind(edit.is_fixed as i64)
     .bind(&now)
     .bind(&rec_id)
-    .bind(&date)
+    .bind(pivot)
     .execute(pool)
     .await
     .map_err(|e| format!("update from: {e}"))?;
@@ -415,6 +428,33 @@ mod tests {
             amount_at(&p, &format!("{rec}:3")).await,
             550000,
             "setembro reajustado"
+        );
+    }
+
+    // Regressão (review adversarial): o corte "deste ponto" é por ÍNDICE, não por data. Prova com
+    // (a) uma data fora de ordem (índice 1 movido para o futuro) e (b) índice de 2 dígitos — onde
+    // o corte por data ou por string quebraria.
+    #[tokio::test]
+    async fn delete_from_cuts_by_index_not_date_even_out_of_order() {
+        let p = pool().await;
+        let rec = create_recurring_series(&p, &tmpl(), Frequency::Mensal, 12)
+            .await
+            .unwrap();
+        // Move o índice 1 para DEPOIS do pivô (índice 10): data-based apagaria o índice 1 junto.
+        sqlx::query("UPDATE \"transaction\" SET date = '2030-01-01' WHERE id = ?1")
+            .bind(format!("{rec}:1"))
+            .execute(&p)
+            .await
+            .unwrap();
+        // Corta a partir do índice 10 (2 dígitos): só 10 e 11 saem.
+        let removed = delete_series_from(&p, &format!("{rec}:10")).await.unwrap();
+        assert_eq!(removed, 2, "só índices 10 e 11 (por índice, não por data)");
+        assert_eq!(count_in_series(&p, &rec).await, 10);
+        // O índice 1, apesar da data futura, permanece — o corte é por índice.
+        assert_eq!(
+            amount_at(&p, &format!("{rec}:1")).await,
+            500000,
+            "índice 1 intacto"
         );
     }
 

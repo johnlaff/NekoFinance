@@ -1,7 +1,8 @@
--- Spec 014: tags livres (cor + emoji), transversais a qualquer lançamento, somam por mês.
--- A tag especial "! Pagar" (is_special) ordena no topo. Substitui o orçamento-por-categoria
--- (anti-padrão do método): a árvore granular de `category` é rebaixada para tags; só
--- `category.nature` (fixed/variable) permanece como atributo do lançamento.
+-- Spec 014: tags livres (nome + cor), transversais a qualquer lançamento, somam por mês.
+-- `emoji` e `is_special` (fixa no topo) são afordâncias próprias do Neko, não do modelo de tags do
+-- método. Substitui o orçamento-por-categoria (anti-padrão do método): a árvore granular de
+-- `category` é rebaixada para tags; só `category.nature` (fixed/variable) permanece como atributo
+-- do lançamento.
 
 CREATE TABLE IF NOT EXISTS tag (
     id TEXT PRIMARY KEY NOT NULL,

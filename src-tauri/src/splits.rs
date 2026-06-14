@@ -1,5 +1,6 @@
 //! Multi-titular (read-side do split, spec 017): quem é responsável/pagou cada parte de um
-//! lançamento. Surge na UI como OwnerChip. Diferencial do Neko sobre o app oficial (single-user).
+//! lançamento. Surge na UI como OwnerChip — suporte a múltiplos titulares (vários pagadores
+//! por lançamento).
 
 use serde::Serialize;
 use sqlx::SqlitePool;

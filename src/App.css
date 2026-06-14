@@ -753,14 +753,28 @@ h3,
   font-family: var(--font-money);
 }
 @media (prefers-reduced-motion: no-preference) {
+  /* Abaixo do termo: desce de cima (-3px). Acima (flip): sobe de baixo (+3px). Ambas animam. */
   .nk-pop--bottom {
     animation: nk-pop-in 0.16s var(--ease-entrance) both;
+  }
+  .nk-pop--top {
+    animation: nk-pop-in-top 0.16s var(--ease-entrance) both;
   }
 }
 @keyframes nk-pop-in {
   from {
     opacity: 0;
     transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes nk-pop-in-top {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
   }
   to {
     opacity: 1;

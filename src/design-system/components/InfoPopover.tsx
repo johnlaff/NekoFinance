@@ -151,6 +151,9 @@ export function InfoPopover({
     };
   }, [open, width]);
 
+  // Higiene: limpa o timer de hover pendente no unmount (evita callback órfão).
+  useEffect(() => () => clearTimeout(hoverTimer.current), []);
+
   const show = () => {
     clearTimeout(hoverTimer.current);
     setOpen(true);

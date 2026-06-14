@@ -113,6 +113,15 @@ pub fn compute_checksum(rows: &[ImportedRow]) -> String {
 /// descrição → editar o valor/nota na planilha **preserva** o id (o UPSERT atualiza em vigor e o
 /// enriquecimento — split, tags, payment_method — sobrevive). `slot` desempata o caso raro de
 /// mais de uma linha com a mesma (aba,data,kind).
+///
+/// LIMITAÇÃO CONHECIDA (slot posicional): `slot` é atribuído pela ordem de aparição. Se houver
+/// 2+ linhas com a mesma (aba,data,kind) e a 1ª for removida da planilha, a sobrevivente herda o
+/// `slot` (e o id) da removida, migrando o enriquecimento para os dados errados. Inalcançável no
+/// grid canônico do método (1 célula por dia×coluna → no máximo 1 linha por (data,kind); ver
+/// `parse_rows_with_layout`); só ocorre em planilha malformada com dias duplicados. NÃO ancoramos
+/// em (linha,coluna) física de propósito: mudaria o esquema do id e regeneraria TODOS os ids no
+/// próximo import, órfãos o enriquecimento de quem já importou. Travado pelo teste
+/// `slot_identity_is_positional_known_limitation`.
 pub fn row_id(sheet: &str, date: &str, kind: RowKind, slot: usize) -> String {
     let mut h = Sha256::new();
     h.update(b"txn-v1|");
@@ -1472,6 +1481,56 @@ mod tests {
         assert_eq!(import_rows(&pool, "2026", &v2, "p1").await.unwrap(), 2);
 
         assert_eq!(count_transactions(&pool).await, 2);
+    }
+
+    // Trava a LIMITAÇÃO CONHECIDA do slot posicional (ver doc de `row_id`). Inalcançável no grid
+    // canônico do método (1 linha por data×kind); aqui forçamos 2 linhas mesma (aba,data,kind) para
+    // documentar que, removida a 1ª, o enriquecimento segue o SLOT (não os dados) — a sobrevivente
+    // assume o slot 0/id da removida e herda a tag. Se um dia ancorarmos id em (linha,coluna), este
+    // teste muda de propósito.
+    #[tokio::test]
+    async fn slot_identity_is_positional_known_limitation() {
+        let pool = test_pool().await;
+        // Duas Saídas no MESMO dia (planilha malformada): slots 0 e 1.
+        let v1 = vec![
+            imported("2026-01-06", -5_000),
+            imported("2026-01-06", -7_000),
+        ];
+        import_rows(&pool, "2026", &v1, "p1").await.unwrap();
+        assert_eq!(count_transactions(&pool).await, 2);
+
+        // Enriquece o SLOT 0 com uma tag.
+        let id0 = row_id("2026", "2026-01-06", RowKind::Saida, 0);
+        sqlx::query("INSERT INTO tag (id, name, color) VALUES ('tg','T','c')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO transaction_tag (transaction_id, tag_id) VALUES (?1,'tg')")
+            .bind(&id0)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Re-import com só UMA Saída no dia (a 1ª sumiu) → a sobrevivente toma o slot 0 = id0.
+        let v2 = vec![imported("2026-01-06", -7_000)];
+        import_rows(&pool, "2026", &v2, "p1").await.unwrap();
+        assert_eq!(count_transactions(&pool).await, 1);
+
+        // Comportamento documentado: id0 sobrevive com os DADOS da sobrevivente (7.000) e ainda
+        // carrega a tag — o enriquecimento é posicional (segue o slot, não a linha original).
+        let (amount, tags): (i64, i64) = sqlx::query_as(
+            "SELECT t.amount, (SELECT COUNT(*) FROM transaction_tag WHERE transaction_id = t.id) \
+             FROM \"transaction\" t WHERE t.id = ?1",
+        )
+        .bind(&id0)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(amount, 7_000, "id0 carrega os dados da sobrevivente");
+        assert_eq!(
+            tags, 1,
+            "enriquecimento seguiu o slot (limitação conhecida)"
+        );
     }
 
     #[tokio::test]
