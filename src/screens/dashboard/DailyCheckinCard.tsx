@@ -109,7 +109,9 @@ export function DailyCheckinCard({
           >
             {fmtBRL(spent)}
             {ceiling > 0 && (
-              <span style={{ color: "var(--text-faint)", fontWeight: "var(--fw-regular)" }}>
+              <span
+                style={{ color: "var(--text-faint)", fontWeight: "var(--fw-regular)" }}
+              >
                 {" "}
                 / {fmtBRL(ceiling)}
               </span>
@@ -130,10 +132,13 @@ export function DailyCheckinCard({
           >
             <div
               style={{
-                width: `${pct}%`,
+                width: "100%",
                 height: "100%",
+                transformOrigin: "left",
+                transform: `scaleX(${pct / 100})`,
                 background: overspent ? "var(--danger-400)" : "var(--type-diario)",
-                transition: "width var(--t-hover)",
+                // Anima transform (GPU), não width — evita layout thrash (impeccable).
+                transition: "transform var(--t-hover)",
               }}
             />
           </div>
@@ -161,7 +166,11 @@ export function DailyCheckinCard({
               fontSize: "var(--fs-body)",
             }}
           />
-          <Button variant="primary" disabled={!canSubmit} onClick={() => void logSpend()}>
+          <Button
+            variant="primary"
+            disabled={!canSubmit}
+            onClick={() => void logSpend()}
+          >
             {busy ? "…" : "Registrar"}
           </Button>
         </div>

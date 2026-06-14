@@ -408,7 +408,10 @@ export function splitsForTransaction(transactionId: string): Promise<SplitRow[]>
   return invoke("splits_for_transaction_cmd", { transactionId });
 }
 
-export function ownerTotalsForMonth(year: number, month: number): Promise<OwnerTotal[]> {
+export function ownerTotalsForMonth(
+  year: number,
+  month: number,
+): Promise<OwnerTotal[]> {
   return invoke("owner_totals_for_month_cmd", { year, month });
 }
 

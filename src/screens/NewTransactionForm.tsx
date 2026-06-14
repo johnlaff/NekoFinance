@@ -1,12 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "../design-system/components/Button";
 import { MovBadge, type MovKind } from "../design-system/components/MovBadge";
-import {
-  createTransaction,
-  listTags,
-  type Frequency,
-  type Tag,
-} from "../lib/api";
+import { createTransaction, listTags, type Frequency, type Tag } from "../lib/api";
 import { parseBRLToCents } from "../lib/format";
 
 /** Os tipos de movimento oferecidos no form (Economia → transfer precisa de conta, fica fora). */

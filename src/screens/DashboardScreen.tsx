@@ -24,7 +24,10 @@ import { DailyCheckinCard } from "./dashboard/DailyCheckinCard";
 
 export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
   const [reloadKey, setReloadKey] = useState(0);
-  const summaryQ = useCommand(`get_dashboard_summary:${reloadKey}`, getDashboardSummary);
+  const summaryQ = useCommand(
+    `get_dashboard_summary:${reloadKey}`,
+    getDashboardSummary,
+  );
   const forecastQ = useCommand(`get_forecast:${reloadKey}`, getForecast);
   const summary = summaryQ.data ?? null;
   const forecast = forecastQ.data ?? null;
