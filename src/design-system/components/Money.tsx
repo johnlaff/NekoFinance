@@ -1,7 +1,7 @@
 /**
  * Money — valor monetário BRL em mono tabular, com sinal de menos REAL (−) e cor por sinal.
  *
- * Portado do componente Money do novo Design System (formatBRL preservado), mas com inline-style
+ * Valor monetário do Design System do Neko (formatBRL próprio), com inline-style
  * (convenção do Neko: Badge/MovBadge) em vez do hook de injeção de CSS — assim é puro, sem
  * hooks/estado/efeito (React Doctor não aplicável).
  */

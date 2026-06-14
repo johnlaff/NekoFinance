@@ -1,9 +1,8 @@
 /**
  * MovBadge — o badge de TIPO DE MOVIMENTO (os 5 pilares do método).
  *
- * Reimplementação dos glifos coloridos do app oficial (fonte proprietária IconsTypeMov) com os
- * tokens `--type-*` do Midnight Ledger. Como no app, Entrada e Economia compartilham a letra "E" —
- * a COR distingue (entrada = jade; economia = verde-escuro). Acessível: o círculo é decorativo
+ * Glifos próprios dos tipos de movimento do método, com os tokens `--type-*` do Midnight
+ * Ledger. No método, Entrada e Economia compartilham a letra "E" — a COR distingue (entrada = jade; economia = verde-escuro). Acessível: o círculo é decorativo
  * (`aria-hidden`) e o nome do tipo é sempre exposto a leitores de tela.
  */
 export type MovKind = "entrada" | "saida" | "diario" | "economia" | "cartao";

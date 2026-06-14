@@ -7,14 +7,13 @@
 
    Aliases sobre primitivos theme-aware → resolvem em dark e light sem
    um bloco por tema (exceto onde um valor próprio é necessário).
-   Adotado de "Docs/Neko Finance Design System" + estendido com a RE do
-   app oficial (ds-adoption-plan.md §2).
+   Adotado do Design System do Neko + estendido com a metodologia (notas locais privadas).
    ============================================================ */
 
 :root {
   /* ---- Procedência do dado (de onde veio / nível de confiança) ---- */
   --prov-imported: var(--ink-300); /* veio da planilha, ainda não conferido */
-  --prov-app: var(--info-400); /* lançado no app (gravado 1:1 na planilha) */
+  --prov-app: var(--info-400); /* lançado no Neko (gravado 1:1 na planilha) */
   --prov-projected: var(--brass-400); /* previsão gerada, ainda não realizada */
   --prov-reconciled: var(--success-500); /* cruzado com o banco, bate */
   --prov-passthrough: var(--info-400); /* repasse: entra e sai, neutro */
@@ -65,17 +64,16 @@
   --phase-operate: var(--success-500);
 
   /* ---- TIPOS DE MOVIMENTO (os 5 pilares do método) ----
-     Cores fixas por tipo, REIMPLEMENTADAS da fonte proprietária IconsTypeMov do app
-     para a paleta Midnight Ledger (não copiar a fonte). E=verde, S=âmbar, D=rosa,
-     Economia=verde-escuro, Cartão=roxo (ground truth: app-ground-truth-blutter.md §3). */
+     Cores fixas por tipo (glifos próprios, reimplementados — não de terceiros) na paleta
+     Midnight Ledger. E=verde, S=âmbar, D=rosa, Economia=verde-escuro, Cartão=roxo. */
   --type-entrada: var(--cat-jade); /* Entrada — renda */
   --type-saida: var(--brass-400); /* Saída — estilo de vida fixo */
-  --type-diario: #d96ba6; /* Diário — variável (rosa, ~#DB2777 no app) */
+  --type-diario: #d96ba6; /* Diário — variável (rosa-magenta) */
   --type-economia: var(--jade-600); /* Economia — poupança (verde-escuro) */
-  --type-cartao: var(--cat-violet); /* Cartão — gasto com cartão (roxo, ~#7C3AED no app) */
+  --type-cartao: var(--cat-violet); /* Cartão — gasto com cartão (roxo) */
 
   /* ---- Heatmap de saldo (Saldos / Horizonte) ----
-     Faixas por saldo projetado. Thresholds em centavos (do app): < -50000 crítico,
+     Faixas por saldo projetado. Thresholds em centavos: < -50000 crítico,
      < 0 negativo, < 100000 apertado, < 200000 ok, >= 200000 folgado.
      `-fill` = fundo da célula; o token base = texto/borda. (Refinar tons no slice do
      componente Heatmap, com revisão visual via Playwright.) */

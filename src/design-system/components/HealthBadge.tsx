@@ -1,6 +1,6 @@
 /**
  * HealthBadge — pill de status com anel de progresso (o "Sobrou dinheiro" / "Dentro da renda"
- * do app oficial). Portado do HealthBadge do novo DS, em inline-style (convenção do Neko) em vez
+ * do método). Em inline-style (convenção do Neko) em vez
  * do hook de injeção de CSS → puro, sem hooks/estado/efeito (React Doctor não aplicável).
  *
  * `level` define a cor/rótulo padrão; `label` sobrescreve com o texto do método ("Sobrou dinheiro",
