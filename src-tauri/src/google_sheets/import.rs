@@ -2,12 +2,43 @@ use super::layout_detect::{SheetLayout, month_number_from_name};
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
+/// Coluna do método de onde a linha veio. Define o tipo/is_fixed na transação E ancora a
+/// identidade determinística (a posição estável: aba + dia + coluna).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowKind {
+    Entrada,
+    Saida,
+    Diario,
+}
+
+impl RowKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RowKind::Entrada => "entrada",
+            RowKind::Saida => "saida",
+            RowKind::Diario => "diario",
+        }
+    }
+    /// `transaction.type`.
+    pub fn txn_type(self) -> &'static str {
+        match self {
+            RowKind::Entrada => "income",
+            RowKind::Saida | RowKind::Diario => "expense",
+        }
+    }
+    /// Saída = estilo de vida FIXO (→ FixedOut no engine); Diário = variável (→ Daily).
+    pub fn is_fixed(self) -> bool {
+        matches!(self, RowKind::Saida)
+    }
+}
+
 #[derive(Debug)]
 pub struct ImportedRow {
     pub date: String,
     pub amount: i64,
     pub description: String,
     pub is_projection: bool,
+    pub kind: RowKind,
 }
 
 pub fn classify_row(date_str: &str, date_direction: &str) -> Result<bool, String> {
@@ -29,8 +60,26 @@ pub fn compute_checksum(rows: &[ImportedRow]) -> String {
         hasher.update(row.amount.to_le_bytes());
         hasher.update(row.description.as_bytes());
         hasher.update([row.is_projection as u8]);
+        hasher.update(row.kind.as_str().as_bytes());
     }
     hex::encode(hasher.finalize())
+}
+
+/// Id DETERMINÍSTICO de uma linha importada = `sha256(aba|data|kind|slot)`. Não inclui valor nem
+/// descrição → editar o valor/nota na planilha **preserva** o id (o UPSERT atualiza em vigor e o
+/// enriquecimento — split, tags, payment_method — sobrevive). `slot` desempata o caso raro de
+/// mais de uma linha com a mesma (aba,data,kind).
+pub fn row_id(sheet: &str, date: &str, kind: RowKind, slot: usize) -> String {
+    let mut h = Sha256::new();
+    h.update(b"txn-v1|");
+    h.update(sheet.as_bytes());
+    h.update(b"|");
+    h.update(date.as_bytes());
+    h.update(b"|");
+    h.update(kind.as_str().as_bytes());
+    h.update(b"|");
+    h.update(slot.to_le_bytes());
+    hex::encode(h.finalize())
 }
 
 pub async fn check_duplicate_import(
@@ -67,61 +116,93 @@ pub async fn import_rows(
 
     let now = chrono::Utc::now().to_rfc3339();
 
-    // Replace-all por aba (spec 010, slice 1): re-importar a planilha editada substitui
-    // atomicamente tudo que veio desta aba antes — nunca duplica, nunca deixa estado parcial.
+    // Reconciliação NÃO-destrutiva por aba (spec 012): identidade determinística + UPSERT preserva
+    // o id (e o enriquecimento — split/tags/payment_method ancorados nele) quando a célula é
+    // editada; diff-delete remove só as linhas que sumiram da planilha. Substitui o DELETE-all +
+    // uuid novo (que regenerava ids e matava o enriquecimento a cada re-import — P0-2).
     let mut tx = pool.begin().await.map_err(|e| format!("begin: {e}"))?;
 
     let profile_id = resolve_profile_id(&mut tx, profile_id).await?;
 
-    sqlx::query(
-        "DELETE FROM \"transaction\" WHERE id IN \
-         (SELECT entity_id FROM sync_log WHERE source_sheet = ?1 AND entity_type = 'transaction')",
-    )
-    .bind(sheet_name)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| format!("clear transactions: {e}"))?;
-
-    sqlx::query("DELETE FROM sync_log WHERE source_sheet = ?1 AND entity_type = 'transaction'")
-        .bind(sheet_name)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| format!("clear sync_log: {e}"))?;
+    let mut slot_counter: std::collections::HashMap<(String, &'static str), usize> =
+        std::collections::HashMap::new();
+    let mut current_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for row in rows {
-        let txn_id = uuid::Uuid::new_v4().to_string();
+        let slot = {
+            let c = slot_counter
+                .entry((row.date.clone(), row.kind.as_str()))
+                .or_insert(0);
+            let s = *c;
+            *c += 1;
+            s
+        };
+        let txn_id = row_id(sheet_name, &row.date, row.kind, slot);
+        current_ids.insert(txn_id.clone());
 
+        // UPSERT só das colunas que o import possui — preserva payment_method/contas/splits.
         sqlx::query(
-            "INSERT INTO \"transaction\" (id, type, amount, description, date, is_projection, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+            "INSERT INTO \"transaction\" (id, type, amount, description, date, is_fixed, is_projection, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8) \
+             ON CONFLICT(id) DO UPDATE SET type=excluded.type, amount=excluded.amount, \
+               description=excluded.description, date=excluded.date, is_fixed=excluded.is_fixed, \
+               is_projection=excluded.is_projection, updated_at=excluded.updated_at"
         )
         .bind(&txn_id)
-        .bind(if row.amount >= 0 { "income" } else { "expense" })
+        .bind(row.kind.txn_type())
         .bind(row.amount.abs())
         .bind(&row.description)
         .bind(&row.date)
+        .bind(row.kind.is_fixed() as i64)
         .bind(row.is_projection as i64)
-        .bind(&now)
         .bind(&now)
         .execute(&mut *tx)
         .await
-        .map_err(|e| format!("insert row {row:?}: {e}"))?;
+        .map_err(|e| format!("upsert row {row:?}: {e}"))?;
 
-        let log_id = uuid::Uuid::new_v4().to_string();
+        // sync_log com id determinístico (1:1 com o txn) → UPSERT idempotente.
+        let log_id = format!("log:{txn_id}");
         sqlx::query(
-            "INSERT INTO sync_log (id, event_type, entity_type, entity_id, profile_id, timestamp, metadata, source_sheet, checksum) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+            "INSERT INTO sync_log (id, event_type, entity_type, entity_id, profile_id, timestamp, metadata, source_sheet, checksum) \
+             VALUES (?1, 'import', 'transaction', ?2, ?3, ?4, ?5, ?6, ?7) \
+             ON CONFLICT(id) DO UPDATE SET timestamp=excluded.timestamp, metadata=excluded.metadata, checksum=excluded.checksum"
         )
         .bind(&log_id)
-        .bind("import")
-        .bind("transaction")
         .bind(&txn_id)
         .bind(&profile_id)
         .bind(&now)
-        .bind(format!(r#"{{"source":"{sheet_name}","date":"{}","amount":{}}}"#, row.date, row.amount))
+        .bind(format!(r#"{{"source":"{sheet_name}","date":"{}","amount":{},"kind":"{}"}}"#, row.date, row.amount, row.kind.as_str()))
         .bind(sheet_name)
         .bind(&checksum)
         .execute(&mut *tx)
         .await
         .map_err(|e| format!("sync_log error: {e}"))?;
+    }
+
+    // Diff-delete: linhas removidas da planilha (no sync_log desta aba, mas fora do import atual).
+    let existing: Vec<(String,)> = sqlx::query_as(
+        "SELECT entity_id FROM sync_log WHERE source_sheet = ?1 AND entity_type = 'transaction'",
+    )
+    .bind(sheet_name)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|e| format!("load existing ids: {e}"))?;
+    for (eid,) in existing {
+        if !current_ids.contains(&eid) {
+            sqlx::query("DELETE FROM \"transaction\" WHERE id = ?1")
+                .bind(&eid)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("delete removed txn: {e}"))?;
+            sqlx::query(
+                "DELETE FROM sync_log WHERE entity_id = ?1 AND source_sheet = ?2 AND entity_type = 'transaction'",
+            )
+            .bind(&eid)
+            .bind(sheet_name)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("delete removed sync_log: {e}"))?;
+        }
     }
 
     tx.commit().await.map_err(|e| format!("commit: {e}"))?;
@@ -302,6 +383,12 @@ pub fn parse_rows_with_layout(
         .iter()
         .find(|(field, _)| field == "amount_out")
         .map(|(_, offset)| *offset as usize);
+    // Coluna Diário (variável): mapeada como `amount_daily`. Quando ausente (planilhas antigas),
+    // o ramo simplesmente não emite nada.
+    let amount_daily_offset = mappings
+        .iter()
+        .find(|(field, _)| field == "amount_daily")
+        .map(|(_, offset)| *offset as usize);
 
     for (r, row) in rows.iter().enumerate().skip(data_start) {
         if row.is_empty() || row.get(day_col).is_none_or(|c| c.trim().is_empty()) {
@@ -335,6 +422,7 @@ pub fn parse_rows_with_layout(
                         amount: amount_in,
                         description: cell_description(notes, r, offset + in_off, &date, "Entrada"),
                         is_projection,
+                        kind: RowKind::Entrada,
                     });
                 }
             }
@@ -349,6 +437,22 @@ pub fn parse_rows_with_layout(
                         amount: -amount_out,
                         description: cell_description(notes, r, offset + out_off, &date, "Saída"),
                         is_projection,
+                        kind: RowKind::Saida,
+                    });
+                }
+            }
+
+            if let Some(d_off) = amount_daily_offset
+                && offset + d_off < row.len()
+            {
+                let amount_daily = parse_number(&row[offset + d_off]);
+                if amount_daily > 0 {
+                    imported.push(ImportedRow {
+                        date: date.clone(),
+                        amount: -amount_daily,
+                        description: cell_description(notes, r, offset + d_off, &date, "Diário"),
+                        is_projection,
+                        kind: RowKind::Diario,
                     });
                 }
             }
@@ -760,6 +864,7 @@ mod tests {
             amount: 10000,
             description: "Test".into(),
             is_projection: false,
+            kind: RowKind::Entrada,
         }];
         let checksum1 = compute_checksum(&rows);
         let checksum2 = compute_checksum(&rows);
@@ -771,6 +876,7 @@ mod tests {
             amount: 10000,
             description: "Test".into(),
             is_projection: false,
+            kind: RowKind::Entrada,
         }];
         let checksum3 = compute_checksum(&different_rows);
         assert_ne!(checksum1, checksum3);
@@ -928,6 +1034,11 @@ mod tests {
             amount,
             description: format!("Linha {date}"),
             is_projection: false,
+            kind: if amount >= 0 {
+                RowKind::Entrada
+            } else {
+                RowKind::Saida
+            },
         }
     }
 
@@ -1007,6 +1118,119 @@ mod tests {
 
         assert_eq!(count_transactions(&pool).await, 3);
         assert_eq!(count_sync_log(&pool, "2026").await, 3);
+    }
+
+    // P0-2: re-importar uma célula EDITADA preserva o id determinístico → o enriquecimento
+    // (aqui payment_method, mas idem split/tags ancorados no id) SOBREVIVE. Antes, o DELETE-all +
+    // uuid novo o destruía a cada re-import.
+    #[tokio::test]
+    async fn reimport_preserves_transaction_identity_and_enrichment() {
+        let pool = test_pool().await;
+        import_rows(&pool, "2026", &[imported("2026-01-05", 10_000)], "p1")
+            .await
+            .unwrap();
+
+        let (id_before,): (String,) =
+            sqlx::query_as("SELECT id FROM \"transaction\" WHERE date='2026-01-05'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        // Enriquecimento numa coluna que o import NÃO escreve.
+        sqlx::query("UPDATE \"transaction\" SET payment_method='credit' WHERE id=?1")
+            .bind(&id_before)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // O dono edita o VALOR na planilha e re-importa.
+        import_rows(&pool, "2026", &[imported("2026-01-05", 12_345)], "p1")
+            .await
+            .unwrap();
+
+        let (id_after, amount, pm): (String, i64, Option<String>) = sqlx::query_as(
+            "SELECT id, amount, payment_method FROM \"transaction\" WHERE date='2026-01-05'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(id_after, id_before, "id estável (determinístico)");
+        assert_eq!(amount, 12_345, "valor atualizado em vigor (UPSERT)");
+        assert_eq!(
+            pm.as_deref(),
+            Some("credit"),
+            "enriquecimento sobrevive ao re-import"
+        );
+        assert_eq!(count_transactions(&pool).await, 1, "sem duplicar");
+    }
+
+    // WRONG #2 (parte do import): Saída entra com is_fixed=1 (→ FixedOut no engine), não Diário.
+    #[tokio::test]
+    async fn import_sets_is_fixed_for_saida() {
+        let pool = test_pool().await;
+        import_rows(&pool, "2026", &[imported("2026-01-05", -5_000)], "p1")
+            .await
+            .unwrap();
+        let (is_fixed, ttype): (i64, String) =
+            sqlx::query_as("SELECT is_fixed, type FROM \"transaction\" WHERE date='2026-01-05'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(ttype, "expense");
+        assert_eq!(is_fixed, 1, "Saída = estilo de vida fixo");
+    }
+
+    // A coluna Diário é importada quando mapeada (amount_daily) → RowKind::Diario (variável).
+    #[test]
+    fn parse_imports_diario_column() {
+        // Coluna 0 = dia (absoluto); bloco JANEIRO no offset 1 (Entrada=2, Saída=3, Diário=4).
+        let rows = vec![
+            vec![
+                "".into(),
+                "JANEIRO".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+            ],
+            vec![
+                "Data".into(),
+                "Entrada".into(),
+                "Saída".into(),
+                "Diário".into(),
+                "Saldo".into(),
+                "".into(),
+            ],
+            vec![
+                "1".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "30".into(),
+                "".into(),
+            ],
+        ];
+        let layout = SheetLayout {
+            id: "t".into(),
+            sheet_name: "2025".into(),
+            year: Some(2025),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 6,
+            date_direction: "past_only".into(),
+        };
+        let mappings = vec![
+            ("amount_in".to_string(), 1),
+            ("amount_out".to_string(), 2),
+            ("amount_daily".to_string(), 3),
+        ];
+        let result = parse_rows_with_layout(&rows, &layout, &mappings, &[]);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].kind, RowKind::Diario);
+        assert_eq!(result[0].amount, -3000); // −R$30,00 (variável)
+        assert_eq!(result[0].date, "2025-01-01");
     }
 
     #[tokio::test]

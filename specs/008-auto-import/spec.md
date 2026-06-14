@@ -27,7 +27,14 @@ padrão que o dono já usa** (lump por coluna + nota estruturada na célula).
 
 ## Princípios (herdados do método / AGENTS)
 
-1. **SQLite é o system-of-record**; a planilha é a visão canônica do método.
+1. **Fonte da verdade por fase (corrigido — spec 012):** enquanto a fase é **import-only** (sem
+   write-back ligado), a **planilha é o system-of-record** — o João a edita à mão todo dia; o
+   SQLite é o **espelho local + camada de enriquecimento** (split por pessoa, tags, payment_method,
+   fatura). A virada para "app-first" (SQLite como system-of-record) só ocorre quando o write-back
+   bidirecional gated por checksum-de-célula estiver ligado e testado. A UI deve declarar a fonte
+   da verdade vigente por fase. _(Antes este princípio afirmava "SQLite é o system-of-record", o
+   que invertia a realidade e arriscava sobrescrever a edição manual — ver
+   `.methodology-pack/neko-vs-planilha-reconciliacao.md` P0-3.)_
 2. O método separa **Entrada / Saída (fixas+faturas) / Diário (variável)**; projeção encadeada
    dia a dia. O import automático NUNCA quebra essa semântica.
 3. Compra no crédito **não toca o Diário**: acumula na fatura (`invoice`) e vira **Saída lump

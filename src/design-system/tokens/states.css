@@ -1,0 +1,92 @@
+/* ============================================================
+   Neko Finance — Semantic STATE tokens
+   Camadas de estado do domínio além de brand/status: procedência de
+   dado, confiança/review, diff/write-back, privacidade/conexão, bolsos
+   por liquidez, pressão de crédito, fases, TIPOS DE MOVIMENTO e o
+   heatmap de saldo (Saldos/Horizonte).
+
+   Aliases sobre primitivos theme-aware → resolvem em dark e light sem
+   um bloco por tema (exceto onde um valor próprio é necessário).
+   Adotado de "Docs/Neko Finance Design System" + estendido com a RE do
+   app oficial (ds-adoption-plan.md §2).
+   ============================================================ */
+
+:root {
+  /* ---- Procedência do dado (de onde veio / nível de confiança) ---- */
+  --prov-imported: var(--ink-300); /* veio da planilha, ainda não conferido */
+  --prov-app: var(--info-400); /* lançado no app (gravado 1:1 na planilha) */
+  --prov-projected: var(--brass-400); /* previsão gerada, ainda não realizada */
+  --prov-reconciled: var(--success-500); /* cruzado com o banco, bate */
+  --prov-passthrough: var(--info-400); /* repasse: entra e sai, neutro */
+
+  /* ---- Confiança de import / review ---- */
+  --confidence-high: var(--success-500);
+  --confidence-mid: var(--brass-400);
+  --confidence-low: var(--danger-500);
+  --review-pending: var(--brass-400);
+  --review-pending-bg: var(--brass-tint);
+
+  /* ---- Diff / write-back (fluxo de aprovação da Mia) ---- */
+  --diff-add: var(--success-500);
+  --diff-add-bg: var(--success-tint);
+  --diff-remove: var(--danger-500);
+  --diff-remove-bg: var(--danger-tint);
+  --diff-protected: var(--brass-300); /* colunas intocáveis: Data, Saldo, fórmulas, edição manual */
+
+  /* ---- Privacidade / ciclo de conexão ---- */
+  --conn-online: var(--success-500);
+  --conn-syncing: var(--info-400);
+  --conn-offline: var(--ink-400);
+  --privacy-local: var(--success-500); /* "neste dispositivo" */
+  --privacy-leaving: var(--brass-400); /* "os dados saem do dispositivo" */
+
+  /* ---- Bolsos por liquidez ---- */
+  --pocket-liquid: var(--cat-jade); /* conta, PIX — dia a dia */
+  --pocket-benefit: var(--cat-teal); /* vale alimentação/refeição */
+  --pocket-reserve: var(--success-500); /* reserva de emergência */
+  --pocket-restricted: var(--cat-amber); /* reservado, curto prazo */
+  --pocket-locked: var(--cat-sky); /* FGTS — saque restrito */
+  --pocket-longterm: var(--cat-orchid); /* previdência */
+  --pocket-illiquid: var(--cat-violet); /* investimentos longo prazo */
+
+  /* ---- Pressão de fatura / crédito (Régua 2) ---- */
+  --pressure-low: var(--success-500);
+  --pressure-mid: var(--brass-400);
+  --pressure-high: var(--danger-500);
+
+  /* ---- Leitura de forecast / liquidez ---- */
+  --forecast-positive: var(--money-pos);
+  --forecast-deficit: var(--money-neg);
+  --forecast-transit: var(--text-faint); /* saldo é camada de passagem */
+
+  /* ---- Fases do período de adaptação (Mapear / Calibrar / Operar) ---- */
+  --phase-map: var(--ink-300);
+  --phase-calibrate: var(--brass-400);
+  --phase-operate: var(--success-500);
+
+  /* ---- TIPOS DE MOVIMENTO (os 5 pilares do método) ----
+     Cores fixas por tipo, REIMPLEMENTADAS da fonte proprietária IconsTypeMov do app
+     para a paleta Midnight Ledger (não copiar a fonte). E=verde, S=âmbar, D=rosa,
+     Economia=verde-escuro, Cartão=roxo (ground truth: app-ground-truth-blutter.md §3). */
+  --type-entrada: var(--cat-jade); /* Entrada — renda */
+  --type-saida: var(--brass-400); /* Saída — estilo de vida fixo */
+  --type-diario: #d96ba6; /* Diário — variável (rosa, ~#DB2777 no app) */
+  --type-economia: var(--jade-600); /* Economia — poupança (verde-escuro) */
+  --type-cartao: var(--cat-violet); /* Cartão — gasto com cartão (roxo, ~#7C3AED no app) */
+
+  /* ---- Heatmap de saldo (Saldos / Horizonte) ----
+     Faixas por saldo projetado. Thresholds em centavos (do app): < -50000 crítico,
+     < 0 negativo, < 100000 apertado, < 200000 ok, >= 200000 folgado.
+     `-fill` = fundo da célula; o token base = texto/borda. (Refinar tons no slice do
+     componente Heatmap, com revisão visual via Playwright.) */
+  --saldo-band-critical: var(--danger-500);
+  --saldo-band-negative: var(--danger-500);
+  --saldo-band-tight: var(--warning-500);
+  --saldo-band-ok: var(--success-500);
+  --saldo-band-comfortable: var(--success-500);
+  --saldo-band-critical-fill: rgba(224, 98, 91, 0.32);
+  --saldo-band-negative-fill: rgba(224, 98, 91, 0.15);
+  --saldo-band-tight-fill: rgba(224, 163, 62, 0.16);
+  --saldo-band-ok-fill: rgba(52, 185, 129, 0.15);
+  --saldo-band-comfortable-fill: rgba(52, 185, 129, 0.3);
+}

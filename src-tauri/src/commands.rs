@@ -561,9 +561,13 @@ async fn load_cashflow_events(
     let today = today_naive.format("%Y-%m-%d").to_string();
     let horizon = horizon_end.format("%Y-%m-%d").to_string();
 
-    let txn_rows: Vec<(String, i64, String, String, i64, i64)> = sqlx::query_as(
-        "SELECT type, amount, date, COALESCE(payment_method,''), is_fixed, is_projection \
-         FROM \"transaction\" WHERE date > ?1 AND date <= ?2",
+    // Liquidez da conta-destino entra no SELECT para classificar `transfer` → Economia (guardar
+    // num bolso não-líquido) vs net-zero (entre contas líquidas).
+    let txn_rows: Vec<(String, i64, String, String, i64, i64, String)> = sqlx::query_as(
+        "SELECT t.type, t.amount, t.date, COALESCE(t.payment_method,''), t.is_fixed, t.is_projection, \
+                COALESCE(a.liquidity,'') \
+         FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
+         WHERE t.date > ?1 AND t.date <= ?2",
     )
     .bind(&today)
     .bind(&horizon)
@@ -573,10 +577,11 @@ async fn load_cashflow_events(
 
     let mut all_events: Vec<CashflowEvent> = txn_rows
         .into_iter()
-        .filter_map(|(ttype, amount, date_str, pm, is_fixed, is_proj)| {
+        .filter_map(|(ttype, amount, date_str, pm, is_fixed, is_proj, liq)| {
             let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d").ok()?;
             let pm = (!pm.is_empty()).then_some(pm);
-            let kind = forecast::classify(&ttype, is_fixed != 0, pm.as_deref())?;
+            let to_liq = (!liq.is_empty()).then_some(liq);
+            let kind = forecast::classify(&ttype, is_fixed != 0, pm.as_deref(), to_liq.as_deref())?;
             Some(CashflowEvent {
                 date,
                 kind,
@@ -655,9 +660,11 @@ async fn load_realized_month_events(
     let start = month_start.format("%Y-%m-%d").to_string();
     let today = today_naive.format("%Y-%m-%d").to_string();
 
-    let rows: Vec<(String, i64, String, String, i64, i64)> = sqlx::query_as(
-        "SELECT type, amount, date, COALESCE(payment_method,''), is_fixed, is_projection \
-         FROM \"transaction\" WHERE date >= ?1 AND date <= ?2",
+    let rows: Vec<(String, i64, String, String, i64, i64, String)> = sqlx::query_as(
+        "SELECT t.type, t.amount, t.date, COALESCE(t.payment_method,''), t.is_fixed, t.is_projection, \
+                COALESCE(a.liquidity,'') \
+         FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
+         WHERE t.date >= ?1 AND t.date <= ?2",
     )
     .bind(&start)
     .bind(&today)
@@ -667,10 +674,11 @@ async fn load_realized_month_events(
 
     Ok(rows
         .into_iter()
-        .filter_map(|(ttype, amount, date_str, pm, is_fixed, is_proj)| {
+        .filter_map(|(ttype, amount, date_str, pm, is_fixed, is_proj, liq)| {
             let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d").ok()?;
             let pm = (!pm.is_empty()).then_some(pm);
-            let kind = forecast::classify(&ttype, is_fixed != 0, pm.as_deref())?;
+            let to_liq = (!liq.is_empty()).then_some(liq);
+            let kind = forecast::classify(&ttype, is_fixed != 0, pm.as_deref(), to_liq.as_deref())?;
             Some(CashflowEvent {
                 date,
                 kind,
@@ -701,6 +709,7 @@ pub struct ForecastDayDto {
     pub income_cents: i64,
     pub fixed_out_cents: i64,
     pub daily_out_cents: i64,
+    pub economia_cents: i64,
     pub balance_cents: i64,
 }
 
@@ -724,6 +733,10 @@ pub struct MonthMetricDto {
     pub income_cents: i64,
     pub performance_cents: i64,
     pub cost_of_living_cents: i64,
+    /// Diário médio do mês = Σ diário realizado ÷ dias decorridos (D/N). Antes morria no DTO.
+    pub real_daily_avg_cents: i64,
+    /// Economia lançada no mês (numerador do Economizado%).
+    pub economia_cents: i64,
     pub savings_rate_bps: i64,
 }
 
@@ -793,7 +806,28 @@ pub async fn get_forecast(pool: State<'_, SqlitePool>) -> Result<ForecastDto, St
 async fn forecast_dto(pool: &SqlitePool, today_naive: NaiveDate) -> Result<ForecastDto, String> {
     let horizon_end = forecast_horizon_end(pool, today_naive).await?;
     let seed = projection_seed(pool, today_naive).await?;
-    let events = load_cashflow_events(pool, today_naive, horizon_end).await?;
+    let mut events = load_cashflow_events(pool, today_naive, horizon_end).await?;
+    // Previsão de diário como DRIVER: injeta o teto/dia nos dias futuros do mês corrente, para o
+    // saldo projetado e a Performance não nascerem otimistas (assumem o gasto típico até o fim do mês).
+    let daily_ceiling: (i64,) = sqlx::query_as(
+        "SELECT COALESCE(amount, 0) FROM daily_budget WHERE status='active' \
+         ORDER BY start_date DESC LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("query daily_budget: {e}"))?
+    .unwrap_or((0,));
+    let days_with_daily: std::collections::HashSet<NaiveDate> = events
+        .iter()
+        .filter(|e| e.kind == forecast::EventKind::Daily)
+        .map(|e| e.date)
+        .collect();
+    events.extend(forecast::project_daily_ceiling(
+        daily_ceiling.0,
+        today_naive,
+        horizon_end,
+        &days_with_daily,
+    ));
     let metric_events = load_metric_events(pool, today_naive, &events).await?;
     let fc =
         forecast::project_with_metrics(seed, today_naive, &events, &metric_events, horizon_end);
@@ -873,7 +907,7 @@ async fn forecast_dto(pool: &SqlitePool, today_naive: NaiveDate) -> Result<Forec
         .collect();
 
     // Per-day flow sums (income, fixed out, daily out), keyed by the same dates the engine emits.
-    let mut flows: std::collections::HashMap<NaiveDate, (i64, i64, i64)> =
+    let mut flows: std::collections::HashMap<NaiveDate, (i64, i64, i64, i64)> =
         std::collections::HashMap::new();
     for e in &events {
         let entry = flows.entry(e.date).or_default();
@@ -881,6 +915,7 @@ async fn forecast_dto(pool: &SqlitePool, today_naive: NaiveDate) -> Result<Forec
             forecast::EventKind::Income => entry.0 += e.amount_cents,
             forecast::EventKind::FixedOut => entry.1 += e.amount_cents,
             forecast::EventKind::Daily => entry.2 += e.amount_cents,
+            forecast::EventKind::Economia => entry.3 += e.amount_cents,
         }
     }
 
@@ -888,12 +923,14 @@ async fn forecast_dto(pool: &SqlitePool, today_naive: NaiveDate) -> Result<Forec
         .daily
         .iter()
         .map(|p| {
-            let (income, fixed_out, daily_out) = flows.get(&p.date).copied().unwrap_or_default();
+            let (income, fixed_out, daily_out, economia) =
+                flows.get(&p.date).copied().unwrap_or_default();
             ForecastDayDto {
                 date: p.date.format("%Y-%m-%d").to_string(),
                 income_cents: income,
                 fixed_out_cents: fixed_out,
                 daily_out_cents: daily_out,
+                economia_cents: economia,
                 balance_cents: p.balance_cents,
             }
         })
@@ -932,9 +969,11 @@ async fn forecast_dto(pool: &SqlitePool, today_naive: NaiveDate) -> Result<Forec
             .map(|m| MonthMetricDto {
                 year: m.year,
                 month: m.month,
-                income_cents: m.income_cents(),
+                income_cents: m.income_cents,
                 performance_cents: m.performance_cents,
                 cost_of_living_cents: m.cost_of_living_cents,
+                real_daily_avg_cents: m.real_daily_avg_cents,
+                economia_cents: m.economia_cents,
                 savings_rate_bps: m.savings_rate_bps,
             })
             .collect(),
@@ -1407,6 +1446,7 @@ mod tests {
             amount: 10000,
             description: "Test".into(),
             is_projection: false,
+            kind: google_sheets::import::RowKind::Entrada,
         }];
         let checksum = compute_checksum(&rows);
         assert!(!checksum.is_empty());

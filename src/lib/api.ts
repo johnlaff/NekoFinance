@@ -91,6 +91,8 @@ export interface ForecastDay {
   income_cents: number;
   fixed_out_cents: number;
   daily_out_cents: number;
+  /** Economia (guardar) lançada no dia — sai do saldo de gasto, mas é poupança. */
+  economia_cents: number;
   balance_cents: number;
 }
 
@@ -112,6 +114,10 @@ export interface MonthMetric {
   income_cents: number;
   performance_cents: number;
   cost_of_living_cents: number;
+  /** Diário médio = Σ diário realizado ÷ dias decorridos (D/N). */
+  real_daily_avg_cents: number;
+  /** Economia lançada no mês (numerador do Economizado%). */
+  economia_cents: number;
   savings_rate_bps: number;
 }
 
