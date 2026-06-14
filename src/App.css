@@ -371,6 +371,23 @@ h3,
   flex-direction: column;
 }
 
+/* Banners/preview que reusam .dash-hero como faixa de texto (Metodologia, preview web). */
+.dash-hero__txt {
+  flex: 1;
+  min-width: 0;
+}
+
+.dash-hero__line {
+  font-size: var(--fs-sm);
+  line-height: var(--lh-normal);
+  color: var(--text-muted);
+}
+
+.dash-hero__line b {
+  color: var(--text-strong);
+  font-weight: var(--fw-bold);
+}
+
 .dash-hero__label {
   margin: 0;
   font-size: var(--fs-sm);

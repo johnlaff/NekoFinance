@@ -69,6 +69,9 @@ pub async fn create_recurring_series(
     freq: Frequency,
     repetitions: usize,
 ) -> Result<String, String> {
+    if repetitions < 1 {
+        return Err("repetições deve ser ≥ 1".into());
+    }
     let rec_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     let mut tx = pool.begin().await.map_err(|e| format!("begin: {e}"))?;

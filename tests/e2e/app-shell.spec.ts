@@ -48,8 +48,8 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     await expect(page.getByText("5 exibidas")).toBeVisible();
     // Multi-titular: o lançamento dividido mostra os OwnerChips dos titulares.
     const splitRow = page.getByRole("row", { name: /Café \+ mercado/ });
-    await expect(splitRow.getByText("Gio")).toBeVisible();
-    await expect(splitRow.getByText("João")).toBeVisible();
+    await expect(splitRow.getByText("Ana")).toBeVisible();
+    await expect(splitRow.getByText("Bruno")).toBeVisible();
     await page.screenshot({
       fullPage: true,
       path: testInfo.outputPath("transactions.png"),

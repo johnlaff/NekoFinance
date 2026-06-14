@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { MovBadge, type MovKind } from "./MovBadge";
 
 describe("MovBadge", () => {
-  const cases: Array<[MovKind, string, string]> = [
+  const cases: [MovKind, string, string][] = [
     ["entrada", "E", "Entrada"],
     ["saida", "S", "Saída"],
     ["diario", "D", "Diário"],
@@ -23,17 +23,17 @@ describe("MovBadge", () => {
 
   it("usa o token de cor do tipo no fundo do glifo", () => {
     const { container } = render(<MovBadge kind="cartao" />);
-    const glyph = container.querySelector("span[aria-hidden='true']") as HTMLElement;
+    const glyph = container.querySelector<HTMLElement>("span[aria-hidden='true']")!;
     expect(glyph.style.background).toBe("var(--type-cartao)");
   });
 
   it("entrada e economia compartilham a letra E mas cores diferentes", () => {
-    const e = render(<MovBadge kind="entrada" />).container.querySelector(
+    const e = render(<MovBadge kind="entrada" />).container.querySelector<HTMLElement>(
       "span[aria-hidden='true']",
-    ) as HTMLElement;
-    const ec = render(<MovBadge kind="economia" />).container.querySelector(
-      "span[aria-hidden='true']",
-    ) as HTMLElement;
+    )!;
+    const ec = render(
+      <MovBadge kind="economia" />,
+    ).container.querySelector<HTMLElement>("span[aria-hidden='true']")!;
     expect(e.textContent).toBe("E");
     expect(ec.textContent).toBe("E");
     expect(e.style.background).not.toBe(ec.style.background);

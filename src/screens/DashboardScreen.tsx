@@ -109,7 +109,7 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
           <p className="dash-hero__label">
             <InfoPopover term="pode_gastar">Pode gastar até</InfoPopover>
           </p>
-          <p className="dash-hero__kpi" data-no-motion="true">
+          <p className="dash-hero__kpi">
             {forecast ? fmtBRL(forecast.safe_to_spend_today_cents) : "—"}
             <span className="dash-hero__kpi-suffix">hoje</span>
           </p>

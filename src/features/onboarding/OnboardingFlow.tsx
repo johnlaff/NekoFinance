@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, Sparkles } from "lucide-react";
 import { Button } from "../../design-system/components/Button";
 import { MovBadge, type MovKind } from "../../design-system/components/MovBadge";
@@ -31,6 +31,12 @@ export function OnboardingFlow({
 }) {
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  // Modalidade real: foca o diálogo ao abrir e prende o foco dentro dele (focus-trap).
+  useEffect(() => {
+    cardRef.current?.focus();
+  }, []);
 
   async function finish() {
     setSaving(true);
@@ -49,11 +55,35 @@ export function OnboardingFlow({
     setStep((s) => Math.max(0, s - 1));
   }
 
+  function onKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      void finish();
+      return;
+    }
+    if (e.key !== "Tab") return;
+    const focusables = cardRef.current?.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    if (!focusables || focusables.length === 0) return;
+    const first = focusables[0]!;
+    const last = focusables[focusables.length - 1]!;
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || active === cardRef.current)) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
   return (
     <div
       role="dialog"
       aria-modal="true"
       aria-label="Boas-vindas ao Neko Finance"
+      onKeyDown={onKeyDown}
       style={{
         position: "fixed",
         inset: 0,
@@ -67,11 +97,14 @@ export function OnboardingFlow({
       }}
     >
       <div
+        ref={cardRef}
+        tabIndex={-1}
         style={{
           width: "100%",
           maxWidth: 520,
           maxHeight: "92vh",
           overflowY: "auto",
+          outline: "none",
           background: "var(--surface-elevated)",
           border: "var(--bw-hair) solid var(--border-strong)",
           borderRadius: "var(--radius-xl)",

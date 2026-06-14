@@ -73,7 +73,7 @@ export function EmptyState({
         <div
           className={`nk-state__ic nk-state__ic--${variant === "error" ? "error" : "empty"}`}
         >
-          {icon || (
+          {icon ?? (
             <svg
               width="22"
               height="22"

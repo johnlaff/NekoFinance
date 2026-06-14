@@ -586,7 +586,9 @@ async fn load_cashflow_events(
             Some(CashflowEvent {
                 date,
                 kind,
-                amount_cents: amount,
+                // Invariante: o evento guarda MAGNITUDE positiva; o sinal vem do `kind` (ver
+                // `forecast::signed`). `.abs()` blinda contra um `transfer` gravado negativo.
+                amount_cents: amount.abs(),
                 realized: is_proj == 0,
             })
         })
@@ -683,7 +685,9 @@ async fn load_realized_month_events(
             Some(CashflowEvent {
                 date,
                 kind,
-                amount_cents: amount,
+                // Invariante: o evento guarda MAGNITUDE positiva; o sinal vem do `kind` (ver
+                // `forecast::signed`). `.abs()` blinda contra um `transfer` gravado negativo.
+                amount_cents: amount.abs(),
                 realized: is_proj == 0,
             })
         })
@@ -1007,7 +1011,9 @@ async fn load_year_events(pool: &SqlitePool, year: i32) -> Result<Vec<CashflowEv
             Some(CashflowEvent {
                 date,
                 kind,
-                amount_cents: amount,
+                // Invariante: o evento guarda MAGNITUDE positiva; o sinal vem do `kind` (ver
+                // `forecast::signed`). `.abs()` blinda contra um `transfer` gravado negativo.
+                amount_cents: amount.abs(),
                 realized: is_proj == 0,
             })
         })
@@ -1391,7 +1397,10 @@ async fn recent_transactions(pool: &SqlitePool, limit: i64) -> Result<Vec<Transa
             owners: if r.owners.is_empty() {
                 Vec::new()
             } else {
-                r.owners.split('|').map(str::to_owned).collect()
+                // Ordena no Rust (não depende da ordem do GROUP_CONCAT, que não é contratual).
+                let mut o: Vec<String> = r.owners.split('|').map(str::to_owned).collect();
+                o.sort_by_key(|s| s.to_lowercase());
+                o
             },
             provenance: if r.is_projection != 0 {
                 "projetado".to_string()
@@ -2054,6 +2063,50 @@ mod tests {
         assert_eq!(fc.safe_to_spend_today_cents, 0);
     }
 
+    // Spec 011: um `transfer` (magnitude positiva) para um bolso de POUPANÇA (reserve) vira
+    // Economia — sai do saldo de gasto E conta no Economizado. Vale-refeição (restricted) NÃO.
+    #[tokio::test]
+    async fn forecast_dto_transfer_to_reserve_is_economia_and_leaves_balance() {
+        let pool = fixture_pool().await;
+        insert_liquid_account(&pool, 100_000).await; // R$ 1.000,00 em caixa
+
+        // Conta de reserva (poupança real).
+        let pid: (String,) = sqlx::query_as("SELECT id FROM person LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let reserve_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, balance, liquidity) VALUES (?1,'Reserva','savings',?2,0,'reserve')",
+        )
+        .bind(&reserve_id)
+        .bind(&pid.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Transfer FUTURO de R$ 300,00 (magnitude positiva) para a reserva.
+        let tid = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) VALUES (?1,'transfer',30_000,'2026-03-20',?2,1)",
+        )
+        .bind(&tid)
+        .bind(&reserve_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let today = NaiveDate::from_ymd_opt(2026, 3, 10).unwrap();
+        let fc = forecast_dto(&pool, today).await.unwrap();
+
+        // Conta como Economia no mês.
+        let mar = fc.months.iter().find(|m| m.month == 3).unwrap();
+        assert_eq!(mar.economia_cents, 30_000, "guardar na reserva = Economia");
+        // E sai do saldo de gasto (caixa cai de 100k para 70k).
+        let d20 = fc.daily.iter().find(|d| d.date == "2026-03-20").unwrap();
+        assert_eq!(d20.balance_cents, 70_000);
+    }
+
     async fn insert_sheet_balance(pool: &sqlx::SqlitePool, sheet: &str, date: &str, cents: i64) {
         sqlx::query(
             "INSERT INTO sheet_daily_balance (sheet_name, date, balance_cents) VALUES (?1,?2,?3)",
@@ -2105,7 +2158,7 @@ mod tests {
     #[tokio::test]
     async fn recent_transactions_carry_distinct_owners() {
         let pool = fixture_pool().await;
-        for (id, name) in [("joao", "João"), ("gio", "Gio")] {
+        for (id, name) in [("bruno", "Bruno"), ("ana", "Ana")] {
             sqlx::query("INSERT INTO person (id, name) VALUES (?1, ?2)")
                 .bind(id)
                 .bind(name)
@@ -2113,10 +2166,10 @@ mod tests {
                 .await
                 .unwrap();
         }
-        // Lançamento dividido entre João e Gio.
+        // Lançamento dividido entre Bruno e Ana.
         sqlx::query("INSERT INTO \"transaction\" (id, type, amount, date, is_projection) VALUES ('t1','expense',-30000,'2026-06-05',0)")
             .execute(&pool).await.unwrap();
-        for (sid, owner, amt) in [("s1", "joao", -20000), ("s2", "gio", -10000)] {
+        for (sid, owner, amt) in [("s1", "bruno", -20000), ("s2", "ana", -10000)] {
             sqlx::query("INSERT INTO split (id, transaction_id, amount, owner_person_id) VALUES (?1,'t1',?2,?3)")
                 .bind(sid).bind(amt).bind(owner)
                 .execute(&pool).await.unwrap();
@@ -2126,7 +2179,7 @@ mod tests {
 
         let rows = recent_transactions(&pool, 10).await.unwrap();
         let split = rows.iter().find(|r| r.id == "t1").unwrap();
-        assert_eq!(split.owners, vec!["Gio".to_string(), "João".to_string()]);
+        assert_eq!(split.owners, vec!["Ana".to_string(), "Bruno".to_string()]);
         let solo = rows.iter().find(|r| r.id != "t1").unwrap();
         assert!(solo.owners.is_empty(), "sem split → owners vazio");
     }
@@ -2255,7 +2308,7 @@ mod tests {
     }
 
     // Previsibilidade: meses futuros esparsos (só fixas) são detectados como incompletos, e a
-    // poupança realizada (honesta) difere da projetada (otimista). O caso do João.
+    // poupança realizada (honesta) difere da projetada (otimista). O caso do usuário.
     #[tokio::test]
     async fn forecast_flags_incomplete_future_and_honest_annual_savings() {
         let pool = fixture_pool().await;
@@ -2366,7 +2419,7 @@ mod tests {
         assert!(fc.safe_to_spend_today_cents > 0);
     }
 
-    // Guardrail duplo end-to-end com os números do João: Saldo de hoje R$ 8.018,89 (caixa
+    // Guardrail duplo end-to-end com os números do usuário: Saldo de hoje R$ 8.018,89 (caixa
     // cheio e crescendo), mas junho com performance negativa → "pode gastar" honesto = 0,
     // limitado pela poupança. O horizonte varre até o fim dos dados pré-lançados (dez).
     // Crava o P0 do review: a performance de junho inclui o REALIZADO antes de hoje (não só

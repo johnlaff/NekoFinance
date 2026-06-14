@@ -27,7 +27,7 @@ describe("SegmentedControl", () => {
   it("highlights active option", () => {
     const onChange = vi.fn();
     render(<SegmentedControl options={OPTIONS} value="month" onChange={onChange} />);
-    const monthBtn = screen.getByText("Mês") as HTMLButtonElement;
+    const monthBtn = screen.getByText("Mês");
     expect(monthBtn.style.color).toBe("var(--primary)");
   });
 
@@ -45,7 +45,7 @@ describe("SegmentedControl", () => {
     render(
       <SegmentedControl options={OPTIONS} value="day" onChange={onChange} size="sm" />,
     );
-    const btn = screen.getByText("Dia") as HTMLButtonElement;
+    const btn = screen.getByText("Dia");
     expect(btn.style.fontSize).toBe("var(--fs-sm)");
   });
 });

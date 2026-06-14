@@ -54,7 +54,7 @@ export const TXNS: TransactionRow[] = [
     date: "2026-03-15",
     payment_method: "debit",
     is_projection: false,
-    owners: ["Gio", "João"],
+    owners: ["Ana", "Bruno"],
     provenance: "importado",
   },
   {

@@ -13,7 +13,7 @@ linha** a cada re-import. Consequências:
    `is_fixed`** → toda Saída importada entra como `is_fixed=0` → o engine a classifica como
    **Diário**, não Saída (FixedOut). (Parte do WRONG #2.)
 3. **Princípio fonte-da-verdade invertido** na spec 008 (declara "SQLite = system-of-record"),
-   quando hoje a **planilha** é o system-of-record (o João a edita à mão todo dia).
+   quando hoje a **planilha** é o system-of-record (o usuário a edita à mão todo dia).
 
 ## Decisões
 

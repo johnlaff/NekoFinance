@@ -2,7 +2,7 @@ import { getForecast } from "../lib/api";
 import type { ForecastDay } from "../lib/api";
 import { monthNamePtBR } from "../lib/format";
 import { useCommand } from "../lib/useCommand";
-import { Money } from "../design-system/components/Money";
+import { Money, formatBRL } from "../design-system/components/Money";
 import { EmptyState } from "../design-system/components/EmptyState";
 import { BalanceTrajectory } from "../design-system/components/BalanceTrajectory";
 
@@ -32,6 +32,10 @@ const BAND_LEGEND: { band: SaldoBand; label: string }[] = [
   { band: "ok", label: "ok" },
   { band: "comfortable", label: "folga" },
 ];
+
+const BAND_LABEL: Record<SaldoBand, string> = Object.fromEntries(
+  BAND_LEGEND.map((l) => [l.band, l.label]),
+) as Record<SaldoBand, string>;
 
 interface DayCell {
   day: number;
@@ -172,8 +176,8 @@ export function HorizonteScreen() {
       </h2>
 
       <div
-        role="table"
-        aria-label="Horizonte de saldos projetados por dia e mês"
+        role="group"
+        aria-label="Saldo projetado por dia, agrupado por mês"
         style={{
           display: "flex",
           gap: "var(--space-4)",
@@ -184,10 +188,12 @@ export function HorizonteScreen() {
         {cols.map((col) => (
           <div
             key={col.ym}
-            role="columnheader"
+            role="group"
+            aria-label={col.label}
             style={{ minWidth: 140, flexShrink: 0 }}
           >
             <div
+              aria-hidden="true"
               style={{
                 fontSize: "var(--fs-label)",
                 fontWeight: "var(--fw-bold)",
@@ -205,8 +211,8 @@ export function HorizonteScreen() {
               {col.days.map((d) => (
                 <div
                   key={d.day}
-                  role="row"
                   aria-current={d.isToday ? "date" : undefined}
+                  aria-label={`Dia ${d.day}: saldo ${formatBRL(d.balance)} (${BAND_LABEL[saldoBand(d.balance)]})`}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -220,6 +226,7 @@ export function HorizonteScreen() {
                   }}
                 >
                   <span
+                    aria-hidden="true"
                     style={{
                       fontSize: "var(--fs-sm)",
                       color: "var(--text-muted)",
@@ -228,7 +235,9 @@ export function HorizonteScreen() {
                   >
                     {d.day}
                   </span>
-                  <Money cents={d.balance} size="sm" sign="auto" />
+                  <span aria-hidden="true">
+                    <Money cents={d.balance} size="sm" sign="auto" />
+                  </span>
                 </div>
               ))}
             </div>

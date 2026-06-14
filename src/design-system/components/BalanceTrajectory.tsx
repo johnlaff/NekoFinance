@@ -218,7 +218,7 @@ export function BalanceTrajectory({
       {hovered && (
         <div
           className="nk-spark__tip"
-          role="status"
+          aria-hidden="true"
           style={{
             left: `${hoverFrac * 100}%`,
             transform: `translateX(${hoverFrac > 0.85 ? "-100%" : hoverFrac < 0.15 ? "0" : "-50%"})`,

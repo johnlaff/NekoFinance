@@ -23,8 +23,9 @@ mas **morre no DTO** (`MonthMetricDto` não o carrega).
 
 - **5 tipos derivados** de `(type, is_fixed, payment_method, liquidez-destino)` — sem migração do
   enum `transaction.type`: entrada=income; saída=expense fixo; diário=expense variável;
-  **cartão**=expense+credit; **economia**=`transfer` p/ conta com `liquidity ∈ {reserve,restricted,illiquid}`.
-  Transfer entre contas `liquid` continua net-zero (skip).
+  **cartão**=expense+credit; **economia**=`transfer` p/ poupança real: `liquidity ∈ {reserve, illiquid}`
+  (reserva + FGTS/previdência = poupança forçada). `restricted` (vale-refeição) é gasto restrito,
+  **não** poupança — não conta como Economia. Transfer entre contas `liquid` continua net-zero (skip).
 - **`EventKind::Economia`** (novo): saída do saldo de gasto (signed −), porque guardar reduz o que
   está disponível para gastar (fiel à conta única do método). Conta como economia em Performance e em
   Economizado%; **não** entra em Custo de vida.

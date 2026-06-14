@@ -92,6 +92,7 @@ export function Disclosure({
         id={`${id}-b`}
         role="region"
         aria-labelledby={`${id}-t`}
+        inert={!open}
       >
         <div className="nk-disc__body">{children}</div>
       </div>

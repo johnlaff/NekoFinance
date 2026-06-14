@@ -66,7 +66,12 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   },
 };
 
-type Pos = { left: number; top: number; side: "top" | "bottom"; arrowX: number };
+interface Pos {
+  left: number;
+  top: number;
+  side: "top" | "bottom";
+  arrowX: number;
+}
 
 interface InfoPopoverProps {
   /** Chave do glossário OU o conteúdo direto ({title?, body}). */
@@ -97,29 +102,28 @@ export function InfoPopover({
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const id = useId();
 
-  const place = () => {
-    const trigger = wrapRef.current?.querySelector(".nk-term");
-    if (!trigger) return;
-    const r = trigger.getBoundingClientRect();
-    const MARGIN = 12;
-    const GAP = 9;
-    const popH = popRef.current ? popRef.current.offsetHeight : 96;
-    const below =
-      r.bottom + GAP + popH + MARGIN <= window.innerHeight ||
-      r.top - GAP - popH < MARGIN;
-    const top = below ? r.bottom + GAP : r.top - GAP - popH;
-    let left = r.left;
-    left = Math.min(left, window.innerWidth - width - MARGIN);
-    left = Math.max(MARGIN, left);
-    const arrowX = Math.max(12, Math.min(width - 20, r.left + r.width / 2 - left));
-    setPos({ left, top, side: below ? "bottom" : "top", arrowX });
-  };
-
+  // `place` mora DENTRO do effect (depende só de open+width) → sem dep instável nem setState
+  // síncrono no fechamento. Ao fechar, o effect não faz nada; o portal some pelo guard `open && pos`
+  // e a `pos` velha (inofensiva) é recomputada no próximo open.
   useEffect(() => {
-    if (!open) {
-      setPos(null);
-      return;
-    }
+    if (!open) return;
+    const place = () => {
+      const trigger = wrapRef.current?.querySelector(".nk-term");
+      if (!trigger) return;
+      const r = trigger.getBoundingClientRect();
+      const MARGIN = 12;
+      const GAP = 9;
+      const popH = popRef.current ? popRef.current.offsetHeight : 96;
+      const below =
+        r.bottom + GAP + popH + MARGIN <= window.innerHeight ||
+        r.top - GAP - popH < MARGIN;
+      const top = below ? r.bottom + GAP : r.top - GAP - popH;
+      let left = r.left;
+      left = Math.min(left, window.innerWidth - width - MARGIN);
+      left = Math.max(MARGIN, left);
+      const arrowX = Math.max(12, Math.min(width - 20, r.left + r.width / 2 - left));
+      setPos({ left, top, side: below ? "bottom" : "top", arrowX });
+    };
     place();
     const raf = requestAnimationFrame(place); // re-place após medir a altura real
     const onKey = (e: KeyboardEvent) => {
@@ -145,8 +149,7 @@ export function InfoPopover({
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onScroll);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- place/width estáveis o suficiente
-  }, [open]);
+  }, [open, width]);
 
   const show = () => {
     clearTimeout(hoverTimer.current);

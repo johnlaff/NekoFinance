@@ -25,10 +25,10 @@ pub enum EventKind {
     FixedOut,
     /// Diário — variable daily débito/cash spend (Régua 1).
     Daily,
-    /// Economia — guardar (transfer to a non-liquid pocket: reserve/restricted/illiquid). Leaves
-    /// the spending balance (signed −, mirroring the app's single conta), but is "saved" not
-    /// "spent": it is the numerator of Economizado% and a term of Performance, yet is NOT part of
-    /// Custo de vida.
+    /// Economia — guardar (transfer to real savings: reserve, ou illiquid p/ FGTS/previdência).
+    /// NÃO inclui `restricted` (vale-refeição = gasto restrito). Leaves the spending balance
+    /// (signed −, mirroring the app's single conta), but is "saved" not "spent": it is the
+    /// numerator of Economizado% and a term of Performance, yet is NOT part of Custo de vida.
     Economia,
 }
 
@@ -228,10 +228,12 @@ fn signed(e: &CashflowEvent) -> i64 {
 
 /// Row→event classification rule (the shell maps DB rows through this).
 /// `income` → Entrada; an `expense` on credit or marked fixed → Saída (a fatura lump or fixed bill);
-/// any other `expense` → Diário (variable débito/cash). A `transfer` is **Economia** when its
-/// destination is a non-liquid pocket (reserve/restricted/illiquid) — guardar dinheiro — and is
-/// otherwise net-zero between own liquid accounts (skipped). `to_liquidity` is the destination
-/// account's `liquidity` (None for non-transfers or unclassified accounts).
+/// any other `expense` → Diário (variable débito/cash). A `transfer` is **Economia** only when its
+/// destination is real savings — `reserve` (reserva) or `illiquid` (FGTS/previdência = poupança
+/// forçada). `restricted` (vale-refeição) é dinheiro de gasto RESTRITO, **não** poupança: contá-lo
+/// como Economia inflaria o Economizado% (= Economia/Entradas) sem respaldo no método. Demais
+/// transferências (entre contas líquidas, ou para vale) são net-zero para a poupança → ignoradas.
+/// `to_liquidity` é a `liquidity` da conta-destino (None p/ não-transfers ou contas sem classe).
 pub fn classify(
     txn_type: &str,
     is_fixed: bool,
@@ -248,9 +250,10 @@ pub fn classify(
             }
         }
         "transfer" => match to_liquidity {
-            // Guardar na reserva/bolso não-líquido = economia (sai do saldo de gasto).
-            Some("reserve") | Some("restricted") | Some("illiquid") => Some(EventKind::Economia),
-            // Transferência entre contas líquidas é net-zero para o saldo de gasto → ignorada.
+            // Poupar de verdade: reserva ou poupança forçada (FGTS/previdência) = Economia.
+            Some("reserve") | Some("illiquid") => Some(EventKind::Economia),
+            // Vale-refeição (restricted) é gasto restrito, não poupança; e transferências entre
+            // contas líquidas são net-zero → nenhuma conta como Economia.
             _ => None,
         },
         _ => None,
@@ -665,7 +668,7 @@ mod tests {
 
     // ---- Guardrail duplo (poupança ANUAL 25% + caixa) — o furo do 1º dogfooding ----
 
-    // Caso do João: caixa cheio (colchão) MAS a poupança do ANO já estourou → pode gastar = 0,
+    // Caso do usuário: caixa cheio (colchão) MAS a poupança do ANO já estourou → pode gastar = 0,
     // limitado pela POUPANÇA, não pelo caixa. É o "Caixa ≠ Performance" do método.
     #[test]
     fn safe_to_spend_savings_binds_when_cash_is_high() {
@@ -880,18 +883,18 @@ mod tests {
     // Economia: transfer p/ bolso não-líquido = Economia; entre líquidos = net-zero (skip).
     #[test]
     fn classify_transfer_to_reserve_is_economia() {
+        // Poupança real (reserva) → Economia.
         assert_eq!(
             classify("transfer", false, None, Some("reserve")),
             Some(EventKind::Economia)
         );
-        assert_eq!(
-            classify("transfer", false, None, Some("restricted")),
-            Some(EventKind::Economia)
-        );
+        // FGTS/previdência (illiquid) = poupança forçada → Economia.
         assert_eq!(
             classify("transfer", false, None, Some("illiquid")),
             Some(EventKind::Economia)
         );
+        // Vale-refeição (restricted) é gasto restrito, NÃO poupança → não conta como Economia.
+        assert_eq!(classify("transfer", false, None, Some("restricted")), None);
         // Entre contas líquidas (ou destino desconhecido) → net-zero, ignorado.
         assert_eq!(classify("transfer", false, None, Some("liquid")), None);
         assert_eq!(classify("transfer", false, None, None), None);

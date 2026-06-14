@@ -7,20 +7,20 @@ describe("OwnerChip", () => {
     ["personal", "Eu"],
     ["partner", "Parceiro(a)"],
     ["shared", "Compartilhado"],
-  ] as Array<[OwnerWho, string]>)("%s → rótulo padrão %s", (who, label) => {
+  ] as [OwnerWho, string][])("%s → rótulo padrão %s", (who, label) => {
     render(<OwnerChip who={who} />);
     expect(screen.getByText(label)).toBeInTheDocument();
   });
 
   it("sobrescreve com o nome real", () => {
-    render(<OwnerChip who="partner" name="Gio" />);
-    expect(screen.getByText("Gio")).toBeInTheDocument();
+    render(<OwnerChip who="partner" name="Ana" />);
+    expect(screen.getByText("Ana")).toBeInTheDocument();
     expect(screen.queryByText("Parceiro(a)")).not.toBeInTheDocument();
   });
 
   it("usa a cor do titular no ponto", () => {
     const { container } = render(<OwnerChip who="partner" />);
-    const dot = container.querySelector("span[aria-hidden='true']") as HTMLElement;
+    const dot = container.querySelector<HTMLElement>("span[aria-hidden='true']")!;
     expect(dot.style.background).toBe("var(--owner-partner)");
   });
 
@@ -31,7 +31,7 @@ describe("OwnerChip", () => {
   });
 
   it("avatar mostra o monograma (iniciais) do nome", () => {
-    render(<OwnerChip name="João Araxá" avatar />);
+    render(<OwnerChip name="Joana Alves" avatar />);
     expect(screen.getByText("JA")).toBeInTheDocument();
   });
 });

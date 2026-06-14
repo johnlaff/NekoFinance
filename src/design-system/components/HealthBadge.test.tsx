@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { HealthBadge, type HealthLevel } from "./HealthBadge";
 
 describe("HealthBadge", () => {
-  const defaults: Array<[HealthLevel, string]> = [
+  const defaults: [HealthLevel, string][] = [
     ["strong", "Forte"],
     ["steady", "Estável"],
     ["watch", "Atenção"],

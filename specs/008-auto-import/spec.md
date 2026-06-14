@@ -28,7 +28,7 @@ padrão que o dono já usa** (lump por coluna + nota estruturada na célula).
 ## Princípios (herdados do método / AGENTS)
 
 1. **Fonte da verdade por fase (corrigido — spec 012):** enquanto a fase é **import-only** (sem
-   write-back ligado), a **planilha é o system-of-record** — o João a edita à mão todo dia; o
+   write-back ligado), a **planilha é o system-of-record** — o usuário a edita à mão todo dia; o
    SQLite é o **espelho local + camada de enriquecimento** (split por pessoa, tags, payment*method,
    fatura). A virada para "app-first" (SQLite como system-of-record) só ocorre quando o write-back
    bidirecional gated por checksum-de-célula estiver ligado e testado. A UI deve declarar a fonte

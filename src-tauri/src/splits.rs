@@ -133,31 +133,31 @@ mod tests {
     #[tokio::test]
     async fn splits_carry_owner_name() {
         let p = pool().await;
-        person(&p, "joao", "João").await;
-        person(&p, "gio", "Gio").await;
+        person(&p, "bruno", "Bruno").await;
+        person(&p, "ana", "Ana").await;
         txn(&p, "t1", -30000, "2026-06-05").await;
-        split(&p, "s1", "t1", -20000, "joao").await;
-        split(&p, "s2", "t1", -10000, "gio").await;
+        split(&p, "s1", "t1", -20000, "bruno").await;
+        split(&p, "s2", "t1", -10000, "ana").await;
 
         let rows = splits_for_transaction(&p, "t1").await.unwrap();
         assert_eq!(rows.len(), 2);
-        // Ordenado por nome: Gio antes de João.
-        assert_eq!(rows[0].owner_name, "Gio");
-        assert_eq!(rows[1].owner_name, "João");
+        // Ordenado por nome: Ana antes de Bruno.
+        assert_eq!(rows[0].owner_name, "Ana");
+        assert_eq!(rows[1].owner_name, "Bruno");
     }
 
     #[tokio::test]
     async fn owner_totals_sum_by_person_and_month() {
         let p = pool().await;
-        person(&p, "joao", "João").await;
-        person(&p, "gio", "Gio").await;
+        person(&p, "bruno", "Bruno").await;
+        person(&p, "ana", "Ana").await;
         txn(&p, "t1", -30000, "2026-06-05").await;
-        split(&p, "s1", "t1", -20000, "joao").await;
-        split(&p, "s2", "t1", -10000, "gio").await;
+        split(&p, "s1", "t1", -20000, "bruno").await;
+        split(&p, "s2", "t1", -10000, "ana").await;
         txn(&p, "t2", -50000, "2026-06-20").await;
-        split(&p, "s3", "t2", -50000, "joao").await;
+        split(&p, "s3", "t2", -50000, "bruno").await;
         txn(&p, "t3", -99900, "2026-07-01").await; // outro mês
-        split(&p, "s4", "t3", -99900, "gio").await;
+        split(&p, "s4", "t3", -99900, "ana").await;
 
         let totals = owner_totals_for_month(&p, 2026, 6).await.unwrap();
         let get = |id: &str| {
@@ -167,9 +167,9 @@ mod tests {
                 .unwrap()
                 .total_cents
         };
-        assert_eq!(get("joao"), 70000, "20 + 50 em junho");
-        assert_eq!(get("gio"), 10000, "só 10 em junho (99,90 é julho)");
-        // João primeiro (maior total).
-        assert_eq!(totals[0].owner_person_id, "joao");
+        assert_eq!(get("bruno"), 70000, "20 + 50 em junho");
+        assert_eq!(get("ana"), 10000, "só 10 em junho (99,90 é julho)");
+        // Bruno primeiro (maior total).
+        assert_eq!(totals[0].owner_person_id, "bruno");
     }
 }

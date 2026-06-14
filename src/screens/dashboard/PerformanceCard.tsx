@@ -50,8 +50,8 @@ export function PerformanceCard({ forecast }: { forecast: Forecast }) {
               className={`dash-perf__cell ${incompleto ? "is-incomplete" : ""}`}
               aria-label={
                 incompleto
-                  ? `${monthLabel}: incompleto — projeção otimista, falta lançar gastos`
-                  : `${monthLabel}: performance ${fmtBRL(m.performance_cents)}, ${ratePct}% da renda`
+                  ? `${monthLabel}: incompleto, projeção otimista, falta lançar gastos`
+                  : `${monthLabel}: performance ${fmtBRL(m.performance_cents)}, economizado ${ratePct}%`
               }
             >
               <span className="dash-perf__month">{monthLabel}</span>
@@ -67,7 +67,7 @@ export function PerformanceCard({ forecast }: { forecast: Forecast }) {
                   <span className="dash-perf__val">
                     <Money cents={m.performance_cents} size="sm" sign="auto" />
                   </span>
-                  <span className="dash-perf__rate">{ratePct}% da renda</span>
+                  <span className="dash-perf__rate">economizado {ratePct}%</span>
                 </>
               )}
             </div>

@@ -233,7 +233,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         date: "2026-06-10",
         payment_method: "debit",
         is_projection: false,
-        owners: ["Gio", "João"],
+        owners: ["Ana", "Bruno"],
         provenance: "importado",
       },
       {

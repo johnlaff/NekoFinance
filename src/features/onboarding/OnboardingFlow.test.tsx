@@ -50,4 +50,18 @@ describe("OnboardingFlow", () => {
     await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
     expect(mockInvoke.mock.calls.some((c) => c[0] === "set_app_setting")).toBe(true);
   });
+
+  it("foca o diálogo ao abrir e Escape fecha (modalidade real)", async () => {
+    const user = userEvent.setup();
+    mockCommands({ set_app_setting: null });
+    const onDone = vi.fn();
+    render(<OnboardingFlow onDone={onDone} />);
+
+    // O cartão do diálogo recebe o foco no mount.
+    expect(screen.getByRole("dialog")).toContainElement(
+      document.activeElement as HTMLElement,
+    );
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
+  });
 });

@@ -290,10 +290,10 @@ Mudanças:
 
 - **Guardrail de poupança virou ANUAL sobre o REALIZADO** (`safe_to_spend_today` recebe
   `annual_income`/`annual_savings`; `realized_annual_savings`). O ano PROJETADO mente quando os
-  meses futuros estão incompletos — para o João, realizado 3,4% vs projetado 19,1%.
+  meses futuros estão incompletos — para o usuário, realizado 3,4% vs projetado 19,1%.
 - **Cobertura por mês futuro** (`forecast::month_coverage` + `realized_monthly_baseline`): saída
   lançada ÷ mediana das saídas realizadas. Mês < 60% do típico = INCOMPLETO. Expõe o "buraco" de
-  lançamento: João tem confiável até julho; ago–dez em ~32% (faltam ~R$ 7k/mês de fatura +
+  lançamento: o usuário tem confiável até julho; ago–dez em ~32% (faltam ~R$ 7k/mês de fatura +
   variáveis). Nenhum app líder faz isso — diferencial confirmado pela pesquisa de mercado.
 - **UI**: card "Previsibilidade" (confiável até X, barras de cobertura, total faltante,
   orientação de pré-lançamento), poupança do ano realizada vs projetada, mensagem do guardrail
@@ -313,8 +313,8 @@ contra a **planilha oficial** (puxada direto do Google Sheets via token decifrad
 célula). Achados e correções:
 
 - **Descrições perdidas (P0)**: o import gravava `"Entrada/Saída 2026"` e DESCARTAVA as **542
-  notas de célula** (a descrição real do método: "R$ 310 - Pagamento Gio", "Fatura Vivo",
-  "Tiago/Games"). **Corrigido**: `SheetsClient::get_sheet_notes` (via `spreadsheets.get` +
+  notas de célula** (a descrição real do método: "R$ 310 - Pagamento Pessoa B", "Fatura operadora",
+  "Pessoa C/Games"). **Corrigido**: `SheetsClient::get_sheet_notes` (via `spreadsheets.get` +
   `includeGridData`) + `parse_rows_with_layout` usa a nota como descrição (quebras → " · "),
   fallback `"{kind} {date}"`. Caminho xlsx não tem notas (calamine) → fallback. **Re-importar**
   para popular.
@@ -329,11 +329,11 @@ célula). Achados e correções:
 - **Valores/datas/Saldo EXATOS (confirmado)**: sem erro de 100×/locale; datas e série de Saldo
   batem com a planilha oficial célula a célula.
 
-**Aba Economia revelada**: coluna `Economia` = **R$ 0 todos os meses** (2025 e 2026) — João não
+**Aba Economia revelada**: coluna `Economia` = **R$ 0 todos os meses** (2025 e 2026) — o usuário não
 lança economia deliberada; pela métrica do método (Economia ÷ Entradas) a poupança é 0%.
 
 **Deferido (documentado)**: importar a aba Economia (slice 7); parsear as notas em **splits por
-titular** (Gio/Tiago/João) e itens (a nota tem "R$ X - <item>" por linha); tile Diário oculto
+titular** (Pessoa A/B/C) e itens (a nota tem "R$ X - <item>" por linha); tile Diário oculto
 quando zero; sparkline do Saldo anual.
 
 ### Slice 13 — Verificação final + coaching de adaptação (2026-06-13)
@@ -361,7 +361,7 @@ Verificação adversarial (4 lentes: app×método, robustez a edições, gaps/co
 3. **`reserve_months` dinâmico** = `reserve_cents / baseline_outflow_cents` (custo de vida × N);
    gate de compra grande da Mia depende disso.
 4. **Saldos encadeados de meses futuros** na UI (o `month_end[]` já existe no DTO).
-5. **Tags / owner / reembolso / pass-through** no schema (carro do pai, fatura da Gio = net-zero).
+5. **Tags / owner / reembolso / pass-through** no schema (repasse de terceiro, fatura de Pessoa B = net-zero).
 6. **Diário/velocímetro de crédito**, renda variável tipificada (extras/13º/PLR), ciclo de
    fechamento do cartão.
 
