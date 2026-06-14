@@ -337,6 +337,15 @@ export interface TagTotal extends Tag {
   total_cents: number;
 }
 
+export interface AnnualMetrics {
+  year: number;
+  months: MonthMetric[];
+}
+
+export function getAnnualMetrics(year: number): Promise<AnnualMetrics> {
+  return invoke("get_annual_metrics", { year });
+}
+
 export function listTags(): Promise<Tag[]> {
   return invoke("list_tags_cmd");
 }

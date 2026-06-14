@@ -59,9 +59,7 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     });
   });
 
-  test("método screens render: Totais, Horizonte, Tags", async ({
-    page,
-  }, testInfo) => {
+  test("método screens render: Totais, Horizonte, Tags", async ({ page }, testInfo) => {
     const nav = (name: string | RegExp) => page.getByRole("button", { name });
 
     // Totais — 4 métricas-herói + status do método.
@@ -82,6 +80,15 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     await page.screenshot({
       fullPage: true,
       path: testInfo.outputPath("horizonte.png"),
+    });
+
+    // Visão anual — tabela das 4 métricas por mês.
+    await nav("Anual").click();
+    await expect(page.getByRole("heading", { name: "Visão anual" })).toBeVisible();
+    await expect(page.getByText("Jun", { exact: true })).toBeVisible();
+    await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath("anual.png"),
     });
 
     // Tags — lista colorida com "! Pagar" no topo.

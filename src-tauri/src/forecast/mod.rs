@@ -407,6 +407,25 @@ fn month_metrics(
         .collect()
 }
 
+/// Métricas por mês para uma lista arbitrária de `(ano, mês)` — usada pela visão ANUAL (todos os 12
+/// meses do ano, realizado + projetado), independente do horizonte do forecast. O `balance_cents`
+/// do `MonthEnd` não importa aqui (as métricas só usam os eventos do mês).
+pub fn month_metrics_for(
+    today: NaiveDate,
+    events: &[CashflowEvent],
+    months: &[(i32, u32)],
+) -> Vec<MonthMetric> {
+    let ends: Vec<MonthEnd> = months
+        .iter()
+        .map(|&(year, month)| MonthEnd {
+            year,
+            month,
+            balance_cents: 0,
+        })
+        .collect();
+    month_metrics(today, events, &ends)
+}
+
 /// Eventos `Daily` projetados da **previsão de diário**: para cada dia do MÊS CORRENTE após `today`
 /// (até o fim do mês ou `horizon_end`, o que vier antes) que ainda não tem um Daily lançado, injeta
 /// o teto/dia (`per_day_cents`) como `Daily { realized: false }`. Faz o saldo projetado e a

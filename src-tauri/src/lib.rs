@@ -26,6 +26,7 @@ pub fn run() {
             commands::import_local_xlsx,
             commands::get_dashboard_summary,
             commands::get_forecast,
+            commands::get_annual_metrics,
             commands::get_recent_transactions,
             commands::get_pockets,
             commands::create_account,

@@ -11,6 +11,7 @@ import {
   Sparkles,
   Table2,
   Tags as TagsIcon,
+  TrendingUp,
   Unlink,
 } from "lucide-react";
 import { NekoMark } from "../design-system/components/NekoMark";
@@ -20,6 +21,7 @@ import type { AuthStatus } from "../lib/api";
 export type Screen =
   | "dashboard"
   | "totais"
+  | "anuais"
   | "horizonte"
   | "transactions"
   | "tags"
@@ -30,6 +32,7 @@ export type Screen =
 export const SCREEN_META: Record<Screen, { title: string; crumb: string }> = {
   dashboard: { title: "Dashboard", crumb: "Todas as contas" },
   totais: { title: "Totais", crumb: "Cálculos do mês" },
+  anuais: { title: "Visão anual", crumb: "O ano inteiro" },
   horizonte: { title: "Horizonte de saldos", crumb: "Projeção mês a mês" },
   transactions: { title: "Transações", crumb: "Histórico completo" },
   tags: { title: "Tags", crumb: "Rótulos do mês" },
@@ -41,6 +44,7 @@ export const SCREEN_META: Record<Screen, { title: string; crumb: string }> = {
 const NAV_ITEMS: { key: Screen; label: string; icon: typeof LayoutDashboard }[] = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { key: "totais", label: "Totais", icon: Calculator },
+  { key: "anuais", label: "Anual", icon: TrendingUp },
   { key: "horizonte", label: "Horizonte", icon: CalendarRange },
   { key: "transactions", label: "Transações", icon: Receipt },
   { key: "tags", label: "Tags", icon: TagsIcon },

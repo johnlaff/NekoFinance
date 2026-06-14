@@ -319,6 +319,20 @@ export async function mockTauri(page: Page) {
       db_path: "C:\\Users\\you\\AppData\\Roaming\\app.neko.finance\\neko-finance.db",
     };
 
+    const ANNUAL = {
+      year: 2026,
+      months: Array.from({ length: 12 }, (_, i) => ({
+        year: 2026,
+        month: i + 1,
+        income_cents: i + 1 === 6 ? 700000 : 0,
+        performance_cents: i + 1 === 6 ? 445700 : 0,
+        cost_of_living_cents: i + 1 === 6 ? 254300 : 0,
+        real_daily_avg_cents: 0,
+        economia_cents: 0,
+        savings_rate_bps: i + 1 === 6 ? 2200 : 0,
+      })),
+    };
+
     const TAG_TOTALS = [
       {
         id: "p",
@@ -351,6 +365,7 @@ export async function mockTauri(page: Page) {
       get_dashboard_summary: SUMMARY,
       get_forecast: FORECAST,
       tag_totals_for_month_cmd: TAG_TOTALS,
+      get_annual_metrics: ANNUAL,
       get_recent_transactions: TXNS,
       get_app_info: APP_INFO,
       get_pockets: POCKETS,

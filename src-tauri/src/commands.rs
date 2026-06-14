@@ -980,6 +980,77 @@ async fn forecast_dto(pool: &SqlitePool, today_naive: NaiveDate) -> Result<Forec
     })
 }
 
+// --- Visão anual (spec 016/visões anuais) ---
+
+/// Todos os eventos do ANO (realizado + projetado), classificados — sem o teto de diário (que só
+/// vale para o mês corrente no forecast). Para a visão anual das 4 métricas.
+async fn load_year_events(pool: &SqlitePool, year: i32) -> Result<Vec<CashflowEvent>, String> {
+    let rows: Vec<(String, i64, String, String, i64, i64, String)> = sqlx::query_as(
+        "SELECT t.type, t.amount, t.date, COALESCE(t.payment_method,''), t.is_fixed, t.is_projection, \
+                COALESCE(a.liquidity,'') \
+         FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
+         WHERE substr(t.date, 1, 4) = ?1",
+    )
+    .bind(format!("{year:04}"))
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("query year events: {e}"))?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|(ttype, amount, date_str, pm, is_fixed, is_proj, liq)| {
+            let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d").ok()?;
+            let pm = (!pm.is_empty()).then_some(pm);
+            let to_liq = (!liq.is_empty()).then_some(liq);
+            let kind = forecast::classify(&ttype, is_fixed != 0, pm.as_deref(), to_liq.as_deref())?;
+            Some(CashflowEvent {
+                date,
+                kind,
+                amount_cents: amount,
+                realized: is_proj == 0,
+            })
+        })
+        .collect())
+}
+
+#[derive(serde::Serialize)]
+pub struct AnnualMetricsDto {
+    pub year: i32,
+    pub months: Vec<MonthMetricDto>,
+}
+
+async fn annual_metrics(
+    pool: &SqlitePool,
+    year: i32,
+    today: NaiveDate,
+) -> Result<AnnualMetricsDto, String> {
+    let events = load_year_events(pool, year).await?;
+    let months: Vec<(i32, u32)> = (1..=12).map(|m| (year, m)).collect();
+    let metrics = forecast::month_metrics_for(today, &events, &months);
+    let months = metrics
+        .iter()
+        .map(|m| MonthMetricDto {
+            year: m.year,
+            month: m.month,
+            income_cents: m.income_cents,
+            performance_cents: m.performance_cents,
+            cost_of_living_cents: m.cost_of_living_cents,
+            real_daily_avg_cents: m.real_daily_avg_cents,
+            economia_cents: m.economia_cents,
+            savings_rate_bps: m.savings_rate_bps,
+        })
+        .collect();
+    Ok(AnnualMetricsDto { year, months })
+}
+
+#[tauri::command]
+pub async fn get_annual_metrics(
+    pool: State<'_, SqlitePool>,
+    year: i32,
+) -> Result<AnnualMetricsDto, String> {
+    annual_metrics(pool.inner(), year, chrono::Local::now().date_naive()).await
+}
+
 // --- Dashboard query commands ---
 
 #[derive(serde::Serialize)]
@@ -1575,6 +1646,31 @@ mod tests {
             "Diário de hoje vem das transações, não R$0 estrutural"
         );
         assert!(!s.has_credit, "sem cartão nem crédito → has_credit false");
+    }
+
+    // Visão anual: agrega as 4 métricas por mês a partir das transações do ano (realizado +
+    // projetado), independente do horizonte do forecast.
+    #[tokio::test]
+    async fn annual_metrics_aggregates_each_month() {
+        let pool = fixture_pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        // Março realizado: renda 700, diário 254,30.
+        insert_realized(&pool, "income", 700_000, "2026-03-05").await;
+        insert_realized(&pool, "expense", 254_300, "2026-03-10").await;
+        // Julho projetado: renda 500.
+        insert_projection(&pool, "income", 500_000, "2026-07-05", "", 0).await;
+
+        let a = annual_metrics(&pool, 2026, today).await.unwrap();
+        assert_eq!(a.year, 2026);
+        assert_eq!(a.months.len(), 12);
+        let mar = a.months.iter().find(|m| m.month == 3).unwrap();
+        assert_eq!(mar.income_cents, 700_000);
+        assert_eq!(mar.cost_of_living_cents, 254_300); // diário realizado
+        assert_eq!(mar.performance_cents, 445_700); // 700 − 254,30
+        let jul = a.months.iter().find(|m| m.month == 7).unwrap();
+        assert_eq!(jul.income_cents, 500_000);
+        let jan = a.months.iter().find(|m| m.month == 1).unwrap();
+        assert_eq!(jan.income_cents, 0); // mês vazio
     }
 
     // --- 005 get_forecast (TDD) ---
