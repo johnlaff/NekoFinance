@@ -29,4 +29,9 @@ describe("OwnerChip", () => {
     expect(screen.getByText("paga")).toBeInTheDocument();
     expect(screen.getByTitle("Casa · paga")).toBeInTheDocument();
   });
+
+  it("avatar mostra o monograma (iniciais) do nome", () => {
+    render(<OwnerChip name="João Araxá" avatar />);
+    expect(screen.getByText("JA")).toBeInTheDocument();
+  });
 });

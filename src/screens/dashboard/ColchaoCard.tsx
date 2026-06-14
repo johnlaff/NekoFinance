@@ -2,6 +2,7 @@ import { Sparkles } from "lucide-react";
 import type { Forecast } from "../../lib/api";
 import { Money } from "../../design-system/components/Money";
 import { Disclosure } from "../../design-system/components/Disclosure";
+import { PhaseBadge } from "../../design-system/components/PhaseBadge";
 
 /**
  * Coaching de adaptação — o "colchão". O dono não registra Economia formal (linha do método);
@@ -26,7 +27,7 @@ export function ColchaoCard({ forecast }: { forecast: Forecast }) {
           />
           Adaptação ao método — seu colchão
         </span>
-        <span className="dash-colchao__phase">fase: calibrar</span>
+        <PhaseBadge phase="calibrate" />
       </div>
       <div className="dash-card__body">
         <div className="dash-colchao__nums">

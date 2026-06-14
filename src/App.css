@@ -562,8 +562,16 @@ h3,
   background: var(--surface-hover);
 }
 
+/* Futuro/previsto: hachura diagonal brass sutil (não troca de cor, não alarme) + leve esmaecimento */
 .txn-table tr.projection td {
-  opacity: 0.45;
+  opacity: 0.6;
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent,
+    transparent 8px,
+    var(--brass-tint) 8px,
+    var(--brass-tint) 10px
+  );
 }
 
 .txn-table .money {

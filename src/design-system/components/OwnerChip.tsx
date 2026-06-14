@@ -19,7 +19,20 @@ interface OwnerChipProps {
   note?: string;
   /** Sem fundo/borda (só ponto + nome inline). */
   bare?: boolean;
+  /** Mostra um avatar circular com as iniciais no lugar do ponto (padrão DS). */
+  avatar?: boolean;
   className?: string;
+}
+
+/** Iniciais (até 2) para o monograma do avatar. */
+function initials(name: string): string {
+  return name
+    .trim()
+    .split(/\s+/)
+    .map((w) => w[0] ?? "")
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
 }
 
 export function OwnerChip({
@@ -27,6 +40,7 @@ export function OwnerChip({
   name,
   note,
   bare = false,
+  avatar = false,
   className = "",
 }: OwnerChipProps) {
   const o = OWNERS[who];
@@ -38,9 +52,9 @@ export function OwnerChip({
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: "6px",
-        height: 22,
-        padding: bare ? 0 : "0 9px 0 7px",
+        gap: avatar ? "7px" : "6px",
+        height: avatar ? 26 : 22,
+        padding: bare ? 0 : avatar ? "0 10px 0 3px" : "0 9px 0 7px",
         borderRadius: "var(--radius-pill)",
         border: bare ? "none" : "var(--bw-hair) solid var(--border)",
         background: bare ? "none" : "var(--surface-2)",
@@ -50,16 +64,37 @@ export function OwnerChip({
         fontFamily: "var(--font-sans)",
       }}
     >
-      <span
-        aria-hidden="true"
-        style={{
-          width: 7,
-          height: 7,
-          borderRadius: "50%",
-          flex: "none",
-          background: o.color,
-        }}
-      />
+      {avatar ? (
+        <span
+          aria-hidden="true"
+          style={{
+            width: 20,
+            height: 20,
+            borderRadius: "50%",
+            flex: "none",
+            display: "inline-grid",
+            placeItems: "center",
+            background: "var(--surface-elevated)",
+            border: `1.5px solid ${o.color}`,
+            color: "var(--text)",
+            fontSize: "10px",
+            fontWeight: "var(--fw-bold)",
+          }}
+        >
+          {initials(label)}
+        </span>
+      ) : (
+        <span
+          aria-hidden="true"
+          style={{
+            width: 7,
+            height: 7,
+            borderRadius: "50%",
+            flex: "none",
+            background: o.color,
+          }}
+        />
+      )}
       {label}
       {note ? <span style={{ color: "var(--text-faint)" }}>{note}</span> : null}
     </span>
