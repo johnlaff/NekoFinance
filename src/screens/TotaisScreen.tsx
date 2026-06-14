@@ -1,10 +1,17 @@
+import { useState } from "react";
 import { getForecast } from "../lib/api";
 import type { MonthMetric } from "../lib/api";
 import { monthNamePtBR } from "../lib/format";
 import { useCommand } from "../lib/useCommand";
 import { Money } from "../design-system/components/Money";
 import { HealthBadge, type HealthLevel } from "../design-system/components/HealthBadge";
+import { MonthNav } from "../design-system/components/MonthNav";
 import { EmptyState } from "../design-system/components/EmptyState";
+
+/** "YYYY-MM" de uma métrica de mês. */
+export function ymOf(m: { year: number; month: number }): string {
+  return `${m.year}-${String(m.month).padStart(2, "0")}`;
+}
 
 const SAVINGS_TARGET_BPS = 2000; // meta 20% (piso da faixa 20–30%)
 
@@ -91,6 +98,7 @@ function MetricRow({
 
 export function TotaisScreen() {
   const forecastQ = useCommand("get_forecast", getForecast);
+  const [selectedYm, setSelectedYm] = useState<string | null>(null);
   const forecast = forecastQ.data ?? null;
 
   if (forecastQ.loading) {
@@ -109,7 +117,14 @@ export function TotaisScreen() {
     );
   }
 
-  const m = currentMonthMetric(forecast.months, forecast.today);
+  const months = [...forecast.months].sort(
+    (a, b) => a.year - b.year || a.month - b.month,
+  );
+  const todayYm = forecast.today.slice(0, 7);
+  const activeYm = selectedYm ?? todayYm;
+  const idx = months.findIndex((x) => ymOf(x) === activeYm);
+  const m =
+    idx >= 0 ? months[idx]! : currentMonthMetric(forecast.months, forecast.today);
   if (!m) {
     return (
       <EmptyState
@@ -119,25 +134,60 @@ export function TotaisScreen() {
     );
   }
 
+  const canPrev = idx > 0;
+  const canNext = idx >= 0 && idx < months.length - 1;
+  const goPrev = () => {
+    if (canPrev) setSelectedYm(ymOf(months[idx - 1]!));
+  };
+  const goNext = () => {
+    if (canNext) setSelectedYm(ymOf(months[idx + 1]!));
+  };
+  const goToday = () => setSelectedYm(null);
+
   const pct = (m.savings_rate_bps / 100).toFixed(0);
-  const iso = `${m.year}-${String(m.month).padStart(2, "0")}-01`;
-  const monthLabel = monthNamePtBR(iso);
+  const monthLabel = monthNamePtBR(`${ymOf(m)}-01`);
   const monthCap = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
 
   return (
     <div style={{ maxWidth: "var(--content-max)", margin: "0 auto", padding: "var(--space-2)" }}>
-      <header style={{ marginBottom: "var(--space-6)" }}>
-        <h1
+      <header
+        style={{
+          marginBottom: "var(--space-6)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "var(--space-4)",
+        }}
+      >
+        <div
           style={{
-            fontSize: "var(--fs-h2)",
-            fontWeight: "var(--fw-bold)",
-            letterSpacing: "var(--ls-tight)",
-            margin: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "var(--space-4)",
+            flexWrap: "wrap",
           }}
         >
-          {monthCap} de {m.year}
-        </h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "var(--fs-sm)", margin: "var(--space-1) 0 0" }}>
+          <h1
+            style={{
+              fontSize: "var(--fs-h2)",
+              fontWeight: "var(--fw-bold)",
+              letterSpacing: "var(--ls-tight)",
+              margin: 0,
+            }}
+          >
+            Totais
+          </h1>
+          <MonthNav
+            label={`${monthCap} de ${m.year}`}
+            onPrev={goPrev}
+            onNext={goNext}
+            onToday={goToday}
+            canPrev={canPrev}
+            canNext={canNext}
+            atToday={activeYm === todayYm}
+          />
+        </div>
+        <p style={{ color: "var(--text-muted)", fontSize: "var(--fs-sm)", margin: 0 }}>
           Cálculos do mês — performance, custo de vida, economizado e diário médio.
         </p>
       </header>

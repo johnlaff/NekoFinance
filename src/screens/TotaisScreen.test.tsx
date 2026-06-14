@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi } from "vitest";
 import {
   TotaisScreen,
@@ -52,5 +53,24 @@ describe("TotaisScreen (render)", () => {
     expect(screen.getByText("Diário médio")).toBeInTheDocument();
     // Status do método aparece (performance positiva no mock → "Sobrou dinheiro").
     expect(screen.getByText("Sobrou dinheiro")).toBeInTheDocument();
+  });
+
+  it("seletor de mês: avança para o próximo mês e volta ao hoje", async () => {
+    mockInvoke.mockReset();
+    mockCommands({ get_forecast: FORECAST });
+    render(<TotaisScreen />);
+    await waitFor(() =>
+      expect(screen.getByText("Performance")).toBeInTheDocument(),
+    );
+    // Começa no mês corrente (junho) → sem botão "Hoje".
+    expect(screen.queryByRole("button", { name: "Hoje" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Junho de 2026/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Próximo mês" }));
+    expect(screen.getByText(/Julho de 2026/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hoje" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Hoje" }));
+    expect(screen.getByText(/Junho de 2026/)).toBeInTheDocument();
   });
 });
