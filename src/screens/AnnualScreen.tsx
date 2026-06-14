@@ -65,7 +65,7 @@ export function AnnualScreen() {
               margin: "var(--space-1) 0 0",
             }}
           >
-            As 4 métricas-herói mês a mês — o ano inteiro de uma vez.
+            As 4 métricas-herói mês a mês, o ano inteiro de uma vez.
           </p>
         </div>
         <MonthNav

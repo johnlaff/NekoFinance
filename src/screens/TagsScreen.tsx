@@ -143,7 +143,7 @@ export function TagsScreen() {
       ) : tags.length === 0 ? (
         <EmptyState
           title="Nenhuma tag ainda"
-          description='Crie tags livres (com emoji e cor) para marcar lançamentos — como "! Pagar", "Viagem", "Delivery".'
+          description='Crie tags livres (com emoji e cor) para marcar lançamentos, como "! Pagar", "Viagem", "Delivery".'
         />
       ) : (
         <ul

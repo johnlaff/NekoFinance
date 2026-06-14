@@ -47,12 +47,12 @@ export function PrevisibilidadeCard({ forecast }: { forecast: Forecast }) {
           </p>
         ) : !hasCoverage ? (
           <p className="dash-predict__neutral">
-            Nenhum mês futuro lançado além de hoje — a projeção só enxerga o presente.
+            Nenhum mês futuro lançado além de hoje. A projeção só enxerga o presente.
             Lance os próximos meses para prever o ano.
           </p>
         ) : !firstIncomplete ? (
           <p className="dash-predict__ok">
-            Seus meses futuros estão completos — a projeção é confiável até o fim dos
+            Seus meses futuros estão completos. A projeção é confiável até o fim dos
             dados lançados.
           </p>
         ) : (

@@ -194,7 +194,7 @@ export function TotaisScreen() {
           />
         </div>
         <p style={{ color: "var(--text-muted)", fontSize: "var(--fs-sm)", margin: 0 }}>
-          Cálculos do mês — performance, custo de vida, economizado e diário médio.
+          Cálculos do mês: performance, custo de vida, economizado e diário médio.
         </p>
       </header>
 
