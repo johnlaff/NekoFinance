@@ -1,6 +1,6 @@
 import { Landmark } from "lucide-react";
 import { getPockets } from "../../lib/api";
-import { fmtBRL } from "../../lib/format";
+import { Money } from "../../design-system/components/Money";
 import { useCommand } from "../../lib/useCommand";
 
 const GROUPS = [
@@ -24,7 +24,7 @@ export function PocketsCard() {
         </span>
         {pockets && pockets.accounts.length > 0 && (
           <span className="pockets-networth">
-            Patrimônio <b>{fmtBRL(pockets.net_worth_cents)}</b>
+            Patrimônio <Money cents={pockets.net_worth_cents} size="sm" sign="auto" />
           </span>
         )}
       </div>
@@ -43,7 +43,9 @@ export function PocketsCard() {
             {GROUPS.map((g) => (
               <div key={g.key} className="pockets-cell">
                 <span className="pockets-cell__label">{g.label}</span>
-                <span className="pockets-cell__value">{fmtBRL(pockets[g.key])}</span>
+                <span className="pockets-cell__value">
+                  <Money cents={pockets[g.key]} size="sm" />
+                </span>
                 <span className="pockets-cell__hint">{g.hint}</span>
               </div>
             ))}

@@ -6,7 +6,8 @@ import { EmptyState } from "../design-system/components/EmptyState";
 import { OwnerChip } from "../design-system/components/OwnerChip";
 import { SegmentedControl } from "../design-system/components/SegmentedControl";
 import { getRecentTransactions, isTauri, type TransactionRow } from "../lib/api";
-import { fmtBRL, fmtDate } from "../lib/format";
+import { fmtDate } from "../lib/format";
+import { Money } from "../design-system/components/Money";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { NewTransactionForm } from "./NewTransactionForm";
 import { ConflictGate } from "../features/reconcile/ConflictGate";
@@ -202,9 +203,12 @@ export function TransactionsScreen({
                     <td>
                       <span className="txn-method">{methodLabel(t)}</span>
                     </td>
-                    <td className={`money ${t.type === "income" ? "positive" : ""}`}>
-                      {t.type === "income" ? "+" : "−"}
-                      {fmtBRL(Math.abs(t.amount))}
+                    <td style={{ textAlign: "right" }}>
+                      {t.type === "income" ? (
+                        <Money cents={Math.abs(t.amount)} size="sm" sign="auto" />
+                      ) : (
+                        <Money cents={-Math.abs(t.amount)} size="sm" sign="none" />
+                      )}
                     </td>
                   </tr>
                 ))}

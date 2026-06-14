@@ -582,6 +582,51 @@ h3,
   color: var(--money-neg);
 }
 
+/* BalanceTrajectory / Sparkline — stroke-draw no mount + tooltip de hover */
+.nk-spark__line {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .nk-spark__line {
+    animation: nk-spark-draw 0.9s var(--ease-entrance) both;
+  }
+}
+@keyframes nk-spark-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.nk-spark__tip {
+  position: absolute;
+  top: 2px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-elevated);
+  border: var(--bw-hair) solid var(--border-strong);
+  box-shadow: var(--shadow-2);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.nk-spark__tip-day {
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+}
+.nk-spark__tip-val {
+  font-family: var(--font-money);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-money-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+
 /* InfoPopover — explicador didático de termos (portado do design system) */
 .nk-term-wrap {
   position: relative;

@@ -7,7 +7,8 @@ import {
   type Pockets,
   type PocketType,
 } from "../../lib/api";
-import { fmtBRL, parseBRLToCents } from "../../lib/format";
+import { parseBRLToCents } from "../../lib/format";
+import { Money } from "../../design-system/components/Money";
 import { invalidateCommands } from "../../lib/useCommand";
 import { LIQUIDITY_LABELS, POCKET_TYPE_LABELS } from "./pocketLabels";
 
@@ -75,7 +76,9 @@ export function PocketsManager() {
                   ? ` · ${LIQUIDITY_LABELS[a.liquidity] ?? a.liquidity}`
                   : ""}
               </span>
-              <span className="pockets-list__balance money">{fmtBRL(a.balance)}</span>
+              <span className="pockets-list__balance">
+                <Money cents={a.balance} size="sm" />
+              </span>
             </li>
           ))}
         </ul>

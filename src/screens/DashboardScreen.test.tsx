@@ -62,8 +62,9 @@ describe("DashboardScreen (forecast view)", () => {
     await waitFor(() => {
       expect(screen.getByText(/Buraco previsto/)).toBeInTheDocument();
     });
-    // Appears in the warning AND in the table's negative saldo row.
-    expect(screen.getAllByText("-R$ 420,00")).toHaveLength(2);
+    // Aparece no alerta, no "pode faltar" do herói E na linha de saldo negativo da tabela.
+    // Money usa o minus real (U+2212).
+    expect(screen.getAllByText("−R$ 420,00")).toHaveLength(3);
     expect(screen.getByText("28/06")).toBeInTheDocument();
   });
 

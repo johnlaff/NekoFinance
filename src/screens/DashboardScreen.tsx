@@ -163,7 +163,7 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
               {deficit ? (
                 <span className="negative">
                   Pode faltar em {fmtDayMonth(deficit.date)}:{" "}
-                  {fmtBRL(deficit.balance_cents)}
+                  <Money cents={deficit.balance_cents} size="sm" sign="negative" />
                 </span>
               ) : (
                 "Como seu saldo deve evoluir até o fim do mês."
@@ -215,7 +215,7 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
           <AlertTriangle size={15} strokeWidth={1.75} />
           <span>
             Buraco previsto de{" "}
-            <b className="dash-hero__money">{fmtBRL(deficit.balance_cents)}</b> em{" "}
+            <Money cents={deficit.balance_cents} size="sm" sign="negative" /> em{" "}
             {fmtDayMonth(deficit.date)}. Precisa de entrada nova ou corte até lá.
           </span>
         </div>
@@ -273,19 +273,33 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
                             {fmtDayMonth(d.date)}
                             {isToday && <span className="fc-today__tag">hoje</span>}
                           </td>
-                          <td className={d.income_cents ? "money positive" : "money"}>
-                            {d.income_cents ? fmtBRL(d.income_cents) : "—"}
+                          <td className="money">
+                            {d.income_cents ? (
+                              <Money cents={d.income_cents} size="sm" sign="auto" />
+                            ) : (
+                              "—"
+                            )}
                           </td>
                           <td className="money">
-                            {d.fixed_out_cents ? fmtBRL(d.fixed_out_cents) : "—"}
+                            {d.fixed_out_cents ? (
+                              <Money cents={d.fixed_out_cents} size="sm" />
+                            ) : (
+                              "—"
+                            )}
                           </td>
                           <td className="money">
-                            {d.daily_out_cents ? fmtBRL(d.daily_out_cents) : "—"}
+                            {d.daily_out_cents ? (
+                              <Money cents={d.daily_out_cents} size="sm" />
+                            ) : (
+                              "—"
+                            )}
                           </td>
-                          <td
-                            className={d.balance_cents < 0 ? "money negative" : "money"}
-                          >
-                            {fmtBRL(d.balance_cents)}
+                          <td className="money">
+                            <Money
+                              cents={d.balance_cents}
+                              size="sm"
+                              sign={d.balance_cents < 0 ? "negative" : "none"}
+                            />
                           </td>
                         </tr>
                       );

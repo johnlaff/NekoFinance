@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { CalendarCheck } from "lucide-react";
 import { Button } from "../../design-system/components/Button";
+import { Money } from "../../design-system/components/Money";
 import { createTransaction, type DashboardSummary } from "../../lib/api";
 import { fmtBRL, parseBRLToCents } from "../../lib/format";
 import { invalidateCommands } from "../../lib/useCommand";
@@ -100,20 +101,14 @@ export function DailyCheckinCard({
           <span style={{ color: "var(--text-muted)", fontSize: "var(--fs-sm)" }}>
             Diário de hoje
           </span>
-          <span
-            style={{
-              fontFamily: "var(--font-money)",
-              fontWeight: "var(--fw-bold)",
-              color: "var(--text)",
-            }}
-          >
-            {fmtBRL(spent)}
+          <span style={{ fontWeight: "var(--fw-bold)" }}>
+            <Money cents={spent} size="md" />
             {ceiling > 0 && (
               <span
                 style={{ color: "var(--text-faint)", fontWeight: "var(--fw-regular)" }}
               >
-                {" "}
-                / {fmtBRL(ceiling)}
+                {" / "}
+                <Money cents={ceiling} size="md" />
               </span>
             )}
           </span>

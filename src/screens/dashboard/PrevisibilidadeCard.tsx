@@ -2,6 +2,8 @@ import { CalendarRange } from "lucide-react";
 import type { Forecast } from "../../lib/api";
 import { fmtBRL, monthNamePtBR } from "../../lib/format";
 import { Disclosure } from "../../design-system/components/Disclosure";
+import { Money } from "../../design-system/components/Money";
+import { InfoPopover } from "../../design-system/components/InfoPopover";
 
 /**
  * Previsibilidade: detecta meses futuros incompletos (futuro vazio = projeção otimista demais,
@@ -32,7 +34,7 @@ export function PrevisibilidadeCard({ forecast }: { forecast: Forecast }) {
             className="dash-card__ic"
             aria-hidden="true"
           />
-          Previsibilidade
+          <InfoPopover term="previsibilidade">Previsibilidade</InfoPopover>
         </span>
         {trustedLabel && (
           <span className="dash-predict__trusted">
@@ -65,9 +67,8 @@ export function PrevisibilidadeCard({ forecast }: { forecast: Forecast }) {
                   `${firstIncomplete.year}-${String(firstIncomplete.month).padStart(2, "0")}-01`,
                 )}
               </b>{" "}
-              faltam{" "}
-              <b className="dash-hero__money">{fmtBRL(forecast.total_missing_cents)}</b>{" "}
-              de gastos não lançados. A projeção está otimista até você pré-lançar.
+              faltam <Money cents={forecast.total_missing_cents} size="sm" /> de gastos
+              não lançados. A projeção está otimista até você pré-lançar.
             </p>
             <div className="dash-predict__rows">
               {incompleteMonths.map((c) => {

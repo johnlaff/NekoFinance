@@ -1,6 +1,6 @@
 import { Sparkles } from "lucide-react";
 import type { Forecast } from "../../lib/api";
-import { fmtBRL } from "../../lib/format";
+import { Money } from "../../design-system/components/Money";
 import { Disclosure } from "../../design-system/components/Disclosure";
 
 /**
@@ -36,10 +36,8 @@ export function ColchaoCard({ forecast }: { forecast: Forecast }) {
           </div>
           <div className="dash-colchao__num">
             <span className="dash-colchao__label">Colchão este ano (realizado)</span>
-            <span
-              className={`dash-colchao__val ${colchaoCents < 0 ? "negative" : "positive"}`}
-            >
-              {fmtBRL(colchaoCents)} · {realizedRatePct}%
+            <span className="dash-colchao__val">
+              <Money cents={colchaoCents} size="md" sign="auto" /> · {realizedRatePct}%
             </span>
           </div>
         </div>

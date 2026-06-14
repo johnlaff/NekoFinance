@@ -7,6 +7,7 @@ import { Money } from "../design-system/components/Money";
 import type { HealthLevel } from "../design-system/components/HealthBadge";
 import { MonthNav } from "../design-system/components/MonthNav";
 import { EmptyState } from "../design-system/components/EmptyState";
+import { InfoPopover } from "../design-system/components/InfoPopover";
 
 const STATUS_TONE: Record<HealthLevel, { dot: string; fg: string; bg: string }> = {
   strong: {
@@ -97,11 +98,13 @@ export function custoVidaStatus(cost: number, income: number): Status {
 
 function MetricRow({
   label,
+  term,
   value,
   status,
   sublabel,
 }: {
   label: string;
+  term?: string;
   value: React.ReactNode;
   status?: Status;
   sublabel?: string;
@@ -128,7 +131,7 @@ function MetricRow({
           color: "var(--text-muted)",
         }}
       >
-        {label}
+        {term ? <InfoPopover term={term}>{label}</InfoPopover> : label}
       </span>
       <span style={{ display: "flex", alignItems: "baseline", gap: "var(--space-3)" }}>
         {value}
@@ -256,11 +259,13 @@ export function TotaisScreen() {
       >
         <MetricRow
           label="Performance"
+          term="performance"
           value={<Money cents={m.performance_cents} size="lg" sign="auto" />}
           status={performanceStatus(m.performance_cents)}
         />
         <MetricRow
           label="Economizado"
+          term="economizado"
           value={
             <span
               style={{
@@ -277,11 +282,13 @@ export function TotaisScreen() {
         />
         <MetricRow
           label="Custo de vida"
+          term="custo_de_vida"
           value={<Money cents={m.cost_of_living_cents} size="lg" />}
           status={custoVidaStatus(m.cost_of_living_cents, m.income_cents)}
         />
         <MetricRow
           label="Diário médio"
+          term="diario_medio"
           value={<Money cents={m.real_daily_avg_cents} size="lg" />}
           sublabel="média realizada por dia até hoje"
         />

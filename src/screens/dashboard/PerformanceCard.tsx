@@ -1,6 +1,7 @@
 import { TrendingUp } from "lucide-react";
 import type { Forecast } from "../../lib/api";
 import { fmtBRL, monthNamePtBR } from "../../lib/format";
+import { Money } from "../../design-system/components/Money";
 
 /**
  * Performance por mês (Caixa ≠ Performance): expõe os meses magros — onde o "cartão sequestra o
@@ -57,16 +58,14 @@ export function PerformanceCard({ forecast }: { forecast: Forecast }) {
               {incompleto ? (
                 <>
                   <span className="dash-perf__val dash-perf__val--muted">
-                    {fmtBRL(m.performance_cents)}
+                    <Money cents={m.performance_cents} size="sm" />
                   </span>
                   <span className="dash-perf__rate">incompleto ⚠</span>
                 </>
               ) : (
                 <>
-                  <span
-                    className={`dash-perf__val ${m.performance_cents < 0 ? "negative" : "positive"}`}
-                  >
-                    {fmtBRL(m.performance_cents)}
+                  <span className="dash-perf__val">
+                    <Money cents={m.performance_cents} size="sm" sign="auto" />
                   </span>
                   <span className="dash-perf__rate">{ratePct}% da renda</span>
                 </>
