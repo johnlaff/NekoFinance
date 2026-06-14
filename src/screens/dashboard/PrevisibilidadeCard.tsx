@@ -1,6 +1,7 @@
 import { CalendarRange } from "lucide-react";
 import type { Forecast } from "../../lib/api";
 import { fmtBRL, monthNamePtBR } from "../../lib/format";
+import { Disclosure } from "../../design-system/components/Disclosure";
 
 /**
  * Previsibilidade: detecta meses futuros incompletos (futuro vazio = projeção otimista demais,
@@ -96,15 +97,14 @@ export function PrevisibilidadeCard({ forecast }: { forecast: Forecast }) {
                 );
               })}
             </div>
-            <details className="dash-disclosure">
-              <summary>Como pré-lançar o ano</summary>
+            <Disclosure title="Como pré-lançar o ano">
               <p>
                 Em cada mês à frente, lance o <b>saldo de hoje</b> (só conta-corrente),
                 o <b>salário</b> conservador, as <b>contas fixas</b>, a{" "}
                 <b>fatura do cartão</b> no vencimento e o <b>diário estimado</b> em
                 todos os dias. Futuro vazio engana a previsão.
               </p>
-            </details>
+            </Disclosure>
           </>
         )}
         <p className="dash-predict__savings">

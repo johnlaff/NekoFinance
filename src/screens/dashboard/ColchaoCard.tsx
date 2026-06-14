@@ -1,6 +1,7 @@
 import { Sparkles } from "lucide-react";
 import type { Forecast } from "../../lib/api";
 import { fmtBRL } from "../../lib/format";
+import { Disclosure } from "../../design-system/components/Disclosure";
 
 /**
  * Coaching de adaptação — o "colchão". O dono não registra Economia formal (linha do método);
@@ -47,14 +48,13 @@ export function ColchaoCard({ forecast }: { forecast: Forecast }) {
             ? "Você guarda o que sobra como colchão para cobrir os meses negativos sem sacar investimento. Adaptação válida do método."
             : "Este ano você usou parte do colchão para cobrir meses negativos, exatamente o que o buffer existe para fazer. O saldo não furou."}
         </p>
-        <details className="dash-disclosure">
-          <summary>Próximo nível, quando quiser</summary>
+        <Disclosure title="Próximo nível, quando quiser">
           <p>
             Registrar a Economia (meta 20 a 30% da renda) como uma saída mensal e
             separar a reserva. Isso vira hábito e protege de sacar investimento na hora
             errada.
           </p>
-        </details>
+        </Disclosure>
       </div>
     </section>
   );

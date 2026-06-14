@@ -15,6 +15,7 @@ import { MetricTile } from "../design-system/components/MetricTile";
 import { MiaAvatar } from "../design-system/components/MiaAvatar";
 import { Money } from "../design-system/components/Money";
 import { BalanceTrajectory } from "../design-system/components/BalanceTrajectory";
+import { InfoPopover } from "../design-system/components/InfoPopover";
 import { getDashboardSummary, getForecast, isTauri } from "../lib/api";
 import { fmtBRL, fmtDayMonth, monthNamePtBR } from "../lib/format";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
@@ -105,7 +106,9 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
     <div className="dash">
       <section className="dash-hero" aria-label="Quanto posso gastar hoje">
         <div className="dash-hero__lead">
-          <p className="dash-hero__label">Pode gastar até</p>
+          <p className="dash-hero__label">
+            <InfoPopover term="pode_gastar">Pode gastar até</InfoPopover>
+          </p>
           <p className="dash-hero__kpi" data-no-motion="true">
             {forecast ? fmtBRL(forecast.safe_to_spend_today_cents) : "—"}
             <span className="dash-hero__kpi-suffix">hoje</span>
