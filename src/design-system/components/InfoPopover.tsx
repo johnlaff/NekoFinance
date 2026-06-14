@@ -46,7 +46,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   },
   performance: {
     title: "Performance",
-    body: "Entradas menos saídas, economia e a previsão do diário que falta. O que de fato sobrou no mês.",
+    body: "A foto do mês: o que entrou menos tudo que saiu (saídas fixas, diário, economia, cartão e a previsão do diário que ainda falta). Por isso o mês nasce no vermelho e vai esverdeando conforme o diário real fica abaixo do teto.",
   },
   economizado: {
     title: "Economizado",
