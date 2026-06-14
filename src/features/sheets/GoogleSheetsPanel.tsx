@@ -32,6 +32,7 @@ import {
 import { extractSpreadsheetId } from "../../lib/spreadsheet-url";
 import { isMetricTab } from "../../lib/sheet-tabs";
 import { invalidateCommands } from "../../lib/useCommand";
+import { withLoading } from "../../lib/withLoading";
 
 export function GoogleSheetsPanel({
   authStatus,
@@ -68,28 +69,27 @@ export function GoogleSheetsPanel({
       );
       return;
     }
-    setLoading(true);
     setError(null);
-    try {
-      await startOAuthFlow(GOOGLE_CLIENT_ID);
-      // O consentimento no navegador leva o tempo que o usuário levar — sondar até
-      // conectar (ou desistir após 2 min), em vez de uma única checagem em 3 s.
-      for (let attempt = 0; attempt < 60; attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        const status = await checkAuthStatus();
-        if (status === "connected") {
-          onAuthChange(status);
-          setStep("pick");
-          await loadSpreadsheets();
-          return;
+    await withLoading(setLoading, async () => {
+      try {
+        await startOAuthFlow(GOOGLE_CLIENT_ID);
+        // O consentimento no navegador leva o tempo que o usuário levar — sondar até
+        // conectar (ou desistir após 2 min), em vez de uma única checagem em 3 s.
+        for (let attempt = 0; attempt < 60; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          const status = await checkAuthStatus();
+          if (status === "connected") {
+            onAuthChange(status);
+            setStep("pick");
+            await loadSpreadsheets();
+            return;
+          }
         }
+        setError("Tempo esgotado aguardando o consentimento. Tente conectar de novo.");
+      } catch (e) {
+        setError(String(e));
       }
-      setError("Tempo esgotado aguardando o consentimento. Tente conectar de novo.");
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
+    });
   };
 
   const handleDisconnect = async () => {
@@ -107,17 +107,16 @@ export function GoogleSheetsPanel({
   };
 
   const loadSpreadsheets = async () => {
-    setLoading(true);
-    try {
-      const list = await listUserSpreadsheets(GOOGLE_CLIENT_ID);
-      setSpreadsheets(list);
-    } catch {
-      // Sem scope do Drive (token antigo) a listagem dá 403 — o campo de URL colada
-      // continua funcionando, então a falha do picker não bloqueia o fluxo.
-      setSpreadsheets([]);
-    } finally {
-      setLoading(false);
-    }
+    await withLoading(setLoading, async () => {
+      try {
+        const list = await listUserSpreadsheets(GOOGLE_CLIENT_ID);
+        setSpreadsheets(list);
+      } catch {
+        // Sem scope do Drive (token antigo) a listagem dá 403 — o campo de URL colada
+        // continua funcionando, então a falha do picker não bloqueia o fluxo.
+        setSpreadsheets([]);
+      }
+    });
   };
 
   // Tenta listar as planilhas UMA vez quando o painel nasce já conectado; o ref
@@ -147,47 +146,44 @@ export function GoogleSheetsPanel({
     setSelectedSheet("");
     setPreview(null);
     setMappings([]);
-    setLoading(true);
-    try {
-      const list = await listSheetNames(id, GOOGLE_CLIENT_ID);
-      setSheets(list);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
+    await withLoading(setLoading, async () => {
+      try {
+        const list = await listSheetNames(id, GOOGLE_CLIENT_ID);
+        setSheets(list);
+      } catch (e) {
+        setError(String(e));
+      }
+    });
   };
 
   const handleSheetSelect = async (name: string) => {
     setSelectedSheet(name);
-    setLoading(true);
-    try {
-      const [prev, maps] = await Promise.all([
-        fetchSheetPreview(selectedSpreadsheet, name, GOOGLE_CLIENT_ID),
-        getSheetMappings(name).catch(() => [] as SheetMappingEntry[]),
-      ]);
-      setPreview(prev);
-      setMappings(maps);
-      setStep("preview");
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
+    await withLoading(setLoading, async () => {
+      try {
+        const [prev, maps] = await Promise.all([
+          fetchSheetPreview(selectedSpreadsheet, name, GOOGLE_CLIENT_ID),
+          getSheetMappings(name).catch(() => [] as SheetMappingEntry[]),
+        ]);
+        setPreview(prev);
+        setMappings(maps);
+        setStep("preview");
+      } catch (e) {
+        setError(String(e));
+      }
+    });
   };
 
   const handleDetectLayout = async () => {
-    setLoading(true);
-    try {
-      await detectSheetLayout(selectedSpreadsheet, selectedSheet, GOOGLE_CLIENT_ID);
-      const maps = await getSheetMappings(selectedSheet);
-      setMappings(maps);
-      setStep("mapping");
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
+    await withLoading(setLoading, async () => {
+      try {
+        await detectSheetLayout(selectedSpreadsheet, selectedSheet, GOOGLE_CLIENT_ID);
+        const maps = await getSheetMappings(selectedSheet);
+        setMappings(maps);
+        setStep("mapping");
+      } catch (e) {
+        setError(String(e));
+      }
+    });
   };
 
   const handleToggleMapping = async (mapping: SheetMappingEntry) => {
@@ -205,28 +201,27 @@ export function GoogleSheetsPanel({
   };
 
   const handleImport = async () => {
-    setImporting(true);
     setImportResult(null);
     setError(null);
-    try {
-      const profileId = crypto.randomUUID();
-      const count = await importSheetData(
-        selectedSpreadsheet,
-        selectedSheet,
-        profileId,
-        GOOGLE_CLIENT_ID,
-      );
-      invalidateCommands(); // finance numbers changed — drop every cached screen
-      setImportResult(
-        count === 0
-          ? "Dados já importados anteriormente (dedup)."
-          : `${count} transações importadas.`,
-      );
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setImporting(false);
-    }
+    await withLoading(setImporting, async () => {
+      try {
+        const profileId = crypto.randomUUID();
+        const count = await importSheetData(
+          selectedSpreadsheet,
+          selectedSheet,
+          profileId,
+          GOOGLE_CLIENT_ID,
+        );
+        invalidateCommands(); // finance numbers changed — drop every cached screen
+        setImportResult(
+          count === 0
+            ? "Dados já importados anteriormente (dedup)."
+            : `${count} transações importadas.`,
+        );
+      } catch (e) {
+        setError(String(e));
+      }
+    });
   };
 
   if (authStatus === "connected") {

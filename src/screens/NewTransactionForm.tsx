@@ -103,6 +103,7 @@ export function NewTransactionForm({ onCreated }: { onCreated?: () => void }) {
     setBusy(true);
     setError(null);
     const fields = kindToFields(kind);
+    // try/catch sem `finally`: o React Compiler não otimiza componentes com try/finally.
     try {
       await createTransaction({
         txnType: fields.txnType,
@@ -119,10 +120,10 @@ export function NewTransactionForm({ onCreated }: { onCreated?: () => void }) {
       setDescription("");
       setSelectedTags([]);
       setRepeat(false);
+      setBusy(false);
       onCreated?.();
     } catch (e) {
       setError(String(e));
-    } finally {
       setBusy(false);
     }
   }

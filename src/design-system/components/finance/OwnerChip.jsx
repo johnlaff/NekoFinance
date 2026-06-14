@@ -37,7 +37,7 @@ function initials(name) {
 export function OwnerChip({
   name,
   type = "personal",
-  role = null,
+  note = null,
   bare = false,
   className = "",
 }) {
@@ -62,7 +62,7 @@ export function OwnerChip({
         {isShared ? "◐" : initials(name)}
       </span>
       <span>{name}</span>
-      {role ? <span className="nk-owner__role">{role}</span> : null}
+      {note ? <span className="nk-owner__role">{note}</span> : null}
     </span>
   );
 }

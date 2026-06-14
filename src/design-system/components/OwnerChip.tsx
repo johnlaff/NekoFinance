@@ -15,8 +15,8 @@ interface OwnerChipProps {
   who?: OwnerWho;
   /** Nome real do titular (sobrescreve o rótulo padrão). */
   name?: string;
-  /** Papel secundário, ex.: "paga". */
-  role?: string;
+  /** Papel secundário, ex.: "paga". (Evita o nome `role`, que colide com o atributo ARIA.) */
+  note?: string;
   /** Sem fundo/borda (só ponto + nome inline). */
   bare?: boolean;
   className?: string;
@@ -25,7 +25,7 @@ interface OwnerChipProps {
 export function OwnerChip({
   who = "personal",
   name,
-  role,
+  note,
   bare = false,
   className = "",
 }: OwnerChipProps) {
@@ -34,7 +34,7 @@ export function OwnerChip({
   return (
     <span
       className={className}
-      title={role ? `${label} · ${role}` : label}
+      title={note ? `${label} · ${note}` : label}
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -61,7 +61,7 @@ export function OwnerChip({
         }}
       />
       {label}
-      {role ? <span style={{ color: "var(--text-faint)" }}>{role}</span> : null}
+      {note ? <span style={{ color: "var(--text-faint)" }}>{note}</span> : null}
     </span>
   );
 }

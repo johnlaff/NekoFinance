@@ -25,7 +25,7 @@ describe("OwnerChip", () => {
   });
 
   it("mostra o papel e o title", () => {
-    render(<OwnerChip who="shared" name="Casa" role="paga" />);
+    render(<OwnerChip who="shared" name="Casa" note="paga" />);
     expect(screen.getByText("paga")).toBeInTheDocument();
     expect(screen.getByTitle("Casa · paga")).toBeInTheDocument();
   });
