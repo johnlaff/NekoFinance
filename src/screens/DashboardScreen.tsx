@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   AlertTriangle,
   CalendarRange,
@@ -14,15 +15,17 @@ import { MetricTile } from "../design-system/components/MetricTile";
 import { MiaAvatar } from "../design-system/components/MiaAvatar";
 import { getDashboardSummary, getForecast, isTauri } from "../lib/api";
 import { fmtBRL, fmtDayMonth, monthNamePtBR } from "../lib/format";
-import { useCommand } from "../lib/useCommand";
+import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { useCountUp } from "../lib/useCountUp";
 import { PrevisibilidadeCard } from "./dashboard/PrevisibilidadeCard";
 import { ColchaoCard } from "./dashboard/ColchaoCard";
 import { PerformanceCard } from "./dashboard/PerformanceCard";
+import { DailyCheckinCard } from "./dashboard/DailyCheckinCard";
 
 export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
-  const summaryQ = useCommand("get_dashboard_summary", getDashboardSummary);
-  const forecastQ = useCommand("get_forecast", getForecast);
+  const [reloadKey, setReloadKey] = useState(0);
+  const summaryQ = useCommand(`get_dashboard_summary:${reloadKey}`, getDashboardSummary);
+  const forecastQ = useCommand(`get_forecast:${reloadKey}`, getForecast);
   const summary = summaryQ.data ?? null;
   const forecast = forecastQ.data ?? null;
   const loading = summaryQ.loading || forecastQ.loading;
@@ -95,6 +98,11 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
     : "0.0";
   const hasData = (summary?.transaction_count ?? 0) > 0;
 
+  function handleLogged() {
+    invalidateCommands();
+    setReloadKey((k) => k + 1);
+  }
+
   return (
     <div className="dash">
       <div className="dash-hero">
@@ -157,6 +165,10 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
             {fmtDayMonth(deficit.date)} — é preciso entrada nova ou corte até lá.
           </span>
         </div>
+      )}
+
+      {summary && hasData && (
+        <DailyCheckinCard summary={summary} onLogged={handleLogged} />
       )}
 
       {forecast && hasData && <PrevisibilidadeCard forecast={forecast} />}

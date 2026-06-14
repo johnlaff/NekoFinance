@@ -22,6 +22,14 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     await expect(page.getByText("hoje", { exact: true })).toBeVisible();
     await expect(page.getByText("R$ 12.340,00").first()).toBeVisible();
 
+    // Check-in diário: card com o disponível do dia e registro rápido.
+    await expect(page.getByText("Check-in de hoje")).toBeVisible();
+    await expect(page.getByText(/disponível/)).toBeVisible();
+    await page.getByLabel("Gasto de hoje").fill("9,90");
+    await page.getByRole("button", { name: "Registrar" }).click();
+    // Campo limpa após registrar (o dashboard refaz a busca).
+    await expect(page.getByLabel("Gasto de hoje")).toHaveValue("");
+
     await page.screenshot({
       fullPage: true,
       path: testInfo.outputPath("dashboard.png"),
