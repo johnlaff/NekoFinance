@@ -1,7 +1,6 @@
 # Spec 012 — Identidade estável de transação + reconciliação não-destrutiva (Conciliação P0)
 
-> Fonte: `.methodology-pack/neko-vs-planilha-reconciliacao.md` (P0-2, P0-3, P0-5) +
-> `neko-vs-app-breno.md` (WRONG #2, parte do import). Slice 2 da meta. **Ordem inegociável.**
+> Fonte: análise local de conciliação (notas privadas). Slice 2 da meta. **Ordem inegociável.**
 
 ## Problema (risco de perda de dados — P0)
 `import_rows` (`google_sheets/import.rs`) faz **`DELETE`-all por aba + `uuid::new_v4()` por

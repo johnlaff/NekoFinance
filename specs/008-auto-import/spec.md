@@ -34,7 +34,7 @@ padrão que o dono já usa** (lump por coluna + nota estruturada na célula).
    bidirecional gated por checksum-de-célula estiver ligado e testado. A UI deve declarar a fonte
    da verdade vigente por fase. _(Antes este princípio afirmava "SQLite é o system-of-record", o
    que invertia a realidade e arriscava sobrescrever a edição manual — ver
-   `.methodology-pack/neko-vs-planilha-reconciliacao.md` P0-3.)_
+   (análise local de conciliação)._
 2. O método separa **Entrada / Saída (fixas+faturas) / Diário (variável)**; projeção encadeada
    dia a dia. O import automático NUNCA quebra essa semântica.
 3. Compra no crédito **não toca o Diário**: acumula na fatura (`invoice`) e vira **Saída lump
