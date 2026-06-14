@@ -4,9 +4,57 @@ import type { MonthMetric } from "../lib/api";
 import { monthNamePtBR } from "../lib/format";
 import { useCommand } from "../lib/useCommand";
 import { Money } from "../design-system/components/Money";
-import { HealthBadge, type HealthLevel } from "../design-system/components/HealthBadge";
+import type { HealthLevel } from "../design-system/components/HealthBadge";
 import { MonthNav } from "../design-system/components/MonthNav";
 import { EmptyState } from "../design-system/components/EmptyState";
+
+const STATUS_TONE: Record<HealthLevel, { dot: string; fg: string; bg: string }> = {
+  strong: {
+    dot: "var(--success-400)",
+    fg: "var(--success-400)",
+    bg: "var(--success-tint)",
+  },
+  steady: { dot: "var(--primary)", fg: "var(--primary)", bg: "var(--primary-quiet)" },
+  watch: {
+    dot: "var(--warning-400)",
+    fg: "var(--warning-400)",
+    bg: "var(--warning-tint)",
+  },
+  risk: { dot: "var(--danger-400)", fg: "var(--danger-400)", bg: "var(--danger-tint)" },
+};
+
+/** Chip de status calmo (ponto + rótulo). Substitui o anel-spinner em status binário do método. */
+function StatusChip({ level, label }: { level: HealthLevel; label: string }) {
+  const t = STATUS_TONE[level];
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "var(--space-2)",
+        alignSelf: "flex-start",
+        padding: "4px 11px 4px 9px",
+        borderRadius: "var(--radius-pill)",
+        background: t.bg,
+        color: t.fg,
+        fontSize: "var(--fs-sm)",
+        fontWeight: "var(--fw-semibold)",
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          width: 7,
+          height: 7,
+          borderRadius: "50%",
+          background: t.dot,
+          flex: "none",
+        }}
+      />
+      {label}
+    </span>
+  );
+}
 
 /** "YYYY-MM" de uma métrica de mês. */
 export function ymOf(m: { year: number; month: number }): string {
@@ -86,7 +134,7 @@ function MetricRow({
         {value}
       </span>
       {status ? (
-        <HealthBadge level={status.level} label={status.label} />
+        <StatusChip level={status.level} label={status.label} />
       ) : sublabel ? (
         <span style={{ fontSize: "var(--fs-sm)", color: "var(--text-faint)" }}>
           {sublabel}

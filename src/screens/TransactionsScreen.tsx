@@ -15,6 +15,20 @@ const FETCH_LIMIT = 500;
 
 export type TransactionScope = "all" | "credit" | "future";
 
+const METHOD_LABELS: Record<string, string> = {
+  debit: "Débito",
+  credit: "Crédito",
+  pix: "PIX",
+  transfer: "Transferência",
+  cash: "Dinheiro",
+};
+
+/** Rótulo amigável do método de pagamento (Débito, PIX…); entrada sem método vira "Entrada". */
+export function methodLabel(t: TransactionRow): string {
+  if (t.payment_method) return METHOD_LABELS[t.payment_method] ?? t.payment_method;
+  return t.type === "income" ? "Entrada" : "—";
+}
+
 /** Pure filter used by the screen; exported for direct testing. */
 export function filterTransactions(
   rows: TransactionRow[],
@@ -183,10 +197,11 @@ export function TransactionsScreen({
                         </span>
                       )}
                     </td>
-                    <td>{t.payment_method || t.type}</td>
-                    <td
-                      className={`money ${t.type === "income" ? "positive" : "negative"}`}
-                    >
+                    <td>
+                      <span className="txn-method">{methodLabel(t)}</span>
+                    </td>
+                    <td className={`money ${t.type === "income" ? "positive" : ""}`}>
+                      {t.type === "income" ? "+" : "−"}
                       {fmtBRL(Math.abs(t.amount))}
                     </td>
                   </tr>

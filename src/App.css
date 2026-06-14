@@ -582,6 +582,19 @@ h3,
   color: var(--money-neg);
 }
 
+/* Método como chip discreto — calmo, não compete com o valor */
+.txn-method {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-subtle);
+  border: var(--bw-hair) solid var(--border);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-medium);
+  color: var(--text-muted);
+}
+
 /* ---- Copilot sidebar ---- */
 .assistant-panel {
   background: var(--bg-subtle);
