@@ -319,6 +319,44 @@ export function saveSheetMapping(
   return invoke("save_sheet_mapping", { mappingId, blockOffset, isActive });
 }
 
+// --- Write-back (spec 018, atrás de flag desligada) ---
+
+/** Uma célula que o write-back tocaria: A1, valor atual, valor proposto, se mudou. */
+export interface CellWrite {
+  a1: string;
+  row: number;
+  col: number;
+  date: string;
+  kind: string;
+  current: string;
+  proposed: string;
+  changed: boolean;
+}
+
+/** Estado da flag de write-back. `false` → envio ao Sheets desabilitado (só preview). */
+export function writeBackEnabled(): Promise<boolean> {
+  return invoke("write_back_enabled");
+}
+
+/** Pré-visualização READ-ONLY: transações → células (diff). Seguro mesmo com a flag desligada. */
+export function previewWriteBack(
+  spreadsheetId: string,
+  sheetName: string,
+  clientId: string,
+): Promise<CellWrite[]> {
+  return invoke("preview_write_back", {
+    spreadsheetId,
+    sheetName,
+    clientId,
+    clientSecret: clientSecretOrNull,
+  });
+}
+
+/** Aplica o write-back. Atrás da flag: rejeita enquanto desligado (nunca escreve). */
+export function applyWriteBack(): Promise<void> {
+  return invoke("apply_write_back");
+}
+
 export function importSheetData(
   spreadsheetId: string,
   sheetName: string,

@@ -307,7 +307,7 @@ pub async fn get_active_mappings_for_sheet(
 /// (títulos, totais) não podem deslocar os meses seguintes. Primeira ocorrência de cada mês
 /// vence: uma anotação posterior ("Março 2026") não cria bloco-fantasma lendo colunas erradas.
 /// Fallback (nenhum nome de mês): fatia a largura em passos de `block_size`.
-fn month_blocks_for(header_row_data: &[String], block_size: usize) -> Vec<(usize, u32)> {
+pub(crate) fn month_blocks_for(header_row_data: &[String], block_size: usize) -> Vec<(usize, u32)> {
     let mut month_blocks: Vec<(usize, u32)> = Vec::new();
     let mut seen_months = [false; 13];
     for (i, cell) in header_row_data.iter().enumerate() {

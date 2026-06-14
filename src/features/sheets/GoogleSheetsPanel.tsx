@@ -33,6 +33,7 @@ import { extractSpreadsheetId } from "../../lib/spreadsheet-url";
 import { isMetricTab } from "../../lib/sheet-tabs";
 import { invalidateCommands } from "../../lib/useCommand";
 import { withLoading } from "../../lib/withLoading";
+import { WriteBackPreview } from "./WriteBackPreview";
 
 export function GoogleSheetsPanel({
   authStatus,
@@ -439,6 +440,12 @@ export function GoogleSheetsPanel({
                 {importResult}
               </div>
             )}
+
+            <WriteBackPreview
+              spreadsheetId={selectedSpreadsheet}
+              sheetName={selectedSheet}
+              clientId={GOOGLE_CLIENT_ID}
+            />
           </div>
         )}
 

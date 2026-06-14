@@ -1,4 +1,5 @@
 use crate::forecast::{self, CashflowEvent};
+use crate::google_sheets::write_back::{self, CellWrite, WriteBackTxn};
 use crate::google_sheets::{self, SheetsClient, import, layout_detect};
 use crate::oauth::{self, AppDataDir, OAuthStateStore};
 use chrono::{Datelike, NaiveDate};
@@ -1542,6 +1543,87 @@ pub async fn detect_sheet_layout(
     }
 
     Ok(layout)
+}
+
+/// Lê as transações do ano `year` e as converte para candidatas de write-back (tipo do método →
+/// RowKind; magnitude positiva). Income→Entrada; expense fixa/crédito→Saída; expense variável→Diário.
+async fn load_write_back_txns(pool: &SqlitePool, year: i32) -> Result<Vec<WriteBackTxn>, String> {
+    let rows: Vec<(String, String, i64, i64, String)> = sqlx::query_as(
+        "SELECT type, date, amount, is_fixed, COALESCE(payment_method, '') \
+         FROM \"transaction\" WHERE substr(date, 1, 4) = ?1",
+    )
+    .bind(format!("{year:04}"))
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("query txns: {e}"))?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|(t, date, amount, is_fixed, pm)| {
+            let kind = match t.as_str() {
+                "income" => import::RowKind::Entrada,
+                "expense" => {
+                    if is_fixed != 0 || pm == "credit" {
+                        import::RowKind::Saida
+                    } else {
+                        import::RowKind::Diario
+                    }
+                }
+                _ => return None, // transfer (Economia) não tem coluna de write-back ainda
+            };
+            Some(WriteBackTxn {
+                date,
+                kind,
+                amount_cents: amount.abs(),
+            })
+        })
+        .collect())
+}
+
+/// Pré-visualização do write-back: lê a planilha e produz o DIFF (transação → célula) para
+/// aprovação. READ-ONLY — não escreve nada, então é seguro mesmo com a flag desligada.
+#[tauri::command]
+pub async fn preview_write_back(
+    app_dir: State<'_, AppDataDir>,
+    pool: State<'_, SqlitePool>,
+    spreadsheet_id: String,
+    sheet_name: String,
+    client_id: String,
+    client_secret: Option<String>,
+) -> Result<Vec<CellWrite>, String> {
+    let token =
+        oauth::token_store::ensure_valid_token(&app_dir.0, &client_id, client_secret.as_deref())
+            .await?;
+    let client = SheetsClient::new(token);
+    let range = format!("'{}'", sheet_name);
+    let values = client.get_sheet_values(&spreadsheet_id, &range).await?;
+
+    let layout = import::get_layout_for_sheet(pool.inner(), &sheet_name)
+        .await?
+        .ok_or("layout não detectado para esta aba — rode a detecção primeiro")?;
+    let mappings = import::get_active_mappings_for_sheet(pool.inner(), &sheet_name).await?;
+    let txns = load_write_back_txns(pool.inner(), layout.year.unwrap_or(2025)).await?;
+
+    Ok(write_back::plan_write_back(
+        &values.values,
+        &layout,
+        &mappings,
+        &txns,
+    ))
+}
+
+/// Estado da flag de write-back (a UI usa para mostrar "desligado" e desabilitar o envio).
+#[tauri::command]
+pub fn write_back_enabled() -> bool {
+    write_back::WRITE_BACK_ENABLED
+}
+
+/// Aplica o write-back ao Sheets. Atrás da flag: enquanto desligada, falha cedo com mensagem clara
+/// e NÃO escreve nada. O envio real só será implementado quando a flag for explicitamente ligada.
+#[tauri::command]
+pub async fn apply_write_back() -> Result<(), String> {
+    write_back::ensure_write_back_enabled()?;
+    Err("Write-back habilitado, mas o envio real ainda não foi implementado.".into())
 }
 
 #[tauri::command]
