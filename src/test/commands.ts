@@ -54,6 +54,7 @@ export const TXNS: TransactionRow[] = [
     date: "2026-03-15",
     payment_method: "debit",
     is_projection: false,
+    owners: ["Gio", "João"],
   },
   {
     id: "t2",
@@ -63,6 +64,7 @@ export const TXNS: TransactionRow[] = [
     date: "2026-03-10",
     payment_method: "credit",
     is_projection: false,
+    owners: [],
   },
   {
     id: "t3",
@@ -72,6 +74,7 @@ export const TXNS: TransactionRow[] = [
     date: "2026-06-25",
     payment_method: "",
     is_projection: true,
+    owners: [],
   },
 ];
 

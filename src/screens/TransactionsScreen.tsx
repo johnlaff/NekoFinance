@@ -3,6 +3,7 @@ import { Search } from "lucide-react";
 import { Badge } from "../design-system/components/Badge";
 import { Button } from "../design-system/components/Button";
 import { EmptyState } from "../design-system/components/EmptyState";
+import { OwnerChip } from "../design-system/components/OwnerChip";
 import { SegmentedControl } from "../design-system/components/SegmentedControl";
 import { getRecentTransactions, isTauri, type TransactionRow } from "../lib/api";
 import { fmtBRL, fmtDate } from "../lib/format";
@@ -142,6 +143,20 @@ export function TransactionsScreen({
                     <td>
                       {t.description || "—"}{" "}
                       {t.is_projection && <Badge tone="secondary">previsto</Badge>}
+                      {t.owners.length >= 2 && (
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            gap: 4,
+                            marginLeft: 6,
+                            verticalAlign: "middle",
+                          }}
+                        >
+                          {t.owners.map((name) => (
+                            <OwnerChip key={name} name={name} />
+                          ))}
+                        </span>
+                      )}
                     </td>
                     <td>{t.payment_method || t.type}</td>
                     <td

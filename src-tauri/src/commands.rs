@@ -1331,6 +1331,8 @@ pub struct TransactionRow {
     pub date: String,
     pub payment_method: String,
     pub is_projection: bool,
+    /// Titulares distintos das parcelas (multi-titular). Vazio = sem split por pessoa.
+    pub owners: Vec<String>,
 }
 
 #[tauri::command]
@@ -1338,17 +1340,31 @@ pub async fn get_recent_transactions(
     pool: State<'_, SqlitePool>,
     limit: i64,
 ) -> Result<Vec<TransactionRow>, String> {
-    let rows: Vec<(String, String, i64, String, String, String, i64)> = sqlx::query_as(
-        "SELECT id, type, amount, COALESCE(description,''), date, COALESCE(payment_method,''), is_projection FROM \"transaction\" ORDER BY date DESC LIMIT ?1"
+    recent_transactions(pool.inner(), limit).await
+}
+
+async fn recent_transactions(
+    pool: &SqlitePool,
+    limit: i64,
+) -> Result<Vec<TransactionRow>, String> {
+    // Titulares vêm de um subquery agregado (GROUP_CONCAT com separador '|') — sem N+1.
+    let rows: Vec<(String, String, i64, String, String, String, i64, String)> = sqlx::query_as(
+        "SELECT t.id, t.type, t.amount, COALESCE(t.description,''), t.date, \
+                COALESCE(t.payment_method,''), t.is_projection, \
+                COALESCE((SELECT GROUP_CONCAT(name, '|') FROM \
+                    (SELECT DISTINCT p.name FROM split s \
+                     JOIN person p ON p.id = s.owner_person_id \
+                     WHERE s.transaction_id = t.id ORDER BY p.name COLLATE NOCASE)), '') \
+         FROM \"transaction\" t ORDER BY t.date DESC LIMIT ?1",
     )
     .bind(limit)
-    .fetch_all(pool.inner())
+    .fetch_all(pool)
     .await
     .map_err(|e| format!("query: {e}"))?;
 
     Ok(rows
         .into_iter()
-        .map(|(id, t, amount, desc, date, pm, is_proj)| TransactionRow {
+        .map(|(id, t, amount, desc, date, pm, is_proj, owners)| TransactionRow {
             id,
             r#type: t,
             amount,
@@ -1356,6 +1372,11 @@ pub async fn get_recent_transactions(
             date,
             payment_method: pm,
             is_projection: is_proj != 0,
+            owners: if owners.is_empty() {
+                Vec::new()
+            } else {
+                owners.split('|').map(str::to_owned).collect()
+            },
         })
         .collect())
 }
@@ -1804,6 +1825,37 @@ mod tests {
         )
         .bind(&tid).bind(ttype).bind(amount).bind(date)
         .execute(pool).await.unwrap();
+    }
+
+    // Multi-titular: get_recent_transactions traz os titulares distintos das parcelas (sem N+1),
+    // ordenados por nome; transação sem split vem com `owners` vazio.
+    #[tokio::test]
+    async fn recent_transactions_carry_distinct_owners() {
+        let pool = fixture_pool().await;
+        for (id, name) in [("joao", "João"), ("gio", "Gio")] {
+            sqlx::query("INSERT INTO person (id, name) VALUES (?1, ?2)")
+                .bind(id)
+                .bind(name)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        // Lançamento dividido entre João e Gio.
+        sqlx::query("INSERT INTO \"transaction\" (id, type, amount, date, is_projection) VALUES ('t1','expense',-30000,'2026-06-05',0)")
+            .execute(&pool).await.unwrap();
+        for (sid, owner, amt) in [("s1", "joao", -20000), ("s2", "gio", -10000)] {
+            sqlx::query("INSERT INTO split (id, transaction_id, amount, owner_person_id) VALUES (?1,'t1',?2,?3)")
+                .bind(sid).bind(amt).bind(owner)
+                .execute(&pool).await.unwrap();
+        }
+        // Lançamento sem split → sem titulares.
+        insert_realized(&pool, "expense", -5000, "2026-06-04").await;
+
+        let rows = recent_transactions(&pool, 10).await.unwrap();
+        let split = rows.iter().find(|r| r.id == "t1").unwrap();
+        assert_eq!(split.owners, vec!["Gio".to_string(), "João".to_string()]);
+        let solo = rows.iter().find(|r| r.id != "t1").unwrap();
+        assert!(solo.owners.is_empty(), "sem split → owners vazio");
     }
 
     // Previsibilidade: meses futuros esparsos (só fixas) são detectados como incompletos, e a

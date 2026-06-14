@@ -233,6 +233,7 @@ export async function mockTauri(page: Page) {
         date: "2026-06-10",
         payment_method: "debit",
         is_projection: false,
+        owners: ["Gio", "João"],
       },
       {
         id: "t2",
@@ -242,6 +243,7 @@ export async function mockTauri(page: Page) {
         date: "2026-06-08",
         payment_method: "credit",
         is_projection: false,
+        owners: [],
       },
       {
         id: "t3",
@@ -251,6 +253,7 @@ export async function mockTauri(page: Page) {
         date: "2026-06-05",
         payment_method: "pix",
         is_projection: false,
+        owners: [],
       },
       {
         id: "t4",
@@ -260,6 +263,7 @@ export async function mockTauri(page: Page) {
         date: "2026-06-25",
         payment_method: "",
         is_projection: true,
+        owners: [],
       },
       {
         id: "t5",
@@ -269,6 +273,7 @@ export async function mockTauri(page: Page) {
         date: "2026-06-15",
         payment_method: "debit",
         is_projection: true,
+        owners: [],
       },
     ];
 

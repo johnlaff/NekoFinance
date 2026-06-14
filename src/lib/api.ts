@@ -39,6 +39,8 @@ export interface TransactionRow {
   date: string;
   payment_method: string;
   is_projection: boolean;
+  /** Titulares distintos das parcelas (multi-titular). Vazio = sem split por pessoa. */
+  owners: string[];
 }
 
 export interface SheetInfo {
@@ -368,4 +370,30 @@ export function setTransactionTags(
 
 export function tagTotalsForMonth(year: number, month: number): Promise<TagTotal[]> {
   return invoke("tag_totals_for_month_cmd", { year, month });
+}
+
+// --- Multi-titular / split (read-side, spec 017) ---
+
+export interface SplitRow {
+  id: string;
+  transaction_id: string;
+  amount: number;
+  owner_person_id: string;
+  owner_name: string;
+  note: string | null;
+}
+
+export interface OwnerTotal {
+  owner_person_id: string;
+  owner_name: string;
+  /** Soma (centavos, valor absoluto) das parcelas do titular no mês. */
+  total_cents: number;
+}
+
+export function splitsForTransaction(transactionId: string): Promise<SplitRow[]> {
+  return invoke("splits_for_transaction_cmd", { transactionId });
+}
+
+export function ownerTotalsForMonth(year: number, month: number): Promise<OwnerTotal[]> {
+  return invoke("owner_totals_for_month_cmd", { year, month });
 }
