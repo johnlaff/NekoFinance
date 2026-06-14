@@ -1,5 +1,7 @@
-# Spec 013 — Views do mês: Totais, Horizonte multi-mês, Anuais
+# Spec 019 — Views do mês: Totais, Horizonte multi-mês, Anuais
 
+> Renumerada de 013 (colisão: 013 é a Conciliação avançada). Conteúdo inalterado.
+>
 > Fonte: notas locais privadas (o método: "olhar para frente"). GAPs de visão — o motor já
 > produz os dados; falta a tela. Functional-core já pronto (spec 003/011); aqui é shell + UI.
 

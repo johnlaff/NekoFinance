@@ -25,10 +25,13 @@ tokens, spreadsheet data, or personal finance caches are committed — see Priva
   the invoice due date).
 - **Google Sheets import** — OAuth (PKCE, loopback) + month-block layout detection, column
   mapping review, deduplicated imports. Or import a local `.xlsx` copy without any Google account.
-- **Five navigable screens** — Dashboard, Transações (filter + search), Mia (honest placeholder),
-  Metodologia, Configurações e privacidade (connections, local import, where-your-data-lives).
-- **Local SQLite system of record** — 18 migrations: accounts, transactions/splits, daily
-  check-ins (Régua 1 débito / Régua 2 crédito), reserve tracking, sheet layouts, sync log, FTS5.
+- **Nine navigable screens** — Dashboard, Totais, Anual, Horizonte, Transações (filter + search),
+  Tags, Mia (honest placeholder), Metodologia, and Configurações e privacidade (connections, local
+  import, where-your-data-lives).
+- **Local SQLite store** — 26 migrations: accounts/pockets + liquidity, transactions/splits, tags,
+  recurrences, daily check-ins (Régua 1 débito / Régua 2 crédito), reserve tracking, sheet layouts,
+  three-way-merge reconciliation, sync log, FTS5. During the import-only phase the spreadsheet is
+  the system of record and SQLite is the local mirror + enrichment layer (see `docs/adr/0003`).
 
 ## Stack
 
@@ -102,4 +105,4 @@ Details: `docs/building-windows.md`.
 - `docs/testing-strategy.md` — coverage, Playwright, React Doctor, eval policy
 - `docs/release-and-distribution.md` — release train and updater plan
 - `docs/methodology-pack.md` — private methodology pack contract
-- `specs/` — feature specs, plans, and task breakdowns (001–005)
+- `specs/` — feature specs, plans, and task breakdowns (001–019)

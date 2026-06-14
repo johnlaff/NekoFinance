@@ -44,15 +44,17 @@ Done (see `specs/` for the full spec/plan/tasks of each):
 2. ✅ Local SQLite schema (spec 001): accounts, transactions, splits, daily check-ins, reserve, sheet sync metadata, FTS5.
 3. ✅ Google OAuth desktop flow + Sheets/local-xlsx import with layout detection (spec 002).
 4. ✅ Forecast core (spec 003): pure projection engine; the dashboard hero is the projected month-end balance.
-5. ✅ Navigable app shell, five screens, PT-BR copy (spec 004).
+5. ✅ Navigable app shell, PT-BR copy (spec 004); screens grew to nine (Dashboard, Totais, Anual, Horizonte, Transações, Tags, Mia, Metodologia, Configurações).
 6. ✅ Forecast view (spec 005): safe-to-spend, deficit warning, daily projection table.
+7. ✅ Account liquidity classes feeding a correct projection seed (spec 007); five first-class movement types in the engine (spec 011).
+8. ✅ Robust import + stable identity, three-way-merge reconciliation, conflict gate (specs 010/012/013); tags, recurrence, multi-titular splits, write-back preview (specs 014–019).
 
 Next:
 
-7. Account liquidity classes (restricted vouchers, illiquid funds) feeding a correct projection seed.
-8. First-class invoice entity with per-owner splits and net-zero reimbursement links.
-9. Copilot (Mia) with deterministic tools first (read-only), then human-approved sheet diffs.
-10. Evals for diagnoses and safe write behavior; what-if scenarios.
+9. First-class invoice entity with per-owner splits and net-zero reimbursement links.
+10. Copilot (Mia) with deterministic tools first (read-only), then human-approved sheet diffs.
+11. Gated bidirectional write-back (per-cell checksum) — flips the system of record to SQLite (ADR-0003).
+12. Evals for diagnoses and safe write behavior; what-if scenarios.
 
 ## Naming Note
 

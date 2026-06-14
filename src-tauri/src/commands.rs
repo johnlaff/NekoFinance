@@ -13,6 +13,8 @@ pub async fn start_oauth_flow(
     client_id: String,
     client_secret: Option<String>,
 ) -> Result<String, String> {
+    // Shell: o secret pode vir do env do processo (não do bundle do frontend) — ver resolve_*.
+    let client_secret = oauth::pkce::resolve_client_secret(client_secret);
     let config = oauth::pkce::OAuthConfig::google(client_id, client_secret);
     let port = find_available_port()?;
     let oauth_state = oauth::pkce::OAuthState::new(port);
@@ -95,6 +97,7 @@ pub async fn list_sheet_names(
     client_id: String,
     client_secret: Option<String>,
 ) -> Result<Vec<SheetInfo>, String> {
+    let client_secret = oauth::pkce::resolve_client_secret(client_secret);
     let token =
         oauth::token_store::ensure_valid_token(&app_dir.0, &client_id, client_secret.as_deref())
             .await?;
@@ -125,6 +128,7 @@ pub async fn fetch_sheet_preview(
     client_id: String,
     client_secret: Option<String>,
 ) -> Result<SheetPreview, String> {
+    let client_secret = oauth::pkce::resolve_client_secret(client_secret);
     let token =
         oauth::token_store::ensure_valid_token(&app_dir.0, &client_id, client_secret.as_deref())
             .await?;
@@ -170,6 +174,7 @@ pub async fn import_sheet_data(
              Importe as abas-ano; o import de métricas chega na spec 010."
         ));
     }
+    let client_secret = oauth::pkce::resolve_client_secret(client_secret);
     let token =
         oauth::token_store::ensure_valid_token(&app_dir.0, &client_id, client_secret.as_deref())
             .await?;
@@ -1587,6 +1592,7 @@ pub async fn detect_sheet_layout(
     client_id: String,
     client_secret: Option<String>,
 ) -> Result<layout_detect::SheetLayout, String> {
+    let client_secret = oauth::pkce::resolve_client_secret(client_secret);
     let token =
         oauth::token_store::ensure_valid_token(&app_dir.0, &client_id, client_secret.as_deref())
             .await?;
@@ -1671,6 +1677,7 @@ pub async fn preview_write_back(
     client_id: String,
     client_secret: Option<String>,
 ) -> Result<Vec<CellWrite>, String> {
+    let client_secret = oauth::pkce::resolve_client_secret(client_secret);
     let token =
         oauth::token_store::ensure_valid_token(&app_dir.0, &client_id, client_secret.as_deref())
             .await?;
@@ -1819,6 +1826,7 @@ pub async fn list_user_spreadsheets(
     client_id: String,
     client_secret: Option<String>,
 ) -> Result<Vec<UserSpreadsheet>, String> {
+    let client_secret = oauth::pkce::resolve_client_secret(client_secret);
     let token =
         oauth::token_store::ensure_valid_token(&app_dir.0, &client_id, client_secret.as_deref())
             .await?;

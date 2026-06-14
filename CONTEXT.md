@@ -35,11 +35,11 @@ Allocation of one transaction across multiple responsible persons and/or categor
 
 ### Classification
 
-**Category**:
-A hierarchical classification with `parent_id` (single-level tree). Every category has a `nature`: `fixed` (predictable bills: rent, subscriptions) or `variable` (everything else: market, leisure, transport). Categories are applied to Splits, not Transactions directly, so a single purchase can span multiple categories.
+**Category** (demoted — specs 014/015):
+The granular per-category tree was the "budget-by-category" anti-pattern the method rejects, so it was **demoted to free tags** (N:N, color/emoji, summed per month). What remains of `category` is only its `nature` attribute on the transaction. The `parent_id` tree is dormant (no budgeting UI); new labels are first-class tags.
 
-**Category Nature** (enum):
-`fixed` — Predictable, recurring, non-negotiable expenses. `variable` — Discretionary spending that becomes the daily budget.
+**Category Nature** (enum, kept on the transaction):
+`fixed` — Predictable, recurring, non-negotiable expenses (Saídas fixas). `variable` — Discretionary spending that becomes the daily budget (Diário).
 
 ### Budgeting & Discipline
 

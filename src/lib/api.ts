@@ -8,13 +8,12 @@ export const GOOGLE_CLIENT_ID =
   (import.meta.env["VITE_GOOGLE_CLIENT_ID"] as string) ?? "";
 
 /**
- * Desktop-app client secret (optional in Google's installed-app token exchange).
- * Not confidential for this client type; lives only in the gitignored local .env.
- * Injected into the OAuth invoke payloads here so callers never handle it.
+ * Client secret do app desktop: NÃO é mais embutido no bundle do frontend (era exposição
+ * desnecessária — qualquer um lê um bundle JS). Para um cliente desktop o secret é opcional: o
+ * fluxo usa PKCE (RFC 8252) e, se o secret for necessário, o backend Rust o lê do PRÓPRIO env
+ * (`GOOGLE_CLIENT_SECRET`, sem prefixo `VITE_`). Os chamadores enviam `null`.
  */
-const GOOGLE_CLIENT_SECRET =
-  (import.meta.env["VITE_GOOGLE_CLIENT_SECRET"] as string) ?? "";
-const clientSecretOrNull = GOOGLE_CLIENT_SECRET || null;
+const clientSecretOrNull = null;
 
 export type AuthStatus = "connected" | "expired" | "disconnected" | "loading";
 

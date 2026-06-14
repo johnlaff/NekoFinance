@@ -4,11 +4,19 @@ Use this directory for Spec-Driven Development artifacts.
 
 Implemented so far:
 
-- `001-sqlite-local-schema` — normalized local schema (18 migrations) + FTS5.
+- `001-sqlite-local-schema` — normalized local schema + FTS5 (26 migrations today).
 - `002-google-oauth-pkce` — OAuth desktop flow, Sheets/local-xlsx import, layout detection.
 - `003-forecast-core` — pure projected-running-balance engine (TDD).
-- `004-app-shell-navigation` — five navigable screens, typed API layer, PT-BR copy.
+- `004-app-shell-navigation` — navigable screens, typed API layer, PT-BR copy.
 - `005-forecast-view` — safe-to-spend, deficit warning, daily projection table.
+- `006-motion-polish`, `007-pockets-liquidity`, `009-design-system-production-contract`.
+- `010-import-manual-robusto`, `011-engine-five-types`, `012-stable-identity-reconciliation`.
+- `013-advanced-reconciliation` — three-way merge + conflict gate.
+- `014-tags`, `015-categories-to-tags`, `016-recurrence`.
+- `017-multi-titular` (splits read-side), `018-write-back-preview` (read-only, flag off).
+- `019-month-views` — Totais, Horizonte multi-month, Anual.
+
+`008-auto-import` is specced but deferred. Numbers are unique identifiers, not strict order.
 
 Recommended shape:
 
