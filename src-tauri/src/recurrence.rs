@@ -134,6 +134,75 @@ pub async fn delete_series_from(pool: &SqlitePool, transaction_id: &str) -> Resu
     Ok(res.rows_affected())
 }
 
+/// Campos editáveis de uma série (o tipo e o calendário permanecem; muda só o que varia ao
+/// reajustar uma recorrência — ex.: aluguel subiu).
+#[derive(Debug, Clone)]
+pub struct SeriesEdit {
+    pub amount: i64,
+    pub description: Option<String>,
+    pub payment_method: Option<String>,
+    pub is_fixed: bool,
+}
+
+/// Edita a ocorrência indicada e TODAS as posteriores ("deste ponto em diante") — o passado
+/// realizado fica intacto.
+pub async fn update_series_from(
+    pool: &SqlitePool,
+    transaction_id: &str,
+    edit: &SeriesEdit,
+) -> Result<u64, String> {
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT recurrence_id, date FROM \"transaction\" WHERE id = ?1 AND recurrence_id IS NOT NULL",
+    )
+    .bind(transaction_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("lookup: {e}"))?;
+    let (rec_id, date) = match row {
+        Some(v) => v,
+        None => return Ok(0),
+    };
+    let now = chrono::Utc::now().to_rfc3339();
+    let res = sqlx::query(
+        "UPDATE \"transaction\" SET amount = ?1, description = ?2, payment_method = ?3, \
+         is_fixed = ?4, updated_at = ?5 WHERE recurrence_id = ?6 AND date >= ?7",
+    )
+    .bind(edit.amount)
+    .bind(&edit.description)
+    .bind(&edit.payment_method)
+    .bind(edit.is_fixed as i64)
+    .bind(&now)
+    .bind(&rec_id)
+    .bind(&date)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("update from: {e}"))?;
+    Ok(res.rows_affected())
+}
+
+/// Edita TODA a série de uma vez.
+pub async fn update_series_all(
+    pool: &SqlitePool,
+    recurrence_id: &str,
+    edit: &SeriesEdit,
+) -> Result<u64, String> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let res = sqlx::query(
+        "UPDATE \"transaction\" SET amount = ?1, description = ?2, payment_method = ?3, \
+         is_fixed = ?4, updated_at = ?5 WHERE recurrence_id = ?6",
+    )
+    .bind(edit.amount)
+    .bind(&edit.description)
+    .bind(&edit.payment_method)
+    .bind(edit.is_fixed as i64)
+    .bind(&now)
+    .bind(recurrence_id)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("update all: {e}"))?;
+    Ok(res.rows_affected())
+}
+
 /// Apaga TODA a série + a linha `recurrence`.
 pub async fn delete_series_all(pool: &SqlitePool, recurrence_id: &str) -> Result<u64, String> {
     let res = sqlx::query("DELETE FROM \"transaction\" WHERE recurrence_id = ?1")
@@ -191,6 +260,42 @@ pub async fn delete_series_all_cmd(
     recurrence_id: String,
 ) -> Result<u64, String> {
     delete_series_all(pool.inner(), &recurrence_id).await
+}
+
+#[tauri::command]
+pub async fn update_series_from_cmd(
+    pool: State<'_, SqlitePool>,
+    transaction_id: String,
+    amount: i64,
+    description: Option<String>,
+    payment_method: Option<String>,
+    is_fixed: bool,
+) -> Result<u64, String> {
+    let edit = SeriesEdit {
+        amount,
+        description,
+        payment_method,
+        is_fixed,
+    };
+    update_series_from(pool.inner(), &transaction_id, &edit).await
+}
+
+#[tauri::command]
+pub async fn update_series_all_cmd(
+    pool: State<'_, SqlitePool>,
+    recurrence_id: String,
+    amount: i64,
+    description: Option<String>,
+    payment_method: Option<String>,
+    is_fixed: bool,
+) -> Result<u64, String> {
+    let edit = SeriesEdit {
+        amount,
+        description,
+        payment_method,
+        is_fixed,
+    };
+    update_series_all(pool.inner(), &recurrence_id, &edit).await
 }
 
 #[cfg(test)]
@@ -260,6 +365,73 @@ mod tests {
         let removed = delete_series_from(&p, &format!("{rec}:2")).await.unwrap();
         assert_eq!(removed, 2, "agosto + setembro removidos");
         assert_eq!(count_in_series(&p, &rec).await, 2, "jun + jul permanecem");
+    }
+
+    async fn amount_at(pool: &SqlitePool, txn_id: &str) -> i64 {
+        sqlx::query_as::<_, (i64,)>("SELECT amount FROM \"transaction\" WHERE id = ?1")
+            .bind(txn_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+            .0
+    }
+
+    #[tokio::test]
+    async fn update_from_changes_this_and_later_only() {
+        let p = pool().await;
+        let rec = create_recurring_series(&p, &tmpl(), Frequency::Mensal, 4)
+            .await
+            .unwrap();
+        let edit = SeriesEdit {
+            amount: 550000,
+            description: Some("Salário reajustado".into()),
+            payment_method: None,
+            is_fixed: false,
+        };
+        // Reajuste a partir da 3ª ocorrência (índice 2).
+        let n = update_series_from(&p, &format!("{rec}:2"), &edit)
+            .await
+            .unwrap();
+        assert_eq!(n, 2, "agosto + setembro reajustados");
+        assert_eq!(
+            amount_at(&p, &format!("{rec}:0")).await,
+            500000,
+            "junho intacto"
+        );
+        assert_eq!(
+            amount_at(&p, &format!("{rec}:1")).await,
+            500000,
+            "julho intacto"
+        );
+        assert_eq!(
+            amount_at(&p, &format!("{rec}:2")).await,
+            550000,
+            "agosto reajustado"
+        );
+        assert_eq!(
+            amount_at(&p, &format!("{rec}:3")).await,
+            550000,
+            "setembro reajustado"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_all_changes_whole_series() {
+        let p = pool().await;
+        let rec = create_recurring_series(&p, &tmpl(), Frequency::Semanal, 3)
+            .await
+            .unwrap();
+        let edit = SeriesEdit {
+            amount: 480000,
+            description: Some("Salário".into()),
+            payment_method: None,
+            is_fixed: false,
+        };
+        let n = update_series_all(&p, &rec, &edit).await.unwrap();
+        assert_eq!(n, 3);
+        for i in 0..3 {
+            assert_eq!(amount_at(&p, &format!("{rec}:{i}")).await, 480000);
+        }
     }
 
     #[tokio::test]

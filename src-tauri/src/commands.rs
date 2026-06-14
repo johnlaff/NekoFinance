@@ -1343,18 +1343,28 @@ pub async fn get_recent_transactions(
     recent_transactions(pool.inner(), limit).await
 }
 
-async fn recent_transactions(
-    pool: &SqlitePool,
-    limit: i64,
-) -> Result<Vec<TransactionRow>, String> {
+#[derive(sqlx::FromRow)]
+struct RecentRow {
+    id: String,
+    r#type: String,
+    amount: i64,
+    description: String,
+    date: String,
+    payment_method: String,
+    is_projection: i64,
+    /// Titulares distintos, juntados por '|' no SQL (vazio = sem split por pessoa).
+    owners: String,
+}
+
+async fn recent_transactions(pool: &SqlitePool, limit: i64) -> Result<Vec<TransactionRow>, String> {
     // Titulares vêm de um subquery agregado (GROUP_CONCAT com separador '|') — sem N+1.
-    let rows: Vec<(String, String, i64, String, String, String, i64, String)> = sqlx::query_as(
-        "SELECT t.id, t.type, t.amount, COALESCE(t.description,''), t.date, \
-                COALESCE(t.payment_method,''), t.is_projection, \
+    let rows: Vec<RecentRow> = sqlx::query_as(
+        "SELECT t.id, t.type, t.amount, COALESCE(t.description,'') AS description, t.date, \
+                COALESCE(t.payment_method,'') AS payment_method, t.is_projection, \
                 COALESCE((SELECT GROUP_CONCAT(name, '|') FROM \
                     (SELECT DISTINCT p.name FROM split s \
                      JOIN person p ON p.id = s.owner_person_id \
-                     WHERE s.transaction_id = t.id ORDER BY p.name COLLATE NOCASE)), '') \
+                     WHERE s.transaction_id = t.id ORDER BY p.name COLLATE NOCASE)), '') AS owners \
          FROM \"transaction\" t ORDER BY t.date DESC LIMIT ?1",
     )
     .bind(limit)
@@ -1364,18 +1374,18 @@ async fn recent_transactions(
 
     Ok(rows
         .into_iter()
-        .map(|(id, t, amount, desc, date, pm, is_proj, owners)| TransactionRow {
-            id,
-            r#type: t,
-            amount,
-            description: desc,
-            date,
-            payment_method: pm,
-            is_projection: is_proj != 0,
-            owners: if owners.is_empty() {
+        .map(|r| TransactionRow {
+            id: r.id,
+            r#type: r.r#type,
+            amount: r.amount,
+            description: r.description,
+            date: r.date,
+            payment_method: r.payment_method,
+            is_projection: r.is_projection != 0,
+            owners: if r.owners.is_empty() {
                 Vec::new()
             } else {
-                owners.split('|').map(str::to_owned).collect()
+                r.owners.split('|').map(str::to_owned).collect()
             },
         })
         .collect())

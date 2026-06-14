@@ -42,6 +42,8 @@ pub fn run() {
             recurrence::create_recurring_series_cmd,
             recurrence::delete_series_from_cmd,
             recurrence::delete_series_all_cmd,
+            recurrence::update_series_from_cmd,
+            recurrence::update_series_all_cmd,
             splits::splits_for_transaction_cmd,
             splits::owner_totals_for_month_cmd,
         ])

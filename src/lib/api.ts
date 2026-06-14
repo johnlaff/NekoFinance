@@ -397,3 +397,53 @@ export function splitsForTransaction(transactionId: string): Promise<SplitRow[]>
 export function ownerTotalsForMonth(year: number, month: number): Promise<OwnerTotal[]> {
   return invoke("owner_totals_for_month_cmd", { year, month });
 }
+
+// --- Recorrências / séries (spec 016) ---
+
+export type Frequency = "diaria" | "semanal" | "mensal";
+
+export function createRecurringSeries(input: {
+  txnType: string;
+  amount: number;
+  description: string | null;
+  start: string;
+  paymentMethod: string | null;
+  isFixed: boolean;
+  frequency: Frequency;
+  repetitions: number;
+}): Promise<string> {
+  return invoke("create_recurring_series_cmd", input);
+}
+
+/** Apaga a ocorrência indicada e todas as posteriores ("deste ponto em diante"). */
+export function deleteSeriesFrom(transactionId: string): Promise<number> {
+  return invoke("delete_series_from_cmd", { transactionId });
+}
+
+/** Apaga toda a série + a linha de recorrência. */
+export function deleteSeriesAll(recurrenceId: string): Promise<number> {
+  return invoke("delete_series_all_cmd", { recurrenceId });
+}
+
+interface SeriesEdit {
+  amount: number;
+  description: string | null;
+  paymentMethod: string | null;
+  isFixed: boolean;
+}
+
+/** Reajusta a ocorrência indicada e todas as posteriores (o passado fica intacto). */
+export function updateSeriesFrom(
+  transactionId: string,
+  edit: SeriesEdit,
+): Promise<number> {
+  return invoke("update_series_from_cmd", { transactionId, ...edit });
+}
+
+/** Reajusta toda a série de uma vez. */
+export function updateSeriesAll(
+  recurrenceId: string,
+  edit: SeriesEdit,
+): Promise<number> {
+  return invoke("update_series_all_cmd", { recurrenceId, ...edit });
+}
