@@ -15,12 +15,12 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     // Pockets card (spec 007): grouped balances + net worth
     await expect(page.getByText("Bolsos & patrimônio")).toBeVisible();
     await expect(page.getByText("R$ 35.420,00")).toBeVisible();
-    await expect(page.getByText("Pode gastar hoje")).toBeVisible();
+    await expect(page.getByText("Pode gastar até")).toBeVisible();
     await expect(page.getByText(/Previsão diária — junho/)).toBeVisible();
     // Stats do herói: reserva + nº de lançamentos.
     await expect(page.getByText("Lançamentos")).toBeVisible();
     // Chained daily table: today marked, salary day visible
-    await expect(page.getByText("hoje", { exact: true })).toBeVisible();
+    await expect(page.getByRole("table").getByText("hoje").first()).toBeVisible();
     await expect(page.getByText("R$ 12.340,00").first()).toBeVisible();
 
     // Check-in diário: card com o disponível do dia e registro rápido.
@@ -86,9 +86,10 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
       path: testInfo.outputPath("totais.png"),
     });
 
-    // Horizonte — heatmap multi-mês.
+    // Horizonte — trajetória do saldo + detalhe diário.
     await nav("Horizonte").click();
-    await expect(page.getByText(/verde folga, vermelho aperto/)).toBeVisible();
+    await expect(page.getByText(/Verde é folga, vermelho é aperto/)).toBeVisible();
+    await expect(page.getByText("Detalhe diário")).toBeVisible();
     await expect(page.getByText("Junho")).toBeVisible();
     await page.screenshot({
       fullPage: true,

@@ -13,10 +13,11 @@ import { Button } from "../design-system/components/Button";
 import { EmptyState } from "../design-system/components/EmptyState";
 import { MetricTile } from "../design-system/components/MetricTile";
 import { MiaAvatar } from "../design-system/components/MiaAvatar";
+import { Money } from "../design-system/components/Money";
+import { BalanceTrajectory } from "../design-system/components/BalanceTrajectory";
 import { getDashboardSummary, getForecast, isTauri } from "../lib/api";
 import { fmtBRL, fmtDayMonth, monthNamePtBR } from "../lib/format";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
-import { useCountUp } from "../lib/useCountUp";
 import { PrevisibilidadeCard } from "./dashboard/PrevisibilidadeCard";
 import { ColchaoCard } from "./dashboard/ColchaoCard";
 import { PerformanceCard } from "./dashboard/PerformanceCard";
@@ -33,7 +34,6 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
   const forecast = forecastQ.data ?? null;
   const loading = summaryQ.loading || forecastQ.loading;
   const error = summaryQ.error ?? forecastQ.error;
-  const animatedBalance = useCountUp(summary?.balance ?? 0, "saldo-projetado");
 
   if (!isTauri) {
     return (
@@ -105,45 +105,75 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
     <div className="dash">
       <section className="dash-hero" aria-label="Quanto posso gastar hoje">
         <div className="dash-hero__lead">
-          <p className="dash-hero__label">Pode gastar hoje</p>
-          <p className="dash-hero__kpi">
+          <p className="dash-hero__label">Pode gastar até</p>
+          <p className="dash-hero__kpi" data-no-motion="true">
             {forecast ? fmtBRL(forecast.safe_to_spend_today_cents) : "—"}
+            <span className="dash-hero__kpi-suffix">hoje</span>
           </p>
           <p className="dash-hero__reason">
             {!forecast
               ? "Importe sua planilha para ver a previsão."
               : savingsBinds
-                ? `Limite da sua meta de poupança do ano (${targetPct}%).`
-                : "Antes do menor saldo projetado do mês."}
+                ? `O menor de dois limites: respeita sua meta de guardar ${targetPct}% no ano.`
+                : "O menor de dois limites: o que o caixa aguenta sem nenhum dia no vermelho."}
           </p>
+          <div className="dash-hero__row">
+            {summary && summary.transaction_count > 0 && (
+              <dl className="dash-hero__stats">
+                <div>
+                  <dt>Reserva</dt>
+                  <dd>{summary.reserve_months.toFixed(1)} meses</dd>
+                </div>
+                <div>
+                  <dt>Lançamentos</dt>
+                  <dd>{summary.transaction_count}</dd>
+                </div>
+              </dl>
+            )}
+            <Button
+              variant="secondary"
+              size="sm"
+              iconLeft={<Sparkles size={15} strokeWidth={1.75} />}
+              onClick={onAskMia}
+            >
+              Perguntar à Mia
+            </Button>
+          </div>
         </div>
-        <div className="dash-hero__aside">
-          {summary && summary.transaction_count > 0 && (
-            <dl className="dash-hero__stats">
-              <div>
-                <dt>Reserva</dt>
-                <dd>{summary.reserve_months.toFixed(1)} meses</dd>
-              </div>
-              <div>
-                <dt>Lançamentos</dt>
-                <dd>{summary.transaction_count}</dd>
-              </div>
-            </dl>
-          )}
-          <Button
-            variant="secondary"
-            iconLeft={<Sparkles size={16} strokeWidth={1.75} />}
-            onClick={onAskMia}
-          >
-            Perguntar à Mia
-          </Button>
-        </div>
+
+        {forecast && forecast.daily.length > 1 && (
+          <aside className="dash-hero__forecast" aria-label="Saldo projetado do mês">
+            <div className="dash-hero__forecast-head">
+              <span>Saldo no fim de {monthNamePtBR(forecast.today)}</span>
+              <Money
+                cents={forecast.month_end[0]?.balance_cents ?? 0}
+                size="md"
+                sign="auto"
+              />
+            </div>
+            <BalanceTrajectory
+              daily={forecast.daily}
+              today={forecast.today}
+              variant="compact"
+            />
+            <p className="dash-hero__forecast-foot">
+              {deficit ? (
+                <span className="negative">
+                  Pode faltar em {fmtDayMonth(deficit.date)}:{" "}
+                  {fmtBRL(deficit.balance_cents)}
+                </span>
+              ) : (
+                "Como seu saldo deve evoluir até o fim do mês."
+              )}
+            </p>
+          </aside>
+        )}
       </section>
 
       <div className="dash-grid4">
         <MetricTile
           label="Saldo projetado"
-          value={summary ? fmtBRL(animatedBalance) : "—"}
+          value={summary ? fmtBRL(summary.balance) : "—"}
           icon={<TrendingUp size={15} strokeWidth={1.75} />}
           sublabel={forecast ? `Fim de ${monthNamePtBR(forecast.today)}` : "Fim do mês"}
         />

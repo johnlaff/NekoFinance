@@ -72,7 +72,7 @@ describe("App navigation", () => {
 
     await user.click(screen.getByRole("button", { name: "Dashboard" }));
     await waitFor(() => {
-      expect(screen.getByText("Pode gastar hoje")).toBeInTheDocument();
+      expect(screen.getByText("Pode gastar até")).toBeInTheDocument();
     });
     const heroButton = screen
       .getAllByRole("button", { name: "Perguntar à Mia" })

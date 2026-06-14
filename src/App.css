@@ -352,9 +352,8 @@ h3,
 
 .dash-hero {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
+  align-items: stretch;
+  gap: 28px;
   flex-wrap: wrap;
   padding: 22px 24px;
   background:
@@ -366,7 +365,10 @@ h3,
 }
 
 .dash-hero__lead {
+  flex: 1 1 300px;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .dash-hero__label {
@@ -385,21 +387,35 @@ h3,
   line-height: 1.04;
   letter-spacing: -0.02em;
   color: var(--text-strong);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.dash-hero__kpi-suffix {
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  color: var(--text-muted);
+  letter-spacing: 0;
 }
 
 .dash-hero__reason {
-  margin: 6px 0 0;
+  margin: 8px 0 0;
   font-size: var(--fs-sm);
   line-height: var(--lh-normal);
   color: var(--text-muted);
-  max-width: 46ch;
+  max-width: 44ch;
 }
 
-.dash-hero__aside {
+.dash-hero__row {
   display: flex;
   align-items: center;
-  gap: 22px;
-  flex: none;
+  gap: 20px;
+  margin-top: auto;
+  padding-top: 16px;
+  flex-wrap: wrap;
 }
 
 .dash-hero__stats {
@@ -431,18 +447,43 @@ h3,
   color: var(--text);
 }
 
+.dash-hero__forecast {
+  flex: 1 1 340px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  background: color-mix(in srgb, var(--bg-subtle) 70%, transparent);
+  border: var(--bw-hair) solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.dash-hero__forecast-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.dash-hero__forecast-foot {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+}
+
+.dash-hero__forecast-foot .negative {
+  color: var(--money-neg);
+  font-weight: var(--fw-semibold);
+}
+
 .dash-hero__money {
   font-family: var(--font-money);
   font-variant-numeric: tabular-nums;
   font-weight: var(--fw-semibold);
   color: var(--text);
-}
-
-@media (max-width: 720px) {
-  .dash-hero__aside {
-    width: 100%;
-    justify-content: space-between;
-  }
 }
 
 .dash-grid4 {

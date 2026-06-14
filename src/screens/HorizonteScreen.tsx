@@ -4,6 +4,7 @@ import { monthNamePtBR } from "../lib/format";
 import { useCommand } from "../lib/useCommand";
 import { Money } from "../design-system/components/Money";
 import { EmptyState } from "../design-system/components/EmptyState";
+import { BalanceTrajectory } from "../design-system/components/BalanceTrajectory";
 
 export type SaldoBand = "critical" | "negative" | "tight" | "ok" | "comfortable";
 
@@ -23,6 +24,14 @@ const BAND_FILL: Record<SaldoBand, string> = {
   ok: "var(--saldo-band-ok-fill)",
   comfortable: "var(--saldo-band-comfortable-fill)",
 };
+
+const BAND_LEGEND: { band: SaldoBand; label: string }[] = [
+  { band: "critical", label: "crítico" },
+  { band: "negative", label: "negativo" },
+  { band: "tight", label: "apertado" },
+  { band: "ok", label: "ok" },
+  { band: "comfortable", label: "folga" },
+];
 
 interface DayCell {
   day: number;
@@ -97,9 +106,70 @@ export function HorizonteScreen() {
             margin: "var(--space-1) 0 0",
           }}
         >
-          Saldo projetado dia a dia, mês a mês — verde folga, vermelho aperto.
+          Saldo projetado dia a dia. Verde é folga, vermelho é aperto.
         </p>
       </header>
+
+      {/* Trajetória do saldo — a leitura principal, preenche a largura */}
+      <section
+        style={{
+          background: "var(--surface)",
+          border: "var(--bw-hair) solid var(--border)",
+          borderRadius: "var(--radius-lg)",
+          boxShadow: "var(--shadow-1)",
+          padding: "var(--space-5) var(--space-5) var(--space-3)",
+          marginBottom: "var(--space-6)",
+        }}
+      >
+        <BalanceTrajectory daily={forecast.daily} today={forecast.today} />
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "var(--space-4)",
+            marginTop: "var(--space-3)",
+            paddingTop: "var(--space-3)",
+            borderTop: "var(--bw-hair) solid var(--border)",
+          }}
+        >
+          {BAND_LEGEND.map((l) => (
+            <span
+              key={l.band}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 7,
+                fontSize: "var(--fs-sm)",
+                color: "var(--text-muted)",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  width: 12,
+                  height: 12,
+                  borderRadius: "var(--radius-xs)",
+                  background: BAND_FILL[l.band],
+                }}
+              />
+              {l.label}
+            </span>
+          ))}
+        </div>
+      </section>
+
+      <h2
+        style={{
+          fontSize: "var(--fs-label)",
+          fontWeight: "var(--fw-semibold)",
+          letterSpacing: "var(--ls-label)",
+          textTransform: "uppercase",
+          color: "var(--text-faint)",
+          margin: "0 0 var(--space-3)",
+        }}
+      >
+        Detalhe diário
+      </h2>
 
       <div
         role="table"

@@ -29,7 +29,7 @@ describe("App (dashboard)", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("Pode gastar hoje")).toBeInTheDocument();
+      expect(screen.getByText("Pode gastar até")).toBeInTheDocument();
     });
 
     expect(screen.getAllByText(/8\.420/).length).toBeGreaterThanOrEqual(1);

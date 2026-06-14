@@ -25,7 +25,7 @@ describe("DashboardScreen (forecast view)", () => {
     render(<DashboardScreen onAskMia={vi.fn()} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Pode gastar hoje")).toBeInTheDocument();
+      expect(screen.getByText("Pode gastar até")).toBeInTheDocument();
     });
     expect(screen.getByText("R$ 350,00")).toBeInTheDocument();
   });
@@ -38,7 +38,8 @@ describe("DashboardScreen (forecast view)", () => {
       expect(screen.getByText(/Previsão diária — junho/)).toBeInTheDocument();
     });
 
-    expect(screen.getByText("hoje")).toBeInTheDocument();
+    // "hoje" aparece no sufixo do herói e como marcador na tabela diária.
+    expect(screen.getAllByText("hoje").length).toBeGreaterThanOrEqual(1);
     // Income day shows the inflow and the new chained balance.
     expect(screen.getByText("R$ 7.000,00")).toBeInTheDocument();
     const balances = screen.getAllByText("R$ 12.877,00");
@@ -51,7 +52,7 @@ describe("DashboardScreen (forecast view)", () => {
     mockCommands({ get_dashboard_summary: SUMMARY, get_forecast: FORECAST });
     const { unmount } = render(<DashboardScreen onAskMia={vi.fn()} />);
     await waitFor(() => {
-      expect(screen.getByText("Pode gastar hoje")).toBeInTheDocument();
+      expect(screen.getByText("Pode gastar até")).toBeInTheDocument();
     });
     expect(screen.queryByText(/Buraco previsto/)).not.toBeInTheDocument();
     unmount();
