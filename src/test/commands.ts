@@ -55,6 +55,7 @@ export const TXNS: TransactionRow[] = [
     payment_method: "debit",
     is_projection: false,
     owners: ["Gio", "João"],
+    provenance: "importado",
   },
   {
     id: "t2",
@@ -65,6 +66,7 @@ export const TXNS: TransactionRow[] = [
     payment_method: "credit",
     is_projection: false,
     owners: [],
+    provenance: "manual",
   },
   {
     id: "t3",
@@ -75,6 +77,7 @@ export const TXNS: TransactionRow[] = [
     payment_method: "",
     is_projection: true,
     owners: [],
+    provenance: "projetado",
   },
 ];
 

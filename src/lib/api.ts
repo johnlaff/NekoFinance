@@ -41,6 +41,8 @@ export interface TransactionRow {
   is_projection: boolean;
   /** Titulares distintos das parcelas (multi-titular). Vazio = sem split por pessoa. */
   owners: string[];
+  /** Proveniência: "projetado" | "importado" | "manual" | "conciliado". */
+  provenance: string;
 }
 
 export interface SheetInfo {

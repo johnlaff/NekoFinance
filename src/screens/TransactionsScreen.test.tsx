@@ -58,11 +58,14 @@ describe("TransactionsScreen", () => {
     expect(screen.getByText("Streaming anual")).toBeInTheDocument();
   });
 
-  it("marks projections with a badge", async () => {
+  it("marca a proveniência de cada lançamento (ProvBadge)", async () => {
     render(<TransactionsScreen query="" onQueryChange={vi.fn()} />);
     await waitFor(() => {
-      expect(screen.getByText("previsto")).toBeInTheDocument();
+      // Projeção → "Previsto"; importado → "Da planilha"; manual → "Do app".
+      expect(screen.getByText("Previsto")).toBeInTheDocument();
     });
+    expect(screen.getAllByText("Da planilha").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Do app")).toBeInTheDocument();
   });
 
   it("applies the controlled query and reports edits upward", async () => {

@@ -234,6 +234,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         payment_method: "debit",
         is_projection: false,
         owners: ["Gio", "João"],
+        provenance: "importado",
       },
       {
         id: "t2",
@@ -244,6 +245,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         payment_method: "credit",
         is_projection: false,
         owners: [],
+        provenance: "manual",
       },
       {
         id: "t3",
@@ -254,6 +256,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         payment_method: "pix",
         is_projection: false,
         owners: [],
+        provenance: "importado",
       },
       {
         id: "t4",
@@ -264,6 +267,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         payment_method: "",
         is_projection: true,
         owners: [],
+        provenance: "projetado",
       },
       {
         id: "t5",
@@ -274,6 +278,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         payment_method: "debit",
         is_projection: true,
         owners: [],
+        provenance: "projetado",
       },
     ];
 

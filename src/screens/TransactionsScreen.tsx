@@ -4,6 +4,7 @@ import { Badge } from "../design-system/components/Badge";
 import { Button } from "../design-system/components/Button";
 import { EmptyState } from "../design-system/components/EmptyState";
 import { OwnerChip } from "../design-system/components/OwnerChip";
+import { ProvBadge } from "../design-system/components/ProvBadge";
 import { SegmentedControl } from "../design-system/components/SegmentedControl";
 import { getRecentTransactions, isTauri, type TransactionRow } from "../lib/api";
 import { fmtDate } from "../lib/format";
@@ -183,8 +184,7 @@ export function TransactionsScreen({
                   <tr className={t.is_projection ? "projection" : ""} key={t.id}>
                     <td>{fmtDate(t.date)}</td>
                     <td>
-                      {t.description || "—"}{" "}
-                      {t.is_projection && <Badge tone="secondary">previsto</Badge>}
+                      {t.description || "—"} <ProvBadge provenance={t.provenance} />
                       {t.owners.length >= 2 && (
                         <span
                           style={{

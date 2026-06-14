@@ -1334,6 +1334,8 @@ pub struct TransactionRow {
     pub is_projection: bool,
     /// Titulares distintos das parcelas (multi-titular). Vazio = sem split por pessoa.
     pub owners: Vec<String>,
+    /// Proveniência: "projetado" (previsto), "importado" (da planilha) ou "manual" (do app).
+    pub provenance: String,
 }
 
 #[tauri::command]
@@ -1355,6 +1357,8 @@ struct RecentRow {
     is_projection: i64,
     /// Titulares distintos, juntados por '|' no SQL (vazio = sem split por pessoa).
     owners: String,
+    /// `source_amount` é NULL quando nunca veio da planilha (lançamento manual no app).
+    has_source: i64,
 }
 
 async fn recent_transactions(pool: &SqlitePool, limit: i64) -> Result<Vec<TransactionRow>, String> {
@@ -1365,7 +1369,8 @@ async fn recent_transactions(pool: &SqlitePool, limit: i64) -> Result<Vec<Transa
                 COALESCE((SELECT GROUP_CONCAT(name, '|') FROM \
                     (SELECT DISTINCT p.name FROM split s \
                      JOIN person p ON p.id = s.owner_person_id \
-                     WHERE s.transaction_id = t.id ORDER BY p.name COLLATE NOCASE)), '') AS owners \
+                     WHERE s.transaction_id = t.id ORDER BY p.name COLLATE NOCASE)), '') AS owners, \
+                (t.source_amount IS NOT NULL) AS has_source \
          FROM \"transaction\" t ORDER BY t.date DESC LIMIT ?1",
     )
     .bind(limit)
@@ -1387,6 +1392,13 @@ async fn recent_transactions(pool: &SqlitePool, limit: i64) -> Result<Vec<Transa
                 Vec::new()
             } else {
                 r.owners.split('|').map(str::to_owned).collect()
+            },
+            provenance: if r.is_projection != 0 {
+                "projetado".to_string()
+            } else if r.has_source != 0 {
+                "importado".to_string()
+            } else {
+                "manual".to_string()
             },
         })
         .collect())
