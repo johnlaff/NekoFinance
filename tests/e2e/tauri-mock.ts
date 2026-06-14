@@ -373,6 +373,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
       list_tags_cmd: TAG_TOTALS,
       get_annual_metrics: ANNUAL,
       get_recent_transactions: TXNS,
+      get_import_conflicts: [],
       create_transaction: "e2e-txn-id",
       get_app_info: APP_INFO,
       get_pockets: POCKETS,

@@ -22,13 +22,13 @@ buracos:
 A chave é guardar o **base**: o valor do campo **como foi importado da planilha da última vez**.
 Com base + local (valor atual no app) + sheet (valor agora na planilha), cada campo decide:
 
-| base | local vs base | sheet vs base | Decisão |
-|---|---|---|---|
-| ausente (1º import) | — | — | **AplicarPlanilha** (semeia base) |
-| presente | local == base | sheet == base | **ManterLocal** (nada mudou) |
-| presente | local == base | sheet ≠ base | **AplicarPlanilha** (só a planilha mudou) |
-| presente | local ≠ base | sheet == base | **ManterLocal** (só o local mudou → preserva edição) |
-| presente | local ≠ base | sheet ≠ base | **Conflito** (ambos mudaram → gate humano) |
+| base                | local vs base | sheet vs base | Decisão                                              |
+| ------------------- | ------------- | ------------- | ---------------------------------------------------- |
+| ausente (1º import) | —             | —             | **AplicarPlanilha** (semeia base)                    |
+| presente            | local == base | sheet == base | **ManterLocal** (nada mudou)                         |
+| presente            | local == base | sheet ≠ base  | **AplicarPlanilha** (só a planilha mudou)            |
+| presente            | local ≠ base  | sheet == base | **ManterLocal** (só o local mudou → preserva edição) |
+| presente            | local ≠ base  | sheet ≠ base  | **Conflito** (ambos mudaram → gate humano)           |
 
 ### Núcleo puro
 
@@ -42,11 +42,12 @@ Conflict }`. Aplica-se por campo (amount, description). Totalmente testado.
   import). NULL = nunca importado da planilha (lançamento 100% manual; nunca entra em conflito de
   import).
 - Tabela `import_conflict (id, transaction_id, field, base_value, local_value, sheet_value,
-  created_at, resolved_at, resolution)` — fila do gate de conflito (persiste para a UI).
+created_at, resolved_at, resolution)` — fila do gate de conflito (persiste para a UI).
 
 ### Import (shell)
 
 Para cada linha importada, antes de gravar:
+
 1. Carrega o txn atual (se existir) e seu `source_*`.
 2. Para `amount` e `description`, roda `reconcile(source, local, sheet)`:
    - **ApplySheet** → grava o valor da planilha + atualiza `source_*`.

@@ -9,6 +9,7 @@ import { getRecentTransactions, isTauri, type TransactionRow } from "../lib/api"
 import { fmtBRL, fmtDate } from "../lib/format";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { NewTransactionForm } from "./NewTransactionForm";
+import { ConflictGate } from "../features/reconcile/ConflictGate";
 
 /** Explicit seam: server-side pagination/FTS5 search replaces this in a later slice. */
 const FETCH_LIMIT = 500;
@@ -112,6 +113,7 @@ export function TransactionsScreen({
 
   return (
     <div className="dash">
+      <ConflictGate onResolved={handleCreated} />
       <div className="txs-tools">
         <SegmentedControl
           size="sm"
