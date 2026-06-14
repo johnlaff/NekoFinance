@@ -12,6 +12,7 @@ export async function mockTauri(page: Page) {
       daily_budget: 4300,
       daily_spend_today: 3800,
       credit_spend_month: 120000,
+      has_credit: true,
       reserve_months: 4.5,
       reserve_trend: "down",
       transaction_count: 42,
@@ -180,6 +181,8 @@ export async function mockTauri(page: Page) {
           performance_cents: 445700,
           cost_of_living_cents: 254300,
           savings_rate_bps: 6367,
+          real_daily_avg_cents: 2971,
+          economia_cents: 150000,
         },
         {
           year: 2026,
@@ -188,6 +191,8 @@ export async function mockTauri(page: Page) {
           performance_cents: 87645,
           cost_of_living_cents: 811686,
           savings_rate_bps: 974,
+          real_daily_avg_cents: 0,
+          economia_cents: 0,
         },
       ],
       cash_headroom_cents: 587700,
@@ -314,10 +319,38 @@ export async function mockTauri(page: Page) {
       db_path: "C:\\Users\\you\\AppData\\Roaming\\app.neko.finance\\neko-finance.db",
     };
 
+    const TAG_TOTALS = [
+      {
+        id: "p",
+        name: "! Pagar",
+        color: "var(--brass-400)",
+        emoji: null,
+        is_special: true,
+        total_cents: 2500,
+      },
+      {
+        id: "v",
+        name: "Viagem",
+        color: "var(--cat-sky)",
+        emoji: "\u2708\uFE0F",
+        is_special: false,
+        total_cents: 10000,
+      },
+      {
+        id: "d",
+        name: "Delivery",
+        color: "var(--cat-coral)",
+        emoji: "\uD83C\uDF54",
+        is_special: false,
+        total_cents: 35000,
+      },
+    ];
+
     const responses: Record<string, unknown> = {
       check_auth_status: "disconnected",
       get_dashboard_summary: SUMMARY,
       get_forecast: FORECAST,
+      tag_totals_for_month_cmd: TAG_TOTALS,
       get_recent_transactions: TXNS,
       get_app_info: APP_INFO,
       get_pockets: POCKETS,

@@ -59,6 +59,42 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     });
   });
 
+  test("método screens render: Totais, Horizonte, Tags", async ({
+    page,
+  }, testInfo) => {
+    const nav = (name: string | RegExp) => page.getByRole("button", { name });
+
+    // Totais — 4 métricas-herói + status do método.
+    await nav("Totais").click();
+    await expect(page.getByText("Performance", { exact: true })).toBeVisible();
+    await expect(page.getByText("Custo de vida", { exact: true })).toBeVisible();
+    await expect(page.getByText("Diário médio", { exact: true })).toBeVisible();
+    await expect(page.getByText("Sobrou dinheiro")).toBeVisible();
+    await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath("totais.png"),
+    });
+
+    // Horizonte — heatmap multi-mês.
+    await nav("Horizonte").click();
+    await expect(page.getByText(/verde folga, vermelho aperto/)).toBeVisible();
+    await expect(page.getByText("Junho")).toBeVisible();
+    await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath("horizonte.png"),
+    });
+
+    // Tags — lista colorida com "! Pagar" no topo.
+    await nav("Tags").click();
+    await expect(page.getByText("! Pagar", { exact: true })).toBeVisible();
+    await expect(page.getByText("Viagem", { exact: true })).toBeVisible();
+    await expect(page.getByText("Delivery", { exact: true })).toBeVisible();
+    await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath("tags.png"),
+    });
+  });
+
   test("dashboard hero button reaches the honest Mia placeholder", async ({ page }) => {
     await page
       .locator(".dash-hero")
