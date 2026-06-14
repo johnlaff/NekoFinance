@@ -69,8 +69,10 @@ pub async fn create_recurring_series(
     freq: Frequency,
     repetitions: usize,
 ) -> Result<String, String> {
-    if repetitions < 1 {
-        return Err("repetições deve ser ≥ 1".into());
+    // Limite superior além do `< 1`: um `repetitions` enorme inseriria N linhas e poderia estourar
+    // a aritmética de datas (add_months) no caminho de escrita financeira. 600 = 50 anos mensais.
+    if !(1..=600).contains(&repetitions) {
+        return Err("repetições deve estar entre 1 e 600".into());
     }
     let rec_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
@@ -475,6 +477,26 @@ mod tests {
         for i in 0..3 {
             assert_eq!(amount_at(&p, &format!("{rec}:{i}")).await, 480000);
         }
+    }
+
+    #[tokio::test]
+    async fn rejects_repetitions_out_of_bounds() {
+        let p = pool().await;
+        assert!(
+            create_recurring_series(&p, &tmpl(), Frequency::Mensal, 0)
+                .await
+                .is_err()
+        );
+        assert!(
+            create_recurring_series(&p, &tmpl(), Frequency::Mensal, 601)
+                .await
+                .is_err()
+        );
+        assert!(
+            create_recurring_series(&p, &tmpl(), Frequency::Mensal, 600)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]

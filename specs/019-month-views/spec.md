@@ -16,26 +16,30 @@ Matriz **dia × mês** do saldo projetado, colorida por faixa (heatmap) — a vi
 método. Lê `forecast.daily` (saldo encadeado de hoje até `horizon_end`, já cruzando meses) e
 agrupa por ano-mês → uma coluna por mês, uma linha por dia, célula = saldo do dia.
 
-**Faixas de saldo** (`saldoBand`, pura) — thresholds em centavos:
+**Faixas de saldo** (`saldoBand`, pura) — RELATIVAS à escala do usuário (`baseline_outflow_cents`,
+o gasto mensal típico). NÃO usar limiares BRL absolutos: a fonte-verdade do método proíbe copiar os
+fixos do material de referência (perdem sentido para rendas diferentes).
 
 ```
-cents < -50000  → critical     (vermelho forte)
-cents <      0  → negative      (vermelho)
-cents < 100000  → tight         (âmbar)
-cents < 200000  → ok            (verde claro)
-cents >= 200000 → comfortable   (verde forte)
+cents < -1 mês de gasto → critical     (vermelho forte)
+cents <  0              → negative      (vermelho)
+cents <  1 mês de gasto → tight         (âmbar)
+cents <  2 meses        → ok            (verde claro)
+cents >= 2 meses        → comfortable   (verde forte)
 ```
 
-Mapeia para os tokens `--saldo-band-*` / `--saldo-band-*-fill` (já no states.css). O dia de hoje
-é destacado. Sem dado → EmptyState.
+Sem baseline ainda (usuário novo) → classifica só pelo sinal. Mapeia para os tokens
+`--saldo-band-*` / `--saldo-band-*-fill` (já no states.css). O dia de hoje é destacado. Sem dado →
+EmptyState.
 
-## Visões anuais (próxima slice)
+## Visões anuais (entregue)
 
-As 4 métricas agregadas por ano (tendência mês a mês). Lê `months[]` do ano. Sparkline opcional.
+`AnnualScreen` (rota `anuais`): tabela do ano inteiro com as 4 métricas-herói mês a mês, navegação
+por ano (`MonthNav`). Lê `months[]` do forecast.
 
 ## DoD
 
-- `saldoBand` pura + testes das faixas (fronteiras −500/0/1000/2000).
+- `saldoBand` pura + testes das faixas RELATIVAS (escala muda a faixa do mesmo saldo).
 - `HorizonteScreen` agrupa `forecast.daily` por mês e renderiza o heatmap; rota `horizonte`.
 - a11y (tabela semântica / aria), responsivo, tema, motion reduzido. React Doctor sem achado novo.
 - `npm run check` verde; testes cobrindo `saldoBand` + render.

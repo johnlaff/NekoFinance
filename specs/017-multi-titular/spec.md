@@ -19,7 +19,7 @@ diário continuam por lançamento).
 
 ## Backend (determinístico, TDD)
 
-- `list_splits(transaction_id)` → as partes de um lançamento (com o nome do titular).
+- `splits_for_transaction(transaction_id)` → as partes de um lançamento (com o nome do titular).
 - `owner_totals_for_month(year, month)` → soma por titular no mês (para a visão de quem-paga-o-quê).
 
 ## UI

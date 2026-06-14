@@ -187,18 +187,20 @@ export function WriteBackPreview({
                     range={`${c.a1} · ${c.date}`}
                     changes={changes}
                     status="pending"
-                    actions={
-                      <Button
-                        variant="primary"
-                        disabled={!enabled}
-                        onClick={() => void approve()}
-                      >
-                        {enabled ? "Aprovar e enviar" : "Envio desligado"}
-                      </Button>
-                    }
                   />
                 );
               })}
+              {/* Uma única aprovação para TODO o lote — `applyWriteBack()` envia tudo de uma vez;
+                  um botão por célula passaria a impressão errada de aprovação célula a célula. */}
+              <Button
+                variant="primary"
+                disabled={!enabled}
+                onClick={() => void approve()}
+              >
+                {enabled
+                  ? `Aprovar e enviar (${changed.length} célula(s))`
+                  : "Envio desligado"}
+              </Button>
             </div>
           )}
           {applyMsg && (

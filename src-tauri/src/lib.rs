@@ -209,15 +209,15 @@ mod tests {
             "INSERT INTO account (id, name, type, owner_person_id, institution, balance) VALUES (?1,?2,?3,?4,?5,?6)"
         )
         .bind(&bank_id).bind("Conta Corrente").bind("bank")
-        .bind(&person_id).bind("Nubank").bind(500000)
+        .bind(&person_id).bind("Banco Exemplo").bind(500000)
         .execute(&pool).await.unwrap();
 
         let card_id = uuid::Uuid::new_v4().to_string();
         sqlx::query(
             "INSERT INTO account (id, name, type, owner_person_id, institution, credit_limit, closing_day, due_day) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)"
         )
-        .bind(&card_id).bind("Visa Infinite").bind("credit_card")
-        .bind(&person_id).bind("Nubank").bind(1000000).bind(5).bind(15)
+        .bind(&card_id).bind("Cartão de crédito").bind("credit_card")
+        .bind(&person_id).bind("Banco Exemplo").bind(1000000).bind(5).bind(15)
         .execute(&pool).await.unwrap();
 
         // Spec 015 (WRONG #4): a árvore granular de categorias foi rebaixada para tags; só as

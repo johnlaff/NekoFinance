@@ -34,12 +34,16 @@ export function ConflictGate({ onResolved }: { onResolved?: () => void }) {
   const [conflicts, setConflicts] = useState<ImportConflict[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
 
-  function load() {
+  // Guarda de unmount: não chama setState se o componente saiu antes do fetch resolver.
+  useEffect(() => {
+    let alive = true;
     getImportConflicts()
-      .then(setConflicts)
-      .catch(() => setConflicts([]));
-  }
-  useEffect(load, []);
+      .then((c) => alive && setConflicts(c))
+      .catch(() => alive && setConflicts([]));
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   async function resolve(c: ImportConflict, choice: "sheet" | "local") {
     setBusy(c.id);

@@ -12,12 +12,12 @@ INSERT OR REPLACE INTO profile (id, person_id, device_id) VALUES
 
 -- Liquid accounts (seed = R$3000.00)
 INSERT OR REPLACE INTO account (id, name, type, owner_person_id, institution, balance) VALUES
-  ('acc-bank-1', 'Conta Corrente', 'bank', 'person-fixture-1', 'Nubank', 250000),
+  ('acc-bank-1', 'Conta Corrente', 'bank', 'person-fixture-1', 'Banco Exemplo', 250000),
   ('acc-wallet-1', 'Carteira', 'wallet', 'person-fixture-1', NULL, 50000);
 
 -- Credit card (closes day 20, due day 10)
 INSERT OR REPLACE INTO account (id, name, type, owner_person_id, institution, balance, closing_day, due_day) VALUES
-  ('acc-card-1', 'Cartão Nubank', 'credit_card', 'person-fixture-1', 'Nubank', 0, 20, 10);
+  ('acc-card-1', 'Cartão de crédito', 'credit_card', 'person-fixture-1', 'Banco Exemplo', 0, 20, 10);
 
 -- Categories
 INSERT OR IGNORE INTO category (id, name, parent_id, nature) VALUES

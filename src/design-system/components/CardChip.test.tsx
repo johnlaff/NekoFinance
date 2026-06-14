@@ -4,19 +4,19 @@ import { describe, it, expect, vi } from "vitest";
 import { CardChip } from "./CardChip";
 
 describe("CardChip", () => {
-  const base = { mono: "NUBANK", last4: "1234", nick: "Roxinho", total: -50000 };
+  const base = { mono: "BANCO", last4: "1234", nick: "Meu cartão", total: -50000 };
 
   it("renderiza apelido, final e nome impresso", () => {
     render(<CardChip {...base} />);
-    expect(screen.getByText("Roxinho")).toBeInTheDocument();
-    expect(screen.getByText("NUBANK")).toBeInTheDocument();
+    expect(screen.getByText("Meu cartão")).toBeInTheDocument();
+    expect(screen.getByText("BANCO")).toBeInTheDocument();
     expect(screen.getByText(/1234/)).toBeInTheDocument();
   });
 
   it("aria-label descreve cartão + fatura", () => {
     render(<CardChip {...base} />);
     expect(
-      screen.getByRole("button", { name: /Roxinho, final 1234, fatura/ }),
+      screen.getByRole("button", { name: /Meu cartão, final 1234, fatura/ }),
     ).toBeInTheDocument();
   });
 

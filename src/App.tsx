@@ -53,30 +53,34 @@ function App() {
           onGoToSettings={() => setScreen("settings")}
         />
       )}
-      <AppShell
-        active={screen}
-        onNavigate={setScreen}
-        onSearch={handleSearch}
-        authStatus={authStatus}
-      >
-        <div key={screen} className="ak-screen">
-          {screen === "dashboard" && (
-            <DashboardScreen onAskMia={() => setScreen("copilot")} />
-          )}
-          {screen === "totais" && <TotaisScreen />}
-          {screen === "anuais" && <AnnualScreen />}
-          {screen === "horizonte" && <HorizonteScreen />}
-          {screen === "tags" && <TagsScreen />}
-          {screen === "transactions" && (
-            <TransactionsScreen query={searchQuery} onQueryChange={setSearchQuery} />
-          )}
-          {screen === "copilot" && <CopilotScreen />}
-          {screen === "methodology" && <MethodologyScreen />}
-          {screen === "settings" && (
-            <SettingsScreen authStatus={authStatus} onAuthChange={setAuthStatus} />
-          )}
-        </div>
-      </AppShell>
+      {/* Enquanto o onboarding (aria-modal) está aberto, o resto fica `inert`: teclado, ponteiro e
+          leitor de tela não alcançam o fundo. `display:contents` não cria caixa de layout. */}
+      <div style={{ display: "contents" }} inert={showOnboarding === true}>
+        <AppShell
+          active={screen}
+          onNavigate={setScreen}
+          onSearch={handleSearch}
+          authStatus={authStatus}
+        >
+          <div key={screen} className="ak-screen">
+            {screen === "dashboard" && (
+              <DashboardScreen onAskMia={() => setScreen("copilot")} />
+            )}
+            {screen === "totais" && <TotaisScreen />}
+            {screen === "anuais" && <AnnualScreen />}
+            {screen === "horizonte" && <HorizonteScreen />}
+            {screen === "tags" && <TagsScreen />}
+            {screen === "transactions" && (
+              <TransactionsScreen query={searchQuery} onQueryChange={setSearchQuery} />
+            )}
+            {screen === "copilot" && <CopilotScreen />}
+            {screen === "methodology" && <MethodologyScreen />}
+            {screen === "settings" && (
+              <SettingsScreen authStatus={authStatus} onAuthChange={setAuthStatus} />
+            )}
+          </div>
+        </AppShell>
+      </div>
     </>
   );
 }

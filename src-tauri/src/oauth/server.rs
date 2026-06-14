@@ -10,7 +10,9 @@ impl OAuthServer {
         Self { port }
     }
 
-    pub async fn listen_for_code(self) -> Result<String, String> {
+    /// Devolve `(code, state)` do callback de loopback. O `state` (CSRF) é validado pelo chamador
+    /// contra o csrf_token gerado — sem isso, um redirect forjado injetaria um code de terceiro.
+    pub async fn listen_for_code(self) -> Result<(String, Option<String>), String> {
         let addr = format!("127.0.0.1:{}", self.port);
         let listener = TcpListener::bind(&addr).map_err(|e| format!("bind error: {e}"))?;
         listener
@@ -29,7 +31,7 @@ impl OAuthServer {
             .read_line(&mut request_line)
             .map_err(|e| format!("read error: {e}"))?;
 
-        let code = extract_code_from_request(&request_line)?;
+        let (code, state) = extract_code_and_state(&request_line)?;
 
         let mut stream = stream;
         let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n\
@@ -40,11 +42,11 @@ impl OAuthServer {
             .write_all(response.as_bytes())
             .map_err(|e| format!("write error: {e}"))?;
 
-        Ok(code)
+        Ok((code, state))
     }
 }
 
-fn extract_code_from_request(request_line: &str) -> Result<String, String> {
+fn extract_code_and_state(request_line: &str) -> Result<(String, Option<String>), String> {
     let path = request_line
         .split_whitespace()
         .nth(1)
@@ -53,17 +55,21 @@ fn extract_code_from_request(request_line: &str) -> Result<String, String> {
     let query_start = path.find('?').ok_or("no query string")?;
     let query = &path[query_start + 1..];
 
+    let mut code: Option<String> = None;
+    let mut state: Option<String> = None;
     for pair in query.split('&') {
         if let Some(value) = pair.strip_prefix("code=") {
-            let code = url_decode(value);
-            if code.is_empty() {
-                return Err("empty code".to_string());
+            let decoded = url_decode(value);
+            if !decoded.is_empty() {
+                code = Some(decoded);
             }
-            return Ok(code);
+        } else if let Some(value) = pair.strip_prefix("state=") {
+            state = Some(url_decode(value));
         }
     }
 
-    Err("no code parameter".to_string())
+    let code = code.ok_or("no code parameter")?;
+    Ok((code, state))
 }
 
 fn url_decode(s: &str) -> String {
@@ -96,18 +102,28 @@ mod tests {
     #[test]
     fn test_extract_code_from_path() {
         let line = "GET /?code=abc123&state=xyz HTTP/1.1";
-        assert_eq!(extract_code_from_request(line).unwrap(), "abc123");
+        let (code, state) = extract_code_and_state(line).unwrap();
+        assert_eq!(code, "abc123");
+        assert_eq!(state.as_deref(), Some("xyz")); // o state volta para validação CSRF
     }
 
     #[test]
     fn test_extract_code_urlencoded() {
         let line = "GET /?code=abc%2Fdef%3Dghi&state=xyz HTTP/1.1";
-        assert_eq!(extract_code_from_request(line).unwrap(), "abc/def=ghi");
+        assert_eq!(extract_code_and_state(line).unwrap().0, "abc/def=ghi");
     }
 
     #[test]
     fn test_extract_code_no_code() {
         let line = "GET /?state=xyz HTTP/1.1";
-        assert!(extract_code_from_request(line).is_err());
+        assert!(extract_code_and_state(line).is_err());
+    }
+
+    #[test]
+    fn test_extract_missing_state_is_none() {
+        let line = "GET /?code=abc123 HTTP/1.1";
+        let (code, state) = extract_code_and_state(line).unwrap();
+        assert_eq!(code, "abc123");
+        assert!(state.is_none()); // sem state → o chamador rejeita (CSRF)
     }
 }

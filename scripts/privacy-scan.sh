@@ -41,7 +41,7 @@ while IFS= read -r pattern || [[ -n "$pattern" ]]; do
 
   # (1) Arquivos da árvore de trabalho (exclui .git/: binário/histórico, lento e ruidoso — o
   #     histórico de mensagens é coberto pelo passo (2)).
-  if rg --hidden --no-ignore-vcs --fixed-strings --line-number \
+  if rg --hidden --no-ignore-vcs --fixed-strings --ignore-case --line-number \
     --glob '!.git/**' \
     --glob '!node_modules/**' \
     --glob '!dist/**' \
@@ -55,8 +55,8 @@ while IFS= read -r pattern || [[ -n "$pattern" ]]; do
     exit 1
   fi
 
-  # (2) Mensagens de commit do range publicável.
-  if [[ -n "$commit_msgs" ]] && printf '%s' "$commit_msgs" | grep -qF -- "$pattern"; then
+  # (2) Mensagens de commit do range publicável (case-insensitive, como o passo 1).
+  if [[ -n "$commit_msgs" ]] && printf '%s' "$commit_msgs" | grep -qiF -- "$pattern"; then
     printf 'Private forbidden pattern in commit message: %s\n' "$pattern" >&2
     exit 1
   fi
