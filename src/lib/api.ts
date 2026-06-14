@@ -229,6 +229,20 @@ export function getRecentTransactions(limit: number): Promise<TransactionRow[]> 
   return invoke("get_recent_transactions", { limit });
 }
 
+/** Cria um lançamento manual. Com `recurrence`, gera a série projetada. Retorna o id criado. */
+export function createTransaction(input: {
+  txnType: "income" | "expense";
+  amountCents: number;
+  description: string | null;
+  date: string;
+  paymentMethod: string | null;
+  isFixed: boolean;
+  tagIds: string[];
+  recurrence: { frequency: Frequency; repetitions: number } | null;
+}): Promise<string> {
+  return invoke("create_transaction", input);
+}
+
 export function getAppInfo(): Promise<AppInfo> {
   return invoke("get_app_info");
 }

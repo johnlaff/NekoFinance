@@ -29,6 +29,7 @@ pub fn run() {
             commands::get_forecast,
             commands::get_annual_metrics,
             commands::get_recent_transactions,
+            commands::create_transaction,
             commands::get_pockets,
             commands::create_account,
             commands::detect_sheet_layout,

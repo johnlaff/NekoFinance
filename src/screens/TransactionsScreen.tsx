@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Search } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import { Badge } from "../design-system/components/Badge";
 import { Button } from "../design-system/components/Button";
 import { EmptyState } from "../design-system/components/EmptyState";
@@ -7,7 +7,8 @@ import { OwnerChip } from "../design-system/components/OwnerChip";
 import { SegmentedControl } from "../design-system/components/SegmentedControl";
 import { getRecentTransactions, isTauri, type TransactionRow } from "../lib/api";
 import { fmtBRL, fmtDate } from "../lib/format";
-import { useCommand } from "../lib/useCommand";
+import { invalidateCommands, useCommand } from "../lib/useCommand";
+import { NewTransactionForm } from "./NewTransactionForm";
 
 /** Explicit seam: server-side pagination/FTS5 search replaces this in a later slice. */
 const FETCH_LIMIT = 500;
@@ -37,11 +38,21 @@ export function TransactionsScreen({
   onQueryChange: (query: string) => void;
 }) {
   const [scope, setScope] = useState<TransactionScope>("all");
+  const [showForm, setShowForm] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const {
     data: transactions = [],
     loading,
     error,
-  } = useCommand("get_recent_transactions", () => getRecentTransactions(FETCH_LIMIT));
+  } = useCommand(`get_recent_transactions:${reloadKey}`, () =>
+    getRecentTransactions(FETCH_LIMIT),
+  );
+
+  function handleCreated() {
+    invalidateCommands();
+    setReloadKey((k) => k + 1);
+    setShowForm(false);
+  }
 
   // React Compiler memoizes; no manual useMemo needed.
   const visible = filterTransactions(transactions, scope, query);
@@ -112,7 +123,21 @@ export function TransactionsScreen({
         <Badge tone="secondary">
           {visible.length} {visible.length === 1 ? "exibida" : "exibidas"}
         </Badge>
+        <Button
+          size="sm"
+          variant={showForm ? "ghost" : "primary"}
+          iconLeft={<Plus size={15} strokeWidth={2} />}
+          onClick={() => setShowForm((v) => !v)}
+        >
+          {showForm ? "Fechar" : "Novo lançamento"}
+        </Button>
       </div>
+
+      {showForm && (
+        <div style={{ marginBottom: "var(--space-4)" }}>
+          <NewTransactionForm onCreated={handleCreated} />
+        </div>
+      )}
 
       <div className="dash-card">
         <div className="dash-card__body" style={{ padding: 0 }}>

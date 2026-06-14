@@ -106,6 +106,22 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     });
   });
 
+  test("novo lançamento: abre o form, preenche e lança", async ({ page }) => {
+    await page.getByRole("button", { name: "Transações" }).click();
+    await page.getByRole("button", { name: "Novo lançamento" }).click();
+
+    // Form visível com o seletor de tipo e os campos.
+    await expect(page.getByText("Tipo de movimento")).toBeVisible();
+    await page.getByLabel("Valor").fill("42,50");
+    await page.getByLabel("Descrição", { exact: true }).fill("Almoço");
+    // Anexa uma tag.
+    await page.getByRole("button", { name: /Viagem/ }).click();
+    await page.getByRole("button", { name: "Lançar" }).click();
+
+    // Após lançar, o form fecha (botão volta a "Novo lançamento").
+    await expect(page.getByRole("button", { name: "Novo lançamento" })).toBeVisible();
+  });
+
   test("dashboard hero button reaches the honest Mia placeholder", async ({ page }) => {
     await page
       .locator(".dash-hero")

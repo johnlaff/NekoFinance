@@ -1391,6 +1391,112 @@ async fn recent_transactions(pool: &SqlitePool, limit: i64) -> Result<Vec<Transa
         .collect())
 }
 
+/// Repetição opcional de um lançamento ("Repetir": frequência + nº de ocorrências).
+#[derive(serde::Deserialize)]
+pub struct RecurrenceInput {
+    pub frequency: String,
+    pub repetitions: usize,
+}
+
+/// Cria um lançamento manual (caminho de escrita do app). `amount_cents` é magnitude positiva;
+/// a direção vem de `txn_type` ('income'/'expense'). Com `recurrence`, gera a série projetada
+/// inteira em vez de um único realizado. As `tag_ids` são anexadas a toda linha criada.
+/// Retorna o id do lançamento (ou da série, quando recorrente).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn create_transaction(
+    pool: State<'_, SqlitePool>,
+    txn_type: String,
+    amount_cents: i64,
+    description: Option<String>,
+    date: String,
+    payment_method: Option<String>,
+    is_fixed: bool,
+    tag_ids: Vec<String>,
+    recurrence: Option<RecurrenceInput>,
+) -> Result<String, String> {
+    create_transaction_inner(
+        pool.inner(),
+        &txn_type,
+        amount_cents,
+        description,
+        &date,
+        payment_method,
+        is_fixed,
+        &tag_ids,
+        recurrence,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn create_transaction_inner(
+    pool: &SqlitePool,
+    txn_type: &str,
+    amount_cents: i64,
+    description: Option<String>,
+    date: &str,
+    payment_method: Option<String>,
+    is_fixed: bool,
+    tag_ids: &[String],
+    recurrence: Option<RecurrenceInput>,
+) -> Result<String, String> {
+    if !matches!(txn_type, "income" | "expense") {
+        return Err(format!("tipo inválido: {txn_type}"));
+    }
+    if amount_cents <= 0 {
+        return Err("valor deve ser positivo (magnitude)".into());
+    }
+    let start = NaiveDate::parse_from_str(date, "%Y-%m-%d").map_err(|e| format!("data: {e}"))?;
+
+    // Caminho recorrente: delega à série projetada e anexa as tags a cada ocorrência.
+    if let Some(rec) = recurrence {
+        let freq =
+            crate::recurrence::Frequency::parse(&rec.frequency).ok_or("frequência inválida")?;
+        let template = crate::recurrence::RecurringTemplate {
+            txn_type: txn_type.to_string(),
+            amount: amount_cents,
+            description,
+            start,
+            payment_method,
+            is_fixed,
+        };
+        let rec_id =
+            crate::recurrence::create_recurring_series(pool, &template, freq, rec.repetitions)
+                .await?;
+        if !tag_ids.is_empty() {
+            for i in 0..rec.repetitions {
+                crate::tags::set_transaction_tags(pool, &format!("{rec_id}:{i}"), tag_ids).await?;
+            }
+        }
+        return Ok(rec_id);
+    }
+
+    // Lançamento único realizado.
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO \"transaction\" (id, type, amount, description, date, payment_method, is_fixed, is_projection, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?8)",
+    )
+    .bind(&id)
+    .bind(txn_type)
+    .bind(amount_cents)
+    .bind(&description)
+    .bind(date)
+    .bind(&payment_method)
+    .bind(is_fixed as i64)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("insert transaction: {e}"))?;
+
+    if !tag_ids.is_empty() {
+        crate::tags::set_transaction_tags(pool, &id, tag_ids).await?;
+    }
+    Ok(id)
+}
+
 #[tauri::command]
 pub async fn detect_sheet_layout(
     app_dir: State<'_, AppDataDir>,
@@ -1866,6 +1972,129 @@ mod tests {
         assert_eq!(split.owners, vec!["Gio".to_string(), "João".to_string()]);
         let solo = rows.iter().find(|r| r.id != "t1").unwrap();
         assert!(solo.owners.is_empty(), "sem split → owners vazio");
+    }
+
+    // Caminho de escrita: lançamento único realizado, com tags anexadas.
+    #[tokio::test]
+    async fn create_transaction_inserts_realized_with_tags() {
+        let pool = fixture_pool().await;
+        let tag = crate::tags::create_tag(&pool, "Viagem", "#3aa", None, false)
+            .await
+            .unwrap();
+
+        let id = create_transaction_inner(
+            &pool,
+            "expense",
+            12_345,
+            Some("Mercado".into()),
+            "2026-06-14",
+            Some("debit".into()),
+            false,
+            std::slice::from_ref(&tag),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let (amount, is_proj, desc): (i64, i64, String) = sqlx::query_as(
+            "SELECT amount, is_projection, COALESCE(description,'') FROM \"transaction\" WHERE id = ?1",
+        )
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(amount, 12_345);
+        assert_eq!(is_proj, 0, "lançamento manual é realizado");
+        assert_eq!(desc, "Mercado");
+
+        let (tag_count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM transaction_tag WHERE transaction_id = ?1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(tag_count, 1, "tag anexada ao lançamento");
+    }
+
+    // "Repetir": o caminho recorrente gera a série projetada inteira e propaga a tag.
+    #[tokio::test]
+    async fn create_transaction_with_recurrence_builds_tagged_series() {
+        let pool = fixture_pool().await;
+        let tag = crate::tags::create_tag(&pool, "Aluguel", "#a33", None, false)
+            .await
+            .unwrap();
+
+        let rec_id = create_transaction_inner(
+            &pool,
+            "expense",
+            231_100,
+            Some("Aluguel".into()),
+            "2026-06-15",
+            Some("debit".into()),
+            true,
+            std::slice::from_ref(&tag),
+            Some(RecurrenceInput {
+                frequency: "mensal".into(),
+                repetitions: 3,
+            }),
+        )
+        .await
+        .unwrap();
+
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM \"transaction\" WHERE recurrence_id = ?1 AND is_projection = 1",
+        )
+        .bind(&rec_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 3, "série projetada de 3 meses");
+
+        let (tagged,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM transaction_tag tt JOIN \"transaction\" t ON t.id = tt.transaction_id WHERE t.recurrence_id = ?1",
+        )
+        .bind(&rec_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(tagged, 3, "tag propagada a cada ocorrência");
+    }
+
+    #[tokio::test]
+    async fn create_transaction_rejects_bad_input() {
+        let pool = fixture_pool().await;
+        assert!(
+            create_transaction_inner(
+                &pool,
+                "transfer",
+                100,
+                None,
+                "2026-06-14",
+                None,
+                false,
+                &[],
+                None
+            )
+            .await
+            .is_err(),
+            "tipo não suportado pelo form é rejeitado"
+        );
+        assert!(
+            create_transaction_inner(
+                &pool,
+                "expense",
+                0,
+                None,
+                "2026-06-14",
+                None,
+                false,
+                &[],
+                None
+            )
+            .await
+            .is_err(),
+            "valor zero/negativo é rejeitado"
+        );
     }
 
     // Previsibilidade: meses futuros esparsos (só fixas) são detectados como incompletos, e a
