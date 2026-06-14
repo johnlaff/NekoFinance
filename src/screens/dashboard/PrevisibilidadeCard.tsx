@@ -58,17 +58,15 @@ export function PrevisibilidadeCard({ forecast }: { forecast: Forecast }) {
         ) : (
           <>
             <p className="dash-predict__warn">
-              De{" "}
+              A partir de{" "}
               <b>
                 {monthNamePtBR(
                   `${firstIncomplete.year}-${String(firstIncomplete.month).padStart(2, "0")}-01`,
                 )}
               </b>{" "}
-              em diante a projeção está otimista demais. Somando os{" "}
-              {incompleteMonths.length} meses incompletos, faltam{" "}
+              faltam{" "}
               <b className="dash-hero__money">{fmtBRL(forecast.total_missing_cents)}</b>{" "}
-              de gastos não lançados (fatura do cartão e gastos variáveis). Sem isso, o
-              saldo e a poupança projetados mentem.
+              de gastos não lançados. A projeção está otimista até você pré-lançar.
             </p>
             <div className="dash-predict__rows">
               {incompleteMonths.map((c) => {
@@ -92,28 +90,30 @@ export function PrevisibilidadeCard({ forecast }: { forecast: Forecast }) {
                       />
                     </span>
                     <span className="dash-predict__pct">
-                      {pct}% lançado · falta {fmtBRL(c.estimated_missing_cents)}
+                      {pct}% · falta {fmtBRL(c.estimated_missing_cents)}
                     </span>
                   </div>
                 );
               })}
             </div>
-            <p className="dash-predict__hint">
-              Para prever o ano, lance em cada mês à frente: o <b>saldo de hoje</b> (só
-              conta-corrente), o <b>salário</b> (valor conservador, não o esperado), as{" "}
-              <b>contas fixas</b>, a <b>fatura do cartão</b> no vencimento com os
-              parcelados e o <b>diário estimado</b> em todos os dias. O método é claro —
-              futuro vazio engana.
-            </p>
+            <details className="dash-disclosure">
+              <summary>Como pré-lançar o ano</summary>
+              <p>
+                Em cada mês à frente, lance o <b>saldo de hoje</b> (só conta-corrente),
+                o <b>salário</b> conservador, as <b>contas fixas</b>, a{" "}
+                <b>fatura do cartão</b> no vencimento e o <b>diário estimado</b> em
+                todos os dias. Futuro vazio engana a previsão.
+              </p>
+            </details>
           </>
         )}
         <p className="dash-predict__savings">
-          Poupança do ano (estimada): <b>{realizedRatePct}%</b> realizado · referência
-          20–30%
+          Poupança do ano: <b>{realizedRatePct}%</b> realizado, referência 20 a 30%
           {incompleteMonths.length > 0 && (
             <span className="dash-predict__muted">
               {" "}
-              (projetado {projectedRatePct}%, mas otimista — o futuro está incompleto)
+              (projetado {projectedRatePct}%, otimista enquanto o futuro está
+              incompleto)
             </span>
           )}
         </p>

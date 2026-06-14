@@ -29,13 +29,13 @@ describe("App (dashboard)", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("42 transações")).toBeInTheDocument();
+      expect(screen.getByText("Pode gastar hoje")).toBeInTheDocument();
     });
 
     expect(screen.getAllByText(/8\.420/).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Saldo projetado")).toBeInTheDocument();
     expect(screen.getByText(/Previsão diária — junho/)).toBeInTheDocument();
-    expect(screen.getByText(/Pode gastar até/)).toBeInTheDocument();
+    expect(screen.getByText("Lançamentos")).toBeInTheDocument();
   });
 
   it("shows loading state", () => {

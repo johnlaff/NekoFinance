@@ -62,23 +62,68 @@ export function OnboardingFlow({
         alignItems: "center",
         justifyContent: "center",
         padding: "var(--space-5)",
-        background: "var(--bg-scrim, rgba(0,0,0,0.55))",
-        backdropFilter: "blur(3px)",
+        background: "var(--bg-scrim)",
+        backdropFilter: "blur(8px)",
       }}
     >
       <div
         style={{
           width: "100%",
-          maxWidth: 540,
-          maxHeight: "90vh",
+          maxWidth: 520,
+          maxHeight: "92vh",
           overflowY: "auto",
-          background: "var(--surface-1)",
-          border: "var(--bw-hair) solid var(--border)",
-          borderRadius: "var(--radius-lg)",
-          boxShadow: "var(--shadow-3)",
-          padding: "var(--space-6)",
+          background: "var(--surface-elevated)",
+          border: "var(--bw-hair) solid var(--border-strong)",
+          borderRadius: "var(--radius-xl)",
+          boxShadow: "var(--shadow-4)",
+          padding: "var(--space-7)",
         }}
       >
+        {/* Marca + passo */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: "var(--space-4)",
+          }}
+        >
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "var(--space-2)",
+              fontWeight: "var(--fw-bold)",
+              fontSize: "var(--fs-body)",
+              color: "var(--text-strong)",
+              letterSpacing: "var(--ls-tight)",
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                width: 9,
+                height: 9,
+                borderRadius: "50%",
+                background: "var(--primary)",
+                boxShadow: "0 0 0 4px var(--primary-quiet)",
+              }}
+            />
+            Neko
+          </span>
+          <span
+            style={{
+              fontSize: "var(--fs-label)",
+              fontWeight: "var(--fw-semibold)",
+              letterSpacing: "var(--ls-label)",
+              textTransform: "uppercase",
+              color: "var(--text-faint)",
+            }}
+          >
+            {step + 1} / {TOTAL_STEPS}
+          </span>
+        </div>
+
         {/* Progresso */}
         <div
           style={{
@@ -102,22 +147,10 @@ export function OnboardingFlow({
           ))}
         </div>
 
-        <span
-          style={{
-            fontSize: "var(--fs-label)",
-            fontWeight: "var(--fw-semibold)",
-            letterSpacing: "var(--ls-label)",
-            textTransform: "uppercase",
-            color: "var(--text-muted)",
-          }}
-        >
-          Passo {step + 1} de {TOTAL_STEPS}
-        </span>
-
         {step === 0 && (
           <Step
             title="Bem-vindo ao Neko"
-            subtitle="Seu dinheiro, previsível — não mais uma planilha que você esquece."
+            subtitle="Seu dinheiro, previsível. Não mais uma planilha que você esquece."
           >
             <p style={pStyle}>
               O Neko fala a língua do método: cinco tipos de movimento, não dezenas de
@@ -162,7 +195,7 @@ export function OnboardingFlow({
               você saber hoje quanto pode gastar sem furar o mês.
             </p>
             <p style={pStyle}>
-              O Neko calcula isso de forma determinística — sem achismo, sem IA
+              O Neko calcula isso de forma determinística, sem achismo e sem IA
               inventando conta. Você decide; o app prevê.
             </p>
           </Step>
@@ -195,11 +228,11 @@ export function OnboardingFlow({
         {step === 3 && (
           <Step
             title="Seu primeiro lançamento"
-            subtitle="Registre algo de hoje — um café, o salário, o aluguel."
+            subtitle="Registre algo de hoje: um café, o salário, o aluguel."
           >
             <p style={pStyle}>
-              Experimente agora. Escolha o tipo, o valor, e pronto — é assim que o dia a
-              dia entra no Neko.
+              Experimente agora. Escolha o tipo e o valor. É assim que o dia a dia entra
+              no Neko.
             </p>
             <div style={{ marginTop: "var(--space-3)" }}>
               <NewTransactionForm onCreated={next} />
@@ -214,7 +247,7 @@ export function OnboardingFlow({
           >
             <p style={pStyle}>
               O Neko acompanha sua <b>Economia</b> contra essa meta e te avisa, com
-              calma, quando o ritmo do ano está dentro ou fora do ideal — sem punir, só
+              calma, quando o ritmo do ano está dentro ou fora do ideal. Sem punir, só
               mostrando.
             </p>
             <p style={pStyle}>

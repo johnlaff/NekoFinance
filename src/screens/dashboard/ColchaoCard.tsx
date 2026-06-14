@@ -44,14 +44,17 @@ export function ColchaoCard({ forecast }: { forecast: Forecast }) {
         </div>
         <p className="dash-colchao__text">
           {colchaoCents >= 0
-            ? "Você não registra Economia formal — guarda o que sobra como colchão para cobrir os meses negativos sem sacar investimento. É uma adaptação válida do método."
-            : "Este ano você usou parte do colchão para cobrir meses negativos — exatamente o que o buffer existe para fazer. Sem Economia formal ainda, mas o saldo não furou."}
+            ? "Você guarda o que sobra como colchão para cobrir os meses negativos sem sacar investimento. Adaptação válida do método."
+            : "Este ano você usou parte do colchão para cobrir meses negativos, exatamente o que o buffer existe para fazer. O saldo não furou."}
         </p>
-        <p className="dash-colchao__next">
-          <b>Próximo nível, quando quiser:</b> registrar a Economia (meta 20–30% da
-          renda) como uma saída mensal e separar a reserva. Isso transforma o colchão em
-          hábito e protege de sacar investimento na hora errada.
-        </p>
+        <details className="dash-disclosure">
+          <summary>Próximo nível, quando quiser</summary>
+          <p>
+            Registrar a Economia (meta 20 a 30% da renda) como uma saída mensal e
+            separar a reserva. Isso vira hábito e protege de sacar investimento na hora
+            errada.
+          </p>
+        </details>
       </div>
     </section>
   );

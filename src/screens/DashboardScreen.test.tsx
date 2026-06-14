@@ -25,7 +25,7 @@ describe("DashboardScreen (forecast view)", () => {
     render(<DashboardScreen onAskMia={vi.fn()} />);
 
     await waitFor(() => {
-      expect(screen.getByText(/Pode gastar até/)).toBeInTheDocument();
+      expect(screen.getByText("Pode gastar hoje")).toBeInTheDocument();
     });
     expect(screen.getByText("R$ 350,00")).toBeInTheDocument();
   });
@@ -51,7 +51,7 @@ describe("DashboardScreen (forecast view)", () => {
     mockCommands({ get_dashboard_summary: SUMMARY, get_forecast: FORECAST });
     const { unmount } = render(<DashboardScreen onAskMia={vi.fn()} />);
     await waitFor(() => {
-      expect(screen.getByText(/Pode gastar até/)).toBeInTheDocument();
+      expect(screen.getByText("Pode gastar hoje")).toBeInTheDocument();
     });
     expect(screen.queryByText(/Buraco previsto/)).not.toBeInTheDocument();
     unmount();

@@ -19,7 +19,7 @@ describe("OnboardingFlow", () => {
 
     // Passo 1 (boas-vindas) mostra os tipos do método.
     expect(screen.getByText("Bem-vindo ao Neko")).toBeInTheDocument();
-    expect(screen.getByText(/Passo 1 de 5/)).toBeInTheDocument();
+    expect(screen.getByText("1 / 5")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Avançar/ }));
     expect(screen.getByText(/Previsível > categorizar/)).toBeInTheDocument();

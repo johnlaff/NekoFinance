@@ -133,7 +133,7 @@ export function NewTransactionForm({ onCreated }: { onCreated?: () => void }) {
         display: "grid",
         gap: "var(--space-4)",
         padding: "var(--space-5)",
-        background: "var(--surface-1)",
+        background: "var(--surface-elevated)",
         border: "var(--bw-hair) solid var(--border)",
         borderRadius: "var(--radius-md)",
       }}

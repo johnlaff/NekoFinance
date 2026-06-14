@@ -94,11 +94,6 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
   const dailyThisMonth = (forecast?.daily ?? []).filter(
     (d) => d.date.slice(0, 7) === ym,
   );
-  // Poupança realizada do ano (para a frase de contexto do "pode gastar"). Os cards de
-  // Previsibilidade/Colchão/Performance derivam o resto internamente (componentes próprios).
-  const realizedRatePct = forecast
-    ? (forecast.annual_savings.realized_rate_bps / 100).toFixed(1)
-    : "0.0";
   const hasData = (summary?.transaction_count ?? 0) > 0;
 
   function handleLogged() {
@@ -108,75 +103,42 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
 
   return (
     <div className="dash">
-      <div className="dash-hero">
-        <div className="dash-hero__txt">
-          <div className="dash-hero__line">
-            {summary && summary.transaction_count > 0 ? (
-              <>
-                <b>{summary.transaction_count} transações</b> no banco local. Reserva:{" "}
-                <span className="dash-hero__money">
-                  {summary.reserve_months.toFixed(1)} meses
-                </span>
-                .
-              </>
-            ) : (
-              "Nenhuma transação ainda. Conecte o Google Sheets e importe sua planilha."
-            )}
-          </div>
-          {forecast && (
-            <div className="dash-hero__line dash-safe">
-              Pode gastar até{" "}
-              <b className="dash-hero__money">
-                {fmtBRL(forecast.safe_to_spend_today_cents)}
-              </b>{" "}
-              hoje{" "}
-              {savingsBinds
-                ? `sem furar sua meta de poupança do ano (${targetPct}%).`
-                : "antes do menor saldo do futuro."}
-            </div>
-          )}
-          {forecast &&
-            savingsBinds &&
-            forecast.savings_headroom_cents !== null &&
-            forecast.savings_headroom_cents < 0 && (
-              <div className="dash-hero__line dash-safe__ctx">
-                Sua poupança do ano está em {realizedRatePct}% (meta {targetPct}%). Em
-                caixa há{" "}
-                <b className="dash-hero__money">
-                  {fmtBRL(forecast.cash_headroom_cents)}
-                </b>
-                , mas isso é sua reserva — gastar no cartão hoje vira fatura e afunda os
-                meses à frente.
+      <section className="dash-hero" aria-label="Quanto posso gastar hoje">
+        <div className="dash-hero__lead">
+          <p className="dash-hero__label">Pode gastar hoje</p>
+          <p className="dash-hero__kpi">
+            {forecast ? fmtBRL(forecast.safe_to_spend_today_cents) : "—"}
+          </p>
+          <p className="dash-hero__reason">
+            {!forecast
+              ? "Importe sua planilha para ver a previsão."
+              : savingsBinds
+                ? `Limite da sua meta de poupança do ano (${targetPct}%).`
+                : "Antes do menor saldo projetado do mês."}
+          </p>
+        </div>
+        <div className="dash-hero__aside">
+          {summary && summary.transaction_count > 0 && (
+            <dl className="dash-hero__stats">
+              <div>
+                <dt>Reserva</dt>
+                <dd>{summary.reserve_months.toFixed(1)} meses</dd>
               </div>
-            )}
+              <div>
+                <dt>Lançamentos</dt>
+                <dd>{summary.transaction_count}</dd>
+              </div>
+            </dl>
+          )}
+          <Button
+            variant="secondary"
+            iconLeft={<Sparkles size={16} strokeWidth={1.75} />}
+            onClick={onAskMia}
+          >
+            Perguntar à Mia
+          </Button>
         </div>
-        <Button
-          variant="secondary"
-          iconLeft={<Sparkles size={16} strokeWidth={1.75} />}
-          onClick={onAskMia}
-        >
-          Perguntar à Mia
-        </Button>
-      </div>
-
-      {deficit && (
-        <div className="dash-deficit" role="status">
-          <AlertTriangle size={15} strokeWidth={1.75} />
-          <span>
-            Buraco previsto:{" "}
-            <b className="dash-hero__money">{fmtBRL(deficit.balance_cents)}</b> em{" "}
-            {fmtDayMonth(deficit.date)} — é preciso entrada nova ou corte até lá.
-          </span>
-        </div>
-      )}
-
-      {summary && hasData && (
-        <DailyCheckinCard summary={summary} onLogged={handleLogged} />
-      )}
-
-      {forecast && hasData && <PrevisibilidadeCard forecast={forecast} />}
-
-      {forecast && hasData && <ColchaoCard forecast={forecast} />}
+      </section>
 
       <div className="dash-grid4">
         <MetricTile
@@ -197,7 +159,7 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
           sublabel={
             summary && !summary.has_credit
               ? "Sem cartão rastreado"
-              : "Régua 2 — fatura acumulada"
+              : "Régua 2, fatura acumulada"
           }
         />
         <MetricTile
@@ -214,6 +176,25 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
           sublabel="Meta: 12 meses de gastos"
         />
       </div>
+
+      {deficit && (
+        <div className="dash-deficit" role="status">
+          <AlertTriangle size={15} strokeWidth={1.75} />
+          <span>
+            Buraco previsto de{" "}
+            <b className="dash-hero__money">{fmtBRL(deficit.balance_cents)}</b> em{" "}
+            {fmtDayMonth(deficit.date)}. Precisa de entrada nova ou corte até lá.
+          </span>
+        </div>
+      )}
+
+      {summary && hasData && (
+        <DailyCheckinCard summary={summary} onLogged={handleLogged} />
+      )}
+
+      {forecast && hasData && <PrevisibilidadeCard forecast={forecast} />}
+
+      {forecast && hasData && <ColchaoCard forecast={forecast} />}
 
       {forecast && <PerformanceCard forecast={forecast} />}
 

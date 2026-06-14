@@ -104,6 +104,9 @@
 
   --focus-ring: rgba(63, 191, 143, 0.55);
 
+  /* Scrim atrás de modais/overlays (escurece o conteúdo de fundo) */
+  --bg-scrim: rgba(6, 10, 9, 0.66);
+
   /* Owner-type accents (personal / partner / shared) */
   --owner-personal: #3fbf8f;
   --owner-partner: #c98bd4;
@@ -179,6 +182,7 @@
   --chart-axis: #7c8782;
 
   --focus-ring: rgba(34, 135, 100, 0.45);
+  --bg-scrim: rgba(20, 32, 25, 0.4);
 
   --owner-personal: #228764;
   --owner-partner: #9a55a8;
