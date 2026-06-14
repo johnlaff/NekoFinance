@@ -177,9 +177,7 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
         />
         <MetricTile
           label="Crédito no mês"
-          value={
-            summary?.has_credit ? fmtBRL(summary.credit_spend_month) : "—"
-          }
+          value={summary?.has_credit ? fmtBRL(summary.credit_spend_month) : "—"}
           icon={<TrendingDown size={15} strokeWidth={1.75} />}
           sublabel={
             summary && !summary.has_credit

@@ -22,9 +22,7 @@ describe("HealthBadge", () => {
   });
 
   it("aria-label combina rótulo e sublabel para leitores de tela", () => {
-    render(
-      <HealthBadge level="risk" label="Faltou dinheiro" sublabel="−R$ 120,00" />,
-    );
+    render(<HealthBadge level="risk" label="Faltou dinheiro" sublabel="−R$ 120,00" />);
     expect(
       screen.getByRole("img", { name: "Faltou dinheiro — −R$ 120,00" }),
     ).toBeInTheDocument();

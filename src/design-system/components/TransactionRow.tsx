@@ -59,7 +59,13 @@ function ProvBadge({ provenance }: { provenance: Provenance | undefined }) {
     >
       <span
         aria-hidden="true"
-        style={{ width: 7, height: 7, borderRadius: "50%", flex: "none", background: g.color }}
+        style={{
+          width: 7,
+          height: 7,
+          borderRadius: "50%",
+          flex: "none",
+          background: g.color,
+        }}
       />
       {g.label}
     </span>
@@ -129,7 +135,9 @@ export function TransactionRow({
         >
           {date}
         </span>
-        <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: "4px" }}>
+        <div
+          style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: "4px" }}
+        >
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             {hasLump ? (
               <button
@@ -160,7 +168,13 @@ export function TransactionRow({
             ) : (
               <span style={{ width: 18, flexShrink: 0 }} />
             )}
-            <span style={{ fontSize: "var(--fs-body)", color: "var(--text)", overflowWrap: "anywhere" }}>
+            <span
+              style={{
+                fontSize: "var(--fs-body)",
+                color: "var(--text)",
+                overflowWrap: "anywhere",
+              }}
+            >
               {desc}
             </span>
             {passthrough ? (
@@ -245,7 +259,11 @@ export function TransactionRow({
                 fontSize: "var(--fs-sm)",
               }}
             >
-              <span style={{ color: "var(--text-faint)", fontFamily: "var(--font-money)" }}>↳</span>
+              <span
+                style={{ color: "var(--text-faint)", fontFamily: "var(--font-money)" }}
+              >
+                ↳
+              </span>
               <span
                 style={{
                   flex: 1,
@@ -262,9 +280,15 @@ export function TransactionRow({
               <span style={moneyStyle(it.amount)}>{formatBRL(it.amount)}</span>
             </div>
           ))}
-          <p style={{ margin: "10px 0 0", fontSize: "var(--fs-micro)", color: "var(--text-faint)" }}>
-            Esse detalhe vem das notas da célula da planilha. Cada item é preservado; nunca vira um
-            “Saída” genérico.
+          <p
+            style={{
+              margin: "10px 0 0",
+              fontSize: "var(--fs-micro)",
+              color: "var(--text-faint)",
+            }}
+          >
+            Esse detalhe vem das notas da célula da planilha. Cada item é preservado;
+            nunca vira um “Saída” genérico.
           </p>
         </div>
       ) : null}

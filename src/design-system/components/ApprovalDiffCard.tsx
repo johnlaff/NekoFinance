@@ -15,8 +15,16 @@ export interface DiffChange {
 }
 
 const PILL: Record<DiffStatus, { label: string; bg: string; color: string }> = {
-  pending: { label: "Precisa de aprovação", bg: "var(--warning-tint)", color: "var(--warning-400)" },
-  approved: { label: "Aprovado", bg: "var(--success-tint)", color: "var(--success-400)" },
+  pending: {
+    label: "Precisa de aprovação",
+    bg: "var(--warning-tint)",
+    color: "var(--warning-400)",
+  },
+  approved: {
+    label: "Aprovado",
+    bg: "var(--success-tint)",
+    color: "var(--success-400)",
+  },
   rejected: { label: "Recusado", bg: "var(--danger-tint)", color: "var(--danger-400)" },
 };
 
@@ -80,13 +88,29 @@ export function ApprovalDiffCard({
             flex: "none",
           }}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
             <path d="M4 4h16v16H4z" />
             <path d="M4 9h16M9 9v11" />
           </svg>
         </span>
         <span style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ display: "block", fontSize: "14px", fontWeight: "var(--fw-bold)", color: "var(--text-strong)" }}>
+          <span
+            style={{
+              display: "block",
+              fontSize: "14px",
+              fontWeight: "var(--fw-bold)",
+              color: "var(--text-strong)",
+            }}
+          >
             {title}
           </span>
           <span
@@ -100,7 +124,9 @@ export function ApprovalDiffCard({
               flexWrap: "wrap",
             }}
           >
-            <b style={{ color: "var(--text-muted)", fontWeight: "var(--fw-semibold)" }}>{sheet}</b>
+            <b style={{ color: "var(--text-muted)", fontWeight: "var(--fw-semibold)" }}>
+              {sheet}
+            </b>
             {range ? <span>· {range}</span> : null}
           </span>
         </span>
@@ -135,7 +161,13 @@ export function ApprovalDiffCard({
               alignItems: "center",
             }}
           >
-            <span style={{ fontSize: "12px", color: "var(--text-muted)", fontWeight: "var(--fw-semibold)" }}>
+            <span
+              style={{
+                fontSize: "12px",
+                color: "var(--text-muted)",
+                fontWeight: "var(--fw-semibold)",
+              }}
+            >
               {c.field}
             </span>
             <span

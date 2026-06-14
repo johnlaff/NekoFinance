@@ -36,7 +36,11 @@ export function CardChip({
   className = "",
 }: CardChipProps) {
   const totalColor =
-    total < 0 ? "var(--money-neg)" : total > 0 ? "var(--money-pos)" : "var(--money-neutral)";
+    total < 0
+      ? "var(--money-neg)"
+      : total > 0
+        ? "var(--money-pos)"
+        : "var(--money-neutral)";
   return (
     <button
       type="button"

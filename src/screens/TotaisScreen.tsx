@@ -149,7 +149,13 @@ export function TotaisScreen() {
   const monthCap = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
 
   return (
-    <div style={{ maxWidth: "var(--content-max)", margin: "0 auto", padding: "var(--space-2)" }}>
+    <div
+      style={{
+        maxWidth: "var(--content-max)",
+        margin: "0 auto",
+        padding: "var(--space-2)",
+      }}
+    >
       <header
         style={{
           marginBottom: "var(--space-6)",
@@ -233,7 +239,10 @@ export function TotaisScreen() {
         />
       </section>
 
-      <section aria-label="Movimentações do mês" style={{ marginTop: "var(--space-8)" }}>
+      <section
+        aria-label="Movimentações do mês"
+        style={{ marginTop: "var(--space-8)" }}
+      >
         <h2
           style={{
             fontSize: "var(--fs-label)",
@@ -247,12 +256,20 @@ export function TotaisScreen() {
           Movimentações do mês
         </h2>
         <div style={{ display: "flex", gap: "var(--space-8)", flexWrap: "wrap" }}>
-          <span style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
-            <span style={{ fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>Entradas</span>
+          <span
+            style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}
+          >
+            <span style={{ fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>
+              Entradas
+            </span>
             <Money cents={m.income_cents} size="md" sign="auto" />
           </span>
-          <span style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
-            <span style={{ fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>Economia</span>
+          <span
+            style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}
+          >
+            <span style={{ fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>
+              Economia
+            </span>
             <Money cents={m.economia_cents} size="md" />
           </span>
         </div>

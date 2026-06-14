@@ -52,7 +52,13 @@ export function OwnerChip({
     >
       <span
         aria-hidden="true"
-        style={{ width: 7, height: 7, borderRadius: "50%", flex: "none", background: o.color }}
+        style={{
+          width: 7,
+          height: 7,
+          borderRadius: "50%",
+          flex: "none",
+          background: o.color,
+        }}
       />
       {label}
       {role ? <span style={{ color: "var(--text-faint)" }}>{role}</span> : null}

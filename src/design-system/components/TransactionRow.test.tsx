@@ -6,7 +6,12 @@ import { TransactionRow } from "./TransactionRow";
 describe("TransactionRow", () => {
   it("renderiza data, descrição e procedência", () => {
     render(
-      <TransactionRow date="13/06" desc="Mercado" amount={-12000} provenance="importado" />,
+      <TransactionRow
+        date="13/06"
+        desc="Mercado"
+        amount={-12000}
+        provenance="importado"
+      />,
     );
     expect(screen.getByText("13/06")).toBeInTheDocument();
     expect(screen.getByText("Mercado")).toBeInTheDocument();
@@ -15,7 +20,13 @@ describe("TransactionRow", () => {
 
   it("mostra a nota entre aspas e o badge de repasse", () => {
     render(
-      <TransactionRow date="01/06" desc="Aluguel" amount={-200000} note="ref. junho" passthrough />,
+      <TransactionRow
+        date="01/06"
+        desc="Aluguel"
+        amount={-200000}
+        note="ref. junho"
+        passthrough
+      />,
     );
     expect(screen.getByText("“ref. junho”")).toBeInTheDocument();
     expect(screen.getByText("repasse")).toBeInTheDocument();

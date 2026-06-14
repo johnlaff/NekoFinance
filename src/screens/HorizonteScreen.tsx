@@ -5,12 +5,7 @@ import { useCommand } from "../lib/useCommand";
 import { Money } from "../design-system/components/Money";
 import { EmptyState } from "../design-system/components/EmptyState";
 
-export type SaldoBand =
-  | "critical"
-  | "negative"
-  | "tight"
-  | "ok"
-  | "comfortable";
+export type SaldoBand = "critical" | "negative" | "tight" | "ok" | "comfortable";
 
 /** Faixa de saldo (heatmap). Thresholds em centavos, fiéis ao método. */
 export function saldoBand(cents: number): SaldoBand {
@@ -95,7 +90,13 @@ export function HorizonteScreen() {
         >
           Horizonte de saldos
         </h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "var(--fs-sm)", margin: "var(--space-1) 0 0" }}>
+        <p
+          style={{
+            color: "var(--text-muted)",
+            fontSize: "var(--fs-sm)",
+            margin: "var(--space-1) 0 0",
+          }}
+        >
           Saldo projetado dia a dia, mês a mês — verde folga, vermelho aperto.
         </p>
       </header>
@@ -103,7 +104,12 @@ export function HorizonteScreen() {
       <div
         role="table"
         aria-label="Horizonte de saldos projetados por dia e mês"
-        style={{ display: "flex", gap: "var(--space-4)", overflowX: "auto", paddingBottom: "var(--space-4)" }}
+        style={{
+          display: "flex",
+          gap: "var(--space-4)",
+          overflowX: "auto",
+          paddingBottom: "var(--space-4)",
+        }}
       >
         {cols.map((col) => (
           <div
@@ -143,7 +149,13 @@ export function HorizonteScreen() {
                     fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  <span style={{ fontSize: "var(--fs-sm)", color: "var(--text-muted)", width: 22 }}>
+                  <span
+                    style={{
+                      fontSize: "var(--fs-sm)",
+                      color: "var(--text-muted)",
+                      width: 22,
+                    }}
+                  >
                     {d.day}
                   </span>
                   <Money cents={d.balance} size="sm" sign="auto" />

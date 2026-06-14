@@ -6,7 +6,12 @@ import { MonthNav } from "./MonthNav";
 describe("MonthNav", () => {
   it("mostra o rótulo do mês", () => {
     render(
-      <MonthNav label="Fevereiro de 2026" onPrev={vi.fn()} onNext={vi.fn()} onToday={vi.fn()} />,
+      <MonthNav
+        label="Fevereiro de 2026"
+        onPrev={vi.fn()}
+        onNext={vi.fn()}
+        onToday={vi.fn()}
+      />,
     );
     expect(screen.getByText("Fevereiro de 2026")).toBeInTheDocument();
   });
@@ -41,7 +46,13 @@ describe("MonthNav", () => {
   it('esconde "Hoje" quando atToday e mostra/clica quando não', async () => {
     const onToday = vi.fn();
     const { rerender } = render(
-      <MonthNav label="Fev/26" onPrev={vi.fn()} onNext={vi.fn()} onToday={onToday} atToday />,
+      <MonthNav
+        label="Fev/26"
+        onPrev={vi.fn()}
+        onNext={vi.fn()}
+        onToday={onToday}
+        atToday
+      />,
     );
     expect(screen.queryByRole("button", { name: "Hoje" })).not.toBeInTheDocument();
 

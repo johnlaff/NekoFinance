@@ -59,9 +59,7 @@ describe("TotaisScreen (render)", () => {
     mockInvoke.mockReset();
     mockCommands({ get_forecast: FORECAST });
     render(<TotaisScreen />);
-    await waitFor(() =>
-      expect(screen.getByText("Performance")).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText("Performance")).toBeInTheDocument());
     // Começa no mês corrente (junho) → sem botão "Hoje".
     expect(screen.queryByRole("button", { name: "Hoje" })).not.toBeInTheDocument();
     expect(screen.getByText(/Junho de 2026/)).toBeInTheDocument();

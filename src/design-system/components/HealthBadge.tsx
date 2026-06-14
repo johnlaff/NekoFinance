@@ -116,7 +116,9 @@ export function HealthBadge({
           strokeLinecap="round"
           strokeDasharray={c}
           strokeDashoffset={c * (1 - pct / 100)}
-          style={{ transition: "stroke-dashoffset var(--dur-slow) var(--ease-entrance)" }}
+          style={{
+            transition: "stroke-dashoffset var(--dur-slow) var(--ease-entrance)",
+          }}
         />
       </svg>
       <span style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
@@ -130,7 +132,9 @@ export function HealthBadge({
           {text}
         </span>
         {sublabel ? (
-          <span style={{ fontSize: "10.5px", fontWeight: "var(--fw-medium)", opacity: 0.8 }}>
+          <span
+            style={{ fontSize: "10.5px", fontWeight: "var(--fw-medium)", opacity: 0.8 }}
+          >
             {sublabel}
           </span>
         ) : null}

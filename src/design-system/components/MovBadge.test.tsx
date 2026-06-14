@@ -23,9 +23,7 @@ describe("MovBadge", () => {
 
   it("usa o token de cor do tipo no fundo do glifo", () => {
     const { container } = render(<MovBadge kind="cartao" />);
-    const glyph = container.querySelector(
-      "span[aria-hidden='true']",
-    ) as HTMLElement;
+    const glyph = container.querySelector("span[aria-hidden='true']") as HTMLElement;
     expect(glyph.style.background).toBe("var(--type-cartao)");
   });
 
@@ -47,11 +45,7 @@ describe("MovBadge", () => {
   });
 
   it("aceita className", () => {
-    const { container } = render(
-      <MovBadge kind="entrada" className="x" />,
-    );
-    expect(
-      (container.firstElementChild as HTMLElement).className,
-    ).toContain("x");
+    const { container } = render(<MovBadge kind="entrada" className="x" />);
+    expect((container.firstElementChild as HTMLElement).className).toContain("x");
   });
 });

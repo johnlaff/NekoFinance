@@ -357,9 +357,6 @@ export function setTransactionTags(
   return invoke("set_transaction_tags_cmd", { transactionId, tagIds });
 }
 
-export function tagTotalsForMonth(
-  year: number,
-  month: number,
-): Promise<TagTotal[]> {
+export function tagTotalsForMonth(year: number, month: number): Promise<TagTotal[]> {
   return invoke("tag_totals_for_month_cmd", { year, month });
 }

@@ -30,7 +30,9 @@
   --diff-add-bg: var(--success-tint);
   --diff-remove: var(--danger-500);
   --diff-remove-bg: var(--danger-tint);
-  --diff-protected: var(--brass-300); /* colunas intocáveis: Data, Saldo, fórmulas, edição manual */
+  --diff-protected: var(
+    --brass-300
+  ); /* colunas intocáveis: Data, Saldo, fórmulas, edição manual */
 
   /* ---- Privacidade / ciclo de conexão ---- */
   --conn-online: var(--success-500);

@@ -63,7 +63,13 @@ export function TagsScreen() {
           >
             Tags
           </h1>
-          <p style={{ color: "var(--text-muted)", fontSize: "var(--fs-sm)", margin: "var(--space-1) 0 0" }}>
+          <p
+            style={{
+              color: "var(--text-muted)",
+              fontSize: "var(--fs-sm)",
+              margin: "var(--space-1) 0 0",
+            }}
+          >
             Rótulos livres que somam por mês. "! Pagar" e similares ficam no topo.
           </p>
         </div>
@@ -119,7 +125,8 @@ export function TagsScreen() {
                   height: 24,
                   borderRadius: "50%",
                   background: c,
-                  border: color === c ? "2px solid var(--text)" : "2px solid transparent",
+                  border:
+                    color === c ? "2px solid var(--text)" : "2px solid transparent",
                   cursor: "pointer",
                 }}
               />
@@ -139,7 +146,16 @@ export function TagsScreen() {
           description='Crie tags livres (com emoji e cor) para marcar lançamentos — como "! Pagar", "Viagem", "Delivery".'
         />
       ) : (
-        <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: "2px" }}>
+        <ul
+          style={{
+            listStyle: "none",
+            margin: 0,
+            padding: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: "2px",
+          }}
+        >
           {tags.map((t) => (
             <li
               key={t.id}
