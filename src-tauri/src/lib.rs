@@ -199,14 +199,25 @@ mod tests {
         .bind(&person_id).bind("Nubank").bind(1000000).bind(5).bind(15)
         .execute(&pool).await.unwrap();
 
+        // Spec 015 (WRONG #4): a árvore granular de categorias foi rebaixada para tags; só as
+        // macro-naturezas (fixo/variável) + "Sem categoria" permanecem.
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM category")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert!(
-            count.0 >= 11,
-            "expected >= 11 seed categories, got {}",
+        assert_eq!(
+            count.0, 3,
+            "só as macro-naturezas permanecem, got {}",
             count.0
+        );
+        let granular: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM category WHERE id = 'cat_var_alimentacao'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            granular.0, 0,
+            "categoria granular removida (rebaixada para tag)"
         );
 
         let txn_id = uuid::Uuid::new_v4().to_string();
@@ -223,7 +234,7 @@ mod tests {
             "INSERT INTO split (id, transaction_id, amount, category_id, owner_person_id) VALUES (?1,?2,?3,?4,?5)"
         )
         .bind(&split_id).bind(&txn_id).bind(4300)
-        .bind("cat_var_alimentacao").bind(&person_id)
+        .bind("cat_variable").bind(&person_id)
         .execute(&pool).await.unwrap();
 
         let checkin_id = uuid::Uuid::new_v4().to_string();
