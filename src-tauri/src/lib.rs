@@ -4,6 +4,7 @@ mod commands;
 mod forecast;
 mod google_sheets;
 mod oauth;
+mod tags;
 
 use oauth::AppDataDir;
 use std::sync::Mutex;
@@ -31,6 +32,10 @@ pub fn run() {
             commands::save_sheet_mapping,
             commands::get_sheet_mappings,
             commands::list_user_spreadsheets,
+            tags::create_tag_cmd,
+            tags::list_tags_cmd,
+            tags::set_transaction_tags_cmd,
+            tags::tag_totals_for_month_cmd,
         ])
         .setup(|app| {
             use tauri::Manager;
