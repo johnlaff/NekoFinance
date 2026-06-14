@@ -59,4 +59,29 @@ describe("TagsScreen", () => {
     expect(screen.getByLabelText("Nome da tag")).toBeInTheDocument();
     expect(screen.getByRole("radiogroup", { name: "Cor da tag" })).toBeInTheDocument();
   });
+
+  it("seletor de cor: padrão radiogroup (roving tabindex + setas)", async () => {
+    mockInvoke.mockReset();
+    mockCommands({ tag_totals_for_month_cmd: [] });
+    render(<TagsScreen />);
+    await waitFor(() =>
+      expect(screen.getByText("Nenhuma tag ainda")).toBeInTheDocument(),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Nova tag" }));
+    const swatches = screen.getAllByRole("radio");
+    // Roving tabindex: só o selecionado (1º, default) é tabbable.
+    expect(swatches[0]).toHaveAttribute("tabindex", "0");
+    expect(swatches[1]).toHaveAttribute("tabindex", "-1");
+    expect(swatches[0]).toHaveAttribute("aria-checked", "true");
+    // Seta direita move a seleção e o foco para o próximo swatch.
+    swatches[0]!.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(swatches[1]).toHaveAttribute("aria-checked", "true");
+    expect(swatches[1]).toHaveFocus();
+    expect(swatches[1]).toHaveAttribute("tabindex", "0");
+    // Wrap: da primeira para a esquerda vai para a última.
+    swatches[0]!.focus();
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(swatches[swatches.length - 1]).toHaveAttribute("aria-checked", "true");
+  });
 });

@@ -8,12 +8,20 @@ import { BalanceTrajectory } from "../design-system/components/BalanceTrajectory
 
 export type SaldoBand = "critical" | "negative" | "tight" | "ok" | "comfortable";
 
-/** Faixa de saldo (heatmap). Thresholds em centavos, fiéis ao método. */
-export function saldoBand(cents: number): SaldoBand {
-  if (cents < -50000) return "critical";
+/**
+ * Faixa de saldo (heatmap), RELATIVA à escala do usuário — `baselineCents` é o gasto mensal típico
+ * (`baseline_outflow_cents` do forecast). A doc do método proíbe copiar os limiares BRL fixos do app
+ * (−500/0/1000/2000): são absolutos e perdem sentido para rendas/escalas diferentes. Aqui as faixas
+ * são múltiplos do próprio gasto mensal: < −1 mês = crítico; < 0 = negativo; < 1 mês de folga =
+ * apertado; < 2 meses = ok; ≥ 2 meses = folga. Sem baseline ainda (usuário novo) → só pelo sinal.
+ */
+export function saldoBand(cents: number, baselineCents: number): SaldoBand {
+  const unit = baselineCents > 0 ? baselineCents : 0;
+  if (unit === 0) return cents < 0 ? "negative" : "ok";
+  if (cents < -unit) return "critical";
   if (cents < 0) return "negative";
-  if (cents < 100000) return "tight";
-  if (cents < 200000) return "ok";
+  if (cents < unit) return "tight";
+  if (cents < 2 * unit) return "ok";
   return "comfortable";
 }
 
@@ -89,6 +97,8 @@ export function HorizonteScreen() {
   }
 
   const cols = groupByMonth(forecast.daily, forecast.today);
+  // Escala do heatmap = gasto mensal típico do usuário (não centavos absolutos do app).
+  const scaleCents = forecast.baseline_outflow_cents;
 
   return (
     <div style={{ padding: "var(--space-2)" }}>
@@ -213,7 +223,7 @@ export function HorizonteScreen() {
                   key={d.day}
                   role="img"
                   aria-current={d.isToday ? "date" : undefined}
-                  aria-label={`Dia ${d.day}: saldo ${formatBRL(d.balance)} (${BAND_LABEL[saldoBand(d.balance)]})`}
+                  aria-label={`Dia ${d.day}: saldo ${formatBRL(d.balance)} (${BAND_LABEL[saldoBand(d.balance, scaleCents)]})`}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -221,7 +231,7 @@ export function HorizonteScreen() {
                     gap: "var(--space-3)",
                     padding: "var(--space-2) var(--space-3)",
                     borderRadius: "var(--radius-sm)",
-                    background: BAND_FILL[saldoBand(d.balance)],
+                    background: BAND_FILL[saldoBand(d.balance, scaleCents)],
                     outline: d.isToday ? "2px solid var(--border-focus)" : "none",
                     fontVariantNumeric: "tabular-nums",
                   }}

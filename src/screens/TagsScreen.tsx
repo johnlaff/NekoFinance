@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { createTag, tagTotalsForMonth } from "../lib/api";
 import { useCommand, invalidateCommands } from "../lib/useCommand";
 import { Money } from "../design-system/components/Money";
@@ -24,6 +24,21 @@ export function TagsScreen() {
   const [name, setName] = useState("");
   const [emoji, setEmoji] = useState("");
   const [color, setColor] = useState(PALETTE[0]!);
+  // Padrão WAI-ARIA radiogroup: roving tabindex (só o selecionado é tabbable) + setas navegam.
+  const swatchRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const onSwatchKey = (e: React.KeyboardEvent, i: number) => {
+    const last = PALETTE.length - 1;
+    let next: number | null = null;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") next = i === last ? 0 : i + 1;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp")
+      next = i === 0 ? last : i - 1;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = last;
+    if (next === null) return;
+    e.preventDefault();
+    setColor(PALETTE[next]!);
+    swatchRefs.current[next]?.focus();
+  };
 
   const totalsQ = useCommand(`tag_totals:${year}-${month}:${reload}`, () =>
     tagTotalsForMonth(year, month),
@@ -112,14 +127,19 @@ export function TagsScreen() {
             aria-label="Cor da tag"
             style={{ display: "flex", gap: "var(--space-2)" }}
           >
-            {PALETTE.map((c) => (
+            {PALETTE.map((c, i) => (
               <button
                 key={c}
+                ref={(el) => {
+                  swatchRefs.current[i] = el;
+                }}
                 type="button"
                 role="radio"
                 aria-checked={color === c}
                 aria-label={`Cor ${c}`}
+                tabIndex={color === c ? 0 : -1}
                 onClick={() => setColor(c)}
+                onKeyDown={(e) => onSwatchKey(e, i)}
                 style={{
                   width: 24,
                   height: 24,

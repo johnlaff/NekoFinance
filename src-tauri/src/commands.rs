@@ -403,7 +403,9 @@ async fn projection_seed(pool: &SqlitePool, today_naive: NaiveDate) -> Result<i6
 }
 
 /// Meta de poupança do método: piso de 25% (faixa 20–30%, "média ANUAL" — "o ano tem que ser de
-/// 20 a 30", aula "Como viver abaixo do que ganha"). Régua do guardrail "pode gastar".
+/// 20 a 30", aula "Como viver abaixo do que ganha"). Régua do guardrail ANUAL "pode gastar".
+/// O badge MENSAL "Dentro do ideal" (src/screens/TotaisScreen.tsx) usa 20% (piso da faixa), por ser
+/// leniente a variações de um mês; ambos ficam dentro da faixa canônica 20–30%.
 const SAVINGS_TARGET_BPS: i64 = 2500;
 
 /// Limiar de cobertura: um mês futuro com menos de 60% do gasto típico já lançado é tratado como
@@ -1140,16 +1142,26 @@ async fn dashboard_summary(
     // Crédito no mês (Régua 2) como MAGNITUDE positiva, mesma regra do Diário: `ABS` por
     // defesa-em-profundidade (amount é positivo por convenção) e fonte única — se há transação de
     // crédito no mês, ela vence; o check-in só preenche meses sem transação de crédito.
+    // Janela do MÊS CORRENTE [month_start, month_end]: o método pré-lança o ano inteiro de faturas
+    // na planilha; sem o limite superior, crédito datado meses à frente inflava o tile do mês (e o
+    // EXISTS sem teto suprimia o fallback de check-in). Escopo análogo ao `date = hoje` do Diário.
     let month_start = format!("{}-01", today_naive.format("%Y-%m"));
+    let month_end = forecast::last_day_of_month(today_naive.year(), today_naive.month())
+        .format("%Y-%m-%d")
+        .to_string();
     let credit_spend: (i64,) = sqlx::query_as(
         "SELECT CASE WHEN EXISTS(SELECT 1 FROM \"transaction\" \
-                                 WHERE type='expense' AND payment_method='credit' AND date >= ?1) \
+                                 WHERE type='expense' AND payment_method='credit' \
+                                   AND date >= ?1 AND date <= ?2) \
                      THEN ABS(COALESCE((SELECT SUM(amount) FROM \"transaction\" \
-                                        WHERE type='expense' AND payment_method='credit' AND date >= ?1), 0)) \
-                     ELSE COALESCE((SELECT SUM(credit_spend) FROM daily_checkin WHERE date >= ?1), 0) \
+                                        WHERE type='expense' AND payment_method='credit' \
+                                          AND date >= ?1 AND date <= ?2), 0)) \
+                     ELSE COALESCE((SELECT SUM(credit_spend) FROM daily_checkin \
+                                    WHERE date >= ?1 AND date <= ?2), 0) \
                 END",
     )
     .bind(&month_start)
+    .bind(&month_end)
     .fetch_one(pool)
     .await
     .map_err(|e| format!("query credit spend: {e}"))?;
@@ -1984,6 +1996,40 @@ mod tests {
         assert_eq!(
             s.daily_spend_today, 4_271,
             "transação Diário vence; check-in não soma por cima (sem double-count)"
+        );
+    }
+
+    // Regressão (review adversarial): o método pré-lança o ano inteiro de faturas na planilha. O
+    // tile "Crédito no mês" deve contar SÓ o mês corrente — crédito datado meses à frente não pode
+    // inflar o número (era over-count silencioso por falta do limite superior de data).
+    #[tokio::test]
+    async fn dashboard_credit_month_excludes_future_lumps() {
+        let pool = fixture_pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let sql = "INSERT INTO \"transaction\" (id, type, amount, date, payment_method, is_fixed, is_projection) \
+                   VALUES (?1,'expense',?2,?3,'credit',0,?4)";
+        // Mês corrente → conta.
+        sqlx::query(sql)
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(30_000i64)
+            .bind("2026-06-05")
+            .bind(0i64)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Fatura futura pré-lançada (projeção) → NÃO conta.
+        sqlx::query(sql)
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(99_999i64)
+            .bind("2026-08-10")
+            .bind(1i64)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let s = dashboard_summary(&pool, today).await.unwrap();
+        assert_eq!(
+            s.credit_spend_month, 30_000,
+            "só o crédito do mês corrente; fatura futura pré-lançada fica de fora"
         );
     }
 

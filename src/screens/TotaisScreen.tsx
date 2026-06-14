@@ -62,7 +62,11 @@ export function ymOf(m: { year: number; month: number }): string {
   return `${m.year}-${String(m.month).padStart(2, "0")}`;
 }
 
-const SAVINGS_TARGET_BPS = 2000; // meta 20% (piso da faixa 20–30%)
+// Piso 20% para o badge MENSAL "Dentro do ideal" — um mês pode variar dentro da faixa 20–30% do
+// método. O guardrail ANUAL "pode gastar hoje" usa 25% (alvo médio da faixa) em
+// src-tauri/src/commands.rs (SAVINGS_TARGET_BPS). Divergência deliberada: indicador mensal leniente,
+// gate anual mais firme; ambos dentro da faixa canônica 20–30%.
+const SAVINGS_TARGET_BPS = 2000;
 
 /** Encontra a métrica do mês corrente a partir do `today` do forecast. */
 export function currentMonthMetric(

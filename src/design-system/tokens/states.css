@@ -75,10 +75,10 @@
   --type-cartao: var(--cat-violet); /* Cartão — gasto com cartão (roxo) */
 
   /* ---- Heatmap de saldo (Saldos / Horizonte) ----
-     Faixas por saldo projetado. Thresholds em centavos: < -50000 crítico,
-     < 0 negativo, < 100000 apertado, < 200000 ok, >= 200000 folgado.
-     `-fill` = fundo da célula; o token base = texto/borda. (Refinar tons no slice do
-     componente Heatmap, com revisão visual via Playwright.) */
+     Faixas por saldo projetado, RELATIVAS ao gasto mensal típico do usuário (não centavos
+     absolutos — a doc do método proíbe copiar os limiares fixos do app): < -1 mês crítico,
+     < 0 negativo, < 1 mês apertado, < 2 meses ok, >= 2 meses folgado. Ver `saldoBand` em
+     HorizonteScreen.tsx. `-fill` = fundo da célula; o token base = texto/borda. */
   --saldo-band-critical: var(--danger-500);
   --saldo-band-negative: var(--danger-500);
   --saldo-band-tight: var(--warning-500);
