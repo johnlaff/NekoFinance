@@ -383,7 +383,7 @@ export function GoogleSheetsPanel({
               {importing ? "Importando…" : "Importar dados"}
             </Button>
             {importResult && (
-              <div className="gs-result gs-result--ok">
+              <div role="status" className="gs-result gs-result--ok">
                 <CheckCircle2 size={14} strokeWidth={1.75} />
                 {importResult}
               </div>
@@ -435,7 +435,7 @@ export function GoogleSheetsPanel({
               {importing ? "Importando…" : "Importar com mapeamento"}
             </Button>
             {importResult && (
-              <div className="gs-result gs-result--ok">
+              <div role="status" className="gs-result gs-result--ok">
                 <CheckCircle2 size={14} strokeWidth={1.75} />
                 {importResult}
               </div>
@@ -450,7 +450,7 @@ export function GoogleSheetsPanel({
         )}
 
         {error && (
-          <div className="gs-result gs-result--err">
+          <div role="alert" className="gs-result gs-result--err">
             <AlertCircle size={14} strokeWidth={1.75} />
             {error}
           </div>
@@ -486,7 +486,7 @@ export function GoogleSheetsPanel({
           </p>
         )}
         {error && (
-          <div className="gs-result gs-result--err">
+          <div role="alert" className="gs-result gs-result--err">
             <AlertCircle size={14} strokeWidth={1.75} />
             {error}
           </div>

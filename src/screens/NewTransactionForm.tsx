@@ -320,7 +320,10 @@ export function NewTransactionForm({ onCreated }: { onCreated?: () => void }) {
       </div>
 
       {error && (
-        <p style={{ color: "var(--danger-400)", fontSize: "var(--fs-sm)", margin: 0 }}>
+        <p
+          role="alert"
+          style={{ color: "var(--danger-400)", fontSize: "var(--fs-sm)", margin: 0 }}
+        >
           {error}
         </p>
       )}

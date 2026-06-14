@@ -1692,7 +1692,11 @@ pub async fn preview_write_back(
         .await?
         .ok_or("layout não detectado para esta aba — rode a detecção primeiro")?;
     let mappings = import::get_active_mappings_for_sheet(pool.inner(), &sheet_name).await?;
-    let txns = load_write_back_txns(pool.inner(), layout.year.unwrap_or(2025)).await?;
+    // Ano não detectado → nada a planejar (consistente com plan_write_back; nunca assume 2025).
+    let Some(year) = layout.year else {
+        return Ok(Vec::new());
+    };
+    let txns = load_write_back_txns(pool.inner(), year).await?;
 
     Ok(write_back::plan_write_back(
         &values.values,

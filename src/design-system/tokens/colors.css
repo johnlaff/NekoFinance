@@ -168,7 +168,7 @@
   --danger-tint: rgba(203, 70, 62, 0.1);
   --info-tint: rgba(46, 131, 172, 0.11);
 
-  --money-pos: #157a52; /* WCAG AA (>=4.5:1) p/ valores 13–15px sobre --surface no tema claro */
+  --money-pos: #147049; /* WCAG AA (>=4.5:1) p/ valores 13–15px sobre surface/bg/bg-subtle (claro) */
   --money-neg: #cb463e;
   --money-neutral: var(--text);
 
@@ -179,7 +179,7 @@
   --chart-5: #cb463e;
   --chart-6: #2e9488;
   --chart-grid: rgba(20, 32, 25, 0.1);
-  --chart-axis: #7c8782;
+  --chart-axis: #5f6b66; /* AA p/ rótulos de eixo (texto 10.5px) sobre --surface no tema claro */
 
   --focus-ring: rgba(34, 135, 100, 0.45);
   --bg-scrim: rgba(20, 32, 25, 0.4);

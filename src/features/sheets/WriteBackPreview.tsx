@@ -144,6 +144,7 @@ export function WriteBackPreview({
 
       {error && (
         <p
+          role="alert"
           style={{
             color: "var(--danger-400)",
             fontSize: "var(--fs-sm)",
