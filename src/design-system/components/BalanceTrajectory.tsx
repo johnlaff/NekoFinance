@@ -57,6 +57,24 @@ export function BalanceTrajectory({
   const minIdx = vals.indexOf(Math.min(...vals));
   const hasDeficit = min < 0;
 
+  // O hover (mouse-only) revela "dia · saldo"; para teclado/leitor de tela, resumimos os pontos-
+  // chave num aria-label dinâmico — hoje, menor saldo e data, déficit, fim do horizonte.
+  const todayBal = todayIdx >= 0 ? daily[todayIdx] : null;
+  const minDay = daily[minIdx];
+  const lastDay = daily[daily.length - 1];
+  const ariaSummary = daily.length
+    ? [
+        "Trajetória do saldo projetado.",
+        todayBal ? `Hoje: ${formatBRL(todayBal.balance_cents)}.` : "",
+        minDay
+          ? `Menor saldo: ${formatBRL(minDay.balance_cents)} em ${fmtDayMonth(minDay.date)}${hasDeficit ? " (fica negativo)" : ""}.`
+          : "",
+        lastDay ? `Fim do horizonte: ${formatBRL(lastDay.balance_cents)}.` : "",
+      ]
+        .filter(Boolean)
+        .join(" ")
+    : "Sem dados de saldo projetado.";
+
   const onMove = (e: React.MouseEvent) => {
     const rect = wrapRef.current?.getBoundingClientRect();
     if (!rect || rect.width === 0) return;
@@ -84,7 +102,7 @@ export function BalanceTrajectory({
         width="100%"
         preserveAspectRatio={compact ? "none" : "xMidYMid meet"}
         role="img"
-        aria-label="Trajetória do saldo projetado ao longo do horizonte"
+        aria-label={ariaSummary}
         style={{ display: "block", height: compact ? H : undefined }}
       >
         <defs>

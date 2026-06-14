@@ -116,7 +116,11 @@ export function DailyCheckinCard({
 
         {ceiling > 0 && (
           <div
-            aria-hidden="true"
+            role="progressbar"
+            aria-valuenow={pct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={`${pct}% do teto diário usado${overspent ? " — teto estourado" : ""}`}
             style={{
               height: 6,
               borderRadius: "var(--radius-pill)",
@@ -126,6 +130,7 @@ export function DailyCheckinCard({
             }}
           >
             <div
+              aria-hidden="true"
               style={{
                 width: "100%",
                 height: "100%",

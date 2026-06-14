@@ -188,6 +188,7 @@ export function HorizonteScreen() {
       <div
         role="group"
         aria-label="Saldo projetado por dia, agrupado por mês"
+        tabIndex={0}
         style={{
           display: "flex",
           gap: "var(--space-4)",

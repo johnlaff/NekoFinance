@@ -5,14 +5,15 @@ import { Money } from "../design-system/components/Money";
 import { Button } from "../design-system/components/Button";
 import { EmptyState } from "../design-system/components/EmptyState";
 
-const PALETTE = [
-  "var(--cat-jade)",
-  "var(--cat-sky)",
-  "var(--cat-orchid)",
-  "var(--cat-violet)",
-  "var(--cat-teal)",
-  "var(--cat-amber)",
-  "var(--cat-coral)",
+// Cor + nome humano (o aria-label precisa de um nome legível, não da string do token CSS).
+const PALETTE: { value: string; name: string }[] = [
+  { value: "var(--cat-jade)", name: "Verde" },
+  { value: "var(--cat-sky)", name: "Azul" },
+  { value: "var(--cat-orchid)", name: "Orquídea" },
+  { value: "var(--cat-violet)", name: "Violeta" },
+  { value: "var(--cat-teal)", name: "Turquesa" },
+  { value: "var(--cat-amber)", name: "Âmbar" },
+  { value: "var(--cat-coral)", name: "Coral" },
 ];
 
 export function TagsScreen() {
@@ -23,7 +24,7 @@ export function TagsScreen() {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [emoji, setEmoji] = useState("");
-  const [color, setColor] = useState(PALETTE[0]!);
+  const [color, setColor] = useState(PALETTE[0]!.value);
   // Padrão WAI-ARIA radiogroup: roving tabindex (só o selecionado é tabbable) + setas navegam.
   const swatchRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const onSwatchKey = (e: React.KeyboardEvent, i: number) => {
@@ -36,7 +37,7 @@ export function TagsScreen() {
     else if (e.key === "End") next = last;
     if (next === null) return;
     e.preventDefault();
-    setColor(PALETTE[next]!);
+    setColor(PALETTE[next]!.value);
     swatchRefs.current[next]?.focus();
   };
 
@@ -129,24 +130,26 @@ export function TagsScreen() {
           >
             {PALETTE.map((c, i) => (
               <button
-                key={c}
+                key={c.value}
                 ref={(el) => {
                   swatchRefs.current[i] = el;
                 }}
                 type="button"
                 role="radio"
-                aria-checked={color === c}
-                aria-label={`Cor ${c}`}
-                tabIndex={color === c ? 0 : -1}
-                onClick={() => setColor(c)}
+                aria-checked={color === c.value}
+                aria-label={c.name}
+                tabIndex={color === c.value ? 0 : -1}
+                onClick={() => setColor(c.value)}
                 onKeyDown={(e) => onSwatchKey(e, i)}
                 style={{
                   width: 24,
                   height: 24,
                   borderRadius: "50%",
-                  background: c,
+                  background: c.value,
                   border:
-                    color === c ? "2px solid var(--text)" : "2px solid transparent",
+                    color === c.value
+                      ? "2px solid var(--text)"
+                      : "2px solid transparent",
                   cursor: "pointer",
                 }}
               />

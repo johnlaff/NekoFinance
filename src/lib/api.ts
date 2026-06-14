@@ -130,8 +130,11 @@ export interface MonthMetric {
 /** Poupança do ano: realizada (honesta) vs projetada (otimista se o futuro está incompleto). */
 export interface AnnualSavings {
   realized_income_cents: number;
+  /** NET superávit (renda − saída) — o "colchão" do Neko, distinto da Economia registrada. */
   realized_savings_cents: number;
   realized_rate_bps: number;
+  /** Economia REGISTRADA do ano (transfers→reserva) — numerador do Economizado% do método. */
+  registered_economia_cents: number;
   projected_income_cents: number;
   projected_savings_cents: number;
   projected_rate_bps: number;

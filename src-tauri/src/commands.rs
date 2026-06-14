@@ -448,6 +448,30 @@ async fn realized_annual_savings(
     Ok((row.0, row.0 - row.1)) // (renda, poupança=net) dos meses completos
 }
 
+/// Economia REGISTRADA do ano até hoje (meses completos): transfers cujo destino é conta
+/// reserva/ilíquida — mesma classificação de `forecast::classify`. É o numerador do "Economizado"
+/// do método (Economia/Entradas), DISTINTO do net superávit de `realized_annual_savings` (que é o
+/// "colchão" do Neko). Existir os dois lado a lado sem se confundir foi um achado da review.
+async fn realized_annual_economia(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+) -> Result<i64, String> {
+    let year_start = format!("{}-01-01", today_naive.year());
+    let cur_ym = today_naive.format("%Y-%m").to_string();
+    let row: (i64,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(t.amount), 0) FROM \"transaction\" t \
+         LEFT JOIN account a ON a.id = t.to_account_id \
+         WHERE t.date >= ?1 AND substr(t.date,1,7) < ?2 \
+           AND t.type='transfer' AND a.liquidity IN ('reserve','illiquid')",
+    )
+    .bind(&year_start)
+    .bind(&cur_ym)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("realized economia: {e}"))?;
+    Ok(row.0)
+}
+
 /// Renda e net do ANO INTEIRO projetado (todas as linhas do ano). Exibido só como contraste com
 /// o realizado — é OTIMISTA quando os meses futuros estão incompletos (não usar no guardrail).
 async fn projected_annual_savings(
@@ -748,11 +772,17 @@ pub struct MonthMetricDto {
 }
 
 /// Poupança do ano: realizada (honesta) vs projetada (otimista quando o futuro está incompleto).
+/// ATENÇÃO a dois conceitos distintos (não confundir na UI): `*_savings_cents` é o NET superávit
+/// (renda − saída), o "colchão" do Neko; `registered_economia_cents` é a Economia REGISTRADA do
+/// método (transfers→reserva), numerador do Economizado%. O guardrail usa o net (colchão); o
+/// Economizado mensal usa a Economia registrada.
 #[derive(serde::Serialize)]
 pub struct AnnualSavingsDto {
     pub realized_income_cents: i64,
     pub realized_savings_cents: i64,
     pub realized_rate_bps: i64,
+    /// Economia REGISTRADA do ano (transfers→reserva/ilíquido), meses completos. Distinta do net.
+    pub registered_economia_cents: i64,
     pub projected_income_cents: i64,
     pub projected_savings_cents: i64,
     pub projected_rate_bps: i64,
@@ -866,10 +896,12 @@ async fn forecast_dto(pool: &SqlitePool, today_naive: NaiveDate) -> Result<Forec
             0
         }
     };
+    let annual_economia = realized_annual_economia(pool, today_naive).await?;
     let annual_savings = AnnualSavingsDto {
         realized_income_cents: annual_income,
         realized_savings_cents: annual_savings_amt,
         realized_rate_bps: rate_bps(annual_savings_amt, annual_income),
+        registered_economia_cents: annual_economia,
         projected_income_cents: proj_income,
         projected_savings_cents: proj_savings,
         projected_rate_bps: rate_bps(proj_savings, proj_income),
@@ -2212,6 +2244,45 @@ mod tests {
         // E sai do saldo de gasto (caixa cai de 100k para 70k).
         let d20 = fc.daily.iter().find(|d| d.date == "2026-03-20").unwrap();
         assert_eq!(d20.balance_cents, 70_000);
+    }
+
+    // Regressão (review adversarial): a Economia REGISTRADA anual (transfer→reserva) é distinta do
+    // net superávit. O ColchaoCard mostrava "R$ 0" fixo; agora vem do DTO. Só transfer→reserva conta
+    // — income/expense e transfer→líquido (net-zero entre contas) não.
+    #[tokio::test]
+    async fn annual_registered_economia_counts_only_reserve_transfers() {
+        let pool = fixture_pool().await;
+        insert_liquid_account(&pool, 100_000).await;
+        let pid: (String,) = sqlx::query_as("SELECT id FROM person LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let reserve_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO account (id, name, type, owner_person_id, balance, liquidity) VALUES (?1,'Reserva','savings',?2,0,'reserve')")
+            .bind(&reserve_id).bind(&pid.0).execute(&pool).await.unwrap();
+        let liquid2 = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO account (id, name, type, owner_person_id, balance, liquidity) VALUES (?1,'Conta2','bank',?2,0,'liquid')")
+            .bind(&liquid2).bind(&pid.0).execute(&pool).await.unwrap();
+        // Mês COMPLETO (março; hoje = junho).
+        insert_realized(&pool, "income", 500_000, "2026-03-05").await;
+        insert_realized(&pool, "expense", 100_000, "2026-03-10").await;
+        let mk_transfer = |amount: i64, date: &'static str, to: String| {
+            let p = pool.clone();
+            async move {
+                sqlx::query("INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) VALUES (?1,'transfer',?2,?3,?4,0)")
+                    .bind(uuid::Uuid::new_v4().to_string()).bind(amount).bind(date).bind(to)
+                    .execute(&p).await.unwrap();
+            }
+        };
+        mk_transfer(30_000, "2026-03-20", reserve_id).await; // → reserva = Economia registrada
+        mk_transfer(20_000, "2026-03-15", liquid2).await; // → líquido = net-zero, NÃO conta
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let fc = forecast_dto(&pool, today).await.unwrap();
+        assert_eq!(
+            fc.annual_savings.registered_economia_cents, 30_000,
+            "só transfer→reserva conta como Economia registrada"
+        );
     }
 
     async fn insert_sheet_balance(pool: &sqlx::SqlitePool, sheet: &str, date: &str, cents: i64) {

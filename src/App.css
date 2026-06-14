@@ -2160,7 +2160,7 @@ h3,
 
 .pockets-input:focus {
   outline: none;
-  border-color: var(--primary-500, var(--text-muted));
+  border-color: var(--primary);
 }
 
 .pockets-select {

@@ -19,7 +19,7 @@
   --ink-600: #2a3433; /* border */
   --ink-500: #3a4644; /* border-strong */
   --ink-400: #566461;
-  --ink-300: #6b7572; /* faint text */
+  --ink-300: #8e9692; /* faint text — WCAG AA (>=4.5:1) em todas as superfícies escuras */
   --ink-200: #9aa5a2; /* muted text */
   --ink-100: #c9d2cf;
   --ink-050: #e8edeb; /* primary text */
@@ -142,7 +142,7 @@
   --text: #142019;
   --text-strong: #0a100d;
   --text-muted: #56635e;
-  --text-faint: #7c8782;
+  --text-faint: #5f6b66; /* WCAG AA (>=4.5:1) sobre superfícies claras */
   --text-on-primary: #ffffff;
   --text-on-brass: #2a1c05;
 

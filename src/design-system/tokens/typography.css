@@ -33,6 +33,13 @@
   --fs-label: 12px; /* labels, chips */
   --fs-micro: 11px; /* annotations, axis ticks, captions */
 
+  /* Aliases de compatibilidade (t-shirt → escala semântica). Existiam usos em App.css sem o token
+     definido, que caíam silenciosamente para o tamanho herdado (bug). Prefira os nomes semânticos
+     em código novo. */
+  --fs-xs: var(--fs-label); /* 12px */
+  --fs-md: var(--fs-body); /* 14px */
+  --fs-lg: var(--fs-title); /* 16px */
+
   /* Money sizes */
   --fs-money-xl: 34px; /* hero metric tiles */
   --fs-money-lg: 22px; /* card metric */
