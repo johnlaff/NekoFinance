@@ -16,7 +16,7 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     await expect(page.getByText("Bolsos & patrimônio")).toBeVisible();
     await expect(page.getByText("R$ 35.420,00")).toBeVisible();
     await expect(page.getByText("Pode gastar até")).toBeVisible();
-    await expect(page.getByText(/Dia a dia de junho/)).toBeVisible();
+    await expect(page.getByText(/Junho de 2026/)).toBeVisible();
     // Stats do herói: reserva + nº de lançamentos.
     await expect(page.getByText("Lançamentos")).toBeVisible();
     // Chained daily table: today marked, salary day visible

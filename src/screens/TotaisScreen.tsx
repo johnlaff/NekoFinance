@@ -363,6 +363,7 @@ export function TotaisScreen() {
             hint="fixas (cartão entra aqui)"
           />
           <MovTotal label="Diário" cents={m.daily_out_cents} hint="gasto variável" />
+          <MovTotal label="Economia" cents={m.economia_cents} hint="guardado no mês" />
           <MovTotal
             label="Saída Total"
             cents={m.cost_of_living_cents}

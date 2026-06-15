@@ -47,7 +47,7 @@ describe("DashboardScreen (forecast view)", () => {
     await waitFor(() => {
       expect(screen.getAllByText("R$ 12.877,00").length).toBeGreaterThanOrEqual(2);
     });
-    expect(screen.getByText(/Dia a dia de junho/)).toBeInTheDocument();
+    expect(screen.getByText(/Junho de 2026/)).toBeInTheDocument();
 
     // "hoje" aparece no sufixo do herói e como marcador na grade do mês.
     expect(screen.getAllByText("hoje").length).toBeGreaterThanOrEqual(1);

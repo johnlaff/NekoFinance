@@ -36,7 +36,7 @@ describe("App (dashboard)", () => {
 
     expect(screen.getAllByText(/8\.420/).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Saldo projetado")).toBeInTheDocument();
-    expect(screen.getByText(/Dia a dia de junho/)).toBeInTheDocument();
+    expect(screen.getByText(/Junho de 2026/)).toBeInTheDocument();
     expect(screen.getByText("Lançamentos")).toBeInTheDocument();
   });
 

@@ -426,8 +426,8 @@ const COVERAGE_COMPLETE_BPS: i64 = 6_000;
 /// da reserva quando o slice de Economia existir; até lá o net é um proxy conservador (review P2).
 ///
 /// Conta só **meses COMPLETOS** do ano (`substr(date) < mês corrente`), nunca o mês em andamento.
-/// Meio do mês as contas já entraram (dias 10–12) mas o salário não (dia ~29), o que daria um
-/// net negativo de timing e um "pode gastar R$ 0" de falso pânico (auditoria vs planilha oficial).
+/// No meio do mês as contas fixas já podem ter entrado mas o salário ainda não, o que daria um
+/// net negativo de timing e um "pode gastar R$ 0" de falso pânico.
 ///
 /// NÃO filtra `is_projection`: ele é congelado no import (data vs hoje DAQUELE dia) e fica STALE
 /// quando o dono não re-importa por dias/meses. Um mês completo já passou — é realizado por
@@ -1127,10 +1127,11 @@ async fn month_grid(
 
     // Fluxos por dia, separados por tipo (Entrada / Saída fixa / Diário variável).
     let flows: Vec<(String, i64, i64, i64)> = sqlx::query_as(
+        // Crédito (régua 2) entra em Saída como a fatura, não em Diário — espelha forecast::classify.
         "SELECT date, \
                 COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END), 0), \
-                COALESCE(SUM(CASE WHEN type='expense' AND COALESCE(is_fixed,0)=1 THEN amount ELSE 0 END), 0), \
-                COALESCE(SUM(CASE WHEN type='expense' AND COALESCE(is_fixed,0)=0 THEN amount ELSE 0 END), 0) \
+                COALESCE(SUM(CASE WHEN type='expense' AND (COALESCE(is_fixed,0)=1 OR payment_method='credit') THEN amount ELSE 0 END), 0), \
+                COALESCE(SUM(CASE WHEN type='expense' AND COALESCE(is_fixed,0)=0 AND COALESCE(payment_method,'')<>'credit' THEN amount ELSE 0 END), 0) \
          FROM \"transaction\" WHERE date BETWEEN ?1 AND ?2 GROUP BY date",
     )
     .bind(&first_s)

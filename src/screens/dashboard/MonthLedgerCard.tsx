@@ -35,6 +35,8 @@ export function MonthLedgerCard({ today }: { today: string }) {
   const todayYm = today.slice(0, 7);
   const [ym, setYm] = useState(todayYm);
   const [year, month] = ym.split("-").map(Number);
+  const monthName = monthNamePtBR(`${ym}-01`);
+  const monthCap = monthName.charAt(0).toUpperCase() + monthName.slice(1);
   const gridQ = useCommand(`month_grid:${ym}`, () => getMonthGrid(year!, month!));
   const grid = gridQ.data ?? [];
   const hasData = grid.some(
@@ -51,10 +53,10 @@ export function MonthLedgerCard({ today }: { today: string }) {
       <div className="dash-card__head">
         <span className="dash-card__title">
           <CalendarRange size={16} strokeWidth={1.75} className="dash-card__ic" />
-          Dia a dia de {monthNamePtBR(`${ym}-01`)}
+          Dia a dia
         </span>
         <MonthNav
-          label={String(year)}
+          label={`${monthCap} de ${year}`}
           onPrev={() => setYm((v) => shiftYm(v, -1))}
           onNext={() => setYm((v) => shiftYm(v, 1))}
           onToday={() => setYm(todayYm)}
