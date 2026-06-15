@@ -72,7 +72,7 @@ describe("NewTransactionForm", () => {
     render(<NewTransactionForm />);
 
     await user.click(screen.getByRole("button", { name: /Saída/ }));
-    await user.type(screen.getByLabelText("Valor"), "2.311,00");
+    await user.type(screen.getByLabelText("Valor"), "2.300,00");
     await user.click(screen.getByLabelText("Repetir"));
     await user.click(screen.getByRole("button", { name: "Lançar" }));
 
@@ -81,7 +81,7 @@ describe("NewTransactionForm", () => {
       expect(call?.[1]).toMatchObject({
         txnType: "expense",
         isFixed: true,
-        amountCents: 231100,
+        amountCents: 230000,
         recurrence: { frequency: "mensal", repetitions: 12 },
       });
     });

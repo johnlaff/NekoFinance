@@ -103,10 +103,10 @@ depois sem re-importar.
   construção a ambiguidade "3 dígitos após o separador".
 - **`parse_number` com regra fechada de separador** (defesa para qualquer string que ainda
   chegue formatada):
-  - tem `.` e `,` → o que aparece **por último** é o decimal (cobre pt-BR `6.012,73` e
-    en_US `6,012.73`);
-  - só `,` → decimal, exceto padrão claro de agrupamento de milhar (`6,012`, grupos de 3);
-  - só `.` → decimal, exceto padrão claro de agrupamento (`6.012`, `1.234.567`).
+  - tem `.` e `,` → o que aparece **por último** é o decimal (cobre pt-BR `1.234,56` e
+    en_US `1,234.56`);
+  - só `,` → decimal, exceto padrão claro de agrupamento de milhar (`1,234`, grupos de 3);
+  - só `.` → decimal, exceto padrão claro de agrupamento (`3.012`, `1.234.567`).
 - **Dia inexistente no mês não vira transação** (a geometria tem linhas fixas 1–31 em todos
   os blocos; fevereiro 29–31 herda fórmulas — `2026-02-30` é pulado).
 - **Blocos de mês deduplicados** (primeira ocorrência vence): anotação solta com nome de mês

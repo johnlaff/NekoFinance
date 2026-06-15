@@ -22,7 +22,7 @@ const mk = (month: number, perf: number, cost: number): MonthMetric => ({
 const ANNUAL: AnnualMetrics = {
   year: 2026,
   months: Array.from({ length: 12 }, (_, i) =>
-    mk(i + 1, i + 1 === 3 ? 445700 : 0, i + 1 === 3 ? 254300 : 0),
+    mk(i + 1, i + 1 === 3 ? 450000 : 0, i + 1 === 3 ? 250000 : 0),
   ),
 };
 

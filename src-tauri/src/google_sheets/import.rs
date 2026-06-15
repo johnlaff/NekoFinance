@@ -709,9 +709,9 @@ pub async fn store_balance_series(
 }
 
 /// Converte texto monetário em centavos. Regra fechada de separadores (spec 010, slice 0):
-/// com `.` e `,` presentes, o que aparece POR ÚLTIMO é o decimal (cobre pt-BR `6.012,73` e
-/// en_US `6,012.73`); um separador sozinho é decimal, exceto padrão claro de agrupamento de
-/// milhar (`6.012`, `1.234.567`). Floats do xlsx chegam normalizados com 4 casas fixas
+/// com `.` e `,` presentes, o que aparece POR ÚLTIMO é o decimal (cobre pt-BR `1.234,56` e
+/// en_US `1,234.56`); um separador sozinho é decimal, exceto padrão claro de agrupamento de
+/// milhar (`1.234`, `1.234.567`). Floats do xlsx chegam normalizados com 4 casas fixas
 /// (ver `xlsx_cell_to_string`), então nunca caem na ambiguidade de 3 dígitos.
 pub fn parse_number(s: &str) -> i64 {
     let cleaned: String = s
@@ -799,7 +799,7 @@ pub fn parse_economia_sheet(rows: &[Vec<String>]) -> Vec<(i32, u32, i64)> {
 }
 
 /// Padrão inequívoco de milhar: primeiro grupo com 1–3 dígitos e todos os demais com
-/// exatamente 3 (`6.012`, `1.234.567`) — qualquer outra forma é tratada como decimal.
+/// exatamente 3 (`3.012`, `1.234.567`) — qualquer outra forma é tratada como decimal.
 fn is_thousands_grouping(s: &str, sep: char) -> bool {
     let unsigned = s.trim_start_matches('-');
     let mut parts = unsigned.split(sep);
@@ -861,13 +861,13 @@ mod tests {
         assert_eq!(parse_number("12.3400"), 1234);
         assert_eq!(parse_number("123.4560"), 12346);
         // Sheets FORMATTED pt-BR e en_US: o último separador é o decimal.
-        assert_eq!(parse_number("6.012,73"), 601273);
-        assert_eq!(parse_number("6,012.73"), 601273);
+        assert_eq!(parse_number("3.012,73"), 301273);
+        assert_eq!(parse_number("3,012.73"), 301273);
         assert_eq!(parse_number("R$ 1.234,56"), 123456);
         // Separador único com agrupamento claro de milhar.
-        assert_eq!(parse_number("6.012"), 601200);
+        assert_eq!(parse_number("3.012"), 301200);
         assert_eq!(parse_number("1.234.567"), 123456700);
-        assert_eq!(parse_number("6,012"), 601200);
+        assert_eq!(parse_number("3,012"), 301200);
         // Decimal pt-BR sem milhar; negativos.
         assert_eq!(parse_number("1370,5"), 137050);
         assert_eq!(parse_number("-45,00"), -4500);
