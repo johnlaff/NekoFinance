@@ -54,11 +54,11 @@ A daily record of actual spending vs budget. Contains two independent metrics:
 - **credit_spend**: sum of credit card expenses for the day (Régua 2 — reality check)
   _Avoid_: Daily log, spending log
 
-**Régua 1 (Diário)**:
-The methodology's core metric: daily_spend compared against daily_budget. Green/amber/red based on budget compliance. Goes silent (always green) when the user pays exclusively with credit.
+**Débito/Diário track** (internal name "Régua 1" — Neko's term, not the method's):
+The method's core metric: daily_spend compared against daily_budget. Green/amber/red based on budget compliance. Goes silent (always green) when the user pays exclusively with credit.
 
-**Régua 2 (Fatura)**:
-Credit bill tracking: SUM(credit_spend for the month) compared against monthly income. Prevents self-deception when Régua 1 is green but the credit bill is accumulating silently. Mia reports both independently.
+**Crédito/Fatura track** (internal name "Régua 2"):
+Credit bill tracking: SUM(credit_spend for the month) accumulates into the invoice that lands on the due date. Prevents self-deception when the daily track is green but the credit bill is accumulating silently. The engine tracks the two independently; it does not compare credit against income.
 
 ### Savings & Protection
 

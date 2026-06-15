@@ -52,10 +52,10 @@ Done (see `specs/` for the full spec/plan/tasks of each):
 
 Next:
 
-9. First-class invoice entity with per-owner splits and net-zero reimbursement links.
-10. Copilot (Mia) with deterministic tools first (read-only), then human-approved sheet diffs.
-11. Gated bidirectional write-back (per-cell checksum) — flips the system of record to SQLite (ADR-0003).
-12. Evals for diagnoses and safe write behavior; what-if scenarios.
+10. First-class invoice entity with per-owner splits and net-zero reimbursement links.
+11. Copilot (Mia) with deterministic tools first (read-only), then human-approved sheet diffs.
+12. Gated bidirectional write-back (per-cell checksum) — flips the system of record to SQLite (ADR-0003).
+13. Evals for diagnoses and safe write behavior; what-if scenarios.
 
 ## Naming Note
 

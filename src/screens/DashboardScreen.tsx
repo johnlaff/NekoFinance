@@ -193,7 +193,7 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
           sublabel={
             summary && !summary.has_credit
               ? "Sem cartão rastreado"
-              : "Régua 2, fatura acumulada"
+              : "No crédito, vira fatura no vencimento"
           }
         />
         <MetricTile
