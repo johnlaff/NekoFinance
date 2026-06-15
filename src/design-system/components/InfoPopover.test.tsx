@@ -9,12 +9,13 @@ describe("InfoPopover", () => {
     render(<InfoPopover term="reserva">Reserva</InfoPopover>);
 
     const trigger = screen.getByRole("button", { name: /Reserva/ });
-    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    // O explicador é um tooltip (não disclosure): sem aria-expanded; o tooltip aparece ao abrir.
+    expect(trigger).not.toHaveAttribute("aria-expanded");
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 
     await user.click(trigger);
-    expect(trigger).toHaveAttribute("aria-expanded", "true");
     const tip = screen.getByRole("tooltip");
+    expect(trigger).toHaveAttribute("aria-describedby");
     expect(tip).toHaveTextContent("Reserva");
     expect(tip).toHaveTextContent(/meses de gasto/);
     expect(screen.getByText("Esc para fechar")).toBeInTheDocument();

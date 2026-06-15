@@ -180,10 +180,9 @@ export function InfoPopover({
         className={["nk-term", hideMarker ? "nk-term--plain" : "", className]
           .filter(Boolean)
           .join(" ")}
-        // O popover é um explicador NÃO-modal (role="tooltip"), já anunciado via aria-describedby
-        // quando aberto. Não usamos aria-haspopup: ele promete um popup interativo (dialog/menu),
-        // o que confundiria o leitor de tela aqui.
-        aria-expanded={open}
+        // O popover é um explicador NÃO-modal (role="tooltip"), anunciado via aria-describedby
+        // quando aberto. NÃO usamos aria-expanded (sugere região colapsável/disclosure, incoerente
+        // com tooltip) nem aria-haspopup (promete um popup interativo dialog/menu inexistente).
         aria-describedby={open ? id : undefined}
         onClick={(e) => {
           e.stopPropagation();

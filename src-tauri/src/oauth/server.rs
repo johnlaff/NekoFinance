@@ -1,5 +1,6 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
+use std::time::Duration;
 
 pub struct OAuthServer {
     listener: TcpListener,
@@ -25,6 +26,12 @@ impl OAuthServer {
             .next()
             .ok_or("no incoming connection")?
             .map_err(|e| format!("accept error: {e}"))?;
+
+        // Timeout de leitura: uma conexão que abre e nunca manda a request line não pode pendurar a
+        // task para sempre (o servidor só aceita UMA conexão). 30s cobre qualquer redirect real.
+        stream
+            .set_read_timeout(Some(Duration::from_secs(30)))
+            .map_err(|e| format!("read timeout: {e}"))?;
 
         let mut reader = BufReader::new(stream.try_clone().map_err(|e| format!("clone: {e}"))?);
         let mut request_line = String::new();

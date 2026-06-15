@@ -1635,36 +1635,27 @@ pub async fn detect_sheet_layout(
     Ok(layout)
 }
 
-/// Lê as transações do ano e as converte para candidatas de write-back (magnitude positiva;
-/// a coluna vem do tipo). Transações mapeadas para as colunas da grade diária (Entrada/Saída/Diário).
-/// DECISÃO de
-/// método (a questão em aberto da planilha↔modelo): o CARTÃO **colapsa para um lump em Saída no
-/// vencimento** — o formato canônico que o dono edita à mão (a planilha crua não tem coluna Cartão).
-/// Sem cartão configurado, o crédito cai na Saída da própria data (melhor que sumir). `transfer`
-/// (Economia) NÃO entra aqui — vai para a aba `Economia` (ver `build_economia_plan`), pois não tem
-/// coluna na grade diária.
+/// Lê as transações e as converte para candidatas de write-back da grade diária do `year`
+/// (magnitude positiva; a coluna vem do tipo). DECISÃO de método (a questão em aberto planilha↔
+/// modelo): o CARTÃO **colapsa para um lump em Saída no VENCIMENTO** — formato canônico que o dono
+/// edita à mão (a planilha crua não tem coluna Cartão). Por isso o crédito é carregado pela janela
+/// de VENCIMENTO, não da compra: uma compra de DEZ/ano-1 vence em JAN/ano e tem que entrar no ano.
+/// Sem cartão configurado, o crédito do ano cai na Saída da própria data. `transfer` (Economia) NÃO
+/// entra aqui — vai para a aba `Economia` (ver `build_economia_plan`).
 async fn load_write_back_txns(pool: &SqlitePool, year: i32) -> Result<Vec<WriteBackTxn>, String> {
-    let rows: Vec<(String, String, i64, i64, String)> = sqlx::query_as(
-        "SELECT type, date, amount, is_fixed, COALESCE(payment_method, '') \
-         FROM \"transaction\" WHERE substr(date, 1, 4) = ?1",
+    // 1) Entrada + Saída/Diário (expense não-crédito) do ano, cada um na sua data.
+    let rows: Vec<(String, String, i64, i64)> = sqlx::query_as(
+        "SELECT type, date, amount, is_fixed FROM \"transaction\" \
+         WHERE substr(date, 1, 4) = ?1 \
+           AND NOT (type='expense' AND payment_method='credit')",
     )
     .bind(format!("{year:04}"))
     .fetch_all(pool)
     .await
     .map_err(|e| format!("query txns: {e}"))?;
 
-    // Ciclo do 1º cartão (fechamento/vencimento) para colapsar o crédito no lump do vencimento.
-    let card: Option<(i64, i64)> =
-        sqlx::query_as("SELECT closing_day, due_day FROM account WHERE type='credit_card' LIMIT 1")
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| format!("query card: {e}"))?;
-
     let mut out = Vec::new();
-    let mut credit_by_due: std::collections::HashMap<String, i64> =
-        std::collections::HashMap::new();
-
-    for (t, date, amount, is_fixed, pm) in rows {
+    for (t, date, amount, is_fixed) in rows {
         let mag = amount.abs();
         match t.as_str() {
             "income" => out.push(WriteBackTxn {
@@ -1672,21 +1663,6 @@ async fn load_write_back_txns(pool: &SqlitePool, year: i32) -> Result<Vec<WriteB
                 kind: import::RowKind::Entrada,
                 amount_cents: mag,
             }),
-            "expense" if pm == "credit" => match card {
-                Some((closing, due)) => {
-                    if let Ok(d) = NaiveDate::parse_from_str(&date, "%Y-%m-%d") {
-                        let due_date = forecast::cycle_due_date(d, closing as u32, due as u32);
-                        *credit_by_due
-                            .entry(due_date.format("%Y-%m-%d").to_string())
-                            .or_insert(0) += mag;
-                    }
-                }
-                None => out.push(WriteBackTxn {
-                    date,
-                    kind: import::RowKind::Saida,
-                    amount_cents: mag,
-                }),
-            },
             "expense" => out.push(WriteBackTxn {
                 date,
                 kind: if is_fixed != 0 {
@@ -1696,17 +1672,68 @@ async fn load_write_back_txns(pool: &SqlitePool, year: i32) -> Result<Vec<WriteB
                 },
                 amount_cents: mag,
             }),
-            _ => {} // transfer (Economia) → aba Economia, caminho separado
+            _ => {} // transfer (Economia) → aba Economia
         }
     }
 
-    // Lumps de crédito agregados por vencimento → Saída. (plan_write_back filtra os de outro ano.)
-    for (due, cents) in credit_by_due {
-        out.push(WriteBackTxn {
-            date: due,
-            kind: import::RowKind::Saida,
-            amount_cents: cents,
-        });
+    // 2) Cartão → lump no vencimento. Com cartão configurado, junta as compras cujo VENCIMENTO cai
+    //    no ano-alvo (janela DEZ/ano-1 .. DEZ/ano, pois a fatura vence ~1 mês após a compra).
+    let card: Option<(i64, i64)> =
+        sqlx::query_as("SELECT closing_day, due_day FROM account WHERE type='credit_card' LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("query card: {e}"))?;
+
+    match card {
+        Some((closing, due)) => {
+            let credit: Vec<(String, i64)> = sqlx::query_as(
+                "SELECT date, amount FROM \"transaction\" \
+                 WHERE type='expense' AND payment_method='credit' AND date >= ?1 AND date <= ?2",
+            )
+            .bind(format!("{:04}-12-01", year - 1))
+            .bind(format!("{year:04}-12-31"))
+            .fetch_all(pool)
+            .await
+            .map_err(|e| format!("query credit: {e}"))?;
+
+            let mut by_due: std::collections::HashMap<String, i64> =
+                std::collections::HashMap::new();
+            for (date, amount) in credit {
+                if let Ok(d) = NaiveDate::parse_from_str(&date, "%Y-%m-%d") {
+                    let due_date = forecast::cycle_due_date(d, closing as u32, due as u32);
+                    if due_date.year() == year {
+                        *by_due
+                            .entry(due_date.format("%Y-%m-%d").to_string())
+                            .or_insert(0) += amount.abs();
+                    }
+                }
+            }
+            for (due_date, cents) in by_due {
+                out.push(WriteBackTxn {
+                    date: due_date,
+                    kind: import::RowKind::Saida,
+                    amount_cents: cents,
+                });
+            }
+        }
+        None => {
+            // Sem cartão: não há ciclo para colapsar — crédito do ano cai na Saída da própria data.
+            let credit: Vec<(String, i64)> = sqlx::query_as(
+                "SELECT date, amount FROM \"transaction\" \
+                 WHERE type='expense' AND payment_method='credit' AND substr(date,1,4) = ?1",
+            )
+            .bind(format!("{year:04}"))
+            .fetch_all(pool)
+            .await
+            .map_err(|e| format!("query credit nocard: {e}"))?;
+            for (date, amount) in credit {
+                out.push(WriteBackTxn {
+                    date,
+                    kind: import::RowKind::Saida,
+                    amount_cents: amount.abs(),
+                });
+            }
+        }
     }
     Ok(out)
 }
@@ -2398,7 +2425,7 @@ mod tests {
 
         // Guardrail duplo: tudo aqui é projetado (nenhum realizado no ano) → a régua de poupança
         // ANUAL está inativa, manda o CAIXA: pode gastar = o vale de R$ 700,00. A régua de
-        // poupança anual é exercitada no teste `forecast_dual_guardrail_savings_binds_for_joao`.
+        // poupança anual é exercitada no teste `forecast_dual_guardrail_savings_binds_for_owner`.
         assert_eq!(fc.cash_headroom_cents, 70_000);
         assert_eq!(fc.binding_guardrail, "cash");
         assert_eq!(fc.savings_headroom_cents, None);
@@ -2830,7 +2857,7 @@ mod tests {
     // Crava o P0 do review: a performance de junho inclui o REALIZADO antes de hoje (não só
     // os eventos futuros), senão o mês aparece com sinal trocado e o guardrail decide errado.
     #[tokio::test]
-    async fn forecast_dual_guardrail_savings_binds_for_joao() {
+    async fn forecast_dual_guardrail_savings_binds_for_owner() {
         let pool = fixture_pool().await;
         insert_sheet_balance(&pool, "2026", "2026-06-13", 801_889).await; // Saldo de hoje
         insert_sheet_balance(&pool, "2026", "2026-12-31", 2_754_616).await; // estende horizonte

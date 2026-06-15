@@ -214,16 +214,26 @@ pub fn plan_economia_write_back(
     year: i32,
     economia_by_month: &[i64; 12],
 ) -> Vec<CellWrite> {
-    // Cabeçalho do bloco do ANO: a linha que tem o ANO (como número) E a palavra "Economia".
-    // `month_col` = coluna onde o ano aparece (os meses ficam logo abaixo, na mesma coluna).
+    // Cabeçalho do bloco do ANO: a linha que tem o ANO (número INTEIRO) E os rótulos "Economia" E
+    // "Entradas". Exigir os dois rótulos evita falso-match com uma célula de dado que por acaso seja
+    // igual ao ano. `month_col` = coluna onde o ano aparece (os meses ficam logo abaixo).
+    let is_year = |c: &str| {
+        c.trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|n| n.fract() == 0.0)
+            .map(|n| n as i32)
+            == Some(year)
+    };
     let header = rows.iter().enumerate().find_map(|(r, row)| {
-        let month_col = row
+        let has_entradas = row
             .iter()
-            .position(|c| c.trim().parse::<f64>().ok().map(|n| n as i32) == Some(year))?;
+            .any(|c| c.trim().eq_ignore_ascii_case("entradas"));
+        let month_col = row.iter().position(|c| is_year(c))?;
         let econ_col = row
             .iter()
             .position(|c| c.trim().eq_ignore_ascii_case("economia"))?;
-        Some((r, month_col, econ_col))
+        has_entradas.then_some((r, month_col, econ_col))
     });
     let Some((header_row, month_col, econ_col)) = header else {
         return Vec::new(); // bloco do ano não encontrado nesta aba
