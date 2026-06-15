@@ -5,45 +5,16 @@ import { useCommand } from "../lib/useCommand";
 import { Money, formatBRL } from "../design-system/components/Money";
 import { EmptyState } from "../design-system/components/EmptyState";
 import { BalanceTrajectory } from "../design-system/components/BalanceTrajectory";
+import {
+  saldoBand,
+  SALDO_BAND_FILL as BAND_FILL,
+  SALDO_BAND_LABEL as BAND_LABEL,
+  SALDO_BAND_LEGEND as BAND_LEGEND,
+  type SaldoBand,
+} from "../lib/saldoHeatmap";
 
-export type SaldoBand = "critical" | "negative" | "tight" | "ok" | "comfortable";
-
-/**
- * Faixa de saldo (heatmap), RELATIVA à escala do usuário — `baselineCents` é o gasto mensal típico
- * (`baseline_outflow_cents` do forecast). A doc do método proíbe copiar os limiares BRL fixos do app
- * (−500/0/1000/2000): são absolutos e perdem sentido para rendas/escalas diferentes. Aqui as faixas
- * são múltiplos do próprio gasto mensal: < −1 mês = crítico; < 0 = negativo; < 1 mês de folga =
- * apertado; < 2 meses = ok; ≥ 2 meses = folga. Sem baseline ainda (usuário novo) → só pelo sinal.
- */
-export function saldoBand(cents: number, baselineCents: number): SaldoBand {
-  const unit = baselineCents > 0 ? baselineCents : 0;
-  if (unit === 0) return cents < 0 ? "negative" : "ok";
-  if (cents < -unit) return "critical";
-  if (cents < 0) return "negative";
-  if (cents < unit) return "tight";
-  if (cents < 2 * unit) return "ok";
-  return "comfortable";
-}
-
-const BAND_FILL: Record<SaldoBand, string> = {
-  critical: "var(--saldo-band-critical-fill)",
-  negative: "var(--saldo-band-negative-fill)",
-  tight: "var(--saldo-band-tight-fill)",
-  ok: "var(--saldo-band-ok-fill)",
-  comfortable: "var(--saldo-band-comfortable-fill)",
-};
-
-const BAND_LEGEND: { band: SaldoBand; label: string }[] = [
-  { band: "critical", label: "crítico" },
-  { band: "negative", label: "negativo" },
-  { band: "tight", label: "apertado" },
-  { band: "ok", label: "ok" },
-  { band: "comfortable", label: "folga" },
-];
-
-const BAND_LABEL: Record<SaldoBand, string> = Object.fromEntries(
-  BAND_LEGEND.map((l) => [l.band, l.label]),
-) as Record<SaldoBand, string>;
+// Reexporta para os testes e telas que importam o termômetro a partir desta tela (origem histórica).
+export { saldoBand, type SaldoBand };
 
 interface DayCell {
   day: number;
@@ -97,8 +68,6 @@ export function HorizonteScreen() {
   }
 
   const cols = groupByMonth(forecast.daily, forecast.today);
-  // Escala do heatmap = gasto mensal típico do usuário (não centavos absolutos do app).
-  const scaleCents = forecast.baseline_outflow_cents;
 
   return (
     <div style={{ padding: "var(--space-2)" }}>
@@ -120,7 +89,8 @@ export function HorizonteScreen() {
             margin: "var(--space-1) 0 0",
           }}
         >
-          Saldo projetado dia a dia. Verde é folga, vermelho é aperto.
+          Saldo projetado dia a dia, no mesmo termômetro da planilha: quanto mais verde,
+          mais folga; quanto mais vermelho, mais aperto.
         </p>
       </header>
 
@@ -224,7 +194,7 @@ export function HorizonteScreen() {
                   key={d.day}
                   role="img"
                   aria-current={d.isToday ? "date" : undefined}
-                  aria-label={`Dia ${d.day}: saldo ${formatBRL(d.balance)} (${BAND_LABEL[saldoBand(d.balance, scaleCents)]})`}
+                  aria-label={`Dia ${d.day}: saldo ${formatBRL(d.balance)} (${BAND_LABEL[saldoBand(d.balance)]})`}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -232,7 +202,7 @@ export function HorizonteScreen() {
                     gap: "var(--space-3)",
                     padding: "var(--space-2) var(--space-3)",
                     borderRadius: "var(--radius-sm)",
-                    background: BAND_FILL[saldoBand(d.balance, scaleCents)],
+                    background: BAND_FILL[saldoBand(d.balance)],
                     outline: d.isToday ? "2px solid var(--border-focus)" : "none",
                     fontVariantNumeric: "tabular-nums",
                   }}

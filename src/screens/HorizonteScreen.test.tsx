@@ -1,38 +1,12 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
-import { HorizonteScreen, saldoBand, groupByMonth } from "./HorizonteScreen";
+import { HorizonteScreen, groupByMonth } from "./HorizonteScreen";
 import type { ForecastDay } from "../lib/api";
 import { FORECAST, mockCommands, mockInvoke } from "../test/commands";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
-describe("saldoBand — faixas RELATIVAS à escala do usuário", () => {
-  const BASE = 300_000; // gasto mensal típico: R$3.000
-  it.each([
-    [-300_001, "critical"], // < -1 mês de gasto no vermelho
-    [-300_000, "negative"],
-    [-1, "negative"],
-    [0, "tight"],
-    [299_999, "tight"], // < 1 mês de folga
-    [300_000, "ok"],
-    [599_999, "ok"], // < 2 meses
-    [600_000, "comfortable"], // >= 2 meses
-  ] as const)("saldo %d (base 300k) → %s", (cents, band) => {
-    expect(saldoBand(cents, BASE)).toBe(band);
-  });
-
-  it("é relativo à escala: o mesmo saldo muda de faixa conforme o baseline", () => {
-    // R$1.500 é folga (ok) p/ quem gasta 1k/mês, mas apertado p/ quem gasta 3k/mês.
-    expect(saldoBand(150_000, 100_000)).toBe("ok");
-    expect(saldoBand(150_000, 300_000)).toBe("tight");
-  });
-
-  it("sem baseline (usuário novo) classifica só pelo sinal", () => {
-    expect(saldoBand(-1, 0)).toBe("negative");
-    expect(saldoBand(0, 0)).toBe("ok");
-    expect(saldoBand(999_999, 0)).toBe("ok");
-  });
-});
+// O termômetro do saldo (faixas absolutas da planilha) é testado em `lib/saldoHeatmap.test.ts`.
 
 describe("groupByMonth", () => {
   it("agrupa a série diária em colunas por mês", () => {

@@ -15,6 +15,7 @@ import { Money } from "../design-system/components/Money";
 import { BalanceTrajectory } from "../design-system/components/BalanceTrajectory";
 import { InfoPopover } from "../design-system/components/InfoPopover";
 import { getDashboardSummary, getForecast, isTauri } from "../lib/api";
+import { saldoBand, SALDO_BAND_FILL, SALDO_BAND_LABEL } from "../lib/saldoHeatmap";
 import { fmtBRL, fmtDayMonth, monthNamePtBR } from "../lib/format";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { PrevisibilidadeCard } from "./dashboard/PrevisibilidadeCard";
@@ -286,12 +287,18 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
                             "—"
                           )}
                         </td>
-                        <td className="money">
-                          <Money
-                            cents={d.balance_cents}
-                            size="sm"
-                            sign={d.balance_cents < 0 ? "negative" : "none"}
-                          />
+                        {/* Saldo com o termômetro da planilha: a célula ganha o tom da faixa
+                            (verde=folga … vermelho=aperto). O número herda --text p/ AA sobre
+                            qualquer faixa; o sinal já vem da cor de fundo. */}
+                        <td
+                          className="money"
+                          style={{
+                            background: SALDO_BAND_FILL[saldoBand(d.balance_cents)],
+                            color: "var(--text)",
+                          }}
+                          title={`Saldo ${SALDO_BAND_LABEL[saldoBand(d.balance_cents)]}`}
+                        >
+                          <Money cents={d.balance_cents} size="sm" sign="none" />
                         </td>
                       </tr>
                     );
