@@ -1,12 +1,5 @@
 import { useState } from "react";
-import {
-  AlertTriangle,
-  CalendarRange,
-  Minus,
-  Sparkles,
-  TrendingDown,
-  TrendingUp,
-} from "lucide-react";
+import { AlertTriangle, Minus, Sparkles, TrendingDown, TrendingUp } from "lucide-react";
 import { PocketsCard } from "../features/pockets/PocketsCard";
 import { Button } from "../design-system/components/Button";
 import { EmptyState } from "../design-system/components/EmptyState";
@@ -15,13 +8,13 @@ import { Money } from "../design-system/components/Money";
 import { BalanceTrajectory } from "../design-system/components/BalanceTrajectory";
 import { InfoPopover } from "../design-system/components/InfoPopover";
 import { getDashboardSummary, getForecast, isTauri } from "../lib/api";
-import { saldoBand, SALDO_BAND_FILL, SALDO_BAND_LABEL } from "../lib/saldoHeatmap";
 import { fmtBRL, fmtDayMonth, monthNamePtBR } from "../lib/format";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { PrevisibilidadeCard } from "./dashboard/PrevisibilidadeCard";
 import { ColchaoCard } from "./dashboard/ColchaoCard";
 import { PerformanceCard } from "./dashboard/PerformanceCard";
 import { DailyCheckinCard } from "./dashboard/DailyCheckinCard";
+import { MonthLedgerCard } from "./dashboard/MonthLedgerCard";
 
 export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
   const [reloadKey, setReloadKey] = useState(0);
@@ -91,11 +84,6 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
   // Guardrail duplo (caixa × poupança). "Pode gastar" honesto = o mais apertado dos dois.
   const savingsBinds = forecast?.binding_guardrail === "savings";
   const targetPct = forecast ? Math.round(forecast.savings_target_bps / 100) : 25;
-  const ym = forecast ? forecast.today.slice(0, 7) : "";
-  // Tabela diária mostra só o mês corrente; o histórico completo é o Livro-razão (slice 8).
-  const dailyThisMonth = (forecast?.daily ?? []).filter(
-    (d) => d.date.slice(0, 7) === ym,
-  );
   const hasData = (summary?.transaction_count ?? 0) > 0;
 
   function handleLogged() {
@@ -225,90 +213,7 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
 
       {forecast && <PerformanceCard forecast={forecast} />}
 
-      <div className="dash-card">
-        <div className="dash-card__head">
-          <span className="dash-card__title">
-            <CalendarRange size={16} strokeWidth={1.75} className="dash-card__ic" />
-            Previsão diária de {forecast ? monthNamePtBR(forecast.today) : "mês atual"}
-          </span>
-        </div>
-        <div className="dash-card__body" style={{ padding: 0 }}>
-          {!forecast || (summary?.transaction_count ?? 0) === 0 ? (
-            <EmptyState
-              variant="empty"
-              title="Nenhuma transação"
-              description="Conecte o Google Sheets e importe sua planilha."
-            />
-          ) : dailyThisMonth.length === 0 ? (
-            <EmptyState
-              variant="empty"
-              title="Sem projeção para este mês"
-              description="Não há dias projetados no mês corrente."
-            />
-          ) : (
-            <div className="fc-scroll">
-              <table className="txn-table fc-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Data</th>
-                    <th scope="col">Entrada</th>
-                    <th scope="col">Saída</th>
-                    <th scope="col">Diário</th>
-                    <th scope="col">Saldo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {dailyThisMonth.map((d) => {
-                    const isToday = d.date === forecast.today;
-                    return (
-                      <tr key={d.date} className={isToday ? "fc-today" : ""}>
-                        <td>
-                          {fmtDayMonth(d.date)}
-                          {isToday && <span className="fc-today__tag">hoje</span>}
-                        </td>
-                        <td className="money">
-                          {d.income_cents ? (
-                            <Money cents={d.income_cents} size="sm" sign="auto" />
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td className="money">
-                          {d.fixed_out_cents ? (
-                            <Money cents={d.fixed_out_cents} size="sm" />
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td className="money">
-                          {d.daily_out_cents ? (
-                            <Money cents={d.daily_out_cents} size="sm" />
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        {/* Saldo com o termômetro da planilha: a célula ganha o tom da faixa
-                            (verde=folga … vermelho=aperto). O número herda --text p/ AA sobre
-                            qualquer faixa; o sinal já vem da cor de fundo. */}
-                        <td
-                          className="money"
-                          style={{
-                            background: SALDO_BAND_FILL[saldoBand(d.balance_cents)],
-                            color: "var(--text)",
-                          }}
-                          title={`Saldo ${SALDO_BAND_LABEL[saldoBand(d.balance_cents)]}`}
-                        >
-                          <Money cents={d.balance_cents} size="sm" sign="none" />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </div>
+      {forecast && <MonthLedgerCard today={forecast.today} />}
 
       <PocketsCard />
     </div>

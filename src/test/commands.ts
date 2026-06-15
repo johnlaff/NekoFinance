@@ -1,6 +1,12 @@
 import type { Mock } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import type { DashboardSummary, Forecast, Pockets, TransactionRow } from "../lib/api";
+import type {
+  DashboardSummary,
+  Forecast,
+  MonthGridDay,
+  Pockets,
+  TransactionRow,
+} from "../lib/api";
 import { invalidateCommands } from "../lib/useCommand";
 
 type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -237,6 +243,16 @@ export const FORECAST: Forecast = {
   ],
   month_end: [{ year: 2026, month: 6, balance_cents: 1287700 }],
 };
+
+/** Grade do mês (get_month_grid) espelhando os dias do FORECAST para junho/2026. */
+export const MONTH_GRID: MonthGridDay[] = FORECAST.daily.map((d) => ({
+  date: d.date,
+  day: Number(d.date.slice(8, 10)),
+  income_cents: d.income_cents,
+  fixed_out_cents: d.fixed_out_cents,
+  daily_out_cents: d.daily_out_cents,
+  balance_cents: d.balance_cents,
+}));
 
 export const DEFICIT_FORECAST: Forecast = {
   ...FORECAST,

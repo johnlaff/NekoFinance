@@ -504,6 +504,22 @@ export function getAnnualMetrics(year: number): Promise<AnnualMetrics> {
   return invoke("get_annual_metrics", { year });
 }
 
+/** Um dia da grade mensal (visão fiel à planilha). `balance_cents` é o Saldo da planilha (null se o
+ * dia não foi importado). */
+export interface MonthGridDay {
+  date: string;
+  day: number;
+  income_cents: number;
+  fixed_out_cents: number;
+  daily_out_cents: number;
+  balance_cents: number | null;
+}
+
+/** Grade Data|Entrada|Saída|Diário|Saldo de QUALQUER mês (passado/futuro), fiel à planilha. */
+export function getMonthGrid(year: number, month: number): Promise<MonthGridDay[]> {
+  return invoke("get_month_grid", { year, month });
+}
+
 export function listTags(): Promise<Tag[]> {
   return invoke("list_tags_cmd");
 }

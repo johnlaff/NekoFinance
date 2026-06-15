@@ -5,6 +5,7 @@ import {
   DEFICIT_FORECAST,
   EMPTY_POCKETS,
   FORECAST,
+  MONTH_GRID,
   POCKETS,
   SUMMARY,
   mockCommands,
@@ -21,7 +22,11 @@ describe("DashboardScreen (forecast view)", () => {
   });
 
   it("shows the safe-to-spend callout", async () => {
-    mockCommands({ get_dashboard_summary: SUMMARY, get_forecast: FORECAST });
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: FORECAST,
+      get_month_grid: MONTH_GRID,
+    });
     render(<DashboardScreen onAskMia={vi.fn()} />);
 
     await waitFor(() => {
@@ -30,26 +35,34 @@ describe("DashboardScreen (forecast view)", () => {
     expect(screen.getByText("R$ 350,00")).toBeInTheDocument();
   });
 
-  it("renders the daily projection table with today marked and dashes for zero flows", async () => {
-    mockCommands({ get_dashboard_summary: SUMMARY, get_forecast: FORECAST });
+  it("renders the daily month grid with today marked and dashes for zero flows", async () => {
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: FORECAST,
+      get_month_grid: MONTH_GRID,
+    });
     render(<DashboardScreen onAskMia={vi.fn()} />);
 
+    // Espera o CORPO da grade carregar (o título do card aparece antes dos dados).
     await waitFor(() => {
-      expect(screen.getByText(/Previsão diária de junho/)).toBeInTheDocument();
+      expect(screen.getAllByText("R$ 12.877,00").length).toBeGreaterThanOrEqual(2);
     });
+    expect(screen.getByText(/Dia a dia de junho/)).toBeInTheDocument();
 
-    // "hoje" aparece no sufixo do herói e como marcador na tabela diária.
+    // "hoje" aparece no sufixo do herói e como marcador na grade do mês.
     expect(screen.getAllByText("hoje").length).toBeGreaterThanOrEqual(1);
-    // Income day shows the inflow and the new chained balance.
-    expect(screen.getByText("R$ 7.000,00")).toBeInTheDocument();
-    const balances = screen.getAllByText("R$ 12.877,00");
-    expect(balances.length).toBeGreaterThanOrEqual(2); // 25th and 30th carry the same saldo
+    // Income day shows the inflow (também aparece no total do rodapé).
+    expect(screen.getAllByText("R$ 7.000,00").length).toBeGreaterThanOrEqual(1);
     // Zero flows render as em-dashes, not R$ 0,00.
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
   });
 
   it("shows the deficit warning only when the projection goes negative", async () => {
-    mockCommands({ get_dashboard_summary: SUMMARY, get_forecast: FORECAST });
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: FORECAST,
+      get_month_grid: MONTH_GRID,
+    });
     const { unmount } = render(<DashboardScreen onAskMia={vi.fn()} />);
     await waitFor(() => {
       expect(screen.getByText("Pode gastar até")).toBeInTheDocument();
@@ -57,21 +70,25 @@ describe("DashboardScreen (forecast view)", () => {
     expect(screen.queryByText(/Buraco previsto/)).not.toBeInTheDocument();
     unmount();
 
-    mockCommands({ get_dashboard_summary: SUMMARY, get_forecast: DEFICIT_FORECAST });
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: DEFICIT_FORECAST,
+      get_month_grid: MONTH_GRID,
+    });
     render(<DashboardScreen onAskMia={vi.fn()} />);
     await waitFor(() => {
       expect(screen.getByText(/Buraco previsto/)).toBeInTheDocument();
     });
-    // Aparece no alerta, no "pode faltar" do herói E na linha de saldo negativo da tabela.
-    // Money usa o minus real (U+2212).
-    expect(screen.getAllByText("−R$ 420,00")).toHaveLength(3);
-    expect(screen.getByText("28/06")).toBeInTheDocument();
+    // O buraco aparece ao menos no alerta e no "pode faltar" do herói (a grade do mês é
+    // testada à parte). Money usa o minus real (U+2212).
+    expect(screen.getAllByText("−R$ 420,00").length).toBeGreaterThanOrEqual(2);
   });
 
   it("shows liquidity-grouped pockets and the net worth (spec 007)", async () => {
     mockCommands({
       get_dashboard_summary: SUMMARY,
       get_forecast: FORECAST,
+      get_month_grid: MONTH_GRID,
       get_pockets: POCKETS,
     });
     render(<DashboardScreen onAskMia={vi.fn()} />);
@@ -90,6 +107,7 @@ describe("DashboardScreen (forecast view)", () => {
     mockCommands({
       get_dashboard_summary: SUMMARY,
       get_forecast: FORECAST,
+      get_month_grid: MONTH_GRID,
       get_pockets: EMPTY_POCKETS,
     });
     render(<DashboardScreen onAskMia={vi.fn()} />);
@@ -103,6 +121,7 @@ describe("DashboardScreen (forecast view)", () => {
     mockCommands({
       get_dashboard_summary: SUMMARY,
       get_forecast: FORECAST,
+      get_month_grid: MONTH_GRID,
       get_pockets: new Error("db locked"),
     });
     render(<DashboardScreen onAskMia={vi.fn()} />);
@@ -116,7 +135,11 @@ describe("DashboardScreen (forecast view)", () => {
   });
 
   it("uses the forecast month in the hero tile sublabel", async () => {
-    mockCommands({ get_dashboard_summary: SUMMARY, get_forecast: FORECAST });
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: FORECAST,
+      get_month_grid: MONTH_GRID,
+    });
     render(<DashboardScreen onAskMia={vi.fn()} />);
     await waitFor(() => {
       expect(screen.getByText("Fim de junho")).toBeInTheDocument();
@@ -127,6 +150,7 @@ describe("DashboardScreen (forecast view)", () => {
     mockCommands({
       get_dashboard_summary: { ...SUMMARY, has_credit: false },
       get_forecast: FORECAST,
+      get_month_grid: MONTH_GRID,
     });
     render(<DashboardScreen onAskMia={vi.fn()} />);
     await waitFor(() => {
