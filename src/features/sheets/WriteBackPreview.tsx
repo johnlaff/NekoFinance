@@ -8,6 +8,8 @@ import {
 import {
   applyWriteBack,
   previewWriteBack,
+  applyEconomiaWriteBack,
+  previewEconomiaWriteBack,
   writeBackEnabled,
   type CellWrite,
 } from "../../lib/api";
@@ -17,6 +19,7 @@ const KIND_LABEL: Record<string, string> = {
   entrada: "Entrada",
   saida: "Saída",
   diario: "Diário",
+  economia: "Economia",
 };
 
 /**
@@ -36,9 +39,15 @@ export function WriteBackPreview({
 }) {
   const [enabled, setEnabled] = useState(false);
   const [cells, setCells] = useState<CellWrite[] | null>(null);
+  const [econCells, setEconCells] = useState<CellWrite[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [applyMsg, setApplyMsg] = useState<string | null>(null);
+  const [econApplyMsg, setEconApplyMsg] = useState<string | null>(null);
+
+  // A aba selecionada é uma aba-ano ("2026"). A Economia é uma aba à parte, escrita por ano.
+  const year = Number.parseInt(sheetName, 10);
+  const yearValid = Number.isInteger(year) && year > 2000;
 
   useEffect(() => {
     let alive = true;
@@ -53,10 +62,21 @@ export function WriteBackPreview({
   async function preview() {
     setError(null);
     setApplyMsg(null);
+    setEconApplyMsg(null);
     await withLoading(setLoading, async () => {
       try {
         const result = await previewWriteBack(spreadsheetId, sheetName, clientId);
         setCells(result);
+        // Aba-ano também tem Economia (aba à parte): pré-visualiza o bloco do ano. É OPCIONAL —
+        // se não houver aba Economia/dados, não falha a prévia principal da grade diária.
+        if (yearValid) {
+          try {
+            const econ = await previewEconomiaWriteBack(spreadsheetId, year, clientId);
+            setEconCells(econ);
+          } catch {
+            setEconCells(null);
+          }
+        }
       } catch (e) {
         setError(String(e));
       }
@@ -66,15 +86,26 @@ export function WriteBackPreview({
   async function approve() {
     setApplyMsg(null);
     try {
-      await applyWriteBack();
-      setApplyMsg("Enviado.");
+      const n = await applyWriteBack(spreadsheetId, sheetName, clientId);
+      setApplyMsg(`Enviado: ${n} célula(s) atualizada(s).`);
     } catch (e) {
       // Flag desligada → mensagem clara, nada foi escrito.
       setApplyMsg(String(e));
     }
   }
 
+  async function approveEcon() {
+    setEconApplyMsg(null);
+    try {
+      const n = await applyEconomiaWriteBack(spreadsheetId, year, clientId);
+      setEconApplyMsg(`Enviado: ${n} célula(s) da aba Economia.`);
+    } catch (e) {
+      setEconApplyMsg(String(e));
+    }
+  }
+
   const changed = (cells ?? []).filter((c) => c.changed);
+  const econChanged = (econCells ?? []).filter((c) => c.changed);
 
   return (
     <section
@@ -213,6 +244,54 @@ export function WriteBackPreview({
               }}
             >
               {applyMsg}
+            </p>
+          )}
+        </div>
+      )}
+
+      {econCells != null && econChanged.length > 0 && (
+        <div
+          style={{
+            marginTop: 16,
+            paddingTop: 12,
+            borderTop: "var(--bw-hair) solid var(--border)",
+            display: "grid",
+            gap: 12,
+          }}
+        >
+          <p
+            style={{ color: "var(--text-muted)", fontSize: "var(--fs-sm)", margin: 0 }}
+          >
+            Aba <strong>Economia</strong> ({year}): {econChanged.length} mês(es) a
+            atualizar.
+          </p>
+          {econChanged.map((c) => (
+            <ApprovalDiffCard
+              key={c.a1}
+              sheet="Economia"
+              range={`${c.a1} · ${c.date}`}
+              changes={[{ field: "Economia", before: c.current, after: c.proposed }]}
+              status="pending"
+            />
+          ))}
+          <Button
+            variant="primary"
+            disabled={!enabled}
+            onClick={() => void approveEcon()}
+          >
+            {enabled
+              ? `Aprovar Economia (${econChanged.length} mês(es))`
+              : "Envio desligado"}
+          </Button>
+          {econApplyMsg && (
+            <p
+              style={{
+                color: "var(--text-muted)",
+                fontSize: "var(--fs-sm)",
+                margin: 0,
+              }}
+            >
+              {econApplyMsg}
             </p>
           )}
         </div>

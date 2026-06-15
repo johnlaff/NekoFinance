@@ -6,7 +6,7 @@
 //! + aprovação humana. Aqui a aprovação é a `ApprovalDiffCard`; o envio só ocorre com a flag ligada.
 
 use super::import::{RowKind, month_blocks_for, parse_number};
-use super::layout_detect::SheetLayout;
+use super::layout_detect::{SheetLayout, month_number_from_name};
 use serde::Serialize;
 
 /// Mestre da trava: o envio real ao Sheets só acontece com isto `true`. Mantido `false` até a
@@ -42,8 +42,10 @@ pub struct CellWrite {
     pub kind: String,
     /// Valor atual da célula (string crua da planilha; vazio = célula em branco).
     pub current: String,
-    /// Valor proposto (reais, pt-BR), formatado a partir da magnitude.
+    /// Valor proposto (reais, pt-BR), formatado a partir da magnitude — só para EXIBIÇÃO no diff.
     pub proposed: String,
+    /// Magnitude em centavos que será escrita (a escrita real usa o número, não a string pt-BR).
+    pub value_cents: i64,
     /// `true` quando o valor proposto difere do atual (por número, não por formatação).
     pub changed: bool,
 }
@@ -191,8 +193,68 @@ pub fn plan_write_back(
             kind: txn.kind.as_str().to_string(),
             current,
             proposed,
+            value_cents: txn.amount_cents,
             changed,
         });
+    }
+    out
+}
+
+/// Planeja o write-back da Economia para a aba `Economia`. PURO e read-only.
+/// `economia_by_month[m-1]` = centavos de Economia REGISTRADA do mês m (1..=12) do `year`.
+///
+/// A aba real EMPILHA um bloco por ano (a planilha cresce com 2027, 2028…): cada bloco tem uma
+/// linha-CABEÇALHO com o ANO (número) e os rótulos `Entradas | Economia | %`, seguida de 12 linhas
+/// `jan`..`dez` e um `TOTAL`. O mês fica na MESMA coluna do ano; `Economia` é a coluna do rótulo
+/// homônimo. Por isso escopamos ao BLOCO do ano-alvo (senão escreveríamos no ano errado) e só
+/// tocamos a coluna `Economia` — `Entradas` e `%` são FÓRMULAS, nunca escritas. Meses sem Economia
+/// (0) e células já iguais não geram escrita.
+pub fn plan_economia_write_back(
+    rows: &[Vec<String>],
+    year: i32,
+    economia_by_month: &[i64; 12],
+) -> Vec<CellWrite> {
+    // Cabeçalho do bloco do ANO: a linha que tem o ANO (como número) E a palavra "Economia".
+    // `month_col` = coluna onde o ano aparece (os meses ficam logo abaixo, na mesma coluna).
+    let header = rows.iter().enumerate().find_map(|(r, row)| {
+        let month_col = row
+            .iter()
+            .position(|c| c.trim().parse::<f64>().ok().map(|n| n as i32) == Some(year))?;
+        let econ_col = row
+            .iter()
+            .position(|c| c.trim().eq_ignore_ascii_case("economia"))?;
+        Some((r, month_col, econ_col))
+    });
+    let Some((header_row, month_col, econ_col)) = header else {
+        return Vec::new(); // bloco do ano não encontrado nesta aba
+    };
+
+    let mut out = Vec::new();
+    for (r, row) in rows.iter().enumerate().skip(header_row + 1) {
+        let Some(month) = row.get(month_col).and_then(|l| month_number_from_name(l)) else {
+            break; // fim do bloco anual (linha vazia, TOTAL ou próximo cabeçalho)
+        };
+        let cents = economia_by_month[(month - 1) as usize];
+        if cents > 0 {
+            let current = row
+                .get(econ_col)
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default();
+            out.push(CellWrite {
+                a1: format!("{}{}", col_to_a1(econ_col), r + 1),
+                row: r,
+                col: econ_col,
+                date: format!("{year}-{month:02}"),
+                kind: "economia".to_string(),
+                current: current.clone(),
+                proposed: cents_to_ptbr(cents),
+                value_cents: cents,
+                changed: parse_number(&current) != cents,
+            });
+        }
+        if month == 12 {
+            break; // chegou em dezembro → fim do bloco do ano
+        }
     }
     out
 }
@@ -300,6 +362,58 @@ mod tests {
         assert_eq!(plan[0].a1, "D3"); // Saída = col 3 (D)
         assert_eq!(plan[0].current, "");
         assert!(plan[0].changed);
+    }
+
+    #[test]
+    fn plans_economia_block_for_target_year_multi_year() {
+        // Estrutura REAL da aba Economia (auditada na planilha viva): blocos empilhados por ano;
+        // ano e mês na col B (idx 1), Economia na col D (idx 3); col A vazia. Dois anos aqui.
+        let h = |y: &str| {
+            vec![
+                "".into(),
+                y.to_string(),
+                "Entradas".into(),
+                "Economia".into(),
+                "%".into(),
+            ]
+        };
+        let m = |name: &str, ent: &str, eco: &str| {
+            vec![
+                "".into(),
+                name.to_string(),
+                ent.to_string(),
+                eco.to_string(),
+                "0".into(),
+            ]
+        };
+        let grid = vec![
+            h("2025"),
+            m("jan", "5000.00", "1000.00"),
+            m("fev", "5000.00", "0.0000"),
+            vec!["".into(), "TOTAL".into(), "".into(), "".into(), "".into()],
+            h("2026"),
+            m("jan", "9000.00", "0.0000"),
+        ];
+        let mut by = [0i64; 12];
+        by[0] = 100_000; // jan
+        by[1] = 50_000; // fev
+
+        // 2025: jan já tem 1000,00 (não muda); fev vazio → escreve 500,00. Para no TOTAL.
+        let plan = plan_economia_write_back(&grid, 2025, &by);
+        assert_eq!(plan.len(), 2);
+        let jan = plan.iter().find(|c| c.date == "2025-01").unwrap();
+        assert_eq!(jan.a1, "D2");
+        assert!(!jan.changed, "jan já tem 1000,00");
+        let fev = plan.iter().find(|c| c.date == "2025-02").unwrap();
+        assert_eq!(fev.a1, "D3");
+        assert_eq!(fev.proposed, "500,00");
+        assert!(fev.changed);
+
+        // 2026: escreve no BLOCO de 2026 (D6), não no de 2025 — escopo por ano.
+        let plan26 = plan_economia_write_back(&grid, 2026, &by);
+        assert_eq!(plan26.len(), 1);
+        assert_eq!(plan26[0].a1, "D6");
+        assert_eq!(plan26[0].date, "2026-01");
     }
 
     #[test]

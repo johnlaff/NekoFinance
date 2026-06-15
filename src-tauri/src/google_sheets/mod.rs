@@ -157,6 +157,44 @@ impl SheetsClient {
             .await
             .map_err(|e| format!("parse error: {e}"))
     }
+
+    /// Escreve células via `values:batchUpdate`. `updates` = lista de (range A1 COM nome de aba,
+    /// ex.: `'2026'!E3`, valor numérico em reais). Escrevemos NÚMERO cru com `valueInputOption=RAW`
+    /// — o Sheets armazena o número exato e o display pt-BR ("75,00") vem do formato da célula;
+    /// assim a escrita é independente do locale (espelha o `UNFORMATTED_VALUE` da leitura). Esta é
+    /// a ÚNICA via de escrita real; só roda atrás de `WRITE_BACK_ENABLED` + aprovação humana.
+    pub async fn batch_update_values(
+        &self,
+        spreadsheet_id: &str,
+        updates: &[(String, f64)],
+    ) -> Result<usize, String> {
+        if updates.is_empty() {
+            return Ok(0);
+        }
+        let data: Vec<serde_json::Value> = updates
+            .iter()
+            .map(|(range, value)| serde_json::json!({ "range": range, "values": [[value]] }))
+            .collect();
+        let body = serde_json::json!({ "valueInputOption": "RAW", "data": data });
+
+        let url = format!(
+            "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values:batchUpdate",
+        );
+        let resp = reqwest::Client::new()
+            .post(&url)
+            .bearer_auth(&self.token.access_token)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("batchUpdate request: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("Sheets batchUpdate error {status}: {body}"));
+        }
+        Ok(updates.len())
+    }
 }
 
 #[derive(Debug, Deserialize)]

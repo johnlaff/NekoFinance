@@ -37,6 +37,8 @@ pub fn run() {
             commands::preview_write_back,
             commands::write_back_enabled,
             commands::apply_write_back,
+            commands::preview_economia_write_back,
+            commands::apply_economia_write_back,
             commands::get_app_setting,
             commands::set_app_setting,
             commands::save_sheet_mapping,

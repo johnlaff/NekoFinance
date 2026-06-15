@@ -16,6 +16,7 @@ const CELLS: CellWrite[] = [
     kind: "diario",
     current: "50,00",
     proposed: "75,00",
+    value_cents: 7500,
     changed: true,
   },
   {
@@ -26,6 +27,7 @@ const CELLS: CellWrite[] = [
     kind: "entrada",
     current: "1000,00",
     proposed: "1000,00",
+    value_cents: 100000,
     changed: false,
   },
 ];
@@ -40,6 +42,7 @@ describe("WriteBackPreview", () => {
     mockCommands({
       write_back_enabled: false,
       preview_write_back: CELLS,
+      preview_economia_write_back: [],
       apply_write_back: new Error(
         "Write-back desligado: o envio ao Sheets está atrás de uma flag desabilitada.",
       ),

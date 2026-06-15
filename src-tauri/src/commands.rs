@@ -1632,8 +1632,14 @@ pub async fn detect_sheet_layout(
     Ok(layout)
 }
 
-/// Lê as transações do ano `year` e as converte para candidatas de write-back (tipo do método →
-/// RowKind; magnitude positiva). Income→Entrada; expense fixa/crédito→Saída; expense variável→Diário.
+/// Lê as transações do ano e as converte para candidatas de write-back (magnitude positiva;
+/// a coluna vem do tipo). Transações mapeadas para as colunas da grade diária (Entrada/Saída/Diário).
+/// DECISÃO de
+/// método (a questão em aberto da planilha↔modelo): o CARTÃO **colapsa para um lump em Saída no
+/// vencimento** — o formato canônico que o dono edita à mão (a planilha crua não tem coluna Cartão).
+/// Sem cartão configurado, o crédito cai na Saída da própria data (melhor que sumir). `transfer`
+/// (Economia) NÃO entra aqui — vai para a aba `Economia` (ver `build_economia_plan`), pois não tem
+/// coluna na grade diária.
 async fn load_write_back_txns(pool: &SqlitePool, year: i32) -> Result<Vec<WriteBackTxn>, String> {
     let rows: Vec<(String, String, i64, i64, String)> = sqlx::query_as(
         "SELECT type, date, amount, is_fixed, COALESCE(payment_method, '') \
@@ -1644,27 +1650,94 @@ async fn load_write_back_txns(pool: &SqlitePool, year: i32) -> Result<Vec<WriteB
     .await
     .map_err(|e| format!("query txns: {e}"))?;
 
-    Ok(rows
-        .into_iter()
-        .filter_map(|(t, date, amount, is_fixed, pm)| {
-            let kind = match t.as_str() {
-                "income" => import::RowKind::Entrada,
-                "expense" => {
-                    if is_fixed != 0 || pm == "credit" {
-                        import::RowKind::Saida
-                    } else {
-                        import::RowKind::Diario
+    // Ciclo do 1º cartão (fechamento/vencimento) para colapsar o crédito no lump do vencimento.
+    let card: Option<(i64, i64)> =
+        sqlx::query_as("SELECT closing_day, due_day FROM account WHERE type='credit_card' LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("query card: {e}"))?;
+
+    let mut out = Vec::new();
+    let mut credit_by_due: std::collections::HashMap<String, i64> =
+        std::collections::HashMap::new();
+
+    for (t, date, amount, is_fixed, pm) in rows {
+        let mag = amount.abs();
+        match t.as_str() {
+            "income" => out.push(WriteBackTxn {
+                date,
+                kind: import::RowKind::Entrada,
+                amount_cents: mag,
+            }),
+            "expense" if pm == "credit" => match card {
+                Some((closing, due)) => {
+                    if let Ok(d) = NaiveDate::parse_from_str(&date, "%Y-%m-%d") {
+                        let due_date = forecast::cycle_due_date(d, closing as u32, due as u32);
+                        *credit_by_due
+                            .entry(due_date.format("%Y-%m-%d").to_string())
+                            .or_insert(0) += mag;
                     }
                 }
-                _ => return None, // transfer (Economia) não tem coluna de write-back ainda
-            };
-            Some(WriteBackTxn {
+                None => out.push(WriteBackTxn {
+                    date,
+                    kind: import::RowKind::Saida,
+                    amount_cents: mag,
+                }),
+            },
+            "expense" => out.push(WriteBackTxn {
                 date,
-                kind,
-                amount_cents: amount.abs(),
-            })
-        })
-        .collect())
+                kind: if is_fixed != 0 {
+                    import::RowKind::Saida
+                } else {
+                    import::RowKind::Diario
+                },
+                amount_cents: mag,
+            }),
+            _ => {} // transfer (Economia) → aba Economia, caminho separado
+        }
+    }
+
+    // Lumps de crédito agregados por vencimento → Saída. (plan_write_back filtra os de outro ano.)
+    for (due, cents) in credit_by_due {
+        out.push(WriteBackTxn {
+            date: due,
+            kind: import::RowKind::Saida,
+            amount_cents: cents,
+        });
+    }
+    Ok(out)
+}
+
+/// Núcleo compartilhado por `preview_write_back` (read-only) e `apply_write_back` (escreve): lê a
+/// aba, resolve layout+mappings, carrega as transações do ano e planeja o diff célula a célula.
+/// Devolve o `SheetsClient` autenticado (para o apply reusar na escrita) + o plano.
+async fn build_write_back_plan(
+    app_dir: &std::path::Path,
+    pool: &SqlitePool,
+    spreadsheet_id: &str,
+    sheet_name: &str,
+    client_id: &str,
+    client_secret: Option<String>,
+) -> Result<(SheetsClient, Vec<CellWrite>), String> {
+    let client_secret = oauth::pkce::resolve_client_secret(client_secret);
+    let token =
+        oauth::token_store::ensure_valid_token(app_dir, client_id, client_secret.as_deref())
+            .await?;
+    let client = SheetsClient::new(token);
+    let range = format!("'{}'", sheet_name);
+    let values = client.get_sheet_values(spreadsheet_id, &range).await?;
+
+    let layout = import::get_layout_for_sheet(pool, sheet_name)
+        .await?
+        .ok_or("layout não detectado para esta aba — rode a detecção primeiro")?;
+    let mappings = import::get_active_mappings_for_sheet(pool, sheet_name).await?;
+    // Ano não detectado → nada a planejar (nunca assume 2025).
+    let Some(year) = layout.year else {
+        return Ok((client, Vec::new()));
+    };
+    let txns = load_write_back_txns(pool, year).await?;
+    let plan = write_back::plan_write_back(&values.values, &layout, &mappings, &txns);
+    Ok((client, plan))
 }
 
 /// Pré-visualização do write-back: lê a planilha e produz o DIFF (transação → célula) para
@@ -1678,30 +1751,16 @@ pub async fn preview_write_back(
     client_id: String,
     client_secret: Option<String>,
 ) -> Result<Vec<CellWrite>, String> {
-    let client_secret = oauth::pkce::resolve_client_secret(client_secret);
-    let token =
-        oauth::token_store::ensure_valid_token(&app_dir.0, &client_id, client_secret.as_deref())
-            .await?;
-    let client = SheetsClient::new(token);
-    let range = format!("'{}'", sheet_name);
-    let values = client.get_sheet_values(&spreadsheet_id, &range).await?;
-
-    let layout = import::get_layout_for_sheet(pool.inner(), &sheet_name)
-        .await?
-        .ok_or("layout não detectado para esta aba — rode a detecção primeiro")?;
-    let mappings = import::get_active_mappings_for_sheet(pool.inner(), &sheet_name).await?;
-    // Ano não detectado → nada a planejar (consistente com plan_write_back; nunca assume 2025).
-    let Some(year) = layout.year else {
-        return Ok(Vec::new());
-    };
-    let txns = load_write_back_txns(pool.inner(), year).await?;
-
-    Ok(write_back::plan_write_back(
-        &values.values,
-        &layout,
-        &mappings,
-        &txns,
-    ))
+    let (_client, plan) = build_write_back_plan(
+        &app_dir.0,
+        pool.inner(),
+        &spreadsheet_id,
+        &sheet_name,
+        &client_id,
+        client_secret,
+    )
+    .await?;
+    Ok(plan)
 }
 
 /// Estado da flag de write-back (a UI usa para mostrar "desligado" e desabilitar o envio).
@@ -1748,12 +1807,141 @@ async fn app_setting_set(pool: &SqlitePool, key: &str, value: &str) -> Result<()
     Ok(())
 }
 
-/// Aplica o write-back ao Sheets. Atrás da flag: enquanto desligada, falha cedo com mensagem clara
-/// e NÃO escreve nada. O envio real só será implementado quando a flag for explicitamente ligada.
+/// Aplica o write-back: escreve as células DIVERGENTES de volta na aba. Trava-mestra: enquanto
+/// `WRITE_BACK_ENABLED` estiver desligado, falha cedo e NÃO escreve nada. A UI já obteve o diff via
+/// `preview_write_back` e o humano aprovou; aqui só replanejamos (a planilha pode ter mudado) e
+/// escrevemos as células que ainda diferem. Retorna quantas células foram escritas.
 #[tauri::command]
-pub async fn apply_write_back() -> Result<(), String> {
+pub async fn apply_write_back(
+    app_dir: State<'_, AppDataDir>,
+    pool: State<'_, SqlitePool>,
+    spreadsheet_id: String,
+    sheet_name: String,
+    client_id: String,
+    client_secret: Option<String>,
+) -> Result<usize, String> {
     write_back::ensure_write_back_enabled()?;
-    Err("Write-back habilitado, mas o envio real ainda não foi implementado.".into())
+
+    let (client, plan) = build_write_back_plan(
+        &app_dir.0,
+        pool.inner(),
+        &spreadsheet_id,
+        &sheet_name,
+        &client_id,
+        client_secret,
+    )
+    .await?;
+
+    // Só as células que MUDARAM; range com nome da aba ('2026'!E3); valor numérico em reais.
+    let updates: Vec<(String, f64)> = plan
+        .iter()
+        .filter(|c| c.changed)
+        .map(|c| {
+            (
+                format!("'{}'!{}", sheet_name, c.a1),
+                c.value_cents as f64 / 100.0,
+            )
+        })
+        .collect();
+
+    client.batch_update_values(&spreadsheet_id, &updates).await
+}
+
+/// Economia REGISTRADA por mês (1..=12) do ano: soma dos transfers→reserva/ilíquido. É o numerador
+/// do Economizado% do método e o que vai para a coluna `Economia` da aba homônima no write-back.
+async fn load_economia_by_month(pool: &SqlitePool, year: i32) -> Result<[i64; 12], String> {
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT substr(t.date, 6, 2), COALESCE(SUM(ABS(t.amount)), 0) FROM \"transaction\" t \
+         LEFT JOIN account a ON a.id = t.to_account_id \
+         WHERE substr(t.date, 1, 4) = ?1 AND t.type = 'transfer' \
+           AND a.liquidity IN ('reserve','illiquid') \
+         GROUP BY substr(t.date, 6, 2)",
+    )
+    .bind(format!("{year:04}"))
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("query economia: {e}"))?;
+    let mut by = [0i64; 12];
+    for (mm, cents) in rows {
+        if let Ok(m) = mm.parse::<usize>()
+            && (1..=12).contains(&m)
+        {
+            by[m - 1] = cents;
+        }
+    }
+    Ok(by)
+}
+
+/// Núcleo compartilhado do write-back da Economia (aba `Economia`, separada da grade diária).
+async fn build_economia_plan(
+    app_dir: &std::path::Path,
+    pool: &SqlitePool,
+    spreadsheet_id: &str,
+    year: i32,
+    client_id: &str,
+    client_secret: Option<String>,
+) -> Result<(SheetsClient, Vec<CellWrite>), String> {
+    let client_secret = oauth::pkce::resolve_client_secret(client_secret);
+    let token =
+        oauth::token_store::ensure_valid_token(app_dir, client_id, client_secret.as_deref())
+            .await?;
+    let client = SheetsClient::new(token);
+    let values = client
+        .get_sheet_values(spreadsheet_id, "'Economia'")
+        .await?;
+    let by_month = load_economia_by_month(pool, year).await?;
+    let plan = write_back::plan_economia_write_back(&values.values, year, &by_month);
+    Ok((client, plan))
+}
+
+/// Preview READ-ONLY do write-back da Economia (transfers→reserva → coluna `Economia` por mês).
+#[tauri::command]
+pub async fn preview_economia_write_back(
+    app_dir: State<'_, AppDataDir>,
+    pool: State<'_, SqlitePool>,
+    spreadsheet_id: String,
+    year: i32,
+    client_id: String,
+    client_secret: Option<String>,
+) -> Result<Vec<CellWrite>, String> {
+    let (_client, plan) = build_economia_plan(
+        &app_dir.0,
+        pool.inner(),
+        &spreadsheet_id,
+        year,
+        &client_id,
+        client_secret,
+    )
+    .await?;
+    Ok(plan)
+}
+
+/// Aplica o write-back da Economia. Atrás da MESMA flag `WRITE_BACK_ENABLED`. Retorna nº de células.
+#[tauri::command]
+pub async fn apply_economia_write_back(
+    app_dir: State<'_, AppDataDir>,
+    pool: State<'_, SqlitePool>,
+    spreadsheet_id: String,
+    year: i32,
+    client_id: String,
+    client_secret: Option<String>,
+) -> Result<usize, String> {
+    write_back::ensure_write_back_enabled()?;
+    let (client, plan) = build_economia_plan(
+        &app_dir.0,
+        pool.inner(),
+        &spreadsheet_id,
+        year,
+        &client_id,
+        client_secret,
+    )
+    .await?;
+    let updates: Vec<(String, f64)> = plan
+        .iter()
+        .filter(|c| c.changed)
+        .map(|c| (format!("'Economia'!{}", c.a1), c.value_cents as f64 / 100.0))
+        .collect();
+    client.batch_update_values(&spreadsheet_id, &updates).await
 }
 
 #[tauri::command]

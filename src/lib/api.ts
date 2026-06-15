@@ -339,6 +339,8 @@ export interface CellWrite {
   kind: string;
   current: string;
   proposed: string;
+  /** Magnitude em centavos efetivamente escrita (o número, não a string pt-BR de exibição). */
+  value_cents: number;
   changed: boolean;
 }
 
@@ -361,9 +363,47 @@ export function previewWriteBack(
   });
 }
 
-/** Aplica o write-back. Atrás da flag: rejeita enquanto desligado (nunca escreve). */
-export function applyWriteBack(): Promise<void> {
-  return invoke("apply_write_back");
+/** Aplica o write-back (escreve as células divergentes). Atrás da flag: rejeita enquanto
+ * desligado (nunca escreve). Retorna quantas células foram escritas. */
+export function applyWriteBack(
+  spreadsheetId: string,
+  sheetName: string,
+  clientId: string,
+): Promise<number> {
+  return invoke("apply_write_back", {
+    spreadsheetId,
+    sheetName,
+    clientId,
+    clientSecret: clientSecretOrNull,
+  });
+}
+
+/** Preview READ-ONLY do write-back da Economia (transfers→reserva → coluna `Economia` por mês). */
+export function previewEconomiaWriteBack(
+  spreadsheetId: string,
+  year: number,
+  clientId: string,
+): Promise<CellWrite[]> {
+  return invoke("preview_economia_write_back", {
+    spreadsheetId,
+    year,
+    clientId,
+    clientSecret: clientSecretOrNull,
+  });
+}
+
+/** Aplica o write-back da Economia. Mesma flag; retorna nº de células escritas. */
+export function applyEconomiaWriteBack(
+  spreadsheetId: string,
+  year: number,
+  clientId: string,
+): Promise<number> {
+  return invoke("apply_economia_write_back", {
+    spreadsheetId,
+    year,
+    clientId,
+    clientSecret: clientSecretOrNull,
+  });
 }
 
 // --- Conciliação avançada: gate de conflito (spec 013) ---
