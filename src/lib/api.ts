@@ -8,12 +8,17 @@ export const GOOGLE_CLIENT_ID =
   (import.meta.env["VITE_GOOGLE_CLIENT_ID"] as string) ?? "";
 
 /**
- * Client secret do app desktop: NÃO é mais embutido no bundle do frontend (era exposição
- * desnecessária — qualquer um lê um bundle JS). Para um cliente desktop o secret é opcional: o
- * fluxo usa PKCE (RFC 8252) e, se o secret for necessário, o backend Rust o lê do PRÓPRIO env
- * (`GOOGLE_CLIENT_SECRET`, sem prefixo `VITE_`). Os chamadores enviam `null`.
+ * Client secret do app desktop. IMPORTANTE: o endpoint de token do Google EXIGE o client_secret
+ * para clientes do tipo "Desktop app" — PKCE NÃO o dispensa (Google não é RFC 8252-puro nesse
+ * ponto). Sem ele a troca do code falha e a conexão nunca completa. O secret de Desktop não é
+ * confidencial (a doc do Google o diz), então embuti-lo é aceitável. Por padrão vem do `.env`
+ * local (`VITE_GOOGLE_CLIENT_SECRET`). Alternativa de endurecimento: deixe o VITE vazio e defina
+ * `GOOGLE_CLIENT_SECRET` (sem `VITE_`) no ambiente do processo — o backend Rust o resolve de lá,
+ * mantendo o segredo fora do bundle JS. O backend usa o que receber OU o env (resolve_client_secret).
  */
-const clientSecretOrNull = null;
+const GOOGLE_CLIENT_SECRET =
+  (import.meta.env["VITE_GOOGLE_CLIENT_SECRET"] as string) ?? "";
+const clientSecretOrNull = GOOGLE_CLIENT_SECRET || null;
 
 export type AuthStatus = "connected" | "expired" | "disconnected" | "loading";
 
