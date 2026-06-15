@@ -86,7 +86,7 @@ export function DailyCheckinCard({
             ? overspent
               ? `${fmtBRL(-remaining)} acima do teto`
               : `${fmtBRL(remaining)} disponível`
-            : "sem teto definido"}
+            : "Teto do dia aparece ao lançar entradas do mês"}
         </span>
       </div>
       <div className="dash-card__body">

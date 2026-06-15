@@ -56,7 +56,7 @@ describe("App navigation", () => {
 
     await user.click(screen.getByRole("button", { name: "Metodologia" }));
     expect(screen.getByText(/Previsibilidade primeiro/)).toBeInTheDocument();
-    expect(screen.getByText("Régua 1 e Régua 2")).toBeInTheDocument();
+    expect(screen.getByText("Débito e crédito: dois ritmos")).toBeInTheDocument();
   });
 
   it("navigates to Mia via sidebar and via dashboard button", async () => {

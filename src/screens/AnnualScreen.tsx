@@ -159,10 +159,10 @@ export function AnnualScreen() {
                       style={{
                         ...tdNum,
                         fontFamily: "var(--font-money)",
-                        color: "var(--text)",
+                        color: empty ? "var(--text-faint)" : "var(--text)",
                       }}
                     >
-                      {(m.savings_rate_bps / 100).toFixed(0)}%
+                      {empty ? "—" : `${(m.savings_rate_bps / 100).toFixed(0)}%`}
                     </td>
                     <td style={tdNum}>
                       <Money cents={m.performance_cents} size="sm" sign="auto" />

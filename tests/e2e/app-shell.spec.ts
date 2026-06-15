@@ -57,7 +57,7 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
 
     await nav("Metodologia").click();
     await expect(page.getByText(/Previsibilidade primeiro/)).toBeVisible();
-    await expect(page.getByText("Régua 1 e Régua 2")).toBeVisible();
+    await expect(page.getByText("Débito e crédito: dois ritmos")).toBeVisible();
     await page.screenshot({
       fullPage: true,
       path: testInfo.outputPath("methodology.png"),

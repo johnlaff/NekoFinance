@@ -74,11 +74,11 @@
   --type-economia: var(--jade-600); /* Economia — poupança (verde-escuro) */
   --type-cartao: var(--cat-violet); /* Cartão — gasto com cartão (roxo) */
 
-  /* ---- Heatmap de saldo (Saldos / Horizonte) ----
-     Faixas por saldo projetado, RELATIVAS ao gasto mensal típico do usuário (não centavos
-     absolutos — a doc do método proíbe copiar os limiares fixos do app): < -1 mês crítico,
-     < 0 negativo, < 1 mês apertado, < 2 meses ok, >= 2 meses folgado. Ver `saldoBand` em
-     HorizonteScreen.tsx. `-fill` = fundo da célula; o token base = texto/borda. */
+  /* ---- Termômetro de saldo (Dashboard / Horizonte) ----
+     Faixas por saldo projetado, com limiares ABSOLUTOS em R$ (formatação condicional canônica da
+     planilha de referência): > 2000 folga, 1000–2000 ok, 0–1000 apertado, 0..−500 negativo,
+     < −500 crítico. Ver `saldoBand` em `lib/saldoHeatmap.ts`. `-fill` = fundo da célula; o token
+     base = texto/borda. */
   --saldo-band-critical: var(--danger-500);
   --saldo-band-negative: var(--danger-500);
   --saldo-band-tight: var(--warning-500);

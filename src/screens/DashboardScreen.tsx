@@ -182,7 +182,7 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
           sublabel={forecast ? `Fim de ${monthNamePtBR(forecast.today)}` : "Fim do mês"}
         />
         <MetricTile
-          label="Diário hoje"
+          label="Diário de hoje"
           value={summary ? fmtBRL(summary.daily_spend_today) : "—"}
           sublabel={summary ? `de ${fmtBRL(summary.daily_budget)}` : ""}
         />
@@ -200,7 +200,7 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
           label="Reserva"
           value={summary ? `${summary.reserve_months.toFixed(1)}m` : "—"}
           icon={reserveTrendIcon}
-          sublabel="Meta: 12 meses de gastos"
+          sublabel="Mín. 6m · paz 12m+"
         />
       </div>
 

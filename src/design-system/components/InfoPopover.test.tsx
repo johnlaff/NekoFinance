@@ -17,7 +17,7 @@ describe("InfoPopover", () => {
     const tip = screen.getByRole("tooltip");
     expect(trigger).toHaveAttribute("aria-describedby");
     expect(tip).toHaveTextContent("Reserva");
-    expect(tip).toHaveTextContent(/meses de gasto/);
+    expect(tip).toHaveTextContent(/meses de custo de vida/);
     expect(screen.getByText("Esc para fechar")).toBeInTheDocument();
   });
 

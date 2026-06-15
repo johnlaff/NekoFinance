@@ -30,7 +30,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   },
   reserva: {
     title: "Reserva",
-    body: "Quantos meses de gasto você consegue cobrir com o que tem guardado. O colchão para imprevistos.",
+    body: "Quantos meses de custo de vida você cobre com o que tem guardado. A meta mínima é 6 meses; a partir de 12 é a 'paz' financeira.",
   },
   caixa: {
     title: "Caixa",
@@ -61,7 +61,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
     body: "A média do gasto variável por dia até hoje. Ajuda a saber se o ritmo do mês está saudável.",
   },
   cartao: {
-    title: "Cartão (Régua 2)",
+    title: "Cartão",
     body: "Compras no cartão viram fatura no vencimento. Gastar hoje no crédito afunda os meses à frente.",
   },
 };

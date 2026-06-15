@@ -36,7 +36,7 @@ export function PocketsCard() {
         ) : !pockets || pockets.accounts.length === 0 ? (
           <p className="pockets-empty">
             Nenhum bolso cadastrado. Adicione conta, poupança, vale, previdência e FGTS
-            em Ajustes para o saldo projetado considerar só dinheiro líquido.
+            em Configurações para o saldo projetado considerar só dinheiro líquido.
           </p>
         ) : (
           <div className="pockets-grid">

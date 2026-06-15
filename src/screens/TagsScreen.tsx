@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { createTag, tagTotalsForMonth } from "../lib/api";
+import { monthNamePtBR } from "../lib/format";
 import { useCommand, invalidateCommands } from "../lib/useCommand";
 import { Money } from "../design-system/components/Money";
 import { Button } from "../design-system/components/Button";
@@ -86,7 +87,9 @@ export function TagsScreen() {
               margin: "var(--space-1) 0 0",
             }}
           >
-            Rótulos livres que somam por mês. "! Pagar" e similares ficam no topo.
+            Totais de {monthNamePtBR(`${year}-${String(month).padStart(2, "0")}-01`)} de{" "}
+            {year}. Rótulos livres para diagnóstico; "! Pagar" e similares ficam no
+            topo.
           </p>
         </div>
         <Button onClick={() => setOpen((o) => !o)}>

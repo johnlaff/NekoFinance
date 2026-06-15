@@ -25,8 +25,8 @@ const PRINCIPLES = [
   },
   {
     icon: Ruler,
-    title: "Régua 1 e Régua 2",
-    body: "Débito, PIX e dinheiro afetam o caixa no dia (Régua 1). Crédito acumula na fatura e só pesa no vencimento (Régua 2). O Neko acompanha as duas réguas de forma independente: isso evita o autoengano de um diário “zerado” enquanto a fatura cresce em silêncio.",
+    title: "Débito e crédito: dois ritmos",
+    body: "Débito, PIX e dinheiro afetam o caixa no mesmo dia. O crédito acumula na fatura e só pesa no vencimento. O Neko acompanha os dois de forma independente: isso evita o autoengano de um diário “zerado” enquanto a fatura cresce em silêncio.",
   },
   {
     icon: ShieldCheck,
@@ -36,7 +36,7 @@ const PRINCIPLES = [
   {
     icon: Sigma,
     title: "Cálculo determinístico",
-    body: "Todos os números vêm de um motor de cálculo determinístico e testado. A Mia explica e contextualiza, mas nunca inventa contas, e nenhuma escrita na sua planilha acontece sem a sua aprovação explícita.",
+    body: "Todos os números vêm de um motor de cálculo determinístico e testado. A Mia (em desenvolvimento) vai explicar e contextualizar esses números sem nunca inventar contas; e nenhuma escrita na sua planilha acontece sem a sua aprovação explícita.",
   },
 ];
 
