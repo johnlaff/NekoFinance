@@ -798,6 +798,67 @@ h3,
   color: var(--text-muted);
 }
 
+/* ---- Tags no Livro-razão ---- */
+.txn-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  border: var(--bw-hair) solid var(--border);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-medium);
+  vertical-align: middle;
+}
+.txn-tag-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.txn-tag-btn {
+  margin-left: 6px;
+  padding: 2px;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  vertical-align: middle;
+}
+.txn-tag-btn:hover,
+.txn-tag-btn[aria-expanded="true"] {
+  color: var(--primary);
+  background: var(--bg-subtle);
+}
+.txn-tag-editor td {
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-subtle);
+}
+.txn-tag-picker {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.txn-tag-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  border: var(--bw-hair) solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.txn-tag-opt.is-on {
+  border-color: var(--primary);
+  color: var(--text);
+  background: var(--primary-quiet);
+}
+
 /* ---- Copilot sidebar ---- */
 .assistant-panel {
   background: var(--bg-subtle);

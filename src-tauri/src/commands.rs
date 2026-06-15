@@ -1485,6 +1485,15 @@ async fn create_account_inner(
     Ok(id)
 }
 
+/// Tag anexada a um lançamento (para os chips do Livro-razão).
+#[derive(serde::Serialize, sqlx::FromRow, Clone)]
+pub struct TagOnRow {
+    pub id: String,
+    pub name: String,
+    pub color: String,
+    pub emoji: Option<String>,
+}
+
 #[derive(serde::Serialize)]
 pub struct TransactionRow {
     pub id: String,
@@ -1498,6 +1507,8 @@ pub struct TransactionRow {
     pub is_fixed: bool,
     /// Titulares distintos das parcelas (multi-titular). Vazio = sem split por pessoa.
     pub owners: Vec<String>,
+    /// Tags anexadas (diagnóstico). Mostradas como chips no Livro-razão.
+    pub tags: Vec<TagOnRow>,
     /// Proveniência: "projetado" (previsto), "importado" (da planilha) ou "manual" (do app).
     pub provenance: String,
 }
@@ -1543,9 +1554,30 @@ async fn recent_transactions(pool: &SqlitePool, limit: i64) -> Result<Vec<Transa
     .await
     .map_err(|e| format!("query: {e}"))?;
 
+    // Tags por transação (uma query só; o volume de tags é pequeno). Mapa transaction_id → tags.
+    let tag_rows: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT tt.transaction_id, t.id, t.name, t.color, t.emoji \
+         FROM transaction_tag tt JOIN tag t ON t.id = tt.tag_id \
+         ORDER BY t.is_special DESC, t.name COLLATE NOCASE",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("tag query: {e}"))?;
+    let mut tags_by_txn: std::collections::HashMap<String, Vec<TagOnRow>> =
+        std::collections::HashMap::new();
+    for (txn_id, id, name, color, emoji) in tag_rows {
+        tags_by_txn.entry(txn_id).or_default().push(TagOnRow {
+            id,
+            name,
+            color,
+            emoji,
+        });
+    }
+
     Ok(rows
         .into_iter()
         .map(|r| TransactionRow {
+            tags: tags_by_txn.get(&r.id).cloned().unwrap_or_default(),
             id: r.id,
             r#type: r.r#type,
             amount: r.amount,
@@ -2792,6 +2824,29 @@ mod tests {
         assert_eq!(split.owners, vec!["Ana".to_string(), "Bruno".to_string()]);
         let solo = rows.iter().find(|r| r.id != "t1").unwrap();
         assert!(solo.owners.is_empty(), "sem split → owners vazio");
+    }
+
+    // Os chips de tag do Livro-razão: recent_transactions devolve as tags anexadas.
+    #[tokio::test]
+    async fn recent_transactions_carry_attached_tags() {
+        let pool = fixture_pool().await;
+        let tag = crate::tags::create_tag(&pool, "Viagem", "var(--cat-sky)", Some("✈"), false)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO \"transaction\" (id, type, amount, date, is_projection) VALUES ('t1','expense',-5000,'2026-06-05',0)")
+            .execute(&pool).await.unwrap();
+        insert_realized(&pool, "expense", -3000, "2026-06-04").await; // sem tag
+        crate::tags::set_transaction_tags(&pool, "t1", &[tag.clone()])
+            .await
+            .unwrap();
+
+        let rows = recent_transactions(&pool, 10).await.unwrap();
+        let tagged = rows.iter().find(|r| r.id == "t1").unwrap();
+        assert_eq!(tagged.tags.len(), 1);
+        assert_eq!(tagged.tags[0].name, "Viagem");
+        assert_eq!(tagged.tags[0].emoji.as_deref(), Some("✈"));
+        let untagged = rows.iter().find(|r| r.id != "t1").unwrap();
+        assert!(untagged.tags.is_empty(), "sem tag → tags vazio");
     }
 
     // Caminho de escrita: lançamento único realizado, com tags anexadas.

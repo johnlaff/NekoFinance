@@ -62,6 +62,7 @@ export const TXNS: TransactionRow[] = [
     is_projection: false,
     is_fixed: false,
     owners: ["Ana", "Bruno"],
+    tags: [],
     provenance: "importado",
   },
   {
@@ -74,6 +75,7 @@ export const TXNS: TransactionRow[] = [
     is_projection: false,
     is_fixed: false,
     owners: [],
+    tags: [],
     provenance: "manual",
   },
   {
@@ -86,6 +88,7 @@ export const TXNS: TransactionRow[] = [
     is_projection: true,
     is_fixed: false,
     owners: [],
+    tags: [],
     provenance: "projetado",
   },
 ];

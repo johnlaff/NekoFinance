@@ -235,6 +235,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         is_projection: false,
         is_fixed: false,
         owners: ["Ana", "Bruno"],
+        tags: [],
         provenance: "importado",
       },
       {
@@ -247,6 +248,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         is_projection: false,
         is_fixed: false,
         owners: [],
+        tags: [],
         provenance: "manual",
       },
       {
@@ -259,6 +261,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         is_projection: false,
         is_fixed: true,
         owners: [],
+        tags: [],
         provenance: "importado",
       },
       {
@@ -271,6 +274,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         is_projection: true,
         is_fixed: false,
         owners: [],
+        tags: [],
         provenance: "projetado",
       },
       {
@@ -283,6 +287,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         is_projection: true,
         is_fixed: true,
         owners: [],
+        tags: [],
         provenance: "projetado",
       },
     ];

@@ -35,6 +35,14 @@ export interface DashboardSummary {
   transaction_count: number;
 }
 
+/** Tag anexada a um lançamento (chip do Livro-razão). */
+export interface TagRef {
+  id: string;
+  name: string;
+  color: string;
+  emoji: string | null;
+}
+
 export interface TransactionRow {
   id: string;
   type: string;
@@ -47,6 +55,8 @@ export interface TransactionRow {
   is_fixed: boolean;
   /** Titulares distintos das parcelas (multi-titular). Vazio = sem split por pessoa. */
   owners: string[];
+  /** Tags anexadas (diagnóstico), mostradas como chips. */
+  tags: TagRef[];
   /** Proveniência: "projetado" | "importado" | "manual" | "conciliado". */
   provenance: string;
 }
