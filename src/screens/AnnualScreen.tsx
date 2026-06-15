@@ -30,6 +30,11 @@ const th: React.CSSProperties = {
   padding: "var(--space-3) var(--space-4)",
 };
 
+const tdNum: React.CSSProperties = {
+  textAlign: "right",
+  padding: "var(--space-3) var(--space-4)",
+};
+
 export function AnnualScreen() {
   const thisYear = new Date().getFullYear();
   const [year, setYear] = useState(thisYear);
@@ -86,7 +91,7 @@ export function AnnualScreen() {
               margin: "var(--space-1) 0 0",
             }}
           >
-            As 4 métricas-herói mês a mês, o ano inteiro de uma vez.
+            Entradas, economia e as métricas do mês, o ano inteiro de uma vez.
           </p>
         </div>
         <MonthNav
@@ -114,11 +119,13 @@ export function AnnualScreen() {
             <thead>
               <tr style={{ borderBottom: "var(--bw-hair) solid var(--border)" }}>
                 <th style={{ ...th, textAlign: "left" }}>Mês</th>
-                <th style={th}>Performance</th>
-                <th style={th}>Custo de vida</th>
+                <th style={th}>Entradas</th>
+                <th style={th}>Economia</th>
                 <th style={th}>
                   <InfoPopover term="economizado">Economizado</InfoPopover>
                 </th>
+                <th style={th}>Performance</th>
+                <th style={th}>Custo de vida</th>
                 <th style={th}>Diário médio</th>
               </tr>
             </thead>
@@ -142,38 +149,28 @@ export function AnnualScreen() {
                     >
                       {MONTHS_PT[m.month - 1]}
                     </td>
-                    <td
-                      style={{
-                        textAlign: "right",
-                        padding: "var(--space-3) var(--space-4)",
-                      }}
-                    >
-                      <Money cents={m.performance_cents} size="sm" sign="auto" />
+                    <td style={tdNum}>
+                      <Money cents={m.income_cents} size="sm" sign="auto" />
+                    </td>
+                    <td style={tdNum}>
+                      <Money cents={m.economia_cents} size="sm" />
                     </td>
                     <td
                       style={{
-                        textAlign: "right",
-                        padding: "var(--space-3) var(--space-4)",
-                      }}
-                    >
-                      <Money cents={m.cost_of_living_cents} size="sm" />
-                    </td>
-                    <td
-                      style={{
-                        textAlign: "right",
-                        padding: "var(--space-3) var(--space-4)",
+                        ...tdNum,
                         fontFamily: "var(--font-money)",
                         color: "var(--text)",
                       }}
                     >
                       {(m.savings_rate_bps / 100).toFixed(0)}%
                     </td>
-                    <td
-                      style={{
-                        textAlign: "right",
-                        padding: "var(--space-3) var(--space-4)",
-                      }}
-                    >
+                    <td style={tdNum}>
+                      <Money cents={m.performance_cents} size="sm" sign="auto" />
+                    </td>
+                    <td style={tdNum}>
+                      <Money cents={m.cost_of_living_cents} size="sm" />
+                    </td>
+                    <td style={tdNum}>
                       <Money cents={m.real_daily_avg_cents} size="sm" />
                     </td>
                   </tr>
@@ -199,42 +196,29 @@ export function AnnualScreen() {
                   >
                     Total
                   </td>
-                  <td
-                    style={{
-                      textAlign: "right",
-                      padding: "var(--space-3) var(--space-4)",
-                    }}
-                  >
-                    <Money cents={totals.performance} size="sm" sign="auto" />
+                  <td style={tdNum}>
+                    <Money cents={totals.income} size="sm" sign="auto" />
                   </td>
-                  <td
-                    style={{
-                      textAlign: "right",
-                      padding: "var(--space-3) var(--space-4)",
-                    }}
-                  >
-                    <Money cents={totals.cost} size="sm" />
+                  <td style={tdNum}>
+                    <Money cents={totals.economia} size="sm" />
                   </td>
                   <td
                     title="Economizado no ano = total economizado ÷ total de entradas (meta 20–30%)"
                     style={{
-                      textAlign: "right",
-                      padding: "var(--space-3) var(--space-4)",
+                      ...tdNum,
                       fontFamily: "var(--font-money)",
                       color: savingsColor,
                     }}
                   >
                     {annualSavingsPct}%
                   </td>
-                  <td
-                    style={{
-                      textAlign: "right",
-                      padding: "var(--space-3) var(--space-4)",
-                      color: "var(--text-faint)",
-                    }}
-                  >
-                    —
+                  <td style={tdNum}>
+                    <Money cents={totals.performance} size="sm" sign="auto" />
                   </td>
+                  <td style={tdNum}>
+                    <Money cents={totals.cost} size="sm" />
+                  </td>
+                  <td style={{ ...tdNum, color: "var(--text-faint)" }}>—</td>
                 </tr>
               </tfoot>
             )}
