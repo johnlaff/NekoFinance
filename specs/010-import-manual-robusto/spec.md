@@ -75,7 +75,7 @@ depois sem re-importar.
 - Nada de schema novo de automação (`source`/`provider_txn_id`/`invoice` são da 008). A
   identidade de re-import usa o que existe (`sync_log.source_sheet` + `entity_id`).
 - Dinheiro em centavos inteiros; comparação com a planilha sempre com tolerância, nunca `==`
-  de float (a planilha carrega floats de 4 casas, ex. `10805.5048`).
+  de float (a planilha carrega floats de 4 casas, ex. `5678.1234`).
 - A semente do forecast é o **Saldo da planilha no dia mais recente ≤ hoje** (decisão do dono
   2026-06-12: "usar a coluna Saldo da planilha"). É seguro porque a engine só carrega eventos
   com `date > hoje` — os lumps futuros pré-lançados ficam DEPOIS da semente e nunca contam duas
@@ -112,8 +112,8 @@ depois sem re-importar.
 - **Blocos de mês deduplicados** (primeira ocorrência vence): anotação solta com nome de mês
   não cria bloco-fantasma.
 - Fixtures de teste com a **geometria real suja**: JANEIRO no offset 0, 12 blocos até a
-  coluna BO, célula espúria entre blocos, e a bateria de valores reais
-  (`6012.73`, `65.28`, `10805.5048`, `6.012,73`, `6,012.73`, `6.012`, `-45,00`).
+  coluna BO, célula espúria entre blocos, e a bateria de valores representativos
+  (`1234.56`, `12.34`, `5678.1234`, `1.234,56`, `1,234.56`, `1.234`, `-45,00`).
 
 ### Slice 1 — Re-import idempotente (TDD)
 
@@ -312,7 +312,7 @@ nº 1). Onboarding guiado + sugestão automática de diário = slices futuros.
 
 Falha de método das revisões anteriores: comparavam a UI/banco contra **o próprio banco** —
 circular (se o import errou, valida o erro). Correção: dois agentes adversariais compararam
-contra a **planilha oficial** (puxada direto do Google Sheets via token decifrado + notas de
+contra a **planilha oficial** (um snapshot da planilha + notas de
 célula). Achados e correções:
 
 - **Descrições perdidas (P0)**: o import gravava `"Entrada/Saída {ano}"` e DESCARTAVA as
@@ -322,7 +322,7 @@ célula). Achados e correções:
   fallback `"{kind} {date}"`. Caminho xlsx não tem notas (calamine) → fallback. **Re-importar**
   para popular.
 - **Falso pânico "pode gastar R$ 0" (P1)**: a poupança realizada incluía o mês corrente em
-  andamento (contas dos dias 10-12 dentro, salário do dia ~29 fora) → net negativo de timing.
+  andamento (contas fixas já dentro, salário do mês ainda fora) → net negativo de timing.
   **Corrigido**: `realized_annual_savings` conta só **meses completos** (`substr(date) < mês`).
 - **Performance otimista de meses incompletos (P1)**: o card mostrava meses futuros esparsos com
   taxas otimistas. **Corrigido**: a faixa marca meses incompletos (tracejado + "incompleto ⚠"), sem

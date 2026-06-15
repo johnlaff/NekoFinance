@@ -242,7 +242,7 @@ pub async fn import_sheet_data(
 
 /// Células numéricas do calamine viram string decimal-com-ponto de 4 casas fixas: `123.456`
 /// vira `123.4560`, que o `parse_number` nunca confunde com agrupamento de milhar
-/// (spec 010, slice 0 — antes, `65.28` perdia o ponto e inflava 100×).
+/// (spec 010, slice 0 — antes, `12.34` perdia o ponto e inflava 100×).
 fn xlsx_cell_to_string(cell: &calamine::Data) -> String {
     match cell {
         calamine::Data::Float(f) => format!("{f:.4}"),
@@ -2325,16 +2325,16 @@ mod tests {
     }
 
     // Spec 010 slice 0: floats do calamine chegam ao parse_number sem ambiguidade de
-    // separador — regressão do bug de 100× (65.28 → R$ 6.528,00).
+    // separador — regressão do bug de 100× (12.34 → R$ 1.234,00).
     #[test]
     fn xlsx_float_cells_parse_to_correct_cents() {
         assert_eq!(
-            xlsx_cell_to_string(&calamine::Data::Float(65.28)),
-            "65.2800"
+            xlsx_cell_to_string(&calamine::Data::Float(12.34)),
+            "12.3400"
         );
         assert_eq!(
-            xlsx_cell_to_string(&calamine::Data::Float(6012.73)),
-            "6012.7300"
+            xlsx_cell_to_string(&calamine::Data::Float(1234.56)),
+            "1234.5600"
         );
         assert_eq!(xlsx_cell_to_string(&calamine::Data::Int(1370)), "1370");
         assert_eq!(
@@ -2345,12 +2345,12 @@ mod tests {
 
         use google_sheets::import::parse_number;
         assert_eq!(
-            parse_number(&xlsx_cell_to_string(&calamine::Data::Float(65.28))),
-            6528
+            parse_number(&xlsx_cell_to_string(&calamine::Data::Float(12.34))),
+            1234
         );
         assert_eq!(
-            parse_number(&xlsx_cell_to_string(&calamine::Data::Float(10805.5048))),
-            1080550
+            parse_number(&xlsx_cell_to_string(&calamine::Data::Float(5678.1234))),
+            567812
         );
         // float que parece milhar (3 dígitos após o ponto) — o {:.4} blinda o caso.
         assert_eq!(

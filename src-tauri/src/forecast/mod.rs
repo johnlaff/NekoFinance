@@ -970,11 +970,11 @@ mod tests {
     // project_daily_ceiling: injeta o teto nos dias futuros do MÊS CORRENTE (realized=false).
     #[test]
     fn daily_ceiling_fills_current_month_future_days() {
-        let ev = project_daily_ceiling(11833, d("2026-02-20"), d("2026-02-28"), &HashSet::new());
+        let ev = project_daily_ceiling(12000, d("2026-02-20"), d("2026-02-28"), &HashSet::new());
         assert_eq!(ev.len(), 8); // 21..28 de fev
         assert!(
             ev.iter()
-                .all(|e| e.kind == EventKind::Daily && !e.realized && e.amount_cents == 11833)
+                .all(|e| e.kind == EventKind::Daily && !e.realized && e.amount_cents == 12000)
         );
         assert_eq!(ev[0].date, d("2026-02-21"));
         assert_eq!(ev[7].date, d("2026-02-28"));

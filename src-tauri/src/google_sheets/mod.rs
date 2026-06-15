@@ -251,9 +251,9 @@ mod tests {
     #[test]
     fn json_cells_normalize_numbers_to_fixed_decimals() {
         use serde_json::json;
-        assert_eq!(json_cell_to_string(&json!(65.28)), "65.2800");
-        assert_eq!(json_cell_to_string(&json!(6012.73)), "6012.7300");
-        assert_eq!(json_cell_to_string(&json!(10805.5048)), "10805.5048");
+        assert_eq!(json_cell_to_string(&json!(12.34)), "12.3400");
+        assert_eq!(json_cell_to_string(&json!(1234.56)), "1234.5600");
+        assert_eq!(json_cell_to_string(&json!(5678.1234)), "5678.1234");
         assert_eq!(json_cell_to_string(&json!(1)), "1.0000");
         assert_eq!(json_cell_to_string(&json!(" JANEIRO ")), "JANEIRO");
         assert_eq!(json_cell_to_string(&json!("")), "");

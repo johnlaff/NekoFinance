@@ -848,17 +848,17 @@ mod tests {
         assert_eq!(parse_number(""), 0);
     }
 
-    // Regressão spec 010 slice 0: valores reais da planilha nos dois locales + xlsx.
+    // Regressão spec 010 slice 0: valores representativos nos dois locales + xlsx.
     #[test]
     fn test_parse_number_separator_rules() {
-        // xlsx/calamine: ponto decimal puro — antes inflava 100× (65.28 → 652800).
-        assert_eq!(parse_number("65.28"), 6528);
-        assert_eq!(parse_number("6012.73"), 601273);
-        // Saldo real com 4 casas: arredonda a centavos na fronteira.
-        assert_eq!(parse_number("10805.5048"), 1080550);
-        assert_eq!(parse_number("289.9252"), 28993);
+        // xlsx/calamine: ponto decimal puro — antes inflava 100× (12.34 → 123400).
+        assert_eq!(parse_number("12.34"), 1234);
+        assert_eq!(parse_number("1234.56"), 123456);
+        // Valor com 4 casas: arredonda a centavos na fronteira.
+        assert_eq!(parse_number("5678.1234"), 567812);
+        assert_eq!(parse_number("456.7891"), 45679);
         // Float do xlsx normalizado com 4 casas fixas (xlsx_cell_to_string).
-        assert_eq!(parse_number("65.2800"), 6528);
+        assert_eq!(parse_number("12.3400"), 1234);
         assert_eq!(parse_number("123.4560"), 12346);
         // Sheets FORMATTED pt-BR e en_US: o último separador é o decimal.
         assert_eq!(parse_number("6.012,73"), 601273);
@@ -1112,8 +1112,8 @@ mod tests {
         }
         let mut day1 = vec![String::new(); width];
         day1[0] = "1".into();
-        day1[1] = "6012.73".into(); // Entrada em JANEIRO (bloco no offset 0)
-        day1[66 + 2] = "65.28".into(); // Saída em DEZEMBRO (bloco no offset 66)
+        day1[1] = "1234.56".into(); // Entrada em JANEIRO (bloco no offset 0)
+        day1[66 + 2] = "12.34".into(); // Saída em DEZEMBRO (bloco no offset 66)
         vec![month_row, header_row, day1]
     }
 
@@ -1129,10 +1129,10 @@ mod tests {
         assert_eq!(result.len(), 2);
         let entrada = result.iter().find(|r| r.amount > 0).unwrap();
         assert_eq!(entrada.date, "2026-01-01");
-        assert_eq!(entrada.amount, 601273);
+        assert_eq!(entrada.amount, 123456);
         let saida = result.iter().find(|r| r.amount < 0).unwrap();
         assert_eq!(saida.date, "2026-12-01");
-        assert_eq!(saida.amount, -6528);
+        assert_eq!(saida.amount, -1234);
     }
 
     // Regressão (review adversarial): anotação com nome de mês depois do bloco real
