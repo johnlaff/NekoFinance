@@ -2536,9 +2536,9 @@ mod tests {
     async fn annual_metrics_aggregates_each_month() {
         let pool = fixture_pool().await;
         let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
-        // Março realizado: renda 700, diário 254,30.
+        // Março realizado: renda 700, diário 250.
         insert_realized(&pool, "income", 700_000, "2026-03-05").await;
-        insert_realized(&pool, "expense", 254_300, "2026-03-10").await;
+        insert_realized(&pool, "expense", 250_000, "2026-03-10").await;
         // Julho projetado: renda 500.
         insert_projection(&pool, "income", 500_000, "2026-07-05", "", 0).await;
 
@@ -2547,8 +2547,8 @@ mod tests {
         assert_eq!(a.months.len(), 12);
         let mar = a.months.iter().find(|m| m.month == 3).unwrap();
         assert_eq!(mar.income_cents, 700_000);
-        assert_eq!(mar.cost_of_living_cents, 254_300); // diário realizado
-        assert_eq!(mar.performance_cents, 445_700); // 700 − 254,30
+        assert_eq!(mar.cost_of_living_cents, 250_000); // diário realizado
+        assert_eq!(mar.performance_cents, 450_000); // 700 − 250
         let jul = a.months.iter().find(|m| m.month == 7).unwrap();
         assert_eq!(jul.income_cents, 500_000);
         let jan = a.months.iter().find(|m| m.month == 1).unwrap();
@@ -2903,7 +2903,7 @@ mod tests {
         let rec_id = create_transaction_inner(
             &pool,
             "expense",
-            231_100,
+            230_000,
             Some("Aluguel".into()),
             "2026-06-15",
             Some("debit".into()),

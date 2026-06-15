@@ -62,7 +62,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         {
           date: "2026-06-15",
           income_cents: 0,
-          fixed_out_cents: 231100,
+          fixed_out_cents: 230000,
           daily_out_cents: 4300,
           balance_cents: 587700,
         },
@@ -280,7 +280,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
       {
         id: "t5",
         type: "expense",
-        amount: 231100,
+        amount: 230000,
         description: "Aluguel",
         date: "2026-06-15",
         payment_method: "debit",
