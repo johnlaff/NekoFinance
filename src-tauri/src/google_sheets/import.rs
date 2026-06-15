@@ -747,6 +747,57 @@ pub fn parse_number(s: &str) -> i64 {
     }
 }
 
+/// Parseia a aba `Economia` → `(ano, mês 1..=12, centavos)` para cada mês com Economia > 0.
+/// A aba EMPILHA um bloco por ano: cada bloco tem uma linha-CABEÇALHO com o ANO (número inteiro) +
+/// os rótulos `Entradas` e `Economia`, seguida de 12 linhas `jan`..`dez` com o valor na coluna
+/// Economia (o mês fica na MESMA coluna do ano). PURA — só lê. Re-import é deduplicado a montante
+/// por id determinístico (`economia:{ano}-{mês}`).
+pub fn parse_economia_sheet(rows: &[Vec<String>]) -> Vec<(i32, u32, i64)> {
+    let mut out = Vec::new();
+    let mut r = 0;
+    while r < rows.len() {
+        let row = &rows[r];
+        let has_entradas = row
+            .iter()
+            .any(|c| c.trim().eq_ignore_ascii_case("entradas"));
+        let econ_col = row
+            .iter()
+            .position(|c| c.trim().eq_ignore_ascii_case("economia"));
+        let year_cell = row.iter().enumerate().find_map(|(i, c)| {
+            c.trim()
+                .parse::<f64>()
+                .ok()
+                .filter(|n| n.fract() == 0.0 && (2000.0..2100.0).contains(n))
+                .map(|n| (i, n as i32))
+        });
+        let (Some(econ_col), true, Some((month_col, year))) = (econ_col, has_entradas, year_cell)
+        else {
+            r += 1;
+            continue;
+        };
+        // Lê as linhas de mês logo abaixo do cabeçalho do bloco.
+        let mut rr = r + 1;
+        while rr < rows.len() {
+            let Some(month) = rows[rr]
+                .get(month_col)
+                .and_then(|l| month_number_from_name(l))
+            else {
+                break; // fim do bloco (linha vazia, TOTAL ou próximo cabeçalho)
+            };
+            let cents = rows[rr].get(econ_col).map(|c| parse_number(c)).unwrap_or(0);
+            if cents > 0 {
+                out.push((year, month, cents));
+            }
+            rr += 1;
+            if month == 12 {
+                break;
+            }
+        }
+        r = rr;
+    }
+    out
+}
+
 /// Padrão inequívoco de milhar: primeiro grupo com 1–3 dígitos e todos os demais com
 /// exatamente 3 (`6.012`, `1.234.567`) — qualquer outra forma é tratada como decimal.
 fn is_thousands_grouping(s: &str, sep: char) -> bool {
@@ -1124,6 +1175,39 @@ mod tests {
     }
 
     // Regressão: célula não-vazia entre blocos não pode virar bloco nem deslocar meses.
+    #[test]
+    fn parse_economia_sheet_reads_blocks_per_year() {
+        // Estrutura REAL: blocos por ano; ano/mês na col B (idx 1), Economia na col D (idx 3).
+        let h = |y: &str| {
+            vec![
+                "".to_string(),
+                y.to_string(),
+                "Entradas".to_string(),
+                "Economia".to_string(),
+                "%".to_string(),
+            ]
+        };
+        let m = |name: &str, eco: &str| {
+            vec![
+                "".to_string(),
+                name.to_string(),
+                "5000.00".to_string(),
+                eco.to_string(),
+                "0".to_string(),
+            ]
+        };
+        let rows = vec![
+            h("2025"),
+            m("jan", "1000.00"),
+            m("fev", "0.0000"), // 0 → ignorado
+            vec!["".into(), "TOTAL".into(), "".into(), "".into(), "".into()],
+            h("2026"),
+            m("jan", "1500.50"),
+        ];
+        let got = parse_economia_sheet(&rows);
+        assert_eq!(got, vec![(2025, 1, 100_000), (2026, 1, 150_050)]);
+    }
+
     #[test]
     fn spurious_cell_between_blocks_does_not_shift_months() {
         let rows = real_geometry_rows(true);

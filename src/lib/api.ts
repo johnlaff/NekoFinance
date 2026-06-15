@@ -458,6 +458,18 @@ export function importSheetData(
   });
 }
 
+/** Importa a aba `Economia` (poupança por mês) → transfers→reserva. Retorna nº de meses importados. */
+export function importEconomiaSheet(
+  spreadsheetId: string,
+  clientId: string,
+): Promise<number> {
+  return invoke("import_economia_sheet", {
+    spreadsheetId,
+    clientId,
+    clientSecret: clientSecretOrNull,
+  });
+}
+
 export function importLocalXlsx(filePath: string, profileId: string): Promise<string> {
   return invoke("import_local_xlsx", { filePath, profileId });
 }

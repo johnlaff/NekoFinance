@@ -19,6 +19,7 @@ import {
   fetchSheetPreview,
   getSheetMappings,
   importSheetData,
+  importEconomiaSheet,
   listSheetNames,
   listUserSpreadsheets,
   saveSheetMapping,
@@ -225,6 +226,24 @@ export function GoogleSheetsPanel({
     });
   };
 
+  const handleImportEconomia = async () => {
+    setImportResult(null);
+    setError(null);
+    await withLoading(setImporting, async () => {
+      try {
+        const count = await importEconomiaSheet(selectedSpreadsheet, GOOGLE_CLIENT_ID);
+        invalidateCommands();
+        setImportResult(
+          count === 0
+            ? "Nenhuma Economia encontrada na aba Economia."
+            : `Economia importada: ${count} mês(es) (poupança → reserva).`,
+        );
+      } catch (e) {
+        setError(String(e));
+      }
+    });
+  };
+
   if (authStatus === "connected") {
     return (
       <div className="gs-panel">
@@ -381,6 +400,13 @@ export function GoogleSheetsPanel({
                 <Download size={14} strokeWidth={1.75} />
               )}
               {importing ? "Importando…" : "Importar dados"}
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => void handleImportEconomia()}
+              disabled={importing || !selectedSpreadsheet}
+            >
+              Importar aba Economia (poupança por mês)
             </Button>
             {importResult && (
               <div role="status" className="gs-result gs-result--ok">

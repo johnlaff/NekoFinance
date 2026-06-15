@@ -25,6 +25,7 @@ pub fn run() {
             commands::list_sheet_names,
             commands::fetch_sheet_preview,
             commands::import_sheet_data,
+            commands::import_economia_sheet,
             commands::import_local_xlsx,
             commands::get_dashboard_summary,
             commands::get_forecast,

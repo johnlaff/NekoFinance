@@ -1974,6 +1974,89 @@ pub async fn apply_economia_write_back(
     client.batch_update_values(&spreadsheet_id, &updates).await
 }
 
+/// Conta de RESERVA destino da Economia. Usa a primeira `liquidity='reserve'`; se não houver, cria
+/// uma "Reserva" padrão (savings/reserve) do 1º titular — assim a Economia importada tem para onde ir.
+async fn ensure_reserve_account(pool: &SqlitePool) -> Result<String, String> {
+    if let Some((id,)) = sqlx::query_as::<_, (String,)>(
+        "SELECT id FROM account WHERE liquidity='reserve' ORDER BY created_at LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("query reserve: {e}"))?
+    {
+        return Ok(id);
+    }
+    let owner: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM person ORDER BY created_at LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("query person: {e}"))?;
+    let id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO account (id, name, type, owner_person_id, balance, liquidity) \
+         VALUES (?1, 'Reserva', 'savings', ?2, 0, 'reserve')",
+    )
+    .bind(&id)
+    .bind(owner.map(|(p,)| p))
+    .execute(pool)
+    .await
+    .map_err(|e| format!("create reserve: {e}"))?;
+    Ok(id)
+}
+
+/// Importa a aba `Economia` da planilha → transações `transfer→reserva` (a representação da Economia
+/// registrada do método). Id determinístico `economia:{ano}-{mês}` ⇒ re-import ATUALIZA, não duplica.
+/// É o que faltava: sem isso, o Economizado%/ColchaoCard e o write-back da Economia ficam zerados.
+#[tauri::command]
+pub async fn import_economia_sheet(
+    app_dir: State<'_, AppDataDir>,
+    pool: State<'_, SqlitePool>,
+    spreadsheet_id: String,
+    client_id: String,
+    client_secret: Option<String>,
+) -> Result<usize, String> {
+    let client_secret = oauth::pkce::resolve_client_secret(client_secret);
+    let token =
+        oauth::token_store::ensure_valid_token(&app_dir.0, &client_id, client_secret.as_deref())
+            .await?;
+    let client = SheetsClient::new(token);
+    let values = client
+        .get_sheet_values(&spreadsheet_id, "'Economia'")
+        .await?;
+    let entries = import::parse_economia_sheet(&values.values);
+    if entries.is_empty() {
+        return Ok(0);
+    }
+
+    let reserve_id = ensure_reserve_account(pool.inner()).await?;
+    let today = chrono::Local::now().date_naive();
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut count = 0usize;
+    for (year, month, cents) in entries {
+        let last = forecast::last_day_of_month(year, month);
+        let date = last.format("%Y-%m-%d").to_string();
+        let id = format!("economia:{year:04}-{month:02}");
+        let is_projection = (last > today) as i64;
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, description, date, to_account_id, is_projection, created_at, updated_at) \
+             VALUES (?1, 'transfer', ?2, 'Economia (importada da aba Economia)', ?3, ?4, ?5, ?6, ?6) \
+             ON CONFLICT(id) DO UPDATE SET amount=excluded.amount, date=excluded.date, \
+               is_projection=excluded.is_projection, updated_at=excluded.updated_at",
+        )
+        .bind(&id)
+        .bind(cents)
+        .bind(&date)
+        .bind(&reserve_id)
+        .bind(is_projection)
+        .bind(&now)
+        .execute(pool.inner())
+        .await
+        .map_err(|e| format!("upsert economia: {e}"))?;
+        count += 1;
+    }
+    Ok(count)
+}
+
 #[tauri::command]
 pub async fn save_sheet_mapping(
     pool: State<'_, SqlitePool>,
