@@ -75,11 +75,11 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
   test("método screens render: Totais, Horizonte, Tags", async ({ page }, testInfo) => {
     const nav = (name: string | RegExp) => page.getByRole("button", { name });
 
-    // Totais — 4 métricas-herói + status do método.
+    // Totais — 4 métricas-herói + status do método. Os rótulos são botões (InfoPopover).
     await nav("Totais").click();
-    await expect(page.getByText("Performance", { exact: true })).toBeVisible();
-    await expect(page.getByText("Custo de vida", { exact: true })).toBeVisible();
-    await expect(page.getByText("Diário médio", { exact: true })).toBeVisible();
+    await expect(nav("Performance")).toBeVisible();
+    await expect(nav("Custo de vida")).toBeVisible();
+    await expect(nav("Diário médio")).toBeVisible();
     await expect(page.getByText("Sobrou dinheiro")).toBeVisible();
     await page.screenshot({
       fullPage: true,
