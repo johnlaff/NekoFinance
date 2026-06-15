@@ -169,6 +169,17 @@ export function NewTransactionForm({ onCreated }: { onCreated?: () => void }) {
             );
           })}
         </div>
+        <p
+          style={{
+            margin: "var(--space-2) 0 0",
+            fontSize: "var(--fs-micro)",
+            color: "var(--text-faint)",
+          }}
+        >
+          <MovBadge kind="economia" size={14} /> Economia entra pela aba Economia da
+          planilha (Configurações &rsaquo; Importar) — é uma transferência para a sua
+          reserva, não um gasto.
+        </p>
       </div>
 
       <div
