@@ -1163,10 +1163,10 @@ async fn dashboard_summary(
     //   dinheiro, Régua 1). Mesma regra no crédito abaixo e no forecast (`load_cashflow_events`).
     let daily_spend: (i64,) = sqlx::query_as(
         "SELECT CASE WHEN EXISTS(SELECT 1 FROM \"transaction\" \
-                                 WHERE type='expense' AND is_fixed=0 AND date = ?1 \
+                                 WHERE type='expense' AND is_fixed=0 AND is_projection=0 AND date = ?1 \
                                    AND (payment_method IS NULL OR payment_method <> 'credit')) \
                      THEN ABS(COALESCE((SELECT SUM(amount) FROM \"transaction\" \
-                                        WHERE type='expense' AND is_fixed=0 AND date = ?1 \
+                                        WHERE type='expense' AND is_fixed=0 AND is_projection=0 AND date = ?1 \
                                           AND (payment_method IS NULL OR payment_method <> 'credit')), 0)) \
                      ELSE COALESCE((SELECT SUM(daily_spend) FROM daily_checkin WHERE date = ?1), 0) \
                 END",
@@ -1188,10 +1188,10 @@ async fn dashboard_summary(
         .to_string();
     let credit_spend: (i64,) = sqlx::query_as(
         "SELECT CASE WHEN EXISTS(SELECT 1 FROM \"transaction\" \
-                                 WHERE type='expense' AND payment_method='credit' \
+                                 WHERE type='expense' AND payment_method='credit' AND is_projection=0 \
                                    AND date >= ?1 AND date <= ?2) \
                      THEN ABS(COALESCE((SELECT SUM(amount) FROM \"transaction\" \
-                                        WHERE type='expense' AND payment_method='credit' \
+                                        WHERE type='expense' AND payment_method='credit' AND is_projection=0 \
                                           AND date >= ?1 AND date <= ?2), 0)) \
                      ELSE COALESCE((SELECT SUM(credit_spend) FROM daily_checkin \
                                     WHERE date >= ?1 AND date <= ?2), 0) \
@@ -1559,12 +1559,14 @@ async fn create_transaction_inner(
         return Ok(rec_id);
     }
 
-    // Lançamento único realizado.
+    // Lançamento único. Data FUTURA → projeção (igual ao import: `classify_row`); hoje/passado →
+    // realizado. Marcar um futuro como realizado distorceria o "já aconteceu" do dashboard.
+    let is_projection = start > chrono::Local::now().date_naive();
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(
         "INSERT INTO \"transaction\" (id, type, amount, description, date, payment_method, is_fixed, is_projection, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?8)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
     )
     .bind(&id)
     .bind(txn_type)
@@ -1573,6 +1575,7 @@ async fn create_transaction_inner(
     .bind(date)
     .bind(&payment_method)
     .bind(is_fixed as i64)
+    .bind(is_projection as i64)
     .bind(&now)
     .execute(pool)
     .await
@@ -2229,6 +2232,29 @@ mod tests {
         assert_eq!(
             s.daily_spend_today, 4_271,
             "transação Diário vence; check-in não soma por cima (sem double-count)"
+        );
+    }
+
+    // Regressão (review adversarial): o gasto realizado de HOJE não pode contar ocorrências
+    // PROJETADAS (is_projection=1) — ex.: uma recorrência futura cuja ocorrência cai hoje.
+    #[tokio::test]
+    async fn dashboard_daily_spend_excludes_projected() {
+        let pool = fixture_pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        insert_realized(&pool, "expense", 4_271, "2026-06-13").await; // realizado → conta
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES (?1,'expense',?2,'2026-06-13',0,1)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(9_999i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let s = dashboard_summary(&pool, today).await.unwrap();
+        assert_eq!(
+            s.daily_spend_today, 4_271,
+            "projeção não entra no gasto realizado de hoje"
         );
     }
 
