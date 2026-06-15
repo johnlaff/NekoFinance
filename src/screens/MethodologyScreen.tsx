@@ -31,7 +31,7 @@ const PRINCIPLES = [
   {
     icon: ShieldCheck,
     title: "Reserva em meses",
-    body: "A reserva de emergência é medida em meses de custo de vida (reserva ÷ custo mensal), não em valor absoluto. A meta inicial é 6 meses; acima de 12, o excedente pode trabalhar em outro lugar.",
+    body: "A reserva de emergência é medida em meses de custo de vida (reserva ÷ custo mensal), não em valor absoluto. A meta mínima é 6 meses; a partir de 12 é a paz financeira, e o excedente pode trabalhar em outro lugar.",
   },
   {
     icon: Sigma,

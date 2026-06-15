@@ -51,10 +51,10 @@ export function MonthLedgerCard({ today }: { today: string }) {
       <div className="dash-card__head">
         <span className="dash-card__title">
           <CalendarRange size={16} strokeWidth={1.75} className="dash-card__ic" />
-          Dia a dia de {monthNamePtBR(`${ym}-01`)} de {year}
+          Dia a dia de {monthNamePtBR(`${ym}-01`)}
         </span>
         <MonthNav
-          label={monthNamePtBR(`${ym}-01`)}
+          label={String(year)}
           onPrev={() => setYm((v) => shiftYm(v, -1))}
           onNext={() => setYm((v) => shiftYm(v, 1))}
           onToday={() => setYm(todayYm)}

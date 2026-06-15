@@ -230,7 +230,7 @@ export function GoogleSheetsPanel({
         invalidateCommands(); // finance numbers changed — drop every cached screen
         setImportResult(
           count === 0
-            ? "Dados já importados anteriormente (dedup)."
+            ? "Dados já importados antes (linhas repetidas são ignoradas)."
             : `${count} transações importadas.`,
         );
       } catch (e) {

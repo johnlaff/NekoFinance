@@ -1,4 +1,4 @@
-import { TrendingUp } from "lucide-react";
+import { AlertTriangle, TrendingUp } from "lucide-react";
 import type { Forecast } from "../../lib/api";
 import { fmtBRL, monthNamePtBR } from "../../lib/format";
 import { Money } from "../../design-system/components/Money";
@@ -62,7 +62,15 @@ export function PerformanceCard({ forecast }: { forecast: Forecast }) {
                   <span className="dash-perf__val dash-perf__val--muted">
                     <Money cents={m.performance_cents} size="sm" />
                   </span>
-                  <span className="dash-perf__rate">incompleto ⚠</span>
+                  <span className="dash-perf__rate">
+                    <AlertTriangle
+                      size={11}
+                      strokeWidth={2}
+                      aria-hidden="true"
+                      style={{ verticalAlign: "-1px", marginRight: 3 }}
+                    />
+                    incompleto
+                  </span>
                 </>
               ) : (
                 <>

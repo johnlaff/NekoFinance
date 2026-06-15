@@ -62,7 +62,7 @@ export function SettingsScreen({
               <div className="set-row__t">Planilha .xlsx</div>
               <div className="set-row__d">
                 Importa todas as abas, detectando o layout de blocos mensais
-                automaticamente. Linhas já importadas são ignoradas (dedup).
+                automaticamente. Linhas já importadas antes são ignoradas.
               </div>
             </div>
             <div className="set-row__ctl">

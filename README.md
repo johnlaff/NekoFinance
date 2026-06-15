@@ -20,8 +20,9 @@ tokens, spreadsheet data, or personal finance caches are committed — see Priva
   day and answers the question that matters: _how does the month end?_ The dashboard hero is the
   projected end-of-month balance, plus "pode gastar até X hoje" (safe-to-spend) and an explicit
   warning when any future day dips negative.
-- **Daily projection table** — Data / Entrada / Saída / Diário / Saldo for the rest of the month,
-  today highlighted, dual credit tracking (débito hits the day; credit accumulates and lands on
+- **Monthly ledger** — Data / Entrada / Saída / Diário / Saldo for any selected month (past or
+  future), today highlighted, a saldo thermometer, and a footer (Entradas / Saídas / Diário →
+  Saída Total → Performance); dual credit tracking (débito hits the day; credit accumulates and lands on
   the invoice due date).
 - **Google Sheets import** — OAuth (PKCE, loopback) + month-block layout detection, column
   mapping review, deduplicated imports. Or import a local `.xlsx` copy without any Google account.

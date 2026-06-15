@@ -2016,6 +2016,26 @@ h3,
   color: var(--primary);
 }
 
+/* Rodapé do mês (Total / Saída Total / Performance) — destacado e fixo no rodapé. */
+.fc-table tfoot {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+}
+.fc-foot td,
+.fc-foot th {
+  background: var(--bg-subtle);
+  font-weight: var(--fw-semibold);
+  border-top: var(--bw-hair) solid var(--border-strong);
+}
+.fc-foot th[scope="row"] {
+  text-align: left;
+  text-transform: uppercase;
+  letter-spacing: var(--ls-label);
+  font-size: var(--fs-label);
+  color: var(--text-muted);
+}
+
 /* ============================================================
    Motion layer (spec 006) — design-system tokens only.
    Entrance-only, compositor-friendly (opacity/transform/clip-path);

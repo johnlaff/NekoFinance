@@ -2836,7 +2836,7 @@ mod tests {
         sqlx::query("INSERT INTO \"transaction\" (id, type, amount, date, is_projection) VALUES ('t1','expense',-5000,'2026-06-05',0)")
             .execute(&pool).await.unwrap();
         insert_realized(&pool, "expense", -3000, "2026-06-04").await; // sem tag
-        crate::tags::set_transaction_tags(&pool, "t1", &[tag.clone()])
+        crate::tags::set_transaction_tags(&pool, "t1", std::slice::from_ref(&tag))
             .await
             .unwrap();
 
