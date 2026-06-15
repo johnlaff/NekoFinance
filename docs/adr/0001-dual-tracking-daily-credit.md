@@ -6,8 +6,10 @@ The methodology prescribes a single daily budget number (daily_spend) tracked ag
 
 Track two parallel metrics per daily check-in:
 
-1. **Régua 1 — Diário** (daily_spend): sum of debit/PIX/cash expenses. Compared against daily_budget.
-2. **Régua 2 — Crédito** (credit_spend): sum of credit card expenses. Compared against monthly income for fat-shaming the credit bill.
+> "Régua 1/2" are Neko's internal names for the two tracks; they are not the method's terminology.
+
+1. **Daily/debit track** ("Régua 1", daily_spend): sum of debit/PIX/cash expenses. Compared against daily_budget.
+2. **Credit/invoice track** ("Régua 2", credit_spend): sum of credit card expenses. Accumulates into the invoice that lands on the due date, so a "green" daily track does not hide a growing bill. The engine tracks the two independently; it does not compare credit against income.
 
 Both are stored in `daily_checkin`. The Mia copilot reports both metrics independently, preventing self-deception when the user is 100% credit.
 

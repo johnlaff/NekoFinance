@@ -4270,7 +4270,7 @@
                           display: "inline-block",
                         },
                       }),
-                      "alex.tan@gmail.com \xB7 read-only scope",
+                      "conta-google-conectada \xB7 read-only scope",
                     ),
                   ),
                   /*#__PURE__*/ React.createElement(
