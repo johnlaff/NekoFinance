@@ -99,9 +99,12 @@ export function performanceStatus(cents: number): Status {
 }
 
 export function economizadoStatus(bps: number): Status {
-  return bps >= SAVINGS_TARGET_BPS
-    ? { level: "strong", label: "Dentro do ideal" } // verbatim do método
-    : { level: "watch", label: "Abaixo do ideal" }; // copy do Neko (estado vermelho)
+  // Faixa do método "20 a 30": acima de 30% é guardar além do ideal (pode alocar em outro lugar);
+  // 20–30% é o alvo; abaixo de 20% fica aquém. "Dentro do ideal" é verbatim; "Acima/Abaixo" são
+  // copy do Neko para nomear os estados que o método só descreve.
+  if (bps > 3000) return { level: "steady", label: "Acima do ideal" };
+  if (bps >= SAVINGS_TARGET_BPS) return { level: "strong", label: "Dentro do ideal" };
+  return { level: "watch", label: "Abaixo do ideal" };
 }
 
 export function custoVidaStatus(cost: number, income: number): Status {
@@ -150,9 +153,8 @@ function MetricRow({
       <span style={{ display: "flex", alignItems: "baseline", gap: "var(--space-3)" }}>
         {value}
       </span>
-      {status ? (
-        <StatusChip level={status.level} label={status.label} />
-      ) : sublabel ? (
+      {status ? <StatusChip level={status.level} label={status.label} /> : null}
+      {sublabel ? (
         <span style={{ fontSize: "var(--fs-sm)", color: "var(--text-faint)" }}>
           {sublabel}
         </span>
@@ -320,6 +322,7 @@ export function TotaisScreen() {
             </span>
           }
           status={economizadoStatus(m.savings_rate_bps)}
+          sublabel="meta 20–30% no ano (este é o mês)"
         />
         <MetricRow
           label="Custo de vida"

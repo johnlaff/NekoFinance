@@ -36,6 +36,19 @@ import { invalidateCommands } from "../../lib/useCommand";
 import { withLoading } from "../../lib/withLoading";
 import { WriteBackPreview } from "./WriteBackPreview";
 
+/** Rótulo PT-BR amigável do campo de destino (esconde o jargão de banco do usuário). */
+const FIELD_LABELS_PT: Record<string, string> = {
+  date: "Data",
+  amount_in: "Entrada",
+  amount_out: "Saída",
+  amount_daily: "Diário",
+  daily_budget: "Teto do diário",
+  balance: "Saldo",
+};
+function fieldLabelPt(field: string): string {
+  return FIELD_LABELS_PT[field] ?? field;
+}
+
 export function GoogleSheetsPanel({
   authStatus,
   onAuthChange,
@@ -430,10 +443,13 @@ export function GoogleSheetsPanel({
                 <div key={m.id} className="gs-mapping-row">
                   <div className="gs-mapping-info">
                     <span className="gs-mapping-field">
-                      {m.column_header ?? m.target_field}
+                      {m.column_header ?? fieldLabelPt(m.target_field)}
                     </span>
-                    <span className="gs-mapping-meta">
-                      {m.target_table}.{m.target_field} — offset {m.block_offset}
+                    <span
+                      className="gs-mapping-meta"
+                      title={`${m.target_table}.${m.target_field} · offset ${m.block_offset}`}
+                    >
+                      Importa como {fieldLabelPt(m.target_field)}
                     </span>
                   </div>
                   <button

@@ -16,7 +16,7 @@ const PRINCIPLES = [
   {
     icon: Gauge,
     title: "A conta do mês (Performance)",
-    body: "Performance = Entradas − (Saídas fixas + Diário + Economia + Cartão + previsão do diário que ainda falta). Por isso o mês nasce no vermelho e vai esverdeando conforme o diário real fica abaixo do teto.",
+    body: "Performance = Entradas − (Saídas fixas + Diário + Economia + Cartão + previsão do diário que ainda falta). O Cartão aqui é a fatura, contada à parte das saídas fixas (não é dupla contagem). Por isso o mês nasce no vermelho e vai esverdeando conforme o diário real fica abaixo do teto.",
   },
   {
     icon: CalendarRange,

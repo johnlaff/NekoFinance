@@ -151,6 +151,22 @@ export function MonthLedgerCard({ today }: { today: string }) {
                   <td className="money" />
                 </tr>
                 <tr className="fc-foot">
+                  <th scope="row">Saída Total</th>
+                  <td className="money" colSpan={3}>
+                    <span
+                      style={{
+                        color: "var(--text-faint)",
+                        fontSize: "var(--fs-micro)",
+                      }}
+                    >
+                      saídas + diário
+                    </span>
+                  </td>
+                  <td className="money">
+                    <Money cents={foot.saidaTotal} size="sm" />
+                  </td>
+                </tr>
+                <tr className="fc-foot">
                   <th scope="row">Performance</th>
                   <td className="money" colSpan={3}>
                     <span
@@ -159,8 +175,7 @@ export function MonthLedgerCard({ today }: { today: string }) {
                         fontSize: "var(--fs-micro)",
                       }}
                     >
-                      entradas − saída total (
-                      {<Money cents={foot.saidaTotal} size="sm" />})
+                      entradas − saída total
                     </span>
                   </td>
                   <td className="money">
