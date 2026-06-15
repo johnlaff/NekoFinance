@@ -1097,6 +1097,89 @@ async fn annual_metrics(
     Ok(AnnualMetricsDto { year, months })
 }
 
+// --- Grade do mês (visão fiel à planilha: Data | Entrada | Saída | Diário | Saldo) ---
+
+/// Um dia da grade mensal. `balance_cents` é o Saldo encadeado da planilha (None se aquele dia não
+/// foi importado). Os fluxos são agregados das transações do dia, separados por tipo.
+#[derive(serde::Serialize)]
+pub struct MonthGridDayDto {
+    pub date: String,
+    pub day: u32,
+    pub income_cents: i64,
+    pub fixed_out_cents: i64,
+    pub daily_out_cents: i64,
+    pub balance_cents: Option<i64>,
+}
+
+/// Grade de TODOS os dias de um mês (1..último), com os fluxos realizados/pré-lançados agregados por
+/// dia e o Saldo da planilha (`sheet_daily_balance`). É a visão Data|Entrada|Saída|Diário|Saldo que o
+/// usuário tem na planilha, para QUALQUER mês (passado ou futuro) — diferente do `forecast.daily`,
+/// que só vai de hoje para frente. Dias sem Saldo importado vêm com `balance_cents = None`.
+async fn month_grid(
+    pool: &SqlitePool,
+    year: i32,
+    month: u32,
+) -> Result<Vec<MonthGridDayDto>, String> {
+    let first = NaiveDate::from_ymd_opt(year, month, 1).ok_or("mês inválido")?;
+    let last = forecast::last_day_of_month(year, month);
+    let first_s = first.format("%Y-%m-%d").to_string();
+    let last_s = last.format("%Y-%m-%d").to_string();
+
+    // Fluxos por dia, separados por tipo (Entrada / Saída fixa / Diário variável).
+    let flows: Vec<(String, i64, i64, i64)> = sqlx::query_as(
+        "SELECT date, \
+                COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END), 0), \
+                COALESCE(SUM(CASE WHEN type='expense' AND COALESCE(is_fixed,0)=1 THEN amount ELSE 0 END), 0), \
+                COALESCE(SUM(CASE WHEN type='expense' AND COALESCE(is_fixed,0)=0 THEN amount ELSE 0 END), 0) \
+         FROM \"transaction\" WHERE date BETWEEN ?1 AND ?2 GROUP BY date",
+    )
+    .bind(&first_s)
+    .bind(&last_s)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("month flows: {e}"))?;
+
+    // Saldo da planilha por dia.
+    let balances: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT date, balance_cents FROM sheet_daily_balance WHERE date BETWEEN ?1 AND ?2",
+    )
+    .bind(&first_s)
+    .bind(&last_s)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("month balances: {e}"))?;
+
+    let flow_of = |d: &str| flows.iter().find(|f| f.0 == d).map(|f| (f.1, f.2, f.3));
+    let balance_of = |d: &str| balances.iter().find(|b| b.0 == d).map(|b| b.1);
+
+    let n_days = (last - first).num_days() + 1;
+    let mut grid = Vec::with_capacity(n_days as usize);
+    for offset in 0..n_days {
+        let date = first + chrono::Duration::days(offset);
+        let date_s = date.format("%Y-%m-%d").to_string();
+        let (income, fixed_out, daily_out) = flow_of(&date_s).unwrap_or((0, 0, 0));
+        grid.push(MonthGridDayDto {
+            day: date.day(),
+            income_cents: income,
+            fixed_out_cents: fixed_out,
+            daily_out_cents: daily_out,
+            balance_cents: balance_of(&date_s),
+            date: date_s,
+        });
+    }
+    Ok(grid)
+}
+
+/// Grade do mês `year-month` (visão fiel à planilha). Ver [`month_grid`].
+#[tauri::command]
+pub async fn get_month_grid(
+    pool: State<'_, SqlitePool>,
+    year: i32,
+    month: u32,
+) -> Result<Vec<MonthGridDayDto>, String> {
+    month_grid(pool.inner(), year, month).await
+}
+
 #[tauri::command]
 pub async fn get_annual_metrics(
     pool: State<'_, SqlitePool>,
@@ -2983,6 +3066,31 @@ mod tests {
         assert!(fc.savings_headroom_cents.unwrap() < 0);
         assert!(fc.cash_headroom_cents > 0); // mas há caixa (é a reserva)
         assert_eq!(fc.savings_target_bps, 2500);
+    }
+
+    // Grade do mês: 31 linhas (maio), fluxos agregados por dia e Saldo vindo da planilha.
+    #[tokio::test]
+    async fn month_grid_aggregates_flows_and_uses_sheet_saldo() {
+        let pool = fixture_pool().await;
+        insert_realized(&pool, "income", 700_000, "2026-05-05").await;
+        insert_realized(&pool, "expense", 12_000, "2026-05-05").await; // diário (is_fixed NULL → Diário)
+        insert_realized(&pool, "expense", 4_000, "2026-05-09").await;
+        insert_sheet_balance(&pool, "2026", "2026-05-05", 580_000).await;
+
+        let grid = month_grid(&pool, 2026, 5).await.unwrap();
+        assert_eq!(grid.len(), 31); // maio tem 31 dias
+        assert_eq!(grid[0].day, 1);
+        assert_eq!(grid[0].balance_cents, None); // dia 1 não importado
+
+        let d5 = grid.iter().find(|g| g.day == 5).unwrap();
+        assert_eq!(d5.income_cents, 700_000);
+        assert_eq!(d5.daily_out_cents, 12_000);
+        assert_eq!(d5.fixed_out_cents, 0);
+        assert_eq!(d5.balance_cents, Some(580_000)); // Saldo da planilha
+
+        let d9 = grid.iter().find(|g| g.day == 9).unwrap();
+        assert_eq!(d9.daily_out_cents, 4_000);
+        assert_eq!(d9.balance_cents, None);
     }
 
     #[tokio::test]
