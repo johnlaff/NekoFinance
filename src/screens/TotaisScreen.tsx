@@ -15,7 +15,11 @@ const STATUS_TONE: Record<HealthLevel, { dot: string; fg: string; bg: string }> 
     fg: "var(--success-400)",
     bg: "var(--success-tint)",
   },
-  steady: { dot: "var(--primary)", fg: "var(--primary)", bg: "var(--primary-quiet)" },
+  steady: {
+    dot: "var(--primary)",
+    fg: "var(--primary-quiet-text)",
+    bg: "var(--primary-quiet)",
+  },
   watch: {
     dot: "var(--warning-400)",
     fg: "var(--warning-400)",

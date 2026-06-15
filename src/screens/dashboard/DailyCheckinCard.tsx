@@ -138,7 +138,8 @@ export function DailyCheckinCard({
                 transform: `scaleX(${pct / 100})`,
                 background: overspent ? "var(--danger-400)" : "var(--type-diario)",
                 // Anima transform (GPU), não width — evita layout thrash (impeccable). `--t-hover`
-                // é shorthand multi-prop (inválido aqui e descartado pelo browser); usar dur+ease.
+                // só lista background/border/color (não transform), então NÃO animaria o transform;
+                // por isso declaramos a transição explícita com dur+ease.
                 transition: "transform var(--dur-slow) var(--ease-entrance)",
               }}
             />
@@ -177,6 +178,7 @@ export function DailyCheckinCard({
         </div>
         {error && (
           <p
+            role="alert"
             style={{
               color: "var(--danger-400)",
               fontSize: "var(--fs-sm)",

@@ -181,7 +181,8 @@ export function OnboardingFlow({
                 height: 4,
                 borderRadius: "var(--radius-pill)",
                 backgroundColor: i <= step ? "var(--primary)" : "var(--bg-subtle)",
-                // `--t-hover` é shorthand multi-prop (inválido em `transition`); usar dur+ease.
+                // `--t-hover` é uma LISTA de transições (background/border/color); prefixar uma
+                // propriedade ("background var(--t-hover)") é sintaxe inválida. Declaramos explícito.
                 transition: "background-color var(--dur-fast) var(--ease-standard)",
               }}
             />

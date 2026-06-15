@@ -93,7 +93,7 @@ export function MonthNav({
             borderRadius: "var(--radius-pill)",
             border: "var(--bw-hair) solid var(--border)",
             background: "var(--primary-quiet)",
-            color: "var(--primary)",
+            color: "var(--primary-quiet-text)",
             fontSize: "var(--fs-sm)",
             fontWeight: "var(--fw-semibold)",
             cursor: "pointer",

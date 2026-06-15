@@ -114,6 +114,12 @@ pub fn compute_checksum(rows: &[ImportedRow]) -> String {
 /// enriquecimento — split, tags, payment_method — sobrevive). `slot` desempata o caso raro de
 /// mais de uma linha com a mesma (aba,data,kind).
 ///
+/// ÂNCORAS data+kind (limitação aceita): como `data` e `kind` ENTRAM no id, editar o DIA de um
+/// lançamento na planilha (ou mover o valor da coluna Saída para Diário) recomputa o id; o diff-
+/// delete remove o id antigo (com seu enriquecimento) e insere o novo "pelado". É o trade-off do
+/// modelo de identidade — edições de VALOR/NOTA (o caso comum) são preservadas; edições de
+/// dia/coluna não. Re-anexar o enriquecimento ao mudar o dia é um endurecimento futuro.
+///
 /// LIMITAÇÃO CONHECIDA (slot posicional): `slot` é atribuído pela ordem de aparição. Se houver
 /// 2+ linhas com a mesma (aba,data,kind) e a 1ª for removida da planilha, a sobrevivente herda o
 /// `slot` (e o id) da removida, migrando o enriquecimento para os dados errados. Inalcançável no

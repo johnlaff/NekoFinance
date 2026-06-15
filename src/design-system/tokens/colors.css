@@ -98,6 +98,9 @@
   --primary-hover: var(--jade-300);
   --primary-press: var(--jade-500);
   --primary-quiet: var(--jade-tint);
+  /* Texto sobre o fundo `--primary-quiet` (pílula/chip discreto) com contraste AA por tema:
+     no escuro o jade-400 já passa (6:1); no claro precisa de um verde mais escuro (ver light). */
+  --primary-quiet-text: var(--jade-400);
 
   --secondary: var(--brass-400);
   --secondary-quiet: var(--brass-tint);
@@ -150,6 +153,7 @@
   --primary-hover: #1c6f52;
   --primary-press: #15543e;
   --primary-quiet: rgba(34, 135, 100, 0.1);
+  --primary-quiet-text: #15543e; /* 7.8:1 sobre a pílula clara (--primary a 3.9 falhava AA) */
 
   --secondary: #b07e28;
   --secondary-quiet: rgba(176, 126, 40, 0.12);

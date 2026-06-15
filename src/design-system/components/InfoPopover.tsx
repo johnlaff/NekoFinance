@@ -180,9 +180,9 @@ export function InfoPopover({
         className={["nk-term", hideMarker ? "nk-term--plain" : "", className]
           .filter(Boolean)
           .join(" ")}
-        // `aria-haspopup` sinaliza ao leitor de tela que o termo ABRE uma definição (afordância
-        // anunciada mesmo antes de abrir); o nome acessível é o próprio termo (children).
-        aria-haspopup="dialog"
+        // O popover é um explicador NÃO-modal (role="tooltip"), já anunciado via aria-describedby
+        // quando aberto. Não usamos aria-haspopup: ele promete um popup interativo (dialog/menu),
+        // o que confundiria o leitor de tela aqui.
         aria-expanded={open}
         aria-describedby={open ? id : undefined}
         onClick={(e) => {

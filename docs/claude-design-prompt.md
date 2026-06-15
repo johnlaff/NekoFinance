@@ -334,7 +334,7 @@ Design how to show:
 - shadowed/ignored import item
 - source cell that is intentionally untouchable
 - protected `Data`, `Saldo`, `Entradas`, `%`, and meaningful `Diário` notes
-- “planilha canônica, SQLite system-of-record” without confusing the user
+- phased ownership without confusing the user: in the current import-only phase the spreadsheet is canonical and SQLite is the local mirror; SQLite becomes system-of-record only in the future gated bidirectional phase (see `docs/adr/0003`)
 
 6. Methodology-aware patterns
 Design how to show:
