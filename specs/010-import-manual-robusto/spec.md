@@ -15,7 +15,7 @@ tentativa de dogfooding falharia no primeiro dia:
 | --- | -------------------------------------------------------------------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------- |
 | 1   | Guard `i > 0` ao derivar offsets de mês                                                | `google_sheets/import.rs:179`              | JANEIRO (coluna A, offset 0) é dropado e todo mês desloca 1 para trás                           |
 | 2   | Range `'{sheet}'!A:Z` no path Sheets ao vivo                                           | `commands.rs:148`                          | Só 26 colunas — corta JUNHO–DEZEMBRO (a planilha vai até a coluna BO)                           |
-| 3   | `parse_number` remove `.` incondicionalmente                                           | `google_sheets/import.rs:252`              | Floats dot-decimal do xlsx (calamine) inflam 100× (`65.28` → R$ 6.528,00)                       |
+| 3   | `parse_number` remove `.` incondicionalmente                                           | `google_sheets/import.rs:252`              | Floats dot-decimal do xlsx (calamine) inflam 100× (`12.34` → R$ 1.234,00)                       |
 | 4   | Checksum de **batch inteiro** como dedup                                               | `google_sheets/import.rs:25-113`           | Re-import sem mudança = skip silencioso; com qualquer mudança = **duplica todas as transações** |
 | 5   | OAuth sem `access_type=offline`                                                        | `oauth/pkce.rs:63-82`                      | Google não devolve refresh_token → sessão morre em 1 h (`ensure_valid_token` falha)             |
 | 6   | Scope só `spreadsheets.readonly`                                                       | `oauth/pkce.rs:75-77` vs `commands.rs:898` | Listagem de planilhas usa Drive v3 sem scope → 403                                              |
@@ -271,15 +271,15 @@ para quem tem colchão (o caixa cresce; libera número alto e enganoso). Substit
    pode gastar 0. Espelha o gate determinístico do método: reserva ≥ piso **E** poupança 20–30%.
 
 Horizonte estendido **até o fim dos dados pré-lançados** (a planilha lança o ano inteiro), não o
-mês. UI: "pode gastar R$ 0 sem furar a meta de junho", strip de **Performance por mês** (Caixa ≠
-Performance, expõe julho magro: R$ 876,45 / 9%), aviso do cartão ("sequestra o salário futuro").
+mês. UI: "pode gastar R$ 0 sem furar a meta do mês", strip de **Performance por mês** (Caixa ≠
+Performance, expõe os meses magros), aviso do cartão ("sequestra o salário futuro").
 Pesquisa de mercado (3 agentes) + review adversarial (4 lentes) conduzidos. Código:
 `forecast::safe_to_spend_today` + `project_with_metrics` + `load_metric_events` +
-`commands::reserve_floor`. Verificado na planilha real: pode-gastar = R$ 0 (poupança manda).
+`commands::reserve_floor`. Verificado: pode-gastar = R$ 0 quando a poupança manda.
 
 **Bug P0 que o review pegou e foi corrigido:** a performance do mês corrente era calculada só
-com eventos `date > hoje`, ignorando o realizado de junho → mês com sinal trocado e guardrail
-decidindo errado (~R$ 4.156 em vez de 0). Fix: `metric_events` = realizado do mês + futuros,
+com eventos `date > hoje`, ignorando o realizado do mês → mês com sinal trocado e guardrail
+decidindo errado (valor positivo em vez de 0). Fix: `metric_events` = realizado do mês + futuros,
 separado do encadeamento de caixa (que continua future-only para não dobrar a semente).
 
 ### Slice 11 — Previsibilidade + poupança anual (IMPLEMENTADO 2026-06-13)
@@ -293,11 +293,11 @@ Mudanças:
 
 - **Guardrail de poupança virou ANUAL sobre o REALIZADO** (`safe_to_spend_today` recebe
   `annual_income`/`annual_savings`; `realized_annual_savings`). O ano PROJETADO mente quando os
-  meses futuros estão incompletos — para o usuário, realizado 3,4% vs projetado 19,1%.
+  meses futuros estão incompletos — o realizado pode ficar bem abaixo do projetado.
 - **Cobertura por mês futuro** (`forecast::month_coverage` + `realized_monthly_baseline`): saída
   lançada ÷ mediana das saídas realizadas. Mês < 60% do típico = INCOMPLETO. Expõe o "buraco" de
-  lançamento: o usuário tem confiável até julho; ago–dez em ~32% (faltam ~R$ 7k/mês de fatura +
-  variáveis). Nenhum app líder faz isso — diferencial confirmado pela pesquisa de mercado.
+  lançamento: meses futuros podem ficar bem abaixo do típico (faltam fatura + variáveis a lançar).
+  Nenhum app líder faz isso — diferencial confirmado pela pesquisa de mercado.
 - **UI**: card "Previsibilidade" (confiável até X, barras de cobertura, total faltante,
   orientação de pré-lançamento), poupança do ano realizada vs projetada, mensagem do guardrail
   anual. DTO: `annual_savings`, `coverage[]`, `trusted_through_month`, `total_missing_cents`.
@@ -315,28 +315,29 @@ circular (se o import errou, valida o erro). Correção: dois agentes adversaria
 contra a **planilha oficial** (puxada direto do Google Sheets via token decifrado + notas de
 célula). Achados e correções:
 
-- **Descrições perdidas (P0)**: o import gravava `"Entrada/Saída 2026"` e DESCARTAVA as **542
-  notas de célula** (a descrição real do método: "R$ 310 - Pagamento Pessoa B", "Fatura operadora",
-  "Pessoa C/Games"). **Corrigido**: `SheetsClient::get_sheet_notes` (via `spreadsheets.get` +
+- **Descrições perdidas (P0)**: o import gravava `"Entrada/Saída {ano}"` e DESCARTAVA as
+  **centenas de notas de célula** (a descrição real do método, no formato `"R$ X - Pagamento Conta A"`,
+  `"Fatura serviço"`, `"Conta A/categoria"`). **Corrigido**: `SheetsClient::get_sheet_notes` (via `spreadsheets.get` +
   `includeGridData`) + `parse_rows_with_layout` usa a nota como descrição (quebras → " · "),
   fallback `"{kind} {date}"`. Caminho xlsx não tem notas (calamine) → fallback. **Re-importar**
   para popular.
 - **Falso pânico "pode gastar R$ 0" (P1)**: a poupança realizada incluía o mês corrente em
   andamento (contas dos dias 10-12 dentro, salário do dia ~29 fora) → net negativo de timing.
   **Corrigido**: `realized_annual_savings` conta só **meses completos** (`substr(date) < mês`).
-- **Performance otimista de meses incompletos (P1)**: o card mostrava ago–dez a 44–53% (de meses
-  esparsos). **Corrigido**: a faixa marca meses incompletos (tracejado + "incompleto ⚠"), sem
+- **Performance otimista de meses incompletos (P1)**: o card mostrava meses futuros esparsos com
+  taxas otimistas. **Corrigido**: a faixa marca meses incompletos (tracejado + "incompleto ⚠"), sem
   taxa enganosa.
 - **Preview/detecção truncados (P1)**: `fetch_sheet_preview` (A1:Z21) e `detect_sheet_layout`
   (A1:Z10) cortavam colunas/linhas. **Corrigido**: grade inteira.
 - **Valores/datas/Saldo EXATOS (confirmado)**: sem erro de 100×/locale; datas e série de Saldo
   batem com a planilha oficial célula a célula.
 
-**Aba Economia revelada**: coluna `Economia` = **R$ 0 todos os meses** (2025 e 2026) — o usuário não
-lança economia deliberada; pela métrica do método (Economia ÷ Entradas) a poupança é 0%.
+**Aba Economia**: a coluna `Economia` pode estar zerada em todos os meses para quem não lança
+economia deliberada; nesse caso, pela métrica do método (Economia ÷ Entradas) a taxa de poupança
+fica em 0% e a poupança real precisa ser lida pela Performance.
 
 **Deferido (documentado)**: importar a aba Economia (slice 7); parsear as notas em **splits por
-titular** (Pessoa A/B/C) e itens (a nota tem "R$ X - <item>" por linha); tile Diário oculto
+titular** (Conta A/B/C) e itens (a nota tem "R$ X - <item>" por linha); tile Diário oculto
 quando zero; sparkline do Saldo anual.
 
 ### Slice 13 — Verificação final + coaching de adaptação (2026-06-13)
@@ -364,7 +365,7 @@ Verificação adversarial (4 lentes: app×método, robustez a edições, gaps/co
 3. **`reserve_months` dinâmico** = `reserve_cents / baseline_outflow_cents` (custo de vida × N);
    gate de compra grande da Mia depende disso.
 4. **Saldos encadeados de meses futuros** na UI (o `month_end[]` já existe no DTO).
-5. **Tags / owner / reembolso / pass-through** no schema (repasse de terceiro, fatura de Pessoa B = net-zero).
+5. **Tags / owner / reembolso / pass-through** no schema (repasse de terceiro, fatura de Conta B = net-zero).
 6. **Diário/velocímetro de crédito**, renda variável tipificada (extras/13º/PLR), ciclo de
    fechamento do cartão.
 
@@ -418,7 +419,7 @@ re-import (idêntico/alterado/removido/aba isolada); reconciliação com fixture
   formatada (calamine `DateTime`), as linhas são puladas. A planilha real usa números 1–31.
   Primeiro suspeito se um dogfooding mostrar zero linhas importadas.
 - **Preview mostra valores crus**: com `UNFORMATTED_VALUE`, a tela de preview exibe
-  `6012.7300` em vez de `R$ 6.012,73`. Cosmético; o dado importado é o correto.
+  `1234.5600` em vez de `R$ 1.234,56`. Cosmético; o dado importado é o correto.
 
 ## Fora de escopo
 

@@ -673,26 +673,26 @@ mod tests {
         assert_eq!(f.cash_floor_cents, 0);
     }
 
-    // ---- Guardrail duplo (poupança ANUAL 25% + caixa) — o furo do 1º dogfooding ----
+    // ---- Guardrail duplo (poupança ANUAL 25% + caixa) ----
 
-    // Caso do usuário: caixa cheio (colchão) MAS a poupança do ANO já estourou → pode gastar = 0,
-    // limitado pela POUPANÇA, não pelo caixa. É o "Caixa ≠ Performance" do método.
+    // Caixa cheio (colchão) MAS a poupança do ANO já estourou → pode gastar = 0, limitado pela
+    // POUPANÇA, não pelo caixa. É o "Caixa ≠ Performance" do método.
     #[test]
     fn safe_to_spend_savings_binds_when_cash_is_high() {
         let events = [
-            ev("2026-06-01", EventKind::Income, 983_712),
-            ev("2026-06-02", EventKind::FixedOut, 1_070_169),
+            ev("2026-06-01", EventKind::Income, 1_000_000),
+            ev("2026-06-02", EventKind::FixedOut, 1_100_000),
         ];
         let f = project(800_000, d("2026-06-01"), &events, d("2026-06-30"));
-        // Poupança do ANO (realizado) = renda 983.712, sobra −86.457 (dissaving).
-        let s = safe_to_spend_today(&f, 983_712, -86_457, 2500, 0);
+        // Poupança do ANO (realizado) = renda 1.000.000, sobra −100.000 (dissaving).
+        let s = safe_to_spend_today(&f, 1_000_000, -100_000, 2500, 0);
 
-        // Caixa positivo e alto: 800.000 + 983.712 − 1.070.169 = 713.543, estável até fim do mês.
-        assert_eq!(s.cash_headroom_cents, 713_543);
-        // Meta 25% × renda anual = 245.928. Folga = −86.457 − 245.928 = −332.385 (abaixo da meta).
-        assert_eq!(s.savings_headroom_cents, Some(-332_385));
+        // Caixa positivo e alto: 800.000 + 1.000.000 − 1.100.000 = 700.000, estável até fim do mês.
+        assert_eq!(s.cash_headroom_cents, 700_000);
+        // Meta 25% × renda anual = 250.000. Folga = −100.000 − 250.000 = −350.000 (abaixo da meta).
+        assert_eq!(s.savings_headroom_cents, Some(-350_000));
         assert_eq!(s.binding, Guardrail::Savings);
-        assert_eq!(s.amount_cents, 0); // honesto: 0, não os R$ 7.135 de caixa
+        assert_eq!(s.amount_cents, 0); // honesto: 0, não o caixa disponível
     }
 
     // Conta futura pré-lançada (fatura/salário) num mês à frente limita o gasto de HOJE pelo
