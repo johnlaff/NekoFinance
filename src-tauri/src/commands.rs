@@ -769,6 +769,10 @@ pub struct MonthMetricDto {
     pub income_cents: i64,
     pub performance_cents: i64,
     pub cost_of_living_cents: i64,
+    /// Saídas fixas realizadas (coluna Saída; cartão entra como lump). Para o rodapé ENTRADAS|SAÍDAS|DIÁRIO.
+    pub fixed_out_cents: i64,
+    /// Diário realizado (coluna Diário). `cost_of_living = fixed_out + daily_out`.
+    pub daily_out_cents: i64,
     /// Diário médio do mês = Σ diário realizado ÷ dias decorridos (D/N). Antes morria no DTO.
     pub real_daily_avg_cents: i64,
     /// Economia lançada no mês (numerador do Economizado%).
@@ -1016,6 +1020,8 @@ async fn forecast_dto(pool: &SqlitePool, today_naive: NaiveDate) -> Result<Forec
                 income_cents: m.income_cents,
                 performance_cents: m.performance_cents,
                 cost_of_living_cents: m.cost_of_living_cents,
+                fixed_out_cents: m.fixed_out_cents,
+                daily_out_cents: m.daily_out_cents,
                 real_daily_avg_cents: m.real_daily_avg_cents,
                 economia_cents: m.economia_cents,
                 savings_rate_bps: m.savings_rate_bps,
@@ -1081,6 +1087,8 @@ async fn annual_metrics(
             income_cents: m.income_cents,
             performance_cents: m.performance_cents,
             cost_of_living_cents: m.cost_of_living_cents,
+            fixed_out_cents: m.fixed_out_cents,
+            daily_out_cents: m.daily_out_cents,
             real_daily_avg_cents: m.real_daily_avg_cents,
             economia_cents: m.economia_cents,
             savings_rate_bps: m.savings_rate_bps,

@@ -48,7 +48,7 @@ const NAV_ITEMS: { key: Screen; label: string; icon: typeof LayoutDashboard }[] 
   { key: "horizonte", label: "Horizonte", icon: CalendarRange },
   { key: "transactions", label: "Transações", icon: Receipt },
   { key: "tags", label: "Tags", icon: TagsIcon },
-  { key: "copilot", label: "Perguntar à Mia", icon: Sparkles },
+  { key: "copilot", label: "Conhecer a Mia", icon: Sparkles },
   { key: "methodology", label: "Metodologia", icon: BookOpen },
 ];
 

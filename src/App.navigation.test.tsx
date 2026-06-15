@@ -65,7 +65,7 @@ describe("App navigation", () => {
 
     const sidebarItem = () =>
       screen
-        .getAllByRole("button", { name: "Perguntar à Mia" })
+        .getAllByRole("button", { name: "Conhecer a Mia" })
         .find((b) => b.classList.contains("ak-item"));
     await user.click(sidebarItem()!);
     expect(screen.getByText("O que a Mia vai fazer")).toBeInTheDocument();
@@ -75,7 +75,7 @@ describe("App navigation", () => {
       expect(screen.getByText("Pode gastar até")).toBeInTheDocument();
     });
     const heroButton = screen
-      .getAllByRole("button", { name: "Perguntar à Mia" })
+      .getAllByRole("button", { name: "Conhecer a Mia" })
       .find((b) => !b.classList.contains("ak-item"));
     await user.click(heroButton!);
     expect(screen.getByText("O que a Mia vai fazer")).toBeInTheDocument();

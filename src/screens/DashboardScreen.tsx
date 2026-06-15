@@ -140,7 +140,7 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
               iconLeft={<Sparkles size={15} strokeWidth={1.75} />}
               onClick={onAskMia}
             >
-              Perguntar à Mia
+              Conhecer a Mia
             </Button>
           </div>
         </div>

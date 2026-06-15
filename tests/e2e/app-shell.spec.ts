@@ -88,7 +88,7 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
 
     // Horizonte — trajetória do saldo + detalhe diário.
     await nav("Horizonte").click();
-    await expect(page.getByText(/Verde é folga, vermelho é aperto/)).toBeVisible();
+    await expect(page.getByText(/quanto mais verde, mais folga/)).toBeVisible();
     await expect(page.getByText("Detalhe diário")).toBeVisible();
     await expect(page.getByText("Junho")).toBeVisible();
     await page.screenshot({
@@ -135,7 +135,7 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
   test("dashboard hero button reaches the honest Mia placeholder", async ({ page }) => {
     await page
       .locator(".dash-hero")
-      .getByRole("button", { name: "Perguntar à Mia" })
+      .getByRole("button", { name: "Conhecer a Mia" })
       .click();
     await expect(page.getByText("O que a Mia vai fazer")).toBeVisible();
     await expect(page.getByText("Em desenvolvimento")).toBeVisible();

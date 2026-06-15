@@ -62,6 +62,11 @@ pub struct MonthMetric {
     pub income_cents: i64,
     pub performance_cents: i64,
     pub cost_of_living_cents: i64,
+    /// Saídas FIXAS realizadas (coluna Saída da planilha; cartão entra como lump aqui). Exposto à
+    /// parte de `cost_of_living_cents` para o rodapé mensal ENTRADAS | SAÍDAS | DIÁRIO.
+    pub fixed_out_cents: i64,
+    /// Diário REALIZADO (coluna Diário). `cost_of_living = fixed_out + daily_out`.
+    pub daily_out_cents: i64,
     pub real_daily_avg_cents: i64,
     pub savings_rate_bps: i64,
     /// Economia lançada no mês (numerador do Economizado%). Já descontada da performance.
@@ -401,6 +406,8 @@ fn month_metrics(
                 income_cents: income,
                 performance_cents,
                 cost_of_living_cents,
+                fixed_out_cents: fixed_out,
+                daily_out_cents: daily_realized,
                 real_daily_avg_cents,
                 savings_rate_bps,
                 economia_cents: economia,
@@ -730,6 +737,8 @@ mod tests {
             income_cents: 0,
             performance_cents: 0,
             cost_of_living_cents: cost,
+            fixed_out_cents: cost,
+            daily_out_cents: 0,
             real_daily_avg_cents: 0,
             savings_rate_bps: 0,
             economia_cents: 0,
@@ -758,6 +767,8 @@ mod tests {
             income_cents: 0,
             performance_cents: 0,
             cost_of_living_cents: cost,
+            fixed_out_cents: cost,
+            daily_out_cents: 0,
             real_daily_avg_cents: 0,
             savings_rate_bps: 0,
             economia_cents: 0,

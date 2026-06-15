@@ -126,6 +126,10 @@ export interface MonthMetric {
   income_cents: number;
   performance_cents: number;
   cost_of_living_cents: number;
+  /** Saídas fixas realizadas (coluna Saída; cartão entra como lump). */
+  fixed_out_cents: number;
+  /** Diário realizado (coluna Diário). cost_of_living = fixed_out + daily_out. */
+  daily_out_cents: number;
   /** Diário médio = Σ diário realizado ÷ dias decorridos (D/N). */
   real_daily_avg_cents: number;
   /** Economia lançada no mês (numerador do Economizado%). */

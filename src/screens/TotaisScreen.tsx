@@ -161,6 +161,33 @@ function MetricRow({
   );
 }
 
+/** Item do rodapé "Movimentações do mês" (rótulo + valor + dica curta), espelhando a planilha. */
+function MovTotal({
+  label,
+  cents,
+  hint,
+  sign = "none",
+}: {
+  label: string;
+  cents: number;
+  hint?: string;
+  sign?: "auto" | "none";
+}) {
+  return (
+    <span style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+      <span style={{ fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>
+        {label}
+      </span>
+      <Money cents={cents} size="md" sign={sign} />
+      {hint ? (
+        <span style={{ fontSize: "var(--fs-micro)", color: "var(--text-faint)" }}>
+          {hint}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 export function TotaisScreen() {
   const forecastQ = useCommand("get_forecast", getForecast);
   const [selectedYm, setSelectedYm] = useState<string | null>(null);
@@ -324,26 +351,20 @@ export function TotaisScreen() {
         >
           Movimentações do mês
         </h2>
+        {/* Rodapé fiel ao da planilha: ENTRADAS | SAÍDAS | DIÁRIO → Saída Total (= Saídas + Diário). */}
         <div style={{ display: "flex", gap: "var(--space-8)", flexWrap: "wrap" }}>
-          <span
-            style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}
-          >
-            <span style={{ fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>
-              Entradas
-            </span>
-            <Money cents={m.income_cents} size="md" sign="auto" />
-          </span>
-          <span
-            style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}
-          >
-            <span style={{ fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>
-              Saídas
-            </span>
-            <Money cents={m.cost_of_living_cents} size="md" />
-            <span style={{ fontSize: "var(--fs-micro)", color: "var(--text-faint)" }}>
-              fixas + diário + cartão
-            </span>
-          </span>
+          <MovTotal label="Entradas" cents={m.income_cents} sign="auto" />
+          <MovTotal
+            label="Saídas"
+            cents={m.fixed_out_cents}
+            hint="fixas (cartão entra aqui)"
+          />
+          <MovTotal label="Diário" cents={m.daily_out_cents} hint="gasto variável" />
+          <MovTotal
+            label="Saída Total"
+            cents={m.cost_of_living_cents}
+            hint="saídas + diário"
+          />
         </div>
       </section>
     </div>
