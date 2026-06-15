@@ -203,6 +203,25 @@ pub fn delete_token(app_dir: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Revoga o token no Google (best-effort). Desconectar deve invalidar o acesso DO LADO do Google,
+/// não só esquecer o token localmente. Falhas são ignoradas — o apagamento local sempre ocorre.
+pub async fn revoke_token(app_dir: &std::path::Path) {
+    if let Ok(Some(token)) = load_token(app_dir) {
+        let tok = if !token.refresh_token.is_empty() {
+            token.refresh_token
+        } else {
+            token.access_token
+        };
+        if !tok.is_empty() {
+            let _ = reqwest::Client::new()
+                .post("https://oauth2.googleapis.com/revoke")
+                .form(&[("token", tok)])
+                .send()
+                .await;
+        }
+    }
+}
+
 pub fn is_token_expired(token: &StoredToken) -> bool {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

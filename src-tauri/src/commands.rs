@@ -50,9 +50,7 @@ pub async fn start_oauth_flow(
 
 #[tauri::command]
 pub async fn check_auth_status(app_dir: tauri::State<'_, AppDataDir>) -> Result<String, String> {
-    // DEBUG TEMPORÁRIO (dogfooding): visível no stderr do tauri dev.
-    eprintln!("check_auth_status: app_dir={:?}", app_dir.0);
-    let result = match crate::oauth::token_store::load_token(&app_dir.0) {
+    match crate::oauth::token_store::load_token(&app_dir.0) {
         Ok(Some(token)) => {
             // Access token expirado mas com refresh_token disponível segue "connected":
             // ensure_valid_token renova sob demanda no próximo uso (spec 010, slice 2).
@@ -65,13 +63,13 @@ pub async fn check_auth_status(app_dir: tauri::State<'_, AppDataDir>) -> Result<
         }
         Ok(None) => Ok("disconnected".to_string()),
         Err(e) => Err(e),
-    };
-    eprintln!("check_auth_status -> {result:?}");
-    result
+    }
 }
 
 #[tauri::command]
 pub async fn disconnect_google(app_dir: tauri::State<'_, AppDataDir>) -> Result<(), String> {
+    // Revoga no Google (best-effort) ANTES de apagar localmente — desconectar de verdade.
+    crate::oauth::token_store::revoke_token(&app_dir.0).await;
     crate::oauth::token_store::delete_token(&app_dir.0)
 }
 

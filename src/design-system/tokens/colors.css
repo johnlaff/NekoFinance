@@ -183,7 +183,7 @@
   --chart-5: #cb463e;
   --chart-6: #2e9488;
   --chart-grid: rgba(20, 32, 25, 0.1);
-  --chart-axis: #5f6b66; /* AA p/ rótulos de eixo (texto 10.5px) sobre --surface no tema claro */
+  --chart-axis: #5a655f; /* AA (>=4.5:1) p/ rótulos de eixo 10.5px sobre surface E bg-subtle (claro) */
 
   --focus-ring: rgba(34, 135, 100, 0.45);
   --bg-scrim: rgba(20, 32, 25, 0.4);

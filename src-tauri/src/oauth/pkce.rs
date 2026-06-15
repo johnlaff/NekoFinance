@@ -93,13 +93,14 @@ impl OAuthState {
             ))
             // Listagem de planilhas (list_user_spreadsheets) usa o Drive v3 — sem este
             // scope o picker devolve 403 (spec 010, slice 2).
-            // Nota: access_type=offline/prompt=consent NÃO se aplicam ao fluxo de app
-            // instalado — "refresh tokens are always returned for installed applications"
-            // (doc oficial native-app). Se o dogfooding mostrar refresh_token vazio,
-            // a contingência registrada na spec 010 é adicioná-los aqui.
             .add_scope(Scope::new(
                 "https://www.googleapis.com/auth/drive.metadata.readonly".to_string(),
             ))
+            // `access_type=offline` + `prompt=consent` GARANTEM o refresh_token (Google só o
+            // devolve com offline, e `consent` força reemissão mesmo em reautorizações). Sem isso
+            // o token morria em ~1h e a conexão caía (sintoma confirmado no dogfooding).
+            .add_extra_param("access_type", "offline")
+            .add_extra_param("prompt", "consent")
             .set_pkce_challenge(compute_challenge(&self.verifier()))
             .url();
 

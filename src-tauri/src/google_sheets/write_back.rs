@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn writes_to_blank_cell_are_changes() {
-        // Saída do dia 1 (célula C3) está em branco; propor 30,00 → change.
+        // Saída do dia 1 (célula D3) está em branco; propor 30,00 → change.
         let txns = vec![WriteBackTxn {
             date: "2026-01-01".into(),
             kind: RowKind::Saida,

@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
  * InfoPopover — o explicador didático de termos do método (mandato "didático e calmo" do DS).
  * Envolve um termo financeiro e abre uma frase de contexto sob demanda. Portado do design system:
  * `position: fixed` portaled para o body (nunca cortado por overflow), flip/clamp ao viewport,
- * teclado completo (Enter/Space alternam, Esc fecha e devolve o foco), `role=button`/`tooltip`,
+ * botão nativo (Enter/Space abrem; Esc fecha e devolve o foco), popover `role=tooltip`,
  * respeita prefers-reduced-motion (via CSS). Orçamento de conteúdo: título opcional + 1–2 frases.
  */
 

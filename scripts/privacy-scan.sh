@@ -23,6 +23,14 @@ for path in "${blocked_paths[@]}"; do
 done
 
 if [[ ! -f ".private-forbidden-patterns" ]]; then
+  # A deny-list é gitignored (ela própria contém os nomes privados), então uma máquina nova/CT
+  # pode não tê-la. Por padrão, pulamos (contribuidor sem o arquivo passa). Em contextos onde a
+  # lista é OBRIGATÓRIA (CI do mantenedor), defina PRIVACY_SCAN_REQUIRE_DENYLIST=1 para FALHAR em
+  # vez de pular em silêncio — assim o gate nunca passa verde sem realmente ter escaneado.
+  if [[ "${PRIVACY_SCAN_REQUIRE_DENYLIST:-0}" == "1" ]]; then
+    printf 'PRIVACY_SCAN_REQUIRE_DENYLIST=1 but .private-forbidden-patterns is missing — failing.\n' >&2
+    exit 1
+  fi
   printf 'No .private-forbidden-patterns file found. Skipping private-name scan.\n' >&2
   exit 0
 fi
