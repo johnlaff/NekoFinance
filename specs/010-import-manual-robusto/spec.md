@@ -22,10 +22,13 @@ tentativa de dogfooding falharia no primeiro dia:
 | 7   | `.env.example` documenta `GOOGLE_OAUTH_CLIENT_ID`, frontend lê `VITE_GOOGLE_CLIENT_ID` | `GoogleSheetsPanel.tsx:58`                 | Botão Conectar permanentemente desabilitado                                                     |
 | 8   | Offsets de mês aceitam qualquer célula não-vazia                                       | `google_sheets/import.rs:178-182`          | Célula espúria entre blocos desloca todos os meses seguintes                                    |
 
-Bugs latentes registrados, fora do caminho crítico: `safe_to_spend_today_cents` retorna o vale
-mínimo do horizonte, não o headroom (`forecast/mod.rs:267`); import insere sem
-`payment_method`/`is_fixed`, então `classify()` rotula toda despesa como `Daily` (Totais
-imprecisos — aceitável porque Diário=0 na planilha real e Totais não bloqueia o loop diário).
+Bug latente registrado, fora do caminho crítico: `safe_to_spend_today_cents` retorna o vale
+mínimo do horizonte, não o headroom (`forecast/mod.rs:267`).
+
+> Atualização: o import **já** grava `is_fixed` pela coluna de origem (Saída→fixa, Diário→variável;
+> ver `import_sets_is_fixed_for_saida`), então `classify()` separa Saída × Diário corretamente. O
+> Livro-razão expõe esse tipo via `MovBadge` (coluna "Tipo"). `payment_method` segue não vindo do
+> import (a planilha colapsa cartão em Saída no vencimento), o que é fiel ao método.
 
 ## Objetivo (definição de sucesso do dogfooding)
 

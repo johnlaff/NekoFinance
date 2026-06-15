@@ -6,6 +6,7 @@ import { EmptyState } from "../design-system/components/EmptyState";
 import { OwnerChip } from "../design-system/components/OwnerChip";
 import { ProvBadge } from "../design-system/components/ProvBadge";
 import { SegmentedControl } from "../design-system/components/SegmentedControl";
+import { MovBadge, type MovKind } from "../design-system/components/MovBadge";
 import { getRecentTransactions, isTauri, type TransactionRow } from "../lib/api";
 import { fmtDate } from "../lib/format";
 import { Money } from "../design-system/components/Money";
@@ -30,6 +31,19 @@ const METHOD_LABELS: Record<string, string> = {
 export function methodLabel(t: TransactionRow): string {
   if (t.payment_method) return METHOD_LABELS[t.payment_method] ?? t.payment_method;
   return t.type === "income" ? "Entrada" : "—";
+}
+
+/**
+ * Tipo de movimento do método (os 5 pilares), derivado de type + is_fixed + payment_method:
+ * income→entrada, transfer→economia, despesa fixa (coluna Saída)→saída, crédito variável→cartão,
+ * o resto→diário. É a leitura por tipo que o usuário tem nas colunas separadas da planilha.
+ */
+export function movKind(t: TransactionRow): MovKind {
+  if (t.type === "income") return "entrada";
+  if (t.type === "transfer") return "economia";
+  if (t.is_fixed) return "saida";
+  if (t.payment_method === "credit") return "cartao";
+  return "diario";
 }
 
 /** Pure filter used by the screen; exported for direct testing. */
@@ -174,6 +188,7 @@ export function TransactionsScreen({
               <thead>
                 <tr>
                   <th scope="col">Data</th>
+                  <th scope="col">Tipo</th>
                   <th scope="col">Descrição</th>
                   <th scope="col">Método</th>
                   <th scope="col">Valor</th>
@@ -183,6 +198,9 @@ export function TransactionsScreen({
                 {visible.map((t) => (
                   <tr className={t.is_projection ? "projection" : ""} key={t.id}>
                     <td>{fmtDate(t.date)}</td>
+                    <td>
+                      <MovBadge kind={movKind(t)} showLabel size={16} />
+                    </td>
                     <td>
                       {t.description || "—"} <ProvBadge provenance={t.provenance} />
                       {t.owners.length >= 2 && (

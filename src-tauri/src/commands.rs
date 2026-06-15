@@ -1403,6 +1403,8 @@ pub struct TransactionRow {
     pub date: String,
     pub payment_method: String,
     pub is_projection: bool,
+    /// Despesa fixa (veio da coluna Saída da planilha) vs variável (Diário). Distingue Saída × Diário.
+    pub is_fixed: bool,
     /// Titulares distintos das parcelas (multi-titular). Vazio = sem split por pessoa.
     pub owners: Vec<String>,
     /// Proveniência: "projetado" (previsto), "importado" (da planilha) ou "manual" (do app).
@@ -1426,6 +1428,7 @@ struct RecentRow {
     date: String,
     payment_method: String,
     is_projection: i64,
+    is_fixed: i64,
     /// Titulares distintos, juntados por '|' no SQL (vazio = sem split por pessoa).
     owners: String,
     /// `source_amount` é NULL quando nunca veio da planilha (lançamento manual no app).
@@ -1436,7 +1439,7 @@ async fn recent_transactions(pool: &SqlitePool, limit: i64) -> Result<Vec<Transa
     // Titulares vêm de um subquery agregado (GROUP_CONCAT com separador '|') — sem N+1.
     let rows: Vec<RecentRow> = sqlx::query_as(
         "SELECT t.id, t.type, t.amount, COALESCE(t.description,'') AS description, t.date, \
-                COALESCE(t.payment_method,'') AS payment_method, t.is_projection, \
+                COALESCE(t.payment_method,'') AS payment_method, t.is_projection, t.is_fixed, \
                 COALESCE((SELECT GROUP_CONCAT(name, '|') FROM \
                     (SELECT DISTINCT p.name FROM split s \
                      JOIN person p ON p.id = s.owner_person_id \
@@ -1459,6 +1462,7 @@ async fn recent_transactions(pool: &SqlitePool, limit: i64) -> Result<Vec<Transa
             date: r.date,
             payment_method: r.payment_method,
             is_projection: r.is_projection != 0,
+            is_fixed: r.is_fixed != 0,
             owners: if r.owners.is_empty() {
                 Vec::new()
             } else {

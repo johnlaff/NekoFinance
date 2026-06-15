@@ -43,6 +43,8 @@ export interface TransactionRow {
   date: string;
   payment_method: string;
   is_projection: boolean;
+  /** Despesa fixa (coluna Saída) vs variável (Diário). Distingue Saída × Diário no Livro-razão. */
+  is_fixed: boolean;
   /** Titulares distintos das parcelas (multi-titular). Vazio = sem split por pessoa. */
   owners: string[];
   /** Proveniência: "projetado" | "importado" | "manual" | "conciliado". */
