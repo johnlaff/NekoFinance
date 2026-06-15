@@ -299,7 +299,7 @@ Mudanças:
   orientação de pré-lançamento), poupança do ano realizada vs projetada, mensagem do guardrail
   anual. DTO: `annual_savings`, `coverage[]`, `trusted_through_month`, `total_missing_cents`.
 
-**O que o método manda pré-lançar** (citações em [[dogfooding-import-bugs]]): saldo inicial
+**O que o método manda pré-lançar**: saldo inicial
 (só conta-corrente), salário futuro (conservador; autônomo: só despesas), contas fixas
 replicadas mês a mês, fatura do cartão no vencimento com parcelados, e o **diário estimado**
 (soma das variáveis ÷ 30, em todos os dias — "nunca baixar na esperança"; deixar vazio é o erro

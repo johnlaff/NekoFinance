@@ -2881,11 +2881,11 @@ mod tests {
     async fn projection_seed_prefers_sheet_saldo_over_pockets() {
         let pool = fixture_pool().await;
         insert_liquid_account(&pool, 100_000).await; // bolso de R$ 1.000,00
-        insert_sheet_balance(&pool, "2026", "2026-06-12", 801_889).await; // Saldo de hoje
+        insert_sheet_balance(&pool, "2026", "2026-06-12", 500_000).await; // Saldo de hoje
 
         let today = NaiveDate::from_ymd_opt(2026, 6, 12).unwrap();
         // Saldo de hoje na planilha vence o bolso; sem lacuna (hoje está na série).
-        assert_eq!(projection_seed(&pool, today).await.unwrap(), 801_889);
+        assert_eq!(projection_seed(&pool, today).await.unwrap(), 500_000);
     }
 
     // Sem planilha importada, a semente continua sendo os Bolsos líquidos (spec 007).
@@ -2911,14 +2911,14 @@ mod tests {
         assert_eq!(projection_seed(&pool, today).await.unwrap(), 515_000);
     }
 
-    // Regressão do bug do 1º dogfooding: import OK (226 txns) mas saldo de hoje aparecia
-    // ZERADO e surgia um déficit ("buraco") falso, porque a semente era 0 (nenhum bolso) e o
-    // Saldo da planilha era descartado. Com a série de Saldo, o saldo de hoje bate com o Sheets.
+    // Regressão: sem bolso e com o Saldo da planilha sendo descartado, o saldo de hoje aparecia
+    // ZERADO e surgia um déficit ("buraco") falso. Com a série de Saldo da planilha como semente,
+    // o saldo de hoje passa a bater com a planilha e o déficit falso some.
     #[tokio::test]
     async fn forecast_seeds_from_sheet_saldo_no_false_deficit() {
         let pool = fixture_pool().await;
-        // Saldo de hoje na planilha = R$ 8.018,89; uma saída futura pequena no dia 26.
-        insert_sheet_balance(&pool, "2026", "2026-06-12", 801_889).await;
+        // Saldo de hoje vindo da planilha; uma saída futura pequena no dia 26.
+        insert_sheet_balance(&pool, "2026", "2026-06-12", 500_000).await;
         insert_projection(&pool, "expense", 4_633, "2026-06-26", "debit", 0).await;
 
         let today = NaiveDate::from_ymd_opt(2026, 6, 12).unwrap();
@@ -2926,24 +2926,24 @@ mod tests {
 
         // Antes: daily[0] = 0 (saldo zerado). Agora bate com o Saldo de hoje da planilha.
         assert_eq!(fc.daily[0].date, "2026-06-12");
-        assert_eq!(fc.daily[0].balance_cents, 801_889);
+        assert_eq!(fc.daily[0].balance_cents, 500_000);
         // Antes: deepest_deficit = −R$ 46,33 (o "buraco que não existe"). Agora positivo.
         let trough = fc.deepest_deficit.as_ref().unwrap();
-        assert_eq!(trough.balance_cents, 801_889 - 4_633);
+        assert_eq!(trough.balance_cents, 500_000 - 4_633);
         assert!(trough.balance_cents > 0);
         assert!(fc.safe_to_spend_today_cents > 0);
     }
 
-    // Guardrail duplo end-to-end com os números do usuário: Saldo de hoje R$ 8.018,89 (caixa
-    // cheio e crescendo), mas junho com performance negativa → "pode gastar" honesto = 0,
-    // limitado pela poupança. O horizonte varre até o fim dos dados pré-lançados (dez).
-    // Crava o P0 do review: a performance de junho inclui o REALIZADO antes de hoje (não só
-    // os eventos futuros), senão o mês aparece com sinal trocado e o guardrail decide errado.
+    // Guardrail duplo end-to-end: caixa cheio (semente alta), mas o mês corrente com performance
+    // negativa → "pode gastar" honesto = 0, limitado pela poupança ANUAL. O horizonte varre até o
+    // fim dos dados pré-lançados (dez). Crava o P0 do review: a performance do mês corrente inclui o
+    // REALIZADO antes de hoje (não só os eventos futuros), senão o mês aparece com sinal trocado e o
+    // guardrail decide errado.
     #[tokio::test]
     async fn forecast_dual_guardrail_savings_binds_for_owner() {
         let pool = fixture_pool().await;
-        insert_sheet_balance(&pool, "2026", "2026-06-13", 801_889).await; // Saldo de hoje
-        insert_sheet_balance(&pool, "2026", "2026-12-31", 2_754_616).await; // estende horizonte
+        insert_sheet_balance(&pool, "2026", "2026-06-13", 500_000).await; // Saldo de hoje
+        insert_sheet_balance(&pool, "2026", "2026-12-31", 1_500_000).await; // estende horizonte
         // Meses COMPLETOS (jan–mai) abaixo da meta → a poupança ANUAL morde. Sem isto, o mês
         // corrente (junho, em andamento) NÃO conta — evita o falso pânico de meio de mês.
         for m in [1, 2, 3, 4, 5] {
@@ -2954,8 +2954,8 @@ mod tests {
         // PERFORMANCE do mês inclui o realizado (o P0), mesmo o mês não contando na poupança anual.
         insert_realized(&pool, "income", 400_000, "2026-06-05").await;
         insert_realized(&pool, "expense", 700_000, "2026-06-10").await;
-        insert_realized(&pool, "income", 583_712, "2026-06-29").await;
-        insert_projection(&pool, "expense", 370_169, "2026-06-30", "debit", 1).await;
+        insert_realized(&pool, "income", 600_000, "2026-06-29").await;
+        insert_projection(&pool, "expense", 400_000, "2026-06-30", "debit", 1).await;
 
         let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
         let fc = forecast_dto(&pool, today).await.unwrap();
@@ -2964,7 +2964,7 @@ mod tests {
         // Performance de junho = MÊS INTEIRO (realizado + projetado): inclui os R$ 700k já
         // realizados em 10/jun, que o cálculo antigo (só futuros) ignorava (o P0).
         let jun = fc.months.iter().find(|m| m.month == 6).unwrap();
-        assert_eq!(jun.performance_cents, 983_712 - 1_070_169); // −86.457
+        assert_eq!(jun.performance_cents, 1_000_000 - 1_100_000); // −100.000
         // Poupança ANUAL (meses completos jan–mai, abaixo da meta) manda → pode gastar 0.
         assert_eq!(fc.binding_guardrail, "savings");
         assert_eq!(fc.safe_to_spend_today_cents, 0);

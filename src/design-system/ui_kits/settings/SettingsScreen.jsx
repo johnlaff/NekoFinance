@@ -92,7 +92,7 @@ function SettingsApp() {
                       display: "inline-block",
                     }}
                   />
-                  alex.tan@gmail.com · read-only scope
+                  conta-google-conectada · read-only scope
                 </div>
               </div>
               <Badge tone="success" dot>

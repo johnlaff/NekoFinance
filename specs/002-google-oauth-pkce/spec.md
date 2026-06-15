@@ -6,7 +6,7 @@ Implement the desktop OAuth PKCE flow to connect Neko Finance to Google Sheets. 
 
 ## Motivation
 
-The app currently has a full local schema but no data. The user's financial data lives in Google Sheets (file `Finanças.xlsx` exported to Google Sheets). Import requires OAuth consent, token management, and sheet parsing.
+The app currently has a full local schema but no data. The user's financial data lives in a Google Sheets workbook. Import requires OAuth consent, token management, and sheet parsing.
 
 ## User Stories
 
