@@ -33,7 +33,7 @@ export function PerformanceCard({ forecast }: { forecast: Forecast }) {
             className="dash-card__ic"
             aria-hidden="true"
           />
-          Performance por mês — caixa não é poupança
+          Performance por mês: caixa não é poupança
         </span>
         <span className="dash-perf__hint">referência anual 20–30%</span>
       </div>

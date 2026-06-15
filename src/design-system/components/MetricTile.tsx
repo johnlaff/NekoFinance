@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Minus, TrendingDown, TrendingUp } from "lucide-react";
 
 interface MetricTileProps {
   label: string;
@@ -89,12 +90,22 @@ export function MetricTile({
         {delta ? (
           <span
             style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
               fontSize: "var(--fs-sm)",
               fontWeight: "var(--fw-semibold)",
               color: deltaColor,
             }}
           >
-            {deltaDir === "up" ? "▲" : deltaDir === "down" ? "▼" : "—"} {delta}
+            {deltaDir === "up" ? (
+              <TrendingUp size={13} strokeWidth={2} aria-hidden="true" />
+            ) : deltaDir === "down" ? (
+              <TrendingDown size={13} strokeWidth={2} aria-hidden="true" />
+            ) : (
+              <Minus size={13} strokeWidth={2} aria-hidden="true" />
+            )}
+            {delta}
           </span>
         ) : null}
         {sublabel ? (

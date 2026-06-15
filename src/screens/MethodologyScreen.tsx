@@ -1,20 +1,32 @@
-import { CalendarRange, Ruler, ShieldCheck, Sigma, TrendingUp } from "lucide-react";
+import {
+  CalendarRange,
+  Gauge,
+  Ruler,
+  ShieldCheck,
+  Sigma,
+  TrendingUp,
+} from "lucide-react";
 
 const PRINCIPLES = [
   {
     icon: TrendingUp,
     title: "Saldo projetado, não saldo atual",
-    body: "A pergunta que importa não é “quanto eu tenho?”, e sim “quanto vai sobrar?”. O Neko encadeia dia a dia as entradas e saídas futuras e mostra o saldo projetado para o fim do mês — esse é o número herói do dashboard.",
+    body: "A pergunta que importa não é “quanto eu tenho?”, e sim “quanto vai sobrar?”. O Neko encadeia dia a dia as entradas e saídas futuras e mostra o saldo projetado para o fim do mês: esse é o número herói do dashboard.",
+  },
+  {
+    icon: Gauge,
+    title: "A conta do mês (Performance)",
+    body: "Performance = Entradas − (Saídas fixas + Diário + Economia + Cartão + previsão do diário que ainda falta). Por isso o mês nasce no vermelho e vai esverdeando conforme o diário real fica abaixo do teto.",
   },
   {
     icon: CalendarRange,
-    title: "Saídas fixas e diário",
-    body: "Custo de vida = saídas fixas (contas previsíveis, com data) + diário (o resto). O diário é um número único por dia, não um orçamento por categoria: categorias servem para diagnóstico, nunca para planejamento.",
+    title: "Custo de vida",
+    body: "Custo de vida = saídas fixas (contas previsíveis, com data) + diário (o resto) + cartão (a fatura). O diário é um número único por dia, não um orçamento por categoria: categorias servem para diagnóstico, nunca para planejamento.",
   },
   {
     icon: Ruler,
     title: "Régua 1 e Régua 2",
-    body: "Débito, PIX e dinheiro afetam o caixa no dia (Régua 1). Crédito acumula na fatura e só pesa no vencimento (Régua 2). O Neko acompanha as duas réguas de forma independente — isso evita o autoengano de um diário “zerado” enquanto a fatura cresce em silêncio.",
+    body: "Débito, PIX e dinheiro afetam o caixa no dia (Régua 1). Crédito acumula na fatura e só pesa no vencimento (Régua 2). O Neko acompanha as duas réguas de forma independente: isso evita o autoengano de um diário “zerado” enquanto a fatura cresce em silêncio.",
   },
   {
     icon: ShieldCheck,
@@ -24,7 +36,7 @@ const PRINCIPLES = [
   {
     icon: Sigma,
     title: "Cálculo determinístico",
-    body: "Todos os números vêm de um motor de cálculo determinístico e testado. A Mia explica e contextualiza — ela nunca inventa contas, e nenhuma escrita na sua planilha acontece sem a sua aprovação explícita.",
+    body: "Todos os números vêm de um motor de cálculo determinístico e testado. A Mia explica e contextualiza, mas nunca inventa contas, e nenhuma escrita na sua planilha acontece sem a sua aprovação explícita.",
   },
 ];
 

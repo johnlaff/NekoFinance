@@ -165,7 +165,7 @@ export function WriteBackPreview({
         }}
       >
         Pré-visualize o que o app escreveria de volta na planilha (transação → célula).
-        O envio real está atrás de uma flag desligada — nada é gravado sem você ligar e
+        O envio real está atrás de uma flag desligada: nada é gravado sem você ligar e
         aprovar.
       </p>
 
@@ -190,7 +190,7 @@ export function WriteBackPreview({
         <div style={{ marginTop: 14 }}>
           {changed.length === 0 ? (
             <p style={{ color: "var(--text-muted)", fontSize: "var(--fs-sm)" }}>
-              Nada a enviar — a planilha já reflete suas transações ({cells.length}{" "}
+              Nada a enviar: a planilha já reflete suas transações ({cells.length}{" "}
               célula(s) conferida(s)).
             </p>
           ) : (

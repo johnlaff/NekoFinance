@@ -12,7 +12,7 @@ const TYPES: { kind: MovKind; desc: string }[] = [
   { kind: "saida", desc: "saídas fixas (aluguel, contas)" },
   { kind: "diario", desc: "o gasto variável do dia a dia" },
   { kind: "cartao", desc: "compras no cartão (vira fatura)" },
-  { kind: "economia", desc: "guardar — sua poupança do mês" },
+  { kind: "economia", desc: "guardar: sua poupança do mês" },
 ];
 
 const TOTAL_STEPS = 5;
@@ -246,7 +246,7 @@ export function OnboardingFlow({
         {step === 2 && (
           <Step
             title="Traga seus dados"
-            subtitle="Comece da sua planilha ou do zero — você escolhe."
+            subtitle="Comece da sua planilha ou do zero: você escolhe."
           >
             <p style={pStyle}>
               Você pode <b>conectar o Google Sheets</b>, <b>importar um .xlsx</b> local,

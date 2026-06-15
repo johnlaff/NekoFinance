@@ -7,12 +7,10 @@ import {
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
-import { Badge } from "../design-system/components/Badge";
 import { PocketsCard } from "../features/pockets/PocketsCard";
 import { Button } from "../design-system/components/Button";
 import { EmptyState } from "../design-system/components/EmptyState";
 import { MetricTile } from "../design-system/components/MetricTile";
-import { MiaAvatar } from "../design-system/components/MiaAvatar";
 import { Money } from "../design-system/components/Money";
 import { BalanceTrajectory } from "../design-system/components/BalanceTrajectory";
 import { InfoPopover } from "../design-system/components/InfoPopover";
@@ -75,12 +73,14 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
     );
   }
 
-  const trendIcon =
-    summary?.reserve_trend === "up"
-      ? "▲"
-      : summary?.reserve_trend === "down"
-        ? "▼"
-        : "—";
+  const reserveTrendIcon =
+    summary?.reserve_trend === "up" ? (
+      <TrendingUp size={15} strokeWidth={1.75} />
+    ) : summary?.reserve_trend === "down" ? (
+      <TrendingDown size={15} strokeWidth={1.75} />
+    ) : (
+      <Minus size={15} strokeWidth={1.75} />
+    );
 
   const deficit =
     forecast?.deepest_deficit && forecast.deepest_deficit.balance_cents < 0
@@ -197,15 +197,8 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
         />
         <MetricTile
           label="Reserva"
-          value={summary ? `${summary.reserve_months.toFixed(1)}m ${trendIcon}` : "—"}
-          icon={<Minus size={15} strokeWidth={1.75} />}
-          deltaDir={
-            summary?.reserve_trend === "up"
-              ? "up"
-              : summary?.reserve_trend === "down"
-                ? "down"
-                : "neutral"
-          }
+          value={summary ? `${summary.reserve_months.toFixed(1)}m` : "—"}
+          icon={reserveTrendIcon}
           sublabel="Meta: 12 meses de gastos"
         />
       </div>
@@ -231,106 +224,83 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
 
       {forecast && <PerformanceCard forecast={forecast} />}
 
-      <div className="dash-2col">
-        <div className="dash-card">
-          <div className="dash-card__head">
-            <span className="dash-card__title">
-              <CalendarRange size={16} strokeWidth={1.75} className="dash-card__ic" />
-              Previsão diária — {forecast ? monthNamePtBR(forecast.today) : "mês atual"}
-            </span>
-          </div>
-          <div className="dash-card__body" style={{ padding: 0 }}>
-            {!forecast || (summary?.transaction_count ?? 0) === 0 ? (
-              <EmptyState
-                variant="empty"
-                title="Nenhuma transação"
-                description="Conecte o Google Sheets e importe sua planilha."
-              />
-            ) : dailyThisMonth.length === 0 ? (
-              <EmptyState
-                variant="empty"
-                title="Sem projeção para este mês"
-                description="Não há dias projetados no mês corrente."
-              />
-            ) : (
-              <div className="fc-scroll">
-                <table className="txn-table fc-table">
-                  <thead>
-                    <tr>
-                      <th scope="col">Data</th>
-                      <th scope="col">Entrada</th>
-                      <th scope="col">Saída</th>
-                      <th scope="col">Diário</th>
-                      <th scope="col">Saldo</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dailyThisMonth.map((d) => {
-                      const isToday = d.date === forecast.today;
-                      return (
-                        <tr key={d.date} className={isToday ? "fc-today" : ""}>
-                          <td>
-                            {fmtDayMonth(d.date)}
-                            {isToday && <span className="fc-today__tag">hoje</span>}
-                          </td>
-                          <td className="money">
-                            {d.income_cents ? (
-                              <Money cents={d.income_cents} size="sm" sign="auto" />
-                            ) : (
-                              "—"
-                            )}
-                          </td>
-                          <td className="money">
-                            {d.fixed_out_cents ? (
-                              <Money cents={d.fixed_out_cents} size="sm" />
-                            ) : (
-                              "—"
-                            )}
-                          </td>
-                          <td className="money">
-                            {d.daily_out_cents ? (
-                              <Money cents={d.daily_out_cents} size="sm" />
-                            ) : (
-                              "—"
-                            )}
-                          </td>
-                          <td className="money">
-                            <Money
-                              cents={d.balance_cents}
-                              size="sm"
-                              sign={d.balance_cents < 0 ? "negative" : "none"}
-                            />
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+      <div className="dash-card">
+        <div className="dash-card__head">
+          <span className="dash-card__title">
+            <CalendarRange size={16} strokeWidth={1.75} className="dash-card__ic" />
+            Previsão diária de {forecast ? monthNamePtBR(forecast.today) : "mês atual"}
+          </span>
         </div>
-
-        <aside className="assistant-panel">
-          <div className="assistant-header">
-            <MiaAvatar width={40} height={40} />
-            <div>
-              <p className="assistant-label">Copiloto</p>
-              <h2 className="assistant-name">Mia</h2>
+        <div className="dash-card__body" style={{ padding: 0 }}>
+          {!forecast || (summary?.transaction_count ?? 0) === 0 ? (
+            <EmptyState
+              variant="empty"
+              title="Nenhuma transação"
+              description="Conecte o Google Sheets e importe sua planilha."
+            />
+          ) : dailyThisMonth.length === 0 ? (
+            <EmptyState
+              variant="empty"
+              title="Sem projeção para este mês"
+              description="Não há dias projetados no mês corrente."
+            />
+          ) : (
+            <div className="fc-scroll">
+              <table className="txn-table fc-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Data</th>
+                    <th scope="col">Entrada</th>
+                    <th scope="col">Saída</th>
+                    <th scope="col">Diário</th>
+                    <th scope="col">Saldo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dailyThisMonth.map((d) => {
+                    const isToday = d.date === forecast.today;
+                    return (
+                      <tr key={d.date} className={isToday ? "fc-today" : ""}>
+                        <td>
+                          {fmtDayMonth(d.date)}
+                          {isToday && <span className="fc-today__tag">hoje</span>}
+                        </td>
+                        <td className="money">
+                          {d.income_cents ? (
+                            <Money cents={d.income_cents} size="sm" sign="auto" />
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td className="money">
+                          {d.fixed_out_cents ? (
+                            <Money cents={d.fixed_out_cents} size="sm" />
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td className="money">
+                          {d.daily_out_cents ? (
+                            <Money cents={d.daily_out_cents} size="sm" />
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td className="money">
+                          <Money
+                            cents={d.balance_cents}
+                            size="sm"
+                            sign={d.balance_cents < 0 ? "negative" : "none"}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-          </div>
-          <p>
-            {summary && summary.transaction_count > 0
-              ? "Seus dados estão carregados. Mia vai poder diagnosticar padrões de gasto, reserva e crédito."
-              : "Importe dados da planilha primeiro. Depois Mia analisa seus gastos."}
-          </p>
-          <div className="assistant-note">
-            {summary
-              ? `Reserva: ${summary.reserve_months.toFixed(1)} meses — ${summary.reserve_trend === "down" ? "caindo" : summary.reserve_trend === "up" ? "subindo" : "estável"}`
-              : "Sem dados de reserva ainda."}
-          </div>
-          <Badge tone="secondary">Chat em desenvolvimento</Badge>
-        </aside>
+          )}
+        </div>
       </div>
 
       <PocketsCard />

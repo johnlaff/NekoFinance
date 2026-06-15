@@ -75,7 +75,7 @@ export function SettingsScreen({
       <Section
         icon={Landmark}
         title="Bolsos"
-        sub="Conta, poupança, vale, previdência e FGTS — só dinheiro líquido entra no saldo projetado."
+        sub="Conta, poupança, vale, previdência e FGTS: só dinheiro líquido entra no saldo projetado."
       >
         <PocketsManager />
       </Section>

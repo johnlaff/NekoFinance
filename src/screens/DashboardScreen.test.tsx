@@ -35,7 +35,7 @@ describe("DashboardScreen (forecast view)", () => {
     render(<DashboardScreen onAskMia={vi.fn()} />);
 
     await waitFor(() => {
-      expect(screen.getByText(/Previsão diária — junho/)).toBeInTheDocument();
+      expect(screen.getByText(/Previsão diária de junho/)).toBeInTheDocument();
     });
 
     // "hoje" aparece no sufixo do herói e como marcador na tabela diária.

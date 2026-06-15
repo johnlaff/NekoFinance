@@ -331,7 +331,7 @@ export function GoogleSheetsPanel({
                         disabled={loading || metric}
                         title={
                           metric
-                            ? "Aba de métricas do método — import dedicado em breve"
+                            ? "Aba de métricas do método: import dedicado em breve"
                             : undefined
                         }
                       >
