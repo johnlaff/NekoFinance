@@ -32,9 +32,9 @@ describe("AnnualScreen", () => {
     mockCommands({ get_annual_metrics: ANNUAL });
     render(<AnnualScreen />);
 
-    await waitFor(() => expect(screen.getByText("Visão anual")).toBeInTheDocument());
-    // Cabeçalhos das 4 métricas.
-    expect(screen.getByText("Performance")).toBeInTheDocument();
+    // Espera a TABELA carregar (o heading aparece antes dos dados async — evita corrida).
+    await waitFor(() => expect(screen.getByText("Performance")).toBeInTheDocument());
+    expect(screen.getByText("Visão anual")).toBeInTheDocument();
     expect(screen.getByText("Custo de vida")).toBeInTheDocument();
     expect(screen.getByText("Economizado")).toBeInTheDocument();
     expect(screen.getByText("Diário médio")).toBeInTheDocument();
