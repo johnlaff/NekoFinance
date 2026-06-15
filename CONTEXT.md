@@ -28,7 +28,7 @@ A normalized financial movement. Has `type` (income, expense, transfer), `paymen
 _Avoid_: Entry, record, movement
 
 **Split**:
-Allocation of one transaction across multiple responsible persons and/or categories. Carries `amount`, `category_id`, and `owner_person_id`. A R$300 market purchase split into R$200 (owner A, category "Mercado") + R$100 (owner B, category "Farmácia") is two split rows on the same transaction.
+Allocation of one transaction across multiple responsible persons. Carries `amount` and `owner_person_id`. A R$300 market purchase split into R$200 (owner A) + R$100 (owner B) is two split rows on the same transaction. "Where the money went" is no longer a category on the split — categorization was demoted to free **tags** (diagnostic only), per the method (categories are for diagnosis, never for planning).
 
 **Payment Method** (enum on Transaction):
 `debit`, `credit`, `pix`, `cash`. The methodology distinguishes debit (immediate balance impact) from credit (delayed, tracked separately as "fatura"). Debit/PIX/cash feed Régua 1; credit feeds Régua 2.

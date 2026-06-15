@@ -47,7 +47,8 @@ Done (see `specs/` for the full spec/plan/tasks of each):
 5. ✅ Navigable app shell, PT-BR copy (spec 004); screens grew to nine (Dashboard, Totais, Anual, Horizonte, Transações, Tags, Mia, Metodologia, Configurações).
 6. ✅ Forecast view (spec 005): safe-to-spend, deficit warning, daily projection table.
 7. ✅ Account liquidity classes feeding a correct projection seed (spec 007); five first-class movement types in the engine (spec 011).
-8. ✅ Robust import + stable identity, three-way-merge reconciliation, conflict gate (specs 010/012/013); tags + categories→tags demotion, recurrence, multi-titular splits, write-back preview, month/annual views (specs 014, 015, 016, 017, 018, 019).
+8. ✅ Motion & interaction polish (spec 006) and the Design System production contract (spec 009): tokens, accessible component contracts, dark-first WCAG AA, reduced-motion.
+9. ✅ Robust import + stable identity, three-way-merge reconciliation, conflict gate (specs 010/012/013); tags + categories→tags demotion, recurrence, multi-titular splits, write-back preview, month/annual views (specs 014, 015, 016, 017, 018, 019).
 
 Next:
 

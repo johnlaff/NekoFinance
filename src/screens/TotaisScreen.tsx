@@ -337,9 +337,12 @@ export function TotaisScreen() {
             style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}
           >
             <span style={{ fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>
-              Economia
+              Saídas
             </span>
-            <Money cents={m.economia_cents} size="md" />
+            <Money cents={m.cost_of_living_cents} size="md" />
+            <span style={{ fontSize: "var(--fs-micro)", color: "var(--text-faint)" }}>
+              fixas + diário + cartão
+            </span>
           </span>
         </div>
       </section>
