@@ -43,4 +43,39 @@ describe("AnnualScreen", () => {
     // O Economizado de março (22%).
     expect(screen.getByText("22%")).toBeInTheDocument();
   });
+
+  it("linha TOTAL: Economizado% anual é ΣEconomia/ΣEntradas (ponderado, não média das taxas)", async () => {
+    mockInvoke.mockReset();
+    const base = (month: number): MonthMetric => ({
+      year: 2026,
+      month,
+      income_cents: 0,
+      performance_cents: 0,
+      cost_of_living_cents: 0,
+      real_daily_avg_cents: 0,
+      economia_cents: 0,
+      savings_rate_bps: 0,
+    });
+    const months = Array.from({ length: 12 }, (_, i) => base(i + 1));
+    // Jan: 30% (30k/100k). Fev: 10% (30k/300k). Média simples = 20%, mas o anual ponderado
+    // = 60k/400k = 15%.
+    months[0] = {
+      ...base(1),
+      income_cents: 100_000,
+      economia_cents: 30_000,
+      savings_rate_bps: 3000,
+    };
+    months[1] = {
+      ...base(2),
+      income_cents: 300_000,
+      economia_cents: 30_000,
+      savings_rate_bps: 1000,
+    };
+    mockCommands({ get_annual_metrics: { year: 2026, months } });
+    render(<AnnualScreen />);
+
+    await waitFor(() => expect(screen.getByText("Total")).toBeInTheDocument());
+    expect(screen.getByText("15%")).toBeInTheDocument(); // anual ponderado
+    expect(screen.queryByText("20%")).not.toBeInTheDocument(); // não é a média simples
+  });
 });

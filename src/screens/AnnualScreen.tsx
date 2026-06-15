@@ -36,6 +36,26 @@ export function AnnualScreen() {
   const q = useCommand(`annual_metrics:${year}`, () => getAnnualMetrics(year));
   const months = q.data?.months ?? [];
 
+  // Linha TOTAL do ano (espelha o TOTAL da aba Economia da planilha). O Economizado% ANUAL é
+  // ΣEconomia/ΣEntradas — NÃO a média das taxas mensais — e é o número que a meta 20–30% cobra.
+  const totals = months.reduce(
+    (a, m) => ({
+      performance: a.performance + m.performance_cents,
+      cost: a.cost + m.cost_of_living_cents,
+      income: a.income + m.income_cents,
+      economia: a.economia + m.economia_cents,
+    }),
+    { performance: 0, cost: 0, income: 0, economia: 0 },
+  );
+  const annualSavingsPct =
+    totals.income > 0 ? Math.round((totals.economia / totals.income) * 100) : 0;
+  const hasYearData = months.some(
+    (m) => m.income_cents !== 0 || m.cost_of_living_cents !== 0,
+  );
+  // Verde quando dentro da faixa ideal anual do método (≥20%); âmbar abaixo.
+  const savingsColor =
+    annualSavingsPct >= 20 ? "var(--success-400)" : "var(--warning-400)";
+
   return (
     <div style={{ maxWidth: 860, margin: "0 auto", padding: "var(--space-2)" }}>
       <header
@@ -160,6 +180,64 @@ export function AnnualScreen() {
                 );
               })}
             </tbody>
+            {hasYearData && (
+              <tfoot>
+                <tr
+                  style={{
+                    borderTop: "var(--bw-strong) solid var(--border-strong)",
+                    fontWeight: "var(--fw-bold)",
+                  }}
+                >
+                  <td
+                    style={{
+                      padding: "var(--space-3) var(--space-4)",
+                      textTransform: "uppercase",
+                      letterSpacing: "var(--ls-label)",
+                      fontSize: "var(--fs-label)",
+                      color: "var(--text)",
+                    }}
+                  >
+                    Total
+                  </td>
+                  <td
+                    style={{
+                      textAlign: "right",
+                      padding: "var(--space-3) var(--space-4)",
+                    }}
+                  >
+                    <Money cents={totals.performance} size="sm" sign="auto" />
+                  </td>
+                  <td
+                    style={{
+                      textAlign: "right",
+                      padding: "var(--space-3) var(--space-4)",
+                    }}
+                  >
+                    <Money cents={totals.cost} size="sm" />
+                  </td>
+                  <td
+                    title="Economizado no ano = total economizado ÷ total de entradas (meta 20–30%)"
+                    style={{
+                      textAlign: "right",
+                      padding: "var(--space-3) var(--space-4)",
+                      fontFamily: "var(--font-money)",
+                      color: savingsColor,
+                    }}
+                  >
+                    {annualSavingsPct}%
+                  </td>
+                  <td
+                    style={{
+                      textAlign: "right",
+                      padding: "var(--space-3) var(--space-4)",
+                      color: "var(--text-faint)",
+                    }}
+                  >
+                    —
+                  </td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       )}
