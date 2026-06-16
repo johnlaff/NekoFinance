@@ -424,6 +424,7 @@ re-import (idêntico/alterado/removido/aba isolada); reconciliação com fixture
 ## Fora de escopo
 
 Tudo da spec 008 (Pluggy/OFX, classificação de extrato, módulo Crédito, write-back,
-`source`/`provider_txn_id`); leitura de notas de célula;
-`payment_method`/`is_fixed` no import (Totais ficam imprecisos de propósito — documentado);
-wire de `reserve`/`reserve_snapshot`; Mia.
+`source`/`provider_txn_id`); detecção de `payment_method` (cartão) no import
+(o `is_fixed` já vem da coluna: Saída → fixa, Diário → variável); wire de
+`reserve`/`reserve_snapshot`; Mia.
+(A leitura de notas de célula — descrição real a partir da nota — FOI implementada na slice 12.)

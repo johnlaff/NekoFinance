@@ -12,7 +12,7 @@ development). Built with Tauri 2 + React 19 + Rust.
 The repo is public and **data-free by design**: no private methodology source material, OAuth
 tokens, spreadsheet data, or personal finance caches are committed — see Privacy Rules below.
 
-![Dashboard — projected balance, safe-to-spend, and the daily projection table](docs/screenshots/dashboard.png)
+![Dashboard — pode gastar até hoje, previsibilidade, and the monthly day-by-day grid](docs/screenshots/dashboard.png)
 
 ## What it does today (v0.1)
 
@@ -26,8 +26,8 @@ tokens, spreadsheet data, or personal finance caches are committed — see Priva
   the invoice due date).
 - **Google Sheets import** — OAuth (PKCE, loopback) + month-block layout detection, column
   mapping review, deduplicated imports. Or import a local `.xlsx` copy without any Google account.
-- **Nine navigable screens** — Dashboard, Totais, Anual, Horizonte, Transações (filter + search),
-  Tags, Mia (honest placeholder), Metodologia, and Configurações e privacidade (connections, local
+- **Nine navigable screens** — Dashboard, Totais, Anual, Horizonte, Lançamentos (filter + search),
+  Tags, Mia (deterministic preview), Metodologia, and Configurações e privacidade (connections, local
   import, where-your-data-lives).
 - **Local SQLite store** — 26 migrations: accounts/pockets + liquidity, transactions/splits, tags,
   recurrences, daily check-ins (separate debit/daily and credit/fatura tracks), reserve tracking, sheet layouts,

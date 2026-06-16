@@ -45,7 +45,9 @@ export function ColchaoCard({ forecast, phase }: { forecast: Forecast; phase: Ph
           />
           Seu colchão
         </span>
-        <PhaseBadge phase={phase} />
+        <span title="Fases do método — Mapear: menos de 30 lançamentos. Calibrar: ajustando o diário. Operar: ≥ 20% economizado no ano e ≥ 3 meses de reserva.">
+          <PhaseBadge phase={phase} />
+        </span>
       </div>
       <div className="dash-card__body">
         <div className="dash-colchao__nums">
@@ -58,7 +60,9 @@ export function ColchaoCard({ forecast, phase }: { forecast: Forecast; phase: Ph
             </span>
           </div>
           <div className="dash-colchao__num">
-            <span className="dash-colchao__label">Colchão este ano (realizado)</span>
+            <span className="dash-colchao__label">
+              Colchão este ano (sobra até hoje)
+            </span>
             <span className="dash-colchao__val">
               <Money cents={colchaoCents} size="md" sign="auto" /> · {realizedRatePct}%
             </span>

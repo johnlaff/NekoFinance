@@ -26,24 +26,26 @@ function miaKnownFacts(
     );
   }
   if (forecast) {
-    const ym = forecast.today.slice(0, 7);
-    const cur = forecast.months.find(
-      (m) => `${m.year}-${String(m.month).padStart(2, "0")}` === ym,
-    );
-    if (cur) {
-      facts.push(
-        `A performance de ${monthNamePtBR(forecast.today)} está em ${fmtBRL(cur.performance_cents)}.`,
-      );
-    }
-    facts.push(
-      `Você pode gastar até ${fmtBRL(forecast.safe_to_spend_today_cents)} hoje sem furar suas metas.`,
-    );
     // Economizado% do método = Economia registrada ÷ Entradas (não o net superávit/colchão).
+    // Vem antes da performance/pode-gastar para não ser descartado pelo corte de 3 fatos.
     const a = forecast.annual_savings;
     const ytd = Math.round(
       (a.registered_economia_cents / Math.max(1, a.realized_income_cents)) * 100,
     );
     facts.push(`No ano, você economizou ${ytd}% (referência 20–30%).`);
+    const ym = forecast.today.slice(0, 7);
+    const cur = forecast.months.find(
+      (m) => `${m.year}-${String(m.month).padStart(2, "0")}` === ym,
+    );
+    if (cur) {
+      // Mês corrente: a performance inclui a previsão do diário que ainda falta — qualificamos.
+      facts.push(
+        `A performance projetada de ${monthNamePtBR(forecast.today)} está em ${fmtBRL(cur.performance_cents)} (inclui o diário que ainda falta no mês).`,
+      );
+    }
+    facts.push(
+      `Você pode gastar até ${fmtBRL(forecast.safe_to_spend_today_cents)} hoje sem furar suas metas.`,
+    );
   }
   return facts.slice(0, 3);
 }

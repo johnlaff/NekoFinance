@@ -17,9 +17,12 @@ function todayISO(): string {
  */
 export function DailyCheckinCard({
   summary,
+  monthAvgCents = 0,
   onLogged,
 }: {
   summary: DashboardSummary;
+  /** Diário médio do mês corrente (Σ realizado ÷ dias decorridos) — referência de ritmo. */
+  monthAvgCents?: number;
   onLogged: () => void;
 }) {
   const [amount, setAmount] = useState("");
@@ -99,7 +102,7 @@ export function DailyCheckinCard({
           }}
         >
           <span style={{ color: "var(--text-muted)", fontSize: "var(--fs-sm)" }}>
-            Total de hoje
+            Diário registrado hoje
           </span>
           <span style={{ fontWeight: "var(--fw-bold)" }}>
             <Money cents={spent} size="md" />
@@ -144,6 +147,18 @@ export function DailyCheckinCard({
               }}
             />
           </div>
+        )}
+
+        {monthAvgCents > 0 && (
+          <p
+            style={{
+              margin: "0 0 var(--space-3)",
+              fontSize: "var(--fs-micro)",
+              color: "var(--text-faint)",
+            }}
+          >
+            Média do mês: {fmtBRL(monthAvgCents)}/dia
+          </p>
         )}
 
         <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>

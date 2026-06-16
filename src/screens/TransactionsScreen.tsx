@@ -40,7 +40,6 @@ const METHOD_LABELS: Record<string, string> = {
   debit: "Débito",
   credit: "Crédito",
   pix: "PIX",
-  transfer: "Transferência",
   cash: "Dinheiro",
 };
 
@@ -145,7 +144,7 @@ export function TransactionsScreen({
         <div className="dash-hero">
           <div className="dash-hero__txt">
             <div className="dash-hero__line">
-              <b>Preview web.</b> Abra o app desktop para ver suas transações.
+              <b>Preview web.</b> Abra o app desktop para ver seus lançamentos.
             </div>
           </div>
         </div>
@@ -166,7 +165,7 @@ export function TransactionsScreen({
       <div className="dash">
         <EmptyState
           variant="error"
-          title="Não foi possível carregar as transações"
+          title="Não foi possível carregar os lançamentos"
           description={error}
           action={
             <Button variant="primary" onClick={() => window.location.reload()}>
@@ -227,7 +226,7 @@ export function TransactionsScreen({
           {visible.length === 0 ? (
             <EmptyState
               variant="empty"
-              title="Nenhuma transação encontrada"
+              title="Nenhum lançamento encontrado"
               description={
                 transactions.length === 0
                   ? "Importe sua planilha em Configurações para começar."
@@ -267,6 +266,11 @@ export function TransactionsScreen({
                         <td>
                           {t.description ? (
                             <span
+                              title={
+                                generic
+                                  ? "Sem nota na célula — reimporte via Google Sheets para trazer a descrição real"
+                                  : undefined
+                              }
                               style={
                                 generic
                                   ? { color: "var(--text-faint)", fontStyle: "italic" }

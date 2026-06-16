@@ -88,6 +88,22 @@ _Avoid_: Import config, column mapping
 **Sync Log**:
 Append-only table for sync events. Records what was imported/modified, when, and by which profile. Enables conflict resolution in future multi-device scenarios.
 
+### Savings & Forecast (derived metrics)
+
+These live in the forecast DTO (`get_forecast`), computed in the Rust core — not persisted tables.
+
+**AnnualSavings**: year-to-date figures from complete months. `registered_economia_cents / realized_income_cents` is the method's **Economizado%** (Economia transferred to reserve ÷ income — the spreadsheet's `%` column; target 20–30% as an ANNUAL average, never a monthly pass/fail). Distinct from `realized_savings_cents` (net surplus = income − outflow = the **Colchão**), which is the buffer, not Economizado.
+
+**MonthCoverage**: per future month, how much of the typical baseline outflow has been pre-launched. Drives the Previsibilidade card — an empty future month makes the projection optimistic until salary/fixed/fatura/diário are entered.
+
+**binding_guardrail**: "pode gastar até X hoje" is the MIN of two limits — cash (no day goes negative) and savings (keep the annual Economizado% ≥ target). `binding_guardrail` says which one bit.
+
+**Colchão**: net surplus kept in cash instead of a formal Economia transfer — a valid adaptation the app recognizes before teaching (ColchaoCard). Shown beside `registered_economia` so the two are never conflated.
+
+**Phase** (adaptação): `map` (mapping — few lançamentos / no realized month) → `calibrate` (tuning the diário) → `operate` (Economizado% ≥ 20% and reserve ≥ 3 months). Derived from summary + forecast (`colchaoPhase`), not stored.
+
+**Reserve months** (dashboard): derived live as reserve-account balance ÷ monthly cost of living (`realized_monthly_baseline`); the `reserve.current_months` column has no production writer.
+
 ## Rules
 
 - Daily budget is per Person, not per Profile. Multi-device inherits the same budget.

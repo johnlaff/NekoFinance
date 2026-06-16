@@ -35,6 +35,10 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     // Campo limpa após registrar (o dashboard refaz a busca).
     await expect(page.getByLabel("Gasto de hoje")).toHaveValue("");
 
+    // Rodapé do MonthLedgerCard fiel à planilha: linhas Saída Total e Performance.
+    await expect(page.getByRole("row", { name: /Saída Total/ })).toBeVisible();
+    await expect(page.getByRole("row", { name: /^Performance/ }).first()).toBeVisible();
+
     await page.screenshot({
       fullPage: true,
       path: testInfo.outputPath("dashboard.png"),

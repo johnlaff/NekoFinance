@@ -85,6 +85,11 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
   const savingsBinds = forecast?.binding_guardrail === "savings";
   const targetPct = forecast ? Math.round(forecast.savings_target_bps / 100) : 25;
   const hasData = (summary?.transaction_count ?? 0) > 0;
+  // Diário médio do mês corrente (Σ diário realizado ÷ dias decorridos) para o ritmo no check-in.
+  const ym = forecast?.today.slice(0, 7);
+  const monthDailyAvgCents =
+    forecast?.months.find((m) => `${m.year}-${String(m.month).padStart(2, "0")}` === ym)
+      ?.real_daily_avg_cents ?? 0;
 
   function handleLogged() {
     invalidateCommands();
@@ -204,7 +209,11 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
       )}
 
       {summary && hasData && (
-        <DailyCheckinCard summary={summary} onLogged={handleLogged} />
+        <DailyCheckinCard
+          summary={summary}
+          monthAvgCents={monthDailyAvgCents}
+          onLogged={handleLogged}
+        />
       )}
 
       {forecast && hasData && <PrevisibilidadeCard forecast={forecast} />}

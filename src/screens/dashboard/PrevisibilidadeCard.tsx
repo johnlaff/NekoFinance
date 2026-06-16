@@ -18,11 +18,24 @@ export function PrevisibilidadeCard({ forecast }: { forecast: Forecast }) {
   // Economizado% do método = Economia registrada (transfers→reserva) ÷ Entradas — não o net
   // superávit/colchão (esse vive no ColchaoCard). Espelha a coluna % da aba Economia da planilha.
   const economizadoPct = Math.round(
-    (annual.registered_economia_cents / Math.max(1, annual.realized_income_cents)) * 100,
+    (annual.registered_economia_cents / Math.max(1, annual.realized_income_cents)) *
+      100,
   );
   const trustedLabel = forecast.trusted_through_month
     ? monthNamePtBR(`${forecast.trusted_through_month}-01`)
     : null;
+
+  // Mesmo guia de pré-lançamento nos dois estados que pedem ação (sem cobertura e incompleto).
+  const preLaunchHelp = (
+    <Disclosure title="Como pré-lançar o ano">
+      <p>
+        Em cada mês à frente, lance o <b>saldo de hoje</b> (só conta-corrente), o{" "}
+        <b>salário</b> conservador, as <b>contas fixas</b>, a <b>fatura do cartão</b> no
+        vencimento e o <b>diário estimado</b> em todos os dias. Futuro vazio engana a
+        previsão.
+      </p>
+    </Disclosure>
+  );
 
   return (
     <section
@@ -52,10 +65,13 @@ export function PrevisibilidadeCard({ forecast }: { forecast: Forecast }) {
             projeção. Importe mais histórico da planilha.
           </p>
         ) : !hasCoverage ? (
-          <p className="dash-predict__neutral">
-            Nenhum mês futuro lançado além de hoje. A projeção só enxerga o presente.
-            Lance os próximos meses para prever o ano.
-          </p>
+          <>
+            <p className="dash-predict__neutral">
+              Nenhum mês futuro lançado além de hoje. A projeção só enxerga o presente.
+              Lance os próximos meses para prever o ano.
+            </p>
+            {preLaunchHelp}
+          </>
         ) : !firstIncomplete ? (
           <p className="dash-predict__ok">
             Seus meses futuros estão completos. A projeção é confiável até o fim dos
@@ -101,14 +117,7 @@ export function PrevisibilidadeCard({ forecast }: { forecast: Forecast }) {
                 );
               })}
             </div>
-            <Disclosure title="Como pré-lançar o ano">
-              <p>
-                Em cada mês à frente, lance o <b>saldo de hoje</b> (só conta-corrente),
-                o <b>salário</b> conservador, as <b>contas fixas</b>, a{" "}
-                <b>fatura do cartão</b> no vencimento e o <b>diário estimado</b> em
-                todos os dias. Futuro vazio engana a previsão.
-              </p>
-            </Disclosure>
+            {preLaunchHelp}
           </>
         )}
         <p className="dash-predict__savings">

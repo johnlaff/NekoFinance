@@ -75,7 +75,7 @@ export function OwnerChip({
             display: "inline-grid",
             placeItems: "center",
             background: "var(--surface-elevated)",
-            border: `1.5px solid ${o.color}`,
+            border: `var(--bw-strong) solid ${o.color}`,
             color: "var(--text)",
             fontSize: "10px",
             fontWeight: "var(--fw-bold)",

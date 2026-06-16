@@ -184,7 +184,7 @@ export function TagsScreen() {
       ) : null}
 
       {totalsQ.loading ? (
-        <div style={{ color: "var(--text-muted)" }}>Carregando tags…</div>
+        <EmptyState variant="skeleton" skeletonRows={6} />
       ) : tags.length === 0 ? (
         <EmptyState
           title="Nenhuma tag ainda"

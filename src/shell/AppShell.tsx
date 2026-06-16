@@ -30,7 +30,7 @@ export type Screen =
   | "settings";
 
 export const SCREEN_META: Record<Screen, { title: string; crumb: string }> = {
-  dashboard: { title: "Dashboard", crumb: "Todas as contas" },
+  dashboard: { title: "Dashboard", crumb: "Quanto posso gastar hoje" },
   totais: { title: "Totais", crumb: "Cálculos do mês" },
   anuais: { title: "Visão anual", crumb: "O ano inteiro" },
   horizonte: { title: "Horizonte de saldos", crumb: "Projeção mês a mês" },

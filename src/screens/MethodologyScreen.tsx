@@ -1,6 +1,7 @@
 import {
   CalendarRange,
   Gauge,
+  PiggyBank,
   Ruler,
   ShieldCheck,
   Sigma,
@@ -22,6 +23,11 @@ const PRINCIPLES = [
     icon: CalendarRange,
     title: "Custo de vida",
     body: "Custo de vida = Saídas (contas fixas previsíveis, com data, + a fatura do cartão no vencimento) + Diário (o resto). O diário é um número único por dia, não um orçamento por categoria: categorias servem para diagnóstico, nunca para planejamento.",
+  },
+  {
+    icon: PiggyBank,
+    title: "Guardar 20 a 30%",
+    body: "Economizado = o quanto você transfere para a reserva ÷ entradas. A meta é 20 a 30% — mas como MÉDIA do ano, não de cada mês (uns meses mais, outros menos). É diferente do colchão (o que sobra em caixa sem você transferir): a Economia é o que você separa de propósito.",
   },
   {
     icon: Ruler,

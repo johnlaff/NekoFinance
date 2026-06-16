@@ -196,11 +196,7 @@ export function TotaisScreen() {
   const forecast = forecastQ.data ?? null;
 
   if (forecastQ.loading) {
-    return (
-      <div style={{ padding: "var(--space-8)", color: "var(--text-muted)" }}>
-        Carregando os totais do mês…
-      </div>
-    );
+    return <EmptyState variant="skeleton" skeletonRows={6} />;
   }
   if (forecastQ.error || !forecast) {
     return (
@@ -336,6 +332,7 @@ export function TotaisScreen() {
           term="custo_de_vida"
           value={<Money cents={m.cost_of_living_cents} size="lg" />}
           status={custoVidaStatus(m.cost_of_living_cents, m.income_cents)}
+          sublabel="= Saída Total (saídas + diário)"
         />
         <MetricRow
           label="Diário médio"
@@ -374,7 +371,7 @@ export function TotaisScreen() {
           <MovTotal
             label="Saída Total"
             cents={m.cost_of_living_cents}
-            hint="saídas + diário"
+            hint="saídas (incl. cartão) + diário = custo de vida"
           />
         </div>
       </section>

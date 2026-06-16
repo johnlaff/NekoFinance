@@ -4,6 +4,7 @@ import { useCommand } from "../lib/useCommand";
 import { Money } from "../design-system/components/Money";
 import { MonthNav } from "../design-system/components/MonthNav";
 import { InfoPopover } from "../design-system/components/InfoPopover";
+import { EmptyState } from "../design-system/components/EmptyState";
 
 const MONTHS_PT = [
   "Jan",
@@ -182,124 +183,133 @@ export function AnnualScreen() {
       </header>
 
       {q.loading ? (
-        <div style={{ color: "var(--text-muted)" }}>Carregando o ano…</div>
+        <EmptyState variant="skeleton" skeletonRows={7} />
       ) : (
-        <div style={{ overflowX: "auto" }}>
-          {hasYearData && <EconomizadoSparkline months={months} />}
-          <table
-            style={{
-              width: "100%",
-              borderCollapse: "collapse",
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
-            <thead>
-              <tr style={{ borderBottom: "var(--bw-hair) solid var(--border)" }}>
-                <th style={{ ...th, textAlign: "left" }}>Mês</th>
-                <th style={th}>Entradas</th>
-                <th style={th}>Economia</th>
-                <th style={th}>
-                  <InfoPopover term="economizado">Economizado</InfoPopover>
-                </th>
-                <th style={th}>Performance</th>
-                <th style={th}>Custo de vida</th>
-                <th style={th}>Diário médio</th>
-              </tr>
-            </thead>
-            <tbody>
-              {months.map((m) => {
-                const empty = m.income_cents === 0 && m.cost_of_living_cents === 0;
-                return (
-                  <tr
-                    key={m.month}
-                    style={{
-                      borderBottom: "var(--bw-hair) solid var(--border)",
-                      opacity: empty ? 0.45 : 1,
-                    }}
-                  >
-                    <td
-                      style={{
-                        padding: "var(--space-3) var(--space-4)",
-                        fontWeight: "var(--fw-semibold)",
-                        color: "var(--text)",
-                      }}
-                    >
-                      {MONTHS_PT[m.month - 1]}
-                    </td>
-                    <td style={tdNum}>
-                      <Money cents={m.income_cents} size="sm" sign="auto" />
-                    </td>
-                    <td style={tdNum}>
-                      <Money cents={m.economia_cents} size="sm" />
-                    </td>
-                    <td
-                      style={{
-                        ...tdNum,
-                        fontFamily: "var(--font-money)",
-                        color: empty ? "var(--text-faint)" : "var(--text)",
-                      }}
-                    >
-                      {empty ? "—" : `${(m.savings_rate_bps / 100).toFixed(0)}%`}
-                    </td>
-                    <td style={tdNum}>
-                      <Money cents={m.performance_cents} size="sm" sign="auto" />
-                    </td>
-                    <td style={tdNum}>
-                      <Money cents={m.cost_of_living_cents} size="sm" />
-                    </td>
-                    <td style={tdNum}>
-                      <Money cents={m.real_daily_avg_cents} size="sm" />
-                    </td>
+        <div className="dash-card">
+          <div className="dash-card__body">
+            {hasYearData && <EconomizadoSparkline months={months} />}
+            <div style={{ overflowX: "auto" }}>
+              <table
+                style={{
+                  width: "100%",
+                  borderCollapse: "collapse",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                <thead>
+                  <tr style={{ borderBottom: "var(--bw-hair) solid var(--border)" }}>
+                    <th style={{ ...th, textAlign: "left" }}>Mês</th>
+                    <th style={th}>Entradas</th>
+                    <th style={th}>Economia</th>
+                    <th style={th}>
+                      <InfoPopover term="economizado">Economizado</InfoPopover>
+                    </th>
+                    <th style={th}>Performance</th>
+                    <th style={th}>Custo de vida</th>
+                    <th style={th}>Diário médio</th>
                   </tr>
-                );
-              })}
-            </tbody>
-            {hasYearData && (
-              <tfoot>
-                <tr
-                  style={{
-                    borderTop: "var(--bw-strong) solid var(--border-strong)",
-                    fontWeight: "var(--fw-bold)",
-                  }}
-                >
-                  <td
-                    style={{
-                      padding: "var(--space-3) var(--space-4)",
-                      textTransform: "uppercase",
-                      letterSpacing: "var(--ls-label)",
-                      fontSize: "var(--fs-label)",
-                      color: "var(--text)",
-                    }}
-                  >
-                    Total
-                  </td>
-                  <td style={tdNum}>
-                    <Money cents={totals.income} size="sm" sign="auto" />
-                  </td>
-                  <td style={tdNum}>
-                    <Money cents={totals.economia} size="sm" />
-                  </td>
-                  <td
-                    title="Economizado no ano = total economizado ÷ total de entradas (meta 20–30%)"
-                    style={{
-                      ...tdNum,
-                      fontFamily: "var(--font-money)",
-                      color: savingsColor,
-                    }}
-                  >
-                    {annualSavingsPct}%
-                  </td>
-                  <td style={tdNum}>
-                    <Money cents={totals.performance} size="sm" sign="auto" />
-                  </td>
-                  <td style={tdNum}>
-                    <Money cents={totals.cost} size="sm" />
-                  </td>
-                  <td style={{ ...tdNum, color: "var(--text-faint)" }}>—</td>
-                </tr>
-              </tfoot>
-            )}
-          </table>
+                </thead>
+                <tbody>
+                  {months.map((m) => {
+                    const empty = m.income_cents === 0 && m.cost_of_living_cents === 0;
+                    return (
+                      <tr
+                        key={m.month}
+                        style={{
+                          borderBottom: "var(--bw-hair) solid var(--border)",
+                          opacity: empty ? 0.45 : 1,
+                        }}
+                      >
+                        <td
+                          style={{
+                            padding: "var(--space-3) var(--space-4)",
+                            fontWeight: "var(--fw-semibold)",
+                            color: "var(--text)",
+                          }}
+                        >
+                          {MONTHS_PT[m.month - 1]}
+                        </td>
+                        <td style={tdNum}>
+                          <Money cents={m.income_cents} size="sm" sign="auto" />
+                        </td>
+                        <td style={tdNum}>
+                          <Money cents={m.economia_cents} size="sm" />
+                        </td>
+                        <td
+                          style={{
+                            ...tdNum,
+                            fontFamily: "var(--font-money)",
+                            color: empty ? "var(--text-faint)" : "var(--text)",
+                          }}
+                        >
+                          {empty ? "—" : `${(m.savings_rate_bps / 100).toFixed(0)}%`}
+                        </td>
+                        <td style={tdNum}>
+                          <Money cents={m.performance_cents} size="sm" sign="auto" />
+                        </td>
+                        <td style={tdNum}>
+                          <Money cents={m.cost_of_living_cents} size="sm" />
+                        </td>
+                        <td style={tdNum}>
+                          <Money cents={m.real_daily_avg_cents} size="sm" />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                {hasYearData && (
+                  <tfoot>
+                    <tr
+                      style={{
+                        borderTop: "var(--bw-strong) solid var(--border-strong)",
+                        fontWeight: "var(--fw-bold)",
+                      }}
+                    >
+                      <td
+                        style={{
+                          padding: "var(--space-3) var(--space-4)",
+                          textTransform: "uppercase",
+                          letterSpacing: "var(--ls-label)",
+                          fontSize: "var(--fs-label)",
+                          color: "var(--text)",
+                        }}
+                      >
+                        Total
+                      </td>
+                      <td style={tdNum}>
+                        <Money cents={totals.income} size="sm" sign="auto" />
+                      </td>
+                      <td style={tdNum}>
+                        <Money cents={totals.economia} size="sm" />
+                      </td>
+                      <td
+                        title="Economizado no ano = total economizado ÷ total de entradas (meta 20–30%)"
+                        style={{
+                          ...tdNum,
+                          fontFamily: "var(--font-money)",
+                          color: savingsColor,
+                        }}
+                      >
+                        {annualSavingsPct}%
+                      </td>
+                      <td style={tdNum}>
+                        <Money cents={totals.performance} size="sm" sign="auto" />
+                      </td>
+                      <td style={tdNum}>
+                        <Money cents={totals.cost} size="sm" />
+                      </td>
+                      <td
+                        style={{ ...tdNum, color: "var(--text-faint)" }}
+                        title="Diário médio não tem total anual — médias não se somam"
+                      >
+                        —
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          </div>
         </div>
       )}
     </div>
