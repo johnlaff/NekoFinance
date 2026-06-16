@@ -28,18 +28,18 @@ A normalized financial movement. Has `type` (income, expense, transfer), `paymen
 _Avoid_: Entry, record, movement
 
 **Split**:
-Allocation of one transaction across multiple responsible persons and/or categories. Carries `amount`, `category_id`, and `owner_person_id`. A R$300 market purchase split into R$200 (owner A, category "Mercado") + R$100 (owner B, category "Farmácia") is two split rows on the same transaction.
+Allocation of one transaction across multiple responsible persons. Carries `amount` and `owner_person_id`. A R$300 market purchase split into R$200 (owner A) + R$100 (owner B) is two split rows on the same transaction. "Where the money went" is no longer a category on the split — categorization was demoted to free **tags** (diagnostic only), per the method (categories are for diagnosis, never for planning).
 
 **Payment Method** (enum on Transaction):
 `debit`, `credit`, `pix`, `cash`. The methodology distinguishes debit (immediate balance impact) from credit (delayed, tracked separately as "fatura"). Debit/PIX/cash feed Régua 1; credit feeds Régua 2.
 
 ### Classification
 
-**Category**:
-A hierarchical classification with `parent_id` (single-level tree). Every category has a `nature`: `fixed` (predictable bills: rent, subscriptions) or `variable` (everything else: market, leisure, transport). Categories are applied to Splits, not Transactions directly, so a single purchase can span multiple categories.
+**Category** (demoted — specs 014/015):
+The granular per-category tree was the "budget-by-category" anti-pattern the method rejects, so it was **demoted to free tags** (N:N, color/emoji, summed per month). What remains of `category` is only its `nature` attribute on the transaction. The `parent_id` tree is dormant (no budgeting UI); new labels are first-class tags.
 
-**Category Nature** (enum):
-`fixed` — Predictable, recurring, non-negotiable expenses. `variable` — Discretionary spending that becomes the daily budget.
+**Category Nature** (enum, kept on the transaction):
+`fixed` — Predictable, recurring, non-negotiable expenses (Saídas fixas). `variable` — Discretionary spending that becomes the daily budget (Diário).
 
 ### Budgeting & Discipline
 
@@ -54,11 +54,11 @@ A daily record of actual spending vs budget. Contains two independent metrics:
 - **credit_spend**: sum of credit card expenses for the day (Régua 2 — reality check)
   _Avoid_: Daily log, spending log
 
-**Régua 1 (Diário)**:
-The methodology's core metric: daily_spend compared against daily_budget. Green/amber/red based on budget compliance. Goes silent (always green) when the user pays exclusively with credit.
+**Débito/Diário track** (internal name "Régua 1" — Neko's term, not the method's):
+The method's core metric: daily_spend compared against daily_budget. Green/amber/red based on budget compliance. Goes silent (always green) when the user pays exclusively with credit.
 
-**Régua 2 (Fatura)**:
-Credit bill tracking: SUM(credit_spend for the month) compared against monthly income. Prevents self-deception when Régua 1 is green but the credit bill is accumulating silently. Mia reports both independently.
+**Crédito/Fatura track** (internal name "Régua 2"):
+Credit bill tracking: SUM(credit_spend for the month) accumulates into the invoice that lands on the due date. Prevents self-deception when the daily track is green but the credit bill is accumulating silently. The engine tracks the two independently; it does not compare credit against income.
 
 ### Savings & Protection
 

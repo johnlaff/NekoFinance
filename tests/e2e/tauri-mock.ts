@@ -5,13 +5,14 @@ import type { Page } from "@playwright/test";
  * real frontend renders with deterministic data in a plain browser. Commands
  * mirror the fixtures used by the vitest suite (src/test/commands.ts).
  */
-export async function mockTauri(page: Page) {
-  await page.addInitScript(() => {
+export async function mockTauri(page: Page, overrides: Record<string, unknown> = {}) {
+  await page.addInitScript((ov: Record<string, unknown>) => {
     const SUMMARY = {
       balance: 842000,
       daily_budget: 4300,
       daily_spend_today: 3800,
       credit_spend_month: 120000,
+      has_credit: true,
       reserve_months: 4.5,
       reserve_trend: "down",
       transaction_count: 42,
@@ -61,7 +62,7 @@ export async function mockTauri(page: Page) {
         {
           date: "2026-06-15",
           income_cents: 0,
-          fixed_out_cents: 231100,
+          fixed_out_cents: 230000,
           daily_out_cents: 4300,
           balance_cents: 587700,
         },
@@ -177,17 +178,25 @@ export async function mockTauri(page: Page) {
           year: 2026,
           month: 6,
           income_cents: 700000,
-          performance_cents: 445700,
-          cost_of_living_cents: 254300,
-          savings_rate_bps: 6367,
+          performance_cents: 450000,
+          cost_of_living_cents: 250000,
+          fixed_out_cents: 250000,
+          daily_out_cents: 0,
+          savings_rate_bps: 2500,
+          real_daily_avg_cents: 3000,
+          economia_cents: 175000,
         },
         {
           year: 2026,
           month: 7,
-          income_cents: 899331,
-          performance_cents: 87645,
-          cost_of_living_cents: 811686,
-          savings_rate_bps: 974,
+          income_cents: 900000,
+          performance_cents: 90000,
+          cost_of_living_cents: 810000,
+          fixed_out_cents: 810000,
+          daily_out_cents: 0,
+          savings_rate_bps: 1000,
+          real_daily_avg_cents: 0,
+          economia_cents: 0,
         },
       ],
       cash_headroom_cents: 587700,
@@ -195,12 +204,12 @@ export async function mockTauri(page: Page) {
       binding_guardrail: "cash",
       savings_target_bps: 2500,
       annual_savings: {
-        realized_income_cents: 6500000,
-        realized_savings_cents: 400000,
-        realized_rate_bps: 615,
-        projected_income_cents: 11800000,
-        projected_savings_cents: 2200000,
-        projected_rate_bps: 1864,
+        realized_income_cents: 5000000,
+        realized_savings_cents: 300000,
+        realized_rate_bps: 600,
+        projected_income_cents: 6000000,
+        projected_savings_cents: 1500000,
+        projected_rate_bps: 2500,
         target_bps: 2500,
       },
       coverage: [
@@ -228,6 +237,10 @@ export async function mockTauri(page: Page) {
         date: "2026-06-10",
         payment_method: "debit",
         is_projection: false,
+        is_fixed: false,
+        owners: ["Ana", "Bruno"],
+        tags: [],
+        provenance: "importado",
       },
       {
         id: "t2",
@@ -237,6 +250,10 @@ export async function mockTauri(page: Page) {
         date: "2026-06-08",
         payment_method: "credit",
         is_projection: false,
+        is_fixed: false,
+        owners: [],
+        tags: [],
+        provenance: "manual",
       },
       {
         id: "t3",
@@ -246,6 +263,10 @@ export async function mockTauri(page: Page) {
         date: "2026-06-05",
         payment_method: "pix",
         is_projection: false,
+        is_fixed: true,
+        owners: [],
+        tags: [],
+        provenance: "importado",
       },
       {
         id: "t4",
@@ -255,15 +276,23 @@ export async function mockTauri(page: Page) {
         date: "2026-06-25",
         payment_method: "",
         is_projection: true,
+        is_fixed: false,
+        owners: [],
+        tags: [],
+        provenance: "projetado",
       },
       {
         id: "t5",
         type: "expense",
-        amount: 231100,
+        amount: 230000,
         description: "Aluguel",
         date: "2026-06-15",
         payment_method: "debit",
         is_projection: true,
+        is_fixed: true,
+        owners: [],
+        tags: [],
+        provenance: "projetado",
       },
     ];
 
@@ -314,14 +343,72 @@ export async function mockTauri(page: Page) {
       db_path: "C:\\Users\\you\\AppData\\Roaming\\app.neko.finance\\neko-finance.db",
     };
 
+    const ANNUAL = {
+      year: 2026,
+      months: Array.from({ length: 12 }, (_, i) => ({
+        year: 2026,
+        month: i + 1,
+        income_cents: i + 1 === 6 ? 700000 : 0,
+        performance_cents: i + 1 === 6 ? 450000 : 0,
+        cost_of_living_cents: i + 1 === 6 ? 250000 : 0,
+        real_daily_avg_cents: 0,
+        economia_cents: 0,
+        savings_rate_bps: i + 1 === 6 ? 2200 : 0,
+      })),
+    };
+
+    const TAG_TOTALS = [
+      {
+        id: "p",
+        name: "! Pagar",
+        color: "var(--brass-400)",
+        emoji: null,
+        is_special: true,
+        total_cents: 2500,
+      },
+      {
+        id: "v",
+        name: "Viagem",
+        color: "var(--cat-sky)",
+        emoji: "\u2708\uFE0F",
+        is_special: false,
+        total_cents: 10000,
+      },
+      {
+        id: "d",
+        name: "Delivery",
+        color: "var(--cat-coral)",
+        emoji: "\uD83C\uDF54",
+        is_special: false,
+        total_cents: 35000,
+      },
+    ];
+
     const responses: Record<string, unknown> = {
       check_auth_status: "disconnected",
       get_dashboard_summary: SUMMARY,
       get_forecast: FORECAST,
+      get_month_grid: FORECAST.daily.map((d) => ({
+        date: d.date,
+        day: Number(d.date.slice(8, 10)),
+        income_cents: d.income_cents,
+        fixed_out_cents: d.fixed_out_cents,
+        daily_out_cents: d.daily_out_cents,
+        balance_cents: d.balance_cents,
+      })),
+      tag_totals_for_month_cmd: TAG_TOTALS,
+      list_tags_cmd: TAG_TOTALS,
+      get_annual_metrics: ANNUAL,
       get_recent_transactions: TXNS,
+      get_import_conflicts: [],
+      create_transaction: "e2e-txn-id",
       get_app_info: APP_INFO,
       get_pockets: POCKETS,
       create_account: "e2e-account-id",
+      // Onboarding já concluído nestes cenários — o overlay não cobre o app.
+      get_app_setting: "true",
+      set_app_setting: null,
+      ...ov,
     };
 
     Object.defineProperty(window, "__TAURI_INTERNALS__", {
@@ -334,5 +421,5 @@ export async function mockTauri(page: Page) {
       },
       configurable: true,
     });
-  });
+  }, overrides);
 }

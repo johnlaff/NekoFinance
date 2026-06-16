@@ -8,7 +8,7 @@ Current automated threshold:
 
 - TypeScript coverage gate: 90% lines, statements, branches, and functions for included source.
 - Excluded from coverage: app bootstrap, test setup, type-only files, generated files, future fixtures, and files without meaningful runtime behavior.
-- **Known gap (2026-06-09)**: overall TS coverage is ~55% (statements). Design system components are at ~98%, but `App.tsx` (919 lines, Google Sheets panel + dashboard + transaction list) is at ~44%. The App component's UI flows (OAuth connect, sheet picker, preview, mapping editor, import) are complex interactive paths — per the strategy below they should be covered by Playwright E2E smoke, not line-by-line Vitest. This gap will be addressed when Playwright E2E is integrated into the CI gate.
+- **Update (2026-06-14)**: the old monolithic `App.tsx` (~919 lines) was decomposed into `src/shell/`, `src/features/` and `src/screens/`; `App.tsx` is now ~84 lines of wiring. The complex interactive flows (OAuth connect, sheet picker, preview, mapping editor, import) moved into feature modules with their own component tests, and the remaining end-to-end paths are covered by the Playwright E2E smoke (`npm run e2e`). Design system components remain at ~98%. Continue to prefer Playwright smoke over line-by-line Vitest for multi-step interactive flows.
 
 Future domain threshold:
 

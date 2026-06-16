@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 function toCamelCase(str: string): string {
-  return str.replace(/-([a-z])/g, (_, g) => g.toUpperCase());
+  return str.replace(/-([a-z])/g, (_: string, g: string) => g.toUpperCase());
 }
 
 interface ButtonProps {
@@ -43,8 +43,8 @@ export function Button({
   className = "",
   disabled = false,
 }: ButtonProps) {
-  const vStyle = (variantStyles[variant] ?? variantStyles["primary"]) || "";
-  const sStyle = (sizeStyles[size] ?? sizeStyles["md"]) || "";
+  const vStyle = variantStyles[variant] ?? variantStyles["primary"] ?? "";
+  const sStyle = sizeStyles[size] ?? sizeStyles["md"] ?? "";
 
   return (
     <button
@@ -69,7 +69,7 @@ export function Button({
         ...Object.fromEntries(
           [...vStyle.split(";"), ...sStyle.split(";")].filter(Boolean).map((s) => {
             const parts = s.split(":").map((x) => x.trim());
-            return [toCamelCase(parts[0] || ""), parts[1] || ""];
+            return [toCamelCase(parts[0] ?? ""), parts[1] ?? ""];
           }),
         ),
       }}

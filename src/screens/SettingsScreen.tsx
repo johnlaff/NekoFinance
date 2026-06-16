@@ -62,7 +62,7 @@ export function SettingsScreen({
               <div className="set-row__t">Planilha .xlsx</div>
               <div className="set-row__d">
                 Importa todas as abas, detectando o layout de blocos mensais
-                automaticamente. Linhas já importadas são ignoradas (dedup).
+                automaticamente. Linhas já importadas antes são ignoradas.
               </div>
             </div>
             <div className="set-row__ctl">
@@ -75,7 +75,7 @@ export function SettingsScreen({
       <Section
         icon={Landmark}
         title="Bolsos"
-        sub="Conta, poupança, vale, previdência e FGTS — só dinheiro líquido entra no saldo projetado."
+        sub="Conta, poupança, vale, previdência e FGTS: só dinheiro líquido entra no saldo projetado."
       >
         <PocketsManager />
       </Section>

@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { Button } from "../../design-system/components/Button";
 import { importLocalXlsx, isTauri } from "../../lib/api";
 import { invalidateCommands } from "../../lib/useCommand";
+import { withLoading } from "../../lib/withLoading";
 
 /**
  * Imports a local .xlsx copy of the spreadsheet through a native file dialog.
@@ -17,6 +18,8 @@ export function LocalXlsxImport() {
   const handlePick = async () => {
     setError(null);
     setResult(null);
+    // Seleção do arquivo primeiro (sem loading); o try/finally do loading mora em withLoading.
+    let file: string;
     try {
       const selected = await open({
         multiple: false,
@@ -24,16 +27,21 @@ export function LocalXlsxImport() {
         filters: [{ name: "Planilha", extensions: ["xlsx"] }],
       });
       if (typeof selected !== "string") return; // dialog dismissed
-      setImporting(true);
-      const profileId = crypto.randomUUID();
-      const summary = await importLocalXlsx(selected, profileId);
-      invalidateCommands(); // finance numbers changed — drop every cached screen
-      setResult(summary);
+      file = selected;
     } catch (e) {
       setError(String(e));
-    } finally {
-      setImporting(false);
+      return;
     }
+    await withLoading(setImporting, async () => {
+      try {
+        const profileId = crypto.randomUUID();
+        const summary = await importLocalXlsx(file, profileId);
+        invalidateCommands(); // finance numbers changed — drop every cached screen
+        setResult(summary);
+      } catch (e) {
+        setError(String(e));
+      }
+    });
   };
 
   return (

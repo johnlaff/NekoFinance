@@ -1,9 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod conflicts;
 mod forecast;
 mod google_sheets;
 mod oauth;
+mod recurrence;
+mod splits;
+mod tags;
 
 use oauth::AppDataDir;
 use std::sync::Mutex;
@@ -21,16 +25,40 @@ pub fn run() {
             commands::list_sheet_names,
             commands::fetch_sheet_preview,
             commands::import_sheet_data,
+            commands::import_economia_sheet,
             commands::import_local_xlsx,
             commands::get_dashboard_summary,
             commands::get_forecast,
+            commands::get_annual_metrics,
+            commands::get_month_grid,
             commands::get_recent_transactions,
+            commands::create_transaction,
             commands::get_pockets,
             commands::create_account,
             commands::detect_sheet_layout,
+            commands::preview_write_back,
+            commands::write_back_enabled,
+            commands::apply_write_back,
+            commands::preview_economia_write_back,
+            commands::apply_economia_write_back,
+            commands::get_app_setting,
+            commands::set_app_setting,
             commands::save_sheet_mapping,
             commands::get_sheet_mappings,
             commands::list_user_spreadsheets,
+            tags::create_tag_cmd,
+            tags::list_tags_cmd,
+            tags::set_transaction_tags_cmd,
+            tags::tag_totals_for_month_cmd,
+            recurrence::create_recurring_series_cmd,
+            recurrence::delete_series_from_cmd,
+            recurrence::delete_series_all_cmd,
+            recurrence::update_series_from_cmd,
+            recurrence::update_series_all_cmd,
+            splits::splits_for_transaction_cmd,
+            splits::owner_totals_for_month_cmd,
+            conflicts::get_import_conflicts,
+            conflicts::resolve_import_conflict,
         ])
         .setup(|app| {
             use tauri::Manager;
@@ -151,6 +179,8 @@ mod tests {
             "sheet_layout",
             "sync_log",
             "transaction_fts",
+            "app_setting",
+            "import_conflict",
         ];
         for table_name in &tables {
             let (name,): (String,) =
@@ -183,25 +213,36 @@ mod tests {
             "INSERT INTO account (id, name, type, owner_person_id, institution, balance) VALUES (?1,?2,?3,?4,?5,?6)"
         )
         .bind(&bank_id).bind("Conta Corrente").bind("bank")
-        .bind(&person_id).bind("Nubank").bind(500000)
+        .bind(&person_id).bind("Banco Exemplo").bind(500000)
         .execute(&pool).await.unwrap();
 
         let card_id = uuid::Uuid::new_v4().to_string();
         sqlx::query(
             "INSERT INTO account (id, name, type, owner_person_id, institution, credit_limit, closing_day, due_day) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)"
         )
-        .bind(&card_id).bind("Visa Infinite").bind("credit_card")
-        .bind(&person_id).bind("Nubank").bind(1000000).bind(5).bind(15)
+        .bind(&card_id).bind("Cartão de crédito").bind("credit_card")
+        .bind(&person_id).bind("Banco Exemplo").bind(1000000).bind(5).bind(15)
         .execute(&pool).await.unwrap();
 
+        // Spec 015 (WRONG #4): a árvore granular de categorias foi rebaixada para tags; só as
+        // macro-naturezas (fixo/variável) + "Sem categoria" permanecem.
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM category")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert!(
-            count.0 >= 11,
-            "expected >= 11 seed categories, got {}",
+        assert_eq!(
+            count.0, 3,
+            "só as macro-naturezas permanecem, got {}",
             count.0
+        );
+        let granular: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM category WHERE id = 'cat_var_alimentacao'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            granular.0, 0,
+            "categoria granular removida (rebaixada para tag)"
         );
 
         let txn_id = uuid::Uuid::new_v4().to_string();
@@ -218,7 +259,7 @@ mod tests {
             "INSERT INTO split (id, transaction_id, amount, category_id, owner_person_id) VALUES (?1,?2,?3,?4,?5)"
         )
         .bind(&split_id).bind(&txn_id).bind(4300)
-        .bind("cat_var_alimentacao").bind(&person_id)
+        .bind("cat_variable").bind(&person_id)
         .execute(&pool).await.unwrap();
 
         let checkin_id = uuid::Uuid::new_v4().to_string();

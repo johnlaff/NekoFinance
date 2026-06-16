@@ -1,6 +1,80 @@
 use super::layout_detect::{SheetLayout, month_number_from_name};
+use super::reconcile;
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
+
+/// Registra (ou limpa) o conflito de um campo. Conflito presente → UPSERT idempotente por
+/// (transação, campo); ausente → apaga o conflito (re-import resolveu ou convergiu).
+#[allow(clippy::too_many_arguments)]
+async fn record_conflict(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    txn_id: &str,
+    field: &str,
+    conflict: bool,
+    base_value: Option<String>,
+    local_value: &str,
+    sheet_value: &str,
+    now: &str,
+) -> Result<(), String> {
+    if conflict {
+        let id = format!("conf:{txn_id}:{field}");
+        sqlx::query(
+            "INSERT INTO import_conflict (id, transaction_id, field, base_value, local_value, sheet_value, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+             ON CONFLICT(transaction_id, field) DO UPDATE SET base_value=excluded.base_value, \
+               local_value=excluded.local_value, sheet_value=excluded.sheet_value, \
+               created_at=excluded.created_at, resolved_at=NULL, resolution=NULL",
+        )
+        .bind(&id)
+        .bind(txn_id)
+        .bind(field)
+        .bind(&base_value)
+        .bind(local_value)
+        .bind(sheet_value)
+        .bind(now)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| format!("record conflict: {e}"))?;
+    } else {
+        sqlx::query("DELETE FROM import_conflict WHERE transaction_id = ?1 AND field = ?2")
+            .bind(txn_id)
+            .bind(field)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| format!("clear conflict: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Coluna do método de onde a linha veio. Define o tipo/is_fixed na transação E ancora a
+/// identidade determinística (a posição estável: aba + dia + coluna).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowKind {
+    Entrada,
+    Saida,
+    Diario,
+}
+
+impl RowKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RowKind::Entrada => "entrada",
+            RowKind::Saida => "saida",
+            RowKind::Diario => "diario",
+        }
+    }
+    /// `transaction.type`.
+    pub fn txn_type(self) -> &'static str {
+        match self {
+            RowKind::Entrada => "income",
+            RowKind::Saida | RowKind::Diario => "expense",
+        }
+    }
+    /// Saída = estilo de vida FIXO (→ FixedOut no engine); Diário = variável (→ Daily).
+    pub fn is_fixed(self) -> bool {
+        matches!(self, RowKind::Saida)
+    }
+}
 
 #[derive(Debug)]
 pub struct ImportedRow {
@@ -8,6 +82,7 @@ pub struct ImportedRow {
     pub amount: i64,
     pub description: String,
     pub is_projection: bool,
+    pub kind: RowKind,
 }
 
 pub fn classify_row(date_str: &str, date_direction: &str) -> Result<bool, String> {
@@ -29,8 +104,41 @@ pub fn compute_checksum(rows: &[ImportedRow]) -> String {
         hasher.update(row.amount.to_le_bytes());
         hasher.update(row.description.as_bytes());
         hasher.update([row.is_projection as u8]);
+        hasher.update(row.kind.as_str().as_bytes());
     }
     hex::encode(hasher.finalize())
+}
+
+/// Id DETERMINÍSTICO de uma linha importada = `sha256(aba|data|kind|slot)`. Não inclui valor nem
+/// descrição → editar o valor/nota na planilha **preserva** o id (o UPSERT atualiza em vigor e o
+/// enriquecimento — split, tags, payment_method — sobrevive). `slot` desempata o caso raro de
+/// mais de uma linha com a mesma (aba,data,kind).
+///
+/// ÂNCORAS data+kind (limitação aceita): como `data` e `kind` ENTRAM no id, editar o DIA de um
+/// lançamento na planilha (ou mover o valor da coluna Saída para Diário) recomputa o id; o diff-
+/// delete remove o id antigo (com seu enriquecimento) e insere o novo "pelado". É o trade-off do
+/// modelo de identidade — edições de VALOR/NOTA (o caso comum) são preservadas; edições de
+/// dia/coluna não. Re-anexar o enriquecimento ao mudar o dia é um endurecimento futuro.
+///
+/// LIMITAÇÃO CONHECIDA (slot posicional): `slot` é atribuído pela ordem de aparição. Se houver
+/// 2+ linhas com a mesma (aba,data,kind) e a 1ª for removida da planilha, a sobrevivente herda o
+/// `slot` (e o id) da removida, migrando o enriquecimento para os dados errados. Inalcançável no
+/// grid canônico do método (1 célula por dia×coluna → no máximo 1 linha por (data,kind); ver
+/// `parse_rows_with_layout`); só ocorre em planilha malformada com dias duplicados. NÃO ancoramos
+/// em (linha,coluna) física de propósito: mudaria o esquema do id e regeneraria TODOS os ids no
+/// próximo import, órfãos o enriquecimento de quem já importou. Travado pelo teste
+/// `slot_identity_is_positional_known_limitation`.
+pub fn row_id(sheet: &str, date: &str, kind: RowKind, slot: usize) -> String {
+    let mut h = Sha256::new();
+    h.update(b"txn-v1|");
+    h.update(sheet.as_bytes());
+    h.update(b"|");
+    h.update(date.as_bytes());
+    h.update(b"|");
+    h.update(kind.as_str().as_bytes());
+    h.update(b"|");
+    h.update(slot.to_le_bytes());
+    hex::encode(h.finalize())
 }
 
 pub async fn check_duplicate_import(
@@ -67,61 +175,162 @@ pub async fn import_rows(
 
     let now = chrono::Utc::now().to_rfc3339();
 
-    // Replace-all por aba (spec 010, slice 1): re-importar a planilha editada substitui
-    // atomicamente tudo que veio desta aba antes — nunca duplica, nunca deixa estado parcial.
+    // Reconciliação NÃO-destrutiva por aba (spec 012): identidade determinística + UPSERT preserva
+    // o id (e o enriquecimento — split/tags/payment_method ancorados nele) quando a célula é
+    // editada; diff-delete remove só as linhas que sumiram da planilha. Substitui o DELETE-all +
+    // uuid novo (que regenerava ids e matava o enriquecimento a cada re-import — P0-2).
     let mut tx = pool.begin().await.map_err(|e| format!("begin: {e}"))?;
 
     let profile_id = resolve_profile_id(&mut tx, profile_id).await?;
 
-    sqlx::query(
-        "DELETE FROM \"transaction\" WHERE id IN \
-         (SELECT entity_id FROM sync_log WHERE source_sheet = ?1 AND entity_type = 'transaction')",
-    )
-    .bind(sheet_name)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| format!("clear transactions: {e}"))?;
-
-    sqlx::query("DELETE FROM sync_log WHERE source_sheet = ?1 AND entity_type = 'transaction'")
-        .bind(sheet_name)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| format!("clear sync_log: {e}"))?;
+    let mut slot_counter: std::collections::HashMap<(String, &'static str), usize> =
+        std::collections::HashMap::new();
+    let mut current_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for row in rows {
-        let txn_id = uuid::Uuid::new_v4().to_string();
+        let slot = {
+            let c = slot_counter
+                .entry((row.date.clone(), row.kind.as_str()))
+                .or_insert(0);
+            let s = *c;
+            *c += 1;
+            s
+        };
+        let txn_id = row_id(sheet_name, &row.date, row.kind, slot);
+        current_ids.insert(txn_id.clone());
 
-        sqlx::query(
-            "INSERT INTO \"transaction\" (id, type, amount, description, date, is_projection, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+        let sheet_amount = row.amount.abs();
+        let sheet_desc = row.description.clone();
+
+        // Merge de 3 vias (spec 013): a planilha não vence cego. Carrega o estado atual + o base
+        // (source_*) e decide por campo — preservando edição local e abrindo conflito quando ambos
+        // divergem, em vez de sobrescrever em silêncio. `is_fixed`/`is_projection`/`type` são
+        // estruturais (seguem a planilha).
+        let existing: Option<(i64, String, Option<i64>, Option<String>)> = sqlx::query_as(
+            "SELECT amount, COALESCE(description,''), source_amount, source_description \
+             FROM \"transaction\" WHERE id = ?1",
         )
         .bind(&txn_id)
-        .bind(if row.amount >= 0 { "income" } else { "expense" })
-        .bind(row.amount.abs())
-        .bind(&row.description)
-        .bind(&row.date)
-        .bind(row.is_projection as i64)
-        .bind(&now)
-        .bind(&now)
-        .execute(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await
-        .map_err(|e| format!("insert row {row:?}: {e}"))?;
+        .map_err(|e| format!("load existing txn: {e}"))?;
 
-        let log_id = uuid::Uuid::new_v4().to_string();
+        match existing {
+            None => {
+                // Linha nova: a planilha semeia valor e base.
+                sqlx::query(
+                    "INSERT INTO \"transaction\" (id, type, amount, description, date, is_fixed, is_projection, source_amount, source_description, created_at, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?3, ?4, ?8, ?8)",
+                )
+                .bind(&txn_id)
+                .bind(row.kind.txn_type())
+                .bind(sheet_amount)
+                .bind(&sheet_desc)
+                .bind(&row.date)
+                .bind(row.kind.is_fixed() as i64)
+                .bind(row.is_projection as i64)
+                .bind(&now)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("insert row {row:?}: {e}"))?;
+            }
+            Some((local_amount, local_desc, src_amount, src_desc)) => {
+                let amt = reconcile::apply(src_amount.as_ref(), &local_amount, &sheet_amount);
+                let desc = reconcile::apply(src_desc.as_ref(), &local_desc, &sheet_desc);
+
+                sqlx::query(
+                    "UPDATE \"transaction\" SET type=?2, amount=?3, description=?4, date=?5, \
+                       is_fixed=?6, is_projection=?7, source_amount=?8, source_description=?9, updated_at=?10 \
+                     WHERE id=?1",
+                )
+                .bind(&txn_id)
+                .bind(row.kind.txn_type())
+                .bind(amt.value)
+                .bind(&desc.value)
+                .bind(&row.date)
+                .bind(row.kind.is_fixed() as i64)
+                .bind(row.is_projection as i64)
+                .bind(amt.source)
+                .bind(&desc.source)
+                .bind(&now)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("update row {row:?}: {e}"))?;
+
+                record_conflict(
+                    &mut tx,
+                    &txn_id,
+                    "amount",
+                    amt.conflict,
+                    src_amount.map(|v| v.to_string()),
+                    &local_amount.to_string(),
+                    &sheet_amount.to_string(),
+                    &now,
+                )
+                .await?;
+                record_conflict(
+                    &mut tx,
+                    &txn_id,
+                    "description",
+                    desc.conflict,
+                    src_desc,
+                    &local_desc,
+                    &sheet_desc,
+                    &now,
+                )
+                .await?;
+            }
+        }
+
+        // sync_log com id determinístico (1:1 com o txn) → UPSERT idempotente.
+        let log_id = format!("log:{txn_id}");
         sqlx::query(
-            "INSERT INTO sync_log (id, event_type, entity_type, entity_id, profile_id, timestamp, metadata, source_sheet, checksum) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+            "INSERT INTO sync_log (id, event_type, entity_type, entity_id, profile_id, timestamp, metadata, source_sheet, checksum) \
+             VALUES (?1, 'import', 'transaction', ?2, ?3, ?4, ?5, ?6, ?7) \
+             ON CONFLICT(id) DO UPDATE SET timestamp=excluded.timestamp, metadata=excluded.metadata, checksum=excluded.checksum"
         )
         .bind(&log_id)
-        .bind("import")
-        .bind("transaction")
         .bind(&txn_id)
         .bind(&profile_id)
         .bind(&now)
-        .bind(format!(r#"{{"source":"{sheet_name}","date":"{}","amount":{}}}"#, row.date, row.amount))
+        .bind(format!(r#"{{"source":"{sheet_name}","date":"{}","amount":{},"kind":"{}"}}"#, row.date, row.amount, row.kind.as_str()))
         .bind(sheet_name)
         .bind(&checksum)
         .execute(&mut *tx)
         .await
         .map_err(|e| format!("sync_log error: {e}"))?;
+    }
+
+    // Diff-delete: linhas removidas da planilha (no sync_log desta aba, mas fora do import atual).
+    let existing: Vec<(String,)> = sqlx::query_as(
+        "SELECT entity_id FROM sync_log WHERE source_sheet = ?1 AND entity_type = 'transaction'",
+    )
+    .bind(sheet_name)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|e| format!("load existing ids: {e}"))?;
+    for (eid,) in existing {
+        if !current_ids.contains(&eid) {
+            sqlx::query("DELETE FROM \"transaction\" WHERE id = ?1")
+                .bind(&eid)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("delete removed txn: {e}"))?;
+            sqlx::query(
+                "DELETE FROM sync_log WHERE entity_id = ?1 AND source_sheet = ?2 AND entity_type = 'transaction'",
+            )
+            .bind(&eid)
+            .bind(sheet_name)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("delete removed sync_log: {e}"))?;
+            // Conflitos órfãos somem com a transação removida.
+            sqlx::query("DELETE FROM import_conflict WHERE transaction_id = ?1")
+                .bind(&eid)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("delete removed conflicts: {e}"))?;
+        }
     }
 
     tx.commit().await.map_err(|e| format!("commit: {e}"))?;
@@ -226,7 +435,7 @@ pub async fn get_active_mappings_for_sheet(
 /// (títulos, totais) não podem deslocar os meses seguintes. Primeira ocorrência de cada mês
 /// vence: uma anotação posterior ("Março 2026") não cria bloco-fantasma lendo colunas erradas.
 /// Fallback (nenhum nome de mês): fatia a largura em passos de `block_size`.
-fn month_blocks_for(header_row_data: &[String], block_size: usize) -> Vec<(usize, u32)> {
+pub(crate) fn month_blocks_for(header_row_data: &[String], block_size: usize) -> Vec<(usize, u32)> {
     let mut month_blocks: Vec<(usize, u32)> = Vec::new();
     let mut seen_months = [false; 13];
     for (i, cell) in header_row_data.iter().enumerate() {
@@ -302,6 +511,12 @@ pub fn parse_rows_with_layout(
         .iter()
         .find(|(field, _)| field == "amount_out")
         .map(|(_, offset)| *offset as usize);
+    // Coluna Diário (variável): mapeada como `amount_daily`. Quando ausente (planilhas antigas),
+    // o ramo simplesmente não emite nada.
+    let amount_daily_offset = mappings
+        .iter()
+        .find(|(field, _)| field == "amount_daily")
+        .map(|(_, offset)| *offset as usize);
 
     for (r, row) in rows.iter().enumerate().skip(data_start) {
         if row.is_empty() || row.get(day_col).is_none_or(|c| c.trim().is_empty()) {
@@ -335,6 +550,7 @@ pub fn parse_rows_with_layout(
                         amount: amount_in,
                         description: cell_description(notes, r, offset + in_off, &date, "Entrada"),
                         is_projection,
+                        kind: RowKind::Entrada,
                     });
                 }
             }
@@ -349,6 +565,22 @@ pub fn parse_rows_with_layout(
                         amount: -amount_out,
                         description: cell_description(notes, r, offset + out_off, &date, "Saída"),
                         is_projection,
+                        kind: RowKind::Saida,
+                    });
+                }
+            }
+
+            if let Some(d_off) = amount_daily_offset
+                && offset + d_off < row.len()
+            {
+                let amount_daily = parse_number(&row[offset + d_off]);
+                if amount_daily > 0 {
+                    imported.push(ImportedRow {
+                        date: date.clone(),
+                        amount: -amount_daily,
+                        description: cell_description(notes, r, offset + d_off, &date, "Diário"),
+                        is_projection,
+                        kind: RowKind::Diario,
                     });
                 }
             }
@@ -477,9 +709,9 @@ pub async fn store_balance_series(
 }
 
 /// Converte texto monetário em centavos. Regra fechada de separadores (spec 010, slice 0):
-/// com `.` e `,` presentes, o que aparece POR ÚLTIMO é o decimal (cobre pt-BR `6.012,73` e
-/// en_US `6,012.73`); um separador sozinho é decimal, exceto padrão claro de agrupamento de
-/// milhar (`6.012`, `1.234.567`). Floats do xlsx chegam normalizados com 4 casas fixas
+/// com `.` e `,` presentes, o que aparece POR ÚLTIMO é o decimal (cobre pt-BR `1.234,56` e
+/// en_US `1,234.56`); um separador sozinho é decimal, exceto padrão claro de agrupamento de
+/// milhar (`1.234`, `1.234.567`). Floats do xlsx chegam normalizados com 4 casas fixas
 /// (ver `xlsx_cell_to_string`), então nunca caem na ambiguidade de 3 dígitos.
 pub fn parse_number(s: &str) -> i64 {
     let cleaned: String = s
@@ -515,8 +747,59 @@ pub fn parse_number(s: &str) -> i64 {
     }
 }
 
+/// Parseia a aba `Economia` → `(ano, mês 1..=12, centavos)` para cada mês com Economia > 0.
+/// A aba EMPILHA um bloco por ano: cada bloco tem uma linha-CABEÇALHO com o ANO (número inteiro) +
+/// os rótulos `Entradas` e `Economia`, seguida de 12 linhas `jan`..`dez` com o valor na coluna
+/// Economia (o mês fica na MESMA coluna do ano). PURA — só lê. Re-import é deduplicado a montante
+/// por id determinístico (`economia:{ano}-{mês}`).
+pub fn parse_economia_sheet(rows: &[Vec<String>]) -> Vec<(i32, u32, i64)> {
+    let mut out = Vec::new();
+    let mut r = 0;
+    while r < rows.len() {
+        let row = &rows[r];
+        let has_entradas = row
+            .iter()
+            .any(|c| c.trim().eq_ignore_ascii_case("entradas"));
+        let econ_col = row
+            .iter()
+            .position(|c| c.trim().eq_ignore_ascii_case("economia"));
+        let year_cell = row.iter().enumerate().find_map(|(i, c)| {
+            c.trim()
+                .parse::<f64>()
+                .ok()
+                .filter(|n| n.fract() == 0.0 && (2000.0..2100.0).contains(n))
+                .map(|n| (i, n as i32))
+        });
+        let (Some(econ_col), true, Some((month_col, year))) = (econ_col, has_entradas, year_cell)
+        else {
+            r += 1;
+            continue;
+        };
+        // Lê as linhas de mês logo abaixo do cabeçalho do bloco.
+        let mut rr = r + 1;
+        while rr < rows.len() {
+            let Some(month) = rows[rr]
+                .get(month_col)
+                .and_then(|l| month_number_from_name(l))
+            else {
+                break; // fim do bloco (linha vazia, TOTAL ou próximo cabeçalho)
+            };
+            let cents = rows[rr].get(econ_col).map(|c| parse_number(c)).unwrap_or(0);
+            if cents > 0 {
+                out.push((year, month, cents));
+            }
+            rr += 1;
+            if month == 12 {
+                break;
+            }
+        }
+        r = rr;
+    }
+    out
+}
+
 /// Padrão inequívoco de milhar: primeiro grupo com 1–3 dígitos e todos os demais com
-/// exatamente 3 (`6.012`, `1.234.567`) — qualquer outra forma é tratada como decimal.
+/// exatamente 3 (`3.012`, `1.234.567`) — qualquer outra forma é tratada como decimal.
 fn is_thousands_grouping(s: &str, sep: char) -> bool {
     let unsigned = s.trim_start_matches('-');
     let mut parts = unsigned.split(sep);
@@ -565,26 +848,26 @@ mod tests {
         assert_eq!(parse_number(""), 0);
     }
 
-    // Regressão spec 010 slice 0: valores reais da planilha nos dois locales + xlsx.
+    // Regressão spec 010 slice 0: valores representativos nos dois locales + xlsx.
     #[test]
     fn test_parse_number_separator_rules() {
-        // xlsx/calamine: ponto decimal puro — antes inflava 100× (65.28 → 652800).
-        assert_eq!(parse_number("65.28"), 6528);
-        assert_eq!(parse_number("6012.73"), 601273);
-        // Saldo real com 4 casas: arredonda a centavos na fronteira.
-        assert_eq!(parse_number("10805.5048"), 1080550);
-        assert_eq!(parse_number("289.9252"), 28993);
+        // xlsx/calamine: ponto decimal puro — antes inflava 100× (12.34 → 123400).
+        assert_eq!(parse_number("12.34"), 1234);
+        assert_eq!(parse_number("1234.56"), 123456);
+        // Valor com 4 casas: arredonda a centavos na fronteira.
+        assert_eq!(parse_number("5678.1234"), 567812);
+        assert_eq!(parse_number("456.7891"), 45679);
         // Float do xlsx normalizado com 4 casas fixas (xlsx_cell_to_string).
-        assert_eq!(parse_number("65.2800"), 6528);
+        assert_eq!(parse_number("12.3400"), 1234);
         assert_eq!(parse_number("123.4560"), 12346);
         // Sheets FORMATTED pt-BR e en_US: o último separador é o decimal.
-        assert_eq!(parse_number("6.012,73"), 601273);
-        assert_eq!(parse_number("6,012.73"), 601273);
+        assert_eq!(parse_number("3.012,73"), 301273);
+        assert_eq!(parse_number("3,012.73"), 301273);
         assert_eq!(parse_number("R$ 1.234,56"), 123456);
         // Separador único com agrupamento claro de milhar.
-        assert_eq!(parse_number("6.012"), 601200);
+        assert_eq!(parse_number("3.012"), 301200);
         assert_eq!(parse_number("1.234.567"), 123456700);
-        assert_eq!(parse_number("6,012"), 601200);
+        assert_eq!(parse_number("3,012"), 301200);
         // Decimal pt-BR sem milhar; negativos.
         assert_eq!(parse_number("1370,5"), 137050);
         assert_eq!(parse_number("-45,00"), -4500);
@@ -760,6 +1043,7 @@ mod tests {
             amount: 10000,
             description: "Test".into(),
             is_projection: false,
+            kind: RowKind::Entrada,
         }];
         let checksum1 = compute_checksum(&rows);
         let checksum2 = compute_checksum(&rows);
@@ -771,6 +1055,7 @@ mod tests {
             amount: 10000,
             description: "Test".into(),
             is_projection: false,
+            kind: RowKind::Entrada,
         }];
         let checksum3 = compute_checksum(&different_rows);
         assert_ne!(checksum1, checksum3);
@@ -827,8 +1112,8 @@ mod tests {
         }
         let mut day1 = vec![String::new(); width];
         day1[0] = "1".into();
-        day1[1] = "6012.73".into(); // Entrada em JANEIRO (bloco no offset 0)
-        day1[66 + 2] = "65.28".into(); // Saída em DEZEMBRO (bloco no offset 66)
+        day1[1] = "1234.56".into(); // Entrada em JANEIRO (bloco no offset 0)
+        day1[66 + 2] = "12.34".into(); // Saída em DEZEMBRO (bloco no offset 66)
         vec![month_row, header_row, day1]
     }
 
@@ -844,10 +1129,10 @@ mod tests {
         assert_eq!(result.len(), 2);
         let entrada = result.iter().find(|r| r.amount > 0).unwrap();
         assert_eq!(entrada.date, "2026-01-01");
-        assert_eq!(entrada.amount, 601273);
+        assert_eq!(entrada.amount, 123456);
         let saida = result.iter().find(|r| r.amount < 0).unwrap();
         assert_eq!(saida.date, "2026-12-01");
-        assert_eq!(saida.amount, -6528);
+        assert_eq!(saida.amount, -1234);
     }
 
     // Regressão (review adversarial): anotação com nome de mês depois do bloco real
@@ -891,6 +1176,39 @@ mod tests {
 
     // Regressão: célula não-vazia entre blocos não pode virar bloco nem deslocar meses.
     #[test]
+    fn parse_economia_sheet_reads_blocks_per_year() {
+        // Estrutura REAL: blocos por ano; ano/mês na col B (idx 1), Economia na col D (idx 3).
+        let h = |y: &str| {
+            vec![
+                "".to_string(),
+                y.to_string(),
+                "Entradas".to_string(),
+                "Economia".to_string(),
+                "%".to_string(),
+            ]
+        };
+        let m = |name: &str, eco: &str| {
+            vec![
+                "".to_string(),
+                name.to_string(),
+                "5000.00".to_string(),
+                eco.to_string(),
+                "0".to_string(),
+            ]
+        };
+        let rows = vec![
+            h("2025"),
+            m("jan", "1000.00"),
+            m("fev", "0.0000"), // 0 → ignorado
+            vec!["".into(), "TOTAL".into(), "".into(), "".into(), "".into()],
+            h("2026"),
+            m("jan", "1500.50"),
+        ];
+        let got = parse_economia_sheet(&rows);
+        assert_eq!(got, vec![(2025, 1, 100_000), (2026, 1, 150_050)]);
+    }
+
+    #[test]
     fn spurious_cell_between_blocks_does_not_shift_months() {
         let rows = real_geometry_rows(true);
         let layout = real_geometry_layout();
@@ -928,6 +1246,11 @@ mod tests {
             amount,
             description: format!("Linha {date}"),
             is_projection: false,
+            kind: if amount >= 0 {
+                RowKind::Entrada
+            } else {
+                RowKind::Saida
+            },
         }
     }
 
@@ -986,6 +1309,115 @@ mod tests {
         assert_eq!(count_sync_log(&pool, "2026").await, 2);
     }
 
+    // --- Spec 013: merge de 3 vias (drift por célula + gate de conflito) ---
+
+    async fn amount_by_date(pool: &SqlitePool, date: &str) -> i64 {
+        sqlx::query_as::<_, (i64,)>("SELECT amount FROM \"transaction\" WHERE date = ?1")
+            .bind(date)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+            .0
+    }
+    async fn set_local_amount(pool: &SqlitePool, date: &str, amount: i64) {
+        sqlx::query("UPDATE \"transaction\" SET amount = ?1 WHERE date = ?2")
+            .bind(amount)
+            .bind(date)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    async fn conflict_count(pool: &SqlitePool) -> i64 {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM import_conflict")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+            .0
+    }
+
+    #[tokio::test]
+    async fn local_edit_preserved_when_only_local_changed() {
+        let pool = test_pool().await;
+        // rowB existe só para mudar o checksum do batch no re-import (rowA fica igual na planilha).
+        let v1 = vec![
+            imported("2026-01-05", 10_000),
+            imported("2026-01-06", -1_000),
+        ];
+        import_rows(&pool, "2026", &v1, "p1").await.unwrap();
+
+        // Usuário corrige o valor de A localmente (base=10000 → local=15000).
+        set_local_amount(&pool, "2026-01-05", 15_000).await;
+
+        // Re-import: A com a MESMA célula (10000), B mudou → batch difere, merge roda em A.
+        let v2 = vec![
+            imported("2026-01-05", 10_000),
+            imported("2026-01-06", -2_000),
+        ];
+        import_rows(&pool, "2026", &v2, "p1").await.unwrap();
+
+        assert_eq!(
+            amount_by_date(&pool, "2026-01-05").await,
+            15_000,
+            "edição local preservada"
+        );
+        assert_eq!(
+            conflict_count(&pool).await,
+            0,
+            "sem conflito: só o local mudou"
+        );
+    }
+
+    #[tokio::test]
+    async fn sheet_update_applied_when_no_local_edit() {
+        let pool = test_pool().await;
+        import_rows(&pool, "2026", &[imported("2026-01-05", 10_000)], "p1")
+            .await
+            .unwrap();
+        // Planilha mudou a célula; local intacto → aplica a planilha.
+        import_rows(&pool, "2026", &[imported("2026-01-05", 12_000)], "p1")
+            .await
+            .unwrap();
+        assert_eq!(amount_by_date(&pool, "2026-01-05").await, 12_000);
+        assert_eq!(conflict_count(&pool).await, 0);
+    }
+
+    #[tokio::test]
+    async fn conflict_recorded_when_both_changed() {
+        let pool = test_pool().await;
+        import_rows(&pool, "2026", &[imported("2026-01-05", 10_000)], "p1")
+            .await
+            .unwrap();
+        set_local_amount(&pool, "2026-01-05", 15_000).await; // edição local
+
+        // Planilha foi para outro valor (20000) → ambos divergem do base (10000) → conflito.
+        import_rows(&pool, "2026", &[imported("2026-01-05", 20_000)], "p1")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            amount_by_date(&pool, "2026-01-05").await,
+            15_000,
+            "não sobrescreve o local"
+        );
+        let conflicts = crate::conflicts::list_conflicts(&pool).await.unwrap();
+        let amt = conflicts.iter().find(|c| c.field == "amount").unwrap();
+        assert_eq!(amt.base_value.as_deref(), Some("10000"));
+        assert_eq!(amt.local_value, "15000");
+        assert_eq!(amt.sheet_value, "20000");
+
+        // Resolvendo pela planilha, o valor passa a 20000 e o conflito some.
+        crate::conflicts::resolve(&pool, &amt.id, "sheet")
+            .await
+            .unwrap();
+        assert_eq!(amount_by_date(&pool, "2026-01-05").await, 20_000);
+        assert!(
+            crate::conflicts::list_conflicts(&pool)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
     // Regressão do bloqueador nº 1 do dogfooding: re-importar a planilha com QUALQUER
     // edição re-inseria todas as linhas (checksum era do batch inteiro, INSERT puro).
     #[tokio::test]
@@ -1009,6 +1441,119 @@ mod tests {
         assert_eq!(count_sync_log(&pool, "2026").await, 3);
     }
 
+    // P0-2: re-importar uma célula EDITADA preserva o id determinístico → o enriquecimento
+    // (aqui payment_method, mas idem split/tags ancorados no id) SOBREVIVE. Antes, o DELETE-all +
+    // uuid novo o destruía a cada re-import.
+    #[tokio::test]
+    async fn reimport_preserves_transaction_identity_and_enrichment() {
+        let pool = test_pool().await;
+        import_rows(&pool, "2026", &[imported("2026-01-05", 10_000)], "p1")
+            .await
+            .unwrap();
+
+        let (id_before,): (String,) =
+            sqlx::query_as("SELECT id FROM \"transaction\" WHERE date='2026-01-05'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        // Enriquecimento numa coluna que o import NÃO escreve.
+        sqlx::query("UPDATE \"transaction\" SET payment_method='credit' WHERE id=?1")
+            .bind(&id_before)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // O dono edita o VALOR na planilha e re-importa.
+        import_rows(&pool, "2026", &[imported("2026-01-05", 12_345)], "p1")
+            .await
+            .unwrap();
+
+        let (id_after, amount, pm): (String, i64, Option<String>) = sqlx::query_as(
+            "SELECT id, amount, payment_method FROM \"transaction\" WHERE date='2026-01-05'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(id_after, id_before, "id estável (determinístico)");
+        assert_eq!(amount, 12_345, "valor atualizado em vigor (UPSERT)");
+        assert_eq!(
+            pm.as_deref(),
+            Some("credit"),
+            "enriquecimento sobrevive ao re-import"
+        );
+        assert_eq!(count_transactions(&pool).await, 1, "sem duplicar");
+    }
+
+    // WRONG #2 (parte do import): Saída entra com is_fixed=1 (→ FixedOut no engine), não Diário.
+    #[tokio::test]
+    async fn import_sets_is_fixed_for_saida() {
+        let pool = test_pool().await;
+        import_rows(&pool, "2026", &[imported("2026-01-05", -5_000)], "p1")
+            .await
+            .unwrap();
+        let (is_fixed, ttype): (i64, String) =
+            sqlx::query_as("SELECT is_fixed, type FROM \"transaction\" WHERE date='2026-01-05'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(ttype, "expense");
+        assert_eq!(is_fixed, 1, "Saída = estilo de vida fixo");
+    }
+
+    // A coluna Diário é importada quando mapeada (amount_daily) → RowKind::Diario (variável).
+    #[test]
+    fn parse_imports_diario_column() {
+        // Coluna 0 = dia (absoluto); bloco JANEIRO no offset 1 (Entrada=2, Saída=3, Diário=4).
+        let rows = vec![
+            vec![
+                "".into(),
+                "JANEIRO".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+            ],
+            vec![
+                "Data".into(),
+                "Entrada".into(),
+                "Saída".into(),
+                "Diário".into(),
+                "Saldo".into(),
+                "".into(),
+            ],
+            vec![
+                "1".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "30".into(),
+                "".into(),
+            ],
+        ];
+        let layout = SheetLayout {
+            id: "t".into(),
+            sheet_name: "2025".into(),
+            year: Some(2025),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 6,
+            date_direction: "past_only".into(),
+        };
+        let mappings = vec![
+            ("amount_in".to_string(), 1),
+            ("amount_out".to_string(), 2),
+            ("amount_daily".to_string(), 3),
+        ];
+        let result = parse_rows_with_layout(&rows, &layout, &mappings, &[]);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].kind, RowKind::Diario);
+        assert_eq!(result[0].amount, -3000); // −R$30,00 (variável)
+        assert_eq!(result[0].date, "2025-01-01");
+    }
+
     #[tokio::test]
     async fn reimport_drops_rows_removed_from_sheet() {
         let pool = test_pool().await;
@@ -1026,6 +1571,56 @@ mod tests {
         assert_eq!(import_rows(&pool, "2026", &v2, "p1").await.unwrap(), 2);
 
         assert_eq!(count_transactions(&pool).await, 2);
+    }
+
+    // Trava a LIMITAÇÃO CONHECIDA do slot posicional (ver doc de `row_id`). Inalcançável no grid
+    // canônico do método (1 linha por data×kind); aqui forçamos 2 linhas mesma (aba,data,kind) para
+    // documentar que, removida a 1ª, o enriquecimento segue o SLOT (não os dados) — a sobrevivente
+    // assume o slot 0/id da removida e herda a tag. Se um dia ancorarmos id em (linha,coluna), este
+    // teste muda de propósito.
+    #[tokio::test]
+    async fn slot_identity_is_positional_known_limitation() {
+        let pool = test_pool().await;
+        // Duas Saídas no MESMO dia (planilha malformada): slots 0 e 1.
+        let v1 = vec![
+            imported("2026-01-06", -5_000),
+            imported("2026-01-06", -7_000),
+        ];
+        import_rows(&pool, "2026", &v1, "p1").await.unwrap();
+        assert_eq!(count_transactions(&pool).await, 2);
+
+        // Enriquece o SLOT 0 com uma tag.
+        let id0 = row_id("2026", "2026-01-06", RowKind::Saida, 0);
+        sqlx::query("INSERT INTO tag (id, name, color) VALUES ('tg','T','c')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO transaction_tag (transaction_id, tag_id) VALUES (?1,'tg')")
+            .bind(&id0)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Re-import com só UMA Saída no dia (a 1ª sumiu) → a sobrevivente toma o slot 0 = id0.
+        let v2 = vec![imported("2026-01-06", -7_000)];
+        import_rows(&pool, "2026", &v2, "p1").await.unwrap();
+        assert_eq!(count_transactions(&pool).await, 1);
+
+        // Comportamento documentado: id0 sobrevive com os DADOS da sobrevivente (7.000) e ainda
+        // carrega a tag — o enriquecimento é posicional (segue o slot, não a linha original).
+        let (amount, tags): (i64, i64) = sqlx::query_as(
+            "SELECT t.amount, (SELECT COUNT(*) FROM transaction_tag WHERE transaction_id = t.id) \
+             FROM \"transaction\" t WHERE t.id = ?1",
+        )
+        .bind(&id0)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(amount, 7_000, "id0 carrega os dados da sobrevivente");
+        assert_eq!(
+            tags, 1,
+            "enriquecimento seguiu o slot (limitação conhecida)"
+        );
     }
 
     #[tokio::test]

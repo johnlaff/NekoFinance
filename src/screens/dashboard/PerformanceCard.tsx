@@ -1,6 +1,7 @@
-import { TrendingUp } from "lucide-react";
+import { AlertTriangle, TrendingUp } from "lucide-react";
 import type { Forecast } from "../../lib/api";
 import { fmtBRL, monthNamePtBR } from "../../lib/format";
+import { Money } from "../../design-system/components/Money";
 
 /**
  * Performance por mês (Caixa ≠ Performance): expõe os meses magros — onde o "cartão sequestra o
@@ -32,7 +33,7 @@ export function PerformanceCard({ forecast }: { forecast: Forecast }) {
             className="dash-card__ic"
             aria-hidden="true"
           />
-          Performance por mês — caixa não é poupança
+          Performance por mês: caixa não é poupança
         </span>
         <span className="dash-perf__hint">referência anual 20–30%</span>
       </div>
@@ -40,7 +41,9 @@ export function PerformanceCard({ forecast }: { forecast: Forecast }) {
         {monthsAhead.map((m) => {
           const key = `${m.year}-${String(m.month).padStart(2, "0")}`;
           const iso = `${key}-01`;
-          const ratePct = Math.floor(m.savings_rate_bps / 100);
+          // Math.round (não floor) — mesma convenção das outras telas e do backend (round-half-up),
+          // senão o mesmo mês mostra 24% aqui e 25% em Totais/Anual.
+          const ratePct = Math.round(m.savings_rate_bps / 100);
           const incompleto = incompleteKeys.has(key);
           const monthLabel = monthNamePtBR(iso);
           return (
@@ -49,26 +52,32 @@ export function PerformanceCard({ forecast }: { forecast: Forecast }) {
               className={`dash-perf__cell ${incompleto ? "is-incomplete" : ""}`}
               aria-label={
                 incompleto
-                  ? `${monthLabel}: incompleto — projeção otimista, falta lançar gastos`
-                  : `${monthLabel}: performance ${fmtBRL(m.performance_cents)}, ${ratePct}% da renda`
+                  ? `${monthLabel}: incompleto, projeção otimista, falta lançar gastos`
+                  : `${monthLabel}: performance ${fmtBRL(m.performance_cents)}, economizado ${ratePct}%`
               }
             >
               <span className="dash-perf__month">{monthLabel}</span>
               {incompleto ? (
                 <>
                   <span className="dash-perf__val dash-perf__val--muted">
-                    {fmtBRL(m.performance_cents)}
+                    <Money cents={m.performance_cents} size="sm" />
                   </span>
-                  <span className="dash-perf__rate">incompleto ⚠</span>
+                  <span className="dash-perf__rate">
+                    <AlertTriangle
+                      size={11}
+                      strokeWidth={2}
+                      aria-hidden="true"
+                      style={{ verticalAlign: "-1px", marginRight: 3 }}
+                    />
+                    incompleto
+                  </span>
                 </>
               ) : (
                 <>
-                  <span
-                    className={`dash-perf__val ${m.performance_cents < 0 ? "negative" : "positive"}`}
-                  >
-                    {fmtBRL(m.performance_cents)}
+                  <span className="dash-perf__val">
+                    <Money cents={m.performance_cents} size="sm" sign="auto" />
                   </span>
-                  <span className="dash-perf__rate">{ratePct}% da renda</span>
+                  <span className="dash-perf__rate">economizado {ratePct}%</span>
                 </>
               )}
             </div>

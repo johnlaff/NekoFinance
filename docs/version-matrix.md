@@ -25,16 +25,16 @@ Checked on 2026-06-08 from npm and crates.io before scaffolding.
 | ESLint JS config       | `@eslint/js`                  | `10.0.1` | Explicit dependency required by ESLint flat config.                             |
 | TypeScript ESLint      | `typescript-eslint`           | `8.61.0` | Supports ESLint 10 and TypeScript `<6.1.0`; compatible with `typescript@6.0.3`. |
 | React Hooks lint       | `eslint-plugin-react-hooks`   | `7.1.1`  | Latest npm.                                                                     |
-| Prettier               | `prettier`                    | `3.8.3`  | Latest npm.                                                                     |
+| Prettier               | `prettier`                    | `3.8.4`  | Latest npm.                                                                     |
 | Test runner            | `vitest`                      | `4.1.8`  | Compatible with Vite 8 and Node 24.                                             |
 | Coverage               | `@vitest/coverage-v8`         | `4.1.8`  | Matches Vitest version.                                                         |
 | DOM test env           | `jsdom`                       | `29.1.1` | Latest npm, Node 24-compatible.                                                 |
 | React testing          | `@testing-library/react`      | `16.3.2` | Supports React 19.                                                              |
 | Jest DOM matchers      | `@testing-library/jest-dom`   | `6.9.1`  | Latest npm.                                                                     |
 | User events            | `@testing-library/user-event` | `14.6.1` | Latest npm.                                                                     |
-| Node types             | `@types/node`                 | `25.9.2` | Latest npm.                                                                     |
+| Node types             | `@types/node`                 | `25.9.3` | Latest npm.                                                                     |
 | Playwright             | `@playwright/test`            | `1.60.0` | Latest npm; Chromium-only smoke for MVP.                                        |
-| React Doctor           | `react-doctor`                | `0.4.2`  | Latest npm; advisory with telemetry disabled locally.                           |
+| React Doctor           | `react-doctor`                | `0.5.1`  | Latest npm; advisory with telemetry disabled locally.                           |
 | Checkout action        | `actions/checkout`            | `v6.0.3` | Latest GitHub release checked.                                                  |
 | Setup Node action      | `actions/setup-node`          | `v6.4.0` | Latest GitHub release checked.                                                  |
 | Cache action           | `actions/cache`               | `v5.0.5` | Latest GitHub release checked.                                                  |
@@ -45,7 +45,7 @@ Checked on 2026-06-08 from npm and crates.io before scaffolding.
 
 ## Planned Dependencies
 
-These are not installed until their implementation slice starts.
+These are candidates for future slices. Note: several have since been installed as their slices landed (e.g. `@tauri-apps/api`, `sqlx`, `google-auth-library`/`googleapis` for OAuth+import, `ai` for the copilot groundwork) — check `package.json`/`Cargo.toml` for the authoritative installed set.
 
 | Area              | Package                                       | Latest checked | Compatibility note                                                                               |
 | ----------------- | --------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------ |

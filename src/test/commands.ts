@@ -1,6 +1,12 @@
 import type { Mock } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import type { DashboardSummary, Forecast, Pockets, TransactionRow } from "../lib/api";
+import type {
+  DashboardSummary,
+  Forecast,
+  MonthGridDay,
+  Pockets,
+  TransactionRow,
+} from "../lib/api";
 import { invalidateCommands } from "../lib/useCommand";
 
 type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -28,6 +34,7 @@ export const SUMMARY: DashboardSummary = {
   daily_budget: 4300,
   daily_spend_today: 3800,
   credit_spend_month: 120000,
+  has_credit: true,
   reserve_months: 4.5,
   reserve_trend: "down",
   transaction_count: 42,
@@ -38,6 +45,7 @@ export const EMPTY_SUMMARY: DashboardSummary = {
   daily_budget: 0,
   daily_spend_today: 0,
   credit_spend_month: 0,
+  has_credit: false,
   reserve_months: 0,
   reserve_trend: "flat",
   transaction_count: 0,
@@ -52,6 +60,10 @@ export const TXNS: TransactionRow[] = [
     date: "2026-03-15",
     payment_method: "debit",
     is_projection: false,
+    is_fixed: false,
+    owners: ["Ana", "Bruno"],
+    tags: [],
+    provenance: "importado",
   },
   {
     id: "t2",
@@ -61,6 +73,10 @@ export const TXNS: TransactionRow[] = [
     date: "2026-03-10",
     payment_method: "credit",
     is_projection: false,
+    is_fixed: false,
+    owners: [],
+    tags: [],
+    provenance: "manual",
   },
   {
     id: "t3",
@@ -70,6 +86,10 @@ export const TXNS: TransactionRow[] = [
     date: "2026-06-25",
     payment_method: "",
     is_projection: true,
+    is_fixed: false,
+    owners: [],
+    tags: [],
+    provenance: "projetado",
   },
 ];
 
@@ -130,12 +150,13 @@ export const APP_INFO = {
 };
 
 const ANNUAL_SAVINGS = {
-  realized_income_cents: 6500000,
-  realized_savings_cents: 221000,
-  realized_rate_bps: 340,
-  projected_income_cents: 11846000,
-  projected_savings_cents: 2268000,
-  projected_rate_bps: 1910,
+  realized_income_cents: 5000000,
+  realized_savings_cents: 300000,
+  realized_rate_bps: 600,
+  registered_economia_cents: 250000,
+  projected_income_cents: 6000000,
+  projected_savings_cents: 1500000,
+  projected_rate_bps: 2500,
   target_bps: 2500,
 };
 
@@ -167,17 +188,25 @@ export const FORECAST: Forecast = {
       year: 2026,
       month: 6,
       income_cents: 700000,
-      performance_cents: 445700,
-      cost_of_living_cents: 254300,
-      savings_rate_bps: 6367,
+      performance_cents: 450000,
+      cost_of_living_cents: 250000,
+      fixed_out_cents: 250000,
+      daily_out_cents: 0,
+      real_daily_avg_cents: 0,
+      economia_cents: 0,
+      savings_rate_bps: 2500,
     },
     {
       year: 2026,
       month: 7,
-      income_cents: 899331,
-      performance_cents: 87645,
-      cost_of_living_cents: 811686,
-      savings_rate_bps: 974,
+      income_cents: 900000,
+      performance_cents: 90000,
+      cost_of_living_cents: 810000,
+      fixed_out_cents: 810000,
+      daily_out_cents: 0,
+      real_daily_avg_cents: 0,
+      economia_cents: 0,
+      savings_rate_bps: 1000,
     },
   ],
   deepest_deficit: { date: "2026-06-15", balance_cents: 587700 },
@@ -187,6 +216,7 @@ export const FORECAST: Forecast = {
       income_cents: 0,
       fixed_out_cents: 0,
       daily_out_cents: 0,
+      economia_cents: 0,
       balance_cents: 842000,
     },
     {
@@ -194,6 +224,7 @@ export const FORECAST: Forecast = {
       income_cents: 0,
       fixed_out_cents: 250000,
       daily_out_cents: 4300,
+      economia_cents: 0,
       balance_cents: 587700,
     },
     {
@@ -201,6 +232,7 @@ export const FORECAST: Forecast = {
       income_cents: 700000,
       fixed_out_cents: 0,
       daily_out_cents: 0,
+      economia_cents: 0,
       balance_cents: 1287700,
     },
     {
@@ -208,11 +240,22 @@ export const FORECAST: Forecast = {
       income_cents: 0,
       fixed_out_cents: 0,
       daily_out_cents: 0,
+      economia_cents: 0,
       balance_cents: 1287700,
     },
   ],
   month_end: [{ year: 2026, month: 6, balance_cents: 1287700 }],
 };
+
+/** Grade do mês (get_month_grid) espelhando os dias do FORECAST para junho/2026. */
+export const MONTH_GRID: MonthGridDay[] = FORECAST.daily.map((d) => ({
+  date: d.date,
+  day: Number(d.date.slice(8, 10)),
+  income_cents: d.income_cents,
+  fixed_out_cents: d.fixed_out_cents,
+  daily_out_cents: d.daily_out_cents,
+  balance_cents: d.balance_cents,
+}));
 
 export const DEFICIT_FORECAST: Forecast = {
   ...FORECAST,
@@ -225,6 +268,7 @@ export const DEFICIT_FORECAST: Forecast = {
       income_cents: 0,
       fixed_out_cents: 629700,
       daily_out_cents: 0,
+      economia_cents: 0,
       balance_cents: -42000,
     },
   ],
@@ -237,6 +281,7 @@ export const EMPTY_FORECAST: Forecast = {
     realized_income_cents: 0,
     realized_savings_cents: 0,
     realized_rate_bps: 0,
+    registered_economia_cents: 0,
     projected_income_cents: 0,
     projected_savings_cents: 0,
     projected_rate_bps: 0,
@@ -259,6 +304,7 @@ export const EMPTY_FORECAST: Forecast = {
       income_cents: 0,
       fixed_out_cents: 0,
       daily_out_cents: 0,
+      economia_cents: 0,
       balance_cents: 0,
     },
   ],

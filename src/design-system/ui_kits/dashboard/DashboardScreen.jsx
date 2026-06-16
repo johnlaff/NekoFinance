@@ -155,18 +155,21 @@ function CashflowChart() {
 /* ---- Category donut ---- */
 function Donut({ data }) {
   const total = data.reduce((s, d) => s + d.value, 0);
-  let acc = 0;
   const R = 52,
     sw = 16,
     C = 2 * Math.PI * R;
+  // Offsets cumulativos puramente funcionais (prefix-sum), sem reatribuir variável durante o
+  // render — o React Compiler rejeita reatribuição capturada em closure.
+  const offsets = data.map(
+    (_, i) => -C * (data.slice(0, i).reduce((s, x) => s + x.value, 0) / total),
+  );
   return (
     <svg viewBox="0 0 140 140" style={{ width: 140, height: 140 }}>
       <g transform="rotate(-90 70 70)">
         {data.map((d, i) => {
           const frac = d.value / total;
           const dash = `${(C * frac).toFixed(1)} ${(C * (1 - frac)).toFixed(1)}`;
-          const off = -C * (acc / total);
-          acc += d.value;
+          const off = offsets[i];
           return (
             <circle
               key={i}

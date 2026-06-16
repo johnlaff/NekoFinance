@@ -179,7 +179,9 @@ pub fn generate_mappings(layout: &SheetLayout) -> Vec<SheetMappingEntry> {
     let mut mappings = Vec::new();
 
     let field_names = ["data", "entrada", "saida", "diario", "saldo"];
-    let target_fields = ["date", "amount_in", "amount_out", "daily_budget", "balance"];
+    // `amount_daily` (não `daily_budget`, que é a tabela do check-in) é o target que o importador
+    // procura para o Diário variável — a estrela do método. Mantê-los em sincronia é fidelidade.
+    let target_fields = ["date", "amount_in", "amount_out", "amount_daily", "balance"];
 
     for (offset, (field, target)) in field_names.iter().zip(target_fields.iter()).enumerate() {
         mappings.push(SheetMappingEntry {
@@ -192,11 +194,7 @@ pub fn generate_mappings(layout: &SheetLayout) -> Vec<SheetMappingEntry> {
             date_direction: layout.date_direction.clone(),
             layout_id: Some(layout.id.clone()),
             block_offset: offset as i32,
-            is_active: if *target == "amount_in" || *target == "amount_out" {
-                1
-            } else {
-                0
-            },
+            is_active: matches!(*target, "amount_in" | "amount_out" | "amount_daily") as i32,
         });
     }
 
@@ -430,6 +428,20 @@ mod tests {
             .unwrap();
         assert_eq!(saida.block_offset, 2);
         assert_eq!(saida.is_active, 1);
+
+        // Diário (a estrela do método) precisa sair do detector como `amount_daily` E ativo —
+        // é exatamente o target_field que o importador procura. Regressão da review adversarial:
+        // o detector emitia `daily_budget` inativo e o Diário nunca era importado.
+        let diario = mappings
+            .iter()
+            .find(|m| m.target_field == "amount_daily")
+            .expect("detector deve mapear a coluna Diário como amount_daily");
+        assert_eq!(diario.block_offset, 3);
+        assert_eq!(diario.is_active, 1);
+        assert!(
+            !mappings.iter().any(|m| m.target_field == "daily_budget"),
+            "daily_budget é a tabela do check-in, nunca um target de mapeamento de coluna"
+        );
 
         let saldo = mappings
             .iter()

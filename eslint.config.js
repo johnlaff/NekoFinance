@@ -12,7 +12,11 @@ export default tseslint.config(
       "**/playwright-report/**",
       "**/test-results/**",
       "node_modules/**",
-      "src/design-system/**",
+      // Só ignora os artefatos gerados/vendorizados do DS; os componentes .tsx à mão são linted.
+      "src/design-system/**/*.jsx",
+      "src/design-system/**/*.d.ts",
+      "src/design-system/ui_kits/**",
+      "src/design-system/_ds_bundle.js",
       "src-tauri/**",
       ".agents/**",
       "scripts/**",

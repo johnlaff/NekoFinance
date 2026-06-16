@@ -21,7 +21,7 @@ The app currently has a synthetic UI shell with no persistence. Every domain ope
 ### US2 — Account registration
 
 **As** the primary user
-**I want** to register my financial accounts (Nubank checking, Visa Infinite, Google Wallet)
+**I want** to register my financial accounts (e.g. a bank checking account, a credit card, a digital wallet)
 **So that** transactions can be associated with real financial instruments.
 
 **Acceptance**: Create accounts with type (bank, credit_card, wallet, savings, business), owner_person_id, and type-specific optional fields (institution, credit_limit, closing_day, linked_account_id for additional cards).

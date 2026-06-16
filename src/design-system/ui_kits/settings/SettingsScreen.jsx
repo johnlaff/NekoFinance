@@ -92,7 +92,7 @@ function SettingsApp() {
                       display: "inline-block",
                     }}
                   />
-                  alex.tan@gmail.com · read-only scope
+                  conta-google-conectada · read-only scope
                 </div>
               </div>
               <Badge tone="success" dot>
@@ -257,7 +257,7 @@ function SettingsApp() {
           <div className="set-panel set-people">
             <div className="set-row">
               <div className="set-row__main">
-                <OwnerChip name="Alex Tan" type="personal" role="You" />
+                <OwnerChip name="Alex Tan" type="personal" note="You" />
               </div>
               <div className="set-row__ctl">
                 <Badge tone="neutral">Owner</Badge>
@@ -265,7 +265,7 @@ function SettingsApp() {
             </div>
             <div className="set-row">
               <div className="set-row__main">
-                <OwnerChip name="Sam Okafor" type="partner" role="Partner" />
+                <OwnerChip name="Sam Okafor" type="partner" note="Partner" />
               </div>
               <div className="set-row__ctl">
                 <Badge tone="neutral">Can view & assign</Badge>

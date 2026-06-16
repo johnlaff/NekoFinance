@@ -19,6 +19,7 @@ import {
   fetchSheetPreview,
   getSheetMappings,
   importSheetData,
+  importEconomiaSheet,
   listSheetNames,
   listUserSpreadsheets,
   saveSheetMapping,
@@ -32,6 +33,21 @@ import {
 import { extractSpreadsheetId } from "../../lib/spreadsheet-url";
 import { isMetricTab } from "../../lib/sheet-tabs";
 import { invalidateCommands } from "../../lib/useCommand";
+import { withLoading } from "../../lib/withLoading";
+import { WriteBackPreview } from "./WriteBackPreview";
+
+/** Rótulo PT-BR amigável do campo de destino (esconde o jargão de banco do usuário). */
+const FIELD_LABELS_PT: Record<string, string> = {
+  date: "Data",
+  amount_in: "Entrada",
+  amount_out: "Saída",
+  amount_daily: "Diário",
+  daily_budget: "Teto do diário",
+  balance: "Saldo",
+};
+function fieldLabelPt(field: string): string {
+  return FIELD_LABELS_PT[field] ?? field;
+}
 
 export function GoogleSheetsPanel({
   authStatus,
@@ -68,28 +84,27 @@ export function GoogleSheetsPanel({
       );
       return;
     }
-    setLoading(true);
     setError(null);
-    try {
-      await startOAuthFlow(GOOGLE_CLIENT_ID);
-      // O consentimento no navegador leva o tempo que o usuário levar — sondar até
-      // conectar (ou desistir após 2 min), em vez de uma única checagem em 3 s.
-      for (let attempt = 0; attempt < 60; attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        const status = await checkAuthStatus();
-        if (status === "connected") {
-          onAuthChange(status);
-          setStep("pick");
-          await loadSpreadsheets();
-          return;
+    await withLoading(setLoading, async () => {
+      try {
+        await startOAuthFlow(GOOGLE_CLIENT_ID);
+        // O consentimento no navegador leva o tempo que o usuário levar — sondar até
+        // conectar (ou desistir após 2 min), em vez de uma única checagem em 3 s.
+        for (let attempt = 0; attempt < 60; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          const status = await checkAuthStatus();
+          if (status === "connected") {
+            onAuthChange(status);
+            setStep("pick");
+            await loadSpreadsheets();
+            return;
+          }
         }
+        setError("Tempo esgotado aguardando o consentimento. Tente conectar de novo.");
+      } catch (e) {
+        setError(String(e));
       }
-      setError("Tempo esgotado aguardando o consentimento. Tente conectar de novo.");
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
+    });
   };
 
   const handleDisconnect = async () => {
@@ -107,17 +122,16 @@ export function GoogleSheetsPanel({
   };
 
   const loadSpreadsheets = async () => {
-    setLoading(true);
-    try {
-      const list = await listUserSpreadsheets(GOOGLE_CLIENT_ID);
-      setSpreadsheets(list);
-    } catch {
-      // Sem scope do Drive (token antigo) a listagem dá 403 — o campo de URL colada
-      // continua funcionando, então a falha do picker não bloqueia o fluxo.
-      setSpreadsheets([]);
-    } finally {
-      setLoading(false);
-    }
+    await withLoading(setLoading, async () => {
+      try {
+        const list = await listUserSpreadsheets(GOOGLE_CLIENT_ID);
+        setSpreadsheets(list);
+      } catch {
+        // Sem scope do Drive (token antigo) a listagem dá 403 — o campo de URL colada
+        // continua funcionando, então a falha do picker não bloqueia o fluxo.
+        setSpreadsheets([]);
+      }
+    });
   };
 
   // Tenta listar as planilhas UMA vez quando o painel nasce já conectado; o ref
@@ -147,47 +161,44 @@ export function GoogleSheetsPanel({
     setSelectedSheet("");
     setPreview(null);
     setMappings([]);
-    setLoading(true);
-    try {
-      const list = await listSheetNames(id, GOOGLE_CLIENT_ID);
-      setSheets(list);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
+    await withLoading(setLoading, async () => {
+      try {
+        const list = await listSheetNames(id, GOOGLE_CLIENT_ID);
+        setSheets(list);
+      } catch (e) {
+        setError(String(e));
+      }
+    });
   };
 
   const handleSheetSelect = async (name: string) => {
     setSelectedSheet(name);
-    setLoading(true);
-    try {
-      const [prev, maps] = await Promise.all([
-        fetchSheetPreview(selectedSpreadsheet, name, GOOGLE_CLIENT_ID),
-        getSheetMappings(name).catch(() => [] as SheetMappingEntry[]),
-      ]);
-      setPreview(prev);
-      setMappings(maps);
-      setStep("preview");
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
+    await withLoading(setLoading, async () => {
+      try {
+        const [prev, maps] = await Promise.all([
+          fetchSheetPreview(selectedSpreadsheet, name, GOOGLE_CLIENT_ID),
+          getSheetMappings(name).catch(() => [] as SheetMappingEntry[]),
+        ]);
+        setPreview(prev);
+        setMappings(maps);
+        setStep("preview");
+      } catch (e) {
+        setError(String(e));
+      }
+    });
   };
 
   const handleDetectLayout = async () => {
-    setLoading(true);
-    try {
-      await detectSheetLayout(selectedSpreadsheet, selectedSheet, GOOGLE_CLIENT_ID);
-      const maps = await getSheetMappings(selectedSheet);
-      setMappings(maps);
-      setStep("mapping");
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
+    await withLoading(setLoading, async () => {
+      try {
+        await detectSheetLayout(selectedSpreadsheet, selectedSheet, GOOGLE_CLIENT_ID);
+        const maps = await getSheetMappings(selectedSheet);
+        setMappings(maps);
+        setStep("mapping");
+      } catch (e) {
+        setError(String(e));
+      }
+    });
   };
 
   const handleToggleMapping = async (mapping: SheetMappingEntry) => {
@@ -205,28 +216,45 @@ export function GoogleSheetsPanel({
   };
 
   const handleImport = async () => {
-    setImporting(true);
     setImportResult(null);
     setError(null);
-    try {
-      const profileId = crypto.randomUUID();
-      const count = await importSheetData(
-        selectedSpreadsheet,
-        selectedSheet,
-        profileId,
-        GOOGLE_CLIENT_ID,
-      );
-      invalidateCommands(); // finance numbers changed — drop every cached screen
-      setImportResult(
-        count === 0
-          ? "Dados já importados anteriormente (dedup)."
-          : `${count} transações importadas.`,
-      );
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setImporting(false);
-    }
+    await withLoading(setImporting, async () => {
+      try {
+        const profileId = crypto.randomUUID();
+        const count = await importSheetData(
+          selectedSpreadsheet,
+          selectedSheet,
+          profileId,
+          GOOGLE_CLIENT_ID,
+        );
+        invalidateCommands(); // finance numbers changed — drop every cached screen
+        setImportResult(
+          count === 0
+            ? "Dados já importados antes (linhas repetidas são ignoradas)."
+            : `${count} transações importadas.`,
+        );
+      } catch (e) {
+        setError(String(e));
+      }
+    });
+  };
+
+  const handleImportEconomia = async () => {
+    setImportResult(null);
+    setError(null);
+    await withLoading(setImporting, async () => {
+      try {
+        const count = await importEconomiaSheet(selectedSpreadsheet, GOOGLE_CLIENT_ID);
+        invalidateCommands();
+        setImportResult(
+          count === 0
+            ? "Nenhuma Economia encontrada na aba Economia."
+            : `Economia importada: ${count} mês(es) (poupança → reserva).`,
+        );
+      } catch (e) {
+        setError(String(e));
+      }
+    });
   };
 
   if (authStatus === "connected") {
@@ -316,7 +344,7 @@ export function GoogleSheetsPanel({
                         disabled={loading || metric}
                         title={
                           metric
-                            ? "Aba de métricas do método — import dedicado em breve"
+                            ? "Aba de métricas do método: import dedicado em breve"
                             : undefined
                         }
                       >
@@ -386,8 +414,15 @@ export function GoogleSheetsPanel({
               )}
               {importing ? "Importando…" : "Importar dados"}
             </Button>
+            <Button
+              variant="secondary"
+              onClick={() => void handleImportEconomia()}
+              disabled={importing || !selectedSpreadsheet}
+            >
+              Importar aba Economia (poupança por mês)
+            </Button>
             {importResult && (
-              <div className="gs-result gs-result--ok">
+              <div role="status" className="gs-result gs-result--ok">
                 <CheckCircle2 size={14} strokeWidth={1.75} />
                 {importResult}
               </div>
@@ -408,10 +443,13 @@ export function GoogleSheetsPanel({
                 <div key={m.id} className="gs-mapping-row">
                   <div className="gs-mapping-info">
                     <span className="gs-mapping-field">
-                      {m.column_header ?? m.target_field}
+                      {m.column_header ?? fieldLabelPt(m.target_field)}
                     </span>
-                    <span className="gs-mapping-meta">
-                      {m.target_table}.{m.target_field} — offset {m.block_offset}
+                    <span
+                      className="gs-mapping-meta"
+                      title={`${m.target_table}.${m.target_field} · offset ${m.block_offset}`}
+                    >
+                      Importa como {fieldLabelPt(m.target_field)}
                     </span>
                   </div>
                   <button
@@ -439,16 +477,22 @@ export function GoogleSheetsPanel({
               {importing ? "Importando…" : "Importar com mapeamento"}
             </Button>
             {importResult && (
-              <div className="gs-result gs-result--ok">
+              <div role="status" className="gs-result gs-result--ok">
                 <CheckCircle2 size={14} strokeWidth={1.75} />
                 {importResult}
               </div>
             )}
+
+            <WriteBackPreview
+              spreadsheetId={selectedSpreadsheet}
+              sheetName={selectedSheet}
+              clientId={GOOGLE_CLIENT_ID}
+            />
           </div>
         )}
 
         {error && (
-          <div className="gs-result gs-result--err">
+          <div role="alert" className="gs-result gs-result--err">
             <AlertCircle size={14} strokeWidth={1.75} />
             {error}
           </div>
@@ -484,7 +528,7 @@ export function GoogleSheetsPanel({
           </p>
         )}
         {error && (
-          <div className="gs-result gs-result--err">
+          <div role="alert" className="gs-result gs-result--err">
             <AlertCircle size={14} strokeWidth={1.75} />
             {error}
           </div>

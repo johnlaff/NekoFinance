@@ -1,33 +1,32 @@
-import {
-  AlertTriangle,
-  CalendarRange,
-  Minus,
-  Sparkles,
-  TrendingDown,
-  TrendingUp,
-} from "lucide-react";
-import { Badge } from "../design-system/components/Badge";
+import { useState } from "react";
+import { AlertTriangle, Minus, Sparkles, TrendingDown, TrendingUp } from "lucide-react";
 import { PocketsCard } from "../features/pockets/PocketsCard";
 import { Button } from "../design-system/components/Button";
 import { EmptyState } from "../design-system/components/EmptyState";
 import { MetricTile } from "../design-system/components/MetricTile";
-import { MiaAvatar } from "../design-system/components/MiaAvatar";
+import { Money } from "../design-system/components/Money";
+import { BalanceTrajectory } from "../design-system/components/BalanceTrajectory";
+import { InfoPopover } from "../design-system/components/InfoPopover";
 import { getDashboardSummary, getForecast, isTauri } from "../lib/api";
 import { fmtBRL, fmtDayMonth, monthNamePtBR } from "../lib/format";
-import { useCommand } from "../lib/useCommand";
-import { useCountUp } from "../lib/useCountUp";
+import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { PrevisibilidadeCard } from "./dashboard/PrevisibilidadeCard";
 import { ColchaoCard } from "./dashboard/ColchaoCard";
 import { PerformanceCard } from "./dashboard/PerformanceCard";
+import { DailyCheckinCard } from "./dashboard/DailyCheckinCard";
+import { MonthLedgerCard } from "./dashboard/MonthLedgerCard";
 
 export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
-  const summaryQ = useCommand("get_dashboard_summary", getDashboardSummary);
-  const forecastQ = useCommand("get_forecast", getForecast);
+  const [reloadKey, setReloadKey] = useState(0);
+  const summaryQ = useCommand(
+    `get_dashboard_summary:${reloadKey}`,
+    getDashboardSummary,
+  );
+  const forecastQ = useCommand(`get_forecast:${reloadKey}`, getForecast);
   const summary = summaryQ.data ?? null;
   const forecast = forecastQ.data ?? null;
   const loading = summaryQ.loading || forecastQ.loading;
   const error = summaryQ.error ?? forecastQ.error;
-  const animatedBalance = useCountUp(summary?.balance ?? 0, "saldo-projetado");
 
   if (!isTauri) {
     return (
@@ -68,12 +67,14 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
     );
   }
 
-  const trendIcon =
-    summary?.reserve_trend === "up"
-      ? "▲"
-      : summary?.reserve_trend === "down"
-        ? "▼"
-        : "—";
+  const reserveTrendIcon =
+    summary?.reserve_trend === "up" ? (
+      <TrendingUp size={15} strokeWidth={1.75} />
+    ) : summary?.reserve_trend === "down" ? (
+      <TrendingDown size={15} strokeWidth={1.75} />
+    ) : (
+      <Minus size={15} strokeWidth={1.75} />
+    );
 
   const deficit =
     forecast?.deepest_deficit && forecast.deepest_deficit.balance_cents < 0
@@ -83,208 +84,136 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
   // Guardrail duplo (caixa × poupança). "Pode gastar" honesto = o mais apertado dos dois.
   const savingsBinds = forecast?.binding_guardrail === "savings";
   const targetPct = forecast ? Math.round(forecast.savings_target_bps / 100) : 25;
-  const ym = forecast ? forecast.today.slice(0, 7) : "";
-  // Tabela diária mostra só o mês corrente; o histórico completo é o Livro-razão (slice 8).
-  const dailyThisMonth = (forecast?.daily ?? []).filter(
-    (d) => d.date.slice(0, 7) === ym,
-  );
-  // Poupança realizada do ano (para a frase de contexto do "pode gastar"). Os cards de
-  // Previsibilidade/Colchão/Performance derivam o resto internamente (componentes próprios).
-  const realizedRatePct = forecast
-    ? (forecast.annual_savings.realized_rate_bps / 100).toFixed(1)
-    : "0.0";
   const hasData = (summary?.transaction_count ?? 0) > 0;
+
+  function handleLogged() {
+    invalidateCommands();
+    setReloadKey((k) => k + 1);
+  }
 
   return (
     <div className="dash">
-      <div className="dash-hero">
-        <div className="dash-hero__txt">
-          <div className="dash-hero__line">
-            {summary && summary.transaction_count > 0 ? (
-              <>
-                <b>{summary.transaction_count} transações</b> no banco local. Reserva:{" "}
-                <span className="dash-hero__money">
-                  {summary.reserve_months.toFixed(1)} meses
-                </span>
-                .
-              </>
-            ) : (
-              "Nenhuma transação ainda. Conecte o Google Sheets e importe sua planilha."
+      <section className="dash-hero" aria-label="Quanto posso gastar hoje">
+        <div className="dash-hero__lead">
+          <p className="dash-hero__label">
+            <InfoPopover term="pode_gastar">Pode gastar até</InfoPopover>
+          </p>
+          <p className="dash-hero__kpi">
+            {forecast ? fmtBRL(forecast.safe_to_spend_today_cents) : "—"}
+            <span className="dash-hero__kpi-suffix">hoje</span>
+          </p>
+          <p className="dash-hero__reason">
+            {!forecast
+              ? "Importe sua planilha para ver a previsão."
+              : savingsBinds
+                ? `O menor de dois limites: respeita sua meta de guardar ${targetPct}% no ano.`
+                : "O menor de dois limites: o que o caixa aguenta sem nenhum dia no vermelho."}
+          </p>
+          <div className="dash-hero__row">
+            {summary && summary.transaction_count > 0 && (
+              <dl className="dash-hero__stats">
+                <div>
+                  <dt>Reserva</dt>
+                  <dd>{summary.reserve_months.toFixed(1)} meses</dd>
+                </div>
+                <div>
+                  <dt>Lançamentos</dt>
+                  <dd>{summary.transaction_count}</dd>
+                </div>
+              </dl>
             )}
+            <Button
+              variant="secondary"
+              size="sm"
+              iconLeft={<Sparkles size={15} strokeWidth={1.75} />}
+              onClick={onAskMia}
+            >
+              Conhecer a Mia
+            </Button>
           </div>
-          {forecast && (
-            <div className="dash-hero__line dash-safe">
-              Pode gastar até{" "}
-              <b className="dash-hero__money">
-                {fmtBRL(forecast.safe_to_spend_today_cents)}
-              </b>{" "}
-              hoje{" "}
-              {savingsBinds
-                ? `sem furar sua meta de poupança do ano (${targetPct}%).`
-                : "antes do menor saldo do futuro."}
-            </div>
-          )}
-          {forecast &&
-            savingsBinds &&
-            forecast.savings_headroom_cents !== null &&
-            forecast.savings_headroom_cents < 0 && (
-              <div className="dash-hero__line dash-safe__ctx">
-                Sua poupança do ano está em {realizedRatePct}% (meta {targetPct}%). Em
-                caixa há{" "}
-                <b className="dash-hero__money">
-                  {fmtBRL(forecast.cash_headroom_cents)}
-                </b>
-                , mas isso é sua reserva — gastar no cartão hoje vira fatura e afunda os
-                meses à frente.
-              </div>
-            )}
         </div>
-        <Button
-          variant="secondary"
-          iconLeft={<Sparkles size={16} strokeWidth={1.75} />}
-          onClick={onAskMia}
-        >
-          Perguntar à Mia
-        </Button>
+
+        {forecast && forecast.daily.length > 1 && (
+          <aside className="dash-hero__forecast" aria-label="Saldo projetado do mês">
+            <div className="dash-hero__forecast-head">
+              <span>Saldo no fim de {monthNamePtBR(forecast.today)}</span>
+              <Money
+                cents={forecast.month_end[0]?.balance_cents ?? 0}
+                size="md"
+                sign="auto"
+              />
+            </div>
+            <BalanceTrajectory
+              daily={forecast.daily}
+              today={forecast.today}
+              variant="compact"
+            />
+            <p className="dash-hero__forecast-foot">
+              {deficit ? (
+                <span className="negative">
+                  Pode faltar em {fmtDayMonth(deficit.date)}:{" "}
+                  <Money cents={deficit.balance_cents} size="sm" sign="negative" />
+                </span>
+              ) : (
+                "Como seu saldo deve evoluir até o fim do mês."
+              )}
+            </p>
+          </aside>
+        )}
+      </section>
+
+      <div className="dash-grid4">
+        <MetricTile
+          label="Saldo projetado"
+          value={summary ? fmtBRL(summary.balance) : "—"}
+          icon={<TrendingUp size={15} strokeWidth={1.75} />}
+          sublabel={forecast ? `Fim de ${monthNamePtBR(forecast.today)}` : "Fim do mês"}
+        />
+        <MetricTile
+          label="Diário de hoje"
+          value={summary ? fmtBRL(summary.daily_spend_today) : "—"}
+          sublabel={summary ? `de ${fmtBRL(summary.daily_budget)}` : ""}
+        />
+        <MetricTile
+          label="Crédito no mês"
+          value={summary?.has_credit ? fmtBRL(summary.credit_spend_month) : "—"}
+          icon={<TrendingDown size={15} strokeWidth={1.75} />}
+          sublabel={
+            summary && !summary.has_credit
+              ? "Sem cartão rastreado"
+              : "No crédito, vira fatura no vencimento"
+          }
+        />
+        <MetricTile
+          label="Reserva"
+          value={summary ? `${summary.reserve_months.toFixed(1)}m` : "—"}
+          icon={reserveTrendIcon}
+          sublabel="Mín. 6m · paz 12m+"
+        />
       </div>
 
       {deficit && (
         <div className="dash-deficit" role="status">
           <AlertTriangle size={15} strokeWidth={1.75} />
           <span>
-            Buraco previsto:{" "}
-            <b className="dash-hero__money">{fmtBRL(deficit.balance_cents)}</b> em{" "}
-            {fmtDayMonth(deficit.date)} — é preciso entrada nova ou corte até lá.
+            Buraco previsto de{" "}
+            <Money cents={deficit.balance_cents} size="sm" sign="negative" /> em{" "}
+            {fmtDayMonth(deficit.date)}. Precisa de entrada nova ou corte até lá.
           </span>
         </div>
+      )}
+
+      {summary && hasData && (
+        <DailyCheckinCard summary={summary} onLogged={handleLogged} />
       )}
 
       {forecast && hasData && <PrevisibilidadeCard forecast={forecast} />}
 
       {forecast && hasData && <ColchaoCard forecast={forecast} />}
 
-      <div className="dash-grid4">
-        <MetricTile
-          label="Saldo projetado"
-          value={summary ? fmtBRL(animatedBalance) : "—"}
-          icon={<TrendingUp size={15} strokeWidth={1.75} />}
-          sublabel={forecast ? `Fim de ${monthNamePtBR(forecast.today)}` : "Fim do mês"}
-        />
-        <MetricTile
-          label="Diário hoje"
-          value={summary ? fmtBRL(summary.daily_spend_today) : "—"}
-          sublabel={summary ? `de ${fmtBRL(summary.daily_budget)}` : ""}
-        />
-        <MetricTile
-          label="Crédito no mês"
-          value={summary ? fmtBRL(summary.credit_spend_month) : "—"}
-          icon={<TrendingDown size={15} strokeWidth={1.75} />}
-          sublabel="Régua 2 — fatura acumulada"
-        />
-        <MetricTile
-          label="Reserva"
-          value={summary ? `${summary.reserve_months.toFixed(1)}m ${trendIcon}` : "—"}
-          icon={<Minus size={15} strokeWidth={1.75} />}
-          deltaDir={
-            summary?.reserve_trend === "up"
-              ? "up"
-              : summary?.reserve_trend === "down"
-                ? "down"
-                : "neutral"
-          }
-          sublabel="Meta: 12 meses de gastos"
-        />
-      </div>
-
       {forecast && <PerformanceCard forecast={forecast} />}
 
-      <div className="dash-2col">
-        <div className="dash-card">
-          <div className="dash-card__head">
-            <span className="dash-card__title">
-              <CalendarRange size={16} strokeWidth={1.75} className="dash-card__ic" />
-              Previsão diária — {forecast ? monthNamePtBR(forecast.today) : "mês atual"}
-            </span>
-          </div>
-          <div className="dash-card__body" style={{ padding: 0 }}>
-            {!forecast || (summary?.transaction_count ?? 0) === 0 ? (
-              <EmptyState
-                variant="empty"
-                title="Nenhuma transação"
-                description="Conecte o Google Sheets e importe sua planilha."
-              />
-            ) : dailyThisMonth.length === 0 ? (
-              <EmptyState
-                variant="empty"
-                title="Sem projeção para este mês"
-                description="Não há dias projetados no mês corrente."
-              />
-            ) : (
-              <div className="fc-scroll">
-                <table className="txn-table fc-table">
-                  <thead>
-                    <tr>
-                      <th scope="col">Data</th>
-                      <th scope="col">Entrada</th>
-                      <th scope="col">Saída</th>
-                      <th scope="col">Diário</th>
-                      <th scope="col">Saldo</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dailyThisMonth.map((d) => {
-                      const isToday = d.date === forecast.today;
-                      return (
-                        <tr key={d.date} className={isToday ? "fc-today" : ""}>
-                          <td>
-                            {fmtDayMonth(d.date)}
-                            {isToday && <span className="fc-today__tag">hoje</span>}
-                          </td>
-                          <td className={d.income_cents ? "money positive" : "money"}>
-                            {d.income_cents ? fmtBRL(d.income_cents) : "—"}
-                          </td>
-                          <td className="money">
-                            {d.fixed_out_cents ? fmtBRL(d.fixed_out_cents) : "—"}
-                          </td>
-                          <td className="money">
-                            {d.daily_out_cents ? fmtBRL(d.daily_out_cents) : "—"}
-                          </td>
-                          <td
-                            className={d.balance_cents < 0 ? "money negative" : "money"}
-                          >
-                            {fmtBRL(d.balance_cents)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <aside className="assistant-panel">
-          <div className="assistant-header">
-            <MiaAvatar width={40} height={40} />
-            <div>
-              <p className="assistant-label">Copiloto</p>
-              <h2 className="assistant-name">Mia</h2>
-            </div>
-          </div>
-          <p>
-            {summary && summary.transaction_count > 0
-              ? "Seus dados estão carregados. Mia vai poder diagnosticar padrões de gasto, reserva e crédito."
-              : "Importe dados da planilha primeiro. Depois Mia analisa seus gastos."}
-          </p>
-          <div className="assistant-note">
-            {summary
-              ? `Reserva: ${summary.reserve_months.toFixed(1)} meses — ${summary.reserve_trend === "down" ? "caindo" : summary.reserve_trend === "up" ? "subindo" : "estável"}`
-              : "Sem dados de reserva ainda."}
-          </div>
-          <Badge tone="secondary">Chat em desenvolvimento</Badge>
-        </aside>
-      </div>
+      {forecast && <MonthLedgerCard today={forecast.today} />}
 
       <PocketsCard />
     </div>

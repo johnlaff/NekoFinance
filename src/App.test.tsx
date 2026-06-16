@@ -5,6 +5,7 @@ import {
   EMPTY_FORECAST,
   EMPTY_SUMMARY,
   FORECAST,
+  MONTH_GRID,
   SUMMARY,
   mockCommands,
   mockInvoke,
@@ -24,18 +25,19 @@ describe("App (dashboard)", () => {
       check_auth_status: "disconnected",
       get_dashboard_summary: SUMMARY,
       get_forecast: FORECAST,
+      get_month_grid: MONTH_GRID,
     });
 
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("42 transações")).toBeInTheDocument();
+      expect(screen.getByText("Pode gastar até")).toBeInTheDocument();
     });
 
     expect(screen.getAllByText(/8\.420/).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Saldo projetado")).toBeInTheDocument();
-    expect(screen.getByText(/Previsão diária — junho/)).toBeInTheDocument();
-    expect(screen.getByText(/Pode gastar até/)).toBeInTheDocument();
+    expect(screen.getByText(/Junho de 2026/)).toBeInTheDocument();
+    expect(screen.getByText("Lançamentos")).toBeInTheDocument();
   });
 
   it("shows loading state", () => {
@@ -62,12 +64,13 @@ describe("App (dashboard)", () => {
       check_auth_status: "disconnected",
       get_dashboard_summary: EMPTY_SUMMARY,
       get_forecast: EMPTY_FORECAST,
+      get_month_grid: [],
     });
 
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("Nenhuma transação")).toBeInTheDocument();
+      expect(screen.getByText("Mês sem lançamentos")).toBeInTheDocument();
     });
   });
 });

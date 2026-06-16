@@ -8,9 +8,13 @@ export const GOOGLE_CLIENT_ID =
   (import.meta.env["VITE_GOOGLE_CLIENT_ID"] as string) ?? "";
 
 /**
- * Desktop-app client secret (optional in Google's installed-app token exchange).
- * Not confidential for this client type; lives only in the gitignored local .env.
- * Injected into the OAuth invoke payloads here so callers never handle it.
+ * Client secret do app desktop. IMPORTANTE: o endpoint de token do Google EXIGE o client_secret
+ * para clientes do tipo "Desktop app" — PKCE NÃO o dispensa (Google não é RFC 8252-puro nesse
+ * ponto). Sem ele a troca do code falha e a conexão nunca completa. O secret de Desktop não é
+ * confidencial (a doc do Google o diz), então embuti-lo é aceitável. Por padrão vem do `.env`
+ * local (`VITE_GOOGLE_CLIENT_SECRET`). Alternativa de endurecimento: deixe o VITE vazio e defina
+ * `GOOGLE_CLIENT_SECRET` (sem `VITE_`) no ambiente do processo — o backend Rust o resolve de lá,
+ * mantendo o segredo fora do bundle JS. O backend usa o que receber OU o env (resolve_client_secret).
  */
 const GOOGLE_CLIENT_SECRET =
   (import.meta.env["VITE_GOOGLE_CLIENT_SECRET"] as string) ?? "";
@@ -24,9 +28,19 @@ export interface DashboardSummary {
   daily_budget: number;
   daily_spend_today: number;
   credit_spend_month: number;
+  /** Há rastreio de crédito (cartão ou gasto). `false` → mostrar "—" no tile, não R$0. */
+  has_credit: boolean;
   reserve_months: number;
   reserve_trend: string;
   transaction_count: number;
+}
+
+/** Tag anexada a um lançamento (chip do Livro-razão). */
+export interface TagRef {
+  id: string;
+  name: string;
+  color: string;
+  emoji: string | null;
 }
 
 export interface TransactionRow {
@@ -37,6 +51,14 @@ export interface TransactionRow {
   date: string;
   payment_method: string;
   is_projection: boolean;
+  /** Despesa fixa (coluna Saída) vs variável (Diário). Distingue Saída × Diário no Livro-razão. */
+  is_fixed: boolean;
+  /** Titulares distintos das parcelas (multi-titular). Vazio = sem split por pessoa. */
+  owners: string[];
+  /** Tags anexadas (diagnóstico), mostradas como chips. */
+  tags: TagRef[];
+  /** Proveniência: "projetado" | "importado" | "manual" | "conciliado". */
+  provenance: string;
 }
 
 export interface SheetInfo {
@@ -91,6 +113,8 @@ export interface ForecastDay {
   income_cents: number;
   fixed_out_cents: number;
   daily_out_cents: number;
+  /** Economia (guardar) lançada no dia — sai do saldo de gasto, mas é poupança. */
+  economia_cents: number;
   balance_cents: number;
 }
 
@@ -112,14 +136,25 @@ export interface MonthMetric {
   income_cents: number;
   performance_cents: number;
   cost_of_living_cents: number;
+  /** Saídas fixas realizadas (coluna Saída; cartão entra como lump). */
+  fixed_out_cents: number;
+  /** Diário realizado (coluna Diário). cost_of_living = fixed_out + daily_out. */
+  daily_out_cents: number;
+  /** Diário médio = Σ diário realizado ÷ dias decorridos (D/N). */
+  real_daily_avg_cents: number;
+  /** Economia lançada no mês (numerador do Economizado%). */
+  economia_cents: number;
   savings_rate_bps: number;
 }
 
 /** Poupança do ano: realizada (honesta) vs projetada (otimista se o futuro está incompleto). */
 export interface AnnualSavings {
   realized_income_cents: number;
+  /** NET superávit (renda − saída) — o "colchão" do Neko, distinto da Economia registrada. */
   realized_savings_cents: number;
   realized_rate_bps: number;
+  /** Economia REGISTRADA do ano (transfers→reserva) — numerador do Economizado% do método. */
+  registered_economia_cents: number;
   projected_income_cents: number;
   projected_savings_cents: number;
   projected_rate_bps: number;
@@ -219,6 +254,20 @@ export function getRecentTransactions(limit: number): Promise<TransactionRow[]> 
   return invoke("get_recent_transactions", { limit });
 }
 
+/** Cria um lançamento manual. Com `recurrence`, gera a série projetada. Retorna o id criado. */
+export function createTransaction(input: {
+  txnType: "income" | "expense";
+  amountCents: number;
+  description: string | null;
+  date: string;
+  paymentMethod: string | null;
+  isFixed: boolean;
+  tagIds: string[];
+  recurrence: { frequency: Frequency; repetitions: number } | null;
+}): Promise<string> {
+  return invoke("create_transaction", input);
+}
+
 export function getAppInfo(): Promise<AppInfo> {
   return invoke("get_app_info");
 }
@@ -295,6 +344,121 @@ export function saveSheetMapping(
   return invoke("save_sheet_mapping", { mappingId, blockOffset, isActive });
 }
 
+// --- Write-back (spec 018, atrás de flag desligada) ---
+
+/** Uma célula que o write-back tocaria: A1, valor atual, valor proposto, se mudou. */
+export interface CellWrite {
+  a1: string;
+  row: number;
+  col: number;
+  date: string;
+  kind: string;
+  current: string;
+  proposed: string;
+  /** Magnitude em centavos efetivamente escrita (o número, não a string pt-BR de exibição). */
+  value_cents: number;
+  changed: boolean;
+}
+
+/** Estado da flag de write-back. `false` → envio ao Sheets desabilitado (só preview). */
+export function writeBackEnabled(): Promise<boolean> {
+  return invoke("write_back_enabled");
+}
+
+/** Pré-visualização READ-ONLY: transações → células (diff). Seguro mesmo com a flag desligada. */
+export function previewWriteBack(
+  spreadsheetId: string,
+  sheetName: string,
+  clientId: string,
+): Promise<CellWrite[]> {
+  return invoke("preview_write_back", {
+    spreadsheetId,
+    sheetName,
+    clientId,
+    clientSecret: clientSecretOrNull,
+  });
+}
+
+/** Aplica o write-back (escreve as células divergentes). Atrás da flag: rejeita enquanto
+ * desligado (nunca escreve). Retorna quantas células foram escritas. */
+export function applyWriteBack(
+  spreadsheetId: string,
+  sheetName: string,
+  clientId: string,
+): Promise<number> {
+  return invoke("apply_write_back", {
+    spreadsheetId,
+    sheetName,
+    clientId,
+    clientSecret: clientSecretOrNull,
+  });
+}
+
+/** Preview READ-ONLY do write-back da Economia (transfers→reserva → coluna `Economia` por mês). */
+export function previewEconomiaWriteBack(
+  spreadsheetId: string,
+  year: number,
+  clientId: string,
+): Promise<CellWrite[]> {
+  return invoke("preview_economia_write_back", {
+    spreadsheetId,
+    year,
+    clientId,
+    clientSecret: clientSecretOrNull,
+  });
+}
+
+/** Aplica o write-back da Economia. Mesma flag; retorna nº de células escritas. */
+export function applyEconomiaWriteBack(
+  spreadsheetId: string,
+  year: number,
+  clientId: string,
+): Promise<number> {
+  return invoke("apply_economia_write_back", {
+    spreadsheetId,
+    year,
+    clientId,
+    clientSecret: clientSecretOrNull,
+  });
+}
+
+// --- Conciliação avançada: gate de conflito (spec 013) ---
+
+/** Um conflito de import: um campo onde local e planilha divergiram do base (merge de 3 vias). */
+export interface ImportConflict {
+  id: string;
+  transaction_id: string;
+  field: string;
+  base_value: string | null;
+  local_value: string;
+  sheet_value: string;
+}
+
+/** Conflitos de import pendentes para o gate humano. */
+export function getImportConflicts(): Promise<ImportConflict[]> {
+  return invoke("get_import_conflicts");
+}
+
+/** Resolve um conflito: "sheet" (planilha vence) ou "local" (mantém a edição). */
+export function resolveImportConflict(
+  id: string,
+  choice: "sheet" | "local",
+): Promise<void> {
+  return invoke("resolve_import_conflict", { id, choice });
+}
+
+// --- Preferências locais (KV) ---
+
+/** Lê uma preferência local. `null` quando nunca foi gravada. */
+export function getAppSetting(key: string): Promise<string | null> {
+  return invoke("get_app_setting", { key });
+}
+
+/** Grava uma preferência local (sobrescreve). */
+export function setAppSetting(key: string, value: string): Promise<void> {
+  return invoke("set_app_setting", { key, value });
+}
+
 export function importSheetData(
   spreadsheetId: string,
   sheetName: string,
@@ -310,6 +474,161 @@ export function importSheetData(
   });
 }
 
+/** Importa a aba `Economia` (poupança por mês) → transfers→reserva. Retorna nº de meses importados. */
+export function importEconomiaSheet(
+  spreadsheetId: string,
+  clientId: string,
+): Promise<number> {
+  return invoke("import_economia_sheet", {
+    spreadsheetId,
+    clientId,
+    clientSecret: clientSecretOrNull,
+  });
+}
+
 export function importLocalXlsx(filePath: string, profileId: string): Promise<string> {
   return invoke("import_local_xlsx", { filePath, profileId });
+}
+
+// --- Tags (spec 014) ---
+
+export interface Tag {
+  id: string;
+  name: string;
+  color: string;
+  emoji: string | null;
+  is_special: boolean;
+}
+
+export interface TagTotal extends Tag {
+  /** Soma (centavos, valor absoluto) dos lançamentos do mês com esta tag. */
+  total_cents: number;
+}
+
+export interface AnnualMetrics {
+  year: number;
+  months: MonthMetric[];
+}
+
+export function getAnnualMetrics(year: number): Promise<AnnualMetrics> {
+  return invoke("get_annual_metrics", { year });
+}
+
+/** Um dia da grade mensal (visão fiel à planilha). `balance_cents` é o Saldo da planilha (null se o
+ * dia não foi importado). */
+export interface MonthGridDay {
+  date: string;
+  day: number;
+  income_cents: number;
+  fixed_out_cents: number;
+  daily_out_cents: number;
+  balance_cents: number | null;
+}
+
+/** Grade Data|Entrada|Saída|Diário|Saldo de QUALQUER mês (passado/futuro), fiel à planilha. */
+export function getMonthGrid(year: number, month: number): Promise<MonthGridDay[]> {
+  return invoke("get_month_grid", { year, month });
+}
+
+export function listTags(): Promise<Tag[]> {
+  return invoke("list_tags_cmd");
+}
+
+export function createTag(
+  name: string,
+  color: string,
+  emoji: string | null,
+  isSpecial: boolean,
+): Promise<string> {
+  return invoke("create_tag_cmd", { name, color, emoji, isSpecial });
+}
+
+export function setTransactionTags(
+  transactionId: string,
+  tagIds: string[],
+): Promise<void> {
+  return invoke("set_transaction_tags_cmd", { transactionId, tagIds });
+}
+
+export function tagTotalsForMonth(year: number, month: number): Promise<TagTotal[]> {
+  return invoke("tag_totals_for_month_cmd", { year, month });
+}
+
+// --- Multi-titular / split (read-side, spec 017) ---
+
+export interface SplitRow {
+  id: string;
+  transaction_id: string;
+  amount: number;
+  owner_person_id: string;
+  owner_name: string;
+  note: string | null;
+}
+
+export interface OwnerTotal {
+  owner_person_id: string;
+  owner_name: string;
+  /** Soma (centavos, valor absoluto) das parcelas do titular no mês. */
+  total_cents: number;
+}
+
+export function splitsForTransaction(transactionId: string): Promise<SplitRow[]> {
+  return invoke("splits_for_transaction_cmd", { transactionId });
+}
+
+export function ownerTotalsForMonth(
+  year: number,
+  month: number,
+): Promise<OwnerTotal[]> {
+  return invoke("owner_totals_for_month_cmd", { year, month });
+}
+
+// --- Recorrências / séries (spec 016) ---
+
+export type Frequency = "diaria" | "semanal" | "mensal";
+
+export function createRecurringSeries(input: {
+  txnType: string;
+  amount: number;
+  description: string | null;
+  start: string;
+  paymentMethod: string | null;
+  isFixed: boolean;
+  frequency: Frequency;
+  repetitions: number;
+}): Promise<string> {
+  return invoke("create_recurring_series_cmd", input);
+}
+
+/** Apaga a ocorrência indicada e todas as posteriores ("deste ponto em diante"). */
+export function deleteSeriesFrom(transactionId: string): Promise<number> {
+  return invoke("delete_series_from_cmd", { transactionId });
+}
+
+/** Apaga toda a série + a linha de recorrência. */
+export function deleteSeriesAll(recurrenceId: string): Promise<number> {
+  return invoke("delete_series_all_cmd", { recurrenceId });
+}
+
+interface SeriesEdit {
+  amount: number;
+  description: string | null;
+  paymentMethod: string | null;
+  isFixed: boolean;
+}
+
+/** Reajusta a ocorrência indicada e todas as posteriores (o passado fica intacto). */
+export function updateSeriesFrom(
+  transactionId: string,
+  edit: SeriesEdit,
+): Promise<number> {
+  return invoke("update_series_from_cmd", { transactionId, ...edit });
+}
+
+/** Reajusta toda a série de uma vez. */
+export function updateSeriesAll(
+  recurrenceId: string,
+  edit: SeriesEdit,
+): Promise<number> {
+  return invoke("update_series_all_cmd", { recurrenceId, ...edit });
 }

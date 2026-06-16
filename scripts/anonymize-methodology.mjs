@@ -270,8 +270,7 @@ function classifyTopic(text) {
   const topics = [];
 
   if (/(reserva|emergência|emergencia|fundo)/.test(lower)) topics.push("reserva");
-  if (/(dívida|divida|inadimpl|mar vermelho|endivida)/.test(lower))
-    topics.push("dividas");
+  if (/(dívida|divida|inadimpl|endivida)/.test(lower)) topics.push("dividas");
   if (/(crédito|credito|cartão|cartao|fatura|limite)/.test(lower))
     topics.push("credito");
   if (/(débito|debito|conta corrente|conta-corrente)/.test(lower))

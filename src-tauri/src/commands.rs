@@ -1,4 +1,5 @@
 use crate::forecast::{self, CashflowEvent};
+use crate::google_sheets::write_back::{self, CellWrite, WriteBackTxn};
 use crate::google_sheets::{self, SheetsClient, import, layout_detect};
 use crate::oauth::{self, AppDataDir, OAuthStateStore};
 use chrono::{Datelike, NaiveDate};
@@ -12,8 +13,12 @@ pub async fn start_oauth_flow(
     client_id: String,
     client_secret: Option<String>,
 ) -> Result<String, String> {
+    // Shell: o secret pode vir do env do processo (não do bundle do frontend) — ver resolve_*.
+    let client_secret = oauth::pkce::resolve_client_secret(client_secret);
     let config = oauth::pkce::OAuthConfig::google(client_id, client_secret);
-    let port = find_available_port()?;
+    // Liga o listener UMA vez e o mantém: a porta do redirect_uri e a que vamos escutar são a
+    // mesma conexão — sem janela TOCTOU entre descobrir a porta e voltar a ligá-la.
+    let (listener, port) = bind_loopback_listener()?;
     let oauth_state = oauth::pkce::OAuthState::new(port);
 
     let app_dir_path = app_dir.0.clone();
@@ -27,7 +32,7 @@ pub async fn start_oauth_flow(
         *guard = Some(oauth_state);
 
         tokio::spawn(async move {
-            match oauth::run_oauth_flow(config_for_bg, flow_state, app_dir_path).await {
+            match oauth::run_oauth_flow(config_for_bg, flow_state, app_dir_path, listener).await {
                 Ok(_token) => {}
                 Err(e) => eprintln!("OAuth flow error: {e}"),
             }
@@ -45,9 +50,7 @@ pub async fn start_oauth_flow(
 
 #[tauri::command]
 pub async fn check_auth_status(app_dir: tauri::State<'_, AppDataDir>) -> Result<String, String> {
-    // DEBUG TEMPORÁRIO (dogfooding): visível no stderr do tauri dev.
-    eprintln!("check_auth_status: app_dir={:?}", app_dir.0);
-    let result = match crate::oauth::token_store::load_token(&app_dir.0) {
+    match crate::oauth::token_store::load_token(&app_dir.0) {
         Ok(Some(token)) => {
             // Access token expirado mas com refresh_token disponível segue "connected":
             // ensure_valid_token renova sob demanda no próximo uso (spec 010, slice 2).
@@ -60,25 +63,25 @@ pub async fn check_auth_status(app_dir: tauri::State<'_, AppDataDir>) -> Result<
         }
         Ok(None) => Ok("disconnected".to_string()),
         Err(e) => Err(e),
-    };
-    eprintln!("check_auth_status -> {result:?}");
-    result
+    }
 }
 
 #[tauri::command]
 pub async fn disconnect_google(app_dir: tauri::State<'_, AppDataDir>) -> Result<(), String> {
+    // Revoga no Google (best-effort) ANTES de apagar localmente — desconectar de verdade.
+    crate::oauth::token_store::revoke_token(&app_dir.0).await;
     crate::oauth::token_store::delete_token(&app_dir.0)
 }
 
-fn find_available_port() -> Result<u16, String> {
-    use std::net::TcpListener;
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("port: {e}"))?;
+/// Liga um socket de loopback numa porta efêmera e devolve `(listener, porta)`. O listener NÃO é
+/// dropado: quem chama o usa para escutar o callback — eliminando o rebind (TOCTOU) do fluxo OAuth.
+fn bind_loopback_listener() -> Result<(std::net::TcpListener, u16), String> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| format!("port: {e}"))?;
     let port = listener
         .local_addr()
         .map_err(|e| format!("addr: {e}"))?
         .port();
-    drop(listener);
-    Ok(port)
+    Ok((listener, port))
 }
 
 #[derive(serde::Serialize)]
@@ -94,6 +97,7 @@ pub async fn list_sheet_names(
     client_id: String,
     client_secret: Option<String>,
 ) -> Result<Vec<SheetInfo>, String> {
+    let client_secret = oauth::pkce::resolve_client_secret(client_secret);
     let token =
         oauth::token_store::ensure_valid_token(&app_dir.0, &client_id, client_secret.as_deref())
             .await?;
@@ -124,6 +128,7 @@ pub async fn fetch_sheet_preview(
     client_id: String,
     client_secret: Option<String>,
 ) -> Result<SheetPreview, String> {
+    let client_secret = oauth::pkce::resolve_client_secret(client_secret);
     let token =
         oauth::token_store::ensure_valid_token(&app_dir.0, &client_id, client_secret.as_deref())
             .await?;
@@ -169,6 +174,7 @@ pub async fn import_sheet_data(
              Importe as abas-ano; o import de métricas chega na spec 010."
         ));
     }
+    let client_secret = oauth::pkce::resolve_client_secret(client_secret);
     let token =
         oauth::token_store::ensure_valid_token(&app_dir.0, &client_id, client_secret.as_deref())
             .await?;
@@ -236,7 +242,7 @@ pub async fn import_sheet_data(
 
 /// Células numéricas do calamine viram string decimal-com-ponto de 4 casas fixas: `123.456`
 /// vira `123.4560`, que o `parse_number` nunca confunde com agrupamento de milhar
-/// (spec 010, slice 0 — antes, `65.28` perdia o ponto e inflava 100×).
+/// (spec 010, slice 0 — antes, `12.34` perdia o ponto e inflava 100×).
 fn xlsx_cell_to_string(cell: &calamine::Data) -> String {
     match cell {
         calamine::Data::Float(f) => format!("{f:.4}"),
@@ -402,7 +408,9 @@ async fn projection_seed(pool: &SqlitePool, today_naive: NaiveDate) -> Result<i6
 }
 
 /// Meta de poupança do método: piso de 25% (faixa 20–30%, "média ANUAL" — "o ano tem que ser de
-/// 20 a 30", aula "Como viver abaixo do que ganha"). Régua do guardrail "pode gastar".
+/// 20 a 30", aula "Como viver abaixo do que ganha"). Régua do guardrail ANUAL "pode gastar".
+/// O badge MENSAL "Dentro do ideal" (src/screens/TotaisScreen.tsx) usa 20% (piso da faixa), por ser
+/// leniente a variações de um mês; ambos ficam dentro da faixa canônica 20–30%.
 const SAVINGS_TARGET_BPS: i64 = 2500;
 
 /// Limiar de cobertura: um mês futuro com menos de 60% do gasto típico já lançado é tratado como
@@ -418,8 +426,8 @@ const COVERAGE_COMPLETE_BPS: i64 = 6_000;
 /// da reserva quando o slice de Economia existir; até lá o net é um proxy conservador (review P2).
 ///
 /// Conta só **meses COMPLETOS** do ano (`substr(date) < mês corrente`), nunca o mês em andamento.
-/// Meio do mês as contas já entraram (dias 10–12) mas o salário não (dia ~29), o que daria um
-/// net negativo de timing e um "pode gastar R$ 0" de falso pânico (auditoria vs planilha oficial).
+/// No meio do mês as contas fixas já podem ter entrado mas o salário ainda não, o que daria um
+/// net negativo de timing e um "pode gastar R$ 0" de falso pânico.
 ///
 /// NÃO filtra `is_projection`: ele é congelado no import (data vs hoje DAQUELE dia) e fica STALE
 /// quando o dono não re-importa por dias/meses. Um mês completo já passou — é realizado por
@@ -443,6 +451,30 @@ async fn realized_annual_savings(
     .await
     .map_err(|e| format!("realized annual: {e}"))?;
     Ok((row.0, row.0 - row.1)) // (renda, poupança=net) dos meses completos
+}
+
+/// Economia REGISTRADA do ano até hoje (meses completos): transfers cujo destino é conta
+/// reserva/ilíquida — mesma classificação de `forecast::classify`. É o numerador do "Economizado"
+/// do método (Economia/Entradas), DISTINTO do net superávit de `realized_annual_savings` (que é o
+/// "colchão" do Neko). Existir os dois lado a lado sem se confundir foi um achado da review.
+async fn realized_annual_economia(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+) -> Result<i64, String> {
+    let year_start = format!("{}-01-01", today_naive.year());
+    let cur_ym = today_naive.format("%Y-%m").to_string();
+    let row: (i64,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(ABS(t.amount)), 0) FROM \"transaction\" t \
+         LEFT JOIN account a ON a.id = t.to_account_id \
+         WHERE t.date >= ?1 AND substr(t.date,1,7) < ?2 \
+           AND t.type='transfer' AND a.liquidity IN ('reserve','illiquid')",
+    )
+    .bind(&year_start)
+    .bind(&cur_ym)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("realized economia: {e}"))?;
+    Ok(row.0)
 }
 
 /// Renda e net do ANO INTEIRO projetado (todas as linhas do ano). Exibido só como contraste com
@@ -561,9 +593,13 @@ async fn load_cashflow_events(
     let today = today_naive.format("%Y-%m-%d").to_string();
     let horizon = horizon_end.format("%Y-%m-%d").to_string();
 
-    let txn_rows: Vec<(String, i64, String, String, i64, i64)> = sqlx::query_as(
-        "SELECT type, amount, date, COALESCE(payment_method,''), is_fixed, is_projection \
-         FROM \"transaction\" WHERE date > ?1 AND date <= ?2",
+    // Liquidez da conta-destino entra no SELECT para classificar `transfer` → Economia (guardar
+    // num bolso não-líquido) vs net-zero (entre contas líquidas).
+    let txn_rows: Vec<(String, i64, String, String, i64, i64, String)> = sqlx::query_as(
+        "SELECT t.type, t.amount, t.date, COALESCE(t.payment_method,''), t.is_fixed, t.is_projection, \
+                COALESCE(a.liquidity,'') \
+         FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
+         WHERE t.date > ?1 AND t.date <= ?2",
     )
     .bind(&today)
     .bind(&horizon)
@@ -573,14 +609,17 @@ async fn load_cashflow_events(
 
     let mut all_events: Vec<CashflowEvent> = txn_rows
         .into_iter()
-        .filter_map(|(ttype, amount, date_str, pm, is_fixed, is_proj)| {
+        .filter_map(|(ttype, amount, date_str, pm, is_fixed, is_proj, liq)| {
             let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d").ok()?;
             let pm = (!pm.is_empty()).then_some(pm);
-            let kind = forecast::classify(&ttype, is_fixed != 0, pm.as_deref())?;
+            let to_liq = (!liq.is_empty()).then_some(liq);
+            let kind = forecast::classify(&ttype, is_fixed != 0, pm.as_deref(), to_liq.as_deref())?;
             Some(CashflowEvent {
                 date,
                 kind,
-                amount_cents: amount,
+                // Invariante: o evento guarda MAGNITUDE positiva; o sinal vem do `kind` (ver
+                // `forecast::signed`). `.abs()` blinda contra um `transfer` gravado negativo.
+                amount_cents: amount.abs(),
                 realized: is_proj == 0,
             })
         })
@@ -655,9 +694,11 @@ async fn load_realized_month_events(
     let start = month_start.format("%Y-%m-%d").to_string();
     let today = today_naive.format("%Y-%m-%d").to_string();
 
-    let rows: Vec<(String, i64, String, String, i64, i64)> = sqlx::query_as(
-        "SELECT type, amount, date, COALESCE(payment_method,''), is_fixed, is_projection \
-         FROM \"transaction\" WHERE date >= ?1 AND date <= ?2",
+    let rows: Vec<(String, i64, String, String, i64, i64, String)> = sqlx::query_as(
+        "SELECT t.type, t.amount, t.date, COALESCE(t.payment_method,''), t.is_fixed, t.is_projection, \
+                COALESCE(a.liquidity,'') \
+         FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
+         WHERE t.date >= ?1 AND t.date <= ?2",
     )
     .bind(&start)
     .bind(&today)
@@ -667,14 +708,17 @@ async fn load_realized_month_events(
 
     Ok(rows
         .into_iter()
-        .filter_map(|(ttype, amount, date_str, pm, is_fixed, is_proj)| {
+        .filter_map(|(ttype, amount, date_str, pm, is_fixed, is_proj, liq)| {
             let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d").ok()?;
             let pm = (!pm.is_empty()).then_some(pm);
-            let kind = forecast::classify(&ttype, is_fixed != 0, pm.as_deref())?;
+            let to_liq = (!liq.is_empty()).then_some(liq);
+            let kind = forecast::classify(&ttype, is_fixed != 0, pm.as_deref(), to_liq.as_deref())?;
             Some(CashflowEvent {
                 date,
                 kind,
-                amount_cents: amount,
+                // Invariante: o evento guarda MAGNITUDE positiva; o sinal vem do `kind` (ver
+                // `forecast::signed`). `.abs()` blinda contra um `transfer` gravado negativo.
+                amount_cents: amount.abs(),
                 realized: is_proj == 0,
             })
         })
@@ -701,6 +745,7 @@ pub struct ForecastDayDto {
     pub income_cents: i64,
     pub fixed_out_cents: i64,
     pub daily_out_cents: i64,
+    pub economia_cents: i64,
     pub balance_cents: i64,
 }
 
@@ -724,15 +769,29 @@ pub struct MonthMetricDto {
     pub income_cents: i64,
     pub performance_cents: i64,
     pub cost_of_living_cents: i64,
+    /// Saídas fixas realizadas (coluna Saída; cartão entra como lump). Para o rodapé ENTRADAS|SAÍDAS|DIÁRIO.
+    pub fixed_out_cents: i64,
+    /// Diário realizado (coluna Diário). `cost_of_living = fixed_out + daily_out`.
+    pub daily_out_cents: i64,
+    /// Diário médio do mês = Σ diário realizado ÷ dias decorridos (D/N). Antes morria no DTO.
+    pub real_daily_avg_cents: i64,
+    /// Economia lançada no mês (numerador do Economizado%).
+    pub economia_cents: i64,
     pub savings_rate_bps: i64,
 }
 
 /// Poupança do ano: realizada (honesta) vs projetada (otimista quando o futuro está incompleto).
+/// ATENÇÃO a dois conceitos distintos (não confundir na UI): `*_savings_cents` é o NET superávit
+/// (renda − saída), o "colchão" do Neko; `registered_economia_cents` é a Economia REGISTRADA do
+/// método (transfers→reserva), numerador do Economizado%. O guardrail usa o net (colchão); o
+/// Economizado mensal usa a Economia registrada.
 #[derive(serde::Serialize)]
 pub struct AnnualSavingsDto {
     pub realized_income_cents: i64,
     pub realized_savings_cents: i64,
     pub realized_rate_bps: i64,
+    /// Economia REGISTRADA do ano (transfers→reserva/ilíquido), meses completos. Distinta do net.
+    pub registered_economia_cents: i64,
     pub projected_income_cents: i64,
     pub projected_savings_cents: i64,
     pub projected_rate_bps: i64,
@@ -793,7 +852,28 @@ pub async fn get_forecast(pool: State<'_, SqlitePool>) -> Result<ForecastDto, St
 async fn forecast_dto(pool: &SqlitePool, today_naive: NaiveDate) -> Result<ForecastDto, String> {
     let horizon_end = forecast_horizon_end(pool, today_naive).await?;
     let seed = projection_seed(pool, today_naive).await?;
-    let events = load_cashflow_events(pool, today_naive, horizon_end).await?;
+    let mut events = load_cashflow_events(pool, today_naive, horizon_end).await?;
+    // Previsão de diário como DRIVER: injeta o teto/dia nos dias futuros do mês corrente, para o
+    // saldo projetado e a Performance não nascerem otimistas (assumem o gasto típico até o fim do mês).
+    let daily_ceiling: (i64,) = sqlx::query_as(
+        "SELECT COALESCE(amount, 0) FROM daily_budget WHERE status='active' \
+         ORDER BY start_date DESC LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("query daily_budget: {e}"))?
+    .unwrap_or((0,));
+    let days_with_daily: std::collections::HashSet<NaiveDate> = events
+        .iter()
+        .filter(|e| e.kind == forecast::EventKind::Daily)
+        .map(|e| e.date)
+        .collect();
+    events.extend(forecast::project_daily_ceiling(
+        daily_ceiling.0,
+        today_naive,
+        horizon_end,
+        &days_with_daily,
+    ));
     let metric_events = load_metric_events(pool, today_naive, &events).await?;
     let fc =
         forecast::project_with_metrics(seed, today_naive, &events, &metric_events, horizon_end);
@@ -825,10 +905,12 @@ async fn forecast_dto(pool: &SqlitePool, today_naive: NaiveDate) -> Result<Forec
             0
         }
     };
+    let annual_economia = realized_annual_economia(pool, today_naive).await?;
     let annual_savings = AnnualSavingsDto {
         realized_income_cents: annual_income,
         realized_savings_cents: annual_savings_amt,
         realized_rate_bps: rate_bps(annual_savings_amt, annual_income),
+        registered_economia_cents: annual_economia,
         projected_income_cents: proj_income,
         projected_savings_cents: proj_savings,
         projected_rate_bps: rate_bps(proj_savings, proj_income),
@@ -873,7 +955,7 @@ async fn forecast_dto(pool: &SqlitePool, today_naive: NaiveDate) -> Result<Forec
         .collect();
 
     // Per-day flow sums (income, fixed out, daily out), keyed by the same dates the engine emits.
-    let mut flows: std::collections::HashMap<NaiveDate, (i64, i64, i64)> =
+    let mut flows: std::collections::HashMap<NaiveDate, (i64, i64, i64, i64)> =
         std::collections::HashMap::new();
     for e in &events {
         let entry = flows.entry(e.date).or_default();
@@ -881,6 +963,7 @@ async fn forecast_dto(pool: &SqlitePool, today_naive: NaiveDate) -> Result<Forec
             forecast::EventKind::Income => entry.0 += e.amount_cents,
             forecast::EventKind::FixedOut => entry.1 += e.amount_cents,
             forecast::EventKind::Daily => entry.2 += e.amount_cents,
+            forecast::EventKind::Economia => entry.3 += e.amount_cents,
         }
     }
 
@@ -888,12 +971,14 @@ async fn forecast_dto(pool: &SqlitePool, today_naive: NaiveDate) -> Result<Forec
         .daily
         .iter()
         .map(|p| {
-            let (income, fixed_out, daily_out) = flows.get(&p.date).copied().unwrap_or_default();
+            let (income, fixed_out, daily_out, economia) =
+                flows.get(&p.date).copied().unwrap_or_default();
             ForecastDayDto {
                 date: p.date.format("%Y-%m-%d").to_string(),
                 income_cents: income,
                 fixed_out_cents: fixed_out,
                 daily_out_cents: daily_out,
+                economia_cents: economia,
                 balance_cents: p.balance_cents,
             }
         })
@@ -932,13 +1017,176 @@ async fn forecast_dto(pool: &SqlitePool, today_naive: NaiveDate) -> Result<Forec
             .map(|m| MonthMetricDto {
                 year: m.year,
                 month: m.month,
-                income_cents: m.income_cents(),
+                income_cents: m.income_cents,
                 performance_cents: m.performance_cents,
                 cost_of_living_cents: m.cost_of_living_cents,
+                fixed_out_cents: m.fixed_out_cents,
+                daily_out_cents: m.daily_out_cents,
+                real_daily_avg_cents: m.real_daily_avg_cents,
+                economia_cents: m.economia_cents,
                 savings_rate_bps: m.savings_rate_bps,
             })
             .collect(),
     })
+}
+
+// --- Visão anual (spec 019 month-views) ---
+
+/// Todos os eventos do ANO (realizado + projetado), classificados — sem o teto de diário (que só
+/// vale para o mês corrente no forecast). Para a visão anual das 4 métricas.
+async fn load_year_events(pool: &SqlitePool, year: i32) -> Result<Vec<CashflowEvent>, String> {
+    let rows: Vec<(String, i64, String, String, i64, i64, String)> = sqlx::query_as(
+        "SELECT t.type, t.amount, t.date, COALESCE(t.payment_method,''), t.is_fixed, t.is_projection, \
+                COALESCE(a.liquidity,'') \
+         FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
+         WHERE substr(t.date, 1, 4) = ?1",
+    )
+    .bind(format!("{year:04}"))
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("query year events: {e}"))?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|(ttype, amount, date_str, pm, is_fixed, is_proj, liq)| {
+            let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d").ok()?;
+            let pm = (!pm.is_empty()).then_some(pm);
+            let to_liq = (!liq.is_empty()).then_some(liq);
+            let kind = forecast::classify(&ttype, is_fixed != 0, pm.as_deref(), to_liq.as_deref())?;
+            Some(CashflowEvent {
+                date,
+                kind,
+                // Invariante: o evento guarda MAGNITUDE positiva; o sinal vem do `kind` (ver
+                // `forecast::signed`). `.abs()` blinda contra um `transfer` gravado negativo.
+                amount_cents: amount.abs(),
+                realized: is_proj == 0,
+            })
+        })
+        .collect())
+}
+
+#[derive(serde::Serialize)]
+pub struct AnnualMetricsDto {
+    pub year: i32,
+    pub months: Vec<MonthMetricDto>,
+}
+
+async fn annual_metrics(
+    pool: &SqlitePool,
+    year: i32,
+    today: NaiveDate,
+) -> Result<AnnualMetricsDto, String> {
+    let events = load_year_events(pool, year).await?;
+    let months: Vec<(i32, u32)> = (1..=12).map(|m| (year, m)).collect();
+    let metrics = forecast::month_metrics_for(today, &events, &months);
+    let months = metrics
+        .iter()
+        .map(|m| MonthMetricDto {
+            year: m.year,
+            month: m.month,
+            income_cents: m.income_cents,
+            performance_cents: m.performance_cents,
+            cost_of_living_cents: m.cost_of_living_cents,
+            fixed_out_cents: m.fixed_out_cents,
+            daily_out_cents: m.daily_out_cents,
+            real_daily_avg_cents: m.real_daily_avg_cents,
+            economia_cents: m.economia_cents,
+            savings_rate_bps: m.savings_rate_bps,
+        })
+        .collect();
+    Ok(AnnualMetricsDto { year, months })
+}
+
+// --- Grade do mês (visão fiel à planilha: Data | Entrada | Saída | Diário | Saldo) ---
+
+/// Um dia da grade mensal. `balance_cents` é o Saldo encadeado da planilha (None se aquele dia não
+/// foi importado). Os fluxos são agregados das transações do dia, separados por tipo.
+#[derive(serde::Serialize)]
+pub struct MonthGridDayDto {
+    pub date: String,
+    pub day: u32,
+    pub income_cents: i64,
+    pub fixed_out_cents: i64,
+    pub daily_out_cents: i64,
+    pub balance_cents: Option<i64>,
+}
+
+/// Grade de TODOS os dias de um mês (1..último), com os fluxos realizados/pré-lançados agregados por
+/// dia e o Saldo da planilha (`sheet_daily_balance`). É a visão Data|Entrada|Saída|Diário|Saldo que o
+/// usuário tem na planilha, para QUALQUER mês (passado ou futuro) — diferente do `forecast.daily`,
+/// que só vai de hoje para frente. Dias sem Saldo importado vêm com `balance_cents = None`.
+async fn month_grid(
+    pool: &SqlitePool,
+    year: i32,
+    month: u32,
+) -> Result<Vec<MonthGridDayDto>, String> {
+    let first = NaiveDate::from_ymd_opt(year, month, 1).ok_or("mês inválido")?;
+    let last = forecast::last_day_of_month(year, month);
+    let first_s = first.format("%Y-%m-%d").to_string();
+    let last_s = last.format("%Y-%m-%d").to_string();
+
+    // Fluxos por dia, separados por tipo (Entrada / Saída fixa / Diário variável).
+    let flows: Vec<(String, i64, i64, i64)> = sqlx::query_as(
+        // Crédito (régua 2) entra em Saída como a fatura, não em Diário — espelha forecast::classify.
+        "SELECT date, \
+                COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END), 0), \
+                COALESCE(SUM(CASE WHEN type='expense' AND (COALESCE(is_fixed,0)=1 OR payment_method='credit') THEN amount ELSE 0 END), 0), \
+                COALESCE(SUM(CASE WHEN type='expense' AND COALESCE(is_fixed,0)=0 AND COALESCE(payment_method,'')<>'credit' THEN amount ELSE 0 END), 0) \
+         FROM \"transaction\" WHERE date BETWEEN ?1 AND ?2 GROUP BY date",
+    )
+    .bind(&first_s)
+    .bind(&last_s)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("month flows: {e}"))?;
+
+    // Saldo da planilha por dia.
+    let balances: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT date, balance_cents FROM sheet_daily_balance WHERE date BETWEEN ?1 AND ?2",
+    )
+    .bind(&first_s)
+    .bind(&last_s)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("month balances: {e}"))?;
+
+    let flow_of = |d: &str| flows.iter().find(|f| f.0 == d).map(|f| (f.1, f.2, f.3));
+    let balance_of = |d: &str| balances.iter().find(|b| b.0 == d).map(|b| b.1);
+
+    let n_days = (last - first).num_days() + 1;
+    let mut grid = Vec::with_capacity(n_days as usize);
+    for offset in 0..n_days {
+        let date = first + chrono::Duration::days(offset);
+        let date_s = date.format("%Y-%m-%d").to_string();
+        let (income, fixed_out, daily_out) = flow_of(&date_s).unwrap_or((0, 0, 0));
+        grid.push(MonthGridDayDto {
+            day: date.day(),
+            income_cents: income,
+            fixed_out_cents: fixed_out,
+            daily_out_cents: daily_out,
+            balance_cents: balance_of(&date_s),
+            date: date_s,
+        });
+    }
+    Ok(grid)
+}
+
+/// Grade do mês `year-month` (visão fiel à planilha). Ver [`month_grid`].
+#[tauri::command]
+pub async fn get_month_grid(
+    pool: State<'_, SqlitePool>,
+    year: i32,
+    month: u32,
+) -> Result<Vec<MonthGridDayDto>, String> {
+    month_grid(pool.inner(), year, month).await
+}
+
+#[tauri::command]
+pub async fn get_annual_metrics(
+    pool: State<'_, SqlitePool>,
+    year: i32,
+) -> Result<AnnualMetricsDto, String> {
+    annual_metrics(pool.inner(), year, chrono::Local::now().date_naive()).await
 }
 
 // --- Dashboard query commands ---
@@ -949,6 +1197,9 @@ pub struct DashboardSummary {
     pub daily_budget: i64,
     pub daily_spend_today: i64,
     pub credit_spend_month: i64,
+    /// Há rastreio de crédito (cartão ou gasto de crédito). `false` → a UI mostra "—" no tile,
+    /// não um R$0 estrutural.
+    pub has_credit: bool,
     pub reserve_months: f64,
     pub reserve_trend: String,
     pub transaction_count: i64,
@@ -994,22 +1245,67 @@ async fn dashboard_summary(
     .map_err(|e| format!("query: {e}"))?
     .unwrap_or((0,));
 
-    // Today's daily spend
-    let daily_spend: (i64,) =
-        sqlx::query_as("SELECT COALESCE(SUM(daily_spend), 0) FROM daily_checkin WHERE date = ?1")
-            .bind(&today)
-            .fetch_one(pool)
-            .await
-            .map_err(|e| format!("query: {e}"))?;
+    // Diário de HOJE como MAGNITUDE positiva (o card faz `teto - gasto` e `gasto/teto`).
+    // - Sinal: por convenção, `amount` é gravado como magnitude positiva (import faz `.abs()`,
+    //   `create_transaction` exige `> 0`); o sinal vem do `type`. `ABS()` é defesa-em-profundidade,
+    //   espelhando o `amount.abs()` do forecast — robusto caso algum writer grave com sinal.
+    // - Fonte única (sem double-count, o achado real): se há transação Diário no dia, ela vence;
+    //   o check-in (`daily_checkin`, sem writer em produção hoje) só preenche dias SEM transação.
+    //   Invariante: um dia nunca contabiliza check-in E transação Diário ao mesmo tempo (mesmo
+    //   dinheiro, Régua 1). Mesma regra no crédito abaixo e no forecast (`load_cashflow_events`).
+    let daily_spend: (i64,) = sqlx::query_as(
+        "SELECT CASE WHEN EXISTS(SELECT 1 FROM \"transaction\" \
+                                 WHERE type='expense' AND is_fixed=0 AND is_projection=0 AND date = ?1 \
+                                   AND (payment_method IS NULL OR payment_method <> 'credit')) \
+                     THEN ABS(COALESCE((SELECT SUM(amount) FROM \"transaction\" \
+                                        WHERE type='expense' AND is_fixed=0 AND is_projection=0 AND date = ?1 \
+                                          AND (payment_method IS NULL OR payment_method <> 'credit')), 0)) \
+                     ELSE COALESCE((SELECT SUM(daily_spend) FROM daily_checkin WHERE date = ?1), 0) \
+                END",
+    )
+    .bind(&today)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("query daily spend: {e}"))?;
 
-    // Credit spend this month
+    // Crédito no mês (Régua 2) como MAGNITUDE positiva, mesma regra do Diário: `ABS` por
+    // defesa-em-profundidade (amount é positivo por convenção) e fonte única — se há transação de
+    // crédito no mês, ela vence; o check-in só preenche meses sem transação de crédito.
+    // Janela do MÊS CORRENTE [month_start, month_end]: o método pré-lança o ano inteiro de faturas
+    // na planilha; sem o limite superior, crédito datado meses à frente inflava o tile do mês (e o
+    // EXISTS sem teto suprimia o fallback de check-in). Escopo análogo ao `date = hoje` do Diário.
     let month_start = format!("{}-01", today_naive.format("%Y-%m"));
-    let credit_spend: (i64,) =
-        sqlx::query_as("SELECT COALESCE(SUM(credit_spend), 0) FROM daily_checkin WHERE date >= ?1")
-            .bind(&month_start)
-            .fetch_one(pool)
-            .await
-            .map_err(|e| format!("query: {e}"))?;
+    let month_end = forecast::last_day_of_month(today_naive.year(), today_naive.month())
+        .format("%Y-%m-%d")
+        .to_string();
+    let credit_spend: (i64,) = sqlx::query_as(
+        "SELECT CASE WHEN EXISTS(SELECT 1 FROM \"transaction\" \
+                                 WHERE type='expense' AND payment_method='credit' AND is_projection=0 \
+                                   AND date >= ?1 AND date <= ?2) \
+                     THEN ABS(COALESCE((SELECT SUM(amount) FROM \"transaction\" \
+                                        WHERE type='expense' AND payment_method='credit' AND is_projection=0 \
+                                          AND date >= ?1 AND date <= ?2), 0)) \
+                     ELSE COALESCE((SELECT SUM(credit_spend) FROM daily_checkin \
+                                    WHERE date >= ?1 AND date <= ?2), 0) \
+                END",
+    )
+    .bind(&month_start)
+    .bind(&month_end)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("query credit spend: {e}"))?;
+
+    // Há rastreio de crédito? (cartão configurado ou algum gasto de crédito). Sem isso a UI mostra
+    // "—" no tile de crédito, em vez de um R$0 estrutural enganoso.
+    let has_credit: (i64,) = sqlx::query_as(
+        "SELECT CASE WHEN EXISTS(SELECT 1 FROM account WHERE type='credit_card') \
+                  OR EXISTS(SELECT 1 FROM \"transaction\" WHERE payment_method='credit') \
+                  OR COALESCE((SELECT SUM(credit_spend) FROM daily_checkin), 0) > 0 \
+                THEN 1 ELSE 0 END",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("query has_credit: {e}"))?;
 
     // Reserve
     let reserve: (f64, String) = sqlx::query_as(
@@ -1033,6 +1329,7 @@ async fn dashboard_summary(
         daily_budget: daily_budget.0,
         daily_spend_today: daily_spend.0,
         credit_spend_month: credit_spend.0,
+        has_credit: has_credit.0 != 0,
         reserve_months: reserve.0,
         reserve_trend: reserve.1,
         transaction_count: count.0,
@@ -1189,6 +1486,15 @@ async fn create_account_inner(
     Ok(id)
 }
 
+/// Tag anexada a um lançamento (para os chips do Livro-razão).
+#[derive(serde::Serialize, sqlx::FromRow, Clone)]
+pub struct TagOnRow {
+    pub id: String,
+    pub name: String,
+    pub color: String,
+    pub emoji: Option<String>,
+}
+
 #[derive(serde::Serialize)]
 pub struct TransactionRow {
     pub id: String,
@@ -1198,6 +1504,14 @@ pub struct TransactionRow {
     pub date: String,
     pub payment_method: String,
     pub is_projection: bool,
+    /// Despesa fixa (veio da coluna Saída da planilha) vs variável (Diário). Distingue Saída × Diário.
+    pub is_fixed: bool,
+    /// Titulares distintos das parcelas (multi-titular). Vazio = sem split por pessoa.
+    pub owners: Vec<String>,
+    /// Tags anexadas (diagnóstico). Mostradas como chips no Livro-razão.
+    pub tags: Vec<TagOnRow>,
+    /// Proveniência: "projetado" (previsto), "importado" (da planilha) ou "manual" (do app).
+    pub provenance: String,
 }
 
 #[tauri::command]
@@ -1205,26 +1519,200 @@ pub async fn get_recent_transactions(
     pool: State<'_, SqlitePool>,
     limit: i64,
 ) -> Result<Vec<TransactionRow>, String> {
-    let rows: Vec<(String, String, i64, String, String, String, i64)> = sqlx::query_as(
-        "SELECT id, type, amount, COALESCE(description,''), date, COALESCE(payment_method,''), is_projection FROM \"transaction\" ORDER BY date DESC LIMIT ?1"
+    recent_transactions(pool.inner(), limit).await
+}
+
+#[derive(sqlx::FromRow)]
+struct RecentRow {
+    id: String,
+    r#type: String,
+    amount: i64,
+    description: String,
+    date: String,
+    payment_method: String,
+    is_projection: i64,
+    is_fixed: i64,
+    /// Titulares distintos, juntados por '|' no SQL (vazio = sem split por pessoa).
+    owners: String,
+    /// `source_amount` é NULL quando nunca veio da planilha (lançamento manual no app).
+    has_source: i64,
+}
+
+async fn recent_transactions(pool: &SqlitePool, limit: i64) -> Result<Vec<TransactionRow>, String> {
+    // Titulares vêm de um subquery agregado (GROUP_CONCAT com separador '|') — sem N+1.
+    let rows: Vec<RecentRow> = sqlx::query_as(
+        "SELECT t.id, t.type, t.amount, COALESCE(t.description,'') AS description, t.date, \
+                COALESCE(t.payment_method,'') AS payment_method, t.is_projection, t.is_fixed, \
+                COALESCE((SELECT GROUP_CONCAT(name, '|') FROM \
+                    (SELECT DISTINCT p.name FROM split s \
+                     JOIN person p ON p.id = s.owner_person_id \
+                     WHERE s.transaction_id = t.id ORDER BY p.name COLLATE NOCASE)), '') AS owners, \
+                (t.source_amount IS NOT NULL) AS has_source \
+         FROM \"transaction\" t ORDER BY t.date DESC LIMIT ?1",
     )
     .bind(limit)
-    .fetch_all(pool.inner())
+    .fetch_all(pool)
     .await
     .map_err(|e| format!("query: {e}"))?;
 
+    // Tags por transação (uma query só; o volume de tags é pequeno). Mapa transaction_id → tags.
+    let tag_rows: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT tt.transaction_id, t.id, t.name, t.color, t.emoji \
+         FROM transaction_tag tt JOIN tag t ON t.id = tt.tag_id \
+         ORDER BY t.is_special DESC, t.name COLLATE NOCASE",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("tag query: {e}"))?;
+    let mut tags_by_txn: std::collections::HashMap<String, Vec<TagOnRow>> =
+        std::collections::HashMap::new();
+    for (txn_id, id, name, color, emoji) in tag_rows {
+        tags_by_txn.entry(txn_id).or_default().push(TagOnRow {
+            id,
+            name,
+            color,
+            emoji,
+        });
+    }
+
     Ok(rows
         .into_iter()
-        .map(|(id, t, amount, desc, date, pm, is_proj)| TransactionRow {
-            id,
-            r#type: t,
-            amount,
-            description: desc,
-            date,
-            payment_method: pm,
-            is_projection: is_proj != 0,
+        .map(|r| TransactionRow {
+            tags: tags_by_txn.get(&r.id).cloned().unwrap_or_default(),
+            id: r.id,
+            r#type: r.r#type,
+            amount: r.amount,
+            description: r.description,
+            date: r.date,
+            payment_method: r.payment_method,
+            is_projection: r.is_projection != 0,
+            is_fixed: r.is_fixed != 0,
+            owners: if r.owners.is_empty() {
+                Vec::new()
+            } else {
+                // Ordena no Rust (não depende da ordem do GROUP_CONCAT, que não é contratual).
+                let mut o: Vec<String> = r.owners.split('|').map(str::to_owned).collect();
+                o.sort_by_key(|s| s.to_lowercase());
+                o
+            },
+            provenance: if r.is_projection != 0 {
+                "projetado".to_string()
+            } else if r.has_source != 0 {
+                "importado".to_string()
+            } else {
+                "manual".to_string()
+            },
         })
         .collect())
+}
+
+/// Repetição opcional de um lançamento ("Repetir": frequência + nº de ocorrências).
+#[derive(serde::Deserialize)]
+pub struct RecurrenceInput {
+    pub frequency: String,
+    pub repetitions: usize,
+}
+
+/// Cria um lançamento manual (caminho de escrita do app). `amount_cents` é magnitude positiva;
+/// a direção vem de `txn_type` ('income'/'expense'). Com `recurrence`, gera a série projetada
+/// inteira em vez de um único realizado. As `tag_ids` são anexadas a toda linha criada.
+/// Retorna o id do lançamento (ou da série, quando recorrente).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn create_transaction(
+    pool: State<'_, SqlitePool>,
+    txn_type: String,
+    amount_cents: i64,
+    description: Option<String>,
+    date: String,
+    payment_method: Option<String>,
+    is_fixed: bool,
+    tag_ids: Vec<String>,
+    recurrence: Option<RecurrenceInput>,
+) -> Result<String, String> {
+    create_transaction_inner(
+        pool.inner(),
+        &txn_type,
+        amount_cents,
+        description,
+        &date,
+        payment_method,
+        is_fixed,
+        &tag_ids,
+        recurrence,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn create_transaction_inner(
+    pool: &SqlitePool,
+    txn_type: &str,
+    amount_cents: i64,
+    description: Option<String>,
+    date: &str,
+    payment_method: Option<String>,
+    is_fixed: bool,
+    tag_ids: &[String],
+    recurrence: Option<RecurrenceInput>,
+) -> Result<String, String> {
+    if !matches!(txn_type, "income" | "expense") {
+        return Err(format!("tipo inválido: {txn_type}"));
+    }
+    if amount_cents <= 0 {
+        return Err("valor deve ser positivo (magnitude)".into());
+    }
+    let start = NaiveDate::parse_from_str(date, "%Y-%m-%d").map_err(|e| format!("data: {e}"))?;
+
+    // Caminho recorrente: delega à série projetada e anexa as tags a cada ocorrência.
+    if let Some(rec) = recurrence {
+        let freq =
+            crate::recurrence::Frequency::parse(&rec.frequency).ok_or("frequência inválida")?;
+        let template = crate::recurrence::RecurringTemplate {
+            txn_type: txn_type.to_string(),
+            amount: amount_cents,
+            description,
+            start,
+            payment_method,
+            is_fixed,
+        };
+        let rec_id =
+            crate::recurrence::create_recurring_series(pool, &template, freq, rec.repetitions)
+                .await?;
+        if !tag_ids.is_empty() {
+            for i in 0..rec.repetitions {
+                crate::tags::set_transaction_tags(pool, &format!("{rec_id}:{i}"), tag_ids).await?;
+            }
+        }
+        return Ok(rec_id);
+    }
+
+    // Lançamento único. Data FUTURA → projeção (igual ao import: `classify_row`); hoje/passado →
+    // realizado. Marcar um futuro como realizado distorceria o "já aconteceu" do dashboard.
+    let is_projection = start > chrono::Local::now().date_naive();
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO \"transaction\" (id, type, amount, description, date, payment_method, is_fixed, is_projection, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
+    )
+    .bind(&id)
+    .bind(txn_type)
+    .bind(amount_cents)
+    .bind(&description)
+    .bind(date)
+    .bind(&payment_method)
+    .bind(is_fixed as i64)
+    .bind(is_projection as i64)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("insert transaction: {e}"))?;
+
+    if !tag_ids.is_empty() {
+        crate::tags::set_transaction_tags(pool, &id, tag_ids).await?;
+    }
+    Ok(id)
 }
 
 #[tauri::command]
@@ -1236,6 +1724,7 @@ pub async fn detect_sheet_layout(
     client_id: String,
     client_secret: Option<String>,
 ) -> Result<layout_detect::SheetLayout, String> {
+    let client_secret = oauth::pkce::resolve_client_secret(client_secret);
     let token =
         oauth::token_store::ensure_valid_token(&app_dir.0, &client_id, client_secret.as_deref())
             .await?;
@@ -1272,6 +1761,428 @@ pub async fn detect_sheet_layout(
     }
 
     Ok(layout)
+}
+
+/// Lê as transações e as converte para candidatas de write-back da grade diária do `year`
+/// (magnitude positiva; a coluna vem do tipo). DECISÃO de método (a questão em aberto planilha↔
+/// modelo): o CARTÃO **colapsa para um lump em Saída no VENCIMENTO** — formato canônico que o dono
+/// edita à mão (a planilha crua não tem coluna Cartão). Por isso o crédito é carregado pela janela
+/// de VENCIMENTO, não da compra: uma compra de DEZ/ano-1 vence em JAN/ano e tem que entrar no ano.
+/// Sem cartão configurado, o crédito do ano cai na Saída da própria data. `transfer` (Economia) NÃO
+/// entra aqui — vai para a aba `Economia` (ver `build_economia_plan`).
+async fn load_write_back_txns(pool: &SqlitePool, year: i32) -> Result<Vec<WriteBackTxn>, String> {
+    // 1) Entrada + Saída/Diário (expense não-crédito) do ano, cada um na sua data.
+    let rows: Vec<(String, String, i64, i64)> = sqlx::query_as(
+        "SELECT type, date, amount, is_fixed FROM \"transaction\" \
+         WHERE substr(date, 1, 4) = ?1 \
+           AND NOT (type='expense' AND payment_method='credit')",
+    )
+    .bind(format!("{year:04}"))
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("query txns: {e}"))?;
+
+    let mut out = Vec::new();
+    for (t, date, amount, is_fixed) in rows {
+        let mag = amount.abs();
+        match t.as_str() {
+            "income" => out.push(WriteBackTxn {
+                date,
+                kind: import::RowKind::Entrada,
+                amount_cents: mag,
+            }),
+            "expense" => out.push(WriteBackTxn {
+                date,
+                kind: if is_fixed != 0 {
+                    import::RowKind::Saida
+                } else {
+                    import::RowKind::Diario
+                },
+                amount_cents: mag,
+            }),
+            _ => {} // transfer (Economia) → aba Economia
+        }
+    }
+
+    // 2) Cartão → lump no vencimento. Com cartão configurado, junta as compras cujo VENCIMENTO cai
+    //    no ano-alvo (janela DEZ/ano-1 .. DEZ/ano, pois a fatura vence ~1 mês após a compra).
+    let card: Option<(i64, i64)> =
+        sqlx::query_as("SELECT closing_day, due_day FROM account WHERE type='credit_card' LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("query card: {e}"))?;
+
+    match card {
+        Some((closing, due)) => {
+            let credit: Vec<(String, i64)> = sqlx::query_as(
+                "SELECT date, amount FROM \"transaction\" \
+                 WHERE type='expense' AND payment_method='credit' AND date >= ?1 AND date <= ?2",
+            )
+            .bind(format!("{:04}-12-01", year - 1))
+            .bind(format!("{year:04}-12-31"))
+            .fetch_all(pool)
+            .await
+            .map_err(|e| format!("query credit: {e}"))?;
+
+            let mut by_due: std::collections::HashMap<String, i64> =
+                std::collections::HashMap::new();
+            for (date, amount) in credit {
+                if let Ok(d) = NaiveDate::parse_from_str(&date, "%Y-%m-%d") {
+                    let due_date = forecast::cycle_due_date(d, closing as u32, due as u32);
+                    if due_date.year() == year {
+                        *by_due
+                            .entry(due_date.format("%Y-%m-%d").to_string())
+                            .or_insert(0) += amount.abs();
+                    }
+                }
+            }
+            for (due_date, cents) in by_due {
+                out.push(WriteBackTxn {
+                    date: due_date,
+                    kind: import::RowKind::Saida,
+                    amount_cents: cents,
+                });
+            }
+        }
+        None => {
+            // Sem cartão: não há ciclo para colapsar — crédito do ano cai na Saída da própria data.
+            let credit: Vec<(String, i64)> = sqlx::query_as(
+                "SELECT date, amount FROM \"transaction\" \
+                 WHERE type='expense' AND payment_method='credit' AND substr(date,1,4) = ?1",
+            )
+            .bind(format!("{year:04}"))
+            .fetch_all(pool)
+            .await
+            .map_err(|e| format!("query credit nocard: {e}"))?;
+            for (date, amount) in credit {
+                out.push(WriteBackTxn {
+                    date,
+                    kind: import::RowKind::Saida,
+                    amount_cents: amount.abs(),
+                });
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Núcleo compartilhado por `preview_write_back` (read-only) e `apply_write_back` (escreve): lê a
+/// aba, resolve layout+mappings, carrega as transações do ano e planeja o diff célula a célula.
+/// Devolve o `SheetsClient` autenticado (para o apply reusar na escrita) + o plano.
+async fn build_write_back_plan(
+    app_dir: &std::path::Path,
+    pool: &SqlitePool,
+    spreadsheet_id: &str,
+    sheet_name: &str,
+    client_id: &str,
+    client_secret: Option<String>,
+) -> Result<(SheetsClient, Vec<CellWrite>), String> {
+    let client_secret = oauth::pkce::resolve_client_secret(client_secret);
+    let token =
+        oauth::token_store::ensure_valid_token(app_dir, client_id, client_secret.as_deref())
+            .await?;
+    let client = SheetsClient::new(token);
+    let range = format!("'{}'", sheet_name);
+    let values = client.get_sheet_values(spreadsheet_id, &range).await?;
+
+    let layout = import::get_layout_for_sheet(pool, sheet_name)
+        .await?
+        .ok_or("layout não detectado para esta aba — rode a detecção primeiro")?;
+    let mappings = import::get_active_mappings_for_sheet(pool, sheet_name).await?;
+    // Ano não detectado → nada a planejar (nunca assume 2025).
+    let Some(year) = layout.year else {
+        return Ok((client, Vec::new()));
+    };
+    let txns = load_write_back_txns(pool, year).await?;
+    let plan = write_back::plan_write_back(&values.values, &layout, &mappings, &txns);
+    Ok((client, plan))
+}
+
+/// Pré-visualização do write-back: lê a planilha e produz o DIFF (transação → célula) para
+/// aprovação. READ-ONLY — não escreve nada, então é seguro mesmo com a flag desligada.
+#[tauri::command]
+pub async fn preview_write_back(
+    app_dir: State<'_, AppDataDir>,
+    pool: State<'_, SqlitePool>,
+    spreadsheet_id: String,
+    sheet_name: String,
+    client_id: String,
+    client_secret: Option<String>,
+) -> Result<Vec<CellWrite>, String> {
+    let (_client, plan) = build_write_back_plan(
+        &app_dir.0,
+        pool.inner(),
+        &spreadsheet_id,
+        &sheet_name,
+        &client_id,
+        client_secret,
+    )
+    .await?;
+    Ok(plan)
+}
+
+/// Estado da flag de write-back (a UI usa para mostrar "desligado" e desabilitar o envio).
+#[tauri::command]
+pub fn write_back_enabled() -> bool {
+    write_back::WRITE_BACK_ENABLED
+}
+
+/// Lê uma preferência local (KV). `None` quando a chave nunca foi gravada.
+#[tauri::command]
+pub async fn get_app_setting(
+    pool: State<'_, SqlitePool>,
+    key: String,
+) -> Result<Option<String>, String> {
+    app_setting_get(pool.inner(), &key).await
+}
+
+async fn app_setting_get(pool: &SqlitePool, key: &str) -> Result<Option<String>, String> {
+    let row: Option<(String,)> = sqlx::query_as("SELECT value FROM app_setting WHERE key = ?1")
+        .bind(key)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| format!("get setting: {e}"))?;
+    Ok(row.map(|(v,)| v))
+}
+
+/// Grava uma preferência local (KV), sobrescrevendo.
+#[tauri::command]
+pub async fn set_app_setting(
+    pool: State<'_, SqlitePool>,
+    key: String,
+    value: String,
+) -> Result<(), String> {
+    app_setting_set(pool.inner(), &key, &value).await
+}
+
+async fn app_setting_set(pool: &SqlitePool, key: &str, value: &str) -> Result<(), String> {
+    sqlx::query("INSERT OR REPLACE INTO app_setting (key, value) VALUES (?1, ?2)")
+        .bind(key)
+        .bind(value)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("set setting: {e}"))?;
+    Ok(())
+}
+
+/// Aplica o write-back: escreve as células DIVERGENTES de volta na aba. Trava-mestra: enquanto
+/// `WRITE_BACK_ENABLED` estiver desligado, falha cedo e NÃO escreve nada. A UI já obteve o diff via
+/// `preview_write_back` e o humano aprovou; aqui só replanejamos (a planilha pode ter mudado) e
+/// escrevemos as células que ainda diferem. Retorna quantas células foram escritas.
+#[tauri::command]
+pub async fn apply_write_back(
+    app_dir: State<'_, AppDataDir>,
+    pool: State<'_, SqlitePool>,
+    spreadsheet_id: String,
+    sheet_name: String,
+    client_id: String,
+    client_secret: Option<String>,
+) -> Result<usize, String> {
+    write_back::ensure_write_back_enabled()?;
+
+    let (client, plan) = build_write_back_plan(
+        &app_dir.0,
+        pool.inner(),
+        &spreadsheet_id,
+        &sheet_name,
+        &client_id,
+        client_secret,
+    )
+    .await?;
+
+    // Só as células que MUDARAM; range com nome da aba ('2026'!E3); valor numérico em reais.
+    let updates: Vec<(String, f64)> = plan
+        .iter()
+        .filter(|c| c.changed)
+        .map(|c| {
+            (
+                format!("'{}'!{}", sheet_name, c.a1),
+                c.value_cents as f64 / 100.0,
+            )
+        })
+        .collect();
+
+    client.batch_update_values(&spreadsheet_id, &updates).await
+}
+
+/// Economia REGISTRADA por mês (1..=12) do ano: soma dos transfers→reserva/ilíquido. É o numerador
+/// do Economizado% do método e o que vai para a coluna `Economia` da aba homônima no write-back.
+async fn load_economia_by_month(pool: &SqlitePool, year: i32) -> Result<[i64; 12], String> {
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT substr(t.date, 6, 2), COALESCE(SUM(ABS(t.amount)), 0) FROM \"transaction\" t \
+         LEFT JOIN account a ON a.id = t.to_account_id \
+         WHERE substr(t.date, 1, 4) = ?1 AND t.type = 'transfer' \
+           AND a.liquidity IN ('reserve','illiquid') \
+         GROUP BY substr(t.date, 6, 2)",
+    )
+    .bind(format!("{year:04}"))
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("query economia: {e}"))?;
+    let mut by = [0i64; 12];
+    for (mm, cents) in rows {
+        if let Ok(m) = mm.parse::<usize>()
+            && (1..=12).contains(&m)
+        {
+            by[m - 1] = cents;
+        }
+    }
+    Ok(by)
+}
+
+/// Núcleo compartilhado do write-back da Economia (aba `Economia`, separada da grade diária).
+async fn build_economia_plan(
+    app_dir: &std::path::Path,
+    pool: &SqlitePool,
+    spreadsheet_id: &str,
+    year: i32,
+    client_id: &str,
+    client_secret: Option<String>,
+) -> Result<(SheetsClient, Vec<CellWrite>), String> {
+    let client_secret = oauth::pkce::resolve_client_secret(client_secret);
+    let token =
+        oauth::token_store::ensure_valid_token(app_dir, client_id, client_secret.as_deref())
+            .await?;
+    let client = SheetsClient::new(token);
+    let values = client
+        .get_sheet_values(spreadsheet_id, "'Economia'")
+        .await?;
+    let by_month = load_economia_by_month(pool, year).await?;
+    let plan = write_back::plan_economia_write_back(&values.values, year, &by_month);
+    Ok((client, plan))
+}
+
+/// Preview READ-ONLY do write-back da Economia (transfers→reserva → coluna `Economia` por mês).
+#[tauri::command]
+pub async fn preview_economia_write_back(
+    app_dir: State<'_, AppDataDir>,
+    pool: State<'_, SqlitePool>,
+    spreadsheet_id: String,
+    year: i32,
+    client_id: String,
+    client_secret: Option<String>,
+) -> Result<Vec<CellWrite>, String> {
+    let (_client, plan) = build_economia_plan(
+        &app_dir.0,
+        pool.inner(),
+        &spreadsheet_id,
+        year,
+        &client_id,
+        client_secret,
+    )
+    .await?;
+    Ok(plan)
+}
+
+/// Aplica o write-back da Economia. Atrás da MESMA flag `WRITE_BACK_ENABLED`. Retorna nº de células.
+#[tauri::command]
+pub async fn apply_economia_write_back(
+    app_dir: State<'_, AppDataDir>,
+    pool: State<'_, SqlitePool>,
+    spreadsheet_id: String,
+    year: i32,
+    client_id: String,
+    client_secret: Option<String>,
+) -> Result<usize, String> {
+    write_back::ensure_write_back_enabled()?;
+    let (client, plan) = build_economia_plan(
+        &app_dir.0,
+        pool.inner(),
+        &spreadsheet_id,
+        year,
+        &client_id,
+        client_secret,
+    )
+    .await?;
+    let updates: Vec<(String, f64)> = plan
+        .iter()
+        .filter(|c| c.changed)
+        .map(|c| (format!("'Economia'!{}", c.a1), c.value_cents as f64 / 100.0))
+        .collect();
+    client.batch_update_values(&spreadsheet_id, &updates).await
+}
+
+/// Conta de RESERVA destino da Economia. Usa a primeira `liquidity='reserve'`; se não houver, cria
+/// uma "Reserva" padrão (savings/reserve) do 1º titular — assim a Economia importada tem para onde ir.
+async fn ensure_reserve_account(pool: &SqlitePool) -> Result<String, String> {
+    if let Some((id,)) = sqlx::query_as::<_, (String,)>(
+        "SELECT id FROM account WHERE liquidity='reserve' ORDER BY created_at LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("query reserve: {e}"))?
+    {
+        return Ok(id);
+    }
+    let owner: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM person ORDER BY created_at LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("query person: {e}"))?;
+    let id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO account (id, name, type, owner_person_id, balance, liquidity) \
+         VALUES (?1, 'Reserva', 'savings', ?2, 0, 'reserve')",
+    )
+    .bind(&id)
+    .bind(owner.map(|(p,)| p))
+    .execute(pool)
+    .await
+    .map_err(|e| format!("create reserve: {e}"))?;
+    Ok(id)
+}
+
+/// Importa a aba `Economia` da planilha → transações `transfer→reserva` (a representação da Economia
+/// registrada do método). Id determinístico `economia:{ano}-{mês}` ⇒ re-import ATUALIZA, não duplica.
+/// É o que faltava: sem isso, o Economizado%/ColchaoCard e o write-back da Economia ficam zerados.
+#[tauri::command]
+pub async fn import_economia_sheet(
+    app_dir: State<'_, AppDataDir>,
+    pool: State<'_, SqlitePool>,
+    spreadsheet_id: String,
+    client_id: String,
+    client_secret: Option<String>,
+) -> Result<usize, String> {
+    let client_secret = oauth::pkce::resolve_client_secret(client_secret);
+    let token =
+        oauth::token_store::ensure_valid_token(&app_dir.0, &client_id, client_secret.as_deref())
+            .await?;
+    let client = SheetsClient::new(token);
+    let values = client
+        .get_sheet_values(&spreadsheet_id, "'Economia'")
+        .await?;
+    let entries = import::parse_economia_sheet(&values.values);
+    if entries.is_empty() {
+        return Ok(0);
+    }
+
+    let reserve_id = ensure_reserve_account(pool.inner()).await?;
+    let today = chrono::Local::now().date_naive();
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut count = 0usize;
+    for (year, month, cents) in entries {
+        let last = forecast::last_day_of_month(year, month);
+        let date = last.format("%Y-%m-%d").to_string();
+        let id = format!("economia:{year:04}-{month:02}");
+        let is_projection = (last > today) as i64;
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, description, date, to_account_id, is_projection, created_at, updated_at) \
+             VALUES (?1, 'transfer', ?2, 'Economia (importada da aba Economia)', ?3, ?4, ?5, ?6, ?6) \
+             ON CONFLICT(id) DO UPDATE SET amount=excluded.amount, date=excluded.date, \
+               is_projection=excluded.is_projection, updated_at=excluded.updated_at",
+        )
+        .bind(&id)
+        .bind(cents)
+        .bind(&date)
+        .bind(&reserve_id)
+        .bind(is_projection)
+        .bind(&now)
+        .execute(pool.inner())
+        .await
+        .map_err(|e| format!("upsert economia: {e}"))?;
+        count += 1;
+    }
+    Ok(count)
 }
 
 #[tauri::command]
@@ -1349,6 +2260,7 @@ pub async fn list_user_spreadsheets(
     client_id: String,
     client_secret: Option<String>,
 ) -> Result<Vec<UserSpreadsheet>, String> {
+    let client_secret = oauth::pkce::resolve_client_secret(client_secret);
     let token =
         oauth::token_store::ensure_valid_token(&app_dir.0, &client_id, client_secret.as_deref())
             .await?;
@@ -1407,22 +2319,23 @@ mod tests {
             amount: 10000,
             description: "Test".into(),
             is_projection: false,
+            kind: google_sheets::import::RowKind::Entrada,
         }];
         let checksum = compute_checksum(&rows);
         assert!(!checksum.is_empty());
     }
 
     // Spec 010 slice 0: floats do calamine chegam ao parse_number sem ambiguidade de
-    // separador — regressão do bug de 100× (65.28 → R$ 6.528,00).
+    // separador — regressão do bug de 100× (12.34 → R$ 1.234,00).
     #[test]
     fn xlsx_float_cells_parse_to_correct_cents() {
         assert_eq!(
-            xlsx_cell_to_string(&calamine::Data::Float(65.28)),
-            "65.2800"
+            xlsx_cell_to_string(&calamine::Data::Float(12.34)),
+            "12.3400"
         );
         assert_eq!(
-            xlsx_cell_to_string(&calamine::Data::Float(6012.73)),
-            "6012.7300"
+            xlsx_cell_to_string(&calamine::Data::Float(1234.56)),
+            "1234.5600"
         );
         assert_eq!(xlsx_cell_to_string(&calamine::Data::Int(1370)), "1370");
         assert_eq!(
@@ -1433,12 +2346,12 @@ mod tests {
 
         use google_sheets::import::parse_number;
         assert_eq!(
-            parse_number(&xlsx_cell_to_string(&calamine::Data::Float(65.28))),
-            6528
+            parse_number(&xlsx_cell_to_string(&calamine::Data::Float(12.34))),
+            1234
         );
         assert_eq!(
-            parse_number(&xlsx_cell_to_string(&calamine::Data::Float(10805.5048))),
-            1080550
+            parse_number(&xlsx_cell_to_string(&calamine::Data::Float(5678.1234))),
+            567812
         );
         // float que parece milhar (3 dígitos após o ponto) — o {:.4} blinda o caso.
         assert_eq!(
@@ -1493,6 +2406,153 @@ mod tests {
 
         // Raw sum is 100000; the projected end-of-March is 100000 − 30000 = 70000.
         assert_eq!(summary.balance, 70_000);
+    }
+
+    // Bug: tiles do dashboard mostravam R$0 estrutural porque liam só `daily_checkin` (vazia).
+    // Agora o Diário de hoje vem das transações realizadas; e `has_credit=false` sem cartão.
+    #[tokio::test]
+    async fn dashboard_daily_spend_comes_from_transactions_and_credit_flag() {
+        let pool = fixture_pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        // Diário realizado de hoje (expense, is_fixed=0) — sem nenhum check-in.
+        insert_realized(&pool, "expense", 4_271, "2026-06-13").await;
+        // Despesa de outro dia não conta no "hoje".
+        insert_realized(&pool, "expense", 9_999, "2026-06-12").await;
+
+        let s = dashboard_summary(&pool, today).await.unwrap();
+        assert_eq!(
+            s.daily_spend_today, 4_271,
+            "Diário de hoje vem das transações, não R$0 estrutural"
+        );
+        assert!(!s.has_credit, "sem cartão nem crédito → has_credit false");
+    }
+
+    // Defesa-em-profundidade (review adversarial): `amount` é magnitude positiva por convenção, mas
+    // `daily_spend_today` usa ABS espelhando o forecast — então um amount negativo (não-canônico)
+    // ainda rende magnitude positiva, jamais um "gasto negativo" que quebraria `teto - gasto`.
+    #[tokio::test]
+    async fn dashboard_daily_spend_is_positive_magnitude_even_if_amount_negative() {
+        let pool = fixture_pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        insert_realized(&pool, "expense", -4_271, "2026-06-13").await; // sinal não-canônico
+        let s = dashboard_summary(&pool, today).await.unwrap();
+        assert_eq!(
+            s.daily_spend_today, 4_271,
+            "ABS garante magnitude positiva mesmo com amount negativo"
+        );
+    }
+
+    // Regressão (review adversarial): um dia com check-in E transação Diário não pode somar os dois
+    // (mesmo dinheiro, Régua 1). A transação realizada vence; o check-in só preenche dias sem ela.
+    #[tokio::test]
+    async fn dashboard_daily_spend_no_double_count_checkin_and_txn() {
+        let pool = fixture_pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let pid = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO person (id, name) VALUES (?1, 'Tester')")
+            .bind(&pid)
+            .execute(&pool)
+            .await
+            .unwrap();
+        insert_realized(&pool, "expense", 4_271, "2026-06-13").await; // magnitude positiva (canônico)
+        // Check-in no mesmo dia com daily_spend 9_999 — NÃO pode ser somado por cima.
+        sqlx::query(
+            "INSERT INTO daily_checkin (id, person_id, date, daily_spend, credit_spend) VALUES (?1,?2,?3,?4,0)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&pid)
+        .bind("2026-06-13")
+        .bind(9_999i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let s = dashboard_summary(&pool, today).await.unwrap();
+        assert_eq!(
+            s.daily_spend_today, 4_271,
+            "transação Diário vence; check-in não soma por cima (sem double-count)"
+        );
+    }
+
+    // Regressão (review adversarial): o gasto realizado de HOJE não pode contar ocorrências
+    // PROJETADAS (is_projection=1) — ex.: uma recorrência futura cuja ocorrência cai hoje.
+    #[tokio::test]
+    async fn dashboard_daily_spend_excludes_projected() {
+        let pool = fixture_pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        insert_realized(&pool, "expense", 4_271, "2026-06-13").await; // realizado → conta
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES (?1,'expense',?2,'2026-06-13',0,1)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(9_999i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let s = dashboard_summary(&pool, today).await.unwrap();
+        assert_eq!(
+            s.daily_spend_today, 4_271,
+            "projeção não entra no gasto realizado de hoje"
+        );
+    }
+
+    // Regressão (review adversarial): o método pré-lança o ano inteiro de faturas na planilha. O
+    // tile "Crédito no mês" deve contar SÓ o mês corrente — crédito datado meses à frente não pode
+    // inflar o número (era over-count silencioso por falta do limite superior de data).
+    #[tokio::test]
+    async fn dashboard_credit_month_excludes_future_lumps() {
+        let pool = fixture_pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let sql = "INSERT INTO \"transaction\" (id, type, amount, date, payment_method, is_fixed, is_projection) \
+                   VALUES (?1,'expense',?2,?3,'credit',0,?4)";
+        // Mês corrente → conta.
+        sqlx::query(sql)
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(30_000i64)
+            .bind("2026-06-05")
+            .bind(0i64)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Fatura futura pré-lançada (projeção) → NÃO conta.
+        sqlx::query(sql)
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(99_999i64)
+            .bind("2026-08-10")
+            .bind(1i64)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let s = dashboard_summary(&pool, today).await.unwrap();
+        assert_eq!(
+            s.credit_spend_month, 30_000,
+            "só o crédito do mês corrente; fatura futura pré-lançada fica de fora"
+        );
+    }
+
+    // Visão anual: agrega as 4 métricas por mês a partir das transações do ano (realizado +
+    // projetado), independente do horizonte do forecast.
+    #[tokio::test]
+    async fn annual_metrics_aggregates_each_month() {
+        let pool = fixture_pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        // Março realizado: renda 700, diário 250.
+        insert_realized(&pool, "income", 700_000, "2026-03-05").await;
+        insert_realized(&pool, "expense", 250_000, "2026-03-10").await;
+        // Julho projetado: renda 500.
+        insert_projection(&pool, "income", 500_000, "2026-07-05", "", 0).await;
+
+        let a = annual_metrics(&pool, 2026, today).await.unwrap();
+        assert_eq!(a.year, 2026);
+        assert_eq!(a.months.len(), 12);
+        let mar = a.months.iter().find(|m| m.month == 3).unwrap();
+        assert_eq!(mar.income_cents, 700_000);
+        assert_eq!(mar.cost_of_living_cents, 250_000); // diário realizado
+        assert_eq!(mar.performance_cents, 450_000); // 700 − 250
+        let jul = a.months.iter().find(|m| m.month == 7).unwrap();
+        assert_eq!(jul.income_cents, 500_000);
+        let jan = a.months.iter().find(|m| m.month == 1).unwrap();
+        assert_eq!(jan.income_cents, 0); // mês vazio
     }
 
     // --- 005 get_forecast (TDD) ---
@@ -1576,7 +2636,7 @@ mod tests {
 
         // Guardrail duplo: tudo aqui é projetado (nenhum realizado no ano) → a régua de poupança
         // ANUAL está inativa, manda o CAIXA: pode gastar = o vale de R$ 700,00. A régua de
-        // poupança anual é exercitada no teste `forecast_dual_guardrail_savings_binds_for_joao`.
+        // poupança anual é exercitada no teste `forecast_dual_guardrail_savings_binds_for_owner`.
         assert_eq!(fc.cash_headroom_cents, 70_000);
         assert_eq!(fc.binding_guardrail, "cash");
         assert_eq!(fc.savings_headroom_cents, None);
@@ -1607,6 +2667,89 @@ mod tests {
         assert_eq!(fc.safe_to_spend_today_cents, 0);
     }
 
+    // Spec 011: um `transfer` (magnitude positiva) para um bolso de POUPANÇA (reserve) vira
+    // Economia — sai do saldo de gasto E conta no Economizado. Vale-refeição (restricted) NÃO.
+    #[tokio::test]
+    async fn forecast_dto_transfer_to_reserve_is_economia_and_leaves_balance() {
+        let pool = fixture_pool().await;
+        insert_liquid_account(&pool, 100_000).await; // R$ 1.000,00 em caixa
+
+        // Conta de reserva (poupança real).
+        let pid: (String,) = sqlx::query_as("SELECT id FROM person LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let reserve_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, balance, liquidity) VALUES (?1,'Reserva','savings',?2,0,'reserve')",
+        )
+        .bind(&reserve_id)
+        .bind(&pid.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Transfer FUTURO de R$ 300,00 (magnitude positiva) para a reserva.
+        let tid = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) VALUES (?1,'transfer',30_000,'2026-03-20',?2,1)",
+        )
+        .bind(&tid)
+        .bind(&reserve_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let today = NaiveDate::from_ymd_opt(2026, 3, 10).unwrap();
+        let fc = forecast_dto(&pool, today).await.unwrap();
+
+        // Conta como Economia no mês.
+        let mar = fc.months.iter().find(|m| m.month == 3).unwrap();
+        assert_eq!(mar.economia_cents, 30_000, "guardar na reserva = Economia");
+        // E sai do saldo de gasto (caixa cai de 100k para 70k).
+        let d20 = fc.daily.iter().find(|d| d.date == "2026-03-20").unwrap();
+        assert_eq!(d20.balance_cents, 70_000);
+    }
+
+    // Regressão (review adversarial): a Economia REGISTRADA anual (transfer→reserva) é distinta do
+    // net superávit. O ColchaoCard mostrava "R$ 0" fixo; agora vem do DTO. Só transfer→reserva conta
+    // — income/expense e transfer→líquido (net-zero entre contas) não.
+    #[tokio::test]
+    async fn annual_registered_economia_counts_only_reserve_transfers() {
+        let pool = fixture_pool().await;
+        insert_liquid_account(&pool, 100_000).await;
+        let pid: (String,) = sqlx::query_as("SELECT id FROM person LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let reserve_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO account (id, name, type, owner_person_id, balance, liquidity) VALUES (?1,'Reserva','savings',?2,0,'reserve')")
+            .bind(&reserve_id).bind(&pid.0).execute(&pool).await.unwrap();
+        let liquid2 = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO account (id, name, type, owner_person_id, balance, liquidity) VALUES (?1,'Conta2','bank',?2,0,'liquid')")
+            .bind(&liquid2).bind(&pid.0).execute(&pool).await.unwrap();
+        // Mês COMPLETO (março; hoje = junho).
+        insert_realized(&pool, "income", 500_000, "2026-03-05").await;
+        insert_realized(&pool, "expense", 100_000, "2026-03-10").await;
+        let mk_transfer = |amount: i64, date: &'static str, to: String| {
+            let p = pool.clone();
+            async move {
+                sqlx::query("INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) VALUES (?1,'transfer',?2,?3,?4,0)")
+                    .bind(uuid::Uuid::new_v4().to_string()).bind(amount).bind(date).bind(to)
+                    .execute(&p).await.unwrap();
+            }
+        };
+        mk_transfer(30_000, "2026-03-20", reserve_id).await; // → reserva = Economia registrada
+        mk_transfer(20_000, "2026-03-15", liquid2).await; // → líquido = net-zero, NÃO conta
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let fc = forecast_dto(&pool, today).await.unwrap();
+        assert_eq!(
+            fc.annual_savings.registered_economia_cents, 30_000,
+            "só transfer→reserva conta como Economia registrada"
+        );
+    }
+
     async fn insert_sheet_balance(pool: &sqlx::SqlitePool, sheet: &str, date: &str, cents: i64) {
         sqlx::query(
             "INSERT INTO sheet_daily_balance (sheet_name, date, balance_cents) VALUES (?1,?2,?3)",
@@ -1628,8 +2771,210 @@ mod tests {
         .execute(pool).await.unwrap();
     }
 
+    // KV de preferências: grava e lê; chave ausente → None.
+    #[tokio::test]
+    async fn app_setting_roundtrip() {
+        let pool = fixture_pool().await;
+        assert_eq!(
+            app_setting_get(&pool, "onboarding_done").await.unwrap(),
+            None
+        );
+        app_setting_set(&pool, "onboarding_done", "true")
+            .await
+            .unwrap();
+        assert_eq!(
+            app_setting_get(&pool, "onboarding_done").await.unwrap(),
+            Some("true".to_string())
+        );
+        // Sobrescreve.
+        app_setting_set(&pool, "onboarding_done", "false")
+            .await
+            .unwrap();
+        assert_eq!(
+            app_setting_get(&pool, "onboarding_done").await.unwrap(),
+            Some("false".to_string())
+        );
+    }
+
+    // Multi-titular: get_recent_transactions traz os titulares distintos das parcelas (sem N+1),
+    // ordenados por nome; transação sem split vem com `owners` vazio.
+    #[tokio::test]
+    async fn recent_transactions_carry_distinct_owners() {
+        let pool = fixture_pool().await;
+        for (id, name) in [("bruno", "Bruno"), ("ana", "Ana")] {
+            sqlx::query("INSERT INTO person (id, name) VALUES (?1, ?2)")
+                .bind(id)
+                .bind(name)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        // Lançamento dividido entre Bruno e Ana.
+        sqlx::query("INSERT INTO \"transaction\" (id, type, amount, date, is_projection) VALUES ('t1','expense',-30000,'2026-06-05',0)")
+            .execute(&pool).await.unwrap();
+        for (sid, owner, amt) in [("s1", "bruno", -20000), ("s2", "ana", -10000)] {
+            sqlx::query("INSERT INTO split (id, transaction_id, amount, owner_person_id) VALUES (?1,'t1',?2,?3)")
+                .bind(sid).bind(amt).bind(owner)
+                .execute(&pool).await.unwrap();
+        }
+        // Lançamento sem split → sem titulares.
+        insert_realized(&pool, "expense", -5000, "2026-06-04").await;
+
+        let rows = recent_transactions(&pool, 10).await.unwrap();
+        let split = rows.iter().find(|r| r.id == "t1").unwrap();
+        assert_eq!(split.owners, vec!["Ana".to_string(), "Bruno".to_string()]);
+        let solo = rows.iter().find(|r| r.id != "t1").unwrap();
+        assert!(solo.owners.is_empty(), "sem split → owners vazio");
+    }
+
+    // Os chips de tag do Livro-razão: recent_transactions devolve as tags anexadas.
+    #[tokio::test]
+    async fn recent_transactions_carry_attached_tags() {
+        let pool = fixture_pool().await;
+        let tag = crate::tags::create_tag(&pool, "Viagem", "var(--cat-sky)", Some("✈"), false)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO \"transaction\" (id, type, amount, date, is_projection) VALUES ('t1','expense',-5000,'2026-06-05',0)")
+            .execute(&pool).await.unwrap();
+        insert_realized(&pool, "expense", -3000, "2026-06-04").await; // sem tag
+        crate::tags::set_transaction_tags(&pool, "t1", std::slice::from_ref(&tag))
+            .await
+            .unwrap();
+
+        let rows = recent_transactions(&pool, 10).await.unwrap();
+        let tagged = rows.iter().find(|r| r.id == "t1").unwrap();
+        assert_eq!(tagged.tags.len(), 1);
+        assert_eq!(tagged.tags[0].name, "Viagem");
+        assert_eq!(tagged.tags[0].emoji.as_deref(), Some("✈"));
+        let untagged = rows.iter().find(|r| r.id != "t1").unwrap();
+        assert!(untagged.tags.is_empty(), "sem tag → tags vazio");
+    }
+
+    // Caminho de escrita: lançamento único realizado, com tags anexadas.
+    #[tokio::test]
+    async fn create_transaction_inserts_realized_with_tags() {
+        let pool = fixture_pool().await;
+        let tag = crate::tags::create_tag(&pool, "Viagem", "#3aa", None, false)
+            .await
+            .unwrap();
+
+        let id = create_transaction_inner(
+            &pool,
+            "expense",
+            12_345,
+            Some("Mercado".into()),
+            "2026-06-14",
+            Some("debit".into()),
+            false,
+            std::slice::from_ref(&tag),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let (amount, is_proj, desc): (i64, i64, String) = sqlx::query_as(
+            "SELECT amount, is_projection, COALESCE(description,'') FROM \"transaction\" WHERE id = ?1",
+        )
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(amount, 12_345);
+        assert_eq!(is_proj, 0, "lançamento manual é realizado");
+        assert_eq!(desc, "Mercado");
+
+        let (tag_count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM transaction_tag WHERE transaction_id = ?1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(tag_count, 1, "tag anexada ao lançamento");
+    }
+
+    // "Repetir": o caminho recorrente gera a série projetada inteira e propaga a tag.
+    #[tokio::test]
+    async fn create_transaction_with_recurrence_builds_tagged_series() {
+        let pool = fixture_pool().await;
+        let tag = crate::tags::create_tag(&pool, "Aluguel", "#a33", None, false)
+            .await
+            .unwrap();
+
+        let rec_id = create_transaction_inner(
+            &pool,
+            "expense",
+            230_000,
+            Some("Aluguel".into()),
+            "2026-06-15",
+            Some("debit".into()),
+            true,
+            std::slice::from_ref(&tag),
+            Some(RecurrenceInput {
+                frequency: "mensal".into(),
+                repetitions: 3,
+            }),
+        )
+        .await
+        .unwrap();
+
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM \"transaction\" WHERE recurrence_id = ?1 AND is_projection = 1",
+        )
+        .bind(&rec_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 3, "série projetada de 3 meses");
+
+        let (tagged,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM transaction_tag tt JOIN \"transaction\" t ON t.id = tt.transaction_id WHERE t.recurrence_id = ?1",
+        )
+        .bind(&rec_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(tagged, 3, "tag propagada a cada ocorrência");
+    }
+
+    #[tokio::test]
+    async fn create_transaction_rejects_bad_input() {
+        let pool = fixture_pool().await;
+        assert!(
+            create_transaction_inner(
+                &pool,
+                "transfer",
+                100,
+                None,
+                "2026-06-14",
+                None,
+                false,
+                &[],
+                None
+            )
+            .await
+            .is_err(),
+            "tipo não suportado pelo form é rejeitado"
+        );
+        assert!(
+            create_transaction_inner(
+                &pool,
+                "expense",
+                0,
+                None,
+                "2026-06-14",
+                None,
+                false,
+                &[],
+                None
+            )
+            .await
+            .is_err(),
+            "valor zero/negativo é rejeitado"
+        );
+    }
+
     // Previsibilidade: meses futuros esparsos (só fixas) são detectados como incompletos, e a
-    // poupança realizada (honesta) difere da projetada (otimista). O caso do João.
+    // poupança realizada (honesta) difere da projetada (otimista). O caso do usuário.
     #[tokio::test]
     async fn forecast_flags_incomplete_future_and_honest_annual_savings() {
         let pool = fixture_pool().await;
@@ -1687,11 +3032,11 @@ mod tests {
     async fn projection_seed_prefers_sheet_saldo_over_pockets() {
         let pool = fixture_pool().await;
         insert_liquid_account(&pool, 100_000).await; // bolso de R$ 1.000,00
-        insert_sheet_balance(&pool, "2026", "2026-06-12", 801_889).await; // Saldo de hoje
+        insert_sheet_balance(&pool, "2026", "2026-06-12", 500_000).await; // Saldo de hoje
 
         let today = NaiveDate::from_ymd_opt(2026, 6, 12).unwrap();
         // Saldo de hoje na planilha vence o bolso; sem lacuna (hoje está na série).
-        assert_eq!(projection_seed(&pool, today).await.unwrap(), 801_889);
+        assert_eq!(projection_seed(&pool, today).await.unwrap(), 500_000);
     }
 
     // Sem planilha importada, a semente continua sendo os Bolsos líquidos (spec 007).
@@ -1717,14 +3062,14 @@ mod tests {
         assert_eq!(projection_seed(&pool, today).await.unwrap(), 515_000);
     }
 
-    // Regressão do bug do 1º dogfooding: import OK (226 txns) mas saldo de hoje aparecia
-    // ZERADO e surgia um déficit ("buraco") falso, porque a semente era 0 (nenhum bolso) e o
-    // Saldo da planilha era descartado. Com a série de Saldo, o saldo de hoje bate com o Sheets.
+    // Regressão: sem bolso e com o Saldo da planilha sendo descartado, o saldo de hoje aparecia
+    // ZERADO e surgia um déficit ("buraco") falso. Com a série de Saldo da planilha como semente,
+    // o saldo de hoje passa a bater com a planilha e o déficit falso some.
     #[tokio::test]
     async fn forecast_seeds_from_sheet_saldo_no_false_deficit() {
         let pool = fixture_pool().await;
-        // Saldo de hoje na planilha = R$ 8.018,89; uma saída futura pequena no dia 26.
-        insert_sheet_balance(&pool, "2026", "2026-06-12", 801_889).await;
+        // Saldo de hoje vindo da planilha; uma saída futura pequena no dia 26.
+        insert_sheet_balance(&pool, "2026", "2026-06-12", 500_000).await;
         insert_projection(&pool, "expense", 4_633, "2026-06-26", "debit", 0).await;
 
         let today = NaiveDate::from_ymd_opt(2026, 6, 12).unwrap();
@@ -1732,24 +3077,24 @@ mod tests {
 
         // Antes: daily[0] = 0 (saldo zerado). Agora bate com o Saldo de hoje da planilha.
         assert_eq!(fc.daily[0].date, "2026-06-12");
-        assert_eq!(fc.daily[0].balance_cents, 801_889);
+        assert_eq!(fc.daily[0].balance_cents, 500_000);
         // Antes: deepest_deficit = −R$ 46,33 (o "buraco que não existe"). Agora positivo.
         let trough = fc.deepest_deficit.as_ref().unwrap();
-        assert_eq!(trough.balance_cents, 801_889 - 4_633);
+        assert_eq!(trough.balance_cents, 500_000 - 4_633);
         assert!(trough.balance_cents > 0);
         assert!(fc.safe_to_spend_today_cents > 0);
     }
 
-    // Guardrail duplo end-to-end com os números do João: Saldo de hoje R$ 8.018,89 (caixa
-    // cheio e crescendo), mas junho com performance negativa → "pode gastar" honesto = 0,
-    // limitado pela poupança. O horizonte varre até o fim dos dados pré-lançados (dez).
-    // Crava o P0 do review: a performance de junho inclui o REALIZADO antes de hoje (não só
-    // os eventos futuros), senão o mês aparece com sinal trocado e o guardrail decide errado.
+    // Guardrail duplo end-to-end: caixa cheio (semente alta), mas o mês corrente com performance
+    // negativa → "pode gastar" honesto = 0, limitado pela poupança ANUAL. O horizonte varre até o
+    // fim dos dados pré-lançados (dez). Crava o P0 do review: a performance do mês corrente inclui o
+    // REALIZADO antes de hoje (não só os eventos futuros), senão o mês aparece com sinal trocado e o
+    // guardrail decide errado.
     #[tokio::test]
-    async fn forecast_dual_guardrail_savings_binds_for_joao() {
+    async fn forecast_dual_guardrail_savings_binds_for_owner() {
         let pool = fixture_pool().await;
-        insert_sheet_balance(&pool, "2026", "2026-06-13", 801_889).await; // Saldo de hoje
-        insert_sheet_balance(&pool, "2026", "2026-12-31", 2_754_616).await; // estende horizonte
+        insert_sheet_balance(&pool, "2026", "2026-06-13", 500_000).await; // Saldo de hoje
+        insert_sheet_balance(&pool, "2026", "2026-12-31", 1_500_000).await; // estende horizonte
         // Meses COMPLETOS (jan–mai) abaixo da meta → a poupança ANUAL morde. Sem isto, o mês
         // corrente (junho, em andamento) NÃO conta — evita o falso pânico de meio de mês.
         for m in [1, 2, 3, 4, 5] {
@@ -1760,8 +3105,8 @@ mod tests {
         // PERFORMANCE do mês inclui o realizado (o P0), mesmo o mês não contando na poupança anual.
         insert_realized(&pool, "income", 400_000, "2026-06-05").await;
         insert_realized(&pool, "expense", 700_000, "2026-06-10").await;
-        insert_realized(&pool, "income", 583_712, "2026-06-29").await;
-        insert_projection(&pool, "expense", 370_169, "2026-06-30", "debit", 1).await;
+        insert_realized(&pool, "income", 600_000, "2026-06-29").await;
+        insert_projection(&pool, "expense", 400_000, "2026-06-30", "debit", 1).await;
 
         let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
         let fc = forecast_dto(&pool, today).await.unwrap();
@@ -1770,13 +3115,38 @@ mod tests {
         // Performance de junho = MÊS INTEIRO (realizado + projetado): inclui os R$ 700k já
         // realizados em 10/jun, que o cálculo antigo (só futuros) ignorava (o P0).
         let jun = fc.months.iter().find(|m| m.month == 6).unwrap();
-        assert_eq!(jun.performance_cents, 983_712 - 1_070_169); // −86.457
+        assert_eq!(jun.performance_cents, 1_000_000 - 1_100_000); // −100.000
         // Poupança ANUAL (meses completos jan–mai, abaixo da meta) manda → pode gastar 0.
         assert_eq!(fc.binding_guardrail, "savings");
         assert_eq!(fc.safe_to_spend_today_cents, 0);
         assert!(fc.savings_headroom_cents.unwrap() < 0);
         assert!(fc.cash_headroom_cents > 0); // mas há caixa (é a reserva)
         assert_eq!(fc.savings_target_bps, 2500);
+    }
+
+    // Grade do mês: 31 linhas (maio), fluxos agregados por dia e Saldo vindo da planilha.
+    #[tokio::test]
+    async fn month_grid_aggregates_flows_and_uses_sheet_saldo() {
+        let pool = fixture_pool().await;
+        insert_realized(&pool, "income", 700_000, "2026-05-05").await;
+        insert_realized(&pool, "expense", 12_000, "2026-05-05").await; // diário (is_fixed NULL → Diário)
+        insert_realized(&pool, "expense", 4_000, "2026-05-09").await;
+        insert_sheet_balance(&pool, "2026", "2026-05-05", 580_000).await;
+
+        let grid = month_grid(&pool, 2026, 5).await.unwrap();
+        assert_eq!(grid.len(), 31); // maio tem 31 dias
+        assert_eq!(grid[0].day, 1);
+        assert_eq!(grid[0].balance_cents, None); // dia 1 não importado
+
+        let d5 = grid.iter().find(|g| g.day == 5).unwrap();
+        assert_eq!(d5.income_cents, 700_000);
+        assert_eq!(d5.daily_out_cents, 12_000);
+        assert_eq!(d5.fixed_out_cents, 0);
+        assert_eq!(d5.balance_cents, Some(580_000)); // Saldo da planilha
+
+        let d9 = grid.iter().find(|g| g.day == 9).unwrap();
+        assert_eq!(d9.daily_out_cents, 4_000);
+        assert_eq!(d9.balance_cents, None);
     }
 
     #[tokio::test]

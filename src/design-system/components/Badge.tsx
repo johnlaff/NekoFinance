@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 function toCamelCase(str: string): string {
-  return str.replace(/-([a-z])/g, (_, g) => g.toUpperCase());
+  return str.replace(/-([a-z])/g, (_: string, g: string) => g.toUpperCase());
 }
 
 interface BadgeProps {
@@ -28,7 +28,7 @@ export function Badge({
   children,
   className = "",
 }: BadgeProps) {
-  const style = (toneMap[tone] ?? toneMap["primary"]) || "";
+  const style = toneMap[tone] ?? toneMap["primary"] ?? "";
   return (
     <span
       className={className}
@@ -49,7 +49,7 @@ export function Badge({
             .filter(Boolean)
             .map((s) => {
               const parts = s.split(":").map((x) => x.trim());
-              return [toCamelCase(parts[0] || ""), parts[1] || ""];
+              return [toCamelCase(parts[0] ?? ""), parts[1] ?? ""];
             }),
         ),
       }}

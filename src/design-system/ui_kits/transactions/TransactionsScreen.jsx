@@ -164,10 +164,14 @@ function TransactionsApp() {
   const sel = TX_DATA.find((t) => t.id === selId);
   const [cat, setCat] = React.useState(sel.cat);
   const [ownerType, setOwnerType] = React.useState(sel.ownerT);
-  React.useEffect(() => {
+  // Reset ao trocar de lançamento via ajuste-durante-render (padrão React), não via effect:
+  // evita o render-em-cascata do setState-no-effect.
+  const [prevSelId, setPrevSelId] = React.useState(selId);
+  if (selId !== prevSelId) {
+    setPrevSelId(selId);
     setCat(sel.cat);
     setOwnerType(sel.ownerT);
-  }, [selId]);
+  }
   const rows = TX_DATA.filter((t) => scope === "all" || t.ownerT === scope);
 
   const right = React.createElement(

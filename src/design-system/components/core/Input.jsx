@@ -46,7 +46,9 @@ export function Input({
   ...rest
 }) {
   useCSS();
-  const fid = id || React.useId();
+  // useId precisa ser chamado incondicionalmente (Rules of Hooks); só depois cai no id externo.
+  const autoId = React.useId();
+  const fid = id || autoId;
   return (
     <div className={["nk-field", className].filter(Boolean).join(" ")}>
       {label ? (

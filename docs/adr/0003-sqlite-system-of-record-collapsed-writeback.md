@@ -8,8 +8,16 @@ and what-if scenarios. The two representations cannot be kept losslessly equal i
 
 ## Decision
 
-The local SQLite database is the **system of record**. The spreadsheet seeds it on import and
-remains a human-friendly projection of it:
+The system of record is **phased**, matching what actually ships:
+
+- **Import-only phase (current).** The spreadsheet is the system of record — the owner hand-edits it
+  daily and re-imports. SQLite is the local mirror + enrichment layer (splits, tags, payment method,
+  reconciliation base). Three-way merge (spec 013) preserves local enrichment without letting the
+  sheet overwrite it blindly; write-back is preview-only behind a disabled flag (spec 018).
+- **Bidirectional phase (target).** Once gated, per-cell-checksum write-back is enabled and tested,
+  SQLite becomes the system of record and the spreadsheet a human-friendly projection of it.
+
+The end-state design below describes the **bidirectional phase**:
 
 1. **Import** parses sheet rows into normalized transactions/splits (layout detection + mapping,
    spec 002). Imports are deduplicated by checksum; the sheet is never the loser of a sync.

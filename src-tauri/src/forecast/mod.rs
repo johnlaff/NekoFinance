@@ -25,6 +25,11 @@ pub enum EventKind {
     FixedOut,
     /// Diário — variable daily débito/cash spend (Régua 1).
     Daily,
+    /// Economia — guardar (transfer to real savings: reserve, ou illiquid p/ FGTS/previdência).
+    /// NÃO inclui `restricted` (vale-refeição = gasto restrito). Leaves the spending balance
+    /// (signed −, mirroring the app's single conta), but is "saved" not "spent": it is the
+    /// numerator of Economizado% and a term of Performance, yet is NOT part of Custo de vida.
+    Economia,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,18 +57,25 @@ pub struct MonthEnd {
 pub struct MonthMetric {
     pub year: i32,
     pub month: u32,
+    /// Renda do mês (Entradas). Guardada à parte porque `performance` já desconta economia e a
+    /// previsão de diário restante, então não é mais reconstituível só de `performance + custo`.
+    pub income_cents: i64,
     pub performance_cents: i64,
     pub cost_of_living_cents: i64,
+    /// Saídas FIXAS realizadas (coluna Saída da planilha; cartão entra como lump aqui). Exposto à
+    /// parte de `cost_of_living_cents` para o rodapé mensal ENTRADAS | SAÍDAS | DIÁRIO.
+    pub fixed_out_cents: i64,
+    /// Diário REALIZADO (coluna Diário). `cost_of_living = fixed_out + daily_out`.
+    pub daily_out_cents: i64,
     pub real_daily_avg_cents: i64,
     pub savings_rate_bps: i64,
-}
-
-impl MonthMetric {
-    /// Renda do mês. Não é guardada à parte: `performance = renda − custo de vida`, então a
-    /// renda é a soma dos dois. Fonte única para todos os consumidores (DRY — review P3).
-    pub fn income_cents(&self) -> i64 {
-        self.performance_cents + self.cost_of_living_cents
-    }
+    /// Economia lançada no mês (numerador do Economizado%). Já descontada da performance.
+    pub economia_cents: i64,
+    /// Saída TOTAL lançada no mês = fixas + diário (realizado + projetado/pré-lançado). É o que a
+    /// [`month_coverage`] usa para julgar "mês completo" (quanto do gasto típico já está lançado),
+    /// distinto de `cost_of_living_cents` (só realizado). Não inclui economia (a baseline é de
+    /// despesas, não de transferências).
+    pub total_outflow_cents: i64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -190,7 +202,9 @@ pub fn month_coverage(
         .iter()
         .filter(|m| (m.year, m.month) > (today.year(), today.month()))
         .map(|m| {
-            let projected_outflow_cents = m.cost_of_living_cents;
+            // Cobertura usa a saída TOTAL lançada (realizado + projetado), não só o custo de vida
+            // realizado — um mês futuro pré-lançado já tem dados, mesmo que `realized=false`.
+            let projected_outflow_cents = m.total_outflow_cents;
             // `.max(0)`: crédito/estorno pode deixar a saída do mês negativa; cobertura nunca < 0.
             let coverage_bps =
                 (projected_outflow_cents.max(0) * 10_000 / baseline_outflow_cents).max(0);
@@ -211,15 +225,26 @@ pub fn month_coverage(
 fn signed(e: &CashflowEvent) -> i64 {
     match e.kind {
         EventKind::Income => e.amount_cents,
-        EventKind::FixedOut | EventKind::Daily => -e.amount_cents,
+        // Economia leaves the spending balance too (guardar reduz o disponível), mirroring the
+        // app's single conta — só que é poupança, não gasto (ver Economizado% nas métricas).
+        EventKind::FixedOut | EventKind::Daily | EventKind::Economia => -e.amount_cents,
     }
 }
 
 /// Row→event classification rule (the shell maps DB rows through this).
 /// `income` → Entrada; an `expense` on credit or marked fixed → Saída (a fatura lump or fixed bill);
-/// any other `expense` → Diário (variable débito/cash); `transfer` is skipped (net-zero between
-/// own accounts in this slice — economia/transfer-to-savings is a later slice).
-pub fn classify(txn_type: &str, is_fixed: bool, payment_method: Option<&str>) -> Option<EventKind> {
+/// any other `expense` → Diário (variable débito/cash). A `transfer` is **Economia** only when its
+/// destination is real savings — `reserve` (reserva) or `illiquid` (FGTS/previdência = poupança
+/// forçada). `restricted` (vale-refeição) é dinheiro de gasto RESTRITO, **não** poupança: contá-lo
+/// como Economia inflaria o Economizado% (= Economia/Entradas) sem respaldo no método. Demais
+/// transferências (entre contas líquidas, ou para vale) são net-zero para a poupança → ignoradas.
+/// `to_liquidity` é a `liquidity` da conta-destino (None p/ não-transfers ou contas sem classe).
+pub fn classify(
+    txn_type: &str,
+    is_fixed: bool,
+    payment_method: Option<&str>,
+    to_liquidity: Option<&str>,
+) -> Option<EventKind> {
     match txn_type {
         "income" => Some(EventKind::Income),
         "expense" => {
@@ -229,6 +254,13 @@ pub fn classify(txn_type: &str, is_fixed: bool, payment_method: Option<&str>) ->
                 Some(EventKind::Daily)
             }
         }
+        "transfer" => match to_liquidity {
+            // Poupar de verdade: reserva ou poupança forçada (FGTS/previdência) = Economia.
+            Some("reserve") | Some("illiquid") => Some(EventKind::Economia),
+            // Vale-refeição (restricted) é gasto restrito, não poupança; e transferências entre
+            // contas líquidas são net-zero → nenhuma conta como Economia.
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -317,8 +349,9 @@ fn month_metrics(
             let (year, month) = (me.year, me.month);
             let mut income = 0i64;
             let mut fixed_out = 0i64;
-            let mut daily = 0i64;
-            let mut realized_daily = 0i64;
+            let mut daily_realized = 0i64;
+            let mut daily_projected = 0i64;
+            let mut economia = 0i64;
             for e in events
                 .iter()
                 .filter(|e| e.date.year() == year && e.date.month() == month)
@@ -327,15 +360,23 @@ fn month_metrics(
                     EventKind::Income => income += e.amount_cents,
                     EventKind::FixedOut => fixed_out += e.amount_cents,
                     EventKind::Daily => {
-                        daily += e.amount_cents;
                         if e.realized {
-                            realized_daily += e.amount_cents;
+                            daily_realized += e.amount_cents;
+                        } else {
+                            // Previsão de diário (teto dos dias futuros) + diários futuros pré-lançados.
+                            daily_projected += e.amount_cents;
                         }
                     }
+                    EventKind::Economia => economia += e.amount_cents,
                 }
             }
-            let cost_of_living_cents = fixed_out + daily; // credit lumps are FixedOut
-            let performance_cents = income - cost_of_living_cents;
+            // Custo de vida = Saídas fixas + Diário realizado (cartão já entra em fixed_out via lump).
+            // NÃO inclui economia nem a previsão de diário restante.
+            let cost_of_living_cents = fixed_out + daily_realized;
+            // Performance = Entradas − (custo de vida + economia + previsão de diário restante).
+            // O termo `daily_projected` faz o mês "nascer no vermelho e esverdear" conforme o
+            // diário real fica abaixo do teto.
+            let performance_cents = income - cost_of_living_cents - economia - daily_projected;
 
             let first = NaiveDate::from_ymd_opt(year, month, 1).expect("valid month");
             let last = last_day_of_month(year, month);
@@ -345,16 +386,16 @@ fn month_metrics(
                 let end = if today > last { last } else { today };
                 (end - first).num_days() + 1
             };
+            // Diário médio = Σ Diário REALIZADO ÷ dias decorridos (D/N). A previsão não entra.
             let real_daily_avg_cents = if elapsed > 0 {
-                realized_daily / elapsed
+                daily_realized / elapsed
             } else {
                 0
             };
 
-            // Provisional: "saved" = surplus (performance). An explicit economia / transfer-to-
-            // savings event is a later slice; for now the rate flags the 20–30% band off surplus.
+            // Economizado% = economia lançada ÷ entradas (não mais o superávit/performance).
             let savings_rate_bps = if income > 0 {
-                performance_cents.max(0) * 10_000 / income
+                economia * 10_000 / income
             } else {
                 0
             };
@@ -362,13 +403,75 @@ fn month_metrics(
             MonthMetric {
                 year,
                 month,
+                income_cents: income,
                 performance_cents,
                 cost_of_living_cents,
+                fixed_out_cents: fixed_out,
+                daily_out_cents: daily_realized,
                 real_daily_avg_cents,
                 savings_rate_bps,
+                economia_cents: economia,
+                total_outflow_cents: fixed_out + daily_realized + daily_projected,
             }
         })
         .collect()
+}
+
+/// Métricas por mês para uma lista arbitrária de `(ano, mês)` — usada pela visão ANUAL (todos os 12
+/// meses do ano, realizado + projetado), independente do horizonte do forecast. O `balance_cents`
+/// do `MonthEnd` não importa aqui (as métricas só usam os eventos do mês).
+pub fn month_metrics_for(
+    today: NaiveDate,
+    events: &[CashflowEvent],
+    months: &[(i32, u32)],
+) -> Vec<MonthMetric> {
+    let ends: Vec<MonthEnd> = months
+        .iter()
+        .map(|&(year, month)| MonthEnd {
+            year,
+            month,
+            balance_cents: 0,
+        })
+        .collect();
+    month_metrics(today, events, &ends)
+}
+
+/// Eventos `Daily` projetados da **previsão de diário**: para cada dia do MÊS CORRENTE após `today`
+/// (até o fim do mês ou `horizon_end`, o que vier antes) que ainda não tem um Daily lançado, injeta
+/// o teto/dia (`per_day_cents`) como `Daily { realized: false }`. Faz o saldo projetado e a
+/// Performance assumirem o gasto típico até o fim do mês ("nasce no vermelho e esverdeia"), sem
+/// inflar o diário médio (que só conta realizado) nem o custo de vida. A previsão dos meses
+/// FUTUROS fica a cargo de [`month_coverage`]; aqui é só o mês corrente ("restante").
+pub fn project_daily_ceiling(
+    per_day_cents: i64,
+    today: NaiveDate,
+    horizon_end: NaiveDate,
+    days_with_daily: &std::collections::HashSet<NaiveDate>,
+) -> Vec<CashflowEvent> {
+    if per_day_cents <= 0 {
+        return Vec::new();
+    }
+    let cap = last_day_of_month(today.year(), today.month()).min(horizon_end);
+    let mut out = Vec::new();
+    let mut day = match today.succ_opt() {
+        Some(d) => d,
+        None => return out,
+    };
+    while day <= cap {
+        if !days_with_daily.contains(&day) {
+            out.push(CashflowEvent {
+                date: day,
+                kind: EventKind::Daily,
+                amount_cents: per_day_cents,
+                realized: false,
+            });
+        }
+        day = match day.succ_opt() {
+            Some(d) => d,
+            None => break,
+        };
+    }
+    out
 }
 
 /// Project the running cash balance day by day from `today` to `horizon_end` (inclusive).
@@ -570,26 +673,26 @@ mod tests {
         assert_eq!(f.cash_floor_cents, 0);
     }
 
-    // ---- Guardrail duplo (poupança ANUAL 25% + caixa) — o furo do 1º dogfooding ----
+    // ---- Guardrail duplo (poupança ANUAL 25% + caixa) ----
 
-    // Caso do João: caixa cheio (colchão) MAS a poupança do ANO já estourou → pode gastar = 0,
-    // limitado pela POUPANÇA, não pelo caixa. É o "Caixa ≠ Performance" do método.
+    // Caixa cheio (colchão) MAS a poupança do ANO já estourou → pode gastar = 0, limitado pela
+    // POUPANÇA, não pelo caixa. É o "Caixa ≠ Performance" do método.
     #[test]
     fn safe_to_spend_savings_binds_when_cash_is_high() {
         let events = [
-            ev("2026-06-01", EventKind::Income, 983_712),
-            ev("2026-06-02", EventKind::FixedOut, 1_070_169),
+            ev("2026-06-01", EventKind::Income, 1_000_000),
+            ev("2026-06-02", EventKind::FixedOut, 1_100_000),
         ];
         let f = project(800_000, d("2026-06-01"), &events, d("2026-06-30"));
-        // Poupança do ANO (realizado) = renda 983.712, sobra −86.457 (dissaving).
-        let s = safe_to_spend_today(&f, 983_712, -86_457, 2500, 0);
+        // Poupança do ANO (realizado) = renda 1.000.000, sobra −100.000 (dissaving).
+        let s = safe_to_spend_today(&f, 1_000_000, -100_000, 2500, 0);
 
-        // Caixa positivo e alto: 800.000 + 983.712 − 1.070.169 = 713.543, estável até fim do mês.
-        assert_eq!(s.cash_headroom_cents, 713_543);
-        // Meta 25% × renda anual = 245.928. Folga = −86.457 − 245.928 = −332.385 (abaixo da meta).
-        assert_eq!(s.savings_headroom_cents, Some(-332_385));
+        // Caixa positivo e alto: 800.000 + 1.000.000 − 1.100.000 = 700.000, estável até fim do mês.
+        assert_eq!(s.cash_headroom_cents, 700_000);
+        // Meta 25% × renda anual = 250.000. Folga = −100.000 − 250.000 = −350.000 (abaixo da meta).
+        assert_eq!(s.savings_headroom_cents, Some(-350_000));
         assert_eq!(s.binding, Guardrail::Savings);
-        assert_eq!(s.amount_cents, 0); // honesto: 0, não os R$ 7.135 de caixa
+        assert_eq!(s.amount_cents, 0); // honesto: 0, não o caixa disponível
     }
 
     // Conta futura pré-lançada (fatura/salário) num mês à frente limita o gasto de HOJE pelo
@@ -631,10 +734,15 @@ mod tests {
         let mm = |year, month, cost: i64| MonthMetric {
             year,
             month,
+            income_cents: 0,
             performance_cents: 0,
             cost_of_living_cents: cost,
+            fixed_out_cents: cost,
+            daily_out_cents: 0,
             real_daily_avg_cents: 0,
             savings_rate_bps: 0,
+            economia_cents: 0,
+            total_outflow_cents: cost,
         };
         // Mês corrente (jun) ignorado; jul completo (R$ 1.000), ago esparso (R$ 380).
         let months = [mm(2026, 6, 900), mm(2026, 7, 1_000), mm(2026, 8, 380)];
@@ -656,10 +764,15 @@ mod tests {
         let mm = |year, month, cost: i64| MonthMetric {
             year,
             month,
+            income_cents: 0,
             performance_cents: 0,
             cost_of_living_cents: cost,
+            fixed_out_cents: cost,
+            daily_out_cents: 0,
             real_daily_avg_cents: 0,
             savings_rate_bps: 0,
+            economia_cents: 0,
+            total_outflow_cents: cost,
         };
         let months = [mm(2026, 7, 1_000), mm(2026, 8, 380)];
         let cov = month_coverage(&months, d("2026-06-13"), 0, 6_000);
@@ -706,17 +819,23 @@ mod tests {
         assert_eq!(f.month_end[0].balance_cents, -120000); // cash ends negative
     }
 
-    // T5.2 — real daily average = realized daily ÷ elapsed days; savings rate in basis points.
+    // T5.2 — real daily average = realized daily ÷ elapsed days; Economizado% = economia ÷ renda.
     #[test]
     fn real_daily_avg_and_savings() {
         let mut events = vec![ev("2026-03-01", EventKind::Income, 1000000)];
         for day in ["2026-03-02", "2026-03-04", "2026-03-06", "2026-03-08"] {
             events.push(ev(day, EventKind::Daily, 50000)); // realized daily, 4 × 50 = 200
         }
+        events.push(ev("2026-03-09", EventKind::Economia, 250000)); // guardou 250
         let f = project(0, d("2026-03-10"), &events, d("2026-03-31"));
         let m = f.months.iter().find(|m| m.month == 3).unwrap();
-        assert_eq!(m.real_daily_avg_cents, 20000); // 200.00 / 10 elapsed days
-        assert_eq!(m.savings_rate_bps, 8000); // (1000 - 200) / 1000 = 80% = 8000 bps
+        assert_eq!(m.real_daily_avg_cents, 20000); // 200.00 / 10 elapsed days (economia não conta)
+        assert_eq!(m.economia_cents, 250000);
+        // Economizado% = economia (250) ÷ renda (1000) = 25% = 2500 bps (não mais o superávit).
+        assert_eq!(m.savings_rate_bps, 2500);
+        // Performance = renda − custo de vida (diário 200) − economia (250) − previsão (0) = 550.
+        assert_eq!(m.performance_cents, 550000);
+        assert_eq!(m.cost_of_living_cents, 200000); // só diário realizado (sem economia)
     }
 
     // ---- Phase 6: credit dual-tracking (US7) ----
@@ -750,21 +869,46 @@ mod tests {
     // T7.1 — classify maps raw transaction rows to the right event kind.
     #[test]
     fn classify_maps_rows_to_kinds() {
-        assert_eq!(classify("income", false, None), Some(EventKind::Income));
         assert_eq!(
-            classify("expense", true, Some("debit")),
+            classify("income", false, None, None),
+            Some(EventKind::Income)
+        );
+        assert_eq!(
+            classify("expense", true, Some("debit"), None),
             Some(EventKind::FixedOut)
         ); // fixed bill
         assert_eq!(
-            classify("expense", false, Some("credit")),
+            classify("expense", false, Some("credit"), None),
             Some(EventKind::FixedOut)
         ); // credit lump
         assert_eq!(
-            classify("expense", false, Some("debit")),
+            classify("expense", false, Some("debit"), None),
             Some(EventKind::Daily)
         ); // variable débito
-        assert_eq!(classify("expense", false, None), Some(EventKind::Daily));
-        assert_eq!(classify("transfer", false, None), None); // skipped (net-zero)
+        assert_eq!(
+            classify("expense", false, None, None),
+            Some(EventKind::Daily)
+        );
+    }
+
+    // Economia: transfer p/ bolso não-líquido = Economia; entre líquidos = net-zero (skip).
+    #[test]
+    fn classify_transfer_to_reserve_is_economia() {
+        // Poupança real (reserva) → Economia.
+        assert_eq!(
+            classify("transfer", false, None, Some("reserve")),
+            Some(EventKind::Economia)
+        );
+        // FGTS/previdência (illiquid) = poupança forçada → Economia.
+        assert_eq!(
+            classify("transfer", false, None, Some("illiquid")),
+            Some(EventKind::Economia)
+        );
+        // Vale-refeição (restricted) é gasto restrito, NÃO poupança → não conta como Economia.
+        assert_eq!(classify("transfer", false, None, Some("restricted")), None);
+        // Entre contas líquidas (ou destino desconhecido) → net-zero, ignorado.
+        assert_eq!(classify("transfer", false, None, Some("liquid")), None);
+        assert_eq!(classify("transfer", false, None, None), None);
     }
 
     // ---- Phase 7: credit cycle aggregation (T7.2) ----
@@ -807,5 +951,76 @@ mod tests {
         let checkin = d("2026-01-15");
         let due = cycle_due_date(checkin, 20, 31);
         assert_eq!(due, d("2026-02-28"));
+    }
+
+    // ---- Slice 011: Economia + previsão de diário como driver ----
+
+    use std::collections::HashSet;
+
+    // Economia sai do saldo de gasto como qualquer saída (guardar reduz o disponível).
+    #[test]
+    fn economia_reduces_spending_balance() {
+        let events = [ev("2026-03-02", EventKind::Economia, 150000)];
+        let f = project(1000000, d("2026-03-01"), &events, d("2026-03-03"));
+        assert_eq!(f.daily[0].balance_cents, 1000000); // dia 1 intacto
+        assert_eq!(f.daily[1].balance_cents, 850000); // dia 2: −150 (economia)
+        assert_eq!(f.daily[2].balance_cents, 850000);
+    }
+
+    // project_daily_ceiling: injeta o teto nos dias futuros do MÊS CORRENTE (realized=false).
+    #[test]
+    fn daily_ceiling_fills_current_month_future_days() {
+        let ev = project_daily_ceiling(12000, d("2026-02-20"), d("2026-02-28"), &HashSet::new());
+        assert_eq!(ev.len(), 8); // 21..28 de fev
+        assert!(
+            ev.iter()
+                .all(|e| e.kind == EventKind::Daily && !e.realized && e.amount_cents == 12000)
+        );
+        assert_eq!(ev[0].date, d("2026-02-21"));
+        assert_eq!(ev[7].date, d("2026-02-28"));
+    }
+
+    // Pula dias que já têm um Daily lançado (não dobra a previsão).
+    #[test]
+    fn daily_ceiling_skips_days_with_daily() {
+        let mut taken = HashSet::new();
+        taken.insert(d("2026-02-22"));
+        let ev = project_daily_ceiling(10000, d("2026-02-20"), d("2026-02-28"), &taken);
+        assert_eq!(ev.len(), 7); // 8 − 1 (dia 22 já tem)
+        assert!(ev.iter().all(|e| e.date != d("2026-02-22")));
+    }
+
+    // Só o mês corrente: horizonte que avança para março não recebe teto (isso é da coverage).
+    #[test]
+    fn daily_ceiling_only_current_month() {
+        let ev = project_daily_ceiling(10000, d("2026-02-25"), d("2026-03-10"), &HashSet::new());
+        assert!(ev.iter().all(|e| e.date.month() == 2));
+        assert_eq!(ev.last().unwrap().date, d("2026-02-28"));
+    }
+
+    // Teto zero → sem eventos (orçamento não configurado).
+    #[test]
+    fn daily_ceiling_zero_budget_is_empty() {
+        assert!(
+            project_daily_ceiling(0, d("2026-02-20"), d("2026-02-28"), &HashSet::new()).is_empty()
+        );
+    }
+
+    // Integração: a previsão de diário faz a Performance do mês "nascer no vermelho".
+    #[test]
+    fn performance_includes_remaining_daily_ceiling() {
+        let mut events = vec![ev("2026-03-01", EventKind::Income, 1000000)];
+        // 11..31 de março = 21 dias × 100.00 = 210.00 de previsão restante.
+        events.extend(project_daily_ceiling(
+            10000,
+            d("2026-03-10"),
+            d("2026-03-31"),
+            &HashSet::new(),
+        ));
+        let f = project(0, d("2026-03-10"), &events, d("2026-03-31"));
+        let m = f.months.iter().find(|m| m.month == 3).unwrap();
+        assert_eq!(m.cost_of_living_cents, 0); // previsão NÃO entra no custo de vida
+        assert_eq!(m.real_daily_avg_cents, 0); // previsão NÃO conta como realizado
+        assert_eq!(m.performance_cents, 790000); // 1000 − 210 (previsão restante)
     }
 }

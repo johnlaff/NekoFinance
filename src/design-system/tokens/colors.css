@@ -19,7 +19,7 @@
   --ink-600: #2a3433; /* border */
   --ink-500: #3a4644; /* border-strong */
   --ink-400: #566461;
-  --ink-300: #6b7572; /* faint text */
+  --ink-300: #8e9692; /* faint text — WCAG AA (>=4.5:1) nas superfícies escuras usadas */
   --ink-200: #9aa5a2; /* muted text */
   --ink-100: #c9d2cf;
   --ink-050: #e8edeb; /* primary text */
@@ -98,16 +98,31 @@
   --primary-hover: var(--jade-300);
   --primary-press: var(--jade-500);
   --primary-quiet: var(--jade-tint);
+  /* Texto sobre o fundo `--primary-quiet` (pílula/chip discreto) com contraste AA por tema:
+     no escuro o jade-400 já passa (6:1); no claro precisa de um verde mais escuro (ver light). */
+  --primary-quiet-text: var(--jade-400);
 
   --secondary: var(--brass-400);
   --secondary-quiet: var(--brass-tint);
 
   --focus-ring: rgba(63, 191, 143, 0.55);
 
+  /* Scrim atrás de modais/overlays (escurece o conteúdo de fundo) */
+  --bg-scrim: rgba(6, 10, 9, 0.66);
+
   /* Owner-type accents (personal / partner / shared) */
   --owner-personal: #3fbf8f;
   --owner-partner: #c98bd4;
   --owner-shared: #5fa8dc;
+
+  /* Família categórica unificada (bolsos / séries / tags). DARK. */
+  --cat-jade: #3fbf8f;
+  --cat-sky: #5fa8dc;
+  --cat-orchid: #c98bd4;
+  --cat-violet: #8c8ae6;
+  --cat-teal: #5fc9c0;
+  --cat-amber: #ddb061;
+  --cat-coral: #e68a84;
 }
 
 /* ============================================================
@@ -130,7 +145,7 @@
   --text: #142019;
   --text-strong: #0a100d;
   --text-muted: #56635e;
-  --text-faint: #7c8782;
+  --text-faint: #5a655f; /* WCAG AA (>=4.5:1) sobre as superfícies claras, incl. --bg-subtle */
   --text-on-primary: #ffffff;
   --text-on-brass: #2a1c05;
 
@@ -138,6 +153,7 @@
   --primary-hover: #1c6f52;
   --primary-press: #15543e;
   --primary-quiet: rgba(34, 135, 100, 0.1);
+  --primary-quiet-text: #15543e; /* 7.8:1 sobre a pílula clara (--primary a 3.9 falhava AA) */
 
   --secondary: #b07e28;
   --secondary-quiet: rgba(176, 126, 40, 0.12);
@@ -156,7 +172,7 @@
   --danger-tint: rgba(203, 70, 62, 0.1);
   --info-tint: rgba(46, 131, 172, 0.11);
 
-  --money-pos: #1e9466;
+  --money-pos: #147049; /* WCAG AA (>=4.5:1) p/ valores 13–15px sobre surface/bg/bg-subtle (claro) */
   --money-neg: #cb463e;
   --money-neutral: var(--text);
 
@@ -167,11 +183,21 @@
   --chart-5: #cb463e;
   --chart-6: #2e9488;
   --chart-grid: rgba(20, 32, 25, 0.1);
-  --chart-axis: #7c8782;
+  --chart-axis: #5a655f; /* AA (>=4.5:1) p/ rótulos de eixo 10.5px sobre surface E bg-subtle (claro) */
 
   --focus-ring: rgba(34, 135, 100, 0.45);
+  --bg-scrim: rgba(20, 32, 25, 0.4);
 
   --owner-personal: #228764;
   --owner-partner: #9a55a8;
   --owner-shared: #2e83ac;
+
+  /* Família categórica unificada (bolsos / séries / tags). LIGHT. */
+  --cat-jade: #1e9466;
+  --cat-sky: #2e83ac;
+  --cat-orchid: #9a55a8;
+  --cat-violet: #5a57c2;
+  --cat-teal: #2e9488;
+  --cat-amber: #b08433;
+  --cat-coral: #c9605a;
 }

@@ -15,14 +15,25 @@ pub async fn run_oauth_flow(
     config: pkce::OAuthConfig,
     state: pkce::OAuthState,
     app_dir: std::path::PathBuf,
+    listener: std::net::TcpListener,
 ) -> Result<token_store::StoredToken, String> {
     // Open browser
     let auth_url = state.build_auth_url(&config);
     open::that(&auth_url).map_err(|e| format!("browser: {e}"))?;
 
-    // Wait for the redirect with the authorization code
-    let server = server::OAuthServer::new(state.redirect_port);
-    let code = server.listen_for_code().await?;
+    // Escuta no listener JÁ ligado (mesma porta do redirect_uri) — sem rebind/TOCTOU.
+    let server = server::OAuthServer::new(listener);
+    let (code, returned_state) = server.listen_for_code().await?;
+
+    // Valida o state (CSRF, RFC 6749 §10.12): o `state` do callback tem que casar com o csrf_token
+    // que geramos. Sem isso, um redirect forjado para o loopback injetaria o code de um atacante.
+    let expected = state.csrf_token.secret();
+    let ok = returned_state
+        .as_deref()
+        .is_some_and(|s| constant_time_eq(s.as_bytes(), expected.as_bytes()));
+    if !ok {
+        return Err("state OAuth inválido (possível CSRF) — fluxo abortado".to_string());
+    }
 
     // Exchange code for token
     let token = exchange_token(&config, &state, &code).await?;
@@ -31,6 +42,18 @@ pub async fn run_oauth_flow(
     token_store::store_token(&app_dir, &token)?;
 
     Ok(token)
+}
+
+/// Compara dois bytes em tempo constante (não vaza onde diferem). Usado na checagem do state CSRF.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 async fn exchange_token(
@@ -87,4 +110,17 @@ async fn exchange_token(
         expires_at: now + expires_in - 60, // 60s safety margin
         scope,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::constant_time_eq;
+
+    #[test]
+    fn constant_time_eq_matches_only_identical() {
+        assert!(constant_time_eq(b"abc123", b"abc123"));
+        assert!(!constant_time_eq(b"abc123", b"abc124")); // 1 byte diferente
+        assert!(!constant_time_eq(b"abc", b"abc123")); // tamanhos diferentes
+        assert!(!constant_time_eq(b"", b"x"));
+    }
 }

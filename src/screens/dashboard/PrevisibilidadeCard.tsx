@@ -1,6 +1,9 @@
 import { CalendarRange } from "lucide-react";
 import type { Forecast } from "../../lib/api";
 import { fmtBRL, monthNamePtBR } from "../../lib/format";
+import { Disclosure } from "../../design-system/components/Disclosure";
+import { Money } from "../../design-system/components/Money";
+import { InfoPopover } from "../../design-system/components/InfoPopover";
 
 /**
  * Previsibilidade: detecta meses futuros incompletos (futuro vazio = projeção otimista demais,
@@ -31,7 +34,7 @@ export function PrevisibilidadeCard({ forecast }: { forecast: Forecast }) {
             className="dash-card__ic"
             aria-hidden="true"
           />
-          Previsibilidade
+          <InfoPopover term="previsibilidade">Previsibilidade</InfoPopover>
         </span>
         {trustedLabel && (
           <span className="dash-predict__trusted">
@@ -47,28 +50,25 @@ export function PrevisibilidadeCard({ forecast }: { forecast: Forecast }) {
           </p>
         ) : !hasCoverage ? (
           <p className="dash-predict__neutral">
-            Nenhum mês futuro lançado além de hoje — a projeção só enxerga o presente.
+            Nenhum mês futuro lançado além de hoje. A projeção só enxerga o presente.
             Lance os próximos meses para prever o ano.
           </p>
         ) : !firstIncomplete ? (
           <p className="dash-predict__ok">
-            Seus meses futuros estão completos — a projeção é confiável até o fim dos
+            Seus meses futuros estão completos. A projeção é confiável até o fim dos
             dados lançados.
           </p>
         ) : (
           <>
             <p className="dash-predict__warn">
-              De{" "}
+              A partir de{" "}
               <b>
                 {monthNamePtBR(
                   `${firstIncomplete.year}-${String(firstIncomplete.month).padStart(2, "0")}-01`,
                 )}
               </b>{" "}
-              em diante a projeção está otimista demais. Somando os{" "}
-              {incompleteMonths.length} meses incompletos, faltam{" "}
-              <b className="dash-hero__money">{fmtBRL(forecast.total_missing_cents)}</b>{" "}
-              de gastos não lançados (fatura do cartão e gastos variáveis). Sem isso, o
-              saldo e a poupança projetados mentem.
+              faltam <Money cents={forecast.total_missing_cents} size="sm" /> de gastos
+              não lançados. A projeção está otimista até você pré-lançar.
             </p>
             <div className="dash-predict__rows">
               {incompleteMonths.map((c) => {
@@ -92,28 +92,29 @@ export function PrevisibilidadeCard({ forecast }: { forecast: Forecast }) {
                       />
                     </span>
                     <span className="dash-predict__pct">
-                      {pct}% lançado · falta {fmtBRL(c.estimated_missing_cents)}
+                      {pct}% · falta {fmtBRL(c.estimated_missing_cents)}
                     </span>
                   </div>
                 );
               })}
             </div>
-            <p className="dash-predict__hint">
-              Para prever o ano, lance em cada mês à frente: o <b>saldo de hoje</b> (só
-              conta-corrente), o <b>salário</b> (valor conservador, não o esperado), as{" "}
-              <b>contas fixas</b>, a <b>fatura do cartão</b> no vencimento com os
-              parcelados e o <b>diário estimado</b> em todos os dias. O método é claro —
-              futuro vazio engana.
-            </p>
+            <Disclosure title="Como pré-lançar o ano">
+              <p>
+                Em cada mês à frente, lance o <b>saldo de hoje</b> (só conta-corrente),
+                o <b>salário</b> conservador, as <b>contas fixas</b>, a{" "}
+                <b>fatura do cartão</b> no vencimento e o <b>diário estimado</b> em
+                todos os dias. Futuro vazio engana a previsão.
+              </p>
+            </Disclosure>
           </>
         )}
         <p className="dash-predict__savings">
-          Poupança do ano (estimada): <b>{realizedRatePct}%</b> realizado · referência
-          20–30%
+          Poupança do ano: <b>{realizedRatePct}%</b> realizado, referência 20 a 30%
           {incompleteMonths.length > 0 && (
             <span className="dash-predict__muted">
               {" "}
-              (projetado {projectedRatePct}%, mas otimista — o futuro está incompleto)
+              (projetado {projectedRatePct}%, otimista enquanto o futuro está
+              incompleto)
             </span>
           )}
         </p>
