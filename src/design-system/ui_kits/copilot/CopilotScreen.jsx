@@ -140,7 +140,7 @@ function CopilotApp() {
           <div className="cp-thread">
             <div className="cp-day">Hoje</div>
 
-            <ChatBubble from="user" userInitials="JA">
+            <ChatBubble from="user" userInitials="VC">
               O mês passado tem vários gastos com comida sem categoria. Pode
               categorizá-los e marcar os compartilhados como casa?
             </ChatBubble>
@@ -188,7 +188,7 @@ function CopilotApp() {
                   {
                     field: "Titular (1 linha)",
                     before: "Sem titular",
-                    after: "João (pessoal)",
+                    after: "Você (pessoal)",
                   },
                 ]}
                 note={

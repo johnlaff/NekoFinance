@@ -38,7 +38,11 @@ function miaKnownFacts(
     facts.push(
       `Você pode gastar até ${fmtBRL(forecast.safe_to_spend_today_cents)} hoje sem furar suas metas.`,
     );
-    const ytd = (forecast.annual_savings.realized_rate_bps / 100).toFixed(0);
+    // Economizado% do método = Economia registrada ÷ Entradas (não o net superávit/colchão).
+    const a = forecast.annual_savings;
+    const ytd = Math.round(
+      (a.registered_economia_cents / Math.max(1, a.realized_income_cents)) * 100,
+    );
     facts.push(`No ano, você economizou ${ytd}% (referência 20–30%).`);
   }
   return facts.slice(0, 3);

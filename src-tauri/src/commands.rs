@@ -407,8 +407,8 @@ async fn projection_seed(pool: &SqlitePool, today_naive: NaiveDate) -> Result<i6
     Ok(balance + gap.0)
 }
 
-/// Meta de poupança do método: piso de 25% (faixa 20–30%, "média ANUAL" — "o ano tem que ser de
-/// 20 a 30", aula "Como viver abaixo do que ganha"). Régua do guardrail ANUAL "pode gastar".
+/// Meta de poupança do método: piso de 25% (faixa 20–30%, MÉDIA ANUAL — o ano todo deve ficar
+/// na faixa, os meses variam). Régua do guardrail ANUAL "pode gastar".
 /// O badge MENSAL "Dentro do ideal" (src/screens/TotaisScreen.tsx) usa 20% (piso da faixa), por ser
 /// leniente a variações de um mês; ambos ficam dentro da faixa canônica 20–30%.
 const SAVINGS_TARGET_BPS: i64 = 2500;

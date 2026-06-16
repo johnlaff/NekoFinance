@@ -15,8 +15,11 @@ export function PrevisibilidadeCard({ forecast }: { forecast: Forecast }) {
   const firstIncomplete = incompleteMonths[0];
   const hasCoverage = forecast.coverage.length > 0;
   const annual = forecast.annual_savings;
-  const realizedRatePct = (annual.realized_rate_bps / 100).toFixed(1);
-  const projectedRatePct = (annual.projected_rate_bps / 100).toFixed(1);
+  // Economizado% do método = Economia registrada (transfers→reserva) ÷ Entradas — não o net
+  // superávit/colchão (esse vive no ColchaoCard). Espelha a coluna % da aba Economia da planilha.
+  const economizadoPct = Math.round(
+    (annual.registered_economia_cents / Math.max(1, annual.realized_income_cents)) * 100,
+  );
   const trustedLabel = forecast.trusted_through_month
     ? monthNamePtBR(`${forecast.trusted_through_month}-01`)
     : null;
@@ -109,14 +112,7 @@ export function PrevisibilidadeCard({ forecast }: { forecast: Forecast }) {
           </>
         )}
         <p className="dash-predict__savings">
-          Economizado no ano: <b>{realizedRatePct}%</b> realizado, referência 20 a 30%
-          {incompleteMonths.length > 0 && (
-            <span className="dash-predict__muted">
-              {" "}
-              (projetado {projectedRatePct}%, otimista enquanto o futuro está
-              incompleto)
-            </span>
-          )}
+          Economizado no ano: <b>{economizadoPct}%</b> realizado, referência 20 a 30%
         </p>
       </div>
     </section>

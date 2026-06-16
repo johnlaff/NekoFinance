@@ -240,8 +240,13 @@ export function TotaisScreen() {
 
   const pct = (m.savings_rate_bps / 100).toFixed(0);
   // Economizado é meta ANUAL (20–30% em média): o mês isolado não passa/reprova. Mostramos o %
-  // do mês como número e o acumulado do ano (YTD realizado) como referência, sem julgar o mês.
-  const ytdPct = (forecast.annual_savings.realized_rate_bps / 100).toFixed(0);
+  // do mês como número e o acumulado do ano como referência, sem julgar o mês. O YTD é o
+  // Economizado% do MÉTODO = Economia registrada (transfers→reserva) ÷ Entradas — NÃO o net
+  // superávit (colchão, que vai no ColchaoCard); espelha a coluna % da aba Economia da planilha.
+  const a = forecast.annual_savings;
+  const ytdPct = Math.round(
+    (a.registered_economia_cents / Math.max(1, a.realized_income_cents)) * 100,
+  );
   const monthLabel = monthNamePtBR(`${ymOf(m)}-01`);
   const monthCap = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
 

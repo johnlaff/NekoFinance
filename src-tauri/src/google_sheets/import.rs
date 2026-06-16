@@ -949,14 +949,14 @@ mod tests {
         // Nota na célula da Entrada de JANEIRO (linha 2, col 1); resto sem nota.
         let mut notes = vec![Vec::new(); rows.len()];
         notes[2] = vec![String::new(); rows[0].len()];
-        notes[2][1] = "R$ 18,33 - Pagamento\nR$ 2,32 - Rendimentos".into();
+        notes[2][1] = "Nota de exemplo\nSegunda linha da nota".into();
 
         let result = parse_rows_with_layout(&rows, &layout, &mappings, &notes);
 
         let entrada = result.iter().find(|r| r.amount > 0).unwrap();
         assert_eq!(
             entrada.description,
-            "R$ 18,33 - Pagamento · R$ 2,32 - Rendimentos"
+            "Nota de exemplo · Segunda linha da nota"
         );
         // A Saída de DEZEMBRO não tem nota → fallback com a data.
         let saida = result.iter().find(|r| r.amount < 0).unwrap();
