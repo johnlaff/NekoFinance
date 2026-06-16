@@ -15,8 +15,10 @@ export function colchaoPhase(
   forecast: Forecast,
 ): Phase {
   const txns = summary?.transaction_count ?? 0;
-  if (txns < 30 || forecast.annual_savings.realized_income_cents === 0) return "map";
-  const rateOk = forecast.annual_savings.realized_rate_bps >= 2000;
+  const income = forecast.annual_savings.realized_income_cents;
+  if (txns < 30 || income === 0) return "map";
+  const economia = forecast.annual_savings.registered_economia_cents;
+  const rateOk = economia * 10_000 >= income * 2_000;
   const reserveOk = (summary?.reserve_months ?? 0) >= 3;
   return rateOk && reserveOk ? "operate" : "calibrate";
 }

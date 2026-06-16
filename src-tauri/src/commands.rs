@@ -723,6 +723,32 @@ async fn load_cashflow_events(
     Ok(all_events)
 }
 
+/// Eventos que alimentam projeções de caixa: lançamentos reais/futuros + Diário típico futuro do
+/// mês corrente. Usado por `forecast_dto` e `dashboard_summary` para manter o saldo projetado
+/// idêntico em todas as telas.
+async fn load_forecast_events(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+    horizon_end: NaiveDate,
+) -> Result<Vec<CashflowEvent>, String> {
+    let mut events = load_cashflow_events(pool, today_naive, horizon_end).await?;
+    // Previsão de diário como DRIVER: injeta o teto/dia nos dias futuros do mês corrente, para o
+    // saldo projetado e a Performance não nascerem otimistas (assumem o gasto típico até o fim do mês).
+    let daily_ceiling = effective_daily_ceiling(pool, today_naive).await?;
+    let days_with_daily: std::collections::HashSet<NaiveDate> = events
+        .iter()
+        .filter(|e| e.kind == forecast::EventKind::Daily)
+        .map(|e| e.date)
+        .collect();
+    events.extend(forecast::project_daily_ceiling(
+        daily_ceiling,
+        today_naive,
+        horizon_end,
+        &days_with_daily,
+    ));
+    Ok(events)
+}
+
 /// Eventos JÁ REALIZADOS do mês corrente (`month_start..=today`), classificados como os futuros.
 /// O encadeamento de caixa não os usa (a semente já os embute), mas a performance do mês precisa
 /// deles — senão o mês corrente aparece pela metade (review adversarial P0). Só transações; os
@@ -893,21 +919,7 @@ pub async fn get_forecast(pool: State<'_, SqlitePool>) -> Result<ForecastDto, St
 async fn forecast_dto(pool: &SqlitePool, today_naive: NaiveDate) -> Result<ForecastDto, String> {
     let horizon_end = forecast_horizon_end(pool, today_naive).await?;
     let seed = projection_seed(pool, today_naive).await?;
-    let mut events = load_cashflow_events(pool, today_naive, horizon_end).await?;
-    // Previsão de diário como DRIVER: injeta o teto/dia nos dias futuros do mês corrente, para o
-    // saldo projetado e a Performance não nascerem otimistas (assumem o gasto típico até o fim do mês).
-    let daily_ceiling = effective_daily_ceiling(pool, today_naive).await?;
-    let days_with_daily: std::collections::HashSet<NaiveDate> = events
-        .iter()
-        .filter(|e| e.kind == forecast::EventKind::Daily)
-        .map(|e| e.date)
-        .collect();
-    events.extend(forecast::project_daily_ceiling(
-        daily_ceiling,
-        today_naive,
-        horizon_end,
-        &days_with_daily,
-    ));
+    let events = load_forecast_events(pool, today_naive, horizon_end).await?;
     let metric_events = load_metric_events(pool, today_naive, &events).await?;
     let fc =
         forecast::project_with_metrics(seed, today_naive, &events, &metric_events, horizon_end);
@@ -1257,7 +1269,7 @@ async fn dashboard_summary(
     // Seed + forward events: shared with `forecast_dto` (single source of event mapping).
     let seed = projection_seed(pool, today_naive).await?;
     let horizon_end = forecast_horizon_end(pool, today_naive).await?;
-    let all_events = load_cashflow_events(pool, today_naive, horizon_end).await?;
+    let all_events = load_forecast_events(pool, today_naive, horizon_end).await?;
 
     // `balance` is the projected end-of-current-month figure (the method's hero, spec 003 US8),
     // not the raw current account sum.
@@ -3231,6 +3243,24 @@ mod tests {
         let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
         let s = dashboard_summary(&pool, today).await.unwrap();
         assert_eq!(s.daily_budget, 310_000 / 31); // 10.000
+    }
+
+    // O saldo projetado do dashboard deve usar o mesmo driver de Diário futuro do forecast; senão o
+    // tile "Saldo projetado" fica otimista e diverge do fim do mês exibido no herói.
+    #[tokio::test]
+    async fn dashboard_projected_balance_includes_future_daily_ceiling() {
+        let pool = fixture_pool().await;
+        insert_liquid_account(&pool, 300_000).await;
+        // Maio: diário de 310.000 em 31 dias → teto típico = 10.000/dia.
+        insert_realized(&pool, "expense", 310_000, "2026-05-10").await;
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let summary = dashboard_summary(&pool, today).await.unwrap();
+        let forecast = forecast_dto(&pool, today).await.unwrap();
+
+        // Junho tem 17 dias após 13/jun (14..30). O saldo precisa reservar esse Diário restante.
+        assert_eq!(summary.balance, 130_000);
+        assert_eq!(forecast.month_end[0].balance_cents, summary.balance);
     }
 
     // Orçamento diário explícito ativo vence o fallback.

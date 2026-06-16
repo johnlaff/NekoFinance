@@ -512,7 +512,7 @@ export function GoogleSheetsPanel({
           <Link2 size={20} strokeWidth={1.75} />
         </div>
         <p className="gs-connect__text">
-          Conecte sua conta Google para importar dados da planilha em tempo real.
+          Conecte sua conta Google para importar os dados da planilha oficial.
         </p>
         <Button
           variant="primary"
