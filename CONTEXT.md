@@ -60,6 +60,16 @@ The method's core metric: daily_spend compared against daily_budget. Green/amber
 **Crédito/Fatura track** (internal name "Régua 2"):
 Credit bill tracking: SUM(credit_spend for the month) accumulates into the invoice that lands on the due date. Prevents self-deception when the daily track is green but the credit bill is accumulating silently. The engine tracks the two independently; it does not compare credit against income.
 
+**Forecast Engine Types** (forecast `EventKind`):
+The projection engine maps each transaction into exactly one bucket. The method has 5 movement types (entrada, saída, diário, economia, cartão); the engine collapses them into 4 `EventKind` variants because the card has no column of its own — its bill folds into the Saída lump at the due date:
+
+- **Income** (Entrada): `type='income'`.
+- **FixedOut** (Saída fixa + Cartão): `type='expense'` with `is_fixed=1`, **or** any `payment_method='credit'` expense (the fatura lands as a Saída lump on the due date).
+- **Daily** (Diário): `type='expense'`, `is_fixed=0`, non-credit (débito/PIX/dinheiro).
+- **Economia**: `type='transfer'` to a `reserve`/`illiquid` account (set aside, not spent).
+
+Derived metrics: `cost_of_living = FixedOut + Daily`; `Performance = Income − (cost_of_living + Economia + previsão de diário restante)`. The UI exposes the 5 method types via `MovBadge` (Cartão = credit expense); the engine buckets are the 4 above.
+
 ### Savings & Protection
 
 **Reserve**:

@@ -1,8 +1,8 @@
 # Neko Finance — Design System
 
-A design system for **Neko Finance**: a local-first, private personal-finance desktop app (Tauri 2 + React 19 + TypeScript, SQLite + Google Sheets planned) with an AI copilot named **Mia** who reads your sheets, explains your finances, separates ownership/responsibility, and proposes _human-approved_ sheet edits only.
+A design system for **Neko Finance**: a local-first, private personal-finance desktop app (Tauri 2 + React 19 + TypeScript, SQLite + Google Sheets import) with an AI copilot named **Mia** who reads your sheets, explains your finances, separates ownership/responsibility, and proposes _human-approved_ sheet edits only.
 
-This system is authored from scratch — no external codebase or Figma was provided. All visual decisions, tokens, and components are original to this proposal. Where production assets are still missing (self-hosted fonts), substitutions are flagged below.
+This system is authored from scratch — no external codebase or Figma was provided. All visual decisions, tokens, and components are original to this proposal. Fonts (Hanken Grotesk, Newsreader, Geist Mono) are self-hosted; lucide-react is the production icon set (`strokeWidth={1.75}`).
 
 > **Primary theme:** Dark ("Midnight Ledger") is the default and presented-first theme. A cool light theme ("Vellum") ships as `[data-theme="light"]` and is tuned to full parity — status, diff, and badge text use dedicated dark on-tint colors in light mode (not just inverted tokens). The app shell exposes a light/dark toggle that persists to `localStorage` (`neko-theme`).
 
@@ -115,7 +115,7 @@ Neko's voice is **calm, plain, and exact** — a competent partner, not a cheerl
 ## 6 · Iconography
 
 - **System:** A **Lucide-style** line set (ISC license), normalized to a **1.75px stroke**, round caps/joins, 24×24 grid. This stroke weight (slightly under Lucide's default 2) reads more refined at small sizes for a finance tool. Shipped as `ui_kits/shared/icons.jsx` → `window.Icon` (`<Icon name="wallet" size={18} />`), drawing `currentColor` so icons inherit theme + state color.
-  > **Substitution flag:** these are hand-normalized Lucide-equivalent paths, not the official Lucide package. For production, install `lucide-react` and set `strokeWidth={1.75}`; the names used here (dashboard, receipt, sparkles, wallet, creditCard, table, lock, shield, etc.) map 1:1 to Lucide.
+  > **Substitution flag (ui_kit prototype only):** these are hand-normalized Lucide-equivalent paths. The production app already uses `lucide-react` with `strokeWidth={1.75}`; the names used here (dashboard, receipt, sparkles, wallet, creditCard, table, lock, shield, etc.) map 1:1 to Lucide.
 - **Sizes:** 15px inside dense labels/metric tiles, 16–18px in nav and buttons, 20–22px for state/empty icons. Never below 14px.
 - **Color:** Icons are `--text-muted`/`--text-faint` at rest, inherit accent color in active/semantic contexts (jade nav, status tints). Avatars and the Neko mark use `--primary`.
 - **The Neko mark:** a friendly geometric cat head with rounded ears, round eyes and a small nose, drawn as a single `currentColor` silhouette with negative-space features (`assets/neko-mark.svg`). It is the _only_ place the literal cat geometry appears; never decorate UI with ears/whiskers literally — the "whisker" cue is expressed abstractly as 1px hairlines.
@@ -202,4 +202,4 @@ Each lives in `components/<group>/<Name>.{jsx,d.ts,prompt.md}` with a directory 
 9. **States** — wire `EmptyState` variants for every async surface.
 10. **A11y pass** — contrast, keyboard, focus, reduced-motion, status-with-label audit.
 
-> **Open items to confirm with the team:** (a) official Lucide vs. the bundled normalized icon set, (b) final brand mark — the included friendly-cat mark is a proposal. Fonts are self-hosted (Hanken Grotesk, Geist Mono, Newsreader as variable TTFs); consider subsetting to WOFF2 for production weight.
+> **Open items to confirm with the team:** (a) ~~official Lucide vs. the bundled normalized icon set~~ — resolved: production uses `lucide-react`; (b) final brand mark — the included friendly-cat mark is a proposal. Fonts are self-hosted (Hanken Grotesk, Geist Mono, Newsreader as variable TTFs); consider subsetting to WOFF2 for production weight.

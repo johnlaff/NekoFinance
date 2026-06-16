@@ -8,7 +8,8 @@
 ## Totais (entregue)
 
 4 métricas-herói do mês corrente (Performance / Custo de vida / Economizado / Diário médio) com
-status do método via HealthBadge. Lê `get_forecast` → `months[today]`. Ver `TotaisScreen`.
+status do método via StatusChip (pílula calma com ponto de cor — preferida ao anel radial do
+HealthBadge neste layout denso de 4 métricas). Lê `get_forecast` → `months[today]`. Ver `TotaisScreen`.
 
 ## Horizonte multi-mês (esta slice)
 

@@ -56,14 +56,14 @@ planilha. Fechar essa lacuna é trabalho de **views**, não de dados.
 
 Matriz de paridade (visão da planilha → tela do app):
 
-| Visão na planilha                                                      | Tela no app                      | Estado                               |
-| ---------------------------------------------------------------------- | -------------------------------- | ------------------------------------ |
-| Grade do ano (12 meses, `Data\|Entrada\|Saída\|Diário\|Saldo` por dia) | Livro-razão (slice 8)            | a construir                          |
-| Saldo corrente encadeado, dia a dia                                    | coluna Saldo do livro + previsão | série capturada ✓ / view a construir |
-| Vários anos (abas 2025, 2026, …)                                       | seletor de ano no livro          | a construir                          |
-| Comparar meses/anos, tendência de gasto                                | Análises (slice 9)               | a construir                          |
-| Aba Economia (taxa de poupança, régua 20–30%)                          | Economia (slice 7)               | a construir                          |
-| Totais / indicadores do mês                                            | Dashboard                        | parcial (mês atual)                  |
+| Visão na planilha                                                      | Tela no app                             | Estado                                          |
+| ---------------------------------------------------------------------- | --------------------------------------- | ----------------------------------------------- |
+| Grade do ano (12 meses, `Data\|Entrada\|Saída\|Diário\|Saldo` por dia) | MonthLedgerCard (Dashboard — Dia a dia) | entregue (qualquer mês, com seletor)            |
+| Saldo corrente encadeado, dia a dia                                    | coluna Saldo do MonthLedgerCard         | entregue (termômetro de Saldo diário)           |
+| Vários anos (abas 2025, 2026, …)                                       | seletor de mês/ano no MonthLedgerCard   | entregue (navega mês a mês)                     |
+| Comparar meses/anos, tendência de gasto                                | Totais + Visão anual                    | parcial (tabelas; tendência visual a construir) |
+| Aba Economia (taxa de poupança, régua 20–30%)                          | import_economia_sheet + Totais          | entregue (linha Economia + Economizado%)        |
+| Totais / indicadores do mês                                            | Dashboard                               | parcial (mês atual)                             |
 
 **Regra de aceite transversal:** nenhuma feature de import/projeção pode descartar coluna ou
 período que a planilha tenha. Quando uma coluna ainda não tem tela (ex.: Diário hoje não vira

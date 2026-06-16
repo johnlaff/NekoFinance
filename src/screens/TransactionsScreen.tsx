@@ -251,109 +251,109 @@ export function TransactionsScreen({
                   const showMonth = i === 0 || visible[i - 1]!.date.slice(0, 7) !== ym;
                   const generic = !!t.description && GENERIC_DESC.test(t.description);
                   return (
-                  <Fragment key={t.id}>
-                    {showMonth && (
-                      <tr className="txn-month-sep">
-                        <th scope="colgroup" colSpan={5}>
-                          {monthSepLabel(ym)}
-                        </th>
-                      </tr>
-                    )}
-                    <tr className={t.is_projection ? "projection" : ""}>
-                      <td>{fmtDate(t.date)}</td>
-                      <td>
-                        <MovBadge kind={movKind(t)} showLabel size={16} />
-                      </td>
-                      <td>
-                        {t.description ? (
-                          <span
-                            style={
-                              generic
-                                ? { color: "var(--text-faint)", fontStyle: "italic" }
-                                : undefined
-                            }
-                          >
-                            {t.description}
-                          </span>
-                        ) : (
-                          "—"
-                        )}{" "}
-                        <ProvBadge provenance={t.provenance} />
-                        {t.owners.length >= 2 && (
-                          <span
-                            style={{
-                              display: "inline-flex",
-                              gap: 4,
-                              marginLeft: 6,
-                              verticalAlign: "middle",
-                            }}
-                          >
-                            {t.owners.map((name) => (
-                              <OwnerChip key={name} name={name} />
-                            ))}
-                          </span>
-                        )}
-                        {t.tags.map((tag) => (
-                          <TagChip key={tag.id} tag={tag} />
-                        ))}
-                        <button
-                          type="button"
-                          className="txn-tag-btn"
-                          aria-label={`Editar tags de ${t.description || "lançamento"}`}
-                          aria-expanded={tagEditId === t.id}
-                          onClick={() =>
-                            setTagEditId((id) => (id === t.id ? null : t.id))
-                          }
-                        >
-                          <TagIcon size={13} strokeWidth={1.75} />
-                        </button>
-                      </td>
-                      <td>
-                        <span className="txn-method">{methodLabel(t)}</span>
-                      </td>
-                      <td style={{ textAlign: "right" }}>
-                        {t.type === "income" ? (
-                          <Money cents={Math.abs(t.amount)} size="sm" sign="auto" />
-                        ) : (
-                          <Money cents={-Math.abs(t.amount)} size="sm" sign="auto" />
-                        )}
-                      </td>
-                    </tr>
-                    {tagEditId === t.id && (
-                      <tr className="txn-tag-editor">
-                        <td colSpan={5}>
-                          {allTags.length === 0 ? (
-                            <span style={{ color: "var(--text-muted)" }}>
-                              Crie tags na aba Tags para classificar este lançamento.
+                    <Fragment key={t.id}>
+                      {showMonth && (
+                        <tr className="txn-month-sep">
+                          <th scope="colgroup" colSpan={5}>
+                            {monthSepLabel(ym)}
+                          </th>
+                        </tr>
+                      )}
+                      <tr className={t.is_projection ? "projection" : ""}>
+                        <td>{fmtDate(t.date)}</td>
+                        <td>
+                          <MovBadge kind={movKind(t)} showLabel size={16} />
+                        </td>
+                        <td>
+                          {t.description ? (
+                            <span
+                              style={
+                                generic
+                                  ? { color: "var(--text-faint)", fontStyle: "italic" }
+                                  : undefined
+                              }
+                            >
+                              {t.description}
                             </span>
                           ) : (
-                            <span className="txn-tag-picker">
-                              {allTags.map((tag) => {
-                                const on = t.tags.some((x) => x.id === tag.id);
-                                return (
-                                  <button
-                                    type="button"
-                                    key={tag.id}
-                                    aria-pressed={on}
-                                    className={`txn-tag-opt ${on ? "is-on" : ""}`}
-                                    onClick={() => void toggleTag(t, tag.id)}
-                                  >
-                                    <span
-                                      aria-hidden="true"
-                                      className="txn-tag-dot"
-                                      style={{ background: tag.color }}
-                                    />
-                                    {tag.emoji ? `${tag.emoji} ` : ""}
-                                    {tag.name}
-                                  </button>
-                                );
-                              })}
+                            "—"
+                          )}{" "}
+                          <ProvBadge provenance={t.provenance} />
+                          {t.owners.length >= 2 && (
+                            <span
+                              style={{
+                                display: "inline-flex",
+                                gap: 4,
+                                marginLeft: 6,
+                                verticalAlign: "middle",
+                              }}
+                            >
+                              {t.owners.map((name) => (
+                                <OwnerChip key={name} name={name} />
+                              ))}
                             </span>
+                          )}
+                          {t.tags.map((tag) => (
+                            <TagChip key={tag.id} tag={tag} />
+                          ))}
+                          <button
+                            type="button"
+                            className="txn-tag-btn"
+                            aria-label={`Editar tags de ${t.description || "lançamento"}`}
+                            aria-expanded={tagEditId === t.id}
+                            onClick={() =>
+                              setTagEditId((id) => (id === t.id ? null : t.id))
+                            }
+                          >
+                            <TagIcon size={13} strokeWidth={1.75} />
+                          </button>
+                        </td>
+                        <td>
+                          <span className="txn-method">{methodLabel(t)}</span>
+                        </td>
+                        <td style={{ textAlign: "right" }}>
+                          {t.type === "income" ? (
+                            <Money cents={Math.abs(t.amount)} size="sm" sign="auto" />
+                          ) : (
+                            <Money cents={-Math.abs(t.amount)} size="sm" sign="auto" />
                           )}
                         </td>
                       </tr>
-                    )}
-                  </Fragment>
+                      {tagEditId === t.id && (
+                        <tr className="txn-tag-editor">
+                          <td colSpan={5}>
+                            {allTags.length === 0 ? (
+                              <span style={{ color: "var(--text-muted)" }}>
+                                Crie tags na aba Tags para classificar este lançamento.
+                              </span>
+                            ) : (
+                              <span className="txn-tag-picker">
+                                {allTags.map((tag) => {
+                                  const on = t.tags.some((x) => x.id === tag.id);
+                                  return (
+                                    <button
+                                      type="button"
+                                      key={tag.id}
+                                      aria-pressed={on}
+                                      className={`txn-tag-opt ${on ? "is-on" : ""}`}
+                                      onClick={() => void toggleTag(t, tag.id)}
+                                    >
+                                      <span
+                                        aria-hidden="true"
+                                        className="txn-tag-dot"
+                                        style={{ background: tag.color }}
+                                      />
+                                      {tag.emoji ? `${tag.emoji} ` : ""}
+                                      {tag.name}
+                                    </button>
+                                  );
+                                })}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })}
               </tbody>

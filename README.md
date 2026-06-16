@@ -30,7 +30,7 @@ tokens, spreadsheet data, or personal finance caches are committed — see Priva
   Tags, Mia (honest placeholder), Metodologia, and Configurações e privacidade (connections, local
   import, where-your-data-lives).
 - **Local SQLite store** — 26 migrations: accounts/pockets + liquidity, transactions/splits, tags,
-  recurrences, daily check-ins (Régua 1 débito / Régua 2 crédito), reserve tracking, sheet layouts,
+  recurrences, daily check-ins (separate debit/daily and credit/fatura tracks), reserve tracking, sheet layouts,
   three-way-merge reconciliation, sync log, FTS5. During the import-only phase the spreadsheet is
   the system of record and SQLite is the local mirror + enrichment layer (see `docs/adr/0003`).
 

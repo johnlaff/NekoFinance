@@ -81,7 +81,10 @@ export function MonthLedgerCard({ today }: { today: string }) {
                 <tr>
                   <th scope="col">Data</th>
                   <th scope="col">Entrada</th>
-                  <th scope="col" title="Saídas fixas e a fatura do cartão no vencimento">
+                  <th
+                    scope="col"
+                    title="Saídas fixas e a fatura do cartão no vencimento"
+                  >
                     Saída
                   </th>
                   <th scope="col">Diário</th>
