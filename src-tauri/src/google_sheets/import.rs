@@ -990,7 +990,7 @@ mod tests {
                 "".into(),
                 "".into(),
                 "".into(),
-                "10571.0048".into(),
+                "12345.6748".into(),
             ],
             vec![
                 "2".into(),
@@ -998,7 +998,7 @@ mod tests {
                 "".into(),
                 "".into(),
                 "".into(),
-                "-46.33".into(),
+                "-78.90".into(),
             ],
             vec![
                 "3".into(),
@@ -1028,12 +1028,12 @@ mod tests {
             series[0],
             DailyBalance {
                 date: "2026-01-01".into(),
-                balance_cents: 1_057_100, // 10571.0048 → centavos
+                balance_cents: 1_234_567, // 12345.6748 → centavos (sub-centavo truncado)
                 is_projection: false,
             }
         );
         assert_eq!(series[1].date, "2026-01-02");
-        assert_eq!(series[1].balance_cents, -4633); // saldo negativo preservado
+        assert_eq!(series[1].balance_cents, -7890); // saldo negativo preservado
     }
 
     #[test]
