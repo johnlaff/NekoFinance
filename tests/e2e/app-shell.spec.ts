@@ -17,14 +17,18 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     await expect(page.getByText("R$ 35.420,00")).toBeVisible();
     await expect(page.getByText("Pode gastar até")).toBeVisible();
     await expect(page.getByText(/Junho de 2026/)).toBeVisible();
-    // Stats do herói: reserva + nº de lançamentos.
-    await expect(page.getByText("Lançamentos")).toBeVisible();
+    // Stats do herói: reserva + nº de lançamentos (escopado ao herói; "Lançamentos"
+    // também é item de navegação).
+    await expect(
+      page.locator(".dash-hero__stats").getByText("Lançamentos"),
+    ).toBeVisible();
     // Chained daily table: today marked, salary day visible
     await expect(page.getByRole("table").getByText("hoje").first()).toBeVisible();
     await expect(page.getByText("R$ 12.340,00").first()).toBeVisible();
 
-    // Check-in diário: card com o disponível do dia e registro rápido.
-    await expect(page.getByText("Check-in de hoje")).toBeVisible();
+    // Diário de hoje: card com o disponível do dia e registro rápido (escopado ao
+    // título do card, pois "Diário de hoje" também rotula o metric tile acima).
+    await expect(page.locator("#dash-checkin-title")).toHaveText("Diário de hoje");
     await expect(page.getByText(/disponível/)).toBeVisible();
     await page.getByLabel("Gasto de hoje").fill("9,90");
     await page.getByRole("button", { name: "Registrar" }).click();
