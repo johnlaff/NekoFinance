@@ -5,6 +5,14 @@ import { useCommand, invalidateCommands } from "../lib/useCommand";
 import { Money } from "../design-system/components/Money";
 import { Button } from "../design-system/components/Button";
 import { EmptyState } from "../design-system/components/EmptyState";
+import { MonthNav } from "../design-system/components/MonthNav";
+
+/** Próximo/anterior "YYYY-MM". */
+function shiftYm(ym: string, delta: number): string {
+  const [y, m] = ym.split("-").map(Number);
+  const d = new Date(Date.UTC(y!, m! - 1 + delta, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
 
 // Cor + nome humano (o aria-label precisa de um nome legível, não da string do token CSS).
 const PALETTE: { value: string; name: string }[] = [
@@ -19,8 +27,9 @@ const PALETTE: { value: string; name: string }[] = [
 
 export function TagsScreen() {
   const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth() + 1;
+  const todayYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const [ym, setYm] = useState(todayYm);
+  const [year, month] = ym.split("-").map(Number);
   const [reload, setReload] = useState(0);
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -42,8 +51,8 @@ export function TagsScreen() {
     swatchRefs.current[next]?.focus();
   };
 
-  const totalsQ = useCommand(`tag_totals:${year}-${month}:${reload}`, () =>
-    tagTotalsForMonth(year, month),
+  const totalsQ = useCommand(`tag_totals:${ym}:${reload}`, () =>
+    tagTotalsForMonth(year!, month!),
   );
   const tags = totalsQ.data ?? [];
 
@@ -87,14 +96,24 @@ export function TagsScreen() {
               margin: "var(--space-1) 0 0",
             }}
           >
-            Totais de {monthNamePtBR(`${year}-${String(month).padStart(2, "0")}-01`)} de{" "}
-            {year}. Rótulos livres para diagnóstico; "! Pagar" e similares ficam no
-            topo.
+            Totais de {monthNamePtBR(`${ym}-01`)} de {year}. Tags são diagnóstico — para
+            onde foi o dinheiro, não orçamento; "! Pagar" e similares ficam no topo.
           </p>
         </div>
-        <Button onClick={() => setOpen((o) => !o)}>
-          {open ? "Cancelar" : "Nova tag"}
-        </Button>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
+          <MonthNav
+            label={`${monthNamePtBR(`${ym}-01`)} de ${year}`}
+            onPrev={() => setYm((v) => shiftYm(v, -1))}
+            onNext={() => setYm((v) => shiftYm(v, 1))}
+            onToday={() => setYm(todayYm)}
+            atToday={ym === todayYm}
+            prevLabel="Mês anterior"
+            nextLabel="Próximo mês"
+          />
+          <Button onClick={() => setOpen((o) => !o)}>
+            {open ? "Cancelar" : "Nova tag"}
+          </Button>
+        </div>
       </header>
 
       {open ? (

@@ -16,12 +16,12 @@ const PRINCIPLES = [
   {
     icon: Gauge,
     title: "A conta do mês (Performance)",
-    body: "Performance = Entradas − (Saídas fixas + Diário + Economia + Cartão + previsão do diário que ainda falta). O Cartão aqui é a fatura, contada à parte das saídas fixas (não é dupla contagem). Por isso o mês nasce no vermelho e vai esverdeando conforme o diário real fica abaixo do teto.",
+    body: "Performance = Entradas − (Saídas + Diário + Economia + previsão do diário que ainda falta). As Saídas já incluem as contas fixas e a fatura do cartão — que entra como saída no vencimento, sem coluna própria (não é dupla contagem). Por isso o mês nasce no vermelho e vai esverdeando conforme o diário real fica abaixo do teto.",
   },
   {
     icon: CalendarRange,
     title: "Custo de vida",
-    body: "Custo de vida = saídas fixas (contas previsíveis, com data) + diário (o resto) + cartão (a fatura). O diário é um número único por dia, não um orçamento por categoria: categorias servem para diagnóstico, nunca para planejamento.",
+    body: "Custo de vida = Saídas (contas fixas previsíveis, com data, + a fatura do cartão no vencimento) + Diário (o resto). O diário é um número único por dia, não um orçamento por categoria: categorias servem para diagnóstico, nunca para planejamento.",
   },
   {
     icon: Ruler,

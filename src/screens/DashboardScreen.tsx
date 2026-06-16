@@ -11,7 +11,7 @@ import { getDashboardSummary, getForecast, isTauri } from "../lib/api";
 import { fmtBRL, fmtDayMonth, monthNamePtBR } from "../lib/format";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { PrevisibilidadeCard } from "./dashboard/PrevisibilidadeCard";
-import { ColchaoCard } from "./dashboard/ColchaoCard";
+import { ColchaoCard, colchaoPhase } from "./dashboard/ColchaoCard";
 import { PerformanceCard } from "./dashboard/PerformanceCard";
 import { DailyCheckinCard } from "./dashboard/DailyCheckinCard";
 import { MonthLedgerCard } from "./dashboard/MonthLedgerCard";
@@ -186,9 +186,9 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
         />
         <MetricTile
           label="Reserva"
-          value={summary ? `${summary.reserve_months.toFixed(1)}m` : "—"}
+          value={summary ? `${summary.reserve_months.toFixed(1)} meses` : "—"}
           icon={reserveTrendIcon}
-          sublabel="Mín. 6m · paz 12m+"
+          sublabel="Mín. 6 · paz 12+"
         />
       </div>
 
@@ -209,7 +209,9 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
 
       {forecast && hasData && <PrevisibilidadeCard forecast={forecast} />}
 
-      {forecast && hasData && <ColchaoCard forecast={forecast} />}
+      {forecast && hasData && (
+        <ColchaoCard forecast={forecast} phase={colchaoPhase(summary, forecast)} />
+      )}
 
       {forecast && <PerformanceCard forecast={forecast} />}
 

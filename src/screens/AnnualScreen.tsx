@@ -35,6 +35,77 @@ const tdNum: React.CSSProperties = {
   padding: "var(--space-3) var(--space-4)",
 };
 
+/** Mini-barras de Economizado% por mês, com a faixa-meta 20–30% sombreada (tendência do ano). */
+function EconomizadoSparkline({
+  months,
+}: {
+  months: {
+    month: number;
+    savings_rate_bps: number;
+    income_cents: number;
+    cost_of_living_cents: number;
+  }[];
+}) {
+  const data = months.map((m) => ({
+    pct: m.savings_rate_bps / 100,
+    empty: m.income_cents === 0 && m.cost_of_living_cents === 0,
+  }));
+  const maxPct = Math.max(40, ...data.map((d) => d.pct));
+  const H = 56;
+  const bandTop = ((maxPct - 30) / maxPct) * H;
+  const bandHeight = (10 / maxPct) * H; // faixa 20–30%
+  return (
+    <div
+      aria-label="Tendência de Economizado% por mês, com a faixa-meta de 20 a 30% sombreada"
+      style={{
+        display: "flex",
+        gap: 4,
+        alignItems: "flex-end",
+        height: H,
+        margin: "0 0 var(--space-6)",
+        position: "relative",
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          top: bandTop,
+          height: bandHeight,
+          background: "var(--success-tint)",
+          borderRadius: 2,
+        }}
+      />
+      {data.map((d, i) => {
+        const h = d.empty ? 2 : Math.max(2, (d.pct / maxPct) * H);
+        const color = d.empty
+          ? "var(--border)"
+          : d.pct > 30
+            ? "var(--primary)"
+            : d.pct >= 20
+              ? "var(--success-400)"
+              : "var(--warning-400)";
+        return (
+          <span
+            key={i}
+            title={`${MONTHS_PT[i]}: ${d.empty ? "—" : `${d.pct.toFixed(0)}%`}`}
+            style={{
+              flex: 1,
+              height: h,
+              background: color,
+              borderRadius: "2px 2px 0 0",
+              position: "relative",
+              zIndex: 1,
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
 export function AnnualScreen() {
   const thisYear = new Date().getFullYear();
   const [year, setYear] = useState(thisYear);
@@ -57,9 +128,14 @@ export function AnnualScreen() {
   const hasYearData = months.some(
     (m) => m.income_cents !== 0 || m.cost_of_living_cents !== 0,
   );
-  // Verde quando dentro da faixa ideal anual do método (≥20%); âmbar abaixo.
+  // 3 estados (mesma lógica do economizadoStatus em Totais): >30% guardando além do ideal
+  // (jade/steady), 20–30% dentro do ideal (verde), <20% aquém (âmbar).
   const savingsColor =
-    annualSavingsPct >= 20 ? "var(--success-400)" : "var(--warning-400)";
+    annualSavingsPct > 30
+      ? "var(--primary)"
+      : annualSavingsPct >= 20
+        ? "var(--success-400)"
+        : "var(--warning-400)";
 
   return (
     <div style={{ maxWidth: 860, margin: "0 auto", padding: "var(--space-2)" }}>
@@ -109,6 +185,7 @@ export function AnnualScreen() {
         <div style={{ color: "var(--text-muted)" }}>Carregando o ano…</div>
       ) : (
         <div style={{ overflowX: "auto" }}>
+          {hasYearData && <EconomizadoSparkline months={months} />}
           <table
             style={{
               width: "100%",

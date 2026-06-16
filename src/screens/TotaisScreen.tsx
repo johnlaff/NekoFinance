@@ -239,6 +239,9 @@ export function TotaisScreen() {
   const goToday = () => setSelectedYm(null);
 
   const pct = (m.savings_rate_bps / 100).toFixed(0);
+  // Economizado é meta ANUAL (20–30% em média): o mês isolado não passa/reprova. Mostramos o %
+  // do mês como número e o acumulado do ano (YTD realizado) como referência, sem julgar o mês.
+  const ytdPct = (forecast.annual_savings.realized_rate_bps / 100).toFixed(0);
   const monthLabel = monthNamePtBR(`${ymOf(m)}-01`);
   const monthCap = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
 
@@ -321,8 +324,7 @@ export function TotaisScreen() {
               {pct}%
             </span>
           }
-          status={economizadoStatus(m.savings_rate_bps)}
-          sublabel="meta 20–30% no ano (este é o mês)"
+          sublabel={`no ano: ${ytdPct}% acumulado · meta 20–30% (média anual)`}
         />
         <MetricRow
           label="Custo de vida"

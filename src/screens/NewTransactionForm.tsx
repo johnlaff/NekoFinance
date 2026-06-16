@@ -177,8 +177,8 @@ export function NewTransactionForm({ onCreated }: { onCreated?: () => void }) {
           }}
         >
           <MovBadge kind="economia" size={14} /> Economia entra pela aba Economia da
-          planilha (Configurações &rsaquo; Importar) — é uma transferência para a sua
-          reserva, não um gasto.
+          planilha (Configurações &rsaquo; Conexão Google Sheets) — é uma transferência
+          para a sua reserva, não um gasto.
         </p>
       </div>
 

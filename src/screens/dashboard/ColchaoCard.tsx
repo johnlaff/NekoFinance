@@ -1,8 +1,25 @@
 import { Sparkles } from "lucide-react";
-import type { Forecast } from "../../lib/api";
+import type { DashboardSummary, Forecast } from "../../lib/api";
 import { Money } from "../../design-system/components/Money";
 import { Disclosure } from "../../design-system/components/Disclosure";
-import { PhaseBadge } from "../../design-system/components/PhaseBadge";
+import { PhaseBadge, type Phase } from "../../design-system/components/PhaseBadge";
+
+/**
+ * Fase de adaptação ao método derivada dos dados (não mais fixa em "calibrate"):
+ * - "map": ainda mapeando — poucos lançamentos (<30) ou nenhum mês realizado.
+ * - "operate": operando — economizado anual ≥ 20% E reserva ≥ 3 meses.
+ * - "calibrate": no meio do caminho (o caso comum enquanto se ajusta o diário).
+ */
+export function colchaoPhase(
+  summary: DashboardSummary | null,
+  forecast: Forecast,
+): Phase {
+  const txns = summary?.transaction_count ?? 0;
+  if (txns < 30 || forecast.annual_savings.realized_income_cents === 0) return "map";
+  const rateOk = forecast.annual_savings.realized_rate_bps >= 2000;
+  const reserveOk = (summary?.reserve_months ?? 0) >= 3;
+  return rateOk && reserveOk ? "operate" : "calibrate";
+}
 
 /**
  * Coaching de adaptação — o "colchão". Muitos guardam o excedente como buffer em caixa (net
@@ -10,7 +27,7 @@ import { PhaseBadge } from "../../design-system/components/PhaseBadge";
  * reconhece ANTES de ensinar (padrão SOTA de coaching), tom calmo, sem punir. Mostra os DOIS
  * números lado a lado: Economia registrada (método) e colchão/net (adaptação), sem confundi-los.
  */
-export function ColchaoCard({ forecast }: { forecast: Forecast }) {
+export function ColchaoCard({ forecast, phase }: { forecast: Forecast; phase: Phase }) {
   const annual = forecast.annual_savings;
   const colchaoCents = annual.realized_savings_cents;
   const registeredEconomia = annual.registered_economia_cents;
@@ -28,7 +45,7 @@ export function ColchaoCard({ forecast }: { forecast: Forecast }) {
           />
           Seu colchão
         </span>
-        <PhaseBadge phase="calibrate" />
+        <PhaseBadge phase={phase} />
       </div>
       <div className="dash-card__body">
         <div className="dash-colchao__nums">

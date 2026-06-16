@@ -5,7 +5,10 @@ import { InfoPopover, type GlossaryEntry } from "./InfoPopover";
  * design system. Ponto colorido + rótulo, com explicação didática no InfoPopover (o badge é o
  * próprio trigger, sem o marcador "i"). Cor nunca é sinal único — sempre acompanha a palavra.
  */
-type Prov = "importado" | "manual" | "projetado" | "conciliado";
+// Nota: "conciliado/Conferido" foi removido até existir persistência de reconciliação. Hoje a
+// proveniência é DERIVADA (projetado/importado/manual) em recent_transactions; o gate de conflito
+// não grava um estado "conferido". Reintroduzir quando houver uma coluna/flag de reconciliação.
+type Prov = "importado" | "manual" | "projetado";
 
 const PROV: Record<Prov, { label: string; dot: string; entry: GlossaryEntry }> = {
   importado: {
@@ -30,14 +33,6 @@ const PROV: Record<Prov, { label: string; dot: string; entry: GlossaryEntry }> =
     entry: {
       title: "Previsto",
       body: "Ainda não aconteceu. É uma previsão que o app criou para completar o futuro. Vira real quando o lançamento de verdade chega.",
-    },
-  },
-  conciliado: {
-    label: "Conferido",
-    dot: "var(--success-400)",
-    entry: {
-      title: "Conferido",
-      body: "Já foi cruzado com o detalhe do banco e bate certinho. É o nível mais alto de confiança.",
     },
   },
 };

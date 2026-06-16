@@ -62,7 +62,7 @@ export function HorizonteScreen() {
     return (
       <EmptyState
         title="Sem horizonte para projetar"
-        description="Lance entradas e saídas futuras para ver o saldo projetado mês a mês."
+        description="O Horizonte mostra o saldo dia a dia no mesmo termômetro da planilha (verde = folga, vermelho = aperto). Para ver o futuro, lance as entradas e saídas dos próximos meses."
       />
     );
   }
