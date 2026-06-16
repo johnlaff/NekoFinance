@@ -37,7 +37,8 @@ describe("App (dashboard)", () => {
     expect(screen.getAllByText(/8\.420/).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Saldo projetado")).toBeInTheDocument();
     expect(screen.getByText(/Junho de 2026/)).toBeInTheDocument();
-    expect(screen.getByText("Lançamentos")).toBeInTheDocument();
+    // "Lançamentos" agora aparece na nav lateral E no stat do hero (nomenclatura unificada).
+    expect(screen.getAllByText("Lançamentos").length).toBeGreaterThanOrEqual(1);
   });
 
   it("shows loading state", () => {

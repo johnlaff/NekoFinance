@@ -42,8 +42,8 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
   }, testInfo) => {
     const nav = (name: string | RegExp) => page.getByRole("button", { name });
 
-    await nav("Transações").click();
-    await expect(nav("Transações")).toHaveAttribute("aria-current", "page");
+    await nav("Lançamentos").click();
+    await expect(nav("Lançamentos")).toHaveAttribute("aria-current", "page");
     await expect(page.getByText("Café + mercado")).toBeVisible();
     await expect(page.getByText("5 exibidas")).toBeVisible();
     // Multi-titular: o lançamento dividido mostra os OwnerChips dos titulares.
@@ -117,7 +117,7 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
   });
 
   test("novo lançamento: abre o form, preenche e lança", async ({ page }) => {
-    await page.getByRole("button", { name: "Transações" }).click();
+    await page.getByRole("button", { name: "Lançamentos" }).click();
     await page.getByRole("button", { name: "Novo lançamento" }).click();
 
     // Form visível com o seletor de tipo e os campos.
@@ -142,7 +142,7 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
   });
 
   test("transactions filter narrows by scope", async ({ page }) => {
-    await page.getByRole("button", { name: "Transações" }).click();
+    await page.getByRole("button", { name: "Lançamentos" }).click();
     await page.getByRole("tab", { name: "Crédito" }).click();
     await expect(page.getByText("1 exibida")).toBeVisible();
     await expect(page.getByText("Assinatura streaming")).toBeVisible();
@@ -151,7 +151,7 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
 
   test("ctrl/cmd+k focuses the header search", async ({ page }) => {
     await page.keyboard.press("ControlOrMeta+k");
-    await expect(page.getByLabel("Buscar transações")).toBeFocused();
+    await expect(page.getByLabel("Buscar lançamentos")).toBeFocused();
   });
 });
 

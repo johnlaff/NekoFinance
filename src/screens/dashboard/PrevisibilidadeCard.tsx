@@ -109,7 +109,7 @@ export function PrevisibilidadeCard({ forecast }: { forecast: Forecast }) {
           </>
         )}
         <p className="dash-predict__savings">
-          Poupança do ano: <b>{realizedRatePct}%</b> realizado, referência 20 a 30%
+          Economizado no ano: <b>{realizedRatePct}%</b> realizado, referência 20 a 30%
           {incompleteMonths.length > 0 && (
             <span className="dash-predict__muted">
               {" "}

@@ -34,7 +34,7 @@ export const SCREEN_META: Record<Screen, { title: string; crumb: string }> = {
   totais: { title: "Totais", crumb: "Cálculos do mês" },
   anuais: { title: "Visão anual", crumb: "O ano inteiro" },
   horizonte: { title: "Horizonte de saldos", crumb: "Projeção mês a mês" },
-  transactions: { title: "Transações", crumb: "Histórico completo" },
+  transactions: { title: "Lançamentos", crumb: "Histórico completo" },
   tags: { title: "Tags", crumb: "Rótulos do mês" },
   copilot: { title: "Mia", crumb: "Copiloto" },
   methodology: { title: "Metodologia", crumb: "Como o Neko calcula" },
@@ -46,9 +46,9 @@ const NAV_ITEMS: { key: Screen; label: string; icon: typeof LayoutDashboard }[] 
   { key: "totais", label: "Totais", icon: Calculator },
   { key: "anuais", label: "Anual", icon: TrendingUp },
   { key: "horizonte", label: "Horizonte", icon: CalendarRange },
-  { key: "transactions", label: "Transações", icon: Receipt },
+  { key: "transactions", label: "Lançamentos", icon: Receipt },
   { key: "tags", label: "Tags", icon: TagsIcon },
-  { key: "copilot", label: "Conhecer a Mia", icon: Sparkles },
+  { key: "copilot", label: "Mia", icon: Sparkles },
   { key: "methodology", label: "Metodologia", icon: BookOpen },
 ];
 
@@ -173,8 +173,8 @@ export function AppShell({
             <Search size={15} strokeWidth={1.75} />
             <input
               ref={searchRef}
-              aria-label="Buscar transações"
-              placeholder="Buscar transações…"
+              aria-label="Buscar lançamentos"
+              placeholder="Buscar lançamentos…"
               type="search"
               value={searchDraft}
               onChange={(e) => setSearchDraft(e.target.value)}

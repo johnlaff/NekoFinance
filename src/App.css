@@ -607,6 +607,17 @@ h3,
   color: var(--money-neg);
 }
 
+/* Separador de mês no Livro-razão: agrupa visualmente os lançamentos por mês (cabeçalho de grupo,
+   herda o estilo de th uppercase/micro/bg-subtle e gruda no topo ao rolar). */
+.txn-month-sep th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: var(--text-muted);
+  border-top: var(--bw-hair) solid var(--border);
+  padding-block: var(--space-2);
+}
+
 /* BalanceTrajectory / Sparkline — stroke-draw no mount + tooltip de hover */
 .nk-spark__line {
   stroke-dasharray: 1;

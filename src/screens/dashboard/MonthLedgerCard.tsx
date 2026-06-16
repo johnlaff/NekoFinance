@@ -81,7 +81,9 @@ export function MonthLedgerCard({ today }: { today: string }) {
                 <tr>
                   <th scope="col">Data</th>
                   <th scope="col">Entrada</th>
-                  <th scope="col">Saída</th>
+                  <th scope="col" title="Saídas fixas e a fatura do cartão no vencimento">
+                    Saída
+                  </th>
                   <th scope="col">Diário</th>
                   <th scope="col">Saldo</th>
                 </tr>
@@ -169,7 +171,12 @@ export function MonthLedgerCard({ today }: { today: string }) {
                   </td>
                 </tr>
                 <tr className="fc-foot">
-                  <th scope="row">Performance</th>
+                  <th
+                    scope="row"
+                    title="Performance do mês na planilha (entradas − saída total). Distinta da Performance do método em Totais, que também desconta economia e a previsão do diário restante."
+                  >
+                    Performance
+                  </th>
                   <td className="money" colSpan={3}>
                     <span
                       style={{
@@ -177,7 +184,7 @@ export function MonthLedgerCard({ today }: { today: string }) {
                         fontSize: "var(--fs-micro)",
                       }}
                     >
-                      entradas − saída total
+                      entradas − saída total (do mês)
                     </span>
                   </td>
                   <td className="money">

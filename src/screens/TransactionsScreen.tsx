@@ -16,7 +16,7 @@ import {
   type TagRef,
   type TransactionRow,
 } from "../lib/api";
-import { fmtDate } from "../lib/format";
+import { fmtDate, monthNamePtBR } from "../lib/format";
 import { Money } from "../design-system/components/Money";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { NewTransactionForm } from "./NewTransactionForm";
@@ -24,6 +24,15 @@ import { ConflictGate } from "../features/reconcile/ConflictGate";
 
 /** Explicit seam: server-side pagination/FTS5 search replaces this in a later slice. */
 const FETCH_LIMIT = 500;
+
+/** Descrição "fallback" gerada no import quando a célula não tinha nota (ex.: "Saída 2026-06-01"). */
+const GENERIC_DESC = /^(Entrada|Saída|Diário) \d{4}-\d{2}-\d{2}$/;
+
+/** Rótulo do separador de mês no Livro-razão: "Junho de 2026". */
+function monthSepLabel(ym: string): string {
+  const name = monthNamePtBR(`${ym}-01`);
+  return `${name.charAt(0).toUpperCase()}${name.slice(1)} de ${ym.slice(0, 4)}`;
+}
 
 export type TransactionScope = "all" | "credit" | "future";
 
@@ -237,15 +246,39 @@ export function TransactionsScreen({
                 </tr>
               </thead>
               <tbody>
-                {visible.map((t) => (
+                {visible.map((t, i) => {
+                  const ym = t.date.slice(0, 7);
+                  const showMonth = i === 0 || visible[i - 1]!.date.slice(0, 7) !== ym;
+                  const generic = !!t.description && GENERIC_DESC.test(t.description);
+                  return (
                   <Fragment key={t.id}>
+                    {showMonth && (
+                      <tr className="txn-month-sep">
+                        <th scope="colgroup" colSpan={5}>
+                          {monthSepLabel(ym)}
+                        </th>
+                      </tr>
+                    )}
                     <tr className={t.is_projection ? "projection" : ""}>
                       <td>{fmtDate(t.date)}</td>
                       <td>
                         <MovBadge kind={movKind(t)} showLabel size={16} />
                       </td>
                       <td>
-                        {t.description || "—"} <ProvBadge provenance={t.provenance} />
+                        {t.description ? (
+                          <span
+                            style={
+                              generic
+                                ? { color: "var(--text-faint)", fontStyle: "italic" }
+                                : undefined
+                            }
+                          >
+                            {t.description}
+                          </span>
+                        ) : (
+                          "—"
+                        )}{" "}
+                        <ProvBadge provenance={t.provenance} />
                         {t.owners.length >= 2 && (
                           <span
                             style={{
@@ -282,7 +315,7 @@ export function TransactionsScreen({
                         {t.type === "income" ? (
                           <Money cents={Math.abs(t.amount)} size="sm" sign="auto" />
                         ) : (
-                          <Money cents={-Math.abs(t.amount)} size="sm" sign="none" />
+                          <Money cents={-Math.abs(t.amount)} size="sm" sign="auto" />
                         )}
                       </td>
                     </tr>
@@ -321,7 +354,8 @@ export function TransactionsScreen({
                       </tr>
                     )}
                   </Fragment>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           )}

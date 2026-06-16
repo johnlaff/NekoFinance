@@ -26,7 +26,7 @@ export function ColchaoCard({ forecast }: { forecast: Forecast }) {
             className="dash-card__ic"
             aria-hidden="true"
           />
-          Adaptação ao método — seu colchão
+          Seu colchão
         </span>
         <PhaseBadge phase="calibrate" />
       </div>
@@ -50,7 +50,7 @@ export function ColchaoCard({ forecast }: { forecast: Forecast }) {
         <p className="dash-colchao__text">
           {colchaoCents >= 0
             ? "Você guarda o que sobra como colchão para cobrir os meses negativos sem sacar investimento. Adaptação válida do método."
-            : "Este ano você usou parte do colchão para cobrir meses negativos, exatamente o que o buffer existe para fazer. O saldo não furou."}
+            : "Este ano você usou parte do colchão para cobrir meses negativos, exatamente para o que o colchão existe. O saldo não furou."}
         </p>
         <Disclosure title="Próximo nível, quando quiser">
           <p>

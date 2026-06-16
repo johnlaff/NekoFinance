@@ -27,7 +27,7 @@ describe("DailyCheckinCard", () => {
     mockCommands({});
     render(<DailyCheckinCard summary={SUMMARY} onLogged={vi.fn()} />);
     // R$ 20,00 de R$ 50,00 → R$ 30,00 disponível.
-    expect(screen.getByText("Check-in de hoje")).toBeInTheDocument();
+    expect(screen.getByText("Diário de hoje")).toBeInTheDocument();
     expect(screen.getByText(/R\$\s?30,00 disponível/)).toBeInTheDocument();
   });
 
@@ -37,7 +37,10 @@ describe("DailyCheckinCard", () => {
     const onLogged = vi.fn();
     render(<DailyCheckinCard summary={SUMMARY} onLogged={onLogged} />);
 
-    await user.type(screen.getByLabelText("Gasto de hoje"), "12,30");
+    await user.type(
+      screen.getByLabelText("Gasto de hoje no débito, PIX ou dinheiro"),
+      "12,30",
+    );
     await user.click(screen.getByRole("button", { name: "Registrar" }));
 
     await waitFor(() => expect(onLogged).toHaveBeenCalledTimes(1));
