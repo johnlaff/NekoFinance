@@ -93,12 +93,12 @@ describe("App navigation", () => {
     render(<App />);
 
     const search = screen.getByLabelText("Buscar lançamentos");
-    await user.type(search, "mercado{Enter}");
+    await user.type(search, "variável{Enter}");
 
     await waitFor(() => {
-      expect(screen.getByLabelText("Filtrar por descrição")).toHaveValue("mercado");
+      expect(screen.getByLabelText("Filtrar por descrição")).toHaveValue("variável");
     });
-    expect(screen.getByText("Café + mercado")).toBeInTheDocument();
-    expect(screen.queryByText("Streaming anual")).not.toBeInTheDocument();
+    expect(screen.getByText("Despesa demo variável")).toBeInTheDocument();
+    expect(screen.queryByText("Compromisso demo no crédito")).not.toBeInTheDocument();
   });
 });

@@ -30,8 +30,8 @@ describe("CardChip", () => {
   });
 
   it('mostra "paga {titular}" em cartão adicional', () => {
-    render(<CardChip {...base} additional ownerLabel="Ana" />);
-    expect(screen.getByText("paga Ana")).toBeInTheDocument();
+    render(<CardChip {...base} additional ownerLabel="Pessoa A" />);
+    expect(screen.getByText("paga Pessoa A")).toBeInTheDocument();
   });
 
   it('mostra "adicional" sem ownerLabel', () => {

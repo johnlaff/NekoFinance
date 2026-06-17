@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { TransactionRow } from "./TransactionRow";
 
 describe("TransactionRow", () => {
@@ -22,7 +22,7 @@ describe("TransactionRow", () => {
     render(
       <TransactionRow
         date="01/06"
-        desc="Aluguel"
+        desc="Despesa fixa demo"
         amount={-200000}
         note="ref. junho"
         passthrough
@@ -33,7 +33,7 @@ describe("TransactionRow", () => {
   });
 
   it("sem lump não tem botão de expandir", () => {
-    render(<TransactionRow date="01/06" desc="Salário" amount={500000} />);
+    render(<TransactionRow date="01/06" desc="Receita demo" amount={500000} />);
     expect(
       screen.queryByRole("button", { name: /Abrir itens|Fechar itens/ }),
     ).not.toBeInTheDocument();
@@ -58,5 +58,18 @@ describe("TransactionRow", () => {
     expect(screen.getByText("Farmácia")).toBeInTheDocument();
     // A nota explicativa da preservação das notas.
     expect(screen.getByText(/Cada item é preservado/)).toBeInTheDocument();
+  });
+
+  it("permite ativar a linha clicável pelo teclado", async () => {
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    render(
+      <TransactionRow date="13/06" desc="Mercado" amount={-12000} onClick={onClick} />,
+    );
+
+    await user.tab();
+    await user.keyboard("{Enter}");
+
+    expect(onClick).toHaveBeenCalledTimes(1);
   });
 });

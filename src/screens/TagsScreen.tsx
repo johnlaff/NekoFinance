@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { createTag, tagTotalsForMonth } from "../lib/api";
 import { monthNamePtBR } from "../lib/format";
+import { safeErrorMessage } from "../lib/errors";
 import { useCommand, invalidateCommands } from "../lib/useCommand";
 import { Money } from "../design-system/components/Money";
 import { Button } from "../design-system/components/Button";
@@ -35,6 +36,8 @@ export function TagsScreen() {
   const [name, setName] = useState("");
   const [emoji, setEmoji] = useState("");
   const [color, setColor] = useState(PALETTE[0]!.value);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
   // Padrão WAI-ARIA radiogroup: roving tabindex (só o selecionado é tabbable) + setas navegam.
   const swatchRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const onSwatchKey = (e: React.KeyboardEvent, i: number) => {
@@ -58,13 +61,23 @@ export function TagsScreen() {
 
   async function submit() {
     const trimmed = name.trim();
-    if (!trimmed) return;
-    await createTag(trimmed, color, emoji.trim() || null, trimmed.startsWith("!"));
-    invalidateCommands();
-    setName("");
-    setEmoji("");
-    setOpen(false);
-    setReload((r) => r + 1);
+    if (!trimmed || saving) return;
+    setSaving(true);
+    setFormError(null);
+    try {
+      await createTag(trimmed, color, emoji.trim() || null, trimmed.startsWith("!"));
+      invalidateCommands();
+      setName("");
+      setEmoji("");
+      setOpen(false);
+      setReload((r) => r + 1);
+      setSaving(false);
+    } catch (e) {
+      setFormError(
+        safeErrorMessage(e, "Não foi possível criar a tag. Tente novamente."),
+      );
+      setSaving(false);
+    }
   }
 
   return (
@@ -132,9 +145,12 @@ export function TagsScreen() {
           <div style={{ display: "flex", gap: "var(--space-3)", flexWrap: "wrap" }}>
             <input
               aria-label="Nome da tag"
-              placeholder="Nome (ex.: Viagem, ! Pagar)"
+              placeholder="Nome (ex.: Categoria demo, ! Pagar)"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                setName(e.target.value);
+                setFormError(null);
+              }}
               style={inputStyle}
             />
             <input
@@ -177,8 +193,22 @@ export function TagsScreen() {
               />
             ))}
           </div>
+          {formError ? (
+            <p
+              role="alert"
+              style={{
+                color: "var(--danger-400)",
+                fontSize: "var(--fs-sm)",
+                margin: 0,
+              }}
+            >
+              {formError}
+            </p>
+          ) : null}
           <div>
-            <Button onClick={() => void submit()}>Criar tag</Button>
+            <Button onClick={() => void submit()} disabled={!name.trim() || saving}>
+              {saving ? "Criando…" : "Criar tag"}
+            </Button>
           </div>
         </div>
       ) : null}
@@ -188,7 +218,7 @@ export function TagsScreen() {
       ) : tags.length === 0 ? (
         <EmptyState
           title="Nenhuma tag ainda"
-          description='Crie tags livres (com emoji e cor) para marcar lançamentos, como "! Pagar", "Viagem", "Delivery".'
+          description='Crie tags livres (com emoji e cor) para marcar lançamentos, como "! Pagar", "Categoria demo A", "Categoria demo B".'
         />
       ) : (
         <ul

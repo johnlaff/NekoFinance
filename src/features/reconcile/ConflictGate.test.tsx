@@ -69,4 +69,23 @@ describe("ConflictGate", () => {
       expect(call?.[1]).toMatchObject({ id: "c1", choice: "sheet" });
     });
   });
+
+  it("mostra erro e mantém o conflito quando a resolução falha", async () => {
+    const user = userEvent.setup();
+    mockCommands({
+      get_import_conflicts: CONFLICTS,
+      resolve_import_conflict: new Error("db locked"),
+    });
+    render(<ConflictGate />);
+
+    await waitFor(() =>
+      expect(screen.getByText(/1 conflito de importação/)).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("button", { name: "Manter o meu" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Não foi possível resolver o conflito",
+    );
+    expect(screen.getByText(/1 conflito de importação/)).toBeInTheDocument();
+  });
 });

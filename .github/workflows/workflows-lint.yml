@@ -25,8 +25,8 @@ jobs:
 
       - name: actionlint
         env:
-          VERSION: 1.7.10
-          SHA256: f4c76b71db5755a713e6055cbb0857ed07e103e028bda117817660ebadb4386f
+          VERSION: 1.7.12
+          SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
         run: |
           curl -sSfL -o actionlint.tgz \
             "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz"

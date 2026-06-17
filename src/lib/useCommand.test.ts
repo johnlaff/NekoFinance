@@ -53,7 +53,7 @@ describe("useCommand", () => {
 
     const second = renderHook(() => useCommand("cmd_c", fetcher));
     await waitFor(() => {
-      expect(second.result.current.error).toMatch(/boom/);
+      expect(second.result.current.error).toMatch(/Não foi possível concluir/);
     });
     expect(second.result.current.data).toBe("ok"); // stale-while-error
   });
@@ -74,6 +74,39 @@ describe("useCommand", () => {
     expect(second.result.current.data).toBeUndefined();
     await waitFor(() => {
       expect(second.result.current.data).toBe(42);
+    });
+  });
+
+  it("does not keep previous command data visible after the key changes", async () => {
+    const fetchA = vi.fn().mockResolvedValue("june");
+    let resolveFetchB!: (value: string) => void;
+    const fetchB = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveFetchB = resolve;
+        }),
+    );
+    const { result, rerender } = renderHook(
+      ({ cmd, fetcher }: { cmd: string; fetcher: () => Promise<string> }) =>
+        useCommand(cmd, fetcher),
+      { initialProps: { cmd: "month:2026-06", fetcher: fetchA } },
+    );
+    await waitFor(() => {
+      expect(result.current.data).toBe("june");
+    });
+
+    rerender({ cmd: "month:2026-07", fetcher: fetchB });
+
+    await waitFor(() => {
+      expect(result.current.data).toBeUndefined();
+      expect(result.current.loading).toBe(true);
+    });
+
+    act(() => {
+      resolveFetchB("july");
+    });
+    await waitFor(() => {
+      expect(result.current.data).toBe("july");
     });
   });
 });

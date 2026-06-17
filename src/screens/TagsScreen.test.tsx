@@ -18,9 +18,9 @@ const TOTALS: TagTotal[] = [
   },
   {
     id: "v",
-    name: "Viagem",
+    name: "Categoria demo A",
     color: "var(--cat-sky)",
-    emoji: "✈️",
+    emoji: null,
     is_special: false,
     total_cents: 10000,
   },
@@ -32,8 +32,7 @@ describe("TagsScreen", () => {
     mockCommands({ tag_totals_for_month_cmd: TOTALS });
     render(<TagsScreen />);
     await waitFor(() => expect(screen.getByText("! Pagar")).toBeInTheDocument());
-    expect(screen.getByText("Viagem")).toBeInTheDocument();
-    expect(screen.getByText("✈️")).toBeInTheDocument();
+    expect(screen.getByText("Categoria demo A")).toBeInTheDocument();
     // Ordem: a especial vem antes (lista <li> na ordem do backend).
     const items = screen.getAllByRole("listitem");
     expect(items[0]).toHaveTextContent("! Pagar");
@@ -58,6 +57,28 @@ describe("TagsScreen", () => {
     await userEvent.click(screen.getByRole("button", { name: "Nova tag" }));
     expect(screen.getByLabelText("Nome da tag")).toBeInTheDocument();
     expect(screen.getByRole("radiogroup", { name: "Cor da tag" })).toBeInTheDocument();
+  });
+
+  it("mantém o formulário aberto e mostra erro quando a criação falha", async () => {
+    const user = userEvent.setup();
+    mockInvoke.mockReset();
+    mockCommands({
+      tag_totals_for_month_cmd: [],
+      create_tag_cmd: new Error("db locked"),
+    });
+    render(<TagsScreen />);
+    await waitFor(() =>
+      expect(screen.getByText("Nenhuma tag ainda")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Nova tag" }));
+    await user.type(screen.getByLabelText("Nome da tag"), "Categoria demo A");
+    await user.click(screen.getByRole("button", { name: "Criar tag" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(/O banco local está ocupado/);
+    });
+    expect(screen.getByLabelText("Nome da tag")).toHaveValue("Categoria demo A");
   });
 
   it("seletor de cor: padrão radiogroup (roving tabindex + setas)", async () => {

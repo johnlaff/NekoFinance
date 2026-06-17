@@ -3,6 +3,7 @@ import { CalendarCheck } from "lucide-react";
 import { Button } from "../../design-system/components/Button";
 import { Money } from "../../design-system/components/Money";
 import { createTransaction, type DashboardSummary } from "../../lib/api";
+import { safeErrorMessage } from "../../lib/errors";
 import { fmtBRL, parseBRLToCents } from "../../lib/format";
 import { invalidateCommands } from "../../lib/useCommand";
 
@@ -61,7 +62,9 @@ export function DailyCheckinCard({
       setBusy(false);
       onLogged();
     } catch (e) {
-      setError(String(e));
+      setError(
+        safeErrorMessage(e, "Não foi possível registrar o diário. Tente novamente."),
+      );
       setBusy(false);
     }
   }

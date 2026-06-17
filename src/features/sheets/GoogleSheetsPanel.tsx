@@ -31,6 +31,7 @@ import {
   type UserSpreadsheet,
 } from "../../lib/api";
 import { extractSpreadsheetId } from "../../lib/spreadsheet-url";
+import { safeErrorMessage } from "../../lib/errors";
 import { isMetricTab } from "../../lib/sheet-tabs";
 import { invalidateCommands } from "../../lib/useCommand";
 import { withLoading } from "../../lib/withLoading";
@@ -106,7 +107,7 @@ export function GoogleSheetsPanel({
         }
         setError("Tempo esgotado aguardando o consentimento. Tente conectar de novo.");
       } catch (e) {
-        setError(String(e));
+        setError(safeErrorMessage(e, "Não foi possível conectar ao Google."));
       }
     });
   };
@@ -121,7 +122,7 @@ export function GoogleSheetsPanel({
       setPreview(null);
       setMappings([]);
     } catch (e) {
-      setError(String(e));
+      setError(safeErrorMessage(e, "Não foi possível desconectar o Google."));
     }
   };
 
@@ -170,7 +171,7 @@ export function GoogleSheetsPanel({
         const list = await listSheetNames(id, GOOGLE_CLIENT_ID);
         setSheets(list);
       } catch (e) {
-        setError(String(e));
+        setError(safeErrorMessage(e, "Não foi possível listar as abas."));
       }
     });
   };
@@ -187,7 +188,7 @@ export function GoogleSheetsPanel({
         setMappings(maps);
         setStep("preview");
       } catch (e) {
-        setError(String(e));
+        setError(safeErrorMessage(e, "Não foi possível carregar a prévia da aba."));
       }
     });
   };
@@ -200,7 +201,7 @@ export function GoogleSheetsPanel({
         setMappings(maps);
         setStep("mapping");
       } catch (e) {
-        setError(String(e));
+        setError(safeErrorMessage(e, "Não foi possível detectar o layout da aba."));
       }
     });
   };
@@ -215,7 +216,7 @@ export function GoogleSheetsPanel({
         ),
       );
     } catch (e) {
-      setError(String(e));
+      setError(safeErrorMessage(e, "Não foi possível salvar o mapeamento."));
     }
   };
 
@@ -238,7 +239,7 @@ export function GoogleSheetsPanel({
             : `${count} transações importadas.`,
         );
       } catch (e) {
-        setError(String(e));
+        setError(safeErrorMessage(e, "Não foi possível importar a aba selecionada."));
       }
     });
   };
@@ -256,7 +257,7 @@ export function GoogleSheetsPanel({
             : `Economia importada: ${count} mês(es) (poupança → reserva).`,
         );
       } catch (e) {
-        setError(String(e));
+        setError(safeErrorMessage(e, "Não foi possível importar a aba Economia."));
       }
     });
   };

@@ -3,6 +3,7 @@ import { AlertCircle, CheckCircle2, FileUp, Loader2 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Button } from "../../design-system/components/Button";
 import { importLocalXlsx, isTauri } from "../../lib/api";
+import { safeErrorMessage } from "../../lib/errors";
 import { invalidateCommands } from "../../lib/useCommand";
 import { withLoading } from "../../lib/withLoading";
 
@@ -29,7 +30,7 @@ export function LocalXlsxImport() {
       if (typeof selected !== "string") return; // dialog dismissed
       file = selected;
     } catch (e) {
-      setError(String(e));
+      setError(safeErrorMessage(e, "Não foi possível selecionar o arquivo."));
       return;
     }
     await withLoading(setImporting, async () => {
@@ -39,7 +40,7 @@ export function LocalXlsxImport() {
         invalidateCommands(); // finance numbers changed — drop every cached screen
         setResult(summary);
       } catch (e) {
-        setError(String(e));
+        setError(safeErrorMessage(e, "Não foi possível importar o arquivo local."));
       }
     });
   };

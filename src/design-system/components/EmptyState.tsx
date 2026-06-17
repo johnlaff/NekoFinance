@@ -14,7 +14,7 @@ const CSS = `
 .nk-state__spin{width:30px;height:30px;border-radius:50%;border:2.5px solid var(--border);
   border-top-color:var(--primary);animation:nk-spin .8s linear infinite;}
 @keyframes nk-spin{to{transform:rotate(360deg)}}
-@media (prefers-reduced-motion:reduce){.nk-state__spin{animation-duration:2s;}}
+@media (prefers-reduced-motion:reduce){.nk-state__spin{animation:none;}}
 .nk-skel{display:flex;flex-direction:column;gap:9px;width:100%;padding:16px;}
 .nk-skel__row{height:13px;border-radius:5px;background:linear-gradient(90deg,var(--surface-2) 25%,var(--surface-hover) 37%,var(--surface-2) 63%);
   background-size:400% 100%;animation:nk-shimmer 1.4s ease infinite;}

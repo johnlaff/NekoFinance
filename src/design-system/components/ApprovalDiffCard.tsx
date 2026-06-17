@@ -28,6 +28,10 @@ const PILL: Record<DiffStatus, { label: string; bg: string; color: string }> = {
   rejected: { label: "Recusado", bg: "var(--danger-tint)", color: "var(--danger-400)" },
 };
 
+function changeKey(change: DiffChange): string {
+  return `${change.field}:${change.before ?? ""}:${change.after}`;
+}
+
 interface ApprovalDiffCardProps {
   title?: string;
   sheet: string;
@@ -150,7 +154,7 @@ export function ApprovalDiffCard({
       <div style={{ padding: "6px 16px 12px" }}>
         {changes.map((c, i) => (
           <div
-            key={i}
+            key={changeKey(c)}
             style={{
               display: "grid",
               gridTemplateColumns: "104px 1fr",

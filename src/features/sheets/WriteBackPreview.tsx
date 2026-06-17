@@ -13,6 +13,7 @@ import {
   writeBackEnabled,
   type CellWrite,
 } from "../../lib/api";
+import { safeErrorMessage } from "../../lib/errors";
 import { withLoading } from "../../lib/withLoading";
 
 const KIND_LABEL: Record<string, string> = {
@@ -78,7 +79,7 @@ export function WriteBackPreview({
           }
         }
       } catch (e) {
-        setError(String(e));
+        setError(safeErrorMessage(e, "Não foi possível pré-visualizar o write-back."));
       }
     });
   }
@@ -90,7 +91,7 @@ export function WriteBackPreview({
       setApplyMsg(`Enviado: ${n} célula(s) atualizada(s).`);
     } catch (e) {
       // Flag desligada → mensagem clara, nada foi escrito.
-      setApplyMsg(String(e));
+      setApplyMsg(safeErrorMessage(e, "Write-back bloqueado. Nada foi escrito."));
     }
   }
 
@@ -100,7 +101,9 @@ export function WriteBackPreview({
       const n = await applyEconomiaWriteBack(spreadsheetId, year, clientId);
       setEconApplyMsg(`Enviado: ${n} célula(s) da aba Economia.`);
     } catch (e) {
-      setEconApplyMsg(String(e));
+      setEconApplyMsg(
+        safeErrorMessage(e, "Write-back da Economia bloqueado. Nada foi escrito."),
+      );
     }
   }
 

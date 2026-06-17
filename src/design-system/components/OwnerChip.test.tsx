@@ -13,8 +13,8 @@ describe("OwnerChip", () => {
   });
 
   it("sobrescreve com o nome real", () => {
-    render(<OwnerChip who="partner" name="Ana" />);
-    expect(screen.getByText("Ana")).toBeInTheDocument();
+    render(<OwnerChip who="partner" name="Pessoa A" />);
+    expect(screen.getByText("Pessoa A")).toBeInTheDocument();
     expect(screen.queryByText("Parceiro(a)")).not.toBeInTheDocument();
   });
 

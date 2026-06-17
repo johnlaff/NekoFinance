@@ -33,6 +33,7 @@ function fmtValue(field: string, value: string): string {
 export function ConflictGate({ onResolved }: { onResolved?: () => void }) {
   const [conflicts, setConflicts] = useState<ImportConflict[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   // Guarda de unmount: não chama setState se o componente saiu antes do fetch resolver.
   useEffect(() => {
@@ -47,12 +48,15 @@ export function ConflictGate({ onResolved }: { onResolved?: () => void }) {
 
   async function resolve(c: ImportConflict, choice: "sheet" | "local") {
     setBusy(c.id);
+    setError(null);
     try {
       await resolveImportConflict(c.id, choice);
       invalidateCommands();
       setConflicts((cur) => cur.filter((x) => x.id !== c.id));
       onResolved?.();
-    } finally {
+      setBusy(null);
+    } catch {
+      setError("Não foi possível resolver o conflito. Tente novamente.");
       setBusy(null);
     }
   }
@@ -87,6 +91,11 @@ export function ConflictGate({ onResolved }: { onResolved?: () => void }) {
           Você editou e a planilha também mudou. Escolha qual vale.
         </span>
       </header>
+      {error && (
+        <p role="alert" style={{ margin: 0, color: "var(--danger-400)" }}>
+          {error}
+        </p>
+      )}
 
       {conflicts.map((c) => {
         const label = FIELD_LABEL[c.field] ?? c.field;

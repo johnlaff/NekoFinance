@@ -77,7 +77,9 @@ describe("SettingsScreen", () => {
     await user.click(screen.getByRole("button", { name: /Escolher arquivo/ }));
 
     await waitFor(() => {
-      expect(screen.getByText(/corrupt file/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/Não foi possível importar o arquivo local/),
+      ).toBeInTheDocument();
     });
   });
 

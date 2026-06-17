@@ -1,5 +1,3 @@
-import { useState } from "react";
-
 interface Option {
   value: string;
   label: string;
@@ -22,10 +20,7 @@ export function SegmentedControl({
   className = "",
   disabled = false,
 }: SegmentedControlProps) {
-  const [active, setActive] = useState(value);
-
   const handleClick = (v: string) => {
-    setActive(v);
     onChange(v);
   };
 
@@ -42,7 +37,7 @@ export function SegmentedControl({
       }}
     >
       {options.map((opt) => {
-        const isActive = active === opt.value;
+        const isActive = value === opt.value;
         return (
           <button
             key={opt.value}
