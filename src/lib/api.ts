@@ -8,11 +8,20 @@ export const GOOGLE_CLIENT_ID =
   (import.meta.env["VITE_GOOGLE_CLIENT_ID"] as string) ?? "";
 
 /**
- * O client secret de app desktop, quando exigido pelo Google, é resolvido no backend Rust via
- * `GOOGLE_CLIENT_SECRET` (sem `VITE_`). Não lemos `VITE_GOOGLE_CLIENT_SECRET` aqui para evitar
- * empacotar esse valor no bundle JS/devtools ou trafegar o secret por IPC sem necessidade.
+ * Client secret do OAuth, repassado ao backend (que já o usa no refresh do token).
+ *
+ * Para um app DESKTOP o "secret" do Google NÃO é confidencial — ele inevitavelmente acompanha o app
+ * instalado (a própria doc do Google assume isso). E este client (tipo "Web application") EXIGE o
+ * `client_secret` no refresh: sem ele o refresh falha com `client_secret is missing` e a conexão cai
+ * em ~1h, forçando reconexão constante. Antes passávamos `null` (confiando num env `GOOGLE_CLIENT_SECRET`
+ * do processo Rust, que NÃO existe no .exe em runtime) — por isso o refresh nunca funcionava.
+ *
+ * Agora lemos do build (`VITE_GOOGLE_CLIENT_SECRET`, do `.env` local gitignored) — `null` quando
+ * ausente (cai no fallback do backend). Alternativa sem secret: trocar para um OAuth client tipo
+ * "Desktop app", cujo refresh usa só PKCE.
  */
-const clientSecretOrNull = null;
+const clientSecretOrNull =
+  (import.meta.env["VITE_GOOGLE_CLIENT_SECRET"] as string) || null;
 
 export type AuthStatus = "connected" | "expired" | "disconnected" | "loading";
 
