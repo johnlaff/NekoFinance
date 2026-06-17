@@ -89,7 +89,9 @@ export function ApprovalDiffCard({
 }: ApprovalDiffCardProps) {
   const pill = PILL[status];
   return (
-    <section
+    // <article> (não-landmark) com nome acessível: vários cards num write-back grande não poluem a
+    // navegação por landmarks (uma <section> nomeada viraria uma region por card).
+    <article
       className={className}
       aria-label={`${title} — ${pill.label}`}
       style={{
@@ -237,6 +239,6 @@ export function ApprovalDiffCard({
           {actions}
         </div>
       ) : null}
-    </section>
+    </article>
   );
 }

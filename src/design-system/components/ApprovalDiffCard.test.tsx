@@ -23,12 +23,12 @@ describe("ApprovalDiffCard", () => {
     expect(screen.getByText(label)).toBeInTheDocument();
   });
 
-  it("expõe uma região com aria-label de título + status", () => {
+  it("expõe um article (não-landmark) com aria-label de título + status", () => {
     render(
       <ApprovalDiffCard sheet="2026" title="Atualizar fatura" changes={changes} />,
     );
     expect(
-      screen.getByRole("region", { name: "Atualizar fatura — Precisa de aprovação" }),
+      screen.getByRole("article", { name: "Atualizar fatura — Precisa de aprovação" }),
     ).toBeInTheDocument();
   });
 
