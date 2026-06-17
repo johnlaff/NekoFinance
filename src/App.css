@@ -1186,6 +1186,34 @@ h3,
   gap: var(--space-3);
 }
 
+/* Atalho "Re-sincronizar": lembra a última planilha/aba importada (sem re-buscar nem re-colar). */
+.gs-resync {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--primary-quiet);
+  border: var(--bw-hair) solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.gs-resync__info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.gs-resync__label {
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.gs-resync__name {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+
 .gs-label {
   font-size: var(--fs-micro);
   font-weight: var(--fw-bold);
@@ -2074,15 +2102,11 @@ h3,
   flex: none;
 }
 
+/* Ledger do dashboard flui na página (scroll ÚNICO): sem max-height/overflow-y próprio — o segundo
+   scrollbar aninhado (e o sticky dentro dele) era a origem da barra dupla. Só overflow-x para telas
+   estreitas. */
 .fc-scroll {
-  max-height: 480px;
-  overflow: auto;
-}
-
-.fc-table thead th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
+  overflow-x: auto;
 }
 
 .fc-table th:not(:first-child),
@@ -2103,12 +2127,8 @@ h3,
   color: var(--primary);
 }
 
-/* Rodapé do mês (Total / Saída Total / Performance) — destacado e fixo no rodapé. */
-.fc-table tfoot {
-  position: sticky;
-  bottom: 0;
-  z-index: 1;
-}
+/* Rodapé do mês (Total / Saída Total / Performance) — destacado, ao fim do ledger (sem sticky:
+   a tabela flui no scroll da página). */
 .fc-foot td,
 .fc-foot th {
   background: var(--bg-subtle);

@@ -17,12 +17,14 @@ import {
   detectSheetLayout,
   disconnectGoogle,
   fetchSheetPreview,
+  getAppSetting,
   getSheetMappings,
   importSheetData,
   importEconomiaSheet,
   listSheetNames,
   listUserSpreadsheets,
   saveSheetMapping,
+  setAppSetting,
   startOAuthFlow,
   type AuthStatus,
   type SheetInfo,
@@ -52,6 +54,15 @@ function fieldLabelPt(field: string): string {
 
 type Step = "connect" | "pick" | "preview" | "mapping";
 
+/** Última planilha/aba importada (persistida em app_setting) para re-sincronizar em 1 clique. */
+interface LastImport {
+  spreadsheetId: string;
+  sheetName: string;
+  label: string;
+}
+
+const LAST_IMPORT_KEY = "sheets_last_import";
+
 // Estado do fluxo de import (conectar → escolher → prévia → mapear) agrupado num reducer, em vez de
 // doze useState relacionados. Toda a lógica vive no hook `useSheetImport`; as views são puras.
 interface SheetState {
@@ -67,6 +78,8 @@ interface SheetState {
   importResult: string | null;
   error: string | null;
   step: Step;
+  /** Carregado de app_setting no mount; alimenta o atalho "Re-sincronizar". */
+  lastImport: LastImport | null;
 }
 
 const initialSheetState: SheetState = {
@@ -82,6 +95,7 @@ const initialSheetState: SheetState = {
   importResult: null,
   error: null,
   step: "connect",
+  lastImport: null,
 };
 
 type SheetAction =
@@ -114,6 +128,7 @@ interface SheetImport {
   handleToggleMapping: (mapping: SheetMappingEntry) => Promise<void>;
   handleImport: () => Promise<void>;
   handleImportEconomia: () => Promise<void>;
+  handleResync: () => Promise<void>;
 }
 
 /** Estado + ações do import do Sheets. Hook (não componente) → toda a lógica fica fora da árvore. */
@@ -270,22 +285,40 @@ function useSheetImport(
     }
   };
 
-  const handleImport = async () => {
+  // Lembra a última planilha/aba importada para o atalho "Re-sincronizar" (sem re-buscar/re-colar).
+  const persistLastImport = async (spreadsheetId: string, sheetName: string) => {
+    const label =
+      state.spreadsheets.find((s) => s.id === spreadsheetId)?.name ??
+      (state.lastImport?.spreadsheetId === spreadsheetId
+        ? state.lastImport.label
+        : sheetName);
+    const last: LastImport = { spreadsheetId, sheetName, label };
+    set({ lastImport: last });
+    try {
+      await setAppSetting(LAST_IMPORT_KEY, JSON.stringify(last));
+    } catch {
+      // Best-effort: o atalho some até a próxima importação, sem quebrar o import.
+    }
+  };
+
+  const runImport = async (spreadsheetId: string, sheetName: string) => {
+    if (!spreadsheetId || !sheetName) return;
     set({ importResult: null, error: null });
     await withLoading(setImporting, async () => {
       try {
         const profileId = crypto.randomUUID();
         const count = await importSheetData(
-          state.selectedSpreadsheet,
-          state.selectedSheet,
+          spreadsheetId,
+          sheetName,
           profileId,
           GOOGLE_CLIENT_ID,
         );
         invalidateCommands(); // finance numbers changed — drop every cached screen
+        await persistLastImport(spreadsheetId, sheetName);
         set({
           importResult:
             count === 0
-              ? "Dados já importados antes (linhas repetidas são ignoradas)."
+              ? "Tudo em dia: nenhuma linha nova (as já importadas são ignoradas)."
               : `${count} transações importadas.`,
         });
       } catch (e) {
@@ -294,6 +327,14 @@ function useSheetImport(
         });
       }
     });
+  };
+
+  const handleImport = () => runImport(state.selectedSpreadsheet, state.selectedSheet);
+
+  // Re-sincroniza a última planilha/aba já importada, sem re-buscar nem re-colar a URL.
+  const handleResync = async () => {
+    if (!state.lastImport) return;
+    await runImport(state.lastImport.spreadsheetId, state.lastImport.sheetName);
   };
 
   const handleImportEconomia = async () => {
@@ -338,6 +379,28 @@ function useSheetImport(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authStatus, effectiveStep]);
 
+  // Carrega a última importação (planilha/aba) persistida para habilitar o "Re-sincronizar". `dispatch`
+  // é estável (useReducer), então o effect roda só no mount.
+  useEffect(() => {
+    let alive = true;
+    getAppSetting(LAST_IMPORT_KEY)
+      .then((raw) => {
+        if (!alive || !raw) return;
+        try {
+          const parsed = JSON.parse(raw) as LastImport;
+          if (parsed?.spreadsheetId && parsed?.sheetName) {
+            dispatch({ type: "set", patch: { lastImport: parsed } });
+          }
+        } catch {
+          // app_setting corrompido → ignora o atalho.
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   return {
     state,
     effectiveStep,
@@ -350,6 +413,7 @@ function useSheetImport(
     handleToggleMapping,
     handleImport,
     handleImportEconomia,
+    handleResync,
   };
 }
 
@@ -358,11 +422,13 @@ function PickStep({
   onSpreadsheetSelect,
   onPastedUrl,
   onSheetSelect,
+  onResync,
 }: {
   state: SheetState;
   onSpreadsheetSelect: (id: string) => void;
   onPastedUrl: (value: string) => void;
   onSheetSelect: (name: string) => void;
+  onResync: () => void;
 }) {
   const {
     spreadsheets,
@@ -371,9 +437,39 @@ function PickStep({
     sheets,
     selectedSheet,
     loading,
+    importing,
+    importResult,
+    lastImport,
   } = state;
   return (
     <div className="gs-step">
+      {lastImport && (
+        <div className="gs-resync">
+          <div className="gs-resync__info">
+            <span className="gs-resync__label">Última importação</span>
+            <span className="gs-resync__name">
+              {lastImport.label} · aba {lastImport.sheetName}
+            </span>
+          </div>
+          <Button variant="primary" onClick={onResync} disabled={importing || loading}>
+            {importing ? (
+              <Loader2 size={14} className="gs-spin" strokeWidth={1.75} />
+            ) : (
+              <RefreshCw size={14} strokeWidth={1.75} />
+            )}
+            {importing ? "Sincronizando…" : "Re-sincronizar"}
+          </Button>
+          {importResult && (
+            <output className="gs-result gs-result--ok">
+              <CheckCircle2 size={14} strokeWidth={1.75} />
+              {importResult}
+            </output>
+          )}
+          <span className="gs-label" style={{ marginTop: "var(--space-2)" }}>
+            Ou importar outra planilha/aba
+          </span>
+        </div>
+      )}
       {spreadsheets.length > 0 && (
         <>
           <label className="gs-label" htmlFor="gs-spreadsheet">
@@ -687,6 +783,7 @@ export function GoogleSheetsPanel({
           onSpreadsheetSelect={(id) => void sheet.handleSpreadsheetSelect(id)}
           onPastedUrl={(value) => void sheet.handlePastedUrl(value)}
           onSheetSelect={(name) => void sheet.handleSheetSelect(name)}
+          onResync={() => void sheet.handleResync()}
         />
       )}
 
