@@ -3,6 +3,7 @@ import {
   AlertCircle,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
   Download,
   FileSpreadsheet,
   Link2,
@@ -54,10 +55,9 @@ function fieldLabelPt(field: string): string {
 
 type Step = "connect" | "pick" | "preview" | "mapping";
 
-/** Última planilha/aba importada (persistida em app_setting) para re-sincronizar em 1 clique. */
+/** Última PLANILHA importada (persistida em app_setting). Re-sincronizar = re-importa todas as abas. */
 interface LastImport {
   spreadsheetId: string;
-  sheetName: string;
   label: string;
 }
 
@@ -138,7 +138,9 @@ interface SheetImport {
   handleToggleMapping: (mapping: SheetMappingEntry) => Promise<void>;
   handleImport: () => Promise<void>;
   handleImportEconomia: () => Promise<void>;
+  handleImportAll: () => Promise<void>;
   handleResync: () => Promise<void>;
+  handleBackToPick: () => void;
 }
 
 /** Estado + ações do import do Sheets. Hook (não componente) → toda a lógica fica fora da árvore. */
@@ -294,14 +296,14 @@ function useSheetImport(
     }
   };
 
-  // Lembra a última planilha/aba importada para o atalho "Re-sincronizar" (sem re-buscar/re-colar).
-  const persistLastImport = async (spreadsheetId: string, sheetName: string) => {
+  // Lembra a última PLANILHA importada para o "Re-sincronizar" (re-importa todas as abas dela).
+  const persistLastImport = async (spreadsheetId: string) => {
     const label =
       state.spreadsheets.find((s) => s.id === spreadsheetId)?.name ??
       (state.lastImport?.spreadsheetId === spreadsheetId
         ? state.lastImport.label
-        : sheetName);
-    const last: LastImport = { spreadsheetId, sheetName, label };
+        : "sua planilha");
+    const last: LastImport = { spreadsheetId, label };
     set({ lastImport: last });
     try {
       await setAppSetting(LAST_IMPORT_KEY, JSON.stringify(last));
@@ -323,7 +325,7 @@ function useSheetImport(
           GOOGLE_CLIENT_ID,
         );
         invalidateCommands(); // finance numbers changed — drop every cached screen
-        await persistLastImport(spreadsheetId, sheetName);
+        await persistLastImport(spreadsheetId);
         set({
           importResult:
             count === 0
@@ -338,11 +340,74 @@ function useSheetImport(
 
   const handleImport = () => runImport(state.selectedSpreadsheet, state.selectedSheet);
 
-  // Re-sincroniza a última planilha/aba já importada, sem re-buscar nem re-colar a URL.
+  // Importa TODAS as abas importáveis da planilha (anos → lançamentos; Economia → poupança;
+  // métricas sem importador são puladas). Usado pelo "Importar todas as abas" e pelo "Re-sincronizar"
+  // (que agora vale para a planilha inteira). Lista as abas antes, se preciso (ex.: re-sync no mount).
+  const importAllTabs = async (spreadsheetId: string) => {
+    if (!spreadsheetId) return;
+    set({ importResult: null, error: null, errorDetail: null });
+    await withLoading(setImporting, async () => {
+      try {
+        let sheets = state.sheets;
+        if (sheets.length === 0 || state.selectedSpreadsheet !== spreadsheetId) {
+          sheets = await listSheetNames(spreadsheetId, GOOGLE_CLIENT_ID);
+          set({ selectedSpreadsheet: spreadsheetId, sheets });
+        }
+        const profileId = crypto.randomUUID();
+        // Import SEQUENCIAL de propósito: uma escrita SQLite por vez (paralelizar daria "database is
+        // locked") e ordem estável. Recursão em vez de await-dentro-de-loop.
+        interface Acc {
+          txns: number;
+          econ: number;
+          years: string[];
+        }
+        const importFrom = async (i: number, acc: Acc): Promise<Acc> => {
+          if (i >= sheets.length) return acc;
+          const s = sheets[i]!;
+          if (isEconomiaTab(s.title)) {
+            acc.econ += await importEconomiaSheet(spreadsheetId, GOOGLE_CLIENT_ID);
+          } else if (!isMetricTab(s.title)) {
+            acc.txns += await importSheetData(
+              spreadsheetId,
+              s.title,
+              profileId,
+              GOOGLE_CLIENT_ID,
+            );
+            acc.years.push(s.title);
+          }
+          return importFrom(i + 1, acc);
+        };
+        const { txns, econ, years } = await importFrom(0, {
+          txns: 0,
+          econ: 0,
+          years: [],
+        });
+        invalidateCommands();
+        await persistLastImport(spreadsheetId);
+        const parts: string[] = [];
+        if (years.length > 0) parts.push(`${years.join(", ")} (${txns} transações)`);
+        if (econ > 0) parts.push(`Economia (${econ} mês(es))`);
+        set({
+          importResult: parts.length
+            ? `Importado: ${parts.join(" + ")}.`
+            : "Tudo em dia: nenhuma linha nova.",
+        });
+      } catch (e) {
+        fail(e, "Não foi possível importar as abas.");
+      }
+    });
+  };
+
+  const handleImportAll = () => importAllTabs(state.selectedSpreadsheet);
+
+  // Re-sincroniza a PLANILHA INTEIRA já importada (todas as abas), sem re-buscar nem re-colar a URL.
   const handleResync = async () => {
     if (!state.lastImport) return;
-    await runImport(state.lastImport.spreadsheetId, state.lastImport.sheetName);
+    await importAllTabs(state.lastImport.spreadsheetId);
   };
+
+  // Volta à lista de abas (do preview/mapeamento) para importar outra aba sem refazer a busca.
+  const handleBackToPick = () => set({ step: "pick" });
 
   const handleImportEconomia = async () => {
     set({ importResult: null, error: null, errorDetail: null });
@@ -353,6 +418,7 @@ function useSheetImport(
           GOOGLE_CLIENT_ID,
         );
         invalidateCommands();
+        await persistLastImport(state.selectedSpreadsheet);
         set({
           importResult:
             count === 0
@@ -393,8 +459,16 @@ function useSheetImport(
         if (!alive || !raw) return;
         try {
           const parsed = JSON.parse(raw) as LastImport;
-          if (parsed?.spreadsheetId && parsed?.sheetName) {
-            dispatch({ type: "set", patch: { lastImport: parsed } });
+          if (parsed?.spreadsheetId) {
+            dispatch({
+              type: "set",
+              patch: {
+                lastImport: {
+                  spreadsheetId: parsed.spreadsheetId,
+                  label: parsed.label || "sua planilha",
+                },
+              },
+            });
           }
         } catch {
           // app_setting corrompido → ignora o atalho.
@@ -418,7 +492,9 @@ function useSheetImport(
     handleToggleMapping,
     handleImport,
     handleImportEconomia,
+    handleImportAll,
     handleResync,
+    handleBackToPick,
   };
 }
 
@@ -429,6 +505,7 @@ function PickStep({
   onSheetSelect,
   onResync,
   onImportEconomia,
+  onImportAll,
 }: {
   state: SheetState;
   onSpreadsheetSelect: (id: string) => void;
@@ -436,6 +513,7 @@ function PickStep({
   onSheetSelect: (name: string) => void;
   onResync: () => void;
   onImportEconomia: () => void;
+  onImportAll: () => void;
 }) {
   const {
     spreadsheets,
@@ -453,10 +531,8 @@ function PickStep({
       {lastImport && (
         <div className="gs-resync">
           <div className="gs-resync__info">
-            <span className="gs-resync__label">Última importação</span>
-            <span className="gs-resync__name">
-              {lastImport.label} · aba {lastImport.sheetName}
-            </span>
+            <span className="gs-resync__label">Última planilha</span>
+            <span className="gs-resync__name">{lastImport.label}</span>
           </div>
           <Button variant="primary" onClick={onResync} disabled={importing || loading}>
             {importing ? (
@@ -555,6 +631,18 @@ function PickStep({
             Aba-ano (2025, 2026…) importa lançamentos; <strong>Economia</strong> importa
             a poupança por mês.
           </p>
+          <Button
+            variant="primary"
+            onClick={onImportAll}
+            disabled={loading || importing}
+          >
+            {importing ? (
+              <Loader2 size={14} className="gs-spin" strokeWidth={1.75} />
+            ) : (
+              <Download size={14} strokeWidth={1.75} />
+            )}
+            {importing ? "Importando…" : "Importar todas as abas"}
+          </Button>
         </>
       )}
 
@@ -578,19 +666,22 @@ function PreviewStep({
   state,
   onDetectLayout,
   onImport,
-  onImportEconomia,
+  onBack,
 }: {
   state: SheetState;
   onDetectLayout: () => void;
   onImport: () => void;
-  onImportEconomia: () => void;
+  onBack: () => void;
 }) {
-  const { preview, selectedSheet, selectedSpreadsheet, importing, importResult } =
-    state;
+  const { preview, selectedSheet, importing, importResult } = state;
   if (!preview) return null;
   return (
     <div className="gs-step">
       <div className="gs-preview-head">
+        <Button variant="ghost" size="sm" onClick={onBack} disabled={importing}>
+          <ChevronLeft size={14} strokeWidth={1.75} />
+          Abas
+        </Button>
         <span className="gs-preview-title">
           {selectedSheet} — {preview.total_rows} linhas
         </span>
@@ -625,14 +716,7 @@ function PreviewStep({
         ) : (
           <Download size={14} strokeWidth={1.75} />
         )}
-        {importing ? "Importando…" : "Importar dados"}
-      </Button>
-      <Button
-        variant="secondary"
-        onClick={onImportEconomia}
-        disabled={importing || !selectedSpreadsheet}
-      >
-        Importar aba Economia (poupança por mês)
+        {importing ? "Importando…" : `Importar ${selectedSheet}`}
       </Button>
       {importResult && (
         <output className="gs-result gs-result--ok">
@@ -648,16 +732,22 @@ function MappingStep({
   state,
   onToggle,
   onImport,
+  onBack,
 }: {
   state: SheetState;
   onToggle: (mapping: SheetMappingEntry) => void;
   onImport: () => void;
+  onBack: () => void;
 }) {
   const { mappings, importing, importResult, selectedSpreadsheet, selectedSheet } =
     state;
   return (
     <div className="gs-step">
       <div className="gs-mapping-head">
+        <Button variant="ghost" size="sm" onClick={onBack} disabled={importing}>
+          <ChevronLeft size={14} strokeWidth={1.75} />
+          Abas
+        </Button>
         <span className="gs-mapping-title">Mapeamento de colunas</span>
         <span className="gs-mapping-sub">Ajuste quais colunas importam dados</span>
       </div>
@@ -814,6 +904,7 @@ export function GoogleSheetsPanel({
           onSheetSelect={(name) => void sheet.handleSheetSelect(name)}
           onResync={() => void sheet.handleResync()}
           onImportEconomia={() => void sheet.handleImportEconomia()}
+          onImportAll={() => void sheet.handleImportAll()}
         />
       )}
 
@@ -822,7 +913,7 @@ export function GoogleSheetsPanel({
           state={state}
           onDetectLayout={() => void sheet.handleDetectLayout()}
           onImport={() => void sheet.handleImport()}
-          onImportEconomia={() => void sheet.handleImportEconomia()}
+          onBack={() => sheet.handleBackToPick()}
         />
       )}
 
@@ -831,6 +922,7 @@ export function GoogleSheetsPanel({
           state={state}
           onToggle={(m) => void sheet.handleToggleMapping(m)}
           onImport={() => void sheet.handleImport()}
+          onBack={() => sheet.handleBackToPick()}
         />
       )}
 
