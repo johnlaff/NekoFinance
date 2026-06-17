@@ -621,7 +621,6 @@ function PickStep({
                 >
                   <FileSpreadsheet size={14} strokeWidth={1.75} />
                   {s.title}
-                  {economia && <span className="gs-sheet-btn__tag">poupança</span>}
                   {metric && <span className="gs-sheet-btn__tag">métricas</span>}
                 </button>
               );
