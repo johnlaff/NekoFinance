@@ -77,9 +77,18 @@ interface SheetState {
   importing: boolean;
   importResult: string | null;
   error: string | null;
+  /** Erro técnico cru (do backend) — mostrado em "Detalhes técnicos" para suporte/diagnóstico. */
+  errorDetail: string | null;
   step: Step;
   /** Carregado de app_setting no mount; alimenta o atalho "Re-sincronizar". */
   lastImport: LastImport | null;
+}
+
+/** Texto cru do erro do backend (o `invoke` rejeita com a String de erro do Rust). */
+function detailOf(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === "string") return e;
+  return String(e);
 }
 
 const initialSheetState: SheetState = {
@@ -94,6 +103,7 @@ const initialSheetState: SheetState = {
   importing: false,
   importResult: null,
   error: null,
+  errorDetail: null,
   step: "connect",
   lastImport: null,
 };
@@ -140,6 +150,9 @@ function useSheetImport(
   const set = (patch: Partial<SheetState>) => dispatch({ type: "set", patch });
   const setLoading = (v: boolean) => set({ loading: v });
   const setImporting = (v: boolean) => set({ importing: v });
+  // Erro amigável (mapeado) + o detalhe técnico cru, para diagnóstico/suporte.
+  const fail = (e: unknown, fallback: string) =>
+    set({ error: safeErrorMessage(e, fallback), errorDetail: detailOf(e) });
 
   // App aberto já conectado (token persistido): o passo efetivo é a escolha de planilha — sem isso o
   // painel fica preso em "Conectar Google" para sempre, porque o step só avançava dentro do
@@ -172,7 +185,7 @@ function useSheetImport(
       });
       return;
     }
-    set({ error: null });
+    set({ error: null, errorDetail: null });
     await withLoading(setLoading, async () => {
       try {
         await startOAuthFlow(GOOGLE_CLIENT_ID);
@@ -199,7 +212,7 @@ function useSheetImport(
         };
         await pollUntilConnected(0);
       } catch (e) {
-        set({ error: safeErrorMessage(e, "Não foi possível conectar ao Google.") });
+        fail(e, "Não foi possível conectar ao Google.");
       }
     });
   };
@@ -216,7 +229,7 @@ function useSheetImport(
         mappings: [],
       });
     } catch (e) {
-      set({ error: safeErrorMessage(e, "Não foi possível desconectar o Google.") });
+      fail(e, "Não foi possível desconectar o Google.");
     }
   };
 
@@ -235,7 +248,7 @@ function useSheetImport(
         const list = await listSheetNames(id, GOOGLE_CLIENT_ID);
         set({ sheets: list });
       } catch (e) {
-        set({ error: safeErrorMessage(e, "Não foi possível listar as abas.") });
+        fail(e, "Não foi possível listar as abas.");
       }
     });
   };
@@ -250,9 +263,7 @@ function useSheetImport(
         ]);
         set({ preview: prev, mappings: maps, step: "preview" });
       } catch (e) {
-        set({
-          error: safeErrorMessage(e, "Não foi possível carregar a prévia da aba."),
-        });
+        fail(e, "Não foi possível carregar a prévia da aba.");
       }
     });
   };
@@ -268,9 +279,7 @@ function useSheetImport(
         const maps = await getSheetMappings(state.selectedSheet);
         set({ mappings: maps, step: "mapping" });
       } catch (e) {
-        set({
-          error: safeErrorMessage(e, "Não foi possível detectar o layout da aba."),
-        });
+        fail(e, "Não foi possível detectar o layout da aba.");
       }
     });
   };
@@ -281,7 +290,7 @@ function useSheetImport(
       await saveSheetMapping(mapping.id, mapping.block_offset, newActive);
       dispatch({ type: "toggleMappingActive", id: mapping.id, active: newActive });
     } catch (e) {
-      set({ error: safeErrorMessage(e, "Não foi possível salvar o mapeamento.") });
+      fail(e, "Não foi possível salvar o mapeamento.");
     }
   };
 
@@ -303,7 +312,7 @@ function useSheetImport(
 
   const runImport = async (spreadsheetId: string, sheetName: string) => {
     if (!spreadsheetId || !sheetName) return;
-    set({ importResult: null, error: null });
+    set({ importResult: null, error: null, errorDetail: null });
     await withLoading(setImporting, async () => {
       try {
         const profileId = crypto.randomUUID();
@@ -322,9 +331,7 @@ function useSheetImport(
               : `${count} transações importadas.`,
         });
       } catch (e) {
-        set({
-          error: safeErrorMessage(e, "Não foi possível importar a aba selecionada."),
-        });
+        fail(e, "Não foi possível importar a aba selecionada.");
       }
     });
   };
@@ -338,7 +345,7 @@ function useSheetImport(
   };
 
   const handleImportEconomia = async () => {
-    set({ importResult: null, error: null });
+    set({ importResult: null, error: null, errorDetail: null });
     await withLoading(setImporting, async () => {
       try {
         const count = await importEconomiaSheet(
@@ -353,9 +360,7 @@ function useSheetImport(
               : `Economia importada: ${count} mês(es) (poupança → reserva).`,
         });
       } catch (e) {
-        set({
-          error: safeErrorMessage(e, "Não foi possível importar a aba Economia."),
-        });
+        fail(e, "Não foi possível importar a aba Economia.");
       }
     });
   };
@@ -696,10 +701,12 @@ function MappingStep({
 function ConnectView({
   loading,
   error,
+  errorDetail,
   onConnect,
 }: {
   loading: boolean;
   error: string | null;
+  errorDetail: string | null;
   onConnect: () => void;
 }) {
   return (
@@ -732,7 +739,15 @@ function ConnectView({
         {error && (
           <div role="alert" className="gs-result gs-result--err">
             <AlertCircle size={14} strokeWidth={1.75} />
-            {error}
+            <span>
+              {error}
+              {errorDetail && (
+                <details className="gs-error-detail">
+                  <summary>Detalhes técnicos</summary>
+                  <code>{errorDetail}</code>
+                </details>
+              )}
+            </span>
           </div>
         )}
       </div>
@@ -755,6 +770,7 @@ export function GoogleSheetsPanel({
       <ConnectView
         loading={state.loading}
         error={state.error}
+        errorDetail={state.errorDetail}
         onConnect={() => void sheet.handleConnect()}
       />
     );
@@ -807,7 +823,15 @@ export function GoogleSheetsPanel({
       {state.error && (
         <div role="alert" className="gs-result gs-result--err">
           <AlertCircle size={14} strokeWidth={1.75} />
-          {state.error}
+          <span>
+            {state.error}
+            {state.errorDetail && (
+              <details className="gs-error-detail">
+                <summary>Detalhes técnicos</summary>
+                <code>{state.errorDetail}</code>
+              </details>
+            )}
+          </span>
         </div>
       )}
     </div>

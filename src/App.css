@@ -1526,6 +1526,27 @@ h3,
   border: var(--bw-hair) solid color-mix(in srgb, var(--danger-400) 15%, transparent);
 }
 
+/* "Detalhes técnicos" sob um erro do Sheets — erro cru do backend para diagnóstico/suporte. */
+.gs-error-detail {
+  margin-top: var(--space-2);
+  font-size: var(--fs-micro);
+}
+.gs-error-detail summary {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.gs-error-detail code {
+  display: block;
+  margin-top: var(--space-1);
+  padding: var(--space-2);
+  background: var(--bg-subtle);
+  border-radius: var(--radius-xs);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .gs-connect {
   display: flex;
   flex-direction: column;

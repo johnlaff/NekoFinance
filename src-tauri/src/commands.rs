@@ -2411,13 +2411,13 @@ pub async fn list_user_spreadsheets(
 
     let url = "https://www.googleapis.com/drive/v3/files?q=mimeType%3D'application%2Fvnd.google-apps.spreadsheet'&fields=files(id,name,modifiedTime)&orderBy=modifiedTime%20desc&pageSize=50";
 
-    let client = reqwest::Client::new();
-    let resp = client
-        .get(url)
-        .bearer_auth(&token.access_token)
-        .send()
-        .await
-        .map_err(|e| format!("drive request: {e}"))?;
+    let resp = crate::http::send_with_retry(
+        crate::http::client()
+            .get(url)
+            .bearer_auth(&token.access_token),
+    )
+    .await
+    .map_err(|e| format!("drive request: {e}"))?;
 
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();

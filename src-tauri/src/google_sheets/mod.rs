@@ -53,13 +53,13 @@ impl SheetsClient {
             "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{range}?valueRenderOption=UNFORMATTED_VALUE",
         );
 
-        let client = reqwest::Client::new();
-        let resp = client
-            .get(&url)
-            .bearer_auth(&self.token.access_token)
-            .send()
-            .await
-            .map_err(|e| format!("request error: {e}"))?;
+        let resp = crate::http::send_with_retry(
+            crate::http::client()
+                .get(&url)
+                .bearer_auth(&self.token.access_token),
+        )
+        .await
+        .map_err(|e| format!("request error: {e}"))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -96,13 +96,13 @@ impl SheetsClient {
             "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}?ranges={range}&includeGridData=true&fields=sheets.data.rowData.values.note",
         );
 
-        let client = reqwest::Client::new();
-        let resp = client
-            .get(&url)
-            .bearer_auth(&self.token.access_token)
-            .send()
-            .await
-            .map_err(|e| format!("notes request: {e}"))?;
+        let resp = crate::http::send_with_retry(
+            crate::http::client()
+                .get(&url)
+                .bearer_auth(&self.token.access_token),
+        )
+        .await
+        .map_err(|e| format!("notes request: {e}"))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -139,13 +139,13 @@ impl SheetsClient {
     ) -> Result<serde_json::Value, String> {
         let url = format!("https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}");
 
-        let client = reqwest::Client::new();
-        let resp = client
-            .get(&url)
-            .bearer_auth(&self.token.access_token)
-            .send()
-            .await
-            .map_err(|e| format!("request error: {e}"))?;
+        let resp = crate::http::send_with_retry(
+            crate::http::client()
+                .get(&url)
+                .bearer_auth(&self.token.access_token),
+        )
+        .await
+        .map_err(|e| format!("request error: {e}"))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -180,13 +180,14 @@ impl SheetsClient {
         let url = format!(
             "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values:batchUpdate",
         );
-        let resp = reqwest::Client::new()
-            .post(&url)
-            .bearer_auth(&self.token.access_token)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| format!("batchUpdate request: {e}"))?;
+        let resp = crate::http::send_with_retry(
+            crate::http::client()
+                .post(&url)
+                .bearer_auth(&self.token.access_token)
+                .json(&body),
+        )
+        .await
+        .map_err(|e| format!("batchUpdate request: {e}"))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
