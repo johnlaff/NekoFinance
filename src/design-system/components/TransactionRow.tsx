@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { formatBRL } from "./Money";
 
 /**
@@ -82,6 +82,10 @@ const moneyStyle = (amount: number): React.CSSProperties => ({
   color: amount > 0 ? "var(--money-pos)" : "var(--text)",
 });
 
+function lumpItemKey(item: LumpItem): string {
+  return `${item.what}:${item.amount}:${item.passthrough ? "repasse" : "normal"}`;
+}
+
 export function TransactionRow({
   date,
   desc,
@@ -100,6 +104,19 @@ export function TransactionRow({
 }: TransactionRowProps) {
   const [open, setOpen] = useState(defaultOpen);
   const hasLump = Array.isArray(lump) && lump.length > 0;
+  const rowInteractionProps = onClick
+    ? {
+        onClick,
+        onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onClick();
+          }
+        },
+        role: "button",
+        tabIndex: 0,
+      }
+    : {};
 
   return (
     <div
@@ -116,7 +133,7 @@ export function TransactionRow({
       }}
     >
       <div
-        onClick={onClick}
+        {...rowInteractionProps}
         style={{
           display: "grid",
           gridTemplateColumns: "58px 1fr auto auto",
@@ -247,9 +264,9 @@ export function TransactionRow({
             borderTop: "1px dashed var(--border)",
           }}
         >
-          {lump.map((it, i) => (
+          {lump.map((it) => (
             <div
-              key={i}
+              key={lumpItemKey(it)}
               style={{
                 display: "flex",
                 alignItems: "center",

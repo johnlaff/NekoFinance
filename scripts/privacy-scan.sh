@@ -44,31 +44,57 @@ if git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
 fi
 commit_msgs="$(git log ${commit_range} --format='%B' 2>/dev/null || true)"
 
+scan_tree_for_pattern() {
+  local pattern="$1"
+  local entry="$2"
+  local files=()
+
+  mapfile -t files < <(
+    rg --hidden --no-ignore-vcs --fixed-strings --ignore-case --files-with-matches \
+      --glob '!.git/**' \
+      --glob '!node_modules/**' \
+      --glob '!dist/**' \
+      --glob '!src-tauri/target/**' \
+      --glob '!package-lock.json' \
+      --glob '!.private-forbidden-patterns' \
+      --glob '!SESSION-CONTEXT.md' \
+      --glob '!.methodology-pack/**' \
+      -- "$pattern" . || true
+  )
+
+  if [[ "${#files[@]}" -eq 0 ]]; then
+    return 1
+  fi
+
+  for file in "${files[@]}"; do
+    awk -v pat="$pattern" -v entry="$entry" '
+      BEGIN { needle = tolower(pat) }
+      index(tolower($0), needle) {
+        printf "Private forbidden pattern matched: denylist entry #%d at %s:%d\n", entry, FILENAME, FNR > "/dev/stderr"
+      }
+    ' "$file"
+  done
+
+  return 0
+}
+
+entry_index=0
 while IFS= read -r pattern || [[ -n "$pattern" ]]; do
   [[ -z "$pattern" || "$pattern" =~ ^[[:space:]]*# ]] && continue
+  entry_index=$((entry_index + 1))
 
   # (1) Arquivos da árvore de trabalho (exclui .git/: binário/histórico, lento e ruidoso). O
   #     histórico de MENSAGENS é coberto pelo passo (2). O histórico de CONTEÚDO (versões antigas
   #     de arquivos) é intencionalmente fora de escopo: senão REMOVER um vazamento já versionado
   #     faria o próprio diff de remoção disparar o scan para sempre. O que importa para o repo
   #     público é a árvore atual + as mensagens — ambas cobertas aqui.
-  if rg --hidden --no-ignore-vcs --fixed-strings --ignore-case --line-number \
-    --glob '!.git/**' \
-    --glob '!node_modules/**' \
-    --glob '!dist/**' \
-    --glob '!src-tauri/target/**' \
-    --glob '!package-lock.json' \
-    --glob '!.private-forbidden-patterns' \
-    --glob '!SESSION-CONTEXT.md' \
-    --glob '!.methodology-pack/**' \
-    "$pattern" .; then
-    printf 'Private forbidden pattern matched: %s\n' "$pattern" >&2
+  if scan_tree_for_pattern "$pattern" "$entry_index"; then
     exit 1
   fi
 
   # (2) Mensagens de commit do range publicável (case-insensitive, como o passo 1).
   if [[ -n "$commit_msgs" ]] && printf '%s' "$commit_msgs" | grep -qiF -- "$pattern"; then
-    printf 'Private forbidden pattern in commit message: %s\n' "$pattern" >&2
+    printf 'Private forbidden pattern in commit message: denylist entry #%d\n' "$entry_index" >&2
     exit 1
   fi
 done < ".private-forbidden-patterns"

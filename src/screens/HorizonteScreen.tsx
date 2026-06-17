@@ -30,12 +30,14 @@ interface MonthCol {
 /** Agrupa a série diária do forecast por ano-mês (uma coluna por mês). */
 export function groupByMonth(daily: ForecastDay[], today: string): MonthCol[] {
   const cols: MonthCol[] = [];
+  const byYm = new Map<string, MonthCol>();
   for (const d of daily) {
     const ym = d.date.slice(0, 7);
-    let col = cols.find((c) => c.ym === ym);
+    let col = byYm.get(ym);
     if (!col) {
       const label = monthNamePtBR(`${ym}-01`);
       col = { ym, label: label.charAt(0).toUpperCase() + label.slice(1), days: [] };
+      byYm.set(ym, col);
       cols.push(col);
     }
     col.days.push({
@@ -154,7 +156,6 @@ export function HorizonteScreen() {
       <div
         role="group"
         aria-label="Saldo projetado por dia, agrupado por mês"
-        tabIndex={0}
         style={{
           display: "flex",
           gap: "var(--space-4)",

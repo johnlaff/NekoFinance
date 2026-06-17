@@ -55,7 +55,7 @@ describe("App (dashboard)", () => {
     });
     render(<App />);
     await waitFor(() => {
-      expect(screen.getByText(/database not found/)).toBeInTheDocument();
+      expect(screen.getByText(/Não foi possível concluir a ação/)).toBeInTheDocument();
     });
     expect(screen.getByText("Tentar novamente")).toBeInTheDocument();
   });

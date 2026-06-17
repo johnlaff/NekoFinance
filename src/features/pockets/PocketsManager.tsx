@@ -8,6 +8,7 @@ import {
   type PocketType,
 } from "../../lib/api";
 import { parseBRLToCents } from "../../lib/format";
+import { safeErrorMessage } from "../../lib/errors";
 import { Money } from "../../design-system/components/Money";
 import { invalidateCommands } from "../../lib/useCommand";
 import { LIQUIDITY_LABELS, POCKET_TYPE_LABELS } from "./pocketLabels";
@@ -33,7 +34,12 @@ export function PocketsManager() {
     if (!isTauri) return;
     getPockets()
       .then(setPockets)
-      .catch((e: unknown) => setStatus({ error: String(e), saving: false }));
+      .catch((e: unknown) =>
+        setStatus({
+          error: safeErrorMessage(e, "Não foi possível carregar os bolsos."),
+          saving: false,
+        }),
+      );
   }
 
   // Load once on mount; subsequent reloads happen after each successful create.
@@ -59,7 +65,10 @@ export function PocketsManager() {
       setStatus({ error: null, saving: false });
       reload();
     } catch (err) {
-      setStatus({ error: String(err), saving: false });
+      setStatus({
+        error: safeErrorMessage(err, "Não foi possível adicionar o bolso."),
+        saving: false,
+      });
     }
   }
 
@@ -91,7 +100,7 @@ export function PocketsManager() {
             className="pockets-input"
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
-            placeholder="Ex.: Vale refeição"
+            placeholder="Ex.: Bolso demo"
             disabled={!isTauri}
           />
         </label>

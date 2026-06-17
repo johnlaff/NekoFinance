@@ -52,12 +52,12 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
 
     await nav("Lançamentos").click();
     await expect(nav("Lançamentos")).toHaveAttribute("aria-current", "page");
-    await expect(page.getByText("Café + mercado")).toBeVisible();
+    await expect(page.getByText("Despesa demo variável")).toBeVisible();
     await expect(page.getByText("5 exibidas")).toBeVisible();
     // Multi-titular: o lançamento dividido mostra os OwnerChips dos titulares.
-    const splitRow = page.getByRole("row", { name: /Café \+ mercado/ });
-    await expect(splitRow.getByText("Ana")).toBeVisible();
-    await expect(splitRow.getByText("Bruno")).toBeVisible();
+    const splitRow = page.getByRole("row", { name: /Despesa demo variável/ });
+    await expect(splitRow.getByText("Pessoa A")).toBeVisible();
+    await expect(splitRow.getByText("Pessoa B")).toBeVisible();
     await page.screenshot({
       fullPage: true,
       path: testInfo.outputPath("transactions.png"),
@@ -116,8 +116,8 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     // Tags — lista colorida com "! Pagar" no topo.
     await nav("Tags").click();
     await expect(page.getByText("! Pagar", { exact: true })).toBeVisible();
-    await expect(page.getByText("Viagem", { exact: true })).toBeVisible();
-    await expect(page.getByText("Delivery", { exact: true })).toBeVisible();
+    await expect(page.getByText("Categoria demo A", { exact: true })).toBeVisible();
+    await expect(page.getByText("Categoria demo B", { exact: true })).toBeVisible();
     await page.screenshot({
       fullPage: true,
       path: testInfo.outputPath("tags.png"),
@@ -131,9 +131,9 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     // Form visível com o seletor de tipo e os campos.
     await expect(page.getByText("Tipo de movimento")).toBeVisible();
     await page.getByLabel("Valor").fill("42,50");
-    await page.getByLabel("Descrição", { exact: true }).fill("Almoço");
+    await page.getByLabel("Descrição", { exact: true }).fill("Despesa demo");
     // Anexa uma tag.
-    await page.getByRole("button", { name: /Viagem/ }).click();
+    await page.getByRole("button", { name: /Categoria demo A/ }).click();
     await page.getByRole("button", { name: "Lançar" }).click();
 
     // Após lançar, o form fecha (botão volta a "Novo lançamento").
@@ -153,8 +153,8 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     await page.getByRole("button", { name: "Lançamentos" }).click();
     await page.getByRole("tab", { name: "Crédito" }).click();
     await expect(page.getByText("1 exibida")).toBeVisible();
-    await expect(page.getByText("Assinatura streaming")).toBeVisible();
-    await expect(page.getByText("Café + mercado")).not.toBeVisible();
+    await expect(page.getByText("Compromisso demo no crédito")).toBeVisible();
+    await expect(page.getByText("Despesa demo variável")).not.toBeVisible();
   });
 
   test("ctrl/cmd+k focuses the header search", async ({ page }) => {

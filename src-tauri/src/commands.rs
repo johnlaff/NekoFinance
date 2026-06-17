@@ -222,14 +222,28 @@ pub async fn import_sheet_data(
 
     let mappings = import::get_active_mappings_for_sheet(&pool, &sheet_name).await?;
     // Notas de célula = a descrição real de cada lançamento (quem/o quê/quanto por item). Sem
-    // elas todo lançamento virava "Entrada/Saída 2026" e a trilha de auditoria se perdia
-    // (auditoria vs planilha oficial). Falha de notas não bloqueia o import dos valores.
-    let notes = client
-        .get_sheet_notes(&spreadsheet_id, &sheet_name)
-        .await
-        .unwrap_or_default();
+    // elas, o parser só tem fallback estrutural ("Entrada/Saída {data}"). Se a API de notas
+    // falhar, os valores ainda entram, mas essas descrições não são tratadas como fonte canônica.
+    let (notes, descriptions_trusted) =
+        match client.get_sheet_notes(&spreadsheet_id, &sheet_name).await {
+            Ok(notes) => (notes, true),
+            Err(_) => (Vec::new(), false),
+        };
     let imported_rows = import::parse_rows_with_layout(&rows, &layout, &mappings, &notes);
-    let count = import::import_rows(&pool, &sheet_name, &imported_rows, &profile_id).await?;
+    let count = if descriptions_trusted {
+        import::import_rows(&pool, &sheet_name, &imported_rows, &profile_id).await?
+    } else {
+        import::import_rows_with_options(
+            &pool,
+            &sheet_name,
+            &imported_rows,
+            &profile_id,
+            import::ImportRowsOptions {
+                descriptions_trusted: false,
+            },
+        )
+        .await?
+    };
 
     // Captura a coluna Saldo (o saldo corrente do método) → semente da projeção + visão
     // histórica. Sem isto a semente era 0 e o saldo de hoje aparecia zerado.
@@ -250,6 +264,30 @@ fn xlsx_cell_to_string(cell: &calamine::Data) -> String {
     }
 }
 
+fn validate_local_xlsx_path(file_path: &str) -> Result<std::path::PathBuf, String> {
+    let path = std::path::PathBuf::from(file_path);
+    let metadata =
+        std::fs::symlink_metadata(&path).map_err(|e| format!("read file metadata: {e}"))?;
+    if metadata.file_type().is_symlink() {
+        return Err("Arquivo .xlsx não pode ser um link simbólico.".into());
+    }
+    if !metadata.is_file() {
+        return Err("Escolha um arquivo .xlsx regular.".into());
+    }
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| format!("canonicalize: {e}"))?;
+    let ext = canonical
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if ext != "xlsx" {
+        return Err("Escolha um arquivo com extensão .xlsx.".into());
+    }
+    Ok(canonical)
+}
+
 #[tauri::command]
 pub async fn import_local_xlsx(
     pool: State<'_, SqlitePool>,
@@ -258,8 +296,9 @@ pub async fn import_local_xlsx(
 ) -> Result<String, String> {
     use calamine::{Reader, Xlsx, open_workbook};
 
+    let workbook_path = validate_local_xlsx_path(&file_path)?;
     let mut workbook: Xlsx<_> =
-        open_workbook(&file_path).map_err(|e| format!("open error: {e}"))?;
+        open_workbook(&workbook_path).map_err(|e| format!("open error: {e}"))?;
 
     let sheet_names = workbook.sheet_names().to_vec();
     let mut total = 0usize;
@@ -267,6 +306,20 @@ pub async fn import_local_xlsx(
 
     for sheet_name in &sheet_names {
         if layout_detect::is_metric_tab(sheet_name) {
+            if sheet_name.trim().eq_ignore_ascii_case("economia")
+                && let Ok(range) = workbook.worksheet_range(sheet_name)
+            {
+                let rows: Vec<Vec<String>> = range
+                    .rows()
+                    .map(|row| row.iter().map(xlsx_cell_to_string).collect())
+                    .collect();
+                let entries = import::parse_economia_sheet(&rows);
+                if !entries.is_empty() {
+                    let count = store_economia_entries(pool.inner(), &entries).await?;
+                    total += count;
+                    sheets_imported.push(format!("{sheet_name} ({count} months)"));
+                }
+            }
             continue;
         }
         if let Ok(range) = workbook.worksheet_range(sheet_name) {
@@ -313,11 +366,20 @@ pub async fn import_local_xlsx(
 
             let mappings = import::get_active_mappings_for_sheet(&pool, sheet_name).await?;
             // xlsx (calamine) não expõe notas de célula → fallback "Entrada/Saída {data}". As
-            // notas só vêm pelo caminho ao vivo (Sheets API). Limitação documentada na spec 010.
+            // notas só vêm pelo caminho ao vivo (Sheets API), então o fallback não vira base
+            // canônica de descrição.
             let imported_rows = import::parse_rows_with_layout(&rows, &layout, &mappings, &[]);
             if !imported_rows.is_empty() {
-                let count =
-                    import::import_rows(&pool, sheet_name, &imported_rows, &profile_id).await?;
+                let count = import::import_rows_with_options(
+                    &pool,
+                    sheet_name,
+                    &imported_rows,
+                    &profile_id,
+                    import::ImportRowsOptions {
+                        descriptions_trusted: false,
+                    },
+                )
+                .await?;
                 total += count;
                 sheets_imported.push(format!("{sheet_name} ({count} rows)"));
             }
@@ -2188,6 +2250,58 @@ async fn ensure_reserve_account(pool: &SqlitePool) -> Result<String, String> {
     Ok(id)
 }
 
+async fn store_economia_entries(
+    pool: &SqlitePool,
+    entries: &[(i32, u32, i64)],
+) -> Result<usize, String> {
+    let today = chrono::Local::now().date_naive();
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut reserve_id: Option<String> = None;
+    let mut count = 0usize;
+
+    for (year, month, cents) in entries {
+        let last = forecast::last_day_of_month(*year, *month);
+        let date = last.format("%Y-%m-%d").to_string();
+        let id = format!("economia:{year:04}-{month:02}");
+
+        if *cents > 0 {
+            let reserve = match &reserve_id {
+                Some(id) => id.clone(),
+                None => {
+                    let id = ensure_reserve_account(pool).await?;
+                    reserve_id = Some(id.clone());
+                    id
+                }
+            };
+            let is_projection = (last > today) as i64;
+            sqlx::query(
+                "INSERT INTO \"transaction\" (id, type, amount, description, date, to_account_id, is_projection, created_at, updated_at) \
+                 VALUES (?1, 'transfer', ?2, 'Economia (importada da aba Economia)', ?3, ?4, ?5, ?6, ?6) \
+                 ON CONFLICT(id) DO UPDATE SET amount=excluded.amount, date=excluded.date, \
+                   is_projection=excluded.is_projection, updated_at=excluded.updated_at",
+            )
+            .bind(&id)
+            .bind(cents)
+            .bind(&date)
+            .bind(&reserve)
+            .bind(is_projection)
+            .bind(&now)
+            .execute(pool)
+            .await
+            .map_err(|e| format!("upsert economia: {e}"))?;
+        } else {
+            sqlx::query("DELETE FROM \"transaction\" WHERE id = ?1")
+                .bind(&id)
+                .execute(pool)
+                .await
+                .map_err(|e| format!("delete economia: {e}"))?;
+        }
+        count += 1;
+    }
+
+    Ok(count)
+}
+
 /// Importa a aba `Economia` da planilha → transações `transfer→reserva` (a representação da Economia
 /// registrada do método). Id determinístico `economia:{ano}-{mês}` ⇒ re-import ATUALIZA, não duplica.
 /// É o que faltava: sem isso, o Economizado%/ColchaoCard e o write-back da Economia ficam zerados.
@@ -2212,33 +2326,7 @@ pub async fn import_economia_sheet(
         return Ok(0);
     }
 
-    let reserve_id = ensure_reserve_account(pool.inner()).await?;
-    let today = chrono::Local::now().date_naive();
-    let now = chrono::Utc::now().to_rfc3339();
-    let mut count = 0usize;
-    for (year, month, cents) in entries {
-        let last = forecast::last_day_of_month(year, month);
-        let date = last.format("%Y-%m-%d").to_string();
-        let id = format!("economia:{year:04}-{month:02}");
-        let is_projection = (last > today) as i64;
-        sqlx::query(
-            "INSERT INTO \"transaction\" (id, type, amount, description, date, to_account_id, is_projection, created_at, updated_at) \
-             VALUES (?1, 'transfer', ?2, 'Economia (importada da aba Economia)', ?3, ?4, ?5, ?6, ?6) \
-             ON CONFLICT(id) DO UPDATE SET amount=excluded.amount, date=excluded.date, \
-               is_projection=excluded.is_projection, updated_at=excluded.updated_at",
-        )
-        .bind(&id)
-        .bind(cents)
-        .bind(&date)
-        .bind(&reserve_id)
-        .bind(is_projection)
-        .bind(&now)
-        .execute(pool.inner())
-        .await
-        .map_err(|e| format!("upsert economia: {e}"))?;
-        count += 1;
-    }
-    Ok(count)
+    store_economia_entries(pool.inner(), &entries).await
 }
 
 #[tauri::command]
@@ -2414,6 +2502,28 @@ mod tests {
             parse_number(&xlsx_cell_to_string(&calamine::Data::Float(123.456))),
             12346
         );
+    }
+
+    #[test]
+    fn local_xlsx_path_validation_rejects_non_xlsx() {
+        let path = std::env::temp_dir().join(format!("neko-{}.txt", uuid::Uuid::new_v4()));
+        std::fs::write(&path, b"not a workbook").unwrap();
+
+        let err = validate_local_xlsx_path(path.to_str().unwrap()).unwrap_err();
+
+        std::fs::remove_file(&path).unwrap();
+        assert!(err.contains(".xlsx"));
+    }
+
+    #[test]
+    fn local_xlsx_path_validation_accepts_regular_xlsx_file() {
+        let path = std::env::temp_dir().join(format!("neko-{}.xlsx", uuid::Uuid::new_v4()));
+        std::fs::write(&path, b"placeholder").unwrap();
+
+        let got = validate_local_xlsx_path(path.to_str().unwrap()).unwrap();
+
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(got.extension().and_then(|e| e.to_str()), Some("xlsx"));
     }
 
     // T7.6 — get_dashboard_summary returns the PROJECTED balance, not the raw account sum.
@@ -2643,6 +2753,38 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn economia_import_zero_removes_stale_month() {
+        let pool = fixture_pool().await;
+        insert_liquid_account(&pool, 100_000).await;
+
+        assert_eq!(
+            store_economia_entries(&pool, &[(2026, 1, 100_000)])
+                .await
+                .unwrap(),
+            1
+        );
+        let (stored,): (i64,) =
+            sqlx::query_as("SELECT amount FROM \"transaction\" WHERE id='economia:2026-01'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(stored, 100_000);
+
+        assert_eq!(
+            store_economia_entries(&pool, &[(2026, 1, 0)])
+                .await
+                .unwrap(),
+            1
+        );
+        let (remaining,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE id='economia:2026-01'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(remaining, 0);
     }
 
     async fn insert_projection(

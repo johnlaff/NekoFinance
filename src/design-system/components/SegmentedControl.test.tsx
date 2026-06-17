@@ -31,6 +31,17 @@ describe("SegmentedControl", () => {
     expect(monthBtn.style.color).toBe("var(--primary)");
   });
 
+  it("updates the active option when value prop changes", () => {
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <SegmentedControl options={OPTIONS} value="day" onChange={onChange} />,
+    );
+
+    rerender(<SegmentedControl options={OPTIONS} value="week" onChange={onChange} />);
+
+    expect(screen.getByText("Semana").style.color).toBe("var(--primary)");
+  });
+
   it("does not call onChange when disabled", () => {
     const onChange = vi.fn();
     render(

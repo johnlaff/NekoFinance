@@ -25,8 +25,18 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Restore private privacy denylist
+        env:
+          PRIVATE_FORBIDDEN_PATTERNS_B64: ${{ secrets.PRIVATE_FORBIDDEN_PATTERNS_B64 }}
+        run: |
+          if [ -n "$PRIVATE_FORBIDDEN_PATTERNS_B64" ]; then
+            umask 077
+            printf '%s' "$PRIVATE_FORBIDDEN_PATTERNS_B64" | base64 -d > .private-forbidden-patterns
+          fi
       - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Privacy scan
+        env:
+          PRIVACY_SCAN_REQUIRE_DENYLIST: ${{ secrets.PRIVATE_FORBIDDEN_PATTERNS_B64 != '' && '1' || '0' }}
         run: bash scripts/privacy-scan.sh

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Button } from "../design-system/components/Button";
 import { MovBadge, type MovKind } from "../design-system/components/MovBadge";
 import { createTransaction, listTags, type Frequency, type Tag } from "../lib/api";
+import { safeErrorMessage } from "../lib/errors";
 import { parseBRLToCents } from "../lib/format";
 
 /** Os tipos de movimento oferecidos no form (Economia → transfer precisa de conta, fica fora). */
@@ -118,7 +119,7 @@ export function NewTransactionForm({ onCreated }: { onCreated?: () => void }) {
       setBusy(false);
       onCreated?.();
     } catch (e) {
-      setError(String(e));
+      setError(safeErrorMessage(e, "Não foi possível lançar. Tente novamente."));
       setBusy(false);
     }
   }

@@ -207,7 +207,7 @@ export function TotaisScreen() {
     );
   }
 
-  const months = [...forecast.months].sort(
+  const months = forecast.months.toSorted(
     (a, b) => a.year - b.year || a.month - b.month,
   );
   const todayYm = forecast.today.slice(0, 7);

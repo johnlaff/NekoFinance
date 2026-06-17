@@ -584,9 +584,8 @@ h3,
   background: var(--surface-hover);
 }
 
-/* Futuro/previsto: hachura diagonal brass sutil (não troca de cor, não alarme) + leve esmaecimento */
+/* Futuro/previsto: hachura diagonal brass sutil (não troca de cor, não alarme). */
 .txn-table tr.projection td {
-  opacity: 0.6;
   background-image: repeating-linear-gradient(
     135deg,
     transparent,
@@ -857,6 +856,13 @@ h3,
   flex-wrap: wrap;
   gap: var(--space-2);
 }
+.txs-inline-error {
+  display: block;
+  margin: 0 0 var(--space-2);
+  color: var(--danger-400);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-body);
+}
 .txn-tag-opt {
   display: inline-flex;
   align-items: center;
@@ -868,6 +874,10 @@ h3,
   color: var(--text-muted);
   font-size: var(--fs-sm);
   cursor: pointer;
+}
+.txn-tag-opt:disabled {
+  cursor: wait;
+  opacity: 0.62;
 }
 .txn-tag-opt.is-on {
   border-color: var(--primary);
@@ -1040,11 +1050,72 @@ h3,
   }
 
   .ak {
-    grid-template-columns: 1fr;
+    display: block;
+    height: auto;
+    min-height: 100dvh;
   }
 
   .ak-side {
+    position: fixed;
+    inset: auto 0 0;
+    z-index: 50;
+    display: block;
+    min-height: 0;
+    border-right: 0;
+    border-top: var(--bw-hair) solid var(--border);
+    background: color-mix(in srgb, var(--bg-subtle) 94%, transparent);
+    backdrop-filter: blur(14px);
+  }
+
+  .ak-brand,
+  .ak-navh,
+  .ak-side__foot {
     display: none;
+  }
+
+  .ak-nav {
+    flex-direction: row;
+    align-items: stretch;
+    gap: var(--space-2);
+    min-height: 0;
+    overflow-x: auto;
+    padding: var(--space-2) max(var(--space-2), env(safe-area-inset-left))
+      calc(var(--space-2) + env(safe-area-inset-bottom))
+      max(var(--space-2), env(safe-area-inset-right));
+    scrollbar-width: thin;
+  }
+
+  .ak-item {
+    flex: 0 0 72px;
+    min-height: 56px;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    padding: 6px 7px;
+    text-align: center;
+    font-size: var(--fs-micro);
+  }
+
+  .ak-item span:not(.ak-item__ic) {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ak-item--active::before {
+    inset: auto 12px -2px;
+    width: auto;
+    height: var(--bw-accent);
+  }
+
+  .ak-main {
+    min-height: 100dvh;
+  }
+
+  .ak-body {
+    padding-bottom: calc(84px + env(safe-area-inset-bottom));
   }
 }
 

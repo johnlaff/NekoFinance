@@ -8,6 +8,10 @@
       "dist/**",
       "node_modules/**",
       "playwright-report/**",
+      "src/design-system/**/*.jsx",
+      "src/design-system/**/*.d.ts",
+      "src/design-system/_ds_bundle.js",
+      "src/design-system/ui_kits/**",
       "src-tauri/**",
       "test-results/**"
     ]

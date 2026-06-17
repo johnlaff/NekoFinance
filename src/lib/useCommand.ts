@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { isTauri } from "./api";
+import { safeErrorMessage } from "./errors";
 
 /**
  * SWR-lite for Tauri commands: returns the last successful response
@@ -9,33 +10,57 @@ import { isTauri } from "./api";
  */
 const cache = new Map<string, unknown>();
 
+interface CommandState<T> {
+  cmd: string;
+  data: T | undefined;
+  error: string | null;
+  loading: boolean;
+}
+
+function stateFor<T>(cmd: string): CommandState<T> {
+  const cached = cache.get(cmd) as T | undefined;
+  return {
+    cmd,
+    data: cached,
+    error: null,
+    loading: cached === undefined && isTauri,
+  };
+}
+
 /** Drops every cached response. Call after any write/import so finance numbers refresh. */
 export function invalidateCommands() {
   cache.clear();
 }
 
 export function useCommand<T>(cmd: string, fetcher: () => Promise<T>) {
-  const cached = cache.get(cmd) as T | undefined;
-  const [data, setData] = useState<T | undefined>(cached);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(cached === undefined && isTauri);
+  const [state, setState] = useState<CommandState<T>>(() => stateFor<T>(cmd));
+  const visible = state.cmd === cmd ? state : stateFor<T>(cmd);
 
   useEffect(() => {
     if (!isTauri) return;
     let alive = true;
+    const cached = cache.get(cmd) as T | undefined;
     fetcher()
       .then((fresh) => {
         cache.set(cmd, fresh);
         if (alive) {
-          setData(fresh);
-          setError(null);
+          setState({
+            cmd,
+            data: fresh,
+            error: null,
+            loading: false,
+          });
         }
       })
       .catch((e: unknown) => {
-        if (alive) setError(String(e));
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
+        if (alive) {
+          setState({
+            cmd,
+            data: cached,
+            error: safeErrorMessage(e),
+            loading: false,
+          });
+        }
       });
     return () => {
       alive = false;
@@ -43,5 +68,9 @@ export function useCommand<T>(cmd: string, fetcher: () => Promise<T>) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fetcher is a stable module-level wrapper
   }, [cmd]);
 
-  return { data, error, loading };
+  return {
+    data: visible.data,
+    error: visible.error,
+    loading: visible.loading,
+  };
 }

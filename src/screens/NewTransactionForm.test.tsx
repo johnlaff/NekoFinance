@@ -8,7 +8,13 @@ import { mockCommands, mockInvoke } from "../test/commands";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 const TAGS: Tag[] = [
-  { id: "viagem", name: "Viagem", color: "#3aa", emoji: "✈️", is_special: false },
+  {
+    id: "demo-a",
+    name: "Categoria demo A",
+    color: "#3aa",
+    emoji: null,
+    is_special: false,
+  },
   { id: "pagar", name: "! Pagar", color: "#a83", emoji: null, is_special: true },
 ];
 
@@ -25,12 +31,14 @@ describe("NewTransactionForm", () => {
 
     // Tags carregadas no mount.
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /Viagem/ })).toBeInTheDocument(),
+      expect(
+        screen.getByRole("button", { name: /Categoria demo A/ }),
+      ).toBeInTheDocument(),
     );
 
     await user.type(screen.getByLabelText("Valor"), "42,50");
-    await user.type(screen.getByLabelText("Descrição"), "Almoço");
-    await user.click(screen.getByRole("button", { name: /Viagem/ }));
+    await user.type(screen.getByLabelText("Descrição"), "Despesa demo");
+    await user.click(screen.getByRole("button", { name: /Categoria demo A/ }));
     await user.click(screen.getByRole("button", { name: "Lançar" }));
 
     await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
@@ -41,8 +49,8 @@ describe("NewTransactionForm", () => {
       amountCents: 4250,
       isFixed: false,
       paymentMethod: "debit",
-      description: "Almoço",
-      tagIds: ["viagem"],
+      description: "Despesa demo",
+      tagIds: ["demo-a"],
       recurrence: null,
     });
   });
@@ -87,9 +95,10 @@ describe("NewTransactionForm", () => {
     });
   });
 
-  it("não envia com valor vazio (botão desabilitado)", () => {
+  it("não envia com valor vazio (botão desabilitado)", async () => {
     mockCommands({ list_tags_cmd: [] });
     render(<NewTransactionForm />);
     expect(screen.getByRole("button", { name: "Lançar" })).toBeDisabled();
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("list_tags_cmd"));
   });
 });

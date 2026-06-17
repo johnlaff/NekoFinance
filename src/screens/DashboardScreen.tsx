@@ -59,7 +59,7 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
           title="Não foi possível carregar os dados"
           description={error}
           action={
-            <Button variant="primary" onClick={() => window.location.reload()}>
+            <Button variant="primary" onClick={handleReload}>
               Tentar novamente
             </Button>
           }
@@ -93,6 +93,11 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
       ?.real_daily_avg_cents ?? 0;
 
   function handleLogged() {
+    invalidateCommands();
+    setReloadKey((k) => k + 1);
+  }
+
+  function handleReload() {
     invalidateCommands();
     setReloadKey((k) => k + 1);
   }

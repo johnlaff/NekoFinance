@@ -3,6 +3,8 @@ use super::reconcile;
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
+type ExistingTransactionRow = (i64, Option<String>, Option<i64>, Option<String>);
+
 /// Registra (ou limpa) o conflito de um campo. Conflito presente → UPSERT idempotente por
 /// (transação, campo); ausente → apaga o conflito (re-import resolveu ou convergiu).
 #[allow(clippy::too_many_arguments)]
@@ -98,11 +100,17 @@ pub fn classify_row(date_str: &str, date_direction: &str) -> Result<bool, String
 }
 
 pub fn compute_checksum(rows: &[ImportedRow]) -> String {
+    compute_checksum_with_options(rows, true)
+}
+
+fn compute_checksum_with_options(rows: &[ImportedRow], descriptions_trusted: bool) -> String {
     let mut hasher = Sha256::new();
     for row in rows {
         hasher.update(row.date.as_bytes());
         hasher.update(row.amount.to_le_bytes());
-        hasher.update(row.description.as_bytes());
+        if descriptions_trusted {
+            hasher.update(row.description.as_bytes());
+        }
         hasher.update([row.is_projection as u8]);
         hasher.update(row.kind.as_str().as_bytes());
     }
@@ -163,11 +171,47 @@ pub async fn import_rows(
     rows: &[ImportedRow],
     profile_id: &str,
 ) -> Result<usize, String> {
+    import_rows_with_options(
+        pool,
+        sheet_name,
+        rows,
+        profile_id,
+        ImportRowsOptions::default(),
+    )
+    .await
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ImportRowsOptions {
+    /// `true` when descriptions came from Sheets cell notes or another authoritative source.
+    /// `false` means parser fallbacks like "Saída YYYY-MM-DD" must not overwrite existing notes.
+    pub descriptions_trusted: bool,
+}
+
+impl Default for ImportRowsOptions {
+    fn default() -> Self {
+        Self {
+            descriptions_trusted: true,
+        }
+    }
+}
+
+pub async fn import_rows_with_options(
+    pool: &SqlitePool,
+    sheet_name: &str,
+    rows: &[ImportedRow],
+    profile_id: &str,
+    options: ImportRowsOptions,
+) -> Result<usize, String> {
     if rows.is_empty() {
         return Ok(0);
     }
 
-    let checksum = compute_checksum(rows);
+    let checksum = if options.descriptions_trusted {
+        compute_checksum(rows)
+    } else {
+        compute_checksum_with_options(rows, false)
+    };
     if check_duplicate_import(pool, sheet_name, &checksum).await? {
         // Dataset idêntico ao último import desta aba — nada mudou, não toca o banco.
         return Ok(0);
@@ -206,8 +250,8 @@ pub async fn import_rows(
         // (source_*) e decide por campo — preservando edição local e abrindo conflito quando ambos
         // divergem, em vez de sobrescrever em silêncio. `is_fixed`/`is_projection`/`type` são
         // estruturais (seguem a planilha).
-        let existing: Option<(i64, String, Option<i64>, Option<String>)> = sqlx::query_as(
-            "SELECT amount, COALESCE(description,''), source_amount, source_description \
+        let existing: Option<ExistingTransactionRow> = sqlx::query_as(
+            "SELECT amount, description, source_amount, source_description \
              FROM \"transaction\" WHERE id = ?1",
         )
         .bind(&txn_id)
@@ -218,6 +262,7 @@ pub async fn import_rows(
         match existing {
             None => {
                 // Linha nova: a planilha semeia valor e base.
+                let trusted_desc = options.descriptions_trusted.then_some(sheet_desc.as_str());
                 sqlx::query(
                     "INSERT INTO \"transaction\" (id, type, amount, description, date, is_fixed, is_projection, source_amount, source_description, created_at, updated_at) \
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?3, ?4, ?8, ?8)",
@@ -225,7 +270,7 @@ pub async fn import_rows(
                 .bind(&txn_id)
                 .bind(row.kind.txn_type())
                 .bind(sheet_amount)
-                .bind(&sheet_desc)
+                .bind(trusted_desc)
                 .bind(&row.date)
                 .bind(row.kind.is_fixed() as i64)
                 .bind(row.is_projection as i64)
@@ -236,7 +281,18 @@ pub async fn import_rows(
             }
             Some((local_amount, local_desc, src_amount, src_desc)) => {
                 let amt = reconcile::apply(src_amount.as_ref(), &local_amount, &sheet_amount);
-                let desc = reconcile::apply(src_desc.as_ref(), &local_desc, &sheet_desc);
+                let local_desc_for_merge = local_desc.clone().unwrap_or_default();
+                let desc = options.descriptions_trusted.then(|| {
+                    reconcile::apply(src_desc.as_ref(), &local_desc_for_merge, &sheet_desc)
+                });
+                let next_description = desc
+                    .as_ref()
+                    .map(|d| Some(d.value.clone()))
+                    .unwrap_or_else(|| local_desc.clone());
+                let next_source_description = desc
+                    .as_ref()
+                    .map(|d| Some(d.source.clone()))
+                    .unwrap_or_else(|| src_desc.clone());
 
                 sqlx::query(
                     "UPDATE \"transaction\" SET type=?2, amount=?3, description=?4, date=?5, \
@@ -246,12 +302,12 @@ pub async fn import_rows(
                 .bind(&txn_id)
                 .bind(row.kind.txn_type())
                 .bind(amt.value)
-                .bind(&desc.value)
+                .bind(next_description.as_deref())
                 .bind(&row.date)
                 .bind(row.kind.is_fixed() as i64)
                 .bind(row.is_projection as i64)
                 .bind(amt.source)
-                .bind(&desc.source)
+                .bind(next_source_description.as_deref())
                 .bind(&now)
                 .execute(&mut *tx)
                 .await
@@ -268,17 +324,19 @@ pub async fn import_rows(
                     &now,
                 )
                 .await?;
-                record_conflict(
-                    &mut tx,
-                    &txn_id,
-                    "description",
-                    desc.conflict,
-                    src_desc,
-                    &local_desc,
-                    &sheet_desc,
-                    &now,
-                )
-                .await?;
+                if let Some(desc) = desc {
+                    record_conflict(
+                        &mut tx,
+                        &txn_id,
+                        "description",
+                        desc.conflict,
+                        src_desc,
+                        &local_desc_for_merge,
+                        &sheet_desc,
+                        &now,
+                    )
+                    .await?;
+                }
             }
         }
 
@@ -747,11 +805,11 @@ pub fn parse_number(s: &str) -> i64 {
     }
 }
 
-/// Parseia a aba `Economia` → `(ano, mês 1..=12, centavos)` para cada mês com Economia > 0.
+/// Parseia a aba `Economia` → `(ano, mês 1..=12, centavos)` para cada mês encontrado.
 /// A aba EMPILHA um bloco por ano: cada bloco tem uma linha-CABEÇALHO com o ANO (número inteiro) +
 /// os rótulos `Entradas` e `Economia`, seguida de 12 linhas `jan`..`dez` com o valor na coluna
-/// Economia (o mês fica na MESMA coluna do ano). PURA — só lê. Re-import é deduplicado a montante
-/// por id determinístico (`economia:{ano}-{mês}`).
+/// Economia (o mês fica na MESMA coluna do ano). PURA — só lê. Zeros/brancos são preservados para
+/// o import conseguir remover uma Economia que foi apagada na planilha.
 pub fn parse_economia_sheet(rows: &[Vec<String>]) -> Vec<(i32, u32, i64)> {
     let mut out = Vec::new();
     let mut r = 0;
@@ -785,9 +843,7 @@ pub fn parse_economia_sheet(rows: &[Vec<String>]) -> Vec<(i32, u32, i64)> {
                 break; // fim do bloco (linha vazia, TOTAL ou próximo cabeçalho)
             };
             let cents = rows[rr].get(econ_col).map(|c| parse_number(c)).unwrap_or(0);
-            if cents > 0 {
-                out.push((year, month, cents));
-            }
+            out.push((year, month, cents));
             rr += 1;
             if month == 12 {
                 break;
@@ -1205,7 +1261,10 @@ mod tests {
             m("jan", "1500.50"),
         ];
         let got = parse_economia_sheet(&rows);
-        assert_eq!(got, vec![(2025, 1, 100_000), (2026, 1, 150_050)]);
+        assert_eq!(
+            got,
+            vec![(2025, 1, 100_000), (2025, 2, 0), (2026, 1, 150_050)]
+        );
     }
 
     #[test]
@@ -1241,10 +1300,14 @@ mod tests {
     }
 
     fn imported(date: &str, amount: i64) -> ImportedRow {
+        imported_desc(date, amount, &format!("Linha {date}"))
+    }
+
+    fn imported_desc(date: &str, amount: i64, description: &str) -> ImportedRow {
         ImportedRow {
             date: date.into(),
             amount,
-            description: format!("Linha {date}"),
+            description: description.into(),
             is_projection: false,
             kind: if amount >= 0 {
                 RowKind::Entrada
@@ -1260,6 +1323,19 @@ mod tests {
             .await
             .unwrap()
             .0
+    }
+
+    async fn description_and_source(
+        pool: &SqlitePool,
+        date: &str,
+    ) -> (Option<String>, Option<String>) {
+        sqlx::query_as::<_, (Option<String>, Option<String>)>(
+            "SELECT description, source_description FROM \"transaction\" WHERE date = ?1",
+        )
+        .bind(date)
+        .fetch_one(pool)
+        .await
+        .unwrap()
     }
 
     async fn count_sync_log(pool: &SqlitePool, sheet: &str) -> i64 {
@@ -1379,6 +1455,59 @@ mod tests {
             .unwrap();
         assert_eq!(amount_by_date(&pool, "2026-01-05").await, 12_000);
         assert_eq!(conflict_count(&pool).await, 0);
+    }
+
+    #[tokio::test]
+    async fn untrusted_descriptions_do_not_overwrite_existing_description_or_source() {
+        let pool = test_pool().await;
+        import_rows(
+            &pool,
+            "2026",
+            &[imported_desc("2026-01-05", -10_000, "Nota sintética")],
+            "p1",
+        )
+        .await
+        .unwrap();
+
+        import_rows_with_options(
+            &pool,
+            "2026",
+            &[imported_desc("2026-01-05", -12_000, "Saída 2026-01-05")],
+            "p1",
+            ImportRowsOptions {
+                descriptions_trusted: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(amount_by_date(&pool, "2026-01-05").await, 12_000);
+        assert_eq!(
+            description_and_source(&pool, "2026-01-05").await,
+            (Some("Nota sintética".into()), Some("Nota sintética".into()))
+        );
+        assert_eq!(conflict_count(&pool).await, 0);
+    }
+
+    #[tokio::test]
+    async fn untrusted_descriptions_insert_new_rows_without_generic_source() {
+        let pool = test_pool().await;
+        import_rows_with_options(
+            &pool,
+            "2026",
+            &[imported_desc("2026-01-05", -12_000, "Saída 2026-01-05")],
+            "p1",
+            ImportRowsOptions {
+                descriptions_trusted: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            description_and_source(&pool, "2026-01-05").await,
+            (None, None)
+        );
     }
 
     #[tokio::test]

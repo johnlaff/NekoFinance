@@ -1,4 +1,4 @@
-import { Fragment, useState } from "react";
+import { Fragment, useReducer } from "react";
 import { Plus, Search, Tag as TagIcon } from "lucide-react";
 import { Badge } from "../design-system/components/Badge";
 import { Button } from "../design-system/components/Button";
@@ -19,6 +19,7 @@ import {
 import { fmtDate, monthNamePtBR } from "../lib/format";
 import { Money } from "../design-system/components/Money";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
+import { safeErrorMessage } from "../lib/errors";
 import { NewTransactionForm } from "./NewTransactionForm";
 import { ConflictGate } from "../features/reconcile/ConflictGate";
 
@@ -98,6 +99,67 @@ function TagChip({ tag }: { tag: TagRef }) {
   );
 }
 
+interface TransactionsUiState {
+  scope: TransactionScope;
+  showForm: boolean;
+  reloadKey: number;
+  tagEditId: string | null;
+  tagSaving: string | null;
+  tagError: string | null;
+}
+
+type TransactionsUiAction =
+  | { type: "setScope"; scope: TransactionScope }
+  | { type: "toggleForm" }
+  | { type: "reload" }
+  | { type: "created" }
+  | { type: "toggleTagEditor"; id: string }
+  | { type: "tagSaveStart"; saveKey: string }
+  | { type: "tagSaveSuccess" }
+  | { type: "tagSaveError"; error: string };
+
+const INITIAL_UI_STATE: TransactionsUiState = {
+  scope: "all",
+  showForm: false,
+  reloadKey: 0,
+  tagEditId: null,
+  tagSaving: null,
+  tagError: null,
+};
+
+function transactionsUiReducer(
+  state: TransactionsUiState,
+  action: TransactionsUiAction,
+): TransactionsUiState {
+  switch (action.type) {
+    case "setScope":
+      return { ...state, scope: action.scope };
+    case "toggleForm":
+      return { ...state, showForm: !state.showForm };
+    case "reload":
+      return { ...state, reloadKey: state.reloadKey + 1 };
+    case "created":
+      return { ...state, reloadKey: state.reloadKey + 1, showForm: false };
+    case "toggleTagEditor":
+      return {
+        ...state,
+        tagEditId: state.tagEditId === action.id ? null : action.id,
+        tagError: null,
+      };
+    case "tagSaveStart":
+      return { ...state, tagSaving: action.saveKey, tagError: null };
+    case "tagSaveSuccess":
+      return {
+        ...state,
+        reloadKey: state.reloadKey + 1,
+        tagSaving: null,
+        tagError: null,
+      };
+    case "tagSaveError":
+      return { ...state, tagSaving: null, tagError: action.error };
+  }
+}
+
 export function TransactionsScreen({
   query,
   onQueryChange,
@@ -105,38 +167,51 @@ export function TransactionsScreen({
   query: string;
   onQueryChange: (query: string) => void;
 }) {
-  const [scope, setScope] = useState<TransactionScope>("all");
-  const [showForm, setShowForm] = useState(false);
-  const [reloadKey, setReloadKey] = useState(0);
-  const [tagEditId, setTagEditId] = useState<string | null>(null);
+  const [ui, dispatchUi] = useReducer(transactionsUiReducer, INITIAL_UI_STATE);
   const {
     data: transactions = [],
     loading,
     error,
-  } = useCommand(`get_recent_transactions:${reloadKey}`, () =>
+  } = useCommand(`get_recent_transactions:${ui.reloadKey}`, () =>
     getRecentTransactions(FETCH_LIMIT),
   );
-  const allTags: Tag[] = useCommand(`list_tags:${reloadKey}`, listTags).data ?? [];
+  const allTags: Tag[] = useCommand(`list_tags:${ui.reloadKey}`, listTags).data ?? [];
 
   /** Anexa/remove uma tag do lançamento e recarrega (fecha o loop de diagnóstico do método). */
   async function toggleTag(t: TransactionRow, tagId: string) {
+    if (ui.tagSaving) return;
     const has = t.tags.some((x) => x.id === tagId);
     const next = has
       ? t.tags.filter((x) => x.id !== tagId).map((x) => x.id)
       : [...t.tags.map((x) => x.id), tagId];
-    await setTransactionTags(t.id, next);
-    invalidateCommands();
-    setReloadKey((k) => k + 1);
+    dispatchUi({ type: "tagSaveStart", saveKey: `${t.id}:${tagId}` });
+    try {
+      await setTransactionTags(t.id, next);
+      invalidateCommands();
+      dispatchUi({ type: "tagSaveSuccess" });
+    } catch (e) {
+      dispatchUi({
+        type: "tagSaveError",
+        error: safeErrorMessage(
+          e,
+          "Não foi possível atualizar as tags. Tente novamente.",
+        ),
+      });
+    }
   }
 
   function handleCreated() {
     invalidateCommands();
-    setReloadKey((k) => k + 1);
-    setShowForm(false);
+    dispatchUi({ type: "created" });
+  }
+
+  function handleReload() {
+    invalidateCommands();
+    dispatchUi({ type: "reload" });
   }
 
   // React Compiler memoizes; no manual useMemo needed.
-  const visible = filterTransactions(transactions, scope, query);
+  const visible = filterTransactions(transactions, ui.scope, query);
 
   if (!isTauri) {
     return (
@@ -168,7 +243,7 @@ export function TransactionsScreen({
           title="Não foi possível carregar os lançamentos"
           description={error}
           action={
-            <Button variant="primary" onClick={() => window.location.reload()}>
+            <Button variant="primary" onClick={handleReload}>
               Tentar novamente
             </Button>
           }
@@ -183,8 +258,10 @@ export function TransactionsScreen({
       <div className="txs-tools">
         <SegmentedControl
           size="sm"
-          value={scope}
-          onChange={(v) => setScope(v as TransactionScope)}
+          value={ui.scope}
+          onChange={(v) =>
+            dispatchUi({ type: "setScope", scope: v as TransactionScope })
+          }
           options={[
             { value: "all", label: "Todas" },
             { value: "credit", label: "Crédito" },
@@ -207,15 +284,15 @@ export function TransactionsScreen({
         </Badge>
         <Button
           size="sm"
-          variant={showForm ? "ghost" : "primary"}
+          variant={ui.showForm ? "ghost" : "primary"}
           iconLeft={<Plus size={15} strokeWidth={2} />}
-          onClick={() => setShowForm((v) => !v)}
+          onClick={() => dispatchUi({ type: "toggleForm" })}
         >
-          {showForm ? "Fechar" : "Novo lançamento"}
+          {ui.showForm ? "Fechar" : "Novo lançamento"}
         </Button>
       </div>
 
-      {showForm && (
+      {ui.showForm && (
         <div style={{ marginBottom: "var(--space-4)" }}>
           <NewTransactionForm onCreated={handleCreated} />
         </div>
@@ -304,9 +381,9 @@ export function TransactionsScreen({
                             type="button"
                             className="txn-tag-btn"
                             aria-label={`Editar tags de ${t.description || "lançamento"}`}
-                            aria-expanded={tagEditId === t.id}
+                            aria-expanded={ui.tagEditId === t.id}
                             onClick={() =>
-                              setTagEditId((id) => (id === t.id ? null : t.id))
+                              dispatchUi({ type: "toggleTagEditor", id: t.id })
                             }
                           >
                             <TagIcon size={13} strokeWidth={1.75} />
@@ -323,7 +400,7 @@ export function TransactionsScreen({
                           )}
                         </td>
                       </tr>
-                      {tagEditId === t.id && (
+                      {ui.tagEditId === t.id && (
                         <tr className="txn-tag-editor">
                           <td colSpan={5}>
                             {allTags.length === 0 ? (
@@ -331,28 +408,37 @@ export function TransactionsScreen({
                                 Crie tags na aba Tags para classificar este lançamento.
                               </span>
                             ) : (
-                              <span className="txn-tag-picker">
-                                {allTags.map((tag) => {
-                                  const on = t.tags.some((x) => x.id === tag.id);
-                                  return (
-                                    <button
-                                      type="button"
-                                      key={tag.id}
-                                      aria-pressed={on}
-                                      className={`txn-tag-opt ${on ? "is-on" : ""}`}
-                                      onClick={() => void toggleTag(t, tag.id)}
-                                    >
-                                      <span
-                                        aria-hidden="true"
-                                        className="txn-tag-dot"
-                                        style={{ background: tag.color }}
-                                      />
-                                      {tag.emoji ? `${tag.emoji} ` : ""}
-                                      {tag.name}
-                                    </button>
-                                  );
-                                })}
-                              </span>
+                              <>
+                                {ui.tagError ? (
+                                  <p className="txs-inline-error" role="alert">
+                                    {ui.tagError}
+                                  </p>
+                                ) : null}
+                                <span className="txn-tag-picker">
+                                  {allTags.map((tag) => {
+                                    const on = t.tags.some((x) => x.id === tag.id);
+                                    const saving = ui.tagSaving === `${t.id}:${tag.id}`;
+                                    return (
+                                      <button
+                                        type="button"
+                                        key={tag.id}
+                                        aria-pressed={on}
+                                        className={`txn-tag-opt ${on ? "is-on" : ""}`}
+                                        disabled={ui.tagSaving !== null}
+                                        onClick={() => void toggleTag(t, tag.id)}
+                                      >
+                                        <span
+                                          aria-hidden="true"
+                                          className="txn-tag-dot"
+                                          style={{ background: tag.color }}
+                                        />
+                                        {tag.emoji ? `${tag.emoji} ` : ""}
+                                        {saving ? "Salvando…" : tag.name}
+                                      </button>
+                                    );
+                                  })}
+                                </span>
+                              </>
                             )}
                           </td>
                         </tr>

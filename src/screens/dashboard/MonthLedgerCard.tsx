@@ -155,7 +155,9 @@ export function MonthLedgerCard({ today }: { today: string }) {
                   <td className="money">
                     <Money cents={foot.daily} size="sm" />
                   </td>
-                  <td className="money" />
+                  <td className="money" aria-label="Saldo não se aplica ao total">
+                    —
+                  </td>
                 </tr>
                 <tr className="fc-foot">
                   <th scope="row">Saída Total</th>
