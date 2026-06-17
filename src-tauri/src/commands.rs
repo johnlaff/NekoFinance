@@ -407,8 +407,8 @@ async fn projection_seed(pool: &SqlitePool, today_naive: NaiveDate) -> Result<i6
     Ok(balance + gap.0)
 }
 
-/// Meta de poupança do método: piso de 25% (faixa 20–30%, "média ANUAL" — "o ano tem que ser de
-/// 20 a 30", aula "Como viver abaixo do que ganha"). Régua do guardrail ANUAL "pode gastar".
+/// Meta de poupança do método: piso de 25% (faixa 20–30%, MÉDIA ANUAL — o ano todo deve ficar
+/// na faixa, os meses variam). Régua do guardrail ANUAL "pode gastar".
 /// O badge MENSAL "Dentro do ideal" (src/screens/TotaisScreen.tsx) usa 20% (piso da faixa), por ser
 /// leniente a variações de um mês; ambos ficam dentro da faixa canônica 20–30%.
 const SAVINGS_TARGET_BPS: i64 = 2500;
@@ -531,6 +531,47 @@ async fn realized_monthly_baseline(
         (vals[mid - 1] + vals[mid]) / 2
     };
     Ok(median)
+}
+
+/// Teto de diário "típico" por dia. Fonte única para (a) projetar o gasto diário nos dias futuros do
+/// mês corrente (driver do forecast — senão o saldo nasce otimista assumindo zero gasto) e (b) a
+/// referência exibida no tile "Diário de hoje" (`de R$X`). Regra:
+/// 1. se houver orçamento diário explícito ativo (> 0), ele vence (o dono definiu um teto);
+/// 2. senão, o Diário médio do último mês COMPLETO = Σ diário realizado (despesa não-fixa, não-crédito)
+///    ÷ dias do mês. Espelha o `real_daily_avg_cents` do método ("Diário médio") sobre o mês anterior.
+///
+/// Sem mês anterior com diário, retorna 0 (usuário novo — nada a assumir).
+async fn effective_daily_ceiling(pool: &SqlitePool, today_naive: NaiveDate) -> Result<i64, String> {
+    let active: Option<(i64,)> = sqlx::query_as(
+        "SELECT amount FROM daily_budget WHERE status='active' AND amount > 0 \
+         ORDER BY start_date DESC LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("daily ceiling (budget): {e}"))?;
+    if let Some((amount,)) = active {
+        return Ok(amount);
+    }
+    // Mês anterior completo: primeiro dia do mês corrente − 1 dia.
+    let first_this = NaiveDate::from_ymd_opt(today_naive.year(), today_naive.month(), 1)
+        .ok_or("data inválida")?;
+    let last_prev = match first_this.pred_opt() {
+        Some(d) => d,
+        None => return Ok(0),
+    };
+    let prev_ym = last_prev.format("%Y-%m").to_string();
+    let days_prev = last_prev.day() as i64;
+    let sum: (i64,) = sqlx::query_as(
+        "SELECT ABS(COALESCE(SUM(amount), 0)) FROM \"transaction\" \
+         WHERE type='expense' AND is_fixed=0 AND is_projection=0 \
+           AND (payment_method IS NULL OR payment_method <> 'credit') \
+           AND substr(date,1,7) = ?1",
+    )
+    .bind(&prev_ym)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("daily ceiling (avg): {e}"))?;
+    Ok(if days_prev > 0 { sum.0 / days_prev } else { 0 })
 }
 
 /// Piso de reserva = colchão intocável que a folga de caixa não pode comer. Por ora = soma dos
@@ -680,6 +721,32 @@ async fn load_cashflow_events(
     }
 
     Ok(all_events)
+}
+
+/// Eventos que alimentam projeções de caixa: lançamentos reais/futuros + Diário típico futuro do
+/// mês corrente. Usado por `forecast_dto` e `dashboard_summary` para manter o saldo projetado
+/// idêntico em todas as telas.
+async fn load_forecast_events(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+    horizon_end: NaiveDate,
+) -> Result<Vec<CashflowEvent>, String> {
+    let mut events = load_cashflow_events(pool, today_naive, horizon_end).await?;
+    // Previsão de diário como DRIVER: injeta o teto/dia nos dias futuros do mês corrente, para o
+    // saldo projetado e a Performance não nascerem otimistas (assumem o gasto típico até o fim do mês).
+    let daily_ceiling = effective_daily_ceiling(pool, today_naive).await?;
+    let days_with_daily: std::collections::HashSet<NaiveDate> = events
+        .iter()
+        .filter(|e| e.kind == forecast::EventKind::Daily)
+        .map(|e| e.date)
+        .collect();
+    events.extend(forecast::project_daily_ceiling(
+        daily_ceiling,
+        today_naive,
+        horizon_end,
+        &days_with_daily,
+    ));
+    Ok(events)
 }
 
 /// Eventos JÁ REALIZADOS do mês corrente (`month_start..=today`), classificados como os futuros.
@@ -852,28 +919,7 @@ pub async fn get_forecast(pool: State<'_, SqlitePool>) -> Result<ForecastDto, St
 async fn forecast_dto(pool: &SqlitePool, today_naive: NaiveDate) -> Result<ForecastDto, String> {
     let horizon_end = forecast_horizon_end(pool, today_naive).await?;
     let seed = projection_seed(pool, today_naive).await?;
-    let mut events = load_cashflow_events(pool, today_naive, horizon_end).await?;
-    // Previsão de diário como DRIVER: injeta o teto/dia nos dias futuros do mês corrente, para o
-    // saldo projetado e a Performance não nascerem otimistas (assumem o gasto típico até o fim do mês).
-    let daily_ceiling: (i64,) = sqlx::query_as(
-        "SELECT COALESCE(amount, 0) FROM daily_budget WHERE status='active' \
-         ORDER BY start_date DESC LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| format!("query daily_budget: {e}"))?
-    .unwrap_or((0,));
-    let days_with_daily: std::collections::HashSet<NaiveDate> = events
-        .iter()
-        .filter(|e| e.kind == forecast::EventKind::Daily)
-        .map(|e| e.date)
-        .collect();
-    events.extend(forecast::project_daily_ceiling(
-        daily_ceiling.0,
-        today_naive,
-        horizon_end,
-        &days_with_daily,
-    ));
+    let events = load_forecast_events(pool, today_naive, horizon_end).await?;
     let metric_events = load_metric_events(pool, today_naive, &events).await?;
     let fc =
         forecast::project_with_metrics(seed, today_naive, &events, &metric_events, horizon_end);
@@ -1223,7 +1269,7 @@ async fn dashboard_summary(
     // Seed + forward events: shared with `forecast_dto` (single source of event mapping).
     let seed = projection_seed(pool, today_naive).await?;
     let horizon_end = forecast_horizon_end(pool, today_naive).await?;
-    let all_events = load_cashflow_events(pool, today_naive, horizon_end).await?;
+    let all_events = load_forecast_events(pool, today_naive, horizon_end).await?;
 
     // `balance` is the projected end-of-current-month figure (the method's hero, spec 003 US8),
     // not the raw current account sum.
@@ -1236,14 +1282,9 @@ async fn dashboard_summary(
         .or_else(|| fc.daily.last().map(|p| p.balance_cents))
         .unwrap_or(seed);
 
-    // Active daily budget
-    let daily_budget: (i64,) = sqlx::query_as(
-        "SELECT COALESCE(amount, 0) FROM daily_budget WHERE status='active' ORDER BY start_date DESC LIMIT 1"
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| format!("query: {e}"))?
-    .unwrap_or((0,));
+    // Teto do diário exibido no tile "Diário de hoje" (`de R$X`): orçamento explícito ativo, senão
+    // o Diário médio do mês anterior — mesma fonte do driver de projeção do forecast (consistência).
+    let daily_budget = effective_daily_ceiling(pool, today_naive).await?;
 
     // Diário de HOJE como MAGNITUDE positiva (o card faz `teto - gasto` e `gasto/teto`).
     // - Sinal: por convenção, `amount` é gravado como magnitude positiva (import faz `.abs()`,
@@ -1307,14 +1348,29 @@ async fn dashboard_summary(
     .await
     .map_err(|e| format!("query has_credit: {e}"))?;
 
-    // Reserve
-    let reserve: (f64, String) = sqlx::query_as(
-        "SELECT COALESCE(current_months, 0), COALESCE(trend, 'flat') FROM reserve ORDER BY last_calculated_at DESC LIMIT 1"
+    // Reserva em MESES de custo de vida (método): saldo das contas de reserva ÷ custo de vida mensal.
+    // Custo de vida mensal = mediana das saídas dos últimos meses completos (realized_monthly_baseline
+    // = fixas + diário + cartão). A tabela `reserve.current_months` não tem writer de produção (só seed
+    // de teste), então derivamos ao vivo dos dados importados — espelha os R$ que o PocketsCard mostra.
+    // `trend` permanece da tabela/snapshot (default 'flat' enquanto não há histórico).
+    let reserve_balance: (i64,) =
+        sqlx::query_as("SELECT COALESCE(SUM(balance), 0) FROM account WHERE liquidity = 'reserve'")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("query reserve balance: {e}"))?;
+    let reserve_baseline = realized_monthly_baseline(pool, today_naive).await?;
+    let reserve_months = if reserve_baseline > 0 {
+        reserve_balance.0 as f64 / reserve_baseline as f64
+    } else {
+        0.0
+    };
+    let reserve_trend: (String,) = sqlx::query_as(
+        "SELECT COALESCE(trend, 'flat') FROM reserve ORDER BY last_calculated_at DESC LIMIT 1",
     )
     .fetch_optional(pool)
     .await
-    .map_err(|e| format!("query: {e}"))?
-    .unwrap_or((0.0, "flat".to_string()));
+    .map_err(|e| format!("query reserve trend: {e}"))?
+    .unwrap_or(("flat".to_string(),));
 
     // Transações já realizadas: por DATA (≤ hoje), não pelo `is_projection` congelado (stale
     // quando o dono não re-importa por dias — auditoria de robustez a edições).
@@ -1326,12 +1382,12 @@ async fn dashboard_summary(
 
     Ok(DashboardSummary {
         balance: projected_balance,
-        daily_budget: daily_budget.0,
+        daily_budget,
         daily_spend_today: daily_spend.0,
         credit_spend_month: credit_spend.0,
         has_credit: has_credit.0 != 0,
-        reserve_months: reserve.0,
-        reserve_trend: reserve.1,
+        reserve_months,
+        reserve_trend: reserve_trend.0,
         transaction_count: count.0,
     })
 }
@@ -3070,7 +3126,7 @@ mod tests {
         let pool = fixture_pool().await;
         // Saldo de hoje vindo da planilha; uma saída futura pequena no dia 26.
         insert_sheet_balance(&pool, "2026", "2026-06-12", 500_000).await;
-        insert_projection(&pool, "expense", 4_633, "2026-06-26", "debit", 0).await;
+        insert_projection(&pool, "expense", 7_890, "2026-06-26", "debit", 0).await;
 
         let today = NaiveDate::from_ymd_opt(2026, 6, 12).unwrap();
         let fc = forecast_dto(&pool, today).await.unwrap();
@@ -3078,9 +3134,9 @@ mod tests {
         // Antes: daily[0] = 0 (saldo zerado). Agora bate com o Saldo de hoje da planilha.
         assert_eq!(fc.daily[0].date, "2026-06-12");
         assert_eq!(fc.daily[0].balance_cents, 500_000);
-        // Antes: deepest_deficit = −R$ 46,33 (o "buraco que não existe"). Agora positivo.
+        // Antes: deepest_deficit negativo (o "buraco que não existe"). Agora positivo.
         let trough = fc.deepest_deficit.as_ref().unwrap();
-        assert_eq!(trough.balance_cents, 500_000 - 4_633);
+        assert_eq!(trough.balance_cents, 500_000 - 7_890);
         assert!(trough.balance_cents > 0);
         assert!(fc.safe_to_spend_today_cents > 0);
     }
@@ -3113,15 +3169,125 @@ mod tests {
 
         assert_eq!(fc.horizon_end, "2026-12-31");
         // Performance de junho = MÊS INTEIRO (realizado + projetado): inclui os R$ 700k já
-        // realizados em 10/jun, que o cálculo antigo (só futuros) ignorava (o P0).
+        // realizados em 10/jun, que o cálculo antigo (só futuros) ignorava (o P0). Inclui também a
+        // PREVISÃO de diário restante: como não há orçamento diário explícito, o teto/dia vem do
+        // Diário médio de maio (220.000 ÷ 31 = 7.096/dia), injetado nos dias futuros de junho
+        // (14–30 = 17 dias) = 120.632 — junho fica corretamente mais conservador que o antigo −100k.
         let jun = fc.months.iter().find(|m| m.month == 6).unwrap();
-        assert_eq!(jun.performance_cents, 1_000_000 - 1_100_000); // −100.000
+        let projected_daily_jun = (220_000 / 31) * 17; // teto = Diário médio de maio × dias 14–30
+        assert_eq!(
+            jun.performance_cents,
+            1_000_000 - 1_100_000 - projected_daily_jun
+        ); // −220.632
         // Poupança ANUAL (meses completos jan–mai, abaixo da meta) manda → pode gastar 0.
         assert_eq!(fc.binding_guardrail, "savings");
         assert_eq!(fc.safe_to_spend_today_cents, 0);
         assert!(fc.savings_headroom_cents.unwrap() < 0);
         assert!(fc.cash_headroom_cents > 0); // mas há caixa (é a reserva)
         assert_eq!(fc.savings_target_bps, 2500);
+    }
+
+    async fn insert_reserve_account(pool: &sqlx::SqlitePool, balance: i64) {
+        let pid = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO person (id, name) VALUES (?1, ?2)")
+            .bind(&pid)
+            .bind("Tester")
+            .execute(pool)
+            .await
+            .unwrap();
+        let aid = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, balance, liquidity) \
+             VALUES (?1,'Reserva','savings',?2,?3,'reserve')",
+        )
+        .bind(&aid)
+        .bind(&pid)
+        .bind(balance)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    // P1.1 (review): reserve_months derivado ao vivo = saldo das contas de reserva ÷ custo de vida
+    // mensal (baseline), em vez do `reserve.current_months` que nunca tem writer de produção.
+    #[tokio::test]
+    async fn dashboard_reserve_months_derived_from_balance_and_baseline() {
+        let pool = fixture_pool().await;
+        // Custo de vida: meses completos (mar–mai) com saída 100.000/mês → mediana baseline = 100.000.
+        for m in [3, 4, 5] {
+            insert_realized(&pool, "expense", 100_000, &format!("2026-{m:02}-10")).await;
+        }
+        insert_reserve_account(&pool, 600_000).await; // 600.000 ÷ 100.000 = 6,0 meses
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let s = dashboard_summary(&pool, today).await.unwrap();
+        assert!((s.reserve_months - 6.0).abs() < 1e-9);
+    }
+
+    // Sem nenhum mês completo (baseline 0), reserve_months é 0 (não divide por zero).
+    #[tokio::test]
+    async fn dashboard_reserve_months_zero_without_baseline() {
+        let pool = fixture_pool().await;
+        insert_reserve_account(&pool, 600_000).await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let s = dashboard_summary(&pool, today).await.unwrap();
+        assert_eq!(s.reserve_months, 0.0);
+    }
+
+    // P1.3 (review): teto do diário cai para o Diário médio do mês anterior quando não há orçamento
+    // explícito (antes era 0 fixo → tile "de R$0" e forecast otimista).
+    #[tokio::test]
+    async fn dashboard_daily_budget_falls_back_to_prior_month_avg() {
+        let pool = fixture_pool().await;
+        // Maio: diário (is_fixed=0) de 310.000 em 31 dias → média = 10.000/dia.
+        insert_realized(&pool, "expense", 310_000, "2026-05-10").await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let s = dashboard_summary(&pool, today).await.unwrap();
+        assert_eq!(s.daily_budget, 310_000 / 31); // 10.000
+    }
+
+    // O saldo projetado do dashboard deve usar o mesmo driver de Diário futuro do forecast; senão o
+    // tile "Saldo projetado" fica otimista e diverge do fim do mês exibido no herói.
+    #[tokio::test]
+    async fn dashboard_projected_balance_includes_future_daily_ceiling() {
+        let pool = fixture_pool().await;
+        insert_liquid_account(&pool, 300_000).await;
+        // Maio: diário de 310.000 em 31 dias → teto típico = 10.000/dia.
+        insert_realized(&pool, "expense", 310_000, "2026-05-10").await;
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let summary = dashboard_summary(&pool, today).await.unwrap();
+        let forecast = forecast_dto(&pool, today).await.unwrap();
+
+        // Junho tem 17 dias após 13/jun (14..30). O saldo precisa reservar esse Diário restante.
+        assert_eq!(summary.balance, 130_000);
+        assert_eq!(forecast.month_end[0].balance_cents, summary.balance);
+    }
+
+    // Orçamento diário explícito ativo vence o fallback.
+    #[tokio::test]
+    async fn dashboard_daily_budget_prefers_explicit_active_budget() {
+        let pool = fixture_pool().await;
+        insert_realized(&pool, "expense", 310_000, "2026-05-10").await; // existiria fallback 10.000
+        let pid = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO person (id, name) VALUES (?1, 'Tester')")
+            .bind(&pid)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let bid = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO daily_budget (id, person_id, amount, start_date, status, free_income) \
+             VALUES (?1,?2,?3,'2026-06-01','active',0)",
+        )
+        .bind(&bid)
+        .bind(&pid)
+        .bind(15_000_i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let s = dashboard_summary(&pool, today).await.unwrap();
+        assert_eq!(s.daily_budget, 15_000); // orçamento explícito, não o fallback de 10.000
     }
 
     // Grade do mês: 31 linhas (maio), fluxos agregados por dia e Saldo vindo da planilha.

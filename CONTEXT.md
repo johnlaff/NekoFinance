@@ -60,6 +60,16 @@ The method's core metric: daily_spend compared against daily_budget. Green/amber
 **Crédito/Fatura track** (internal name "Régua 2"):
 Credit bill tracking: SUM(credit_spend for the month) accumulates into the invoice that lands on the due date. Prevents self-deception when the daily track is green but the credit bill is accumulating silently. The engine tracks the two independently; it does not compare credit against income.
 
+**Forecast Engine Types** (forecast `EventKind`):
+The projection engine maps each transaction into exactly one bucket. The method has 5 movement types (entrada, saída, diário, economia, cartão); the engine collapses them into 4 `EventKind` variants because the card has no column of its own — its bill folds into the Saída lump at the due date:
+
+- **Income** (Entrada): `type='income'`.
+- **FixedOut** (Saída fixa + Cartão): `type='expense'` with `is_fixed=1`, **or** any `payment_method='credit'` expense (the fatura lands as a Saída lump on the due date).
+- **Daily** (Diário): `type='expense'`, `is_fixed=0`, non-credit (débito/PIX/dinheiro).
+- **Economia**: `type='transfer'` to a `reserve`/`illiquid` account (set aside, not spent).
+
+Derived metrics: `cost_of_living = FixedOut + Daily`; `Performance = Income − (cost_of_living + Economia + previsão de diário restante)`. The UI exposes the 5 method types via `MovBadge` (Cartão = credit expense); the engine buckets are the 4 above.
+
 ### Savings & Protection
 
 **Reserve**:
@@ -77,6 +87,22 @@ _Avoid_: Import config, column mapping
 
 **Sync Log**:
 Append-only table for sync events. Records what was imported/modified, when, and by which profile. Enables conflict resolution in future multi-device scenarios.
+
+### Savings & Forecast (derived metrics)
+
+These live in the forecast DTO (`get_forecast`), computed in the Rust core — not persisted tables.
+
+**AnnualSavings**: year-to-date figures from complete months. `registered_economia_cents / realized_income_cents` is the method's **Economizado%** (Economia transferred to reserve ÷ income — the spreadsheet's `%` column; target 20–30% as an ANNUAL average, never a monthly pass/fail). Distinct from `realized_savings_cents` (net surplus = income − outflow = the **Colchão**), which is the buffer, not Economizado.
+
+**MonthCoverage**: per future month, how much of the typical baseline outflow has been pre-launched. Drives the Previsibilidade card — an empty future month makes the projection optimistic until salary/fixed/fatura/diário are entered.
+
+**binding_guardrail**: "pode gastar até X hoje" is the MIN of two limits — cash (no day goes negative) and savings (keep the annual Economizado% ≥ target). `binding_guardrail` says which one bit.
+
+**Colchão**: net surplus kept in cash instead of a formal Economia transfer — a valid adaptation the app recognizes before teaching (ColchaoCard). Shown beside `registered_economia` so the two are never conflated.
+
+**Phase** (adaptação): `map` (mapping — few lançamentos / no realized month) → `calibrate` (tuning the diário) → `operate` (Economizado% ≥ 20% and reserve ≥ 3 months). Derived from summary + forecast (`colchaoPhase`), not stored.
+
+**Reserve months** (dashboard): derived live as reserve-account balance ÷ monthly cost of living (`realized_monthly_baseline`); the `reserve.current_months` column has no production writer.
 
 ## Rules
 

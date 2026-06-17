@@ -86,7 +86,7 @@ describe("TransactionsScreen", () => {
     mockCommands({ get_recent_transactions: [] });
     render(<TransactionsScreen query="" onQueryChange={vi.fn()} />);
     await waitFor(() => {
-      expect(screen.getByText("Nenhuma transação encontrada")).toBeInTheDocument();
+      expect(screen.getByText("Nenhum lançamento encontrado")).toBeInTheDocument();
     });
     expect(screen.getByText(/Importe sua planilha/)).toBeInTheDocument();
   });

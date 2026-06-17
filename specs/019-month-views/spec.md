@@ -2,15 +2,16 @@
 
 > Renumerada de 013 (colisão: 013 é a Conciliação avançada). Conteúdo inalterado.
 >
-> Fonte: notas locais privadas (o método: "olhar para frente"). GAPs de visão — o motor já
-> produz os dados; falta a tela. Functional-core já pronto (spec 003/011); aqui é shell + UI.
+> Fonte: notas locais privadas (o método: "olhar para frente"). As três telas (Totais, Horizonte
+> multi-mês, Visão anual) foram ENTREGUES sobre o functional-core (spec 003/011): aqui é shell + UI.
 
 ## Totais (entregue)
 
 4 métricas-herói do mês corrente (Performance / Custo de vida / Economizado / Diário médio) com
-status do método via HealthBadge. Lê `get_forecast` → `months[today]`. Ver `TotaisScreen`.
+status do método via StatusChip (pílula calma com ponto de cor — preferida ao anel radial do
+HealthBadge neste layout denso de 4 métricas). Lê `get_forecast` → `months[today]`. Ver `TotaisScreen`.
 
-## Horizonte multi-mês (esta slice)
+## Horizonte multi-mês (entregue)
 
 Matriz **dia × mês** do saldo projetado, colorida por faixa (heatmap) — a visão "para frente" do
 método. Lê `forecast.daily` (saldo encadeado de hoje até `horizon_end`, já cruzando meses) e

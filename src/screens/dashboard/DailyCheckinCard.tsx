@@ -17,9 +17,12 @@ function todayISO(): string {
  */
 export function DailyCheckinCard({
   summary,
+  monthAvgCents = 0,
   onLogged,
 }: {
   summary: DashboardSummary;
+  /** Diário médio do mês corrente (Σ realizado ÷ dias decorridos) — referência de ritmo. */
+  monthAvgCents?: number;
   onLogged: () => void;
 }) {
   const [amount, setAmount] = useState("");
@@ -73,7 +76,7 @@ export function DailyCheckinCard({
             className="dash-card__ic"
             aria-hidden="true"
           />
-          Check-in de hoje
+          Diário de hoje
         </span>
         <span
           style={{
@@ -99,7 +102,7 @@ export function DailyCheckinCard({
           }}
         >
           <span style={{ color: "var(--text-muted)", fontSize: "var(--fs-sm)" }}>
-            Diário de hoje
+            Diário registrado hoje
           </span>
           <span style={{ fontWeight: "var(--fw-bold)" }}>
             <Money cents={spent} size="md" />
@@ -146,11 +149,23 @@ export function DailyCheckinCard({
           </div>
         )}
 
+        {monthAvgCents > 0 && (
+          <p
+            style={{
+              margin: "0 0 var(--space-3)",
+              fontSize: "var(--fs-micro)",
+              color: "var(--text-faint)",
+            }}
+          >
+            Média do mês: {fmtBRL(monthAvgCents)}/dia
+          </p>
+        )}
+
         <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
           <input
-            aria-label="Gasto de hoje"
+            aria-label="Gasto de hoje no débito, PIX ou dinheiro"
             inputMode="decimal"
-            placeholder="Quanto gastou hoje? (R$)"
+            placeholder="Gasto de hoje — débito, PIX ou dinheiro (R$)"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             onKeyDown={(e) => {

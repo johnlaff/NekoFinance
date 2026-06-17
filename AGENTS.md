@@ -58,7 +58,7 @@ The public repo must stay source-neutral and data-free. Do not commit private so
 
 ## Repo Map
 
-- `src/`: React UI and future frontend domain modules.
+- `src/`: React UI and frontend domain modules — `lib/` (domain/api), `features/`, `screens/`, `shell/`, `design-system/`.
 - `src-tauri/`: Tauri shell and Rust commands/plugins.
 - `docs/`: architecture, engineering standards, release strategy, methodology-pack contract.
 - `specs/`: feature specs, plans, and task breakdowns.

@@ -949,14 +949,14 @@ mod tests {
         // Nota na célula da Entrada de JANEIRO (linha 2, col 1); resto sem nota.
         let mut notes = vec![Vec::new(); rows.len()];
         notes[2] = vec![String::new(); rows[0].len()];
-        notes[2][1] = "R$ 18,33 - Pagamento\nR$ 2,32 - Rendimentos".into();
+        notes[2][1] = "Nota de exemplo\nSegunda linha da nota".into();
 
         let result = parse_rows_with_layout(&rows, &layout, &mappings, &notes);
 
         let entrada = result.iter().find(|r| r.amount > 0).unwrap();
         assert_eq!(
             entrada.description,
-            "R$ 18,33 - Pagamento · R$ 2,32 - Rendimentos"
+            "Nota de exemplo · Segunda linha da nota"
         );
         // A Saída de DEZEMBRO não tem nota → fallback com a data.
         let saida = result.iter().find(|r| r.amount < 0).unwrap();
@@ -990,7 +990,7 @@ mod tests {
                 "".into(),
                 "".into(),
                 "".into(),
-                "10571.0048".into(),
+                "12345.6748".into(),
             ],
             vec![
                 "2".into(),
@@ -998,7 +998,7 @@ mod tests {
                 "".into(),
                 "".into(),
                 "".into(),
-                "-46.33".into(),
+                "-78.90".into(),
             ],
             vec![
                 "3".into(),
@@ -1028,12 +1028,12 @@ mod tests {
             series[0],
             DailyBalance {
                 date: "2026-01-01".into(),
-                balance_cents: 1_057_100, // 10571.0048 → centavos
+                balance_cents: 1_234_567, // 12345.6748 → centavos (sub-centavo truncado)
                 is_projection: false,
             }
         );
         assert_eq!(series[1].date, "2026-01-02");
-        assert_eq!(series[1].balance_cents, -4633); // saldo negativo preservado
+        assert_eq!(series[1].balance_cents, -7890); // saldo negativo preservado
     }
 
     #[test]

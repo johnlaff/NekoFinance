@@ -12,6 +12,7 @@ import { fmtBRL, fmtDayMonth, monthNamePtBR } from "../lib/format";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { PrevisibilidadeCard } from "./dashboard/PrevisibilidadeCard";
 import { ColchaoCard } from "./dashboard/ColchaoCard";
+import { colchaoPhase } from "./dashboard/colchaoPhase";
 import { PerformanceCard } from "./dashboard/PerformanceCard";
 import { DailyCheckinCard } from "./dashboard/DailyCheckinCard";
 import { MonthLedgerCard } from "./dashboard/MonthLedgerCard";
@@ -85,6 +86,11 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
   const savingsBinds = forecast?.binding_guardrail === "savings";
   const targetPct = forecast ? Math.round(forecast.savings_target_bps / 100) : 25;
   const hasData = (summary?.transaction_count ?? 0) > 0;
+  // Diário médio do mês corrente (Σ diário realizado ÷ dias decorridos) para o ritmo no check-in.
+  const ym = forecast?.today.slice(0, 7);
+  const monthDailyAvgCents =
+    forecast?.months.find((m) => `${m.year}-${String(m.month).padStart(2, "0")}` === ym)
+      ?.real_daily_avg_cents ?? 0;
 
   function handleLogged() {
     invalidateCommands();
@@ -186,9 +192,9 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
         />
         <MetricTile
           label="Reserva"
-          value={summary ? `${summary.reserve_months.toFixed(1)}m` : "—"}
+          value={summary ? `${summary.reserve_months.toFixed(1)} meses` : "—"}
           icon={reserveTrendIcon}
-          sublabel="Mín. 6m · paz 12m+"
+          sublabel="Mín. 6 · paz 12+"
         />
       </div>
 
@@ -204,12 +210,18 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
       )}
 
       {summary && hasData && (
-        <DailyCheckinCard summary={summary} onLogged={handleLogged} />
+        <DailyCheckinCard
+          summary={summary}
+          monthAvgCents={monthDailyAvgCents}
+          onLogged={handleLogged}
+        />
       )}
 
       {forecast && hasData && <PrevisibilidadeCard forecast={forecast} />}
 
-      {forecast && hasData && <ColchaoCard forecast={forecast} />}
+      {forecast && hasData && (
+        <ColchaoCard forecast={forecast} phase={colchaoPhase(summary, forecast)} />
+      )}
 
       {forecast && <PerformanceCard forecast={forecast} />}
 

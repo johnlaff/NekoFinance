@@ -17,19 +17,27 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     await expect(page.getByText("R$ 35.420,00")).toBeVisible();
     await expect(page.getByText("Pode gastar até")).toBeVisible();
     await expect(page.getByText(/Junho de 2026/)).toBeVisible();
-    // Stats do herói: reserva + nº de lançamentos.
-    await expect(page.getByText("Lançamentos")).toBeVisible();
+    // Stats do herói: reserva + nº de lançamentos (escopado ao herói; "Lançamentos"
+    // também é item de navegação).
+    await expect(
+      page.locator(".dash-hero__stats").getByText("Lançamentos"),
+    ).toBeVisible();
     // Chained daily table: today marked, salary day visible
     await expect(page.getByRole("table").getByText("hoje").first()).toBeVisible();
     await expect(page.getByText("R$ 12.340,00").first()).toBeVisible();
 
-    // Check-in diário: card com o disponível do dia e registro rápido.
-    await expect(page.getByText("Check-in de hoje")).toBeVisible();
+    // Diário de hoje: card com o disponível do dia e registro rápido (escopado ao
+    // título do card, pois "Diário de hoje" também rotula o metric tile acima).
+    await expect(page.locator("#dash-checkin-title")).toHaveText("Diário de hoje");
     await expect(page.getByText(/disponível/)).toBeVisible();
     await page.getByLabel("Gasto de hoje").fill("9,90");
     await page.getByRole("button", { name: "Registrar" }).click();
     // Campo limpa após registrar (o dashboard refaz a busca).
     await expect(page.getByLabel("Gasto de hoje")).toHaveValue("");
+
+    // Rodapé do MonthLedgerCard fiel à planilha: linhas Saída Total e Performance.
+    await expect(page.getByRole("row", { name: /Saída Total/ })).toBeVisible();
+    await expect(page.getByRole("row", { name: /^Performance/ }).first()).toBeVisible();
 
     await page.screenshot({
       fullPage: true,
@@ -42,8 +50,8 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
   }, testInfo) => {
     const nav = (name: string | RegExp) => page.getByRole("button", { name });
 
-    await nav("Transações").click();
-    await expect(nav("Transações")).toHaveAttribute("aria-current", "page");
+    await nav("Lançamentos").click();
+    await expect(nav("Lançamentos")).toHaveAttribute("aria-current", "page");
     await expect(page.getByText("Café + mercado")).toBeVisible();
     await expect(page.getByText("5 exibidas")).toBeVisible();
     // Multi-titular: o lançamento dividido mostra os OwnerChips dos titulares.
@@ -117,7 +125,7 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
   });
 
   test("novo lançamento: abre o form, preenche e lança", async ({ page }) => {
-    await page.getByRole("button", { name: "Transações" }).click();
+    await page.getByRole("button", { name: "Lançamentos" }).click();
     await page.getByRole("button", { name: "Novo lançamento" }).click();
 
     // Form visível com o seletor de tipo e os campos.
@@ -142,7 +150,7 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
   });
 
   test("transactions filter narrows by scope", async ({ page }) => {
-    await page.getByRole("button", { name: "Transações" }).click();
+    await page.getByRole("button", { name: "Lançamentos" }).click();
     await page.getByRole("tab", { name: "Crédito" }).click();
     await expect(page.getByText("1 exibida")).toBeVisible();
     await expect(page.getByText("Assinatura streaming")).toBeVisible();
@@ -151,7 +159,7 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
 
   test("ctrl/cmd+k focuses the header search", async ({ page }) => {
     await page.keyboard.press("ControlOrMeta+k");
-    await expect(page.getByLabel("Buscar transações")).toBeFocused();
+    await expect(page.getByLabel("Buscar lançamentos")).toBeFocused();
   });
 });
 

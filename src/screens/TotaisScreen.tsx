@@ -196,11 +196,7 @@ export function TotaisScreen() {
   const forecast = forecastQ.data ?? null;
 
   if (forecastQ.loading) {
-    return (
-      <div style={{ padding: "var(--space-8)", color: "var(--text-muted)" }}>
-        Carregando os totais do mês…
-      </div>
-    );
+    return <EmptyState variant="skeleton" skeletonRows={6} />;
   }
   if (forecastQ.error || !forecast) {
     return (
@@ -239,6 +235,14 @@ export function TotaisScreen() {
   const goToday = () => setSelectedYm(null);
 
   const pct = (m.savings_rate_bps / 100).toFixed(0);
+  // Economizado é meta ANUAL (20–30% em média): o mês isolado não passa/reprova. Mostramos o %
+  // do mês como número e o acumulado do ano como referência, sem julgar o mês. O YTD é o
+  // Economizado% do MÉTODO = Economia registrada (transfers→reserva) ÷ Entradas — NÃO o net
+  // superávit (colchão, que vai no ColchaoCard); espelha a coluna % da aba Economia da planilha.
+  const a = forecast.annual_savings;
+  const ytdPct = Math.round(
+    (a.registered_economia_cents / Math.max(1, a.realized_income_cents)) * 100,
+  );
   const monthLabel = monthNamePtBR(`${ymOf(m)}-01`);
   const monthCap = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
 
@@ -321,14 +325,14 @@ export function TotaisScreen() {
               {pct}%
             </span>
           }
-          status={economizadoStatus(m.savings_rate_bps)}
-          sublabel="meta 20–30% no ano (este é o mês)"
+          sublabel={`no ano: ${ytdPct}% acumulado · meta 20–30% (média anual)`}
         />
         <MetricRow
           label="Custo de vida"
           term="custo_de_vida"
           value={<Money cents={m.cost_of_living_cents} size="lg" />}
           status={custoVidaStatus(m.cost_of_living_cents, m.income_cents)}
+          sublabel="= Saída Total (saídas + diário)"
         />
         <MetricRow
           label="Diário médio"
@@ -367,7 +371,7 @@ export function TotaisScreen() {
           <MovTotal
             label="Saída Total"
             cents={m.cost_of_living_cents}
-            hint="saídas + diário"
+            hint="saídas (incl. cartão) + diário = custo de vida"
           />
         </div>
       </section>

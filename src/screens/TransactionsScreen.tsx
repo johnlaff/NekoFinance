@@ -16,7 +16,7 @@ import {
   type TagRef,
   type TransactionRow,
 } from "../lib/api";
-import { fmtDate } from "../lib/format";
+import { fmtDate, monthNamePtBR } from "../lib/format";
 import { Money } from "../design-system/components/Money";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { NewTransactionForm } from "./NewTransactionForm";
@@ -25,13 +25,21 @@ import { ConflictGate } from "../features/reconcile/ConflictGate";
 /** Explicit seam: server-side pagination/FTS5 search replaces this in a later slice. */
 const FETCH_LIMIT = 500;
 
+/** Descrição "fallback" gerada no import quando a célula não tinha nota (ex.: "Saída 2026-06-01"). */
+const GENERIC_DESC = /^(Entrada|Saída|Diário) \d{4}-\d{2}-\d{2}$/;
+
+/** Rótulo do separador de mês no Livro-razão: "Junho de 2026". */
+function monthSepLabel(ym: string): string {
+  const name = monthNamePtBR(`${ym}-01`);
+  return `${name.charAt(0).toUpperCase()}${name.slice(1)} de ${ym.slice(0, 4)}`;
+}
+
 export type TransactionScope = "all" | "credit" | "future";
 
 const METHOD_LABELS: Record<string, string> = {
   debit: "Débito",
   credit: "Crédito",
   pix: "PIX",
-  transfer: "Transferência",
   cash: "Dinheiro",
 };
 
@@ -136,7 +144,7 @@ export function TransactionsScreen({
         <div className="dash-hero">
           <div className="dash-hero__txt">
             <div className="dash-hero__line">
-              <b>Preview web.</b> Abra o app desktop para ver suas transações.
+              <b>Preview web.</b> Abra o app desktop para ver seus lançamentos.
             </div>
           </div>
         </div>
@@ -157,7 +165,7 @@ export function TransactionsScreen({
       <div className="dash">
         <EmptyState
           variant="error"
-          title="Não foi possível carregar as transações"
+          title="Não foi possível carregar os lançamentos"
           description={error}
           action={
             <Button variant="primary" onClick={() => window.location.reload()}>
@@ -218,7 +226,7 @@ export function TransactionsScreen({
           {visible.length === 0 ? (
             <EmptyState
               variant="empty"
-              title="Nenhuma transação encontrada"
+              title="Nenhum lançamento encontrado"
               description={
                 transactions.length === 0
                   ? "Importe sua planilha em Configurações para começar."
@@ -237,91 +245,121 @@ export function TransactionsScreen({
                 </tr>
               </thead>
               <tbody>
-                {visible.map((t) => (
-                  <Fragment key={t.id}>
-                    <tr className={t.is_projection ? "projection" : ""}>
-                      <td>{fmtDate(t.date)}</td>
-                      <td>
-                        <MovBadge kind={movKind(t)} showLabel size={16} />
-                      </td>
-                      <td>
-                        {t.description || "—"} <ProvBadge provenance={t.provenance} />
-                        {t.owners.length >= 2 && (
-                          <span
-                            style={{
-                              display: "inline-flex",
-                              gap: 4,
-                              marginLeft: 6,
-                              verticalAlign: "middle",
-                            }}
-                          >
-                            {t.owners.map((name) => (
-                              <OwnerChip key={name} name={name} />
-                            ))}
-                          </span>
-                        )}
-                        {t.tags.map((tag) => (
-                          <TagChip key={tag.id} tag={tag} />
-                        ))}
-                        <button
-                          type="button"
-                          className="txn-tag-btn"
-                          aria-label={`Editar tags de ${t.description || "lançamento"}`}
-                          aria-expanded={tagEditId === t.id}
-                          onClick={() =>
-                            setTagEditId((id) => (id === t.id ? null : t.id))
-                          }
-                        >
-                          <TagIcon size={13} strokeWidth={1.75} />
-                        </button>
-                      </td>
-                      <td>
-                        <span className="txn-method">{methodLabel(t)}</span>
-                      </td>
-                      <td style={{ textAlign: "right" }}>
-                        {t.type === "income" ? (
-                          <Money cents={Math.abs(t.amount)} size="sm" sign="auto" />
-                        ) : (
-                          <Money cents={-Math.abs(t.amount)} size="sm" sign="none" />
-                        )}
-                      </td>
-                    </tr>
-                    {tagEditId === t.id && (
-                      <tr className="txn-tag-editor">
-                        <td colSpan={5}>
-                          {allTags.length === 0 ? (
-                            <span style={{ color: "var(--text-muted)" }}>
-                              Crie tags na aba Tags para classificar este lançamento.
+                {visible.map((t, i) => {
+                  const ym = t.date.slice(0, 7);
+                  const showMonth = i === 0 || visible[i - 1]!.date.slice(0, 7) !== ym;
+                  const generic = !!t.description && GENERIC_DESC.test(t.description);
+                  return (
+                    <Fragment key={t.id}>
+                      {showMonth && (
+                        <tr className="txn-month-sep">
+                          <th scope="colgroup" colSpan={5}>
+                            {monthSepLabel(ym)}
+                          </th>
+                        </tr>
+                      )}
+                      <tr className={t.is_projection ? "projection" : ""}>
+                        <td>{fmtDate(t.date)}</td>
+                        <td>
+                          <MovBadge kind={movKind(t)} showLabel size={16} />
+                        </td>
+                        <td>
+                          {t.description ? (
+                            <span
+                              title={
+                                generic
+                                  ? "Sem nota na célula — reimporte via Google Sheets para trazer a descrição real"
+                                  : undefined
+                              }
+                              style={
+                                generic
+                                  ? { color: "var(--text-faint)", fontStyle: "italic" }
+                                  : undefined
+                              }
+                            >
+                              {t.description}
                             </span>
                           ) : (
-                            <span className="txn-tag-picker">
-                              {allTags.map((tag) => {
-                                const on = t.tags.some((x) => x.id === tag.id);
-                                return (
-                                  <button
-                                    type="button"
-                                    key={tag.id}
-                                    aria-pressed={on}
-                                    className={`txn-tag-opt ${on ? "is-on" : ""}`}
-                                    onClick={() => void toggleTag(t, tag.id)}
-                                  >
-                                    <span
-                                      aria-hidden="true"
-                                      className="txn-tag-dot"
-                                      style={{ background: tag.color }}
-                                    />
-                                    {tag.emoji ? `${tag.emoji} ` : ""}
-                                    {tag.name}
-                                  </button>
-                                );
-                              })}
+                            "—"
+                          )}{" "}
+                          <ProvBadge provenance={t.provenance} />
+                          {t.owners.length >= 2 && (
+                            <span
+                              style={{
+                                display: "inline-flex",
+                                gap: 4,
+                                marginLeft: 6,
+                                verticalAlign: "middle",
+                              }}
+                            >
+                              {t.owners.map((name) => (
+                                <OwnerChip key={name} name={name} />
+                              ))}
                             </span>
+                          )}
+                          {t.tags.map((tag) => (
+                            <TagChip key={tag.id} tag={tag} />
+                          ))}
+                          <button
+                            type="button"
+                            className="txn-tag-btn"
+                            aria-label={`Editar tags de ${t.description || "lançamento"}`}
+                            aria-expanded={tagEditId === t.id}
+                            onClick={() =>
+                              setTagEditId((id) => (id === t.id ? null : t.id))
+                            }
+                          >
+                            <TagIcon size={13} strokeWidth={1.75} />
+                          </button>
+                        </td>
+                        <td>
+                          <span className="txn-method">{methodLabel(t)}</span>
+                        </td>
+                        <td style={{ textAlign: "right" }}>
+                          {t.type === "income" ? (
+                            <Money cents={Math.abs(t.amount)} size="sm" sign="auto" />
+                          ) : (
+                            <Money cents={-Math.abs(t.amount)} size="sm" sign="auto" />
                           )}
                         </td>
                       </tr>
-                    )}
-                  </Fragment>
-                ))}
+                      {tagEditId === t.id && (
+                        <tr className="txn-tag-editor">
+                          <td colSpan={5}>
+                            {allTags.length === 0 ? (
+                              <span style={{ color: "var(--text-muted)" }}>
+                                Crie tags na aba Tags para classificar este lançamento.
+                              </span>
+                            ) : (
+                              <span className="txn-tag-picker">
+                                {allTags.map((tag) => {
+                                  const on = t.tags.some((x) => x.id === tag.id);
+                                  return (
+                                    <button
+                                      type="button"
+                                      key={tag.id}
+                                      aria-pressed={on}
+                                      className={`txn-tag-opt ${on ? "is-on" : ""}`}
+                                      onClick={() => void toggleTag(t, tag.id)}
+                                    >
+                                      <span
+                                        aria-hidden="true"
+                                        className="txn-tag-dot"
+                                        style={{ background: tag.color }}
+                                      />
+                                      {tag.emoji ? `${tag.emoji} ` : ""}
+                                      {tag.name}
+                                    </button>
+                                  );
+                                })}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           )}

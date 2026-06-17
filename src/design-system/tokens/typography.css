@@ -24,6 +24,7 @@
 
   /* ---- Type scale (px) — desktop-dense ---- */
   --fs-display: 40px; /* hero numbers, screen titles on landing */
+  --fs-display-hero: 46px; /* dashboard hero KPI ("Pode gastar até") */
   --fs-h1: 28px;
   --fs-h2: 22px;
   --fs-h3: 18px;

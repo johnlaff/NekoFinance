@@ -288,6 +288,11 @@ h3,
   font-size: var(--fs-sm);
 }
 
+/* Foco via teclado (Ctrl/Cmd+K ou Tab) acende a borda jade, como os demais inputs do DS. */
+.ak-search:focus-within {
+  border-color: var(--border-focus);
+}
+
 .ak-search input {
   background: none;
   border: none;
@@ -400,7 +405,7 @@ h3,
   font-family: var(--font-money);
   font-variant-numeric: tabular-nums;
   font-weight: var(--fw-bold);
-  font-size: 46px;
+  font-size: var(--fs-display-hero);
   line-height: 1.04;
   letter-spacing: -0.02em;
   color: var(--text-strong);
@@ -607,6 +612,17 @@ h3,
   color: var(--money-neg);
 }
 
+/* Separador de mês no Livro-razão: agrupa visualmente os lançamentos por mês (cabeçalho de grupo,
+   herda o estilo de th uppercase/micro/bg-subtle e gruda no topo ao rolar). */
+.txn-month-sep th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: var(--text-muted);
+  border-top: var(--bw-hair) solid var(--border);
+  padding-block: var(--space-2);
+}
+
 /* BalanceTrajectory / Sparkline — stroke-draw no mount + tooltip de hover */
 .nk-spark__line {
   stroke-dasharray: 1;
@@ -690,7 +706,7 @@ h3,
   width: 13px;
   height: 13px;
   border-radius: 50%;
-  border: 1px solid currentColor;
+  border: var(--bw-hair) solid currentColor;
   font-family: var(--font-serif);
   font-style: italic;
   font-size: 9px;
@@ -712,7 +728,7 @@ h3,
   padding: 12px 14px;
   border-radius: var(--radius-md);
   background: var(--surface-elevated);
-  border: 1px solid var(--border-strong);
+  border: var(--bw-hair) solid var(--border-strong);
   box-shadow: var(--shadow-3);
   display: flex;
   flex-direction: column;
@@ -727,7 +743,7 @@ h3,
   width: 9px;
   height: 9px;
   background: var(--surface-elevated);
-  border: 1px solid var(--border-strong);
+  border: var(--bw-hair) solid var(--border-strong);
   transform: rotate(45deg);
 }
 .nk-pop--bottom::before {
@@ -1334,7 +1350,7 @@ h3,
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: white;
+  background: var(--ink-000);
   transition: var(--t-hover);
 }
 
@@ -1615,7 +1631,7 @@ h3,
 /* Disclosure (design system) — resumo sempre visível, corpo anima grid-template-rows 0fr→1fr */
 .nk-disc {
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: var(--bw-hair) solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-1);
   overflow: hidden;

@@ -12,22 +12,22 @@ export type HealthLevel = "strong" | "steady" | "watch" | "risk";
 const TONE: Record<HealthLevel, { bg: string; border: string; color: string }> = {
   strong: {
     bg: "var(--success-tint)",
-    border: "rgba(52,185,129,.25)",
+    border: "color-mix(in srgb, var(--success-400) 25%, transparent)",
     color: "var(--success-400)",
   },
   steady: {
     bg: "var(--primary-quiet)",
-    border: "rgba(63,191,143,.22)",
+    border: "color-mix(in srgb, var(--primary) 22%, transparent)",
     color: "var(--primary)",
   },
   watch: {
     bg: "var(--warning-tint)",
-    border: "rgba(224,163,62,.25)",
+    border: "color-mix(in srgb, var(--warning-400) 25%, transparent)",
     color: "var(--warning-400)",
   },
   risk: {
     bg: "var(--danger-tint)",
-    border: "rgba(224,98,91,.25)",
+    border: "color-mix(in srgb, var(--danger-400) 25%, transparent)",
     color: "var(--danger-400)",
   },
 };
@@ -124,7 +124,7 @@ export function HealthBadge({
       <span style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
         <span
           style={{
-            fontSize: size === "lg" ? "16px" : "13px",
+            fontSize: size === "lg" ? "var(--fs-title)" : "var(--fs-sm)",
             fontWeight: "var(--fw-bold)",
             letterSpacing: "-0.005em",
           }}
@@ -133,7 +133,11 @@ export function HealthBadge({
         </span>
         {sublabel ? (
           <span
-            style={{ fontSize: "10.5px", fontWeight: "var(--fw-medium)", opacity: 0.8 }}
+            style={{
+              fontSize: "var(--fs-micro)",
+              fontWeight: "var(--fw-medium)",
+              opacity: 0.8,
+            }}
           >
             {sublabel}
           </span>

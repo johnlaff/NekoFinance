@@ -59,15 +59,15 @@ function CopilotApp() {
           <CpIcon name="lock" size={20} />
         </span>
         <div>
-          <div className="cpd-priv__t">Private &amp; local</div>
+          <div className="cpd-priv__t">Privado e local</div>
           <div className="cpd-priv__s">
-            Mia runs on-device. Nothing leaves your machine without approval.
+            A Mia roda no dispositivo. Nada sai da sua máquina sem aprovação.
           </div>
         </div>
       </div>
       <div>
         <div className="cpd-h" style={{ marginBottom: 8 }}>
-          What Mia can see
+          O que a Mia enxerga
         </div>
         <div className="cpd-card">
           <div className="cpd-row">
@@ -78,8 +78,10 @@ function CopilotApp() {
               <CpIcon name="table" size={15} />
             </span>
             <div>
-              <div className="cpd-row__t">Expenses 2025</div>
-              <div className="cpd-row__s">Read-only · 248 rows · synced 2m ago</div>
+              <div className="cpd-row__t">Despesas 2025</div>
+              <div className="cpd-row__s">
+                Somente leitura · 248 linhas · sincronizado há 2 min
+              </div>
             </div>
           </div>
           <div className="cpd-row">
@@ -93,24 +95,24 @@ function CopilotApp() {
               <CpIcon name="key" size={15} />
             </span>
             <div>
-              <div className="cpd-row__t">Writes need approval</div>
-              <div className="cpd-row__s">Every change is shown as a diff first.</div>
+              <div className="cpd-row__t">Escritas precisam de aprovação</div>
+              <div className="cpd-row__s">Toda mudança aparece como diff antes.</div>
             </div>
           </div>
         </div>
       </div>
       <div>
         <div className="cpd-h" style={{ marginBottom: 8 }}>
-          Suggested
+          Sugestões
         </div>
         <div
           className="cpd-card"
           style={{ display: "flex", flexDirection: "column", gap: 7 }}
         >
           {[
-            "Why was June cashflow lower?",
-            "Split rent 60/40 going forward",
-            "Find subscriptions we forgot",
+            "Por que o fluxo de junho caiu?",
+            "Dividir o aluguel 60/40 daqui pra frente",
+            "Achar assinaturas esquecidas",
           ].map((s) => (
             <div
               key={s}
@@ -128,72 +130,72 @@ function CopilotApp() {
     <window.AppShell
       active={nav}
       onNav={(k) => (window.__nekoRoute ? window.__nekoRoute(k) : setNav(k))}
-      title="Ask Mia"
-      crumb="Private · runs locally"
+      title="Pergunte à Mia"
+      crumb="Privado · roda localmente"
       dock={dock}
       flush={true}
     >
       <div className="cp">
         <div className="cp-scroll" ref={scrollRef}>
           <div className="cp-thread">
-            <div className="cp-day">Today</div>
+            <div className="cp-day">Hoje</div>
 
-            <ChatBubble from="user" userInitials="AT">
-              Last month has a bunch of uncategorized dining. Can you categorize them
-              and mark the shared ones as household?
+            <ChatBubble from="user" userInitials="VC">
+              O mês passado tem vários gastos com comida sem categoria. Pode
+              categorizá-los e marcar os compartilhados como casa?
             </ChatBubble>
 
             <ChatBubble from="mia">
               <p>
-                I found <b>3 uncategorized dining charges</b> in May totaling{" "}
-                <span className="nk-chat__money">$131.70</span>{" "}
-                <Citation index={1} source="rows 1204–1206" />. Two are at venues you
-                usually split with Sam.
+                Encontrei <b>3 gastos com comida sem categoria</b> em maio, somando{" "}
+                <span className="nk-chat__money">R$ 131,70</span>{" "}
+                <Citation index={1} source="linhas 1204–1206" />. Dois são em lugares
+                que você costuma dividir.
               </p>
               <Citation
                 variant="tool"
-                fn="filter(May 2025, category = ∅, mcc = dining)"
+                fn="filtro(maio 2025, categoria = ∅, tipo = comida)"
                 lines={[
-                  { label: "Whole Foods · 12 May", value: "78.00" },
-                  { label: "Blue Bottle · 19 May", value: "9.50" },
-                  { label: "Bottega · 24 May", value: "44.20" },
+                  { label: "Supermercado · 12 mai", value: "78,00" },
+                  { label: "Cafeteria · 19 mai", value: "9,50" },
+                  { label: "Restaurante · 24 mai", value: "44,20" },
                 ]}
-                total={{ label: "Matched", value: "$131.70" }}
-                source="Sheet ‘Expenses 2025’ · 3 rows · deterministic"
+                total={{ label: "Correspondentes", value: "R$ 131,70" }}
+                source="Planilha ‘Despesas 2025’ · 3 linhas · determinístico"
               />
             </ChatBubble>
 
             <ChatBubble from="mia">
               <p>
-                Here's the change I'd make. It needs your approval before I touch the
-                sheet:
+                Esta é a mudança que eu faria. Precisa da sua aprovação antes de eu
+                tocar na planilha:
               </p>
             </ChatBubble>
 
             <div style={{ paddingLeft: 42 }}>
               <ApprovalDiffCard
-                title="Categorize & assign 3 dining rows"
-                sheet="Expenses 2025"
+                title="Categorizar e atribuir 3 linhas de comida"
+                sheet="Despesas 2025"
                 range="E1204:F1206"
                 status={status}
                 changes={[
-                  { field: "Category", before: "—", after: "Dining" },
+                  { field: "Categoria", before: "—", after: "Comida" },
                   {
-                    field: "Owner (2 rows)",
-                    before: "Unassigned",
-                    after: "Household (shared)",
+                    field: "Titular (2 linhas)",
+                    before: "Sem titular",
+                    after: "Casa (compartilhado)",
                   },
                   {
-                    field: "Owner (1 row)",
-                    before: "Unassigned",
-                    after: "Alex (personal)",
+                    field: "Titular (1 linha)",
+                    before: "Sem titular",
+                    after: "Você (pessoal)",
                   },
                 ]}
                 note={
                   <span>
-                    Venues <b>Whole Foods</b> &amp; <b>Bottega</b> match your
-                    shared-dining rule; <b>Blue Bottle</b> was a solo charge near your
-                    office.
+                    <b>Supermercado</b> e <b>Restaurante</b> batem com sua regra de
+                    comida compartilhada; <b>Cafeteria</b> foi um gasto individual perto
+                    do escritório.
                   </span>
                 }
                 actions={
@@ -205,14 +207,14 @@ function CopilotApp() {
                         iconLeft={<CpIcon name="check" size={15} />}
                         onClick={() => setStatus("approved")}
                       >
-                        Approve &amp; write
+                        Aprovar e gravar
                       </Button>
                       <Button
                         variant="ghost"
                         size="sm"
                         iconLeft={<CpIcon name="pencil" size={14} />}
                       >
-                        Edit
+                        Editar
                       </Button>
                       <span style={{ flex: 1 }} />
                       <Button
@@ -220,7 +222,7 @@ function CopilotApp() {
                         size="sm"
                         onClick={() => setStatus("rejected")}
                       >
-                        Reject
+                        Rejeitar
                       </Button>
                     </>
                   ) : (
@@ -242,8 +244,8 @@ function CopilotApp() {
                         size={15}
                       />
                       {status === "approved"
-                        ? "Written to Expenses 2025 · 3 rows updated"
-                        : "Rejected — no changes made"}
+                        ? "Gravado em Despesas 2025 · 3 linhas atualizadas"
+                        : "Rejeitado — nenhuma mudança feita"}
                     </span>
                   )
                 }
@@ -253,9 +255,10 @@ function CopilotApp() {
             {status === "approved" ? (
               <ChatBubble from="mia">
                 <p>
-                  Done — I updated <b>3 rows</b> and your May dining now reads{" "}
-                  <span className="nk-chat__money">$486.20</span>. Want me to set up a
-                  rule so future shared-venue charges auto-suggest “Household”?
+                  Pronto — atualizei <b>3 linhas</b> e sua comida de maio agora soma{" "}
+                  <span className="nk-chat__money">R$ 486,20</span>. Quer que eu crie
+                  uma regra para sugerir “Casa” automaticamente em gastos de lugares
+                  compartilhados?
                 </p>
               </ChatBubble>
             ) : null}
@@ -267,15 +270,15 @@ function CopilotApp() {
             <div className="cp-inrow">
               <textarea
                 rows="1"
-                placeholder="Ask about your money — Mia cites every number…"
+                placeholder="Pergunte sobre seu dinheiro — a Mia cita cada número…"
               />
               <button className="cp-send">
                 <CpIcon name="send" size={16} />
               </button>
             </div>
             <div className="cp-foot">
-              <span className="cp-foot__dot" /> Local model · reads your sheet read-only
-              · writes always need approval
+              <span className="cp-foot__dot" /> Modelo local · lê sua planilha somente
+              leitura · escritas sempre precisam de aprovação
             </div>
           </div>
         </div>

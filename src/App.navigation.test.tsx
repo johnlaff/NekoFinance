@@ -35,11 +35,11 @@ describe("App navigation", () => {
     mockAll();
   });
 
-  it("navigates to Transações and marks it current", async () => {
+  it("navigates to Lançamentos and marks it current", async () => {
     const user = userEvent.setup();
     render(<App />);
 
-    const navItem = screen.getByRole("button", { name: "Transações" });
+    const navItem = screen.getByRole("button", { name: "Lançamentos" });
     expect(navItem).not.toHaveAttribute("aria-current");
     await user.click(navItem);
 
@@ -63,21 +63,15 @@ describe("App navigation", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    const sidebarItem = () =>
-      screen
-        .getAllByRole("button", { name: "Conhecer a Mia" })
-        .find((b) => b.classList.contains("ak-item"));
-    await user.click(sidebarItem()!);
+    await user.click(screen.getByRole("button", { name: "Mia" }));
     expect(screen.getByText("O que a Mia vai fazer")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Dashboard" }));
     await waitFor(() => {
       expect(screen.getByText("Pode gastar até")).toBeInTheDocument();
     });
-    const heroButton = screen
-      .getAllByRole("button", { name: "Conhecer a Mia" })
-      .find((b) => !b.classList.contains("ak-item"));
-    await user.click(heroButton!);
+    // O CTA do dashboard mantém "Conhecer a Mia" (convite); a nav lateral é só "Mia".
+    await user.click(screen.getByRole("button", { name: "Conhecer a Mia" }));
     expect(screen.getByText("O que a Mia vai fazer")).toBeInTheDocument();
   });
 
@@ -94,11 +88,11 @@ describe("App navigation", () => {
     expect(screen.getByText("Importar arquivo local")).toBeInTheDocument();
   });
 
-  it("header search lands on Transações with the query applied", async () => {
+  it("header search lands on Lançamentos with the query applied", async () => {
     const user = userEvent.setup();
     render(<App />);
 
-    const search = screen.getByLabelText("Buscar transações");
+    const search = screen.getByLabelText("Buscar lançamentos");
     await user.type(search, "mercado{Enter}");
 
     await waitFor(() => {

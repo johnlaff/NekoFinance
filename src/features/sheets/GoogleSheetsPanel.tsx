@@ -79,8 +79,12 @@ export function GoogleSheetsPanel({
 
   const handleConnect = async () => {
     if (!GOOGLE_CLIENT_ID) {
+      // Detalhe técnico vai para o console, não para o usuário final.
+      console.warn(
+        "Conexão Google indisponível: VITE_GOOGLE_CLIENT_ID ausente no build.",
+      );
       setError(
-        "GOOGLE_CLIENT_ID não configurado. Defina VITE_GOOGLE_CLIENT_ID no .env",
+        "A conexão com o Google não está configurada nesta instalação. Você ainda pode importar sua planilha como arquivo .xlsx.",
       );
       return;
     }
@@ -508,7 +512,7 @@ export function GoogleSheetsPanel({
           <Link2 size={20} strokeWidth={1.75} />
         </div>
         <p className="gs-connect__text">
-          Conecte sua conta Google para importar dados da planilha em tempo real.
+          Conecte sua conta Google para importar os dados da planilha oficial.
         </p>
         <Button
           variant="primary"
@@ -524,7 +528,8 @@ export function GoogleSheetsPanel({
         </Button>
         {!GOOGLE_CLIENT_ID && (
           <p className="gs-connect__hint">
-            Configure VITE_GOOGLE_CLIENT_ID no arquivo .env
+            Conexão Google indisponível nesta instalação — use a importação de arquivo
+            .xlsx abaixo.
           </p>
         )}
         {error && (

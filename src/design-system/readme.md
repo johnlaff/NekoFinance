@@ -1,8 +1,8 @@
 # Neko Finance — Design System
 
-A design system for **Neko Finance**: a local-first, private personal-finance desktop app (Tauri 2 + React 19 + TypeScript, SQLite + Google Sheets planned) with an AI copilot named **Mia** who reads your sheets, explains your finances, separates ownership/responsibility, and proposes _human-approved_ sheet edits only.
+A design system for **Neko Finance**: a local-first, private personal-finance desktop app (Tauri 2 + React 19 + TypeScript, SQLite + Google Sheets import) with an AI copilot named **Mia** who reads your sheets, explains your finances, separates ownership/responsibility, and proposes _human-approved_ sheet edits only.
 
-This system is authored from scratch — no external codebase or Figma was provided. All visual decisions, tokens, and components are original to this proposal. Where production assets are still missing (self-hosted fonts), substitutions are flagged below.
+This system is authored from scratch — no external codebase or Figma was provided. All visual decisions, tokens, and components are original to this proposal. Fonts (Hanken Grotesk, Newsreader, Geist Mono) are self-hosted; lucide-react is the production icon set (`strokeWidth={1.75}`).
 
 > **Primary theme:** Dark ("Midnight Ledger") is the default and presented-first theme. A cool light theme ("Vellum") ships as `[data-theme="light"]` and is tuned to full parity — status, diff, and badge text use dedicated dark on-tint colors in light mode (not just inverted tokens). The app shell exposes a light/dark toggle that persists to `localStorage` (`neko-theme`).
 
@@ -33,8 +33,8 @@ This system is authored from scratch — no external codebase or Figma was provi
 
 ## 2 · Sources & provenance
 
-- **No codebase / Figma provided.** This is a greenfield proposal. If a repo or Figma exists, re-attach via the Import menu and this system should be reconciled against it.
-- Product brief: Neko Finance MVP — dashboard, transactions/import review, copilot approval, methodology/insights, settings/privacy.
+- **Implemented in the live app.** This system shipped into the Tauri + React 19 codebase; the production tokens/components live under `src/design-system/` and the screens under `src/screens/`. Reconcile changes against the running app, not a standalone proposal.
+- Product surface (9 telas): Dashboard, Totais, Anual, Horizonte, Lançamentos, Tags, Mia, Metodologia, Configurações e privacidade.
 - All logos and the Mia avatar are original SVGs authored here (`assets/`).
 
 ---
@@ -76,20 +76,20 @@ Neko's voice is **calm, plain, and exact** — a competent partner, not a cheerl
 
 - **Person:** Address the user as **you**; the product/Mia speaks as **I** sparingly ("I found 3 charges…", "I'd make this change"). Never royal "we" for the app.
 - **Casing:** Sentence case everywhere — buttons, titles, menus ("Approve & write", not "Approve & Write"). UPPERCASE only for tiny eyebrow/section labels with letter-spacing.
-- **Numbers are sacred:** Always show currency symbol + tabular figures + 2 decimals for money ("$642.18"). Percentages get one place when meaningful ("6.1%"). Never approximate a figure Mia could compute exactly.
-- **Tone:** Declarative and reassuring. Lead with the fact, then the nuance. e.g. _"You're $1,678 ahead this month. Spending is 6% under your average."_
+- **Numbers are sacred:** Always show currency symbol + tabular figures + 2 decimals for money ("R$ 642,18"). Percentages get one place when meaningful ("6,1%"). Never approximate a figure Mia could compute exactly.
+- **Tone:** Declarative and reassuring. Lead with the fact, then the nuance. e.g. _"Você está R$ 1.678 à frente neste mês. Os gastos estão 6% abaixo da sua média."_
 - **Trust language:** Be explicit about privacy and control — "runs locally", "read-only", "needs your approval", "nothing leaves your machine". These phrases are features, not fine print.
 - **Mia's warmth:** A light, dry calm — _"Want me to set up a rule for that?"_ Never cat puns, never emoji, never exclamation-spam. The feline character is in restraint, not decoration.
 - **Errors:** Name what happened + the fix, no blame — _"Couldn't reach that sheet. Check it's shared with your connected account."_
-- **Empty states:** One sentence of what + one of how — _"No transactions yet. Connect a Google Sheet and Mia will import and categorize your activity."_
+- **Empty states:** One sentence of what + one of how — _"Nenhum lançamento ainda. Conecte uma planilha do Google e a Mia importa sua atividade."_
 - **Emoji:** None. **Cat puns:** None.
 
-**Examples**
+**Examples** (copy de produção é PT-BR; tags são para CLASSIFICAR, não "categorizar" — categorias foram rebaixadas a tags na spec 015)
 | Don't | Do |
 |---|---|
-| "Oops! Something went wrong 😿" | "Couldn't reach that sheet." |
-| "Your Spending Is Looking Great!" | "Spending is 6% under your average." |
-| "We've categorized everything for you" | "I categorized 3 dining charges — approve to save them." |
+| "Opa! Algo deu errado 😿" | "Não consegui acessar essa planilha." |
+| "Seus Gastos Estão Ótimos!" | "Os gastos estão 6% abaixo da sua média." |
+| "Categorizamos tudo para você" | "Classifiquei 3 gastos com tags — aprove para salvar." |
 
 ---
 
@@ -115,7 +115,7 @@ Neko's voice is **calm, plain, and exact** — a competent partner, not a cheerl
 ## 6 · Iconography
 
 - **System:** A **Lucide-style** line set (ISC license), normalized to a **1.75px stroke**, round caps/joins, 24×24 grid. This stroke weight (slightly under Lucide's default 2) reads more refined at small sizes for a finance tool. Shipped as `ui_kits/shared/icons.jsx` → `window.Icon` (`<Icon name="wallet" size={18} />`), drawing `currentColor` so icons inherit theme + state color.
-  > **Substitution flag:** these are hand-normalized Lucide-equivalent paths, not the official Lucide package. For production, install `lucide-react` and set `strokeWidth={1.75}`; the names used here (dashboard, receipt, sparkles, wallet, creditCard, table, lock, shield, etc.) map 1:1 to Lucide.
+  > **Substitution flag (ui_kit prototype only):** these are hand-normalized Lucide-equivalent paths. The production app already uses `lucide-react` with `strokeWidth={1.75}`; the names used here (dashboard, receipt, sparkles, wallet, creditCard, table, lock, shield, etc.) map 1:1 to Lucide.
 - **Sizes:** 15px inside dense labels/metric tiles, 16–18px in nav and buttons, 20–22px for state/empty icons. Never below 14px.
 - **Color:** Icons are `--text-muted`/`--text-faint` at rest, inherit accent color in active/semantic contexts (jade nav, status tints). Avatars and the Neko mark use `--primary`.
 - **The Neko mark:** a friendly geometric cat head with rounded ears, round eyes and a small nose, drawn as a single `currentColor` silhouette with negative-space features (`assets/neko-mark.svg`). It is the _only_ place the literal cat geometry appears; never decorate UI with ears/whiskers literally — the "whisker" cue is expressed abstractly as 1px hairlines.
@@ -202,4 +202,4 @@ Each lives in `components/<group>/<Name>.{jsx,d.ts,prompt.md}` with a directory 
 9. **States** — wire `EmptyState` variants for every async surface.
 10. **A11y pass** — contrast, keyboard, focus, reduced-motion, status-with-label audit.
 
-> **Open items to confirm with the team:** (a) official Lucide vs. the bundled normalized icon set, (b) final brand mark — the included friendly-cat mark is a proposal. Fonts are self-hosted (Hanken Grotesk, Geist Mono, Newsreader as variable TTFs); consider subsetting to WOFF2 for production weight.
+> **Open items to confirm with the team:** (a) ~~official Lucide vs. the bundled normalized icon set~~ — resolved: production uses `lucide-react`; (b) final brand mark — the included friendly-cat mark is a proposal. Fonts are self-hosted (Hanken Grotesk, Geist Mono, Newsreader as variable TTFs); consider subsetting to WOFF2 for production weight.

@@ -26,14 +26,18 @@ export function PerformanceCard({ forecast }: { forecast: Forecast }) {
   return (
     <section aria-labelledby="dash-perf-title" className="dash-card dash-perf">
       <div className="dash-card__head">
-        <span className="dash-card__title" id="dash-perf-title">
+        <span
+          className="dash-card__title"
+          id="dash-perf-title"
+          title="Caixa não é poupança: um mês pode ter saldo positivo e ainda assim performance baixa."
+        >
           <TrendingUp
             size={16}
             strokeWidth={1.75}
             className="dash-card__ic"
             aria-hidden="true"
           />
-          Performance por mês: caixa não é poupança
+          Performance por mês
         </span>
         <span className="dash-perf__hint">referência anual 20–30%</span>
       </div>

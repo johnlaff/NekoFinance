@@ -2,7 +2,7 @@ import { Sparkles } from "lucide-react";
 import type { Forecast } from "../../lib/api";
 import { Money } from "../../design-system/components/Money";
 import { Disclosure } from "../../design-system/components/Disclosure";
-import { PhaseBadge } from "../../design-system/components/PhaseBadge";
+import { PhaseBadge, type Phase } from "../../design-system/components/PhaseBadge";
 
 /**
  * Coaching de adaptação — o "colchão". Muitos guardam o excedente como buffer em caixa (net
@@ -10,7 +10,7 @@ import { PhaseBadge } from "../../design-system/components/PhaseBadge";
  * reconhece ANTES de ensinar (padrão SOTA de coaching), tom calmo, sem punir. Mostra os DOIS
  * números lado a lado: Economia registrada (método) e colchão/net (adaptação), sem confundi-los.
  */
-export function ColchaoCard({ forecast }: { forecast: Forecast }) {
+export function ColchaoCard({ forecast, phase }: { forecast: Forecast; phase: Phase }) {
   const annual = forecast.annual_savings;
   const colchaoCents = annual.realized_savings_cents;
   const registeredEconomia = annual.registered_economia_cents;
@@ -26,9 +26,11 @@ export function ColchaoCard({ forecast }: { forecast: Forecast }) {
             className="dash-card__ic"
             aria-hidden="true"
           />
-          Adaptação ao método — seu colchão
+          Seu colchão
         </span>
-        <PhaseBadge phase="calibrate" />
+        <span title="Fases do método — Mapear: menos de 30 lançamentos. Calibrar: ajustando o diário. Operar: ≥ 20% economizado no ano e ≥ 3 meses de reserva.">
+          <PhaseBadge phase={phase} />
+        </span>
       </div>
       <div className="dash-card__body">
         <div className="dash-colchao__nums">
@@ -41,7 +43,9 @@ export function ColchaoCard({ forecast }: { forecast: Forecast }) {
             </span>
           </div>
           <div className="dash-colchao__num">
-            <span className="dash-colchao__label">Colchão este ano (realizado)</span>
+            <span className="dash-colchao__label">
+              Colchão este ano (sobra até hoje)
+            </span>
             <span className="dash-colchao__val">
               <Money cents={colchaoCents} size="md" sign="auto" /> · {realizedRatePct}%
             </span>
@@ -50,7 +54,7 @@ export function ColchaoCard({ forecast }: { forecast: Forecast }) {
         <p className="dash-colchao__text">
           {colchaoCents >= 0
             ? "Você guarda o que sobra como colchão para cobrir os meses negativos sem sacar investimento. Adaptação válida do método."
-            : "Este ano você usou parte do colchão para cobrir meses negativos, exatamente o que o buffer existe para fazer. O saldo não furou."}
+            : "Este ano você usou parte do colchão para cobrir meses negativos, exatamente para o que o colchão existe. O saldo não furou."}
         </p>
         <Disclosure title="Próximo nível, quando quiser">
           <p>

@@ -52,17 +52,13 @@ export function HorizonteScreen() {
   const forecast = forecastQ.data ?? null;
 
   if (forecastQ.loading) {
-    return (
-      <div style={{ padding: "var(--space-8)", color: "var(--text-muted)" }}>
-        Carregando o horizonte de saldos…
-      </div>
-    );
+    return <EmptyState variant="skeleton" skeletonRows={6} />;
   }
   if (forecastQ.error || !forecast || forecast.daily.length === 0) {
     return (
       <EmptyState
         title="Sem horizonte para projetar"
-        description="Lance entradas e saídas futuras para ver o saldo projetado mês a mês."
+        description="O Horizonte mostra o saldo dia a dia no mesmo termômetro da planilha (verde = folga, vermelho = aperto). Para ver o futuro, lance as entradas e saídas dos próximos meses."
       />
     );
   }

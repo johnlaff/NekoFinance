@@ -126,9 +126,9 @@ pub struct SafeToSpend {
 ///    ("não fique negativo"), mas frouxo para quem tem colchão: o caixa pode crescer enquanto a
 ///    poupança despenca.
 /// 2. **Poupança** — quanto cabe mantendo a taxa de poupança **do ANO** ≥ `savings_target_bps`:
-///    `poupança_ano − meta×renda_ano`. A meta de 20–30% é **média ANUAL** ("o ano tem que ser de
-///    20 a 30; tem mês que é mais, tem mês que é menos" — aula "Como viver abaixo do que ganha"),
-///    então um mês isolado não pode mandar. As figuras anuais são do REALIZADO (o ano projetado
+///    `poupança_ano − meta×renda_ano`. A meta de 20–30% é **média ANUAL** (o ano todo fica na
+///    faixa; tem mês que é mais, tem mês que é menos), então um mês isolado não pode mandar.
+///    As figuras anuais são do REALIZADO (o ano projetado
 ///    mente quando os meses futuros estão incompletos). `None` = sem renda no ano → só o caixa.
 ///
 /// Espelha o gate determinístico do método: só pode gastar se a reserva continua acima do piso
