@@ -1,8 +1,36 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 function toCamelCase(str: string): string {
   return str.replace(/-([a-z])/g, (_: string, g: string) => g.toUpperCase());
 }
+
+/** Converte "background:var(--x);color:var(--y);" → objeto de estilo, numa única passada. */
+function parseStyleDecls(...decls: string[]): CSSProperties {
+  const out: Record<string, string> = {};
+  for (const chunk of decls) {
+    for (const s of chunk.split(";")) {
+      if (!s) continue;
+      const parts = s.split(":").map((x) => x.trim());
+      out[toCamelCase(parts[0] ?? "")] = parts[1] ?? "";
+    }
+  }
+  return out;
+}
+
+// Base estática do botão (não recria por render); variante/tamanho/estado entram por merge.
+const BTN_BASE: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "var(--space-2)",
+  justifyContent: "center",
+  borderRadius: "var(--radius-sm)",
+  border: "var(--bw-hair) solid transparent",
+  fontFamily: "var(--font-sans)",
+  fontWeight: "var(--fw-semibold)",
+  lineHeight: 1,
+  transition: "var(--t-hover)",
+  whiteSpace: "nowrap",
+};
 
 interface ButtonProps {
   variant?: "primary" | "secondary" | "ghost" | "danger";
@@ -45,6 +73,12 @@ export function Button({
 }: ButtonProps) {
   const vStyle = variantStyles[variant] ?? variantStyles["primary"] ?? "";
   const sStyle = sizeStyles[size] ?? sizeStyles["md"] ?? "";
+  const style: CSSProperties = {
+    ...BTN_BASE,
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.5 : 1,
+    ...parseStyleDecls(vStyle, sStyle),
+  };
 
   return (
     <button
@@ -52,27 +86,7 @@ export function Button({
       disabled={disabled}
       onClick={onClick}
       className={className}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: "var(--space-2)",
-        justifyContent: "center",
-        borderRadius: "var(--radius-sm)",
-        border: "var(--bw-hair) solid transparent",
-        fontFamily: "var(--font-sans)",
-        fontWeight: "var(--fw-semibold)",
-        lineHeight: 1,
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.5 : 1,
-        transition: "var(--t-hover)",
-        whiteSpace: "nowrap",
-        ...Object.fromEntries(
-          [...vStyle.split(";"), ...sStyle.split(";")].filter(Boolean).map((s) => {
-            const parts = s.split(":").map((x) => x.trim());
-            return [toCamelCase(parts[0] ?? ""), parts[1] ?? ""];
-          }),
-        ),
-      }}
+      style={style}
     >
       {iconLeft}
       {children}

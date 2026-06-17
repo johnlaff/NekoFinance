@@ -36,6 +36,19 @@ const arrowBtn = (enabled: boolean): React.CSSProperties => ({
   transition: "background-color var(--dur-fast) var(--ease-standard)",
 });
 
+// Botão "Hoje" (estático): hoistado para não recriar por render.
+const TODAY_BTN_STYLE: React.CSSProperties = {
+  marginLeft: "var(--space-2)",
+  padding: "var(--space-2) var(--space-4)",
+  borderRadius: "var(--radius-pill)",
+  border: "var(--bw-hair) solid var(--border)",
+  background: "var(--primary-quiet)",
+  color: "var(--primary-quiet-text)",
+  fontSize: "var(--fs-sm)",
+  fontWeight: "var(--fw-semibold)",
+  cursor: "pointer",
+};
+
 export function MonthNav({
   label,
   onPrev,
@@ -84,21 +97,7 @@ export function MonthNav({
         <ChevronRight size={18} strokeWidth={2} />
       </button>
       {!atToday && (
-        <button
-          type="button"
-          onClick={onToday}
-          style={{
-            marginLeft: "var(--space-2)",
-            padding: "var(--space-2) var(--space-4)",
-            borderRadius: "var(--radius-pill)",
-            border: "var(--bw-hair) solid var(--border)",
-            background: "var(--primary-quiet)",
-            color: "var(--primary-quiet-text)",
-            fontSize: "var(--fs-sm)",
-            fontWeight: "var(--fw-semibold)",
-            cursor: "pointer",
-          }}
-        >
+        <button type="button" onClick={onToday} style={TODAY_BTN_STYLE}>
           Hoje
         </button>
       )}

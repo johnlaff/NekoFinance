@@ -1,6 +1,7 @@
 import { render } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
-import { BalanceTrajectory, fmtCompactBRL } from "./BalanceTrajectory";
+import { BalanceTrajectory } from "./BalanceTrajectory";
+import { fmtCompactBRL } from "../../lib/format";
 import type { ForecastDay } from "../../lib/api";
 
 const day = (date: string, balance: number): ForecastDay => ({

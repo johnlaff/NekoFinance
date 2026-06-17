@@ -1,10 +1,41 @@
-import { formatBRL } from "./Money";
+import type { CSSProperties } from "react";
+import { formatBRL } from "../../lib/format";
 
 /**
  * CardChip — cartão de crédito (o 5º tipo: gasto com cartão / Régua 2). Face com gradiente da
  * marca, apelido, final, e a fatura acumulada. Portado do novo DS em inline-style (puro). `brand`
  * default = token do tipo Cartão.
  */
+
+// Base estática do cartão (não recria por render); borda/sombra do estado ativo entram por merge.
+const CARD_CHIP_BASE: CSSProperties = {
+  flex: "0 0 auto",
+  width: 168,
+  display: "flex",
+  flexDirection: "column",
+  gap: "8px",
+  padding: "12px",
+  borderRadius: "var(--radius-md)",
+  background: "var(--surface)",
+  textAlign: "left",
+  cursor: "pointer",
+  fontFamily: "var(--font-sans)",
+  transition: "transform var(--dur-fast) var(--ease-standard)",
+};
+
+const ADDITIONAL_BADGE_STYLE: CSSProperties = {
+  display: "inline-block",
+  width: "fit-content",
+  fontSize: "var(--fs-label)",
+  fontWeight: "var(--fw-bold)",
+  textTransform: "uppercase",
+  letterSpacing: "0.04em",
+  color: "var(--info-400)",
+  background: "var(--info-tint)",
+  padding: "1px 6px",
+  borderRadius: "4px",
+};
+
 interface CardChipProps {
   brand?: string;
   /** Nome impresso (banco/bandeira). */
@@ -41,6 +72,13 @@ export function CardChip({
       : total > 0
         ? "var(--money-pos)"
         : "var(--money-neutral)";
+  const chipStyle: CSSProperties = {
+    ...CARD_CHIP_BASE,
+    border: active
+      ? "var(--bw-default) solid var(--border-focus)"
+      : "var(--bw-hair) solid var(--border)",
+    boxShadow: active ? "var(--shadow-focus)" : "var(--shadow-1)",
+  };
   return (
     <button
       type="button"
@@ -48,24 +86,7 @@ export function CardChip({
       aria-pressed={active}
       aria-label={ariaLabel ?? `${nick}, final ${last4}, fatura ${formatBRL(total)}`}
       className={className}
-      style={{
-        flex: "0 0 auto",
-        width: 168,
-        display: "flex",
-        flexDirection: "column",
-        gap: "8px",
-        padding: "12px",
-        border: active
-          ? "var(--bw-default) solid var(--border-focus)"
-          : "var(--bw-hair) solid var(--border)",
-        borderRadius: "var(--radius-md)",
-        background: "var(--surface)",
-        textAlign: "left",
-        cursor: "pointer",
-        fontFamily: "var(--font-sans)",
-        boxShadow: active ? "var(--shadow-focus)" : "var(--shadow-1)",
-        transition: "transform var(--dur-fast) var(--ease-standard)",
-      }}
+      style={chipStyle}
     >
       <span
         aria-hidden="true"
@@ -93,7 +114,7 @@ export function CardChip({
         <span
           style={{
             fontFamily: "var(--font-money)",
-            fontSize: "11px",
+            fontSize: "var(--fs-label)",
             color: "#fff",
             opacity: 0.85,
             letterSpacing: "0.04em",
@@ -126,20 +147,7 @@ export function CardChip({
         {formatBRL(total)}
       </span>
       {additional ? (
-        <span
-          style={{
-            display: "inline-block",
-            width: "fit-content",
-            fontSize: "9.5px",
-            fontWeight: "var(--fw-bold)",
-            textTransform: "uppercase",
-            letterSpacing: "0.04em",
-            color: "var(--info-400)",
-            background: "var(--info-tint)",
-            padding: "1px 6px",
-            borderRadius: "4px",
-          }}
-        >
+        <span style={ADDITIONAL_BADGE_STYLE}>
           {ownerLabel ? `paga ${ownerLabel}` : "adicional"}
         </span>
       ) : null}

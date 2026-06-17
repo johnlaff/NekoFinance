@@ -27,6 +27,18 @@ const SR_ONLY: React.CSSProperties = {
   border: 0,
 };
 
+// Base estática do glifo (não recria por render); tamanho/cor/fonte entram por merge.
+const GLYPH_BASE: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  borderRadius: "50%",
+  color: "var(--text-on-primary)",
+  fontWeight: "var(--fw-bold)",
+  lineHeight: 1,
+  flexShrink: 0,
+};
+
 interface MovBadgeProps {
   kind: MovKind;
   /** Mostra o nome do tipo ao lado do glifo (senão fica só para leitores de tela). */
@@ -43,28 +55,19 @@ export function MovBadge({
   className = "",
 }: MovBadgeProps) {
   const meta = KIND_META[kind];
+  const glyphStyle: React.CSSProperties = {
+    ...GLYPH_BASE,
+    width: size,
+    height: size,
+    background: meta.token,
+    fontSize: `${Math.round(size * 0.56)}px`,
+  };
   return (
     <span
       className={className}
       style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
     >
-      <span
-        aria-hidden="true"
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          width: size,
-          height: size,
-          borderRadius: "50%",
-          background: meta.token,
-          color: "var(--text-on-primary)",
-          fontSize: `${Math.round(size * 0.56)}px`,
-          fontWeight: "var(--fw-bold)",
-          lineHeight: 1,
-          flexShrink: 0,
-        }}
-      >
+      <span aria-hidden="true" style={glyphStyle}>
         {meta.glyph}
       </span>
       {showLabel ? (

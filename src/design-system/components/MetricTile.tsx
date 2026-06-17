@@ -1,5 +1,17 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Minus, TrendingDown, TrendingUp } from "lucide-react";
+
+// Card estático (não recria por render).
+const METRIC_TILE_STYLE: CSSProperties = {
+  background: "var(--surface)",
+  border: "var(--bw-hair) solid var(--border)",
+  borderRadius: "var(--radius-md)",
+  boxShadow: "var(--elev-card)",
+  padding: "var(--space-6)",
+  display: "flex",
+  flexDirection: "column",
+  gap: "var(--space-2)",
+};
 
 interface MetricTileProps {
   label: string;
@@ -30,19 +42,7 @@ export function MetricTile({
         : "var(--text-muted)";
 
   return (
-    <article
-      className={className}
-      style={{
-        background: "var(--surface)",
-        border: "var(--bw-hair) solid var(--border)",
-        borderRadius: "var(--radius-md)",
-        boxShadow: "var(--elev-card)",
-        padding: "var(--space-6)",
-        display: "flex",
-        flexDirection: "column",
-        gap: "var(--space-2)",
-      }}
-    >
+    <article className={className} style={METRIC_TILE_STYLE}>
       <div
         style={{
           display: "flex",

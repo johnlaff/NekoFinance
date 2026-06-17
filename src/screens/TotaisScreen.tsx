@@ -1,6 +1,5 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { getForecast } from "../lib/api";
-import type { MonthMetric } from "../lib/api";
 import { monthNamePtBR } from "../lib/format";
 import { useCommand } from "../lib/useCommand";
 import { Money } from "../design-system/components/Money";
@@ -8,6 +7,12 @@ import type { HealthLevel } from "../design-system/components/HealthBadge";
 import { MonthNav } from "../design-system/components/MonthNav";
 import { EmptyState } from "../design-system/components/EmptyState";
 import { InfoPopover } from "../design-system/components/InfoPopover";
+import {
+  currentMonthMetric,
+  performanceStatus,
+  custoVidaStatus,
+  type Status,
+} from "./totaisStatus";
 
 const STATUS_TONE: Record<HealthLevel, { dot: string; fg: string; bg: string }> = {
   strong: {
@@ -28,24 +33,34 @@ const STATUS_TONE: Record<HealthLevel, { dot: string; fg: string; bg: string }> 
   risk: { dot: "var(--danger-400)", fg: "var(--danger-400)", bg: "var(--danger-tint)" },
 };
 
+// Base estática hoistada (não recria por render); tom (bg/fg) entra por merge.
+const STATUS_CHIP_BASE: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "var(--space-2)",
+  alignSelf: "flex-start",
+  padding: "4px 11px 4px 9px",
+  borderRadius: "var(--radius-pill)",
+  fontSize: "var(--fs-sm)",
+  fontWeight: "var(--fw-semibold)",
+};
+
+const METRIC_CARD_STYLE: CSSProperties = {
+  background: "var(--surface)",
+  border: "var(--bw-hair) solid var(--border)",
+  borderRadius: "var(--radius-md)",
+  boxShadow: "var(--elev-card)",
+  padding: "var(--space-6)",
+  display: "flex",
+  flexDirection: "column",
+  gap: "var(--space-3)",
+};
+
 /** Chip de status calmo (ponto + rótulo). Substitui o anel-spinner em status binário do método. */
 function StatusChip({ level, label }: { level: HealthLevel; label: string }) {
   const t = STATUS_TONE[level];
   return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: "var(--space-2)",
-        alignSelf: "flex-start",
-        padding: "4px 11px 4px 9px",
-        borderRadius: "var(--radius-pill)",
-        background: t.bg,
-        color: t.fg,
-        fontSize: "var(--fs-sm)",
-        fontWeight: "var(--fw-semibold)",
-      }}
-    >
+    <span style={{ ...STATUS_CHIP_BASE, background: t.bg, color: t.fg }}>
       <span
         aria-hidden="true"
         style={{
@@ -62,55 +77,8 @@ function StatusChip({ level, label }: { level: HealthLevel; label: string }) {
 }
 
 /** "YYYY-MM" de uma métrica de mês. */
-export function ymOf(m: { year: number; month: number }): string {
+function ymOf(m: { year: number; month: number }): string {
   return `${m.year}-${String(m.month).padStart(2, "0")}`;
-}
-
-// Piso 20% para o badge MENSAL "Dentro do ideal" — um mês pode variar dentro da faixa 20–30% do
-// método. O guardrail ANUAL "pode gastar hoje" usa 25% (alvo médio da faixa) em
-// src-tauri/src/commands.rs (SAVINGS_TARGET_BPS). Divergência deliberada: indicador mensal leniente,
-// gate anual mais firme; ambos dentro da faixa canônica 20–30%.
-const SAVINGS_TARGET_BPS = 2000;
-
-/** Encontra a métrica do mês corrente a partir do `today` do forecast. */
-export function currentMonthMetric(
-  months: MonthMetric[],
-  today: string,
-): MonthMetric | null {
-  const [y, m] = today.split("-").map(Number);
-  return months.find((x) => x.year === y && x.month === m) ?? null;
-}
-
-interface Status {
-  level: HealthLevel;
-  label: string;
-}
-
-// Proveniência dos rótulos (fidelidade ao método):
-// - Performance: "Sobrou dinheiro" / "Faltou dinheiro" — AMBOS verbatim do método (par confirmado).
-// - "Dentro do ideal" (economizado) e "Dentro da renda" (custo de vida): os ESTADOS POSITIVOS são
-//   verbatim do método. Os estados negativos abaixo ("Abaixo do ideal", "Acima da renda") são copy
-//   PRÓPRIA do Neko para o estado vermelho — o método só registra o rótulo positivo. Mantidos
-//   porque a UI precisa nomear o estado ruim; não os atribua ao método.
-export function performanceStatus(cents: number): Status {
-  return cents >= 0
-    ? { level: "strong", label: "Sobrou dinheiro" }
-    : { level: "risk", label: "Faltou dinheiro" };
-}
-
-export function economizadoStatus(bps: number): Status {
-  // Faixa do método "20 a 30": acima de 30% é guardar além do ideal (pode alocar em outro lugar);
-  // 20–30% é o alvo; abaixo de 20% fica aquém. "Dentro do ideal" é verbatim; "Acima/Abaixo" são
-  // copy do Neko para nomear os estados que o método só descreve.
-  if (bps > 3000) return { level: "steady", label: "Acima do ideal" };
-  if (bps >= SAVINGS_TARGET_BPS) return { level: "strong", label: "Dentro do ideal" };
-  return { level: "watch", label: "Abaixo do ideal" };
-}
-
-export function custoVidaStatus(cost: number, income: number): Status {
-  return cost <= income
-    ? { level: "steady", label: "Dentro da renda" } // verbatim do método
-    : { level: "watch", label: "Acima da renda" }; // copy do Neko (estado vermelho)
 }
 
 function MetricRow({
@@ -127,18 +95,7 @@ function MetricRow({
   sublabel?: string;
 }) {
   return (
-    <article
-      style={{
-        background: "var(--surface)",
-        border: "var(--bw-hair) solid var(--border)",
-        borderRadius: "var(--radius-md)",
-        boxShadow: "var(--elev-card)",
-        padding: "var(--space-6)",
-        display: "flex",
-        flexDirection: "column",
-        gap: "var(--space-3)",
-      }}
-    >
+    <article style={METRIC_CARD_STYLE}>
       <span
         style={{
           fontSize: "var(--fs-label)",

@@ -1,4 +1,38 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
+
+// Estilos estáticos hoistados (não recriam por render); o tom do pill entra por merge.
+const DIFF_ICON_STYLE: CSSProperties = {
+  width: 28,
+  height: 28,
+  borderRadius: "var(--radius-sm)",
+  background: "var(--primary-quiet)",
+  color: "var(--primary)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  flex: "none",
+};
+
+const DIFF_PILL_BASE: CSSProperties = {
+  fontSize: "var(--fs-label)",
+  fontWeight: "var(--fw-bold)",
+  letterSpacing: "0.05em",
+  textTransform: "uppercase",
+  padding: "3px 8px",
+  borderRadius: "var(--radius-pill)",
+  flex: "none",
+};
+
+const DIFF_NOTE_STYLE: CSSProperties = {
+  display: "flex",
+  gap: "8px",
+  padding: "11px 16px",
+  background: "var(--bg-subtle)",
+  borderTop: "var(--bw-hair) solid var(--border)",
+  fontSize: "12px",
+  lineHeight: 1.45,
+  color: "var(--text-muted)",
+};
 
 /**
  * ApprovalDiffCard — diff de uma mudança PROPOSTA na planilha (fluxo de write-back gated). Mostra
@@ -55,9 +89,8 @@ export function ApprovalDiffCard({
 }: ApprovalDiffCardProps) {
   const pill = PILL[status];
   return (
-    <div
+    <section
       className={className}
-      role="group"
       aria-label={`${title} — ${pill.label}`}
       style={{
         background: "var(--surface)",
@@ -78,20 +111,7 @@ export function ApprovalDiffCard({
           borderBottom: "var(--bw-hair) solid var(--border)",
         }}
       >
-        <span
-          aria-hidden="true"
-          style={{
-            width: 28,
-            height: 28,
-            borderRadius: "var(--radius-sm)",
-            background: "var(--primary-quiet)",
-            color: "var(--primary)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flex: "none",
-          }}
-        >
+        <span aria-hidden="true" style={DIFF_ICON_STYLE}>
           <svg
             width="16"
             height="16"
@@ -120,7 +140,7 @@ export function ApprovalDiffCard({
           <span
             style={{
               fontFamily: "var(--font-money)",
-              fontSize: "11px",
+              fontSize: "var(--fs-label)",
               color: "var(--text-faint)",
               marginTop: 3,
               display: "flex",
@@ -134,19 +154,7 @@ export function ApprovalDiffCard({
             {range ? <span>· {range}</span> : null}
           </span>
         </span>
-        <span
-          style={{
-            fontSize: "10px",
-            fontWeight: "var(--fw-bold)",
-            letterSpacing: "0.05em",
-            textTransform: "uppercase",
-            padding: "3px 8px",
-            borderRadius: "var(--radius-pill)",
-            flex: "none",
-            background: pill.bg,
-            color: pill.color,
-          }}
-        >
+        <span style={{ ...DIFF_PILL_BASE, background: pill.bg, color: pill.color }}>
           {pill.label}
         </span>
       </div>
@@ -215,22 +223,7 @@ export function ApprovalDiffCard({
         ))}
       </div>
 
-      {note ? (
-        <div
-          style={{
-            display: "flex",
-            gap: "8px",
-            padding: "11px 16px",
-            background: "var(--bg-subtle)",
-            borderTop: "var(--bw-hair) solid var(--border)",
-            fontSize: "12px",
-            lineHeight: 1.45,
-            color: "var(--text-muted)",
-          }}
-        >
-          {note}
-        </div>
-      ) : null}
+      {note ? <div style={DIFF_NOTE_STYLE}>{note}</div> : null}
 
       {actions ? (
         <div
@@ -244,6 +237,6 @@ export function ApprovalDiffCard({
           {actions}
         </div>
       ) : null}
-    </div>
+    </section>
   );
 }

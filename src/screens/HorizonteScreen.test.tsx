@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
-import { HorizonteScreen, groupByMonth } from "./HorizonteScreen";
+import { HorizonteScreen } from "./HorizonteScreen";
+import { groupByMonth } from "./horizonteData";
 import type { ForecastDay } from "../lib/api";
 import { FORECAST, mockCommands, mockInvoke } from "../test/commands";
 

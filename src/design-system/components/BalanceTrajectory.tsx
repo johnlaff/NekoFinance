@@ -1,16 +1,6 @@
 import { useRef, useState } from "react";
 import type { ForecastDay } from "../../lib/api";
-import { fmtDayMonth } from "../../lib/format";
-import { formatBRL } from "./Money";
-
-/** R$ compacto para rótulos de gráfico: "R$ 5.8k", "−R$ 320". Minus tipográfico (U+2212). */
-export function fmtCompactBRL(cents: number): string {
-  const v = cents / 100;
-  const abs = Math.abs(v);
-  const sign = v < 0 ? "−" : "";
-  if (abs >= 1000) return `${sign}R$ ${(abs / 1000).toFixed(abs >= 10000 ? 0 : 1)}k`;
-  return `${sign}R$ ${abs.toFixed(0)}`;
-}
+import { fmtDayMonth, formatBRL, fmtCompactBRL } from "../../lib/format";
 
 /**
  * BalanceTrajectory — gráfico de área da trajetória do saldo projetado (o Sparkline do design

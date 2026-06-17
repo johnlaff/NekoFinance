@@ -87,15 +87,14 @@ export function Disclosure({
         </span>
         <Chevron />
       </button>
-      <div
+      <section
         className="nk-disc__bodywrap"
         id={`${id}-b`}
-        role="region"
         aria-labelledby={`${id}-t`}
         inert={!open}
       >
         <div className="nk-disc__body">{children}</div>
-      </div>
+      </section>
     </div>
   );
 }

@@ -204,14 +204,14 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
       </div>
 
       {deficit && (
-        <div className="dash-deficit" role="status">
+        <output className="dash-deficit">
           <AlertTriangle size={15} strokeWidth={1.75} />
           <span>
             Buraco previsto de{" "}
             <Money cents={deficit.balance_cents} size="sm" sign="negative" /> em{" "}
             {fmtDayMonth(deficit.date)}. Precisa de entrada nova ou corte até lá.
           </span>
-        </div>
+        </output>
       )}
 
       {summary && hasData && (

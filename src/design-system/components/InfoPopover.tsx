@@ -15,7 +15,7 @@ export interface GlossaryEntry {
 }
 
 /** Glossário canônico PT-BR dos termos do método (teste dos 12 anos). */
-export const GLOSSARY: Record<string, GlossaryEntry> = {
+const GLOSSARY: Record<string, GlossaryEntry> = {
   pode_gastar: {
     title: "Pode gastar hoje",
     body: "O quanto dá para gastar hoje sem furar o mês. É o menor de dois limites: o que o caixa aguenta e o que respeita sua meta de poupança.",
@@ -99,11 +99,17 @@ export function InfoPopover({
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const id = useId();
 
-  // `place` mora DENTRO do effect (depende só de open+width) → sem dep instável nem setState
-  // síncrono no fechamento. Ao fechar, o effect não faz nada; o portal some pelo guard `open && pos`
-  // e a `pos` velha (inofensiva) é recomputada no próximo open.
+  // `place` mora DENTRO do effect (depende só de open+width) → sem dep instável. Os fechamentos
+  // (`dismiss`/`dismissAndRefocus`) também moram no effect e compartilham um único `setOpen(false)`,
+  // de modo que o effect tem só dois setState lexicais (posicionar + fechar) — sem cascata síncrona
+  // (os fechamentos rodam em handlers assíncronos) nem callbacks instáveis nas deps.
   useEffect(() => {
     if (!open) return;
+    const dismiss = () => setOpen(false);
+    const dismissAndRefocus = () => {
+      dismiss();
+      (wrapRef.current?.querySelector(".nk-term") as HTMLElement | null)?.focus();
+    };
     const place = () => {
       const trigger = wrapRef.current?.querySelector(".nk-term");
       if (!trigger) return;
@@ -124,15 +130,12 @@ export function InfoPopover({
     place();
     const raf = requestAnimationFrame(place); // re-place após medir a altura real
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setOpen(false);
-        (wrapRef.current?.querySelector(".nk-term") as HTMLElement | null)?.focus();
-      }
+      if (e.key === "Escape") dismissAndRefocus();
     };
     const onDoc = (e: MouseEvent) => {
       const t = e.target as Node;
       if (wrapRef.current?.contains(t) || popRef.current?.contains(t)) return;
-      setOpen(false);
+      dismiss();
     };
     const onScroll = () => place();
     document.addEventListener("keydown", onKey);

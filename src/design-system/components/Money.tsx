@@ -1,10 +1,12 @@
 /**
  * Money — valor monetário BRL em mono tabular, com sinal de menos REAL (−) e cor por sinal.
  *
- * Valor monetário do Design System do Neko (formatBRL próprio), com inline-style
- * (convenção do Neko: Badge/MovBadge) em vez do hook de injeção de CSS — assim é puro, sem
- * hooks/estado/efeito (React Doctor não aplicável).
+ * Valor monetário do Design System do Neko, com inline-style (convenção do Neko: Badge/MovBadge)
+ * em vez do hook de injeção de CSS — assim é puro, sem hooks/estado/efeito. O formatador `formatBRL`
+ * mora em `lib/format` (módulo puro); importado aqui para o rótulo e o conteúdo.
  */
+import { formatBRL } from "../../lib/format";
+
 export type MoneySize = "sm" | "md" | "lg" | "display";
 export type MoneySign = "none" | "auto" | "negative";
 
@@ -14,17 +16,6 @@ const SIZE_FS: Record<MoneySize, string> = {
   lg: "var(--fs-money-lg)",
   display: "var(--fs-money-xl)",
 };
-
-/** Formata centavos BRL → "R$ 1.234,56" com sinal de menos real (−) e NBSP após R$. */
-export function formatBRL(cents: number, hideCents = false): string {
-  const neg = cents < 0;
-  const v = Math.abs(cents) / 100;
-  const s = v.toLocaleString("pt-BR", {
-    minimumFractionDigits: hideCents ? 0 : 2,
-    maximumFractionDigits: hideCents ? 0 : 2,
-  });
-  return (neg ? "−R$ " : "R$ ") + s;
-}
 
 interface MoneyProps {
   cents: number;

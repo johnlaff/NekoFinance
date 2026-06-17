@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useReducer, type CSSProperties } from "react";
 import { GitCompareArrows, Lock } from "lucide-react";
 import { Button } from "../../design-system/components/Button";
 import {
@@ -23,6 +23,71 @@ const KIND_LABEL: Record<string, string> = {
   economia: "Economia",
 };
 
+// Estado do fluxo de prévia/envio agrupado num reducer (uma atualização lógica = um render).
+interface WBState {
+  enabled: boolean;
+  cells: CellWrite[] | null;
+  econCells: CellWrite[] | null;
+  loading: boolean;
+  error: string | null;
+  applyMsg: string | null;
+  econApplyMsg: string | null;
+}
+
+const initialWB: WBState = {
+  enabled: false,
+  cells: null,
+  econCells: null,
+  loading: false,
+  error: null,
+  applyMsg: null,
+  econApplyMsg: null,
+};
+
+type WBAction =
+  | { type: "enabled"; value: boolean }
+  | { type: "loading"; value: boolean }
+  | { type: "previewReset" }
+  | { type: "cells"; value: CellWrite[] | null }
+  | { type: "econCells"; value: CellWrite[] | null }
+  | { type: "error"; value: string }
+  | { type: "applyMsg"; value: string }
+  | { type: "econApplyMsg"; value: string };
+
+function wbReducer(s: WBState, a: WBAction): WBState {
+  switch (a.type) {
+    case "enabled":
+      return { ...s, enabled: a.value };
+    case "loading":
+      return { ...s, loading: a.value };
+    case "previewReset":
+      return { ...s, error: null, applyMsg: null, econApplyMsg: null };
+    case "cells":
+      return { ...s, cells: a.value };
+    case "econCells":
+      return { ...s, econCells: a.value };
+    case "error":
+      return { ...s, error: a.value };
+    case "applyMsg":
+      return { ...s, applyMsg: a.value };
+    case "econApplyMsg":
+      return { ...s, econApplyMsg: a.value };
+  }
+}
+
+// Base estática do selo de status (não recria por render); o tom (habilitado/desligado) entra por merge.
+const STATUS_PILL_BASE: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 5,
+  fontSize: "var(--fs-micro)",
+  fontWeight: "var(--fw-bold)",
+  textTransform: "uppercase",
+  letterSpacing: "0.05em",
+  padding: "3px 8px",
+  borderRadius: "var(--radius-pill)",
+};
+
 /**
  * Write-back (spec 018) — pré-visualiza o caminho inverso (transação → célula da planilha) como um
  * diff para aprovação humana. O ENVIO real fica atrás de uma flag desligada: o botão "Aprovar e
@@ -38,13 +103,9 @@ export function WriteBackPreview({
   sheetName: string;
   clientId: string;
 }) {
-  const [enabled, setEnabled] = useState(false);
-  const [cells, setCells] = useState<CellWrite[] | null>(null);
-  const [econCells, setEconCells] = useState<CellWrite[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [applyMsg, setApplyMsg] = useState<string | null>(null);
-  const [econApplyMsg, setEconApplyMsg] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(wbReducer, initialWB);
+  const { enabled, cells, econCells, loading, error, applyMsg, econApplyMsg } = state;
+  const setLoading = (v: boolean) => dispatch({ type: "loading", value: v });
 
   // A aba selecionada é uma aba-ano ("2026"). A Economia é uma aba à parte, escrita por ano.
   const year = Number.parseInt(sheetName, 10);
@@ -53,57 +114,66 @@ export function WriteBackPreview({
   useEffect(() => {
     let alive = true;
     writeBackEnabled()
-      .then((v) => alive && setEnabled(v))
-      .catch(() => alive && setEnabled(false));
+      .then((v) => alive && dispatch({ type: "enabled", value: v }))
+      .catch(() => alive && dispatch({ type: "enabled", value: false }));
     return () => {
       alive = false;
     };
   }, []);
 
   async function preview() {
-    setError(null);
-    setApplyMsg(null);
-    setEconApplyMsg(null);
+    dispatch({ type: "previewReset" });
     await withLoading(setLoading, async () => {
       try {
         const result = await previewWriteBack(spreadsheetId, sheetName, clientId);
-        setCells(result);
+        dispatch({ type: "cells", value: result });
         // Aba-ano também tem Economia (aba à parte): pré-visualiza o bloco do ano. É OPCIONAL —
         // se não houver aba Economia/dados, não falha a prévia principal da grade diária.
         if (yearValid) {
           try {
             const econ = await previewEconomiaWriteBack(spreadsheetId, year, clientId);
-            setEconCells(econ);
+            dispatch({ type: "econCells", value: econ });
           } catch {
-            setEconCells(null);
+            dispatch({ type: "econCells", value: null });
           }
         }
       } catch (e) {
-        setError(safeErrorMessage(e, "Não foi possível pré-visualizar o write-back."));
+        dispatch({
+          type: "error",
+          value: safeErrorMessage(e, "Não foi possível pré-visualizar o write-back."),
+        });
       }
     });
   }
 
   async function approve() {
-    setApplyMsg(null);
     try {
       const n = await applyWriteBack(spreadsheetId, sheetName, clientId);
-      setApplyMsg(`Enviado: ${n} célula(s) atualizada(s).`);
+      dispatch({ type: "applyMsg", value: `Enviado: ${n} célula(s) atualizada(s).` });
     } catch (e) {
       // Flag desligada → mensagem clara, nada foi escrito.
-      setApplyMsg(safeErrorMessage(e, "Write-back bloqueado. Nada foi escrito."));
+      dispatch({
+        type: "applyMsg",
+        value: safeErrorMessage(e, "Write-back bloqueado. Nada foi escrito."),
+      });
     }
   }
 
   async function approveEcon() {
-    setEconApplyMsg(null);
     try {
       const n = await applyEconomiaWriteBack(spreadsheetId, year, clientId);
-      setEconApplyMsg(`Enviado: ${n} célula(s) da aba Economia.`);
+      dispatch({
+        type: "econApplyMsg",
+        value: `Enviado: ${n} célula(s) da aba Economia.`,
+      });
     } catch (e) {
-      setEconApplyMsg(
-        safeErrorMessage(e, "Write-back da Economia bloqueado. Nada foi escrito."),
-      );
+      dispatch({
+        type: "econApplyMsg",
+        value: safeErrorMessage(
+          e,
+          "Write-back da Economia bloqueado. Nada foi escrito.",
+        ),
+      });
     }
   }
 
@@ -142,15 +212,7 @@ export function WriteBackPreview({
         </span>
         <span
           style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 5,
-            fontSize: "var(--fs-micro)",
-            fontWeight: "var(--fw-bold)",
-            textTransform: "uppercase",
-            letterSpacing: "0.05em",
-            padding: "3px 8px",
-            borderRadius: "var(--radius-pill)",
+            ...STATUS_PILL_BASE,
             background: enabled ? "var(--success-tint)" : "var(--bg-subtle)",
             color: enabled ? "var(--success-400)" : "var(--text-muted)",
           }}
