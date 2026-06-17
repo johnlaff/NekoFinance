@@ -13,6 +13,19 @@
   box-sizing: border-box;
 }
 
+/* App-shell: cadeia de altura 100% (não 100vh — o WebView do Tauri arredonda 100vh e gera um scroll
+   de documento extra, com a barra nativa fora do tema) e overflow oculto no documento — só os painéis
+   internos (.ak-body / .ak-nav) rolam. O layout empilhado mobile restaura o scroll do documento. */
+html,
+body,
+#root {
+  height: 100%;
+}
+html,
+body {
+  overflow: hidden;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -22,6 +35,28 @@ body {
   line-height: var(--lh-normal);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbars no tema (dark-first): a barra nativa clara do WebView destoava do design system. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--radius-pill);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
 }
 
 button {
@@ -57,7 +92,7 @@ h3,
 .ak {
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;
-  height: 100vh;
+  height: 100%;
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-sans);
@@ -1047,6 +1082,14 @@ h3,
   .dash-grid4,
   .pockets-grid {
     grid-template-columns: 1fr;
+  }
+
+  /* Layout empilhado: restaura o scroll do documento (o app-shell desktop o desliga). */
+  html,
+  body,
+  #root {
+    height: auto;
+    overflow: auto;
   }
 
   .ak {
