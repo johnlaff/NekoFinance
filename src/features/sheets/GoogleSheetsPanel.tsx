@@ -34,7 +34,7 @@ import {
 } from "../../lib/api";
 import { extractSpreadsheetId } from "../../lib/spreadsheet-url";
 import { safeErrorMessage } from "../../lib/errors";
-import { isMetricTab } from "../../lib/sheet-tabs";
+import { isEconomiaTab, isMetricTab } from "../../lib/sheet-tabs";
 import { invalidateCommands } from "../../lib/useCommand";
 import { withLoading } from "../../lib/withLoading";
 import { WriteBackPreview } from "./WriteBackPreview";
@@ -428,12 +428,14 @@ function PickStep({
   onPastedUrl,
   onSheetSelect,
   onResync,
+  onImportEconomia,
 }: {
   state: SheetState;
   onSpreadsheetSelect: (id: string) => void;
   onPastedUrl: (value: string) => void;
   onSheetSelect: (name: string) => void;
   onResync: () => void;
+  onImportEconomia: () => void;
 }) {
   const {
     spreadsheets,
@@ -464,12 +466,6 @@ function PickStep({
             )}
             {importing ? "Sincronizando…" : "Re-sincronizar"}
           </Button>
-          {importResult && (
-            <output className="gs-result gs-result--ok">
-              <CheckCircle2 size={14} strokeWidth={1.75} />
-              {importResult}
-            </output>
-          )}
           <span className="gs-label" style={{ marginTop: "var(--space-2)" }}>
             Ou importar outra planilha/aba
           </span>
@@ -525,37 +521,54 @@ function PickStep({
           </span>
           <div className="gs-sheets">
             {sheets.map((s) => {
-              // Abas de métricas (Economia/Totais) têm layout próprio, não o de blocos mensais —
-              // importá-las como transações geraria lixo. Terão importador dedicado (spec 010).
-              const metric = isMetricTab(s.title);
+              // Economia tem importador próprio (poupança por mês) → clicável, importa direto.
+              // As demais métricas (Totais/métricas) têm layout próprio e ainda não têm importador;
+              // importá-las como transações geraria lixo → bloqueadas.
+              const economia = isEconomiaTab(s.title);
+              const metric = !economia && isMetricTab(s.title);
               return (
                 <button
                   key={s.sheet_id}
                   type="button"
                   className={`gs-sheet-btn ${selectedSheet === s.title ? "gs-sheet-btn--active" : ""}`}
-                  onClick={() => onSheetSelect(s.title)}
-                  disabled={loading || metric}
+                  onClick={() =>
+                    economia ? onImportEconomia() : onSheetSelect(s.title)
+                  }
+                  disabled={loading || importing || metric}
                   title={
-                    metric
-                      ? "Aba de métricas do método: import dedicado em breve"
-                      : undefined
+                    economia
+                      ? "Importa a poupança por mês (aba Economia)"
+                      : metric
+                        ? "Aba de métricas do método: import dedicado em breve"
+                        : undefined
                   }
                 >
                   <FileSpreadsheet size={14} strokeWidth={1.75} />
                   {s.title}
+                  {economia && <span className="gs-sheet-btn__tag">poupança</span>}
                   {metric && <span className="gs-sheet-btn__tag">métricas</span>}
                 </button>
               );
             })}
           </div>
+          <p className="gs-hint">
+            Aba-ano (2025, 2026…) importa lançamentos; <strong>Economia</strong> importa
+            a poupança por mês.
+          </p>
         </>
       )}
 
-      {loading && (
+      {(loading || importing) && (
         <div className="gs-loading">
           <Loader2 size={16} className="gs-spin" strokeWidth={1.75} />
-          <span>Carregando…</span>
+          <span>{importing ? "Importando…" : "Carregando…"}</span>
         </div>
+      )}
+      {importResult && (
+        <output className="gs-result gs-result--ok">
+          <CheckCircle2 size={14} strokeWidth={1.75} />
+          {importResult}
+        </output>
       )}
     </div>
   );
@@ -800,6 +813,7 @@ export function GoogleSheetsPanel({
           onPastedUrl={(value) => void sheet.handlePastedUrl(value)}
           onSheetSelect={(name) => void sheet.handleSheetSelect(name)}
           onResync={() => void sheet.handleResync()}
+          onImportEconomia={() => void sheet.handleImportEconomia()}
         />
       )}
 
