@@ -4,9 +4,14 @@
 
 Coverage is a risk signal, not proof of quality. The policy follows the pragmatic market pattern: high thresholds where correctness matters, lower tolerance for UI shell churn, and explicit exclusions for files that do not have meaningful executable behavior.
 
-Current automated threshold:
+Coverage thresholds (configured in `vite.config.ts`, enforced when you run `npm run coverage`):
 
-- TypeScript coverage gate: 90% lines, statements, branches, and functions for included source.
+- 90% lines, statements, branches, and functions for included source. This is a **manual/optional**
+  signal — the blocking gate (`npm run check`, CI) runs `test:run` (no coverage threshold) plus lint,
+  typecheck, the Playwright E2E smoke, clippy, and the privacy scan. Multi-step interactive flows
+  (OAuth connect, sheet picker/preview/mapping, import) are covered by the E2E smoke rather than
+  line-by-line Vitest, so the global `npm run coverage` number sits below 90% for those UI-shell
+  modules by design; the design-system and domain modules stay high.
 - Excluded from coverage: app bootstrap, test setup, type-only files, generated files, future fixtures, and files without meaningful runtime behavior.
 - **Update (2026-06-14)**: the old monolithic `App.tsx` (~919 lines) was decomposed into `src/shell/`, `src/features/` and `src/screens/`; `App.tsx` is now ~84 lines of wiring. The complex interactive flows (OAuth connect, sheet picker, preview, mapping editor, import) moved into feature modules with their own component tests, and the remaining end-to-end paths are covered by the Playwright E2E smoke (`npm run e2e`). Design system components remain at ~98%. Continue to prefer Playwright smoke over line-by-line Vitest for multi-step interactive flows.
 

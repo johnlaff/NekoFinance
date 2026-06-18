@@ -8,15 +8,22 @@ import { MonthNav } from "../../design-system/components/MonthNav";
 import { EmptyState } from "../../design-system/components/EmptyState";
 import { saldoBand, SALDO_BAND_FILL, SALDO_BAND_LABEL } from "../../lib/saldoHeatmap";
 
-/** Soma os fluxos da grade para o rodapé do mês (ENTRADAS | SAÍDAS | DIÁRIO → Saída Total). */
+/** Soma os fluxos da grade para o rodapé do mês (ENTRADAS | SAÍDAS | DIÁRIO → Saída Total).
+ * Uma única passada (era 3 reduces sobre a mesma lista). */
 function footerOf(
   grid: { income_cents: number; fixed_out_cents: number; daily_out_cents: number }[],
 ) {
-  const income = grid.reduce((a, d) => a + d.income_cents, 0);
-  const fixed = grid.reduce((a, d) => a + d.fixed_out_cents, 0);
-  const daily = grid.reduce((a, d) => a + d.daily_out_cents, 0);
-  const saidaTotal = fixed + daily;
-  return { income, fixed, daily, saidaTotal, performance: income - saidaTotal };
+  const t = grid.reduce(
+    (a, d) => {
+      a.income += d.income_cents;
+      a.fixed += d.fixed_out_cents;
+      a.daily += d.daily_out_cents;
+      return a;
+    },
+    { income: 0, fixed: 0, daily: 0 },
+  );
+  const saidaTotal = t.fixed + t.daily;
+  return { ...t, saidaTotal, performance: t.income - saidaTotal };
 }
 
 /** Próximo/anterior "YYYY-MM". */
@@ -31,13 +38,23 @@ function shiftYm(ym: string, delta: number): string {
  * (com seletor), o termômetro na coluna Saldo, e o rodapé ENTRADAS | SAÍDAS | DIÁRIO → Saída Total →
  * Performance. Diferente da projeção do dashboard, mostra também os dias já passados do mês.
  */
-export function MonthLedgerCard({ today }: { today: string }) {
+export function MonthLedgerCard({
+  today,
+  reloadKey = 0,
+}: {
+  today: string;
+  /** Muda quando o dashboard é invalidado (ex.: após um check-in diário) para forçar o refetch da
+   * grade — a chave do useCommand é estável por mês, então sem isto o "Dia a dia" ficava stale. */
+  reloadKey?: number;
+}) {
   const todayYm = today.slice(0, 7);
   const [ym, setYm] = useState(todayYm);
   const [year, month] = ym.split("-").map(Number);
   const monthName = monthNamePtBR(`${ym}-01`);
   const monthCap = monthName.charAt(0).toUpperCase() + monthName.slice(1);
-  const gridQ = useCommand(`month_grid:${ym}`, () => getMonthGrid(year!, month!));
+  const gridQ = useCommand(`month_grid:${ym}:${reloadKey}`, () =>
+    getMonthGrid(year!, month!),
+  );
   const grid = gridQ.data ?? [];
   const hasData = grid.some(
     (d) =>

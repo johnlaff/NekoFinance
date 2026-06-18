@@ -86,6 +86,9 @@
   --border: var(--ink-600);
   --border-strong: var(--ink-500);
   --border-focus: var(--jade-400);
+  /* Borda de CONTROLES de formulário (inputs/selects): >=3:1 p/ delinear o campo (WCAG 1.4.11).
+     `--border` (divisores estruturais) é fraco demais para identificar um controle no escuro. */
+  --border-input: var(--ink-300);
 
   --text: var(--ink-050);
   --text-strong: var(--ink-000);
@@ -141,6 +144,8 @@
   --border: #d7dedb;
   --border-strong: #c2cbc7;
   --border-focus: #2e9b6f;
+  /* Borda de controles de formulário no claro (>=3:1 sobre as superfícies claras). */
+  --border-input: #6f7a74;
 
   --text: #142019;
   --text-strong: #0a100d;
@@ -149,7 +154,7 @@
   --text-on-primary: #ffffff;
   --text-on-brass: #2a1c05;
 
-  --primary: #228764;
+  --primary: #1e7a59; /* WCAG AA (>=4.5:1) p/ texto branco no botão primário (o #228764 dava 4.45) */
   --primary-hover: #1c6f52;
   --primary-press: #15543e;
   --primary-quiet: rgba(34, 135, 100, 0.1);

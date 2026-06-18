@@ -1,3 +1,16 @@
+/**
+ * Hoje no fuso LOCAL como ISO `YYYY-MM-DD`. Usa a data de PAREDE (getFullYear/Month/Date), não
+ * `toISOString()` (UTC): à noite no Brasil (UTC-3) o UTC já virou o dia seguinte, e um lançamento
+ * feito depois das 21h era datado como amanhã — quebrando "Diário de hoje" e marcando um gasto
+ * realizado como projeção futura no backend (que compara com a data LOCAL).
+ */
+export function todayISO(): string {
+  const d = new Date();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
 /** Formats INTEGER cents as localized BRL currency (e.g. 123456 → "R$ 1.234,56"). */
 export function fmtBRL(cents: number): string {
   const reais = cents / 100;
@@ -20,17 +33,20 @@ export function parseBRLToCents(input: string): number | null {
   return Math.round(Number(cleaned) * 100);
 }
 
-/** Formats an ISO 8601 date (YYYY-MM-DD) as DD/MM/YYYY. Empty input stays empty. */
+/** Formats an ISO 8601 date (YYYY-MM-DD) as DD/MM/YYYY. Malformed input is returned as-is (não
+ * monta "undefined/...": melhor expor o valor inesperado do que mascará-lo). */
 export function fmtDate(iso: string): string {
-  if (!iso) return "";
-  const [y, m, d] = iso.split("-");
+  const parts = iso.split("-");
+  if (parts.length < 3) return iso;
+  const [y, m, d] = parts;
   return `${d}/${m}/${y}`;
 }
 
-/** Formats an ISO 8601 date (YYYY-MM-DD) as DD/MM. Empty input stays empty. */
+/** Formats an ISO 8601 date (YYYY-MM-DD) as DD/MM. Malformed input is returned as-is. */
 export function fmtDayMonth(iso: string): string {
-  if (!iso) return "";
-  const [, m, d] = iso.split("-");
+  const parts = iso.split("-");
+  if (parts.length < 3) return iso;
+  const [, m, d] = parts;
   return `${d}/${m}`;
 }
 

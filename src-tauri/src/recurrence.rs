@@ -221,18 +221,21 @@ pub async fn update_series_all(
     Ok(res.rows_affected())
 }
 
-/// Apaga TODA a série + a linha `recurrence`.
+/// Apaga TODA a série + a linha `recurrence`. Os dois DELETEs correm numa única transação: senão
+/// uma falha entre eles deixaria a linha `recurrence` órfã (sem ocorrências) ou vice-versa.
 pub async fn delete_series_all(pool: &SqlitePool, recurrence_id: &str) -> Result<u64, String> {
+    let mut tx = pool.begin().await.map_err(|e| format!("begin: {e}"))?;
     let res = sqlx::query("DELETE FROM \"transaction\" WHERE recurrence_id = ?1")
         .bind(recurrence_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| format!("delete all: {e}"))?;
     sqlx::query("DELETE FROM recurrence WHERE id = ?1")
         .bind(recurrence_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| format!("delete recurrence: {e}"))?;
+    tx.commit().await.map_err(|e| format!("commit: {e}"))?;
     Ok(res.rows_affected())
 }
 

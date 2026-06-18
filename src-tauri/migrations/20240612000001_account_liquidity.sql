@@ -1,6 +1,9 @@
 -- Spec 007: pockets & liquidity. SQLite cannot alter a CHECK constraint, so the
 -- table is rebuilt in place (no indexes exist on account; child tables keep
--- referencing "account" by name and FK enforcement is off in the app pool).
+-- referencing "account" by name). FK enforcement is ON (sqlx enables PRAGMA
+-- foreign_keys by default; the app pool now also sets it explicitly): the rebuild
+-- runs inside the migration transaction and the DROP/RENAME swaps the table so
+-- child FKs resolve by name to the renamed table.
 CREATE TABLE account_new (
     id TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL,

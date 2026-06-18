@@ -275,6 +275,12 @@ export function getAppInfo(): Promise<AppInfo> {
   return invoke("get_app_info");
 }
 
+/** Backup atômico (VACUUM INTO) do banco local em `destPath` (escolhido no save dialog). Retorna
+ * o caminho gravado. Local-first: o dono do dado leva uma cópia íntegra para onde quiser. */
+export function backupDatabase(destPath: string): Promise<string> {
+  return invoke("backup_database", { destPath });
+}
+
 export function getForecast(): Promise<Forecast> {
   return invoke("get_forecast");
 }

@@ -6,6 +6,12 @@ use chrono::{Datelike, NaiveDate};
 use sqlx::SqlitePool;
 use tauri::State;
 
+/// Aba entre aspas simples para um range A1 do Sheets, com as aspas internas escapadas (`'` → `''`).
+/// Sem isto, uma aba chamada `O'Brien` quebraria o range (`'O'Brien'`) e a chamada à API falharia.
+fn quote_sheet(name: impl AsRef<str>) -> String {
+    format!("'{}'", name.as_ref().replace('\'', "''"))
+}
+
 #[tauri::command]
 pub async fn start_oauth_flow(
     state: tauri::State<'_, OAuthStateStore>,
@@ -136,7 +142,7 @@ pub async fn fetch_sheet_preview(
 
     // Grade inteira (não A1:Z21) — a planilha real vai até a coluna BO (~71 col); A:Z cortaria
     // JUNHO–DEZEMBRO no preview, como no import (auditoria vs planilha oficial, P1).
-    let range = format!("'{}'", sheet_name);
+    let range = quote_sheet(&sheet_name);
     let values = client.get_sheet_values(&spreadsheet_id, &range).await?;
 
     let mut rows = values.values;
@@ -182,7 +188,7 @@ pub async fn import_sheet_data(
 
     // Grade usada inteira: a planilha real tem 12 blocos mensais até a coluna BO (~71
     // colunas) — um range A:Z cortaria JUNHO–DEZEMBRO em silêncio (spec 010, slice 0).
-    let range = format!("'{}'", sheet_name);
+    let range = quote_sheet(&sheet_name);
     let values = client.get_sheet_values(&spreadsheet_id, &range).await?;
     let rows = values.values;
 
@@ -728,11 +734,18 @@ async fn load_cashflow_events(
         })
         .collect();
 
-    let credit_cards: Vec<(i32, i32)> =
+    // `closing_day`/`due_day` são NULL-áveis no schema (um cartão pode ser criado sem ciclo). Decodifica
+    // como Option e mantém só os cartões com ciclo COMPLETO — senão um NULL faria o decode (i32,i32)
+    // estourar e derrubar a projeção inteira.
+    let credit_cards: Vec<(Option<i32>, Option<i32>)> =
         sqlx::query_as("SELECT closing_day, due_day FROM account WHERE type = 'credit_card'")
             .fetch_all(pool)
             .await
             .map_err(|e| format!("query credit cards: {e}"))?;
+    let credit_cards: Vec<(i32, i32)> = credit_cards
+        .into_iter()
+        .filter_map(|(c, d)| c.zip(d))
+        .collect();
 
     if !credit_cards.is_empty() {
         // Use the first card's closing/due days (multi-card aggregation is a later slice)
@@ -861,8 +874,8 @@ async fn load_metric_events(
     today_naive: NaiveDate,
     future_events: &[CashflowEvent],
 ) -> Result<Vec<CashflowEvent>, String> {
-    let month_start =
-        NaiveDate::from_ymd_opt(today_naive.year(), today_naive.month(), 1).expect("valid month");
+    let month_start = NaiveDate::from_ymd_opt(today_naive.year(), today_naive.month(), 1)
+        .ok_or("data de hoje inválida")?;
     let mut metric = load_realized_month_events(pool, month_start, today_naive).await?;
     metric.extend_from_slice(future_events);
     Ok(metric)
@@ -1677,8 +1690,10 @@ async fn recent_transactions(pool: &SqlitePool, limit: i64) -> Result<Vec<Transa
     let tag_rows: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(
         "SELECT tt.transaction_id, t.id, t.name, t.color, t.emoji \
          FROM transaction_tag tt JOIN tag t ON t.id = tt.tag_id \
+         WHERE tt.transaction_id IN (SELECT id FROM \"transaction\" ORDER BY date DESC LIMIT ?1) \
          ORDER BY t.is_special DESC, t.name COLLATE NOCASE",
     )
+    .bind(limit)
     .fetch_all(pool)
     .await
     .map_err(|e| format!("tag query: {e}"))?;
@@ -1849,7 +1864,7 @@ pub async fn detect_sheet_layout(
     let client = SheetsClient::new(token);
 
     // Grade inteira — A1:Z10 podia cortar a linha de dados/cabeçalhos da detecção (P1).
-    let range = format!("'{}'", sheet_name);
+    let range = quote_sheet(&sheet_name);
     let values = client.get_sheet_values(&spreadsheet_id, &range).await?;
     let rows = values.values;
 
@@ -1924,11 +1939,14 @@ async fn load_write_back_txns(pool: &SqlitePool, year: i32) -> Result<Vec<WriteB
 
     // 2) Cartão → lump no vencimento. Com cartão configurado, junta as compras cujo VENCIMENTO cai
     //    no ano-alvo (janela DEZ/ano-1 .. DEZ/ano, pois a fatura vence ~1 mês após a compra).
-    let card: Option<(i64, i64)> =
+    // Dias do cartão são NULL-áveis: decodifica como Option e só conta como "tem cartão" quando o
+    // ciclo está completo (closing E due) — senão um NULL derrubaria o write-back do ano.
+    let card: Option<(Option<i64>, Option<i64>)> =
         sqlx::query_as("SELECT closing_day, due_day FROM account WHERE type='credit_card' LIMIT 1")
             .fetch_optional(pool)
             .await
             .map_err(|e| format!("query card: {e}"))?;
+    let card = card.and_then(|(c, d)| c.zip(d));
 
     match card {
         Some((closing, due)) => {
@@ -2000,7 +2018,7 @@ async fn build_write_back_plan(
         oauth::token_store::ensure_valid_token(app_dir, client_id, client_secret.as_deref())
             .await?;
     let client = SheetsClient::new(token);
-    let range = format!("'{}'", sheet_name);
+    let range = quote_sheet(sheet_name);
     let values = client.get_sheet_values(spreadsheet_id, &range).await?;
 
     let layout = import::get_layout_for_sheet(pool, sheet_name)
@@ -2083,6 +2101,43 @@ async fn app_setting_set(pool: &SqlitePool, key: &str, value: &str) -> Result<()
     Ok(())
 }
 
+/// Backup do banco local em `dest_path` (escolhido pelo usuário no save dialog). Usa `VACUUM INTO`,
+/// que cria uma cópia CONSISTENTE mesmo com o banco em uso e em modo WAL — diferente de copiar o
+/// arquivo `.db` cru, que poderia capturar um estado parcial (WAL não aplicado). Local-first: o dono
+/// do dado precisa conseguir levar uma cópia íntegra. Retorna o caminho gravado.
+#[tauri::command]
+pub async fn backup_database(
+    pool: State<'_, SqlitePool>,
+    dest_path: String,
+) -> Result<String, String> {
+    backup_db(pool.inner(), &dest_path).await
+}
+
+async fn backup_db(pool: &SqlitePool, dest_path: &str) -> Result<String, String> {
+    let dest = dest_path.trim();
+    if dest.is_empty() {
+        return Err("escolha um destino para o backup".into());
+    }
+    // `VACUUM INTO` recusa um arquivo já existente; o save dialog já confirmou a sobrescrita com o
+    // usuário, então removemos a versão anterior (só se for arquivo regular) antes de gravar.
+    let path = std::path::Path::new(dest);
+    if path.is_file() {
+        std::fs::remove_file(path).map_err(|e| format!("remover backup anterior: {e}"))?;
+    }
+    // `VACUUM INTO` é um statement especial que não substitui parâmetros bindados (`?1` sairia vazio
+    // e o arquivo não seria criado); o destino vai inline com aspas escapadas (`'` → `''`) — seguro
+    // mesmo que o caminho contenha aspas.
+    let stmt = format!("VACUUM INTO '{}'", dest.replace('\'', "''"));
+    // `VACUUM` precisa rodar como SQL BRUTO (não via prepared statement, que o silenciaria); por isso
+    // `raw_sql`. SQL dinâmico AUDITADO: o único dado interpolado é o caminho, com aspas escapadas
+    // acima (`AssertSqlSafe` é o caminho oficial do sqlx 0.9 para SQL montado, ver SqlSafeStr).
+    sqlx::raw_sql(sqlx::AssertSqlSafe(stmt))
+        .execute(pool)
+        .await
+        .map_err(|e| format!("backup: {e}"))?;
+    Ok(dest.to_string())
+}
+
 /// Aplica o write-back: escreve as células DIVERGENTES de volta na aba. Trava-mestra: enquanto
 /// `WRITE_BACK_ENABLED` estiver desligado, falha cedo e NÃO escreve nada. A UI já obteve o diff via
 /// `preview_write_back` e o humano aprovou; aqui só replanejamos (a planilha pode ter mudado) e
@@ -2114,7 +2169,7 @@ pub async fn apply_write_back(
         .filter(|c| c.changed)
         .map(|c| {
             (
-                format!("'{}'!{}", sheet_name, c.a1),
+                format!("{}!{}", quote_sheet(&sheet_name), c.a1),
                 c.value_cents as f64 / 100.0,
             )
         })
@@ -2256,7 +2311,18 @@ async fn store_economia_entries(
 ) -> Result<usize, String> {
     let today = chrono::Local::now().date_naive();
     let now = chrono::Utc::now().to_rfc3339();
-    let mut reserve_id: Option<String> = None;
+
+    // A conta de reserva é pré-requisito das linhas com economia > 0 — resolvida ANTES da transação
+    // (assim um import só de zeros/deleções não cria uma reserva à toa). Os upserts/deletes correm
+    // numa ÚNICA transação: uma falha no meio deixaria o Economizado%/ColchaoCard parcialmente errado.
+    let needs_reserve = entries.iter().any(|(_, _, cents)| *cents > 0);
+    let reserve_id = if needs_reserve {
+        Some(ensure_reserve_account(pool).await?)
+    } else {
+        None
+    };
+
+    let mut tx = pool.begin().await.map_err(|e| format!("begin: {e}"))?;
     let mut count = 0usize;
 
     for (year, month, cents) in entries {
@@ -2265,13 +2331,8 @@ async fn store_economia_entries(
         let id = format!("economia:{year:04}-{month:02}");
 
         if *cents > 0 {
-            let reserve = match &reserve_id {
-                Some(id) => id.clone(),
-                None => {
-                    let id = ensure_reserve_account(pool).await?;
-                    reserve_id = Some(id.clone());
-                    id
-                }
+            let Some(reserve) = reserve_id.as_ref() else {
+                return Err("conta de reserva não resolvida para a Economia".into());
             };
             let is_projection = (last > today) as i64;
             sqlx::query(
@@ -2283,22 +2344,23 @@ async fn store_economia_entries(
             .bind(&id)
             .bind(cents)
             .bind(&date)
-            .bind(&reserve)
+            .bind(reserve)
             .bind(is_projection)
             .bind(&now)
-            .execute(pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| format!("upsert economia: {e}"))?;
         } else {
             sqlx::query("DELETE FROM \"transaction\" WHERE id = ?1")
                 .bind(&id)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await
                 .map_err(|e| format!("delete economia: {e}"))?;
         }
         count += 1;
     }
 
+    tx.commit().await.map_err(|e| format!("commit: {e}"))?;
     Ok(count)
 }
 
@@ -2785,6 +2847,78 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(remaining, 0);
+    }
+
+    // Regressão (review): store_economia_entries grava upsert+delete numa única transação. Uma
+    // chamada com meses mistos (>0 e =0) deve aplicar TODOS atomicamente, criando a reserva 1×.
+    #[tokio::test]
+    async fn economia_mixed_entries_commit_in_one_transaction() {
+        let pool = fixture_pool().await;
+        insert_liquid_account(&pool, 100_000).await;
+
+        let n = store_economia_entries(
+            &pool,
+            &[(2026, 1, 100_000), (2026, 2, 0), (2026, 3, 50_000)],
+        )
+        .await
+        .unwrap();
+        assert_eq!(n, 3);
+
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE id LIKE 'economia:2026-%'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 2, "jan e mar gravados; fev (0) não cria linha");
+
+        let (reserves,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM account WHERE liquidity='reserve'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(reserves, 1, "a conta de reserva é criada uma única vez");
+    }
+
+    // M2: backup via VACUUM INTO grava um arquivo SQLite válido e não-vazio. Usa uma fonte em
+    // ARQUIVO (como o app real), pois VACUUM INTO a partir de `:memory:` não materializa o arquivo.
+    // Checa o cabeçalho mágico do SQLite — prova que VACUUM INTO produziu um DB de verdade.
+    #[tokio::test]
+    async fn backup_database_writes_valid_sqlite_file() {
+        use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+        use std::str::FromStr;
+
+        let src = std::env::temp_dir().join(format!("neko-src-{}.db", uuid::Uuid::new_v4()));
+        let src_str = src.to_str().unwrap();
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::from_str(&format!("sqlite:{src_str}"))
+                    .unwrap()
+                    .create_if_missing(true),
+            )
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        insert_liquid_account(&pool, 123_456).await;
+
+        let dest = std::env::temp_dir().join(format!("neko-backup-{}.db", uuid::Uuid::new_v4()));
+        let dest_str = dest.to_str().unwrap();
+        let written = backup_db(&pool, dest_str).await.unwrap();
+        assert_eq!(written, dest_str);
+
+        let bytes = std::fs::read(&dest).unwrap();
+        assert!(
+            bytes.starts_with(b"SQLite format 3\0"),
+            "o backup é um arquivo SQLite válido"
+        );
+        assert!(bytes.len() > 1000, "backup não-vazio");
+
+        // Destino vazio é rejeitado.
+        assert!(backup_db(&pool, "   ").await.is_err());
+
+        drop(pool);
+        std::fs::remove_file(&dest).ok();
+        std::fs::remove_file(&src).ok();
     }
 
     async fn insert_projection(

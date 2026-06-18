@@ -230,7 +230,7 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
 
       {forecast && <PerformanceCard forecast={forecast} />}
 
-      {forecast && <MonthLedgerCard today={forecast.today} />}
+      {forecast && <MonthLedgerCard today={forecast.today} reloadKey={reloadKey} />}
 
       <PocketsCard />
     </div>

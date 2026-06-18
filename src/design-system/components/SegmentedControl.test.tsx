@@ -17,6 +17,50 @@ describe("SegmentedControl", () => {
     expect(screen.getByText("Mês")).toBeInTheDocument();
   });
 
+  it("exposes radiogroup/radio semantics with aria-checked", () => {
+    const onChange = vi.fn();
+    render(
+      <SegmentedControl
+        options={OPTIONS}
+        value="week"
+        onChange={onChange}
+        ariaLabel="Período"
+      />,
+    );
+    expect(screen.getByRole("radiogroup", { name: "Período" })).toBeInTheDocument();
+    const radios = screen.getAllByRole("radio");
+    expect(radios).toHaveLength(3);
+    expect(screen.getByRole("radio", { name: "Semana" })).toBeChecked();
+  });
+
+  it("uses roving tabindex (only the selected radio is tabbable)", () => {
+    const onChange = vi.fn();
+    render(<SegmentedControl options={OPTIONS} value="day" onChange={onChange} />);
+    expect(screen.getByRole("radio", { name: "Dia" })).toHaveAttribute("tabindex", "0");
+    expect(screen.getByRole("radio", { name: "Semana" })).toHaveAttribute(
+      "tabindex",
+      "-1",
+    );
+  });
+
+  it("moves selection with arrow keys", () => {
+    const onChange = vi.fn();
+    render(<SegmentedControl options={OPTIONS} value="day" onChange={onChange} />);
+    fireEvent.keyDown(screen.getByRole("radio", { name: "Dia" }), {
+      key: "ArrowRight",
+    });
+    expect(onChange).toHaveBeenCalledWith("week");
+  });
+
+  it("wraps and supports Home/End keys", () => {
+    const onChange = vi.fn();
+    render(<SegmentedControl options={OPTIONS} value="day" onChange={onChange} />);
+    fireEvent.keyDown(screen.getByRole("radio", { name: "Dia" }), { key: "ArrowLeft" });
+    expect(onChange).toHaveBeenLastCalledWith("month"); // wrap-around
+    fireEvent.keyDown(screen.getByRole("radio", { name: "Dia" }), { key: "End" });
+    expect(onChange).toHaveBeenLastCalledWith("month");
+  });
+
   it("calls onChange when option clicked", () => {
     const onChange = vi.fn();
     render(<SegmentedControl options={OPTIONS} value="day" onChange={onChange} />);

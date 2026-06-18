@@ -1,9 +1,74 @@
+import { useState } from "react";
 import { FileUp, HardDrive, Landmark, Link2, type LucideIcon } from "lucide-react";
+import { save } from "@tauri-apps/plugin-dialog";
 import { PocketsManager } from "../features/pockets/PocketsManager";
 import { GoogleSheetsPanel } from "../features/sheets/GoogleSheetsPanel";
 import { LocalXlsxImport } from "../features/sheets/LocalXlsxImport";
-import { getAppInfo, type AuthStatus } from "../lib/api";
+import { backupDatabase, getAppInfo, isTauri, type AuthStatus } from "../lib/api";
+import { safeErrorMessage } from "../lib/errors";
 import { useCommand } from "../lib/useCommand";
+import { Button } from "../design-system/components/Button";
+
+/** Backup local do banco: escolhe o destino no save dialog nativo e grava via VACUUM INTO. */
+function DataBackupRow() {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Sem `finally` de propósito: o React Compiler não otimiza componentes com try/finally.
+  async function doBackup() {
+    setMsg(null);
+    setErr(null);
+    let dest: string | null;
+    try {
+      dest = await save({
+        title: "Salvar backup do Neko",
+        defaultPath: "neko-finance-backup.db",
+        filters: [{ name: "Banco SQLite", extensions: ["db"] }],
+      });
+    } catch (e) {
+      setErr(safeErrorMessage(e, "Não foi possível abrir o seletor de arquivo."));
+      return;
+    }
+    if (!dest) return; // usuário cancelou
+    setBusy(true);
+    try {
+      await backupDatabase(dest);
+      setBusy(false);
+      setMsg("Backup salvo.");
+    } catch (e) {
+      setBusy(false);
+      setErr(safeErrorMessage(e, "Não foi possível fazer o backup."));
+    }
+  }
+
+  return (
+    <div className="set-row">
+      <div className="set-row__main">
+        <div className="set-row__t">Backup do banco</div>
+        <div className="set-row__d">
+          Salva uma cópia íntegra (.db) onde você escolher — leve para outro disco ou
+          dispositivo. {msg ? <strong>{msg}</strong> : null}
+          {err ? (
+            <strong role="alert" style={{ color: "var(--danger-400)" }}>
+              {err}
+            </strong>
+          ) : null}
+        </div>
+      </div>
+      <div className="set-row__ctl">
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => void doBackup()}
+          disabled={busy || !isTauri}
+        >
+          {busy ? "Salvando…" : "Fazer backup"}
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 function Section({
   icon: Icon,
@@ -95,6 +160,7 @@ export function SettingsScreen({
               </div>
             </div>
           </div>
+          <DataBackupRow />
           <div className="set-row">
             <div className="set-row__main">
               <div className="set-row__t">Telemetria</div>

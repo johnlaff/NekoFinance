@@ -151,7 +151,7 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
 
   test("transactions filter narrows by scope", async ({ page }) => {
     await page.getByRole("button", { name: "Lançamentos" }).click();
-    await page.getByRole("tab", { name: "Crédito" }).click();
+    await page.getByRole("radio", { name: "Crédito" }).click();
     await expect(page.getByText("1 exibida")).toBeVisible();
     await expect(page.getByText("Compromisso demo no crédito")).toBeVisible();
     await expect(page.getByText("Despesa demo variável")).not.toBeVisible();

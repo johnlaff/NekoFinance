@@ -54,7 +54,19 @@ jobs:
         # (fronteira secret↔build; o projeto não tem install scripts próprios).
         run: npm ci --ignore-scripts
 
+      - name: Audit npm production dependencies
+        # Falha só em vulnerabilidade ALTA+ de dependência de produção (devDeps ficam de fora — não
+        # vão no bundle). 0 vulns hoje; trava regressões de supply-chain no JS.
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Run quality gates
         env:
           PRIVACY_SCAN_REQUIRE_DENYLIST: ${{ secrets.PRIVATE_FORBIDDEN_PATTERNS_B64 != '' && '1' || '0' }}
         run: npm run check
+
+      - name: Audit Rust dependencies (RUSTSEC)
+        # cargo-audit falha só em VULNERABILIDADE (avisos de unmaintained/unsound de deps transitivas
+        # do stack GTK/Tauri não bloqueiam). O binário é cacheado pelo rust-cache (cache-bin).
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit --file src-tauri/Cargo.lock

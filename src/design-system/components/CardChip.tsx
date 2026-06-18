@@ -107,6 +107,8 @@ export function CardChip({
             fontSize: "13px",
             color: "#fff",
             opacity: 0.95,
+            // O nome cai na ponta CLARA do gradiente (135deg) — a sombra garante leitura do branco.
+            textShadow: "0 1px 3px rgba(0, 0, 0, 0.5)",
           }}
         >
           {mono}

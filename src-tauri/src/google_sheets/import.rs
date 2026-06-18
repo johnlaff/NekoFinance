@@ -772,6 +772,11 @@ pub async fn store_balance_series(
 /// milhar (`1.234`, `1.234.567`). Floats do xlsx chegam normalizados com 4 casas fixas
 /// (ver `xlsx_cell_to_string`), então nunca caem na ambiguidade de 3 dígitos.
 pub fn parse_number(s: &str) -> i64 {
+    // Negativo contábil entre parênteses ("(1.234,56)" = −1.234,56): os parênteses são removidos
+    // pelo filtro abaixo, então capturamos o sinal antes. Comum em export de planilha/extrato.
+    let trimmed = s.trim();
+    let negative_paren = trimmed.starts_with('(') && trimmed.ends_with(')');
+
     let cleaned: String = s
         .chars()
         .filter(|c| c.is_ascii_digit() || *c == '.' || *c == '-' || *c == ',')
@@ -798,11 +803,12 @@ pub fn parse_number(s: &str) -> i64 {
         cleaned
     };
 
-    if let Ok(f) = normalized.parse::<f64>() {
+    let value = if let Ok(f) = normalized.parse::<f64>() {
         (f * 100.0).round() as i64
     } else {
-        0
-    }
+        return 0;
+    };
+    if negative_paren { -value.abs() } else { value }
 }
 
 /// Parseia a aba `Economia` → `(ano, mês 1..=12, centavos)` para cada mês encontrado.
@@ -928,6 +934,11 @@ mod tests {
         assert_eq!(parse_number("1370,5"), 137050);
         assert_eq!(parse_number("-45,00"), -4500);
         assert_eq!(parse_number("-45.00"), -4500);
+        // Negativo contábil entre parênteses (export de planilha/extrato).
+        assert_eq!(parse_number("(1.234,56)"), -123456);
+        assert_eq!(parse_number("(50,00)"), -5000);
+        assert_eq!(parse_number("(R$ 1.000,00)"), -100000);
+        assert_eq!(parse_number("(0)"), 0);
     }
 
     #[test]

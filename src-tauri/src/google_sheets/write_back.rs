@@ -245,21 +245,25 @@ pub fn plan_economia_write_back(
             break; // fim do bloco anual (linha vazia, TOTAL ou próximo cabeçalho)
         };
         let cents = economia_by_month[(month - 1) as usize];
-        if cents > 0 {
-            let current = row
-                .get(econ_col)
-                .map(|s| s.trim().to_string())
-                .unwrap_or_default();
+        let current = row
+            .get(econ_col)
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+        let current_cents = parse_number(&current);
+        // Emite escrita quando há economia (> 0) OU quando a célula tem um valor ANTIGO a limpar
+        // (economia local foi zerada). Sem o segundo caso, apagar a Economia na origem nunca
+        // refletia na planilha — a célula ficava com o valor obsoleto para sempre.
+        if cents > 0 || current_cents != 0 {
             out.push(CellWrite {
                 a1: format!("{}{}", col_to_a1(econ_col), r + 1),
                 row: r,
                 col: econ_col,
                 date: format!("{year}-{month:02}"),
                 kind: "economia".to_string(),
-                current: current.clone(),
+                current,
                 proposed: cents_to_ptbr(cents),
                 value_cents: cents,
-                changed: parse_number(&current) != cents,
+                changed: current_cents != cents,
             });
         }
         if month == 12 {
@@ -424,6 +428,38 @@ mod tests {
         assert_eq!(plan26.len(), 1);
         assert_eq!(plan26[0].a1, "D6");
         assert_eq!(plan26[0].date, "2026-01");
+    }
+
+    #[test]
+    fn economia_zeroed_locally_clears_stale_sheet_cell() {
+        // Regressão (review): a planilha tem 1000,00 em jan, mas a Economia local foi zerada (0).
+        // Antes, meses com 0 eram pulados → a célula obsoleta nunca era limpa. Agora gera 1 escrita.
+        let row = |name: &str, eco: &str| {
+            vec![
+                "".into(),
+                name.to_string(),
+                "5000.00".into(),
+                eco.to_string(),
+                "0".into(),
+            ]
+        };
+        let grid = vec![
+            vec![
+                "".into(),
+                "2026".into(),
+                "Entradas".into(),
+                "Economia".into(),
+                "%".into(),
+            ],
+            row("jan", "1000.00"),
+        ];
+        let by = [0i64; 12]; // nenhuma economia registrada → jan deve ser limpo
+
+        let plan = plan_economia_write_back(&grid, 2026, &by);
+        assert_eq!(plan.len(), 1, "a célula obsoleta de jan precisa ser limpa");
+        assert_eq!(plan[0].date, "2026-01");
+        assert_eq!(plan[0].value_cents, 0);
+        assert!(plan[0].changed, "1000,00 → 0 é mudança");
     }
 
     #[test]
