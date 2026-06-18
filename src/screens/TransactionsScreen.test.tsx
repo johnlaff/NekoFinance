@@ -1,7 +1,8 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { TransactionsScreen, filterTransactions } from "./TransactionsScreen";
+import { TransactionsScreen } from "./TransactionsScreen";
+import { filterTransactions } from "./transactionsFilter";
 import { TXNS, mockCommands, mockInvoke } from "../test/commands";
 import type { Tag } from "../lib/api";
 

@@ -1,5 +1,5 @@
 import { useState, type KeyboardEvent, type ReactNode } from "react";
-import { formatBRL } from "./Money";
+import { formatBRL } from "../../lib/format";
 
 /**
  * TransactionRow — linha de lançamento fiel ao método: data, descrição, método, valor, procedência,
@@ -86,6 +86,33 @@ function lumpItemKey(item: LumpItem): string {
   return `${item.what}:${item.amount}:${item.passthrough ? "repasse" : "normal"}`;
 }
 
+// Base estática do botão de expandir o lump (não recria por render); só o `transform` é dinâmico.
+const LUMP_TOGGLE_BASE: React.CSSProperties = {
+  width: 18,
+  height: 18,
+  display: "grid",
+  placeItems: "center",
+  border: "none",
+  background: "transparent",
+  color: "var(--text-faint)",
+  borderRadius: "4px",
+  cursor: "pointer",
+  flexShrink: 0,
+  transition: "transform var(--dur-fast) var(--ease-standard)",
+};
+
+const PASSTHROUGH_BADGE_STYLE: React.CSSProperties = {
+  fontSize: "var(--fs-label)",
+  fontWeight: "var(--fw-bold)",
+  textTransform: "uppercase",
+  letterSpacing: "0.04em",
+  color: "var(--info-400)",
+  background: "var(--info-tint)",
+  padding: "1px 6px",
+  borderRadius: "4px",
+  whiteSpace: "nowrap",
+};
+
 export function TransactionRow({
   date,
   desc,
@@ -104,6 +131,10 @@ export function TransactionRow({
 }: TransactionRowProps) {
   const [open, setOpen] = useState(defaultOpen);
   const hasLump = Array.isArray(lump) && lump.length > 0;
+  const toggleStyle: React.CSSProperties = {
+    ...LUMP_TOGGLE_BASE,
+    transform: open ? "rotate(90deg)" : "none",
+  };
   const rowInteractionProps = onClick
     ? {
         onClick,
@@ -165,20 +196,7 @@ export function TransactionRow({
                   e.stopPropagation();
                   setOpen((o) => !o);
                 }}
-                style={{
-                  width: 18,
-                  height: 18,
-                  display: "grid",
-                  placeItems: "center",
-                  border: "none",
-                  background: "transparent",
-                  color: "var(--text-faint)",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                  flexShrink: 0,
-                  transform: open ? "rotate(90deg)" : "none",
-                  transition: "transform var(--dur-fast) var(--ease-standard)",
-                }}
+                style={toggleStyle}
               >
                 ›
               </button>
@@ -194,23 +212,7 @@ export function TransactionRow({
             >
               {desc}
             </span>
-            {passthrough ? (
-              <span
-                style={{
-                  fontSize: "10px",
-                  fontWeight: "var(--fw-bold)",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.04em",
-                  color: "var(--info-400)",
-                  background: "var(--info-tint)",
-                  padding: "1px 6px",
-                  borderRadius: "4px",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                repasse
-              </span>
-            ) : null}
+            {passthrough ? <span style={PASSTHROUGH_BADGE_STYLE}>repasse</span> : null}
           </div>
           {provenance || owner || note ? (
             <div

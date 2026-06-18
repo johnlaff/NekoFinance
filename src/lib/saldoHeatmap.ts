@@ -31,7 +31,7 @@ export interface SaldoBandThresholds {
 }
 
 /** Default = formatação condicional da planilha de referência. */
-export const SALDO_BAND_THRESHOLDS_CENTS: SaldoBandThresholds = {
+const SALDO_BAND_THRESHOLDS_CENTS: SaldoBandThresholds = {
   critical: -50_000, // −R$ 500,00
   positive: 0,
   tight: 100_000, // R$ 1.000,00

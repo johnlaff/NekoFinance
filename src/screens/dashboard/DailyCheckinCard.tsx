@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { CalendarCheck } from "lucide-react";
 import { Button } from "../../design-system/components/Button";
 import { Money } from "../../design-system/components/Money";
@@ -6,6 +6,30 @@ import { createTransaction, type DashboardSummary } from "../../lib/api";
 import { safeErrorMessage } from "../../lib/errors";
 import { fmtBRL, parseBRLToCents } from "../../lib/format";
 import { invalidateCommands } from "../../lib/useCommand";
+import { SR_ONLY } from "../../design-system/srOnly";
+
+// Trilho da barra de teto diário (estático). A barra usa `<progress>` sr-only para a semântica e
+// um trilho visual aria-hidden — assim mantém a animação scaleX (GPU) idêntica nos dois WebViews
+// do Tauri, sem mapear para um `<progress>` visível (estilização inconsistente entre WebViews).
+const DAILY_BAR_TRACK: CSSProperties = {
+  height: 6,
+  borderRadius: "var(--radius-pill)",
+  background: "var(--bg-subtle)",
+  overflow: "hidden",
+  marginBottom: "var(--space-4)",
+};
+
+const DAILY_INPUT_STYLE: CSSProperties = {
+  flex: 1,
+  height: "var(--hit-min)",
+  padding: "0 var(--space-3)",
+  background: "var(--bg-subtle)",
+  border: "var(--bw-hair) solid var(--border)",
+  borderRadius: "var(--radius-xs)",
+  color: "var(--text)",
+  fontFamily: "var(--font-money)",
+  fontSize: "var(--fs-body)",
+};
 
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
@@ -121,35 +145,30 @@ export function DailyCheckinCard({
         </div>
 
         {ceiling > 0 && (
-          <div
-            role="progressbar"
-            aria-valuenow={pct}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-label={`${pct}% do teto diário usado${overspent ? " — teto estourado" : ""}`}
-            style={{
-              height: 6,
-              borderRadius: "var(--radius-pill)",
-              background: "var(--bg-subtle)",
-              overflow: "hidden",
-              marginBottom: "var(--space-4)",
-            }}
-          >
-            <div
-              aria-hidden="true"
-              style={{
-                width: "100%",
-                height: "100%",
-                transformOrigin: "left",
-                transform: `scaleX(${pct / 100})`,
-                background: overspent ? "var(--danger-400)" : "var(--type-diario)",
-                // Anima transform (GPU), não width — evita layout thrash (impeccable). `--t-hover`
-                // só lista background/border/color (não transform), então NÃO animaria o transform;
-                // por isso declaramos a transição explícita com dur+ease.
-                transition: "transform var(--dur-slow) var(--ease-entrance)",
-              }}
+          <>
+            {/* Semântica via `<progress>` nativo (sr-only); o trilho visual abaixo é decorativo. */}
+            <progress
+              value={pct}
+              max={100}
+              aria-label={`${pct}% do teto diário usado${overspent ? " — teto estourado" : ""}`}
+              style={SR_ONLY}
             />
-          </div>
+            <div aria-hidden="true" style={DAILY_BAR_TRACK}>
+              <div
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  transformOrigin: "left",
+                  transform: `scaleX(${pct / 100})`,
+                  background: overspent ? "var(--danger-400)" : "var(--type-diario)",
+                  // Anima transform (GPU), não width — evita layout thrash (impeccable). `--t-hover`
+                  // só lista background/border/color (não transform), então NÃO animaria o transform;
+                  // por isso declaramos a transição explícita com dur+ease.
+                  transition: "transform var(--dur-slow) var(--ease-entrance)",
+                }}
+              />
+            </div>
+          </>
         )}
 
         {monthAvgCents > 0 && (
@@ -174,17 +193,7 @@ export function DailyCheckinCard({
             onKeyDown={(e) => {
               if (e.key === "Enter" && canSubmit) void logSpend();
             }}
-            style={{
-              flex: 1,
-              height: "var(--hit-min)",
-              padding: "0 var(--space-3)",
-              background: "var(--bg-subtle)",
-              border: "var(--bw-hair) solid var(--border)",
-              borderRadius: "var(--radius-xs)",
-              color: "var(--text)",
-              fontFamily: "var(--font-money)",
-              fontSize: "var(--fs-body)",
-            }}
+            style={DAILY_INPUT_STYLE}
           />
           <Button
             variant="primary"

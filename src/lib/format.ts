@@ -43,3 +43,27 @@ export function monthNamePtBR(iso: string): string {
     timeZone: "UTC",
   });
 }
+
+/**
+ * Formata centavos BRL → "R$ 1.234,56" com sinal de menos real (−, U+2212).
+ * Formatador próprio do Design System (usado por `<Money>`, TransactionRow, CardChip…).
+ */
+export function formatBRL(cents: number, hideCents = false): string {
+  const neg = cents < 0;
+  const v = Math.abs(cents) / 100;
+  const s = v.toLocaleString("pt-BR", {
+    minimumFractionDigits: hideCents ? 0 : 2,
+    maximumFractionDigits: hideCents ? 0 : 2,
+  });
+  // Espaco apos R$ e um NBSP (U+00A0), que cola o simbolo ao numero; menos real e U+2212.
+  return (neg ? "−R$ " : "R$ ") + s;
+}
+
+/** R$ compacto para rótulos de gráfico: "R$ 5.8k", "−R$ 320". Minus tipográfico (U+2212). */
+export function fmtCompactBRL(cents: number): string {
+  const v = cents / 100;
+  const abs = Math.abs(v);
+  const sign = v < 0 ? "−" : "";
+  if (abs >= 1000) return `${sign}R$ ${(abs / 1000).toFixed(abs >= 10000 ? 0 : 1)}k`;
+  return `${sign}R$ ${abs.toFixed(0)}`;
+}

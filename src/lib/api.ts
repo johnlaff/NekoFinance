@@ -8,11 +8,20 @@ export const GOOGLE_CLIENT_ID =
   (import.meta.env["VITE_GOOGLE_CLIENT_ID"] as string) ?? "";
 
 /**
- * O client secret de app desktop, quando exigido pelo Google, é resolvido no backend Rust via
- * `GOOGLE_CLIENT_SECRET` (sem `VITE_`). Não lemos `VITE_GOOGLE_CLIENT_SECRET` aqui para evitar
- * empacotar esse valor no bundle JS/devtools ou trafegar o secret por IPC sem necessidade.
+ * Client secret do OAuth, repassado ao backend (que já o usa no refresh do token).
+ *
+ * Para um app DESKTOP o "secret" do Google NÃO é confidencial — ele inevitavelmente acompanha o app
+ * instalado (a própria doc do Google assume isso). E este client (tipo "Web application") EXIGE o
+ * `client_secret` no refresh: sem ele o refresh falha com `client_secret is missing` e a conexão cai
+ * em ~1h, forçando reconexão constante. Antes passávamos `null` (confiando num env `GOOGLE_CLIENT_SECRET`
+ * do processo Rust, que NÃO existe no .exe em runtime) — por isso o refresh nunca funcionava.
+ *
+ * Agora lemos do build (`VITE_GOOGLE_CLIENT_SECRET`, do `.env` local gitignored) — `null` quando
+ * ausente (cai no fallback do backend). Alternativa sem secret: trocar para um OAuth client tipo
+ * "Desktop app", cujo refresh usa só PKCE.
  */
-const clientSecretOrNull = null;
+const clientSecretOrNull =
+  (import.meta.env["VITE_GOOGLE_CLIENT_SECRET"] as string) || null;
 
 export type AuthStatus = "connected" | "expired" | "disconnected" | "loading";
 
@@ -566,10 +575,12 @@ export interface OwnerTotal {
   total_cents: number;
 }
 
+// react-doctor-disable-next-line deslop/unused-export -- spec 017: ponte do frontend (comando Tauri pronto/testado), UI multi-titular pendente
 export function splitsForTransaction(transactionId: string): Promise<SplitRow[]> {
   return invoke("splits_for_transaction_cmd", { transactionId });
 }
 
+// react-doctor-disable-next-line deslop/unused-export -- spec 017: ponte do frontend (comando Tauri pronto/testado), UI multi-titular pendente
 export function ownerTotalsForMonth(
   year: number,
   month: number,
@@ -581,6 +592,7 @@ export function ownerTotalsForMonth(
 
 export type Frequency = "diaria" | "semanal" | "mensal";
 
+// react-doctor-disable-next-line deslop/unused-export -- spec 016: ponte do frontend (comando Tauri pronto/testado), UI de recorrências pendente
 export function createRecurringSeries(input: {
   txnType: string;
   amount: number;
@@ -595,11 +607,13 @@ export function createRecurringSeries(input: {
 }
 
 /** Apaga a ocorrência indicada e todas as posteriores ("deste ponto em diante"). */
+// react-doctor-disable-next-line deslop/unused-export -- spec 016: ponte do frontend (comando Tauri pronto/testado), UI de recorrências pendente
 export function deleteSeriesFrom(transactionId: string): Promise<number> {
   return invoke("delete_series_from_cmd", { transactionId });
 }
 
 /** Apaga toda a série + a linha de recorrência. */
+// react-doctor-disable-next-line deslop/unused-export -- spec 016: ponte do frontend (comando Tauri pronto/testado), UI de recorrências pendente
 export function deleteSeriesAll(recurrenceId: string): Promise<number> {
   return invoke("delete_series_all_cmd", { recurrenceId });
 }
@@ -612,6 +626,7 @@ interface SeriesEdit {
 }
 
 /** Reajusta a ocorrência indicada e todas as posteriores (o passado fica intacto). */
+// react-doctor-disable-next-line deslop/unused-export -- spec 016: ponte do frontend (comando Tauri pronto/testado), UI de recorrências pendente
 export function updateSeriesFrom(
   transactionId: string,
   edit: SeriesEdit,
@@ -620,6 +635,7 @@ export function updateSeriesFrom(
 }
 
 /** Reajusta toda a série de uma vez. */
+// react-doctor-disable-next-line deslop/unused-export -- spec 016: ponte do frontend (comando Tauri pronto/testado), UI de recorrências pendente
 export function updateSeriesAll(
   recurrenceId: string,
   edit: SeriesEdit,

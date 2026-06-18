@@ -21,11 +21,10 @@ describe("HealthBadge", () => {
     expect(screen.queryByText("Forte")).not.toBeInTheDocument();
   });
 
-  it("aria-label combina rótulo e sublabel para leitores de tela", () => {
+  it("expõe rótulo e sublabel como texto para leitores de tela", () => {
     render(<HealthBadge level="risk" label="Faltou dinheiro" sublabel="−R$ 120,00" />);
-    expect(
-      screen.getByRole("img", { name: "Faltou dinheiro — −R$ 120,00" }),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Faltou dinheiro")).toBeInTheDocument();
+    expect(screen.getByText("−R$ 120,00")).toBeInTheDocument();
   });
 
   it("renderiza o anel de progresso (svg)", () => {

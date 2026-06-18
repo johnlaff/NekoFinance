@@ -37,27 +37,27 @@ const PROV: Record<Prov, { label: string; dot: string; entry: GlossaryEntry }> =
   },
 };
 
+const PROV_BADGE_STYLE: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "5px",
+  height: 20,
+  padding: "0 8px 0 6px",
+  borderRadius: "var(--radius-pill)",
+  background: "var(--bg-subtle)",
+  border: "var(--bw-hair) solid var(--border)",
+  fontSize: "var(--fs-micro)",
+  fontWeight: "var(--fw-medium)",
+  color: "var(--text-muted)",
+  whiteSpace: "nowrap",
+};
+
 export function ProvBadge({ provenance }: { provenance: string }) {
   const p = PROV[provenance as Prov];
   if (!p) return null;
   return (
     <InfoPopover term={p.entry} hideMarker>
-      <span
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: "5px",
-          height: 20,
-          padding: "0 8px 0 6px",
-          borderRadius: "var(--radius-pill)",
-          background: "var(--bg-subtle)",
-          border: "var(--bw-hair) solid var(--border)",
-          fontSize: "var(--fs-micro)",
-          fontWeight: "var(--fw-medium)",
-          color: "var(--text-muted)",
-          whiteSpace: "nowrap",
-        }}
-      >
+      <span style={PROV_BADGE_STYLE}>
         <span
           aria-hidden="true"
           style={{

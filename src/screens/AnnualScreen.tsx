@@ -36,6 +36,19 @@ const tdNum: React.CSSProperties = {
   padding: "var(--space-3) var(--space-4)",
 };
 
+/** Item da legenda do sparkline: amostra de cor + rótulo. */
+function LegendDot({ color, label }: { color: string; label: string }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+      <span
+        aria-hidden="true"
+        style={{ width: 9, height: 9, borderRadius: 2, background: color }}
+      />
+      {label}
+    </span>
+  );
+}
+
 /** Mini-barras de Economizado% por mês, com a faixa-meta 20–30% sombreada (tendência do ano). */
 function EconomizadoSparkline({
   months,
@@ -56,53 +69,72 @@ function EconomizadoSparkline({
   const bandTop = ((maxPct - 30) / maxPct) * H;
   const bandHeight = (10 / maxPct) * H; // faixa 20–30%
   return (
-    <div
-      aria-label="Tendência de Economizado% por mês, com a faixa-meta de 20 a 30% sombreada"
-      style={{
-        display: "flex",
-        gap: 4,
-        alignItems: "flex-end",
-        height: H,
-        margin: "0 0 var(--space-6)",
-        position: "relative",
-      }}
-    >
-      <span
-        aria-hidden="true"
+    <div style={{ margin: "0 0 var(--space-6)" }}>
+      <div
+        aria-label="Tendência de Economizado% por mês, com a faixa-meta de 20 a 30% sombreada"
         style={{
-          position: "absolute",
-          left: 0,
-          right: 0,
-          top: bandTop,
-          height: bandHeight,
-          background: "var(--success-tint)",
-          borderRadius: 2,
+          display: "flex",
+          gap: 4,
+          alignItems: "flex-end",
+          height: H,
+          position: "relative",
         }}
-      />
-      {data.map((d, i) => {
-        const h = d.empty ? 2 : Math.max(2, (d.pct / maxPct) * H);
-        const color = d.empty
-          ? "var(--border)"
-          : d.pct > 30
-            ? "var(--primary)"
-            : d.pct >= 20
-              ? "var(--success-400)"
-              : "var(--warning-400)";
-        return (
-          <span
-            key={i}
-            title={`${MONTHS_PT[i]}: ${d.empty ? "—" : `${d.pct.toFixed(0)}%`}`}
-            style={{
-              flex: 1,
-              height: h,
-              background: color,
-              borderRadius: "2px 2px 0 0",
-              position: "relative",
-              zIndex: 1,
-            }}
-          />
-        );
-      })}
+      >
+        <span
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            top: bandTop,
+            height: bandHeight,
+            background: "var(--success-tint)",
+            borderRadius: 2,
+          }}
+        />
+        {data.map((d, i) => {
+          const h = d.empty ? 2 : Math.max(2, (d.pct / maxPct) * H);
+          const color = d.empty
+            ? "var(--border)"
+            : d.pct > 30
+              ? "var(--primary)"
+              : d.pct >= 20
+                ? "var(--success-400)"
+                : "var(--warning-400)";
+          return (
+            <span
+              key={i}
+              title={`${MONTHS_PT[i]}: ${d.empty ? "—" : `${d.pct.toFixed(0)}%`}`}
+              style={{
+                flex: 1,
+                height: h,
+                background: color,
+                borderRadius: "2px 2px 0 0",
+                position: "relative",
+                zIndex: 1,
+              }}
+            />
+          );
+        })}
+      </div>
+      {/* Legenda visível: o gráfico mostra Economizado% por mês contra a meta do método (20–30%). */}
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "var(--space-3)",
+          alignItems: "center",
+          marginTop: "var(--space-2)",
+          fontSize: "var(--fs-micro)",
+          color: "var(--text-faint)",
+        }}
+      >
+        <span>Economizado% por mês:</span>
+        <LegendDot color="var(--success-tint)" label="meta 20–30%" />
+        <LegendDot color="var(--success-400)" label="dentro" />
+        <LegendDot color="var(--warning-400)" label="abaixo" />
+        <LegendDot color="var(--primary)" label="acima" />
+      </div>
     </div>
   );
 }
@@ -129,6 +161,9 @@ export function AnnualScreen() {
   const hasYearData = months.some(
     (m) => m.income_cents !== 0 || m.cost_of_living_cents !== 0,
   );
+  // Sem nenhuma Economia no ano, o sparkline fica achatado no zero (confuso). Nesse caso mostramos
+  // uma dica em vez do gráfico — a Economia entra pela aba dedicada (Configurações › Google Sheets).
+  const hasEconomia = months.some((m) => m.economia_cents !== 0);
   // 3 estados (mesma lógica do economizadoStatus em Totais): >30% guardando além do ideal
   // (jade/steady), 20–30% dentro do ideal (verde), <20% aquém (âmbar).
   const savingsColor =
@@ -187,7 +222,22 @@ export function AnnualScreen() {
       ) : (
         <div className="dash-card">
           <div className="dash-card__body">
-            {hasYearData && <EconomizadoSparkline months={months} />}
+            {hasYearData &&
+              (hasEconomia ? (
+                <EconomizadoSparkline months={months} />
+              ) : (
+                <p
+                  style={{
+                    margin: "0 0 var(--space-6)",
+                    fontSize: "var(--fs-sm)",
+                    color: "var(--text-muted)",
+                  }}
+                >
+                  Sem Economia registrada em {year} — importe a aba{" "}
+                  <strong>Economia</strong> em Configurações › Google Sheets para ver a
+                  tendência de quanto você guardou (meta 20–30%).
+                </p>
+              ))}
             <div style={{ overflowX: "auto" }}>
               <table
                 style={{

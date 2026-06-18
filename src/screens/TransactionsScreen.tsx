@@ -22,6 +22,7 @@ import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { safeErrorMessage } from "../lib/errors";
 import { NewTransactionForm } from "./NewTransactionForm";
 import { ConflictGate } from "../features/reconcile/ConflictGate";
+import { filterTransactions, type TransactionScope } from "./transactionsFilter";
 
 /** Explicit seam: server-side pagination/FTS5 search replaces this in a later slice. */
 const FETCH_LIMIT = 500;
@@ -35,8 +36,6 @@ function monthSepLabel(ym: string): string {
   return `${name.charAt(0).toUpperCase()}${name.slice(1)} de ${ym.slice(0, 4)}`;
 }
 
-export type TransactionScope = "all" | "credit" | "future";
-
 const METHOD_LABELS: Record<string, string> = {
   debit: "Débito",
   credit: "Crédito",
@@ -45,7 +44,7 @@ const METHOD_LABELS: Record<string, string> = {
 };
 
 /** Rótulo amigável do método de pagamento (Débito, PIX…); entrada sem método vira "Entrada". */
-export function methodLabel(t: TransactionRow): string {
+function methodLabel(t: TransactionRow): string {
   if (t.payment_method) return METHOD_LABELS[t.payment_method] ?? t.payment_method;
   return t.type === "income" ? "Entrada" : "—";
 }
@@ -55,27 +54,12 @@ export function methodLabel(t: TransactionRow): string {
  * income→entrada, transfer→economia, despesa fixa (coluna Saída)→saída, crédito variável→cartão,
  * o resto→diário. É a leitura por tipo que o usuário tem nas colunas separadas da planilha.
  */
-export function movKind(t: TransactionRow): MovKind {
+function movKind(t: TransactionRow): MovKind {
   if (t.type === "income") return "entrada";
   if (t.type === "transfer") return "economia";
   if (t.is_fixed) return "saida";
   if (t.payment_method === "credit") return "cartao";
   return "diario";
-}
-
-/** Pure filter used by the screen; exported for direct testing. */
-export function filterTransactions(
-  rows: TransactionRow[],
-  scope: TransactionScope,
-  query: string,
-): TransactionRow[] {
-  const q = query.trim().toLocaleLowerCase("pt-BR");
-  return rows.filter((t) => {
-    if (scope === "credit" && t.payment_method !== "credit") return false;
-    if (scope === "future" && !t.is_projection) return false;
-    if (q && !t.description.toLocaleLowerCase("pt-BR").includes(q)) return false;
-    return true;
-  });
 }
 
 /** Chip colorido de uma tag anexada (somente leitura) no Livro-razão. */
@@ -181,8 +165,13 @@ export function TransactionsScreen({
   async function toggleTag(t: TransactionRow, tagId: string) {
     if (ui.tagSaving) return;
     const has = t.tags.some((x) => x.id === tagId);
+    // Uma passada (reduce) em vez de .filter().map(): remove a tag clicada se já existe,
+    // senão acrescenta ao final.
     const next = has
-      ? t.tags.filter((x) => x.id !== tagId).map((x) => x.id)
+      ? t.tags.reduce<string[]>((acc, x) => {
+          if (x.id !== tagId) acc.push(x.id);
+          return acc;
+        }, [])
       : [...t.tags.map((x) => x.id), tagId];
     dispatchUi({ type: "tagSaveStart", saveKey: `${t.id}:${tagId}` });
     try {

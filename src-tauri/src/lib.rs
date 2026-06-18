@@ -4,6 +4,7 @@ mod commands;
 mod conflicts;
 mod forecast;
 mod google_sheets;
+mod http;
 mod oauth;
 mod recurrence;
 mod splits;

@@ -61,7 +61,6 @@ async fn exchange_token(
     state: &pkce::OAuthState,
     code: &str,
 ) -> Result<token_store::StoredToken, String> {
-    let client = reqwest::Client::new();
     let mut params = vec![
         ("code", code.to_string()),
         ("client_id", config.client_id.clone()),
@@ -78,12 +77,10 @@ async fn exchange_token(
         params.push(("client_secret", secret.clone()));
     }
 
-    let resp = client
-        .post(&config.token_url)
-        .form(&params)
-        .send()
-        .await
-        .map_err(|e| format!("token request: {e}"))?;
+    let resp =
+        crate::http::send_with_retry(crate::http::client().post(&config.token_url).form(&params))
+            .await
+            .map_err(|e| format!("token request: {e}"))?;
 
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();

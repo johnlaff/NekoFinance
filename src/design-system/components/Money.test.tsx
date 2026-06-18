@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
-import { Money, formatBRL } from "./Money";
+import { Money } from "./Money";
+import { formatBRL } from "../../lib/format";
 
 describe("formatBRL", () => {
   it("formata positivo com agrupamento e 2 casas (pt-BR)", () => {

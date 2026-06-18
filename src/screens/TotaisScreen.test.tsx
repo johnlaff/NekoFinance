@@ -1,13 +1,13 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi } from "vitest";
+import { TotaisScreen } from "./TotaisScreen";
 import {
-  TotaisScreen,
   currentMonthMetric,
   performanceStatus,
   economizadoStatus,
   custoVidaStatus,
-} from "./TotaisScreen";
+} from "./totaisStatus";
 import type { MonthMetric } from "../lib/api";
 import { FORECAST, mockCommands, mockInvoke } from "../test/commands";
 

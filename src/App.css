@@ -13,6 +13,19 @@
   box-sizing: border-box;
 }
 
+/* App-shell: cadeia de altura 100% (não 100vh — o WebView do Tauri arredonda 100vh e gera um scroll
+   de documento extra, com a barra nativa fora do tema) e overflow oculto no documento — só os painéis
+   internos (.ak-body / .ak-nav) rolam. O layout empilhado mobile restaura o scroll do documento. */
+html,
+body,
+#root {
+  height: 100%;
+}
+html,
+body {
+  overflow: hidden;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -22,6 +35,28 @@ body {
   line-height: var(--lh-normal);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbars no tema (dark-first): a barra nativa clara do WebView destoava do design system. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--radius-pill);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
 }
 
 button {
@@ -57,7 +92,7 @@ h3,
 .ak {
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;
-  height: 100vh;
+  height: 100%;
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-sans);
@@ -1049,6 +1084,14 @@ h3,
     grid-template-columns: 1fr;
   }
 
+  /* Layout empilhado: restaura o scroll do documento (o app-shell desktop o desliga). */
+  html,
+  body,
+  #root {
+    height: auto;
+    overflow: auto;
+  }
+
   .ak {
     display: block;
     height: auto;
@@ -1186,6 +1229,34 @@ h3,
   gap: var(--space-3);
 }
 
+/* Atalho "Re-sincronizar": lembra a última planilha/aba importada (sem re-buscar nem re-colar). */
+.gs-resync {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--primary-quiet);
+  border: var(--bw-hair) solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.gs-resync__info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.gs-resync__label {
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.gs-resync__name {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+
 .gs-label {
   font-size: var(--fs-micro);
   font-weight: var(--fw-bold);
@@ -1229,6 +1300,12 @@ h3,
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+.gs-hint {
+  margin: var(--space-2) 0 0;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
 }
 
 .gs-sheet-btn {
@@ -1453,6 +1530,27 @@ h3,
   background: var(--danger-tint);
   color: var(--danger-400);
   border: var(--bw-hair) solid color-mix(in srgb, var(--danger-400) 15%, transparent);
+}
+
+/* "Detalhes técnicos" sob um erro do Sheets — erro cru do backend para diagnóstico/suporte. */
+.gs-error-detail {
+  margin-top: var(--space-2);
+  font-size: var(--fs-micro);
+}
+.gs-error-detail summary {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.gs-error-detail code {
+  display: block;
+  margin-top: var(--space-1);
+  padding: var(--space-2);
+  background: var(--bg-subtle);
+  border-radius: var(--radius-xs);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .gs-connect {
@@ -2074,15 +2172,11 @@ h3,
   flex: none;
 }
 
+/* Ledger do dashboard flui na página (scroll ÚNICO): sem max-height/overflow-y próprio — o segundo
+   scrollbar aninhado (e o sticky dentro dele) era a origem da barra dupla. Só overflow-x para telas
+   estreitas. */
 .fc-scroll {
-  max-height: 480px;
-  overflow: auto;
-}
-
-.fc-table thead th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
+  overflow-x: auto;
 }
 
 .fc-table th:not(:first-child),
@@ -2103,12 +2197,8 @@ h3,
   color: var(--primary);
 }
 
-/* Rodapé do mês (Total / Saída Total / Performance) — destacado e fixo no rodapé. */
-.fc-table tfoot {
-  position: sticky;
-  bottom: 0;
-  z-index: 1;
-}
+/* Rodapé do mês (Total / Saída Total / Performance) — destacado, ao fim do ledger (sem sticky:
+   a tabela flui no scroll da página). */
 .fc-foot td,
 .fc-foot th {
   background: var(--bg-subtle);

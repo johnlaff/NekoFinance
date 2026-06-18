@@ -1,8 +1,8 @@
+import type { CSSProperties } from "react";
 import { getForecast } from "../lib/api";
-import type { ForecastDay } from "../lib/api";
-import { monthNamePtBR } from "../lib/format";
+import { formatBRL } from "../lib/format";
 import { useCommand } from "../lib/useCommand";
-import { Money, formatBRL } from "../design-system/components/Money";
+import { Money } from "../design-system/components/Money";
 import { EmptyState } from "../design-system/components/EmptyState";
 import { BalanceTrajectory } from "../design-system/components/BalanceTrajectory";
 import {
@@ -10,44 +10,40 @@ import {
   SALDO_BAND_FILL as BAND_FILL,
   SALDO_BAND_LABEL as BAND_LABEL,
   SALDO_BAND_LEGEND as BAND_LEGEND,
-  type SaldoBand,
 } from "../lib/saldoHeatmap";
+import { groupByMonth } from "./horizonteData";
 
-// Reexporta para os testes e telas que importam o termômetro a partir desta tela (origem histórica).
-export { saldoBand, type SaldoBand };
+// Estilos estáticos hoistados do JSX: não recriam por render nem disparam o aviso de objeto de
+// estilo inline exaustivo. A parte dinâmica do dia (cor da faixa + outline) entra por merge.
+const MONTH_LABEL_STYLE: CSSProperties = {
+  fontSize: "var(--fs-label)",
+  fontWeight: "var(--fw-bold)",
+  letterSpacing: "var(--ls-label)",
+  textTransform: "uppercase",
+  color: "var(--text-muted)",
+  padding: "var(--space-2) var(--space-3)",
+  position: "sticky",
+  top: 0,
+};
 
-interface DayCell {
-  day: number;
-  balance: number;
-  isToday: boolean;
-}
-interface MonthCol {
-  ym: string;
-  label: string;
-  days: DayCell[];
-}
+const DAY_LIST_STYLE: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "2px",
+  listStyle: "none",
+  margin: 0,
+  padding: 0,
+};
 
-/** Agrupa a série diária do forecast por ano-mês (uma coluna por mês). */
-export function groupByMonth(daily: ForecastDay[], today: string): MonthCol[] {
-  const cols: MonthCol[] = [];
-  const byYm = new Map<string, MonthCol>();
-  for (const d of daily) {
-    const ym = d.date.slice(0, 7);
-    let col = byYm.get(ym);
-    if (!col) {
-      const label = monthNamePtBR(`${ym}-01`);
-      col = { ym, label: label.charAt(0).toUpperCase() + label.slice(1), days: [] };
-      byYm.set(ym, col);
-      cols.push(col);
-    }
-    col.days.push({
-      day: Number(d.date.slice(8, 10)),
-      balance: d.balance_cents,
-      isToday: d.date === today,
-    });
-  }
-  return cols;
-}
+const DAY_CELL_BASE: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "var(--space-3)",
+  padding: "var(--space-2) var(--space-3)",
+  borderRadius: "var(--radius-sm)",
+  fontVariantNumeric: "tabular-nums",
+};
 
 export function HorizonteScreen() {
   const forecastQ = useCommand("get_forecast", getForecast);
@@ -153,8 +149,9 @@ export function HorizonteScreen() {
         Detalhe diário
       </h2>
 
-      <div
-        role="group"
+      {/* `<section>` rotulado (região) + `<ul>`/`<li>` por mês: semântica nativa de lista no lugar
+          de role="group"/role="img". Cada dia é um item rotulado; o conteúdo visual fica aria-hidden. */}
+      <section
         aria-label="Saldo projetado por dia, agrupado por mês"
         style={{
           display: "flex",
@@ -164,70 +161,49 @@ export function HorizonteScreen() {
         }}
       >
         {cols.map((col) => (
-          <div
-            key={col.ym}
-            role="group"
-            aria-label={col.label}
-            style={{ minWidth: 140, flexShrink: 0 }}
-          >
-            <div
-              aria-hidden="true"
-              style={{
-                fontSize: "var(--fs-label)",
-                fontWeight: "var(--fw-bold)",
-                letterSpacing: "var(--ls-label)",
-                textTransform: "uppercase",
-                color: "var(--text-muted)",
-                padding: "var(--space-2) var(--space-3)",
-                position: "sticky",
-                top: 0,
-              }}
-            >
+          <div key={col.ym} style={{ minWidth: 140, flexShrink: 0 }}>
+            <div aria-hidden="true" style={MONTH_LABEL_STYLE}>
               {col.label}
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-              {col.days.map((d) => (
-                <div
-                  key={d.day}
-                  role="img"
-                  aria-current={d.isToday ? "date" : undefined}
-                  aria-label={`Dia ${d.day}: saldo ${formatBRL(d.balance)} (${BAND_LABEL[saldoBand(d.balance)]})`}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: "var(--space-3)",
-                    padding: "var(--space-2) var(--space-3)",
-                    borderRadius: "var(--radius-sm)",
-                    background: BAND_FILL[saldoBand(d.balance)],
-                    outline: d.isToday ? "2px solid var(--border-focus)" : "none",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  <span
-                    aria-hidden="true"
-                    style={{
-                      // --text (não --text-muted): garante >=4.5:1 sobre TODAS as faixas-fundo
-                      // do heatmap (as faixas verdes/vermelhas fortes derrubavam o muted < AA).
-                      fontSize: "var(--fs-sm)",
-                      color: "var(--text)",
-                      width: 22,
-                    }}
+            <ul aria-label={col.label} style={DAY_LIST_STYLE}>
+              {col.days.map((d) => {
+                const cellStyle: CSSProperties = {
+                  ...DAY_CELL_BASE,
+                  background: BAND_FILL[saldoBand(d.balance)],
+                  outline: d.isToday ? "2px solid var(--border-focus)" : "none",
+                };
+                return (
+                  <li
+                    key={d.day}
+                    aria-current={d.isToday ? "date" : undefined}
+                    aria-label={`Dia ${d.day}: saldo ${formatBRL(d.balance)} (${BAND_LABEL[saldoBand(d.balance)]})`}
+                    style={cellStyle}
                   >
-                    {d.day}
-                  </span>
-                  {/* `sign="none"` + --text: o saldo herda alto contraste (>=4.5:1 em TODAS as
-                      faixas). O sinal +/− já é carregado pela COR da faixa-fundo; colorir o número
-                      por cima caía abaixo de AA nas faixas fortes (vermelho/verde 0.3+). */}
-                  <span aria-hidden="true" style={{ color: "var(--text)" }}>
-                    <Money cents={d.balance} size="sm" sign="none" />
-                  </span>
-                </div>
-              ))}
-            </div>
+                    {/* --text (não --text-muted): garante >=4.5:1 sobre TODAS as faixas-fundo do
+                        heatmap (as faixas verdes/vermelhas fortes derrubavam o muted < AA). */}
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        fontSize: "var(--fs-sm)",
+                        color: "var(--text)",
+                        width: 22,
+                      }}
+                    >
+                      {d.day}
+                    </span>
+                    {/* `sign="none"` + --text: o saldo herda alto contraste (>=4.5:1 em TODAS as
+                        faixas). O sinal +/− já é carregado pela COR da faixa-fundo; colorir o número
+                        por cima caía abaixo de AA nas faixas fortes (vermelho/verde 0.3+). */}
+                    <span aria-hidden="true" style={{ color: "var(--text)" }}>
+                      <Money cents={d.balance} size="sm" sign="none" />
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
           </div>
         ))}
-      </div>
+      </section>
     </div>
   );
 }

@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { flushSync } from "react-dom";
 import { Moon, Sun } from "lucide-react";
 
 const THEME_KEY = "neko-theme";
@@ -29,6 +28,37 @@ function prefersReducedMotion(): boolean {
   );
 }
 
+/**
+ * Floreio "circular reveal" a partir do ponto de interação — um overlay com a cor de fundo do tema
+ * de destino que floresce em `clip-path: circle()` e se dissolve. Decorativo: o tema já foi aplicado
+ * antes (o overlay nunca é a fonte da verdade), então o swap é correto mesmo sem Web Animations API
+ * (WebKitGTK antigo, jsdom). Substitui a View Transitions API (sem `flushSync`/`startViewTransition`).
+ */
+function playReveal(x: number, y: number, radius: number, next: Theme): void {
+  const overlay = document.createElement("div");
+  if (typeof overlay.animate !== "function") return; // sem WAAPI → sem floreio
+  overlay.setAttribute("aria-hidden", "true");
+  // `[data-theme="light"]` casa qualquer elemento, então o overlay resolve o --bg do tema de destino.
+  if (next === "light") overlay.setAttribute("data-theme", "light");
+  overlay.style.cssText =
+    "position:fixed;inset:0;z-index:9999;pointer-events:none;background:var(--bg);" +
+    `clip-path:circle(0px at ${x}px ${y}px);`;
+  document.body.appendChild(overlay);
+  const anim = overlay.animate(
+    [
+      { clipPath: `circle(0px at ${x}px ${y}px)`, opacity: 0.9 },
+      { clipPath: `circle(${radius}px at ${x}px ${y}px)`, opacity: 0 },
+    ],
+    {
+      duration: 480, // --dur-deliberate
+      easing: "cubic-bezier(0.16, 1, 0.3, 1)", // --ease-entrance
+    },
+  );
+  const cleanup = () => overlay.remove();
+  anim.addEventListener("finish", cleanup);
+  anim.addEventListener("cancel", cleanup);
+}
+
 export function ThemeToggle() {
   const [theme, setTheme] = useState<Theme>(getStoredTheme);
 
@@ -40,15 +70,12 @@ export function ThemeToggle() {
   const toggle = (event: React.MouseEvent<HTMLButtonElement>) => {
     const next: Theme = theme === "dark" ? "light" : "dark";
 
-    // Fallback path: no View Transitions (WebKitGTK dev shell, jsdom) or
-    // reduced motion → instant, correct swap.
-    if (typeof document.startViewTransition !== "function" || prefersReducedMotion()) {
-      setTheme(next);
-      return;
-    }
+    // O tema é aplicado já — o reveal é só decorativo. Em reduced motion, troca instantânea.
+    setTheme(next);
+    if (prefersReducedMotion()) return;
 
-    // Circular reveal from the interaction point (button center on
-    // keyboard activation, where clientX/Y are 0).
+    // Reveal circular a partir do ponto de interação (centro do botão na ativação por teclado,
+    // onde clientX/Y são 0).
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX || rect.left + rect.width / 2;
     const y = event.clientY || rect.top + rect.height / 2;
@@ -56,26 +83,7 @@ export function ThemeToggle() {
       Math.max(x, window.innerWidth - x),
       Math.max(y, window.innerHeight - y),
     );
-
-    const transition = document.startViewTransition(() => {
-      flushSync(() => setTheme(next));
-    });
-
-    void transition.ready.then(() => {
-      document.documentElement.animate(
-        {
-          clipPath: [
-            `circle(0px at ${x}px ${y}px)`,
-            `circle(${radius}px at ${x}px ${y}px)`,
-          ],
-        },
-        {
-          duration: 480, // --dur-deliberate
-          easing: "cubic-bezier(0.16, 1, 0.3, 1)", // --ease-entrance
-          pseudoElement: "::view-transition-new(root)",
-        },
-      );
-    });
+    playReveal(x, y, radius, next);
   };
 
   return (

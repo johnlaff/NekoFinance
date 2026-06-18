@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useReducer, useState } from "react";
 import { Button } from "../design-system/components/Button";
 import { MovBadge, type MovKind } from "../design-system/components/MovBadge";
 import { createTransaction, listTags, type Frequency, type Tag } from "../lib/api";
@@ -59,18 +59,113 @@ const label: React.CSSProperties = {
   marginBottom: "var(--space-1)",
 };
 
+// Base estática dos chips de seleção (tipo / tag); fundo+borda do estado ativo entram por merge.
+const KIND_BTN_BASE: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "var(--space-2)",
+  height: "var(--hit-min)",
+  padding: "0 var(--space-3)",
+  borderRadius: "var(--radius-sm)",
+  cursor: "pointer",
+  color: "var(--text)",
+  fontFamily: "var(--font-sans)",
+  fontSize: "var(--fs-sm)",
+};
+
+const TAG_BTN_BASE: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "6px",
+  height: 28,
+  padding: "0 10px",
+  borderRadius: "var(--radius-pill)",
+  cursor: "pointer",
+  color: "var(--text)",
+  fontSize: "var(--fs-micro)",
+  fontFamily: "var(--font-sans)",
+};
+
+// Estado do formulário agrupado num reducer (uma atualização lógica = um render), em vez de dez
+// useState relacionados. A lista de tags disponíveis (carregada por IO) fica num useState à parte.
+interface FormState {
+  kind: MovKind;
+  amount: string;
+  description: string;
+  date: string;
+  selectedTags: string[];
+  repeat: boolean;
+  frequency: Frequency;
+  repetitions: number;
+  busy: boolean;
+  error: string | null;
+}
+
+function makeInitialForm(): FormState {
+  return {
+    kind: "diario",
+    amount: "",
+    description: "",
+    date: todayISO(),
+    selectedTags: [],
+    repeat: false,
+    frequency: "mensal",
+    repetitions: 12,
+    busy: false,
+    error: null,
+  };
+}
+
+type FormAction =
+  | { type: "set"; patch: Partial<FormState> }
+  | { type: "toggleTag"; id: string }
+  | { type: "submitStart" }
+  | { type: "submitSuccess" }
+  | { type: "fail"; error: string };
+
+function formReducer(s: FormState, a: FormAction): FormState {
+  switch (a.type) {
+    case "set":
+      return { ...s, ...a.patch };
+    case "toggleTag":
+      return {
+        ...s,
+        selectedTags: s.selectedTags.includes(a.id)
+          ? s.selectedTags.filter((x) => x !== a.id)
+          : [...s.selectedTags, a.id],
+      };
+    case "submitStart":
+      return { ...s, busy: true, error: null };
+    case "submitSuccess":
+      // Reset dos campos voláteis; mantém tipo e data para lançamentos em sequência.
+      return {
+        ...s,
+        amount: "",
+        description: "",
+        selectedTags: [],
+        repeat: false,
+        busy: false,
+      };
+    case "fail":
+      return { ...s, busy: false, error: a.error };
+  }
+}
+
 export function NewTransactionForm({ onCreated }: { onCreated?: () => void }) {
-  const [kind, setKind] = useState<MovKind>("diario");
-  const [amount, setAmount] = useState("");
-  const [description, setDescription] = useState("");
-  const [date, setDate] = useState(todayISO);
+  const [form, dispatch] = useReducer(formReducer, undefined, makeInitialForm);
+  const {
+    kind,
+    amount,
+    description,
+    date,
+    selectedTags,
+    repeat,
+    frequency,
+    repetitions,
+    busy,
+    error,
+  } = form;
   const [tags, setTags] = useState<Tag[]>([]);
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [repeat, setRepeat] = useState(false);
-  const [frequency, setFrequency] = useState<Frequency>("mensal");
-  const [repetitions, setRepetitions] = useState(12);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -85,19 +180,12 @@ export function NewTransactionForm({ onCreated }: { onCreated?: () => void }) {
   const amountCents = parseBRLToCents(amount);
   const canSubmit = amountCents != null && amountCents > 0 && !busy;
 
-  function toggleTag(id: string) {
-    setSelectedTags((cur) =>
-      cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id],
-    );
-  }
-
   async function submit() {
     if (amountCents == null || amountCents <= 0) {
-      setError("Informe um valor válido.");
+      dispatch({ type: "fail", error: "Informe um valor válido." });
       return;
     }
-    setBusy(true);
-    setError(null);
+    dispatch({ type: "submitStart" });
     const fields = kindToFields(kind);
     // try/catch sem `finally`: o React Compiler não otimiza componentes com try/finally.
     try {
@@ -111,16 +199,13 @@ export function NewTransactionForm({ onCreated }: { onCreated?: () => void }) {
         tagIds: selectedTags,
         recurrence: repeat ? { frequency, repetitions } : null,
       });
-      // Reset dos campos voláteis; mantém tipo e data para lançamentos em sequência.
-      setAmount("");
-      setDescription("");
-      setSelectedTags([]);
-      setRepeat(false);
-      setBusy(false);
+      dispatch({ type: "submitSuccess" });
       onCreated?.();
     } catch (e) {
-      setError(safeErrorMessage(e, "Não foi possível lançar. Tente novamente."));
-      setBusy(false);
+      dispatch({
+        type: "fail",
+        error: safeErrorMessage(e, "Não foi possível lançar. Tente novamente."),
+      });
     }
   }
 
@@ -144,26 +229,18 @@ export function NewTransactionForm({ onCreated }: { onCreated?: () => void }) {
         <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
           {FORM_KINDS.map((k) => {
             const active = k === kind;
+            const btnStyle: React.CSSProperties = {
+              ...KIND_BTN_BASE,
+              background: active ? "var(--surface-selected)" : "transparent",
+              border: `var(--bw-hair) solid ${active ? "var(--primary)" : "var(--border)"}`,
+            };
             return (
               <button
                 key={k}
                 type="button"
                 aria-pressed={active}
-                onClick={() => setKind(k)}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "var(--space-2)",
-                  height: "var(--hit-min)",
-                  padding: "0 var(--space-3)",
-                  borderRadius: "var(--radius-sm)",
-                  cursor: "pointer",
-                  background: active ? "var(--surface-selected)" : "transparent",
-                  border: `var(--bw-hair) solid ${active ? "var(--primary)" : "var(--border)"}`,
-                  color: "var(--text)",
-                  fontFamily: "var(--font-sans)",
-                  fontSize: "var(--fs-sm)",
-                }}
+                onClick={() => dispatch({ type: "set", patch: { kind: k } })}
+                style={btnStyle}
               >
                 <MovBadge kind={k} showLabel size={16} />
               </button>
@@ -199,7 +276,9 @@ export function NewTransactionForm({ onCreated }: { onCreated?: () => void }) {
             inputMode="decimal"
             placeholder="R$ 0,00"
             value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            onChange={(e) =>
+              dispatch({ type: "set", patch: { amount: e.target.value } })
+            }
             style={{ ...field, fontFamily: "var(--font-money)" }}
           />
         </div>
@@ -211,7 +290,7 @@ export function NewTransactionForm({ onCreated }: { onCreated?: () => void }) {
             id="ntf-date"
             type="date"
             value={date}
-            onChange={(e) => setDate(e.target.value)}
+            onChange={(e) => dispatch({ type: "set", patch: { date: e.target.value } })}
             style={field}
           />
         </div>
@@ -225,7 +304,9 @@ export function NewTransactionForm({ onCreated }: { onCreated?: () => void }) {
           id="ntf-desc"
           placeholder="Ex.: Mercado, salário, aluguel…"
           value={description}
-          onChange={(e) => setDescription(e.target.value)}
+          onChange={(e) =>
+            dispatch({ type: "set", patch: { description: e.target.value } })
+          }
           style={field}
         />
       </div>
@@ -236,26 +317,18 @@ export function NewTransactionForm({ onCreated }: { onCreated?: () => void }) {
           <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
             {tags.map((t) => {
               const on = selectedTags.includes(t.id);
+              const tagBtnStyle: React.CSSProperties = {
+                ...TAG_BTN_BASE,
+                background: on ? "var(--surface-selected)" : "var(--surface-2)",
+                border: `var(--bw-hair) solid ${on ? t.color : "var(--border)"}`,
+              };
               return (
                 <button
                   key={t.id}
                   type="button"
                   aria-pressed={on}
-                  onClick={() => toggleTag(t.id)}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "6px",
-                    height: 28,
-                    padding: "0 10px",
-                    borderRadius: "var(--radius-pill)",
-                    cursor: "pointer",
-                    background: on ? "var(--surface-selected)" : "var(--surface-2)",
-                    border: `var(--bw-hair) solid ${on ? t.color : "var(--border)"}`,
-                    color: "var(--text)",
-                    fontSize: "var(--fs-micro)",
-                    fontFamily: "var(--font-sans)",
-                  }}
+                  onClick={() => dispatch({ type: "toggleTag", id: t.id })}
+                  style={tagBtnStyle}
                 >
                   <span
                     aria-hidden="true"
@@ -289,7 +362,9 @@ export function NewTransactionForm({ onCreated }: { onCreated?: () => void }) {
           <input
             type="checkbox"
             checked={repeat}
-            onChange={(e) => setRepeat(e.target.checked)}
+            onChange={(e) =>
+              dispatch({ type: "set", patch: { repeat: e.target.checked } })
+            }
           />
           Repetir
         </label>
@@ -309,7 +384,12 @@ export function NewTransactionForm({ onCreated }: { onCreated?: () => void }) {
               min={1}
               max={120}
               value={repetitions}
-              onChange={(e) => setRepetitions(Math.max(1, Number(e.target.value) || 1))}
+              onChange={(e) =>
+                dispatch({
+                  type: "set",
+                  patch: { repetitions: Math.max(1, Number(e.target.value) || 1) },
+                })
+              }
               style={{ ...field, width: 88 }}
             />
             <span style={{ color: "var(--text-muted)", fontSize: "var(--fs-sm)" }}>
@@ -318,7 +398,12 @@ export function NewTransactionForm({ onCreated }: { onCreated?: () => void }) {
             <select
               aria-label="Frequência"
               value={frequency}
-              onChange={(e) => setFrequency(e.target.value as Frequency)}
+              onChange={(e) =>
+                dispatch({
+                  type: "set",
+                  patch: { frequency: e.target.value as Frequency },
+                })
+              }
               style={{ ...field, width: "auto", minWidth: 140 }}
             >
               {(["diaria", "semanal", "mensal"] as Frequency[]).map((f) => (

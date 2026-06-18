@@ -19,29 +19,29 @@ Checked on 2026-06-08 from npm and crates.io before scaffolding.
 
 ## Quality Tooling
 
-| Area                   | Package/action                | Version  | Notes                                                                           |
-| ---------------------- | ----------------------------- | -------- | ------------------------------------------------------------------------------- |
-| ESLint                 | `eslint`                      | `10.4.1` | Latest npm, Node 24-compatible.                                                 |
-| ESLint JS config       | `@eslint/js`                  | `10.0.1` | Explicit dependency required by ESLint flat config.                             |
-| TypeScript ESLint      | `typescript-eslint`           | `8.61.0` | Supports ESLint 10 and TypeScript `<6.1.0`; compatible with `typescript@6.0.3`. |
-| React Hooks lint       | `eslint-plugin-react-hooks`   | `7.1.1`  | Latest npm.                                                                     |
-| Prettier               | `prettier`                    | `3.8.4`  | Latest npm.                                                                     |
-| Test runner            | `vitest`                      | `4.1.8`  | Compatible with Vite 8 and Node 24.                                             |
-| Coverage               | `@vitest/coverage-v8`         | `4.1.8`  | Matches Vitest version.                                                         |
-| DOM test env           | `jsdom`                       | `29.1.1` | Latest npm, Node 24-compatible.                                                 |
-| React testing          | `@testing-library/react`      | `16.3.2` | Supports React 19.                                                              |
-| Jest DOM matchers      | `@testing-library/jest-dom`   | `6.9.1`  | Latest npm.                                                                     |
-| User events            | `@testing-library/user-event` | `14.6.1` | Latest npm.                                                                     |
-| Node types             | `@types/node`                 | `25.9.3` | Latest npm.                                                                     |
-| Playwright             | `@playwright/test`            | `1.60.0` | Latest npm; Chromium-only smoke for MVP.                                        |
-| React Doctor           | `react-doctor`                | `0.5.1`  | Latest npm; advisory with telemetry disabled locally.                           |
-| Checkout action        | `actions/checkout`            | `v6.0.3` | Latest GitHub release checked.                                                  |
-| Setup Node action      | `actions/setup-node`          | `v6.4.0` | Latest GitHub release checked.                                                  |
-| Cache action           | `actions/cache`               | `v5.0.5` | Latest GitHub release checked.                                                  |
-| Upload artifact action | `actions/upload-artifact`     | `v7.0.1` | Latest checked; not used yet.                                                   |
-| Gitleaks action        | `gitleaks/gitleaks-action`    | `v3.0.0` | Node 24 runtime.                                                                |
-| Tauri action           | `tauri-apps/tauri-action`     | `v0.6.2` | Latest tag checked.                                                             |
-| React Doctor action    | `millionco/react-doctor`      | `v2.1.0` | Latest tag checked; advisory workflow.                                          |
+| Area                   | Package/action                | Version  | Notes                                                                                                   |
+| ---------------------- | ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------- |
+| ESLint                 | `eslint`                      | `10.4.1` | Latest npm, Node 24-compatible.                                                                         |
+| ESLint JS config       | `@eslint/js`                  | `10.0.1` | Explicit dependency required by ESLint flat config.                                                     |
+| TypeScript ESLint      | `typescript-eslint`           | `8.61.0` | Supports ESLint 10 and TypeScript `<6.1.0`; compatible with `typescript@6.0.3`.                         |
+| React Hooks lint       | `eslint-plugin-react-hooks`   | `7.1.1`  | Latest npm.                                                                                             |
+| Prettier               | `prettier`                    | `3.8.4`  | Latest npm.                                                                                             |
+| Test runner            | `vitest`                      | `4.1.8`  | Compatible with Vite 8 and Node 24.                                                                     |
+| Coverage               | `@vitest/coverage-v8`         | `4.1.8`  | Matches Vitest version.                                                                                 |
+| DOM test env           | `jsdom`                       | `29.1.1` | Latest npm, Node 24-compatible.                                                                         |
+| React testing          | `@testing-library/react`      | `16.3.2` | Supports React 19.                                                                                      |
+| Jest DOM matchers      | `@testing-library/jest-dom`   | `6.9.1`  | Latest npm.                                                                                             |
+| User events            | `@testing-library/user-event` | `14.6.1` | Latest npm.                                                                                             |
+| Node types             | `@types/node`                 | `25.9.3` | Latest npm.                                                                                             |
+| Playwright             | `@playwright/test`            | `1.60.0` | Latest npm; Chromium-only smoke for MVP.                                                                |
+| React Doctor           | `npx react-doctor@latest`     | latest   | Advisory; sempre a última via npx (sem devDependency fixa). CI: Action `millionco/react-doctor@v2.1.0`. |
+| Checkout action        | `actions/checkout`            | `v6.0.3` | Latest GitHub release checked.                                                                          |
+| Setup Node action      | `actions/setup-node`          | `v6.4.0` | Latest GitHub release checked.                                                                          |
+| Cache action           | `actions/cache`               | `v5.0.5` | Latest GitHub release checked.                                                                          |
+| Upload artifact action | `actions/upload-artifact`     | `v7.0.1` | Latest checked; not used yet.                                                                           |
+| Gitleaks action        | `gitleaks/gitleaks-action`    | `v3.0.0` | Node 24 runtime.                                                                                        |
+| Tauri action           | `tauri-apps/tauri-action`     | `v0.6.2` | Latest tag checked.                                                                                     |
+| React Doctor action    | `millionco/react-doctor`      | `v2.1.0` | Latest tag checked; advisory workflow.                                                                  |
 
 ## Planned Dependencies
 

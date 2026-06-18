@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useReducer, useRef, useState, type CSSProperties } from "react";
 import { createTag, tagTotalsForMonth } from "../lib/api";
 import { monthNamePtBR } from "../lib/format";
 import { safeErrorMessage } from "../lib/errors";
@@ -26,18 +26,72 @@ const PALETTE: { value: string; name: string }[] = [
   { value: "var(--cat-coral)", name: "Coral" },
 ];
 
+// Estado do formulário "Nova tag" agrupado num reducer (uma atualização lógica = um render), em vez
+// de seis useState relacionados.
+interface FormState {
+  open: boolean;
+  name: string;
+  emoji: string;
+  color: string;
+  saving: boolean;
+  error: string | null;
+}
+
+const initialForm: FormState = {
+  open: false,
+  name: "",
+  emoji: "",
+  color: PALETTE[0]!.value,
+  saving: false,
+  error: null,
+};
+
+type FormAction =
+  | { type: "toggle" }
+  | { type: "setName"; value: string }
+  | { type: "setEmoji"; value: string }
+  | { type: "setColor"; value: string }
+  | { type: "submitStart" }
+  | { type: "submitSuccess" }
+  | { type: "submitError"; error: string };
+
+function formReducer(s: FormState, a: FormAction): FormState {
+  switch (a.type) {
+    case "toggle":
+      return { ...s, open: !s.open, error: null };
+    case "setName":
+      return { ...s, name: a.value, error: null };
+    case "setEmoji":
+      return { ...s, emoji: a.value };
+    case "setColor":
+      return { ...s, color: a.value };
+    case "submitStart":
+      return { ...s, saving: true, error: null };
+    case "submitSuccess":
+      return { ...s, name: "", emoji: "", open: false, saving: false };
+    case "submitError":
+      return { ...s, saving: false, error: a.error };
+  }
+}
+
+const FORM_PANEL_STYLE: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "var(--space-4)",
+  padding: "var(--space-6)",
+  marginBottom: "var(--space-6)",
+  background: "var(--surface)",
+  border: "var(--bw-hair) solid var(--border)",
+  borderRadius: "var(--radius-md)",
+};
+
 export function TagsScreen() {
   const now = new Date();
   const todayYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   const [ym, setYm] = useState(todayYm);
   const [year, month] = ym.split("-").map(Number);
   const [reload, setReload] = useState(0);
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [emoji, setEmoji] = useState("");
-  const [color, setColor] = useState(PALETTE[0]!.value);
-  const [saving, setSaving] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
+  const [form, dispatch] = useReducer(formReducer, initialForm);
   // Padrão WAI-ARIA radiogroup: roving tabindex (só o selecionado é tabbable) + setas navegam.
   const swatchRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const onSwatchKey = (e: React.KeyboardEvent, i: number) => {
@@ -50,7 +104,7 @@ export function TagsScreen() {
     else if (e.key === "End") next = last;
     if (next === null) return;
     e.preventDefault();
-    setColor(PALETTE[next]!.value);
+    dispatch({ type: "setColor", value: PALETTE[next]!.value });
     swatchRefs.current[next]?.focus();
   };
 
@@ -60,23 +114,24 @@ export function TagsScreen() {
   const tags = totalsQ.data ?? [];
 
   async function submit() {
-    const trimmed = name.trim();
-    if (!trimmed || saving) return;
-    setSaving(true);
-    setFormError(null);
+    const trimmed = form.name.trim();
+    if (!trimmed || form.saving) return;
+    dispatch({ type: "submitStart" });
     try {
-      await createTag(trimmed, color, emoji.trim() || null, trimmed.startsWith("!"));
-      invalidateCommands();
-      setName("");
-      setEmoji("");
-      setOpen(false);
-      setReload((r) => r + 1);
-      setSaving(false);
-    } catch (e) {
-      setFormError(
-        safeErrorMessage(e, "Não foi possível criar a tag. Tente novamente."),
+      await createTag(
+        trimmed,
+        form.color,
+        form.emoji.trim() || null,
+        trimmed.startsWith("!"),
       );
-      setSaving(false);
+      invalidateCommands();
+      dispatch({ type: "submitSuccess" });
+      setReload((r) => r + 1);
+    } catch (e) {
+      dispatch({
+        type: "submitError",
+        error: safeErrorMessage(e, "Não foi possível criar a tag. Tente novamente."),
+      });
     }
   }
 
@@ -123,41 +178,27 @@ export function TagsScreen() {
             prevLabel="Mês anterior"
             nextLabel="Próximo mês"
           />
-          <Button onClick={() => setOpen((o) => !o)}>
-            {open ? "Cancelar" : "Nova tag"}
+          <Button onClick={() => dispatch({ type: "toggle" })}>
+            {form.open ? "Cancelar" : "Nova tag"}
           </Button>
         </div>
       </header>
 
-      {open ? (
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "var(--space-4)",
-            padding: "var(--space-6)",
-            marginBottom: "var(--space-6)",
-            background: "var(--surface)",
-            border: "var(--bw-hair) solid var(--border)",
-            borderRadius: "var(--radius-md)",
-          }}
-        >
+      {form.open ? (
+        <div style={FORM_PANEL_STYLE}>
           <div style={{ display: "flex", gap: "var(--space-3)", flexWrap: "wrap" }}>
             <input
               aria-label="Nome da tag"
               placeholder="Nome (ex.: Categoria demo, ! Pagar)"
-              value={name}
-              onChange={(e) => {
-                setName(e.target.value);
-                setFormError(null);
-              }}
+              value={form.name}
+              onChange={(e) => dispatch({ type: "setName", value: e.target.value })}
               style={inputStyle}
             />
             <input
               aria-label="Emoji da tag"
               placeholder="Emoji"
-              value={emoji}
-              onChange={(e) => setEmoji(e.target.value)}
+              value={form.emoji}
+              onChange={(e) => dispatch({ type: "setEmoji", value: e.target.value })}
               style={{ ...inputStyle, width: 80 }}
             />
           </div>
@@ -174,10 +215,10 @@ export function TagsScreen() {
                 }}
                 type="button"
                 role="radio"
-                aria-checked={color === c.value}
+                aria-checked={form.color === c.value}
                 aria-label={c.name}
-                tabIndex={color === c.value ? 0 : -1}
-                onClick={() => setColor(c.value)}
+                tabIndex={form.color === c.value ? 0 : -1}
+                onClick={() => dispatch({ type: "setColor", value: c.value })}
                 onKeyDown={(e) => onSwatchKey(e, i)}
                 style={{
                   width: 24,
@@ -185,7 +226,7 @@ export function TagsScreen() {
                   borderRadius: "50%",
                   background: c.value,
                   border:
-                    color === c.value
+                    form.color === c.value
                       ? "2px solid var(--text)"
                       : "2px solid transparent",
                   cursor: "pointer",
@@ -193,7 +234,7 @@ export function TagsScreen() {
               />
             ))}
           </div>
-          {formError ? (
+          {form.error ? (
             <p
               role="alert"
               style={{
@@ -202,12 +243,15 @@ export function TagsScreen() {
                 margin: 0,
               }}
             >
-              {formError}
+              {form.error}
             </p>
           ) : null}
           <div>
-            <Button onClick={() => void submit()} disabled={!name.trim() || saving}>
-              {saving ? "Criando…" : "Criar tag"}
+            <Button
+              onClick={() => void submit()}
+              disabled={!form.name.trim() || form.saving}
+            >
+              {form.saving ? "Criando…" : "Criar tag"}
             </Button>
           </div>
         </div>

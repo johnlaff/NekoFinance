@@ -241,7 +241,6 @@ pub async fn refresh_access_token(
         return Err("no refresh token available".to_string());
     }
 
-    let client = reqwest::Client::new();
     let mut params = vec![
         ("client_id", client_id.to_string()),
         ("refresh_token", token.refresh_token.clone()),
@@ -251,12 +250,13 @@ pub async fn refresh_access_token(
         params.push(("client_secret", secret.to_string()));
     }
 
-    let resp = client
-        .post("https://oauth2.googleapis.com/token")
-        .form(&params)
-        .send()
-        .await
-        .map_err(|e| format!("refresh request: {e}"))?;
+    let resp = crate::http::send_with_retry(
+        crate::http::client()
+            .post("https://oauth2.googleapis.com/token")
+            .form(&params),
+    )
+    .await
+    .map_err(|e| format!("refresh request: {e}"))?;
 
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();

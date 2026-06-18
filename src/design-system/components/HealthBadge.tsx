@@ -7,7 +7,19 @@
  * "Dentro do ideal", "Dentro da renda"…). O anel anima via CSS transition respeitando
  * prefers-reduced-motion (a transição some quando o usuário pede menos movimento).
  */
+import type { CSSProperties } from "react";
+
 export type HealthLevel = "strong" | "steady" | "watch" | "risk";
+
+// Base estática do pill (não recria por render); padding/tom entram por merge.
+const HEALTH_BADGE_BASE: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "10px",
+  borderRadius: "var(--radius-pill)",
+  fontFamily: "var(--font-sans)",
+  lineHeight: 1,
+};
 
 const TONE: Record<HealthLevel, { bg: string; border: string; color: string }> = {
   strong: {
@@ -72,24 +84,17 @@ export function HealthBadge({
   const r = size === "lg" ? 15 : 10;
   const c = 2 * Math.PI * r;
   const cx = dim / 2;
+  const badgeStyle: CSSProperties = {
+    ...HEALTH_BADGE_BASE,
+    padding: size === "lg" ? "10px 18px 10px 12px" : "7px 13px 7px 9px",
+    border: `1px solid ${tone.border}`,
+    background: tone.bg,
+    color: tone.color,
+  };
   return (
-    <span
-      role="img"
-      aria-label={sublabel ? `${text} — ${sublabel}` : text}
-      className={className}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: "10px",
-        padding: size === "lg" ? "10px 18px 10px 12px" : "7px 13px 7px 9px",
-        borderRadius: "var(--radius-pill)",
-        fontFamily: "var(--font-sans)",
-        border: `1px solid ${tone.border}`,
-        background: tone.bg,
-        color: tone.color,
-        lineHeight: 1,
-      }}
-    >
+    // Sem role="img": o anel (svg) é decorativo (aria-hidden) e os textos visíveis já dão o rótulo
+    // ao leitor de tela — semântica nativa, sem mapear para uma tag <img> inexistente.
+    <span className={className} style={badgeStyle}>
       <svg
         aria-hidden="true"
         width={dim}
