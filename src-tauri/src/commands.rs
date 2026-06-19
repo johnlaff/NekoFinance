@@ -734,18 +734,17 @@ async fn load_cashflow_events(
         })
         .collect();
 
-    // `closing_day`/`due_day` são NULL-áveis no schema (um cartão pode ser criado sem ciclo). Decodifica
-    // como Option e mantém só os cartões com ciclo COMPLETO — senão um NULL faria o decode (i32,i32)
-    // estourar e derrubar a projeção inteira.
-    let credit_cards: Vec<(Option<i32>, Option<i32>)> =
-        sqlx::query_as("SELECT closing_day, due_day FROM account WHERE type = 'credit_card'")
-            .fetch_all(pool)
-            .await
-            .map_err(|e| format!("query credit cards: {e}"))?;
-    let credit_cards: Vec<(i32, i32)> = credit_cards
-        .into_iter()
-        .filter_map(|(c, d)| c.zip(d))
-        .collect();
+    // `closing_day`/`due_day` são NULL-áveis (um cartão pode ser criado sem ciclo). Filtra no SQL
+    // só os cartões com ciclo COMPLETO, em ordem determinística — um NULL faria o decode (i32,i32)
+    // estourar, e sem ORDER BY a escolha do "primeiro" cartão (multi-card é slice futura) variaria.
+    let credit_cards: Vec<(i32, i32)> = sqlx::query_as(
+        "SELECT closing_day, due_day FROM account \
+         WHERE type = 'credit_card' AND closing_day IS NOT NULL AND due_day IS NOT NULL \
+         ORDER BY created_at, id",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("query credit cards: {e}"))?;
 
     if !credit_cards.is_empty() {
         // Use the first card's closing/due days (multi-card aggregation is a later slice)
@@ -1686,17 +1685,31 @@ async fn recent_transactions(pool: &SqlitePool, limit: i64) -> Result<Vec<Transa
     .await
     .map_err(|e| format!("query: {e}"))?;
 
-    // Tags por transação (uma query só; o volume de tags é pequeno). Mapa transaction_id → tags.
-    let tag_rows: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(
-        "SELECT tt.transaction_id, t.id, t.name, t.color, t.emoji \
-         FROM transaction_tag tt JOIN tag t ON t.id = tt.tag_id \
-         WHERE tt.transaction_id IN (SELECT id FROM \"transaction\" ORDER BY date DESC LIMIT ?1) \
-         ORDER BY t.is_special DESC, t.name COLLATE NOCASE",
-    )
-    .bind(limit)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| format!("tag query: {e}"))?;
+    // Tags só das transações EFETIVAMENTE retornadas acima (busca pelos IDs reais). Uma janela
+    // `ORDER BY date DESC LIMIT ?1` separada não garante o MESMO conjunto quando há empate de data
+    // na borda do LIMIT (desempate arbitrário do SQLite), e linhas visíveis perderiam suas tags.
+    let ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+    let tag_rows: Vec<(String, String, String, String, Option<String>)> = if ids.is_empty() {
+        Vec::new()
+    } else {
+        // Placeholders posicionais (só `?`, sem dado interpolado) + binds — seguro com AssertSqlSafe.
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!(
+            "SELECT tt.transaction_id, t.id, t.name, t.color, t.emoji \
+             FROM transaction_tag tt JOIN tag t ON t.id = tt.tag_id \
+             WHERE tt.transaction_id IN ({placeholders}) \
+             ORDER BY t.is_special DESC, t.name COLLATE NOCASE"
+        );
+        let mut q = sqlx::query_as::<_, (String, String, String, String, Option<String>)>(
+            sqlx::AssertSqlSafe(sql),
+        );
+        for id in &ids {
+            q = q.bind(id);
+        }
+        q.fetch_all(pool)
+            .await
+            .map_err(|e| format!("tag query: {e}"))?
+    };
     let mut tags_by_txn: std::collections::HashMap<String, Vec<TagOnRow>> =
         std::collections::HashMap::new();
     for (txn_id, id, name, color, emoji) in tag_rows {
@@ -1939,14 +1952,17 @@ async fn load_write_back_txns(pool: &SqlitePool, year: i32) -> Result<Vec<WriteB
 
     // 2) Cartão → lump no vencimento. Com cartão configurado, junta as compras cujo VENCIMENTO cai
     //    no ano-alvo (janela DEZ/ano-1 .. DEZ/ano, pois a fatura vence ~1 mês após a compra).
-    // Dias do cartão são NULL-áveis: decodifica como Option e só conta como "tem cartão" quando o
-    // ciclo está completo (closing E due) — senão um NULL derrubaria o write-back do ano.
-    let card: Option<(Option<i64>, Option<i64>)> =
-        sqlx::query_as("SELECT closing_day, due_day FROM account WHERE type='credit_card' LIMIT 1")
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| format!("query card: {e}"))?;
-    let card = card.and_then(|(c, d)| c.zip(d));
+    // Dias do cartão são NULL-áveis: FILTRA no SQL (não LIMIT 1 cego) — senão, se o 1º cartão
+    // viesse sem ciclo mas existisse outro completo, o write-back ignoraria o ciclo válido e
+    // lançaria crédito pela data da compra. Ordem determinística para escolher sempre o mesmo.
+    let card: Option<(i64, i64)> = sqlx::query_as(
+        "SELECT closing_day, due_day FROM account \
+         WHERE type='credit_card' AND closing_day IS NOT NULL AND due_day IS NOT NULL \
+         ORDER BY created_at, id LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("query card: {e}"))?;
 
     match card {
         Some((closing, due)) => {
@@ -2107,34 +2123,52 @@ async fn app_setting_set(pool: &SqlitePool, key: &str, value: &str) -> Result<()
 /// do dado precisa conseguir levar uma cópia íntegra. Retorna o caminho gravado.
 #[tauri::command]
 pub async fn backup_database(
+    app_dir: State<'_, AppDataDir>,
     pool: State<'_, SqlitePool>,
     dest_path: String,
 ) -> Result<String, String> {
-    backup_db(pool.inner(), &dest_path).await
+    backup_db(pool.inner(), &app_dir.0.join("neko-finance.db"), &dest_path).await
 }
 
-async fn backup_db(pool: &SqlitePool, dest_path: &str) -> Result<String, String> {
+async fn backup_db(
+    pool: &SqlitePool,
+    active_db: &std::path::Path,
+    dest_path: &str,
+) -> Result<String, String> {
+    use std::path::{Path, PathBuf};
     let dest = dest_path.trim();
     if dest.is_empty() {
         return Err("escolha um destino para o backup".into());
     }
-    // `VACUUM INTO` recusa um arquivo já existente; o save dialog já confirmou a sobrescrita com o
-    // usuário, então removemos a versão anterior (só se for arquivo regular) antes de gravar.
-    let path = std::path::Path::new(dest);
-    if path.is_file() {
-        std::fs::remove_file(path).map_err(|e| format!("remover backup anterior: {e}"))?;
+    let dest_buf = PathBuf::from(dest);
+
+    // NUNCA fazer backup SOBRE o banco em uso: apagá-lo/escrevê-lo desvincularia o arquivo aberto
+    // (Unix) e perderia escritas futuras, ou falharia travado (Windows). Só rejeita quando o destino
+    // já existe E é o mesmo arquivo (canonicalize); um destino novo nunca pode ser o banco ativo.
+    if let (Ok(d), Ok(a)) = (
+        std::fs::canonicalize(&dest_buf),
+        std::fs::canonicalize(active_db),
+    ) && d == a
+    {
+        return Err("escolha um destino diferente do banco em uso.".into());
     }
-    // `VACUUM INTO` é um statement especial que não substitui parâmetros bindados (`?1` sairia vazio
-    // e o arquivo não seria criado); o destino vai inline com aspas escapadas (`'` → `''`) — seguro
-    // mesmo que o caminho contenha aspas.
-    let stmt = format!("VACUUM INTO '{}'", dest.replace('\'', "''"));
-    // `VACUUM` precisa rodar como SQL BRUTO (não via prepared statement, que o silenciaria); por isso
-    // `raw_sql`. SQL dinâmico AUDITADO: o único dado interpolado é o caminho, com aspas escapadas
-    // acima (`AssertSqlSafe` é o caminho oficial do sqlx 0.9 para SQL montado, ver SqlSafeStr).
-    sqlx::raw_sql(sqlx::AssertSqlSafe(stmt))
-        .execute(pool)
-        .await
-        .map_err(|e| format!("backup: {e}"))?;
+
+    // Grava num TEMP no MESMO diretório do destino e só então faz `rename` (atômico no mesmo
+    // filesystem): o backup ANTERIOR só é substituído quando o novo está completo. Se o VACUUM
+    // falhar, o destino antigo permanece intacto. (`VACUUM INTO` recusa arquivo já existente, daí o
+    // temp único; e roda como SQL BRUTO via `raw_sql` — um prepared statement o silenciaria.)
+    let parent = dest_buf.parent().unwrap_or_else(|| Path::new("."));
+    let tmp = parent.join(format!(".neko-backup-{}.tmp", uuid::Uuid::new_v4()));
+    let tmp_sql = tmp.to_string_lossy().replace('\'', "''");
+    let stmt = format!("VACUUM INTO '{tmp_sql}'");
+    if let Err(e) = sqlx::raw_sql(sqlx::AssertSqlSafe(stmt)).execute(pool).await {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("backup: {e}"));
+    }
+    std::fs::rename(&tmp, &dest_buf).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("finalizar backup: {e}")
+    })?;
     Ok(dest.to_string())
 }
 
@@ -2903,7 +2937,7 @@ mod tests {
 
         let dest = std::env::temp_dir().join(format!("neko-backup-{}.db", uuid::Uuid::new_v4()));
         let dest_str = dest.to_str().unwrap();
-        let written = backup_db(&pool, dest_str).await.unwrap();
+        let written = backup_db(&pool, &src, dest_str).await.unwrap();
         assert_eq!(written, dest_str);
 
         let bytes = std::fs::read(&dest).unwrap();
@@ -2913,8 +2947,21 @@ mod tests {
         );
         assert!(bytes.len() > 1000, "backup não-vazio");
 
-        // Destino vazio é rejeitado.
-        assert!(backup_db(&pool, "   ").await.is_err());
+        // Re-backup sobre um destino EXISTENTE: o swap atômico substitui sem deixar .tmp órfão.
+        backup_db(&pool, &src, dest_str).await.unwrap();
+        let leftovers: Vec<_> = std::fs::read_dir(std::env::temp_dir())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".neko-backup-"))
+            .collect();
+        assert!(leftovers.is_empty(), "nenhum .tmp órfão após o rename");
+
+        // Destino vazio é rejeitado; o próprio banco ativo é rejeitado (não desvincular o DB em uso).
+        assert!(backup_db(&pool, &src, "   ").await.is_err());
+        assert!(
+            backup_db(&pool, &src, src_str).await.is_err(),
+            "backup sobre o banco ativo é recusado"
+        );
 
         drop(pool);
         std::fs::remove_file(&dest).ok();
