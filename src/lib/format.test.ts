@@ -1,5 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { fmtBRL, fmtDate, fmtDayMonth, monthNamePtBR, parseBRLToCents } from "./format";
+import {
+  fmtBRL,
+  fmtDate,
+  fmtDayMonth,
+  monthNamePtBR,
+  parseBRLToCents,
+  todayISO,
+} from "./format";
+
+describe("todayISO", () => {
+  it("uses the LOCAL wall-clock date, not UTC", () => {
+    const d = new Date();
+    const expected = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+      d.getDate(),
+    ).padStart(2, "0")}`;
+    expect(todayISO()).toBe(expected);
+    expect(todayISO()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+});
 
 describe("parseBRLToCents", () => {
   it("parses pt-BR formatted amounts into cents", () => {
@@ -42,6 +60,11 @@ describe("fmtDate", () => {
 
   it("returns empty string for empty input", () => {
     expect(fmtDate("")).toBe("");
+  });
+
+  it("returns malformed input as-is instead of building undefined/...", () => {
+    expect(fmtDate("2026-03")).toBe("2026-03");
+    expect(fmtDate("invalid")).toBe("invalid");
   });
 });
 

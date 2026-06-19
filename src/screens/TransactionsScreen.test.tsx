@@ -64,7 +64,7 @@ describe("TransactionsScreen", () => {
     });
     expect(screen.getByText("3 exibidas")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "Crédito" }));
+    await user.click(screen.getByRole("radio", { name: "Crédito" }));
     expect(screen.getByText("1 exibida")).toBeInTheDocument();
     expect(screen.queryByText("Despesa demo variável")).not.toBeInTheDocument();
     expect(screen.getByText("Compromisso demo no crédito")).toBeInTheDocument();

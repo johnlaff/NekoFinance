@@ -34,7 +34,9 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        # --ignore-scripts: consistente com a política dos demais workflows (não roda lifecycle
+        # scripts de deps). O Chromium é instalado explicitamente no passo seguinte.
+        run: npm ci --ignore-scripts
 
       - name: Install Chromium
         run: npx playwright install chromium --with-deps

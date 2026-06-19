@@ -167,8 +167,12 @@ fn try_keyring_delete() -> Result<(), String> {
 }
 
 pub fn store_token(app_dir: &std::path::Path, token: &StoredToken) -> Result<(), String> {
-    if try_keyring_store(token).is_ok() {
-        return Ok(());
+    match try_keyring_store(token) {
+        Ok(()) => return Ok(()),
+        // Keychain indisponível (ex.: Linux headless / sem libsecret): caímos no arquivo cifrado,
+        // que é só ofuscação best-effort (ver `derive_key`). Avisa para não ser uma degradação de
+        // segurança silenciosa.
+        Err(e) => eprintln!("keyring indisponível ({e}); usando fallback de arquivo cifrado"),
     }
 
     let key = derive_key(app_dir)?;
@@ -213,7 +217,9 @@ pub async fn revoke_token(app_dir: &std::path::Path) {
             token.access_token
         };
         if !tok.is_empty() {
-            let _ = reqwest::Client::new()
+            // Cliente compartilhado COM timeout (`http::client`): com `reqwest::Client::new()` cru
+            // (sem timeout), um Google lento penduraria o `disconnect_google` indefinidamente.
+            let _ = crate::http::client()
                 .post("https://oauth2.googleapis.com/revoke")
                 .form(&[("token", tok)])
                 .send()

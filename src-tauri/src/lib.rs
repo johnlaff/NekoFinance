@@ -44,6 +44,7 @@ pub fn run() {
             commands::apply_economia_write_back,
             commands::get_app_setting,
             commands::set_app_setting,
+            commands::backup_database,
             commands::save_sheet_mapping,
             commands::get_sheet_mappings,
             commands::list_user_spreadsheets,
@@ -62,7 +63,11 @@ pub fn run() {
             conflicts::resolve_import_conflict,
         ])
         .setup(|app| {
+            use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+            use std::str::FromStr;
             use tauri::Manager;
+            use tauri_plugin_dialog::DialogExt;
+
             let app_dir = app
                 .path()
                 .app_data_dir()
@@ -71,22 +76,47 @@ pub fn run() {
             app.manage(AppDataDir(app_dir.clone()));
 
             let db_path = app_dir.join("neko-finance.db");
-            let db_url = format!("sqlite:{}?mode=rwc", db_path.display());
 
-            let pool = tauri::async_runtime::block_on(async {
-                let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            // WAL: leituras não bloqueiam a escrita e o banco sobrevive melhor a um crash no meio de
+            // uma transação (writes ficam num log à parte até o checkpoint). `foreign_keys` explícito
+            // para não depender do default da conexão. Pool de 1 conexão (escritor único) preservado.
+            let pool_result = tauri::async_runtime::block_on(async {
+                let opts = SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path.display()))
+                    .map_err(|e| format!("URL do banco: {e}"))?
+                    .create_if_missing(true)
+                    .journal_mode(SqliteJournalMode::Wal)
+                    .foreign_keys(true);
+
+                let pool = SqlitePoolOptions::new()
                     .max_connections(1)
-                    .connect(&db_url)
+                    .connect_with(opts)
                     .await
-                    .expect("failed to create database pool");
+                    .map_err(|e| format!("abrir o banco: {e}"))?;
 
                 sqlx::migrate!("./migrations")
                     .run(&pool)
                     .await
-                    .expect("database migrations failed");
+                    .map_err(|e| format!("migrações do banco: {e}"))?;
 
-                pool
+                Ok::<_, String>(pool)
             });
+
+            // Falha ao abrir/migrar o banco: com `windows_subsystem = "windows"` um panic some sem
+            // janela nem console — o app simplesmente não abre. Mostramos um diálogo nativo com o
+            // motivo e o caminho do arquivo antes de abortar, para o usuário ter o que reportar/agir.
+            let pool = match pool_result {
+                Ok(pool) => pool,
+                Err(e) => {
+                    app.dialog()
+                        .message(format!(
+                            "Não foi possível abrir o banco de dados.\n\n{e}\n\nArquivo: {}",
+                            db_path.display()
+                        ))
+                        .title("Neko Finance")
+                        .blocking_show();
+                    return Err(std::io::Error::other(e).into());
+                }
+            };
 
             app.manage(pool);
             Ok(())
@@ -179,7 +209,6 @@ mod tests {
             "sheet_mapping",
             "sheet_layout",
             "sync_log",
-            "transaction_fts",
             "app_setting",
             "import_conflict",
         ];
@@ -316,19 +345,15 @@ mod tests {
                 .unwrap();
         assert_eq!(proj_count, 1);
 
-        sqlx::query("INSERT INTO transaction_fts (rowid, description) VALUES (?1, ?2)")
-            .bind(1i64)
-            .bind("Cafe da manha na padaria")
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        let (fts_count,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM transaction_fts WHERE description MATCH 'cafe'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(fts_count, 1);
+        // FTS5 (transaction_fts/category_fts) foi removida na migration 0010 (infra morta — sem
+        // writer de produção; busca de Lançamentos é client-side). Garante que sumiu do schema.
+        let (fts_count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('transaction_fts','category_fts')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(fts_count, 0, "tabelas FTS removidas");
     }
 
     #[tokio::test]

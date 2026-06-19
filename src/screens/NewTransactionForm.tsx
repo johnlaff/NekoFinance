@@ -3,7 +3,7 @@ import { Button } from "../design-system/components/Button";
 import { MovBadge, type MovKind } from "../design-system/components/MovBadge";
 import { createTransaction, listTags, type Frequency, type Tag } from "../lib/api";
 import { safeErrorMessage } from "../lib/errors";
-import { parseBRLToCents } from "../lib/format";
+import { parseBRLToCents, todayISO } from "../lib/format";
 
 /** Os tipos de movimento oferecidos no form (Economia → transfer precisa de conta, fica fora). */
 const FORM_KINDS: MovKind[] = ["entrada", "saida", "diario", "cartao"];
@@ -33,16 +33,12 @@ const FREQ_LABELS: Record<Frequency, string> = {
   mensal: "por mês",
 };
 
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 const field: React.CSSProperties = {
   width: "100%",
   height: "var(--hit-min)",
   padding: "0 var(--space-3)",
   background: "var(--bg-subtle)",
-  border: "var(--bw-hair) solid var(--border)",
+  border: "var(--bw-hair) solid var(--border-input)",
   borderRadius: "var(--radius-xs)",
   color: "var(--text)",
   fontFamily: "var(--font-sans)",

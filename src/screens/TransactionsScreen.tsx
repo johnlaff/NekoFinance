@@ -247,6 +247,7 @@ export function TransactionsScreen({
       <div className="txs-tools">
         <SegmentedControl
           size="sm"
+          ariaLabel="Filtrar lançamentos por escopo"
           value={ui.scope}
           onChange={(v) =>
             dispatchUi({ type: "setScope", scope: v as TransactionScope })

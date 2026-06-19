@@ -29,9 +29,9 @@ tokens, spreadsheet data, or personal finance caches are committed — see Priva
 - **Nine navigable screens** — Dashboard, Totais, Anual, Horizonte, Lançamentos (filter + search),
   Tags, Mia (deterministic preview), Metodologia, and Configurações e privacidade (connections, local
   import, where-your-data-lives).
-- **Local SQLite store** — 26 migrations: accounts/pockets + liquidity, transactions/splits, tags,
+- **Local SQLite store** (WAL) — 28 migrations: accounts/pockets + liquidity, transactions/splits, tags,
   recurrences, daily check-ins (separate debit/daily and credit/fatura tracks), reserve tracking, sheet layouts,
-  three-way-merge reconciliation, sync log, FTS5. During the import-only phase the spreadsheet is
+  three-way-merge reconciliation, sync log. During the import-only phase the spreadsheet is
   the system of record and SQLite is the local mirror + enrichment layer (see `docs/adr/0003`).
 
 ## Stack

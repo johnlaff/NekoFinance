@@ -10,7 +10,7 @@ Neko Finance is designed as a local-first desktop app. The repo is public-safe; 
 | Tauri shell      | Desktop runtime, local file access, secure OS integrations, command bridge.                         |
 | Forecast core    | Pure Rust projection engine (`src-tauri/src/forecast/`): chained daily balance, month-end,          |
 |                  | future deficit, safe-to-spend, monthly metrics. No IO; commands are thin adapters (spec 003/005).   |
-| Local storage    | SQLite for normalized finance data, settings, sync state, and FTS5 text search.                     |
+| Local storage    | SQLite (WAL) for normalized finance data, settings, and sync state. Full-text search is planned.    |
 | Local retrieval  | LanceDB for anonymized methodology chunks and future semantic retrieval (not built yet).            |
 | Google connector | OAuth desktop flow, Google Sheets read/write, sync checkpoints.                                     |
 | Copilot          | CopilotScreen já mostra um preview determinístico (reserva, performance, pode-gastar, economizado%) |
@@ -41,7 +41,7 @@ Neko Finance is designed as a local-first desktop app. The repo is public-safe; 
 Done (see `specs/` for the full spec/plan/tasks of each):
 
 1. ✅ Scaffold and privacy guardrails.
-2. ✅ Local SQLite schema (spec 001): accounts, transactions, splits, daily check-ins, reserve, sheet sync metadata, FTS5.
+2. ✅ Local SQLite schema (spec 001): accounts, transactions, splits, daily check-ins, reserve, sheet sync metadata.
 3. ✅ Google OAuth desktop flow + Sheets/local-xlsx import with layout detection (spec 002).
 4. ✅ Forecast core (spec 003): pure projection engine. O herói do dashboard é "pode gastar até X hoje" (guardrail duplo caixa × poupança anual); o saldo projetado de fim de mês é o aside secundário.
 5. ✅ Navigable app shell, PT-BR copy (spec 004); screens grew to nine (Dashboard, Totais, Anual, Horizonte, Lançamentos, Tags, Mia, Metodologia, Configurações).

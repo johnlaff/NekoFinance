@@ -316,7 +316,7 @@ h3,
   height: 32px;
   padding: 0 11px;
   background: var(--surface);
-  border: var(--bw-hair) solid var(--border);
+  border: var(--bw-hair) solid var(--border-input);
   border-radius: var(--radius-sm);
   color: var(--text-faint);
   width: 230px;
@@ -1274,7 +1274,7 @@ h3,
   height: 32px;
   padding: 0 28px 0 var(--space-4);
   background: var(--surface);
-  border: var(--bw-hair) solid var(--border);
+  border: var(--bw-hair) solid var(--border-input);
   border-radius: var(--radius-sm);
   color: var(--text);
   font-family: var(--font-sans);
@@ -1488,8 +1488,14 @@ h3,
   background: var(--primary);
 }
 
+/* Estado OFF visível: `--border` no escuro tinha ~1.25:1 contra a superfície (o toggle sumia).
+   `--ink-400` passa o 3:1 do WCAG 1.4.11 (contraste de componente não-textual). */
 .gs-toggle--off {
-  background: var(--border);
+  background: var(--ink-400);
+}
+
+[data-theme="light"] .gs-toggle--off {
+  background: #828c87;
 }
 
 .gs-toggle__knob {
@@ -2410,7 +2416,7 @@ h3,
 
 .pockets-input {
   background: var(--surface-2);
-  border: var(--bw-hair) solid var(--border);
+  border: var(--bw-hair) solid var(--border-input);
   border-radius: var(--radius-xs);
   color: var(--text);
   font-family: inherit;

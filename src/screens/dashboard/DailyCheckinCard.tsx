@@ -4,7 +4,7 @@ import { Button } from "../../design-system/components/Button";
 import { Money } from "../../design-system/components/Money";
 import { createTransaction, type DashboardSummary } from "../../lib/api";
 import { safeErrorMessage } from "../../lib/errors";
-import { fmtBRL, parseBRLToCents } from "../../lib/format";
+import { fmtBRL, parseBRLToCents, todayISO } from "../../lib/format";
 import { invalidateCommands } from "../../lib/useCommand";
 import { SR_ONLY } from "../../design-system/srOnly";
 
@@ -24,16 +24,12 @@ const DAILY_INPUT_STYLE: CSSProperties = {
   height: "var(--hit-min)",
   padding: "0 var(--space-3)",
   background: "var(--bg-subtle)",
-  border: "var(--bw-hair) solid var(--border)",
+  border: "var(--bw-hair) solid var(--border-input)",
   borderRadius: "var(--radius-xs)",
   color: "var(--text)",
   fontFamily: "var(--font-money)",
   fontSize: "var(--fs-body)",
 };
-
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 /**
  * Check-in diário — o ritual do método: a cada dia o dono registra o gasto variável (Diário) e vê
