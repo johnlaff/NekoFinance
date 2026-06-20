@@ -494,24 +494,21 @@ pub(crate) async fn record_write_back_audit(
         .map_err(|e| format!("begin audit: {e}"))?;
     let mut realigned = 0usize;
     for c in cells {
+        // O kind `saida` cobre DOIS casos físicos na mesma célula: (a) Saídas fixas de débito 1:1 e
+        // (b) o LUMP de cartão no vencimento — soma de compras de crédito (`is_fixed=0`,
+        // `payment_method='credit'`) agrupadas por `cycle_due_date`. O caso (b) não tem linha 1:1
+        // importável, então o realinho do crédito é feito à parte (ver `realign_credit_lump`).
+        if c.kind.as_str() == "saida" {
+            realigned += realign_saida_cell(&mut tx, c, &now).await?;
+            record_write_back_log(&mut tx, sheet_name, &now, profile_id.as_ref(), c).await?;
+            continue;
+        }
         // kind (string da célula) → critério de seleção da(s) transação(ões) na data.
         let updated = match c.kind.as_str() {
             "entrada" => {
                 sqlx::query(
                     "UPDATE \"transaction\" SET source_amount = ?1, updated_at = ?2 \
                      WHERE date = ?3 AND type = 'income'",
-                )
-                .bind(c.value_cents)
-                .bind(&now)
-                .bind(&c.date)
-                .execute(&mut *tx)
-                .await
-            }
-            "saida" => {
-                sqlx::query(
-                    "UPDATE \"transaction\" SET source_amount = ?1, updated_at = ?2 \
-                     WHERE date = ?3 AND type = 'expense' AND is_fixed = 1 \
-                       AND (payment_method IS NULL OR payment_method <> 'credit')",
                 )
                 .bind(c.value_cents)
                 .bind(&now)
@@ -551,29 +548,127 @@ pub(crate) async fn record_write_back_audit(
         .map_err(|e| format!("realign source_amount: {e}"))?;
         realigned += updated.rows_affected() as usize;
 
-        // Trilha no sync_log (best-effort de auditoria): só quando há um profile a referenciar (FK
-        // NOT NULL). Id determinístico por (aba, célula) → idempotente entre escritas repetidas.
-        if let Some((pid,)) = profile_id.as_ref() {
-            let log_id = format!("writeback:{sheet_name}:{}", c.a1);
-            sqlx::query(
-                "INSERT INTO sync_log (id, event_type, entity_type, entity_id, profile_id, timestamp, source_sheet) \
-                 VALUES (?1, 'write_back', 'cell', ?2, ?3, ?4, ?5) \
-                 ON CONFLICT(id) DO UPDATE SET timestamp = excluded.timestamp",
-            )
-            .bind(&log_id)
-            .bind(&c.a1)
-            .bind(pid)
-            .bind(&now)
-            .bind(sheet_name)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| format!("sync_log write_back: {e}"))?;
-        }
+        record_write_back_log(&mut tx, sheet_name, &now, profile_id.as_ref(), c).await?;
     }
     tx.commit()
         .await
         .map_err(|e| format!("commit audit: {e}"))?;
     Ok(realigned)
+}
+
+/// Realinha a base (`source_amount`) das transações de uma célula `saida`. Cobre os dois casos
+/// físicos da coluna Saída: (a) Saída fixa de débito 1:1 — `source_amount = valor escrito`; (b) o
+/// LUMP de cartão no vencimento — as compras de crédito cujo `cycle_due_date` cai na data da célula
+/// (ver `realign_credit_lump`). Devolve o total de linhas realinhadas (débito + crédito).
+async fn realign_saida_cell(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    c: &CellWrite,
+    now: &str,
+) -> Result<usize, String> {
+    // (a) Saída fixa de débito (linha 1:1). NÃO toca em linhas de crédito (tratadas em (b)).
+    let debit = sqlx::query(
+        "UPDATE \"transaction\" SET source_amount = ?1, updated_at = ?2 \
+         WHERE date = ?3 AND type = 'expense' AND is_fixed = 1 \
+           AND (payment_method IS NULL OR payment_method <> 'credit')",
+    )
+    .bind(c.value_cents)
+    .bind(now)
+    .bind(&c.date)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| format!("realign source_amount (saida débito): {e}"))?;
+
+    // (b) Lump de cartão: realinha as compras de crédito cujo vencimento cai na data da célula.
+    let credit = realign_credit_lump(tx, &c.date, now).await?;
+    Ok(debit.rows_affected() as usize + credit)
+}
+
+/// Realinha a base das compras de crédito que compõem o LUMP de uma célula Saída escrita na data
+/// `due_date`. O lump da planilha é `SUM(ABS(amount))` das compras cujo `cycle_due_date` é `due_date`
+/// — não há coluna por-compra na planilha, então a base por-linha não tem snapshot rastreável. Ao
+/// zerar `source_amount` (`NULL`) dessas compras, o merge de 3 vias do próximo import vê `base
+/// ausente` (`reconcile` com `base = None` → `ApplySheet`, sem conflito): o lump agregado passa a
+/// ser a nova base autoritativa e as compras individuais ficam abaixo da granularidade rastreada.
+///
+/// O vencimento é computado em Rust com `forecast::cycle_due_date` — a MESMA função que
+/// `load_write_back_txns` usa para montar o lump —, então o agrupamento não diverge. App suporta um
+/// cartão (`ORDER BY created_at, id LIMIT 1`, igual ao load); sem cartão configurado, nada a fazer.
+async fn realign_credit_lump(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    due_date: &str,
+    now: &str,
+) -> Result<usize, String> {
+    let card: Option<(i64, i64)> = sqlx::query_as(
+        "SELECT closing_day, due_day FROM account \
+         WHERE type='credit_card' AND closing_day IS NOT NULL AND due_day IS NOT NULL \
+         ORDER BY created_at, id LIMIT 1",
+    )
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|e| format!("query card for audit: {e}"))?;
+
+    let Some((closing, due)) = card else {
+        return Ok(0); // sem cartão com ciclo → crédito caiu na própria data; nada a colapsar.
+    };
+
+    let candidates: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, date FROM \"transaction\" \
+         WHERE type='expense' AND payment_method='credit'",
+    )
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|e| format!("query credit candidates: {e}"))?;
+
+    let matching_ids: Vec<String> = candidates
+        .into_iter()
+        .filter_map(|(id, date_str)| {
+            let d = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d").ok()?;
+            let computed = forecast::cycle_due_date(d, closing as u32, due as u32);
+            (computed.format("%Y-%m-%d").to_string() == due_date).then_some(id)
+        })
+        .collect();
+
+    let mut n = 0usize;
+    for id in &matching_ids {
+        sqlx::query(
+            "UPDATE \"transaction\" SET source_amount = NULL, updated_at = ?1 WHERE id = ?2",
+        )
+        .bind(now)
+        .bind(id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| format!("realign credit source_amount: {e}"))?;
+        n += 1;
+    }
+    Ok(n)
+}
+
+/// Trilha no sync_log (best-effort de auditoria): só quando há um profile a referenciar (FK NOT
+/// NULL). Id determinístico por (aba, célula) → idempotente entre escritas repetidas.
+async fn record_write_back_log(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    sheet_name: &str,
+    now: &str,
+    profile_id: Option<&(String,)>,
+    c: &CellWrite,
+) -> Result<(), String> {
+    if let Some((pid,)) = profile_id {
+        let log_id = format!("writeback:{sheet_name}:{}", c.a1);
+        sqlx::query(
+            "INSERT INTO sync_log (id, event_type, entity_type, entity_id, profile_id, timestamp, source_sheet) \
+             VALUES (?1, 'write_back', 'cell', ?2, ?3, ?4, ?5) \
+             ON CONFLICT(id) DO UPDATE SET timestamp = excluded.timestamp",
+        )
+        .bind(&log_id)
+        .bind(&c.a1)
+        .bind(pid)
+        .bind(now)
+        .bind(sheet_name)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| format!("sync_log write_back: {e}"))?;
+    }
+    Ok(())
 }
 
 /// Economia REGISTRADA por mês (1..=12) do ano: soma dos transfers→reserva/ilíquido. É o numerador
@@ -870,4 +965,106 @@ pub async fn list_user_spreadsheets(
             })
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn pool() -> SqlitePool {
+        let p = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&p).await.unwrap();
+        p
+    }
+
+    // Bug 2 (plano 037): a fatura de cartão é escrita como um LUMP em Saída no vencimento, agregado
+    // de compras de crédito individuais (is_fixed=0, payment_method='credit') agrupadas por
+    // `cycle_due_date`. O braço `saida` da auditoria só realinhava linhas `is_fixed=1` não-crédito →
+    // casava ZERO linhas para o lump → a base ficava STALE → conflito espúrio no próximo import.
+    // O fix realinha a base (`source_amount = NULL`) das compras de crédito cujo vencimento cai na
+    // data da célula. `base = None` faz o merge de 3 vias devolver `ApplySheet` (sem conflito).
+    #[tokio::test]
+    async fn credit_lump_writeback_realigns_source_amount() {
+        let p = pool().await;
+
+        // Cartão: fecha dia 25, vence dia 5. Compras de 20 e 22/MAI (≤ 25) vencem em 05/JUN.
+        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-1', 'Tester')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day) \
+             VALUES ('card-1', 'Cartão', 'credit_card', 'pe-1', 25, 5)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, payment_method, is_fixed, is_projection, source_amount) \
+             VALUES ('buy-1', 'expense', 3000, '2026-05-20', 'credit', 0, 0, 3000), \
+                    ('buy-2', 'expense', 2000, '2026-05-22', 'credit', 0, 0, 2000)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        // A compra abaixo vence em OUTRO ciclo (06/JUN > 25 → vence 05/JUL): NÃO pode ser realinhada.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, payment_method, is_fixed, is_projection, source_amount) \
+             VALUES ('buy-other', 'expense', 9000, '2026-06-06', 'credit', 0, 0, 9000)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let cell = CellWrite {
+            a1: "F5".into(),
+            row: 4,
+            col: 5,
+            date: "2026-06-05".into(),
+            kind: "saida".into(),
+            current: "0,00".into(),
+            proposed: "50,00".into(),
+            value_cents: 5000, // 3000 + 2000, o lump da fatura
+            changed: true,
+        };
+        let realigned = record_write_back_audit(&p, "2026", &[&cell]).await.unwrap();
+        assert_eq!(
+            realigned, 2,
+            "as duas compras do ciclo de 05/JUN são realinhadas"
+        );
+
+        // As compras do lump têm a base zerada (NULL) → o próximo import com sheet_value = 5000 vê
+        // `base = None` → ApplySheet, sem conflito espúrio.
+        let rows: Vec<(String, Option<i64>)> = sqlx::query_as(
+            "SELECT id, source_amount FROM \"transaction\" \
+             WHERE id IN ('buy-1', 'buy-2') ORDER BY id",
+        )
+        .fetch_all(&p)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 2);
+        for (id, src) in &rows {
+            assert!(
+                src.is_none(),
+                "{id}: a base do crédito é zerada (NULL) após o write-back do lump"
+            );
+        }
+
+        // A compra de outro ciclo permanece intacta (base preservada).
+        let (other,): (Option<i64>,) =
+            sqlx::query_as("SELECT source_amount FROM \"transaction\" WHERE id = 'buy-other'")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(
+            other,
+            Some(9000),
+            "compra de outro vencimento não é tocada pelo realinho do lump"
+        );
+    }
 }
