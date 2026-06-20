@@ -206,6 +206,119 @@ test.describe("onboarding de primeiro uso", () => {
   });
 });
 
+test.describe("write-back para a planilha (Tauri mockado, sem escrita real)", () => {
+  // Comandos do fluxo de import (conectado → escolher → prévia → mapeamento) + do write-back. O mock
+  // do Tauri NÃO faz IO real: `apply_write_back` aqui é um stub que conta como chamado, mas o teste
+  // só chega ao diálogo de 2ª confirmação e CANCELA — provando que um clique não escreve sozinho.
+  const WB_OVERRIDES = {
+    check_auth_status: "connected",
+    list_user_spreadsheets: [
+      { id: "ss1", name: "Planilha demo", modified_time: "2026-06-20T10:00:00.000Z" },
+    ],
+    list_sheet_names: [{ title: "2026", sheet_id: 0 }],
+    fetch_sheet_preview: {
+      headers: ["Data", "Entrada", "Saída", "Diário", "Saldo"],
+      rows: [["1", "0", "0", "50,00", "100,00"]],
+      total_rows: 1,
+    },
+    detect_sheet_layout: {
+      id: "lay1",
+      sheet_name: "2026",
+      year: 2026,
+      month_names_row: 0,
+      header_row: 1,
+      data_start_row: 2,
+      day_column: 0,
+      block_size: 5,
+      date_direction: "down",
+    },
+    get_sheet_mappings: [
+      {
+        id: "m1",
+        sheet_name: "2026",
+        column_letter: "D",
+        column_header: "Diário",
+        target_table: "transaction",
+        target_field: "amount_daily",
+        date_direction: "down",
+        layout_id: "lay1",
+        block_offset: 3,
+        is_active: 1,
+      },
+    ],
+    write_back_enabled: true,
+    get_import_conflicts: [],
+    preview_write_back_status: {
+      cells: [
+        {
+          a1: "E3",
+          row: 2,
+          col: 4,
+          date: "2026-01-01",
+          kind: "diario",
+          current: "50,00",
+          proposed: "75,00",
+          value_cents: 7500,
+          changed: true,
+        },
+      ],
+      preview_revision: "2026-06-20T10:00:00.000Z",
+      conflicts_pending: false,
+      multi_card_warning: false,
+    },
+    preview_economia_write_back_status: {
+      cells: [],
+      preview_revision: "2026-06-20T10:00:00.000Z",
+      conflicts_pending: false,
+      multi_card_warning: false,
+    },
+    apply_write_back: 1,
+  };
+
+  test("renderiza o diff e o diálogo de confirmação gera o envio (cancelar não escreve)", async ({
+    page,
+  }, testInfo) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await mockTauri(page, WB_OVERRIDES);
+    await page.goto("/");
+
+    await page.getByRole("button", { name: "Configurações e privacidade" }).click();
+
+    // Conectado → escolhe a planilha → a aba-ano → detecta layout → chega ao mapeamento.
+    await page.getByLabel("Planilha", { exact: true }).selectOption("ss1");
+    await page.getByRole("button", { name: "2026" }).click();
+    await page.getByRole("button", { name: "Detectar layout" }).click();
+
+    // O painel de write-back aparece (flag habilitada).
+    await expect(page.getByText("Write-back para a planilha")).toBeVisible();
+    await expect(page.getByText("habilitado")).toBeVisible();
+
+    // Gera a prévia → mostra a célula divergente.
+    await page.getByRole("button", { name: "Gerar prévia do diff" }).click();
+    await expect(page.getByText(/1 célula\(s\) divergente\(s\)/)).toBeVisible();
+    await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath("writeback-preview.png"),
+    });
+
+    // Aprovar abre o diálogo de 2ª confirmação — nada foi escrito ainda.
+    await page.getByRole("button", { name: /Aprovar e enviar/ }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText(/Enviar 1 célula\(s\)/)).toBeVisible();
+
+    // Cancelar fecha o diálogo sem enviar.
+    await dialog.getByRole("button", { name: "Cancelar" }).click();
+    await expect(page.getByRole("dialog")).not.toBeVisible();
+    await expect(page.getByText(/Enviado:/)).not.toBeVisible();
+
+    // Reabrir e confirmar mostra o resultado do envio (mock — sem rede real).
+    await page.getByRole("button", { name: /Aprovar e enviar/ }).click();
+    await page.getByRole("button", { name: "Confirmar envio" }).click();
+    await expect(page.getByText(/Enviado: 1/)).toBeVisible();
+  });
+});
+
 test.describe("theme switch (View Transitions path, motion enabled)", () => {
   test("circular reveal lands on the light theme and back", async ({ page }) => {
     await mockTauri(page);

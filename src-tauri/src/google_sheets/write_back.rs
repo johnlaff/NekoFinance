@@ -1,17 +1,21 @@
 //! Write-back (spec 018): o caminho inverso do import — uma transação vira a célula da planilha
 //! que a originaria. Produz um DIFF estruturado para aprovação humana; o envio real ao Google
-//! Sheets fica atrás de `WRITE_BACK_ENABLED` (DESLIGADO). Núcleo puro + shell gated.
+//! Sheets fica atrás de `WRITE_BACK_ENABLED` (LIGADO, plano 028 Step 9). Núcleo puro + shell gated.
 //!
-//! Invariável de segurança (AGENTS.md): toda escrita material no Sheets passa por diff + validação
-//! + aprovação humana. Aqui a aprovação é a `ApprovalDiffCard`; o envio só ocorre com a flag ligada.
+//! Invariável de segurança (AGENTS.md): toda escrita material no Sheets passa por diff + validação +
+//! aprovação humana. Aqui a aprovação é a `ApprovalDiffCard` + uma 2ª confirmação na UI; ligar a flag
+//! habilita o caminho aprovar-para-escrever, mas cada envio ainda exige aprovação humana explícita.
 
 use super::import::{RowKind, month_blocks_for, parse_number};
 use super::layout_detect::{SheetLayout, month_number_from_name};
 use serde::Serialize;
 
-/// Mestre da trava: o envio real ao Sheets só acontece com isto `true`. Mantido `false` até a
-/// fase de write-back ser explicitamente liberada — o diff/preview funciona desligado (read-only).
-pub const WRITE_BACK_ENABLED: bool = false;
+/// Mestre da trava: o envio real ao Sheets só acontece com isto `true`. LIGADO (plano 028 Step 9)
+/// após as salvaguardas do PR-A: escopo de escrita + re-consentimento, blocklist de fórmulas, gate de
+/// conflito, re-verificação de frescura, inspeção do batchUpdate e auditoria. Ligar habilita o
+/// caminho aprovar-para-escrever — NÃO escreve sozinho: cada envio ainda exige aprovação + confirmação
+/// humana na UI (diff + 2ª confirmação). O diff/preview já funcionava desligado (read-only).
+pub const WRITE_BACK_ENABLED: bool = true;
 
 /// Colunas que são FÓRMULAS/estruturais na planilha e o write-back NUNCA pode tocar: `balance`
 /// (Saldo é calculado pela própria planilha) e `date` (o Dia é a âncora da linha, não um valor a
@@ -716,12 +720,14 @@ mod tests {
     }
 
     #[test]
-    fn apply_is_blocked_while_flag_off() {
-        // Enquanto a flag estiver desligada (estado de nascimento), o gate falha cedo.
-        if !WRITE_BACK_ENABLED {
-            assert!(ensure_write_back_enabled().is_err());
-        } else {
+    fn flag_gate_matches_master_switch() {
+        // O gate (`ensure_write_back_enabled`) reflete a trava-mestra: com a flag LIGADA (plano 028
+        // Step 9) passa; se algum dia for desligada de novo, volta a falhar cedo. O envio real segue
+        // exigindo aprovação + 2ª confirmação humana na UI — ligar a flag não escreve sozinho.
+        if WRITE_BACK_ENABLED {
             assert!(ensure_write_back_enabled().is_ok());
+        } else {
+            assert!(ensure_write_back_enabled().is_err());
         }
     }
 }
