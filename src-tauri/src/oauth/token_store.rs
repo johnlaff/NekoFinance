@@ -327,6 +327,37 @@ pub async fn ensure_valid_token(
     refresh_access_token(app_dir, client_id, client_secret).await
 }
 
+/// Mensagem acionável devolvida quando o token armazenado NÃO tem o escopo de escrita: o usuário
+/// precisa re-autorizar (o frontend a transforma num prompt de re-consentimento). Exposta como
+/// constante para o teste/UI casarem a string exata, em vez de espalhar o literal.
+pub const NEEDS_WRITE_REAUTH: &str =
+    "Re-autorize para habilitar a escrita: sua conexão atual é somente leitura.";
+
+/// O escopo concedido (gravado no token na troca, ver `oauth::mod`) inclui a escrita na planilha?
+/// O Google devolve os escopos concedidos separados por espaço. Um token emitido ANTES do plano 028
+/// só carrega `spreadsheets.readonly` → uma escrita daria 403; esta checagem permite à rota de apply
+/// FALHAR CEDO com um erro de re-consentimento em vez de propagar o 403 cru.
+pub fn scope_grants_write(granted_scope: &str) -> bool {
+    granted_scope
+        .split_whitespace()
+        .any(|s| s == super::pkce::SHEETS_WRITE_SCOPE)
+}
+
+/// Garante que o token armazenado pode ESCREVER na planilha. Reusa `ensure_valid_token` (refresh se
+/// expirado) e então valida o escopo concedido; em falta de escopo, devolve `NEEDS_WRITE_REAUTH`.
+/// A rota de apply chama isto ANTES de tentar a escrita real.
+pub async fn ensure_write_scope(
+    app_dir: &std::path::Path,
+    client_id: &str,
+    client_secret: Option<&str>,
+) -> Result<StoredToken, String> {
+    let token = ensure_valid_token(app_dir, client_id, client_secret).await?;
+    if !scope_grants_write(&token.scope) {
+        return Err(NEEDS_WRITE_REAUTH.to_string());
+    }
+    Ok(token)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -378,6 +409,25 @@ mod tests {
         let json = serde_json::to_string(&token).unwrap();
         let restored: StoredToken = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.access_token, token.access_token);
+    }
+
+    #[test]
+    fn scope_grants_write_detects_readonly_vs_write_token() {
+        // Token antigo (somente leitura) → sem escrita; precisa re-autorizar.
+        assert!(!scope_grants_write(
+            "https://www.googleapis.com/auth/spreadsheets.readonly \
+             https://www.googleapis.com/auth/drive.metadata.readonly"
+        ));
+        assert!(!scope_grants_write(""));
+        // Token novo (escopo de escrita concedido) → pode escrever.
+        assert!(scope_grants_write(
+            "https://www.googleapis.com/auth/spreadsheets \
+             https://www.googleapis.com/auth/drive.metadata.readonly"
+        ));
+        // O readonly NÃO deve casar por ser prefixo do de escrita (split por espaço, igualdade exata).
+        assert!(!scope_grants_write(
+            "https://www.googleapis.com/auth/spreadsheets.readonly"
+        ));
     }
 
     #[test]

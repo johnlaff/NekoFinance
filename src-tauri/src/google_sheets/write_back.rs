@@ -13,6 +13,12 @@ use serde::Serialize;
 /// fase de write-back ser explicitamente liberada — o diff/preview funciona desligado (read-only).
 pub const WRITE_BACK_ENABLED: bool = false;
 
+/// Colunas que são FÓRMULAS/estruturais na planilha e o write-back NUNCA pode tocar: `balance`
+/// (Saldo é calculado pela própria planilha) e `date` (o Dia é a âncora da linha, não um valor a
+/// escrever). Defesa-em-profundidade SOBRE a flag `is_active` do banco: mesmo que um mapeamento
+/// fosse gravado `is_active=1` por engano, estas colunas continuam barradas no planejador puro.
+pub const FORMULA_ONLY_FIELDS: &[&str] = &["balance", "date"];
+
 /// Falha cedo quando o write-back está desligado. Toda rota que ESCREVE chama isto primeiro.
 pub fn ensure_write_back_enabled() -> Result<(), String> {
     if !WRITE_BACK_ENABLED {
@@ -126,6 +132,17 @@ pub fn plan_write_back(
     let Some(year) = layout.year else {
         return Vec::new();
     };
+
+    // BLOQUEIO de coluna-fórmula (defesa-em-profundidade): descarta QUALQUER mapeamento cujo
+    // `target_field` seja de uma coluna calculada/estrutural ANTES de `kind_offset` resolvê-lo.
+    // Assim, mesmo que `balance`/`date` chegassem aqui marcados ativos, nenhum offset deles é
+    // visível ao planejador → zero `CellWrite` para Saldo/Data. É a base de segurança (STOP).
+    let mappings: Vec<(String, i32)> = mappings
+        .iter()
+        .filter(|(field, _)| !FORMULA_ONLY_FIELDS.contains(&field.as_str()))
+        .cloned()
+        .collect();
+    let mappings = mappings.as_slice();
     let data_start = layout.data_start_row as usize;
     let day_col = layout.day_column as usize;
     let block_size = layout.block_size as usize;
@@ -242,6 +259,24 @@ pub fn plan_economia_write_back(
     let Some((header_row, month_col, econ_col)) = header else {
         return Vec::new(); // bloco do ano não encontrado nesta aba
     };
+
+    // BLOQUEIO de coluna-fórmula (Economia): `Entradas` e `%` são FÓRMULAS — nunca escritas. O
+    // `econ_col` é resolvido pelo rótulo "economia", então NÃO pode ser uma dessas; mas afirmamos
+    // por rótulo no índice resolvido como rede de segurança. Se por dado malformado o `econ_col`
+    // cair sobre um rótulo `Entradas`/`%`, abortamos com plano VAZIO em vez de escrever a coluna
+    // errada (paridade com o STOP do `plan_write_back`: nunca tocar uma coluna calculada).
+    let econ_label = rows[header_row]
+        .get(econ_col)
+        .map(|c| c.trim())
+        .unwrap_or_default();
+    let targets_formula_col = econ_label.eq_ignore_ascii_case("entradas") || econ_label == "%";
+    debug_assert!(
+        !targets_formula_col,
+        "econ_col deve apontar a coluna Economia, nunca Entradas/% (fórmulas)"
+    );
+    if targets_formula_col {
+        return Vec::new();
+    }
 
     let mut out = Vec::new();
     for (r, row) in rows.iter().enumerate().skip(header_row + 1) {
@@ -380,6 +415,91 @@ mod tests {
         assert_eq!(plan[0].a1, "D3"); // Saída = col 3 (D)
         assert_eq!(plan[0].current, "");
         assert!(plan[0].changed);
+    }
+
+    // Plano 028 Step 2 (BLOQUEIO, STOP-condition): mesmo com `balance` (offset 4) e `date`
+    // (offset 0) presentes e marcados ATIVOS nos mappings, o planejador NUNCA emite um CellWrite
+    // para essas colunas-fórmula. Defesa-em-profundidade sobre o `is_active` do banco.
+    #[test]
+    fn plan_write_back_never_targets_formula_columns_even_if_active() {
+        // Mappings adversariais: inclui `date`@0 e `balance`@4 como se estivessem ativos, além das
+        // colunas legítimas de movimento. Transações nos três tipos no dia 1.
+        let mappings = vec![
+            ("date".to_string(), 0),
+            ("amount_in".to_string(), 1),
+            ("amount_out".to_string(), 2),
+            ("amount_daily".to_string(), 3),
+            ("balance".to_string(), 4),
+        ];
+        let txns = vec![
+            WriteBackTxn {
+                date: "2026-01-01".into(),
+                kind: RowKind::Entrada,
+                amount_cents: 1000,
+            },
+            WriteBackTxn {
+                date: "2026-01-01".into(),
+                kind: RowKind::Saida,
+                amount_cents: 2000,
+            },
+            WriteBackTxn {
+                date: "2026-01-01".into(),
+                kind: RowKind::Diario,
+                amount_cents: 3000,
+            },
+        ];
+        let plan = plan_write_back(&grid(), &layout(), &mappings, &txns);
+        // As colunas-fórmula são os offsets 0 (date) e 4 (balance), ancorados no bloco de JANEIRO
+        // (col 1 = Saldo): col absoluta do Saldo = block_start(1) + 4? Não — aqui as colunas de
+        // movimento ancoram em block_start=1. O invariante testado é direto: NENHUM CellWrite pode
+        // cair sobre uma coluna cujo offset de mapeamento era de `date`/`balance`.
+        let block_start = 1usize; // JANEIRO ancora na col 1 (ver grid())
+        let date_col = block_start; // offset 0 (date) → coluna do Saldo no grid de teste
+        let balance_col = block_start + 4; // offset 4 (balance)
+        assert!(
+            plan.iter()
+                .all(|c| c.col != date_col && c.col != balance_col),
+            "nenhuma escrita pode tocar as colunas de date/balance (fórmula/estrutural)"
+        );
+        // E as colunas de movimento legítimas SEGUEM sendo planejadas (o bloqueio não derruba tudo).
+        assert_eq!(
+            plan.len(),
+            3,
+            "as três colunas de movimento ainda são planejadas"
+        );
+    }
+
+    // Plano 028 Step 2 (b): a Economia nunca escreve na coluna Entradas nem na coluna % (fórmulas).
+    #[test]
+    fn plan_economia_write_back_never_targets_entradas_or_percent_column() {
+        let grid = vec![
+            vec![
+                "".into(),
+                "2026".into(),
+                "Entradas".into(),
+                "Economia".into(),
+                "%".into(),
+            ],
+            vec![
+                "".into(),
+                "jan".into(),
+                "9000.00".into(),
+                "0.0000".into(),
+                "0".into(),
+            ],
+        ];
+        let mut by = [0i64; 12];
+        by[0] = 100_000; // jan tem economia → gera ao menos uma escrita
+
+        let plan = plan_economia_write_back(&grid, 2026, &by);
+        assert!(!plan.is_empty(), "deve planejar jan de 2026");
+        // Entradas = idx 2, % = idx 4. NENHUMA escrita pode cair nessas colunas.
+        assert!(
+            plan.iter().all(|c| c.col != 2 && c.col != 4),
+            "Economia nunca escreve nas colunas Entradas (2) nem % (4)"
+        );
+        // Confirma positivamente que escreve na coluna Economia (idx 3).
+        assert!(plan.iter().all(|c| c.col == 3));
     }
 
     #[test]

@@ -205,7 +205,32 @@ impl SheetsClient {
         if updates.is_empty() {
             return Ok(0);
         }
-        let data: Vec<serde_json::Value> = updates
+        // Fragmenta o lote em pedaços ≤ MAX_RANGES_PER_REQUEST: uma escrita anual completa pode
+        // exceder o limite de ranges por requisição da API. Reportamos progresso PARCIAL numa falha
+        // no meio (o erro inclui quantas células já foram confirmadas) em vez de um "0" enganoso.
+        let mut written = 0usize;
+        for chunk in chunk_update_ranges(updates) {
+            match self.batch_update_chunk(spreadsheet_id, chunk).await {
+                Ok(n) => written += n,
+                Err(e) => {
+                    return Err(format!(
+                        "{e} (parcial: {written} célula(s) já escritas antes da falha)"
+                    ));
+                }
+            }
+        }
+        Ok(written)
+    }
+
+    /// Envia UM pedaço (≤ limite) ao `values:batchUpdate` e CONFERE a resposta: o
+    /// `totalUpdatedCells` precisa bater com o número de ranges pedidos, senão reportamos erro
+    /// (uma escrita silenciosamente parcial é tão perigosa quanto um 4xx). Plano 028 Step 6.
+    async fn batch_update_chunk(
+        &self,
+        spreadsheet_id: &str,
+        chunk: &[(String, f64)],
+    ) -> Result<usize, String> {
+        let data: Vec<serde_json::Value> = chunk
             .iter()
             .map(|(range, value)| serde_json::json!({ "range": range, "values": [[value]] }))
             .collect();
@@ -228,8 +253,40 @@ impl SheetsClient {
             let body = resp.text().await.unwrap_or_default();
             return Err(format!("Sheets batchUpdate error {status}: {body}"));
         }
-        Ok(updates.len())
+
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("batchUpdate parse: {e}"))?;
+        verify_batch_update_response(&json, chunk.len())
     }
+}
+
+/// Limite seguro de ranges por requisição `values:batchUpdate`. Mantém uma folga ampla sob qualquer
+/// limite prático da API para que uma escrita anual completa nunca estoure numa única chamada.
+pub(crate) const MAX_RANGES_PER_REQUEST: usize = 500;
+
+/// Fragmenta o slice de updates em pedaços de no máximo `MAX_RANGES_PER_REQUEST` ranges.
+pub(crate) fn chunk_update_ranges(
+    updates: &[(String, f64)],
+) -> std::slice::Chunks<'_, (String, f64)> {
+    updates.chunks(MAX_RANGES_PER_REQUEST)
+}
+
+/// Confere a resposta do `values:batchUpdate`: o `totalUpdatedCells` deve igualar `expected`
+/// (uma célula por range pedido). Diferente → erro nomeando a divergência, em vez de reportar
+/// sucesso sobre uma escrita parcial/silenciosa. Plano 028 Step 6.
+pub(crate) fn verify_batch_update_response(
+    json: &serde_json::Value,
+    expected: usize,
+) -> Result<usize, String> {
+    let total = json["totalUpdatedCells"].as_u64().unwrap_or(0) as usize;
+    if total != expected {
+        return Err(format!(
+            "Sheets batchUpdate confirmou {total} célula(s), esperado {expected} — escrita parcial; revise a planilha."
+        ));
+    }
+    Ok(total)
 }
 
 #[derive(Debug, Deserialize)]
@@ -280,6 +337,48 @@ mod tests {
         let metadata = serde_json::json!({"sheets": []});
         let sheets = parse_sheet_names(&metadata);
         assert!(sheets.is_empty());
+    }
+
+    // Plano 028 Step 6: a fronteira de fragmentação respeita MAX_RANGES_PER_REQUEST. Um lote de
+    // exatamente o limite vira 1 pedaço; +1 vira 2 (o último com 1 range).
+    #[test]
+    fn batch_update_chunks_at_the_safe_boundary() {
+        let make = |n: usize| -> Vec<(String, f64)> {
+            (0..n).map(|i| (format!("A{i}"), i as f64)).collect()
+        };
+
+        let exact = make(MAX_RANGES_PER_REQUEST);
+        let chunks: Vec<_> = chunk_update_ranges(&exact).collect();
+        assert_eq!(chunks.len(), 1, "exatamente no limite → 1 pedaço");
+        assert_eq!(chunks[0].len(), MAX_RANGES_PER_REQUEST);
+
+        let over = make(MAX_RANGES_PER_REQUEST + 1);
+        let chunks: Vec<_> = chunk_update_ranges(&over).collect();
+        assert_eq!(chunks.len(), 2, "um a mais → 2 pedaços");
+        assert_eq!(chunks[0].len(), MAX_RANGES_PER_REQUEST);
+        assert_eq!(chunks[1].len(), 1, "o resto cai no último pedaço");
+
+        // Lote bem maior: ceil(1250/500) = 3 pedaços (500, 500, 250).
+        let big = make(1250);
+        let lens: Vec<usize> = chunk_update_ranges(&big).map(|c| c.len()).collect();
+        assert_eq!(lens, vec![500, 500, 250]);
+    }
+
+    // Plano 028 Step 6: a conferência da resposta detecta escrita parcial (totalUpdatedCells != n).
+    #[test]
+    fn verify_batch_update_response_flags_partial_writes() {
+        use serde_json::json;
+        // Confirmação exata → Ok com a contagem.
+        assert_eq!(
+            verify_batch_update_response(&json!({"totalUpdatedCells": 3}), 3),
+            Ok(3)
+        );
+        // Menos células confirmadas que o pedido → erro nomeando a divergência.
+        let err = verify_batch_update_response(&json!({"totalUpdatedCells": 2}), 3).unwrap_err();
+        assert!(err.contains("2"));
+        assert!(err.contains("3"));
+        // Campo ausente (resposta inesperada) é tratado como 0 confirmadas → erro.
+        assert!(verify_batch_update_response(&json!({}), 1).is_err());
     }
 
     // Spec 010 slice 0: o path ao vivo normaliza números cru → 4 casas fixas, sem locale.

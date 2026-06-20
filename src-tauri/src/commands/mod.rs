@@ -1753,4 +1753,228 @@ mod tests {
         let out = load_write_back_txns(&pool, 2026).await.unwrap();
         assert!(out.is_empty(), "transação de 2025 não entra no ano 2026");
     }
+
+    // --- Plano 028: gates de segurança do write-back -----------------------------------------
+
+    async fn seed_unresolved_conflict(pool: &sqlx::SqlitePool) {
+        sqlx::query(
+            "INSERT INTO import_conflict (id, transaction_id, field, base_value, local_value, sheet_value) \
+             VALUES ('c-test', 't-test', 'amount', '100', '150', '200')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    // Step 3: com um conflito de import PENDENTE, o gate bloqueia o write-back ANTES de tocar o
+    // cliente do Sheets (o teste exercita o guard que o apply chama primeiro).
+    #[tokio::test]
+    async fn write_back_blocked_when_import_conflicts_pending() {
+        let pool = fixture_pool().await;
+        assert_eq!(unresolved_conflict_count(&pool).await.unwrap(), 0);
+        // Sem conflitos → o guard passa.
+        assert!(guard_no_pending_conflicts(&pool).await.is_ok());
+
+        seed_unresolved_conflict(&pool).await;
+        assert_eq!(unresolved_conflict_count(&pool).await.unwrap(), 1);
+        let err = guard_no_pending_conflicts(&pool).await.unwrap_err();
+        assert_eq!(err, CONFLICTS_PENDING_MSG);
+    }
+
+    // Step 3: um conflito já RESOLVIDO não bloqueia (só os com resolved_at NULL contam).
+    #[tokio::test]
+    async fn write_back_not_blocked_by_resolved_conflict() {
+        let pool = fixture_pool().await;
+        sqlx::query(
+            "INSERT INTO import_conflict (id, transaction_id, field, base_value, local_value, sheet_value, resolved_at) \
+             VALUES ('c-done', 't', 'amount', '1', '2', '3', '2026-06-20')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(unresolved_conflict_count(&pool).await.unwrap(), 0);
+        assert!(guard_no_pending_conflicts(&pool).await.is_ok());
+    }
+
+    // Step 4: se o modifiedTime AVANÇOU entre a prévia e o apply, a re-verificação aborta (e o apply
+    // não escreve nada). Sem revisão (None) ou revisão idêntica → segue.
+    #[test]
+    fn staleness_aborts_when_sheet_modified_since_preview() {
+        // Igual → ok (planilha intacta desde a prévia).
+        assert!(staleness_check("2026-06-20T10:00:00Z", "2026-06-20T10:00:00Z").is_ok());
+        // Avançou → erro de re-revisão (nada será escrito).
+        let err = staleness_check("2026-06-20T10:00:00Z", "2026-06-20T10:05:00Z").unwrap_err();
+        assert_eq!(err, SHEET_CHANGED_MSG);
+    }
+
+    // Step 8: dois cartões com ciclo completo (closing+due) → aviso não-bloqueante ligado.
+    #[tokio::test]
+    async fn multi_card_warning_set_with_two_cycle_cards() {
+        let pool = fixture_pool().await;
+        let pid = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO person (id, name) VALUES (?1, 'Tester')")
+            .bind(&pid)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let insert_card = |closing: Option<i64>, due: Option<i64>| {
+            let pid = pid.clone();
+            let pool = pool.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day) \
+                     VALUES (?1, 'Cartão', 'credit_card', ?2, ?3, ?4)",
+                )
+                .bind(uuid::Uuid::new_v4().to_string())
+                .bind(&pid)
+                .bind(closing)
+                .bind(due)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+
+        // Nenhum cartão → sem aviso.
+        assert!(!multi_card_warning(&pool).await.unwrap());
+        // Um cartão completo → ainda sem aviso (caso suportado).
+        insert_card(Some(10), Some(20)).await;
+        assert!(!multi_card_warning(&pool).await.unwrap());
+        // Segundo cartão completo → aviso LIGADO (mais de um ciclo).
+        insert_card(Some(5), Some(15)).await;
+        assert!(multi_card_warning(&pool).await.unwrap());
+    }
+
+    // Step 8: um cartão SEM dias de ciclo também liga o aviso (a data da fatura é ambígua).
+    #[tokio::test]
+    async fn multi_card_warning_set_with_card_missing_cycle() {
+        let pool = fixture_pool().await;
+        let pid = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO person (id, name) VALUES (?1, 'Tester')")
+            .bind(&pid)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day) \
+             VALUES (?1, 'Cartão sem ciclo', 'credit_card', ?2, NULL, NULL)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&pid)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(multi_card_warning(&pool).await.unwrap());
+    }
+
+    // Step 7: round-trip. O write-back grava o valor LOCAL na planilha; a auditoria realinha a BASE
+    // (source_amount) a esse valor. Assim, uma edição local POSTERIOR não vira conflito espúrio: a
+    // planilha guarda um valor que o PRÓPRIO app pôs lá (não uma edição independente do dono).
+    //
+    // Cenário: import (base=1000) → escrita do app leva a planilha a 1500 + auditoria (base→1500) →
+    // dono edita local de novo para 1800 → re-import com a planilha ainda em 1500. Como base==sheet
+    // (1500) e só o local mudou → KeepLocal, SEM conflito.
+    #[tokio::test]
+    async fn write_back_audit_prevents_spurious_conflict_on_reimport() {
+        use google_sheets::import::{self, ImportedRow, RowKind};
+
+        let pool = fixture_pool().await;
+        let mk = |amount: i64| ImportedRow {
+            date: "2026-03-01".into(),
+            amount,
+            description: "Salário".into(),
+            is_projection: false,
+            kind: RowKind::Entrada,
+            raw_note: String::new(),
+        };
+
+        // 1) Import inicial: base (source_amount) = 1000; o app exibe 1000.
+        import::import_rows(&pool, "2026", &[mk(1000)], "p-test")
+            .await
+            .unwrap();
+
+        // 2) O dono ajusta para 1500 no app; o write-back grava 1500 na planilha. Auditoria realinha
+        //    a base para 1500.
+        sqlx::query("UPDATE \"transaction\" SET amount = 1500 WHERE date = '2026-03-01'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let cell = CellWrite {
+            a1: "C5".into(),
+            row: 4,
+            col: 2,
+            date: "2026-03-01".into(),
+            kind: "entrada".into(),
+            current: "1000,00".into(),
+            proposed: "1500,00".into(),
+            value_cents: 1500,
+            changed: true,
+        };
+        let realigned = record_write_back_audit(&pool, "2026", &[&cell])
+            .await
+            .unwrap();
+        assert_eq!(realigned, 1, "uma linha de income realinhada");
+
+        // 3) Edição local POSTERIOR para 1800 (planilha continua 1500, posta pelo app).
+        sqlx::query("UPDATE \"transaction\" SET amount = 1800 WHERE date = '2026-03-01'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // 4) Re-import com a planilha em 1500: base(1500)==sheet(1500), só o local mudou → KeepLocal,
+        //    SEM conflito espúrio.
+        import::import_rows(&pool, "2026", &[mk(1500)], "p-test")
+            .await
+            .unwrap();
+        let (conflicts,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM import_conflict WHERE resolved_at IS NULL")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(conflicts, 0, "a base realinhada evita o conflito espúrio");
+
+        // E uma trilha de auditoria foi gravada no sync_log com event_type write_back.
+        let (audit,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM sync_log WHERE event_type = 'write_back'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(audit, 1, "uma linha de auditoria por célula escrita");
+    }
+
+    // Step 7 (controle): SEM a auditoria que realinha a base, o MESMO cenário produz o conflito
+    // espúrio — prova de que o realinho é o que o evita.
+    #[tokio::test]
+    async fn reimport_without_audit_would_conflict() {
+        use google_sheets::import::{self, ImportedRow, RowKind};
+
+        let pool = fixture_pool().await;
+        let mk = |amount: i64| ImportedRow {
+            date: "2026-03-01".into(),
+            amount,
+            description: "Salário".into(),
+            is_projection: false,
+            kind: RowKind::Entrada,
+            raw_note: String::new(),
+        };
+        // base=1000; o app vai a 1500 (escrita) MAS sem realinhar a base; depois local→1800.
+        import::import_rows(&pool, "2026", &[mk(1000)], "p-test")
+            .await
+            .unwrap();
+        sqlx::query("UPDATE \"transaction\" SET amount = 1800 WHERE date = '2026-03-01'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Re-import com a planilha em 1500 (posta pela escrita): base(1000) != sheet(1500) e
+        // base(1000) != local(1800), e sheet != local → CONFLITO (que a auditoria evitaria).
+        import::import_rows(&pool, "2026", &[mk(1500)], "p-test")
+            .await
+            .unwrap();
+        let (conflicts,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM import_conflict WHERE resolved_at IS NULL")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(conflicts, 1, "sem realinhar a base, o re-import conflita");
+    }
 }
