@@ -4202,4 +4202,367 @@ mod tests {
         assert_eq!(y2027.len(), 1, "2027-01-01 cai em 2027 (limite exclusivo)");
         assert_eq!(y2027[0].amount_cents, 200_000);
     }
+
+    // ===================================================================================
+    // Plan 010: characterization tests for money/forecast SQL helpers. These PIN the
+    // current behavior of helpers that are otherwise only exercised through the
+    // higher-level DTOs, so the commands.rs split (plan 011) has a safety net. They
+    // assert what the code does TODAY; if a value looks surprising, it is pinned as-is.
+    // ===================================================================================
+
+    // Insere um transfer (Economia) com destino explícito e is_projection controlável. Não há helper
+    // existente para transfers com to_account_id, então inserimos direto (centavos inteiros ≥ 0).
+    async fn insert_transfer_to(
+        pool: &sqlx::SqlitePool,
+        amount: i64,
+        date: &str,
+        to_account_id: &str,
+        is_projection: i64,
+    ) {
+        let tid = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) \
+             VALUES (?1,'transfer',?2,?3,?4,?5)",
+        )
+        .bind(&tid)
+        .bind(amount)
+        .bind(date)
+        .bind(to_account_id)
+        .bind(is_projection)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn reserve_account_id(pool: &sqlx::SqlitePool) -> String {
+        let (id,): (String,) =
+            sqlx::query_as("SELECT id FROM account WHERE liquidity='reserve' LIMIT 1")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        id
+    }
+
+    // --- realized_annual_economia ------------------------------------------------------
+
+    // Só meses COMPLETOS contam (substr(date,1,7) < mês corrente); o mês corrente fica de fora.
+    #[tokio::test]
+    async fn economia_counts_complete_months_only() {
+        let pool = fixture_pool().await;
+        insert_reserve_account(&pool, 0).await;
+        let reserve_id = reserve_account_id(&pool).await;
+        // Março (mês completo) → conta.
+        insert_transfer_to(&pool, 50_000, "2026-03-15", &reserve_id, 0).await;
+        // Junho (mês corrente, incompleto) → NÃO conta.
+        insert_transfer_to(&pool, 30_000, "2026-06-05", &reserve_id, 0).await;
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let economia = realized_annual_economia(&pool, today).await.unwrap();
+        assert_eq!(
+            economia, 50_000,
+            "só março (mês completo) conta; junho fica de fora"
+        );
+    }
+
+    // Transfer para conta LÍQUIDA (não reserve/illiquid) não é Economia → não soma.
+    #[tokio::test]
+    async fn economia_skips_transfers_to_liquid_accounts() {
+        let pool = fixture_pool().await;
+        insert_liquid_account(&pool, 0).await;
+        let (liquid_id,): (String,) =
+            sqlx::query_as("SELECT id FROM account WHERE type='bank' LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        // Transfer em mês completo, mas o destino é líquido → fora do filtro de liquidez.
+        insert_transfer_to(&pool, 40_000, "2026-03-15", &liquid_id, 0).await;
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let economia = realized_annual_economia(&pool, today).await.unwrap();
+        assert_eq!(economia, 0, "transfer p/ conta líquida não é Economia");
+    }
+
+    // Mesma regra de staleness do savings: a janela de DATA vence o flag is_projection congelado.
+    #[tokio::test]
+    async fn economia_ignores_stale_is_projection_flag() {
+        let pool = fixture_pool().await;
+        insert_reserve_account(&pool, 0).await;
+        let reserve_id = reserve_account_id(&pool).await;
+        // Mês completo mas com is_projection=1 (stale): ainda conta.
+        insert_transfer_to(&pool, 70_000, "2026-04-10", &reserve_id, 1).await;
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let economia = realized_annual_economia(&pool, today).await.unwrap();
+        assert_eq!(
+            economia, 70_000,
+            "data (mês completo) decide, não o flag stale"
+        );
+    }
+
+    // --- realized_monthly_baseline -----------------------------------------------------
+
+    // Mediana dos ÚLTIMOS 6 meses completos. Inserimos 7 meses; o LIMIT 6 descarta o mais antigo
+    // (jan). Os 6 recentes (fev..jul) ordenados asc = [150k,180k,200k,250k,300k,400k] → (200k+250k)/2.
+    #[tokio::test]
+    async fn baseline_is_median_of_last_six_complete_months() {
+        let pool = fixture_pool().await;
+        // (mês, valor) do mais antigo ao mais recente; jan será descartado pelo LIMIT 6.
+        let months = [
+            (1, 100_000),
+            (2, 200_000),
+            (3, 300_000),
+            (4, 150_000),
+            (5, 250_000),
+            (6, 180_000),
+            (7, 400_000),
+        ];
+        for (m, v) in months {
+            insert_realized(&pool, "expense", v, &format!("2026-{m:02}-10")).await;
+        }
+        // today = 1º dia do mês após o último mês de despesa (agosto) → todos jan..jul são completos.
+        let today = NaiveDate::from_ymd_opt(2026, 8, 1).unwrap();
+        let baseline = realized_monthly_baseline(&pool, today).await.unwrap();
+        assert_eq!(
+            baseline, 225_000,
+            "(200_000 + 250_000) / 2 dos 6 meses recentes"
+        );
+    }
+
+    // Sem meses completos → 0 (não há padrão a inferir).
+    #[tokio::test]
+    async fn baseline_returns_zero_when_no_complete_months() {
+        let pool = fixture_pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let baseline = realized_monthly_baseline(&pool, today).await.unwrap();
+        assert_eq!(baseline, 0);
+    }
+
+    // Despesas só no mês corrente não contam (mês incompleto) → baseline 0.
+    #[tokio::test]
+    async fn baseline_ignores_current_month() {
+        let pool = fixture_pool().await;
+        insert_realized(&pool, "expense", 100_000, "2026-06-05").await;
+        insert_realized(&pool, "expense", 200_000, "2026-06-20").await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let baseline = realized_monthly_baseline(&pool, today).await.unwrap();
+        assert_eq!(
+            baseline, 0,
+            "junho (mês corrente) está fora da janela de meses completos"
+        );
+    }
+
+    // Número ÍMPAR de meses → valor do meio. 3 meses [100k,200k,300k] → 200k.
+    #[tokio::test]
+    async fn baseline_odd_count_uses_middle_value() {
+        let pool = fixture_pool().await;
+        insert_realized(&pool, "expense", 100_000, "2026-03-10").await;
+        insert_realized(&pool, "expense", 200_000, "2026-04-10").await;
+        insert_realized(&pool, "expense", 300_000, "2026-05-10").await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let baseline = realized_monthly_baseline(&pool, today).await.unwrap();
+        assert_eq!(baseline, 200_000, "mediana de 3 valores = o do meio");
+    }
+
+    // --- effective_daily_ceiling -------------------------------------------------------
+
+    // Sem orçamento explícito: teto = Σ diário (não-fixo, não-crédito, não-projeção) do mês anterior
+    // ÷ dias do mês. Maio tem 31 dias; today = 13/jun → mês anterior = maio.
+    #[tokio::test]
+    async fn daily_ceiling_falls_back_to_prior_month_avg() {
+        let pool = fixture_pool().await;
+        insert_realized(&pool, "expense", 310_000, "2026-05-10").await; // diário (is_fixed NULL)
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let ceiling = effective_daily_ceiling(&pool, today).await.unwrap();
+        assert_eq!(
+            ceiling,
+            310_000 / 31,
+            "média do diário de maio = 10.000/dia"
+        );
+    }
+
+    // Orçamento explícito ativo (> 0) VENCE o fallback calculado.
+    #[tokio::test]
+    async fn daily_ceiling_prefers_active_budget_over_fallback() {
+        let pool = fixture_pool().await;
+        insert_realized(&pool, "expense", 310_000, "2026-05-10").await; // existiria fallback 10.000
+        let pid = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO person (id, name) VALUES (?1, 'Tester')")
+            .bind(&pid)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let bid = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO daily_budget (id, person_id, amount, start_date, status, free_income) \
+             VALUES (?1,?2,?3,'2026-06-01','active',0)",
+        )
+        .bind(&bid)
+        .bind(&pid)
+        .bind(15_000_i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let ceiling = effective_daily_ceiling(&pool, today).await.unwrap();
+        assert_eq!(
+            ceiling, 15_000,
+            "orçamento explícito vence o fallback de 10.000"
+        );
+    }
+
+    // Usuário novo, pool vazio → 0 (nada a assumir).
+    #[tokio::test]
+    async fn daily_ceiling_zero_when_no_prior_month() {
+        let pool = fixture_pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let ceiling = effective_daily_ceiling(&pool, today).await.unwrap();
+        assert_eq!(ceiling, 0);
+    }
+
+    // Só o diário variável NÃO-crédito entra na média; fixo, crédito e projeção são excluídos.
+    #[tokio::test]
+    async fn daily_ceiling_excludes_fixed_and_credit_from_avg() {
+        let pool = fixture_pool().await;
+        // Variável, débito, realizado → CONTA (62.000).
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, payment_method, is_fixed, is_projection) \
+             VALUES (?1,'expense',62_000,'2026-05-10','debit',0,0)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Fixo → excluído.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, payment_method, is_fixed, is_projection) \
+             VALUES (?1,'expense',999_000,'2026-05-12','debit',1,0)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Crédito → excluído.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, payment_method, is_fixed, is_projection) \
+             VALUES (?1,'expense',888_000,'2026-05-14','credit',0,0)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Projeção → excluída (is_projection=1).
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, payment_method, is_fixed, is_projection) \
+             VALUES (?1,'expense',777_000,'2026-05-16','debit',0,1)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let ceiling = effective_daily_ceiling(&pool, today).await.unwrap();
+        assert_eq!(
+            ceiling,
+            62_000 / 31,
+            "só os 62.000 variáveis em débito contam"
+        );
+    }
+
+    // --- load_write_back_txns ----------------------------------------------------------
+
+    // Insere uma despesa com payment_method/is_fixed explícitos, realizada (is_projection=0).
+    async fn insert_expense_pm(
+        pool: &sqlx::SqlitePool,
+        amount: i64,
+        date: &str,
+        payment_method: &str,
+        is_fixed: i64,
+    ) {
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, payment_method, is_fixed, is_projection) \
+             VALUES (?1,'expense',?2,?3,?4,?5,0)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(amount)
+        .bind(date)
+        .bind(payment_method)
+        .bind(is_fixed)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    // income → Entrada; expense variável (is_fixed=0, débito) → Diario.
+    #[tokio::test]
+    async fn write_back_txns_income_and_variable_expense() {
+        let pool = fixture_pool().await;
+        insert_realized(&pool, "income", 500_000, "2026-04-05").await;
+        insert_expense_pm(&pool, 12_000, "2026-04-10", "debit", 0).await;
+
+        let out = load_write_back_txns(&pool, 2026).await.unwrap();
+        assert_eq!(out.len(), 2);
+        assert!(
+            out.iter()
+                .any(|t| t.kind == import::RowKind::Entrada && t.amount_cents == 500_000)
+        );
+        assert!(
+            out.iter()
+                .any(|t| t.kind == import::RowKind::Diario && t.amount_cents == 12_000)
+        );
+    }
+
+    // expense fixo (is_fixed=1) → Saida.
+    #[tokio::test]
+    async fn write_back_txns_fixed_expense_maps_to_saida() {
+        let pool = fixture_pool().await;
+        insert_expense_pm(&pool, 80_000, "2026-04-10", "debit", 1).await;
+
+        let out = load_write_back_txns(&pool, 2026).await.unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].kind, import::RowKind::Saida);
+        assert_eq!(out[0].amount_cents, 80_000);
+        assert_eq!(out[0].date, "2026-04-10");
+    }
+
+    // Sem cartão configurado: o crédito cai como Saida na PRÓPRIA data (ramo no-card).
+    #[tokio::test]
+    async fn write_back_txns_credit_no_card_falls_to_own_date() {
+        let pool = fixture_pool().await;
+        insert_expense_pm(&pool, 45_000, "2026-04-20", "credit", 0).await;
+
+        let out = load_write_back_txns(&pool, 2026).await.unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].kind, import::RowKind::Saida);
+        assert_eq!(out[0].amount_cents, 45_000);
+        assert_eq!(
+            out[0].date, "2026-04-20",
+            "sem cartão, o crédito fica na própria data"
+        );
+    }
+
+    // Transfers (Economia) NÃO entram na grade diária do write-back.
+    #[tokio::test]
+    async fn write_back_txns_transfer_excluded() {
+        let pool = fixture_pool().await;
+        insert_reserve_account(&pool, 0).await;
+        let reserve_id = reserve_account_id(&pool).await;
+        insert_transfer_to(&pool, 90_000, "2026-04-15", &reserve_id, 0).await;
+        // Uma income p/ garantir que o filtro não esvazia tudo por engano.
+        insert_realized(&pool, "income", 100_000, "2026-04-05").await;
+
+        let out = load_write_back_txns(&pool, 2026).await.unwrap();
+        assert_eq!(out.len(), 1, "só a income entra; o transfer fica de fora");
+        assert_eq!(out[0].kind, import::RowKind::Entrada);
+    }
+
+    // Filtro de ano: income de 2025 não aparece ao pedir 2026.
+    #[tokio::test]
+    async fn write_back_txns_wrong_year_excluded() {
+        let pool = fixture_pool().await;
+        insert_realized(&pool, "income", 500_000, "2025-12-31").await;
+
+        let out = load_write_back_txns(&pool, 2026).await.unwrap();
+        assert!(out.is_empty(), "transação de 2025 não entra no ano 2026");
+    }
 }
