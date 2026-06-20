@@ -1000,17 +1000,35 @@ async fn store_balance_series_core(
         .await
         .map_err(|e| format!("clear balances: {e}"))?;
 
-    for b in series {
-        sqlx::query(
-            "INSERT OR REPLACE INTO sheet_daily_balance (sheet_name, date, balance_cents, is_projection) VALUES (?1, ?2, ?3, ?4)",
-        )
-        .bind(sheet_name)
-        .bind(&b.date)
-        .bind(b.balance_cents)
-        .bind(b.is_projection as i64)
-        .execute(&mut **tx)
-        .await
-        .map_err(|e| format!("insert balance: {e}"))?;
+    // Insere em lote (multi-row VALUES) em vez de uma query por linha: ~365 round-trips por aba
+    // viravam 1 só por chunk. SQLite limita 32.766 parâmetros por statement; com 4 params/linha o
+    // teto é 8.191 — CHUNK=8.000 (× 4 = 32.000) fica folgado dentro do limite. Mesma semântica
+    // `INSERT OR REPLACE`, mesmas colunas/valores; só muda o empacotamento.
+    const CHUNK: usize = 8_000;
+    for chunk in series.chunks(CHUNK) {
+        let placeholders: String = (0..chunk.len())
+            .map(|i| {
+                let b = i * 4;
+                format!("(?{}, ?{}, ?{}, ?{})", b + 1, b + 2, b + 3, b + 4)
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        // Placeholders posicionais (só `?`, sem dado interpolado) + binds — seguro com AssertSqlSafe.
+        let sql = format!(
+            "INSERT OR REPLACE INTO sheet_daily_balance \
+             (sheet_name, date, balance_cents, is_projection) VALUES {placeholders}"
+        );
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for b in chunk {
+            q = q
+                .bind(sheet_name)
+                .bind(&b.date)
+                .bind(b.balance_cents)
+                .bind(b.is_projection as i64);
+        }
+        q.execute(&mut **tx)
+            .await
+            .map_err(|e| format!("insert balance: {e}"))?;
     }
 
     Ok(series.len())
@@ -2255,6 +2273,43 @@ mod tests {
             bal_count, 1,
             "série de Saldo comitada junto com as transações"
         );
+    }
+
+    // Plan 009: o insert em lote grava o mesmo conjunto de linhas que o loop linha-a-linha e o
+    // re-import (DELETE + lote) substitui atomicamente — inclusive com slice vazio (sem placeholders
+    // = sem query, sem panic), preservando as linhas já gravadas pelo DELETE da chamada anterior.
+    #[tokio::test]
+    async fn store_balance_series_batches_400_rows() {
+        let pool = test_pool().await;
+        let series: Vec<DailyBalance> = (0..400)
+            .map(|i| DailyBalance {
+                // datas únicas e ISO-válidas; o valor exato não importa para a contagem
+                date: format!("2026-{:02}-{:02}", (i / 28) + 1, (i % 28) + 1),
+                balance_cents: 1_000 + i as i64,
+                is_projection: i % 2 == 0,
+            })
+            .collect();
+
+        let n = store_balance_series(&pool, "Jan", &series).await.unwrap();
+        assert_eq!(n, 400, "store_balance_series deve reportar 400 linhas");
+
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM sheet_daily_balance WHERE sheet_name = 'Jan'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 400, "400 linhas gravadas pelo lote");
+
+        // Re-import com slice vazio: DELETE roda, nenhum INSERT (chunk vazio não gera query),
+        // commit OK. A aba 'Jan' fica zerada — replace-all atômico, sem corromper a tabela.
+        let n_empty = store_balance_series(&pool, "Jan", &[]).await.unwrap();
+        assert_eq!(n_empty, 0);
+        let (after,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM sheet_daily_balance WHERE sheet_name = 'Jan'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(after, 0, "slice vazio limpa a aba sem erro");
     }
 
     // ===================================================================
