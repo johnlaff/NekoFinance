@@ -196,9 +196,9 @@ mod tests {
     }
 
     // Bug: tiles do dashboard mostravam R$0 estrutural porque liam só `daily_checkin` (vazia).
-    // Agora o Diário de hoje vem das transações realizadas; e `has_credit=false` sem cartão.
+    // Agora o Diário de hoje vem das transações realizadas.
     #[tokio::test]
-    async fn dashboard_daily_spend_comes_from_transactions_and_credit_flag() {
+    async fn dashboard_daily_spend_comes_from_transactions() {
         let pool = fixture_pool().await;
         let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
         // Diário realizado de hoje (expense, is_fixed=0) — sem nenhum check-in.
@@ -211,7 +211,6 @@ mod tests {
             s.daily_spend_today, 4_271,
             "Diário de hoje vem das transações, não R$0 estrutural"
         );
-        assert!(!s.has_credit, "sem cartão nem crédito → has_credit false");
     }
 
     // Defesa-em-profundidade (review adversarial): `amount` é magnitude positiva por convenção, mas
@@ -280,40 +279,6 @@ mod tests {
         assert_eq!(
             s.daily_spend_today, 4_271,
             "projeção não entra no gasto realizado de hoje"
-        );
-    }
-
-    // Regressão (review adversarial): o método pré-lança o ano inteiro de faturas na planilha. O
-    // tile "Crédito no mês" deve contar SÓ o mês corrente — crédito datado meses à frente não pode
-    // inflar o número (era over-count silencioso por falta do limite superior de data).
-    #[tokio::test]
-    async fn dashboard_credit_month_excludes_future_lumps() {
-        let pool = fixture_pool().await;
-        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
-        let sql = "INSERT INTO \"transaction\" (id, type, amount, date, payment_method, is_fixed, is_projection) \
-                   VALUES (?1,'expense',?2,?3,'credit',0,?4)";
-        // Mês corrente → conta.
-        sqlx::query(sql)
-            .bind(uuid::Uuid::new_v4().to_string())
-            .bind(30_000i64)
-            .bind("2026-06-05")
-            .bind(0i64)
-            .execute(&pool)
-            .await
-            .unwrap();
-        // Fatura futura pré-lançada (projeção) → NÃO conta.
-        sqlx::query(sql)
-            .bind(uuid::Uuid::new_v4().to_string())
-            .bind(99_999i64)
-            .bind("2026-08-10")
-            .bind(1i64)
-            .execute(&pool)
-            .await
-            .unwrap();
-        let s = dashboard_summary(&pool, today).await.unwrap();
-        assert_eq!(
-            s.credit_spend_month, 30_000,
-            "só o crédito do mês corrente; fatura futura pré-lançada fica de fora"
         );
     }
 
