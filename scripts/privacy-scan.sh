@@ -13,6 +13,8 @@ blocked_paths=(
   "videos"
   "embeddings"
   "indexes"
+  ".neko-data"
+  ".lancedb"
 )
 
 for path in "${blocked_paths[@]}"; do

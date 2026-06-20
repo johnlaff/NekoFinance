@@ -25,7 +25,7 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 010  | Characterization tests for money/forecast SQL helpers                               | P2       | M      | —          | TODO   |
 | 011  | Split the `commands.rs` god-module + dedupe the row mapper                          | P2       | L      | 010        | TODO   |
 | 012  | Remove dead code + unify duplicate money formatters                                 | P2       | S      | —          | TODO   |
-| 013  | Security hardening: token fail-closed, loopback timeout, CSP, privacy-scan          | P2       | S      | —          | TODO   |
+| 013  | Security hardening: token fail-closed, loopback timeout, CSP, privacy-scan          | P2       | S      | —          | DONE   |
 | 014  | Documentation truth fixes                                                           | P2       | S      | —          | DONE   |
 | 015  | Wire built-but-unwired UI: edit/delete transaction, recurrence series, owner totals | P1       | M      | —          | DONE   |
 | 016  | Navigation/IA restructure + dashboard de-duplication                                | P1       | M      | —          | TODO   |
