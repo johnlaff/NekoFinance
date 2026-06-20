@@ -23,7 +23,7 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 008  | Dashboard: single forecast source + unified cache key                               | P1       | S–M    | —          | DONE   |
 | 009  | Bulk-insert import + index-friendly date filters                                    | P2       | S–M    | —          | DONE   |
 | 010  | Characterization tests for money/forecast SQL helpers                               | P2       | M      | —          | DONE   |
-| 011  | Split the `commands.rs` god-module + dedupe the row mapper                          | P2       | L      | 010        | TODO   |
+| 011  | Split the `commands.rs` god-module + dedupe the row mapper                          | P2       | L      | 010        | DONE   |
 | 012  | Remove dead code + unify duplicate money formatters                                 | P2       | S      | —          | DONE   |
 | 013  | Security hardening: token fail-closed, loopback timeout, CSP, privacy-scan          | P2       | S      | —          | DONE   |
 | 014  | Documentation truth fixes                                                           | P2       | S      | —          | DONE   |
