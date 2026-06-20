@@ -228,7 +228,7 @@ pub async fn import_sheet_data(
             Ok(notes) => (notes, true),
             Err(_) => (Vec::new(), false),
         };
-    let imported_rows = import::parse_rows_with_layout(&rows, &layout, &mappings, &notes);
+    let imported_rows = import::parse_rows_with_layout(&rows, &layout, &mappings, &notes)?;
     let options = import::ImportRowsOptions {
         descriptions_trusted,
     };
@@ -246,7 +246,7 @@ pub async fn import_sheet_data(
     // Sem isto a semente era 0 e o saldo de hoje aparecia zerado. `get_balance_offset_for_sheet` é
     // leitura no pool; pode rodar antes de abrir a tx.
     let balance_offset = import::get_balance_offset_for_sheet(&pool, &sheet_name).await?;
-    let balances = import::parse_balance_series(&rows, &layout, balance_offset);
+    let balances = import::parse_balance_series(&rows, &layout, balance_offset)?;
 
     // Transação externa única: layout + mappings + linhas + série de Saldo gravam tudo-ou-nada.
     let mut tx = pool
@@ -404,7 +404,7 @@ pub async fn import_local_xlsx(
             // xlsx (calamine) não expõe notas de célula → fallback "Entrada/Saída {data}". As
             // notas só vêm pelo caminho ao vivo (Sheets API), então o fallback não vira base
             // canônica de descrição.
-            let imported_rows = import::parse_rows_with_layout(&rows, &layout, &mappings, &[]);
+            let imported_rows = import::parse_rows_with_layout(&rows, &layout, &mappings, &[])?;
             if imported_rows.is_empty() {
                 continue;
             }
@@ -419,7 +419,7 @@ pub async fn import_local_xlsx(
 
             // Série de Saldo da aba (semente da projeção + visão histórica do livro-razão).
             let balance_offset = import::get_balance_offset_for_sheet(&pool, sheet_name).await?;
-            let balances = import::parse_balance_series(&rows, &layout, balance_offset);
+            let balances = import::parse_balance_series(&rows, &layout, balance_offset)?;
 
             // Transação externa única por aba: layout + mappings + linhas + Saldo, tudo-ou-nada.
             let mut tx = pool
@@ -537,9 +537,14 @@ async fn projection_seed(pool: &SqlitePool, today_naive: NaiveDate) -> Result<i6
         return liquid_seed(pool).await;
     };
 
+    // `transfer` (Economia) é INCLUÍDO: reduz o saldo líquido tanto quanto uma despesa (o dinheiro
+    // sai da conta de gastos para a reserva). Todo `transfer` gravado tem destino reserve/illiquid
+    // (validado no lançamento manual e no import), então é sempre uma saída do líquido. O CASE
+    // abaixo já o trata como saída (−amount); excluí-lo superestimava a semente pelas Economias
+    // ocorridas entre o último Saldo da planilha e hoje.
     let gap: (i64,) = sqlx::query_as(
         "SELECT COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE -amount END), 0) \
-         FROM \"transaction\" WHERE date > ?1 AND date <= ?2 AND type IN ('income','expense')",
+         FROM \"transaction\" WHERE date > ?1 AND date <= ?2 AND type IN ('income','expense','transfer')",
     )
     .bind(&seed_date)
     .bind(&today)
@@ -3756,6 +3761,21 @@ mod tests {
         let today = NaiveDate::from_ymd_opt(2026, 6, 12).unwrap();
         // 500.000 + 20.000 − 5.000 = 515.000
         assert_eq!(projection_seed(&pool, today).await.unwrap(), 515_000);
+    }
+
+    // Regressão: uma Economia (transfer→reserva) entre o último Saldo da planilha e hoje reduz o
+    // saldo líquido. Antes era excluída do gap → a semente ficava superestimada pelo valor da
+    // Economia. Agora o transfer entra como saída (−amount).
+    #[tokio::test]
+    async fn projection_seed_gap_includes_transfer_economia() {
+        let pool = fixture_pool().await;
+        insert_sheet_balance(&pool, "2026", "2026-06-10", 500_000).await;
+        // Economia transferida entre a data da semente e hoje: deve reduzir a semente.
+        insert_realized(&pool, "transfer", 50_000, "2026-06-11").await;
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 12).unwrap();
+        // 500.000 − 50.000 = 450.000
+        assert_eq!(projection_seed(&pool, today).await.unwrap(), 450_000);
     }
 
     // Regressão: sem bolso e com o Saldo da planilha sendo descartado, o saldo de hoje aparecia

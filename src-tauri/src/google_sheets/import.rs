@@ -757,17 +757,25 @@ pub fn parse_rows_with_layout(
     layout: &SheetLayout,
     mappings: &[(String, i32)],
     notes: &[Vec<String>],
-) -> Vec<ImportedRow> {
+) -> Result<Vec<ImportedRow>, String> {
     let mut imported = Vec::new();
 
-    let year = layout.year.unwrap_or(2025);
+    // Fail loudly when the year could not be detected from the sheet name. Silently dating every
+    // row to a hardcoded fallback year misdates the entire tab with no signal to caller or user;
+    // an explicit error is safer than wrong dates.
+    let year = layout.year.ok_or_else(|| {
+        format!(
+            "não foi possível detectar o ano da aba '{}' (o nome da aba deve ser um ano de 4 dígitos)",
+            layout.sheet_name
+        )
+    })?;
     let data_start = layout.data_start_row as usize;
     let day_col = layout.day_column as usize;
     let block_size = layout.block_size as usize;
     let month_row = layout.month_names_row as usize;
 
     if month_row >= rows.len() {
-        return imported;
+        return Ok(imported);
     }
 
     let month_blocks = month_blocks_for(&rows[month_row], block_size);
@@ -859,7 +867,7 @@ pub fn parse_rows_with_layout(
         }
     }
 
-    imported
+    Ok(imported)
 }
 
 /// Um ponto da série de Saldo corrente lida da planilha (coluna `Saldo` do método).
@@ -882,17 +890,24 @@ pub fn parse_balance_series(
     rows: &[Vec<String>],
     layout: &SheetLayout,
     balance_offset: usize,
-) -> Vec<DailyBalance> {
+) -> Result<Vec<DailyBalance>, String> {
     let mut out = Vec::new();
 
-    let year = layout.year.unwrap_or(2025);
+    // Fail loudly when the year could not be detected (see `parse_rows_with_layout`): a hardcoded
+    // fallback would misdate the entire Saldo series, corrupting the projection seed.
+    let year = layout.year.ok_or_else(|| {
+        format!(
+            "não foi possível detectar o ano da aba '{}' (o nome da aba deve ser um ano de 4 dígitos)",
+            layout.sheet_name
+        )
+    })?;
     let data_start = layout.data_start_row as usize;
     let day_col = layout.day_column as usize;
     let block_size = layout.block_size as usize;
     let month_row = layout.month_names_row as usize;
 
     if month_row >= rows.len() {
-        return out;
+        return Ok(out);
     }
     let month_blocks = month_blocks_for(&rows[month_row], block_size);
 
@@ -928,7 +943,7 @@ pub fn parse_balance_series(
         }
     }
 
-    out
+    Ok(out)
 }
 
 /// Bloco de offset da coluna `Saldo` para a aba (do mapeamento `target_field = 'balance'`,
@@ -1259,7 +1274,7 @@ mod tests {
 
         let mappings = vec![("amount_in".to_string(), 1), ("amount_out".to_string(), 2)];
 
-        let result = parse_rows_with_layout(&rows, &layout, &mappings, &[]);
+        let result = parse_rows_with_layout(&rows, &layout, &mappings, &[]).unwrap();
 
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].amount, 350000);
@@ -1281,7 +1296,7 @@ mod tests {
         notes[2] = vec![String::new(); rows[0].len()];
         notes[2][1] = "Nota de exemplo\nSegunda linha da nota".into();
 
-        let result = parse_rows_with_layout(&rows, &layout, &mappings, &notes);
+        let result = parse_rows_with_layout(&rows, &layout, &mappings, &notes).unwrap();
 
         let entrada = result.iter().find(|r| r.amount > 0).unwrap();
         assert_eq!(
@@ -1351,7 +1366,7 @@ mod tests {
             date_direction: "past_only".into(),
         };
 
-        let series = parse_balance_series(&rows, &layout, 4);
+        let series = parse_balance_series(&rows, &layout, 4).unwrap();
 
         assert_eq!(series.len(), 2); // dia 3 (Saldo vazio) é pulado
         assert_eq!(
@@ -1456,7 +1471,7 @@ mod tests {
         let layout = real_geometry_layout();
         let mappings = vec![("amount_in".to_string(), 1), ("amount_out".to_string(), 2)];
 
-        let result = parse_rows_with_layout(&rows, &layout, &mappings, &[]);
+        let result = parse_rows_with_layout(&rows, &layout, &mappings, &[]).unwrap();
 
         assert_eq!(result.len(), 2);
         let entrada = result.iter().find(|r| r.amount > 0).unwrap();
@@ -1465,6 +1480,24 @@ mod tests {
         let saida = result.iter().find(|r| r.amount < 0).unwrap();
         assert_eq!(saida.date, "2026-12-01");
         assert_eq!(saida.amount, -1234);
+    }
+
+    // Ano não detectado (nome de aba que não é um ano de 4 dígitos) → erro explícito, NUNCA datar
+    // as linhas com um ano hardcoded. Vale para os dois parsers que dependem de `layout.year`.
+    #[test]
+    fn year_none_returns_error() {
+        let rows = real_geometry_rows(false);
+        let mut layout = real_geometry_layout();
+        layout.year = None;
+        layout.sheet_name = "Finanças".into();
+        let mappings = vec![("amount_in".to_string(), 1), ("amount_out".to_string(), 2)];
+
+        let rows_err = parse_rows_with_layout(&rows, &layout, &mappings, &[]);
+        assert!(rows_err.is_err());
+        assert!(rows_err.unwrap_err().contains("Finanças"));
+
+        let balance_err = parse_balance_series(&rows, &layout, 4);
+        assert!(balance_err.is_err());
     }
 
     // Regressão (review adversarial): anotação com nome de mês depois do bloco real
@@ -1478,7 +1511,7 @@ mod tests {
 
         let layout = real_geometry_layout();
         let mappings = vec![("amount_in".to_string(), 1), ("amount_out".to_string(), 2)];
-        let result = parse_rows_with_layout(&rows, &layout, &mappings, &[]);
+        let result = parse_rows_with_layout(&rows, &layout, &mappings, &[]).unwrap();
 
         // Só as duas linhas reais; o 50.00 sob o bloco-fantasma não é importado.
         assert_eq!(result.len(), 2);
@@ -1499,7 +1532,7 @@ mod tests {
 
         let layout = real_geometry_layout();
         let mappings = vec![("amount_in".to_string(), 1), ("amount_out".to_string(), 2)];
-        let result = parse_rows_with_layout(&rows, &layout, &mappings, &[]);
+        let result = parse_rows_with_layout(&rows, &layout, &mappings, &[]).unwrap();
 
         // Só as duas linhas válidas do dia 1; "2026-02-30" não existe.
         assert_eq!(result.len(), 2);
@@ -1614,7 +1647,7 @@ mod tests {
         let layout = real_geometry_layout();
         let mappings = vec![("amount_in".to_string(), 1), ("amount_out".to_string(), 2)];
 
-        let result = parse_rows_with_layout(&rows, &layout, &mappings, &[]);
+        let result = parse_rows_with_layout(&rows, &layout, &mappings, &[]).unwrap();
 
         assert_eq!(result.len(), 2);
         assert_eq!(
@@ -2018,7 +2051,7 @@ mod tests {
             ("amount_out".to_string(), 2),
             ("amount_daily".to_string(), 3),
         ];
-        let result = parse_rows_with_layout(&rows, &layout, &mappings, &[]);
+        let result = parse_rows_with_layout(&rows, &layout, &mappings, &[]).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].kind, RowKind::Diario);
         assert_eq!(result[0].amount, -3000); // −R$30,00 (variável)
