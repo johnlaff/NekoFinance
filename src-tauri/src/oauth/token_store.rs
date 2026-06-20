@@ -31,8 +31,7 @@ fn salt_path(app_dir: &std::path::Path) -> PathBuf {
 /// forte — o sal fica em claro ao lado do ciphertext e a chave deriva de machine-id + sal, ambos
 /// legíveis por qualquer processo do mesmo usuário. Só protege contra leitura casual do arquivo, não
 /// contra um atacante local. O caminho preferido é o keychain do SO; este fallback existe para
-/// ambientes sem keychain. Endurecimento futuro: falhar fechado (recusar persistir) sem keychain,
-/// ou derivar de um segredo protegido pelo SO (DPAPI/libsecret).
+/// ambientes sem keychain. O fallback só é usado com NEKO_INSECURE_FILE_FALLBACK=1.
 fn derive_key(app_dir: &std::path::Path) -> Result<[u8; 32], String> {
     let salt_file = salt_path(app_dir);
     let salt = if salt_file.exists() {
@@ -169,10 +168,19 @@ fn try_keyring_delete() -> Result<(), String> {
 pub fn store_token(app_dir: &std::path::Path, token: &StoredToken) -> Result<(), String> {
     match try_keyring_store(token) {
         Ok(()) => return Ok(()),
-        // Keychain indisponível (ex.: Linux headless / sem libsecret): caímos no arquivo cifrado,
-        // que é só ofuscação best-effort (ver `derive_key`). Avisa para não ser uma degradação de
-        // segurança silenciosa.
-        Err(e) => eprintln!("keyring indisponível ({e}); usando fallback de arquivo cifrado"),
+        Err(e) => {
+            // Keychain indisponível (ex.: Linux headless / sem libsecret). Falha FECHADA por padrão
+            // para não expor a credencial silenciosamente em ambientes headless/CI. Defina
+            // NEKO_INSECURE_FILE_FALLBACK=1 para permitir o fallback de arquivo (só ofuscação
+            // best-effort — não é proteção forte; ver `derive_key`).
+            if std::env::var("NEKO_INSECURE_FILE_FALLBACK").as_deref() != Ok("1") {
+                return Err(format!(
+                    "Keychain unavailable ({e}). Set NEKO_INSECURE_FILE_FALLBACK=1 to allow \
+                     the insecure file-based fallback, or install a keychain (libsecret on Linux)."
+                ));
+            }
+            eprintln!("NEKO_INSECURE_FILE_FALLBACK=1: using weak file-based token storage ({e})");
+        }
     }
 
     let key = derive_key(app_dir)?;
@@ -265,8 +273,13 @@ pub async fn refresh_access_token(
     .map_err(|e| format!("refresh request: {e}"))?;
 
     if !resp.status().is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("refresh failed: {body}"));
+        let status = resp.status();
+        // Não repassa o corpo bruto do upstream para o frontend — pode conter detalhe de diagnóstico
+        // não destinado ao usuário final. Mantém o status HTTP para depuração.
+        let _ = resp.text().await; // consome o corpo para liberar a conexão
+        return Err(format!(
+            "Token refresh failed (HTTP {status}). Reconnect your Google account."
+        ));
     }
 
     let json: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {e}"))?;
@@ -318,6 +331,11 @@ pub async fn ensure_valid_token(
 mod tests {
     use super::*;
     use std::env::temp_dir;
+    use std::sync::Mutex;
+
+    // `NEKO_INSECURE_FILE_FALLBACK` é um env var de PROCESSO; testes rodam em paralelo. Este mutex
+    // serializa os testes que leem/escrevem essa variável para não disputarem entre si.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn temp_app_dir() -> PathBuf {
         let dir = temp_dir().join(format!("neko-test-{}", uuid::Uuid::new_v4()));
@@ -327,6 +345,7 @@ mod tests {
 
     #[test]
     fn test_token_store_roundtrip() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = temp_app_dir();
         let token = StoredToken {
             access_token: "ya29.test".into(),
@@ -334,7 +353,12 @@ mod tests {
             expires_at: 1717977600,
             scope: "spreadsheets.readonly".into(),
         };
+        // Permite o fallback de arquivo para o roundtrip ser determinístico tanto com keychain
+        // disponível (keyring vence primeiro) quanto sem (ex.: CI headless).
+        // SAFETY: serializado por ENV_LOCK; nenhum outro código de teste roda concorrentemente.
+        unsafe { std::env::set_var("NEKO_INSECURE_FILE_FALLBACK", "1") };
         store_token(&dir, &token).unwrap();
+        unsafe { std::env::remove_var("NEKO_INSECURE_FILE_FALLBACK") };
         let loaded = load_token(&dir).unwrap().unwrap();
         assert_eq!(loaded.access_token, token.access_token);
         assert_eq!(loaded.refresh_token, token.refresh_token);
@@ -423,6 +447,59 @@ mod tests {
         let key1 = derive_key(&dir).unwrap();
         let key2 = derive_key(&dir).unwrap();
         assert_eq!(key1, key2);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_store_token_fails_closed_without_keychain_env() {
+        // Sem NEKO_INSECURE_FILE_FALLBACK e sem keychain, store_token deve FALHAR FECHADO e NÃO
+        // escrever o arquivo cifrado. Em uma máquina com keychain funcionando o keyring vence
+        // primeiro e store_token retorna Ok — então só asseguramos o invariante: se houve Err,
+        // nenhum arquivo foi escrito.
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = temp_app_dir();
+        // SAFETY: serializado por ENV_LOCK.
+        unsafe { std::env::remove_var("NEKO_INSECURE_FILE_FALLBACK") };
+        let token = StoredToken {
+            access_token: "ya29.test".into(),
+            refresh_token: "1//test".into(),
+            expires_at: 9_999_999_999,
+            scope: "spreadsheets.readonly".into(),
+        };
+        let result = store_token(&dir, &token);
+        let enc_path = encrypted_token_path(&dir);
+        if let Err(msg) = result {
+            // Caminho fail-closed: a mensagem deve apontar o env var e o arquivo NÃO pode existir.
+            assert!(
+                msg.contains("NEKO_INSECURE_FILE_FALLBACK"),
+                "fail-closed error must reference the opt-in env var"
+            );
+            assert!(
+                !enc_path.exists(),
+                "encrypted token file must NOT be written when failing closed"
+            );
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_store_token_file_fallback_when_env_set() {
+        // Com NEKO_INSECURE_FILE_FALLBACK=1 e sem keychain, o arquivo DEVE ser escrito. Numa
+        // máquina com keychain funcionando o keyring vence primeiro (no-op pass).
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = temp_app_dir();
+        // SAFETY: serializado por ENV_LOCK.
+        unsafe { std::env::set_var("NEKO_INSECURE_FILE_FALLBACK", "1") };
+        let token = StoredToken {
+            access_token: "ya29.test".into(),
+            refresh_token: "1//test".into(),
+            expires_at: 9_999_999_999,
+            scope: "spreadsheets.readonly".into(),
+        };
+        // Não deve dar Err independentemente de o keychain estar presente.
+        assert!(store_token(&dir, &token).is_ok());
+        // SAFETY: serializado por ENV_LOCK.
+        unsafe { std::env::remove_var("NEKO_INSECURE_FILE_FALLBACK") };
         std::fs::remove_dir_all(&dir).ok();
     }
 }

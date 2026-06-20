@@ -1,6 +1,6 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub struct OAuthServer {
     listener: TcpListener,
@@ -16,16 +16,37 @@ impl OAuthServer {
     /// Devolve `(code, state)` do callback de loopback. O `state` (CSRF) é validado pelo chamador
     /// contra o csrf_token gerado — sem isso, um redirect forjado injetaria um code de terceiro.
     pub async fn listen_for_code(self) -> Result<(String, Option<String>), String> {
+        // Accept com limite: se o usuário fecha o navegador sem concluir o fluxo OAuth, o listener
+        // não pode bloquear para sempre (vazaria a porta e a task). `TcpListener` não tem
+        // `set_read_timeout`, então usamos accept não-bloqueante em loop com deadline. 2 minutos é
+        // generoso para qualquer redirect real.
+        const ACCEPT_TIMEOUT: Duration = Duration::from_secs(120);
+        const POLL_INTERVAL: Duration = Duration::from_millis(100);
         self.listener
-            .set_nonblocking(false)
+            .set_nonblocking(true)
             .map_err(|e| format!("nonblocking error: {e}"))?;
 
-        let stream = self
-            .listener
-            .incoming()
-            .next()
-            .ok_or("no incoming connection")?
-            .map_err(|e| format!("accept error: {e}"))?;
+        let deadline = Instant::now() + ACCEPT_TIMEOUT;
+        let stream = loop {
+            match self.listener.accept() {
+                Ok((stream, _addr)) => break stream,
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return Err(
+                            "OAuth timeout: no browser callback received within 2 minutes"
+                                .to_string(),
+                        );
+                    }
+                    std::thread::sleep(POLL_INTERVAL);
+                }
+                Err(e) => return Err(format!("accept error: {e}")),
+            }
+        };
+
+        // O stream herda o modo não-bloqueante do listener; volta a bloquear para a leitura abaixo.
+        stream
+            .set_nonblocking(false)
+            .map_err(|e| format!("blocking error: {e}"))?;
 
         // Timeout de leitura: uma conexão que abre e nunca manda a request line não pode pendurar a
         // task para sempre (o servidor só aceita UMA conexão). 30s cobre qualquer redirect real.
@@ -133,5 +154,33 @@ mod tests {
         let (code, state) = extract_code_and_state(line).unwrap();
         assert_eq!(code, "abc123");
         assert!(state.is_none()); // sem state → o chamador rejeita (CSRF)
+    }
+
+    #[test]
+    fn test_nonblocking_accept_times_out() {
+        // Valida o contrato do SO no qual o accept com deadline de `listen_for_code` se apoia:
+        // num listener não-bloqueante sem nenhuma conexão, `accept()` retorna WouldBlock, então o
+        // loop com deadline termina sem pendurar para sempre. (O caminho async completo usa 120s;
+        // aqui exercemos a mesma mecânica com um deadline curto.)
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nonblocking");
+
+        let deadline = Instant::now() + Duration::from_millis(150);
+        let timed_out = loop {
+            match listener.accept() {
+                Ok(_) => panic!("unexpected connection on an unused port"),
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        break true;
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(e) => panic!("unexpected accept error: {e}"),
+            }
+        };
+        assert!(
+            timed_out,
+            "non-blocking accept must time out via the deadline"
+        );
     }
 }
