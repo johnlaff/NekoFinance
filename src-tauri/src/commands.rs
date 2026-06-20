@@ -2748,6 +2748,7 @@ mod tests {
             description: "Test".into(),
             is_projection: false,
             kind: google_sheets::import::RowKind::Entrada,
+            raw_note: String::new(),
         }];
         let checksum = compute_checksum(&rows);
         assert!(!checksum.is_empty());
