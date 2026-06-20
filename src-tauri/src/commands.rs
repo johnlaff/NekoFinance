@@ -1835,8 +1835,10 @@ pub struct RecurrenceInput {
 }
 
 /// Cria um lançamento manual (caminho de escrita do app). `amount_cents` é magnitude positiva;
-/// a direção vem de `txn_type` ('income'/'expense'). Com `recurrence`, gera a série projetada
-/// inteira em vez de um único realizado. As `tag_ids` são anexadas a toda linha criada.
+/// a direção vem de `txn_type` ('income'/'expense'/'transfer'). Com `recurrence`, gera a série
+/// projetada inteira em vez de um único realizado. As `tag_ids` são anexadas a toda linha criada.
+/// Para `transfer` (Economia), `to_account_id` é obrigatório e precisa apontar para uma conta
+/// reserve/illiquid — a MESMA forma que o import grava, para que `classify()` a conte como Economia.
 /// Retorna o id do lançamento (ou da série, quando recorrente).
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
@@ -1850,6 +1852,7 @@ pub async fn create_transaction(
     is_fixed: bool,
     tag_ids: Vec<String>,
     recurrence: Option<RecurrenceInput>,
+    to_account_id: Option<String>,
 ) -> Result<String, String> {
     create_transaction_inner(
         pool.inner(),
@@ -1861,6 +1864,7 @@ pub async fn create_transaction(
         is_fixed,
         &tag_ids,
         recurrence,
+        to_account_id.as_deref(),
     )
     .await
 }
@@ -1876,17 +1880,51 @@ async fn create_transaction_inner(
     is_fixed: bool,
     tag_ids: &[String],
     recurrence: Option<RecurrenceInput>,
+    to_account_id: Option<&str>,
 ) -> Result<String, String> {
-    if !matches!(txn_type, "income" | "expense") {
-        return Err(format!("tipo inválido: {txn_type}"));
+    // Tipos aceitos no caminho manual: income/expense (gasto/renda) e transfer (Economia). Para
+    // transfer, a conta-destino precisa ser reserve/illiquid — a mesma forma que o import grava,
+    // que `classify()` (forecast) reconhece como Economia. transfer→líquido seria net-zero (não é
+    // poupar) e transfer→restricted é gasto restrito: ambos rejeitados.
+    match txn_type {
+        "income" | "expense" => {
+            if to_account_id.is_some_and(|s| !s.is_empty()) {
+                return Err("conta-destino só se aplica a transfer (Economia)".into());
+            }
+        }
+        "transfer" => {
+            let dest_id = to_account_id
+                .filter(|s| !s.is_empty())
+                .ok_or("transfer requer conta-destino (to_account_id)")?;
+            let row: Option<(String,)> =
+                sqlx::query_as("SELECT COALESCE(liquidity,'') FROM account WHERE id = ?1")
+                    .bind(dest_id)
+                    .fetch_optional(pool)
+                    .await
+                    .map_err(|e| format!("query account: {e}"))?;
+            match row {
+                None => return Err("conta-destino não encontrada".into()),
+                Some((liq,)) if liq == "reserve" || liq == "illiquid" => {}
+                Some((liq,)) => {
+                    return Err(format!(
+                        "conta-destino deve ter liquidez 'reserve' ou 'illiquid', encontrado '{liq}'"
+                    ));
+                }
+            }
+        }
+        other => return Err(format!("tipo inválido: {other}")),
     }
     if amount_cents <= 0 {
         return Err("valor deve ser positivo (magnitude)".into());
     }
     let start = NaiveDate::parse_from_str(date, "%Y-%m-%d").map_err(|e| format!("data: {e}"))?;
 
-    // Caminho recorrente: delega à série projetada e anexa as tags a cada ocorrência.
+    // Caminho recorrente: delega à série projetada e anexa as tags a cada ocorrência. Economia
+    // (transfer) é um lançamento único — a recorrência valida só income/expense (ver plano).
     if let Some(rec) = recurrence {
+        if txn_type == "transfer" {
+            return Err("Economia não suporta recorrência".into());
+        }
         let freq =
             crate::recurrence::Frequency::parse(&rec.frequency).ok_or("frequência inválida")?;
         let template = crate::recurrence::RecurringTemplate {
@@ -1913,9 +1951,16 @@ async fn create_transaction_inner(
     let is_projection = start > chrono::Local::now().date_naive();
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
+    // `to_account_id` só viaja para transfer (Economia); income/expense ficam com from/to NULL —
+    // a mesma forma do import (`store_economia_entries`), que `classify()` conta como Economia.
+    let dest = if txn_type == "transfer" {
+        to_account_id
+    } else {
+        None
+    };
     sqlx::query(
-        "INSERT INTO \"transaction\" (id, type, amount, description, date, payment_method, is_fixed, is_projection, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
+        "INSERT INTO \"transaction\" (id, type, amount, description, date, payment_method, is_fixed, to_account_id, is_projection, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
     )
     .bind(&id)
     .bind(txn_type)
@@ -1924,6 +1969,7 @@ async fn create_transaction_inner(
     .bind(date)
     .bind(&payment_method)
     .bind(is_fixed as i64)
+    .bind(dest)
     .bind(is_projection as i64)
     .bind(&now)
     .execute(pool)
@@ -3390,6 +3436,7 @@ mod tests {
             false,
             std::slice::from_ref(&tag),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -3435,6 +3482,7 @@ mod tests {
                 frequency: "mensal".into(),
                 repetitions: 3,
             }),
+            None,
         )
         .await
         .unwrap();
@@ -3461,6 +3509,7 @@ mod tests {
     #[tokio::test]
     async fn create_transaction_rejects_bad_input() {
         let pool = fixture_pool().await;
+        // transfer sem conta-destino → Err (Economia precisa de uma reserva explícita).
         assert!(
             create_transaction_inner(
                 &pool,
@@ -3471,11 +3520,30 @@ mod tests {
                 None,
                 false,
                 &[],
-                None
+                None,
+                None,
             )
             .await
             .is_err(),
-            "tipo não suportado pelo form é rejeitado"
+            "transfer sem to_account_id é rejeitado"
+        );
+        // tipo inexistente → Err.
+        assert!(
+            create_transaction_inner(
+                &pool,
+                "bogus",
+                100,
+                None,
+                "2026-06-14",
+                None,
+                false,
+                &[],
+                None,
+                None,
+            )
+            .await
+            .is_err(),
+            "tipo inválido é rejeitado"
         );
         assert!(
             create_transaction_inner(
@@ -3487,11 +3555,80 @@ mod tests {
                 None,
                 false,
                 &[],
-                None
+                None,
+                None,
             )
             .await
             .is_err(),
             "valor zero/negativo é rejeitado"
+        );
+    }
+
+    // Economia manual: transfer→reserva é aceito e gravado na MESMA forma do import (type='transfer',
+    // amount positivo, to_account_id na reserva), que `classify()`/`forecast_dto` contam como Economia.
+    #[tokio::test]
+    async fn create_transaction_transfer_to_reserve_inserts_economia() {
+        let pool = fixture_pool().await;
+        insert_reserve_account(&pool, 0).await;
+        let (reserve_id,): (String,) =
+            sqlx::query_as("SELECT id FROM account WHERE liquidity='reserve' LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let id = create_transaction_inner(
+            &pool,
+            "transfer",
+            50_000,
+            Some("Economia manual".into()),
+            "2026-06-19",
+            None,
+            false,
+            &[],
+            None,
+            Some(&reserve_id),
+        )
+        .await
+        .expect("transfer para reserva deve ser aceito");
+
+        let (r#type, amount, to_acct): (String, i64, Option<String>) =
+            sqlx::query_as("SELECT type, amount, to_account_id FROM \"transaction\" WHERE id = ?1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(r#type, "transfer");
+        assert_eq!(amount, 50_000);
+        assert_eq!(to_acct.as_deref(), Some(reserve_id.as_str()));
+    }
+
+    // transfer→conta líquida é net-zero entre contas, não poupar: deve ser rejeitado (não é Economia).
+    #[tokio::test]
+    async fn create_transaction_transfer_to_liquid_account_is_rejected() {
+        let pool = fixture_pool().await;
+        insert_liquid_account(&pool, 100_000).await;
+        let (liquid_id,): (String,) =
+            sqlx::query_as("SELECT id FROM account WHERE liquidity='liquid' LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let result = create_transaction_inner(
+            &pool,
+            "transfer",
+            10_000,
+            None,
+            "2026-06-19",
+            None,
+            false,
+            &[],
+            None,
+            Some(&liquid_id),
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "transfer para conta líquida não é Economia — deve ser rejeitado"
         );
     }
 
