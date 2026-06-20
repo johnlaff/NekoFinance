@@ -159,8 +159,25 @@ pub(crate) async fn realized_annual_economia(
     pool: &SqlitePool,
     today_naive: NaiveDate,
 ) -> Result<i64, String> {
-    let year_start = format!("{}-01-01", today_naive.year());
     let cur_ym = today_naive.format("%Y-%m").to_string();
+    // Mesma janela de "meses COMPLETOS" de `realized_annual_savings` — MANTER SIMÉTRICAS: o guardrail
+    // de poupança compara a renda (daquela função) contra a Economia (desta). Em 1º de JANEIRO a
+    // janela `[ano-01-01, mês-corrente-01)` é VAZIA, o que zerava a Economia justo na virada do ano
+    // enquanto a renda usava a janela deslocada para DEZEMBRO → guardrail incoerente ("pode gastar"
+    // enganoso). Aqui replicamos o mesmo deslocamento para DEZEMBRO do ano anterior.
+    let is_january = cur_ym == format!("{}-01", today_naive.year());
+    let (lower, upper) = if is_january {
+        (
+            format!("{}-12-01", today_naive.year() - 1),
+            format!("{}-01-01", today_naive.year()),
+        )
+    } else {
+        // `date < 'YYYY-MM-01'` ≡ `substr(date,1,7) < 'YYYY-MM'` p/ ISO.
+        (
+            format!("{}-01-01", today_naive.year()),
+            format!("{cur_ym}-01"),
+        )
+    };
     let row: (i64,) = sqlx::query_as(
         "SELECT COALESCE(SUM(ABS(t.amount)), 0) FROM \"transaction\" t \
          LEFT JOIN account a ON a.id = t.to_account_id \
@@ -172,8 +189,8 @@ pub(crate) async fn realized_annual_economia(
                WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
            )",
     )
-    .bind(&year_start)
-    .bind(format!("{cur_ym}-01")) // 1º dia do mês corrente: range ≡ `substr(date,1,7) < 'YYYY-MM'` p/ ISO
+    .bind(&lower)
+    .bind(&upper)
     .fetch_one(pool)
     .await
     .map_err(|e| format!("realized economia: {e}"))?;
@@ -356,16 +373,17 @@ pub(crate) async fn load_cashflow_events(
 
     // Liquidez da conta-destino entra no SELECT para classificar `transfer` → Economia (guardar
     // num bolso não-líquido) vs net-zero (entre contas líquidas).
+    //
+    // SEM filtro por tag-excluída: esta é a visão de CAIXA (encadeamento do Saldo projetado,
+    // déficit mais profundo, Horizonte). Tags "Ignorar" suprimem só as MÉTRICAS (Performance/Custo
+    // de vida) — o dinheiro de um gasto futuro marcado "Ignorar" AINDA sai da conta, então tem que
+    // continuar pesando no Saldo. O filtro `exclude_from_totals` vive nas funções de MÉTRICA
+    // (`load_realized_month_events`, `load_year_events`, `realized_annual_economia`), não aqui.
     let txn_rows: Vec<(String, i64, String, String, i64, i64, String)> = sqlx::query_as(
         "SELECT t.type, t.amount, t.date, COALESCE(t.payment_method,''), t.is_fixed, t.is_projection, \
                 COALESCE(a.liquidity,'') \
          FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
-         WHERE t.date > ?1 AND t.date <= ?2 \
-           AND NOT EXISTS ( \
-               SELECT 1 FROM transaction_tag tt2 \
-               JOIN tag tg ON tg.id = tt2.tag_id \
-               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
-           )",
+         WHERE t.date > ?1 AND t.date <= ?2",
     )
     .bind(&today)
     .bind(&horizon)
@@ -996,4 +1014,148 @@ pub(crate) async fn dashboard_summary(
         transaction_count: count.0,
         last_real_tx_date,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn pool() -> SqlitePool {
+        let p = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&p).await.unwrap();
+        p
+    }
+
+    async fn insert_expense(pool: &SqlitePool, id: &str, amount: i64, date: &str) {
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_projection) \
+             VALUES (?1, 'expense', ?2, ?3, 1)",
+        )
+        .bind(id)
+        .bind(amount)
+        .bind(date)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Liga uma tag `exclude_from_totals = 1` ("Ignorar") a um lançamento.
+    async fn tag_as_excluded(pool: &SqlitePool, txn_id: &str) {
+        sqlx::query(
+            "INSERT INTO tag (id, name, exclude_from_totals) VALUES ('tg-ignore', 'Ignorar', 1)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO transaction_tag (transaction_id, tag_id) VALUES (?1, 'tg-ignore')",
+        )
+        .bind(txn_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    // Bug 1 (plano 037): uma despesa FUTURA marcada com tag "Ignorar" (exclude_from_totals)
+    // continua pesando no Saldo PROJETADO — o dinheiro vai sair da conta de qualquer forma. A tag
+    // só suprime as MÉTRICAS (Performance/Custo de vida), nunca a visão de CAIXA. O bug do 034 era
+    // o filtro `NOT EXISTS` em `load_cashflow_events` (a fonte do encadeamento do Saldo), que sumia
+    // com o gasto futuro do Saldo projetado. Este teste guarda os DOIS lados: caixa inclui, métrica
+    // exclui.
+    #[tokio::test]
+    async fn excluded_tag_expense_still_lowers_projected_balance() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        let tomorrow = today.succ_opt().unwrap();
+        let horizon = NaiveDate::from_ymd_opt(2026, 12, 31).unwrap();
+
+        // Despesa FUTURA marcada "Ignorar".
+        insert_expense(
+            &p,
+            "fut-ign",
+            5000,
+            &tomorrow.format("%Y-%m-%d").to_string(),
+        )
+        .await;
+        tag_as_excluded(&p, "fut-ign").await;
+
+        // Lado CAIXA: a despesa NÃO é filtrada — aparece na trajetória do Saldo projetado.
+        let cash = load_cashflow_events(&p, today, horizon).await.unwrap();
+        assert_eq!(cash.len(), 1, "o gasto futuro 'Ignorar' continua no caixa");
+        assert_eq!(cash[0].kind, forecast::EventKind::Daily);
+        assert_eq!(cash[0].amount_cents, 5000);
+
+        // Lado MÉTRICA: uma despesa REALIZADA "Ignorar" do mês corrente É excluída (filtro
+        // intencional preservado em `load_realized_month_events`). Guarda contra remover o filtro
+        // da função errada.
+        let month_start = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+        insert_expense(&p, "past-ign", 7000, "2026-06-10").await;
+        sqlx::query(
+            "INSERT INTO transaction_tag (transaction_id, tag_id) VALUES ('past-ign', 'tg-ignore')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        let metric = load_realized_month_events(&p, month_start, today)
+            .await
+            .unwrap();
+        assert!(
+            metric.is_empty(),
+            "a despesa realizada 'Ignorar' some das MÉTRICAS"
+        );
+    }
+
+    // Bug 3 (plano 037): em 1º de JANEIRO `realized_annual_economia` precisa da MESMA janela
+    // deslocada para DEZEMBRO que `realized_annual_savings` usa — senão o guardrail compara renda de
+    // dezembro contra Economia = 0 (janela vazia do ano novo). Mantém as duas funções SIMÉTRICAS.
+    #[tokio::test]
+    async fn jan1_economia_uses_prior_december_window() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+
+        // Conta de reserva (destino da Economia) + renda de dezembro do ano anterior.
+        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-1', 'Tester')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, balance, liquidity) \
+             VALUES ('acc-res', 'Reserva', 'savings', 'pe-1', 0, 'reserve')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) \
+             VALUES ('econ-dez', 'transfer', 20000, '2025-12-15', 'acc-res', 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_projection) \
+             VALUES ('renda-dez', 'income', 100000, '2025-12-10', 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let economia = realized_annual_economia(&p, today).await.unwrap();
+        assert_eq!(
+            economia, 20000,
+            "em 1º/jan a Economia usa a janela de dezembro (não 0)"
+        );
+
+        // Simetria: a poupança também enxerga dezembro (renda > 0), confirmando que ambas usam a
+        // mesma janela na virada do ano.
+        let (income, _savings) = realized_annual_savings(&p, today).await.unwrap();
+        assert_eq!(
+            income, 100000,
+            "guardrail simétrico: renda de dezembro também é vista em 1º/jan"
+        );
+    }
 }
