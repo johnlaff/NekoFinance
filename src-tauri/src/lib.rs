@@ -127,9 +127,10 @@ pub fn run() {
 
             // Background read-side sync (plan 026, Phase 1: read-only — never touches
             // write-back). Spawned after the pool + AppDataDir are managed. Clones happen
-            // before `app.manage(pool)` moves the pool into Tauri state. The shared
-            // SyncGuard serializes background and user-triggered imports (single-connection
-            // pool); the focus handler reuses the same guard so neither path overlaps.
+            // before `app.manage(pool)` moves the pool into Tauri state. The shared SyncGuard
+            // serializes ALL import paths (background loop, focus probe, `import_sheet_data`,
+            // `import_local_xlsx`) against each other on the single-connection pool; the user
+            // commands resolve it from managed state via `app.manage(import_guard.clone())`.
             let sync_pool = pool.clone();
             let import_guard = Arc::new(sync_task::SyncGuard::new(()));
             app.manage(import_guard.clone());

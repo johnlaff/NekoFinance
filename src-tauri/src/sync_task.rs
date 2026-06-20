@@ -221,12 +221,14 @@ pub async fn run_probe(
     //    background-imported rows stable across ticks.
     let profile_id = format!("bg-sync:{spreadsheet_id}");
     let tabs = get_active_sheet_names_for_spreadsheet(pool).await?;
+    let mut all_ok = true;
     for tab in &tabs {
         if let Err(e) =
             crate::commands::import_one_tab(pool, &client, &spreadsheet_id, tab, &profile_id).await
         {
-            // One bad tab shouldn't abort the rest; log and continue.
+            // One bad tab shouldn't abort the rest; log and continue, but remember the failure.
             eprintln!("[sync] import of tab '{tab}' failed: {e}");
+            all_ok = false;
         }
     }
 
@@ -234,8 +236,12 @@ pub async fn run_probe(
     //    auto-resolves; this is the badge number the frontend shows).
     let conflict_count = open_conflict_count(pool).await?;
 
-    // 10. Advance the sentinel only after a successful import pass.
-    crate::commands::app_setting_set(pool, "sheets_last_modified_time", &modified_time).await?;
+    // 10. Advance the sentinel ONLY when every tab imported successfully. If any tab failed we
+    //     leave `sheets_last_modified_time` untouched so the next tick retries the whole pass —
+    //     otherwise a transient failure would be silently skipped until the sheet changes again.
+    if all_ok {
+        crate::commands::app_setting_set(pool, "sheets_last_modified_time", &modified_time).await?;
+    }
 
     // 11. Tell the frontend to refresh finance data + the ConflictGate badge.
     {

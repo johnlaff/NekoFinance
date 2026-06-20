@@ -1977,4 +1977,180 @@ mod tests {
                 .unwrap();
         assert_eq!(conflicts, 1, "sem realinhar a base, o re-import conflita");
     }
+
+    // --- Plan 032 regression tests --------------------------------------------------------
+
+    // Bug A: linhas Saída/Diário com payment_method NULL (o caso manual normal) DEVEM ser
+    // realinhadas pela auditoria de write-back. Antes: `NOT (payment_method = 'credit')` virava
+    // NULL em SQLite (NULL = 'credit' → NULL → NOT NULL → NULL), então a linha era EXCLUÍDA e a
+    // base nunca era atualizada → conflito espúrio a cada write-back. Agora: NULL passa.
+    #[tokio::test]
+    async fn write_back_audit_realigns_null_payment_method() {
+        let pool = fixture_pool().await;
+        // Saída fixa REAL com payment_method NÃO informado (NULL) — o lançamento manual padrão.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES (?1,'expense',50000,'2026-03-10',1,0)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let cell = CellWrite {
+            a1: "B10".into(),
+            row: 9,
+            col: 1,
+            date: "2026-03-10".into(),
+            kind: "saida".into(),
+            current: "500,00".into(),
+            proposed: "550,00".into(),
+            value_cents: 55000,
+            changed: true,
+        };
+        let realigned = record_write_back_audit(&pool, "2026", &[&cell])
+            .await
+            .unwrap();
+        assert_eq!(realigned, 1, "a linha com payment_method NULL é realinhada");
+
+        let (source_amount,): (Option<i64>,) = sqlx::query_as(
+            "SELECT source_amount FROM \"transaction\" WHERE date='2026-03-10' AND type='expense'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            source_amount,
+            Some(55000),
+            "a base foi realinhada para o valor escrito"
+        );
+    }
+
+    // Bug C: as Entradas compensatórias DERIVADAS (#reembolso/#dividir, id `derived:%`) NÃO podem
+    // entrar na carga do write-back — senão a agregação infla a célula Entrada da planilha. A query
+    // de load passa a excluir `id LIKE 'derived:%'`.
+    #[tokio::test]
+    async fn load_write_back_txns_excludes_derived() {
+        let pool = fixture_pool().await;
+        // Entrada real.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_projection) \
+             VALUES ('t-real','income',100000,'2026-03-05',0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Entrada compensatória derivada (não deve ser somada no write-back).
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_projection) \
+             VALUES ('derived:reembolso:t-real','income',5000,'2026-03-05',0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let out = load_write_back_txns(&pool, 2026).await.unwrap();
+        assert_eq!(
+            out.len(),
+            1,
+            "apenas a transação real entra (a derivada sai)"
+        );
+        assert_eq!(out[0].kind, import::RowKind::Entrada);
+        assert_eq!(out[0].amount_cents, 100000);
+    }
+
+    // Bug D: em 1º de JANEIRO o guardrail de poupança não pode ficar mudo. A janela
+    // `[ano-01-01, mês-corrente-01)` é vazia nesse dia; o fix desloca para DEZEMBRO do ano anterior,
+    // mantendo o guardrail ATIVO com base no último mês completo.
+    #[tokio::test]
+    async fn realized_annual_savings_active_on_jan_1() {
+        let pool = fixture_pool().await;
+        // Dezembro do ano anterior (mês completo): renda 120.000, despesa 80.000 → poupança 40.000.
+        insert_realized(&pool, "income", 120000, "2025-12-10").await;
+        insert_realized(&pool, "expense", 80000, "2025-12-15").await;
+
+        let today = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+        let (income, savings) = realized_annual_savings(&pool, today).await.unwrap();
+        assert_eq!(
+            income, 120000,
+            "renda de dezembro alimenta o guardrail em 1º/jan"
+        );
+        assert_eq!(
+            savings, 40000,
+            "poupança = 120.000 − 80.000, guardrail ATIVO"
+        );
+    }
+
+    // Bug D (borda): 1º de janeiro SEM dado do dezembro anterior → fallback seguro (0, 0), sem
+    // pânico e sem janela quebrada.
+    #[tokio::test]
+    async fn realized_annual_savings_jan_1_no_prior_data() {
+        let pool = fixture_pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+        let (income, savings) = realized_annual_savings(&pool, today).await.unwrap();
+        assert_eq!(
+            income, 0,
+            "sem dezembro anterior, renda = 0 (fallback seguro)"
+        );
+        assert_eq!(
+            savings, 0,
+            "sem dezembro anterior, poupança = 0 (fallback seguro)"
+        );
+    }
+
+    // P2a: a auditoria de write-back trata o kind `economia` — realinha a base da linha mensal
+    // `economia:YYYY-MM` E grava a trilha no sync_log. Antes a Economia caía em `_ => continue`
+    // (nenhum realinho, nenhuma trilha). Garante que `apply_economia_write_back` audita de fato.
+    #[tokio::test]
+    async fn write_back_audit_handles_economia_kind() {
+        let pool = fixture_pool().await;
+        // Um profile (com person) é pré-requisito para a FK do sync_log.
+        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-econ', 'Tester')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO profile (id, person_id) VALUES ('p-econ', 'pe-econ')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Linha mensal de Economia (transfer) com a base antiga.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_projection, source_amount) \
+             VALUES ('economia:2026-01','transfer',30000,'2026-01-31',0,30000)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let cell = CellWrite {
+            a1: "E5".into(),
+            row: 4,
+            col: 4,
+            date: "2026-01".into(), // célula de Economia carrega "YYYY-MM"
+            kind: "economia".into(),
+            current: "300,00".into(),
+            proposed: "350,00".into(),
+            value_cents: 35000,
+            changed: true,
+        };
+        let realigned = record_write_back_audit(&pool, "Economia", &[&cell])
+            .await
+            .unwrap();
+        assert_eq!(realigned, 1, "a linha mensal de Economia é realinhada");
+
+        let (source_amount,): (Option<i64>,) =
+            sqlx::query_as("SELECT source_amount FROM \"transaction\" WHERE id='economia:2026-01'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(source_amount, Some(35000), "base da Economia realinhada");
+
+        let (audit,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM sync_log WHERE event_type='write_back' AND source_sheet='Economia'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(audit, 1, "trilha de auditoria gravada para a Economia");
+    }
 }
