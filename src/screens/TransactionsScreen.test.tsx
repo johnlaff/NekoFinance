@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { TransactionsScreen } from "./TransactionsScreen";
 import { filterTransactions } from "./transactionsFilter";
 import { TXNS, RECURRING_TXN, mockCommands, mockInvoke } from "../test/commands";
-import type { Tag } from "../lib/api";
+import type { Tag, TransactionRow } from "../lib/api";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -289,5 +289,111 @@ describe("TransactionsScreen — apagar/editar (ações da linha)", () => {
 
     await user.click(actionBtn);
     expect(screen.queryByRole("button", { name: "Apagar" })).not.toBeInTheDocument();
+  });
+});
+
+describe("TransactionsScreen — breakdown itemizado", () => {
+  beforeEach(() => {
+    mockInvoke.mockReset();
+  });
+
+  it("não mostra botão de expand quando não há itens", async () => {
+    mockCommands({ get_recent_transactions: TXNS, list_tags_cmd: [] });
+    render(<TransactionsScreen query="" onGoToSettings={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getByText("Despesa demo variável")).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByRole("button", {
+        name: /Ver itens de Despesa demo variável/,
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("mostra e oculta os itens ao clicar no botão de expand", async () => {
+    const user = userEvent.setup();
+    const itemizedTxn: TransactionRow = {
+      ...TXNS[0]!,
+      id: "t-itemized",
+      description: "Despesa com itens",
+      amount: 15000,
+      line_items: [
+        {
+          id: "li:t-itemized:0",
+          transaction_id: "t-itemized",
+          amount_cents: 10000,
+          description: "Parte A",
+          position: 0,
+        },
+        {
+          id: "li:t-itemized:1",
+          transaction_id: "t-itemized",
+          amount_cents: 5000,
+          description: "Parte B",
+          position: 1,
+        },
+      ],
+    };
+    mockCommands({ get_recent_transactions: [itemizedTxn], list_tags_cmd: [] });
+    render(<TransactionsScreen query="" onGoToSettings={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getByText("Despesa com itens")).toBeInTheDocument();
+    });
+
+    // Itens escondidos inicialmente.
+    expect(screen.queryByText("Parte A")).not.toBeInTheDocument();
+    expect(screen.queryByText("Parte B")).not.toBeInTheDocument();
+
+    // Clica para expandir.
+    await user.click(
+      screen.getByRole("button", { name: /Ver itens de Despesa com itens/ }),
+    );
+    expect(screen.getByText("Parte A")).toBeInTheDocument();
+    expect(screen.getByText("Parte B")).toBeInTheDocument();
+
+    // Clica de novo para recolher.
+    await user.click(
+      screen.getByRole("button", { name: /Fechar itens de Despesa com itens/ }),
+    );
+    expect(screen.queryByText("Parte A")).not.toBeInTheDocument();
+  });
+
+  it("mostra itens de lançamentos projetados (futuro)", async () => {
+    const projectedItemized: TransactionRow = {
+      ...TXNS[2]!,
+      id: "t-projected-itemized",
+      description: "Receita projetada com itens",
+      line_items: [
+        {
+          id: "li:t-projected-itemized:0",
+          transaction_id: "t-projected-itemized",
+          amount_cents: 200000,
+          description: "Parte projetada",
+          position: 0,
+        },
+        {
+          id: "li:t-projected-itemized:1",
+          transaction_id: "t-projected-itemized",
+          amount_cents: 150000,
+          description: "Outra parte projetada",
+          position: 1,
+        },
+      ],
+    };
+    mockCommands({
+      get_recent_transactions: [projectedItemized],
+      list_tags_cmd: [],
+    });
+    render(<TransactionsScreen query="" onGoToSettings={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getByText("Receita projetada com itens")).toBeInTheDocument();
+    });
+    await userEvent.setup().click(
+      screen.getByRole("button", {
+        name: /Ver itens de Receita projetada com itens/,
+      }),
+    );
+    expect(screen.getByText("Parte projetada")).toBeInTheDocument();
+    expect(screen.getByText("Outra parte projetada")).toBeInTheDocument();
   });
 });

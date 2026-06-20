@@ -45,6 +45,15 @@ export interface TagRef {
   emoji: string | null;
 }
 
+/** Uma parte de um lançamento itemizado (breakdown da nota de célula, plano 035). */
+export interface LineItem {
+  id: string;
+  transaction_id: string;
+  amount_cents: number;
+  description: string;
+  position: number;
+}
+
 export interface TransactionRow {
   id: string;
   type: string;
@@ -61,6 +70,8 @@ export interface TransactionRow {
   tags: TagRef[];
   /** Proveniência: "projetado" | "importado" | "manual" | "conciliado". */
   provenance: string;
+  /** Partes itemizadas da nota (vazio = lançamento não itemizado). Plano 035 — só leitura. */
+  line_items: LineItem[];
 }
 
 export interface SheetInfo {
@@ -254,6 +265,12 @@ export function getDashboardSummary(): Promise<DashboardSummary> {
 
 export function getRecentTransactions(limit: number): Promise<TransactionRow[]> {
   return invoke("get_recent_transactions", { limit });
+}
+
+/** Partes itemizadas de um lançamento (breakdown da nota de célula, plano 035). */
+// react-doctor-disable-next-line deslop/unused-export -- plano 035: ponte do frontend (comando Tauri pronto/testado); o Livro-razão usa o batch line_items, este getter sob demanda atende o plano 036
+export function getLineItems(transactionId: string): Promise<LineItem[]> {
+  return invoke<LineItem[]>("get_line_items_cmd", { transactionId });
 }
 
 /** Cria um lançamento manual. Com `recurrence`, gera a série projetada. Para `transfer` (Economia),

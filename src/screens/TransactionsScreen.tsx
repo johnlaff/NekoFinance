@@ -1,5 +1,11 @@
 import { Fragment, useReducer } from "react";
-import { MoreHorizontal, Plus, Tag as TagIcon } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  MoreHorizontal,
+  Plus,
+  Tag as TagIcon,
+} from "lucide-react";
 import { Badge } from "../design-system/components/Badge";
 import { Button } from "../design-system/components/Button";
 import { EmptyState } from "../design-system/components/EmptyState";
@@ -62,6 +68,24 @@ const ACTION_PANEL_STYLE: React.CSSProperties = {
 
 const EDIT_FORM_WRAP_STYLE: React.CSSProperties = {
   marginBottom: "var(--space-4)",
+};
+
+// Plan 035: breakdown itemizado (lista de partes da nota de célula), só leitura.
+const LINE_ITEMS_LIST_STYLE: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "var(--space-1)",
+  margin: 0,
+  paddingLeft: "var(--space-6)",
+  listStyle: "none",
+};
+
+const LINE_ITEM_STYLE: React.CSSProperties = {
+  display: "flex",
+  gap: "var(--space-3)",
+  alignItems: "baseline",
+  fontSize: "var(--fs-sm)",
+  color: "var(--text-muted)",
 };
 
 /** Rótulo amigável do método de pagamento (Débito, PIX…); entrada sem método vira "Entrada". */
@@ -136,6 +160,7 @@ interface TransactionsUiState {
   actionRowId: string | null; // qual linha tem o painel de ações aberto
   actionError: string | null; // último erro de uma ação apagar/editar
   editingTxn: TransactionRow | null; // lançamento em edição (form inline)
+  expandItemsId: string | null; // qual linha tem o breakdown itemizado aberto (plano 035)
 }
 
 type TransactionsUiAction =
@@ -151,7 +176,8 @@ type TransactionsUiAction =
   | { type: "actionError"; error: string }
   | { type: "actionClear" }
   | { type: "editTxn"; txn: TransactionRow }
-  | { type: "editDone" };
+  | { type: "editDone" }
+  | { type: "toggleItems"; id: string };
 
 const INITIAL_UI_STATE: TransactionsUiState = {
   scope: "all",
@@ -163,6 +189,7 @@ const INITIAL_UI_STATE: TransactionsUiState = {
   actionRowId: null,
   actionError: null,
   editingTxn: null,
+  expandItemsId: null,
 };
 
 function transactionsUiReducer(
@@ -214,6 +241,11 @@ function transactionsUiReducer(
         actionRowId: null,
         reloadKey: state.reloadKey + 1,
       };
+    case "toggleItems":
+      return {
+        ...state,
+        expandItemsId: state.expandItemsId === action.id ? null : action.id,
+      };
   }
 }
 
@@ -222,16 +254,21 @@ function LedgerDataRow({
   t,
   tagEditOpen,
   actionOpen,
+  itemsOpen,
   onToggleTagEditor,
   onToggleAction,
+  onToggleItems,
 }: {
   t: TransactionRow;
   tagEditOpen: boolean;
   actionOpen: boolean;
+  itemsOpen: boolean;
   onToggleTagEditor: () => void;
   onToggleAction: () => void;
+  onToggleItems: () => void;
 }) {
   const generic = !!t.description && GENERIC_DESC.test(t.description);
+  const hasItems = t.line_items.length > 0;
   return (
     <tr className={t.is_projection ? "projection" : ""}>
       <td>{fmtDate(t.date)}</td>
@@ -239,6 +276,21 @@ function LedgerDataRow({
         <MovBadge kind={movKind(t)} showLabel size={16} />
       </td>
       <td>
+        {hasItems && (
+          <button
+            type="button"
+            className="txn-tag-btn"
+            aria-label={`${itemsOpen ? "Fechar" : "Ver"} itens de ${t.description || "lançamento"}`}
+            aria-expanded={itemsOpen}
+            onClick={onToggleItems}
+          >
+            {itemsOpen ? (
+              <ChevronDown size={13} strokeWidth={1.75} />
+            ) : (
+              <ChevronRight size={13} strokeWidth={1.75} />
+            )}
+          </button>
+        )}{" "}
         {t.description ? (
           <span
             title={
@@ -405,6 +457,123 @@ function TagEditorRow({
         )}
       </td>
     </tr>
+  );
+}
+
+/**
+ * Sub-linha de breakdown itemizado (plano 035): mostra cada parte da nota de célula como
+ * `R$ <valor> — <descrição>`. SÓ LEITURA — edição/write-back ficam para o plano 036. O total
+ * do lançamento pai é a SOMA destas partes e não é alterado aqui. Vale para passado E projetado.
+ */
+function LineItemsRow({ t }: { t: TransactionRow }) {
+  if (t.line_items.length === 0) return null;
+  // Espelha a direção do pai: despesa exibe as partes como saída (negativas).
+  const sign = t.type === "income" ? 1 : -1;
+  return (
+    <tr className="txn-tag-editor">
+      <td colSpan={6}>
+        <ul
+          style={LINE_ITEMS_LIST_STYLE}
+          aria-label={`Itens de ${t.description || "lançamento"}`}
+        >
+          {t.line_items.map((li) => (
+            <li key={li.id} style={LINE_ITEM_STYLE}>
+              <Money cents={sign * Math.abs(li.amount_cents)} size="sm" sign="auto" />
+              <span>{li.description}</span>
+            </li>
+          ))}
+        </ul>
+      </td>
+    </tr>
+  );
+}
+
+/**
+ * Tabela do Livro-razão: cabeçalho, separadores de mês e cada linha com seus painéis
+ * (breakdown itemizado, ações, editor de tags). Extraída da tela para manter o componente
+ * pai enxuto e legível (uma seção por componente).
+ */
+function LedgerTable({
+  visible,
+  ui,
+  allTags,
+  onToggleTagEditor,
+  onToggleAction,
+  onToggleItems,
+  onEdit,
+  onDeleteOne,
+  onDeleteSeries,
+  onToggleTag,
+}: {
+  visible: TransactionRow[];
+  ui: TransactionsUiState;
+  allTags: Tag[];
+  onToggleTagEditor: (id: string) => void;
+  onToggleAction: (id: string) => void;
+  onToggleItems: (id: string) => void;
+  onEdit: (t: TransactionRow) => void;
+  onDeleteOne: (t: TransactionRow) => void;
+  onDeleteSeries: (t: TransactionRow) => void;
+  onToggleTag: (t: TransactionRow, tagId: string) => void;
+}) {
+  return (
+    <table className="txn-table">
+      <thead>
+        <tr>
+          <th scope="col">Data</th>
+          <th scope="col">Tipo</th>
+          <th scope="col">Descrição</th>
+          <th scope="col">Método</th>
+          <th scope="col">Valor</th>
+          <th scope="col" aria-label="Ações" />
+        </tr>
+      </thead>
+      <tbody>
+        {visible.map((t, i) => {
+          const ym = t.date.slice(0, 7);
+          const showMonth = i === 0 || visible[i - 1]!.date.slice(0, 7) !== ym;
+          return (
+            <Fragment key={t.id}>
+              {showMonth && (
+                <tr className="txn-month-sep">
+                  <th scope="colgroup" colSpan={6}>
+                    {monthSepLabel(ym)}
+                  </th>
+                </tr>
+              )}
+              <LedgerDataRow
+                t={t}
+                tagEditOpen={ui.tagEditId === t.id}
+                actionOpen={ui.actionRowId === t.id}
+                itemsOpen={ui.expandItemsId === t.id}
+                onToggleTagEditor={() => onToggleTagEditor(t.id)}
+                onToggleAction={() => onToggleAction(t.id)}
+                onToggleItems={() => onToggleItems(t.id)}
+              />
+              {ui.expandItemsId === t.id && <LineItemsRow t={t} />}
+              {ui.actionRowId === t.id && (
+                <ActionPanelRow
+                  t={t}
+                  actionError={ui.actionError}
+                  onEdit={() => onEdit(t)}
+                  onDeleteOne={() => onDeleteOne(t)}
+                  onDeleteSeries={() => onDeleteSeries(t)}
+                />
+              )}
+              {ui.tagEditId === t.id && (
+                <TagEditorRow
+                  t={t}
+                  allTags={allTags}
+                  tagSaving={ui.tagSaving}
+                  tagError={ui.tagError}
+                  onToggleTag={(tagId) => onToggleTag(t, tagId)}
+                />
+              )}
+            </Fragment>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
 
@@ -643,64 +812,18 @@ export function TransactionsScreen({
               }
             />
           ) : (
-            <table className="txn-table">
-              <thead>
-                <tr>
-                  <th scope="col">Data</th>
-                  <th scope="col">Tipo</th>
-                  <th scope="col">Descrição</th>
-                  <th scope="col">Método</th>
-                  <th scope="col">Valor</th>
-                  <th scope="col" aria-label="Ações" />
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((t, i) => {
-                  const ym = t.date.slice(0, 7);
-                  const showMonth = i === 0 || visible[i - 1]!.date.slice(0, 7) !== ym;
-                  return (
-                    <Fragment key={t.id}>
-                      {showMonth && (
-                        <tr className="txn-month-sep">
-                          <th scope="colgroup" colSpan={6}>
-                            {monthSepLabel(ym)}
-                          </th>
-                        </tr>
-                      )}
-                      <LedgerDataRow
-                        t={t}
-                        tagEditOpen={ui.tagEditId === t.id}
-                        actionOpen={ui.actionRowId === t.id}
-                        onToggleTagEditor={() =>
-                          dispatchUi({ type: "toggleTagEditor", id: t.id })
-                        }
-                        onToggleAction={() =>
-                          dispatchUi({ type: "toggleActionRow", id: t.id })
-                        }
-                      />
-                      {ui.actionRowId === t.id && (
-                        <ActionPanelRow
-                          t={t}
-                          actionError={ui.actionError}
-                          onEdit={() => dispatchUi({ type: "editTxn", txn: t })}
-                          onDeleteOne={() => void handleDeleteOne(t)}
-                          onDeleteSeries={() => void handleDeleteSeries(t)}
-                        />
-                      )}
-                      {ui.tagEditId === t.id && (
-                        <TagEditorRow
-                          t={t}
-                          allTags={allTags}
-                          tagSaving={ui.tagSaving}
-                          tagError={ui.tagError}
-                          onToggleTag={(tagId) => void toggleTag(t, tagId)}
-                        />
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
+            <LedgerTable
+              visible={visible}
+              ui={ui}
+              allTags={allTags}
+              onToggleTagEditor={(id) => dispatchUi({ type: "toggleTagEditor", id })}
+              onToggleAction={(id) => dispatchUi({ type: "toggleActionRow", id })}
+              onToggleItems={(id) => dispatchUi({ type: "toggleItems", id })}
+              onEdit={(t) => dispatchUi({ type: "editTxn", txn: t })}
+              onDeleteOne={(t) => void handleDeleteOne(t)}
+              onDeleteSeries={(t) => void handleDeleteSeries(t)}
+              onToggleTag={(t, tagId) => void toggleTag(t, tagId)}
+            />
           )}
         </div>
       </div>
