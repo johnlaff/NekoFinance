@@ -14,3 +14,20 @@ Model the emergency reserve as its own entity (`reserve` table) rather than a fi
 ## Why record it here
 
 The decision to separate reserve from account is not obvious from the multiuser model alone. A future engineer would likely model it as an account field, losing the trend tracking and methodology alignment.
+
+## Production reality (2026-06)
+
+`reserve.current_months` and `reserve_snapshot` exist in the schema but have
+no production writer as of this reconciliation. The dashboard derives
+`reserve_months` live: reserve-account balance ÷ `realized_monthly_baseline`
+(see `CONTEXT.md` — "Reserve months (dashboard)"). The live-derived value is
+the source of truth for the UI.
+
+`trend` in the `reserve` table is also unwritten in production; it is not yet
+surfaced in the UI.
+
+**Implication for future work**: if a background writer for `current_months` or
+`reserve_snapshot` is ever added, it must use the same formula as the live
+derivation to avoid a stale-vs-live conflict. Do not add a writer unless the
+motivation is historical trend tracking (the only feature that requires
+persisted snapshots); the live computation is sufficient for current UI needs.

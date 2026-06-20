@@ -13,8 +13,8 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
   }, testInfo) => {
     // O saldo projetado vive no cabeçalho do herói (o metric tile redundante foi removido).
     await expect(page.getByText(/Saldo no fim de/)).toBeVisible();
-    // Pockets card (spec 007): grouped balances + net worth
-    await expect(page.getByText("Bolsos & patrimônio")).toBeVisible();
+    // Pockets card (spec 007): grouped balances + net worth (patrimônio is a quiet footer)
+    await expect(page.getByText("Bolsos", { exact: true })).toBeVisible();
     await expect(page.getByText("R$ 35.420,00")).toBeVisible();
     await expect(page.getByText("Pode gastar até")).toBeVisible();
     await expect(page.getByText(/Junho de 2026/)).toBeVisible();

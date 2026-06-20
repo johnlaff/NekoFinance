@@ -491,8 +491,6 @@ function DashboardScreen({ onAskMia = () => {} }) {
           <TransactionRow
             date="08 Jun"
             merchant="Whole Foods Market"
-            category="Groceries"
-            categoryColor="var(--chart-2)"
             owner={<OwnerChip name="Household" type="shared" bare />}
             amount="642.18"
             status="needs-owner"
@@ -501,8 +499,6 @@ function DashboardScreen({ onAskMia = () => {} }) {
           <TransactionRow
             date="08 Jun"
             merchant="Acme Payroll"
-            category="Income"
-            categoryColor="var(--chart-1)"
             owner={<OwnerChip name="Alex Tan" type="personal" bare />}
             amount="6,200.00"
             positive
@@ -511,8 +507,6 @@ function DashboardScreen({ onAskMia = () => {} }) {
           <TransactionRow
             date="07 Jun"
             merchant="Pacific Gas & Electric"
-            category="Housing"
-            categoryColor="var(--chart-1)"
             owner={<OwnerChip name="Household" type="shared" bare />}
             amount="148.90"
             status="reconciled"
@@ -520,8 +514,6 @@ function DashboardScreen({ onAskMia = () => {} }) {
           <TransactionRow
             date="06 Jun"
             merchant="Spotify"
-            category="Subscriptions"
-            categoryColor="var(--chart-4)"
             owner={<OwnerChip name="Sam Okafor" type="partner" bare />}
             amount="14.99"
             status="imported"

@@ -20,13 +20,8 @@ export function PocketsCard() {
       <div className="dash-card__head">
         <span className="dash-card__title">
           <Landmark size={16} strokeWidth={1.75} className="dash-card__ic" />
-          Bolsos &amp; patrimônio
+          Bolsos
         </span>
-        {pockets && pockets.accounts.length > 0 && (
-          <span className="pockets-networth">
-            Patrimônio <Money cents={pockets.net_worth_cents} size="sm" sign="auto" />
-          </span>
-        )}
       </div>
       <div className="dash-card__body">
         {pocketsQ.error ? (
@@ -39,17 +34,23 @@ export function PocketsCard() {
             em Configurações para o saldo projetado considerar só dinheiro líquido.
           </p>
         ) : (
-          <div className="pockets-grid">
-            {GROUPS.map((g) => (
-              <div key={g.key} className="pockets-cell">
-                <span className="pockets-cell__label">{g.label}</span>
-                <span className="pockets-cell__value">
-                  <Money cents={pockets[g.key]} size="sm" />
-                </span>
-                <span className="pockets-cell__hint">{g.hint}</span>
-              </div>
-            ))}
-          </div>
+          <>
+            <div className="pockets-grid">
+              {GROUPS.map((g) => (
+                <div key={g.key} className="pockets-cell">
+                  <span className="pockets-cell__label">{g.label}</span>
+                  <span className="pockets-cell__value">
+                    <Money cents={pockets[g.key]} size="sm" />
+                  </span>
+                  <span className="pockets-cell__hint">{g.hint}</span>
+                </div>
+              ))}
+            </div>
+            <div className="pockets-networth">
+              Patrimônio total{" "}
+              <Money cents={pockets.net_worth_cents} size="sm" sign="auto" />
+            </div>
+          </>
         )}
       </div>
     </div>
