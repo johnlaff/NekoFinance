@@ -14,8 +14,16 @@ const TAGS: Tag[] = [
     color: "#3aa",
     emoji: null,
     is_special: false,
+    exclude_from_totals: false,
   },
-  { id: "pagar", name: "! Pagar", color: "#a83", emoji: null, is_special: true },
+  {
+    id: "pagar",
+    name: "! Pagar",
+    color: "#a83",
+    emoji: null,
+    is_special: true,
+    exclude_from_totals: false,
+  },
 ];
 
 describe("NewTransactionForm", () => {

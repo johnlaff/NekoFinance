@@ -1,5 +1,5 @@
 import { useReducer, useRef, useState, type CSSProperties } from "react";
-import { createTag, tagTotalsForMonth } from "../lib/api";
+import { createTag, tagTotalsForMonth, updateTagExclude } from "../lib/api";
 import { monthNamePtBR } from "../lib/format";
 import { safeErrorMessage } from "../lib/errors";
 import { useCommand, invalidateCommands } from "../lib/useCommand";
@@ -85,6 +85,28 @@ const FORM_PANEL_STYLE: CSSProperties = {
   borderRadius: "var(--radius-md)",
 };
 
+// Botão-switch "Ignorar nos cálculos" por tag. Dois estilos estáticos (incluído/ignorado) hasteados
+// p/ o React Compiler — só a escolha entre eles depende da linha.
+const TOGGLE_BASE_STYLE: CSSProperties = {
+  padding: "var(--space-1) var(--space-2)",
+  borderRadius: "var(--radius-sm)",
+  border: "var(--bw-hair) solid var(--border)",
+  fontSize: "var(--fs-xs)",
+  fontFamily: "var(--font-sans)",
+  cursor: "pointer",
+  flexShrink: 0,
+};
+const TOGGLE_INCLUDED_STYLE: CSSProperties = {
+  ...TOGGLE_BASE_STYLE,
+  background: "transparent",
+  color: "var(--text)",
+};
+const TOGGLE_EXCLUDED_STYLE: CSSProperties = {
+  ...TOGGLE_BASE_STYLE,
+  background: "var(--surface-2)",
+  color: "var(--text-muted)",
+};
+
 export function TagsScreen() {
   const now = new Date();
   const todayYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -132,6 +154,16 @@ export function TagsScreen() {
         type: "submitError",
         error: safeErrorMessage(e, "Não foi possível criar a tag. Tente novamente."),
       });
+    }
+  }
+
+  async function toggleExclude(tagId: string, currentValue: boolean) {
+    try {
+      await updateTagExclude(tagId, !currentValue);
+      invalidateCommands();
+      setReload((r) => r + 1);
+    } catch {
+      // Silencioso — alternar é best-effort; o próximo reload reflete o estado real.
     }
   }
 
@@ -301,12 +333,28 @@ export function TagsScreen() {
                 style={{
                   flex: 1,
                   fontWeight: t.is_special ? "var(--fw-bold)" : "var(--fw-semibold)",
-                  color: "var(--text)",
+                  color: t.exclude_from_totals ? "var(--text-muted)" : "var(--text)",
                 }}
               >
                 {t.name}
               </span>
               <Money cents={t.total_cents} size="sm" />
+              <button
+                type="button"
+                role="switch"
+                aria-checked={t.exclude_from_totals}
+                aria-label={
+                  t.exclude_from_totals
+                    ? `Incluir "${t.name}" nos cálculos`
+                    : `Ignorar "${t.name}" nos cálculos`
+                }
+                onClick={() => void toggleExclude(t.id, t.exclude_from_totals)}
+                style={
+                  t.exclude_from_totals ? TOGGLE_EXCLUDED_STYLE : TOGGLE_INCLUDED_STYLE
+                }
+              >
+                {t.exclude_from_totals ? "ignorado" : "incluído"}
+              </button>
             </li>
           ))}
         </ul>

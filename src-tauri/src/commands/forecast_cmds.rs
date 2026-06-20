@@ -165,7 +165,12 @@ pub(crate) async fn realized_annual_economia(
         "SELECT COALESCE(SUM(ABS(t.amount)), 0) FROM \"transaction\" t \
          LEFT JOIN account a ON a.id = t.to_account_id \
          WHERE t.date >= ?1 AND t.date < ?2 \
-           AND t.type='transfer' AND a.liquidity IN ('reserve','illiquid')",
+           AND t.type='transfer' AND a.liquidity IN ('reserve','illiquid') \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM transaction_tag tt2 \
+               JOIN tag tg ON tg.id = tt2.tag_id \
+               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
+           )",
     )
     .bind(&year_start)
     .bind(format!("{cur_ym}-01")) // 1º dia do mês corrente: range ≡ `substr(date,1,7) < 'YYYY-MM'` p/ ISO
@@ -355,7 +360,12 @@ pub(crate) async fn load_cashflow_events(
         "SELECT t.type, t.amount, t.date, COALESCE(t.payment_method,''), t.is_fixed, t.is_projection, \
                 COALESCE(a.liquidity,'') \
          FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
-         WHERE t.date > ?1 AND t.date <= ?2",
+         WHERE t.date > ?1 AND t.date <= ?2 \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM transaction_tag tt2 \
+               JOIN tag tg ON tg.id = tt2.tag_id \
+               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
+           )",
     )
     .bind(&today)
     .bind(&horizon)
@@ -411,7 +421,12 @@ pub(crate) async fn load_realized_month_events(
         "SELECT t.type, t.amount, t.date, COALESCE(t.payment_method,''), t.is_fixed, t.is_projection, \
                 COALESCE(a.liquidity,'') \
          FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
-         WHERE t.date >= ?1 AND t.date <= ?2",
+         WHERE t.date >= ?1 AND t.date <= ?2 \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM transaction_tag tt2 \
+               JOIN tag tg ON tg.id = tt2.tag_id \
+               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
+           )",
     )
     .bind(&start)
     .bind(&today)
@@ -723,7 +738,12 @@ pub(crate) async fn load_year_events(
         "SELECT t.type, t.amount, t.date, COALESCE(t.payment_method,''), t.is_fixed, t.is_projection, \
                 COALESCE(a.liquidity,'') \
          FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
-         WHERE t.date >= ?1 AND t.date < ?2",
+         WHERE t.date >= ?1 AND t.date < ?2 \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM transaction_tag tt2 \
+               JOIN tag tg ON tg.id = tt2.tag_id \
+               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
+           )",
     )
     .bind(format!("{year:04}-01-01"))
     .bind(format!("{}-01-01", year + 1))
