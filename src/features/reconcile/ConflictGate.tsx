@@ -6,8 +6,11 @@ import {
 } from "../../design-system/components/ApprovalDiffCard";
 import {
   getImportConflicts,
+  listenEvent,
   resolveImportConflict,
+  SYNC_DONE_EVENT,
   type ImportConflict,
+  type SyncDonePayload,
 } from "../../lib/api";
 import { invalidateCommands } from "../../lib/useCommand";
 import { formatBRL } from "../../lib/format";
@@ -43,6 +46,24 @@ export function ConflictGate({ onResolved }: { onResolved?: () => void }) {
       .catch(() => alive && setConflicts([]));
     return () => {
       alive = false;
+    };
+  }, []);
+
+  // Sync em segundo plano (plano 026): quando o backend conclui um import automático ele emite
+  // `neko://sync-done`. Re-derruba o cache de finanças (dashboard/grade/totais) e re-busca os
+  // conflitos para o badge aparecer sem ação do usuário. Cancela a assinatura no unmount (evita
+  // vazar o listener no HMR).
+  useEffect(() => {
+    let alive = true;
+    const unlistenPromise = listenEvent<SyncDonePayload>(SYNC_DONE_EVENT, () => {
+      invalidateCommands();
+      getImportConflicts()
+        .then((c) => alive && setConflicts(c))
+        .catch(() => undefined);
+    });
+    return () => {
+      alive = false;
+      void unlistenPromise.then((unlisten) => unlisten());
     };
   }, []);
 

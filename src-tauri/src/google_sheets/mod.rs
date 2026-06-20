@@ -133,6 +133,40 @@ impl SheetsClient {
         Ok(rows)
     }
 
+    /// Sonda os metadados do arquivo no Drive para detectar barato se a planilha mudou desde o último
+    /// import. Devolve a string RFC-3339 `modifiedTime` do endpoint `files.get` do Drive.
+    ///
+    /// Uma chamada ao Drive substitui N leituras do Sheets como sentinela de mudança — o
+    /// `spreadsheets.values.batchGet` completo só roda quando o `modifiedTime` avançou. Usa o scope
+    /// `drive.metadata.readonly` que o app já pede (oauth::pkce) — nenhum re-consentimento.
+    pub async fn get_file_modified_time(&self, file_id: &str) -> Result<String, String> {
+        let url =
+            format!("https://www.googleapis.com/drive/v3/files/{file_id}?fields=modifiedTime");
+        let resp = crate::http::send_with_retry(
+            crate::http::client()
+                .get(&url)
+                .bearer_auth(&self.token.access_token),
+        )
+        .await
+        .map_err(|e| format!("drive files.get error: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("Drive API error {status}: {body}"));
+        }
+
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("drive modifiedTime parse: {e}"))?;
+
+        json["modifiedTime"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| "modifiedTime field absent from Drive response".into())
+    }
+
     pub async fn get_sheet_metadata(
         &self,
         spreadsheet_id: &str,

@@ -8,14 +8,16 @@ mod http;
 mod oauth;
 mod recurrence;
 mod splits;
+mod sync_task;
 mod tags;
 
 use oauth::AppDataDir;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -119,6 +121,47 @@ pub fn run() {
                     return Err(std::io::Error::other(e).into());
                 }
             };
+
+            // Background read-side sync (plan 026, Phase 1: read-only — never touches
+            // write-back). Spawned after the pool + AppDataDir are managed. Clones happen
+            // before `app.manage(pool)` moves the pool into Tauri state. The shared
+            // SyncGuard serializes background and user-triggered imports (single-connection
+            // pool); the focus handler reuses the same guard so neither path overlaps.
+            let sync_pool = pool.clone();
+            let import_guard = Arc::new(sync_task::SyncGuard::new(()));
+            app.manage(import_guard.clone());
+
+            // Focus-triggered probe: fires when the user switches back to the app
+            // (e.g. from the spreadsheet in the browser). Debounced inside run_probe
+            // (MIN_FOCUS_DEBOUNCE_SECS), shared with the interval loop so neither bursts.
+            if let Some(window) = app.get_webview_window("main") {
+                let pool_focus = pool.clone();
+                let app_dir_focus = app_dir.clone();
+                let guard_focus = import_guard.clone();
+                let handle_focus = app.handle().clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::Focused(true) = event {
+                        let pool = pool_focus.clone();
+                        let app_dir = app_dir_focus.clone();
+                        let guard = guard_focus.clone();
+                        let handle = handle_focus.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(e) =
+                                sync_task::run_probe(&pool, &app_dir, &handle, &guard).await
+                            {
+                                eprintln!("[sync/focus] probe error: {e}");
+                            }
+                        });
+                    }
+                });
+            }
+
+            sync_task::spawn_background_sync(
+                sync_pool,
+                app_dir.clone(),
+                app.handle().clone(),
+                import_guard,
+            );
 
             app.manage(pool);
             Ok(())

@@ -96,10 +96,35 @@ pub async fn import_sheet_data(
             .await?;
     let client = SheetsClient::new(token);
 
+    import_one_tab(
+        pool.inner(),
+        &client,
+        &spreadsheet_id,
+        &sheet_name,
+        &profile_id,
+    )
+    .await
+}
+
+/// Pipeline completo de import de UMA aba-ano, partindo de um `SheetsClient` já autenticado.
+/// Extraído de `import_sheet_data` para que o comando (caminho do usuário) e a tarefa de sync em
+/// segundo plano reusem EXATAMENTE o mesmo pipeline (fetch → parse → checksum-skip → transação
+/// atômica → UPSERT + merge de 3 vias → diff-delete), sem reimplementar nada. Pula abas de métricas.
+pub(crate) async fn import_one_tab(
+    pool: &SqlitePool,
+    client: &SheetsClient,
+    spreadsheet_id: &str,
+    sheet_name: &str,
+    profile_id: &str,
+) -> Result<usize, String> {
+    if layout_detect::is_metric_tab(sheet_name) {
+        return Ok(0);
+    }
+
     // Grade usada inteira: a planilha real tem 12 blocos mensais até a coluna BO (~71
     // colunas) — um range A:Z cortaria JUNHO–DEZEMBRO em silêncio (spec 010, slice 0).
-    let range = quote_sheet(&sheet_name);
-    let values = client.get_sheet_values(&spreadsheet_id, &range).await?;
+    let range = quote_sheet(sheet_name);
+    let values = client.get_sheet_values(spreadsheet_id, &range).await?;
     let rows = values.values;
 
     if rows.len() < 3 {
@@ -109,10 +134,10 @@ pub async fn import_sheet_data(
     // Detecção de layout (leituras no pool). Quando NOVO, o INSERT do layout/mappings é adiado para
     // DENTRO da transação externa (tudo-ou-nada); guardamos os mappings gerados para o parse, já que
     // ainda não estarão visíveis por uma leitura no pool.
-    let (layout, new_mappings) = match import::get_layout_for_sheet(&pool, &sheet_name).await? {
+    let (layout, new_mappings) = match import::get_layout_for_sheet(pool, sheet_name).await? {
         Some(l) => (l, None),
         None => {
-            let detected = layout_detect::detect_layout(&rows, &sheet_name)?;
+            let detected = layout_detect::detect_layout(&rows, sheet_name)?;
             let mappings = layout_detect::generate_mappings(&detected);
             (detected, Some(mappings))
         }
@@ -127,14 +152,14 @@ pub async fn import_sheet_data(
             .filter(|m| m.is_active != 0)
             .map(|m| (m.target_field.clone(), m.block_offset))
             .collect(),
-        None => import::get_active_mappings_for_sheet(&pool, &sheet_name).await?,
+        None => import::get_active_mappings_for_sheet(pool, sheet_name).await?,
     };
 
     // Notas de célula = a descrição real de cada lançamento (quem/o quê/quanto por item). Sem
     // elas, o parser só tem fallback estrutural ("Entrada/Saída {data}"). Se a API de notas
     // falhar, os valores ainda entram, mas essas descrições não são tratadas como fonte canônica.
     let (notes, descriptions_trusted) =
-        match client.get_sheet_notes(&spreadsheet_id, &sheet_name).await {
+        match client.get_sheet_notes(spreadsheet_id, sheet_name).await {
             Ok(notes) => (notes, true),
             Err(_) => (Vec::new(), false),
         };
@@ -147,7 +172,7 @@ pub async fn import_sheet_data(
     // daria read-your-writes falso-negativo). Dataset idêntico ao último import → idempotente.
     let checksum = import::compute_import_checksum(&imported_rows, descriptions_trusted);
     if !imported_rows.is_empty()
-        && import::check_duplicate_import(&pool, &sheet_name, &checksum).await?
+        && import::check_duplicate_import(pool, sheet_name, &checksum).await?
     {
         return Ok(0);
     }
@@ -155,7 +180,7 @@ pub async fn import_sheet_data(
     // Captura a coluna Saldo (o saldo corrente do método) → semente da projeção + visão histórica.
     // Sem isto a semente era 0 e o saldo de hoje aparecia zerado. `get_balance_offset_for_sheet` é
     // leitura no pool; pode rodar antes de abrir a tx.
-    let balance_offset = import::get_balance_offset_for_sheet(&pool, &sheet_name).await?;
+    let balance_offset = import::get_balance_offset_for_sheet(pool, sheet_name).await?;
     let balances = import::parse_balance_series(&rows, &layout, balance_offset)?;
 
     // Transação externa única: layout + mappings + linhas + série de Saldo gravam tudo-ou-nada.
@@ -190,15 +215,15 @@ pub async fn import_sheet_data(
 
     let count = import::import_rows_with_options_in_tx(
         &mut tx,
-        &sheet_name,
+        sheet_name,
         &imported_rows,
-        &profile_id,
+        profile_id,
         options,
         &checksum,
     )
     .await?;
 
-    import::store_balance_series_in_tx(&mut tx, &sheet_name, &balances).await?;
+    import::store_balance_series_in_tx(&mut tx, sheet_name, &balances).await?;
 
     tx.commit()
         .await

@@ -11,33 +11,34 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 
 ## Execution order & status
 
-| Plan | Title                                                                               | Priority | Effort | Depends on | Status                     |
-| ---- | ----------------------------------------------------------------------------------- | -------- | ------ | ---------- | -------------------------- |
-| 001  | Fix side-by-side Economia sheet layout (import + write-back)                        | P1       | S–M    | —          | DONE                       |
-| 002  | Make the sheet import atomic (single SQLite transaction)                            | P1       | S–M    | —          | DONE                       |
-| 003  | Allow manual Economia/transfer launch (engine + form)                               | P1       | M      | —          | DONE                       |
-| 004  | Import owner splits and credit payment method                                       | P1       | L      | 002        | DONE                       |
-| 005  | Safe-to-spend guardrail uses registered Economia, not net-surplus proxy             | P2       | M      | —          | DONE                       |
-| 006  | Calibrate "operate" phase + reserve baseline to the method                          | P2       | S      | —          | DONE                       |
-| 007  | Correctness: engine/date edge cases + effect/transaction hygiene                    | P2       | S      | —          | DONE                       |
-| 008  | Dashboard: single forecast source + unified cache key                               | P1       | S–M    | —          | DONE                       |
-| 009  | Bulk-insert import + index-friendly date filters                                    | P2       | S–M    | —          | DONE                       |
-| 010  | Characterization tests for money/forecast SQL helpers                               | P2       | M      | —          | DONE                       |
-| 011  | Split the `commands.rs` god-module + dedupe the row mapper                          | P2       | L      | 010        | DONE                       |
-| 012  | Remove dead code + unify duplicate money formatters                                 | P2       | S      | —          | DONE                       |
-| 013  | Security hardening: token fail-closed, loopback timeout, CSP, privacy-scan          | P2       | S      | —          | DONE                       |
-| 014  | Documentation truth fixes                                                           | P2       | S      | —          | DONE                       |
-| 015  | Wire built-but-unwired UI: edit/delete transaction, recurrence series, owner totals | P1       | M      | —          | DONE                       |
-| 016  | Navigation/IA restructure + dashboard de-duplication                                | P1       | M      | —          | DONE                       |
-| 017  | Accessibility WCAG batch (contrast + landmarks)                                     | P1       | S      | —          | DONE                       |
-| 018  | Motion 2026: stagger static screens + token-driven durations                        | P2       | S–M    | —          | DONE                       |
-| 019  | SPIKE: first-class invoice (credit-bill) entity                                     | —        | spike  | 004        | TODO                       |
-| 020  | SPIKE: what-if / scenario branching of the forecast                                 | —        | spike  | —          | TODO                       |
-| 021  | SPIKE: real-time two-way Google Sheets sync                                         | —        | spike  | 001, 002   | SPIKE DONE — Phase 1 ready |
-| 022  | Remove the credit-accumulator fork residue (stay faithful: credit is a lump)        | P2       | M      | —          | DONE                       |
-| 023  | Rewrite note-marker convention → method-faithful #dividir:/#reembolso: + net-zero   | P1       | M      | —          | DONE                       |
-| 024  | SPIKE: decide the fate of the vestigial daily_checkin table                         | —        | spike  | —          | TODO                       |
-| 025  | Minor fidelity polish (patrimônio de-emphasis, dead category prop, reserve ADR)     | P3       | S      | —          | DONE                       |
+| Plan | Title                                                                                  | Priority | Effort | Depends on | Status                     |
+| ---- | -------------------------------------------------------------------------------------- | -------- | ------ | ---------- | -------------------------- |
+| 001  | Fix side-by-side Economia sheet layout (import + write-back)                           | P1       | S–M    | —          | DONE                       |
+| 002  | Make the sheet import atomic (single SQLite transaction)                               | P1       | S–M    | —          | DONE                       |
+| 003  | Allow manual Economia/transfer launch (engine + form)                                  | P1       | M      | —          | DONE                       |
+| 004  | Import owner splits and credit payment method                                          | P1       | L      | 002        | DONE                       |
+| 005  | Safe-to-spend guardrail uses registered Economia, not net-surplus proxy                | P2       | M      | —          | DONE                       |
+| 006  | Calibrate "operate" phase + reserve baseline to the method                             | P2       | S      | —          | DONE                       |
+| 007  | Correctness: engine/date edge cases + effect/transaction hygiene                       | P2       | S      | —          | DONE                       |
+| 008  | Dashboard: single forecast source + unified cache key                                  | P1       | S–M    | —          | DONE                       |
+| 009  | Bulk-insert import + index-friendly date filters                                       | P2       | S–M    | —          | DONE                       |
+| 010  | Characterization tests for money/forecast SQL helpers                                  | P2       | M      | —          | DONE                       |
+| 011  | Split the `commands.rs` god-module + dedupe the row mapper                             | P2       | L      | 010        | DONE                       |
+| 012  | Remove dead code + unify duplicate money formatters                                    | P2       | S      | —          | DONE                       |
+| 013  | Security hardening: token fail-closed, loopback timeout, CSP, privacy-scan             | P2       | S      | —          | DONE                       |
+| 014  | Documentation truth fixes                                                              | P2       | S      | —          | DONE                       |
+| 015  | Wire built-but-unwired UI: edit/delete transaction, recurrence series, owner totals    | P1       | M      | —          | DONE                       |
+| 016  | Navigation/IA restructure + dashboard de-duplication                                   | P1       | M      | —          | DONE                       |
+| 017  | Accessibility WCAG batch (contrast + landmarks)                                        | P1       | S      | —          | DONE                       |
+| 018  | Motion 2026: stagger static screens + token-driven durations                           | P2       | S–M    | —          | DONE                       |
+| 019  | SPIKE: first-class invoice (credit-bill) entity                                        | —        | spike  | 004        | TODO                       |
+| 020  | SPIKE: what-if / scenario branching of the forecast                                    | —        | spike  | —          | TODO                       |
+| 021  | SPIKE: real-time two-way Google Sheets sync                                            | —        | spike  | 001, 002   | SPIKE DONE — Phase 1 ready |
+| 022  | Remove the credit-accumulator fork residue (stay faithful: credit is a lump)           | P2       | M      | —          | DONE                       |
+| 023  | Rewrite note-marker convention → method-faithful #dividir:/#reembolso: + net-zero      | P1       | M      | —          | DONE                       |
+| 024  | SPIKE: decide the fate of the vestigial daily_checkin table                            | —        | spike  | —          | TODO                       |
+| 025  | Minor fidelity polish (patrimônio de-emphasis, dead category prop, reserve ADR)        | P3       | S      | —          | DONE                       |
+| 026  | Real-time spreadsheet sync — Phase 1 (read-side): modifiedTime probe + background poll | —        | L      | 001, 002   | DONE                       |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale)
 

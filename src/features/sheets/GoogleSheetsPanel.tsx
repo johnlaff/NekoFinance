@@ -62,6 +62,10 @@ interface LastImport {
 }
 
 const LAST_IMPORT_KEY = "sheets_last_import";
+/** Sync em segundo plano (plano 026): ligado por padrão, separado do "Re-sincronizar" manual. */
+const BG_SYNC_KEY = "sheets_bg_sync_enabled";
+/** Client id do OAuth persistido para a tarefa de sync poder renovar o token sem o estado da UI. */
+const CLIENT_ID_KEY = "sheets_client_id";
 
 // Estado do fluxo de import (conectar → escolher → prévia → mapear) agrupado num reducer, em vez de
 // doze useState relacionados. Toda a lógica vive no hook `useSheetImport`; as views são puras.
@@ -82,6 +86,8 @@ interface SheetState {
   step: Step;
   /** Carregado de app_setting no mount; alimenta o atalho "Re-sincronizar". */
   lastImport: LastImport | null;
+  /** Atualização automática em segundo plano (plano 026). Padrão ligado; separado do re-sync manual. */
+  bgSyncEnabled: boolean;
 }
 
 /** Texto cru do erro do backend (o `invoke` rejeita com a String de erro do Rust). */
@@ -106,6 +112,7 @@ const initialSheetState: SheetState = {
   errorDetail: null,
   step: "connect",
   lastImport: null,
+  bgSyncEnabled: true,
 };
 
 type SheetAction =
@@ -141,6 +148,7 @@ interface SheetImport {
   handleImportAll: () => Promise<void>;
   handleResync: () => Promise<void>;
   handleBackToPick: () => void;
+  handleToggleBgSync: (enabled: boolean) => Promise<void>;
 }
 
 /** Estado + ações do import do Sheets. Hook (não componente) → toda a lógica fica fora da árvore. */
@@ -307,8 +315,23 @@ function useSheetImport(
     set({ lastImport: last });
     try {
       await setAppSetting(LAST_IMPORT_KEY, JSON.stringify(last));
+      // O client id vive no build do frontend; a tarefa de sync em segundo plano (sem estado da UI)
+      // precisa dele para renovar o token. Persistimos junto da última importação.
+      if (GOOGLE_CLIENT_ID) await setAppSetting(CLIENT_ID_KEY, GOOGLE_CLIENT_ID);
     } catch {
       // Best-effort: o atalho some até a próxima importação, sem quebrar o import.
+    }
+  };
+
+  // Liga/desliga a atualização automática em segundo plano (plano 026). Persistido em app_setting;
+  // independente do "Re-sincronizar" manual, que continua sempre disponível.
+  const handleToggleBgSync = async (enabled: boolean) => {
+    set({ bgSyncEnabled: enabled });
+    try {
+      await setAppSetting(BG_SYNC_KEY, enabled ? "true" : "false");
+    } catch {
+      // Best-effort: reverte o visual se a gravação falhar.
+      set({ bgSyncEnabled: !enabled });
     }
   };
 
@@ -475,6 +498,13 @@ function useSheetImport(
         }
       })
       .catch(() => undefined);
+    // Estado da atualização automática (plano 026). Chave ausente = ligado por padrão.
+    getAppSetting(BG_SYNC_KEY)
+      .then((raw) => {
+        if (!alive) return;
+        dispatch({ type: "set", patch: { bgSyncEnabled: raw !== "false" } });
+      })
+      .catch(() => undefined);
     return () => {
       alive = false;
     };
@@ -495,6 +525,7 @@ function useSheetImport(
     handleImportAll,
     handleResync,
     handleBackToPick,
+    handleToggleBgSync,
   };
 }
 
@@ -506,6 +537,7 @@ function PickStep({
   onResync,
   onImportEconomia,
   onImportAll,
+  onToggleBgSync,
 }: {
   state: SheetState;
   onSpreadsheetSelect: (id: string) => void;
@@ -514,6 +546,7 @@ function PickStep({
   onResync: () => void;
   onImportEconomia: () => void;
   onImportAll: () => void;
+  onToggleBgSync: (enabled: boolean) => void;
 }) {
   const {
     spreadsheets,
@@ -525,6 +558,7 @@ function PickStep({
     importing,
     importResult,
     lastImport,
+    bgSyncEnabled,
   } = state;
   return (
     <div className="gs-step">
@@ -542,6 +576,16 @@ function PickStep({
             )}
             {importing ? "Sincronizando…" : "Re-sincronizar"}
           </Button>
+          {/* Atualização automática em segundo plano (plano 026): controle secundário,
+              separado do botão manual acima. Checkbox nativo = acessível sem componente custom. */}
+          <label className="gs-bgsync">
+            <input
+              type="checkbox"
+              checked={bgSyncEnabled}
+              onChange={(e) => onToggleBgSync(e.target.checked)}
+            />
+            <span className="gs-bgsync__label">Atualização automática</span>
+          </label>
           <span className="gs-label" style={{ marginTop: "var(--space-2)" }}>
             Ou importar outra planilha/aba
           </span>
@@ -904,6 +948,7 @@ export function GoogleSheetsPanel({
           onResync={() => void sheet.handleResync()}
           onImportEconomia={() => void sheet.handleImportEconomia()}
           onImportAll={() => void sheet.handleImportAll()}
+          onToggleBgSync={(enabled) => void sheet.handleToggleBgSync(enabled)}
         />
       )}
 
