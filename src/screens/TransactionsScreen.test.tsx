@@ -1,9 +1,9 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { TransactionsScreen } from "./TransactionsScreen";
 import { filterTransactions } from "./transactionsFilter";
-import { TXNS, mockCommands, mockInvoke } from "../test/commands";
+import { TXNS, RECURRING_TXN, mockCommands, mockInvoke } from "../test/commands";
 import type { Tag } from "../lib/api";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -134,5 +134,136 @@ describe("TransactionsScreen", () => {
     expect(
       screen.getByRole("button", { name: "Categoria demo A" }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("TransactionsScreen — apagar/editar (ações da linha)", () => {
+  let confirmSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    mockInvoke.mockReset();
+    confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    confirmSpy.mockRestore();
+  });
+
+  it("apaga um lançamento único pelo painel de ações (caminho feliz)", async () => {
+    const user = userEvent.setup();
+    mockCommands({
+      get_recent_transactions: TXNS,
+      list_tags_cmd: [],
+      delete_transaction_cmd: null,
+    });
+    render(<TransactionsScreen query="" onQueryChange={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getByText("Despesa demo variável")).toBeInTheDocument();
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /Ações para Despesa demo variável/ }),
+    );
+    await user.click(screen.getByRole("button", { name: "Apagar" }));
+
+    expect(confirmSpy).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith("delete_transaction_cmd", {
+        id: "t1",
+      });
+    });
+  });
+
+  it("mostra um alerta e mantém a linha quando apagar falha", async () => {
+    const user = userEvent.setup();
+    mockCommands({
+      get_recent_transactions: TXNS,
+      list_tags_cmd: [],
+      delete_transaction_cmd: new Error("db locked"),
+    });
+    render(<TransactionsScreen query="" onQueryChange={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getByText("Despesa demo variável")).toBeInTheDocument();
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /Ações para Despesa demo variável/ }),
+    );
+    await user.click(screen.getByRole("button", { name: "Apagar" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(/O banco local está ocupado/);
+    });
+    // A linha continua presente (não foi removida da lista).
+    expect(screen.getByText("Despesa demo variável")).toBeInTheDocument();
+  });
+
+  it("apaga toda a série quando o lançamento é recorrente e o usuário confirma 'toda a série'", async () => {
+    const user = userEvent.setup();
+    // window.confirm retorna true → "Apagar TODA a série" → delete_series_all_cmd.
+    mockCommands({
+      get_recent_transactions: [RECURRING_TXN],
+      list_tags_cmd: [],
+      delete_series_all_cmd: 3,
+    });
+    render(<TransactionsScreen query="" onQueryChange={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getByText("Compromisso recorrente demo")).toBeInTheDocument();
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /Ações para Compromisso recorrente demo/ }),
+    );
+    await user.click(screen.getByRole("button", { name: "Apagar da série" }));
+
+    await waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith("delete_series_all_cmd", {
+        recurrenceId: "rec-uuid-abc",
+      });
+    });
+  });
+
+  it("apaga apenas deste ponto em diante quando o usuário recusa 'toda a série'", async () => {
+    const user = userEvent.setup();
+    // 1º confirm (toda a série) → false; 2º confirm (este e futuros) → true → delete_series_from_cmd.
+    confirmSpy.mockReturnValueOnce(false).mockReturnValueOnce(true);
+    mockCommands({
+      get_recent_transactions: [RECURRING_TXN],
+      list_tags_cmd: [],
+      delete_series_from_cmd: 1,
+    });
+    render(<TransactionsScreen query="" onQueryChange={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getByText("Compromisso recorrente demo")).toBeInTheDocument();
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /Ações para Compromisso recorrente demo/ }),
+    );
+    await user.click(screen.getByRole("button", { name: "Apagar da série" }));
+
+    await waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith("delete_series_from_cmd", {
+        transactionId: "rec-uuid-abc:2",
+      });
+    });
+  });
+
+  it("fecha o painel de ações ao clicar no botão uma segunda vez", async () => {
+    const user = userEvent.setup();
+    mockCommands({ get_recent_transactions: TXNS, list_tags_cmd: [] });
+    render(<TransactionsScreen query="" onQueryChange={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getByText("Despesa demo variável")).toBeInTheDocument();
+    });
+
+    const actionBtn = screen.getByRole("button", {
+      name: /Ações para Despesa demo variável/,
+    });
+    await user.click(actionBtn);
+    expect(screen.getByRole("button", { name: "Apagar" })).toBeInTheDocument();
+
+    await user.click(actionBtn);
+    expect(screen.queryByRole("button", { name: "Apagar" })).not.toBeInTheDocument();
   });
 });

@@ -1,5 +1,5 @@
 import { Fragment, useReducer } from "react";
-import { Plus, Search, Tag as TagIcon } from "lucide-react";
+import { MoreHorizontal, Plus, Search, Tag as TagIcon } from "lucide-react";
 import { Badge } from "../design-system/components/Badge";
 import { Button } from "../design-system/components/Button";
 import { EmptyState } from "../design-system/components/EmptyState";
@@ -8,6 +8,9 @@ import { ProvBadge } from "../design-system/components/ProvBadge";
 import { SegmentedControl } from "../design-system/components/SegmentedControl";
 import { MovBadge, type MovKind } from "../design-system/components/MovBadge";
 import {
+  deleteSeriesAll,
+  deleteSeriesFrom,
+  deleteTransaction,
   getRecentTransactions,
   isTauri,
   listTags,
@@ -20,7 +23,7 @@ import { fmtDate, monthNamePtBR } from "../lib/format";
 import { Money } from "../design-system/components/Money";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { safeErrorMessage } from "../lib/errors";
-import { NewTransactionForm } from "./NewTransactionForm";
+import { NewTransactionForm, type TransactionEditValues } from "./NewTransactionForm";
 import { ConflictGate } from "../features/reconcile/ConflictGate";
 import { filterTransactions, type TransactionScope } from "./transactionsFilter";
 
@@ -43,6 +46,24 @@ const METHOD_LABELS: Record<string, string> = {
   cash: "Dinheiro",
 };
 
+// Estilos estáticos hoistados (não recriam por render — convenção do React Compiler/Doctor).
+const ACTION_CELL_STYLE: React.CSSProperties = {
+  width: 32,
+  textAlign: "right",
+  paddingRight: 8,
+};
+
+const ACTION_PANEL_STYLE: React.CSSProperties = {
+  display: "flex",
+  gap: "var(--space-3)",
+  flexWrap: "wrap",
+  alignItems: "center",
+};
+
+const EDIT_FORM_WRAP_STYLE: React.CSSProperties = {
+  marginBottom: "var(--space-4)",
+};
+
 /** Rótulo amigável do método de pagamento (Débito, PIX…); entrada sem método vira "Entrada". */
 function methodLabel(t: TransactionRow): string {
   if (t.payment_method) return METHOD_LABELS[t.payment_method] ?? t.payment_method;
@@ -60,6 +81,28 @@ function movKind(t: TransactionRow): MovKind {
   if (t.is_fixed) return "saida";
   if (t.payment_method === "credit") return "cartao";
   return "diario";
+}
+
+/**
+ * Recupera o id de recorrência a partir do id de um lançamento ("uuid:index" → "uuid").
+ * Sem dois-pontos = lançamento único (null). Evita ida ao backend só para saber se é série.
+ */
+function recurrenceIdOf(id: string): string | null {
+  return id.includes(":") ? id.slice(0, id.lastIndexOf(":")) : null;
+}
+
+/** Converte uma linha do Livro-razão nos valores que o form precisa para entrar em modo edição. */
+function toEditValues(t: TransactionRow): TransactionEditValues {
+  return {
+    id: t.id,
+    type: t.type,
+    amount: Math.abs(t.amount),
+    description: t.description ?? "",
+    date: t.date,
+    payment_method: t.payment_method || null,
+    is_fixed: t.is_fixed,
+    recurrence_id: recurrenceIdOf(t.id),
+  };
 }
 
 /** Chip colorido de uma tag anexada (somente leitura) no Livro-razão. */
@@ -90,6 +133,9 @@ interface TransactionsUiState {
   tagEditId: string | null;
   tagSaving: string | null;
   tagError: string | null;
+  actionRowId: string | null; // qual linha tem o painel de ações aberto
+  actionError: string | null; // último erro de uma ação apagar/editar
+  editingTxn: TransactionRow | null; // lançamento em edição (form inline)
 }
 
 type TransactionsUiAction =
@@ -100,7 +146,12 @@ type TransactionsUiAction =
   | { type: "toggleTagEditor"; id: string }
   | { type: "tagSaveStart"; saveKey: string }
   | { type: "tagSaveSuccess" }
-  | { type: "tagSaveError"; error: string };
+  | { type: "tagSaveError"; error: string }
+  | { type: "toggleActionRow"; id: string }
+  | { type: "actionError"; error: string }
+  | { type: "actionClear" }
+  | { type: "editTxn"; txn: TransactionRow }
+  | { type: "editDone" };
 
 const INITIAL_UI_STATE: TransactionsUiState = {
   scope: "all",
@@ -109,6 +160,9 @@ const INITIAL_UI_STATE: TransactionsUiState = {
   tagEditId: null,
   tagSaving: null,
   tagError: null,
+  actionRowId: null,
+  actionError: null,
+  editingTxn: null,
 };
 
 function transactionsUiReducer(
@@ -141,7 +195,217 @@ function transactionsUiReducer(
       };
     case "tagSaveError":
       return { ...state, tagSaving: null, tagError: action.error };
+    case "toggleActionRow":
+      return {
+        ...state,
+        actionRowId: state.actionRowId === action.id ? null : action.id,
+        actionError: null,
+      };
+    case "actionError":
+      return { ...state, actionError: action.error };
+    case "actionClear":
+      return { ...state, actionRowId: null, actionError: null };
+    case "editTxn":
+      return { ...state, editingTxn: action.txn, actionRowId: null };
+    case "editDone":
+      return {
+        ...state,
+        editingTxn: null,
+        actionRowId: null,
+        reloadKey: state.reloadKey + 1,
+      };
   }
+}
+
+/** Linha principal de um lançamento no Livro-razão (data, tipo, descrição, método, valor, ações). */
+function LedgerDataRow({
+  t,
+  tagEditOpen,
+  actionOpen,
+  onToggleTagEditor,
+  onToggleAction,
+}: {
+  t: TransactionRow;
+  tagEditOpen: boolean;
+  actionOpen: boolean;
+  onToggleTagEditor: () => void;
+  onToggleAction: () => void;
+}) {
+  const generic = !!t.description && GENERIC_DESC.test(t.description);
+  return (
+    <tr className={t.is_projection ? "projection" : ""}>
+      <td>{fmtDate(t.date)}</td>
+      <td>
+        <MovBadge kind={movKind(t)} showLabel size={16} />
+      </td>
+      <td>
+        {t.description ? (
+          <span
+            title={
+              generic
+                ? "Sem nota na célula — reimporte via Google Sheets para trazer a descrição real"
+                : undefined
+            }
+            style={
+              generic ? { color: "var(--text-faint)", fontStyle: "italic" } : undefined
+            }
+          >
+            {t.description}
+          </span>
+        ) : (
+          "—"
+        )}{" "}
+        <ProvBadge provenance={t.provenance} />
+        {t.owners.length >= 2 && (
+          <span
+            style={{
+              display: "inline-flex",
+              gap: 4,
+              marginLeft: 6,
+              verticalAlign: "middle",
+            }}
+          >
+            {t.owners.map((name) => (
+              <OwnerChip key={name} name={name} />
+            ))}
+          </span>
+        )}
+        {t.tags.map((tag) => (
+          <TagChip key={tag.id} tag={tag} />
+        ))}
+        <button
+          type="button"
+          className="txn-tag-btn"
+          aria-label={`Editar tags de ${t.description || "lançamento"}`}
+          aria-expanded={tagEditOpen}
+          onClick={onToggleTagEditor}
+        >
+          <TagIcon size={13} strokeWidth={1.75} />
+        </button>
+      </td>
+      <td>
+        <span className="txn-method">{methodLabel(t)}</span>
+      </td>
+      <td style={{ textAlign: "right" }}>
+        {t.type === "income" ? (
+          <Money cents={Math.abs(t.amount)} size="sm" sign="auto" />
+        ) : (
+          <Money cents={-Math.abs(t.amount)} size="sm" sign="auto" />
+        )}
+      </td>
+      <td style={ACTION_CELL_STYLE}>
+        <button
+          type="button"
+          className="txn-tag-btn"
+          aria-label={`Ações para ${t.description || "lançamento"}`}
+          aria-expanded={actionOpen}
+          onClick={onToggleAction}
+        >
+          <MoreHorizontal size={13} strokeWidth={1.75} />
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+/** Linha-painel de ações (Editar / Apagar) de um lançamento, aberta sob a sua linha. */
+function ActionPanelRow({
+  t,
+  actionError,
+  onEdit,
+  onDeleteOne,
+  onDeleteSeries,
+}: {
+  t: TransactionRow;
+  actionError: string | null;
+  onEdit: () => void;
+  onDeleteOne: () => void;
+  onDeleteSeries: () => void;
+}) {
+  return (
+    <tr className="txn-tag-editor">
+      <td colSpan={6}>
+        {actionError ? (
+          <p className="txs-inline-error" role="alert">
+            {actionError}
+          </p>
+        ) : null}
+        <div style={ACTION_PANEL_STYLE}>
+          <Button size="sm" variant="ghost" onClick={onEdit}>
+            Editar
+          </Button>
+          {recurrenceIdOf(t.id) ? (
+            <Button size="sm" variant="ghost" onClick={onDeleteSeries}>
+              Apagar da série
+            </Button>
+          ) : (
+            <Button size="sm" variant="ghost" onClick={onDeleteOne}>
+              Apagar
+            </Button>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+/** Linha-painel do editor de tags de um lançamento, aberta sob a sua linha. */
+function TagEditorRow({
+  t,
+  allTags,
+  tagSaving,
+  tagError,
+  onToggleTag,
+}: {
+  t: TransactionRow;
+  allTags: Tag[];
+  tagSaving: string | null;
+  tagError: string | null;
+  onToggleTag: (tagId: string) => void;
+}) {
+  return (
+    <tr className="txn-tag-editor">
+      <td colSpan={6}>
+        {allTags.length === 0 ? (
+          <span style={{ color: "var(--text-muted)" }}>
+            Crie tags na aba Tags para classificar este lançamento.
+          </span>
+        ) : (
+          <>
+            {tagError ? (
+              <p className="txs-inline-error" role="alert">
+                {tagError}
+              </p>
+            ) : null}
+            <span className="txn-tag-picker">
+              {allTags.map((tag) => {
+                const on = t.tags.some((x) => x.id === tag.id);
+                const saving = tagSaving === `${t.id}:${tag.id}`;
+                return (
+                  <button
+                    type="button"
+                    key={tag.id}
+                    aria-pressed={on}
+                    className={`txn-tag-opt ${on ? "is-on" : ""}`}
+                    disabled={tagSaving !== null}
+                    onClick={() => onToggleTag(tag.id)}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="txn-tag-dot"
+                      style={{ background: tag.color }}
+                    />
+                    {tag.emoji ? `${tag.emoji} ` : ""}
+                    {saving ? "Salvando…" : tag.name}
+                  </button>
+                );
+              })}
+            </span>
+          </>
+        )}
+      </td>
+    </tr>
+  );
 }
 
 export function TransactionsScreen({
@@ -197,6 +461,73 @@ export function TransactionsScreen({
   function handleReload() {
     invalidateCommands();
     dispatchUi({ type: "reload" });
+  }
+
+  /** Fecha o form de edição inline e recarrega a lista. */
+  function handleSaved() {
+    invalidateCommands();
+    dispatchUi({ type: "editDone" });
+  }
+
+  /** Apaga um lançamento único (não recorrente), com confirmação. */
+  async function handleDeleteOne(t: TransactionRow) {
+    if (
+      !window.confirm(
+        `Apagar "${t.description || "este lançamento"}"? Esta ação não pode ser desfeita.`,
+      )
+    )
+      return;
+    try {
+      await deleteTransaction(t.id);
+      invalidateCommands();
+      dispatchUi({ type: "reload" });
+      dispatchUi({ type: "actionClear" });
+    } catch (e) {
+      dispatchUi({
+        type: "actionError",
+        error: safeErrorMessage(e, "Não foi possível apagar. Tente novamente."),
+      });
+    }
+  }
+
+  /**
+   * Apaga uma ocorrência de série recorrente. Oferece três escolhas via dois confirms:
+   * toda a série, deste ponto em diante, ou só esta ocorrência.
+   */
+  async function handleDeleteSeries(t: TransactionRow) {
+    const recId = recurrenceIdOf(t.id);
+    if (!recId) {
+      dispatchUi({
+        type: "actionError",
+        error: "Lançamento não pertence a uma série.",
+      });
+      return;
+    }
+    const all = window.confirm(
+      "Apagar TODA a série recorrente?\n\nOK = apagar a série inteira\nCancela = escolher só este ou os futuros",
+    );
+    try {
+      if (all) {
+        await deleteSeriesAll(recId);
+      } else {
+        const fromHere = window.confirm(
+          "OK = apagar este e todos os futuros da série.\nCancela = apagar somente este.",
+        );
+        if (fromHere) {
+          await deleteSeriesFrom(t.id);
+        } else {
+          await deleteTransaction(t.id);
+        }
+      }
+      invalidateCommands();
+      dispatchUi({ type: "reload" });
+      dispatchUi({ type: "actionClear" });
+    } catch (e) {
+      dispatchUi({
+        type: "actionError",
+        error: safeErrorMessage(e, "Não foi possível apagar. Tente novamente."),
+      });
+    }
   }
 
   // React Compiler memoizes; no manual useMemo needed.
@@ -288,6 +619,15 @@ export function TransactionsScreen({
         </div>
       )}
 
+      {ui.editingTxn && (
+        <div style={EDIT_FORM_WRAP_STYLE}>
+          <NewTransactionForm
+            initialValues={toEditValues(ui.editingTxn)}
+            onSaved={handleSaved}
+          />
+        </div>
+      )}
+
       <div className="dash-card">
         <div className="dash-card__body" style={{ padding: 0 }}>
           {visible.length === 0 ? (
@@ -309,129 +649,50 @@ export function TransactionsScreen({
                   <th scope="col">Descrição</th>
                   <th scope="col">Método</th>
                   <th scope="col">Valor</th>
+                  <th scope="col" aria-label="Ações" />
                 </tr>
               </thead>
               <tbody>
                 {visible.map((t, i) => {
                   const ym = t.date.slice(0, 7);
                   const showMonth = i === 0 || visible[i - 1]!.date.slice(0, 7) !== ym;
-                  const generic = !!t.description && GENERIC_DESC.test(t.description);
                   return (
                     <Fragment key={t.id}>
                       {showMonth && (
                         <tr className="txn-month-sep">
-                          <th scope="colgroup" colSpan={5}>
+                          <th scope="colgroup" colSpan={6}>
                             {monthSepLabel(ym)}
                           </th>
                         </tr>
                       )}
-                      <tr className={t.is_projection ? "projection" : ""}>
-                        <td>{fmtDate(t.date)}</td>
-                        <td>
-                          <MovBadge kind={movKind(t)} showLabel size={16} />
-                        </td>
-                        <td>
-                          {t.description ? (
-                            <span
-                              title={
-                                generic
-                                  ? "Sem nota na célula — reimporte via Google Sheets para trazer a descrição real"
-                                  : undefined
-                              }
-                              style={
-                                generic
-                                  ? { color: "var(--text-faint)", fontStyle: "italic" }
-                                  : undefined
-                              }
-                            >
-                              {t.description}
-                            </span>
-                          ) : (
-                            "—"
-                          )}{" "}
-                          <ProvBadge provenance={t.provenance} />
-                          {t.owners.length >= 2 && (
-                            <span
-                              style={{
-                                display: "inline-flex",
-                                gap: 4,
-                                marginLeft: 6,
-                                verticalAlign: "middle",
-                              }}
-                            >
-                              {t.owners.map((name) => (
-                                <OwnerChip key={name} name={name} />
-                              ))}
-                            </span>
-                          )}
-                          {t.tags.map((tag) => (
-                            <TagChip key={tag.id} tag={tag} />
-                          ))}
-                          <button
-                            type="button"
-                            className="txn-tag-btn"
-                            aria-label={`Editar tags de ${t.description || "lançamento"}`}
-                            aria-expanded={ui.tagEditId === t.id}
-                            onClick={() =>
-                              dispatchUi({ type: "toggleTagEditor", id: t.id })
-                            }
-                          >
-                            <TagIcon size={13} strokeWidth={1.75} />
-                          </button>
-                        </td>
-                        <td>
-                          <span className="txn-method">{methodLabel(t)}</span>
-                        </td>
-                        <td style={{ textAlign: "right" }}>
-                          {t.type === "income" ? (
-                            <Money cents={Math.abs(t.amount)} size="sm" sign="auto" />
-                          ) : (
-                            <Money cents={-Math.abs(t.amount)} size="sm" sign="auto" />
-                          )}
-                        </td>
-                      </tr>
+                      <LedgerDataRow
+                        t={t}
+                        tagEditOpen={ui.tagEditId === t.id}
+                        actionOpen={ui.actionRowId === t.id}
+                        onToggleTagEditor={() =>
+                          dispatchUi({ type: "toggleTagEditor", id: t.id })
+                        }
+                        onToggleAction={() =>
+                          dispatchUi({ type: "toggleActionRow", id: t.id })
+                        }
+                      />
+                      {ui.actionRowId === t.id && (
+                        <ActionPanelRow
+                          t={t}
+                          actionError={ui.actionError}
+                          onEdit={() => dispatchUi({ type: "editTxn", txn: t })}
+                          onDeleteOne={() => void handleDeleteOne(t)}
+                          onDeleteSeries={() => void handleDeleteSeries(t)}
+                        />
+                      )}
                       {ui.tagEditId === t.id && (
-                        <tr className="txn-tag-editor">
-                          <td colSpan={5}>
-                            {allTags.length === 0 ? (
-                              <span style={{ color: "var(--text-muted)" }}>
-                                Crie tags na aba Tags para classificar este lançamento.
-                              </span>
-                            ) : (
-                              <>
-                                {ui.tagError ? (
-                                  <p className="txs-inline-error" role="alert">
-                                    {ui.tagError}
-                                  </p>
-                                ) : null}
-                                <span className="txn-tag-picker">
-                                  {allTags.map((tag) => {
-                                    const on = t.tags.some((x) => x.id === tag.id);
-                                    const saving = ui.tagSaving === `${t.id}:${tag.id}`;
-                                    return (
-                                      <button
-                                        type="button"
-                                        key={tag.id}
-                                        aria-pressed={on}
-                                        className={`txn-tag-opt ${on ? "is-on" : ""}`}
-                                        disabled={ui.tagSaving !== null}
-                                        onClick={() => void toggleTag(t, tag.id)}
-                                      >
-                                        <span
-                                          aria-hidden="true"
-                                          className="txn-tag-dot"
-                                          style={{ background: tag.color }}
-                                        />
-                                        {tag.emoji ? `${tag.emoji} ` : ""}
-                                        {saving ? "Salvando…" : tag.name}
-                                      </button>
-                                    );
-                                  })}
-                                </span>
-                              </>
-                            )}
-                          </td>
-                        </tr>
+                        <TagEditorRow
+                          t={t}
+                          allTags={allTags}
+                          tagSaving={ui.tagSaving}
+                          tagError={ui.tagError}
+                          onToggleTag={(tagId) => void toggleTag(t, tagId)}
+                        />
                       )}
                     </Fragment>
                   );

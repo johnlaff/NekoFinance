@@ -271,6 +271,27 @@ export function createTransaction(input: {
   return invoke("create_transaction", input);
 }
 
+/** Apaga um lançamento manual pelo id. Importados da planilha são rejeitados pelo backend. */
+export function deleteTransaction(id: string): Promise<void> {
+  return invoke("delete_transaction_cmd", { id });
+}
+
+/** Edita um lançamento manual (tipo, valor, descrição, método, fixo, data). `txnType` precisa
+ * viajar: trocar entrada↔saída muda renda↔despesa (sinal no forecast). */
+export function updateTransaction(
+  id: string,
+  edit: {
+    txnType: string;
+    amountCents: number;
+    description: string | null;
+    paymentMethod: string | null;
+    isFixed: boolean;
+    date: string;
+  },
+): Promise<void> {
+  return invoke("update_transaction_cmd", { id, ...edit });
+}
+
 export function getAppInfo(): Promise<AppInfo> {
   return invoke("get_app_info");
 }
@@ -586,7 +607,6 @@ export function splitsForTransaction(transactionId: string): Promise<SplitRow[]>
   return invoke("splits_for_transaction_cmd", { transactionId });
 }
 
-// react-doctor-disable-next-line deslop/unused-export -- spec 017: ponte do frontend (comando Tauri pronto/testado), UI multi-titular pendente
 export function ownerTotalsForMonth(
   year: number,
   month: number,
@@ -613,18 +633,16 @@ export function createRecurringSeries(input: {
 }
 
 /** Apaga a ocorrência indicada e todas as posteriores ("deste ponto em diante"). */
-// react-doctor-disable-next-line deslop/unused-export -- spec 016: ponte do frontend (comando Tauri pronto/testado), UI de recorrências pendente
 export function deleteSeriesFrom(transactionId: string): Promise<number> {
   return invoke("delete_series_from_cmd", { transactionId });
 }
 
 /** Apaga toda a série + a linha de recorrência. */
-// react-doctor-disable-next-line deslop/unused-export -- spec 016: ponte do frontend (comando Tauri pronto/testado), UI de recorrências pendente
 export function deleteSeriesAll(recurrenceId: string): Promise<number> {
   return invoke("delete_series_all_cmd", { recurrenceId });
 }
 
-interface SeriesEdit {
+export interface SeriesEdit {
   amount: number;
   description: string | null;
   paymentMethod: string | null;
@@ -632,7 +650,6 @@ interface SeriesEdit {
 }
 
 /** Reajusta a ocorrência indicada e todas as posteriores (o passado fica intacto). */
-// react-doctor-disable-next-line deslop/unused-export -- spec 016: ponte do frontend (comando Tauri pronto/testado), UI de recorrências pendente
 export function updateSeriesFrom(
   transactionId: string,
   edit: SeriesEdit,
@@ -641,7 +658,6 @@ export function updateSeriesFrom(
 }
 
 /** Reajusta toda a série de uma vez. */
-// react-doctor-disable-next-line deslop/unused-export -- spec 016: ponte do frontend (comando Tauri pronto/testado), UI de recorrências pendente
 export function updateSeriesAll(
   recurrenceId: string,
   edit: SeriesEdit,

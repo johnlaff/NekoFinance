@@ -4,6 +4,7 @@ import type {
   DashboardSummary,
   Forecast,
   MonthGridDay,
+  OwnerTotal,
   Pockets,
   TransactionRow,
 } from "../lib/api";
@@ -91,6 +92,27 @@ export const TXNS: TransactionRow[] = [
     tags: [],
     provenance: "projetado",
   },
+];
+
+/** Lançamento com id no formato de série recorrente ("uuid:index"). */
+export const RECURRING_TXN: TransactionRow = {
+  id: "rec-uuid-abc:2",
+  type: "expense",
+  amount: 50000,
+  description: "Compromisso recorrente demo",
+  date: "2026-06-01",
+  payment_method: "debit",
+  is_projection: true,
+  is_fixed: true,
+  owners: [],
+  tags: [],
+  provenance: "projetado",
+};
+
+/** Totais por titular de um mês (multi-titular) para a seção "Por titular" dos Totais. */
+export const OWNER_TOTALS: OwnerTotal[] = [
+  { owner_person_id: "p1", owner_name: "Titular A", total_cents: 320000 },
+  { owner_person_id: "p2", owner_name: "Titular B", total_cents: 180000 },
 ];
 
 export const POCKETS: Pockets = {

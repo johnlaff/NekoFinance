@@ -34,6 +34,8 @@ pub fn run() {
             commands::get_month_grid,
             commands::get_recent_transactions,
             commands::create_transaction,
+            commands::delete_transaction_cmd,
+            commands::update_transaction_cmd,
             commands::get_pockets,
             commands::create_account,
             commands::detect_sheet_layout,
