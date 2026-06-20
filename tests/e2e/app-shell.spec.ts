@@ -161,6 +161,16 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     await page.keyboard.press("ControlOrMeta+k");
     await expect(page.getByLabel("Buscar lançamentos")).toBeFocused();
   });
+
+  test("page has a main landmark, a labelled nav and named metric tiles", async ({
+    page,
+  }) => {
+    await expect(page.locator("main.ak-main")).toBeVisible();
+    await expect(
+      page.getByRole("navigation", { name: "Navegação principal" }),
+    ).toBeVisible();
+    await expect(page.getByRole("article", { name: "Saldo projetado" })).toBeVisible();
+  });
 });
 
 test.describe("onboarding de primeiro uso", () => {

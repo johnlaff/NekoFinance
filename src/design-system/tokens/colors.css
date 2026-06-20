@@ -109,6 +109,7 @@
   --secondary-quiet: var(--brass-tint);
 
   --focus-ring: rgba(63, 191, 143, 0.55);
+  --scrollbar-thumb: #677870; /* WCAG 1.4.11: >=3:1 vs --surface (#161d1c) e --bg (#0e1413) */
 
   /* Scrim atrás de modais/overlays (escurece o conteúdo de fundo) */
   --bg-scrim: rgba(6, 10, 9, 0.66);
@@ -190,7 +191,8 @@
   --chart-grid: rgba(20, 32, 25, 0.1);
   --chart-axis: #5a655f; /* AA (>=4.5:1) p/ rótulos de eixo 10.5px sobre surface E bg-subtle (claro) */
 
-  --focus-ring: rgba(34, 135, 100, 0.45);
+  --focus-ring: rgba(34, 135, 100, 0.85); /* WCAG 1.4.11: 3.07:1 vs --bg (#eaeeec) */
+  --scrollbar-thumb: #6f7a74; /* WCAG 1.4.11: >=3:1 vs --bg (#eaeeec) e superfície branca */
   --bg-scrim: rgba(20, 32, 25, 0.4);
 
   --owner-personal: #228764;
