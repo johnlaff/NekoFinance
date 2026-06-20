@@ -241,6 +241,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         owners: ["Pessoa A", "Pessoa B"],
         tags: [],
         provenance: "importado",
+        line_items: [],
       },
       {
         id: "t2",
@@ -254,6 +255,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         owners: [],
         tags: [],
         provenance: "manual",
+        line_items: [],
       },
       {
         id: "t3",
@@ -267,6 +269,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         owners: [],
         tags: [],
         provenance: "importado",
+        line_items: [],
       },
       {
         id: "t4",
@@ -280,6 +283,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         owners: [],
         tags: [],
         provenance: "projetado",
+        line_items: [],
       },
       {
         id: "t5",
@@ -293,6 +297,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         owners: [],
         tags: [],
         provenance: "projetado",
+        line_items: [],
       },
     ];
 

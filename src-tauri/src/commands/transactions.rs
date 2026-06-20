@@ -9,6 +9,40 @@ pub struct TagOnRow {
     pub emoji: Option<String>,
 }
 
+/// Plan 035: uma parte itemizada de um lançamento (breakdown da nota de célula).
+/// O total do lançamento pai é a SOMA destas partes; aqui só leitura (edição = plano 036).
+#[derive(Debug, serde::Serialize, sqlx::FromRow, Clone)]
+pub struct LineItemOnRow {
+    pub id: String,
+    pub transaction_id: String,
+    pub amount_cents: i64,
+    pub description: String,
+    pub position: i64,
+}
+
+/// Retorna as partes itemizadas de um lançamento (vazio = lançamento não itemizado).
+pub(crate) async fn line_items_for_transaction(
+    pool: &SqlitePool,
+    transaction_id: &str,
+) -> Result<Vec<LineItemOnRow>, String> {
+    sqlx::query_as::<_, LineItemOnRow>(
+        "SELECT id, transaction_id, amount_cents, description, position \
+         FROM line_item WHERE transaction_id = ?1 ORDER BY position",
+    )
+    .bind(transaction_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("line_items_for_transaction: {e}"))
+}
+
+#[tauri::command]
+pub async fn get_line_items_cmd(
+    pool: State<'_, SqlitePool>,
+    transaction_id: String,
+) -> Result<Vec<LineItemOnRow>, String> {
+    line_items_for_transaction(pool.inner(), &transaction_id).await
+}
+
 #[derive(serde::Serialize)]
 pub struct TransactionRow {
     pub id: String,
@@ -26,6 +60,8 @@ pub struct TransactionRow {
     pub tags: Vec<TagOnRow>,
     /// Proveniência: "projetado" (previsto), "importado" (da planilha) ou "manual" (do app).
     pub provenance: String,
+    /// Partes itemizadas da nota (vazio = lançamento não itemizado). Plan 035 — só leitura.
+    pub line_items: Vec<LineItemOnRow>,
 }
 
 #[tauri::command]
@@ -108,10 +144,40 @@ pub(crate) async fn recent_transactions(
         });
     }
 
+    // Plan 035: partes itemizadas das linhas EFETIVAMENTE retornadas (mesma janela de ids
+    // que as tags). Batch único por ids — sem N+1. O caso comum (lançamentos sem itens)
+    // não paga nada quando line_item está vazio.
+    let li_rows: Vec<LineItemOnRow> = if ids.is_empty() {
+        Vec::new()
+    } else {
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!(
+            "SELECT id, transaction_id, amount_cents, description, position \
+             FROM line_item WHERE transaction_id IN ({placeholders}) \
+             ORDER BY transaction_id, position"
+        );
+        let mut q = sqlx::query_as::<_, LineItemOnRow>(sqlx::AssertSqlSafe(sql));
+        for id in &ids {
+            q = q.bind(id);
+        }
+        q.fetch_all(pool)
+            .await
+            .map_err(|e| format!("line_item query: {e}"))?
+    };
+    let mut items_by_txn: std::collections::HashMap<String, Vec<LineItemOnRow>> =
+        std::collections::HashMap::new();
+    for li in li_rows {
+        items_by_txn
+            .entry(li.transaction_id.clone())
+            .or_default()
+            .push(li);
+    }
+
     Ok(rows
         .into_iter()
         .map(|r| TransactionRow {
             tags: tags_by_txn.get(&r.id).cloned().unwrap_or_default(),
+            line_items: items_by_txn.get(&r.id).cloned().unwrap_or_default(),
             id: r.id,
             r#type: r.r#type,
             amount: r.amount,

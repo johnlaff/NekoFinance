@@ -36,6 +36,7 @@ pub fn run() {
             commands::get_annual_metrics,
             commands::get_month_grid,
             commands::get_recent_transactions,
+            commands::get_line_items_cmd,
             commands::create_transaction,
             commands::delete_transaction_cmd,
             commands::update_transaction_cmd,

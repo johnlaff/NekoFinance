@@ -505,6 +505,58 @@ async fn import_rows_core(
         }
         // --- fim Plan 023 ---
 
+        // --- Plan 035: nota itemizada → linhas em line_item ---
+        // O estilo de anotação do usuário é a célula itemizada: o TOTAL da célula é a
+        // SOMA de partes, cada parte descrita em uma linha da nota. Aqui surfeamos essas
+        // partes como filhos descritivos (passado E projetado), sem NUNCA mexer no total.
+        //
+        // Idempotência: clear-then-reinsert por transação a cada import (a nota é
+        // autoritativa, como no bloco 023). Roda para realizado E projetado.
+        //
+        // SEGURO POR PADRÃO: se a nota não tem ≥2 linhas `R$` OU o somatório das partes
+        // diverge do total da célula além de 1 centavo (arredondamento), nenhum item é
+        // gravado — só o total da transação fica. O total do pai jamais é alterado.
+        {
+            let items = parse_itemized_note(&row.raw_note);
+            let parts_sum: i64 = items.iter().map(|i| i.amount_cents).sum();
+            let parent_total = row.amount.abs();
+            // Exige ≥2 partes (1 parte não é um breakdown) e somatório casando com o total.
+            let sum_matches = items.len() >= 2 && (parts_sum - parent_total).abs() <= 1;
+
+            // Sempre limpa os itens antigos desta txn (idempotente no re-import).
+            sqlx::query("DELETE FROM line_item WHERE transaction_id = ?1")
+                .bind(&txn_id)
+                .execute(&mut **tx)
+                .await
+                .map_err(|e| format!("clear line_items for {txn_id}: {e}"))?;
+
+            if sum_matches {
+                for item in &items {
+                    // Id determinístico `li:<txn_id>:<pos>` → re-import estável (UPSERT),
+                    // load-bearing para o write-back do plano 036.
+                    let item_id = format!("li:{}:{}", txn_id, item.position);
+                    sqlx::query(
+                        "INSERT INTO line_item (id, transaction_id, amount_cents, description, position) \
+                         VALUES (?1, ?2, ?3, ?4, ?5) \
+                         ON CONFLICT(id) DO UPDATE SET \
+                           amount_cents=excluded.amount_cents, \
+                           description=excluded.description, \
+                           position=excluded.position",
+                    )
+                    .bind(&item_id)
+                    .bind(&txn_id)
+                    .bind(item.amount_cents)
+                    .bind(&item.description)
+                    .bind(item.position as i64)
+                    .execute(&mut **tx)
+                    .await
+                    .map_err(|e| format!("insert line_item {item_id}: {e}"))?;
+                }
+            }
+            // Somatório não bate ou nota sem itens: nenhum item inserido; total do pai intacto.
+        }
+        // --- fim Plan 035 ---
+
         // sync_log com id determinístico (1:1 com o txn) → UPSERT idempotente.
         let log_id = format!("log:{txn_id}");
         sqlx::query(
@@ -765,6 +817,71 @@ pub(crate) enum NoteMarkerKind {
         /// Parte de <quem> em centavos (já resolvida: padrão 50% ou valor explícito).
         share_cents: i64,
     },
+}
+
+/// Plan 035: uma parte itemizada extraída de uma linha da nota de célula.
+#[derive(Debug, PartialEq)]
+pub(crate) struct NoteLineItem {
+    /// Magnitude em centavos (positiva). Mesma convenção de `transaction.amount`.
+    pub amount_cents: i64,
+    pub description: String,
+    /// Posição 0-based na nota (ordem de aparição).
+    pub position: usize,
+}
+
+/// Parseia as linhas itemizadas de uma nota de célula (Plan 035).
+///
+/// O estilo de anotação do usuário é a célula itemizada: um TOTAL que é a SOMA de
+/// partes, cada parte descrita em uma linha da nota como `R$ <valor> - <descrição>`.
+///
+/// GRAMÁTICA: cada linha começando com `R$` (com ou sem espaço entre `R$` e o número)
+/// é tratada como um item; o que vem antes do primeiro traço é o valor, o resto é a
+/// descrição. Linhas que NÃO começam com `R$` (cabeçalhos, trailers `Total = …`,
+/// linhas de orçamento separadas por tab, linhas em branco) são puladas em silêncio.
+///
+/// Tolerâncias:
+/// - `R$<número>` e `R$ <número>` (espaço opcional após `R$`)
+/// - ` - ` e `-` (espaço opcional ao redor do traço)
+/// - Valor em pt-BR (`1.234,56`) ou float do xlsx (`1234.5600`) — via `parse_number`
+/// - Linha com marcador `#reembolso:`/`#dividir:` no fim: parseia o item normalmente
+///   (o marcador fica na descrição). Os dois parsers são leituras INDEPENDENTES da
+///   mesma nota; este não substitui nem altera `parse_note_markers`.
+///
+/// SEGURO POR PADRÃO: nota vazia ou sem linhas `R$` → lista vazia. A reconciliação
+/// (somatório das partes ≈ total do pai) é decidida na camada de persistência, não aqui:
+/// se não bater, nenhum item é gravado e o total do pai fica intocado.
+///
+/// PURA — sem I/O, sem DB, sem panics.
+pub(crate) fn parse_itemized_note(note: &str) -> Vec<NoteLineItem> {
+    let mut items = Vec::new();
+    for (pos, line) in note.lines().enumerate() {
+        let trimmed = line.trim();
+        // Só linhas que começam com `R$` (case-insensitive) são itens.
+        let rest = if trimmed.len() >= 2 && trimmed[..2].eq_ignore_ascii_case("r$") {
+            trimmed[2..].trim_start()
+        } else {
+            continue;
+        };
+        // Separador no PRIMEIRO traço: o que vem antes é o valor, o resto é a descrição.
+        // Usar o primeiro traço permite descrições com traço (ex.: "Produto A - loja B")
+        // sem truncar, porque o valor (positivo) nunca contém traço.
+        let (value_part, desc_part) = if let Some(idx) = rest.find('-') {
+            (rest[..idx].trim_end(), rest[idx + 1..].trim_start())
+        } else {
+            // Sem separador → a linha inteira é o valor, sem descrição.
+            (rest, "")
+        };
+        let amount_cents = parse_number(value_part.trim());
+        if amount_cents <= 0 {
+            continue; // valor inválido, zero ou negativo → pula
+        }
+        items.push(NoteLineItem {
+            amount_cents,
+            description: desc_part.to_string(),
+            position: pos,
+        });
+    }
+    items
 }
 
 /// GRAMÁTICA DAS NOTAS (contrato público — opt-in, explícito, seguro por padrão).
@@ -1850,6 +1967,24 @@ mod tests {
         }
     }
 
+    // Plan 035: linha importada com nota de célula crua e flag de projeção (passado/futuro).
+    fn imported_note(date: &str, amount: i64, raw_note: &str, is_projection: bool) -> ImportedRow {
+        ImportedRow {
+            raw_note: raw_note.into(),
+            is_projection,
+            ..imported_desc(date, amount, &format!("Linha {date}"))
+        }
+    }
+
+    async fn count_line_items(pool: &SqlitePool, txn_id: &str) -> i64 {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM line_item WHERE transaction_id = ?1")
+            .bind(txn_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+            .0
+    }
+
     async fn count_transactions(pool: &SqlitePool) -> i64 {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM \"transaction\"")
             .fetch_one(pool)
@@ -2880,5 +3015,244 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(count, 1, "nenhuma pessoa duplicada criada");
+    }
+
+    // --- Plan 035: parser puro parse_itemized_note (sem I/O) ---
+
+    // Happy path: gramática padrão → duas partes com valor, descrição e posição.
+    #[test]
+    fn itemized_standard_form_parses_parts() {
+        let note = "R$ 150,00 - Categoria A\nR$ 200,50 - Categoria B";
+        let items = parse_itemized_note(note);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].amount_cents, 15_000);
+        assert_eq!(items[0].description, "Categoria A");
+        assert_eq!(items[0].position, 0);
+        assert_eq!(items[1].amount_cents, 20_050);
+        assert_eq!(items[1].description, "Categoria B");
+        assert_eq!(items[1].position, 1);
+    }
+
+    // Tolerância: sem espaço depois do `R$`.
+    #[test]
+    fn itemized_tolerates_no_space_after_rs() {
+        let items = parse_itemized_note("R$300,00 - Item");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].amount_cents, 30_000);
+        assert_eq!(items[0].description, "Item");
+    }
+
+    // Tolerância: sem espaço ao redor do traço.
+    #[test]
+    fn itemized_tolerates_no_space_around_dash() {
+        let items = parse_itemized_note("R$ 50,00-Descrição do item");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].amount_cents, 5_000);
+        assert_eq!(items[0].description, "Descrição do item");
+    }
+
+    // Cabeçalho (sem `R$`) e trailer `Total = …` são pulados.
+    #[test]
+    fn itemized_skips_header_lines() {
+        let note = "CONTAS:\nR$ 100,00 - Item A\nTotal = R$ 100,00";
+        let items = parse_itemized_note(note);
+        assert_eq!(items.len(), 1, "só a linha R$ do meio é item");
+        assert_eq!(items[0].amount_cents, 10_000);
+        assert_eq!(items[0].description, "Item A");
+    }
+
+    // Linha de orçamento separada por tab (sem `R$` à esquerda) é pulada.
+    #[test]
+    fn itemized_skips_tab_separated_budget_lines() {
+        let note = "Mensal\tR$ 300,00\tCategoria\nR$ 50,00 - Outro item";
+        let items = parse_itemized_note(note);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].description, "Outro item");
+    }
+
+    // Nota vazia / só espaços → nenhum item (seguro por padrão).
+    #[test]
+    fn itemized_empty_note_yields_no_items() {
+        assert!(parse_itemized_note("").is_empty());
+        assert!(parse_itemized_note("   ").is_empty());
+    }
+
+    // Nota só com prosa (sem linhas `R$`) → nenhum item.
+    #[test]
+    fn itemized_no_rs_lines_yields_no_items() {
+        assert!(parse_itemized_note("Descrição geral sem itens").is_empty());
+    }
+
+    // Linha com sufixo de marcador: o item é parseado; o marcador fica na descrição.
+    // (parse_note_markers faz o trabalho dele na mesma nota, de forma independente.)
+    #[test]
+    fn itemized_line_with_marker_parses_as_item() {
+        let note = "R$ 200,00 - Item X #reembolso:Pessoa Y";
+        let items = parse_itemized_note(note);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].amount_cents, 20_000);
+        assert!(items[0].description.contains("Item X"));
+    }
+
+    // O parse produz os valores individuais corretos independentemente da reconciliação
+    // (a decisão de anexar/descartar é da camada de persistência, não do parser).
+    #[test]
+    fn itemized_mismatched_sum_still_parses_individual_amounts() {
+        let note = "R$ 100,00 - Item A\nR$ 100,00 - Item B"; // soma = 200
+        let items = parse_itemized_note(note);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].amount_cents + items[1].amount_cents, 20_000);
+    }
+
+    // Descrição com traço interno não trunca (usa só o primeiro traço como separador).
+    #[test]
+    fn itemized_keeps_dash_inside_description() {
+        let items = parse_itemized_note("R$ 80,00 - Produto A - loja B");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].amount_cents, 8_000);
+        assert_eq!(items[0].description, "Produto A - loja B");
+    }
+
+    // Valor em float do xlsx (ponto decimal) é tolerado via parse_number.
+    #[test]
+    fn itemized_tolerates_xlsx_float_value() {
+        let items = parse_itemized_note("R$ 1234.5600 - Item");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].amount_cents, 123_456);
+    }
+
+    // --- Plan 035: persistência de line_item no import (camada DB) ---
+
+    // Happy path: nota com 2 linhas R$ cujo somatório bate com o total → itens gravados.
+    #[tokio::test]
+    async fn line_items_stored_when_note_sums_match_total() {
+        let pool = test_pool().await;
+        // Saída de R$ 150,00; nota: R$ 100,00 + R$ 50,00 = R$ 150,00 (bate).
+        let rows = vec![imported_note(
+            "2026-02-10",
+            -15_000,
+            "R$ 100,00 - Parte A\nR$ 50,00 - Parte B",
+            false,
+        )];
+        import_rows(&pool, "2026", &rows, "p1").await.unwrap();
+
+        let txn_id = row_id("2026", "2026-02-10", RowKind::Saida, 0);
+        assert_eq!(count_line_items(&pool, &txn_id).await, 2);
+
+        // O total do pai NÃO mudou (continua a magnitude da célula).
+        assert_eq!(amount_by_date(&pool, "2026-02-10").await, 15_000);
+    }
+
+    // Mismatch: partes não somam o total → nenhum item; total do pai intocado.
+    #[tokio::test]
+    async fn line_items_not_stored_when_sum_mismatches() {
+        let pool = test_pool().await;
+        // Total R$ 100,00; nota soma R$ 120,00 (não bate) → 0 itens.
+        let rows = vec![imported_note(
+            "2026-02-11",
+            -10_000,
+            "R$ 60,00 - A\nR$ 60,00 - B",
+            false,
+        )];
+        import_rows(&pool, "2026", &rows, "p1").await.unwrap();
+
+        let txn_id = row_id("2026", "2026-02-11", RowKind::Saida, 0);
+        assert_eq!(count_line_items(&pool, &txn_id).await, 0);
+        assert_eq!(amount_by_date(&pool, "2026-02-11").await, 10_000);
+    }
+
+    // Re-import idêntico: mesmos itens, sem duplicar (clear-then-reinsert).
+    #[tokio::test]
+    async fn line_items_are_idempotent_on_reimport() {
+        let pool = test_pool().await;
+        let rows = vec![imported_note(
+            "2026-02-12",
+            -15_000,
+            "R$ 100,00 - Parte A\nR$ 50,00 - Parte B",
+            false,
+        )];
+        import_rows(&pool, "2026", &rows, "p1").await.unwrap();
+        import_rows(&pool, "2026", &rows, "p1").await.unwrap();
+
+        let txn_id = row_id("2026", "2026-02-12", RowKind::Saida, 0);
+        assert_eq!(count_line_items(&pool, &txn_id).await, 2);
+    }
+
+    // Mudança de nota no re-import: itens atualizados (2 → 3).
+    #[tokio::test]
+    async fn line_items_update_on_note_change() {
+        let pool = test_pool().await;
+        let first = vec![imported_note(
+            "2026-02-13",
+            -15_000,
+            "R$ 100,00 - Parte A\nR$ 50,00 - Parte B",
+            false,
+        )];
+        import_rows(&pool, "2026", &first, "p1").await.unwrap();
+
+        // Nova nota com 3 partes somando o mesmo total (R$ 150,00).
+        let second = vec![imported_note(
+            "2026-02-13",
+            -15_000,
+            "R$ 50,00 - Parte A\nR$ 50,00 - Parte B\nR$ 50,00 - Parte C",
+            false,
+        )];
+        import_rows(&pool, "2026", &second, "p1").await.unwrap();
+
+        let txn_id = row_id("2026", "2026-02-13", RowKind::Saida, 0);
+        assert_eq!(count_line_items(&pool, &txn_id).await, 3);
+    }
+
+    // Seguro por padrão: nota vazia → 0 itens, sem erro.
+    #[tokio::test]
+    async fn line_items_empty_note_inserts_none() {
+        let pool = test_pool().await;
+        let rows = vec![imported_note("2026-02-14", -10_000, "", false)];
+        import_rows(&pool, "2026", &rows, "p1").await.unwrap();
+
+        let txn_id = row_id("2026", "2026-02-14", RowKind::Saida, 0);
+        assert_eq!(count_line_items(&pool, &txn_id).await, 0);
+    }
+
+    // Lançamento PROJETADO (futuro) também recebe os itens da nota.
+    #[tokio::test]
+    async fn line_items_stored_for_projected_rows() {
+        let pool = test_pool().await;
+        // Entrada projetada de R$ 300,00; nota soma R$ 300,00.
+        let rows = vec![imported_note(
+            "2099-12-01",
+            30_000,
+            "R$ 100,00 - Parte A\nR$ 200,00 - Parte B",
+            true,
+        )];
+        import_rows(&pool, "2026", &rows, "p1").await.unwrap();
+
+        let txn_id = row_id("2026", "2099-12-01", RowKind::Entrada, 0);
+        assert_eq!(count_line_items(&pool, &txn_id).await, 2);
+
+        // Confirma que a linha é mesmo projeção.
+        let (is_proj,): (i64,) =
+            sqlx::query_as("SELECT is_projection FROM \"transaction\" WHERE id = ?1")
+                .bind(&txn_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(is_proj, 1);
+    }
+
+    // Uma única parte não é um breakdown → nenhum item (evita "item-fantasma").
+    #[tokio::test]
+    async fn line_items_single_part_not_stored() {
+        let pool = test_pool().await;
+        let rows = vec![imported_note(
+            "2026-02-15",
+            -10_000,
+            "R$ 100,00 - Único",
+            false,
+        )];
+        import_rows(&pool, "2026", &rows, "p1").await.unwrap();
+
+        let txn_id = row_id("2026", "2026-02-15", RowKind::Saida, 0);
+        assert_eq!(count_line_items(&pool, &txn_id).await, 0);
     }
 }
