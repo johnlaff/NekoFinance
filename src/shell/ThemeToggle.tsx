@@ -44,13 +44,20 @@ function playReveal(x: number, y: number, radius: number, next: Theme): void {
     "position:fixed;inset:0;z-index:9999;pointer-events:none;background:var(--bg);" +
     `clip-path:circle(0px at ${x}px ${y}px);`;
   document.body.appendChild(overlay);
+  // Lê o token no momento da chamada para que mudanças futuras no DS propaguem
+  // automaticamente. `getPropertyValue` retorna algo como "480ms"; `parseFloat`
+  // tira a unidade. O fallback cobre o caminho sem getComputedStyle (jsdom).
+  const durMs =
+    parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue("--dur-deliberate"),
+    ) || 480;
   const anim = overlay.animate(
     [
       { clipPath: `circle(0px at ${x}px ${y}px)`, opacity: 0.9 },
       { clipPath: `circle(${radius}px at ${x}px ${y}px)`, opacity: 0 },
     ],
     {
-      duration: 480, // --dur-deliberate
+      duration: durMs,
       easing: "cubic-bezier(0.16, 1, 0.3, 1)", // --ease-entrance
     },
   );
