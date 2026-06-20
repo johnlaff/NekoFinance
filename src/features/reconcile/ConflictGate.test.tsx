@@ -7,6 +7,19 @@ import { mockCommands, mockInvoke } from "../../test/commands";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
+// Captura o handler do `neko://sync-done` e devolve um `unlisten` espionável (plano 026). O
+// `listenEvent` da api importa este módulo dinamicamente.
+const unlistenSpy = vi.fn();
+let syncDoneHandler: ((e: { payload: { conflict_count: number } }) => void) | undefined;
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(
+    (_event: string, cb: (e: { payload: { conflict_count: number } }) => void) => {
+      syncDoneHandler = cb;
+      return Promise.resolve(unlistenSpy);
+    },
+  ),
+}));
+
 const CONFLICTS: ImportConflict[] = [
   {
     id: "c1",
@@ -21,6 +34,8 @@ const CONFLICTS: ImportConflict[] = [
 describe("ConflictGate", () => {
   beforeEach(() => {
     mockInvoke.mockReset();
+    unlistenSpy.mockClear();
+    syncDoneHandler = undefined;
   });
 
   it("não renderiza nada quando não há conflitos", async () => {
@@ -87,5 +102,40 @@ describe("ConflictGate", () => {
       "Não foi possível resolver o conflito",
     );
     expect(screen.getByText(/1 conflito de importação/)).toBeInTheDocument();
+  });
+
+  // Plano 026: ao receber `neko://sync-done`, o gate re-busca os conflitos (badge sem ação do
+  // usuário). Aqui começa vazio e, após o evento, o backend passa a devolver um conflito.
+  it("re-busca os conflitos quando chega o evento sync-done", async () => {
+    mockCommands({ get_import_conflicts: [] });
+    render(<ConflictGate />);
+    await waitFor(() => expect(syncDoneHandler).toBeDefined());
+
+    const before = mockInvoke.mock.calls.filter(
+      (c) => c[0] === "get_import_conflicts",
+    ).length;
+
+    // Próxima leitura traz um conflito; dispara o evento manualmente.
+    mockCommands({ get_import_conflicts: CONFLICTS });
+    syncDoneHandler?.({ payload: { conflict_count: 1 } });
+
+    await waitFor(() =>
+      expect(screen.getByText(/1 conflito de importação/)).toBeInTheDocument(),
+    );
+    const after = mockInvoke.mock.calls.filter(
+      (c) => c[0] === "get_import_conflicts",
+    ).length;
+    expect(after).toBeGreaterThan(before);
+  });
+
+  // Plano 026: a assinatura do evento é cancelada no unmount (sem vazar listener no HMR).
+  it("cancela a assinatura do evento ao desmontar", async () => {
+    mockCommands({ get_import_conflicts: [] });
+    const { unmount } = render(<ConflictGate />);
+    await waitFor(() => expect(syncDoneHandler).toBeDefined());
+
+    unmount();
+
+    await waitFor(() => expect(unlistenSpy).toHaveBeenCalled());
   });
 });

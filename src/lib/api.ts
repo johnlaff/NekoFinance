@@ -489,6 +489,34 @@ export function setAppSetting(key: string, value: string): Promise<void> {
   return invoke("set_app_setting", { key, value });
 }
 
+// --- Eventos do backend (sync em segundo plano, plano 026) ---
+
+/** Carga útil do evento `neko://sync-done` emitido pela tarefa de sync de leitura. */
+export interface SyncDonePayload {
+  conflict_count: number;
+}
+
+/** Nome do evento emitido pelo backend quando um sync em segundo plano conclui. */
+export const SYNC_DONE_EVENT = "neko://sync-done";
+
+/** Função para cancelar uma assinatura de evento. */
+export type UnlistenFn = () => void;
+
+/**
+ * Assina um evento do backend Tauri, degradando com elegância fora do shell (web preview, e2e
+ * mockado): se não estamos no Tauri ou o IPC de eventos não existe no mock, retorna um cancelador
+ * no-op em vez de quebrar. A importação é dinâmica para não puxar o módulo de eventos no bundle web.
+ */
+export function listenEvent<T>(
+  event: string,
+  handler: (payload: T) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri) return Promise.resolve(() => undefined);
+  return import("@tauri-apps/api/event")
+    .then(({ listen }) => listen<T>(event, (e) => handler(e.payload)))
+    .catch(() => () => undefined);
+}
+
 export function importSheetData(
   spreadsheetId: string,
   sheetName: string,
