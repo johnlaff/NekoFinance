@@ -33,6 +33,8 @@ export interface DashboardSummary {
   reserve_months: number;
   reserve_trend: string;
   transaction_count: number;
+  /** ISO date (YYYY-MM-DD) of the most recent non-projection transaction, or null if none. */
+  last_real_tx_date: string | null;
 }
 
 /** Tag anexada a um lançamento (chip do Livro-razão). */

@@ -14,6 +14,7 @@ const SUMMARY: DashboardSummary = {
   reserve_months: 3,
   reserve_trend: "flat",
   transaction_count: 10,
+  last_real_tx_date: "2026-06-19",
 };
 
 /** Última chamada ao backend de criação de lançamento, para inspecionar os campos derivados. */

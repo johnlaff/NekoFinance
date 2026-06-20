@@ -826,6 +826,9 @@ pub struct DashboardSummary {
     pub reserve_months: f64,
     pub reserve_trend: String,
     pub transaction_count: i64,
+    /// Most recent date (`YYYY-MM-DD`) of a non-projection transaction the user logged.
+    /// `None` when no real transactions exist yet.
+    pub last_real_tx_date: Option<String>,
 }
 
 #[tauri::command]
@@ -911,6 +914,17 @@ pub(crate) async fn dashboard_summary(
         .await
         .map_err(|e| format!("query: {e}"))?;
 
+    // Data do lançamento REAL mais recente (não-projeção, ≤ hoje) — alimenta o aviso "lançou
+    // pela última vez há X dias" do dashboard. NULL quando ainda não há lançamentos reais.
+    let last_real: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT MAX(date) FROM \"transaction\" WHERE is_projection = 0 AND date <= ?1",
+    )
+    .bind(&today)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("query last_real_tx_date: {e}"))?;
+    let last_real_tx_date = last_real.and_then(|(d,)| d);
+
     Ok(DashboardSummary {
         balance: projected_balance,
         daily_budget,
@@ -918,5 +932,6 @@ pub(crate) async fn dashboard_summary(
         reserve_months,
         reserve_trend: reserve_trend.0,
         transaction_count: count.0,
+        last_real_tx_date,
     })
 }

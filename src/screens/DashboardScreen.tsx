@@ -14,6 +14,7 @@ import { ColchaoCard } from "./dashboard/ColchaoCard";
 import { colchaoPhase } from "./dashboard/colchaoPhase";
 import { PerformanceCard } from "./dashboard/PerformanceCard";
 import { DailyCheckinCard } from "./dashboard/DailyCheckinCard";
+import { LastLoggedBanner } from "./dashboard/LastLoggedBanner";
 import { MonthLedgerCard } from "./dashboard/MonthLedgerCard";
 
 export function DashboardScreen({
@@ -180,6 +181,10 @@ export function DashboardScreen({
             {fmtDayMonth(deficit.date)}. Precisa de entrada nova ou corte até lá.
           </span>
         </output>
+      )}
+
+      {summary && hasData && (
+        <LastLoggedBanner lastRealTxDate={summary.last_real_tx_date} />
       )}
 
       {summary && hasData && (
