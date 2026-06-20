@@ -7,6 +7,7 @@ mod google_sheets;
 mod http;
 mod oauth;
 mod recurrence;
+mod reminder_task;
 mod splits;
 mod sync_task;
 mod tags;
@@ -164,6 +165,11 @@ pub fn run() {
                 app.handle().clone(),
                 import_guard,
             );
+
+            // Daily reminder loop (plan 030): fires an OS notification at the user's
+            // configured time while the app is open. Clones the pool before `app.manage`
+            // moves it, same as the sync task above.
+            reminder_task::spawn_reminder_task(pool.clone(), app.handle().clone());
 
             app.manage(pool);
             Ok(())

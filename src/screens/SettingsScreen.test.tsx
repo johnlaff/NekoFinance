@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SettingsScreen } from "./SettingsScreen";
 import { APP_INFO, POCKETS, mockCommands, mockInvoke } from "../test/commands";
+import { invalidateCommands } from "../lib/useCommand";
 import { open } from "@tauri-apps/plugin-dialog";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -139,5 +140,61 @@ describe("SettingsScreen", () => {
     expect(
       await screen.findByRole("button", { name: /Conectar Google/ }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("DailyReminderSection", () => {
+  beforeEach(() => {
+    mockInvoke.mockReset();
+    mockOpen.mockReset();
+  });
+
+  // `get_app_setting` é chamado com `key`s diferentes (enabled/time), então roteamos
+  // por (cmd, args) em vez do `mockCommands` que só distingue por nome de comando.
+  function mockSettings(values: Record<string, string | null>) {
+    invalidateCommands();
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === "get_app_info") return Promise.resolve(APP_INFO);
+      if (cmd === "get_app_setting") {
+        const key = String(args?.["key"]);
+        return Promise.resolve(key in values ? values[key] : null);
+      }
+      if (cmd === "set_app_setting") return Promise.resolve(undefined);
+      return Promise.reject(new Error(`unmocked command: ${cmd}`));
+    });
+  }
+
+  it("shows the reminder toggle in the default ON state when the key is absent", async () => {
+    mockSettings({}); // chaves ausentes → ligado por padrão
+    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("radiogroup", { name: /lembrete diário/i }),
+      ).toBeInTheDocument();
+    });
+    const on = screen.getByRole("radio", { name: "Ligado" });
+    expect(on).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("persists the toggle off", async () => {
+    const user = userEvent.setup();
+    mockSettings({});
+    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("radiogroup", { name: /lembrete diário/i }),
+      ).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByRole("radio", { name: "Desligado" }));
+
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith("set_app_setting", {
+        key: "daily_reminder_enabled",
+        value: "false",
+      }),
+    );
   });
 });

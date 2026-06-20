@@ -1,13 +1,139 @@
-import { useState } from "react";
-import { FileUp, HardDrive, Landmark, Link2, type LucideIcon } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  Bell,
+  FileUp,
+  HardDrive,
+  Landmark,
+  Link2,
+  type LucideIcon,
+} from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { PocketsManager } from "../features/pockets/PocketsManager";
 import { GoogleSheetsPanel } from "../features/sheets/GoogleSheetsPanel";
 import { LocalXlsxImport } from "../features/sheets/LocalXlsxImport";
-import { backupDatabase, getAppInfo, isTauri, type AuthStatus } from "../lib/api";
+import {
+  backupDatabase,
+  getAppInfo,
+  getAppSetting,
+  isTauri,
+  setAppSetting,
+  type AuthStatus,
+} from "../lib/api";
 import { safeErrorMessage } from "../lib/errors";
 import { useCommand } from "../lib/useCommand";
 import { Button } from "../design-system/components/Button";
+import { SegmentedControl } from "../design-system/components/SegmentedControl";
+
+// Estilo estático do campo de horário (React Compiler: nunca inline em JSX).
+const TIME_INPUT_STYLE: React.CSSProperties = {
+  fontFamily: "var(--font-money)",
+  fontSize: "var(--fs-body)",
+  background: "var(--bg-subtle)",
+  border: "var(--bw-hair) solid var(--border-input)",
+  borderRadius: "var(--radius-xs)",
+  color: "var(--text)",
+  padding: "4px 8px",
+  height: "var(--hit-min)",
+};
+
+/**
+ * Configurações do lembrete diário: liga/desliga e horário preferido.
+ * Persiste em `app_setting` via os comandos existentes. Disponível só no shell
+ * desktop (isTauri) — a notificação dispara enquanto o app estiver aberto.
+ */
+function DailyReminderSection() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [time, setTime] = useState("20:00");
+  const [saving, setSaving] = useState(false);
+
+  // Carrega as configurações atuais na montagem. Uma falha de leitura mantém o
+  // padrão (ligado, 20:00) em vez de quebrar a tela — leitura de KV não é crítica.
+  useEffect(() => {
+    if (!isTauri) return;
+    void (async () => {
+      try {
+        const [en, t] = await Promise.all([
+          getAppSetting("daily_reminder_enabled"),
+          getAppSetting("daily_reminder_time"),
+        ]);
+        setEnabled(en !== "false"); // ausente = ligado por padrão
+        if (t) setTime(t);
+      } catch {
+        setEnabled(true); // assume o padrão e segue renderizando a seção
+      }
+    })();
+  }, []);
+
+  async function handleToggle(val: string) {
+    const next = val === "on";
+    setEnabled(next);
+    setSaving(true);
+    await setAppSetting("daily_reminder_enabled", next ? "true" : "false");
+    setSaving(false);
+  }
+
+  async function handleTimeChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const val = e.currentTarget.value;
+    setTime(val);
+    setSaving(true);
+    await setAppSetting("daily_reminder_time", val);
+    setSaving(false);
+  }
+
+  if (!isTauri) return null;
+  if (enabled === null) return null; // ainda carregando
+
+  return (
+    <Section
+      icon={Bell}
+      title="Lembrete diário"
+      sub="Notificação nativa enquanto o app está aberto."
+    >
+      <div className="set-panel">
+        <div className="set-row">
+          <div className="set-row__main">
+            <div className="set-row__t">Ativar lembrete</div>
+            <div className="set-row__d">
+              Envia uma notificação nativa no horário escolhido. Disponível enquanto o
+              Neko estiver aberto.
+            </div>
+          </div>
+          <div className="set-row__ctl">
+            <SegmentedControl
+              options={[
+                { value: "on", label: "Ligado" },
+                { value: "off", label: "Desligado" },
+              ]}
+              value={enabled ? "on" : "off"}
+              onChange={(val) => void handleToggle(val)}
+              size="sm"
+              disabled={saving}
+              ariaLabel="Ativar ou desativar lembrete diário"
+            />
+          </div>
+        </div>
+        {enabled && (
+          <div className="set-row">
+            <div className="set-row__main">
+              <div className="set-row__t">Horário</div>
+              <div className="set-row__d">Hora local (24 h) para receber o aviso.</div>
+            </div>
+            <div className="set-row__ctl">
+              <input
+                type="time"
+                value={time}
+                onChange={(e) => void handleTimeChange(e)}
+                disabled={saving}
+                style={TIME_INPUT_STYLE}
+                aria-label="Horário do lembrete diário"
+              />
+            </div>
+          </div>
+        )}
+      </div>
+    </Section>
+  );
+}
 
 /** Backup local do banco: escolhe o destino no save dialog nativo e grava via VACUUM INTO. */
 function DataBackupRow() {
@@ -144,6 +270,8 @@ export function SettingsScreen({
       >
         <PocketsManager />
       </Section>
+
+      <DailyReminderSection />
 
       <Section
         icon={HardDrive}

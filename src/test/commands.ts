@@ -37,6 +37,7 @@ export const SUMMARY: DashboardSummary = {
   reserve_months: 4.5,
   reserve_trend: "down",
   transaction_count: 42,
+  last_real_tx_date: "2026-06-19",
 };
 
 export const EMPTY_SUMMARY: DashboardSummary = {
@@ -46,6 +47,7 @@ export const EMPTY_SUMMARY: DashboardSummary = {
   reserve_months: 0,
   reserve_trend: "flat",
   transaction_count: 0,
+  last_real_tx_date: null,
 };
 
 export const TXNS: TransactionRow[] = [
