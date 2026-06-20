@@ -17,7 +17,7 @@ use chrono::{Datelike, NaiveDate};
 pub enum EventKind {
     /// Entrada — income (salary, reimbursement, freela…).
     Income,
-    /// Saída — fixed outflow: fixed bills + the credit-invoice lump at the card due day (Régua 2).
+    /// Saída — fixed outflow: fixed bills + the fatura lump at the card due date (credit settles as one lump, not per-purchase).
     FixedOut,
     /// Diário — variable daily débito/cash spend (Régua 1).
     Daily,
@@ -849,13 +849,13 @@ mod tests {
         assert_eq!(f.daily[1].balance_cents, 930000); // Jan 2: −70
     }
 
-    // T6.2 / T6.3 — a credit lump (Régua 2) lands as one FixedOut on the due day, depressing the
-    // future month, while débito daily (Régua 1) only touches its own day.
+    // T6.2 / T6.3 — a fatura lump lands as one FixedOut on the card due day, depressing the
+    // future month, while débito/PIX daily spend only touches its own day.
     #[test]
-    fn regua2_credit_lump_at_due_day() {
+    fn credit_fatura_lump_lands_at_due_day() {
         let events = [
-            ev("2026-01-10", EventKind::Daily, 20000), // débito daily (Régua 1)
-            ev("2026-02-15", EventKind::FixedOut, 600000), // invoice lump at due day (Régua 2)
+            ev("2026-01-10", EventKind::Daily, 20000), // débito/PIX daily spend
+            ev("2026-02-15", EventKind::FixedOut, 600000), // fatura lump at card due date
         ];
         let f = project(1000000, d("2026-01-10"), &events, d("2026-02-15"));
         let jan = f.month_end.iter().find(|m| m.month == 1).unwrap();

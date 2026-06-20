@@ -11,8 +11,6 @@ const SUMMARY: DashboardSummary = {
   balance: 500000,
   daily_budget: 5000,
   daily_spend_today: 2000,
-  credit_spend_month: 0,
-  has_credit: false,
   reserve_months: 3,
   reserve_trend: "flat",
   transaction_count: 10,

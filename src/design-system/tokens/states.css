@@ -50,7 +50,7 @@
   --pocket-longterm: var(--cat-orchid); /* previdência */
   --pocket-illiquid: var(--cat-violet); /* investimentos longo prazo */
 
-  /* ---- Pressão de fatura / crédito (Régua 2) ---- */
+  /* ---- Pressão de fatura / crédito ---- */
   --pressure-low: var(--success-500);
   --pressure-mid: var(--brass-400);
   --pressure-high: var(--danger-500);

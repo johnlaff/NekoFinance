@@ -297,7 +297,7 @@ pub(crate) async fn forecast_horizon_end(
 
 /// Loads forward cashflow events for the projection window: future transactions (date > today,
 /// avoiding double-counting today's already-realized spending baked into the balance snapshot)
-/// plus credit-cycle lumps aggregated from `daily_checkin` at the card due date (Régua 2).
+/// plus credit-cycle lumps aggregated from `daily_checkin` and folded into a fatura lump at the card due date.
 /// Single source of row→event mapping, shared by `dashboard_summary` and `forecast_dto`.
 pub(crate) async fn load_cashflow_events(
     pool: &SqlitePool,
@@ -366,7 +366,7 @@ pub(crate) async fn load_cashflow_events(
                     });
                 }
 
-                // Credit spend (Régua 2) → aggregate by due_date
+                // Credit spend → aggregate into a fatura lump at due_date
                 if credit_spend > 0 {
                     let due_date = forecast::cycle_due_date(checkin_date, closing_day, due_day);
                     *credit_by_due.entry(due_date).or_insert(0) += credit_spend;
@@ -814,7 +814,7 @@ pub(crate) async fn month_grid(
 
     // Fluxos por dia, separados por tipo (Entrada / Saída fixa / Diário variável).
     let flows: Vec<(String, i64, i64, i64)> = sqlx::query_as(
-        // Crédito (régua 2) entra em Saída como a fatura, não em Diário — espelha forecast::classify.
+        // Crédito entra em Saída como a fatura (lump no vencimento), não em Diário — espelha forecast::classify.
         "SELECT date, \
                 COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END), 0), \
                 COALESCE(SUM(CASE WHEN type='expense' AND (COALESCE(is_fixed,0)=1 OR payment_method='credit') THEN amount ELSE 0 END), 0), \
@@ -883,10 +883,6 @@ pub struct DashboardSummary {
     pub balance: i64,
     pub daily_budget: i64,
     pub daily_spend_today: i64,
-    pub credit_spend_month: i64,
-    /// Há rastreio de crédito (cartão ou gasto de crédito). `false` → a UI mostra "—" no tile,
-    /// não um R$0 estrutural.
-    pub has_credit: bool,
     pub reserve_months: f64,
     pub reserve_trend: String,
     pub transaction_count: i64,
@@ -950,45 +946,6 @@ pub(crate) async fn dashboard_summary(
     .await
     .map_err(|e| format!("query daily spend: {e}"))?;
 
-    // Crédito no mês (Régua 2) como MAGNITUDE positiva, mesma regra do Diário: `ABS` por
-    // defesa-em-profundidade (amount é positivo por convenção) e fonte única — se há transação de
-    // crédito no mês, ela vence; o check-in só preenche meses sem transação de crédito.
-    // Janela do MÊS CORRENTE [month_start, month_end]: o método pré-lança o ano inteiro de faturas
-    // na planilha; sem o limite superior, crédito datado meses à frente inflava o tile do mês (e o
-    // EXISTS sem teto suprimia o fallback de check-in). Escopo análogo ao `date = hoje` do Diário.
-    let month_start = format!("{}-01", today_naive.format("%Y-%m"));
-    let month_end = forecast::last_day_of_month(today_naive.year(), today_naive.month())
-        .format("%Y-%m-%d")
-        .to_string();
-    let credit_spend: (i64,) = sqlx::query_as(
-        "SELECT CASE WHEN EXISTS(SELECT 1 FROM \"transaction\" \
-                                 WHERE type='expense' AND payment_method='credit' AND is_projection=0 \
-                                   AND date >= ?1 AND date <= ?2) \
-                     THEN ABS(COALESCE((SELECT SUM(amount) FROM \"transaction\" \
-                                        WHERE type='expense' AND payment_method='credit' AND is_projection=0 \
-                                          AND date >= ?1 AND date <= ?2), 0)) \
-                     ELSE COALESCE((SELECT SUM(credit_spend) FROM daily_checkin \
-                                    WHERE date >= ?1 AND date <= ?2), 0) \
-                END",
-    )
-    .bind(&month_start)
-    .bind(&month_end)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| format!("query credit spend: {e}"))?;
-
-    // Há rastreio de crédito? (cartão configurado ou algum gasto de crédito). Sem isso a UI mostra
-    // "—" no tile de crédito, em vez de um R$0 estrutural enganoso.
-    let has_credit: (i64,) = sqlx::query_as(
-        "SELECT CASE WHEN EXISTS(SELECT 1 FROM account WHERE type='credit_card') \
-                  OR EXISTS(SELECT 1 FROM \"transaction\" WHERE payment_method='credit') \
-                  OR COALESCE((SELECT SUM(credit_spend) FROM daily_checkin), 0) > 0 \
-                THEN 1 ELSE 0 END",
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| format!("query has_credit: {e}"))?;
-
     // Reserva em MESES de custo de vida (método): saldo das contas de reserva ÷ custo de vida mensal.
     // Custo de vida mensal = mediana das saídas dos últimos meses completos (realized_monthly_baseline
     // = fixas + diário + cartão). A tabela `reserve.current_months` não tem writer de produção (só seed
@@ -1025,8 +982,6 @@ pub(crate) async fn dashboard_summary(
         balance: projected_balance,
         daily_budget,
         daily_spend_today: daily_spend.0,
-        credit_spend_month: credit_spend.0,
-        has_credit: has_credit.0 != 0,
         reserve_months,
         reserve_trend: reserve_trend.0,
         transaction_count: count.0,

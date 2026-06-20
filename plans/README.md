@@ -34,7 +34,7 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 019  | SPIKE: first-class invoice (credit-bill) entity                                     | —        | spike  | 004        | TODO                       |
 | 020  | SPIKE: what-if / scenario branching of the forecast                                 | —        | spike  | —          | TODO                       |
 | 021  | SPIKE: real-time two-way Google Sheets sync                                         | —        | spike  | 001, 002   | SPIKE DONE — Phase 1 ready |
-| 022  | Remove the credit-accumulator fork residue (stay faithful: credit is a lump)        | P2       | M      | —          | TODO                       |
+| 022  | Remove the credit-accumulator fork residue (stay faithful: credit is a lump)        | P2       | M      | —          | DONE                       |
 | 023  | Rewrite note-marker convention → method-faithful #dividir:/#reembolso: + net-zero   | P1       | M      | —          | TODO                       |
 | 024  | SPIKE: decide the fate of the vestigial daily_checkin table                         | —        | spike  | —          | TODO                       |
 | 025  | Minor fidelity polish (patrimônio de-emphasis, dead category prop, reserve ADR)     | P3       | S      | —          | TODO                       |

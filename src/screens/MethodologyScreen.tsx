@@ -32,7 +32,7 @@ const PRINCIPLES = [
   {
     icon: Ruler,
     title: "Débito e crédito: dois ritmos",
-    body: "Débito, PIX e dinheiro afetam o caixa no mesmo dia. O crédito acumula na fatura e só pesa no vencimento. O Neko acompanha os dois de forma independente: isso evita o autoengano de um diário “zerado” enquanto a fatura cresce em silêncio.",
+    body: "Débito, PIX e dinheiro afetam o caixa no mesmo dia. O crédito é diferente: cada compra vai para a fatura e o Neko lança esse total como uma Saída única no vencimento — o cartão sequestra o salário futuro. Por isso a fatura aparece nas Saídas, não no Diário.",
   },
   {
     icon: ShieldCheck,
