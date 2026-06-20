@@ -7,6 +7,7 @@ import {
   performanceStatus,
   economizadoStatus,
   custoVidaStatus,
+  SAVINGS_MIN_BPS,
 } from "./totaisStatus";
 import type { MonthMetric } from "../lib/api";
 import { FORECAST, OWNER_TOTALS, mockCommands, mockInvoke } from "../test/commands";
@@ -24,6 +25,14 @@ describe("TotaisScreen — regras do método (puro)", () => {
     expect(economizadoStatus(2500).label).toBe("Dentro do ideal");
     expect(economizadoStatus(2000).label).toBe("Dentro do ideal");
     expect(economizadoStatus(1900).label).toBe("Abaixo do ideal");
+  });
+  it("SAVINGS_MIN_BPS é a constante canônica de 20% (compartilhada entre as telas)", () => {
+    // Guarda o piso canônico: AnnualScreen e colchaoPhase importam esta mesma constante,
+    // então um rename/mudança de valor falha aqui em vez de silenciosamente divergir.
+    expect(SAVINGS_MIN_BPS).toBe(2000);
+    // Confirma que o badge mensal usa exatamente este limiar.
+    expect(economizadoStatus(SAVINGS_MIN_BPS).label).toBe("Dentro do ideal");
+    expect(economizadoStatus(SAVINGS_MIN_BPS - 1).label).toBe("Abaixo do ideal");
   });
   it("Custo de vida: custo<=renda dentro da renda", () => {
     expect(custoVidaStatus(500, 1000).label).toBe("Dentro da renda");
