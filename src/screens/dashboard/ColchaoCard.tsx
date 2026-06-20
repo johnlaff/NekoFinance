@@ -28,7 +28,7 @@ export function ColchaoCard({ forecast, phase }: { forecast: Forecast; phase: Ph
           />
           Seu colchão
         </span>
-        <span title="Fases do método — Mapear: menos de 30 lançamentos. Calibrar: ajustando o diário. Operar: ≥ 20% economizado no ano e ≥ 3 meses de reserva.">
+        <span title="Fases do método — Mapear: menos de 30 lançamentos. Calibrar: ajustando o diário. Operar: ≥ 20% economizado no ano e ≥ 6 meses de reserva.">
           <PhaseBadge phase={phase} />
         </span>
       </div>
