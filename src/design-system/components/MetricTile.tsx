@@ -42,7 +42,7 @@ export function MetricTile({
         : "var(--text-muted)";
 
   return (
-    <article className={className} style={METRIC_TILE_STYLE}>
+    <article className={className} style={METRIC_TILE_STYLE} aria-label={label}>
       <div
         style={{
           display: "flex",

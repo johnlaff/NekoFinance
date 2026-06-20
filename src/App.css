@@ -40,7 +40,7 @@ body {
 /* Scrollbars no tema (dark-first): a barra nativa clara do WebView destoava do design system. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--border-strong) transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 ::-webkit-scrollbar {
   width: 10px;
@@ -50,7 +50,7 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
+  background: var(--scrollbar-thumb);
   border-radius: var(--radius-pill);
   border: 2px solid transparent;
   background-clip: padding-box;
@@ -896,7 +896,7 @@ h3,
   margin: 0 0 var(--space-2);
   color: var(--danger-400);
   font-size: var(--fs-sm);
-  line-height: var(--lh-body);
+  line-height: var(--lh-normal);
 }
 .txn-tag-opt {
   display: inline-flex;
@@ -1491,11 +1491,11 @@ h3,
 /* Estado OFF visível: `--border` no escuro tinha ~1.25:1 contra a superfície (o toggle sumia).
    `--ink-400` passa o 3:1 do WCAG 1.4.11 (contraste de componente não-textual). */
 .gs-toggle--off {
-  background: var(--ink-400);
+  background: var(--ink-300); /* WCAG 1.4.11: >=3:1 vs --surface (#161d1c) */
 }
 
 [data-theme="light"] .gs-toggle--off {
-  background: #828c87;
+  background: #727c77; /* WCAG 1.4.11: >=3:1 vs --bg (#eaeeec) e superfície branca */
 }
 
 .gs-toggle__knob {

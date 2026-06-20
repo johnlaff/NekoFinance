@@ -71,6 +71,7 @@ function EconomizadoSparkline({
   return (
     <div style={{ margin: "0 0 var(--space-6)" }}>
       <div
+        role="img"
         aria-label="Tendência de Economizado% por mês, com a faixa-meta de 20 a 30% sombreada"
         style={{
           display: "flex",

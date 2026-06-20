@@ -98,7 +98,7 @@ export function AppShell({
           </span>
         </div>
 
-        <nav className="ak-nav">
+        <nav className="ak-nav" aria-label="Navegação principal">
           <div className="ak-navh">Finanças</div>
           {NAV_ITEMS.map((n) => (
             <button
@@ -155,7 +155,7 @@ export function AppShell({
         </div>
       </aside>
 
-      <div className="ak-main">
+      <main className="ak-main">
         <header className="ak-top">
           <div className="ak-top__titles">
             <div className="ak-top__title">{meta.title}</div>
@@ -186,7 +186,7 @@ export function AppShell({
           <ThemeToggle />
         </header>
         <div className="ak-body">{children}</div>
-      </div>
+      </main>
     </div>
   );
 }
