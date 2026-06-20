@@ -14,7 +14,7 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | Plan | Title                                                                               | Priority | Effort | Depends on | Status |
 | ---- | ----------------------------------------------------------------------------------- | -------- | ------ | ---------- | ------ |
 | 001  | Fix side-by-side Economia sheet layout (import + write-back)                        | P1       | S–M    | —          | DONE   |
-| 002  | Make the sheet import atomic (single SQLite transaction)                            | P1       | S–M    | —          | TODO   |
+| 002  | Make the sheet import atomic (single SQLite transaction)                            | P1       | S–M    | —          | DONE   |
 | 003  | Allow manual Economia/transfer launch (engine + form)                               | P1       | M      | —          | TODO   |
 | 004  | Import owner splits and credit payment method                                       | P1       | L      | 002        | TODO   |
 | 005  | Safe-to-spend guardrail uses registered Economia, not net-surplus proxy             | P2       | M      | —          | TODO   |
