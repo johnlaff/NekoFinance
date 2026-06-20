@@ -812,10 +812,12 @@ pub fn parse_number(s: &str) -> i64 {
 }
 
 /// Parseia a aba `Economia` → `(ano, mês 1..=12, centavos)` para cada mês encontrado.
-/// A aba EMPILHA um bloco por ano: cada bloco tem uma linha-CABEÇALHO com o ANO (número inteiro) +
-/// os rótulos `Entradas` e `Economia`, seguida de 12 linhas `jan`..`dez` com o valor na coluna
-/// Economia (o mês fica na MESMA coluna do ano). PURA — só lê. Zeros/brancos são preservados para
-/// o import conseguir remover uma Economia que foi apagada na planilha.
+/// A aba coloca os blocos de ano LADO A LADO nas mesmas linhas (auditado na planilha viva: 2025 em
+/// B–E, 2026 em G–J — o CABEÇALHO de cada bloco tem o ANO + os rótulos `Entradas`/`Economia`, e os
+/// 12 meses `jan`..`dez` ficam logo abaixo, na coluna do ano). Também tolera blocos EMPILHADOS
+/// verticalmente. Cada bloco usa a SUA coluna de mês e a SUA coluna `Economia` (o primeiro rótulo
+/// `Economia` à DIREITA do ano). PURA — só lê. Zeros/brancos são preservados para o import conseguir
+/// remover uma Economia que foi apagada na planilha.
 pub fn parse_economia_sheet(rows: &[Vec<String>]) -> Vec<(i32, u32, i64)> {
     let mut out = Vec::new();
     let mut r = 0;
@@ -824,34 +826,60 @@ pub fn parse_economia_sheet(rows: &[Vec<String>]) -> Vec<(i32, u32, i64)> {
         let has_entradas = row
             .iter()
             .any(|c| c.trim().eq_ignore_ascii_case("entradas"));
-        let econ_col = row
-            .iter()
-            .position(|c| c.trim().eq_ignore_ascii_case("economia"));
-        let year_cell = row.iter().enumerate().find_map(|(i, c)| {
-            c.trim()
-                .parse::<f64>()
-                .ok()
-                .filter(|n| n.fract() == 0.0 && (2000.0..2100.0).contains(n))
-                .map(|n| (i, n as i32))
-        });
-        let (Some(econ_col), true, Some((month_col, year))) = (econ_col, has_entradas, year_cell)
-        else {
+        // Coleta TODOS os blocos `(month_col, ano, econ_col)` deste cabeçalho. `econ_col` de um bloco
+        // é o primeiro rótulo `Economia` à direita do ano — assim 2026 (lado a lado) usa a coluna de
+        // 2026, não a de 2025.
+        let mut blocks: Vec<(usize, i32, usize)> = Vec::new();
+        if has_entradas {
+            for (i, c) in row.iter().enumerate() {
+                let Some(year) = c
+                    .trim()
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|n| n.fract() == 0.0 && (2000.0..2100.0).contains(n))
+                    .map(|n| n as i32)
+                else {
+                    continue;
+                };
+                if let Some(econ_col) = row[i + 1..]
+                    .iter()
+                    .position(|e| e.trim().eq_ignore_ascii_case("economia"))
+                    .map(|p| i + 1 + p)
+                {
+                    blocks.push((i, year, econ_col));
+                }
+            }
+        }
+        if blocks.is_empty() {
             r += 1;
             continue;
-        };
-        // Lê as linhas de mês logo abaixo do cabeçalho do bloco.
+        }
+        // Lê as linhas de mês logo abaixo do cabeçalho; cada bloco lê a SUA coluna de mês e de
+        // Economia. Para quando nenhuma coluna de bloco nomeia um mês (TOTAL/linha vazia/próximo
+        // cabeçalho) ou logo após dezembro.
         let mut rr = r + 1;
         while rr < rows.len() {
-            let Some(month) = rows[rr]
-                .get(month_col)
-                .and_then(|l| month_number_from_name(l))
-            else {
-                break; // fim do bloco (linha vazia, TOTAL ou próximo cabeçalho)
-            };
-            let cents = rows[rr].get(econ_col).map(|c| parse_number(c)).unwrap_or(0);
-            out.push((year, month, cents));
+            let mut any = false;
+            let mut saw_december = false;
+            for &(month_col, year, econ_col) in &blocks {
+                let Some(month) = rows[rr]
+                    .get(month_col)
+                    .and_then(|l| month_number_from_name(l))
+                else {
+                    continue;
+                };
+                any = true;
+                let cents = rows[rr].get(econ_col).map(|c| parse_number(c)).unwrap_or(0);
+                out.push((year, month, cents));
+                if month == 12 {
+                    saw_december = true;
+                }
+            }
+            if !any {
+                break;
+            }
             rr += 1;
-            if month == 12 {
+            if saw_december {
                 break;
             }
         }
@@ -1275,6 +1303,71 @@ mod tests {
         assert_eq!(
             got,
             vec![(2025, 1, 100_000), (2025, 2, 0), (2026, 1, 150_050)]
+        );
+    }
+
+    // Regressão (P1): a aba real coloca os anos LADO A LADO nas mesmas linhas. Antes, o parser pegava
+    // só o primeiro bloco e descartava silenciosamente o ano corrente (2026).
+    #[test]
+    fn parse_economia_sheet_side_by_side_blocks() {
+        // 2025 em B–E (idx 1–4), 2026 em G–J (idx 6–9); col F (idx 5) é o gap.
+        let header = vec![
+            "".to_string(),
+            "2025".to_string(),
+            "Entradas".to_string(),
+            "Economia".to_string(),
+            "%".to_string(),
+            "".to_string(),
+            "2026".to_string(),
+            "Entradas".to_string(),
+            "Economia".to_string(),
+            "%".to_string(),
+        ];
+        let m = |name: &str, eco25: &str, eco26: &str| {
+            vec![
+                "".to_string(),
+                name.to_string(),
+                "5000.00".to_string(),
+                eco25.to_string(),
+                "0".to_string(),
+                "".to_string(),
+                name.to_string(),
+                "8000.00".to_string(),
+                eco26.to_string(),
+                "0".to_string(),
+            ]
+        };
+        let rows = vec![
+            header,
+            m("jan", "1000.00", "1500.00"),
+            m("fev", "0.0000", "2000.00"),
+        ];
+        let got = parse_economia_sheet(&rows);
+
+        let y2025: Vec<_> = got
+            .iter()
+            .filter(|&&(y, _, _)| y == 2025)
+            .copied()
+            .collect();
+        let y2026: Vec<_> = got
+            .iter()
+            .filter(|&&(y, _, _)| y == 2026)
+            .copied()
+            .collect();
+        assert_eq!(y2025.len(), 2, "2025 deve ter jan e fev");
+        assert_eq!(y2026.len(), 2, "2026 deve ter jan e fev");
+        assert_eq!(
+            y2025.iter().find(|&&(_, mo, _)| mo == 1).unwrap().2,
+            100_000
+        );
+        assert_eq!(y2025.iter().find(|&&(_, mo, _)| mo == 2).unwrap().2, 0); // 0 preservado
+        assert_eq!(
+            y2026.iter().find(|&&(_, mo, _)| mo == 1).unwrap().2,
+            150_000
+        );
+        assert_eq!(
+            y2026.iter().find(|&&(_, mo, _)| mo == 2).unwrap().2,
+            200_000
         );
     }
 
