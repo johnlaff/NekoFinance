@@ -17,6 +17,7 @@ const TAGS: Tag[] = [
     color: "var(--cat-sky)",
     emoji: null,
     is_special: false,
+    exclude_from_totals: false,
   },
 ];
 

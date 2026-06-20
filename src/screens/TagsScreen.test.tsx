@@ -14,6 +14,7 @@ const TOTALS: TagTotal[] = [
     color: "var(--brass-400)",
     emoji: null,
     is_special: true,
+    exclude_from_totals: false,
     total_cents: 2500,
   },
   {
@@ -22,6 +23,7 @@ const TOTALS: TagTotal[] = [
     color: "var(--cat-sky)",
     emoji: null,
     is_special: false,
+    exclude_from_totals: false,
     total_cents: 10000,
   },
 ];
@@ -36,6 +38,35 @@ describe("TagsScreen", () => {
     // Ordem: a especial vem antes (lista <li> na ordem do backend).
     const items = screen.getAllByRole("listitem");
     expect(items[0]).toHaveTextContent("! Pagar");
+  });
+
+  it('toggle "Ignorar nos cálculos" persiste via update_tag_exclude_cmd', async () => {
+    const user = userEvent.setup();
+    mockInvoke.mockReset();
+    mockCommands({
+      tag_totals_for_month_cmd: TOTALS,
+      update_tag_exclude_cmd: null,
+    });
+    render(<TagsScreen />);
+    await waitFor(() =>
+      expect(screen.getByText("Categoria demo A")).toBeInTheDocument(),
+    );
+
+    const switches = screen.getAllByRole("switch");
+    expect(switches).toHaveLength(2);
+    // Default: incluído (não excluído).
+    expect(switches[0]).toHaveAttribute("aria-checked", "false");
+
+    await user.click(
+      screen.getByRole("switch", { name: 'Ignorar "Categoria demo A" nos cálculos' }),
+    );
+
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith("update_tag_exclude_cmd", {
+        tagId: "v",
+        exclude: true,
+      }),
+    );
   });
 
   it("mostra EmptyState quando não há tags", async () => {

@@ -13,6 +13,9 @@ pub struct Tag {
     pub color: String,
     pub emoji: Option<String>,
     pub is_special: bool,
+    /// Quando `true`, lançamentos com esta tag saem das métricas derivadas (Performance,
+    /// Custo de vida, Economizado%) — mas continuam no Saldo (movimento de caixa real).
+    pub exclude_from_totals: bool,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow, PartialEq, Eq)]
@@ -22,6 +25,8 @@ pub struct TagTotal {
     pub color: String,
     pub emoji: Option<String>,
     pub is_special: bool,
+    /// Ver `Tag::exclude_from_totals`.
+    pub exclude_from_totals: bool,
     /// Soma (em centavos, valor absoluto) dos lançamentos do mês com esta tag.
     pub total_cents: i64,
 }
@@ -48,7 +53,7 @@ pub async fn create_tag(
 
 pub async fn list_tags(pool: &SqlitePool) -> Result<Vec<Tag>, String> {
     sqlx::query_as::<_, Tag>(
-        "SELECT id, name, color, emoji, is_special FROM tag \
+        "SELECT id, name, color, emoji, is_special, exclude_from_totals FROM tag \
          ORDER BY is_special DESC, name COLLATE NOCASE",
     )
     .fetch_all(pool)
@@ -82,6 +87,24 @@ pub async fn set_transaction_tags(
     Ok(())
 }
 
+/// Liga/desliga a exclusão das métricas para uma tag (plan 034). Erro se a tag não existir.
+pub async fn update_tag_exclude(
+    pool: &SqlitePool,
+    tag_id: &str,
+    exclude: bool,
+) -> Result<(), String> {
+    let rows = sqlx::query("UPDATE tag SET exclude_from_totals = ?1 WHERE id = ?2")
+        .bind(exclude as i64)
+        .bind(tag_id)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("update_tag_exclude: {e}"))?;
+    if rows.rows_affected() == 0 {
+        return Err(format!("tag not found: {tag_id}"));
+    }
+    Ok(())
+}
+
 /// Total por tag no mês (`YYYY-MM`). Inclui tags sem lançamento (total 0). `is_special` no topo.
 pub async fn tag_totals_for_month(
     pool: &SqlitePool,
@@ -90,7 +113,7 @@ pub async fn tag_totals_for_month(
 ) -> Result<Vec<TagTotal>, String> {
     let ym = format!("{year:04}-{month:02}");
     sqlx::query_as::<_, TagTotal>(
-        "SELECT t.id, t.name, t.color, t.emoji, t.is_special, \
+        "SELECT t.id, t.name, t.color, t.emoji, t.is_special, t.exclude_from_totals, \
                 COALESCE(SUM(ABS(tr.amount)), 0) AS total_cents \
          FROM tag t \
          LEFT JOIN transaction_tag tt ON tt.tag_id = t.id \
@@ -140,6 +163,15 @@ pub async fn tag_totals_for_month_cmd(
     month: u32,
 ) -> Result<Vec<TagTotal>, String> {
     tag_totals_for_month(pool.inner(), year, month).await
+}
+
+#[tauri::command]
+pub async fn update_tag_exclude_cmd(
+    pool: State<'_, SqlitePool>,
+    tag_id: String,
+    exclude: bool,
+) -> Result<(), String> {
+    update_tag_exclude(pool.inner(), &tag_id, exclude).await
 }
 
 #[cfg(test)]

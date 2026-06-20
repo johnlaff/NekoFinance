@@ -578,6 +578,9 @@ export interface Tag {
   color: string;
   emoji: string | null;
   is_special: boolean;
+  /** Quando true, lançamentos com esta tag saem das métricas (Performance, Custo de vida,
+   * Economizado%) — mas continuam no Saldo (movimento de caixa real). */
+  exclude_from_totals: boolean;
 }
 
 export interface TagTotal extends Tag {
@@ -628,6 +631,11 @@ export function setTransactionTags(
   tagIds: string[],
 ): Promise<void> {
   return invoke("set_transaction_tags_cmd", { transactionId, tagIds });
+}
+
+/** Liga/desliga "Ignorar nos cálculos" para uma tag (sai das métricas, não do Saldo). */
+export function updateTagExclude(tagId: string, exclude: boolean): Promise<void> {
+  return invoke("update_tag_exclude_cmd", { tagId, exclude });
 }
 
 export function tagTotalsForMonth(year: number, month: number): Promise<TagTotal[]> {

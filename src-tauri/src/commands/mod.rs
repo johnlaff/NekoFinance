@@ -2247,4 +2247,138 @@ mod tests {
         .unwrap();
         assert_eq!(audit, 1, "trilha de auditoria gravada para a Economia");
     }
+
+    // --- Plan 034: tag "Ignorar nos cálculos" ---
+
+    /// Insere um lançamento com id conhecido (para anexar tag depois).
+    async fn insert_realized_id(
+        pool: &sqlx::SqlitePool,
+        id: &str,
+        ttype: &str,
+        amount: i64,
+        date: &str,
+    ) {
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_projection) VALUES (?1,?2,?3,?4,0)",
+        )
+        .bind(id)
+        .bind(ttype)
+        .bind(amount)
+        .bind(date)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    // Uma saída marcada com tag excluída sai do Custo de vida e da Performance do mês; uma saída
+    // sem tag permanece. Exercita o filtro de `load_realized_month_events`/`load_year_events`.
+    #[tokio::test]
+    async fn excluded_tag_drops_expense_from_performance() {
+        let pool = fixture_pool().await;
+        // Março realizado (hoje = junho): renda 500, duas saídas de 100.
+        insert_realized(&pool, "income", 500_000, "2026-03-05").await;
+        insert_realized_id(&pool, "exp-ignored", "expense", 100_000, "2026-03-10").await;
+        insert_realized_id(&pool, "exp-counted", "expense", 100_000, "2026-03-12").await;
+
+        // Tag "Reembolso" marcada para ignorar; anexada só à saída ignorada.
+        let tag = crate::tags::create_tag(&pool, "Reembolso", "var(--cat-jade)", None, false)
+            .await
+            .unwrap();
+        crate::tags::update_tag_exclude(&pool, &tag, true)
+            .await
+            .unwrap();
+        crate::tags::set_transaction_tags(&pool, "exp-ignored", std::slice::from_ref(&tag))
+            .await
+            .unwrap();
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let a = annual_metrics(&pool, 2026, today).await.unwrap();
+        let mar = a.months.iter().find(|m| m.month == 3).unwrap();
+        assert_eq!(mar.income_cents, 500_000, "renda intacta");
+        assert_eq!(
+            mar.cost_of_living_cents, 100_000,
+            "só a saída sem tag conta no Custo de vida"
+        );
+        assert_eq!(
+            mar.performance_cents, 400_000,
+            "Performance = 500 − 100 (a saída ignorada não entra)"
+        );
+    }
+
+    // Um transfer→reserva marcado com tag excluída NÃO infla o Economizado; um sem tag conta.
+    // Exercita o filtro de `realized_annual_economia`.
+    #[tokio::test]
+    async fn excluded_tag_drops_transfer_from_economizado() {
+        let pool = fixture_pool().await;
+        let pid: (String,) = {
+            insert_liquid_account(&pool, 0).await;
+            sqlx::query_as("SELECT id FROM person LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+        let reserve_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO account (id, name, type, owner_person_id, balance, liquidity) VALUES (?1,'Reserva','savings',?2,0,'reserve')")
+            .bind(&reserve_id).bind(&pid.0).execute(&pool).await.unwrap();
+
+        // Dois transfers→reserva (mês completo, hoje = junho): 50k ignorado, 30k contado.
+        sqlx::query("INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) VALUES ('tr-ignored','transfer',50_000,'2026-03-20',?1,0)")
+            .bind(&reserve_id).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) VALUES ('tr-counted','transfer',30_000,'2026-03-21',?1,0)")
+            .bind(&reserve_id).execute(&pool).await.unwrap();
+
+        let tag = crate::tags::create_tag(&pool, "Ignorar", "var(--cat-jade)", None, false)
+            .await
+            .unwrap();
+        crate::tags::update_tag_exclude(&pool, &tag, true)
+            .await
+            .unwrap();
+        crate::tags::set_transaction_tags(&pool, "tr-ignored", std::slice::from_ref(&tag))
+            .await
+            .unwrap();
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let economia = realized_annual_economia(&pool, today).await.unwrap();
+        assert_eq!(
+            economia, 30_000,
+            "só o transfer→reserva sem tag conta no Economizado (não 80_000)"
+        );
+    }
+
+    // Regressão: a exclusão NÃO afeta a cadeia do Saldo — o movimento de caixa real permanece.
+    // A semente da projeção (`projection_seed`) soma a saída ignorada ao gap do Saldo da planilha,
+    // exatamente como uma saída qualquer; só as métricas derivadas a omitem.
+    #[tokio::test]
+    async fn excluded_tag_does_not_affect_saldo_chain() {
+        let pool = fixture_pool().await;
+        // Saldo da planilha de ontem = R$ 1.000,00; hoje = 2026-06-13.
+        insert_sheet_balance(&pool, "2026", "2026-06-12", 100_000).await;
+        // Saída de R$ 200,00 ENTRE o Saldo e hoje, marcada para ignorar nas métricas.
+        insert_realized_id(&pool, "exp-ignored", "expense", 20_000, "2026-06-13").await;
+
+        let tag = crate::tags::create_tag(&pool, "Ignorar", "var(--cat-jade)", None, false)
+            .await
+            .unwrap();
+        crate::tags::update_tag_exclude(&pool, &tag, true)
+            .await
+            .unwrap();
+        crate::tags::set_transaction_tags(&pool, "exp-ignored", std::slice::from_ref(&tag))
+            .await
+            .unwrap();
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let seed = projection_seed(&pool, today).await.unwrap();
+        assert_eq!(
+            seed, 80_000,
+            "o Saldo cai pela saída ignorada (100k − 20k): caixa real intacto"
+        );
+
+        // E confirma que a métrica do mesmo mês A ignora.
+        let a = annual_metrics(&pool, 2026, today).await.unwrap();
+        let jun = a.months.iter().find(|m| m.month == 6).unwrap();
+        assert_eq!(
+            jun.cost_of_living_cents, 0,
+            "a saída ignorada não conta no Custo de vida (só no Saldo)"
+        );
+    }
 }
