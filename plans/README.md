@@ -47,6 +47,11 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 032  | Flow correctness: write-back audit, sync race, derived double-count, Jan-1 guardrail   | P1       | M      | —          | DONE (pkg B)               |
 | 033  | Adherence: reserve floor = cost-of-living × months; unify Economizado% threshold       | P2       | M      | —          | DONE (pkg C)               |
 | 034  | Tag "Ignorar/Calcular" toggle (exclude tagged movements from aggregations)             | P2       | M      | —          | DONE (pkg C)               |
+| 035  | Itemized transactions — model + import parse + VIEW the breakdown (past/future/new)    | P1       | L      | —          | TODO (pkg D)               |
+| 036  | Itemized transactions — EDIT line items + write-back round-trip (SUM + note)           | P1       | L      | 035        | TODO (pkg D)               |
+| 037  | P1 flow fixes: tag-exclude out of Saldo projection; credit-lump audit; Jan-1 economia  | P1       | M      | —          | TODO (pkg D)               |
+| 038  | Dual-reality UX: daily-teto config + credit-first quick-add + Economizado badge        | P1       | M      | —          | TODO (pkg D)               |
+| 039  | Daily ease: OS-scheduler reminder (app closed) + 1-click Sincronizar fast path         | P2       | M      | —          | TODO (pkg D)               |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale)
 
