@@ -159,7 +159,7 @@ export function MonthLedgerCard({
                   );
                 })}
               </tbody>
-              {/* Rodapé do mês, fiel ao da planilha (linhas 37–44): somas + Saída Total + Performance. */}
+              {/* Rodapé do mês, fiel ao da planilha (linhas 37–44): somas + Saída Total + Resultado do mês. */}
               <tfoot>
                 <tr className="fc-foot">
                   <th scope="row">Total</th>
@@ -195,9 +195,9 @@ export function MonthLedgerCard({
                 <tr className="fc-foot">
                   <th
                     scope="row"
-                    title="Performance do mês na planilha (entradas − saída total). Distinta da Performance do método em Totais, que também desconta economia e a previsão do diário restante."
+                    title="Resultado contábil do mês na grade: entradas menos saída total (fixas + diário). Diferente da Performance do método (Totais), que também desconta Economia e a projeção do diário restante."
                   >
-                    Performance
+                    Resultado do mês
                   </th>
                   <td className="money" colSpan={3}>
                     <span
@@ -206,7 +206,7 @@ export function MonthLedgerCard({
                         fontSize: "var(--fs-micro)",
                       }}
                     >
-                      entradas − saída total (do mês)
+                      entradas − saída total
                     </span>
                   </td>
                   <td className="money">

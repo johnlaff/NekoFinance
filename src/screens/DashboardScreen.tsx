@@ -1,9 +1,8 @@
 import { useState } from "react";
-import { AlertTriangle, Minus, Sparkles, TrendingDown, TrendingUp } from "lucide-react";
+import { AlertTriangle, Sparkles } from "lucide-react";
 import { PocketsCard } from "../features/pockets/PocketsCard";
 import { Button } from "../design-system/components/Button";
 import { EmptyState } from "../design-system/components/EmptyState";
-import { MetricTile } from "../design-system/components/MetricTile";
 import { Money } from "../design-system/components/Money";
 import { BalanceTrajectory } from "../design-system/components/BalanceTrajectory";
 import { InfoPopover } from "../design-system/components/InfoPopover";
@@ -68,15 +67,6 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
       </div>
     );
   }
-
-  const reserveTrendIcon =
-    summary?.reserve_trend === "up" ? (
-      <TrendingUp size={15} strokeWidth={1.75} />
-    ) : summary?.reserve_trend === "down" ? (
-      <TrendingDown size={15} strokeWidth={1.75} />
-    ) : (
-      <Minus size={15} strokeWidth={1.75} />
-    );
 
   const deficit =
     forecast?.deepest_deficit && forecast.deepest_deficit.balance_cents < 0
@@ -173,36 +163,6 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
           </aside>
         )}
       </section>
-
-      <div className="dash-grid4">
-        <MetricTile
-          label="Saldo projetado"
-          value={summary ? formatBRL(summary.balance) : "—"}
-          icon={<TrendingUp size={15} strokeWidth={1.75} />}
-          sublabel={forecast ? `Fim de ${monthNamePtBR(forecast.today)}` : "Fim do mês"}
-        />
-        <MetricTile
-          label="Diário de hoje"
-          value={summary ? formatBRL(summary.daily_spend_today) : "—"}
-          sublabel={summary ? `de ${formatBRL(summary.daily_budget)}` : ""}
-        />
-        <MetricTile
-          label="Crédito no mês"
-          value={summary?.has_credit ? formatBRL(summary.credit_spend_month) : "—"}
-          icon={<TrendingDown size={15} strokeWidth={1.75} />}
-          sublabel={
-            summary && !summary.has_credit
-              ? "Sem cartão rastreado"
-              : "No crédito, vira fatura no vencimento"
-          }
-        />
-        <MetricTile
-          label="Reserva"
-          value={summary ? `${summary.reserve_months.toFixed(1)} meses` : "—"}
-          icon={reserveTrendIcon}
-          sublabel="Mín. 6 · paz 12+"
-        />
-      </div>
 
       {deficit && (
         <output className="dash-deficit">

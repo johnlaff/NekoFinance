@@ -56,8 +56,7 @@ describe("TransactionsScreen", () => {
 
   it("lists transactions and updates the shown count when filtering", async () => {
     const user = userEvent.setup();
-    const onQueryChange = vi.fn();
-    render(<TransactionsScreen query="" onQueryChange={onQueryChange} />);
+    render(<TransactionsScreen query="" onGoToSettings={vi.fn()} />);
 
     await waitFor(() => {
       expect(screen.getByText("Despesa demo variável")).toBeInTheDocument();
@@ -71,7 +70,7 @@ describe("TransactionsScreen", () => {
   });
 
   it("marca a proveniência de cada lançamento (ProvBadge)", async () => {
-    render(<TransactionsScreen query="" onQueryChange={vi.fn()} />);
+    render(<TransactionsScreen query="" onGoToSettings={vi.fn()} />);
     await waitFor(() => {
       // Projeção → "Previsto"; importado → "Da planilha"; manual → "Do app".
       expect(screen.getByText("Previsto")).toBeInTheDocument();
@@ -80,32 +79,56 @@ describe("TransactionsScreen", () => {
     expect(screen.getByText("Do app")).toBeInTheDocument();
   });
 
-  it("applies the controlled query and reports edits upward", async () => {
-    const user = userEvent.setup();
-    const onQueryChange = vi.fn();
-    render(<TransactionsScreen query="crédito" onQueryChange={onQueryChange} />);
+  it("applies the controlled query from the global header search", async () => {
+    // A tela não tem mais busca própria: o filtro chega só pela prop `query` (⌘K do header).
+    render(<TransactionsScreen query="crédito" onGoToSettings={vi.fn()} />);
 
     await waitFor(() => {
       expect(screen.getByText("Compromisso demo no crédito")).toBeInTheDocument();
     });
     expect(screen.queryByText("Despesa demo variável")).not.toBeInTheDocument();
-
-    await user.type(screen.getByLabelText("Filtrar por descrição"), "x");
-    expect(onQueryChange).toHaveBeenCalledWith("créditox");
+    // Indicador "Busca: …" mostra a consulta ativa sem reintroduzir um segundo input.
+    expect(screen.getByText("Busca:")).toBeInTheDocument();
+    // Não existe mais um campo de busca local concorrendo com o ⌘K do header.
+    expect(screen.queryByLabelText("Filtrar por descrição")).not.toBeInTheDocument();
   });
 
   it("shows the empty state with a settings hint when there is no data", async () => {
     mockCommands({ get_recent_transactions: [] });
-    render(<TransactionsScreen query="" onQueryChange={vi.fn()} />);
+    render(<TransactionsScreen query="" onGoToSettings={vi.fn()} />);
     await waitFor(() => {
       expect(screen.getByText("Nenhum lançamento encontrado")).toBeInTheDocument();
     });
     expect(screen.getByText(/Importe sua planilha/)).toBeInTheDocument();
   });
 
+  it("shows a Settings CTA when there are no transactions", async () => {
+    const user = userEvent.setup();
+    const onGoToSettings = vi.fn();
+    mockCommands({ get_recent_transactions: [] });
+    render(<TransactionsScreen query="" onGoToSettings={onGoToSettings} />);
+    await waitFor(() => {
+      expect(screen.getByText("Ir para Configurações")).toBeInTheDocument();
+    });
+    await user.click(screen.getByText("Ir para Configurações"));
+    expect(onGoToSettings).toHaveBeenCalledOnce();
+  });
+
+  it("does not show the Settings CTA when a filter merely returns nothing", async () => {
+    // Há lançamentos, mas a busca ativa não casa nenhum → empty state SEM CTA (não é falta de dados).
+    mockCommands({ get_recent_transactions: TXNS });
+    render(<TransactionsScreen query="zzzz-sem-resultado" onGoToSettings={vi.fn()} />);
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Nenhum resultado para o filtro atual/),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Ir para Configurações")).not.toBeInTheDocument();
+  });
+
   it("shows the error state when the fetch fails", async () => {
     mockCommands({ get_recent_transactions: new Error("db locked") });
-    render(<TransactionsScreen query="" onQueryChange={vi.fn()} />);
+    render(<TransactionsScreen query="" onGoToSettings={vi.fn()} />);
     await waitFor(() => {
       expect(screen.getByText(/O banco local está ocupado/)).toBeInTheDocument();
     });
@@ -118,7 +141,7 @@ describe("TransactionsScreen", () => {
       list_tags_cmd: TAGS,
       set_transaction_tags_cmd: new Error("db locked"),
     });
-    render(<TransactionsScreen query="" onQueryChange={vi.fn()} />);
+    render(<TransactionsScreen query="" onGoToSettings={vi.fn()} />);
     await waitFor(() => {
       expect(screen.getByText("Despesa demo variável")).toBeInTheDocument();
     });
@@ -156,7 +179,7 @@ describe("TransactionsScreen — apagar/editar (ações da linha)", () => {
       list_tags_cmd: [],
       delete_transaction_cmd: null,
     });
-    render(<TransactionsScreen query="" onQueryChange={vi.fn()} />);
+    render(<TransactionsScreen query="" onGoToSettings={vi.fn()} />);
     await waitFor(() => {
       expect(screen.getByText("Despesa demo variável")).toBeInTheDocument();
     });
@@ -181,7 +204,7 @@ describe("TransactionsScreen — apagar/editar (ações da linha)", () => {
       list_tags_cmd: [],
       delete_transaction_cmd: new Error("db locked"),
     });
-    render(<TransactionsScreen query="" onQueryChange={vi.fn()} />);
+    render(<TransactionsScreen query="" onGoToSettings={vi.fn()} />);
     await waitFor(() => {
       expect(screen.getByText("Despesa demo variável")).toBeInTheDocument();
     });
@@ -206,7 +229,7 @@ describe("TransactionsScreen — apagar/editar (ações da linha)", () => {
       list_tags_cmd: [],
       delete_series_all_cmd: 3,
     });
-    render(<TransactionsScreen query="" onQueryChange={vi.fn()} />);
+    render(<TransactionsScreen query="" onGoToSettings={vi.fn()} />);
     await waitFor(() => {
       expect(screen.getByText("Compromisso recorrente demo")).toBeInTheDocument();
     });
@@ -232,7 +255,7 @@ describe("TransactionsScreen — apagar/editar (ações da linha)", () => {
       list_tags_cmd: [],
       delete_series_from_cmd: 1,
     });
-    render(<TransactionsScreen query="" onQueryChange={vi.fn()} />);
+    render(<TransactionsScreen query="" onGoToSettings={vi.fn()} />);
     await waitFor(() => {
       expect(screen.getByText("Compromisso recorrente demo")).toBeInTheDocument();
     });
@@ -252,7 +275,7 @@ describe("TransactionsScreen — apagar/editar (ações da linha)", () => {
   it("fecha o painel de ações ao clicar no botão uma segunda vez", async () => {
     const user = userEvent.setup();
     mockCommands({ get_recent_transactions: TXNS, list_tags_cmd: [] });
-    render(<TransactionsScreen query="" onQueryChange={vi.fn()} />);
+    render(<TransactionsScreen query="" onGoToSettings={vi.fn()} />);
     await waitFor(() => {
       expect(screen.getByText("Despesa demo variável")).toBeInTheDocument();
     });
