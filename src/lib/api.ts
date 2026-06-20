@@ -390,18 +390,32 @@ export interface CellWrite {
   changed: boolean;
 }
 
+/**
+ * Resultado RICO da prévia (plano 028): o diff + um token de frescura + flags de pré-condição.
+ * `preview_revision` é o `modifiedTime` do Drive no instante da prévia; o apply o re-verifica e
+ * ABORTA se a planilha tiver mudado (edição concorrente → re-revisão). `conflicts_pending` espelha
+ * o gate de conflito do backend (a UI desabilita o envio). `multi_card_warning` é não-bloqueante.
+ */
+export interface WriteBackPreviewResult {
+  cells: CellWrite[];
+  preview_revision: string;
+  conflicts_pending: boolean;
+  multi_card_warning: boolean;
+}
+
 /** Estado da flag de write-back. `false` → envio ao Sheets desabilitado (só preview). */
 export function writeBackEnabled(): Promise<boolean> {
   return invoke("write_back_enabled");
 }
 
-/** Pré-visualização READ-ONLY: transações → células (diff). Seguro mesmo com a flag desligada. */
-export function previewWriteBack(
+/** Prévia RICA READ-ONLY (plano 028): diff + `preview_revision` (frescura) + conflitos pendentes +
+ * aviso de multi-cartão. A UI endurecida usa isto para amarrar a aprovação ao que foi visto. */
+export function previewWriteBackStatus(
   spreadsheetId: string,
   sheetName: string,
   clientId: string,
-): Promise<CellWrite[]> {
-  return invoke("preview_write_back", {
+): Promise<WriteBackPreviewResult> {
+  return invoke("preview_write_back_status", {
     spreadsheetId,
     sheetName,
     clientId,
@@ -410,27 +424,30 @@ export function previewWriteBack(
 }
 
 /** Aplica o write-back (escreve as células divergentes). Atrás da flag: rejeita enquanto
- * desligado (nunca escreve). Retorna quantas células foram escritas. */
+ * desligado (nunca escreve). `previewRevision` (do `previewWriteBackStatus`) amarra a aprovação à
+ * revisão vista: se a planilha mudou, o backend aborta com erro de re-revisão. Retorna nº escritas. */
 export function applyWriteBack(
   spreadsheetId: string,
   sheetName: string,
   clientId: string,
+  previewRevision?: string | null,
 ): Promise<number> {
   return invoke("apply_write_back", {
     spreadsheetId,
     sheetName,
     clientId,
     clientSecret: clientSecretOrNull,
+    previewRevision: previewRevision ?? null,
   });
 }
 
-/** Preview READ-ONLY do write-back da Economia (transfers→reserva → coluna `Economia` por mês). */
-export function previewEconomiaWriteBack(
+/** Prévia RICA READ-ONLY da Economia (plano 028): diff + `preview_revision` + conflitos pendentes. */
+export function previewEconomiaWriteBackStatus(
   spreadsheetId: string,
   year: number,
   clientId: string,
-): Promise<CellWrite[]> {
-  return invoke("preview_economia_write_back", {
+): Promise<WriteBackPreviewResult> {
+  return invoke("preview_economia_write_back_status", {
     spreadsheetId,
     year,
     clientId,
@@ -438,17 +455,20 @@ export function previewEconomiaWriteBack(
   });
 }
 
-/** Aplica o write-back da Economia. Mesma flag; retorna nº de células escritas. */
+/** Aplica o write-back da Economia. Mesma flag; `previewRevision` amarra a aprovação à revisão
+ * vista (aborta em edição concorrente). Retorna nº de células escritas. */
 export function applyEconomiaWriteBack(
   spreadsheetId: string,
   year: number,
   clientId: string,
+  previewRevision?: string | null,
 ): Promise<number> {
   return invoke("apply_economia_write_back", {
     spreadsheetId,
     year,
     clientId,
     clientSecret: clientSecretOrNull,
+    previewRevision: previewRevision ?? null,
   });
 }
 
