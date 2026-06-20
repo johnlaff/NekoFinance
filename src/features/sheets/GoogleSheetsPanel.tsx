@@ -62,6 +62,8 @@ interface LastImport {
 }
 
 const LAST_IMPORT_KEY = "sheets_last_import";
+/** Última ABA-ano importada — o dashboard (plano 031) a usa p/ medir o diff local → planilha. */
+const LAST_SHEET_KEY = "sheets_last_sheet";
 /** Sync em segundo plano (plano 026): ligado por padrão, separado do "Re-sincronizar" manual. */
 const BG_SYNC_KEY = "sheets_bg_sync_enabled";
 /** Client id do OAuth persistido para a tarefa de sync poder renovar o token sem o estado da UI. */
@@ -315,6 +317,9 @@ function useSheetImport(
     set({ lastImport: last });
     try {
       await setAppSetting(LAST_IMPORT_KEY, JSON.stringify(last));
+      // Aba-ano importada → o indicador de write-back pendente do dashboard (plano 031) a lê
+      // direto desta preferência para medir o diff local → planilha da aba mapeada.
+      if (state.selectedSheet) await setAppSetting(LAST_SHEET_KEY, state.selectedSheet);
       // O client id vive no build do frontend; a tarefa de sync em segundo plano (sem estado da UI)
       // precisa dele para renovar o token. Persistimos junto da última importação.
       if (GOOGLE_CLIENT_ID) await setAppSetting(CLIENT_ID_KEY, GOOGLE_CLIENT_ID);
