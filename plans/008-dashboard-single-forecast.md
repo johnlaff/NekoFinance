@@ -21,6 +21,22 @@
 - **Category**: perf
 - **Planned at**: commit `d183bbf`, 2026-06-19
 
+## Implementation note (2026-06-19)
+
+Shipped the **frontend cache-key alignment** (Steps 3–5) — the real win: the dashboard now
+reuses the shared `get_forecast` / `get_dashboard_summary` cache slots instead of private
+`:${reloadKey}` slots, so returning to the dashboard no longer forces a cold re-fetch.
+
+The **Rust Steps 1–2 were reconsidered and dropped**: making `dashboard_summary` call
+`forecast_dto` would _double_ cold-load cost, not halve it — today the dashboard runs one heavy
+`forecast_dto` (via `get_forecast`) plus one light `forecast::project` (via `dashboard_summary`);
+routing `dashboard_summary` through `forecast_dto` would run the heavy pipeline (with
+`project_with_metrics` + the annual-savings/coverage queries) in **both** commands. The genuine
+Rust dedup is to stop `dashboard_summary` computing the projection at all and have the frontend
+read `balance` from `forecast.month_end` — but that changes the `DashboardSummary` struct + its TS
+type, which is out of scope here and belongs with the dashboard restructure in **plan 016** (whose
+maintenance notes already flag that `get_dashboard_summary` may become redundant).
+
 ## Why this matters
 
 Every `DashboardScreen` load fires two Tauri commands — `get_dashboard_summary` and `get_forecast` — each of which independently runs the full forecast pipeline (seed, horizon, event load, projection, `effective_daily_ceiling`). That doubles CPU and SQLite I/O on the most-visited screen. Additionally, the cache keys embed `reloadKey` (e.g. `get_dashboard_summary:0`, `get_forecast:0`) while every other screen uses the plain keys `get_dashboard_summary` and `get_forecast`; this means navigating to the Dashboard always triggers a network-equivalent fetch even when the data is fresh in the shared cache. Finally, `effective_daily_ceiling` is computed twice per `get_dashboard_summary` call (once inside `dashboard_summary` at line 1361, once inside `load_forecast_events` at line 811). Eliminating the duplicate pipeline and aligning the cache key makes the dashboard load from cache on return visits and halves server-side work on cold loads.

@@ -18,12 +18,13 @@ import { DailyCheckinCard } from "./dashboard/DailyCheckinCard";
 import { MonthLedgerCard } from "./dashboard/MonthLedgerCard";
 
 export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
-  const [reloadKey, setReloadKey] = useState(0);
-  const summaryQ = useCommand(
-    `get_dashboard_summary:${reloadKey}`,
-    getDashboardSummary,
-  );
-  const forecastQ = useCommand(`get_forecast:${reloadKey}`, getForecast);
+  // Chaves de cache COMPARTILHADAS (sem sufixo) → o dashboard reaproveita o `get_forecast` /
+  // `get_dashboard_summary` já buscados por outras telas, em vez de um slot privado que forçava
+  // re-fetch a cada visita. `invalidateCommands()` (em handleLogged/handleReload) limpa o cache
+  // inteiro, então o próximo render rebusca fresco. `ledgerKey` força só o re-fetch do grid mensal.
+  const [ledgerKey, setLedgerKey] = useState(0);
+  const summaryQ = useCommand("get_dashboard_summary", getDashboardSummary);
+  const forecastQ = useCommand("get_forecast", getForecast);
   const summary = summaryQ.data ?? null;
   const forecast = forecastQ.data ?? null;
   const loading = summaryQ.loading || forecastQ.loading;
@@ -94,12 +95,12 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
 
   function handleLogged() {
     invalidateCommands();
-    setReloadKey((k) => k + 1);
+    setLedgerKey((k) => k + 1);
   }
 
   function handleReload() {
     invalidateCommands();
-    setReloadKey((k) => k + 1);
+    setLedgerKey((k) => k + 1);
   }
 
   return (
@@ -230,7 +231,7 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
 
       {forecast && <PerformanceCard forecast={forecast} />}
 
-      {forecast && <MonthLedgerCard today={forecast.today} reloadKey={reloadKey} />}
+      {forecast && <MonthLedgerCard today={forecast.today} reloadKey={ledgerKey} />}
 
       <PocketsCard />
     </div>
