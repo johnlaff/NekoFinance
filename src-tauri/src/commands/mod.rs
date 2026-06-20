@@ -195,13 +195,12 @@ mod tests {
         assert_eq!(summary.balance, 70_000);
     }
 
-    // Bug: tiles do dashboard mostravam R$0 estrutural porque liam só `daily_checkin` (vazia).
-    // Agora o Diário de hoje vem das transações realizadas.
+    // O Diário de hoje vem das transações realizadas (despesa variável não-crédito do dia).
     #[tokio::test]
     async fn dashboard_daily_spend_comes_from_transactions() {
         let pool = fixture_pool().await;
         let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
-        // Diário realizado de hoje (expense, is_fixed=0) — sem nenhum check-in.
+        // Diário realizado de hoje (expense, is_fixed=0).
         insert_realized(&pool, "expense", 4_271, "2026-06-13").await;
         // Despesa de outro dia não conta no "hoje".
         insert_realized(&pool, "expense", 9_999, "2026-06-12").await;
@@ -225,37 +224,6 @@ mod tests {
         assert_eq!(
             s.daily_spend_today, 4_271,
             "ABS garante magnitude positiva mesmo com amount negativo"
-        );
-    }
-
-    // Regressão (review adversarial): um dia com check-in E transação Diário não pode somar os dois
-    // (mesmo dinheiro, Régua 1). A transação realizada vence; o check-in só preenche dias sem ela.
-    #[tokio::test]
-    async fn dashboard_daily_spend_no_double_count_checkin_and_txn() {
-        let pool = fixture_pool().await;
-        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
-        let pid = uuid::Uuid::new_v4().to_string();
-        sqlx::query("INSERT INTO person (id, name) VALUES (?1, 'Tester')")
-            .bind(&pid)
-            .execute(&pool)
-            .await
-            .unwrap();
-        insert_realized(&pool, "expense", 4_271, "2026-06-13").await; // magnitude positiva (canônico)
-        // Check-in no mesmo dia com daily_spend 9_999 — NÃO pode ser somado por cima.
-        sqlx::query(
-            "INSERT INTO daily_checkin (id, person_id, date, daily_spend, credit_spend) VALUES (?1,?2,?3,?4,0)",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(&pid)
-        .bind("2026-06-13")
-        .bind(9_999i64)
-        .execute(&pool)
-        .await
-        .unwrap();
-        let s = dashboard_summary(&pool, today).await.unwrap();
-        assert_eq!(
-            s.daily_spend_today, 4_271,
-            "transação Diário vence; check-in não soma por cima (sem double-count)"
         );
     }
 
@@ -1389,78 +1357,6 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(liq.as_deref(), Some("liquid"));
-    }
-
-    // T7.2 — credit cycle aggregation: credit_spend from daily_checkin lands as a lump at due_day.
-    #[tokio::test]
-    async fn dashboard_credit_lump_at_due_day() {
-        use sqlx::sqlite::SqlitePoolOptions;
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-
-        let pid = uuid::Uuid::new_v4().to_string();
-        sqlx::query("INSERT INTO person (id, name) VALUES (?1, ?2)")
-            .bind(&pid)
-            .bind("Tester")
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        // Liquid bank account with R$2000.00
-        let aid = uuid::Uuid::new_v4().to_string();
-        sqlx::query(
-            "INSERT INTO account (id, name, type, owner_person_id, balance) VALUES (?1,?2,?3,?4,?5)",
-        )
-        .bind(&aid)
-        .bind("Conta")
-        .bind("bank")
-        .bind(&pid)
-        .bind(200_000i64)
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        // Credit card: closes on day 20, due on day 10
-        let card_id = uuid::Uuid::new_v4().to_string();
-        sqlx::query(
-            "INSERT INTO account (id, name, type, owner_person_id, balance, closing_day, due_day) VALUES (?1,?2,?3,?4,?5,?6,?7)",
-        )
-        .bind(&card_id)
-        .bind("Cartão")
-        .bind("credit_card")
-        .bind(&pid)
-        .bind(0i64)
-        .bind(20i32)
-        .bind(10i32)
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        // Checkin on March 15 with credit_spend = R$500.00
-        // Cycle closes March 20 → due April 10
-        let checkin_id = uuid::Uuid::new_v4().to_string();
-        sqlx::query(
-            "INSERT INTO daily_checkin (id, person_id, date, daily_spend, credit_spend) VALUES (?1,?2,?3,?4,?5)",
-        )
-        .bind(&checkin_id)
-        .bind(&pid)
-        .bind("2026-03-15")
-        .bind(0i64)
-        .bind(50_000i64)
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        let today = NaiveDate::from_ymd_opt(2026, 3, 10).unwrap();
-        let summary = dashboard_summary(&pool, today).await.unwrap();
-
-        // Seed = 200000. Credit lump of 50000 lands on April 10 (outside March horizon).
-        // Projected end-of-March = 200000 (no events in March after today).
-        assert_eq!(summary.balance, 200_000);
     }
 
     // Plan 009: o filtro de ano virou range `date >= 'YYYY-01-01' AND date < '(YYYY+1)-01-01'`.

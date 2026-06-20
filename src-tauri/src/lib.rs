@@ -248,7 +248,6 @@ mod tests {
             "transaction",
             "split",
             "daily_budget",
-            "daily_checkin",
             "reserve",
             "reserve_snapshot",
             "sheet_mapping",
@@ -335,14 +334,6 @@ mod tests {
         )
         .bind(&split_id).bind(&txn_id).bind(4300)
         .bind("cat_variable").bind(&person_id)
-        .execute(&pool).await.unwrap();
-
-        let checkin_id = uuid::Uuid::new_v4().to_string();
-        sqlx::query(
-            "INSERT INTO daily_checkin (id, person_id, date, daily_spend, credit_spend) VALUES (?1,?2,?3,?4,?5)"
-        )
-        .bind(&checkin_id).bind(&person_id).bind("2025-03-15")
-        .bind(4300).bind(0)
         .execute(&pool).await.unwrap();
 
         let budget_id = uuid::Uuid::new_v4().to_string();

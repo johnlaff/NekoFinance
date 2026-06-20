@@ -42,11 +42,12 @@ INSERT OR REPLACE INTO "transaction" (id, type, amount, description, date, payme
   ('txn-proj-1', 'expense', 200000, 'Viagem projetada', '2026-06-25', 'debit', 0, 1),
   ('txn-proj-2', 'expense', 100000, 'Conserto carro', '2026-06-28', 'debit', 0, 1);
 
--- Daily checkins (Régua 1: daily_spend, Régua 2: credit_spend)
-INSERT OR REPLACE INTO daily_checkin (id, person_id, date, daily_spend, credit_spend) VALUES
-  ('checkin-1', 'person-fixture-1', '2026-06-15', 5000, 20000),
-  ('checkin-2', 'person-fixture-1', '2026-06-16', 4500, 15000),
-  ('checkin-3', 'person-fixture-1', '2026-06-17', 6000, 25000);
+-- Daily (Diário) spend — ordinary variable expense transactions (is_fixed=0, realized).
+-- The daily ritual is recorded as transactions; there is no dedicated check-in table.
+INSERT OR REPLACE INTO "transaction" (id, type, amount, description, date, payment_method, is_fixed, is_projection) VALUES
+  ('txn-daily-1', 'expense', 5000, 'Diário', '2026-06-15', 'debit', 0, 0),
+  ('txn-daily-2', 'expense', 4500, 'Diário', '2026-06-16', 'debit', 0, 0),
+  ('txn-daily-3', 'expense', 6000, 'Diário', '2026-06-17', 'debit', 0, 0);
 
 -- Daily budget
 INSERT OR REPLACE INTO daily_budget (id, person_id, amount, start_date, status, free_income) VALUES

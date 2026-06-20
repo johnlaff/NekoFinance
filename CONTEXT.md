@@ -31,7 +31,7 @@ _Avoid_: Entry, record, movement
 Allocation of one transaction across multiple responsible persons. Carries `amount` and `owner_person_id`. A R$300 market purchase split into R$200 (owner A) + R$100 (owner B) is two split rows on the same transaction. "Where the money went" is no longer a category on the split — categorization was demoted to free **tags** (diagnostic only), per the method (categories are for diagnosis, never for planning).
 
 **Payment Method** (enum on Transaction):
-`debit`, `credit`, `pix`, `cash`. The methodology distinguishes debit (immediate balance impact) from credit (delayed, tracked separately as "fatura"). Debit/PIX/cash feed Régua 1; credit feeds Régua 2.
+`debit`, `credit`, `pix`, `cash`. The methodology distinguishes debit (immediate balance impact) from credit (delayed: the bill folds into a single Saída lump on the due date — "fatura"). Debit/PIX/cash are the daily (Diário) spend; credit becomes the due-date lump.
 
 ### Classification
 
@@ -47,18 +47,15 @@ The granular per-category tree was the "budget-by-category" anti-pattern the met
 A single daily spending limit per Person, calculated as (free income ÷ 30). Does not subdivide by category — categories are for backward-looking diagnosis, not forward-looking allocation. Has `status` (active, under_review, deprecated) and `amount`. Recalculated on: 3-month review, income change, or when Mia detects >15% deviation for 2+ weeks.
 \_Avoid*: Daily allowance, per-diem
 
-**Daily Check-in** (daily_checkin):
-A daily record of actual spending vs budget. Contains two independent metrics:
-
-- **daily_spend**: sum of debit/PIX/cash expenses for the day (Régua 1 — methodology pure)
-- **credit_spend**: sum of credit card expenses for the day (Régua 2 — reality check)
-  _Avoid_: Daily log, spending log
+**Daily ritual** (the day's Diário spend):
+The day's actual spending is the sum of that day's debit/PIX/cash variable (`is_fixed=0`, non-credit) `transaction` rows, compared against the daily*budget. There is **no dedicated check-in table**: the daily ritual is recorded as ordinary Diário `transaction` rows. (A `daily_checkin` table once existed for this but had no production writer and was dropped — ADR-0001 / plan 027.)
+\_Avoid*: Daily log, spending log
 
 **Débito/Diário track** (internal name "Régua 1" — Neko's term, not the method's):
-The method's core metric: daily_spend compared against daily_budget. Green/amber/red based on budget compliance. Goes silent (always green) when the user pays exclusively with credit.
+The method's core metric: the day's Diário spend compared against daily_budget. Green/amber/red based on budget compliance. Goes silent (always green) when the user pays exclusively with credit.
 
-**Crédito/Fatura track** (internal name "Régua 2"):
-Credit bill tracking: SUM(credit_spend for the month) accumulates into the invoice that lands on the due date. Prevents self-deception when the daily track is green but the credit bill is accumulating silently. The engine tracks the two independently; it does not compare credit against income.
+**Crédito/Fatura** (the bill is a single due-date lump):
+A credit bill is **one outflow on the due date** (Saída lump), not a per-day accrual. During a cycle you increment a running total, but the recorded output is one lump at the vencimento — `classify()` + write-back already do this. The earlier "credit accumulates daily" track ("Régua 2") was retired (ADR-0001 / plans 022, 027); credit is never compared against income.
 
 **Forecast Engine Types** (forecast `EventKind`):
 The projection engine maps each transaction into exactly one bucket. The method has 5 movement types (entrada, saída, diário, economia, cartão); the engine collapses them into 4 `EventKind` variants because the card has no column of its own — its bill folds into the Saída lump at the due date:
@@ -108,7 +105,7 @@ These live in the forecast DTO (`get_forecast`), computed in the Rust core — n
 
 - Daily budget is per Person, not per Profile. Multi-device inherits the same budget.
 - Do not hardcode "me" into persisted data. Use Person rows.
-- Fixed expenses are transactions with `is_fixed=true` and specific dates. Variable expenses feed the daily check-in.
+- Fixed expenses are transactions with `is_fixed=true` and specific dates. Variable expenses are the daily (Diário) spend — ordinary `transaction` rows with `is_fixed=false`.
 - Credit card = pay later. Debit/PIX = pay now. The methodology distinguishes them; the schema preserves that distinction.
 - The reserve is separate from the savings account. A savings account may or may not contain the reserve.
 - Categories are for diagnosis, not planning. The daily_budget is a single number.
