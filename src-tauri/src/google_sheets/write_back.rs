@@ -203,12 +203,13 @@ pub fn plan_write_back(
 /// Planeja o write-back da Economia para a aba `Economia`. PURO e read-only.
 /// `economia_by_month[m-1]` = centavos de Economia REGISTRADA do mês m (1..=12) do `year`.
 ///
-/// A aba real EMPILHA um bloco por ano (a planilha cresce com 2027, 2028…): cada bloco tem uma
-/// linha-CABEÇALHO com o ANO (número) e os rótulos `Entradas | Economia | %`, seguida de 12 linhas
-/// `jan`..`dez` e um `TOTAL`. O mês fica na MESMA coluna do ano; `Economia` é a coluna do rótulo
-/// homônimo. Por isso escopamos ao BLOCO do ano-alvo (senão escreveríamos no ano errado) e só
-/// tocamos a coluna `Economia` — `Entradas` e `%` são FÓRMULAS, nunca escritas. Meses sem Economia
-/// (0) e células já iguais não geram escrita.
+/// A aba real coloca os blocos de ano LADO A LADO nas mesmas linhas (auditado: 2025 em B–E, 2026 em
+/// G–J), e também tolera empilhamento vertical: cada bloco tem uma linha-CABEÇALHO com o ANO (número)
+/// e os rótulos `Entradas | Economia | %`, seguida de 12 linhas `jan`..`dez` e um `TOTAL`. O mês fica
+/// na MESMA coluna do ano; `Economia` é a coluna do rótulo homônimo à DIREITA do ano. Por isso
+/// escopamos ao BLOCO do ano-alvo (senão escreveríamos na coluna do ano errado) e só tocamos a coluna
+/// `Economia` — `Entradas` e `%` são FÓRMULAS, nunca escritas. Meses sem Economia (0) e células já
+/// iguais não geram escrita.
 pub fn plan_economia_write_back(
     rows: &[Vec<String>],
     year: i32,
@@ -230,9 +231,12 @@ pub fn plan_economia_write_back(
             .iter()
             .any(|c| c.trim().eq_ignore_ascii_case("entradas"));
         let month_col = row.iter().position(|c| is_year(c))?;
-        let econ_col = row
+        // `Economia` do bloco = primeiro rótulo à DIREITA da coluna do ano. Na aba real os anos ficam
+        // lado a lado, então o `Economia` de 2026 vem depois da coluna de 2026 — não o de 2025.
+        let econ_col = row[month_col + 1..]
             .iter()
-            .position(|c| c.trim().eq_ignore_ascii_case("economia"))?;
+            .position(|c| c.trim().eq_ignore_ascii_case("economia"))
+            .map(|p| month_col + 1 + p)?;
         has_entradas.then_some((r, month_col, econ_col))
     });
     let Some((header_row, month_col, econ_col)) = header else {
@@ -428,6 +432,57 @@ mod tests {
         assert_eq!(plan26.len(), 1);
         assert_eq!(plan26[0].a1, "D6");
         assert_eq!(plan26[0].date, "2026-01");
+    }
+
+    // Regressão (P1): na aba real os anos ficam LADO A LADO. Escrever 2026 deve cair na coluna de
+    // Economia de 2026 ("I"), nunca na de 2025 ("D").
+    #[test]
+    fn plans_economia_write_back_side_by_side_targets_correct_block() {
+        // 2025 em B–E (Economia idx 3 = "D"), 2026 em G–J (Economia idx 8 = "I"); col F (idx 5) gap.
+        let header = vec![
+            "".into(),
+            "2025".into(),
+            "Entradas".into(),
+            "Economia".into(),
+            "%".into(),
+            "".into(),
+            "2026".into(),
+            "Entradas".into(),
+            "Economia".into(),
+            "%".into(),
+        ];
+        let data_row = |name: &str, eco25: &str, eco26: &str| {
+            vec![
+                "".into(),
+                name.to_string(),
+                "5000.00".into(),
+                eco25.to_string(),
+                "0".into(),
+                "".into(),
+                name.to_string(),
+                "8000.00".into(),
+                eco26.to_string(),
+                "0".into(),
+            ]
+        };
+        let grid = vec![header, data_row("jan", "1000.00", "500.00")];
+
+        let mut by = [0i64; 12];
+        by[0] = 200_000; // jan = 2000,00
+
+        let plan26 = plan_economia_write_back(&grid, 2026, &by);
+        assert!(!plan26.is_empty(), "deve planejar jan de 2026");
+        assert!(
+            plan26.iter().all(|c| c.col == 8 && c.a1.starts_with('I')),
+            "escritas de 2026 vão para a col 8 (I), não a col 3 (D)"
+        );
+
+        let plan25 = plan_economia_write_back(&grid, 2025, &by);
+        assert!(!plan25.is_empty(), "deve planejar jan de 2025");
+        assert!(
+            plan25.iter().all(|c| c.col == 3 && c.a1.starts_with('D')),
+            "escritas de 2025 vão para a col 3 (D)"
+        );
     }
 
     #[test]
