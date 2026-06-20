@@ -11,15 +11,6 @@ export function todayISO(): string {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
-/** Formats INTEGER cents as localized BRL currency (e.g. 123456 → "R$ 1.234,56"). */
-export function fmtBRL(cents: number): string {
-  const reais = cents / 100;
-  return reais.toLocaleString("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  });
-}
-
 /**
  * Parses a pt-BR money string ("1.234,56", "R$ 950", "42,5") into INTEGER cents.
  * Returns null when the input has no parseable amount.

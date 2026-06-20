@@ -4,7 +4,7 @@ import { Button } from "../../design-system/components/Button";
 import { Money } from "../../design-system/components/Money";
 import { createTransaction, type DashboardSummary } from "../../lib/api";
 import { safeErrorMessage } from "../../lib/errors";
-import { fmtBRL, parseBRLToCents, todayISO } from "../../lib/format";
+import { formatBRL, parseBRLToCents, todayISO } from "../../lib/format";
 import { invalidateCommands } from "../../lib/useCommand";
 import { SR_ONLY } from "../../design-system/srOnly";
 
@@ -110,8 +110,8 @@ export function DailyCheckinCard({
         >
           {ceiling > 0
             ? overspent
-              ? `${fmtBRL(-remaining)} acima do teto`
-              : `${fmtBRL(remaining)} disponível`
+              ? `${formatBRL(-remaining)} acima do teto`
+              : `${formatBRL(remaining)} disponível`
             : "Teto do dia aparece ao lançar entradas do mês"}
         </span>
       </div>
@@ -175,7 +175,7 @@ export function DailyCheckinCard({
               color: "var(--text-faint)",
             }}
           >
-            Média do mês: {fmtBRL(monthAvgCents)}/dia
+            Média do mês: {formatBRL(monthAvgCents)}/dia
           </p>
         )}
 

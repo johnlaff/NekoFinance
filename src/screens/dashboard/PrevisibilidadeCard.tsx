@@ -1,6 +1,6 @@
 import { CalendarRange } from "lucide-react";
 import type { Forecast } from "../../lib/api";
-import { fmtBRL, monthNamePtBR } from "../../lib/format";
+import { formatBRL, monthNamePtBR } from "../../lib/format";
 import { Disclosure } from "../../design-system/components/Disclosure";
 import { Money } from "../../design-system/components/Money";
 import { InfoPopover } from "../../design-system/components/InfoPopover";
@@ -101,7 +101,7 @@ export function PrevisibilidadeCard({ forecast }: { forecast: Forecast }) {
                   <div
                     key={iso}
                     className="dash-predict__row"
-                    aria-label={`${label}: ${pct}% do gasto típico lançado, falta ${fmtBRL(c.estimated_missing_cents)}`}
+                    aria-label={`${label}: ${pct}% do gasto típico lançado, falta ${formatBRL(c.estimated_missing_cents)}`}
                   >
                     <span className="dash-predict__month">{label}</span>
                     <span className="dash-predict__bar" aria-hidden="true">
@@ -111,7 +111,7 @@ export function PrevisibilidadeCard({ forecast }: { forecast: Forecast }) {
                       />
                     </span>
                     <span className="dash-predict__pct">
-                      {pct}% · falta {fmtBRL(c.estimated_missing_cents)}
+                      {pct}% · falta {formatBRL(c.estimated_missing_cents)}
                     </span>
                   </div>
                 );

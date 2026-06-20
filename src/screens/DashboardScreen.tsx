@@ -8,7 +8,7 @@ import { Money } from "../design-system/components/Money";
 import { BalanceTrajectory } from "../design-system/components/BalanceTrajectory";
 import { InfoPopover } from "../design-system/components/InfoPopover";
 import { getDashboardSummary, getForecast, isTauri } from "../lib/api";
-import { fmtBRL, fmtDayMonth, monthNamePtBR } from "../lib/format";
+import { formatBRL, fmtDayMonth, monthNamePtBR } from "../lib/format";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { PrevisibilidadeCard } from "./dashboard/PrevisibilidadeCard";
 import { ColchaoCard } from "./dashboard/ColchaoCard";
@@ -111,7 +111,7 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
             <InfoPopover term="pode_gastar">Pode gastar até</InfoPopover>
           </p>
           <p className="dash-hero__kpi">
-            {forecast ? fmtBRL(forecast.safe_to_spend_today_cents) : "—"}
+            {forecast ? formatBRL(forecast.safe_to_spend_today_cents) : "—"}
             <span className="dash-hero__kpi-suffix">hoje</span>
           </p>
           <p className="dash-hero__reason">
@@ -177,18 +177,18 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
       <div className="dash-grid4">
         <MetricTile
           label="Saldo projetado"
-          value={summary ? fmtBRL(summary.balance) : "—"}
+          value={summary ? formatBRL(summary.balance) : "—"}
           icon={<TrendingUp size={15} strokeWidth={1.75} />}
           sublabel={forecast ? `Fim de ${monthNamePtBR(forecast.today)}` : "Fim do mês"}
         />
         <MetricTile
           label="Diário de hoje"
-          value={summary ? fmtBRL(summary.daily_spend_today) : "—"}
-          sublabel={summary ? `de ${fmtBRL(summary.daily_budget)}` : ""}
+          value={summary ? formatBRL(summary.daily_spend_today) : "—"}
+          sublabel={summary ? `de ${formatBRL(summary.daily_budget)}` : ""}
         />
         <MetricTile
           label="Crédito no mês"
-          value={summary?.has_credit ? fmtBRL(summary.credit_spend_month) : "—"}
+          value={summary?.has_credit ? formatBRL(summary.credit_spend_month) : "—"}
           icon={<TrendingDown size={15} strokeWidth={1.75} />}
           sublabel={
             summary && !summary.has_credit

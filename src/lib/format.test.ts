@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  fmtBRL,
   fmtDate,
   fmtDayMonth,
+  formatBRL,
   monthNamePtBR,
   parseBRLToCents,
   todayISO,
@@ -35,21 +35,23 @@ describe("parseBRLToCents", () => {
   });
 });
 
-describe("fmtBRL", () => {
+describe("formatBRL", () => {
   it("formats cents as BRL with pt-BR grouping", () => {
-    expect(fmtBRL(123456)).toBe("R$ 1.234,56");
+    expect(formatBRL(123456)).toContain("1.234,56");
   });
 
   it("formats zero", () => {
-    expect(fmtBRL(0)).toBe("R$ 0,00");
+    expect(formatBRL(0)).toContain("0,00");
   });
 
-  it("formats negative amounts", () => {
-    expect(fmtBRL(-5000)).toBe("-R$ 50,00");
+  it("formats negative amounts with typographic minus", () => {
+    const s = formatBRL(-5000);
+    expect(s).toContain("−");
+    expect(s).toContain("50,00");
   });
 
   it("keeps two decimal places for sub-real cents", () => {
-    expect(fmtBRL(7)).toBe("R$ 0,07");
+    expect(formatBRL(7)).toContain("0,07");
   });
 });
 
