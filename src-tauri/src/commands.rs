@@ -561,12 +561,10 @@ const SAVINGS_TARGET_BPS: i64 = 2500;
 /// método aceita variação mês a mês; abaixo disso é quase certo que falta fatura/variável.
 const COVERAGE_COMPLETE_BPS: i64 = 6_000;
 
-/// Renda e poupança REALIZADAS do ano corrente até hoje (`is_projection = 0`). Proxy de
-/// Entradas/Economia da aba Economia (que ainda não é importada — slice 7): a poupança é o net
-/// `renda − saída` realizado. Usada no guardrail anual: o ano PROJETADO mente quando os meses
-/// futuros estão incompletos (só fixas/salário), então a régua olha só o que já aconteceu.
-/// `transfer` é IGNORADO (não há linha Economia explícita ainda) — a poupança real virá do saldo
-/// da reserva quando o slice de Economia existir; até lá o net é um proxy conservador (review P2).
+/// Renda e net REALIZADOS do ano corrente até hoje (`is_projection = 0`): a poupança é o net
+/// `renda − saída` realizado dos meses completos. Retorna `(renda, net)` — o `net` superávit
+/// alimenta `AnnualSavingsDto.realized_savings_cents` (o "colchão" exibido); a Economia registrada
+/// que o guardrail de poupança usa vem de `realized_annual_economia` (transfers→reserva).
 ///
 /// Conta só **meses COMPLETOS** do ano (`substr(date) < mês corrente`), nunca o mês em andamento.
 /// No meio do mês as contas fixas já podem ter entrado mas o salário ainda não, o que daria um
@@ -998,9 +996,9 @@ pub struct MonthMetricDto {
 
 /// Poupança do ano: realizada (honesta) vs projetada (otimista quando o futuro está incompleto).
 /// ATENÇÃO a dois conceitos distintos (não confundir na UI): `*_savings_cents` é o NET superávit
-/// (renda − saída), o "colchão" do Neko; `registered_economia_cents` é a Economia REGISTRADA do
-/// método (transfers→reserva), numerador do Economizado%. O guardrail usa o net (colchão); o
-/// Economizado mensal usa a Economia registrada.
+/// (renda − saída), o "colchão" exibido no Neko; `registered_economia_cents` é a Economia
+/// REGISTRADA do método (transfers→reserva), numerador do Economizado%. O guardrail de poupança
+/// usa a Economia registrada; o net só aparece como exibição do colchão.
 #[derive(serde::Serialize)]
 pub struct AnnualSavingsDto {
     pub realized_income_cents: i64,
@@ -1076,10 +1074,13 @@ async fn forecast_dto(pool: &SqlitePool, today_naive: NaiveDate) -> Result<Forec
     let reserve_floor_cents = reserve_floor(pool).await?;
     // Poupança ANUAL realizada (não o mês isolado, não o ano projetado-incompleto).
     let (annual_income, annual_savings_amt) = realized_annual_savings(pool, today_naive).await?;
+    // Economia REGISTRADA do ano (transfers→reserva): numerador do Economizado% e entrada do
+    // guardrail de poupança. O net `annual_savings_amt` é só exibição do colchão (não decide).
+    let annual_economia = realized_annual_economia(pool, today_naive).await?;
     let sts = forecast::safe_to_spend_today(
         &fc,
         annual_income,
-        annual_savings_amt,
+        annual_economia,
         SAVINGS_TARGET_BPS,
         reserve_floor_cents,
     );
@@ -1100,7 +1101,6 @@ async fn forecast_dto(pool: &SqlitePool, today_naive: NaiveDate) -> Result<Forec
             0
         }
     };
-    let annual_economia = realized_annual_economia(pool, today_naive).await?;
     let annual_savings = AnnualSavingsDto {
         realized_income_cents: annual_income,
         realized_savings_cents: annual_savings_amt,
@@ -3315,6 +3315,43 @@ mod tests {
         assert_eq!(
             fc.annual_savings.registered_economia_cents, 30_000,
             "só transfer→reserva conta como Economia registrada"
+        );
+    }
+
+    // REGRESSÃO: net superávit grande não satisfaz mais o guardrail de poupança — só a Economia
+    // REGISTRADA (transfers→reserva) conta. Quem ganhou >> gastou mas NÃO transferiu para a reserva
+    // tem Economizado = 0 pelo método, então a régua de poupança morde (não o proxy do net antigo).
+    #[tokio::test]
+    async fn guardrail_savings_uses_registered_economia_not_net_surplus() {
+        let pool = fixture_pool().await;
+        insert_liquid_account(&pool, 1_000_000).await; // R$ 10 000 de caixa → folga de caixa ampla
+        // Mês COMPLETO (março; hoje = junho): renda R$ 5 000, saída R$ 1 000 → net R$ 4 000.
+        // ZERO transfers para reserva → Economia registrada = 0.
+        insert_realized(&pool, "income", 500_000, "2026-03-05").await;
+        insert_realized(&pool, "expense", 100_000, "2026-03-10").await;
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let fc = forecast_dto(&pool, today).await.unwrap();
+
+        assert_eq!(fc.annual_savings.realized_income_cents, 500_000);
+        assert_eq!(
+            fc.annual_savings.registered_economia_cents, 0,
+            "sem transfer→reserva, a Economia registrada é zero"
+        );
+        // Folga de poupança = Economia(0) − 25% × renda(500_000) = −125_000 (NEGATIVA).
+        // Sob o proxy antigo seria net(400_000) − 125_000 = +275_000 e binding="cash".
+        assert_eq!(fc.savings_headroom_cents, Some(-125_000));
+        assert_eq!(
+            fc.binding_guardrail, "savings",
+            "a régua de poupança morde apesar do net positivo"
+        );
+        assert_eq!(
+            fc.safe_to_spend_today_cents, 0,
+            "net superávit não conta como já-poupado; pode gastar 0"
+        );
+        assert!(
+            fc.cash_headroom_cents > 0,
+            "há caixa de sobra — o que morde é a poupança, não o caixa"
         );
     }
 
