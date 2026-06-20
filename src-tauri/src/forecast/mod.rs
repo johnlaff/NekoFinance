@@ -281,6 +281,10 @@ pub fn last_day_of_month(year: i32, month: u32) -> NaiveDate {
 /// The cycle closes on `closing_day` of the checkin's month (or previous month if checkin is before
 /// closing_day), and the invoice is due on `due_day` of the following month.
 pub fn cycle_due_date(checkin_date: NaiveDate, closing_day: u32, due_day: u32) -> NaiveDate {
+    // Clamp closing_day to a calendar day present in every month. `closing_day = 0` is not a valid
+    // cycle boundary (the `day() <= closing_day` guard would never hold, always routing to the
+    // prior month); treat it as 1. `closing_day > 28` could skip February; cap at 28.
+    let closing_day = closing_day.clamp(1, 28);
     let (cycle_close_year, cycle_close_month) = if checkin_date.day() <= closing_day {
         // Checkin is before or on closing_day → cycle closes this month
         (checkin_date.year(), checkin_date.month())
@@ -951,6 +955,20 @@ mod tests {
         let checkin = d("2026-01-15");
         let due = cycle_due_date(checkin, 20, 31);
         assert_eq!(due, d("2026-02-28"));
+    }
+
+    // T7.2e — cycle_due_date: closing_day = 0 is clamped to 1 (not "always prior month").
+    // Before the clamp, `day() <= 0` was always false → the cycle was always treated as closed
+    // last month regardless of checkin. After clamping to 1: checkin day 15 > closing day 1, so
+    // the cycle closed last month (December) → due January 10.
+    #[test]
+    fn cycle_due_date_closing_day_zero() {
+        let checkin = d("2026-01-15");
+        let due = cycle_due_date(checkin, 0, 10);
+        assert_eq!(due, d("2026-01-10"));
+        // Sanity: a same-month checkin on day 1 (≤ clamped closing_day 1) closes this month → Feb.
+        let due_early = cycle_due_date(d("2026-01-01"), 0, 10);
+        assert_eq!(due_early, d("2026-02-10"));
     }
 
     // ---- Slice 011: Economia + previsão de diário como driver ----

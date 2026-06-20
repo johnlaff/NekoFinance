@@ -51,6 +51,11 @@ pub async fn resolve(pool: &SqlitePool, id: &str, choice: &str) -> Result<(), St
     let now = chrono::Utc::now().to_rfc3339();
     let sheet_wins = choice == "sheet";
 
+    // Atomicidade: a escrita na `transaction` e a marcação de `resolved_at` precisam ser tudo-ou-
+    // nada. Sem a transação, um crash entre as duas deixaria a linha atualizada mas o conflito
+    // ainda pendente (ou vice-versa).
+    let mut tx = pool.begin().await.map_err(|e| format!("begin tx: {e}"))?;
+
     match field.as_str() {
         "amount" => {
             let source: i64 = sheet_value.parse().map_err(|_| "sheet amount inválido")?;
@@ -62,7 +67,7 @@ pub async fn resolve(pool: &SqlitePool, id: &str, choice: &str) -> Result<(), St
                 .bind(source)
                 .bind(&now)
                 .bind(&txn_id)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await
                 .map_err(|e| format!("apply amount: {e}"))?;
             } else {
@@ -73,7 +78,7 @@ pub async fn resolve(pool: &SqlitePool, id: &str, choice: &str) -> Result<(), St
                 .bind(source)
                 .bind(&now)
                 .bind(&txn_id)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await
                 .map_err(|e| format!("align amount base: {e}"))?;
             }
@@ -86,7 +91,7 @@ pub async fn resolve(pool: &SqlitePool, id: &str, choice: &str) -> Result<(), St
                 .bind(&sheet_value)
                 .bind(&now)
                 .bind(&txn_id)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await
                 .map_err(|e| format!("apply description: {e}"))?;
             } else {
@@ -96,7 +101,7 @@ pub async fn resolve(pool: &SqlitePool, id: &str, choice: &str) -> Result<(), St
                 .bind(&sheet_value)
                 .bind(&now)
                 .bind(&txn_id)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await
                 .map_err(|e| format!("align description base: {e}"))?;
             }
@@ -108,9 +113,13 @@ pub async fn resolve(pool: &SqlitePool, id: &str, choice: &str) -> Result<(), St
         .bind(&now)
         .bind(choice)
         .bind(id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| format!("mark resolved: {e}"))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| format!("commit resolve: {e}"))?;
     Ok(())
 }
 
@@ -252,5 +261,22 @@ mod tests {
         seed_txn(&p, "t1", 100, "x").await;
         seed_conflict(&p, "c1", "t1", "amount", "1", "2", "3").await;
         assert!(resolve(&p, "c1", "whatever").await.is_err());
+    }
+
+    // Idempotência + caminho transacional: as duas escritas (transaction + import_conflict) são
+    // tudo-ou-nada num único `tx.commit()`. A 2ª chamada vê o conflito já resolvido (resolved_at
+    // IS NOT NULL → não casa o SELECT) e é um no-op, sem corromper o estado já gravado.
+    #[tokio::test]
+    async fn resolve_idempotent_second_call_is_noop() {
+        let p = pool().await;
+        seed_txn(&p, "t1", 10000, "x").await;
+        seed_conflict(&p, "c1", "t1", "amount", "8000", "10000", "12000").await;
+
+        resolve(&p, "c1", "sheet").await.unwrap();
+        // 2ª chamada: conflito já resolvido → linha não encontrada no SELECT.
+        // Não pode errar nem corromper o estado já resolvido.
+        resolve(&p, "c1", "sheet").await.unwrap();
+        assert_eq!(amount_of(&p, "t1").await, (12000, Some(12000)));
+        assert!(list_conflicts(&p).await.unwrap().is_empty());
     }
 }
