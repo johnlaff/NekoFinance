@@ -100,7 +100,7 @@ These live in the forecast DTO (`get_forecast`), computed in the Rust core — n
 
 **Colchão**: net surplus kept in cash instead of a formal Economia transfer — a valid adaptation the app recognizes before teaching (ColchaoCard). Shown beside `registered_economia` so the two are never conflated.
 
-**Phase** (adaptação): `map` (mapping — few lançamentos / no realized month) → `calibrate` (tuning the diário) → `operate` (Economizado% ≥ 20% and reserve ≥ 3 months). Derived from summary + forecast (`colchaoPhase`), not stored.
+**Phase** (adaptação): `map` (mapping — few lançamentos / no realized month) → `calibrate` (tuning the diário) → `operate` (Economizado% ≥ 20% and reserve ≥ 6 months). Derived from summary + forecast (`colchaoPhase`), not stored.
 
 **Reserve months** (dashboard): derived live as reserve-account balance ÷ monthly cost of living (`realized_monthly_baseline`); the `reserve.current_months` column has no production writer.
 

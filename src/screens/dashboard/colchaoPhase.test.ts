@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DashboardSummary, Forecast } from "../../lib/api";
-import { colchaoPhase } from "./colchaoPhase";
+import { colchaoPhase, RESERVE_MIN_MONTHS } from "./colchaoPhase";
 
 const summary = {
   transaction_count: 50,
@@ -30,6 +30,51 @@ describe("colchaoPhase", () => {
           registered_economia_cents: 200_000,
         },
       }),
+    ).toBe("operate");
+  });
+
+  it("calibrates at 3 months even when rate is met — below method floor", () => {
+    expect(
+      colchaoPhase(
+        { ...summary, reserve_months: 3 },
+        {
+          ...forecast,
+          annual_savings: {
+            ...forecast.annual_savings,
+            registered_economia_cents: 200_000,
+          },
+        },
+      ),
+    ).toBe("calibrate");
+  });
+
+  it("calibrates at 5 months — at-risk zone, not yet at floor", () => {
+    expect(
+      colchaoPhase(
+        { ...summary, reserve_months: 5 },
+        {
+          ...forecast,
+          annual_savings: {
+            ...forecast.annual_savings,
+            registered_economia_cents: 200_000,
+          },
+        },
+      ),
+    ).toBe("calibrate");
+  });
+
+  it("operates at exactly RESERVE_MIN_MONTHS when rate is met", () => {
+    expect(
+      colchaoPhase(
+        { ...summary, reserve_months: RESERVE_MIN_MONTHS },
+        {
+          ...forecast,
+          annual_savings: {
+            ...forecast.annual_savings,
+            registered_economia_cents: 200_000,
+          },
+        },
+      ),
     ).toBe("operate");
   });
 });
