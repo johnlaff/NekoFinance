@@ -296,8 +296,8 @@ pub(crate) async fn forecast_horizon_end(
 }
 
 /// Loads forward cashflow events for the projection window: future transactions (date > today,
-/// avoiding double-counting today's already-realized spending baked into the balance snapshot)
-/// plus credit-cycle lumps aggregated from `daily_checkin` and folded into a fatura lump at the card due date.
+/// avoiding double-counting today's already-realized spending baked into the balance snapshot).
+/// Credit bills are already carried as a single outflow on the due date by these transaction rows.
 /// Single source of row→event mapping, shared by `dashboard_summary` and `forecast_dto`.
 pub(crate) async fn load_cashflow_events(
     pool: &SqlitePool,
@@ -321,68 +321,8 @@ pub(crate) async fn load_cashflow_events(
     .await
     .map_err(|e| format!("query: {e}"))?;
 
-    let mut all_events: Vec<CashflowEvent> =
+    let all_events: Vec<CashflowEvent> =
         txn_rows.into_iter().filter_map(map_cashflow_row).collect();
-
-    // `closing_day`/`due_day` são NULL-áveis (um cartão pode ser criado sem ciclo). Filtra no SQL
-    // só os cartões com ciclo COMPLETO, em ordem determinística — um NULL faria o decode (i32,i32)
-    // estourar, e sem ORDER BY a escolha do "primeiro" cartão (multi-card é slice futura) variaria.
-    let credit_cards: Vec<(i32, i32)> = sqlx::query_as(
-        "SELECT closing_day, due_day FROM account \
-         WHERE type = 'credit_card' AND closing_day IS NOT NULL AND due_day IS NOT NULL \
-         ORDER BY created_at, id",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| format!("query credit cards: {e}"))?;
-
-    if !credit_cards.is_empty() {
-        // Use the first card's closing/due days (multi-card aggregation is a later slice)
-        let (closing_day, due_day) = credit_cards[0];
-        let closing_day = closing_day as u32;
-        let due_day = due_day as u32;
-
-        let checkins: Vec<(String, i64, i64)> = sqlx::query_as(
-            "SELECT date, daily_spend, credit_spend FROM daily_checkin WHERE date > ?1 AND date <= ?2",
-        )
-        .bind(&today)
-        .bind(&horizon)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| format!("query checkins: {e}"))?;
-
-        let mut credit_by_due: std::collections::HashMap<NaiveDate, i64> =
-            std::collections::HashMap::new();
-
-        for (date_str, daily_spend, credit_spend) in checkins {
-            if let Ok(checkin_date) = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d") {
-                // Daily spend (Régua 1) → Daily event on its day
-                if daily_spend > 0 {
-                    all_events.push(CashflowEvent {
-                        date: checkin_date,
-                        kind: forecast::EventKind::Daily,
-                        amount_cents: daily_spend,
-                        realized: true,
-                    });
-                }
-
-                // Credit spend → aggregate into a fatura lump at due_date
-                if credit_spend > 0 {
-                    let due_date = forecast::cycle_due_date(checkin_date, closing_day, due_day);
-                    *credit_by_due.entry(due_date).or_insert(0) += credit_spend;
-                }
-            }
-        }
-
-        for (due_date, total_credit) in credit_by_due {
-            all_events.push(CashflowEvent {
-                date: due_date,
-                kind: forecast::EventKind::FixedOut,
-                amount_cents: total_credit,
-                realized: false, // future projection
-            });
-        }
-    }
 
     Ok(all_events)
 }
@@ -927,19 +867,12 @@ pub(crate) async fn dashboard_summary(
     // - Sinal: por convenção, `amount` é gravado como magnitude positiva (import faz `.abs()`,
     //   `create_transaction` exige `> 0`); o sinal vem do `type`. `ABS()` é defesa-em-profundidade,
     //   espelhando o `amount.abs()` do forecast — robusto caso algum writer grave com sinal.
-    // - Fonte única (sem double-count, o achado real): se há transação Diário no dia, ela vence;
-    //   o check-in (`daily_checkin`, sem writer em produção hoje) só preenche dias SEM transação.
-    //   Invariante: um dia nunca contabiliza check-in E transação Diário ao mesmo tempo (mesmo
-    //   dinheiro, Régua 1). Mesma regra no crédito abaixo e no forecast (`load_cashflow_events`).
+    // - Fonte única: o gasto do dia vem das transações Diário (despesa variável não-crédito);
+    //   sem nenhuma transação no dia, a soma é 0. O ritual diário é uma transação Diário comum.
     let daily_spend: (i64,) = sqlx::query_as(
-        "SELECT CASE WHEN EXISTS(SELECT 1 FROM \"transaction\" \
-                                 WHERE type='expense' AND is_fixed=0 AND is_projection=0 AND date = ?1 \
-                                   AND (payment_method IS NULL OR payment_method <> 'credit')) \
-                     THEN ABS(COALESCE((SELECT SUM(amount) FROM \"transaction\" \
-                                        WHERE type='expense' AND is_fixed=0 AND is_projection=0 AND date = ?1 \
-                                          AND (payment_method IS NULL OR payment_method <> 'credit')), 0)) \
-                     ELSE COALESCE((SELECT SUM(daily_spend) FROM daily_checkin WHERE date = ?1), 0) \
-                END",
+        "SELECT ABS(COALESCE((SELECT SUM(amount) FROM \"transaction\" \
+                              WHERE type='expense' AND is_fixed=0 AND is_projection=0 AND date = ?1 \
+                                AND (payment_method IS NULL OR payment_method <> 'credit')), 0))",
     )
     .bind(&today)
     .fetch_one(pool)
