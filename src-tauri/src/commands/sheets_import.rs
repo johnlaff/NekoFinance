@@ -74,10 +74,14 @@ pub async fn fetch_sheet_preview(
     })
 }
 
+// Comando Tauri: a lista de parâmetros é plana por design (cada um vem de state/request); o
+// `guard` (SyncGuard) é estado gerenciado — daí passar de 7 argumentos.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn import_sheet_data(
     app_dir: State<'_, AppDataDir>,
     pool: State<'_, SqlitePool>,
+    guard: State<'_, std::sync::Arc<crate::sync_task::SyncGuard>>,
     spreadsheet_id: String,
     sheet_name: String,
     profile_id: String,
@@ -96,6 +100,9 @@ pub async fn import_sheet_data(
             .await?;
     let client = SheetsClient::new(token);
 
+    // Serializa contra o sync de fundo e o probe de foco no pool de 1 conexão (mesmo SyncGuard).
+    // Segurado por TODO o import_one_tab (fetch → transação atômica → diff-delete).
+    let _lock = guard.inner().lock().await;
     import_one_tab(
         pool.inner(),
         &client,
@@ -269,6 +276,7 @@ pub(crate) fn validate_local_xlsx_path(file_path: &str) -> Result<std::path::Pat
 #[tauri::command]
 pub async fn import_local_xlsx(
     pool: State<'_, SqlitePool>,
+    guard: State<'_, std::sync::Arc<crate::sync_task::SyncGuard>>,
     file_path: String,
     profile_id: String,
 ) -> Result<String, String> {
@@ -282,6 +290,9 @@ pub async fn import_local_xlsx(
     let mut total = 0usize;
     let mut sheets_imported = Vec::new();
 
+    // Serializa contra o sync de fundo e o probe de foco no pool de 1 conexão (mesmo SyncGuard).
+    // Segurado por TODO o loop de abas (cada aba é uma transação atômica própria).
+    let _lock = guard.inner().lock().await;
     for sheet_name in &sheet_names {
         if layout_detect::is_metric_tab(sheet_name) {
             if sheet_name.trim().eq_ignore_ascii_case("economia")

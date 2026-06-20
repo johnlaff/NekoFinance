@@ -106,8 +106,26 @@ pub(crate) async fn realized_annual_savings(
     pool: &SqlitePool,
     today_naive: NaiveDate,
 ) -> Result<(i64, i64), String> {
-    let year_start = format!("{}-01-01", today_naive.year());
     let cur_ym = today_naive.format("%Y-%m").to_string();
+    let is_january = cur_ym == format!("{}-01", today_naive.year());
+    // Janela = só meses COMPLETOS do ano corrente: `[ano-01-01, 1º dia do mês corrente)`.
+    // Em 1º de JANEIRO essa janela é `[YYYY-01-01, YYYY-01-01)` → VAZIA, o que zerava o guardrail
+    // justo na virada do ano (falso "sem restrição"). Nesse caso deslocamos a janela para DEZEMBRO
+    // do ano anterior — o último período COMPLETO de poupança realizada —, `[YYYY-1-12-01,
+    // YYYY-01-01)`, mantendo o guardrail ATIVO. Sem dado de dezembro a query devolve 0 (mesmo
+    // fallback seguro de antes, mas agora o chamador distingue "sem dado" de "janela vazia").
+    let (lower, upper) = if is_january {
+        (
+            format!("{}-12-01", today_naive.year() - 1),
+            format!("{}-01-01", today_naive.year()),
+        )
+    } else {
+        // `date < 'YYYY-MM-01'` ≡ `substr(date,1,7) < 'YYYY-MM'` p/ ISO.
+        (
+            format!("{}-01-01", today_naive.year()),
+            format!("{cur_ym}-01"),
+        )
+    };
     let row: (i64, i64) = sqlx::query_as(
         "SELECT \
            COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END), 0), \
@@ -115,8 +133,8 @@ pub(crate) async fn realized_annual_savings(
          FROM \"transaction\" WHERE date >= ?1 AND date < ?2 \
            AND type IN ('income','expense')",
     )
-    .bind(&year_start)
-    .bind(format!("{cur_ym}-01")) // 1º dia do mês corrente: `date < 'YYYY-MM-01'` ≡ `substr(date,1,7) < 'YYYY-MM'` p/ ISO
+    .bind(&lower)
+    .bind(&upper)
     .fetch_one(pool)
     .await
     .map_err(|e| format!("realized annual: {e}"))?;

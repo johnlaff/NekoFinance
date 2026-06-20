@@ -15,7 +15,8 @@ pub(crate) async fn load_write_back_txns(
     let rows: Vec<(String, String, i64, i64)> = sqlx::query_as(
         "SELECT type, date, amount, is_fixed FROM \"transaction\" \
          WHERE date >= ?1 AND date < ?2 \
-           AND NOT (type='expense' AND payment_method='credit')",
+           AND NOT (type='expense' AND payment_method='credit') \
+           AND id NOT LIKE 'derived:%'",
     )
     .bind(format!("{year:04}-01-01"))
     .bind(format!("{}-01-01", year + 1))
@@ -510,7 +511,7 @@ pub(crate) async fn record_write_back_audit(
                 sqlx::query(
                     "UPDATE \"transaction\" SET source_amount = ?1, updated_at = ?2 \
                      WHERE date = ?3 AND type = 'expense' AND is_fixed = 1 \
-                       AND NOT (payment_method = 'credit')",
+                       AND (payment_method IS NULL OR payment_method <> 'credit')",
                 )
                 .bind(c.value_cents)
                 .bind(&now)
@@ -522,7 +523,7 @@ pub(crate) async fn record_write_back_audit(
                 sqlx::query(
                     "UPDATE \"transaction\" SET source_amount = ?1, updated_at = ?2 \
                      WHERE date = ?3 AND type = 'expense' AND is_fixed = 0 \
-                       AND NOT (payment_method = 'credit')",
+                       AND (payment_method IS NULL OR payment_method <> 'credit')",
                 )
                 .bind(c.value_cents)
                 .bind(&now)
@@ -530,7 +531,22 @@ pub(crate) async fn record_write_back_audit(
                 .execute(&mut *tx)
                 .await
             }
-            _ => continue, // economia é auditada à parte (aba própria)
+            "economia" => {
+                // Economia é mensal: a célula carrega `date = "YYYY-MM"` e a transação-resumo tem
+                // id determinístico `economia:YYYY-MM` (ver `store_economia_entries`). Realinha a
+                // base desse mês para o valor escrito, igual aos demais kinds — assim o próximo
+                // import não acusa conflito espúrio na Economia.
+                sqlx::query(
+                    "UPDATE \"transaction\" SET source_amount = ?1, updated_at = ?2 \
+                     WHERE id = ?3 AND type = 'transfer'",
+                )
+                .bind(c.value_cents)
+                .bind(&now)
+                .bind(format!("economia:{}", c.date))
+                .execute(&mut *tx)
+                .await
+            }
+            _ => continue, // kind desconhecido: nada a realinhar nem a auditar
         }
         .map_err(|e| format!("realign source_amount: {e}"))?;
         realigned += updated.rows_affected() as usize;
@@ -697,12 +713,22 @@ pub async fn apply_economia_write_back(
     // Re-verifica a frescura (Step 4) antes de escrever.
     guard_sheet_unchanged(&client, &spreadsheet_id, preview_revision.as_deref()).await?;
 
-    let updates: Vec<(String, f64)> = plan
+    // Células efetivamente escritas (já filtradas por `changed`); reusadas para a auditoria.
+    let written: Vec<&CellWrite> = plan.iter().filter(|c| c.changed).collect();
+    let updates: Vec<(String, f64)> = written
         .iter()
-        .filter(|c| c.changed)
         .map(|c| (format!("'Economia'!{}", c.a1), c.value_cents as f64 / 100.0))
         .collect();
-    client.batch_update_values(&spreadsheet_id, &updates).await
+    let n = client
+        .batch_update_values(&spreadsheet_id, &updates)
+        .await?;
+
+    // Auditoria pós-escrita (paridade com `apply_write_back`): realinha a base (`source_amount`) das
+    // linhas mensais de Economia + registra a escrita no `sync_log`. Só em escrita bem-sucedida.
+    if n > 0 {
+        record_write_back_audit(pool.inner(), "Economia", &written).await?;
+    }
+    Ok(n)
 }
 
 /// Conta de RESERVA destino da Economia. Usa a primeira `liquidity='reserve'`; se não houver, cria
