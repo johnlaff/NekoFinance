@@ -1,5 +1,5 @@
 import { Fragment, useReducer } from "react";
-import { MoreHorizontal, Plus, Search, Tag as TagIcon } from "lucide-react";
+import { MoreHorizontal, Plus, Tag as TagIcon } from "lucide-react";
 import { Badge } from "../design-system/components/Badge";
 import { Button } from "../design-system/components/Button";
 import { EmptyState } from "../design-system/components/EmptyState";
@@ -410,10 +410,10 @@ function TagEditorRow({
 
 export function TransactionsScreen({
   query,
-  onQueryChange,
+  onGoToSettings,
 }: {
   query: string;
-  onQueryChange: (query: string) => void;
+  onGoToSettings: () => void;
 }) {
   const [ui, dispatchUi] = useReducer(transactionsUiReducer, INITIAL_UI_STATE);
   const {
@@ -589,16 +589,11 @@ export function TransactionsScreen({
             { value: "future", label: "Futuro" },
           ]}
         />
-        <label className="ak-search txs-tools__search">
-          <Search size={15} strokeWidth={1.75} />
-          <input
-            aria-label="Filtrar por descrição"
-            placeholder="Filtrar por descrição…"
-            type="search"
-            value={query}
-            onChange={(e) => onQueryChange(e.target.value)}
-          />
-        </label>
+        {query && (
+          <Badge tone="secondary">
+            <span style={{ color: "var(--text-muted)" }}>Busca:</span> {query}
+          </Badge>
+        )}
         <span className="txs-tools__sp" />
         <Badge tone="secondary">
           {visible.length} {visible.length === 1 ? "exibida" : "exibidas"}
@@ -638,6 +633,13 @@ export function TransactionsScreen({
                 transactions.length === 0
                   ? "Importe sua planilha em Configurações para começar."
                   : "Nenhum resultado para o filtro atual."
+              }
+              action={
+                transactions.length === 0 ? (
+                  <Button variant="secondary" size="sm" onClick={onGoToSettings}>
+                    Ir para Configurações
+                  </Button>
+                ) : undefined
               }
             />
           ) : (

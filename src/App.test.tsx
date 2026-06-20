@@ -34,8 +34,8 @@ describe("App (dashboard)", () => {
       expect(screen.getByText("Pode gastar até")).toBeInTheDocument();
     });
 
-    expect(screen.getAllByText(/8\.420/).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("Saldo projetado")).toBeInTheDocument();
+    // O metric tile redundante saiu; o saldo projetado vive no cabeçalho do herói.
+    expect(screen.getByText(/Saldo no fim de junho/)).toBeInTheDocument();
     expect(screen.getByText(/Junho de 2026/)).toBeInTheDocument();
     // "Lançamentos" agora aparece na nav lateral E no stat do hero (nomenclatura unificada).
     expect(screen.getAllByText("Lançamentos").length).toBeGreaterThanOrEqual(1);

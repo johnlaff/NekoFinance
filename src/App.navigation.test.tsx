@@ -47,14 +47,27 @@ describe("App navigation", () => {
     await waitFor(() => {
       expect(screen.getByText(/exibidas?/)).toBeInTheDocument();
     });
-    expect(screen.getByLabelText("Filtrar por descrição")).toBeInTheDocument();
+    // Não há mais busca própria na tela: a única afordância é o ⌘K do header.
+    expect(screen.getByLabelText("Buscar lançamentos")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Filtrar por descrição")).not.toBeInTheDocument();
   });
 
-  it("navigates to Metodologia", async () => {
+  it("sidebar groups items into Início and Análise", () => {
+    render(<App />);
+    expect(screen.getByText("Início")).toBeInTheDocument();
+    expect(screen.getByText("Análise")).toBeInTheDocument();
+    expect(screen.getByText("Sistema")).toBeInTheDocument();
+  });
+
+  it("navigates to a Metodologia via the demoted Ajuda entry", async () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(screen.getByRole("button", { name: "Metodologia" }));
+    // Metodologia foi rebaixada: chega-se a ela pelo item "Ajuda" em Sistema, não como par das telas do dia.
+    expect(
+      screen.queryByRole("button", { name: "Metodologia" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Ajuda" }));
     expect(screen.getByText(/Previsibilidade primeiro/)).toBeInTheDocument();
     expect(screen.getByText("Débito e crédito: dois ritmos")).toBeInTheDocument();
   });
@@ -95,10 +108,12 @@ describe("App navigation", () => {
     const search = screen.getByLabelText("Buscar lançamentos");
     await user.type(search, "variável{Enter}");
 
+    // A busca do header é a única afordância: a lista já chega filtrada (sem input local duplicado).
     await waitFor(() => {
-      expect(screen.getByLabelText("Filtrar por descrição")).toHaveValue("variável");
+      expect(screen.getByText("Despesa demo variável")).toBeInTheDocument();
     });
-    expect(screen.getByText("Despesa demo variável")).toBeInTheDocument();
+    expect(screen.getByText("Busca:")).toBeInTheDocument();
     expect(screen.queryByText("Compromisso demo no crédito")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Filtrar por descrição")).not.toBeInTheDocument();
   });
 });

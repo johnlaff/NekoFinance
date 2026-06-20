@@ -11,7 +11,8 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
   test("dashboard renders the forecast-first reading surface", async ({
     page,
   }, testInfo) => {
-    await expect(page.getByText("Saldo projetado", { exact: true })).toBeVisible();
+    // O saldo projetado vive no cabeçalho do herói (o metric tile redundante foi removido).
+    await expect(page.getByText(/Saldo no fim de/)).toBeVisible();
     // Pockets card (spec 007): grouped balances + net worth
     await expect(page.getByText("Bolsos & patrimônio")).toBeVisible();
     await expect(page.getByText("R$ 35.420,00")).toBeVisible();
@@ -26,8 +27,7 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     await expect(page.getByRole("table").getByText("hoje").first()).toBeVisible();
     await expect(page.getByText("R$ 12.340,00").first()).toBeVisible();
 
-    // Diário de hoje: card com o disponível do dia e registro rápido (escopado ao
-    // título do card, pois "Diário de hoje" também rotula o metric tile acima).
+    // Diário de hoje: card com o disponível do dia e registro rápido.
     await expect(page.locator("#dash-checkin-title")).toHaveText("Diário de hoje");
     await expect(page.getByText(/disponível/)).toBeVisible();
     await page.getByLabel("Gasto de hoje").fill("9,90");
@@ -35,9 +35,11 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     // Campo limpa após registrar (o dashboard refaz a busca).
     await expect(page.getByLabel("Gasto de hoje")).toHaveValue("");
 
-    // Rodapé do MonthLedgerCard fiel à planilha: linhas Saída Total e Performance.
+    // Rodapé do MonthLedgerCard fiel à planilha: linhas Saída Total e Resultado do mês.
     await expect(page.getByRole("row", { name: /Saída Total/ })).toBeVisible();
-    await expect(page.getByRole("row", { name: /^Performance/ }).first()).toBeVisible();
+    await expect(
+      page.getByRole("row", { name: /^Resultado do mês/ }).first(),
+    ).toBeVisible();
 
     await page.screenshot({
       fullPage: true,
@@ -63,7 +65,8 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
       path: testInfo.outputPath("transactions.png"),
     });
 
-    await nav("Metodologia").click();
+    // Metodologia foi rebaixada: chega-se a ela pelo item "Ajuda" em Sistema.
+    await nav("Ajuda").click();
     await expect(page.getByText(/Previsibilidade primeiro/)).toBeVisible();
     await expect(page.getByText("Débito e crédito: dois ritmos")).toBeVisible();
     await page.screenshot({
@@ -162,14 +165,17 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     await expect(page.getByLabel("Buscar lançamentos")).toBeFocused();
   });
 
-  test("page has a main landmark, a labelled nav and named metric tiles", async ({
+  test("page has a main landmark, a labelled nav and the hero forecast region", async ({
     page,
   }) => {
     await expect(page.locator("main.ak-main")).toBeVisible();
     await expect(
       page.getByRole("navigation", { name: "Navegação principal" }),
     ).toBeVisible();
-    await expect(page.getByRole("article", { name: "Saldo projetado" })).toBeVisible();
+    // O metric tile foi removido; a região complementar do herói (saldo projetado) permanece nomeada.
+    await expect(
+      page.getByRole("complementary", { name: "Saldo projetado do mês" }),
+    ).toBeVisible();
   });
 });
 
@@ -196,7 +202,7 @@ test.describe("onboarding de primeiro uso", () => {
 
     // Overlay fecha; o app fica acessível.
     await expect(page.getByRole("dialog", { name: /Boas-vindas/ })).not.toBeVisible();
-    await expect(page.getByText("Saldo projetado", { exact: true })).toBeVisible();
+    await expect(page.getByText(/Saldo no fim de/)).toBeVisible();
   });
 });
 

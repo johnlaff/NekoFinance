@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  BookOpen,
   Calculator,
   CalendarRange,
+  HelpCircle,
   LayoutDashboard,
   Lock,
   Receipt,
@@ -37,20 +37,52 @@ const SCREEN_META: Record<Screen, { title: string; crumb: string }> = {
   transactions: { title: "Lançamentos", crumb: "Histórico completo" },
   tags: { title: "Tags", crumb: "Rótulos do mês" },
   copilot: { title: "Mia", crumb: "Copiloto" },
-  methodology: { title: "Metodologia", crumb: "Como o Neko calcula" },
+  methodology: { title: "Ajuda", crumb: "Como o Neko calcula" },
   settings: { title: "Configurações e privacidade", crumb: "Local · este dispositivo" },
 };
 
-const NAV_ITEMS: { key: Screen; label: string; icon: typeof LayoutDashboard }[] = [
+interface NavItem {
+  key: Screen;
+  label: string;
+  icon: typeof LayoutDashboard;
+}
+
+// Início = o que se toca em toda conferência noturna (<30s). Análise = visões diagnósticas.
+const NAV_PRIMARY: NavItem[] = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { key: "transactions", label: "Lançamentos", icon: Receipt },
+];
+
+const NAV_ANALYSIS: NavItem[] = [
   { key: "totais", label: "Totais", icon: Calculator },
   { key: "anuais", label: "Anual", icon: TrendingUp },
   { key: "horizonte", label: "Horizonte", icon: CalendarRange },
-  { key: "transactions", label: "Lançamentos", icon: Receipt },
   { key: "tags", label: "Tags", icon: TagsIcon },
-  { key: "copilot", label: "Mia", icon: Sparkles },
-  { key: "methodology", label: "Metodologia", icon: BookOpen },
 ];
+
+/** Item de navegação da barra lateral. Vocabulário único reusado pelos três grupos. */
+function NavButton({
+  item,
+  active,
+  onNavigate,
+}: {
+  item: NavItem;
+  active: Screen;
+  onNavigate: (screen: Screen) => void;
+}) {
+  const Icon = item.icon;
+  return (
+    <button
+      type="button"
+      className={`ak-item ${active === item.key ? "ak-item--active" : ""}`}
+      aria-current={active === item.key ? "page" : undefined}
+      onClick={() => onNavigate(item.key)}
+    >
+      <Icon size={18} strokeWidth={1.75} className="ak-item__ic" />
+      <span>{item.label}</span>
+    </button>
+  );
+}
 
 export function AppShell({
   active,
@@ -99,30 +131,38 @@ export function AppShell({
         </div>
 
         <nav className="ak-nav" aria-label="Navegação principal">
-          <div className="ak-navh">Finanças</div>
-          {NAV_ITEMS.map((n) => (
-            <button
-              key={n.key}
-              type="button"
-              className={`ak-item ${active === n.key ? "ak-item--active" : ""}`}
-              aria-current={active === n.key ? "page" : undefined}
-              onClick={() => onNavigate(n.key)}
-            >
-              <n.icon size={18} strokeWidth={1.75} className="ak-item__ic" />
-              <span>{n.label}</span>
-            </button>
+          <div className="ak-navh">Início</div>
+          {NAV_PRIMARY.map((n) => (
+            <NavButton key={n.key} item={n} active={active} onNavigate={onNavigate} />
+          ))}
+
+          <div className="ak-navh">Análise</div>
+          {NAV_ANALYSIS.map((n) => (
+            <NavButton key={n.key} item={n} active={active} onNavigate={onNavigate} />
           ))}
 
           <div className="ak-navh">Sistema</div>
-          <button
-            type="button"
-            className={`ak-item ${active === "settings" ? "ak-item--active" : ""}`}
-            aria-current={active === "settings" ? "page" : undefined}
-            onClick={() => onNavigate("settings")}
-          >
-            <Settings size={18} strokeWidth={1.75} className="ak-item__ic" />
-            <span>Configurações e privacidade</span>
-          </button>
+          <NavButton
+            item={{
+              key: "settings",
+              label: "Configurações e privacidade",
+              icon: Settings,
+            }}
+            active={active}
+            onNavigate={onNavigate}
+          />
+          {/* Metodologia rebaixada: doc estático acessível por "Ajuda", não mais um par das telas do dia. */}
+          <NavButton
+            item={{ key: "methodology", label: "Ajuda", icon: HelpCircle }}
+            active={active}
+            onNavigate={onNavigate}
+          />
+          {/* Mia ainda é um stub ("Em desenvolvimento") → entra aqui, não compete com as telas diárias. */}
+          <NavButton
+            item={{ key: "copilot", label: "Mia", icon: Sparkles }}
+            active={active}
+            onNavigate={onNavigate}
+          />
         </nav>
 
         <div className="ak-side__foot">

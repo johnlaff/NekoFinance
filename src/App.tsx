@@ -71,7 +71,10 @@ function App() {
             {screen === "horizonte" && <HorizonteScreen />}
             {screen === "tags" && <TagsScreen />}
             {screen === "transactions" && (
-              <TransactionsScreen query={searchQuery} onQueryChange={setSearchQuery} />
+              <TransactionsScreen
+                query={searchQuery}
+                onGoToSettings={() => setScreen("settings")}
+              />
             )}
             {screen === "copilot" && <CopilotScreen />}
             {screen === "methodology" && <MethodologyScreen />}

@@ -134,7 +134,9 @@ describe("DashboardScreen (forecast view)", () => {
     expect(screen.queryByText(/Nenhum bolso cadastrado/)).not.toBeInTheDocument();
   });
 
-  it("uses the forecast month in the hero tile sublabel", async () => {
+  it("names the projected month in the hero forecast head", async () => {
+    // O metric tile redundante ("Saldo projetado · Fim de junho") foi removido; o mês projetado
+    // continua nomeado no cabeçalho do herói ("Saldo no fim de junho").
     mockCommands({
       get_dashboard_summary: SUMMARY,
       get_forecast: FORECAST,
@@ -142,20 +144,23 @@ describe("DashboardScreen (forecast view)", () => {
     });
     render(<DashboardScreen onAskMia={vi.fn()} />);
     await waitFor(() => {
-      expect(screen.getByText("Fim de junho")).toBeInTheDocument();
+      expect(screen.getByText(/Saldo no fim de junho/)).toBeInTheDocument();
     });
   });
 
-  it('credit tile shows "—" / "Sem cartão rastreado" when no credit is tracked', async () => {
+  it("does not render the redundant 4-tile metric bar", async () => {
+    // Os números desses tiles já vivem no herói (saldo projetado, pode-gastar) e nos cards abaixo.
     mockCommands({
-      get_dashboard_summary: { ...SUMMARY, has_credit: false },
+      get_dashboard_summary: SUMMARY,
       get_forecast: FORECAST,
       get_month_grid: MONTH_GRID,
     });
-    render(<DashboardScreen onAskMia={vi.fn()} />);
+    const { container } = render(<DashboardScreen onAskMia={vi.fn()} />);
     await waitFor(() => {
-      expect(screen.getByText("Sem cartão rastreado")).toBeInTheDocument();
+      expect(screen.getByText("Pode gastar até")).toBeInTheDocument();
     });
-    expect(screen.getByText("Crédito no mês")).toBeInTheDocument();
+    expect(container.querySelector(".dash-grid4")).toBeNull();
+    expect(screen.queryByRole("article", { name: "Saldo projetado" })).toBeNull();
+    expect(screen.queryByRole("article", { name: "Crédito no mês" })).toBeNull();
   });
 });
