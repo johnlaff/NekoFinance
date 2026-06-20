@@ -123,6 +123,10 @@ fn compute_checksum_with_options(rows: &[ImportedRow], descriptions_trusted: boo
         }
         hasher.update([row.is_projection as u8]);
         hasher.update(row.kind.as_str().as_bytes());
+        // A nota crua entra no checksum: editar SÓ a nota de célula (ex.: retag de
+        // `#reembolso:`/`#dividir:`) é uma mudança real que o re-import deve aplicar —
+        // o bloco de marcadores re-deriva splits/Entradas a partir da nota (autoritativa).
+        hasher.update(row.raw_note.as_bytes());
     }
     hex::encode(hasher.finalize())
 }
@@ -393,46 +397,35 @@ async fn import_rows_core(
             }
         }
 
-        // --- Plan 004: splits de titular + payment_method='credit' via gramática da nota ---
-        // Marcadores OPT-IN (ver `parse_note_markers`): nota sem marcador → bloco inteiro é
-        // no-op, idêntico ao comportamento de hoje (sem split, payment_method intocado).
+        // --- Plan 023: gramática das notas (#reembolso:/#dividir:) ---
+        // Opt-in e forward-only: nota sem marcador → no-op (idêntico ao comportamento de hoje).
         let markers = parse_note_markers(&row.raw_note);
 
-        if markers.is_credit {
-            // Despesa de cartão: marca para o engine dobrar no lump da fatura (classify()).
-            sqlx::query("UPDATE \"transaction\" SET payment_method = 'credit' WHERE id = ?1")
-                .bind(&txn_id)
+        if !markers.tagged_lines.is_empty() {
+            // Idempotência no re-import: descarta as linhas derivadas e splits anteriores
+            // desta transação, depois re-insere a partir da nota atual. A nota é autoritativa.
+            sqlx::query("DELETE FROM \"transaction\" WHERE id LIKE ?1")
+                .bind(format!("derived:%:{txn_id}:%"))
                 .execute(&mut **tx)
                 .await
-                .map_err(|e| format!("set payment_method credit: {e}"))?;
-        }
+                .map_err(|e| format!("clear derived rows for {txn_id}: {e}"))?;
 
-        if !markers.owners.is_empty() {
-            // Re-import idempotente: a planilha é a fonte autoritativa da gramática, então
-            // substituímos os splits desta transação. ON DELETE CASCADE no schema cobre o
-            // caso de diff-delete da própria transação. (Limitação conhecida: sobrescreve
-            // splits editados manualmente — endereçado pelo plan 015 com flag de lock.)
             sqlx::query("DELETE FROM split WHERE transaction_id = ?1")
                 .bind(&txn_id)
                 .execute(&mut **tx)
                 .await
-                .map_err(|e| format!("clear splits for txn: {e}"))?;
+                .map_err(|e| format!("clear splits for {txn_id}: {e}"))?;
 
-            // Valor do split = magnitude positiva da transação (mesma convenção do amount da
-            // transação). Alocação parcial por titular fica para o plan 019 (entidade fatura).
-            let split_amount = row.amount.abs();
-            for owner_name in &markers.owners {
-                // Resolve a pessoa pelo nome (case-insensitive); cria sob demanda na MESMA tx,
-                // espelhando o bootstrap de person em `resolve_profile_id`. Pessoa-sem-profile é
-                // válida para titulares não-primários.
+            for tagged in &markers.tagged_lines {
+                // Resolve a pessoa pelo nome (case-insensitive); cria sob demanda na MESMA tx.
                 let person_id: String = {
                     let existing: Option<(String,)> = sqlx::query_as(
                         "SELECT id FROM person WHERE LOWER(name) = LOWER(?1) LIMIT 1",
                     )
-                    .bind(owner_name)
+                    .bind(&tagged.person_name)
                     .fetch_optional(&mut **tx)
                     .await
-                    .map_err(|e| format!("lookup person '{owner_name}': {e}"))?;
+                    .map_err(|e| format!("lookup person '{}': {e}", tagged.person_name))?;
 
                     match existing {
                         Some((id,)) => id,
@@ -440,30 +433,77 @@ async fn import_rows_core(
                             let new_id = uuid::Uuid::new_v4().to_string();
                             sqlx::query("INSERT INTO person (id, name) VALUES (?1, ?2)")
                                 .bind(&new_id)
-                                .bind(owner_name)
+                                .bind(&tagged.person_name)
                                 .execute(&mut **tx)
                                 .await
-                                .map_err(|e| format!("create person '{owner_name}': {e}"))?;
+                                .map_err(|e| {
+                                    format!("create person '{}': {e}", tagged.person_name)
+                                })?;
                             new_id
                         }
                     }
                 };
 
-                let split_id = uuid::Uuid::new_v4().to_string();
-                sqlx::query(
-                    "INSERT INTO split (id, transaction_id, amount, owner_person_id) \
-                     VALUES (?1, ?2, ?3, ?4)",
-                )
-                .bind(&split_id)
-                .bind(&txn_id)
-                .bind(split_amount)
-                .bind(&person_id)
-                .execute(&mut **tx)
-                .await
-                .map_err(|e| format!("insert split for '{owner_name}': {e}"))?;
+                match &tagged.kind {
+                    NoteMarkerKind::Reembolso => {
+                        // Entrada compensatória: valor integral da linha. Id determinístico
+                        // ancorado ao pai → re-import substitui (não duplica); sem linha em
+                        // sync_log → nunca diff-deletada por engano (só via cleanup do pai).
+                        let derived_id =
+                            format!("derived:reembolso:{txn_id}:{}", tagged.line_index);
+                        let desc = format!("Reembolso: {}", tagged.person_name);
+                        sqlx::query(
+                            "INSERT OR REPLACE INTO \"transaction\" \
+                             (id, type, amount, description, date, is_fixed, is_projection, \
+                              created_at, updated_at) \
+                             VALUES (?1, 'income', ?2, ?3, ?4, 0, 0, ?5, ?5)",
+                        )
+                        .bind(&derived_id)
+                        .bind(tagged.line_amount_cents)
+                        .bind(&desc)
+                        .bind(&row.date)
+                        .bind(&now)
+                        .execute(&mut **tx)
+                        .await
+                        .map_err(|e| format!("insert reembolso Entrada: {e}"))?;
+                    }
+                    NoteMarkerKind::Dividir { share_cents } => {
+                        // Split na transação pai para <quem>.
+                        let split_id = uuid::Uuid::new_v4().to_string();
+                        sqlx::query(
+                            "INSERT INTO split (id, transaction_id, amount, owner_person_id) \
+                             VALUES (?1, ?2, ?3, ?4)",
+                        )
+                        .bind(&split_id)
+                        .bind(&txn_id)
+                        .bind(share_cents)
+                        .bind(&person_id)
+                        .execute(&mut **tx)
+                        .await
+                        .map_err(|e| format!("insert split for '{}': {e}", tagged.person_name))?;
+
+                        // Entrada compensatória pela parte de <quem>.
+                        let derived_id = format!("derived:dividir:{txn_id}:{}", tagged.line_index);
+                        let desc = format!("Dividir: {}", tagged.person_name);
+                        sqlx::query(
+                            "INSERT OR REPLACE INTO \"transaction\" \
+                             (id, type, amount, description, date, is_fixed, is_projection, \
+                              created_at, updated_at) \
+                             VALUES (?1, 'income', ?2, ?3, ?4, 0, 0, ?5, ?5)",
+                        )
+                        .bind(&derived_id)
+                        .bind(share_cents)
+                        .bind(&desc)
+                        .bind(&row.date)
+                        .bind(&now)
+                        .execute(&mut **tx)
+                        .await
+                        .map_err(|e| format!("insert dividir Entrada: {e}"))?;
+                    }
+                }
             }
         }
-        // --- fim Plan 004 ---
+        // --- fim Plan 023 ---
 
         // sync_log com id determinístico (1:1 com o txn) → UPSERT idempotente.
         let log_id = format!("log:{txn_id}");
@@ -499,6 +539,15 @@ async fn import_rows_core(
                 .execute(&mut **tx)
                 .await
                 .map_err(|e| format!("delete removed txn: {e}"))?;
+            // Linhas derivadas (Entradas compensatórias) têm ids determinísticos prefixados
+            // com "derived:<kind>:<parent_id>:<i>" e NÃO têm linha em sync_log. Limpamos aqui
+            // quando o pai é removido pelo diff-delete. (`eid` é um SHA-256 hex de row_id, sem
+            // o prefixo `derived:`, então o LIKE não casa transações não-derivadas.)
+            sqlx::query("DELETE FROM \"transaction\" WHERE id LIKE ?1")
+                .bind(format!("derived:%:{eid}:%"))
+                .execute(&mut **tx)
+                .await
+                .map_err(|e| format!("delete derived rows for {eid}: {e}"))?;
             sqlx::query(
                 "DELETE FROM sync_log WHERE entity_id = ?1 AND source_sheet = ?2 AND entity_type = 'transaction'",
             )
@@ -679,77 +728,168 @@ fn cell_raw_note(notes: &[Vec<String>], row: usize, col: usize) -> String {
 /// Marcadores OPT-IN extraídos de uma nota de célula (`parse_note_markers`).
 ///
 /// SEGURO POR PADRÃO: uma nota sem marcador devolve `NoteMarkers::default()`
-/// (sem owners, `is_credit=false`), de modo que o import se comporta byte-a-byte
-/// como hoje. A esmagadora maioria das notas reais é prosa livre — ver a
-/// GRAMÁTICA DAS NOTAS em `parse_note_markers`.
+/// (sem entradas em `tagged_lines`), de modo que o import se comporta
+/// byte-a-byte como hoje.
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct NoteMarkers {
-    /// Nomes de exibição dos titulares, na ordem em que aparecem na nota.
-    /// Resolvidos para `person.name` (case-insensitive) na fase de escrita.
-    pub owners: Vec<String>,
-    /// `true` se a nota contém o marcador `#credito` em qualquer linha.
-    pub is_credit: bool,
+    /// Linhas da nota que carregam um marcador reconhecido, na ordem em que
+    /// aparecem. Linhas sem marcador não aparecem aqui.
+    pub tagged_lines: Vec<TaggedLine>,
+}
+
+/// Uma linha de nota com marcador reconhecido.
+#[derive(Debug, PartialEq)]
+pub(crate) struct TaggedLine {
+    /// Índice 0-based da linha dentro da nota (para id determinístico).
+    pub line_index: usize,
+    /// Valor da linha em centavos inteiros (magnitude positiva).
+    /// Extraído do prefixo `R$ <valor>` da linha.
+    pub line_amount_cents: i64,
+    /// Nome do terceiro que divide ou reembolsa (sem normalização de caixa).
+    pub person_name: String,
+    /// Tipo do marcador.
+    pub kind: NoteMarkerKind,
+}
+
+/// Tipo de marcador de nota.
+#[derive(Debug, PartialEq)]
+pub(crate) enum NoteMarkerKind {
+    /// `#reembolso:<quem>` — o VALOR INTEGRAL da linha será reembolsado por <quem>.
+    /// Gera uma Entrada compensatória de `line_amount_cents`.
+    Reembolso,
+    /// `#dividir:<quem>` ou `#dividir:<quem>:<valor>` — a parte de <quem>.
+    /// `share_cents` é 50% de `line_amount_cents` (arredondado para baixo) quando
+    /// não explicitado; caso contrário, o valor explícito.
+    /// Gera um split para <quem> E uma Entrada compensatória de `share_cents`.
+    Dividir {
+        /// Parte de <quem> em centavos (já resolvida: padrão 50% ou valor explícito).
+        share_cents: i64,
+    },
 }
 
 /// GRAMÁTICA DAS NOTAS (contrato público — opt-in, explícito, seguro por padrão).
 ///
-/// Cada linha da nota é analisada de forma independente. Uma linha SÓ vira
-/// marcador quando casa EXATAMENTE com uma das formas estruturadas abaixo; uma
-/// nota sem marcador não produz split nem altera `payment_method` (idêntico ao
-/// comportamento de hoje — provado por teste). A sintaxe foi escolhida para não
-/// colidir com a convenção pessoal de prosa livre do dono (validado contra a
-/// planilha de referência: zero linhas começando com `@` ou `#`).
+/// Cada linha da nota é analisada de forma independente. Uma linha só vira
+/// marcador quando casa EXATAMENTE com uma das formas estruturadas abaixo;
+/// uma nota sem marcador não produz split nem Entrada compensatória
+/// (idêntico ao comportamento anterior — provado por teste).
 ///
-/// Formas reconhecidas:
-///   `@<nome>: <resto>`  — MARCADOR DE TITULAR. A linha deve COMEÇAR com `@`,
-///                         seguido de um nome NÃO-vazio e DOIS-PONTOS. O `<nome>`
-///                         (aparado) casa case-insensitive com `person.name` na
-///                         escrita; o `<resto>` (tipicamente um valor) é IGNORADO
-///                         no import — o valor da transação é canônico. Cada
-///                         marcador gera uma linha em `split` com `owner_person_id`
-///                         apontando para a pessoa (criada sob demanda se ausente).
-///   `#credito`          — MARCADOR DE MÉTODO DE PAGAMENTO. O token `#credito`
-///                         (case-insensitive) sozinho ou como PRIMEIRA palavra da
-///                         linha (terminado por fim-de-linha ou espaço — `#creditox`
-///                         NÃO casa). Define `payment_method='credit'` na transação,
-///                         dobrando a despesa no lump da fatura (`classify()`).
+/// A sintaxe foi escolhida para não colidir com a convenção pessoal de prosa livre
+/// do usuário (validado contra a planilha de referência: zero linhas começando com
+/// `R$` E terminando com `#reembolso:` ou `#dividir:`).
+///
+/// Formas reconhecidas (cada linha analisada individualmente):
+///
+///   `R$ <valor> - <descrição> #reembolso:<quem>`
+///       O valor INTEGRAL da linha é reembolsado por <quem>.
+///       Gera uma Entrada compensatória de <valor> centavos, datada na data
+///       da transação pai, `description = "Reembolso: <quem>"`.
+///       Cashflow líquido = zero (Saída anulada pela Entrada).
+///
+///   `R$ <valor> - <descrição> #dividir:<quem>`
+///       50% de <valor> (arredondado para baixo) é a parte de <quem>.
+///       Gera: (1) split na transação pai com owner=<quem>, amount=share;
+///             (2) Entrada compensatória de share centavos.
+///
+///   `R$ <valor> - <descrição> #dividir:<quem>:<valor_da_parte>`
+///       Igual, mas com valor explícito para a parte de <quem>.
 ///
 /// Exemplos:
-///   `"@Pessoa A: 150,00"`        → split com owner="Pessoa A"
-///   `"@Pessoa A: 150\n@Pessoa B: 50"` → dois splits (mesma transação)
-///   `"#credito"`                 → payment_method='credit'
-///   `"@Pessoa A: 200\n#credito"` → ambos
-///   `"Mercado da semana"`        → NENHUM marcador (prosa livre intocada)
+///   `"R$ 530 - Cartões Pessoa B #reembolso:Pessoa B"` → Entrada R$530, owner Pessoa B
+///   `"R$ 200 - Almoço #dividir:Pessoa B"`     → split+Entrada R$100 (50%)
+///   `"R$ 200 - Almoço #dividir:Pessoa B:80"`  → split+Entrada R$80 (explícito)
+///   `"R$ 1.200 - Parcela carro"`              → NENHUM marcador (prosa livre)
+///   `"Mercado da semana"`                     → NENHUM marcador
 ///
 /// Pura — sem I/O, sem DB, sem panics. Testável sem pool.
 pub(crate) fn parse_note_markers(note: &str) -> NoteMarkers {
-    let mut owners: Vec<String> = Vec::new();
-    let mut is_credit = false;
+    let mut tagged_lines: Vec<TaggedLine> = Vec::new();
 
-    for line in note.lines() {
+    for (line_index, line) in note.lines().enumerate() {
         let trimmed = line.trim();
 
-        // Token de crédito: a linha começa com `#credito` e o próximo char (se houver)
-        // é um separador (espaço/tab) — evita falso-positivo de `#creditocard` etc.
-        let lower = trimmed.to_ascii_lowercase();
-        if let Some(rest) = lower.strip_prefix("#credito")
-            && rest.chars().next().is_none_or(char::is_whitespace)
-        {
-            is_credit = true;
+        // Marcador deve estar no sufixo: localiza o último '#' na linha.
+        let Some(hash_pos) = trimmed.rfind('#') else {
+            continue;
+        };
+        let before_hash = &trimmed[..hash_pos];
+        let tag_suffix = &trimmed[hash_pos..]; // inclui o '#'
+
+        let tag_lower = tag_suffix.to_ascii_lowercase();
+
+        // Extrai <quem> e opcional <valor_da_parte> do sufixo reconhecido.
+        // Retorna (marker_kind_tag, (person_name, Option<valor_da_parte_str>)).
+        let (marker_kind_tag, person_raw, explicit_valor_str) =
+            if tag_lower.starts_with("#reembolso:") {
+                let person = tag_suffix["#reembolso:".len()..].trim();
+                ("reembolso", person, None::<&str>)
+            } else if tag_lower.starts_with("#dividir:") {
+                let payload = tag_suffix["#dividir:".len()..].trim();
+                if let Some(colon) = payload.find(':') {
+                    let person = payload[..colon].trim();
+                    let val = payload[colon + 1..].trim();
+                    ("dividir", person, Some(val))
+                } else {
+                    ("dividir", payload, None::<&str>)
+                }
+            } else {
+                continue; // tag não reconhecida
+            };
+
+        let person_name = person_raw.to_string();
+        if person_name.is_empty() {
+            continue; // <quem> vazio → ignora
         }
 
-        // Marcador de titular: `@<nome>: ...` com nome não-vazio antes dos dois-pontos.
-        if let Some(rest) = trimmed.strip_prefix('@')
-            && let Some(colon_pos) = rest.find(':')
+        // Extrai R$ <valor> do prefixo `before_hash`.
+        // Formato esperado: `R$ <número> - <descrição> ` (com espaço antes do `#`).
+        let before = before_hash.trim();
+        // Prefixo `R$` case-insensitive; fatia a partir da string original para preservar
+        // a grafia dos dígitos (parse_number só precisa de vírgula/ponto/dígitos).
+        let line_amount_cents = if before
+            .get(..2)
+            .is_some_and(|p| p.eq_ignore_ascii_case("r$"))
         {
-            let name = rest[..colon_pos].trim().to_string();
-            if !name.is_empty() {
-                owners.push(name);
-            }
+            let rest = &before[2..];
+            // Tudo antes do primeiro ` - ` é o valor.
+            let value_part = if let Some(dash) = rest.find(" - ") {
+                &rest[..dash]
+            } else {
+                rest
+            };
+            // Usa parse_number existente (lida com vírgula/ponto); retorna i64 em centavos.
+            parse_number(value_part.trim())
+        } else {
+            continue; // linha não começa com R$ → ignora
+        };
+
+        if line_amount_cents <= 0 {
+            continue; // valor inválido ou zero → ignora
         }
+
+        let kind = match marker_kind_tag {
+            "reembolso" => NoteMarkerKind::Reembolso,
+            "dividir" => {
+                let share_cents = if let Some(val_str) = explicit_valor_str {
+                    let v = parse_number(val_str);
+                    if v > 0 { v } else { line_amount_cents / 2 }
+                } else {
+                    line_amount_cents / 2 // 50% arredondado para baixo
+                };
+                NoteMarkerKind::Dividir { share_cents }
+            }
+            _ => continue,
+        };
+
+        tagged_lines.push(TaggedLine {
+            line_index,
+            line_amount_cents,
+            person_name,
+            kind,
+        });
     }
 
-    NoteMarkers { owners, is_credit }
+    NoteMarkers { tagged_lines }
 }
 
 pub fn parse_rows_with_layout(
@@ -2313,293 +2453,432 @@ mod tests {
     }
 
     // ===================================================================
-    // Plan 004: gramática das notas (parse puro, sem DB)
+    // Plan 023: gramática das notas (parse puro, sem DB)
     // ===================================================================
 
     #[test]
     fn parse_note_markers_empty_note() {
         let m = parse_note_markers("");
-        assert!(m.owners.is_empty());
-        assert!(!m.is_credit);
-    }
-
-    #[test]
-    fn parse_note_markers_owner_only() {
-        let m = parse_note_markers("@Pessoa A: 150,00");
-        assert_eq!(m.owners, vec!["Pessoa A"]);
-        assert!(!m.is_credit);
-    }
-
-    #[test]
-    fn parse_note_markers_credit_only() {
-        let m = parse_note_markers("#credito");
-        assert!(m.owners.is_empty());
-        assert!(m.is_credit);
-    }
-
-    #[test]
-    fn parse_note_markers_credit_case_insensitive() {
-        assert!(parse_note_markers("#Credito").is_credit);
-        assert!(parse_note_markers("#CREDITO").is_credit);
-    }
-
-    #[test]
-    fn parse_note_markers_credit_substring_not_matched() {
-        // `#creditocard` NÃO casa: o token precisa terminar em fim-de-linha ou espaço.
-        assert!(!parse_note_markers("#creditocard").is_credit);
-        // Mas `#credito` seguido de espaço/texto casa (token isolado).
-        assert!(parse_note_markers("#credito fatura nubank").is_credit);
-    }
-
-    #[test]
-    fn parse_note_markers_owner_and_credit() {
-        let note = "@Pessoa A: 200,00\n#credito";
-        let m = parse_note_markers(note);
-        assert_eq!(m.owners, vec!["Pessoa A"]);
-        assert!(m.is_credit);
-    }
-
-    #[test]
-    fn parse_note_markers_multiple_owners() {
-        let note = "@Pessoa A: 150,00\n@Pessoa B: 50,00";
-        let m = parse_note_markers(note);
-        assert_eq!(m.owners, vec!["Pessoa A", "Pessoa B"]);
-        assert!(!m.is_credit);
+        assert!(m.tagged_lines.is_empty());
     }
 
     #[test]
     fn parse_note_markers_free_prose_ignored() {
-        // Notas de prosa livre existentes NÃO podem disparar marcadores por acidente.
-        // (Formato real da planilha de referência: "R$ X - descrição".)
+        // Notas de prosa livre NÃO disparam marcador algum.
+        // Formato real da planilha: "R$ X - descrição" sem tag.
         let note = "R$ 65,00 - Vivo · faltou só o frango";
+        assert!(parse_note_markers(note).tagged_lines.is_empty());
+
+        // Linha sem R$ também é ignorada.
+        assert!(
+            parse_note_markers("Mercado da semana")
+                .tagged_lines
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn parse_note_markers_reembolso_full_value() {
+        let note = "R$ 530,00 - Cartões Pessoa B #reembolso:Pessoa B";
         let m = parse_note_markers(note);
-        assert!(m.owners.is_empty());
-        assert!(!m.is_credit);
+        assert_eq!(m.tagged_lines.len(), 1);
+        assert_eq!(m.tagged_lines[0].line_index, 0);
+        assert_eq!(m.tagged_lines[0].line_amount_cents, 53000);
+        assert_eq!(m.tagged_lines[0].person_name, "Pessoa B");
+        assert_eq!(m.tagged_lines[0].kind, NoteMarkerKind::Reembolso);
     }
 
     #[test]
-    fn parse_note_markers_owner_name_trimmed() {
-        let m = parse_note_markers("@ Pessoa A :  valor");
-        // Espaço antes/depois do nome é aparado; dois-pontos após espaço ainda casa.
-        assert_eq!(m.owners, vec!["Pessoa A"]);
+    fn parse_note_markers_dividir_default_50_percent() {
+        let note = "R$ 200,00 - Almoço #dividir:Pessoa A";
+        let m = parse_note_markers(note);
+        assert_eq!(m.tagged_lines.len(), 1);
+        assert_eq!(m.tagged_lines[0].line_amount_cents, 20000);
+        assert_eq!(m.tagged_lines[0].person_name, "Pessoa A");
+        assert_eq!(
+            m.tagged_lines[0].kind,
+            NoteMarkerKind::Dividir { share_cents: 10000 } // 50% de 200
+        );
     }
 
     #[test]
-    fn parse_note_markers_at_without_colon_ignored() {
-        // `@` sem dois-pontos não é marcador de titular (não vira split por acidente).
-        let m = parse_note_markers("email @ provedor sem dois pontos");
-        assert!(m.owners.is_empty());
+    fn parse_note_markers_dividir_explicit_value() {
+        let note = "R$ 200,00 - Almoço #dividir:Pessoa A:80,00";
+        let m = parse_note_markers(note);
+        assert_eq!(m.tagged_lines.len(), 1);
+        assert_eq!(
+            m.tagged_lines[0].kind,
+            NoteMarkerKind::Dividir { share_cents: 8000 } // valor explícito
+        );
+    }
+
+    #[test]
+    fn parse_note_markers_multiple_tagged_lines() {
+        // Nota com duas linhas marcadas e uma linha de prosa livre.
+        let note = "R$ 530,00 - Cartões Pessoa B #reembolso:Pessoa B\n\
+                    R$ 1.200,00 - Parcela carro\n\
+                    R$ 191,00 - Empréstimo Pessoa C #reembolso:Pessoa C";
+        let m = parse_note_markers(note);
+        assert_eq!(m.tagged_lines.len(), 2);
+        assert_eq!(m.tagged_lines[0].line_index, 0);
+        assert_eq!(m.tagged_lines[0].line_amount_cents, 53000);
+        assert_eq!(m.tagged_lines[0].person_name, "Pessoa B");
+        assert_eq!(m.tagged_lines[1].line_index, 2);
+        assert_eq!(m.tagged_lines[1].line_amount_cents, 19100);
+        assert_eq!(m.tagged_lines[1].person_name, "Pessoa C");
+    }
+
+    #[test]
+    fn parse_note_markers_case_insensitive_tag() {
+        // O marcador é case-insensitive.
+        let note = "R$ 100,00 - Teste #REEMBOLSO:Pessoa A";
+        let m = parse_note_markers(note);
+        assert_eq!(m.tagged_lines.len(), 1);
+        assert_eq!(m.tagged_lines[0].kind, NoteMarkerKind::Reembolso);
+    }
+
+    #[test]
+    fn parse_note_markers_no_rs_prefix_ignored() {
+        // Linha sem `R$` não é marcador — mesmo que termine com `#reembolso:`.
+        let note = "Transferência bancária #reembolso:Pessoa A";
+        assert!(parse_note_markers(note).tagged_lines.is_empty());
+    }
+
+    #[test]
+    fn parse_note_markers_empty_person_ignored() {
+        // `#reembolso:` sem <quem> → ignora.
+        let note = "R$ 100,00 - Teste #reembolso:";
+        assert!(parse_note_markers(note).tagged_lines.is_empty());
+    }
+
+    #[test]
+    fn parse_note_markers_old_at_syntax_ignored() {
+        // `@Pessoa A: 150,00` (sintaxe anterior) já não é um marcador reconhecido.
+        let note = "@Pessoa A: 150,00";
+        assert!(parse_note_markers(note).tagged_lines.is_empty());
+    }
+
+    #[test]
+    fn parse_note_markers_old_credito_ignored() {
+        // `#credito` (sintaxe anterior) não é mais reconhecido.
+        let note = "#credito";
+        assert!(parse_note_markers(note).tagged_lines.is_empty());
     }
 
     // ===================================================================
-    // Plan 004: testes de integração (DB)
+    // Plan 023: testes de integração (DB)
     // ===================================================================
 
     #[tokio::test]
-    async fn import_sets_credit_payment_method_from_note() {
+    async fn import_reembolso_creates_compensating_entrada() {
+        // #reembolso: gera uma Entrada compensatória; cashflow líquido = zero.
         let pool = test_pool().await;
         let rows = vec![ImportedRow {
             date: "2026-01-10".into(),
-            amount: -30000, // R$300 Saída
-            description: "Fatura cartão · #credito".into(),
+            amount: -53000, // R$530 Saída
+            description: "Cartões Pessoa B".into(),
             is_projection: false,
             kind: RowKind::Saida,
-            raw_note: "#credito".into(),
+            raw_note: "R$ 530,00 - Cartões Pessoa B #reembolso:Pessoa B".into(),
         }];
-
         import_rows(&pool, "2026", &rows, "p1").await.unwrap();
 
-        let (pm,): (Option<String>,) =
-            sqlx::query_as("SELECT payment_method FROM \"transaction\" WHERE date = '2026-01-10'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(pm.as_deref(), Some("credit"));
+        // A Entrada compensatória deve existir.
+        let (tipo, amount, desc): (String, i64, String) = sqlx::query_as(
+            "SELECT type, amount, description FROM \"transaction\" \
+             WHERE id LIKE 'derived:reembolso:%'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(tipo, "income");
+        assert_eq!(amount, 53000);
+        assert!(desc.contains("Pessoa B"), "descrição menciona a pessoa");
+
+        // Cashflow líquido: Saída 530 + Entrada 530 = 0.
+        let (net,): (i64,) = sqlx::query_as(
+            "SELECT SUM(CASE type WHEN 'income' THEN amount ELSE -amount END) \
+             FROM \"transaction\" WHERE date = '2026-01-10'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(net, 0, "cashflow líquido deve ser zero");
     }
 
     #[tokio::test]
-    async fn import_creates_split_with_owner_from_note() {
+    async fn import_dividir_creates_split_and_compensating_entrada() {
+        // #dividir: gera split + Entrada compensatória pela parte de <quem>.
         let pool = test_pool().await;
         let rows = vec![ImportedRow {
             date: "2026-01-15".into(),
-            amount: -30000,
-            description: "@Pessoa A: 30000".into(),
+            amount: -20000, // R$200 Saída
+            description: "Almoço".into(),
             is_projection: false,
             kind: RowKind::Saida,
-            raw_note: "@Pessoa A: 30000".into(),
+            raw_note: "R$ 200,00 - Almoço #dividir:Pessoa A".into(),
         }];
-
         import_rows(&pool, "2026", &rows, "p1").await.unwrap();
 
-        // A linha de split precisa existir, com magnitude positiva.
-        let splits: Vec<(String, i64)> = sqlx::query_as(
-            "SELECT p.name, s.amount FROM split s \
+        // Split criado com 50% do valor.
+        let (split_amount,): (i64,) = sqlx::query_as(
+            "SELECT s.amount FROM split s \
              JOIN person p ON p.id = s.owner_person_id \
-             JOIN \"transaction\" t ON t.id = s.transaction_id \
-             WHERE t.date = '2026-01-15'",
+             WHERE LOWER(p.name) = 'pessoa a'",
         )
-        .fetch_all(&pool)
+        .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(splits.len(), 1);
-        assert_eq!(splits[0].0, "Pessoa A");
-        assert_eq!(splits[0].1, 30000); // magnitude positiva
+        assert_eq!(split_amount, 10000, "50% de R$200");
 
-        // A pessoa foi criada sob demanda.
-        let (pcount,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM person WHERE LOWER(name)='pessoa a'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(pcount, 1);
+        // Entrada compensatória para 50%.
+        let (tipo, amount): (String, i64) = sqlx::query_as(
+            "SELECT type, amount FROM \"transaction\" \
+             WHERE id LIKE 'derived:dividir:%'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(tipo, "income");
+        assert_eq!(amount, 10000);
     }
 
     #[tokio::test]
-    async fn import_creates_multiple_splits_for_multiple_owners() {
+    async fn import_dividir_explicit_value() {
+        // #dividir:<quem>:<valor> usa o valor explícito.
         let pool = test_pool().await;
         let rows = vec![ImportedRow {
             date: "2026-02-01".into(),
-            amount: -30000,
-            description: "@Pessoa A: 200 · @Pessoa B: 100".into(),
+            amount: -20000,
+            description: "Almoço".into(),
             is_projection: false,
             kind: RowKind::Saida,
-            raw_note: "@Pessoa A: 200,00\n@Pessoa B: 100,00".into(),
+            raw_note: "R$ 200,00 - Almoço #dividir:Pessoa A:80,00".into(),
         }];
-
         import_rows(&pool, "2026", &rows, "p1").await.unwrap();
 
-        let (scount,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM split s \
-             JOIN \"transaction\" t ON t.id = s.transaction_id \
-             WHERE t.date = '2026-02-01'",
+        let (split_amount,): (i64,) = sqlx::query_as(
+            "SELECT s.amount FROM split s \
+             JOIN person p ON p.id = s.owner_person_id \
+             WHERE LOWER(p.name) = 'pessoa a'",
         )
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(scount, 2);
+        assert_eq!(split_amount, 8000, "valor explícito R$80");
     }
 
     #[tokio::test]
-    async fn reimport_replaces_splits_idempotently() {
+    async fn import_multiple_tagged_lines_same_note() {
+        // Nota com duas linhas marcadas: dois reembolsos independentes.
         let pool = test_pool().await;
-
-        // Primeiro import: um titular.
-        let v1 = vec![ImportedRow {
+        let rows = vec![ImportedRow {
             date: "2026-03-01".into(),
-            amount: -30000,
-            description: "@Pessoa A: 30000".into(),
+            amount: -72100, // R$721 total
+            description: "Múltiplas despesas".into(),
             is_projection: false,
             kind: RowKind::Saida,
-            raw_note: "@Pessoa A: 30000".into(),
+            raw_note: "R$ 530,00 - Cartões Pessoa B #reembolso:Pessoa B\n\
+                       R$ 1.200,00 - Parcela carro\n\
+                       R$ 191,00 - Empréstimo Pessoa C #reembolso:Pessoa C"
+                .into(),
+        }];
+        import_rows(&pool, "2026", &rows, "p1").await.unwrap();
+
+        // Duas Entradas compensatórias.
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM \"transaction\" WHERE id LIKE 'derived:reembolso:%'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[tokio::test]
+    async fn reimport_replaces_derived_rows_idempotently() {
+        // Re-import substitui as Entradas derivadas e splits (idempotente).
+        let pool = test_pool().await;
+
+        let v1 = vec![ImportedRow {
+            date: "2026-04-01".into(),
+            amount: -53000,
+            description: "Cartões Pessoa B".into(),
+            is_projection: false,
+            kind: RowKind::Saida,
+            raw_note: "R$ 530,00 - Cartões Pessoa B #reembolso:Pessoa B".into(),
         }];
         import_rows(&pool, "2026", &v1, "p1").await.unwrap();
 
-        // Segundo import (a nota da planilha mudou para dois titulares).
+        // Segundo import com nota diferente.
         let v2 = vec![ImportedRow {
-            date: "2026-03-01".into(),
-            amount: -30000,
-            description: "@Pessoa A: 200 · @Pessoa B: 100".into(),
+            date: "2026-04-01".into(),
+            amount: -53000,
+            description: "Cartões Pessoa B".into(),
             is_projection: false,
             kind: RowKind::Saida,
-            raw_note: "@Pessoa A: 200,00\n@Pessoa B: 100,00".into(),
+            raw_note: "R$ 530,00 - Cartões Pessoa B #reembolso:Pessoa C".into(),
         }];
         import_rows(&pool, "2026", &v2, "p1").await.unwrap();
 
-        let (scount,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM split s \
-             JOIN \"transaction\" t ON t.id = s.transaction_id \
-             WHERE t.date = '2026-03-01'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(scount, 2, "re-import substituiu o único split por dois");
+        // Deve haver exatamente uma Entrada derivada (a do segundo import).
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE id LIKE 'derived:%'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 1, "re-import substituiu a Entrada derivada");
+
+        let (desc,): (String,) =
+            sqlx::query_as("SELECT description FROM \"transaction\" WHERE id LIKE 'derived:%'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            desc.contains("Pessoa C"),
+            "nova Entrada aponta para Pessoa C"
+        );
     }
 
     #[tokio::test]
-    async fn import_no_note_leaves_payment_method_null_and_no_splits() {
+    async fn diff_delete_removes_derived_rows() {
+        // Quando a transação pai é removida pelo diff-delete, as Entradas derivadas também somem.
+        // O diff-delete só roda num re-import NÃO-vazio (slice vazio é no-op em `import_rows`),
+        // então re-importamos uma lista que OMITE a linha marcada — espelhando uma linha que
+        // sumiu da planilha (igual a `reimport_drops_rows_removed_from_sheet`).
+        let pool = test_pool().await;
+
+        let v1 = vec![
+            ImportedRow {
+                date: "2026-05-01".into(),
+                amount: -53000,
+                description: "Cartões Pessoa B".into(),
+                is_projection: false,
+                kind: RowKind::Saida,
+                raw_note: "R$ 530,00 - Cartões Pessoa B #reembolso:Pessoa B".into(),
+            },
+            // Linha-âncora sem nota: mantém a aba não-vazia no re-import seguinte.
+            imported("2026-05-02", -1_000),
+        ];
+        import_rows(&pool, "2026", &v1, "p1").await.unwrap();
+
+        // Confirma que a Entrada derivada existe.
+        let (before,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE id LIKE 'derived:%'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(before, 1);
+
+        // Re-import que OMITE a linha marcada → diff-delete remove a transação pai.
+        let v2 = vec![imported("2026-05-02", -1_000)];
+        import_rows(&pool, "2026", &v2, "p1").await.unwrap();
+
+        let (after,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE id LIKE 'derived:%'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(after, 0, "Entrada derivada removida junto com o pai");
+    }
+
+    #[tokio::test]
+    async fn import_no_note_leaves_no_derived_rows_and_no_splits() {
         // PROVA DE SEGURANÇA: nota ausente → comportamento idêntico ao de hoje.
         let pool = test_pool().await;
-        let rows = vec![imported("2026-04-01", -10000)]; // raw_note vazio
+        let rows = vec![imported("2026-06-01", -10000)];
         import_rows(&pool, "2026", &rows, "p1").await.unwrap();
 
-        let (pm, splits): (Option<String>, i64) = sqlx::query_as(
-            "SELECT t.payment_method, \
-                    (SELECT COUNT(*) FROM split WHERE transaction_id = t.id) \
-             FROM \"transaction\" t WHERE t.date = '2026-04-01'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert!(pm.is_none(), "sem nota → payment_method permanece NULL");
-        assert_eq!(splits, 0, "sem nota → nenhum split criado");
+        let (derived,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE id LIKE 'derived:%'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(derived, 0, "sem nota → sem Entradas derivadas");
+
+        let (splits,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM split")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(splits, 0, "sem nota → sem splits");
     }
 
     #[tokio::test]
-    async fn import_unmarked_prose_note_leaves_payment_method_null_and_no_splits() {
-        // PROVA DE SEGURANÇA reforçada: nota com PROSA LIVRE real (formato da planilha,
-        // contendo nomes próprios soltos) NÃO dispara marcador algum.
+    async fn import_unmarked_prose_note_leaves_no_derived_rows() {
+        // PROVA DE SEGURANÇA reforçada: nota de prosa livre real NÃO dispara marcadores.
         let pool = test_pool().await;
         let rows = vec![ImportedRow {
-            date: "2026-04-02".into(),
-            amount: -10000,
-            description: "R$ 300 - Pagamento Contas".into(),
+            date: "2026-06-02".into(),
+            amount: -72100,
+            description: "Contas mensais".into(),
             is_projection: false,
             kind: RowKind::Saida,
-            raw_note: "R$ 300 - Pagamento Contas\nR$ 60 - Empréstimo".into(),
+            raw_note: "R$ 530,00 - Cartões Pessoa D\nR$ 1.200,00 - Parcela carro\n\
+                       R$ 191,00 - Empréstimo Viagem Pessoa E"
+                .into(),
         }];
         import_rows(&pool, "2026", &rows, "p1").await.unwrap();
 
-        let (pm, splits): (Option<String>, i64) = sqlx::query_as(
-            "SELECT t.payment_method, \
-                    (SELECT COUNT(*) FROM split WHERE transaction_id = t.id) \
-             FROM \"transaction\" t WHERE t.date = '2026-04-02'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert!(pm.is_none(), "prosa livre → payment_method permanece NULL");
-        assert_eq!(splits, 0, "prosa livre → nenhum split criado");
+        let (derived,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE id LIKE 'derived:%'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(derived, 0, "prosa livre → sem Entradas derivadas");
+
+        let (splits,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM split")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(splits, 0, "prosa livre → sem splits");
     }
 
     #[tokio::test]
-    async fn import_owner_lookup_is_case_insensitive() {
+    async fn import_person_created_on_demand_for_reembolso() {
+        // Pessoa não-existente é criada sob demanda na mesma transação DB.
         let pool = test_pool().await;
-        // Pré-semeia a pessoa com nome em maiúscula/minúscula misto.
+        let rows = vec![ImportedRow {
+            date: "2026-07-01".into(),
+            amount: -10000,
+            description: "Teste".into(),
+            is_projection: false,
+            kind: RowKind::Saida,
+            raw_note: "R$ 100,00 - Teste #reembolso:Nova Pessoa".into(),
+        }];
+        import_rows(&pool, "2026", &rows, "p1").await.unwrap();
+
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM person WHERE LOWER(name) = 'nova pessoa'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 1, "pessoa criada sob demanda");
+    }
+
+    #[tokio::test]
+    async fn import_person_reuse_case_insensitive() {
+        // Pessoa pré-existente é reutilizada (sem duplicata) mesmo com caixa diferente.
+        let pool = test_pool().await;
         sqlx::query("INSERT INTO person (id, name) VALUES ('pid-pa', 'Pessoa A')")
             .execute(&pool)
             .await
             .unwrap();
 
         let rows = vec![ImportedRow {
-            date: "2026-05-01".into(),
+            date: "2026-08-01".into(),
             amount: -10000,
-            description: "@pessoa a: 100".into(),
+            description: "Teste".into(),
             is_projection: false,
             kind: RowKind::Saida,
-            raw_note: "@pessoa a: 100".into(),
+            raw_note: "R$ 100,00 - Teste #reembolso:PESSOA A".into(),
         }];
         import_rows(&pool, "2026", &rows, "p1").await.unwrap();
 
-        // Deve reutilizar a pessoa existente (sem criar duplicata).
-        let (pcount,): (i64,) =
+        let (count,): (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM person WHERE LOWER(name) = 'pessoa a'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(pcount, 1, "nenhuma pessoa duplicada criada");
-        let (owner,): (String,) = sqlx::query_as(
-            "SELECT p.name FROM split s \
-             JOIN person p ON p.id = s.owner_person_id \
-             JOIN \"transaction\" t ON t.id = s.transaction_id \
-             WHERE t.date = '2026-05-01'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(
-            owner, "Pessoa A",
-            "split aponta para a pessoa pré-existente"
-        );
+        assert_eq!(count, 1, "nenhuma pessoa duplicada criada");
     }
 }
