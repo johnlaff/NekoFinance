@@ -553,3 +553,38 @@ check` fails because the spec file itself was accidentally placed in a scanned
   formula chain in the spreadsheet; overwriting it from write-back would silently
   corrupt every subsequent day's balance). The blocklist must be unit-tested
   before `WRITE_BACK_ENABLED` is set to `true`. See `docs/claude-design-prompt.md:189`.
+
+## Executed spike — recommendation & decisions (2026-06-20)
+
+Investigation done (external API reality + codebase seam audit). **No push** — the
+provider's push notifications require a public HTTPS endpoint that a local-first
+desktop app cannot host; **polling is the correct mechanism**. Recommended design:
+
+- **Two-tier probe**: a cheap file-metadata `modifiedTime` read is the change
+  sentinel; only run the full values import when `modifiedTime` advanced past the
+  value stored in `app_setting`. (Keeps the expensive read off the per-minute Sheets
+  quota — mandatory ahead of the planned 2026 overage charges.)
+- **Cadence**: trigger on window focus + a background interval of 30–60s (probe only)
+  - a manual "Refresh". Never poll faster than 10s.
+- **Seam**: a Rust background task spawned in `lib.rs` `setup()` (after the pool +
+  `AppDataDir` are managed) via `tauri::async_runtime::spawn`, holding the pool +
+  app_dir + interval; each tick → `ensure_valid_token` (auto-refresh already exists)
+  → probe → on change run the EXISTING import pipeline (checksum-skip + atomic tx +
+  3-way merge + diff-delete, all inherited) → emit `neko://sync-done` with a
+  `conflict_count` → frontend `invalidateCommands()` + a ConflictGate badge.
+- **Guards**: a shared `tokio::Mutex<()>` import guard (the single-connection pool
+  means background + user-triggered imports must not overlap); **pause background sync
+  while `conflict_count > 0`** so a re-import doesn't reopen conflicts mid-resolution.
+- Persist `spreadsheetId` + tab list in `app_setting` (the background task can't read
+  React state).
+
+**Decisions (confirmed by the owner, 2026-06-20):**
+
+1. Background sync is **toggleable, default ON**, separate from the manual re-sync.
+2. On token revocation / refresh failure → **native OS notification** (a notification
+   plugin), not a silent skip.
+3. **Phased**: Phase 1 = read-side sync (above), no write-back. Phase 2 = write-back
+   enablement (per-cell re-verify + `Saldo`/formula-column blocklist + conflict-queue
+   guard → flip `WRITE_BACK_ENABLED`), all human-approved per ADR-0003.
+
+Status: spike COMPLETE. Phase 1 is ready to be promoted to an implementation plan on request.

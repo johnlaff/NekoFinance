@@ -223,7 +223,7 @@ The test at line 53 clicks `{ name: "Metodologia" }` directly. The test at line 
 - **Commit style**: conventional commits with scope, e.g. `feat(shell): ...`, `fix(dashboard): ...`.
   Match the style in `git log` (`fix:`, `chore:`, `feat:` with colon-space).
 - **Method-neutral language**: this repo is public. Never reference external brand names, apps,
-  courses, or reverse-engineering in code comments, strings, or this file.
+  courses, or external analysis in code comments, strings, or this file.
 
 ## Commands you will need
 
