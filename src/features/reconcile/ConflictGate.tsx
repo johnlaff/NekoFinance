@@ -10,7 +10,7 @@ import {
   type ImportConflict,
 } from "../../lib/api";
 import { invalidateCommands } from "../../lib/useCommand";
-import { fmtBRL } from "../../lib/format";
+import { formatBRL } from "../../lib/format";
 
 const FIELD_LABEL: Record<string, string> = {
   amount: "Valor",
@@ -20,7 +20,7 @@ const FIELD_LABEL: Record<string, string> = {
 function fmtValue(field: string, value: string): string {
   if (field === "amount") {
     const n = Number(value);
-    return Number.isFinite(n) ? fmtBRL(Math.abs(n)) : value;
+    return Number.isFinite(n) ? formatBRL(Math.abs(n)) : value;
   }
   return value || "—";
 }

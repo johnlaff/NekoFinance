@@ -9,10 +9,6 @@
 //! Totais). Remaining slice work is in the shell: wire the row→event mapping + seed into
 //! `get_dashboard_summary` (Phase 7) and add a demo fixture (Phase 8).
 
-// Public engine API. Some outputs (`deepest_deficit`, `cash_floor_cents`, `months`) are
-// consumed by later slices (Mia decision tools, the Totais screen), so allow unread-for-now.
-#![allow(dead_code)]
-
 use chrono::{Datelike, NaiveDate};
 
 /// A dated cash-flow event in the projection. Amounts are always positive; the sign is implied by

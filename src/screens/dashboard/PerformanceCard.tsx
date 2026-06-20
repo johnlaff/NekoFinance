@@ -1,6 +1,6 @@
 import { AlertTriangle, TrendingUp } from "lucide-react";
 import type { Forecast } from "../../lib/api";
-import { fmtBRL, monthNamePtBR } from "../../lib/format";
+import { formatBRL, monthNamePtBR } from "../../lib/format";
 import { Money } from "../../design-system/components/Money";
 
 /**
@@ -57,7 +57,7 @@ export function PerformanceCard({ forecast }: { forecast: Forecast }) {
               aria-label={
                 incompleto
                   ? `${monthLabel}: incompleto, projeção otimista, falta lançar gastos`
-                  : `${monthLabel}: performance ${fmtBRL(m.performance_cents)}, economizado ${ratePct}%`
+                  : `${monthLabel}: performance ${formatBRL(m.performance_cents)}, economizado ${ratePct}%`
               }
             >
               <span className="dash-perf__month">{monthLabel}</span>

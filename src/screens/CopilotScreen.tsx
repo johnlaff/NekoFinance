@@ -6,7 +6,7 @@ import {
   type DashboardSummary,
   type Forecast,
 } from "../lib/api";
-import { fmtBRL, monthNamePtBR } from "../lib/format";
+import { formatBRL, monthNamePtBR } from "../lib/format";
 import { useCommand } from "../lib/useCommand";
 
 /**
@@ -40,11 +40,11 @@ function miaKnownFacts(
     if (cur) {
       // Mês corrente: a performance inclui a previsão do diário que ainda falta — qualificamos.
       facts.push(
-        `A performance projetada de ${monthNamePtBR(forecast.today)} está em ${fmtBRL(cur.performance_cents)} (inclui o diário que ainda falta no mês).`,
+        `A performance projetada de ${monthNamePtBR(forecast.today)} está em ${formatBRL(cur.performance_cents)} (inclui o diário que ainda falta no mês).`,
       );
     }
     facts.push(
-      `Você pode gastar até ${fmtBRL(forecast.safe_to_spend_today_cents)} hoje sem furar suas metas.`,
+      `Você pode gastar até ${formatBRL(forecast.safe_to_spend_today_cents)} hoje sem furar suas metas.`,
     );
   }
   return facts.slice(0, 3);

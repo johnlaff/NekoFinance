@@ -108,30 +108,19 @@ impl OAuthState {
     }
 }
 
-#[allow(dead_code)]
-pub fn exchange_code(
-    _config: &OAuthConfig,
-    _state: &OAuthState,
-    code: String,
-) -> Result<(String, String), String> {
-    // Token exchange requires HTTP client — placeholder for now
-    Err(format!(
-        "Code received (exchange not yet implemented): {code}"
-    ))
-}
-
-#[allow(dead_code)]
-pub fn is_valid_code_verifier(s: &str) -> bool {
-    !s.is_empty()
-        && s.len() >= 43
-        && s.len() <= 128
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_' || c == '~')
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Predicado de validação do code_verifier (RFC 7636). Só usado nos testes, então vive dentro
+    // do módulo de teste — sem precisar de suppressor nem ser API pública do módulo.
+    fn is_valid_code_verifier(s: &str) -> bool {
+        !s.is_empty()
+            && s.len() >= 43
+            && s.len() <= 128
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_' || c == '~')
+    }
 
     #[test]
     fn test_generate_verifier_length() {
