@@ -3,6 +3,10 @@ use oauth2::{
 };
 use rand::RngExt;
 
+/// Escopo de ESCRITA na planilha pedido no consentimento. Fonte única da verdade — `token_store`
+/// usa esta mesma string para detectar um token antigo (somente leitura) e exigir re-autorização.
+pub const SHEETS_WRITE_SCOPE: &str = "https://www.googleapis.com/auth/spreadsheets";
+
 pub fn generate_code_verifier() -> PkceCodeVerifier {
     PkceCodeVerifier::new(generate_random_string(64))
 }
@@ -88,9 +92,11 @@ impl OAuthState {
             .set_token_uri(token_url)
             .set_redirect_uri(redirect_uri)
             .authorize_url(|| self.csrf_token.clone())
-            .add_scope(Scope::new(
-                "https://www.googleapis.com/auth/spreadsheets.readonly".to_string(),
-            ))
+            // Escopo de ESCRITA na planilha (supersedes o `spreadsheets.readonly`): o write-back
+            // aprovado precisa escrever células de volta. Um token emitido ANTES desta mudança só
+            // tem readonly → uma escrita daria 403; `token_store::has_write_scope` detecta isso e a
+            // rota de apply devolve um erro acionável ("re-autorize") em vez do 403 cru.
+            .add_scope(Scope::new(SHEETS_WRITE_SCOPE.to_string()))
             // Listagem de planilhas (list_user_spreadsheets) usa o Drive v3 — sem este
             // scope o picker devolve 403 (spec 010, slice 2).
             .add_scope(Scope::new(
@@ -153,7 +159,18 @@ mod tests {
         assert!(url.contains("127.0.0.1"));
         assert!(url.contains("code_challenge="));
         assert!(url.contains("code_challenge_method=S256"));
-        assert!(url.contains("spreadsheets.readonly"));
+        // Plano 028: o consentimento agora pede o escopo de ESCRITA na planilha (supersedes o
+        // readonly), exigido pelo write-back aprovado. A string é url-encoded no query (`%2F`) e o
+        // escopo de escrita aparece SOZINHO (separador `+` entre escopos, ou fim do parâmetro) —
+        // NÃO o `spreadsheets.readonly`. Verificamos a forma terminada para não casar o readonly.
+        assert!(
+            url.contains("auth%2Fspreadsheets+") || url.contains("auth%2Fspreadsheets&"),
+            "consentimento deve pedir o escopo de ESCRITA spreadsheets (não readonly)"
+        );
+        assert!(
+            !url.contains("spreadsheets.readonly"),
+            "o escopo de escrita supersedes o readonly — não pedir os dois"
+        );
         // Spec 010 slice 2: scope do Drive para o picker de planilhas.
         assert!(url.contains("drive.metadata.readonly"));
     }

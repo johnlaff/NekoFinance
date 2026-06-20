@@ -114,6 +114,81 @@ pub(crate) async fn load_write_back_txns(
     Ok(out)
 }
 
+/// Mensagem (typed-error por string, como o resto deste módulo) quando há conflitos de import
+/// pendentes: o write-back é BLOQUEADO até a fila ser resolvida (ADR-0003), senão escreveríamos por
+/// cima de um valor que o dono ainda está conciliando. Plano 028 Step 3.
+pub(crate) const CONFLICTS_PENDING_MSG: &str =
+    "Resolva os conflitos de importação antes de enviar.";
+
+/// Erro quando a planilha mudou ENTRE o preview e o apply: a aprovação do dono vale para o que ele
+/// VIU; uma edição concorrente exige re-revisão (não sobrescrever às cegas). Plano 028 Step 4.
+pub(crate) const SHEET_CHANGED_MSG: &str =
+    "A planilha mudou desde a prévia — gere o preview de novo e revise antes de enviar.";
+
+/// Conta de conflitos de import ainda não resolvidos. > 0 ⇒ o write-back deve abortar (Step 3).
+pub(crate) async fn unresolved_conflict_count(pool: &SqlitePool) -> Result<i64, String> {
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM import_conflict WHERE resolved_at IS NULL")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("conflict count: {e}"))?;
+    Ok(count)
+}
+
+/// Aborta o write-back se houver conflitos de import pendentes. Chamada ANTES de qualquer escrita —
+/// inclusive antes de tocar o `SheetsClient` — para que um plano nunca seja enviado sob conflito.
+pub(crate) async fn guard_no_pending_conflicts(pool: &SqlitePool) -> Result<(), String> {
+    if unresolved_conflict_count(pool).await? > 0 {
+        return Err(CONFLICTS_PENDING_MSG.to_string());
+    }
+    Ok(())
+}
+
+/// Re-verifica a frescura da planilha: compara o `modifiedTime` atual do Drive com o `preview_revision`
+/// que o dono viu na prévia. Se AVANÇOU, aborta (Step 4). `preview_revision = None` ⇒ sem checagem
+/// (compatibilidade: o frontend só passa o token a partir do PR-B; até lá o gate fica inerte, e o
+/// envio real continua atrás de `WRITE_BACK_ENABLED`).
+pub(crate) async fn guard_sheet_unchanged(
+    client: &SheetsClient,
+    spreadsheet_id: &str,
+    preview_revision: Option<&str>,
+) -> Result<(), String> {
+    let Some(seen) = preview_revision.filter(|s| !s.trim().is_empty()) else {
+        return Ok(());
+    };
+    let current = client.get_file_modified_time(spreadsheet_id).await?;
+    staleness_check(seen, &current)
+}
+
+/// Decisão PURA da re-verificação de frescura (Step 4): a aprovação do dono vale para a revisão que
+/// ele VIU (`seen`); se o `current` (modifiedTime relido no apply) for DIFERENTE, a planilha mudou
+/// → aborta. Comparação por igualdade exata da string RFC-3339 do Drive (qualquer edição a avança).
+pub(crate) fn staleness_check(seen: &str, current: &str) -> Result<(), String> {
+    if current != seen {
+        return Err(SHEET_CHANGED_MSG.to_string());
+    }
+    Ok(())
+}
+
+/// Aviso NÃO-bloqueante do write-back: o colapso do lump de cartão (`load_write_back_txns`) usa UM
+/// cartão (o primeiro com ciclo completo). Se houver MAIS DE UM cartão com `closing_day`+`due_day`,
+/// ou QUALQUER cartão SEM esses dias de ciclo, a data da fatura pode não bater com a intenção do
+/// dono — então sinalizamos para a UI pedir conferência. NÃO altera o plano (suporte multi-cartão
+/// está fora de escopo); apenas avisa. Plano 028 Step 8.
+pub(crate) async fn multi_card_warning(pool: &SqlitePool) -> Result<bool, String> {
+    // Cartões com ciclo COMPLETO (ambos os dias) e cartões com ciclo INCOMPLETO (algum dia ausente).
+    let (with_cycle, without_cycle): (i64, i64) = sqlx::query_as(
+        "SELECT \
+           COALESCE(SUM(CASE WHEN closing_day IS NOT NULL AND due_day IS NOT NULL THEN 1 ELSE 0 END), 0), \
+           COALESCE(SUM(CASE WHEN closing_day IS NULL OR due_day IS NULL THEN 1 ELSE 0 END), 0) \
+         FROM account WHERE type = 'credit_card'",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("query card cycle: {e}"))?;
+    Ok(with_cycle > 1 || without_cycle > 0)
+}
+
 /// Núcleo compartilhado por `preview_write_back` (read-only) e `apply_write_back` (escreve): lê a
 /// aba, resolve layout+mappings, carrega as transações do ano e planeja o diff célula a célula.
 /// Devolve o `SheetsClient` autenticado (para o apply reusar na escrita) + o plano.
@@ -167,6 +242,53 @@ pub async fn preview_write_back(
     )
     .await?;
     Ok(plan)
+}
+
+/// Resultado RICO da prévia (plano 028): o diff + o `preview_revision` (modifiedTime do Drive no
+/// instante da prévia, que o apply re-verifica para forçar re-revisão em edição concorrente) + um
+/// aviso não-bloqueante de multi-cartão. Comando NOVO, aditivo: o `preview_write_back` legado segue
+/// devolvendo `Vec<CellWrite>` (a UI atual não muda); a UI passa a usar este no PR de hardening.
+#[derive(serde::Serialize)]
+pub struct WriteBackPreviewResult {
+    pub cells: Vec<CellWrite>,
+    /// `modifiedTime` RFC-3339 do Drive na hora da prévia (token de frescura para o apply).
+    pub preview_revision: String,
+    /// Há conflitos de import pendentes? A UI desabilita o envio (espelha o gate do backend).
+    pub conflicts_pending: bool,
+    /// Mais de um cartão com ciclo, ou um cartão sem ciclo → a data da fatura pode divergir.
+    pub multi_card_warning: bool,
+}
+
+/// Prévia RICA (read-only) usada pela UI endurecida (PR-B): mesmo plano do `preview_write_back`, mais
+/// o `preview_revision` (re-revisão por edição concorrente), o flag de conflitos pendentes e o aviso
+/// de multi-cartão. Read-only — seguro com a flag desligada.
+#[tauri::command]
+pub async fn preview_write_back_status(
+    app_dir: State<'_, AppDataDir>,
+    pool: State<'_, SqlitePool>,
+    spreadsheet_id: String,
+    sheet_name: String,
+    client_id: String,
+    client_secret: Option<String>,
+) -> Result<WriteBackPreviewResult, String> {
+    let (client, cells) = build_write_back_plan(
+        &app_dir.0,
+        pool.inner(),
+        &spreadsheet_id,
+        &sheet_name,
+        &client_id,
+        client_secret,
+    )
+    .await?;
+    let preview_revision = client.get_file_modified_time(&spreadsheet_id).await?;
+    let conflicts_pending = unresolved_conflict_count(pool.inner()).await? > 0;
+    let multi_card_warning = multi_card_warning(pool.inner()).await?;
+    Ok(WriteBackPreviewResult {
+        cells,
+        preview_revision,
+        conflicts_pending,
+        multi_card_warning,
+    })
 }
 
 /// Estado da flag de write-back (a UI usa para mostrar "desligado" e desabilitar o envio).
@@ -287,8 +409,19 @@ pub async fn apply_write_back(
     sheet_name: String,
     client_id: String,
     client_secret: Option<String>,
+    // Token de frescura devolvido por `preview_write_back_status` (Step 4). `None` no caminho legado
+    // da UI atual; quando presente, o apply ABORTA se a planilha mudou desde a prévia.
+    preview_revision: Option<String>,
 ) -> Result<usize, String> {
     write_back::ensure_write_back_enabled()?;
+    // Gate de conflito (Step 3): nunca escrever sob conflitos de import pendentes — ANTES de tocar
+    // o cliente do Sheets.
+    guard_no_pending_conflicts(pool.inner()).await?;
+
+    let resolved_secret = oauth::pkce::resolve_client_secret(client_secret.clone());
+    // Escopo de escrita (Step 1): falha cedo com erro de re-consentimento se o token for readonly.
+    oauth::token_store::ensure_write_scope(&app_dir.0, &client_id, resolved_secret.as_deref())
+        .await?;
 
     let (client, plan) = build_write_back_plan(
         &app_dir.0,
@@ -300,10 +433,13 @@ pub async fn apply_write_back(
     )
     .await?;
 
+    // Re-verifica a frescura (Step 4): aborta sem escrever se o `modifiedTime` avançou.
+    guard_sheet_unchanged(&client, &spreadsheet_id, preview_revision.as_deref()).await?;
+
     // Só as células que MUDARAM; range com nome da aba ('2026'!E3); valor numérico em reais.
-    let updates: Vec<(String, f64)> = plan
+    let changed: Vec<&CellWrite> = plan.iter().filter(|c| c.changed).collect();
+    let updates: Vec<(String, f64)> = changed
         .iter()
-        .filter(|c| c.changed)
         .map(|c| {
             (
                 format!("{}!{}", quote_sheet(&sheet_name), c.a1),
@@ -312,7 +448,116 @@ pub async fn apply_write_back(
         })
         .collect();
 
-    client.batch_update_values(&spreadsheet_id, &updates).await
+    let written = client
+        .batch_update_values(&spreadsheet_id, &updates)
+        .await?;
+
+    // Auditoria pós-escrita (Step 7): realinha o `source_*` das transações escritas + registra a
+    // escrita no `sync_log`, para que o próximo import reconheça os valores como a NOVA base (sem
+    // conflito espúrio). Só roda em escrita bem-sucedida.
+    if written > 0 {
+        record_write_back_audit(pool.inner(), &sheet_name, &changed).await?;
+    }
+
+    Ok(written)
+}
+
+/// Auditoria pós-escrita do write-back (plano 028 Step 7). Faz DUAS coisas, atômicas:
+///
+/// 1) Realinha `source_amount` (a BASE do merge de 3 vias) das transações cujas células acabaram de
+///    ser escritas ao valor que foi para a planilha. Sem isto, o próximo import veria `local ==
+///    novo-valor`, `sheet == novo-valor`, mas `base == valor-antigo` → `Conflict` espúrio (ambos
+///    "mudaram"). Com a base realinhada, `base == sheet` → sem conflito.
+/// 2) Registra a escrita no `sync_log` (event_type `write_back`, com `source_sheet`) como trilha de
+///    auditoria de que aquele estado da aba veio do app.
+///
+/// `cells` são as células efetivamente ESCRITAS (já filtradas por `changed`). Mapeamos cada uma para
+/// as transações por `(date, type, is_fixed)` derivados do `kind` — o mesmo critério de
+/// `load_write_back_txns`. Cartão (lump no vencimento) não tem linha 1:1 importável, então o realinho
+/// foca nas linhas de movimento direto (income/expense em débito); o teste de round-trip cobre isto.
+pub(crate) async fn record_write_back_audit(
+    pool: &SqlitePool,
+    sheet_name: &str,
+    cells: &[&CellWrite],
+) -> Result<usize, String> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let profile_id: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM profile ORDER BY created_at LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("query profile: {e}"))?;
+
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| format!("begin audit: {e}"))?;
+    let mut realigned = 0usize;
+    for c in cells {
+        // kind (string da célula) → critério de seleção da(s) transação(ões) na data.
+        let updated = match c.kind.as_str() {
+            "entrada" => {
+                sqlx::query(
+                    "UPDATE \"transaction\" SET source_amount = ?1, updated_at = ?2 \
+                     WHERE date = ?3 AND type = 'income'",
+                )
+                .bind(c.value_cents)
+                .bind(&now)
+                .bind(&c.date)
+                .execute(&mut *tx)
+                .await
+            }
+            "saida" => {
+                sqlx::query(
+                    "UPDATE \"transaction\" SET source_amount = ?1, updated_at = ?2 \
+                     WHERE date = ?3 AND type = 'expense' AND is_fixed = 1 \
+                       AND NOT (payment_method = 'credit')",
+                )
+                .bind(c.value_cents)
+                .bind(&now)
+                .bind(&c.date)
+                .execute(&mut *tx)
+                .await
+            }
+            "diario" => {
+                sqlx::query(
+                    "UPDATE \"transaction\" SET source_amount = ?1, updated_at = ?2 \
+                     WHERE date = ?3 AND type = 'expense' AND is_fixed = 0 \
+                       AND NOT (payment_method = 'credit')",
+                )
+                .bind(c.value_cents)
+                .bind(&now)
+                .bind(&c.date)
+                .execute(&mut *tx)
+                .await
+            }
+            _ => continue, // economia é auditada à parte (aba própria)
+        }
+        .map_err(|e| format!("realign source_amount: {e}"))?;
+        realigned += updated.rows_affected() as usize;
+
+        // Trilha no sync_log (best-effort de auditoria): só quando há um profile a referenciar (FK
+        // NOT NULL). Id determinístico por (aba, célula) → idempotente entre escritas repetidas.
+        if let Some((pid,)) = profile_id.as_ref() {
+            let log_id = format!("writeback:{sheet_name}:{}", c.a1);
+            sqlx::query(
+                "INSERT INTO sync_log (id, event_type, entity_type, entity_id, profile_id, timestamp, source_sheet) \
+                 VALUES (?1, 'write_back', 'cell', ?2, ?3, ?4, ?5) \
+                 ON CONFLICT(id) DO UPDATE SET timestamp = excluded.timestamp",
+            )
+            .bind(&log_id)
+            .bind(&c.a1)
+            .bind(pid)
+            .bind(&now)
+            .bind(sheet_name)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("sync_log write_back: {e}"))?;
+        }
+    }
+    tx.commit()
+        .await
+        .map_err(|e| format!("commit audit: {e}"))?;
+    Ok(realigned)
 }
 
 /// Economia REGISTRADA por mês (1..=12) do ano: soma dos transfers→reserva/ilíquido. É o numerador
@@ -388,6 +633,36 @@ pub async fn preview_economia_write_back(
     Ok(plan)
 }
 
+/// Prévia RICA da Economia (read-only): plano + `preview_revision` (frescura) + conflitos pendentes.
+/// Comando NOVO/aditivo; o `preview_economia_write_back` legado segue devolvendo `Vec<CellWrite>`.
+#[tauri::command]
+pub async fn preview_economia_write_back_status(
+    app_dir: State<'_, AppDataDir>,
+    pool: State<'_, SqlitePool>,
+    spreadsheet_id: String,
+    year: i32,
+    client_id: String,
+    client_secret: Option<String>,
+) -> Result<WriteBackPreviewResult, String> {
+    let (client, cells) = build_economia_plan(
+        &app_dir.0,
+        pool.inner(),
+        &spreadsheet_id,
+        year,
+        &client_id,
+        client_secret,
+    )
+    .await?;
+    let preview_revision = client.get_file_modified_time(&spreadsheet_id).await?;
+    let conflicts_pending = unresolved_conflict_count(pool.inner()).await? > 0;
+    Ok(WriteBackPreviewResult {
+        cells,
+        preview_revision,
+        conflicts_pending,
+        multi_card_warning: false, // a Economia não depende de ciclo de cartão
+    })
+}
+
 /// Aplica o write-back da Economia. Atrás da MESMA flag `WRITE_BACK_ENABLED`. Retorna nº de células.
 #[tauri::command]
 pub async fn apply_economia_write_back(
@@ -397,8 +672,18 @@ pub async fn apply_economia_write_back(
     year: i32,
     client_id: String,
     client_secret: Option<String>,
+    // Token de frescura (Step 4); `None` no caminho legado da UI.
+    preview_revision: Option<String>,
 ) -> Result<usize, String> {
     write_back::ensure_write_back_enabled()?;
+    // Gate de conflito (Step 3) antes de qualquer escrita / chamada ao cliente.
+    guard_no_pending_conflicts(pool.inner()).await?;
+
+    let resolved_secret = oauth::pkce::resolve_client_secret(client_secret.clone());
+    // Escopo de escrita (Step 1).
+    oauth::token_store::ensure_write_scope(&app_dir.0, &client_id, resolved_secret.as_deref())
+        .await?;
+
     let (client, plan) = build_economia_plan(
         &app_dir.0,
         pool.inner(),
@@ -408,6 +693,10 @@ pub async fn apply_economia_write_back(
         client_secret,
     )
     .await?;
+
+    // Re-verifica a frescura (Step 4) antes de escrever.
+    guard_sheet_unchanged(&client, &spreadsheet_id, preview_revision.as_deref()).await?;
+
     let updates: Vec<(String, f64)> = plan
         .iter()
         .filter(|c| c.changed)
