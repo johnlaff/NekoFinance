@@ -99,6 +99,11 @@ pub fn classify_row(date_str: &str, date_direction: &str) -> Result<bool, String
     }
 }
 
+// API pública retida (plan 002): o shell migrou para as variantes `*_in_tx` (transação externa
+// única), então estes wrappers de pool agora só têm chamadores nos testes. Mantidos de propósito
+// como API estável para os testes e chamadores futuros (o módulo `google_sheets` é privado no
+// crate, então o `dead_code` dispara sem o allow).
+#[allow(dead_code)]
 pub fn compute_checksum(rows: &[ImportedRow]) -> String {
     compute_checksum_with_options(rows, true)
 }
@@ -165,6 +170,9 @@ pub async fn check_duplicate_import(
     Ok(count > 0)
 }
 
+// API pública retida (plan 002) — ver nota em `compute_checksum`. Wrapper de pool usado pelos
+// testes; o shell usa `import_rows_with_options_in_tx` na transação externa.
+#[allow(dead_code)]
 pub async fn import_rows(
     pool: &SqlitePool,
     sheet_name: &str,
@@ -196,6 +204,17 @@ impl Default for ImportRowsOptions {
     }
 }
 
+/// Calcula o checksum de idempotência do batch da MESMA forma que `import_rows_with_options`,
+/// para o shell (commands.rs) poder rodar `check_duplicate_import` ANTES de abrir a transação
+/// externa (a checagem é uma leitura no pool e não pode acontecer dentro da tx — read-your-writes
+/// daria falso-negativo).
+pub(crate) fn compute_import_checksum(rows: &[ImportedRow], descriptions_trusted: bool) -> String {
+    compute_checksum_with_options(rows, descriptions_trusted)
+}
+
+// API pública retida (plan 002) — ver nota em `compute_checksum`. Wrapper de pool (begin→core→
+// commit) usado pelos testes; o shell usa `import_rows_with_options_in_tx`.
+#[allow(dead_code)]
 pub async fn import_rows_with_options(
     pool: &SqlitePool,
     sheet_name: &str,
@@ -217,15 +236,44 @@ pub async fn import_rows_with_options(
         return Ok(0);
     }
 
+    let mut tx = pool.begin().await.map_err(|e| format!("begin: {e}"))?;
+    let n = import_rows_core(&mut tx, sheet_name, rows, profile_id, options, &checksum).await?;
+    tx.commit().await.map_err(|e| format!("commit: {e}"))?;
+    Ok(n)
+}
+
+/// Importa as linhas numa transação JÁ ABERTA — o chamador (o shell) é dono do commit/rollback,
+/// de modo que layout + mappings + linhas + série de Saldo gravem tudo-ou-nada numa única tx.
+/// A checagem de duplicata (`check_duplicate_import`) é responsabilidade do chamador e deve rodar
+/// no pool ANTES de abrir a transação. `checksum` é o do batch (ver `compute_import_checksum`).
+pub(crate) async fn import_rows_with_options_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    sheet_name: &str,
+    rows: &[ImportedRow],
+    profile_id: &str,
+    options: ImportRowsOptions,
+    checksum: &str,
+) -> Result<usize, String> {
+    import_rows_core(tx, sheet_name, rows, profile_id, options, checksum).await
+}
+
+/// Corpo do import de linhas dentro de uma transação recebida; NÃO faz commit. Toda a IO usa
+/// `&mut **tx` (a transação dereferencia para `&mut SqliteConnection`).
+async fn import_rows_core(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    sheet_name: &str,
+    rows: &[ImportedRow],
+    profile_id: &str,
+    options: ImportRowsOptions,
+    checksum: &str,
+) -> Result<usize, String> {
     let now = chrono::Utc::now().to_rfc3339();
 
     // Reconciliação NÃO-destrutiva por aba (spec 012): identidade determinística + UPSERT preserva
     // o id (e o enriquecimento — split/tags/payment_method ancorados nele) quando a célula é
     // editada; diff-delete remove só as linhas que sumiram da planilha. Substitui o DELETE-all +
     // uuid novo (que regenerava ids e matava o enriquecimento a cada re-import — P0-2).
-    let mut tx = pool.begin().await.map_err(|e| format!("begin: {e}"))?;
-
-    let profile_id = resolve_profile_id(&mut tx, profile_id).await?;
+    let profile_id = resolve_profile_id(tx, profile_id).await?;
 
     let mut slot_counter: std::collections::HashMap<(String, &'static str), usize> =
         std::collections::HashMap::new();
@@ -255,7 +303,7 @@ pub async fn import_rows_with_options(
              FROM \"transaction\" WHERE id = ?1",
         )
         .bind(&txn_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await
         .map_err(|e| format!("load existing txn: {e}"))?;
 
@@ -275,7 +323,7 @@ pub async fn import_rows_with_options(
                 .bind(row.kind.is_fixed() as i64)
                 .bind(row.is_projection as i64)
                 .bind(&now)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await
                 .map_err(|e| format!("insert row {row:?}: {e}"))?;
             }
@@ -309,12 +357,12 @@ pub async fn import_rows_with_options(
                 .bind(amt.source)
                 .bind(next_source_description.as_deref())
                 .bind(&now)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await
                 .map_err(|e| format!("update row {row:?}: {e}"))?;
 
                 record_conflict(
-                    &mut tx,
+                    tx,
                     &txn_id,
                     "amount",
                     amt.conflict,
@@ -326,7 +374,7 @@ pub async fn import_rows_with_options(
                 .await?;
                 if let Some(desc) = desc {
                     record_conflict(
-                        &mut tx,
+                        tx,
                         &txn_id,
                         "description",
                         desc.conflict,
@@ -353,8 +401,8 @@ pub async fn import_rows_with_options(
         .bind(&now)
         .bind(format!(r#"{{"source":"{sheet_name}","date":"{}","amount":{},"kind":"{}"}}"#, row.date, row.amount, row.kind.as_str()))
         .bind(sheet_name)
-        .bind(&checksum)
-        .execute(&mut *tx)
+        .bind(checksum)
+        .execute(&mut **tx)
         .await
         .map_err(|e| format!("sync_log error: {e}"))?;
     }
@@ -364,14 +412,14 @@ pub async fn import_rows_with_options(
         "SELECT entity_id FROM sync_log WHERE source_sheet = ?1 AND entity_type = 'transaction'",
     )
     .bind(sheet_name)
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut **tx)
     .await
     .map_err(|e| format!("load existing ids: {e}"))?;
     for (eid,) in existing {
         if !current_ids.contains(&eid) {
             sqlx::query("DELETE FROM \"transaction\" WHERE id = ?1")
                 .bind(&eid)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await
                 .map_err(|e| format!("delete removed txn: {e}"))?;
             sqlx::query(
@@ -379,19 +427,17 @@ pub async fn import_rows_with_options(
             )
             .bind(&eid)
             .bind(sheet_name)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await
             .map_err(|e| format!("delete removed sync_log: {e}"))?;
             // Conflitos órfãos somem com a transação removida.
             sqlx::query("DELETE FROM import_conflict WHERE transaction_id = ?1")
                 .bind(&eid)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await
                 .map_err(|e| format!("delete removed conflicts: {e}"))?;
         }
     }
-
-    tx.commit().await.map_err(|e| format!("commit: {e}"))?;
 
     Ok(rows.len())
 }
@@ -736,16 +782,38 @@ pub async fn get_balance_offset_for_sheet(
 
 /// Grava a série de Saldo diário, replace-all por aba (igual às transações): re-importar a
 /// planilha editada substitui atomicamente a série antiga desta aba.
+// API pública retida (plan 002) — ver nota em `compute_checksum`. Wrapper de pool usado pelos
+// testes; o shell usa `store_balance_series_in_tx`.
+#[allow(dead_code)]
 pub async fn store_balance_series(
     pool: &SqlitePool,
     sheet_name: &str,
     series: &[DailyBalance],
 ) -> Result<usize, String> {
     let mut tx = pool.begin().await.map_err(|e| format!("begin: {e}"))?;
+    let n = store_balance_series_core(&mut tx, sheet_name, series).await?;
+    tx.commit().await.map_err(|e| format!("commit: {e}"))?;
+    Ok(n)
+}
 
+/// Grava a série de Saldo numa transação JÁ ABERTA — o chamador é dono do commit/rollback, para
+/// participar do mesmo tudo-ou-nada das linhas/layout/mappings. NÃO faz commit.
+pub(crate) async fn store_balance_series_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    sheet_name: &str,
+    series: &[DailyBalance],
+) -> Result<usize, String> {
+    store_balance_series_core(tx, sheet_name, series).await
+}
+
+async fn store_balance_series_core(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    sheet_name: &str,
+    series: &[DailyBalance],
+) -> Result<usize, String> {
     sqlx::query("DELETE FROM sheet_daily_balance WHERE sheet_name = ?1")
         .bind(sheet_name)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(|e| format!("clear balances: {e}"))?;
 
@@ -757,12 +825,11 @@ pub async fn store_balance_series(
         .bind(&b.date)
         .bind(b.balance_cents)
         .bind(b.is_projection as i64)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(|e| format!("insert balance: {e}"))?;
     }
 
-    tx.commit().await.map_err(|e| format!("commit: {e}"))?;
     Ok(series.len())
 }
 
@@ -1890,5 +1957,99 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(count_2025, 2);
+    }
+
+    // Plan 002: o import é tudo-ou-nada numa única transação. Se algo falha entre a fase de
+    // linhas e a de Saldo, o rollback desfaz TUDO — zero linhas, zero saldo — e o gate de
+    // duplicata NÃO é envenenado (o sync_log da tentativa revertida some junto), para o retry
+    // poder reimportar.
+    #[tokio::test]
+    async fn atomic_import_rolls_back_on_balance_error() {
+        let pool = test_pool().await;
+        let rows = vec![imported("2026-03-01", 50_000)];
+
+        // Primeiro: um import normal teria sucesso; aqui escrevemos as linhas e então simulamos
+        // uma falha na fase de Saldo fazendo rollback explícito (= crash no meio do import).
+        let checksum = compute_import_checksum(&rows, true);
+        assert!(
+            !check_duplicate_import(&pool, "2026", &checksum)
+                .await
+                .unwrap()
+        );
+        {
+            let mut tx = pool.begin().await.unwrap();
+            let n = import_rows_with_options_in_tx(
+                &mut tx,
+                "2026",
+                &rows,
+                "p1",
+                ImportRowsOptions::default(),
+                &checksum,
+            )
+            .await
+            .unwrap();
+            assert_eq!(n, 1);
+            tx.rollback().await.unwrap();
+        }
+
+        // Após o rollback: zero transações, série de Saldo vazia.
+        assert_eq!(count_transactions(&pool).await, 0);
+        let (bal_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sheet_daily_balance")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            bal_count, 0,
+            "série de Saldo também ausente após o rollback"
+        );
+
+        // O gate de duplicata continua false: o sync_log da tentativa revertida não pode bloquear
+        // o retry.
+        assert!(
+            !check_duplicate_import(&pool, "2026", &checksum)
+                .await
+                .unwrap(),
+            "import revertido não pode envenenar o gate de duplicata"
+        );
+    }
+
+    // Plan 002: um import bem-sucedido comita linhas E série de Saldo juntas na mesma transação;
+    // ambas ficam legíveis após o commit.
+    #[tokio::test]
+    async fn atomic_import_commits_rows_and_balance_together() {
+        let pool = test_pool().await;
+        let rows = vec![imported("2026-04-01", 30_000)];
+        let series = vec![DailyBalance {
+            date: "2026-04-01".into(),
+            balance_cents: 30_000,
+            is_projection: false,
+        }];
+        let checksum = compute_import_checksum(&rows, true);
+
+        let mut tx = pool.begin().await.unwrap();
+        import_rows_with_options_in_tx(
+            &mut tx,
+            "2026",
+            &rows,
+            "p1",
+            ImportRowsOptions::default(),
+            &checksum,
+        )
+        .await
+        .unwrap();
+        store_balance_series_in_tx(&mut tx, "2026", &series)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(count_transactions(&pool).await, 1);
+        let (bal_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sheet_daily_balance")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            bal_count, 1,
+            "série de Saldo comitada junto com as transações"
+        );
     }
 }

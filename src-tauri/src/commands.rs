@@ -196,37 +196,30 @@ pub async fn import_sheet_data(
         return Ok(0);
     }
 
-    let layout = match import::get_layout_for_sheet(&pool, &sheet_name).await? {
-        Some(l) => l,
+    // Detecção de layout (leituras no pool). Quando NOVO, o INSERT do layout/mappings é adiado para
+    // DENTRO da transação externa (tudo-ou-nada); guardamos os mappings gerados para o parse, já que
+    // ainda não estarão visíveis por uma leitura no pool.
+    let (layout, new_mappings) = match import::get_layout_for_sheet(&pool, &sheet_name).await? {
+        Some(l) => (l, None),
         None => {
             let detected = layout_detect::detect_layout(&rows, &sheet_name)?;
-            sqlx::query(
-                "INSERT OR REPLACE INTO sheet_layout (id, sheet_name, year, month_names_row, header_row, data_start_row, day_column, block_size, date_direction) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)"
-            )
-            .bind(&detected.id).bind(&detected.sheet_name).bind(detected.year)
-            .bind(detected.month_names_row).bind(detected.header_row).bind(detected.data_start_row)
-            .bind(detected.day_column).bind(detected.block_size).bind(&detected.date_direction)
-            .execute(pool.inner())
-            .await
-            .map_err(|e| format!("save layout: {e}"))?;
-
             let mappings = layout_detect::generate_mappings(&detected);
-            for m in &mappings {
-                sqlx::query(
-                    "INSERT OR REPLACE INTO sheet_mapping (id, sheet_name, column_letter, column_header, target_table, target_field, date_direction, layout_id, block_offset, is_active) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)"
-                )
-                .bind(&m.id).bind(&m.sheet_name).bind(&m.column_letter).bind(&m.column_header)
-                .bind(&m.target_table).bind(&m.target_field).bind(&m.date_direction)
-                .bind(&m.layout_id).bind(m.block_offset).bind(m.is_active)
-                .execute(pool.inner())
-                .await
-                .map_err(|e| format!("save mapping: {e}"))?;
-            }
-            detected
+            (detected, Some(mappings))
         }
     };
 
-    let mappings = import::get_active_mappings_for_sheet(&pool, &sheet_name).await?;
+    // Mappings ativos para o parse: do pool (layout pré-existente) ou os recém-gerados (layout novo,
+    // ainda não comitado). `generate_mappings` marca a coluna Saldo como inativa, então o parse só vê
+    // os mappings ativos — espelhando `get_active_mappings_for_sheet`.
+    let mappings: Vec<(String, i32)> = match &new_mappings {
+        Some(generated) => generated
+            .iter()
+            .filter(|m| m.is_active != 0)
+            .map(|m| (m.target_field.clone(), m.block_offset))
+            .collect(),
+        None => import::get_active_mappings_for_sheet(&pool, &sheet_name).await?,
+    };
+
     // Notas de célula = a descrição real de cada lançamento (quem/o quê/quanto por item). Sem
     // elas, o parser só tem fallback estrutural ("Entrada/Saída {data}"). Se a API de notas
     // falhar, os valores ainda entram, mas essas descrições não são tratadas como fonte canônica.
@@ -236,26 +229,70 @@ pub async fn import_sheet_data(
             Err(_) => (Vec::new(), false),
         };
     let imported_rows = import::parse_rows_with_layout(&rows, &layout, &mappings, &notes);
-    let count = if descriptions_trusted {
-        import::import_rows(&pool, &sheet_name, &imported_rows, &profile_id).await?
-    } else {
-        import::import_rows_with_options(
-            &pool,
-            &sheet_name,
-            &imported_rows,
-            &profile_id,
-            import::ImportRowsOptions {
-                descriptions_trusted: false,
-            },
-        )
-        .await?
+    let options = import::ImportRowsOptions {
+        descriptions_trusted,
     };
 
-    // Captura a coluna Saldo (o saldo corrente do método) → semente da projeção + visão
-    // histórica. Sem isto a semente era 0 e o saldo de hoje aparecia zerado.
+    // Checksum + checagem de duplicata ANTES de abrir a transação (leitura no pool; dentro da tx
+    // daria read-your-writes falso-negativo). Dataset idêntico ao último import → idempotente.
+    let checksum = import::compute_import_checksum(&imported_rows, descriptions_trusted);
+    if !imported_rows.is_empty()
+        && import::check_duplicate_import(&pool, &sheet_name, &checksum).await?
+    {
+        return Ok(0);
+    }
+
+    // Captura a coluna Saldo (o saldo corrente do método) → semente da projeção + visão histórica.
+    // Sem isto a semente era 0 e o saldo de hoje aparecia zerado. `get_balance_offset_for_sheet` é
+    // leitura no pool; pode rodar antes de abrir a tx.
     let balance_offset = import::get_balance_offset_for_sheet(&pool, &sheet_name).await?;
     let balances = import::parse_balance_series(&rows, &layout, balance_offset);
-    import::store_balance_series(&pool, &sheet_name, &balances).await?;
+
+    // Transação externa única: layout + mappings + linhas + série de Saldo gravam tudo-ou-nada.
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| format!("begin import: {e}"))?;
+
+    if let Some(generated) = &new_mappings {
+        sqlx::query(
+            "INSERT OR REPLACE INTO sheet_layout (id, sheet_name, year, month_names_row, header_row, data_start_row, day_column, block_size, date_direction) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)"
+        )
+        .bind(&layout.id).bind(&layout.sheet_name).bind(layout.year)
+        .bind(layout.month_names_row).bind(layout.header_row).bind(layout.data_start_row)
+        .bind(layout.day_column).bind(layout.block_size).bind(&layout.date_direction)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("save layout: {e}"))?;
+
+        for m in generated {
+            sqlx::query(
+                "INSERT OR REPLACE INTO sheet_mapping (id, sheet_name, column_letter, column_header, target_table, target_field, date_direction, layout_id, block_offset, is_active) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)"
+            )
+            .bind(&m.id).bind(&m.sheet_name).bind(&m.column_letter).bind(&m.column_header)
+            .bind(&m.target_table).bind(&m.target_field).bind(&m.date_direction)
+            .bind(&m.layout_id).bind(m.block_offset).bind(m.is_active)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("save mapping: {e}"))?;
+        }
+    }
+
+    let count = import::import_rows_with_options_in_tx(
+        &mut tx,
+        &sheet_name,
+        &imported_rows,
+        &profile_id,
+        options,
+        &checksum,
+    )
+    .await?;
+
+    import::store_balance_series_in_tx(&mut tx, &sheet_name, &balances).await?;
+
+    tx.commit()
+        .await
+        .map_err(|e| format!("commit import: {e}"))?;
 
     Ok(count)
 }
@@ -338,62 +375,100 @@ pub async fn import_local_xlsx(
                 continue;
             }
 
-            let layout = match import::get_layout_for_sheet(&pool, sheet_name).await? {
-                Some(l) => l,
-                None => match layout_detect::detect_layout(&rows, sheet_name) {
-                    Ok(detected) => {
-                        sqlx::query(
-                                "INSERT OR REPLACE INTO sheet_layout (id, sheet_name, year, month_names_row, header_row, data_start_row, day_column, block_size, date_direction) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)"
-                            )
-                            .bind(&detected.id).bind(&detected.sheet_name).bind(detected.year)
-                            .bind(detected.month_names_row).bind(detected.header_row).bind(detected.data_start_row)
-                            .bind(detected.day_column).bind(detected.block_size).bind(&detected.date_direction)
-                            .execute(pool.inner())
-                            .await
-                            .map_err(|e| format!("save layout: {e}"))?;
-
-                        let mappings = layout_detect::generate_mappings(&detected);
-                        for m in &mappings {
-                            sqlx::query(
-                                    "INSERT OR REPLACE INTO sheet_mapping (id, sheet_name, column_letter, column_header, target_table, target_field, date_direction, layout_id, block_offset, is_active) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)"
-                                )
-                                .bind(&m.id).bind(&m.sheet_name).bind(&m.column_letter).bind(&m.column_header)
-                                .bind(&m.target_table).bind(&m.target_field).bind(&m.date_direction)
-                                .bind(&m.layout_id).bind(m.block_offset).bind(m.is_active)
-                                .execute(pool.inner())
-                                .await
-                                .map_err(|e| format!("save mapping: {e}"))?;
+            // Layout: pré-existente (leitura no pool) ou recém-detectado. Quando NOVO, o INSERT do
+            // layout/mappings é adiado para DENTRO da transação externa; guardamos os mappings
+            // gerados para o parse, já que ainda não estarão visíveis por uma leitura no pool.
+            let (layout, new_mappings) =
+                match import::get_layout_for_sheet(&pool, sheet_name).await? {
+                    Some(l) => (l, None),
+                    None => match layout_detect::detect_layout(&rows, sheet_name) {
+                        Ok(detected) => {
+                            let mappings = layout_detect::generate_mappings(&detected);
+                            (detected, Some(mappings))
                         }
-                        detected
-                    }
-                    Err(_) => continue,
-                },
+                        Err(_) => continue,
+                    },
+                };
+
+            // Mappings ativos para o parse: do pool (layout pré-existente) ou os recém-gerados
+            // (layout novo, ainda não comitado).
+            let mappings: Vec<(String, i32)> = match &new_mappings {
+                Some(generated) => generated
+                    .iter()
+                    .filter(|m| m.is_active != 0)
+                    .map(|m| (m.target_field.clone(), m.block_offset))
+                    .collect(),
+                None => import::get_active_mappings_for_sheet(&pool, sheet_name).await?,
             };
 
-            let mappings = import::get_active_mappings_for_sheet(&pool, sheet_name).await?;
             // xlsx (calamine) não expõe notas de célula → fallback "Entrada/Saída {data}". As
             // notas só vêm pelo caminho ao vivo (Sheets API), então o fallback não vira base
             // canônica de descrição.
             let imported_rows = import::parse_rows_with_layout(&rows, &layout, &mappings, &[]);
-            if !imported_rows.is_empty() {
-                let count = import::import_rows_with_options(
-                    &pool,
-                    sheet_name,
-                    &imported_rows,
-                    &profile_id,
-                    import::ImportRowsOptions {
-                        descriptions_trusted: false,
-                    },
-                )
-                .await?;
-                total += count;
-                sheets_imported.push(format!("{sheet_name} ({count} rows)"));
+            if imported_rows.is_empty() {
+                continue;
+            }
+
+            let options = import::ImportRowsOptions {
+                descriptions_trusted: false,
+            };
+            let checksum = import::compute_import_checksum(&imported_rows, false);
+            if import::check_duplicate_import(&pool, sheet_name, &checksum).await? {
+                continue;
             }
 
             // Série de Saldo da aba (semente da projeção + visão histórica do livro-razão).
             let balance_offset = import::get_balance_offset_for_sheet(&pool, sheet_name).await?;
             let balances = import::parse_balance_series(&rows, &layout, balance_offset);
-            import::store_balance_series(&pool, sheet_name, &balances).await?;
+
+            // Transação externa única por aba: layout + mappings + linhas + Saldo, tudo-ou-nada.
+            let mut tx = pool
+                .begin()
+                .await
+                .map_err(|e| format!("begin import: {e}"))?;
+
+            if let Some(generated) = &new_mappings {
+                sqlx::query(
+                        "INSERT OR REPLACE INTO sheet_layout (id, sheet_name, year, month_names_row, header_row, data_start_row, day_column, block_size, date_direction) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)"
+                    )
+                    .bind(&layout.id).bind(&layout.sheet_name).bind(layout.year)
+                    .bind(layout.month_names_row).bind(layout.header_row).bind(layout.data_start_row)
+                    .bind(layout.day_column).bind(layout.block_size).bind(&layout.date_direction)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| format!("save layout: {e}"))?;
+
+                for m in generated {
+                    sqlx::query(
+                            "INSERT OR REPLACE INTO sheet_mapping (id, sheet_name, column_letter, column_header, target_table, target_field, date_direction, layout_id, block_offset, is_active) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)"
+                        )
+                        .bind(&m.id).bind(&m.sheet_name).bind(&m.column_letter).bind(&m.column_header)
+                        .bind(&m.target_table).bind(&m.target_field).bind(&m.date_direction)
+                        .bind(&m.layout_id).bind(m.block_offset).bind(m.is_active)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(|e| format!("save mapping: {e}"))?;
+                }
+            }
+
+            let count = import::import_rows_with_options_in_tx(
+                &mut tx,
+                sheet_name,
+                &imported_rows,
+                &profile_id,
+                options,
+                &checksum,
+            )
+            .await?;
+
+            import::store_balance_series_in_tx(&mut tx, sheet_name, &balances).await?;
+
+            tx.commit()
+                .await
+                .map_err(|e| format!("commit import: {e}"))?;
+
+            total += count;
+            sheets_imported.push(format!("{sheet_name} ({count} rows)"));
         }
     }
 
