@@ -30,7 +30,7 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 015  | Wire built-but-unwired UI: edit/delete transaction, recurrence series, owner totals | P1       | M      | —          | DONE   |
 | 016  | Navigation/IA restructure + dashboard de-duplication                                | P1       | M      | —          | DONE   |
 | 017  | Accessibility WCAG batch (contrast + landmarks)                                     | P1       | S      | —          | DONE   |
-| 018  | Motion 2026: stagger static screens + token-driven durations                        | P2       | S–M    | —          | TODO   |
+| 018  | Motion 2026: stagger static screens + token-driven durations                        | P2       | S–M    | —          | DONE   |
 | 019  | SPIKE: first-class invoice (credit-bill) entity                                     | —        | spike  | 004        | TODO   |
 | 020  | SPIKE: what-if / scenario branching of the forecast                                 | —        | spike  | —          | TODO   |
 | 021  | SPIKE: real-time two-way Google Sheets sync                                         | —        | spike  | 001, 002   | TODO   |

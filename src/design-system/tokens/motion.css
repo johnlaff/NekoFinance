@@ -10,6 +10,7 @@
   --dur-base: 200ms; /* @kind other */
   --dur-slow: 320ms; /* @kind other */
   --dur-deliberate: 480ms; /* @kind other */
+  --dur-stagger-step: 40ms; /* per-row stagger increment for list screens; @kind other */
 
   /* Easing — composed, restrained */
   --ease-standard: cubic-bezier(0.2, 0, 0, 1); /* @kind other */
@@ -32,5 +33,6 @@
     --dur-base: 0ms; /* @kind other */
     --dur-slow: 0ms; /* @kind other */
     --dur-deliberate: 0ms; /* @kind other */
+    --dur-stagger-step: 0ms; /* @kind other */
   }
 }

@@ -153,6 +153,7 @@ export function HorizonteScreen() {
           de role="group"/role="img". Cada dia é um item rotulado; o conteúdo visual fica aria-hidden. */}
       <section
         aria-label="Saldo projetado por dia, agrupado por mês"
+        className="nk-horizon-cols"
         style={{
           display: "flex",
           gap: "var(--space-4)",
