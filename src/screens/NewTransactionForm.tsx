@@ -3,23 +3,25 @@ import { Button } from "../design-system/components/Button";
 import { MovBadge, type MovKind } from "../design-system/components/MovBadge";
 import {
   createTransaction,
+  getPockets,
   listTags,
   updateSeriesAll,
   updateSeriesFrom,
   updateTransaction,
   type Frequency,
+  type PocketAccount,
   type SeriesEdit,
   type Tag,
 } from "../lib/api";
 import { safeErrorMessage } from "../lib/errors";
 import { parseBRLToCents, todayISO } from "../lib/format";
 
-/** Os tipos de movimento oferecidos no form (Economia → transfer precisa de conta, fica fora). */
-const FORM_KINDS: MovKind[] = ["entrada", "saida", "diario", "cartao"];
+/** Os tipos de movimento oferecidos no form. Economia → transfer para uma conta reserve/illiquid. */
+const FORM_KINDS: MovKind[] = ["entrada", "saida", "diario", "cartao", "economia"];
 
 /** Mapeia o tipo de movimento do método para (type, is_fixed, payment_method) do schema. */
 function kindToFields(kind: MovKind): {
-  txnType: "income" | "expense";
+  txnType: "income" | "expense" | "transfer";
   isFixed: boolean;
   paymentMethod: string | null;
 } {
@@ -30,6 +32,8 @@ function kindToFields(kind: MovKind): {
       return { txnType: "expense", isFixed: true, paymentMethod: "debit" };
     case "cartao":
       return { txnType: "expense", isFixed: false, paymentMethod: "credit" };
+    case "economia":
+      return { txnType: "transfer", isFixed: false, paymentMethod: null };
     case "diario":
     default:
       return { txnType: "expense", isFixed: false, paymentMethod: "debit" };
@@ -42,6 +46,7 @@ function fieldsToKind(
   isFixed: boolean,
   paymentMethod: string | null,
 ): MovKind {
+  if (type === "transfer") return "economia";
   if (type === "income") return "entrada";
   if (isFixed) return "saida";
   if (paymentMethod === "credit") return "cartao";
@@ -121,6 +126,19 @@ const TAG_BTN_BASE: React.CSSProperties = {
   fontFamily: "var(--font-sans)",
 };
 
+// Texto auxiliar (dica). Hoisted para o React Compiler não recriar o objeto a cada render.
+const HINT_TEXT: React.CSSProperties = {
+  margin: "var(--space-2) 0 0",
+  fontSize: "var(--fs-micro)",
+  color: "var(--text-faint)",
+};
+
+const HINT_EMPTY: React.CSSProperties = {
+  margin: 0,
+  fontSize: "var(--fs-sm)",
+  color: "var(--text-faint)",
+};
+
 // Estado do formulário agrupado num reducer (uma atualização lógica = um render), em vez de dez
 // useState relacionados. A lista de tags disponíveis (carregada por IO) fica num useState à parte.
 interface FormState {
@@ -129,6 +147,8 @@ interface FormState {
   description: string;
   date: string;
   selectedTags: string[];
+  /** Conta-destino da Economia (transfer): id de uma conta reserve/illiquid. Vazio fora do kind. */
+  toAccountId: string;
   repeat: boolean;
   frequency: Frequency;
   repetitions: number;
@@ -144,6 +164,7 @@ function makeInitialForm(initial?: TransactionEditValues): FormState {
       description: initial.description,
       date: initial.date,
       selectedTags: [],
+      toAccountId: "",
       repeat: false,
       frequency: "mensal",
       repetitions: 12,
@@ -157,6 +178,7 @@ function makeInitialForm(initial?: TransactionEditValues): FormState {
     description: "",
     date: todayISO(),
     selectedTags: [],
+    toAccountId: "",
     repeat: false,
     frequency: "mensal",
     repetitions: 12,
@@ -175,7 +197,11 @@ type FormAction =
 function formReducer(s: FormState, a: FormAction): FormState {
   switch (a.type) {
     case "set":
-      return { ...s, ...a.patch };
+      // Trocar de tipo de movimento limpa a conta-destino: ela só faz sentido para Economia, e um
+      // valor remanescente não deve poluir os outros tipos (o backend já ignora, isto é só higiene).
+      return a.patch.kind !== undefined && a.patch.kind !== "economia"
+        ? { ...s, ...a.patch, toAccountId: "" }
+        : { ...s, ...a.patch };
     case "toggleTag":
       return {
         ...s,
@@ -331,6 +357,49 @@ function RepeatControls({
   );
 }
 
+/** Seletor da conta-destino da Economia (transfer). Só contas reserve/illiquid; sem nenhuma, guia
+ * o usuário a criar uma em Configurações › Bolsos (não criamos conta no submit, sem aprovação). */
+function ReserveAccountPicker({
+  accounts,
+  toAccountId,
+  dispatch,
+}: {
+  accounts: PocketAccount[];
+  toAccountId: string;
+  dispatch: Dispatch<FormAction>;
+}) {
+  return (
+    <div>
+      <label htmlFor="ntf-dest-account" style={label}>
+        Conta-destino (reserva)
+      </label>
+      {accounts.length === 0 ? (
+        <p style={HINT_EMPTY}>
+          Nenhuma conta de reserva ou ilíquida encontrada. Crie uma em Configurações
+          &rsaquo; Bolsos antes de registrar Economia.
+        </p>
+      ) : (
+        <select
+          id="ntf-dest-account"
+          value={toAccountId}
+          onChange={(e) =>
+            dispatch({ type: "set", patch: { toAccountId: e.target.value } })
+          }
+          style={{ ...field, width: "100%" }}
+        >
+          <option value="">Selecione a conta…</option>
+          {accounts.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+              {a.liquidity === "illiquid" ? " (ilíquida)" : ""}
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+}
+
 export function NewTransactionForm({
   onCreated,
   initialValues,
@@ -348,6 +417,7 @@ export function NewTransactionForm({
     description,
     date,
     selectedTags,
+    toAccountId,
     repeat,
     frequency,
     repetitions,
@@ -355,6 +425,7 @@ export function NewTransactionForm({
     error,
   } = form;
   const [tags, setTags] = useState<Tag[]>([]);
+  const [reserveAccounts, setReserveAccounts] = useState<PocketAccount[]>([]);
 
   useEffect(() => {
     let alive = true;
@@ -366,8 +437,30 @@ export function NewTransactionForm({
     };
   }, []);
 
+  // Contas-destino possíveis da Economia (reserve/illiquid). Só usado no kind "economia".
+  useEffect(() => {
+    let alive = true;
+    getPockets()
+      .then((p) => {
+        if (!alive) return;
+        setReserveAccounts(
+          p.accounts.filter(
+            (a) => a.liquidity === "reserve" || a.liquidity === "illiquid",
+          ),
+        );
+      })
+      .catch(() => alive && setReserveAccounts([]));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const amountCents = parseBRLToCents(amount);
-  const canSubmit = amountCents != null && amountCents > 0 && !busy;
+  const canSubmit =
+    amountCents != null &&
+    amountCents > 0 &&
+    !busy &&
+    (kind !== "economia" || toAccountId !== "");
 
   async function submit() {
     if (amountCents == null || amountCents <= 0) {
@@ -420,6 +513,7 @@ export function NewTransactionForm({
         isFixed: fields.isFixed,
         tagIds: selectedTags,
         recurrence: repeat ? { frequency, repetitions } : null,
+        toAccountId: kind === "economia" ? toAccountId : null,
       });
       dispatch({ type: "submitSuccess" });
       onCreated?.();
@@ -474,17 +568,13 @@ export function NewTransactionForm({
             );
           })}
         </div>
-        <p
-          style={{
-            margin: "var(--space-2) 0 0",
-            fontSize: "var(--fs-micro)",
-            color: "var(--text-faint)",
-          }}
-        >
-          <MovBadge kind="economia" size={14} /> Economia entra pela aba Economia da
-          planilha (Configurações &rsaquo; Conexão Google Sheets) — é uma transferência
-          para a sua reserva, não um gasto.
-        </p>
+        {kind !== "economia" && (
+          <p style={HINT_TEXT}>
+            <MovBadge kind="economia" size={14} /> Economia é uma transferência para a
+            sua reserva — registre aqui ou importe pela aba Economia da planilha
+            (Configurações &rsaquo; Conexão Google Sheets).
+          </p>
+        )}
       </div>
 
       <div
@@ -538,11 +628,20 @@ export function NewTransactionForm({
         />
       </div>
 
-      {!editing && tags.length > 0 && (
+      {!editing && kind === "economia" && (
+        <ReserveAccountPicker
+          accounts={reserveAccounts}
+          toAccountId={toAccountId}
+          dispatch={dispatch}
+        />
+      )}
+
+      {!editing && kind !== "economia" && tags.length > 0 && (
         <TagPicker tags={tags} selectedTags={selectedTags} dispatch={dispatch} />
       )}
 
-      {!editing && (
+      {/* Economia é um lançamento único — a recorrência (transfer) é rejeitada pelo backend. */}
+      {!editing && kind !== "economia" && (
         <RepeatControls
           repeat={repeat}
           repetitions={repetitions}

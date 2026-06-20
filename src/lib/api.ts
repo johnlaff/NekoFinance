@@ -257,9 +257,10 @@ export function getRecentTransactions(limit: number): Promise<TransactionRow[]> 
   return invoke("get_recent_transactions", { limit });
 }
 
-/** Cria um lançamento manual. Com `recurrence`, gera a série projetada. Retorna o id criado. */
+/** Cria um lançamento manual. Com `recurrence`, gera a série projetada. Para `transfer` (Economia),
+ * `toAccountId` é obrigatório e precisa ser uma conta reserve/illiquid. Retorna o id criado. */
 export function createTransaction(input: {
-  txnType: "income" | "expense";
+  txnType: "income" | "expense" | "transfer";
   amountCents: number;
   description: string | null;
   date: string;
@@ -267,6 +268,8 @@ export function createTransaction(input: {
   isFixed: boolean;
   tagIds: string[];
   recurrence: { frequency: Frequency; repetitions: number } | null;
+  /** Obrigatório (não-nulo) quando `txnType = "transfer"`. Ausente/nulo nos demais (income/expense). */
+  toAccountId?: string | null;
 }): Promise<string> {
   return invoke("create_transaction", input);
 }

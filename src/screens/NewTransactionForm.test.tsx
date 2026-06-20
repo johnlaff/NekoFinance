@@ -101,4 +101,94 @@ describe("NewTransactionForm", () => {
     expect(screen.getByRole("button", { name: "Lançar" })).toBeDisabled();
     await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("list_tags_cmd"));
   });
+
+  it("lança Economia como transfer para conta reserva", async () => {
+    const user = userEvent.setup();
+    mockCommands({
+      list_tags_cmd: [],
+      get_pockets: {
+        liquid_cents: 0,
+        reserve_cents: 1500000,
+        restricted_cents: 0,
+        illiquid_cents: 0,
+        net_worth_cents: 1500000,
+        accounts: [
+          {
+            id: "reserve-001",
+            name: "Poupança",
+            type: "savings",
+            liquidity: "reserve",
+            balance: 1500000,
+            institution: null,
+          },
+        ],
+      },
+      create_transaction: "tx-economia-id",
+    });
+    render(<NewTransactionForm />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Economia/ })).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("button", { name: /Economia/ }));
+
+    // Conta-destino carregada (reserve/illiquid).
+    await waitFor(() =>
+      expect(screen.getByLabelText("Conta-destino (reserva)")).toBeInTheDocument(),
+    );
+
+    await user.type(screen.getByLabelText("Valor"), "1.000,00");
+    await user.selectOptions(
+      screen.getByLabelText("Conta-destino (reserva)"),
+      "reserve-001",
+    );
+    await user.click(screen.getByRole("button", { name: "Lançar" }));
+
+    await waitFor(() => {
+      const call = mockInvoke.mock.calls.find((c) => c[0] === "create_transaction");
+      expect(call?.[1]).toMatchObject({
+        txnType: "transfer",
+        amountCents: 100000,
+        paymentMethod: null,
+        isFixed: false,
+        toAccountId: "reserve-001",
+        recurrence: null,
+      });
+    });
+  });
+
+  it("desabilita Lançar sem conta reserva disponível", async () => {
+    const user = userEvent.setup();
+    mockCommands({
+      list_tags_cmd: [],
+      get_pockets: {
+        liquid_cents: 842000,
+        reserve_cents: 0,
+        restricted_cents: 0,
+        illiquid_cents: 0,
+        net_worth_cents: 842000,
+        accounts: [
+          {
+            id: "bank-001",
+            name: "Conta corrente",
+            type: "bank",
+            liquidity: "liquid",
+            balance: 842000,
+            institution: null,
+          },
+        ],
+      },
+      create_transaction: "never-called",
+    });
+    render(<NewTransactionForm />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Economia/ })).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("button", { name: /Economia/ }));
+    await user.type(screen.getByLabelText("Valor"), "500,00");
+
+    // Sem conta reserve/illiquid → toAccountId fica vazio → botão desabilitado.
+    expect(screen.getByRole("button", { name: "Lançar" })).toBeDisabled();
+  });
 });
