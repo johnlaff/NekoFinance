@@ -43,7 +43,7 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 028  | Sync Phase 2 — enable human-approved write-back, safely                                | P1       | L      | 026        | DONE                       |
 | 029  | Frictionless daily quick-add (description + type + global shortcut)                    | P1       | M      | —          | DONE (pkg A)               |
 | 030  | Daily reminder via OS notification + "last logged" indicator                           | P1       | S–M    | —          | DONE (pkg A)               |
-| 031  | Surface write-back: pending indicator + send-from-dashboard                            | P1       | S–M    | 028        | TODO (pkg A)               |
+| 031  | Surface write-back: pending indicator + send-from-dashboard                            | P1       | S–M    | 028        | DONE (pkg A)               |
 | 032  | Flow correctness: write-back audit, sync race, derived double-count, Jan-1 guardrail   | P1       | M      | —          | TODO (pkg B)               |
 | 033  | Adherence: reserve floor = cost-of-living × months; unify Economizado% threshold       | P2       | M      | —          | TODO (pkg C)               |
 | 034  | Tag "Ignorar/Calcular" toggle (exclude tagged movements from aggregations)             | P2       | M      | —          | TODO (pkg C)               |
