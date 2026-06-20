@@ -57,6 +57,7 @@ misleadingly zero Economizado%.
 ### Key excerpts (live code at planned-at commit)
 
 **The rejection guard** (`src-tauri/src/commands.rs:1805–1806`):
+
 ```rust
 if !matches!(txn_type, "income" | "expense") {
     return Err(format!("tipo inválido: {txn_type}"));
@@ -64,25 +65,30 @@ if !matches!(txn_type, "income" | "expense") {
 ```
 
 **The transfer INSERT used by the Economia importer** (`commands.rs:2373–2374`):
+
 ```sql
 INSERT INTO "transaction" (id, type, amount, description, date,
   to_account_id, is_projection, created_at, updated_at)
 VALUES (?1, 'transfer', ?2, 'Economia (importada da aba Economia)',
   ?3, ?4, ?5, ?6, ?6)
 ```
+
 The schema allows `from_account_id` and `to_account_id` on the transaction
 row (`migrations/20240608000006_transaction.sql:9–10`).
 
 **The engine's Economia classification** (`commands.rs:536–538`):
+
 ```sql
 LEFT JOIN account a ON a.id = t.to_account_id
 WHERE ... AND t.type='transfer'
   AND a.liquidity IN ('reserve','illiquid')
 ```
+
 This already works correctly for imported transfers. A manually created
 transfer to a reserve/illiquid account will be classified the same way.
 
 **The public Tauri command signature** (`commands.rs:1768–1791`):
+
 ```rust
 pub async fn create_transaction(
     pool: State<'_, SqlitePool>,
@@ -96,10 +102,12 @@ pub async fn create_transaction(
     recurrence: Option<RecurrenceInput>,
 ) -> Result<String, String>
 ```
+
 Adding `to_account_id: Option<String>` to this signature requires a matching
 update to the TypeScript binding.
 
 **The TypeScript binding** (`src/lib/api.ts:261–272`):
+
 ```ts
 export function createTransaction(input: {
   txnType: "income" | "expense";
@@ -116,17 +124,21 @@ export function createTransaction(input: {
 ```
 
 **The form's movement-type list** (`src/screens/NewTransactionForm.tsx:8–9`):
+
 ```ts
 /** Os tipos de movimento oferecidos no form (Economia → transfer precisa de conta, fica fora). */
 const FORM_KINDS: MovKind[] = ["entrada", "saida", "diario", "cartao"];
 ```
+
 The comment already anticipates that Economia needs a destination account.
 `MovKind` is defined in `src/design-system/components/MovBadge.tsx:8` as:
+
 ```ts
 export type MovKind = "entrada" | "saida" | "diario" | "economia" | "cartao";
 ```
 
 **The movement-to-fields mapper** (`NewTransactionForm.tsx:12–28`):
+
 ```ts
 function kindToFields(kind: MovKind): {
   txnType: "income" | "expense";
@@ -148,6 +160,7 @@ function kindToFields(kind: MovKind): {
 ```
 
 **The existing Economia placeholder UI** (`NewTransactionForm.tsx:253–256`):
+
 ```tsx
 <MovBadge kind="economia" size={14} /> Economia entra pela aba Economia da
 planilha (Configurações › Conexão Google Sheets) — é uma transferência
@@ -155,6 +168,7 @@ para a sua reserva, não um gasto.
 ```
 
 **The existing bad-input Rust test** (`commands.rs:3319–3352`):
+
 ```rust
 async fn create_transaction_rejects_bad_input() {
     // ...
@@ -162,6 +176,7 @@ async fn create_transaction_rejects_bad_input() {
         "2026-06-14", None, false, &[], None)
         .await.is_err(), "tipo não suportado pelo form é rejeitado"
 ```
+
 This test asserts that `"transfer"` is rejected. It must be UPDATED (not
 deleted) to test that `"transfer"` with a valid reserve account ID succeeds,
 and that `"transfer"` with a missing or liquid `to_account_id` fails.
@@ -173,11 +188,13 @@ call it automatically. The form must require the user to pick an explicit
 reserve account.
 
 **The `insert_reserve_account` test fixture** (`commands.rs:3513–3531`):
+
 ```rust
 async fn insert_reserve_account(pool: &sqlx::SqlitePool, balance: i64) {
     // inserts a person + a savings/reserve account
 }
 ```
+
 Use this helper in new Rust tests for the transfer path.
 
 ### Repo conventions that apply here
@@ -211,14 +228,14 @@ Use this helper in new Rust tests for the transfer path.
 
 ## Commands you will need
 
-| Purpose | Command | Expected on success |
-|---|---|---|
-| Rust check (fmt+clippy+test) | `npm run rust:check` | exit 0 |
-| Rust tests only | `cargo test --manifest-path src-tauri/Cargo.toml --locked` | all pass |
-| Typecheck | `npm run typecheck` | exit 0, no errors |
-| Lint | `npm run lint` | exit 0 |
-| Front unit tests | `npm run test:run` | all pass |
-| Full gate | `npm run check` | exit 0 |
+| Purpose                      | Command                                                    | Expected on success |
+| ---------------------------- | ---------------------------------------------------------- | ------------------- |
+| Rust check (fmt+clippy+test) | `npm run rust:check`                                       | exit 0              |
+| Rust tests only              | `cargo test --manifest-path src-tauri/Cargo.toml --locked` | all pass            |
+| Typecheck                    | `npm run typecheck`                                        | exit 0, no errors   |
+| Lint                         | `npm run lint`                                             | exit 0              |
+| Front unit tests             | `npm run test:run`                                         | all pass            |
+| Full gate                    | `npm run check`                                            | exit 0              |
 
 ## Suggested executor toolkit
 
@@ -304,6 +321,7 @@ pub async fn create_transaction(
 Add `to_account_id: Option<&str>` as the last parameter.
 
 Replace the rejection guard at lines 1805–1807 with logic that:
+
 1. Still rejects types other than `"income"`, `"expense"`, `"transfer"`.
 2. For `"transfer"`, validates that `to_account_id` is `Some(non-empty)` and
    that the referenced account's `liquidity` is `"reserve"` or `"illiquid"`.
@@ -544,7 +562,7 @@ export function createTransaction(input: {
   isFixed: boolean;
   tagIds: string[];
   recurrence: { frequency: Frequency; repetitions: number } | null;
-  toAccountId: string | null;   // NEW: required (non-null) when txnType = "transfer"
+  toAccountId: string | null; // NEW: required (non-null) when txnType = "transfer"
 }): Promise<string> {
   return invoke("create_transaction", input);
 }
@@ -560,6 +578,7 @@ and will be fixed in step 6.
 Open `src/screens/NewTransactionForm.tsx`. Make the following changes in order:
 
 **6a. Add `toAccountId` to `FormState`** (around line 87):
+
 ```ts
 interface FormState {
   kind: MovKind;
@@ -567,7 +586,7 @@ interface FormState {
   description: string;
   date: string;
   selectedTags: string[];
-  toAccountId: string;   // NEW: id of destination account for Economia
+  toAccountId: string; // NEW: id of destination account for Economia
   repeat: boolean;
   frequency: Frequency;
   repetitions: number;
@@ -577,6 +596,7 @@ interface FormState {
 ```
 
 **6b. Initialize `toAccountId` in `makeInitialForm`** (around line 100):
+
 ```ts
 function makeInitialForm(): FormState {
   return {
@@ -585,7 +605,7 @@ function makeInitialForm(): FormState {
     description: "",
     date: todayISO(),
     selectedTags: [],
-    toAccountId: "",   // NEW
+    toAccountId: "", // NEW
     repeat: false,
     frequency: "mensal",
     repetitions: 12,
@@ -596,12 +616,14 @@ function makeInitialForm(): FormState {
 ```
 
 **6c. Add `"economia"` to `FORM_KINDS`** (line 9):
+
 ```ts
 const FORM_KINDS: MovKind[] = ["entrada", "saida", "diario", "cartao", "economia"];
 ```
 
 **6d. Extend `kindToFields`** to return `txnType: "income" | "expense" | "transfer"`.
 Update the return type and add the `"economia"` case:
+
 ```ts
 function kindToFields(kind: MovKind): {
   txnType: "income" | "expense" | "transfer";
@@ -631,7 +653,14 @@ existing `useEffect` for tags (around line 166). Import `getPockets` and
 `PocketAccount` from `../lib/api`.
 
 ```ts
-import { createTransaction, getPockets, listTags, type Frequency, type PocketAccount, type Tag } from "../lib/api";
+import {
+  createTransaction,
+  getPockets,
+  listTags,
+  type Frequency,
+  type PocketAccount,
+  type Tag,
+} from "../lib/api";
 
 // Inside NewTransactionForm component, after the tags useState:
 const [reserveAccounts, setReserveAccounts] = useState<PocketAccount[]>([]);
@@ -643,12 +672,14 @@ useEffect(() => {
       if (!alive) return;
       setReserveAccounts(
         p.accounts.filter(
-          (a) => a.liquidity === "reserve" || a.liquidity === "illiquid"
-        )
+          (a) => a.liquidity === "reserve" || a.liquidity === "illiquid",
+        ),
       );
     })
     .catch(() => alive && setReserveAccounts([]));
-  return () => { alive = false; };
+  return () => {
+    alive = false;
+  };
 }, []);
 ```
 
@@ -657,6 +688,7 @@ destructured values (after line 163).
 
 **6g. Extend `canSubmit`** to require a non-empty `toAccountId` when
 `kind === "economia"`:
+
 ```ts
 const canSubmit =
   amountCents != null &&
@@ -666,6 +698,7 @@ const canSubmit =
 ```
 
 **6h. Extend the `submit` function** to pass `toAccountId` to `createTransaction`:
+
 ```ts
 await createTransaction({
   txnType: fields.txnType,
@@ -676,7 +709,7 @@ await createTransaction({
   isFixed: fields.isFixed,
   tagIds: selectedTags,
   recurrence: repeat ? { frequency, repetitions } : null,
-  toAccountId: kind === "economia" ? toAccountId : null,   // NEW
+  toAccountId: kind === "economia" ? toAccountId : null, // NEW
 });
 ```
 
@@ -692,54 +725,56 @@ kind chip itself already shows the badge).
 Replace the entire static paragraph block with:
 
 ```tsx
-{kind === "economia" ? (
-  <div>
-    <label htmlFor="ntf-dest-account" style={label}>
-      Conta-destino (reserva)
-    </label>
-    {reserveAccounts.length === 0 ? (
-      <p
-        style={{
-          margin: 0,
-          fontSize: "var(--fs-sm)",
-          color: "var(--text-faint)",
-        }}
-      >
-        Nenhuma conta de reserva ou ilíquida encontrada. Crie uma em{" "}
-        Configurações &rsaquo; Bolsos antes de registrar Economia.
-      </p>
-    ) : (
-      <select
-        id="ntf-dest-account"
-        value={toAccountId}
-        onChange={(e) =>
-          dispatch({ type: "set", patch: { toAccountId: e.target.value } })
-        }
-        style={{ ...field, width: "100%" }}
-      >
-        <option value="">Selecione a conta…</option>
-        {reserveAccounts.map((a) => (
-          <option key={a.id} value={a.id}>
-            {a.name}
-            {a.liquidity === "illiquid" ? " (ilíquida)" : ""}
-          </option>
-        ))}
-      </select>
-    )}
-  </div>
-) : (
-  <p
-    style={{
-      margin: "var(--space-2) 0 0",
-      fontSize: "var(--fs-micro)",
-      color: "var(--text-faint)",
-    }}
-  >
-    <MovBadge kind="economia" size={14} /> Economia é uma transferência
-    para a sua reserva — registre aqui ou importe pela aba Economia da
-    planilha (Configurações &rsaquo; Conexão Google Sheets).
-  </p>
-)}
+{
+  kind === "economia" ? (
+    <div>
+      <label htmlFor="ntf-dest-account" style={label}>
+        Conta-destino (reserva)
+      </label>
+      {reserveAccounts.length === 0 ? (
+        <p
+          style={{
+            margin: 0,
+            fontSize: "var(--fs-sm)",
+            color: "var(--text-faint)",
+          }}
+        >
+          Nenhuma conta de reserva ou ilíquida encontrada. Crie uma em Configurações
+          &rsaquo; Bolsos antes de registrar Economia.
+        </p>
+      ) : (
+        <select
+          id="ntf-dest-account"
+          value={toAccountId}
+          onChange={(e) =>
+            dispatch({ type: "set", patch: { toAccountId: e.target.value } })
+          }
+          style={{ ...field, width: "100%" }}
+        >
+          <option value="">Selecione a conta…</option>
+          {reserveAccounts.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+              {a.liquidity === "illiquid" ? " (ilíquida)" : ""}
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
+  ) : (
+    <p
+      style={{
+        margin: "var(--space-2) 0 0",
+        fontSize: "var(--fs-micro)",
+        color: "var(--text-faint)",
+      }}
+    >
+      <MovBadge kind="economia" size={14} /> Economia é uma transferência para a sua
+      reserva — registre aqui ou importe pela aba Economia da planilha (Configurações
+      &rsaquo; Conexão Google Sheets).
+    </p>
+  );
+}
 ```
 
 **6j. Hide the "Repetir" toggle when `kind === "economia"`** to prevent the
@@ -870,11 +905,11 @@ Expected: exit 0. All of typecheck, lint, front tests, Rust check pass.
 
 ### New Rust tests (in `src-tauri/src/commands.rs`)
 
-| Test name | File | Case covered |
-|---|---|---|
-| `create_transaction_transfer_to_reserve_inserts_economia` | `commands.rs` | Happy path: `"transfer"` + reserve `to_account_id` → row inserted with correct type, amount, and `to_account_id` |
-| `create_transaction_transfer_to_liquid_account_is_rejected` | `commands.rs` | Validation: `"transfer"` to a liquid account → `Err` |
-| Updated `create_transaction_rejects_bad_input` | `commands.rs` | Regression: `"transfer"` with no `to_account_id` still `Err`; zero amount still `Err`; bogus type still `Err` |
+| Test name                                                   | File          | Case covered                                                                                                     |
+| ----------------------------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `create_transaction_transfer_to_reserve_inserts_economia`   | `commands.rs` | Happy path: `"transfer"` + reserve `to_account_id` → row inserted with correct type, amount, and `to_account_id` |
+| `create_transaction_transfer_to_liquid_account_is_rejected` | `commands.rs` | Validation: `"transfer"` to a liquid account → `Err`                                                             |
+| Updated `create_transaction_rejects_bad_input`              | `commands.rs` | Regression: `"transfer"` with no `to_account_id` still `Err`; zero amount still `Err`; bogus type still `Err`    |
 
 Model the new Rust tests after `create_transaction_inserts_realized_with_tags`
 (~line 3234) and use the existing `insert_reserve_account` and
@@ -882,10 +917,10 @@ Model the new Rust tests after `create_transaction_inserts_realized_with_tags`
 
 ### New front-end tests (in `src/screens/NewTransactionForm.test.tsx`)
 
-| Test | File | Case |
-|---|---|---|
+| Test                                              | File                          | Case                                                                     |
+| ------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------ |
 | "lança Economia como transfer para conta reserva" | `NewTransactionForm.test.tsx` | Happy path: form picks reserve account, submits as `txnType: "transfer"` |
-| "desabilita Lançar sem conta reserva disponível" | `NewTransactionForm.test.tsx` | No-reserve guard: submit disabled when no reserve accounts found |
+| "desabilita Lançar sem conta reserva disponível"  | `NewTransactionForm.test.tsx` | No-reserve guard: submit disabled when no reserve accounts found         |
 
 Model the new form tests after the existing "lança um diário variável" test
 (line 26), using `mockCommands` with a `get_pockets` handler.

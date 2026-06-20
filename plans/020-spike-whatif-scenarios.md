@@ -179,11 +179,16 @@ Key DTO interfaces the scenario compare output will extend (lines 114–203):
 ```ts
 // api.ts:135-151 — per-month metrics exposed from Rust
 interface MonthMetric {
-  year: number; month: number;
-  income_cents: number; performance_cents: number;
-  cost_of_living_cents: number; fixed_out_cents: number;
-  daily_out_cents: number; real_daily_avg_cents: number;
-  economia_cents: number; savings_rate_bps: number;
+  year: number;
+  month: number;
+  income_cents: number;
+  performance_cents: number;
+  cost_of_living_cents: number;
+  fixed_out_cents: number;
+  daily_out_cents: number;
+  real_daily_avg_cents: number;
+  economia_cents: number;
+  savings_rate_bps: number;
 }
 
 // api.ts:178-203 — top-level ForecastDto (the "real" branch already returns this)
@@ -211,6 +216,7 @@ a "real vs scenario" overlay.
 ### Domain vocabulary (from `CONTEXT.md`)
 
 Use these exact terms in names and comments:
+
 - **Performance** = `income − (cost_of_living + economia + projected_remaining_daily)`
 - **buraco do futuro** = `deepest_deficit` (the minimum projected balance in the horizon)
 - **Economizado%** = `economia_cents / income_cents` (the method's savings rate)
@@ -229,13 +235,13 @@ spike is on the roadmap and scoped for future work.
 
 ## Commands you will need
 
-| Purpose | Command | Expected on success |
-|---|---|---|
-| Drift check | `git diff --stat d183bbf..HEAD -- src-tauri/src/forecast/mod.rs src-tauri/src/commands.rs src-tauri/migrations/ src/lib/api.ts` | shows changed files or empty |
-| Rust engine tests | `cargo test --manifest-path src-tauri/Cargo.toml --locked -- forecast` | all pass, ~30 tests |
-| Full type-check | `npm run typecheck` | exit 0 |
-| Full test suite | `npm run test:run` | all pass |
-| Full gate | `npm run check` | exit 0 |
+| Purpose           | Command                                                                                                                         | Expected on success          |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| Drift check       | `git diff --stat d183bbf..HEAD -- src-tauri/src/forecast/mod.rs src-tauri/src/commands.rs src-tauri/migrations/ src/lib/api.ts` | shows changed files or empty |
+| Rust engine tests | `cargo test --manifest-path src-tauri/Cargo.toml --locked -- forecast`                                                          | all pass, ~30 tests          |
+| Full type-check   | `npm run typecheck`                                                                                                             | exit 0                       |
+| Full test suite   | `npm run test:run`                                                                                                              | all pass                     |
+| Full gate         | `npm run check`                                                                                                                 | exit 0                       |
 
 This spike does NOT run any gate during authoring (read-only). The executor
 who implements the successor plan will run the full gate.
@@ -452,8 +458,11 @@ interface ForecastDiff {
   safe_to_spend_delta_cents: number;
 }
 interface MonthEndDelta {
-  year: number; month: number;
-  real_cents: number; scenario_cents: number; delta_cents: number;
+  year: number;
+  month: number;
+  real_cents: number;
+  scenario_cents: number;
+  delta_cents: number;
 }
 ```
 
@@ -493,6 +502,7 @@ Money amounts are displayed with `<Money>` (never animated).
 #### 4f. What is in scope for the first-cut implementation (next plan)
 
 IN for first cut:
+
 - `scenario` table + migration (`ALTER TABLE "transaction" ADD COLUMN scenario_id`).
 - CRUD commands: `create_scenario`, `list_scenarios`, `delete_scenario`,
   `add_scenario_transaction`, `delete_scenario_transaction`.
@@ -505,6 +515,7 @@ IN for first cut:
   new tests cover the shell query logic and DTO mapping).
 
 OUT for first cut (deferred):
+
 - Cloning the FULL real ledger into a scenario ("fork the entire month") —
   this is expensive and unclear UX; start with additive hypotheticals only.
 - Scenario sharing or persistence outside the local SQLite.
@@ -617,12 +628,12 @@ must include. To confirm the engine is stable before the spike is authored:
 All must hold before marking this plan DONE:
 
 - [ ] `specs/020-whatif-scenarios/spike.md` exists and contains all eight
-  sections (4a–4h) above.
+      sections (4a–4h) above.
 - [ ] `cargo test --manifest-path src-tauri/Cargo.toml --locked -- forecast`
-  exits 0 (engine unchanged).
+      exits 0 (engine unchanged).
 - [ ] `npm run typecheck` exits 0.
 - [ ] `git diff --stat` shows zero changes to any file under `src/`,
-  `src-tauri/src/`, or `src-tauri/migrations/`.
+      `src-tauri/src/`, or `src-tauri/migrations/`.
 - [ ] `plans/README.md` status row for plan 020 is updated (not `TODO`).
 - [ ] The spike doc answers or explicitly defers every question in §4g.
 

@@ -135,12 +135,12 @@ column — silent data corruption.
 
 ## Commands you will need
 
-| Purpose             | Command                                                                                          | Expected on success       |
-|---------------------|--------------------------------------------------------------------------------------------------|---------------------------|
-| Rust check (full)   | `npm run rust:check`                                                                             | exit 0                    |
-| Rust tests only     | `cargo test --manifest-path src-tauri/Cargo.toml --locked --all-targets --all-features`         | all pass                  |
-| Filter to economia  | `cargo test --manifest-path src-tauri/Cargo.toml --locked -- economia`                          | all pass (≥ 4 tests)      |
-| Full gate           | `npm run check`                                                                                  | exit 0                    |
+| Purpose            | Command                                                                                 | Expected on success  |
+| ------------------ | --------------------------------------------------------------------------------------- | -------------------- |
+| Rust check (full)  | `npm run rust:check`                                                                    | exit 0               |
+| Rust tests only    | `cargo test --manifest-path src-tauri/Cargo.toml --locked --all-targets --all-features` | all pass             |
+| Filter to economia | `cargo test --manifest-path src-tauri/Cargo.toml --locked -- economia`                  | all pass (≥ 4 tests) |
+| Full gate          | `npm run check`                                                                         | exit 0               |
 
 Run `cargo test ... -- economia` after each step to keep the feedback loop tight.
 
@@ -284,9 +284,11 @@ uses a VERTICALLY stacked layout (one block below the other, different rows). Th
 test must continue to pass — do not break the vertical-stacking path.
 
 **Verify**:
+
 ```
 cargo test --manifest-path src-tauri/Cargo.toml --locked -- parse_economia
 ```
+
 Expected: all existing `parse_economia*` tests pass (no new test yet).
 
 ---
@@ -358,9 +360,11 @@ fn parse_economia_sheet_side_by_side_blocks() {
 ```
 
 **Verify**:
+
 ```
 cargo test --manifest-path src-tauri/Cargo.toml --locked -- parse_economia
 ```
+
 Expected: all `parse_economia*` tests pass, including the new one (≥ 2 tests named
 `parse_economia*`).
 
@@ -403,9 +407,11 @@ layout — e.g. "can place multiple year blocks SIDE BY SIDE in the same rows or
 them vertically".
 
 **Verify**:
+
 ```
 cargo test --manifest-path src-tauri/Cargo.toml --locked -- economia
 ```
+
 Expected: all existing `economia*` tests pass (no new test yet).
 
 ---
@@ -481,9 +487,11 @@ fn plans_economia_write_back_side_by_side_targets_correct_block() {
 ```
 
 **Verify**:
+
 ```
 cargo test --manifest-path src-tauri/Cargo.toml --locked -- economia
 ```
+
 Expected: all `economia*` tests pass, including the new one (≥ 4 tests named
 `*economia*` in write_back).
 
@@ -535,9 +543,11 @@ investigate — the changes in this plan should not touch any frontend file.
 closure style as the existing tests in their respective files.
 
 **Verification**:
+
 ```
 cargo test --manifest-path src-tauri/Cargo.toml --locked -- economia
 ```
+
 Expected: all pass; count should be ≥ the pre-fix count plus 2.
 
 ## Done criteria

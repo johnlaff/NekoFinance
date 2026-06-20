@@ -94,7 +94,7 @@ export function TransactionsScreen({
 }: {
   query: string;
   onQueryChange: (query: string) => void;
-})
+});
 ```
 
 The `TransactionRow` data type does NOT include `recurrence_id`. The id of a recurring
@@ -121,6 +121,7 @@ values to pass to `ownerTotalsForMonth`.
 boolean`. For the owner-totals breakdown, use `avatar` mode for visual distinction.
 
 **`src-tauri/src/recurrence.rs`** — series backend (lines 130-320). Key facts:
+
 - `delete_series_from(pool, transaction_id)` — deletes this occurrence and all with a higher
   index (`:N` suffix). Takes a **transaction id**, not a recurrence id.
 - `delete_series_all(pool, recurrence_id)` — deletes all occurrences and the recurrence row.
@@ -152,15 +153,15 @@ boolean`. For the owner-totals breakdown, use `avatar` mode for visual distincti
 
 ## Commands you will need
 
-| Purpose            | Command                                                                   | Expected on success          |
-|--------------------|---------------------------------------------------------------------------|------------------------------|
-| Typecheck          | `npm run typecheck`                                                       | exit 0, no errors            |
-| Lint               | `npm run lint`                                                            | exit 0                       |
-| Front tests        | `npm run test:run`                                                        | all pass                     |
-| Rust check         | `npm run rust:check`                                                      | fmt + clippy + tests pass    |
-| Full gate          | `npm run check`                                                           | exit 0                       |
-| Run specific tests | `npm run test:run -- TransactionsScreen`                                  | all pass                     |
-| Run specific tests | `npm run test:run -- TotaisScreen`                                        | all pass                     |
+| Purpose            | Command                                  | Expected on success       |
+| ------------------ | ---------------------------------------- | ------------------------- |
+| Typecheck          | `npm run typecheck`                      | exit 0, no errors         |
+| Lint               | `npm run lint`                           | exit 0                    |
+| Front tests        | `npm run test:run`                       | all pass                  |
+| Rust check         | `npm run rust:check`                     | fmt + clippy + tests pass |
+| Full gate          | `npm run check`                          | exit 0                    |
+| Run specific tests | `npm run test:run -- TransactionsScreen` | all pass                  |
+| Run specific tests | `npm run test:run -- TotaisScreen`       | all pass                  |
 
 ## Suggested executor toolkit
 
@@ -341,8 +342,8 @@ Extend `TransactionsUiState` (currently lines 86-93) with two new fields:
 ```typescript
 interface TransactionsUiState {
   // ... existing fields ...
-  actionRowId: string | null;   // which row has the action panel open
-  actionError: string | null;   // last error from a delete/edit action
+  actionRowId: string | null; // which row has the action panel open
+  actionError: string | null; // last error from a delete/edit action
 }
 ```
 
@@ -385,22 +386,33 @@ confirmation — no custom modal needed:
 
 ```typescript
 async function handleDeleteOne(t: TransactionRow) {
-  if (!window.confirm(`Apagar "${t.description || "este lançamento"}"? Esta ação não pode ser desfeita.`)) return;
+  if (
+    !window.confirm(
+      `Apagar "${t.description || "este lançamento"}"? Esta ação não pode ser desfeita.`,
+    )
+  )
+    return;
   try {
     await deleteTransaction(t.id);
     invalidateCommands();
     dispatchUi({ type: "reload" });
     dispatchUi({ type: "actionClear" });
   } catch (e) {
-    dispatchUi({ type: "actionError", error: safeErrorMessage(e, "Não foi possível apagar. Tente novamente.") });
+    dispatchUi({
+      type: "actionError",
+      error: safeErrorMessage(e, "Não foi possível apagar. Tente novamente."),
+    });
   }
 }
 
 async function handleDeleteSeries(t: TransactionRow) {
   const recId = t.id.includes(":") ? t.id.slice(0, t.id.lastIndexOf(":")) : null;
-  if (!recId) { dispatchUi({ type: "actionError", error: "Lançamento não pertence a uma série." }); return; }
+  if (!recId) {
+    dispatchUi({ type: "actionError", error: "Lançamento não pertence a uma série." });
+    return;
+  }
   const choice = window.confirm(
-    `Série recorrente detectada.\n\nOK = apagar este e todos os futuros da série.\nCancela = apagar somente este.`
+    `Série recorrente detectada.\n\nOK = apagar este e todos os futuros da série.\nCancela = apagar somente este.`,
   );
   try {
     if (choice) {
@@ -412,7 +424,10 @@ async function handleDeleteSeries(t: TransactionRow) {
     dispatchUi({ type: "reload" });
     dispatchUi({ type: "actionClear" });
   } catch (e) {
-    dispatchUi({ type: "actionError", error: safeErrorMessage(e, "Não foi possível apagar. Tente novamente.") });
+    dispatchUi({
+      type: "actionError",
+      error: safeErrorMessage(e, "Não foi possível apagar. Tente novamente."),
+    });
   }
 }
 ```
@@ -451,33 +466,50 @@ After the tag-editor row (the existing `{ui.tagEditId === t.id && ...}` block), 
 matching action panel row:
 
 ```tsx
-{ui.actionRowId === t.id && (
-  <tr className="txn-tag-editor">
-    <td colSpan={6}>
-      {ui.actionError && (
-        <p className="txs-inline-error" role="alert">{ui.actionError}</p>
-      )}
-      <div style={{ display: "flex", gap: "var(--space-3)", flexWrap: "wrap", alignItems: "center" }}>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => { /* open edit form: set editingTxn = t */ }}
-        >
-          Editar
-        </Button>
-        {t.id.includes(":") ? (
-          <Button size="sm" variant="ghost" onClick={() => void handleDeleteSeries(t)}>
-            Apagar da série
-          </Button>
-        ) : (
-          <Button size="sm" variant="ghost" onClick={() => void handleDeleteOne(t)}>
-            Apagar
-          </Button>
+{
+  ui.actionRowId === t.id && (
+    <tr className="txn-tag-editor">
+      <td colSpan={6}>
+        {ui.actionError && (
+          <p className="txs-inline-error" role="alert">
+            {ui.actionError}
+          </p>
         )}
-      </div>
-    </td>
-  </tr>
-)}
+        <div
+          style={{
+            display: "flex",
+            gap: "var(--space-3)",
+            flexWrap: "wrap",
+            alignItems: "center",
+          }}
+        >
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              /* open edit form: set editingTxn = t */
+            }}
+          >
+            Editar
+          </Button>
+          {t.id.includes(":") ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => void handleDeleteSeries(t)}
+            >
+              Apagar da série
+            </Button>
+          ) : (
+            <Button size="sm" variant="ghost" onClick={() => void handleDeleteOne(t)}>
+              Apagar
+            </Button>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
 ```
 
 For the edit flow, add an `editingTxn: TransactionRow | null` field to `TransactionsUiState`
@@ -514,6 +546,7 @@ export function NewTransactionForm({
 ```
 
 When `initialValues` is provided:
+
 - Seed `makeInitialForm()` from `initialValues`: convert `amount` (cents) back to BRL
   display string using `formatBRL` from `src/lib/format.ts` (e.g. `(amount / 100).toFixed(2).replace('.', ',')`)
   or use a helper; set `date`, `description`, `kind` (reverse `kindToFields`).
@@ -525,9 +558,13 @@ When `initialValues` is provided:
 To derive `kind` from the existing transaction values, add a helper inverse of `kindToFields`:
 
 ```typescript
-function fieldsToKind(type: string, isFixed: boolean, paymentMethod: string | null): MovKind {
+function fieldsToKind(
+  type: string,
+  isFixed: boolean,
+  paymentMethod: string | null,
+): MovKind {
   if (type === "income") return "entrada";
-  if (type === "transfer") return "economia";  // economia stays out of form; guard with FORM_KINDS check
+  if (type === "transfer") return "economia"; // economia stays out of form; guard with FORM_KINDS check
   if (isFixed) return "saida";
   if (paymentMethod === "credit") return "cartao";
   return "diario";
@@ -540,15 +577,28 @@ The form submit logic when `initialValues` is provided (pseudo-code):
 if (initialValues) {
   const recId = initialValues.recurrence_id;
   if (recId) {
-    const all = window.confirm("Aplicar a alteração em toda a série?\n\nOK = toda a série\nCancela = este e futuros");
-    const edit: SeriesEdit = { amount: amountCents, description: description.trim() || null, paymentMethod: fields.paymentMethod, isFixed: fields.isFixed };
+    const all = window.confirm(
+      "Aplicar a alteração em toda a série?\n\nOK = toda a série\nCancela = este e futuros",
+    );
+    const edit: SeriesEdit = {
+      amount: amountCents,
+      description: description.trim() || null,
+      paymentMethod: fields.paymentMethod,
+      isFixed: fields.isFixed,
+    };
     if (all) {
       await updateSeriesAll(recId, edit);
     } else {
       await updateSeriesFrom(initialValues.id, edit);
     }
   } else {
-    await updateTransaction(initialValues.id, { amountCents, description: description.trim() || null, paymentMethod: fields.paymentMethod, isFixed: fields.isFixed, date });
+    await updateTransaction(initialValues.id, {
+      amountCents,
+      description: description.trim() || null,
+      paymentMethod: fields.paymentMethod,
+      isFixed: fields.isFixed,
+      date,
+    });
   }
   dispatch({ type: "submitSuccess" });
   onSaved?.();
@@ -578,9 +628,8 @@ Add a `useCommand` call for owner totals, keyed by the active year/month (so it 
 MonthNav navigation):
 
 ```typescript
-const ownerTotalsQ = useCommand(
-  `owner_totals_for_month:${m.year}:${m.month}`,
-  () => ownerTotalsForMonth(m.year, m.month),
+const ownerTotalsQ = useCommand(`owner_totals_for_month:${m.year}:${m.month}`, () =>
+  ownerTotalsForMonth(m.year, m.month),
 );
 const ownerTotals: OwnerTotal[] = ownerTotalsQ.data ?? [];
 ```
@@ -600,28 +649,35 @@ section (after the `</section>` that closes around line 333), but ONLY when
 `ownerTotals.length >= 2`:
 
 ```tsx
-{ownerTotals.length >= 2 && (
-  <section aria-label="Por titular" style={{ marginTop: "var(--space-8)" }}>
-    <h2 style={{
-      fontSize: "var(--fs-label)",
-      fontWeight: "var(--fw-semibold)",
-      letterSpacing: "var(--ls-label)",
-      textTransform: "uppercase",
-      color: "var(--text-muted)",
-      margin: "0 0 var(--space-4)",
-    }}>
-      Por titular
-    </h2>
-    <div style={{ display: "flex", gap: "var(--space-8)", flexWrap: "wrap" }}>
-      {ownerTotals.map((o) => (
-        <span key={o.owner_person_id} style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-          <OwnerChip name={o.owner_name} avatar />
-          <Money cents={o.total_cents} size="md" />
-        </span>
-      ))}
-    </div>
-  </section>
-)}
+{
+  ownerTotals.length >= 2 && (
+    <section aria-label="Por titular" style={{ marginTop: "var(--space-8)" }}>
+      <h2
+        style={{
+          fontSize: "var(--fs-label)",
+          fontWeight: "var(--fw-semibold)",
+          letterSpacing: "var(--ls-label)",
+          textTransform: "uppercase",
+          color: "var(--text-muted)",
+          margin: "0 0 var(--space-4)",
+        }}
+      >
+        Por titular
+      </h2>
+      <div style={{ display: "flex", gap: "var(--space-8)", flexWrap: "wrap" }}>
+        {ownerTotals.map((o) => (
+          <span
+            key={o.owner_person_id}
+            style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}
+          >
+            <OwnerChip name={o.owner_name} avatar />
+            <Money cents={o.total_cents} size="md" />
+          </span>
+        ))}
+      </div>
+    </section>
+  );
+}
 ```
 
 After wiring this, remove the `react-doctor-disable-next-line` comment from
@@ -634,6 +690,7 @@ After wiring this, remove the `react-doctor-disable-next-line` comment from
 After Steps 3–5, all six previously-unused api.ts functions are wired to screens.
 Open `src/lib/api.ts` and remove the `react-doctor-disable-next-line` comment lines
 (and their inline explanations) from:
+
 - `splitsForTransaction` (line 584) — called indirectly via the edit panel in TransactionsScreen
 - `ownerTotalsForMonth` (line 589) — called in TotaisScreen (Step 5)
 - `deleteSeriesFrom` (line 616) — called in TransactionsScreen (Step 3)
@@ -734,13 +791,13 @@ ALL must hold before marking this plan DONE:
 
 - [ ] `npm run typecheck` exits 0
 - [ ] `npm run lint` exits 0 (including React Doctor — no new `deslop/unused-export`
-  violations for the functions wired in this plan)
+      violations for the functions wired in this plan)
 - [ ] `npm run test:run` exits 0; at least 6 new test cases added covering delete-single,
-  delete-series, action-panel-toggle, owner-totals-shown, owner-totals-hidden
+      delete-series, action-panel-toggle, owner-totals-shown, owner-totals-hidden
 - [ ] `npm run rust:check` exits 0 (fmt + clippy + tests)
 - [ ] `grep -n "UI pendente" src/lib/api.ts` returns no lines for `deleteSeriesFrom`,
-  `deleteSeriesAll`, `updateSeriesFrom`, `updateSeriesAll`, `ownerTotalsForMonth`
-  (the five functions actively called by this plan's UI changes)
+      `deleteSeriesAll`, `updateSeriesFrom`, `updateSeriesAll`, `ownerTotalsForMonth`
+      (the five functions actively called by this plan's UI changes)
 - [ ] `git status` shows only files in the in-scope list modified
 - [ ] `plans/README.md` status row for plan 015 updated to DONE
 

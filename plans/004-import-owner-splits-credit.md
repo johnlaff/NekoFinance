@@ -49,6 +49,7 @@ requiring post-import manual enrichment.
 ### Relevant schema
 
 **`transaction` table** (`src-tauri/migrations/20240608000006_transaction.sql`):
+
 ```sql
 CREATE TABLE IF NOT EXISTS "transaction" (
     id TEXT PRIMARY KEY NOT NULL,
@@ -61,9 +62,11 @@ CREATE TABLE IF NOT EXISTS "transaction" (
     ...
 );
 ```
+
 The `payment_method` column accepts `'credit'` (among others) or NULL.
 
 **`split` table** (`src-tauri/migrations/20240608000007_split.sql`):
+
 ```sql
 CREATE TABLE IF NOT EXISTS split (
     id TEXT PRIMARY KEY NOT NULL,
@@ -74,6 +77,7 @@ CREATE TABLE IF NOT EXISTS split (
     note TEXT
 );
 ```
+
 `owner_person_id` is a NOT NULL FK to `person(id)`. The importer must ensure the
 `person` row exists before inserting a split.
 
@@ -88,6 +92,7 @@ pub struct ImportedRow {
     pub kind: RowKind,
 }
 ```
+
 No owner or payment_method field today.
 
 ### `cell_description` — how notes reach `ImportedRow` (import.rs:521–542)
@@ -116,6 +121,7 @@ fn cell_description(
     }
 }
 ```
+
 The raw note text (multi-line) is available here. Today it is only used to build
 `description`; this plan adds a second pass to parse owner/credit markers from it.
 
@@ -161,9 +167,11 @@ sqlx::query(
 .bind(&now)
 .execute(&mut *tx)
 ```
+
 `payment_method` is not bound — it stays NULL.
 
 The UPDATE for an existing row is at import.rs:297–314:
+
 ```rust
 sqlx::query(
     "UPDATE \"transaction\" SET type=?2, amount=?3, description=?4, date=?5, \
@@ -171,6 +179,7 @@ sqlx::query(
      WHERE id=?1",
 )
 ```
+
 `payment_method` is also missing here.
 
 No `split` INSERT exists anywhere in `import.rs` today.
@@ -178,6 +187,7 @@ No `split` INSERT exists anywhere in `import.rs` today.
 ### Split INSERT pattern (splits.rs:121–130)
 
 The existing exemplar for split inserts (used in tests):
+
 ```rust
 sqlx::query(
     "INSERT INTO split (id, transaction_id, amount, owner_person_id) VALUES (?1,?2,?3,?4)",
@@ -187,6 +197,7 @@ sqlx::query(
 .bind(amount)
 .bind(owner)
 ```
+
 Use this shape; include the ON DELETE CASCADE (already in the schema DDL) so
 diff-deletes in the importer cascade to split rows automatically.
 
@@ -231,12 +242,12 @@ needed here.
 
 ## Commands you will need
 
-| Purpose | Command | Expected on success |
-|---------|---------|---------------------|
-| Rust typecheck + clippy + fmt | `npm run rust:check` | exit 0, no warnings |
-| Rust unit tests only | `cargo test --manifest-path src-tauri/Cargo.toml --locked` | all pass |
-| Full gate | `npm run check` | exit 0 |
-| Run a single test | `cargo test --manifest-path src-tauri/Cargo.toml --locked <test_name>` | 1 passed |
+| Purpose                       | Command                                                                | Expected on success |
+| ----------------------------- | ---------------------------------------------------------------------- | ------------------- |
+| Rust typecheck + clippy + fmt | `npm run rust:check`                                                   | exit 0, no warnings |
+| Rust unit tests only          | `cargo test --manifest-path src-tauri/Cargo.toml --locked`             | all pass            |
+| Full gate                     | `npm run check`                                                        | exit 0              |
+| Run a single test             | `cargo test --manifest-path src-tauri/Cargo.toml --locked <test_name>` | 1 passed            |
 
 > `npm run rust:check` runs `cargo fmt --check`, `cargo clippy -- -D warnings`, and
 > `cargo test`. Run it between steps. If `cargo fmt --check` fails, run
@@ -472,6 +483,7 @@ Then update all three `ImportedRow { ... }` construction sites inside
 For each, capture the raw note before the `cell_description` call:
 
 **Entrada branch** (around import.rs:601–614):
+
 ```rust
 if let Some(in_off) = amount_in_offset
     && offset + in_off < row.len()
@@ -501,6 +513,7 @@ branch (offset `d_off`).
 
 Also update the test helper `imported_desc` (import.rs:1317–1328) to supply an empty
 `raw_note`:
+
 ```rust
 fn imported_desc(date: &str, amount: i64, description: &str) -> ImportedRow {
     ImportedRow {
@@ -535,13 +548,13 @@ The new block should:
 3. If `owners` is non-empty:
    a. Delete existing import-managed splits for this `txn_id` (idempotent on re-import).
    b. For each owner name:
-      - Look up `person.id` by `LOWER(name) = LOWER(?1)`.
-      - If not found, INSERT a new `person` row (same bootstrap pattern as
-        `resolve_profile_id`: `uuid::Uuid::new_v4().to_string()` for the id).
-      - INSERT a `split` row: `id = uuid::Uuid::new_v4().to_string()`,
-        `transaction_id = txn_id`, `amount = sheet_amount` (use `row.amount.abs()`
-        — the same positive-magnitude convention as the transaction amount),
-        `owner_person_id = person_id`.
+   - Look up `person.id` by `LOWER(name) = LOWER(?1)`.
+   - If not found, INSERT a new `person` row (same bootstrap pattern as
+     `resolve_profile_id`: `uuid::Uuid::new_v4().to_string()` for the id).
+   - INSERT a `split` row: `id = uuid::Uuid::new_v4().to_string()`,
+     `transaction_id = txn_id`, `amount = sheet_amount` (use `row.amount.abs()`
+     — the same positive-magnitude convention as the transaction amount),
+     `owner_person_id = person_id`.
 
 **Shape of the new block** (place after `match existing { ... }` closes at line ~341):
 
@@ -819,6 +832,7 @@ touched.
 ```
 git diff --name-only HEAD
 ```
+
 Expected: only `src-tauri/src/google_sheets/import.rs` is modified.
 
 **Verify**: `npm run check` → exit 0 (all gates: fmt, clippy, tests, typecheck, lint,
@@ -827,6 +841,7 @@ privacy scan).
 ## Test plan
 
 **New pure tests** (Step 3, 8 tests in `#[cfg(test)] mod tests`):
+
 - `parse_note_markers_empty_note`
 - `parse_note_markers_owner_only`
 - `parse_note_markers_credit_only`
@@ -837,6 +852,7 @@ privacy scan).
 - `parse_note_markers_owner_name_trimmed`
 
 **New integration tests** (Step 6, 6 tests):
+
 - `import_sets_credit_payment_method_from_note`
 - `import_creates_split_with_owner_from_note`
 - `import_creates_multiple_splits_for_multiple_owners`
@@ -859,14 +875,14 @@ Machine-checkable. ALL must hold:
 
 - [ ] `npm run rust:check` exits 0 (fmt + clippy + tests)
 - [ ] `cargo test --manifest-path src-tauri/Cargo.toml --locked` exits 0; exactly 14
-  new tests exist (8 unit + 6 integration) and all pass
+      new tests exist (8 unit + 6 integration) and all pass
 - [ ] `git diff --name-only HEAD` shows only `src-tauri/src/google_sheets/import.rs`
 - [ ] `grep -n "parse_note_markers" src-tauri/src/google_sheets/import.rs` returns
-  at least 3 matches (fn definition + call site in the import loop + tests)
+      at least 3 matches (fn definition + call site in the import loop + tests)
 - [ ] `grep -n "payment_method.*credit" src-tauri/src/google_sheets/import.rs` returns
-  at least 1 match (the UPDATE statement in Step 5)
+      at least 1 match (the UPDATE statement in Step 5)
 - [ ] `grep -n "INSERT INTO split" src-tauri/src/google_sheets/import.rs` returns
-  at least 1 match (the split INSERT in Step 5)
+      at least 1 match (the split INSERT in Step 5)
 - [ ] `npm run check` exits 0 (full gate including frontend typecheck, lint, privacy scan)
 - [ ] `plans/README.md` status row for plan 004 updated to DONE
 
@@ -909,7 +925,7 @@ Stop and report (do not improvise) if:
   stored as the transaction total for now; plan 019 will introduce the amount-per-owner
   parsing when the invoice entity lands. Revisit this when plan 019 is executed.
 - **Reviewer should check in the PR**: (a) that the `DELETE FROM split WHERE
-  transaction_id = ?1` before re-inserting covers the idempotent-re-import case
+transaction_id = ?1` before re-inserting covers the idempotent-re-import case
   without accidentally deleting manually-created splits that predate this plan, and
   (b) that the person-bootstrap path doesn't create a `person` without a corresponding
   `profile` row — in this plan that is intentional (person-without-profile is valid for

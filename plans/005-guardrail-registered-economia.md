@@ -56,12 +56,14 @@ is unchanged.
 ### Key excerpts (verify against live code before changing anything)
 
 **`commands.rs` lines 489–494** — stale doc-comment marks this as "proxy conservador (review P2)":
+
 ```
 /// `transfer` é IGNORADO (não há linha Economia explícita ainda) — a poupança real virá do saldo
 /// da reserva quando o slice de Economia existir; até lá o net é um proxy conservador (review P2).
 ```
 
 **`commands.rs` lines 924–928** — `AnnualSavingsDto` doc-comment says the guardrail uses the net:
+
 ```
 /// ATENÇÃO a dois conceitos distintos (não confundir na UI): `*_savings_cents` é o NET superávit
 /// (renda − saída), o "colchão" do Neko; `registered_economia_cents` é a Economia REGISTRADA do
@@ -70,6 +72,7 @@ is unchanged.
 ```
 
 **`commands.rs` lines 1001–1010** — the call site fetches only `realized_annual_savings` before calling `safe_to_spend_today`, then fetches `realized_annual_economia` separately afterwards (line 1028):
+
 ```rust
 let reserve_floor_cents = reserve_floor(pool).await?;
 // Poupança ANUAL realizada (não o mês isolado, não o ano projetado-incompleto).
@@ -82,12 +85,15 @@ let sts = forecast::safe_to_spend_today(
     reserve_floor_cents,
 );
 ```
+
 And at **line 1028**:
+
 ```rust
 let annual_economia = realized_annual_economia(pool, today_naive).await?;
 ```
 
 **`commands.rs` lines 528–546** — the correct data source, already exists:
+
 ```rust
 async fn realized_annual_economia(
     pool: &SqlitePool,
@@ -111,6 +117,7 @@ async fn realized_annual_economia(
 ```
 
 **`forecast/mod.rs` lines 136–148** — the pure function's parameter `annual_savings_cents` is the savings limb numerator; it is generic (the caller decides what to pass):
+
 ```rust
 pub fn safe_to_spend_today(
     fc: &Forecast,
@@ -147,13 +154,13 @@ passes without modification.
 
 ## Commands you will need
 
-| Purpose | Command | Expected on success |
-|---------|---------|---------------------|
-| Rust check (fmt + clippy + test) | `npm run rust:check` | exit 0 |
-| Rust tests only | `cargo test --manifest-path src-tauri/Cargo.toml --locked` | all pass |
-| Filter to forecast tests | `cargo test --manifest-path src-tauri/Cargo.toml --locked forecast` | all pass |
-| Full gate | `npm run check` | exit 0 |
-| Typecheck (frontend) | `npm run typecheck` | exit 0, no errors |
+| Purpose                          | Command                                                             | Expected on success |
+| -------------------------------- | ------------------------------------------------------------------- | ------------------- |
+| Rust check (fmt + clippy + test) | `npm run rust:check`                                                | exit 0              |
+| Rust tests only                  | `cargo test --manifest-path src-tauri/Cargo.toml --locked`          | all pass            |
+| Filter to forecast tests         | `cargo test --manifest-path src-tauri/Cargo.toml --locked forecast` | all pass            |
+| Full gate                        | `npm run check`                                                     | exit 0              |
+| Typecheck (frontend)             | `npm run typecheck`                                                 | exit 0, no errors   |
 
 ## Scope
 
@@ -200,6 +207,7 @@ let sts = forecast::safe_to_spend_today(
 ```
 
 And at line ~1028 (after `rate_bps` closure and after `sts`/`binding_guardrail`):
+
 ```rust
 let annual_economia = realized_annual_economia(pool, today_naive).await?;
 ```
@@ -208,6 +216,7 @@ Make these two changes **together** (the second change uses the variable introdu
 
 1. Fetch `annual_economia` immediately after `realized_annual_savings`, before calling
    `safe_to_spend_today`:
+
    ```rust
    let (annual_income, annual_savings_amt) = realized_annual_savings(pool, today_naive).await?;
    let annual_economia = realized_annual_economia(pool, today_naive).await?;
@@ -215,6 +224,7 @@ Make these two changes **together** (the second change uses the variable introdu
 
 2. Pass `annual_economia` (not `annual_savings_amt`) to `safe_to_spend_today` as the savings
    argument:
+
    ```rust
    let sts = forecast::safe_to_spend_today(
        &fc,
@@ -230,6 +240,7 @@ Make these two changes **together** (the second change uses the variable introdu
    the standalone fetch line is removed.
 
 The final ordering in `forecast_dto` must be:
+
 ```
 realized_annual_savings → realized_annual_economia → safe_to_spend_today
   → projected_annual_savings → rate_bps closure → AnnualSavingsDto { … annual_economia … }
@@ -246,12 +257,14 @@ removed (they describe the old proxy behaviour as a temporary workaround; that w
 resolved). Keep the rest of the comment intact.
 
 Remove exactly these two sentences from the comment block:
+
 ```
 /// `transfer` é IGNORADO (não há linha Economia explícita ainda) — a poupança real virá do saldo
 /// da reserva quando o slice de Economia existir; até lá o net é um proxy conservador (review P2).
 ```
 
 Replace them with a sentence explaining the current role of this function:
+
 ```
 /// Retorna `(renda, net)` — o `net` superávit alimenta `AnnualSavingsDto.realized_savings_cents`
 /// (o "colchão" exibido); a Economia registrada para o guardrail vem de `realized_annual_economia`.
@@ -267,6 +280,7 @@ In `src-tauri/src/commands.rs`, update the doc-comment on `AnnualSavingsDto`
 false. Replace the two-sentence "ATENÇÃO" block:
 
 Old text:
+
 ```
 /// ATENÇÃO a dois conceitos distintos (não confundir na UI): `*_savings_cents` é o NET superávit
 /// (renda − saída), o "colchão" do Neko; `registered_economia_cents` é a Economia REGISTRADA do
@@ -275,6 +289,7 @@ Old text:
 ```
 
 New text (the final sentence is corrected):
+
 ```
 /// ATENÇÃO a dois conceitos distintos (não confundir na UI): `*_savings_cents` é o NET superávit
 /// (renda − saída), o "colchão" exibido no Neko; `registered_economia_cents` é a Economia
@@ -297,6 +312,7 @@ Use `insert_realized` and ad-hoc `sqlx::query` for the reserve account, followin
 of `annual_registered_economia_counts_only_reserve_transfers` (lines ~3097–3130) as the template.
 
 Scenario:
+
 - Cash seed: R$ 10 000 (1_000_000 cents) in a liquid account.
 - Past complete month (e.g. `2026-03-*`): income R$ 5 000 (500_000), expense R$ 1 000 (100_000).
   Net surplus = R$ 4 000 (400_000). No transfers to any reserve account.
@@ -304,6 +320,7 @@ Scenario:
   complete).
 
 Expected results after the fix:
+
 - `fc.annual_savings.realized_income_cents` = 500_000 (income from March)
 - `fc.annual_savings.registered_economia_cents` = 0 (no reserve transfers)
 - `fc.savings_headroom_cents` = `Some(0 - 25% × 500_000)` = `Some(-125_000)` (negative)
@@ -402,5 +419,5 @@ Stop and report back (do not improvise) if:
 - **`realized_annual_savings` is still needed** — it provides `realized_savings_cents` (the
   "colchão" net surplus) for `AnnualSavingsDto` display. Do not delete it.
 - **`annual_savings_amt` variable** — after the fix it is only used in `AnnualSavingsDto
-  { realized_savings_cents: annual_savings_amt, … }`. If a later refactor removes that DTO
+{ realized_savings_cents: annual_savings_amt, … }`. If a later refactor removes that DTO
   field, `realized_annual_savings` can be removed or reduced to return just `annual_income`.

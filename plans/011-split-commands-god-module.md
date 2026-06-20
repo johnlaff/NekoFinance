@@ -58,14 +58,14 @@ frontend `invoke` contract, wired in `src-tauri/src/lib.rs`).
 Each group below is a self-contained concern. The boundary is drawn where the
 existing section comments are:
 
-| Proposed submodule | Line range in commands.rs | Public commands included |
-|---|---|---|
-| `commands/oauth.rs` | 1–91 | `start_oauth_flow`, `check_auth_status`, `disconnect_google` |
-| `commands/sheets_import.rs` | 93–413 | `list_sheet_names`, `fetch_sheet_preview`, `import_sheet_data`, `import_local_xlsx`, `import_economia_sheet`, `detect_sheet_layout`, `save_sheet_mapping`, `get_sheet_mappings` |
-| `commands/forecast.rs` | 415–1310 | `get_app_info`, `get_forecast`, `get_month_grid`, `get_annual_metrics`, `get_dashboard_summary` |
-| `commands/pockets.rs` | 1469–1760 | `get_pockets`, `create_account` |
-| `commands/transactions.rs` | 1647–1862 | `get_recent_transactions`, `create_transaction` |
-| `commands/write_back.rs` | 1864–2540 | `preview_write_back`, `apply_write_back`, `write_back_enabled`, `preview_economia_write_back`, `apply_economia_write_back`, `get_app_setting`, `set_app_setting`, `backup_database`, `list_user_spreadsheets` |
+| Proposed submodule          | Line range in commands.rs | Public commands included                                                                                                                                                                                      |
+| --------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `commands/oauth.rs`         | 1–91                      | `start_oauth_flow`, `check_auth_status`, `disconnect_google`                                                                                                                                                  |
+| `commands/sheets_import.rs` | 93–413                    | `list_sheet_names`, `fetch_sheet_preview`, `import_sheet_data`, `import_local_xlsx`, `import_economia_sheet`, `detect_sheet_layout`, `save_sheet_mapping`, `get_sheet_mappings`                               |
+| `commands/forecast.rs`      | 415–1310                  | `get_app_info`, `get_forecast`, `get_month_grid`, `get_annual_metrics`, `get_dashboard_summary`                                                                                                               |
+| `commands/pockets.rs`       | 1469–1760                 | `get_pockets`, `create_account`                                                                                                                                                                               |
+| `commands/transactions.rs`  | 1647–1862                 | `get_recent_transactions`, `create_transaction`                                                                                                                                                               |
+| `commands/write_back.rs`    | 1864–2540                 | `preview_write_back`, `apply_write_back`, `write_back_enabled`, `preview_economia_write_back`, `apply_economia_write_back`, `get_app_setting`, `set_app_setting`, `backup_database`, `list_user_spreadsheets` |
 
 Note: `get_recent_transactions` starts at line 1647 inside the transactions
 section; `get_dashboard_summary` is within forecast (line 1328 onward). Some
@@ -206,13 +206,13 @@ Daily | Economia`. Do not invent synonyms.
 
 ## Commands you will need
 
-| Purpose | Command | Expected on success |
-|---|---|---|
-| Rust compile + clippy | `npm run rust:check` | exit 0, zero warnings |
-| Rust unit tests only | `cargo test --manifest-path src-tauri/Cargo.toml --locked` | all pass |
-| Full gate | `npm run check` | exit 0 |
-| Typecheck (frontend) | `npm run typecheck` | exit 0 |
-| Privacy scan | `npm run privacy:scan` | exit 0 |
+| Purpose               | Command                                                    | Expected on success   |
+| --------------------- | ---------------------------------------------------------- | --------------------- |
+| Rust compile + clippy | `npm run rust:check`                                       | exit 0, zero warnings |
+| Rust unit tests only  | `cargo test --manifest-path src-tauri/Cargo.toml --locked` | all pass              |
+| Full gate             | `npm run check`                                            | exit 0                |
+| Typecheck (frontend)  | `npm run typecheck`                                        | exit 0                |
+| Privacy scan          | `npm run privacy:scan`                                     | exit 0                |
 
 Run `npm run rust:check` (not the full gate) after **each step** to keep the
 build green at every checkpoint.
@@ -379,14 +379,17 @@ the four functions and the private helper. Replace their bodies in `mod.rs`
 with `pub use oauth::{start_oauth_flow, check_auth_status, disconnect_google};`.
 
 Imports needed in `oauth.rs`:
+
 ```rust
 use crate::oauth::{self, AppDataDir, OAuthStateStore};
 ```
 
 **Verify**:
+
 ```
 npm run rust:check
 ```
+
 Expected: exit 0. All tests pass.
 
 ---
@@ -417,15 +420,18 @@ block at the bottom of the file. They use `xlsx_cell_to_string` and
 `validate_local_xlsx_path`, which live in this module.
 
 **Verify**:
+
 ```
 cargo test --manifest-path src-tauri/Cargo.toml --locked
 ```
+
 Expected: all tests pass (total count unchanged or higher if sub-module tests
 resolve previously shadowed ones).
 
 ```
 npm run rust:check
 ```
+
 Expected: exit 0.
 
 ---
@@ -468,13 +474,17 @@ Create `src-tauri/src/commands/forecast.rs`. Add `pub(super) mod forecast;` in
 `mod.rs`.
 
 **Verify**:
+
 ```
 cargo test --manifest-path src-tauri/Cargo.toml --locked
 ```
+
 Expected: all tests pass.
+
 ```
 npm run rust:check
 ```
+
 Expected: exit 0.
 
 ---
@@ -482,6 +492,7 @@ Expected: exit 0.
 ### Step 6: extract `commands/pockets.rs`
 
 Group:
+
 - Private types `PocketAccount`, `Pockets`, `fn liquidity_for_type`,
   `fn aggregate_pockets`
 - `pub async fn get_pockets`, `async fn pockets`
@@ -505,13 +516,17 @@ The tests for `savings_no_longer_inflates_the_projection_seed` call
 Option (b) is simpler — that test covers forecast seed behaviour, not pockets.
 
 **Verify**:
+
 ```
 cargo test --manifest-path src-tauri/Cargo.toml --locked
 ```
+
 Expected: all tests pass.
+
 ```
 npm run rust:check
 ```
+
 Expected: exit 0.
 
 ---
@@ -519,6 +534,7 @@ Expected: exit 0.
 ### Step 7: extract `commands/transactions.rs`
 
 Group:
+
 - `pub struct TransactionRow`, `pub struct TagOnRow`, `struct RecentRow`,
   `pub struct RecurrenceInput`
 - `pub async fn get_recent_transactions`, `async fn recent_transactions`
@@ -533,13 +549,17 @@ Create `src-tauri/src/commands/transactions.rs`. Add `pub(super) mod transaction
 in `mod.rs`.
 
 **Verify**:
+
 ```
 cargo test --manifest-path src-tauri/Cargo.toml --locked
 ```
+
 Expected: all tests pass.
+
 ```
 npm run rust:check
 ```
+
 Expected: exit 0.
 
 ---
@@ -551,6 +571,7 @@ the existing `src-tauri/src/google_sheets/write_back.rs` module that
 `commands/mod.rs` already re-imports via `use crate::google_sheets::write_back`.
 
 Group:
+
 - `pub struct UserSpreadsheet`
 - Private helpers: `load_write_back_txns`, `build_write_back_plan`,
   `load_economia_by_month`, `build_economia_plan`, `ensure_reserve_account`,
@@ -568,13 +589,17 @@ Create `src-tauri/src/commands/write_back_cmds.rs`. Add
 `pub(super) mod write_back_cmds;` in `mod.rs`.
 
 **Verify**:
+
 ```
 cargo test --manifest-path src-tauri/Cargo.toml --locked
 ```
+
 Expected: all tests pass.
+
 ```
 npm run rust:check
 ```
+
 Expected: exit 0.
 
 ---
@@ -582,6 +607,7 @@ Expected: exit 0.
 ### Step 9: slim down commands/mod.rs and update lib.rs if needed
 
 After Steps 3–8, `commands/mod.rs` should contain only:
+
 - `use` imports consumed by multiple submodules (or none — each subfile owns
   its own imports)
 - `pub(crate) use` / `pub use` re-exports of all public commands, so that
@@ -597,14 +623,17 @@ Verify `mod.rs` is now short (target: under 80 lines of actual code, mostly
 `pub use` re-exports and `mod` declarations).
 
 **Verify**:
+
 ```
 npm run rust:check
 ```
+
 Expected: exit 0.
 
 ```
 wc -l src-tauri/src/commands/mod.rs
 ```
+
 Expected: under 100 lines.
 
 ---
@@ -619,6 +648,7 @@ npm run check
 
 Expected: exit 0 (typecheck + lint + tests + rust:check + privacy scan all
 pass). If any step fails, diagnose with the narrower command:
+
 - Rust: `cargo test --manifest-path src-tauri/Cargo.toml --locked`
 - Frontend: `npm run typecheck && npm run lint`
 - Privacy: `npm run privacy:scan`
@@ -663,9 +693,11 @@ extraction is correct.
 that block structure into each subfile's bottom.
 
 **Verification**:
+
 ```
 cargo test --manifest-path src-tauri/Cargo.toml --locked
 ```
+
 Expected: exit 0, **45 tests pass** (same count as before — all tests moved,
 none added, none deleted).
 
@@ -677,20 +709,20 @@ ALL of the following must hold before marking this plan DONE:
 
 - [ ] `npm run rust:check` exits 0 (fmt + clippy + tests)
 - [ ] `cargo test --manifest-path src-tauri/Cargo.toml --locked` exits 0;
-  **45 tests pass** (same count as pre-refactor — verify with
-  `cargo test … 2>&1 | grep "test result"`)
+      **45 tests pass** (same count as pre-refactor — verify with
+      `cargo test … 2>&1 | grep "test result"`)
 - [ ] `npm run check` exits 0 (full gate)
 - [ ] `wc -l src-tauri/src/commands/mod.rs` reports under 100 lines
 - [ ] `grep -rn "amount_cents: amount.abs()" src-tauri/src/commands/` returns
-  exactly **1 match**
+      exactly **1 match**
 - [ ] `grep -rn "filter_map(|(ttype, amount" src-tauri/src/commands/` returns
-  **0 matches**
+      **0 matches**
 - [ ] `git diff d183bbf..HEAD -- src/` is empty (no frontend files changed)
 - [ ] All `#[tauri::command]` function names in
-  `src-tauri/src/lib.rs` lines 21–64 are identical to before (verify with
-  `git diff HEAD src-tauri/src/lib.rs | grep "commands::"`)
+      `src-tauri/src/lib.rs` lines 21–64 are identical to before (verify with
+      `git diff HEAD src-tauri/src/lib.rs | grep "commands::"`)
 - [ ] No files outside the in-scope list are modified (`git status` shows only
-  files under `src-tauri/src/commands/` and `src-tauri/src/lib.rs`)
+      files under `src-tauri/src/commands/` and `src-tauri/src/lib.rs`)
 - [ ] `plans/README.md` status row for plan 011 updated to DONE
 
 ---

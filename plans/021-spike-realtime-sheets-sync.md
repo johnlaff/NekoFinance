@@ -60,8 +60,8 @@ fit into a recurring sync — before anyone touches the flag.
   - `KeepLocal` when only local changed or nothing changed.
   - `ApplySheet` when only the sheet changed (or no base exists — first import).
   - `Conflict` when both diverged → human gate required; never auto-resolves.
-  `apply(base, local, sheet) -> FieldOutcome` (line 53) wraps `reconcile` and
-  returns the value to write, the new base, and a `conflict: bool`.
+    `apply(base, local, sheet) -> FieldOutcome` (line 53) wraps `reconcile` and
+    returns the value to write, the new base, and a `conflict: bool`.
 - `src-tauri/src/google_sheets/write_back.rs` — write-back planner + safety
   gate.
   - `WRITE_BACK_ENABLED: bool = false` (line 14): master kill switch. All write
@@ -85,6 +85,7 @@ fit into a recurring sync — before anyone touches the flag.
 ### Relevant schema (migrations verified at d183bbf)
 
 `sync_log` (migration 14, `20240608000014_sync_log.sql`):
+
 ```sql
 CREATE TABLE IF NOT EXISTS sync_log (
     id TEXT PRIMARY KEY NOT NULL,
@@ -99,6 +100,7 @@ CREATE TABLE IF NOT EXISTS sync_log (
 
 `sync_log` gains `source_sheet TEXT` and `checksum TEXT` columns (migration 18,
 `20240608000018_sync_log_checksum.sql`):
+
 ```sql
 ALTER TABLE sync_log ADD COLUMN source_sheet TEXT;
 ALTER TABLE sync_log ADD COLUMN checksum TEXT;
@@ -106,6 +108,7 @@ CREATE INDEX IF NOT EXISTS idx_sync_log_source ON sync_log(source_sheet, checksu
 ```
 
 `import_conflict` (migration `20240612000007_advanced_reconciliation.sql`):
+
 ```sql
 CREATE TABLE IF NOT EXISTS import_conflict (
     id              TEXT PRIMARY KEY,
@@ -163,15 +166,15 @@ confirm it fits within the 60 req/min/user budget across trigger combinations.
 
 ## Commands you will need
 
-| Purpose | Command | Expected on success |
-|---------|---------|---------------------|
-| Typecheck | `npm run typecheck` | exit 0, no errors |
-| Lint | `npm run lint` | exit 0, no errors |
-| Rust check | `npm run rust:check` | exit 0 (fmt + clippy + test) |
-| Unit tests (Rust) | `cargo test --manifest-path src-tauri/Cargo.toml --locked` | all pass |
-| Unit tests (front) | `npm run test:run` | all pass |
-| Privacy scan | `npm run privacy:scan` | exit 0 |
-| Full gate | `npm run check` | exit 0 |
+| Purpose            | Command                                                    | Expected on success          |
+| ------------------ | ---------------------------------------------------------- | ---------------------------- |
+| Typecheck          | `npm run typecheck`                                        | exit 0, no errors            |
+| Lint               | `npm run lint`                                             | exit 0, no errors            |
+| Rust check         | `npm run rust:check`                                       | exit 0 (fmt + clippy + test) |
+| Unit tests (Rust)  | `cargo test --manifest-path src-tauri/Cargo.toml --locked` | all pass                     |
+| Unit tests (front) | `npm run test:run`                                         | all pass                     |
+| Privacy scan       | `npm run privacy:scan`                                     | exit 0                       |
+| Full gate          | `npm run check`                                            | exit 0                       |
 
 (All verified during recon; use exactly as written.)
 
@@ -240,12 +243,14 @@ current state to confirm the excerpts in "Current state" still match:
 In the spec, enumerate and evaluate these trigger options:
 
 **Option A: Manual only (status quo)**
+
 - Pro: zero API quota risk; user controls exactly when data refreshes.
 - Con: dashboard can be stale for hours between hand edits; friction for daily
   use workflow.
 - Recommended for: users with API-paranoid setups or slow connections.
 
 **Option B: Focus-triggered re-import (RECOMMENDED)**
+
 - Trigger: Tauri's `on_window_event` with `WindowEvent::Focused(true)` fires
   when the app regains focus (user switches back from the spreadsheet browser tab).
 - Behavior: run `check_duplicate_import` for each tracked tab; only call the
@@ -260,6 +265,7 @@ In the spec, enumerate and evaluate these trigger options:
   in `app_setting` (`sheets_focus_sync_enabled`, default `"true"`).
 
 **Option C: Background poll**
+
 - Trigger: `tokio::time::interval` in a Tauri background task.
 - Cadence options: 5 min, 15 min, 30 min. At 15 min and 13 tabs: 52 calls/hour
   = 0.87 req/min — well within quota even combined with focus triggers.
@@ -344,7 +350,7 @@ infrastructure:
    these columns from `CellWrite` output before it reaches the UI.
 
 5. **Conflict queue is empty before write**: if `SELECT COUNT(*) FROM
-   import_conflict WHERE resolved_at IS NULL` > 0, the write-back button must
+import_conflict WHERE resolved_at IS NULL` > 0, the write-back button must
    be disabled with a clear message. Writing to a sheet when the local state has
    unresolved conflicts risks propagating the wrong value.
 
@@ -490,14 +496,14 @@ Existing test to use as pattern for frontend tests: `src/features/reconcile/Conf
 ALL must hold when the spike is complete:
 
 - [ ] `specs/021-realtime-sync/spec.md` exists and contains all eight sections
-  listed in step 6.
+      listed in step 6.
 - [ ] `specs/021-realtime-sync/open-questions.md` exists and contains Q1–Q5.
 - [ ] `npm run check` exits 0 (no source files modified; all existing checks pass).
 - [ ] `npm run privacy:scan` exits 0 (no private data in spec files).
 - [ ] `grep "WRITE_BACK_ENABLED" src-tauri/src/google_sheets/write_back.rs` still
-  returns `pub const WRITE_BACK_ENABLED: bool = false;` (flag untouched).
+      returns `pub const WRITE_BACK_ENABLED: bool = false;` (flag untouched).
 - [ ] `git diff --name-only HEAD` shows only files under `specs/021-realtime-sync/`
-  and `plans/README.md` — no source files.
+      and `plans/README.md` — no source files.
 - [ ] `plans/README.md` row for plan 021 shows status `DONE`.
 
 ## STOP conditions
@@ -511,13 +517,13 @@ Stop and report back (do not improvise) if:
   refactored since this plan was written — the incremental import flow in step 3
   depends on its exact semantics.
 - `check_duplicate_import` no longer queries `sync_log` by `(source_sheet,
-  checksum)` — this is the incremental-sync deduplication mechanism; a change
+checksum)` — this is the incremental-sync deduplication mechanism; a change
   here invalidates the checksum-diff flow design.
 - `plans/001` or `plans/002` are marked `REJECTED` — the spike's write-back
   gate criteria assume those correctness fixes land first; rejecting them
   changes the prerequisite analysis.
 - Any step's verification fails after a reasonable fix attempt (e.g., `npm run
-  check` fails because the spec file itself was accidentally placed in a scanned
+check` fails because the spec file itself was accidentally placed in a scanned
   source directory).
 - The spec, to be accurate, requires documenting a private method name, token
   value, spreadsheet URL, or personal data — stop and sanitize first.

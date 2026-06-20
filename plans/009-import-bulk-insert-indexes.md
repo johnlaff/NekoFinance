@@ -95,17 +95,18 @@ The `Some` branch (update) always issues exactly one UPDATE. There is also one
          FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
          WHERE substr(t.date, 1, 4) = ?1",
 ```
+
 Bound with `.bind(format!("{year:04}"))`. The index `idx_transaction_date` is
 skipped because `substr()` wraps the indexed column.
 
 ### All five `substr(…date…, 1, 4)` occurrences (lines as of d183bbf)
 
-| Line | Function | SQL fragment |
-|------|----------|--------------|
-| 1162 | `load_year_events` | `WHERE substr(t.date, 1, 4) = ?1` |
-| 1923 | `load_write_back_txns` (income/expense branch) | `WHERE substr(date, 1, 4) = ?1` |
-| 2003 | `load_write_back_txns` (credit no-card branch) | `WHERE … AND substr(date,1,4) = ?1` |
-| 2221 | `load_economia_by_month` | `WHERE substr(t.date, 1, 4) = ?1 AND t.type = 'transfer' …` |
+| Line | Function                                       | SQL fragment                                                |
+| ---- | ---------------------------------------------- | ----------------------------------------------------------- |
+| 1162 | `load_year_events`                             | `WHERE substr(t.date, 1, 4) = ?1`                           |
+| 1923 | `load_write_back_txns` (income/expense branch) | `WHERE substr(date, 1, 4) = ?1`                             |
+| 2003 | `load_write_back_txns` (credit no-card branch) | `WHERE … AND substr(date,1,4) = ?1`                         |
+| 2221 | `load_economia_by_month`                       | `WHERE substr(t.date, 1, 4) = ?1 AND t.type = 'transfer' …` |
 
 There is also a `substr(date, 1, 4)` at line 2219 inside the same query
 (`SELECT substr(t.date, 6, 2), …`) — that one is in the SELECT list and
@@ -161,13 +162,13 @@ target user's database, skip the index and document that in Maintenance notes.
 
 ## Commands you will need
 
-| Purpose | Command | Expected on success |
-|---------|---------|---------------------|
-| Rust typecheck + clippy | `npm run rust:check` | exit 0, no warnings |
-| Rust unit tests only | `cargo test --manifest-path src-tauri/Cargo.toml --locked` | all pass |
-| Full gate | `npm run check` | exit 0 |
-| Lint | `npm run lint` | exit 0 |
-| Typecheck (frontend) | `npm run typecheck` | exit 0 |
+| Purpose                 | Command                                                    | Expected on success |
+| ----------------------- | ---------------------------------------------------------- | ------------------- |
+| Rust typecheck + clippy | `npm run rust:check`                                       | exit 0, no warnings |
+| Rust unit tests only    | `cargo test --manifest-path src-tauri/Cargo.toml --locked` | all pass            |
+| Full gate               | `npm run check`                                            | exit 0              |
+| Lint                    | `npm run lint`                                             | exit 0              |
+| Typecheck (frontend)    | `npm run typecheck`                                        | exit 0              |
 
 `npm run rust:check` runs `cargo fmt --check`, `cargo clippy`, and `cargo test` — use
 it as the single Rust gate.
@@ -311,16 +312,21 @@ replaces correctly" invariant.
 Open `src-tauri/src/commands.rs`. Locate `load_year_events` (line 1157).
 
 Current WHERE clause (line 1162):
+
 ```sql
 WHERE substr(t.date, 1, 4) = ?1
 ```
+
 Bound with `.bind(format!("{year:04}"))`.
 
 Replace with:
+
 ```sql
 WHERE t.date >= ?1 AND t.date < ?2
 ```
+
 And change the bind calls to:
+
 ```rust
 .bind(format!("{year:04}-01-01"))
 .bind(format!("{}-01-01", year + 1))
@@ -344,10 +350,12 @@ SELECT type, date, amount, is_fixed FROM "transaction"
 WHERE substr(date, 1, 4) = ?1
   AND NOT (type='expense' AND payment_method='credit')
 ```
+
 Bound with `.bind(format!("{year:04}"))`.
 
 Replace `WHERE substr(date, 1, 4) = ?1` with `WHERE date >= ?1 AND date < ?2` and
 update the binds:
+
 ```rust
 .bind(format!("{year:04}-01-01"))
 .bind(format!("{}-01-01", year + 1))
@@ -366,13 +374,17 @@ Still in `commands.rs`. Locate the credit no-card branch inside `load_write_back
 SELECT date, amount FROM "transaction"
 WHERE type='expense' AND payment_method='credit' AND substr(date,1,4) = ?1
 ```
+
 Bound with `.bind(format!("{year:04}"))`.
 
 Replace with the same range pattern:
+
 ```sql
 WHERE type='expense' AND payment_method='credit' AND date >= ?1 AND date < ?2
 ```
+
 Binds:
+
 ```rust
 .bind(format!("{year:04}-01-01"))
 .bind(format!("{}-01-01", year + 1))
@@ -400,6 +412,7 @@ Replace only the WHERE predicate `substr(t.date, 1, 4) = ?1` with
 GROUP BY unchanged — those are not WHERE filters and do not prevent index use.
 
 Updated binds:
+
 ```rust
 .bind(format!("{year:04}-01-01"))
 .bind(format!("{}-01-01", year + 1))
@@ -435,6 +448,7 @@ would have excluded it anyway — but the test documents the contract explicitly
 ### Step 8: Grep-confirm no remaining `substr.*date.*1, 4` year predicates in WHERE
 
 Run:
+
 ```
 grep -rn "substr.*date.*1, 4\|substr.*date.*1,4" src-tauri/src/commands.rs src-tauri/src/google_sheets/import.rs
 ```
@@ -474,7 +488,7 @@ Change the Status cell for plan 009 from `TODO` to `DONE`.
 ### New tests to write
 
 1. **`store_balance_series_batches_400_rows`** (in `import.rs`, inside `mod tests`):
-   - Happy path: 400-element series is stored, COUNT(*) = 400.
+   - Happy path: 400-element series is stored, COUNT(\*) = 400.
    - Re-import: calling again with empty slice leaves 400 rows intact.
    - Pattern: model after `fixture_pool()` in `commands.rs:2822–2831`; use
      `sqlx::migrate!("./migrations").run(&pool)` to bootstrap schema.

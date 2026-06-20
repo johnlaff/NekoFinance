@@ -37,6 +37,7 @@ Every `DashboardScreen` load fires two Tauri commands — `get_dashboard_summary
 ### Code excerpts (verified at commit d183bbf)
 
 **`src/screens/DashboardScreen.tsx` lines 20–30** — the two commands with divergent cache keys:
+
 ```tsx
 export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
   const [reloadKey, setReloadKey] = useState(0);
@@ -52,6 +53,7 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
 ```
 
 **`src/lib/useCommand.ts` lines 11–35** — cache semantics (plain string key = shared slot):
+
 ```ts
 const cache = new Map<string, unknown>();
 // ...
@@ -69,14 +71,17 @@ export function useCommand<T>(cmd: string, fetcher: () => Promise<T>) {
     // ...
   }, [cmd]);
 ```
+
 The cache key is the first argument to `useCommand`. Using `"get_forecast"` (no suffix) means `TotaisScreen`, `HorizonteScreen`, and `CopilotScreen` all share one slot; `DashboardScreen` with `:${reloadKey}` uses a separate slot and forces a cold fetch every navigation.
 
 **Other screens use plain keys** (`src/screens/TotaisScreen.tsx:151`, `src/screens/HorizonteScreen.tsx:49`, `src/screens/CopilotScreen.tsx:55`):
+
 ```ts
 const forecastQ = useCommand("get_forecast", getForecast);
 ```
 
 **`src-tauri/src/commands.rs` lines 800–823** — `load_forecast_events` calls `effective_daily_ceiling` (first invocation when used by `dashboard_summary`):
+
 ```rust
 async fn load_forecast_events(
     pool: &SqlitePool,
@@ -90,12 +95,14 @@ async fn load_forecast_events(
 ```
 
 **`src-tauri/src/commands.rs` lines 1359–1361** — `dashboard_summary` calls `effective_daily_ceiling` a second time:
+
 ```rust
     // Teto do diário exibido no tile "Diário de hoje" (`de R$X`):
     let daily_budget = effective_daily_ceiling(pool, today_naive).await?;    // <── call 2
 ```
 
 **`src-tauri/src/commands.rs` lines 987–989** — `get_forecast` delegates to `forecast_dto`:
+
 ```rust
 #[tauri::command]
 pub async fn get_forecast(pool: State<'_, SqlitePool>) -> Result<ForecastDto, String> {
@@ -104,6 +111,7 @@ pub async fn get_forecast(pool: State<'_, SqlitePool>) -> Result<ForecastDto, St
 ```
 
 **`src-tauri/src/commands.rs` lines 1329–1332** — `get_dashboard_summary` delegates to `dashboard_summary`:
+
 ```rust
 pub async fn get_dashboard_summary(
     pool: State<'_, SqlitePool>,
@@ -113,6 +121,7 @@ pub async fn get_dashboard_summary(
 ```
 
 **`src-tauri/src/commands.rs` `DashboardSummary` struct lines 1315–1326**:
+
 ```rust
 pub struct DashboardSummary {
     pub balance: i64,
@@ -142,23 +151,25 @@ The `DashboardSummary.balance` field (projected end-of-month balance) is already
 
 ## Commands you will need
 
-| Purpose | Command | Expected on success |
-|---|---|---|
-| Typecheck (frontend) | `npm run typecheck` | exit 0, no errors |
-| Lint | `npm run lint` | exit 0 |
-| Frontend unit tests | `npm run test:run` | all pass |
-| Rust check (fmt + clippy + test) | `npm run rust:check` | exit 0 |
-| Rust tests only | `cargo test --manifest-path src-tauri/Cargo.toml --locked` | all pass |
-| Full gate | `npm run check` | exit 0 |
-| Privacy scan | `npm run privacy:scan` | exit 0 |
+| Purpose                          | Command                                                    | Expected on success |
+| -------------------------------- | ---------------------------------------------------------- | ------------------- |
+| Typecheck (frontend)             | `npm run typecheck`                                        | exit 0, no errors   |
+| Lint                             | `npm run lint`                                             | exit 0              |
+| Frontend unit tests              | `npm run test:run`                                         | all pass            |
+| Rust check (fmt + clippy + test) | `npm run rust:check`                                       | exit 0              |
+| Rust tests only                  | `cargo test --manifest-path src-tauri/Cargo.toml --locked` | all pass            |
+| Full gate                        | `npm run check`                                            | exit 0              |
+| Privacy scan                     | `npm run privacy:scan`                                     | exit 0              |
 
 ## Scope
 
 **In scope** (the only files you should modify):
+
 - `src/screens/DashboardScreen.tsx`
 - `src-tauri/src/commands.rs`
 
 **Out of scope** (do NOT touch, even though they look related):
+
 - `src/lib/useCommand.ts` — the cache implementation is correct; only the call-site keys need fixing.
 - `src/lib/api.ts` — the Tauri invoke wrappers (`getDashboardSummary`, `getForecast`) stay unchanged; the Rust command names and signatures must not change.
 - `src-tauri/src/forecast/` — no changes to the forecast engine or its math.
@@ -231,6 +242,7 @@ Check the types carefully: `ForecastDto.month_end` is `Vec<MonthEndDto>`. Find `
 In the `#[cfg(test)]` block in `src-tauri/src/commands.rs` (around line 2820), add a new `#[tokio::test]` function named `dashboard_balance_matches_forecast_month_end`. Use the `fixture_pool()` and `insert_liquid_account` helpers already present at lines ~2822–2852.
 
 The test should:
+
 1. Create a pool with `fixture_pool()`.
 2. Insert a liquid account with a known balance (e.g. 200_000 cents).
 3. Insert a future fixed expense (projection) dated later in the same test month.
@@ -246,16 +258,15 @@ This is the regression for the "duplicate pipeline" bug: if `dashboard_summary` 
 Open `src/screens/DashboardScreen.tsx`.
 
 **Current code at lines 21–26**:
+
 ```tsx
 const [reloadKey, setReloadKey] = useState(0);
-const summaryQ = useCommand(
-  `get_dashboard_summary:${reloadKey}`,
-  getDashboardSummary,
-);
+const summaryQ = useCommand(`get_dashboard_summary:${reloadKey}`, getDashboardSummary);
 const forecastQ = useCommand(`get_forecast:${reloadKey}`, getForecast);
 ```
 
 **Change to**:
+
 ```tsx
 const summaryQ = useCommand("get_dashboard_summary", getDashboardSummary);
 const forecastQ = useCommand("get_forecast", getForecast);
@@ -264,15 +275,18 @@ const forecastQ = useCommand("get_forecast", getForecast);
 Remove the `const [reloadKey, setReloadKey] = useState(0);` line (line 21).
 
 `reloadKey` is currently used in three places:
+
 1. The two `useCommand` keys (just fixed above).
 2. `MonthLedgerCard` at line 233: `<MonthLedgerCard today={forecast.today} reloadKey={reloadKey} />`. This prop is intentional — `MonthLedgerCard` uses `reloadKey` in its own `useCommand` key (`month_grid:${ym}:${reloadKey}`) to force a re-fetch of the ledger grid on manual reload. Do NOT remove this usage; keep it working.
 
 Since `MonthLedgerCard` still needs a reload trigger, introduce a separate state variable for it:
+
 ```tsx
 const [ledgerKey, setLedgerKey] = useState(0);
 ```
 
 Update `handleLogged` and `handleReload` to increment `ledgerKey` (not `reloadKey`):
+
 ```tsx
 function handleLogged() {
   invalidateCommands();
@@ -286,6 +300,7 @@ function handleReload() {
 ```
 
 Update line 233 to pass `ledgerKey`:
+
 ```tsx
 <MonthLedgerCard today={forecast.today} reloadKey={ledgerKey} />
 ```
@@ -345,6 +360,7 @@ Set the status of plan 008 to `DONE` in the table.
 **Test name**: `dashboard_balance_matches_forecast_month_end`
 
 **Cases to cover**:
+
 - Happy path: a liquid account + one future projected expense in the same month → `summary.balance` equals the month-end balance from `forecast_dto` for the same `today`.
 - Regression for the duplicate-pipeline bug: if the two pipelines ever diverge, this assertion fails.
 

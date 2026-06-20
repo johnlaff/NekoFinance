@@ -47,6 +47,7 @@ the daily track (Régua 1) but it is not invisible — the bill accumulates item
 by item and lands as a Saída lump on the due date. The spec 008 "Módulo Crédito"
 design validated this as a central requirement. Without a first-class `invoice`
 entity the app can never show:
+
 - the running total of the open bill (what is owed right now);
 - a per-item breakdown with per-owner attribution;
 - a reimbursement link (net-zero Entrada at due date for a companion's share);
@@ -61,6 +62,7 @@ implementation plan that follows can build on settled decisions.
 ### Schema facts (verified against live migrations)
 
 **`account` table** (`src-tauri/migrations/20240608000003_account.sql`):
+
 ```sql
 CREATE TABLE IF NOT EXISTS account (
     id TEXT PRIMARY KEY NOT NULL,
@@ -77,6 +79,7 @@ CREATE TABLE IF NOT EXISTS account (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 ```
+
 After migration `20240612000001_account_liquidity.sql`, the account type check
 is extended to include `'meal_voucher'`, `'pension'`, `'fgts'`, and a `liquidity`
 column (`'liquid'`, `'reserve'`, `'restricted'`, `'illiquid'`) is added.
@@ -84,6 +87,7 @@ column (`'liquid'`, `'reserve'`, `'restricted'`, `'illiquid'`) is added.
 identifies a companion card (additional card pointing to the primary).
 
 **`transaction` table** (`src-tauri/migrations/20240608000006_transaction.sql`):
+
 ```sql
 CREATE TABLE IF NOT EXISTS "transaction" (
     id TEXT PRIMARY KEY NOT NULL,
@@ -100,10 +104,12 @@ CREATE TABLE IF NOT EXISTS "transaction" (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 ```
+
 `payment_method='credit'` is the marker for credit items. There is no
 `invoice_id` column today.
 
 **`split` table** (`src-tauri/migrations/20240608000007_split.sql`):
+
 ```sql
 CREATE TABLE IF NOT EXISTS split (
     id TEXT PRIMARY KEY NOT NULL,
@@ -114,9 +120,11 @@ CREATE TABLE IF NOT EXISTS split (
     note TEXT
 );
 ```
+
 No `reimbursed_by_transaction_id` column today.
 
 **`daily_checkin` table** (`src-tauri/migrations/20240608000010_daily_checkin.sql`):
+
 ```sql
 CREATE TABLE IF NOT EXISTS daily_checkin (
     id TEXT PRIMARY KEY NOT NULL,
@@ -129,12 +137,14 @@ CREATE TABLE IF NOT EXISTS daily_checkin (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 ```
+
 `credit_spend` is how Régua 2 is tracked today — a daily aggregate, not
 linked to any invoice.
 
 ### Engine facts (verified against live source)
 
 **`forecast::classify()`** (`src-tauri/src/forecast/mod.rs:242–266`):
+
 ```rust
 pub fn classify(
     txn_type: &str,
@@ -159,22 +169,26 @@ pub fn classify(
     }
 }
 ```
+
 Credit expenses already route to `FixedOut`. The lump is assembled in
 `commands.rs:779–794` where `credit_by_due` aggregates `daily_checkin.credit_spend`
 by `cycle_due_date(checkin_date, closing_day, due_day)` and emits a single
 `FixedOut` event per due date.
 
 **`cycle_due_date()`** (`src-tauri/src/forecast/mod.rs:281–306`):
+
 ```rust
 pub fn cycle_due_date(checkin_date: NaiveDate, closing_day: u32, due_day: u32) -> NaiveDate {
     // ... cycles close on closing_day of current/prev month;
     // due date is in the month after the cycle closes.
 }
 ```
+
 The cycle model already exists — it is used only for daily_checkin aggregation
 today, not for a first-class entity.
 
 **CONTEXT.md domain vocabulary** (mandatory for naming new types):
+
 - `Transaction.payment_method`: `credit` = "pay later / fatura"; distinct from
   `debit` / `pix` / `cash` (Régua 1). Credit feeds Régua 2.
 - `Split.owner_person_id`: whose expense this is. `linked_account_id` on account
@@ -192,6 +206,7 @@ today, not for a first-class entity.
 ### Dual-tracking contract (ADR-0001)
 
 Two parallel metrics per check-in:
+
 1. `daily_spend` (Régua 1): sum of debit/PIX/cash expenses.
 2. `credit_spend` (Régua 2): sum of credit card expenses per day.
 
@@ -203,6 +218,7 @@ into Régua 1 or Daily.
 
 `specs/008-auto-import/spec.md` (deferred, design-approved) defines the invoice
 entity at lines 535–569 under "Modelo de dados":
+
 - `invoice`: account_id, cycle, closing/due date, status (open/closed/paid/
   partially_paid), total, residual balance.
 - `transaction.invoice_id`: links an item to its invoice.
@@ -221,13 +237,13 @@ invoice entity must use a timestamp strictly after `20240612000010`.
 
 ## Commands you will need
 
-| Purpose | Command | Expected on success |
-|---------|---------|---------------------|
-| Rust typecheck + clippy + fmt | `npm run rust:check` | exit 0, no warnings |
-| Rust unit tests only | `cargo test --manifest-path src-tauri/Cargo.toml --locked` | all pass |
-| Full gate | `npm run check` | exit 0 |
-| Run a single test | `cargo test --manifest-path src-tauri/Cargo.toml --locked <test_name>` | 1 passed |
-| Schema inspection (in test) | use `sqlx::query_as("PRAGMA table_info(?)")` inside a test pool | returns column rows |
+| Purpose                       | Command                                                                | Expected on success |
+| ----------------------------- | ---------------------------------------------------------------------- | ------------------- |
+| Rust typecheck + clippy + fmt | `npm run rust:check`                                                   | exit 0, no warnings |
+| Rust unit tests only          | `cargo test --manifest-path src-tauri/Cargo.toml --locked`             | all pass            |
+| Full gate                     | `npm run check`                                                        | exit 0              |
+| Run a single test             | `cargo test --manifest-path src-tauri/Cargo.toml --locked <test_name>` | 1 passed            |
+| Schema inspection (in test)   | use `sqlx::query_as("PRAGMA table_info(?)")` inside a test pool        | returns column rows |
 
 > `npm run rust:check` runs `cargo fmt --check`, `cargo clippy -- -D warnings`,
 > and `cargo test`. If `cargo fmt --check` fails, run
@@ -320,6 +336,7 @@ explicitly so that account-level changes don't silently shift historical cycles.
 ('open','closed','paid','partially_paid'))`. Default `'open'`.
 
 **R3 — Financial totals** (all integer cents, positive magnitude):
+
 - `total_cents INTEGER NOT NULL DEFAULT 0` — sum of all item amounts in the
   invoice.
 - `paid_cents INTEGER NOT NULL DEFAULT 0` — amount actually paid so far
@@ -332,6 +349,7 @@ new nullable column on `transaction`; each credit expense item is linked to
 exactly one open invoice.
 
 **R5 — Owner-split / reimbursement**:
+
 - `split.owner_person_id` (already exists) marks whose expense each split is.
 - Add `split.reimbursed_by_transaction_id TEXT REFERENCES "transaction"(id)` —
   links the third-party's portion of a split to the Entrada that reimburses it.
@@ -711,11 +729,13 @@ directory if it does not exist). The file must contain:
    - **Forecast lump at due_date** (FixedOut): the `credit_by_due` aggregation
      in `commands.rs` today reads `daily_checkin.credit_spend`. Once the
      implementation plan lands, it should instead read:
+
      ```sql
      SELECT due_date, total_cents - paid_cents AS remaining_cents
      FROM invoice
      WHERE account_id = ?1 AND status IN ('open','closed')
      ```
+
      and emit one `FixedOut` event per invoice at its `due_date`. The engine
      `classify()` signature does NOT change; the shell wiring changes.
      The `daily_checkin.credit_spend` column is kept for backward compatibility
@@ -836,7 +856,9 @@ files and that all checks pass.
 ```
 git diff --name-only HEAD
 ```
+
 Expected output (no other files):
+
 ```
 specs/019-invoice-entity/spike.md
 src-tauri/migrations/20240613000001_invoice.sql
@@ -844,6 +866,7 @@ src-tauri/src/forecast/mod.rs
 src-tauri/src/invoice_spike.rs
 src-tauri/src/lib.rs
 ```
+
 (If the spike tests were added to `splits.rs` instead, `lib.rs` and
 `invoice_spike.rs` are absent and `splits.rs` appears instead.)
 
@@ -859,6 +882,7 @@ frontend errors as part of this spike.
 **New Rust tests** (Steps 3–4):
 
 In `src-tauri/src/invoice_spike.rs` (or `splits.rs` test block):
+
 - `invoice_schema_applies_cleanly` — migration applies without error
 - `transaction_has_invoice_id_column` — `PRAGMA table_info` confirms the column
 - `split_has_reimbursed_by_column` — confirms the new split column
@@ -866,6 +890,7 @@ In `src-tauri/src/invoice_spike.rs` (or `splits.rs` test block):
   returns 10000 before reimbursement, 0 after
 
 In `src-tauri/src/forecast/mod.rs` test block:
+
 - `in_cycle_on_closing_day_is_included`
 - `in_cycle_day_after_prev_closing_is_first_day`
 - `in_cycle_prev_closing_day_is_excluded`
@@ -883,17 +908,17 @@ via `sqlx::migrate!`).
 Machine-checkable. ALL must hold:
 
 - [ ] `cargo test --manifest-path src-tauri/Cargo.toml --locked` exits 0; at
-  least 8 new tests exist and pass (4 schema/counterparty-balance, 4 in_cycle)
+      least 8 new tests exist and pass (4 schema/counterparty-balance, 4 in_cycle)
 - [ ] `npm run rust:check` exits 0 (fmt + clippy + tests)
 - [ ] `ls src-tauri/migrations/20240613000001_invoice.sql` → file exists
 - [ ] `ls specs/019-invoice-entity/spike.md` → file exists
 - [ ] `wc -l specs/019-invoice-entity/spike.md` → output is ≥ 80
 - [ ] `git diff --name-only HEAD` shows only the files listed in Step 6
-  (no commands.rs, no import.rs, no frontend files)
+      (no commands.rs, no import.rs, no frontend files)
 - [ ] `grep -n "in_cycle" src-tauri/src/forecast/mod.rs` → at least 5 matches
-  (fn definition + 4 test calls)
+      (fn definition + 4 test calls)
 - [ ] `grep -n "invoice_id" src-tauri/migrations/20240613000001_invoice.sql` →
-  at least 1 match (the ALTER TABLE statement)
+      at least 1 match (the ALTER TABLE statement)
 - [ ] `npm run check` exits 0 (full gate)
 - [ ] `plans/README.md` status row for plan 019 updated to DONE
 

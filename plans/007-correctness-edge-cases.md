@@ -124,6 +124,7 @@ second overload that accepts a stable `cmd` key alongside an inline fetcher.
 Because changing the deps array would change runtime behavior (callers who
 currently pass unstable arrows would start re-running the effect on every
 render, which is also wrong), the minimal correct fix is to:
+
 1. Strengthen the JSDoc so callers know they must pass a referentially stable
    `fetcher`, and
 2. Replace the vague eslint-disable comment with one that explicitly states
@@ -176,14 +177,14 @@ both writes in a single `sqlx` transaction.
 
 ## Commands you will need
 
-| Purpose          | Command                                                                 | Expected on success          |
-|------------------|-------------------------------------------------------------------------|------------------------------|
-| Rust check       | `npm run rust:check`                                                    | exit 0 (fmt + clippy + test) |
-| Rust tests only  | `cargo test --manifest-path src-tauri/Cargo.toml --locked`             | all pass                     |
-| TS typecheck     | `npm run typecheck`                                                     | exit 0, no errors            |
-| TS lint          | `npm run lint`                                                          | exit 0                       |
-| TS unit tests    | `npm run test:run`                                                      | all pass                     |
-| Full gate        | `npm run check`                                                         | exit 0                       |
+| Purpose         | Command                                                    | Expected on success          |
+| --------------- | ---------------------------------------------------------- | ---------------------------- |
+| Rust check      | `npm run rust:check`                                       | exit 0 (fmt + clippy + test) |
+| Rust tests only | `cargo test --manifest-path src-tauri/Cargo.toml --locked` | all pass                     |
+| TS typecheck    | `npm run typecheck`                                        | exit 0, no errors            |
+| TS lint         | `npm run lint`                                             | exit 0                       |
+| TS unit tests   | `npm run test:run`                                         | all pass                     |
+| Full gate       | `npm run check`                                            | exit 0                       |
 
 ## Scope
 
@@ -327,9 +328,11 @@ transfer will correctly subtract from the running total. This matches the
 method's definition: Economia is a signed outflow from the liquid balance.
 
 Also remove (or update) the now-stale comment at lines 493–494 that reads:
+
 > `transfer` é IGNORADO (não há linha Economia explícita ainda) — a poupança real virá do saldo da reserva quando o slice de Economia existir; até lá o net é um proxy conservador (review P2).
 
 Replace it with a comment that reflects the corrected behaviour:
+
 > `transfer` (Economia) é incluído: reduz o saldo líquido tanto quanto uma despesa.
 > O CASE expression abaixo trata corretamente como saída (−amount).
 
@@ -340,6 +343,7 @@ with `ttype = "transfer"` in the gap window and assert the seed is reduced by
 the transfer amount.
 
 Example:
+
 ```rust
 #[tokio::test]
 async fn projection_seed_gap_includes_transfer_economia() {
@@ -450,6 +454,7 @@ the full round-trip through an in-memory SQLite pool and will catch any
 regression.
 
 Add one new test `resolve_is_atomic_on_simulated_crash` that:
+
 - Seeds a transaction and a conflict.
 - Replaces the pool with a pool that has WAL mode enabled (or simply verifies
   that after `resolve()` succeeds both the `transaction` row and the
@@ -457,7 +462,7 @@ Add one new test `resolve_is_atomic_on_simulated_crash` that:
   already implicitly verify this).
 - **Simpler alternative**: just verify that calling `resolve()` twice on the
   same conflict ID (the second call should be a no-op because `resolved_at IS
-  NULL` is false) does not corrupt data.
+NULL` is false) does not corrupt data.
 
 ```rust
 #[tokio::test]
@@ -489,12 +494,12 @@ Run the full gate to confirm all five fixes compose cleanly:
 
 New tests (all regression/bug-fix tests):
 
-| Test name | File | What it guards |
-|---|---|---|
-| `cycle_due_date_closing_day_zero` | `forecast/mod.rs` | Fix 1: `closing_day = 0` no longer always routes to prior month |
-| `year_none_returns_error` (or `parse_rows_year_none_errors`) | `import.rs` | Fix 2: `layout.year = None` returns `Err`, not misdated rows |
-| `projection_seed_gap_includes_transfer_economia` | `commands.rs` | Fix 3: Economia transfer in gap window reduces the seed |
-| `resolve_idempotent_second_call_is_noop` | `conflicts.rs` | Fix 5: idempotent double-resolve, also exercises the transaction path |
+| Test name                                                    | File              | What it guards                                                        |
+| ------------------------------------------------------------ | ----------------- | --------------------------------------------------------------------- |
+| `cycle_due_date_closing_day_zero`                            | `forecast/mod.rs` | Fix 1: `closing_day = 0` no longer always routes to prior month       |
+| `year_none_returns_error` (or `parse_rows_year_none_errors`) | `import.rs`       | Fix 2: `layout.year = None` returns `Err`, not misdated rows          |
+| `projection_seed_gap_includes_transfer_economia`             | `commands.rs`     | Fix 3: Economia transfer in gap window reduces the seed               |
+| `resolve_idempotent_second_call_is_noop`                     | `conflicts.rs`    | Fix 5: idempotent double-resolve, also exercises the transaction path |
 
 Fix 4 (`useCommand`) has no new test — it is a documentation-only change that does not alter observable runtime behaviour. The existing five tests in `useCommand.test.ts` must continue to pass unchanged.
 

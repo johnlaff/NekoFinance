@@ -233,18 +233,18 @@ add `role="img"` so assistive technology exposes the label.
 
 ## Commands you will need
 
-| Purpose              | Command                                          | Expected on success           |
-|----------------------|--------------------------------------------------|-------------------------------|
-| Typecheck            | `npm run typecheck`                              | exit 0, no errors             |
-| Lint                 | `npm run lint`                                   | exit 0                        |
-| Unit tests           | `npm run test:run`                               | all pass                      |
-| E2E smoke            | `npm run e2e`                                    | all tests pass                |
-| Full gate            | `npm run check`                                  | exit 0                        |
-| Verify token absent  | `grep -n "lh-body" src/App.css`                  | no matches                    |
-| Verify main present  | `grep -n "<main" src/shell/AppShell.tsx`         | 1 match                       |
-| Verify nav label     | `grep -n 'aria-label="Navegação' src/shell/AppShell.tsx` | 1 match              |
-| Verify article label | `grep -n 'aria-label={label}' src/design-system/components/MetricTile.tsx` | 1 match |
-| Verify role img      | `grep -n 'role="img"' src/screens/AnnualScreen.tsx` | 1 match                  |
+| Purpose              | Command                                                                    | Expected on success |
+| -------------------- | -------------------------------------------------------------------------- | ------------------- |
+| Typecheck            | `npm run typecheck`                                                        | exit 0, no errors   |
+| Lint                 | `npm run lint`                                                             | exit 0              |
+| Unit tests           | `npm run test:run`                                                         | all pass            |
+| E2E smoke            | `npm run e2e`                                                              | all tests pass      |
+| Full gate            | `npm run check`                                                            | exit 0              |
+| Verify token absent  | `grep -n "lh-body" src/App.css`                                            | no matches          |
+| Verify main present  | `grep -n "<main" src/shell/AppShell.tsx`                                   | 1 match             |
+| Verify nav label     | `grep -n 'aria-label="Navegação' src/shell/AppShell.tsx`                   | 1 match             |
+| Verify article label | `grep -n 'aria-label={label}' src/design-system/components/MetricTile.tsx` | 1 match             |
+| Verify role img      | `grep -n 'role="img"' src/screens/AnnualScreen.tsx`                        | 1 match             |
 
 ## Scope
 
@@ -307,6 +307,7 @@ Do NOT touch line 111 (the `:root` dark focus-ring).
 **Verify**: `grep -n "focus-ring" src/design-system/tokens/colors.css`
 
 Expected output (two lines, the dark value unchanged):
+
 ```
 111:  --focus-ring: rgba(63, 191, 143, 0.55);
 193:  --focus-ring: rgba(34, 135, 100, 0.85);
@@ -320,14 +321,14 @@ In the `:root` block (dark theme), add a new token near the `--focus-ring`
 declaration (around line 111):
 
 ```css
-  --scrollbar-thumb: #677870; /* WCAG 1.4.11: >=3:1 vs --surface (#161d1c) and --bg (#0e1413) */
+--scrollbar-thumb: #677870; /* WCAG 1.4.11: >=3:1 vs --surface (#161d1c) and --bg (#0e1413) */
 ```
 
 In the `[data-theme="light"]` block, add a corresponding override near the
 light `--focus-ring` (around line 193):
 
 ```css
-  --scrollbar-thumb: #6f7a74; /* WCAG 1.4.11: >=3:1 vs --bg (#eaeeec) and white surface */
+--scrollbar-thumb: #6f7a74; /* WCAG 1.4.11: >=3:1 vs --bg (#eaeeec) and white surface */
 ```
 
 Open `src/App.css`. Find the scrollbar block (lines 40–60 area). Replace
@@ -401,6 +402,7 @@ Find the light override (line 1497 area). Update the hex value:
 **Verify**: `grep -A2 "gs-toggle--off" src/App.css`
 
 Expected (two rule blocks):
+
 ```
 .gs-toggle--off {
   background: var(--ink-300);
@@ -416,10 +418,10 @@ the undefined token:
 
 ```css
 /* before */
-  line-height: var(--lh-body);
+line-height: var(--lh-body);
 
 /* after */
-  line-height: var(--lh-normal);
+line-height: var(--lh-normal);
 ```
 
 **Verify**: `grep -n "lh-body" src/App.css`
@@ -465,14 +467,17 @@ No other changes to this file.
 **Verify**: `npm run typecheck` → exit 0
 
 **Verify**:
+
 ```
 grep -n "<main\|</main" src/shell/AppShell.tsx
 ```
+
 Expected: 2 matches (opening and closing).
 
 ```
 grep -n 'aria-label="Navegação principal"' src/shell/AppShell.tsx
 ```
+
 Expected: 1 match.
 
 ### Step 6: Add accessible name to MetricTile `<article>`
@@ -532,15 +537,13 @@ Add a new test case inside the first `test.describe` block (after the
 last existing test, before the closing `}`):
 
 ```ts
-  test("page has main landmark and labelled navigation", async ({ page }) => {
-    await expect(page.locator("main.ak-main")).toBeVisible();
-    await expect(
-      page.getByRole("navigation", { name: "Navegação principal" }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("article", { name: "Saldo projetado" }),
-    ).toBeVisible();
-  });
+test("page has main landmark and labelled navigation", async ({ page }) => {
+  await expect(page.locator("main.ak-main")).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Navegação principal" }),
+  ).toBeVisible();
+  await expect(page.getByRole("article", { name: "Saldo projetado" })).toBeVisible();
+});
 ```
 
 The `"Saldo projetado"` article name comes from the MetricTile `label`
@@ -594,11 +597,11 @@ All of the following must hold simultaneously:
 - [ ] `npm run e2e` exits 0, including the new landmark test from Step 8
 - [ ] `grep -n "lh-body" src/App.css` → no output
 - [ ] `grep -n "focus-ring" src/design-system/tokens/colors.css` → line
-  111 = `rgba(63, 191, 143, 0.55)` (dark, unchanged); line 193 = `rgba(34, 135, 100, 0.85)` (light, updated)
+      111 = `rgba(63, 191, 143, 0.55)` (dark, unchanged); line 193 = `rgba(34, 135, 100, 0.85)` (light, updated)
 - [ ] `grep -n "scrollbar-thumb" src/design-system/tokens/colors.css` → 2
-  matches (one in `:root`, one in `[data-theme="light"]`)
+      matches (one in `:root`, one in `[data-theme="light"]`)
 - [ ] `grep -n "gs-toggle--off" src/App.css` → `.gs-toggle--off` uses
-  `var(--ink-300)` and `[data-theme="light"]` override uses `#727c77`
+      `var(--ink-300)` and `[data-theme="light"]` override uses `#727c77`
 - [ ] `grep -n "<main" src/shell/AppShell.tsx` → 1 match
 - [ ] `grep -n 'aria-label="Navegação principal"' src/shell/AppShell.tsx` → 1 match
 - [ ] `grep -n 'aria-label={label}' src/design-system/components/MetricTile.tsx` → 1 match

@@ -57,6 +57,7 @@ from `.neko-data/` or `.lancedb/`, which hold personal finance cache files.
 ### Excerpts as of d183bbf
 
 **token_store.rs:30-35** — the fallback WARN comment (find with `derive_key`):
+
 ```rust
 /// Chave do fallback de arquivo cifrado. AVISO de segurança: é OFUSCAÇÃO BEST-EFFORT, não proteção
 /// forte — o sal fica em claro ao lado do ciphertext e a chave deriva de machine-id + sal, ambos
@@ -68,6 +69,7 @@ fn derive_key(app_dir: &std::path::Path) -> Result<[u8; 32], String> {
 ```
 
 **token_store.rs:169-182** — `store_token` silently falls back today:
+
 ```rust
 pub fn store_token(app_dir: &std::path::Path, token: &StoredToken) -> Result<(), String> {
     match try_keyring_store(token) {
@@ -86,6 +88,7 @@ pub fn store_token(app_dir: &std::path::Path, token: &StoredToken) -> Result<(),
 ```
 
 **server.rs:18-28** — `incoming().next()` blocks with no accept-level timeout:
+
 ```rust
 pub async fn listen_for_code(self) -> Result<(String, Option<String>), String> {
     self.listener
@@ -99,32 +102,38 @@ pub async fn listen_for_code(self) -> Result<(String, Option<String>), String> {
         .ok_or("no incoming connection")?
         .map_err(|e| format!("accept error: {e}"))?;
 ```
+
 The `set_read_timeout` at line 33 applies only to data already accepted — not to
 the `incoming().next()` call above it which blocks forever waiting for any
 connection to arrive.
 
 **tauri.conf.json:23-25** — CSP includes Vite dev-server origins:
+
 ```json
 "security": {
   "csp": "default-src 'self'; img-src 'self' asset: https://asset.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://localhost:1420 ws://localhost:1420"
 }
 ```
+
 `http://localhost:1420` and `ws://localhost:1420` are Vite HMR origins that
 must not appear in the production bundle.
 
 **token_store.rs:267-269** — raw upstream body forwarded as error:
+
 ```rust
 if !resp.status().is_success() {
     let body = resp.text().await.unwrap_or_default();
     return Err(format!("refresh failed: {body}"));
 }
 ```
+
 This `body` is the raw Google API JSON error response and propagates through the
 Tauri command `Result<_, String>` directly to the `detailOf()` function in the
 frontend, which renders it verbatim inside `<code>` (GoogleSheetsPanel.tsx:849,
 936).
 
 **scripts/privacy-scan.sh:7-16** — blocked-paths list missing data directories:
+
 ```bash
 blocked_paths=(
   ".circle-auth"
@@ -137,20 +146,21 @@ blocked_paths=(
   "indexes"
 )
 ```
+
 `.neko-data/` (local finance cache) and `.lancedb/` (vector index) are listed
 in `AGENTS.md` as gitignored private directories but are absent from this list,
 so their existence is never checked at pre-push time.
 
 ## Commands you will need
 
-| Purpose            | Command                                                                           | Expected on success                     |
-|--------------------|-----------------------------------------------------------------------------------|-----------------------------------------|
-| Rust check         | `npm run rust:check`                                                              | exit 0 (fmt + clippy + test)            |
+| Purpose            | Command                                                                          | Expected on success                     |
+| ------------------ | -------------------------------------------------------------------------------- | --------------------------------------- |
+| Rust check         | `npm run rust:check`                                                             | exit 0 (fmt + clippy + test)            |
 | Rust tests only    | `cargo test --manifest-path src-tauri/Cargo.toml --locked`                       | all pass                                |
-| Typecheck          | `npm run typecheck`                                                               | exit 0, no TS errors                    |
-| Lint               | `npm run lint`                                                                    | exit 0                                  |
-| Privacy scan       | `npm run privacy:scan`                                                            | exit 0, "Privacy scan passed."          |
-| Full gate          | `npm run check`                                                                   | exit 0                                  |
+| Typecheck          | `npm run typecheck`                                                              | exit 0, no TS errors                    |
+| Lint               | `npm run lint`                                                                   | exit 0                                  |
+| Privacy scan       | `npm run privacy:scan`                                                           | exit 0, "Privacy scan passed."          |
+| Full gate          | `npm run check`                                                                  | exit 0                                  |
 | Grep CSP dev URLs  | `grep -n "localhost:1420" src-tauri/tauri.conf.json`                             | no matches (after step 3)               |
 | Grep raw body leak | `grep -n 'format!("refresh failed: {body}")' src-tauri/src/oauth/token_store.rs` | no matches (after step 4)               |
 | Grep fallback path | `grep -n 'using fallback\|arquivo cifrado' src-tauri/src/oauth/token_store.rs`   | shows fail-closed branch (after step 1) |
@@ -283,7 +293,7 @@ abandons the browser tab the task is released within a bounded time.
 **File**: `src-tauri/src/oauth/server.rs`
 
 The current code at lines 18-28 uses `incoming().next()` which blocks the OS
-thread with no deadline. The fix uses `set_read_timeout` on the *listener*
+thread with no deadline. The fix uses `set_read_timeout` on the _listener_
 before calling `accept`, which `std::net::TcpListener` supports. Setting it
 causes `accept()` to return `Err(WouldBlock)` / `TimedOut` after the deadline.
 
@@ -370,11 +380,13 @@ or `ws://localhost:1420` in `connect-src`.
 **File**: `src-tauri/tauri.conf.json`
 
 Current line 24:
+
 ```json
 "csp": "default-src 'self'; img-src 'self' asset: https://asset.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://localhost:1420 ws://localhost:1420"
 ```
 
 Replace with (drop the two localhost Vite origins from `connect-src`):
+
 ```json
 "csp": "default-src 'self'; img-src 'self' asset: https://asset.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'"
 ```
@@ -398,6 +410,7 @@ diagnostics; drop the body.
 **File**: `src-tauri/src/oauth/token_store.rs`
 
 Current lines 267-269 (`refresh_access_token`):
+
 ```rust
 if !resp.status().is_success() {
     let body = resp.text().await.unwrap_or_default();
@@ -406,6 +419,7 @@ if !resp.status().is_success() {
 ```
 
 Replace with:
+
 ```rust
 if !resp.status().is_success() {
     let status = resp.status();
@@ -419,6 +433,7 @@ if !resp.status().is_success() {
 ```
 
 **Verify**:
+
 - `grep -n 'format!("refresh failed: {body}")' src-tauri/src/oauth/token_store.rs` → no matches.
 - `cargo test --manifest-path src-tauri/Cargo.toml --locked` → all pass.
 
@@ -432,6 +447,7 @@ the working tree, preventing accidental commits of personal finance cache files.
 **File**: `scripts/privacy-scan.sh`
 
 Current `blocked_paths` array at lines 7-16:
+
 ```bash
 blocked_paths=(
   ".circle-auth"
@@ -446,6 +462,7 @@ blocked_paths=(
 ```
 
 Replace with:
+
 ```bash
 blocked_paths=(
   ".circle-auth"
@@ -462,6 +479,7 @@ blocked_paths=(
 ```
 
 **Verify**:
+
 ```bash
 # Simulate: create the directory, run the scan, confirm it fails.
 mkdir -p /tmp/neko-scan-test/.neko-data
@@ -473,6 +491,7 @@ bash -c '
   done; echo "OK: none found")
 '
 ```
+
 Expected: `BLOCKED: .neko-data found`.
 
 Then run `npm run privacy:scan` from the repo root (where neither `.neko-data`
@@ -491,11 +510,11 @@ build.
 
 New tests written in this plan:
 
-| Test name | File | What it covers |
-|---|---|---|
-| `test_store_token_fails_closed_without_keychain_env` | `token_store.rs` | Structural presence of fail-closed path; env var absent |
-| `test_store_token_file_fallback_when_env_set` | `token_store.rs` | File written when `NEKO_INSECURE_FILE_FALLBACK=1` |
-| `test_listen_for_code_times_out` | `server.rs` | OS-level `set_read_timeout`+`accept` contract returns `WouldBlock`/`TimedOut` |
+| Test name                                            | File             | What it covers                                                                |
+| ---------------------------------------------------- | ---------------- | ----------------------------------------------------------------------------- |
+| `test_store_token_fails_closed_without_keychain_env` | `token_store.rs` | Structural presence of fail-closed path; env var absent                       |
+| `test_store_token_file_fallback_when_env_set`        | `token_store.rs` | File written when `NEKO_INSECURE_FILE_FALLBACK=1`                             |
+| `test_listen_for_code_times_out`                     | `server.rs`      | OS-level `set_read_timeout`+`accept` contract returns `WouldBlock`/`TimedOut` |
 
 Existing test to use as structural pattern: `token_store.rs::tests::test_token_store_roundtrip`
 and `server.rs::tests::test_extract_code_from_path`.

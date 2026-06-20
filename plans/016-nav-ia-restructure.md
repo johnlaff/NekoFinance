@@ -8,9 +8,11 @@
 > maintain the index.
 >
 > **Drift check (run first)**:
+>
 > ```
 > git diff --stat d183bbf..HEAD -- src/shell/AppShell.tsx src/screens/DashboardScreen.tsx src/screens/dashboard/MonthLedgerCard.tsx src/screens/TransactionsScreen.tsx src/screens/CopilotScreen.tsx src/screens/MethodologyScreen.tsx src/App.tsx src/App.navigation.test.tsx
 > ```
+>
 > If any in-scope file changed since this plan was written, compare the
 > "Current state" excerpts against the live code before proceeding; on a
 > mismatch, treat it as a STOP condition.
@@ -52,7 +54,7 @@ no navigation affordance. These compound into a UX that over-complicates a simpl
   `onAskMia` button CTA (lines 136–144).
 - `src/screens/dashboard/MonthLedgerCard.tsx` — the "Dia a dia" card with a `<tfoot>` that
   shows a "Performance" row (lines 195–215). The `title` attribute on the `<th>` at line 196
-  already acknowledges the distinction: *"Distinta da Performance do método em Totais"*.
+  already acknowledges the distinction: _"Distinta da Performance do método em Totais"_.
 - `src/screens/TransactionsScreen.tsx` — transactions list; has a second `<label class="ak-search">` search input (lines 261–269) and an empty-state paragraph that mentions "Configurações" with no `action` prop (lines 293–303).
 - `src/screens/CopilotScreen.tsx` — Mia stub; has a "Em desenvolvimento" badge (line 67) and a
   deterministic facts panel (lines 77–131) that is the real value today.
@@ -65,6 +67,7 @@ no navigation affordance. These compound into a UX that over-complicates a simpl
 ### Key excerpts (verify these match before making any change)
 
 **AppShell.tsx — Screen union and NAV_ITEMS (lines 21–53)**:
+
 ```ts
 // line 21
 export type Screen =
@@ -81,17 +84,18 @@ export type Screen =
 // line 44 — single flat array, 8 items
 const NAV_ITEMS: { key: Screen; label: string; icon: typeof LayoutDashboard }[] = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { key: "totais",    label: "Totais",    icon: Calculator      },
-  { key: "anuais",    label: "Anual",     icon: TrendingUp      },
-  { key: "horizonte", label: "Horizonte", icon: CalendarRange   },
-  { key: "transactions", label: "Lançamentos", icon: Receipt    },
-  { key: "tags",      label: "Tags",      icon: TagsIcon        },
-  { key: "copilot",   label: "Mia",       icon: Sparkles        },
-  { key: "methodology", label: "Metodologia", icon: BookOpen    },
+  { key: "totais", label: "Totais", icon: Calculator },
+  { key: "anuais", label: "Anual", icon: TrendingUp },
+  { key: "horizonte", label: "Horizonte", icon: CalendarRange },
+  { key: "transactions", label: "Lançamentos", icon: Receipt },
+  { key: "tags", label: "Tags", icon: TagsIcon },
+  { key: "copilot", label: "Mia", icon: Sparkles },
+  { key: "methodology", label: "Metodologia", icon: BookOpen },
 ];
 ```
 
 **AppShell.tsx — nav render (lines 101–126)**:
+
 ```tsx
 // line 101
 <nav className="ak-nav">
@@ -109,6 +113,7 @@ const NAV_ITEMS: { key: Screen; label: string; icon: typeof LayoutDashboard }[] 
 ```
 
 **DashboardScreen.tsx — 4-tile MetricBar (lines 176–204)**:
+
 ```tsx
 // line 176
 <div className="dash-grid4">
@@ -131,10 +136,12 @@ const NAV_ITEMS: { key: Screen; label: string; icon: typeof LayoutDashboard }[] 
 ```
 
 **MonthLedgerCard.tsx — "Performance" footer row (lines 195–215)**:
+
 ```tsx
 // line 195
 <tr className="fc-foot">
-  <th scope="row"
+  <th
+    scope="row"
     title="Performance do mês na planilha (entradas − saída total). Distinta da Performance do método em Totais, que também desconta economia e a previsão do diário restante."
   >
     Performance
@@ -151,6 +158,7 @@ const NAV_ITEMS: { key: Screen; label: string; icon: typeof LayoutDashboard }[] 
 ```
 
 **TransactionsScreen.tsx — second search input (lines 261–269)**:
+
 ```tsx
 // line 261
 <label className="ak-search txs-tools__search">
@@ -166,6 +174,7 @@ const NAV_ITEMS: { key: Screen; label: string; icon: typeof LayoutDashboard }[] 
 ```
 
 **TransactionsScreen.tsx — empty-state without navigation action (lines 293–303)**:
+
 ```tsx
 // line 293
 {visible.length === 0 ? (
@@ -181,6 +190,7 @@ const NAV_ITEMS: { key: Screen; label: string; icon: typeof LayoutDashboard }[] 
 ```
 
 **CopilotScreen.tsx — "Em desenvolvimento" badge (line 67)**:
+
 ```tsx
 // line 67
 <span className="cop-panel__badge">
@@ -195,7 +205,7 @@ The test at line 53 clicks `{ name: "Metodologia" }` directly. The test at line 
 ### Conventions
 
 - **No manual `memo`/`useMemo`/`useCallback`** — React Compiler is enabled. See top-level
-  comment in `src/App.tsx` (line 43): *"React Compiler memoizes; no manual useCallback needed."*
+  comment in `src/App.tsx` (line 43): _"React Compiler memoizes; no manual useCallback needed."_
 - **Icons**: lucide-react, always `size={N} strokeWidth={1.75}`.
 - **Design system tokens**: Only tokens defined in `src/design-system/` — do NOT invent tokens.
   `--surface-1` does not exist; use `--surface`.
@@ -217,14 +227,14 @@ The test at line 53 clicks `{ name: "Metodologia" }` directly. The test at line 
 
 ## Commands you will need
 
-| Purpose | Command | Expected on success |
-|---------|---------|---------------------|
-| Typecheck | `npm run typecheck` | exit 0, no TS errors |
-| Lint | `npm run lint` | exit 0, no ESLint errors |
-| Unit tests | `npm run test:run` | all pass |
-| Full gate | `npm run check` | exit 0 |
-| E2E visual smoke | `npm run e2e` | all pass; screenshots in `test-results/` |
-| Privacy scan | `npm run privacy:scan` | exit 0 |
+| Purpose          | Command                | Expected on success                      |
+| ---------------- | ---------------------- | ---------------------------------------- |
+| Typecheck        | `npm run typecheck`    | exit 0, no TS errors                     |
+| Lint             | `npm run lint`         | exit 0, no ESLint errors                 |
+| Unit tests       | `npm run test:run`     | all pass                                 |
+| Full gate        | `npm run check`        | exit 0                                   |
+| E2E visual smoke | `npm run e2e`          | all pass; screenshots in `test-results/` |
+| Privacy scan     | `npm run privacy:scan` | exit 0                                   |
 
 ## Suggested executor toolkit
 
@@ -312,6 +322,7 @@ a STOP condition).
 ```
 
 Rationale:
+
 - "Início" contains the items a user touches in every nightly session (Dashboard + Lançamentos).
   These are the only two items in the primary group.
 - "Análise" holds the deeper views (Totais, Anual, Horizonte, Tags) used weekly or diagnostically.
@@ -329,16 +340,17 @@ Rationale:
 
    ```ts
    const NAV_PRIMARY: { key: Screen; label: string; icon: typeof LayoutDashboard }[] = [
-     { key: "dashboard",    label: "Dashboard",    icon: LayoutDashboard },
-     { key: "transactions", label: "Lançamentos",  icon: Receipt         },
+     { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+     { key: "transactions", label: "Lançamentos", icon: Receipt },
    ];
 
-   const NAV_ANALYSIS: { key: Screen; label: string; icon: typeof LayoutDashboard }[] = [
-     { key: "totais",    label: "Totais",    icon: Calculator  },
-     { key: "anuais",    label: "Anual",     icon: TrendingUp  },
-     { key: "horizonte", label: "Horizonte", icon: CalendarRange },
-     { key: "tags",      label: "Tags",      icon: TagsIcon    },
-   ];
+   const NAV_ANALYSIS: { key: Screen; label: string; icon: typeof LayoutDashboard }[] =
+     [
+       { key: "totais", label: "Totais", icon: Calculator },
+       { key: "anuais", label: "Anual", icon: TrendingUp },
+       { key: "horizonte", label: "Horizonte", icon: CalendarRange },
+       { key: "tags", label: "Tags", icon: TagsIcon },
+     ];
    ```
 
 3. Replace the nav render block (lines 101–126) with:
@@ -347,7 +359,9 @@ Rationale:
    <nav className="ak-nav">
      <div className="ak-navh">Início</div>
      {NAV_PRIMARY.map((n) => (
-       <button key={n.key} type="button"
+       <button
+         key={n.key}
+         type="button"
          className={`ak-item ${active === n.key ? "ak-item--active" : ""}`}
          aria-current={active === n.key ? "page" : undefined}
          onClick={() => onNavigate(n.key)}
@@ -359,7 +373,9 @@ Rationale:
 
      <div className="ak-navh">Análise</div>
      {NAV_ANALYSIS.map((n) => (
-       <button key={n.key} type="button"
+       <button
+         key={n.key}
+         type="button"
          className={`ak-item ${active === n.key ? "ak-item--active" : ""}`}
          aria-current={active === n.key ? "page" : undefined}
          onClick={() => onNavigate(n.key)}
@@ -370,7 +386,8 @@ Rationale:
      ))}
 
      <div className="ak-navh">Sistema</div>
-     <button type="button"
+     <button
+       type="button"
        className={`ak-item ${active === "settings" ? "ak-item--active" : ""}`}
        aria-current={active === "settings" ? "page" : undefined}
        onClick={() => onNavigate("settings")}
@@ -378,7 +395,8 @@ Rationale:
        <Settings size={18} strokeWidth={1.75} className="ak-item__ic" />
        <span>Configurações e privacidade</span>
      </button>
-     <button type="button"
+     <button
+       type="button"
        className={`ak-item ${active === "methodology" ? "ak-item--active" : ""}`}
        aria-current={active === "methodology" ? "page" : undefined}
        onClick={() => onNavigate("methodology")}
@@ -386,7 +404,8 @@ Rationale:
        <HelpCircle size={18} strokeWidth={1.75} className="ak-item__ic" />
        <span>Ajuda</span>
      </button>
-     <button type="button"
+     <button
+       type="button"
        className={`ak-item ${active === "copilot" ? "ak-item--active" : ""}`}
        aria-current={active === "copilot" ? "page" : undefined}
        onClick={() => onNavigate("copilot")}
@@ -457,6 +476,7 @@ const reserveTrendIcon =
 ```
 
 `reserveTrendIcon` is only consumed inside the deleted `MetricTile` "Reserva". After deletion:
+
 - Remove the `reserveTrendIcon` const (lines 71–78) since it is now unused.
 - Remove `TrendingDown` from the lucide-react import line.
 - `TrendingUp` is still used in the hero's `<dl>` — check; if not, remove it too.
@@ -464,6 +484,7 @@ const reserveTrendIcon =
 - `MetricTile` is used only in the `dash-grid4` block. Remove its import (line 6).
 
 After removal:
+
 - The hero section (lines 107–174 unchanged) already shows "Reserva" and "Lançamentos" in the
   `<dl>` inside `dash-hero__stats` (lines 124–135). No hero change needed.
 - The `monthDailyAvgCents` local variable (lines 90–93) is passed to `DailyCheckinCard`. Verify
@@ -626,13 +647,15 @@ Settings it needs an `onGoToSettings` callback. Add the prop and wire it.
 3. In `src/App.tsx`, update the `TransactionsScreen` usage (line 74) to pass the new prop:
 
    ```tsx
-   {screen === "transactions" && (
-     <TransactionsScreen
-       query={searchQuery}
-       onQueryChange={setSearchQuery}
-       onGoToSettings={() => setScreen("settings")}
-     />
-   )}
+   {
+     screen === "transactions" && (
+       <TransactionsScreen
+         query={searchQuery}
+         onQueryChange={setSearchQuery}
+         onGoToSettings={() => setScreen("settings")}
+       />
+     );
+   }
    ```
 
 **Verify**: `npm run typecheck` → exit 0.
@@ -742,19 +765,19 @@ feat(shell): restructure nav IA, dedupe dashboard, collapse search
 
 ### Tests to update (existing)
 
-| File | Test description | Change needed |
-|------|-----------------|---------------|
-| `src/App.navigation.test.tsx:53` | clicks "Metodologia" nav button | Change selector to `{ name: "Ajuda" }` |
-| `src/App.navigation.test.tsx:50` | asserts `"Filtrar por descrição"` input | Change to `"Buscar lançamentos"` (header search) |
-| `src/screens/TransactionsScreen.test.tsx` | all `render(<TransactionsScreen ...>)` calls | Add `onGoToSettings={vi.fn()}` prop |
-| `src/screens/DashboardScreen.test.tsx` | any assertion on "Saldo projetado" / "Diário de hoje" / "Crédito no mês" / "Reserva" MetricTiles | Remove those assertions |
+| File                                      | Test description                                                                                 | Change needed                                    |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------ |
+| `src/App.navigation.test.tsx:53`          | clicks "Metodologia" nav button                                                                  | Change selector to `{ name: "Ajuda" }`           |
+| `src/App.navigation.test.tsx:50`          | asserts `"Filtrar por descrição"` input                                                          | Change to `"Buscar lançamentos"` (header search) |
+| `src/screens/TransactionsScreen.test.tsx` | all `render(<TransactionsScreen ...>)` calls                                                     | Add `onGoToSettings={vi.fn()}` prop              |
+| `src/screens/DashboardScreen.test.tsx`    | any assertion on "Saldo projetado" / "Diário de hoje" / "Crédito no mês" / "Reserva" MetricTiles | Remove those assertions                          |
 
 ### New tests to write
 
-| File | Test | Happy path / regression it covers |
-|------|------|------------------------------------|
-| `src/App.navigation.test.tsx` | `"sidebar has Início and Análise group headings"` | Verifies new IA structure renders with correct headings |
-| `src/screens/TransactionsScreen.test.tsx` | `"shows a Settings CTA when there are no transactions"` | Regression: empty-state CTA navigates; prop is called |
+| File                                      | Test                                                    | Happy path / regression it covers                       |
+| ----------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------- |
+| `src/App.navigation.test.tsx`             | `"sidebar has Início and Análise group headings"`       | Verifies new IA structure renders with correct headings |
+| `src/screens/TransactionsScreen.test.tsx` | `"shows a Settings CTA when there are no transactions"` | Regression: empty-state CTA navigates; prop is called   |
 
 ### Structural pattern
 

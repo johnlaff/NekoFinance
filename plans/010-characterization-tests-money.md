@@ -63,6 +63,7 @@ duplicate):
   `sheet_daily_balance`.
 
 **Key invariants confirmed in code:**
+
 - `amount` is always stored as positive magnitude (integer cents ≥ 0). Functions
   use `ABS()` in SQL or `.abs()` in Rust when reading back; do not insert negative
   amounts in the new tests unless the test is specifically about non-canonical sign.
@@ -79,7 +80,7 @@ duplicate):
 - `effective_daily_ceiling` (line 612): if an active explicit `daily_budget` with
   `amount > 0` exists, returns it directly (priority). Otherwise, returns
   `SUM(expense where is_fixed=0 AND is_projection=0 AND payment_method<>'credit'
-  AND substr(date,1,7) = prev_ym) / days_in_prev_month`. Returns 0 if no prior month.
+AND substr(date,1,7) = prev_ym) / days_in_prev_month`. Returns 0 if no prior month.
 - `load_write_back_txns` (line 1919): for a given `year` (i32):
   - Loads all `income` and `expense` (non-credit) transactions with
     `substr(date,1,4) = year`.
@@ -87,7 +88,7 @@ duplicate):
     expense → `RowKind::Diario`.
   - If a credit card account exists with `closing_day` and `due_day` set,
     collapses all credit expenses into lumps at `cycle_due_date(purchase_date,
-    closing, due)` — only those whose due date falls in `year` are included.
+closing, due)` — only those whose due date falls in `year` are included.
   - If no credit card with a cycle exists, credit expenses are included at
     their own dates as `RowKind::Saida`.
 
@@ -133,16 +134,17 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 data when the existing fixture covers the case.
 
 Key types (from `src/lib/api.ts`):
+
 - `Forecast` (line 179): includes `annual_savings: AnnualSavings`,
   `coverage: MonthCoverage[]`, `baseline_outflow_cents`, `trusted_through_month`,
   `months: MonthMetric[]`.
 - `MonthCoverage` (line 168): `{ year, month, projected_outflow_cents,
-  baseline_outflow_cents, coverage_bps, is_complete, estimated_missing_cents }`.
+baseline_outflow_cents, coverage_bps, is_complete, estimated_missing_cents }`.
 - `AnnualSavings` (line 154): includes `registered_economia_cents`,
   `realized_income_cents`, `realized_savings_cents`, `realized_rate_bps`.
 - `MonthGridDay` used by `getMonthGrid` Tauri command (`get_month_grid`).
 - `Pockets` (line ~96 of `src/test/commands.ts`): `{ liquid_cents, reserve_cents,
-  restricted_cents, illiquid_cents, net_worth_cents, accounts[] }`.
+restricted_cents, illiquid_cents, net_worth_cents, accounts[] }`.
 
 **React Compiler is enabled**: do NOT add `memo`, `useMemo`, or `useCallback` anywhere.
 
@@ -162,15 +164,15 @@ form renders as disabled, test the disabled state rather than submit flow.
 
 ## Commands you will need
 
-| Purpose | Command | Expected on success |
-|---------|---------|---------------------|
-| Rust tests (all) | `cargo test --manifest-path src-tauri/Cargo.toml --locked` | all pass |
-| Rust tests (filter) | `cargo test --manifest-path src-tauri/Cargo.toml --locked -- helpers_char` | targeted tests pass |
-| Frontend tests (all) | `npm run test:run` | all pass |
-| Frontend tests (filter) | `npm run test:run -- --reporter=verbose PrevisibilidadeCard` | targeted tests pass |
-| Typecheck | `npm run typecheck` | exit 0, no errors |
-| Lint | `npm run lint` | exit 0 |
-| Full gate (optional, use last) | `npm run check` | exit 0 |
+| Purpose                        | Command                                                                    | Expected on success |
+| ------------------------------ | -------------------------------------------------------------------------- | ------------------- |
+| Rust tests (all)               | `cargo test --manifest-path src-tauri/Cargo.toml --locked`                 | all pass            |
+| Rust tests (filter)            | `cargo test --manifest-path src-tauri/Cargo.toml --locked -- helpers_char` | targeted tests pass |
+| Frontend tests (all)           | `npm run test:run`                                                         | all pass            |
+| Frontend tests (filter)        | `npm run test:run -- --reporter=verbose PrevisibilidadeCard`               | targeted tests pass |
+| Typecheck                      | `npm run typecheck`                                                        | exit 0, no errors   |
+| Lint                           | `npm run lint`                                                             | exit 0              |
+| Full gate (optional, use last) | `npm run check`                                                            | exit 0              |
 
 ## Scope
 
@@ -275,7 +277,7 @@ Add these tests inside `mod tests`:
    expenses with values that have a known median (e.g., 100_000, 200_000, 300_000,
    150_000, 250_000, 180_000, 400_000 from oldest to newest; the LIMIT 6 takes the 6
    most recent, sorted ascending → median of `[150_000, 180_000, 200_000, 250_000,
-   300_000, 400_000]` = `(200_000 + 250_000) / 2 = 225_000`). Today = first day of
+300_000, 400_000]` = `(200_000 + 250_000) / 2 = 225_000`). Today = first day of
    the month AFTER the last expense month.
 
 2. **`baseline_returns_zero_when_no_complete_months`** — empty pool (or only current
@@ -370,6 +372,7 @@ Model after `DailyCheckinCard.test.tsx`. The component is a pure render (no Taur
 calls; props-only). No `vi.mock` or `mockCommands` needed.
 
 Import from `src/test/commands.ts`:
+
 - `FORECAST` for the standard case (has coverage with one incomplete month,
   `baseline_outflow_cents > 0`, `annual_savings.registered_economia_cents = 250000`,
   `annual_savings.realized_income_cents = 5000000`).
@@ -444,6 +447,7 @@ Import `MONTH_GRID` from `src/test/commands.ts`. The MONTH_GRID fixture has 4 da
 through the rendered footer rows.
 
 From the MONTH_GRID fixture:
+
 - `income_cents` total = 700_000 (day June 25).
 - `fixed_out_cents` total = 250_000 (day June 15).
 - `daily_out_cents` total = 4_300 (day June 15).
@@ -519,6 +523,7 @@ submit button has the disabled attribute when `!isTauri`.
 ### Step 11: Typecheck and lint
 
 **Verify (both must pass)**:
+
 ```
 npm run typecheck 2>&1 | tail -5   # → exit 0, no errors
 npm run lint 2>&1 | tail -5        # → exit 0
@@ -535,24 +540,24 @@ Edit `plans/README.md`. Change the status cell for plan 010 from `TODO` to `DONE
 
 ### Rust tests (append to `mod tests` in `src-tauri/src/commands.rs`)
 
-| Test name | Helper(s) under test | What it pins |
-|-----------|----------------------|--------------|
-| `economia_counts_complete_months_only` | `realized_annual_economia` | current-month exclusion |
-| `economia_skips_transfers_to_liquid_accounts` | `realized_annual_economia` | liquidity filter |
-| `economia_ignores_stale_is_projection_flag` | `realized_annual_economia` | date-window wins |
-| `baseline_is_median_of_last_six_complete_months` | `realized_monthly_baseline` | LIMIT 6 + median |
-| `baseline_returns_zero_when_no_complete_months` | `realized_monthly_baseline` | zero-data path |
-| `baseline_ignores_current_month` | `realized_monthly_baseline` | month boundary |
-| `baseline_odd_count_uses_middle_value` | `realized_monthly_baseline` | odd-length median |
-| `daily_ceiling_falls_back_to_prior_month_avg` | `effective_daily_ceiling` | fallback path |
-| `daily_ceiling_prefers_active_budget_over_fallback` | `effective_daily_ceiling` | budget priority |
-| `daily_ceiling_zero_when_no_prior_month` | `effective_daily_ceiling` | new-user zero |
-| `daily_ceiling_excludes_fixed_and_credit_from_avg` | `effective_daily_ceiling` | filter correctness |
-| `write_back_txns_income_and_variable_expense` | `load_write_back_txns` | Entrada + Diario |
-| `write_back_txns_fixed_expense_maps_to_saida` | `load_write_back_txns` | Saida for fixed |
-| `write_back_txns_credit_no_card_falls_to_own_date` | `load_write_back_txns` | no-card branch |
-| `write_back_txns_transfer_excluded` | `load_write_back_txns` | transfer exclusion |
-| `write_back_txns_wrong_year_excluded` | `load_write_back_txns` | year filter |
+| Test name                                           | Helper(s) under test        | What it pins            |
+| --------------------------------------------------- | --------------------------- | ----------------------- |
+| `economia_counts_complete_months_only`              | `realized_annual_economia`  | current-month exclusion |
+| `economia_skips_transfers_to_liquid_accounts`       | `realized_annual_economia`  | liquidity filter        |
+| `economia_ignores_stale_is_projection_flag`         | `realized_annual_economia`  | date-window wins        |
+| `baseline_is_median_of_last_six_complete_months`    | `realized_monthly_baseline` | LIMIT 6 + median        |
+| `baseline_returns_zero_when_no_complete_months`     | `realized_monthly_baseline` | zero-data path          |
+| `baseline_ignores_current_month`                    | `realized_monthly_baseline` | month boundary          |
+| `baseline_odd_count_uses_middle_value`              | `realized_monthly_baseline` | odd-length median       |
+| `daily_ceiling_falls_back_to_prior_month_avg`       | `effective_daily_ceiling`   | fallback path           |
+| `daily_ceiling_prefers_active_budget_over_fallback` | `effective_daily_ceiling`   | budget priority         |
+| `daily_ceiling_zero_when_no_prior_month`            | `effective_daily_ceiling`   | new-user zero           |
+| `daily_ceiling_excludes_fixed_and_credit_from_avg`  | `effective_daily_ceiling`   | filter correctness      |
+| `write_back_txns_income_and_variable_expense`       | `load_write_back_txns`      | Entrada + Diario        |
+| `write_back_txns_fixed_expense_maps_to_saida`       | `load_write_back_txns`      | Saida for fixed         |
+| `write_back_txns_credit_no_card_falls_to_own_date`  | `load_write_back_txns`      | no-card branch          |
+| `write_back_txns_transfer_excluded`                 | `load_write_back_txns`      | transfer exclusion      |
+| `write_back_txns_wrong_year_excluded`               | `load_write_back_txns`      | year filter             |
 
 Total new Rust tests: 16.
 
@@ -562,12 +567,12 @@ for inserting a `daily_budget` row.
 
 ### Frontend tests (new files)
 
-| File | Tests | Structural model |
-|------|-------|-----------------|
-| `PrevisibilidadeCard.test.tsx` | 4 | `DailyCheckinCard.test.tsx` |
-| `PerformanceCard.test.tsx` | 3 | `DailyCheckinCard.test.tsx` |
-| `MonthLedgerCard.test.tsx` | 4 | `DashboardScreen.test.tsx` |
-| `PocketsManager.test.tsx` | 4 | `DailyCheckinCard.test.tsx` |
+| File                           | Tests | Structural model            |
+| ------------------------------ | ----- | --------------------------- |
+| `PrevisibilidadeCard.test.tsx` | 4     | `DailyCheckinCard.test.tsx` |
+| `PerformanceCard.test.tsx`     | 3     | `DailyCheckinCard.test.tsx` |
+| `MonthLedgerCard.test.tsx`     | 4     | `DashboardScreen.test.tsx`  |
+| `PocketsManager.test.tsx`      | 4     | `DailyCheckinCard.test.tsx` |
 
 Total new frontend tests: ≥ 15.
 
@@ -582,13 +587,13 @@ Total new frontend tests: ≥ 15.
 Machine-checkable. ALL must hold:
 
 - [ ] `cargo test --manifest-path src-tauri/Cargo.toml --locked` exits 0; the 16 new
-  Rust test names listed in the Test plan table all appear in the output as `ok`.
+      Rust test names listed in the Test plan table all appear in the output as `ok`.
 - [ ] `npm run test:run` exits 0; the 4 new `.test.tsx` files all appear in the output.
 - [ ] `npm run typecheck` exits 0 with no errors.
 - [ ] `npm run lint` exits 0.
 - [ ] `git diff --name-only HEAD~1..HEAD` (or `git status`) shows ONLY the 5
-  in-scope files modified/created (plus `plans/README.md`). No production source
-  files changed.
+      in-scope files modified/created (plus `plans/README.md`). No production source
+      files changed.
 - [ ] `plans/README.md` status for plan 010 reads `DONE`.
 
 ## STOP conditions

@@ -54,6 +54,7 @@ together, or nothing changes.
 ### Critical excerpts (re-verify with the drift check)
 
 **`import_rows_with_options` signature (import.rs:199–205):**
+
 ```rust
 pub async fn import_rows_with_options(
     pool: &SqlitePool,
@@ -63,9 +64,11 @@ pub async fn import_rows_with_options(
     options: ImportRowsOptions,
 ) -> Result<usize, String> {
 ```
+
 It calls `pool.begin()` at line 226 and `tx.commit()` at line 394.
 
 **`store_balance_series` signature (import.rs:739–744):**
+
 ```rust
 pub async fn store_balance_series(
     pool: &SqlitePool,
@@ -73,10 +76,12 @@ pub async fn store_balance_series(
     series: &[DailyBalance],
 ) -> Result<usize, String> {
 ```
+
 It calls `pool.begin()` at line 744 and `tx.commit()` at line 765.
 
 **`import_sheet_data` orchestration (commands.rs:199–261) — the non-atomic
 sequence:**
+
 ```rust
 // Layout INSERT (separate execute)
 sqlx::query("INSERT OR REPLACE INTO sheet_layout …")
@@ -97,6 +102,7 @@ import::store_balance_series(&pool, &sheet_name, &balances).await?; // line ~258
 ```
 
 **`import_local_xlsx` (commands.rs:341–396) — identical shape per sheet:**
+
 ```rust
 sqlx::query("INSERT OR REPLACE INTO sheet_layout …")
     .execute(pool.inner())  // line ~351
@@ -142,14 +148,14 @@ read-your-writes false negative.
 
 ## Commands you will need
 
-| Purpose            | Command                                                                              | Expected on success         |
-|--------------------|--------------------------------------------------------------------------------------|-----------------------------|
-| Rust check         | `npm run rust:check`                                                                 | exit 0 (fmt + clippy + test)|
-| Rust tests only    | `cargo test --manifest-path src-tauri/Cargo.toml --locked`                          | all pass                    |
-| Filtered Rust test | `cargo test --manifest-path src-tauri/Cargo.toml --locked import`                   | all pass                    |
-| Typecheck (full)   | `npm run typecheck`                                                                  | exit 0                      |
-| Full gate          | `npm run check`                                                                      | exit 0                      |
-| Privacy scan       | `npm run privacy:scan`                                                               | exit 0                      |
+| Purpose            | Command                                                           | Expected on success          |
+| ------------------ | ----------------------------------------------------------------- | ---------------------------- |
+| Rust check         | `npm run rust:check`                                              | exit 0 (fmt + clippy + test) |
+| Rust tests only    | `cargo test --manifest-path src-tauri/Cargo.toml --locked`        | all pass                     |
+| Filtered Rust test | `cargo test --manifest-path src-tauri/Cargo.toml --locked import` | all pass                     |
+| Typecheck (full)   | `npm run typecheck`                                               | exit 0                       |
+| Full gate          | `npm run check`                                                   | exit 0                       |
+| Privacy scan       | `npm run privacy:scan`                                            | exit 0                       |
 
 ## Scope
 
@@ -330,6 +336,7 @@ Ok(count)
 ```
 
 Notes:
+
 - `get_balance_offset_for_sheet` is a read-only query; call it against `&pool`
   (pool-level read) before or after the tx — it does not write. Calling it
   after `tx` is opened is fine because it does not conflict with any in-tx
@@ -542,10 +549,10 @@ Then run the full gate:
 
 ### New tests (Step 4, in `src-tauri/src/google_sheets/import.rs`, `mod tests`)
 
-| Test name | What it covers |
-|---|---|
-| `atomic_import_rolls_back_on_balance_error` | Explicit rollback after row-import phase leaves zero transactions and zero balance rows; duplicate-check gate not poisoned by the rolled-back sync_log entries |
-| `atomic_import_commits_rows_and_balance_together` | Successful single-transaction import commits both rows and balance series; both are readable after commit |
+| Test name                                         | What it covers                                                                                                                                                 |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `atomic_import_rolls_back_on_balance_error`       | Explicit rollback after row-import phase leaves zero transactions and zero balance rows; duplicate-check gate not poisoned by the rolled-back sync_log entries |
+| `atomic_import_commits_rows_and_balance_together` | Successful single-transaction import commits both rows and balance series; both are readable after commit                                                      |
 
 ### Structural pattern
 
@@ -556,6 +563,7 @@ async test setup (`test_pool().await`, `imported()` helper, `count_transactions(
 ### Existing tests that must still pass (no regression)
 
 All tests in `mod tests` of `import.rs` — especially:
+
 - `reimport_identical_dataset_is_noop` — idempotency must still work
 - `import_bootstraps_default_profile_when_id_is_unknown` — profile resolution still in inner tx
 - `reimport_preserves_transaction_identity_and_enrichment` — no re-insert

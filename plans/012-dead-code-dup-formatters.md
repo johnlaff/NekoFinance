@@ -94,6 +94,7 @@ export function formatBRL(cents: number, hideCents = false): string {
 **Key semantic difference**: `fmtBRL` delegates sign to `toLocaleString` (produces a locale hyphen-minus like `-R$ 50,00`). `formatBRL` uses the typographic minus `−` (U+2212) and supports `hideCents`. `formatBRL` is the Design System formatter (used by `<Money>`, `TransactionRow`, `CardChip`, `BalanceTrajectory`) and is the **survivor**. `fmtBRL` is used only in plain-text contexts (aria-labels, text strings) where no `hideCents` is needed and the difference in minus character does not matter semantically.
 
 **`fmtBRL` callers to migrate** (7 files):
+
 - `src/features/reconcile/ConflictGate.tsx:23` — `fmtBRL(Math.abs(n))` in aria text
 - `src/screens/CopilotScreen.tsx:43,47` — two template-string aria texts
 - `src/screens/DashboardScreen.tsx:113,179,185,186,190` — five `value=` and `sublabel=` string props
@@ -102,6 +103,7 @@ export function formatBRL(cents: number, hideCents = false): string {
 - `src/screens/dashboard/PrevisibilidadeCard.tsx:104,114` — two aria/display strings
 
 **`formatBRL` callers** (already using the survivor, no change needed):
+
 - `src/design-system/components/BalanceTrajectory.tsx` — 4 call sites
 - `src/design-system/components/CardChip.tsx` — 2 call sites
 - `src/design-system/components/Money.tsx` — 2 call sites (the DS primary consumer)
@@ -171,22 +173,23 @@ Action for `is_valid_code_verifier`: **keep the function, remove the `#[allow(de
 
 ## Commands you will need
 
-| Purpose | Command | Expected on success |
-|---------|---------|---------------------|
-| Typecheck (TS) | `npm run typecheck` | exit 0, no errors |
-| Lint | `npm run lint` | exit 0 |
-| Frontend tests | `npm run test:run` | all pass |
-| Rust check (fmt+clippy+test) | `npm run rust:check` | exit 0 |
-| Full gate | `npm run check` | exit 0 |
-| Grep dead hook | `grep -rn "useCountUp" src/` | no output |
-| Grep old formatter | `grep -rn "\bfmtBRL\b" src/` | no output |
-| Grep dead_code suppressors | `grep -rn "allow(dead_code)" src-tauri/src/` | no output |
+| Purpose                      | Command                                      | Expected on success |
+| ---------------------------- | -------------------------------------------- | ------------------- |
+| Typecheck (TS)               | `npm run typecheck`                          | exit 0, no errors   |
+| Lint                         | `npm run lint`                               | exit 0              |
+| Frontend tests               | `npm run test:run`                           | all pass            |
+| Rust check (fmt+clippy+test) | `npm run rust:check`                         | exit 0              |
+| Full gate                    | `npm run check`                              | exit 0              |
+| Grep dead hook               | `grep -rn "useCountUp" src/`                 | no output           |
+| Grep old formatter           | `grep -rn "\bfmtBRL\b" src/`                 | no output           |
+| Grep dead_code suppressors   | `grep -rn "allow(dead_code)" src-tauri/src/` | no output           |
 
 ## Scope
 
 **In scope** (the only files you should modify):
 
 Frontend:
+
 - `src/lib/useCountUp.ts` — delete
 - `src/lib/useCountUp.test.ts` — delete
 - `src/lib/format.ts` — delete `fmtBRL` function (lines 14–21 at planned-at SHA)
@@ -200,10 +203,12 @@ Frontend:
 - `src/screens/dashboard/PrevisibilidadeCard.tsx` — replace `fmtBRL` import+calls with `formatBRL`
 
 Rust:
+
 - `src-tauri/src/forecast/mod.rs` — remove `#![allow(dead_code)]` (line 14) and its stale comment (lines 12–13); conditionally add a field-level suppressor on `cash_floor_cents` if Rust flags it
 - `src-tauri/src/oauth/pkce.rs` — delete `exchange_code` (lines 111–121); remove `#[allow(dead_code)]` from `is_valid_code_verifier` and move it inside `#[cfg(test)]`
 
 **Out of scope** (do NOT touch, even if they look related):
+
 - `src/design-system/components/Money.tsx` — already uses `formatBRL`; no change needed
 - `src/design-system/components/BalanceTrajectory.tsx` — already uses `formatBRL`; no change needed
 - `src/design-system/components/CardChip.tsx` — already uses `formatBRL`; no change needed
@@ -240,6 +245,7 @@ Expected output: exactly two lines, both in `src/lib/useCountUp.ts` and `src/lib
 ### Step 2: Delete useCountUp source and test files
 
 Delete both files:
+
 - `src/lib/useCountUp.ts`
 - `src/lib/useCountUp.test.ts`
 
@@ -250,6 +256,7 @@ Then: `npm run typecheck` → exit 0, no errors.
 ### Step 3: Migrate fmtBRL callers in screen/feature files
 
 For each of the 7 files below, do the following mechanical substitution:
+
 1. In the `import` line, replace `fmtBRL` with `formatBRL` (if `formatBRL` is not already imported in that file).
 2. In every call site, replace `fmtBRL(` with `formatBRL(`.
 
@@ -262,26 +269,32 @@ For each of the 7 files below, do the following mechanical substitution:
 Files to edit (in any order):
 
 **`src/features/reconcile/ConflictGate.tsx`**
+
 - Line 13: `import { fmtBRL } from "../../lib/format";` → `import { formatBRL } from "../../lib/format";`
 - Line 23: `fmtBRL(Math.abs(n))` → `formatBRL(Math.abs(n))`
 
 **`src/screens/CopilotScreen.tsx`**
+
 - Line 9: remove `fmtBRL` from import (keep `monthNamePtBR`); add `formatBRL` to same import
 - Lines 43, 47: replace `fmtBRL(` with `formatBRL(`
 
 **`src/screens/DashboardScreen.tsx`**
+
 - Line 11: replace `fmtBRL` with `formatBRL` in import (keep `fmtDayMonth`, `monthNamePtBR`)
 - Lines 113, 179, 185, 186, 190: replace `fmtBRL(` with `formatBRL(`
 
 **`src/screens/dashboard/DailyCheckinCard.tsx`**
+
 - Line 7: replace `fmtBRL` with `formatBRL` in import (keep `parseBRLToCents`, `todayISO`)
 - Lines 113, 114, 178: replace `fmtBRL(` with `formatBRL(`
 
 **`src/screens/dashboard/PerformanceCard.tsx`**
+
 - Line 3: replace `fmtBRL` with `formatBRL` in import (keep `monthNamePtBR`)
 - Line 60: replace `fmtBRL(` with `formatBRL(`
 
 **`src/screens/dashboard/PrevisibilidadeCard.tsx`**
+
 - Line 3: replace `fmtBRL` with `formatBRL` in import (keep `monthNamePtBR`)
 - Lines 104, 114: replace `fmtBRL(` with `formatBRL(`
 
@@ -294,6 +307,7 @@ Then: `npm run typecheck` → exit 0.
 **In `src/lib/format.ts`**: Delete lines 14–21 (the `fmtBRL` function, including the JSDoc comment above it). Verify no blank lines are left that look like artifacts.
 
 **In `src/lib/format.test.ts`**: The test block `describe("fmtBRL", ...)` at lines 38–54 tests locale formatting of cents. Convert it to test `formatBRL` instead:
+
 1. Add `formatBRL` to the import at line 3 (alongside the existing imports).
 2. Remove `fmtBRL` from that import.
 3. Rename the describe block from `"fmtBRL"` to `"formatBRL"`.
@@ -304,6 +318,7 @@ Then: `npm run typecheck` → exit 0.
    - `formatBRL(7)` → contains `"0,07"` ✓ (same)
 
    The negative test case changes from `toBe("-R$ 50,00")` to using `toContain("−")` and `toContain("50,00")` to be locale-tolerant, matching the pattern already used in `src/design-system/components/Money.test.tsx:11`:
+
    ```ts
    // Money.test.tsx:11 — use as pattern:
    const s = formatBRL(-50000);
@@ -311,6 +326,7 @@ Then: `npm run typecheck` → exit 0.
    ```
 
 **Verify**:
+
 - `grep -rn "\bfmtBRL\b" src/` → no output (the symbol is fully gone)
 - `npm run test:run` → all pass
 
@@ -343,6 +359,7 @@ Do NOT add any other `#[allow(dead_code)]` attributes. If Rust flags other items
 Open `src-tauri/src/oauth/pkce.rs`.
 
 **Delete `exchange_code`** (lines 111–121 at planned-at SHA):
+
 ```rust
 #[allow(dead_code)]
 pub fn exchange_code(
@@ -356,6 +373,7 @@ pub fn exchange_code(
     ))
 }
 ```
+
 Remove the blank line that preceded it too.
 
 **Move `is_valid_code_verifier` inside `#[cfg(test)]`**: The function (lines 123–130) is only called in the test module. Remove the `#[allow(dead_code)]` attribute from it. Move the function body (without the `#[allow(dead_code)]`) into the `#[cfg(test)]` block that starts at line 132. The function becomes `fn is_valid_code_verifier` (no `pub` needed inside `#[cfg(test)]`). The existing test `test_generate_verifier_length` at line 136 calls `is_valid_code_verifier(verifier.secret())` — this reference will now resolve to the local function.
@@ -394,6 +412,7 @@ No new tests are required. The changes are purely structural:
 - Rust tests in `pkce.rs` continue to pass; `is_valid_code_verifier` remains callable inside the test module.
 
 Model the updated `format.test.ts` negative-amount test after the pattern in `src/design-system/components/Money.test.tsx:11-13`:
+
 ```ts
 it("formats negative amounts with typographic minus", () => {
   const s = formatBRL(-5000);

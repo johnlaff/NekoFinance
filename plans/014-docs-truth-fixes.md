@@ -105,16 +105,16 @@ sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev
 
 ## Commands you will need
 
-| Purpose          | Command                                                  | Expected on success                    |
-|------------------|----------------------------------------------------------|----------------------------------------|
-| Drift check      | `git diff --stat d183bbf..HEAD -- docs/testing-strategy.md docs/architecture.md docs/version-matrix.md README.md src-tauri/migrations/20240612000010_drop_unused_fts.sql` | empty or no in-scope files changed |
-| Verify no e2e in check | `grep '"check"' package.json`                       | line does not contain `run e2e ` (space after `e2e`; `e2e:typecheck` is fine) |
-| Verify keyring in Cargo.toml | `grep 'keyring' src-tauri/Cargo.toml`       | `version = "3"`                        |
-| Verify keyring in Cargo.lock | `grep -A2 'name = "keyring"' src-tauri/Cargo.lock` | `version = "3.x.x"`              |
-| Lint             | `npm run lint`                                           | exit 0, no errors                      |
-| Typecheck        | `npm run typecheck`                                      | exit 0, no errors                      |
-| Privacy scan     | `npm run privacy:scan`                                   | exit 0                                 |
-| Full gate        | `npm run check`                                          | exit 0                                 |
+| Purpose                      | Command                                                                                                                                                                   | Expected on success                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Drift check                  | `git diff --stat d183bbf..HEAD -- docs/testing-strategy.md docs/architecture.md docs/version-matrix.md README.md src-tauri/migrations/20240612000010_drop_unused_fts.sql` | empty or no in-scope files changed                                            |
+| Verify no e2e in check       | `grep '"check"' package.json`                                                                                                                                             | line does not contain `run e2e ` (space after `e2e`; `e2e:typecheck` is fine) |
+| Verify keyring in Cargo.toml | `grep 'keyring' src-tauri/Cargo.toml`                                                                                                                                     | `version = "3"`                                                               |
+| Verify keyring in Cargo.lock | `grep -A2 'name = "keyring"' src-tauri/Cargo.lock`                                                                                                                        | `version = "3.x.x"`                                                           |
+| Lint                         | `npm run lint`                                                                                                                                                            | exit 0, no errors                                                             |
+| Typecheck                    | `npm run typecheck`                                                                                                                                                       | exit 0, no errors                                                             |
+| Privacy scan                 | `npm run privacy:scan`                                                                                                                                                    | exit 0                                                                        |
+| Full gate                    | `npm run check`                                                                                                                                                           | exit 0                                                                        |
 
 ## Scope
 

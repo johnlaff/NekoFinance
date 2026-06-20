@@ -57,6 +57,7 @@ accurate.
 ### Verified code excerpts (re-confirm before editing)
 
 **`src/screens/dashboard/colchaoPhase.ts` lines 1–24** (entire file):
+
 ```ts
 import type { DashboardSummary, Forecast } from "../../lib/api";
 import type { Phase } from "../../design-system/components/PhaseBadge";
@@ -79,17 +80,19 @@ export function colchaoPhase(
   if (txns < 30 || income === 0) return "map";
   const economia = forecast.annual_savings.registered_economia_cents;
   const rateOk = economia * 10_000 >= income * 2_000;
-  const reserveOk = (summary?.reserve_months ?? 0) >= 3;   // ← BUG: should be 6
+  const reserveOk = (summary?.reserve_months ?? 0) >= 3; // ← BUG: should be 6
   return rateOk && reserveOk ? "operate" : "calibrate";
 }
 ```
 
 **`src/screens/dashboard/ColchaoCard.tsx` line 31** (tooltip title attribute):
+
 ```tsx
         <span title="Fases do método — Mapear: menos de 30 lançamentos. Calibrar: ajustando o diário. Operar: ≥ 20% economizado no ano e ≥ 3 meses de reserva.">
 ```
 
 **`src-tauri/src/commands.rs` lines 572–602** (`realized_monthly_baseline`):
+
 ```rust
 /// Gasto típico de um mês = MEDIANA da saída dos meses realizados COMPLETOS (anteriores ao mês
 /// corrente), dos **últimos 6 meses** (recentes representam melhor o padrão atual que meses
@@ -109,6 +112,7 @@ async fn realized_monthly_baseline(
 ```
 
 **`CONTEXT.md` line 103**:
+
 ```
 **Phase** (adaptação): `map` (mapping — few lançamentos / no realized month) → `calibrate` (tuning the diário) → `operate` (Economizado% ≥ 20% and reserve ≥ 3 months). Derived from summary + forecast (`colchaoPhase`), not stored.
 ```
@@ -140,24 +144,26 @@ threshold and its documentation.
 
 ## Commands you will need
 
-| Purpose          | Command                                                       | Expected on success          |
-|------------------|---------------------------------------------------------------|------------------------------|
+| Purpose          | Command                                                                                                                                                                                        | Expected on success                    |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
 | Drift check      | `git diff --stat d183bbf..HEAD -- src/screens/dashboard/colchaoPhase.ts src/screens/dashboard/colchaoPhase.test.ts src/screens/dashboard/ColchaoCard.tsx src-tauri/src/commands.rs CONTEXT.md` | Only in-scope files changed (or empty) |
-| Front unit tests | `npm run test:run`                                            | all pass, exit 0             |
-| Filtered tests   | `npx vitest run src/screens/dashboard/colchaoPhase.test.ts`  | all pass, exit 0             |
-| Typecheck        | `npm run typecheck`                                           | exit 0, no errors            |
-| Lint             | `npm run lint`                                               | exit 0                       |
-| Full gate        | `npm run check`                                               | exit 0                       |
+| Front unit tests | `npm run test:run`                                                                                                                                                                             | all pass, exit 0                       |
+| Filtered tests   | `npx vitest run src/screens/dashboard/colchaoPhase.test.ts`                                                                                                                                    | all pass, exit 0                       |
+| Typecheck        | `npm run typecheck`                                                                                                                                                                            | exit 0, no errors                      |
+| Lint             | `npm run lint`                                                                                                                                                                                 | exit 0                                 |
+| Full gate        | `npm run check`                                                                                                                                                                                | exit 0                                 |
 
 ## Scope
 
 **In scope** (the only files you should modify):
+
 - `src/screens/dashboard/colchaoPhase.ts` — raise operate gate; add `RESERVE_MIN_MONTHS` constant.
 - `src/screens/dashboard/colchaoPhase.test.ts` — add regression cases for 3, 5, and 6 months.
 - `src/screens/dashboard/ColchaoCard.tsx` — update tooltip string at line 31.
 - `CONTEXT.md` — update line 103 ("≥ 3 months" → "≥ 6 months").
 
 **Out of scope** (do NOT touch, even though they look related):
+
 - `src-tauri/src/commands.rs` — the `realized_monthly_baseline` SQL is correct
   (already filters `type='expense'`; Economia/transfers are `type='transfer'` and
   therefore excluded). No change needed.
@@ -190,12 +196,15 @@ export const RESERVE_MIN_MONTHS = 6;
 ```
 
 Change line 22 from:
+
 ```ts
-  const reserveOk = (summary?.reserve_months ?? 0) >= 3;
+const reserveOk = (summary?.reserve_months ?? 0) >= 3;
 ```
+
 to:
+
 ```ts
-  const reserveOk = (summary?.reserve_months ?? 0) >= RESERVE_MIN_MONTHS;
+const reserveOk = (summary?.reserve_months ?? 0) >= RESERVE_MIN_MONTHS;
 ```
 
 The full file after the edit should be:
@@ -264,32 +273,50 @@ import { colchaoPhase, RESERVE_MIN_MONTHS } from "./colchaoPhase";
 New cases (add after the existing `it("operates when …")` block):
 
 ```ts
-  it("calibrates at 3 months even when rate is met — below method floor", () => {
-    expect(
-      colchaoPhase(
-        { ...summary, reserve_months: 3 },
-        { ...forecast, annual_savings: { ...forecast.annual_savings, registered_economia_cents: 200_000 } },
-      ),
-    ).toBe("calibrate");
-  });
+it("calibrates at 3 months even when rate is met — below method floor", () => {
+  expect(
+    colchaoPhase(
+      { ...summary, reserve_months: 3 },
+      {
+        ...forecast,
+        annual_savings: {
+          ...forecast.annual_savings,
+          registered_economia_cents: 200_000,
+        },
+      },
+    ),
+  ).toBe("calibrate");
+});
 
-  it("calibrates at 5 months — at-risk zone, not yet at floor", () => {
-    expect(
-      colchaoPhase(
-        { ...summary, reserve_months: 5 },
-        { ...forecast, annual_savings: { ...forecast.annual_savings, registered_economia_cents: 200_000 } },
-      ),
-    ).toBe("calibrate");
-  });
+it("calibrates at 5 months — at-risk zone, not yet at floor", () => {
+  expect(
+    colchaoPhase(
+      { ...summary, reserve_months: 5 },
+      {
+        ...forecast,
+        annual_savings: {
+          ...forecast.annual_savings,
+          registered_economia_cents: 200_000,
+        },
+      },
+    ),
+  ).toBe("calibrate");
+});
 
-  it("operates at exactly RESERVE_MIN_MONTHS when rate is met", () => {
-    expect(
-      colchaoPhase(
-        { ...summary, reserve_months: RESERVE_MIN_MONTHS },
-        { ...forecast, annual_savings: { ...forecast.annual_savings, registered_economia_cents: 200_000 } },
-      ),
-    ).toBe("operate");
-  });
+it("operates at exactly RESERVE_MIN_MONTHS when rate is met", () => {
+  expect(
+    colchaoPhase(
+      { ...summary, reserve_months: RESERVE_MIN_MONTHS },
+      {
+        ...forecast,
+        annual_savings: {
+          ...forecast.annual_savings,
+          registered_economia_cents: 200_000,
+        },
+      },
+    ),
+  ).toBe("operate");
+});
 ```
 
 **Verify**: `npx vitest run src/screens/dashboard/colchaoPhase.test.ts` → all 5
@@ -339,6 +366,7 @@ and must NOT contain `≥ 3 months`.
 ### Step 5: Run the full verification gate
 
 **Verify**:
+
 1. `npm run test:run` → all tests pass, exit 0 (at least 5 tests in colchaoPhase suite).
 2. `npm run typecheck` → exit 0.
 3. `npm run lint` → exit 0.
@@ -367,13 +395,14 @@ Then update the `plans/README.md` status row for plan 006 from `TODO` to `DONE`.
 
 New test cases (all in `src/screens/dashboard/colchaoPhase.test.ts`):
 
-| # | Case | Input | Expected |
-|---|------|-------|----------|
-| 1 | Regression: 3 months + 20% rate | `reserve_months: 3`, `registered_economia_cents: 200_000` | `"calibrate"` |
-| 2 | At-risk zone: 5 months + 20% rate | `reserve_months: 5`, `registered_economia_cents: 200_000` | `"calibrate"` |
-| 3 | Boundary floor: exactly 6 months + 20% rate | `reserve_months: RESERVE_MIN_MONTHS`, `registered_economia_cents: 200_000` | `"operate"` |
+| #   | Case                                        | Input                                                                      | Expected      |
+| --- | ------------------------------------------- | -------------------------------------------------------------------------- | ------------- |
+| 1   | Regression: 3 months + 20% rate             | `reserve_months: 3`, `registered_economia_cents: 200_000`                  | `"calibrate"` |
+| 2   | At-risk zone: 5 months + 20% rate           | `reserve_months: 5`, `registered_economia_cents: 200_000`                  | `"calibrate"` |
+| 3   | Boundary floor: exactly 6 months + 20% rate | `reserve_months: RESERVE_MIN_MONTHS`, `registered_economia_cents: 200_000` | `"operate"`   |
 
 Existing tests to preserve (must still pass):
+
 - `"does not operate from net surplus when registered Economia is below 20%"` → `"calibrate"` (reserve_months=6, economia=0)
 - `"operates when registered Economia reaches 20% and reserve is ready"` → `"operate"` (reserve_months=6, economia=200_000)
 
