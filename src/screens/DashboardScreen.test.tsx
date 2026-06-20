@@ -96,7 +96,7 @@ describe("DashboardScreen (forecast view)", () => {
     await waitFor(() => {
       expect(screen.getByText("Caixa")).toBeInTheDocument();
     });
-    expect(screen.getByText("Bolsos & patrimônio")).toBeInTheDocument();
+    expect(screen.getByText("Bolsos", { exact: true })).toBeInTheDocument();
     expect(screen.getByText("R$ 15.000,00")).toBeInTheDocument(); // reserva
     expect(screen.getByText("R$ 420,00")).toBeInTheDocument(); // vale
     expect(screen.getByText("R$ 12.000,00")).toBeInTheDocument(); // ilíquido

@@ -5,10 +5,6 @@ export interface TransactionRowProps {
   date: string;
   /** Merchant / description (truncates). */
   merchant: string;
-  /** Category label. */
-  category?: string;
-  /** Category dot color (a chart-series var). */
-  categoryColor?: string;
   /** An <OwnerChip> (use bare) for the responsible owner. */
   owner?: React.ReactNode;
   /** Pre-formatted amount, e.g. "642.18". */
@@ -26,6 +22,6 @@ export interface TransactionRowProps {
 
 /**
  * A single dense transaction line for tables and import review. Carries
- * owner, category, amount, status and (during import) AI confidence.
+ * owner, amount, status and (during import) AI confidence.
  */
 export function TransactionRow(props: TransactionRowProps): JSX.Element;

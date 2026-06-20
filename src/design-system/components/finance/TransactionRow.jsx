@@ -10,8 +10,6 @@ const CSS = `
 .nk-txn__date{font-family:var(--font-money);font-variant-numeric:tabular-nums;font-size:12px;color:var(--text-faint);}
 .nk-txn__main{min-width:0;display:flex;flex-direction:column;gap:2px;}
 .nk-txn__merchant{font-size:13.5px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.nk-txn__cat{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-muted);}
-.nk-txn__catdot{width:7px;height:7px;border-radius:2px;flex:none;}
 .nk-txn__owner{display:flex;justify-content:flex-end;}
 .nk-txn__status{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;justify-content:flex-end;min-width:96px;}
 .nk-txn__dot{width:7px;height:7px;border-radius:50%;flex:none;}
@@ -45,8 +43,6 @@ const STATUS = {
 export function TransactionRow({
   date,
   merchant,
-  category,
-  categoryColor = "var(--chart-3)",
   owner = null,
   amount,
   positive = false,
@@ -75,12 +71,6 @@ export function TransactionRow({
       <span className="nk-txn__date">{date}</span>
       <span className="nk-txn__main">
         <span className="nk-txn__merchant">{merchant}</span>
-        {category ? (
-          <span className="nk-txn__cat">
-            <span className="nk-txn__catdot" style={{ background: categoryColor }} />
-            {category}
-          </span>
-        ) : null}
       </span>
       <span className="nk-txn__owner">{owner}</span>
       <span className="nk-txn__status" style={{ color: st.t }}>

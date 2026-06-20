@@ -2387,6 +2387,9 @@ h3,
 .pockets-networth {
   font-size: var(--fs-sm);
   color: var(--text-muted);
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border);
 }
 
 .pockets-networth b {

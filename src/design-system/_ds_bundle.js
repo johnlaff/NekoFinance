@@ -1617,8 +1617,6 @@
 .nk-txn__date{font-family:var(--font-money);font-variant-numeric:tabular-nums;font-size:12px;color:var(--text-faint);}
 .nk-txn__main{min-width:0;display:flex;flex-direction:column;gap:2px;}
 .nk-txn__merchant{font-size:13.5px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.nk-txn__cat{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-muted);}
-.nk-txn__catdot{width:7px;height:7px;border-radius:2px;flex:none;}
 .nk-txn__owner{display:flex;justify-content:flex-end;}
 .nk-txn__status{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;justify-content:flex-end;min-width:96px;}
 .nk-txn__dot{width:7px;height:7px;border-radius:50%;flex:none;}
@@ -1657,8 +1655,6 @@
       function TransactionRow({
         date,
         merchant,
-        category,
-        categoryColor = "var(--chart-3)",
         owner = null,
         amount,
         positive = false,
@@ -1709,21 +1705,6 @@
               },
               merchant,
             ),
-            category
-              ? /*#__PURE__*/ React.createElement(
-                  "span",
-                  {
-                    className: "nk-txn__cat",
-                  },
-                  /*#__PURE__*/ React.createElement("span", {
-                    className: "nk-txn__catdot",
-                    style: {
-                      background: categoryColor,
-                    },
-                  }),
-                  category,
-                )
-              : null,
           ),
           /*#__PURE__*/ React.createElement(
             "span",
@@ -3539,8 +3520,6 @@
               /*#__PURE__*/ React.createElement(TransactionRow, {
                 date: "08 Jun",
                 merchant: "Whole Foods Market",
-                category: "Groceries",
-                categoryColor: "var(--chart-2)",
                 owner: /*#__PURE__*/ React.createElement(OwnerChip, {
                   name: "Household",
                   type: "shared",
@@ -3553,8 +3532,6 @@
               /*#__PURE__*/ React.createElement(TransactionRow, {
                 date: "08 Jun",
                 merchant: "Acme Payroll",
-                category: "Income",
-                categoryColor: "var(--chart-1)",
                 owner: /*#__PURE__*/ React.createElement(OwnerChip, {
                   name: "Alex Tan",
                   type: "personal",
@@ -3567,8 +3544,6 @@
               /*#__PURE__*/ React.createElement(TransactionRow, {
                 date: "07 Jun",
                 merchant: "Pacific Gas & Electric",
-                category: "Housing",
-                categoryColor: "var(--chart-1)",
                 owner: /*#__PURE__*/ React.createElement(OwnerChip, {
                   name: "Household",
                   type: "shared",
@@ -3580,8 +3555,6 @@
               /*#__PURE__*/ React.createElement(TransactionRow, {
                 date: "06 Jun",
                 merchant: "Spotify",
-                category: "Subscriptions",
-                categoryColor: "var(--chart-4)",
                 owner: /*#__PURE__*/ React.createElement(OwnerChip, {
                   name: "Sam Okafor",
                   type: "partner",
@@ -5461,8 +5434,6 @@
                     key: t.id,
                     date: t.date,
                     merchant: t.merchant,
-                    category: t.cat,
-                    categoryColor: t.catC,
                     owner: /*#__PURE__*/ React.createElement(OwnerChip, {
                       name: t.ownerN === "—" ? "Unassigned" : t.ownerN,
                       type: t.ownerT,

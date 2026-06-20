@@ -131,8 +131,8 @@
         "message": "<Switch> doesn't accept that prop. Declared props: checked, onChange, label, disabled, className."
       },
       {
-        "selector": "JSXOpeningElement[name.name='TransactionRow'] > JSXAttribute > JSXIdentifier[name!=/^(?:date|merchant|category|categoryColor|owner|amount|positive|status|confidence|selected|onClick|className|key|ref|className|style|children)$/]",
-        "message": "<TransactionRow> doesn't accept that prop. Declared props: date, merchant, category, categoryColor, owner, amount, positive, status, confidence, selected, onClick, className."
+        "selector": "JSXOpeningElement[name.name='TransactionRow'] > JSXAttribute > JSXIdentifier[name!=/^(?:date|merchant|owner|amount|positive|status|confidence|selected|onClick|className|key|ref|className|style|children)$/]",
+        "message": "<TransactionRow> doesn't accept that prop. Declared props: date, merchant, owner, amount, positive, status, confidence, selected, onClick, className."
       },
       {
         "selector": "JSXOpeningElement[name.name='TransactionRow'] > JSXAttribute[name.name='status'] > Literal[value!=/^(?:reconciled|imported|needs-owner)$/]",
