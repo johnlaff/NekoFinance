@@ -588,11 +588,11 @@ async fn realized_annual_savings(
         "SELECT \
            COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END), 0), \
            COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END), 0) \
-         FROM \"transaction\" WHERE date >= ?1 AND substr(date,1,7) < ?2 \
+         FROM \"transaction\" WHERE date >= ?1 AND date < ?2 \
            AND type IN ('income','expense')",
     )
     .bind(&year_start)
-    .bind(&cur_ym)
+    .bind(format!("{cur_ym}-01")) // 1º dia do mês corrente: `date < 'YYYY-MM-01'` ≡ `substr(date,1,7) < 'YYYY-MM'` p/ ISO
     .fetch_one(pool)
     .await
     .map_err(|e| format!("realized annual: {e}"))?;
@@ -612,11 +612,11 @@ async fn realized_annual_economia(
     let row: (i64,) = sqlx::query_as(
         "SELECT COALESCE(SUM(ABS(t.amount)), 0) FROM \"transaction\" t \
          LEFT JOIN account a ON a.id = t.to_account_id \
-         WHERE t.date >= ?1 AND substr(t.date,1,7) < ?2 \
+         WHERE t.date >= ?1 AND t.date < ?2 \
            AND t.type='transfer' AND a.liquidity IN ('reserve','illiquid')",
     )
     .bind(&year_start)
-    .bind(&cur_ym)
+    .bind(format!("{cur_ym}-01")) // 1º dia do mês corrente: range ≡ `substr(date,1,7) < 'YYYY-MM'` p/ ISO
     .fetch_one(pool)
     .await
     .map_err(|e| format!("realized economia: {e}"))?;
@@ -658,10 +658,10 @@ async fn realized_monthly_baseline(
     // Sem filtro `is_projection` (congelado/stale): meses completos já passaram, a data decide.
     let rows: Vec<(i64,)> = sqlx::query_as(
         "SELECT SUM(amount) FROM \"transaction\" \
-         WHERE type='expense' AND substr(date,1,7) < ?1 \
+         WHERE type='expense' AND date < ?1 \
          GROUP BY substr(date,1,7) ORDER BY substr(date,1,7) DESC LIMIT 6",
     )
-    .bind(&cur_ym)
+    .bind(format!("{cur_ym}-01")) // WHERE vira range (usa o índice); GROUP/ORDER por mês ficam
     .fetch_all(pool)
     .await
     .map_err(|e| format!("baseline: {e}"))?;
@@ -1239,9 +1239,10 @@ async fn load_year_events(pool: &SqlitePool, year: i32) -> Result<Vec<CashflowEv
         "SELECT t.type, t.amount, t.date, COALESCE(t.payment_method,''), t.is_fixed, t.is_projection, \
                 COALESCE(a.liquidity,'') \
          FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
-         WHERE substr(t.date, 1, 4) = ?1",
+         WHERE t.date >= ?1 AND t.date < ?2",
     )
-    .bind(format!("{year:04}"))
+    .bind(format!("{year:04}-01-01"))
+    .bind(format!("{}-01-01", year + 1))
     .fetch_all(pool)
     .await
     .map_err(|e| format!("query year events: {e}"))?;
@@ -2113,10 +2114,11 @@ async fn load_write_back_txns(pool: &SqlitePool, year: i32) -> Result<Vec<WriteB
     // 1) Entrada + Saída/Diário (expense não-crédito) do ano, cada um na sua data.
     let rows: Vec<(String, String, i64, i64)> = sqlx::query_as(
         "SELECT type, date, amount, is_fixed FROM \"transaction\" \
-         WHERE substr(date, 1, 4) = ?1 \
+         WHERE date >= ?1 AND date < ?2 \
            AND NOT (type='expense' AND payment_method='credit')",
     )
-    .bind(format!("{year:04}"))
+    .bind(format!("{year:04}-01-01"))
+    .bind(format!("{}-01-01", year + 1))
     .fetch_all(pool)
     .await
     .map_err(|e| format!("query txns: {e}"))?;
@@ -2193,9 +2195,10 @@ async fn load_write_back_txns(pool: &SqlitePool, year: i32) -> Result<Vec<WriteB
             // Sem cartão: não há ciclo para colapsar — crédito do ano cai na Saída da própria data.
             let credit: Vec<(String, i64)> = sqlx::query_as(
                 "SELECT date, amount FROM \"transaction\" \
-                 WHERE type='expense' AND payment_method='credit' AND substr(date,1,4) = ?1",
+                 WHERE type='expense' AND payment_method='credit' AND date >= ?1 AND date < ?2",
             )
-            .bind(format!("{year:04}"))
+            .bind(format!("{year:04}-01-01"))
+            .bind(format!("{}-01-01", year + 1))
             .fetch_all(pool)
             .await
             .map_err(|e| format!("query credit nocard: {e}"))?;
@@ -2411,11 +2414,12 @@ async fn load_economia_by_month(pool: &SqlitePool, year: i32) -> Result<[i64; 12
     let rows: Vec<(String, i64)> = sqlx::query_as(
         "SELECT substr(t.date, 6, 2), COALESCE(SUM(ABS(t.amount)), 0) FROM \"transaction\" t \
          LEFT JOIN account a ON a.id = t.to_account_id \
-         WHERE substr(t.date, 1, 4) = ?1 AND t.type = 'transfer' \
+         WHERE t.date >= ?1 AND t.date < ?2 AND t.type = 'transfer' \
            AND a.liquidity IN ('reserve','illiquid') \
          GROUP BY substr(t.date, 6, 2)",
     )
-    .bind(format!("{year:04}"))
+    .bind(format!("{year:04}-01-01"))
+    .bind(format!("{}-01-01", year + 1))
     .fetch_all(pool)
     .await
     .map_err(|e| format!("query economia: {e}"))?;
@@ -4165,5 +4169,37 @@ mod tests {
         // Seed = 200000. Credit lump of 50000 lands on April 10 (outside March horizon).
         // Projected end-of-March = 200000 (no events in March after today).
         assert_eq!(summary.balance, 200_000);
+    }
+
+    // Plan 009: o filtro de ano virou range `date >= 'YYYY-01-01' AND date < '(YYYY+1)-01-01'`.
+    // O limite superior EXCLUSIVO `< '2027-01-01'` mantém o contrato: 2027-01-01 cai em 2027, não
+    // em 2026 — byte-idêntico ao antigo `substr(date,1,4) = '2026'`.
+    #[tokio::test]
+    async fn load_year_events_year_boundary() {
+        let pool = fixture_pool().await;
+        let insert = "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+                      VALUES (?1,'income',?2,?3,0,0)";
+        sqlx::query(insert)
+            .bind("t1")
+            .bind(100_000i64)
+            .bind("2026-06-15")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(insert)
+            .bind("t2")
+            .bind(200_000i64)
+            .bind("2027-01-01")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let y2026 = load_year_events(&pool, 2026).await.unwrap();
+        assert_eq!(y2026.len(), 1, "só 2026-06-15 cai em 2026");
+        assert_eq!(y2026[0].amount_cents, 100_000);
+
+        let y2027 = load_year_events(&pool, 2027).await.unwrap();
+        assert_eq!(y2027.len(), 1, "2027-01-01 cai em 2027 (limite exclusivo)");
+        assert_eq!(y2027[0].amount_cents, 200_000);
     }
 }

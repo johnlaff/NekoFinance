@@ -21,7 +21,7 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 006  | Calibrate "operate" phase + reserve baseline to the method                          | P2       | S      | —          | DONE   |
 | 007  | Correctness: engine/date edge cases + effect/transaction hygiene                    | P2       | S      | —          | DONE   |
 | 008  | Dashboard: single forecast source + unified cache key                               | P1       | S–M    | —          | DONE   |
-| 009  | Bulk-insert import + index-friendly date filters                                    | P2       | S–M    | —          | TODO   |
+| 009  | Bulk-insert import + index-friendly date filters                                    | P2       | S–M    | —          | DONE   |
 | 010  | Characterization tests for money/forecast SQL helpers                               | P2       | M      | —          | TODO   |
 | 011  | Split the `commands.rs` god-module + dedupe the row mapper                          | P2       | L      | 010        | TODO   |
 | 012  | Remove dead code + unify duplicate money formatters                                 | P2       | S      | —          | DONE   |
