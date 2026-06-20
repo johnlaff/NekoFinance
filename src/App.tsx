@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./App.css";
 import { AppShell, type Screen } from "./shell/AppShell";
 import { DashboardScreen } from "./screens/DashboardScreen";
@@ -39,10 +39,23 @@ function App() {
       .catch(() => setShowOnboarding(false));
   }, []);
 
+  // Ponte do atalho "N": o DashboardScreen entrega o ref do campo de valor; o AppShell chama
+  // handleQuickAdd ao pressionar "N". Fora do dashboard, navega e foca depois do card montar (rAF).
+  const quickAddInputRef = useRef<HTMLInputElement | null>(null);
+
   // React Compiler memoizes; no manual useCallback needed.
   const handleSearch = (query: string) => {
     setSearchQuery(query);
     setScreen("transactions");
+  };
+
+  const handleQuickAdd = () => {
+    if (screen !== "dashboard") {
+      setScreen("dashboard");
+      requestAnimationFrame(() => quickAddInputRef.current?.focus());
+    } else {
+      quickAddInputRef.current?.focus();
+    }
   };
 
   return (
@@ -61,10 +74,16 @@ function App() {
           onNavigate={setScreen}
           onSearch={handleSearch}
           authStatus={authStatus}
+          onQuickAdd={handleQuickAdd}
         >
           <div key={screen} className="ak-screen">
             {screen === "dashboard" && (
-              <DashboardScreen onAskMia={() => setScreen("copilot")} />
+              <DashboardScreen
+                onAskMia={() => setScreen("copilot")}
+                onQuickAddAmountRef={(el) => {
+                  quickAddInputRef.current = el;
+                }}
+              />
             )}
             {screen === "totais" && <TotaisScreen />}
             {screen === "anuais" && <AnnualScreen />}

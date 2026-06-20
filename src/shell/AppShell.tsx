@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   Calculator,
   CalendarRange,
@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { NekoMark } from "../design-system/components/NekoMark";
 import { ThemeToggle } from "./ThemeToggle";
+import { SR_ONLY } from "../design-system/srOnly";
 import type { AuthStatus } from "../lib/api";
 
 export type Screen =
@@ -90,12 +91,15 @@ export function AppShell({
   onSearch,
   authStatus,
   children,
+  onQuickAdd,
 }: {
   active: Screen;
   onNavigate: (screen: Screen) => void;
   onSearch: (query: string) => void;
   authStatus: AuthStatus;
   children: React.ReactNode;
+  /** Chamado ao pressionar "N" (fora de campos de texto). O App leva o foco ao check-in rápido. */
+  onQuickAdd?: () => void;
 }) {
   const [searchDraft, setSearchDraft] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
@@ -104,12 +108,30 @@ export function AppShell({
   const isMac =
     typeof navigator !== "undefined" && /mac/i.test(navigator.platform ?? "");
 
+  // O atalho "N" só dispara um callback que vem do pai (fluxo de dados para baixo). useEffectEvent
+  // lê o `onQuickAdd` mais recente sem virar dependência — o listener de teclado assina só no mount.
+  const triggerQuickAdd = useEffectEvent(() => onQuickAdd?.());
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         searchRef.current?.focus();
         searchRef.current?.select();
+        return;
+      }
+      // "N" = novo lançamento rápido: só sem modificadores e fora de campos de texto/seleção.
+      if (
+        e.key === "n" &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !(e.target instanceof HTMLInputElement) &&
+        !(e.target instanceof HTMLTextAreaElement) &&
+        !(e.target instanceof HTMLSelectElement)
+      ) {
+        e.preventDefault();
+        triggerQuickAdd();
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -223,6 +245,13 @@ export function AppShell({
               {isMac ? "⌘K" : "Ctrl K"}
             </kbd>
           </form>
+          {/* Atalho global de novo lançamento (foca o check-in do dashboard). Pista discreta. */}
+          <span className="ak-kbd-hint" title="Novo lançamento (N)">
+            <kbd className="ak-kbd" aria-hidden="true">
+              N
+            </kbd>
+            <span style={SR_ONLY}>Atalho N: novo lançamento</span>
+          </span>
           <ThemeToggle />
         </header>
         <div className="ak-body">{children}</div>

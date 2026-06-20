@@ -2400,6 +2400,12 @@ h3,
   line-height: 1.4;
 }
 
+/* Pista do atalho global "N" (novo lançamento), ao lado da busca no topo. */
+.ak-kbd-hint {
+  display: inline-flex;
+  align-items: center;
+}
+
 /* ---- Bolsos & patrimônio (spec 007) ---- */
 .pockets-networth {
   font-size: var(--fs-sm);

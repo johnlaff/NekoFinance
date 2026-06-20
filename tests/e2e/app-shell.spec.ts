@@ -27,13 +27,26 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     await expect(page.getByRole("table").getByText("hoje").first()).toBeVisible();
     await expect(page.getByText("R$ 12.340,00").first()).toBeVisible();
 
-    // Diário de hoje: card com o disponível do dia e registro rápido.
+    // Diário de hoje: card com o disponível do dia e registro rápido (tipo + descrição + valor).
     await expect(page.locator("#dash-checkin-title")).toHaveText("Diário de hoje");
     await expect(page.getByText(/disponível/)).toBeVisible();
-    await page.getByLabel("Gasto de hoje").fill("9,90");
-    await page.getByRole("button", { name: "Registrar" }).click();
-    // Campo limpa após registrar (o dashboard refaz a busca).
-    await expect(page.getByLabel("Gasto de hoje")).toHaveValue("");
+    // Seletor dos 5 tipos de movimento (Economia direciona ao form completo → desabilitada).
+    const checkin = page.locator("section[aria-labelledby='dash-checkin-title']");
+    await expect(
+      checkin.getByRole("radiogroup", { name: "Tipo de movimento" }),
+    ).toBeVisible();
+    await expect(checkin.getByRole("radio", { name: /Diário/ })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await expect(checkin.getByRole("radio", { name: /Economia/ })).toBeDisabled();
+    // Descrição opcional + valor, sem sair da tela.
+    await checkin.getByLabel("Descrição (opcional)").fill("mercado");
+    await checkin.getByLabel(/Valor do lançamento/).fill("9,90");
+    await checkin.getByRole("button", { name: "Registrar" }).click();
+    // Campos limpam após registrar (o dashboard refaz a busca); o tipo é mantido.
+    await expect(checkin.getByLabel(/Valor do lançamento/)).toHaveValue("");
+    await expect(checkin.getByLabel("Descrição (opcional)")).toHaveValue("");
 
     // Rodapé do MonthLedgerCard fiel à planilha: linhas Saída Total e Resultado do mês.
     await expect(page.getByRole("row", { name: /Saída Total/ })).toBeVisible();
@@ -163,6 +176,23 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
   test("ctrl/cmd+k focuses the header search", async ({ page }) => {
     await page.keyboard.press("ControlOrMeta+k");
     await expect(page.getByLabel("Buscar lançamentos")).toBeFocused();
+  });
+
+  test("tecla N foca o campo de valor do check-in rápido", async ({ page }) => {
+    // Tira o foco de qualquer campo de texto (clica numa área neutra) e pressiona N.
+    await page.locator("main.ak-main").click({ position: { x: 5, y: 5 } });
+    await page.keyboard.press("n");
+    await expect(page.getByLabel(/Valor do lançamento/)).toBeFocused();
+  });
+
+  test("tecla N de outra tela navega ao dashboard e foca o check-in", async ({
+    page,
+  }) => {
+    await page.getByRole("button", { name: "Lançamentos" }).click();
+    await expect(page.getByText("Despesa demo variável")).toBeVisible();
+    await page.locator("main.ak-main").click({ position: { x: 5, y: 5 } });
+    await page.keyboard.press("n");
+    await expect(page.getByLabel(/Valor do lançamento/)).toBeFocused();
   });
 
   test("page has a main landmark, a labelled nav and the hero forecast region", async ({

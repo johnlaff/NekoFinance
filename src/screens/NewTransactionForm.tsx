@@ -15,43 +15,7 @@ import {
 } from "../lib/api";
 import { safeErrorMessage } from "../lib/errors";
 import { parseBRLToCents, todayISO } from "../lib/format";
-
-/** Os tipos de movimento oferecidos no form. Economia → transfer para uma conta reserve/illiquid. */
-const FORM_KINDS: MovKind[] = ["entrada", "saida", "diario", "cartao", "economia"];
-
-/** Mapeia o tipo de movimento do método para (type, is_fixed, payment_method) do schema. */
-function kindToFields(kind: MovKind): {
-  txnType: "income" | "expense" | "transfer";
-  isFixed: boolean;
-  paymentMethod: string | null;
-} {
-  switch (kind) {
-    case "entrada":
-      return { txnType: "income", isFixed: false, paymentMethod: null };
-    case "saida":
-      return { txnType: "expense", isFixed: true, paymentMethod: "debit" };
-    case "cartao":
-      return { txnType: "expense", isFixed: false, paymentMethod: "credit" };
-    case "economia":
-      return { txnType: "transfer", isFixed: false, paymentMethod: null };
-    case "diario":
-    default:
-      return { txnType: "expense", isFixed: false, paymentMethod: "debit" };
-  }
-}
-
-/** Inverso de `kindToFields`: deriva o tipo de movimento (chip) de um lançamento existente. */
-function fieldsToKind(
-  type: string,
-  isFixed: boolean,
-  paymentMethod: string | null,
-): MovKind {
-  if (type === "transfer") return "economia";
-  if (type === "income") return "entrada";
-  if (isFixed) return "saida";
-  if (paymentMethod === "credit") return "cartao";
-  return "diario";
-}
+import { FORM_KINDS, fieldsToKind, kindToFields } from "../lib/movement";
 
 /** Valores de um lançamento existente para pré-preencher o form no modo edição. */
 export interface TransactionEditValues {

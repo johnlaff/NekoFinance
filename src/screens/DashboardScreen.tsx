@@ -16,7 +16,14 @@ import { PerformanceCard } from "./dashboard/PerformanceCard";
 import { DailyCheckinCard } from "./dashboard/DailyCheckinCard";
 import { MonthLedgerCard } from "./dashboard/MonthLedgerCard";
 
-export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
+export function DashboardScreen({
+  onAskMia,
+  onQuickAddAmountRef,
+}: {
+  onAskMia: () => void;
+  /** Ref do campo de valor do check-in rápido — repassado ao AppShell p/ o atalho "N". */
+  onQuickAddAmountRef?: (ref: HTMLInputElement | null) => void;
+}) {
   // Chaves de cache COMPARTILHADAS (sem sufixo) → o dashboard reaproveita o `get_forecast` /
   // `get_dashboard_summary` já buscados por outras telas, em vez de um slot privado que forçava
   // re-fetch a cada visita. `invalidateCommands()` (em handleLogged/handleReload) limpa o cache
@@ -180,6 +187,7 @@ export function DashboardScreen({ onAskMia }: { onAskMia: () => void }) {
           summary={summary}
           monthAvgCents={monthDailyAvgCents}
           onLogged={handleLogged}
+          onAmountRef={onQuickAddAmountRef}
         />
       )}
 

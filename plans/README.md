@@ -41,7 +41,7 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 026  | Real-time spreadsheet sync — Phase 1 (read-side): modifiedTime probe + background poll | —        | L      | 001, 002   | DONE                       |
 | 027  | Retire the vestigial daily_checkin table (spike 024 → Option A)                        | P2       | S–M    | —          | DONE                       |
 | 028  | Sync Phase 2 — enable human-approved write-back, safely                                | P1       | L      | 026        | DONE                       |
-| 029  | Frictionless daily quick-add (description + type + global shortcut)                    | P1       | M      | —          | TODO (pkg A)               |
+| 029  | Frictionless daily quick-add (description + type + global shortcut)                    | P1       | M      | —          | DONE (pkg A)               |
 | 030  | Daily reminder via OS notification + "last logged" indicator                           | P1       | S–M    | —          | TODO (pkg A)               |
 | 031  | Surface write-back: pending indicator + send-from-dashboard                            | P1       | S–M    | 028        | TODO (pkg A)               |
 | 032  | Flow correctness: write-back audit, sync race, derived double-count, Jan-1 guardrail   | P1       | M      | —          | TODO (pkg B)               |
