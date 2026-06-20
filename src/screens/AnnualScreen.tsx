@@ -5,6 +5,7 @@ import { Money } from "../design-system/components/Money";
 import { MonthNav } from "../design-system/components/MonthNav";
 import { InfoPopover } from "../design-system/components/InfoPopover";
 import { EmptyState } from "../design-system/components/EmptyState";
+import { SAVINGS_MIN_BPS } from "./totaisStatus";
 
 const MONTHS_PT = [
   "Jan",
@@ -166,11 +167,11 @@ export function AnnualScreen() {
   // uma dica em vez do gráfico — a Economia entra pela aba dedicada (Configurações › Google Sheets).
   const hasEconomia = months.some((m) => m.economia_cents !== 0);
   // 3 estados (mesma lógica do economizadoStatus em Totais): >30% guardando além do ideal
-  // (jade/steady), 20–30% dentro do ideal (verde), <20% aquém (âmbar).
+  // (jade/steady), ≥ SAVINGS_MIN_BPS (20%) dentro do ideal (verde), <20% aquém (âmbar).
   const savingsColor =
     annualSavingsPct > 30
       ? "var(--primary)"
-      : annualSavingsPct >= 20
+      : annualSavingsPct >= SAVINGS_MIN_BPS / 100
         ? "var(--success-400)"
         : "var(--warning-400)";
 

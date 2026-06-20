@@ -1073,14 +1073,21 @@ mod tests {
     #[tokio::test]
     async fn forecast_dual_guardrail_savings_binds_for_owner() {
         let pool = fixture_pool().await;
-        insert_sheet_balance(&pool, "2026", "2026-06-13", 500_000).await; // Saldo de hoje
-        insert_sheet_balance(&pool, "2026", "2026-12-31", 1_500_000).await; // estende horizonte
+        // Caixa cheio: o Saldo de hoje fica bem acima do piso de reserva do método, de modo que a
+        // régua de CAIXA tem folga e quem morde é a POUPANÇA anual (o ponto deste teste).
+        insert_sheet_balance(&pool, "2026", "2026-06-13", 1_700_000).await; // Saldo de hoje
+        insert_sheet_balance(&pool, "2026", "2026-12-31", 2_500_000).await; // estende horizonte
         // Meses COMPLETOS (jan–mai) abaixo da meta → a poupança ANUAL morde. Sem isto, o mês
-        // corrente (junho, em andamento) NÃO conta — evita o falso pânico de meio de mês.
+        // corrente (junho, em andamento) NÃO conta — evita o falso pânico de meio de mês. Estes
+        // mesmos meses definem o custo de vida (mediana = 220.000), logo o piso de reserva do
+        // método = 220.000 × 6 = 1.320.000 (plano 033).
         for m in [1, 2, 3, 4, 5] {
             insert_realized(&pool, "income", 200_000, &format!("2026-{m:02}-05")).await;
             insert_realized(&pool, "expense", 220_000, &format!("2026-{m:02}-10")).await;
         }
+        // Bolso de reserva configurado no exato piso do método (custo de vida × 6) — o caixa fica
+        // acima dele, então a régua de caixa NÃO morde e a poupança anual é a que decide.
+        insert_reserve_account(&pool, 1_320_000).await;
         // Junho (corrente) — metade realizada antes de hoje, metade projetada: testa que a
         // PERFORMANCE do mês inclui o realizado (o P0), mesmo o mês não contando na poupança anual.
         insert_realized(&pool, "income", 400_000, "2026-06-05").await;
@@ -1107,7 +1114,9 @@ mod tests {
         assert_eq!(fc.binding_guardrail, "savings");
         assert_eq!(fc.safe_to_spend_today_cents, 0);
         assert!(fc.savings_headroom_cents.unwrap() < 0);
-        assert!(fc.cash_headroom_cents > 0); // mas há caixa (é a reserva)
+        // Há caixa acima do piso de reserva (1.700.000 − fixos > 1.320.000) → a régua de caixa
+        // tem folga e não é a que morde; a poupança anual (negativa) é a binding.
+        assert!(fc.cash_headroom_cents > 0);
         assert_eq!(fc.savings_target_bps, 2500);
     }
 
@@ -1155,6 +1164,91 @@ mod tests {
         let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
         let s = dashboard_summary(&pool, today).await.unwrap();
         assert_eq!(s.reserve_months, 0.0);
+    }
+
+    // --- reserve_floor tests (plano 033) -------------------------------------------------
+    // O piso de reserva = max(saldo dos Bolsos de reserva, custo de vida mensal × meses do método).
+
+    // Sem Bolso de reserva E sem histórico de custo de vida, o piso é 0 (não bloqueia usuário novo).
+    #[tokio::test]
+    async fn reserve_floor_zero_when_no_history_and_no_reserve_account() {
+        let pool = fixture_pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 20).unwrap();
+        let floor = reserve_floor(&pool, today).await.unwrap();
+        assert_eq!(floor, 0);
+    }
+
+    // Sem Bolso de reserva mas COM histórico de custo de vida, o piso é
+    // custo_de_vida_mensal × RESERVE_MIN_MONTHS (o mínimo calculado entra em cena — antes ficava 0
+    // e o guardrail de caixa ficava desmontado).
+    #[tokio::test]
+    async fn reserve_floor_uses_computed_minimum_when_no_reserve_account() {
+        let pool = fixture_pool().await;
+        // 3 meses completos de saída a 100.000 cada → mediana do custo de vida = 100.000.
+        for m in [3u32, 4, 5] {
+            insert_realized(&pool, "expense", 100_000, &format!("2026-{m:02}-10")).await;
+        }
+        let today = NaiveDate::from_ymd_opt(2026, 6, 20).unwrap();
+        let floor = reserve_floor(&pool, today).await.unwrap();
+        // 100.000 × 6 = 600.000
+        assert_eq!(floor, 600_000);
+    }
+
+    // Com um Bolso de reserva acima do piso calculado, o saldo real vence (usamos o maior dos dois).
+    #[tokio::test]
+    async fn reserve_floor_uses_reserve_balance_when_above_computed_minimum() {
+        let pool = fixture_pool().await;
+        for m in [3u32, 4, 5] {
+            insert_realized(&pool, "expense", 100_000, &format!("2026-{m:02}-10")).await;
+        }
+        // Saldo de reserva 900.000 > piso calculado 600.000.
+        insert_reserve_account(&pool, 900_000).await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 20).unwrap();
+        let floor = reserve_floor(&pool, today).await.unwrap();
+        assert_eq!(floor, 900_000);
+    }
+
+    // Com um Bolso de reserva ABAIXO do piso calculado, o piso do método vence (é a restrição mais
+    // forte — o objetivo do método é maior que o que o usuário guardou até agora).
+    #[tokio::test]
+    async fn reserve_floor_uses_computed_minimum_when_reserve_balance_is_low() {
+        let pool = fixture_pool().await;
+        for m in [3u32, 4, 5] {
+            insert_realized(&pool, "expense", 100_000, &format!("2026-{m:02}-10")).await;
+        }
+        // Saldo de reserva 200.000 < piso calculado 600.000.
+        insert_reserve_account(&pool, 200_000).await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 20).unwrap();
+        let floor = reserve_floor(&pool, today).await.unwrap();
+        assert_eq!(floor, 600_000);
+    }
+
+    // End-to-end (plano 033): SEM Bolso de reserva, o guardrail "pode gastar" deixa de ficar
+    // desmontado — o piso calculado (custo de vida × meses) já protege o caixa via forecast_dto.
+    // Antes do plano 033, reserve_floor = 0 aqui e cash_headroom = saldo cheio inteiro.
+    #[tokio::test]
+    async fn forecast_cash_guardrail_gated_by_computed_reserve_floor() {
+        let pool = fixture_pool().await;
+        // Saldo de hoje confortável; só fixas modestas adiante → o trough fica alto.
+        insert_sheet_balance(&pool, "2026", "2026-06-13", 1_000_000).await;
+        insert_sheet_balance(&pool, "2026", "2026-12-31", 1_200_000).await;
+        // Custo de vida: 3 meses completos a 100.000 → mediana 100.000 → piso = 600.000.
+        for m in [3u32, 4, 5] {
+            insert_realized(&pool, "expense", 100_000, &format!("2026-{m:02}-10")).await;
+        }
+        // Sem renda no ano → a régua de poupança fica INATIVA (None); resta só o caixa, que agora
+        // está gated pelo piso de reserva calculado.
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let fc = forecast_dto(&pool, today).await.unwrap();
+        assert_eq!(fc.binding_guardrail, "cash");
+        assert!(
+            fc.savings_headroom_cents.is_none(),
+            "sem renda, a régua de poupança está inativa"
+        );
+        // O piso (600.000) foi de fato subtraído: a folga de caixa é o trough menos 600.000, não o
+        // trough inteiro. Confirma que o guardrail deixou de estar desmontado.
+        let trough = fc.deepest_deficit.as_ref().unwrap().balance_cents;
+        assert_eq!(fc.cash_headroom_cents, trough - 600_000);
     }
 
     // P1.3 (review): teto do diário cai para o Diário médio do mês anterior quando não há orçamento

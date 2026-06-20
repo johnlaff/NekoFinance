@@ -6,11 +6,13 @@ export interface Status {
   label: string;
 }
 
-// Piso 20% para o badge MENSAL "Dentro do ideal" — um mês pode variar dentro da faixa 20–30% do
-// método. O guardrail ANUAL "pode gastar hoje" usa 25% (alvo médio da faixa) em
-// src-tauri/src/commands.rs (SAVINGS_TARGET_BPS). Divergência deliberada: indicador mensal leniente,
-// gate anual mais firme; ambos dentro da faixa canônica 20–30%.
-const SAVINGS_TARGET_BPS = 2000;
+// Piso de 20% (2000 bps) do método — fonte única para os indicadores e visuais MENSAIS e ANUAIS:
+// badge "Dentro do ideal" (este arquivo), cor da visão anual (AnnualScreen) e gate da fase "operar"
+// (colchaoPhase). Um mês pode variar dentro da faixa 20–30%, então estes são lenientes.
+// O guardrail ANUAL "pode gastar hoje" usa uma barra mais alta — 25% (alvo médio da faixa) em
+// src-tauri/src/commands/forecast_cmds.rs (SAVINGS_TARGET_BPS = 2500). Divergência deliberada: o
+// gate que libera gasto mira no alvo médio; ambos ficam dentro da faixa canônica 20–30%.
+export const SAVINGS_MIN_BPS = 2000;
 
 /** Encontra a métrica do mês corrente a partir do `today` do forecast. */
 export function currentMonthMetric(
@@ -38,7 +40,7 @@ export function economizadoStatus(bps: number): Status {
   // 20–30% é o alvo; abaixo de 20% fica aquém. "Dentro do ideal" é verbatim; "Acima/Abaixo" são
   // copy do Neko para nomear os estados que o método só descreve.
   if (bps > 3000) return { level: "steady", label: "Acima do ideal" };
-  if (bps >= SAVINGS_TARGET_BPS) return { level: "strong", label: "Dentro do ideal" };
+  if (bps >= SAVINGS_MIN_BPS) return { level: "strong", label: "Dentro do ideal" };
   return { level: "watch", label: "Abaixo do ideal" };
 }
 

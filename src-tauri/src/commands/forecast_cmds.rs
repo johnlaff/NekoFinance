@@ -79,16 +79,26 @@ pub(crate) async fn projection_seed(
     Ok(balance + gap.0)
 }
 
-/// Meta de poupança do método: piso de 25% (faixa 20–30%, MÉDIA ANUAL — o ano todo deve ficar
-/// na faixa, os meses variam). Régua do guardrail ANUAL "pode gastar".
-/// O badge MENSAL "Dentro do ideal" (src/screens/TotaisScreen.tsx) usa 20% (piso da faixa), por ser
-/// leniente a variações de um mês; ambos ficam dentro da faixa canônica 20–30%.
+/// Meta de poupança do método para o guardrail ANUAL "pode gastar": **25% (2500 bps)** — a MÉDIA
+/// da faixa canônica 20–30% (MÉDIA ANUAL: o ano todo deve ficar na faixa, os meses variam). É uma
+/// barra DELIBERADAMENTE mais alta que o piso de 20% do método: o gate anual decide quanto se pode
+/// gastar HOJE, então mira no alvo médio, não no piso.
+///
+/// O piso mínimo de 20% (2000 bps) é o `SAVINGS_MIN_BPS` do frontend (`src/screens/totaisStatus.ts`),
+/// usado nos indicadores/visuais MENSAIS e ANUAIS (badge "Dentro do ideal", cor da visão anual,
+/// gate da fase "operar"), que são lenientes a variações de um mês. Ambos os limiares ficam dentro
+/// da faixa canônica 20–30%; não os unifique sem decisão de método (unificar afrouxaria o gate anual).
 pub(crate) const SAVINGS_TARGET_BPS: i64 = 2500;
 
 /// Limiar de cobertura: um mês futuro com menos de 60% do gasto típico já lançado é tratado como
 /// INCOMPLETO (projeção otimista demais — o "chá revelação" do método). Margem ampla porque o
 /// método aceita variação mês a mês; abaixo disso é quase certo que falta fatura/variável.
 pub(crate) const COVERAGE_COMPLETE_BPS: i64 = 6_000;
+
+/// Meses de reserva mínimos do método (fase "operar"): o mesmo limiar que o frontend usa em
+/// `colchaoPhase.ts` (RESERVE_MIN_MONTHS). Mantidos em sync manualmente (a lógica de fase é
+/// puramente frontend; se mudar, atualizar os dois).
+pub(crate) const RESERVE_MIN_MONTHS: i64 = 6;
 
 /// Renda e net REALIZADOS do ano corrente até hoje (`is_projection = 0`): a poupança é o net
 /// `renda − saída` realizado dos meses completos. Retorna `(renda, net)` — o `net` superávit
@@ -265,18 +275,32 @@ pub(crate) async fn effective_daily_ceiling(
     Ok(if days_prev > 0 { sum.0 / days_prev } else { 0 })
 }
 
-/// Piso de reserva = colchão intocável que a folga de caixa não pode comer. Por ora = soma dos
-/// Bolsos marcados como reserva (spec 007, `liquidity = 'reserve'`); esses NÃO entram na semente
-/// líquida, então subtraí-los aqui não dobra. O ideal metodológico (custo de vida × 12) fica
-/// para quando a reserva for modelada como meta — ver limitações na spec 010. Hoje, sem reserva
-/// configurada, retorna 0 e a régua de poupança é a que morde.
-pub(crate) async fn reserve_floor(pool: &SqlitePool) -> Result<i64, String> {
-    let floor: (i64,) =
+/// Piso de reserva = colchão intocável que a folga de caixa não pode comer.
+///
+/// Lógica em duas camadas:
+/// 1. Saldo dos Bolsos de reserva configurados (`liquidity = 'reserve'`). Esses Bolsos NÃO
+///    entram na semente líquida, então subtraí-los aqui não os dobra.
+/// 2. Piso mínimo do método: `custo de vida mensal × RESERVE_MIN_MONTHS`. O custo de vida mensal é
+///    o `realized_monthly_baseline` (mediana das saídas dos meses completos = fixas + diário +
+///    cartão). Se não há Bolso de reserva configurado (ou o saldo está abaixo do piso), usa o
+///    piso calculado — assim o guardrail não fica completamente desmontado para quem ainda não
+///    criou um Bolso de reserva.
+///
+/// Sem histórico de custo de vida (baseline = 0, usuário novo), o piso calculado é 0 e o resultado
+/// cai no saldo de reserva (também 0 nesse caso) — não bloqueia quem está começando. Sem Bolso de
+/// reserva mas com histórico, retorna o piso calculado.
+pub(crate) async fn reserve_floor(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+) -> Result<i64, String> {
+    let reserve_balance: (i64,) =
         sqlx::query_as("SELECT COALESCE(SUM(balance), 0) FROM account WHERE liquidity = 'reserve'")
             .fetch_one(pool)
             .await
-            .map_err(|e| format!("reserve floor: {e}"))?;
-    Ok(floor.0)
+            .map_err(|e| format!("reserve floor (balance): {e}"))?;
+    let baseline = realized_monthly_baseline(pool, today_naive).await?;
+    let computed_floor = baseline * RESERVE_MIN_MONTHS;
+    Ok(reserve_balance.0.max(computed_floor))
 }
 
 /// Fim do horizonte da projeção = o último dia com dado pré-lançado (transação futura ou Saldo
@@ -533,7 +557,7 @@ pub(crate) async fn forecast_dto(
     let fc =
         forecast::project_with_metrics(seed, today_naive, &events, &metric_events, horizon_end);
 
-    let reserve_floor_cents = reserve_floor(pool).await?;
+    let reserve_floor_cents = reserve_floor(pool, today_naive).await?;
     // Poupança ANUAL realizada (não o mês isolado, não o ano projetado-incompleto).
     let (annual_income, annual_savings_amt) = realized_annual_savings(pool, today_naive).await?;
     // Economia REGISTRADA do ano (transfers→reserva): numerador do Economizado% e entrada do
