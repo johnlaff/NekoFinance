@@ -1936,6 +1936,73 @@ async fn create_transaction_inner(
     Ok(id)
 }
 
+/// Apaga um lançamento manual (não importado) pelo id. O guarda `source_amount IS NULL` impede
+/// remover histórico vindo da planilha pelo app — esses precisam de um fluxo próprio.
+#[tauri::command]
+pub async fn delete_transaction_cmd(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
+    let affected =
+        sqlx::query(r#"DELETE FROM "transaction" WHERE id = ?1 AND source_amount IS NULL"#)
+            .bind(&id)
+            .execute(pool.inner())
+            .await
+            .map_err(|e| format!("delete: {e}"))?
+            .rows_affected();
+    if affected == 0 {
+        return Err(
+            "lançamento não encontrado ou importado da planilha (não pode ser apagado pelo app)"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// Edita um lançamento manual (valor, descrição, método, fixo, data) pelo id. Mesmo guarda de
+/// `delete_transaction_cmd`: importados da planilha não são editáveis pelo app.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn update_transaction_cmd(
+    pool: State<'_, SqlitePool>,
+    id: String,
+    txn_type: String,
+    amount_cents: i64,
+    description: Option<String>,
+    payment_method: Option<String>,
+    is_fixed: bool,
+    date: String,
+) -> Result<(), String> {
+    // `type` precisa ser atualizável: trocar entrada↔saída no form muda renda↔despesa, e sem isto
+    // o sinal do lançamento no forecast ficaria errado. Mesmo conjunto válido do create.
+    if !matches!(txn_type.as_str(), "income" | "expense") {
+        return Err(format!("tipo inválido: {txn_type}"));
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    let affected = sqlx::query(
+        r#"UPDATE "transaction"
+           SET type = ?2, amount = ?3, description = ?4, payment_method = ?5,
+               is_fixed = ?6, date = ?7, updated_at = ?8
+           WHERE id = ?1 AND source_amount IS NULL"#,
+    )
+    .bind(&id)
+    .bind(&txn_type)
+    .bind(amount_cents)
+    .bind(&description)
+    .bind(&payment_method)
+    .bind(is_fixed as i64)
+    .bind(&date)
+    .bind(&now)
+    .execute(pool.inner())
+    .await
+    .map_err(|e| format!("update: {e}"))?
+    .rows_affected();
+    if affected == 0 {
+        return Err(
+            "lançamento não encontrado ou importado da planilha (não pode ser editado pelo app)"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn detect_sheet_layout(
     app_dir: State<'_, AppDataDir>,

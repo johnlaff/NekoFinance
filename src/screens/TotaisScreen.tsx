@@ -1,8 +1,9 @@
 import { useState, type CSSProperties } from "react";
-import { getForecast } from "../lib/api";
+import { getForecast, ownerTotalsForMonth, type OwnerTotal } from "../lib/api";
 import { monthNamePtBR } from "../lib/format";
 import { useCommand } from "../lib/useCommand";
 import { Money } from "../design-system/components/Money";
+import { OwnerChip } from "../design-system/components/OwnerChip";
 import type { HealthLevel } from "../design-system/components/HealthBadge";
 import { MonthNav } from "../design-system/components/MonthNav";
 import { EmptyState } from "../design-system/components/EmptyState";
@@ -54,6 +55,22 @@ const METRIC_CARD_STYLE: CSSProperties = {
   display: "flex",
   flexDirection: "column",
   gap: "var(--space-3)",
+};
+
+// Cabeçalho de seção (uppercase, sutil) — reaproveitado em "Por titular".
+const SECTION_HEADING_STYLE: CSSProperties = {
+  fontSize: "var(--fs-label)",
+  fontWeight: "var(--fw-semibold)",
+  letterSpacing: "var(--ls-label)",
+  textTransform: "uppercase",
+  color: "var(--text-muted)",
+  margin: "0 0 var(--space-4)",
+};
+
+const OWNER_TOTAL_COL_STYLE: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "var(--space-2)",
 };
 
 /** Chip de status calmo (ponto + rótulo). Substitui o anel-spinner em status binário do método. */
@@ -151,6 +168,17 @@ export function TotaisScreen() {
   const forecastQ = useCommand("get_forecast", getForecast);
   const [selectedYm, setSelectedYm] = useState<string | null>(null);
   const forecast = forecastQ.data ?? null;
+
+  // Mês ativo (selecionado ou o de `today`). Derivado antes de qualquer return condicional para
+  // manter a ordem dos hooks estável; quando ainda não há forecast, a chave fica "0-0" (sem dados).
+  const activeYmForOwners = selectedYm ?? forecast?.today.slice(0, 7) ?? "";
+  const ownerYear = Number(activeYmForOwners.slice(0, 4)) || 0;
+  const ownerMonth = Number(activeYmForOwners.slice(5, 7)) || 0;
+  const ownerTotalsQ = useCommand(
+    `owner_totals_for_month:${ownerYear}:${ownerMonth}`,
+    () => ownerTotalsForMonth(ownerYear, ownerMonth),
+  );
+  const ownerTotals: OwnerTotal[] = ownerTotalsQ.data ?? [];
 
   if (forecastQ.loading) {
     return <EmptyState variant="skeleton" skeletonRows={6} />;
@@ -332,6 +360,20 @@ export function TotaisScreen() {
           />
         </div>
       </section>
+
+      {ownerTotals.length >= 2 && (
+        <section aria-label="Por titular" style={{ marginTop: "var(--space-8)" }}>
+          <h2 style={SECTION_HEADING_STYLE}>Por titular</h2>
+          <div style={{ display: "flex", gap: "var(--space-8)", flexWrap: "wrap" }}>
+            {ownerTotals.map((o) => (
+              <span key={o.owner_person_id} style={OWNER_TOTAL_COL_STYLE}>
+                <OwnerChip name={o.owner_name} avatar />
+                <Money cents={o.total_cents} size="md" />
+              </span>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

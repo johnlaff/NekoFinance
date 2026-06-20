@@ -9,7 +9,7 @@ import {
   custoVidaStatus,
 } from "./totaisStatus";
 import type { MonthMetric } from "../lib/api";
-import { FORECAST, mockCommands, mockInvoke } from "../test/commands";
+import { FORECAST, OWNER_TOTALS, mockCommands, mockInvoke } from "../test/commands";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -42,7 +42,7 @@ describe("TotaisScreen — regras do método (puro)", () => {
 describe("TotaisScreen (render)", () => {
   it("mostra as 4 métricas-herói e o status do mês corrente", async () => {
     mockInvoke.mockReset();
-    mockCommands({ get_forecast: FORECAST });
+    mockCommands({ get_forecast: FORECAST, owner_totals_for_month_cmd: [] });
     render(<TotaisScreen />);
 
     await waitFor(() => {
@@ -57,7 +57,7 @@ describe("TotaisScreen (render)", () => {
 
   it("seletor de mês: avança para o próximo mês e volta ao hoje", async () => {
     mockInvoke.mockReset();
-    mockCommands({ get_forecast: FORECAST });
+    mockCommands({ get_forecast: FORECAST, owner_totals_for_month_cmd: [] });
     render(<TotaisScreen />);
     await waitFor(() => expect(screen.getByText("Performance")).toBeInTheDocument());
     // Começa no mês corrente (junho) → sem botão "Hoje".
@@ -70,5 +70,36 @@ describe("TotaisScreen (render)", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Hoje" }));
     expect(screen.getByText(/Junho de 2026/)).toBeInTheDocument();
+  });
+
+  it("mostra totais por titular quando há 2+ titulares", async () => {
+    mockInvoke.mockReset();
+    mockCommands({
+      get_forecast: FORECAST,
+      owner_totals_for_month_cmd: OWNER_TOTALS,
+    });
+    render(<TotaisScreen />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("region", { name: "Por titular" })).toBeInTheDocument();
+    });
+    expect(screen.getByText("Titular A")).toBeInTheDocument();
+    expect(screen.getByText("Titular B")).toBeInTheDocument();
+    // Os valores (R$ 3.200,00 e R$ 1.800,00) aparecem como Money.
+    expect(screen.getByText(/3\.200,00/)).toBeInTheDocument();
+    expect(screen.getByText(/1\.800,00/)).toBeInTheDocument();
+  });
+
+  it("não mostra a seção por titular quando não há split (lista vazia)", async () => {
+    mockInvoke.mockReset();
+    mockCommands({ get_forecast: FORECAST, owner_totals_for_month_cmd: [] });
+    render(<TotaisScreen />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Performance")).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByRole("region", { name: "Por titular" }),
+    ).not.toBeInTheDocument();
   });
 });

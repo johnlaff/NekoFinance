@@ -27,7 +27,7 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 012  | Remove dead code + unify duplicate money formatters                                 | P2       | S      | —          | TODO   |
 | 013  | Security hardening: token fail-closed, loopback timeout, CSP, privacy-scan          | P2       | S      | —          | TODO   |
 | 014  | Documentation truth fixes                                                           | P2       | S      | —          | TODO   |
-| 015  | Wire built-but-unwired UI: edit/delete transaction, recurrence series, owner totals | P1       | M      | —          | TODO   |
+| 015  | Wire built-but-unwired UI: edit/delete transaction, recurrence series, owner totals | P1       | M      | —          | DONE   |
 | 016  | Navigation/IA restructure + dashboard de-duplication                                | P1       | M      | —          | TODO   |
 | 017  | Accessibility WCAG batch (contrast + landmarks)                                     | P1       | S      | —          | TODO   |
 | 018  | Motion 2026: stagger static screens + token-driven durations                        | P2       | S–M    | —          | TODO   |

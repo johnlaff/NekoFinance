@@ -1,7 +1,16 @@
-import { useEffect, useReducer, useState } from "react";
+import { useEffect, useReducer, useState, type Dispatch } from "react";
 import { Button } from "../design-system/components/Button";
 import { MovBadge, type MovKind } from "../design-system/components/MovBadge";
-import { createTransaction, listTags, type Frequency, type Tag } from "../lib/api";
+import {
+  createTransaction,
+  listTags,
+  updateSeriesAll,
+  updateSeriesFrom,
+  updateTransaction,
+  type Frequency,
+  type SeriesEdit,
+  type Tag,
+} from "../lib/api";
 import { safeErrorMessage } from "../lib/errors";
 import { parseBRLToCents, todayISO } from "../lib/format";
 
@@ -25,6 +34,36 @@ function kindToFields(kind: MovKind): {
     default:
       return { txnType: "expense", isFixed: false, paymentMethod: "debit" };
   }
+}
+
+/** Inverso de `kindToFields`: deriva o tipo de movimento (chip) de um lançamento existente. */
+function fieldsToKind(
+  type: string,
+  isFixed: boolean,
+  paymentMethod: string | null,
+): MovKind {
+  if (type === "income") return "entrada";
+  if (isFixed) return "saida";
+  if (paymentMethod === "credit") return "cartao";
+  return "diario";
+}
+
+/** Valores de um lançamento existente para pré-preencher o form no modo edição. */
+export interface TransactionEditValues {
+  id: string;
+  type: string;
+  amount: number; // centavos, magnitude positiva
+  description: string;
+  date: string;
+  payment_method: string | null;
+  is_fixed: boolean;
+  /** Prefixo uuid da série (derivado do id "uuid:index"); null = lançamento único. */
+  recurrence_id: string | null;
+}
+
+/** Centavos → string editável pt-BR ("1234,50"), que volta limpo por `parseBRLToCents`. */
+function centsToInput(cents: number): string {
+  return (cents / 100).toFixed(2).replace(".", ",");
 }
 
 const FREQ_LABELS: Record<Frequency, string> = {
@@ -97,7 +136,21 @@ interface FormState {
   error: string | null;
 }
 
-function makeInitialForm(): FormState {
+function makeInitialForm(initial?: TransactionEditValues): FormState {
+  if (initial) {
+    return {
+      kind: fieldsToKind(initial.type, initial.is_fixed, initial.payment_method),
+      amount: centsToInput(initial.amount),
+      description: initial.description,
+      date: initial.date,
+      selectedTags: [],
+      repeat: false,
+      frequency: "mensal",
+      repetitions: 12,
+      busy: false,
+      error: null,
+    };
+  }
   return {
     kind: "diario",
     amount: "",
@@ -147,8 +200,148 @@ function formReducer(s: FormState, a: FormAction): FormState {
   }
 }
 
-export function NewTransactionForm({ onCreated }: { onCreated?: () => void }) {
-  const [form, dispatch] = useReducer(formReducer, undefined, makeInitialForm);
+/** Seleção de tags (só no modo criação). Cada chip alterna a tag no estado do form. */
+function TagPicker({
+  tags,
+  selectedTags,
+  dispatch,
+}: {
+  tags: Tag[];
+  selectedTags: string[];
+  dispatch: Dispatch<FormAction>;
+}) {
+  return (
+    <div>
+      <span style={label}>Tags</span>
+      <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
+        {tags.map((t) => {
+          const on = selectedTags.includes(t.id);
+          const tagBtnStyle: React.CSSProperties = {
+            ...TAG_BTN_BASE,
+            background: on ? "var(--surface-selected)" : "var(--surface-2)",
+            border: `var(--bw-hair) solid ${on ? t.color : "var(--border)"}`,
+          };
+          return (
+            <button
+              key={t.id}
+              type="button"
+              aria-pressed={on}
+              onClick={() => dispatch({ type: "toggleTag", id: t.id })}
+              style={tagBtnStyle}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  background: t.color,
+                }}
+              />
+              {t.emoji ? `${t.emoji} ` : ""}
+              {t.name}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Controle de recorrência ("Repetir" + nº de vezes + frequência), só no modo criação. */
+function RepeatControls({
+  repeat,
+  repetitions,
+  frequency,
+  dispatch,
+}: {
+  repeat: boolean;
+  repetitions: number;
+  frequency: Frequency;
+  dispatch: Dispatch<FormAction>;
+}) {
+  return (
+    <div>
+      <label
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "var(--space-2)",
+          cursor: "pointer",
+          fontSize: "var(--fs-sm)",
+          color: "var(--text)",
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={repeat}
+          onChange={(e) =>
+            dispatch({ type: "set", patch: { repeat: e.target.checked } })
+          }
+        />
+        Repetir
+      </label>
+      {repeat && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--space-3)",
+            marginTop: "var(--space-3)",
+            flexWrap: "wrap",
+          }}
+        >
+          <input
+            aria-label="Número de repetições"
+            type="number"
+            min={1}
+            max={120}
+            value={repetitions}
+            onChange={(e) =>
+              dispatch({
+                type: "set",
+                patch: { repetitions: Math.max(1, Number(e.target.value) || 1) },
+              })
+            }
+            style={{ ...field, width: 88 }}
+          />
+          <span style={{ color: "var(--text-muted)", fontSize: "var(--fs-sm)" }}>
+            vezes
+          </span>
+          <select
+            aria-label="Frequência"
+            value={frequency}
+            onChange={(e) =>
+              dispatch({
+                type: "set",
+                patch: { frequency: e.target.value as Frequency },
+              })
+            }
+            style={{ ...field, width: "auto", minWidth: 140 }}
+          >
+            {(["diaria", "semanal", "mensal"] as Frequency[]).map((f) => (
+              <option key={f} value={f}>
+                {FREQ_LABELS[f]}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function NewTransactionForm({
+  onCreated,
+  initialValues,
+  onSaved,
+}: {
+  onCreated?: () => void;
+  initialValues?: TransactionEditValues;
+  onSaved?: () => void;
+}) {
+  const editing = initialValues != null;
+  const [form, dispatch] = useReducer(formReducer, initialValues, makeInitialForm);
   const {
     kind,
     amount,
@@ -185,6 +378,39 @@ export function NewTransactionForm({ onCreated }: { onCreated?: () => void }) {
     const fields = kindToFields(kind);
     // try/catch sem `finally`: o React Compiler não otimiza componentes com try/finally.
     try {
+      if (initialValues) {
+        const recId = initialValues.recurrence_id;
+        if (recId) {
+          // Série recorrente: a escolha "toda a série" vs "deste ponto em diante" (o passado
+          // fica intacto em updateSeriesFrom).
+          const all = window.confirm(
+            "Aplicar a alteração em toda a série?\n\nOK = toda a série\nCancela = este e os futuros",
+          );
+          const edit: SeriesEdit = {
+            amount: amountCents,
+            description: description.trim() || null,
+            paymentMethod: fields.paymentMethod,
+            isFixed: fields.isFixed,
+          };
+          if (all) {
+            await updateSeriesAll(recId, edit);
+          } else {
+            await updateSeriesFrom(initialValues.id, edit);
+          }
+        } else {
+          await updateTransaction(initialValues.id, {
+            txnType: fields.txnType,
+            amountCents,
+            description: description.trim() || null,
+            paymentMethod: fields.paymentMethod,
+            isFixed: fields.isFixed,
+            date,
+          });
+        }
+        dispatch({ type: "submitSuccess" });
+        onSaved?.();
+        return;
+      }
       await createTransaction({
         txnType: fields.txnType,
         amountCents,
@@ -200,7 +426,12 @@ export function NewTransactionForm({ onCreated }: { onCreated?: () => void }) {
     } catch (e) {
       dispatch({
         type: "fail",
-        error: safeErrorMessage(e, "Não foi possível lançar. Tente novamente."),
+        error: safeErrorMessage(
+          e,
+          editing
+            ? "Não foi possível salvar. Tente novamente."
+            : "Não foi possível lançar. Tente novamente.",
+        ),
       });
     }
   }
@@ -307,110 +538,18 @@ export function NewTransactionForm({ onCreated }: { onCreated?: () => void }) {
         />
       </div>
 
-      {tags.length > 0 && (
-        <div>
-          <span style={label}>Tags</span>
-          <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
-            {tags.map((t) => {
-              const on = selectedTags.includes(t.id);
-              const tagBtnStyle: React.CSSProperties = {
-                ...TAG_BTN_BASE,
-                background: on ? "var(--surface-selected)" : "var(--surface-2)",
-                border: `var(--bw-hair) solid ${on ? t.color : "var(--border)"}`,
-              };
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  aria-pressed={on}
-                  onClick={() => dispatch({ type: "toggleTag", id: t.id })}
-                  style={tagBtnStyle}
-                >
-                  <span
-                    aria-hidden="true"
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: "50%",
-                      background: t.color,
-                    }}
-                  />
-                  {t.emoji ? `${t.emoji} ` : ""}
-                  {t.name}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+      {!editing && tags.length > 0 && (
+        <TagPicker tags={tags} selectedTags={selectedTags} dispatch={dispatch} />
       )}
 
-      <div>
-        <label
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "var(--space-2)",
-            cursor: "pointer",
-            fontSize: "var(--fs-sm)",
-            color: "var(--text)",
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={repeat}
-            onChange={(e) =>
-              dispatch({ type: "set", patch: { repeat: e.target.checked } })
-            }
-          />
-          Repetir
-        </label>
-        {repeat && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "var(--space-3)",
-              marginTop: "var(--space-3)",
-              flexWrap: "wrap",
-            }}
-          >
-            <input
-              aria-label="Número de repetições"
-              type="number"
-              min={1}
-              max={120}
-              value={repetitions}
-              onChange={(e) =>
-                dispatch({
-                  type: "set",
-                  patch: { repetitions: Math.max(1, Number(e.target.value) || 1) },
-                })
-              }
-              style={{ ...field, width: 88 }}
-            />
-            <span style={{ color: "var(--text-muted)", fontSize: "var(--fs-sm)" }}>
-              vezes
-            </span>
-            <select
-              aria-label="Frequência"
-              value={frequency}
-              onChange={(e) =>
-                dispatch({
-                  type: "set",
-                  patch: { frequency: e.target.value as Frequency },
-                })
-              }
-              style={{ ...field, width: "auto", minWidth: 140 }}
-            >
-              {(["diaria", "semanal", "mensal"] as Frequency[]).map((f) => (
-                <option key={f} value={f}>
-                  {FREQ_LABELS[f]}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-      </div>
+      {!editing && (
+        <RepeatControls
+          repeat={repeat}
+          repetitions={repetitions}
+          frequency={frequency}
+          dispatch={dispatch}
+        />
+      )}
 
       {error && (
         <p
@@ -423,7 +562,7 @@ export function NewTransactionForm({ onCreated }: { onCreated?: () => void }) {
 
       <div style={{ display: "flex", justifyContent: "flex-end" }}>
         <Button type="submit" variant="primary" disabled={!canSubmit}>
-          {busy ? "Salvando…" : "Lançar"}
+          {busy ? "Salvando…" : editing ? "Salvar" : "Lançar"}
         </Button>
       </div>
     </form>
