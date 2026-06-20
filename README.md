@@ -64,7 +64,8 @@ Linux/WSL2 prerequisites for the desktop shell:
 ```bash
 sudo apt update
 sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
-  libssl-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev pkg-config
+  libssl-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev pkg-config \
+  patchelf
 ```
 
 Optional: connect Google Sheets by setting `VITE_GOOGLE_CLIENT_ID` in `.env` (see

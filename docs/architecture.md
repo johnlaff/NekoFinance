@@ -4,17 +4,17 @@ Neko Finance is designed as a local-first desktop app. The repo is public-safe; 
 
 ## Runtime Layers
 
-| Layer            | Responsibility                                                                                      |
-| ---------------- | --------------------------------------------------------------------------------------------------- |
-| React UI         | Dashboards, chat/captain panel, approval dialogs, data mapping screens.                             |
-| Tauri shell      | Desktop runtime, local file access, secure OS integrations, command bridge.                         |
-| Forecast core    | Pure Rust projection engine (`src-tauri/src/forecast/`): chained daily balance, month-end,          |
-|                  | future deficit, safe-to-spend, monthly metrics. No IO; commands are thin adapters (spec 003/005).   |
-| Local storage    | SQLite (WAL) for normalized finance data, settings, and sync state. Full-text search is planned.    |
-| Local retrieval  | LanceDB for anonymized methodology chunks and future semantic retrieval (not built yet).            |
-| Google connector | OAuth desktop flow, Google Sheets read/write, sync checkpoints.                                     |
-| Copilot          | CopilotScreen já mostra um preview determinístico (reserva, performance, pode-gastar, economizado%) |
-|                  | derivado do forecast core. O chat/agente com tools e escrita aprovada ainda não foi construído.     |
+| Layer            | Responsibility                                                                                                                                                                                                                                                                  |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| React UI         | Dashboards, chat/captain panel, approval dialogs, data mapping screens.                                                                                                                                                                                                         |
+| Tauri shell      | Desktop runtime, local file access, secure OS integrations, command bridge.                                                                                                                                                                                                     |
+| Forecast core    | Pure Rust projection engine (`src-tauri/src/forecast/`): chained daily balance, month-end,                                                                                                                                                                                      |
+|                  | future deficit, safe-to-spend, monthly metrics. No IO; commands are thin adapters (spec 003/005).                                                                                                                                                                               |
+| Local storage    | SQLite (WAL) for normalized finance data, settings, and sync state. Full-text search was prototyped (migration 0015) and removed (migration 0010-drop) — tables were never populated; search is client-side. Re-add with triggers and rebuild when FTS is actually implemented. |
+| Local retrieval  | LanceDB for anonymized methodology chunks and future semantic retrieval (not built yet).                                                                                                                                                                                        |
+| Google connector | OAuth desktop flow, Google Sheets read/write, sync checkpoints.                                                                                                                                                                                                                 |
+| Copilot          | CopilotScreen já mostra um preview determinístico (reserva, performance, pode-gastar, economizado%)                                                                                                                                                                             |
+|                  | derivado do forecast core. O chat/agente com tools e escrita aprovada ainda não foi construído.                                                                                                                                                                                 |
 
 ## Data Boundaries
 

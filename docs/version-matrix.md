@@ -4,18 +4,19 @@ Checked on 2026-06-08 from npm and crates.io before scaffolding.
 
 ## Installed In This Scaffold
 
-| Area               | Package                            | Version              | Notes                                                                     |
-| ------------------ | ---------------------------------- | -------------------- | ------------------------------------------------------------------------- |
-| Tauri CLI          | `@tauri-apps/cli`                  | `2.11.2`             | Latest npm.                                                               |
-| React              | `react`, `react-dom`               | `19.2.7`             | Latest npm.                                                               |
-| React types        | `@types/react`, `@types/react-dom` | `19.2.17`, `19.2.3`  | Latest npm.                                                               |
-| Vite               | `vite`                             | `8.0.16`             | Requires Node `^20.19.0 &#124;&#124; >=22.12.0`; local Node is `24.16.0`. |
-| Vite React plugin  | `@vitejs/plugin-react`             | `6.0.2`              | Latest npm.                                                               |
-| TypeScript         | `typescript`                       | `6.0.3`              | Compatible with checked `typescript-eslint` range `<6.1.0`.               |
-| Tauri crate        | `tauri`                            | `2.11.2`             | Latest crates.io.                                                         |
-| Tauri build crate  | `tauri-build`                      | `2.6.2`              | Latest crates.io.                                                         |
-| Tauri opener crate | `tauri-plugin-opener`              | `2.5.4`              | Latest crates.io.                                                         |
-| Serde              | `serde`, `serde_json`              | `1.0.228`, `1.0.150` | Latest crates.io.                                                         |
+| Area               | Package                            | Version              | Notes                                                                                                                                                                                       |
+| ------------------ | ---------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tauri CLI          | `@tauri-apps/cli`                  | `2.11.2`             | Latest npm.                                                                                                                                                                                 |
+| React              | `react`, `react-dom`               | `19.2.7`             | Latest npm.                                                                                                                                                                                 |
+| React types        | `@types/react`, `@types/react-dom` | `19.2.17`, `19.2.3`  | Latest npm.                                                                                                                                                                                 |
+| Vite               | `vite`                             | `8.0.16`             | Requires Node `^20.19.0 &#124;&#124; >=22.12.0`; local Node is `24.16.0`.                                                                                                                   |
+| Vite React plugin  | `@vitejs/plugin-react`             | `6.0.2`              | Latest npm.                                                                                                                                                                                 |
+| TypeScript         | `typescript`                       | `6.0.3`              | Compatible with checked `typescript-eslint` range `<6.1.0`.                                                                                                                                 |
+| Tauri crate        | `tauri`                            | `2.11.2`             | Latest crates.io.                                                                                                                                                                           |
+| Tauri build crate  | `tauri-build`                      | `2.6.2`              | Latest crates.io.                                                                                                                                                                           |
+| Tauri opener crate | `tauri-plugin-opener`              | `2.5.4`              | Latest crates.io.                                                                                                                                                                           |
+| Serde              | `serde`, `serde_json`              | `1.0.228`, `1.0.150` | Latest crates.io.                                                                                                                                                                           |
+| OS keychain        | `keyring`                          | `3.6.3`              | `keyring 4.x` dropped the `sync-secret-service` feature flag needed on Linux; `3.x` (locked at `3.6.3`) is used instead. Features: `apple-native`, `windows-native`, `sync-secret-service`. |
 
 ## Quality Tooling
 
@@ -54,7 +55,6 @@ These are candidates for future slices. Note: several have since been installed 
 | SQLite plugin     | `@tauri-apps/plugin-sql` / `tauri-plugin-sql` | `2.4.0`        | Use with SQLite feature when storage slice starts.                                               |
 | Rust SQLite       | `rusqlite`                                    | `0.40.1`       | Alternative if direct Rust storage is preferred.                                                 |
 | SQL toolkit       | `sqlx`                                        | `0.9.0`        | Requires Rust `1.94`; local Rust is `1.96`.                                                      |
-| OS keychain       | `keyring`                                     | `4.0.1`        | For OAuth refresh tokens/API keys if needed.                                                     |
 | Google APIs       | `googleapis`                                  | `173.0.0`      | Node `>=18`; local Node is `24.16`.                                                              |
 | Google auth       | `google-auth-library`                         | `10.7.0`       | Node `>=18`.                                                                                     |
 | AI SDK            | `ai`                                          | `6.0.198`      | Peer `zod ^3.25.76 &#124;&#124; ^4.1.8`.                                                         |
