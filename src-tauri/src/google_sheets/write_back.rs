@@ -38,6 +38,8 @@ pub fn ensure_write_back_enabled() -> Result<(), String> {
 pub struct TxnLineItem {
     pub amount_cents: i64,
     pub description: String,
+    /// Cabeçalho de seção original, se existir (ver `NoteLineItem::section`). Plano 048.
+    pub section: Option<String>,
 }
 
 /// Uma transação candidata a voltar para a planilha (magnitude positiva; o sinal/coluna vem do tipo).
@@ -132,19 +134,39 @@ pub fn build_itemized_cell_value(items: &[TxnLineItem]) -> String {
 /// Descrição vazia vira `"<sem descrição>"` (placeholder método-neutro) para a linha continuar
 /// parseável. A descrição é TEXTO de nota — o Sheets não a interpreta como fórmula (sem risco de
 /// injeção), então é escrita como veio (sanitização de fórmula é só na célula, ver acima).
+///
+/// Plano 048: quando os itens carregam um `section` (cabeçalho da nota original, ex.: "CONTAS:"),
+/// reemite o cabeçalho antes do primeiro item de cada seção, com uma linha em branco separando
+/// blocos consecutivos — fechando o round-trip import → editar → write-back fielmente. Itens com
+/// `section = None` produzem exatamente o formato plano de antes (sem regressão).
 pub fn build_itemized_note(items: &[TxnLineItem]) -> String {
-    items
-        .iter()
-        .map(|it| {
-            let desc = if it.description.trim().is_empty() {
-                "<sem descrição>"
-            } else {
-                it.description.trim()
-            };
-            format!("R$ {} - {}", cents_to_ptbr(it.amount_cents), desc)
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    let mut lines: Vec<String> = Vec::new();
+    let mut last_section: Option<&str> = None;
+
+    for it in items {
+        let this_section = it.section.as_deref();
+
+        // Emite o cabeçalho quando a seção muda (None → Some, ou Some("A") → Some("B")).
+        // Uma linha em branco separa blocos ao transicionar de um bloco anterior.
+        if this_section != last_section {
+            if let Some(header) = this_section {
+                if !lines.is_empty() {
+                    lines.push(String::new()); // separador em branco entre seções
+                }
+                lines.push(header.to_string());
+            }
+            last_section = this_section;
+        }
+
+        let desc = if it.description.trim().is_empty() {
+            "<sem descrição>"
+        } else {
+            it.description.trim()
+        };
+        lines.push(format!("R$ {} - {}", cents_to_ptbr(it.amount_cents), desc));
+    }
+
+    lines.join("\n")
 }
 
 fn kind_offset(kind: RowKind, mappings: &[(String, i32)]) -> Option<usize> {
@@ -837,6 +859,7 @@ mod tests {
         TxnLineItem {
             amount_cents,
             description: description.into(),
+            section: None,
         }
     }
 
@@ -895,6 +918,65 @@ mod tests {
         assert_eq!(parsed[0].description, "Conta A");
         assert_eq!(parsed[1].amount_cents, 120050);
         assert_eq!(parsed[1].description, "Parcela carro");
+    }
+
+    // Plano 048: build_itemized_note reemite os cabeçalhos de seção no round-trip.
+    fn ti_sec(amount_cents: i64, description: &str, section: Option<&str>) -> TxnLineItem {
+        TxnLineItem {
+            amount_cents,
+            description: description.into(),
+            section: section.map(|s| s.to_string()),
+        }
+    }
+
+    #[test]
+    fn build_itemized_note_with_single_section() {
+        let items = vec![
+            ti_sec(10_000, "Item A", Some("CONTAS:")),
+            ti_sec(5_000, "Item B", Some("CONTAS:")),
+        ];
+        assert_eq!(
+            build_itemized_note(&items),
+            "CONTAS:\nR$ 100,00 - Item A\nR$ 50,00 - Item B",
+        );
+    }
+
+    #[test]
+    fn build_itemized_note_with_two_sections() {
+        let items = vec![
+            ti_sec(10_000, "Item A", Some("CONTAS:")),
+            ti_sec(20_000, "Item B", Some("CARTÕES:")),
+        ];
+        assert_eq!(
+            build_itemized_note(&items),
+            "CONTAS:\nR$ 100,00 - Item A\n\nCARTÕES:\nR$ 200,00 - Item B",
+        );
+    }
+
+    #[test]
+    fn build_itemized_note_no_section_stays_flat() {
+        // Itens com section=None produzem a mesma saída de antes (sem regressão).
+        let items = vec![ti(5000, "Conta A"), ti(7500, "Conta B")];
+        assert_eq!(
+            build_itemized_note(&items),
+            "R$ 50,00 - Conta A\nR$ 75,00 - Conta B",
+        );
+    }
+
+    #[test]
+    fn build_itemized_note_section_round_trips_through_parse() {
+        use super::super::import::parse_itemized_note;
+        let items = vec![
+            ti_sec(10_000, "Item A", Some("CONTAS:")),
+            ti_sec(20_000, "Item B", Some("CARTÕES:")),
+        ];
+        let note = build_itemized_note(&items);
+        let reparsed = parse_itemized_note(&note);
+        assert_eq!(reparsed.len(), 2);
+        assert_eq!(reparsed[0].amount_cents, 10_000);
+        assert_eq!(reparsed[0].section.as_deref(), Some("CONTAS:"));
+        assert_eq!(reparsed[1].amount_cents, 20_000);
+        assert_eq!(reparsed[1].section.as_deref(), Some("CARTÕES:"));
     }
 
     #[test]
