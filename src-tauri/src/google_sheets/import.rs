@@ -94,7 +94,10 @@ pub struct ImportedRow {
 
 pub fn classify_row(date_str: &str, date_direction: &str) -> Result<bool, String> {
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let is_past = date_str < today.as_str();
+    // Hoje é REALIZADO (não projeção): `<=` inclui a data de hoje em `is_past`,
+    // então `is_projection = !is_past = false` no modo "both". O `<` antigo
+    // jogava o gasto de hoje no painel de previsão.
+    let is_past = date_str <= today.as_str();
 
     match date_direction {
         "past_only" => Ok(false),
@@ -121,7 +124,9 @@ fn compute_checksum_with_options(rows: &[ImportedRow], descriptions_trusted: boo
         if descriptions_trusted {
             hasher.update(row.description.as_bytes());
         }
-        hasher.update([row.is_projection as u8]);
+        // `is_projection` NÃO entra no checksum: é um campo DERIVADO de `Local::now()`
+        // no import, não dado-fonte. Incluí-lo fazia a MESMA planilha inalterada gerar
+        // um checksum diferente a cada dia → re-import integral espúrio diário.
         hasher.update(row.kind.as_str().as_bytes());
         // A nota crua entra no checksum: editar SÓ a nota de célula (ex.: retag de
         // `#reembolso:`/`#dividir:`) é uma mudança real que o re-import deve aplicar —
@@ -1492,6 +1497,50 @@ mod tests {
     #[test]
     fn test_classify_row_invalid_direction() {
         assert!(classify_row("2025-01-01", "invalid").is_err());
+    }
+
+    #[test]
+    fn classify_row_today_is_realized() {
+        // A row dated today must be realized (is_projection = false), not projected.
+        // Bug 1: the old `<` comparison made today a projection.
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        assert!(
+            !classify_row(&today, "both").unwrap(),
+            "today must be realized (is_projection=false) in 'both' mode"
+        );
+        // "past_only" and "future_only" are direction overrides; unchanged by this fix.
+        assert!(!classify_row(&today, "past_only").unwrap());
+        assert!(classify_row(&today, "future_only").unwrap());
+    }
+
+    #[test]
+    fn checksum_excludes_is_projection_field() {
+        // Bug 2: is_projection is date-relative (computed from today), so including it
+        // in the checksum caused the same unchanged sheet to produce a different checksum
+        // on a different calendar day → daily spurious full re-import.
+        // Fix: is_projection must NOT affect the checksum.
+        let row_as_future = ImportedRow {
+            date: "2099-01-15".into(),
+            amount: 50000,
+            description: "Gasto fixo".into(),
+            is_projection: true, // "future" classification
+            kind: RowKind::Saida,
+            raw_note: String::new(),
+        };
+        let row_as_past = ImportedRow {
+            date: "2099-01-15".into(),
+            amount: 50000,
+            description: "Gasto fixo".into(),
+            is_projection: false, // same source data, different derived classification
+            kind: RowKind::Saida,
+            raw_note: String::new(),
+        };
+        // Same source data → same checksum regardless of is_projection.
+        assert_eq!(
+            compute_checksum(&[row_as_future]),
+            compute_checksum(&[row_as_past]),
+            "checksum must not depend on is_projection (derived field)"
+        );
     }
 
     #[test]
