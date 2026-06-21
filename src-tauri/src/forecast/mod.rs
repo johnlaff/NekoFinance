@@ -344,6 +344,7 @@ fn month_metrics(
     today: NaiveDate,
     events: &[CashflowEvent],
     months: &[MonthEnd],
+    annotation: &std::collections::HashMap<(i32, u32), i64>,
 ) -> Vec<MonthMetric> {
     months
         .iter()
@@ -372,6 +373,11 @@ fn month_metrics(
                     EventKind::Economia => economia += e.amount_cents,
                 }
             }
+            // Anotação da aba Economia para este mês (import via store_economia_entries, plano 052).
+            // Disjunta dos transfers de reserva MANUAIS (já somados em EventKind::Economia acima):
+            // a anotação só vem do import da aba e nunca vira transação → somar não duplica. Alimenta
+            // o Economizado% (savings_rate_bps) e o `economia_cents`, NÃO a Performance nem o Saldo.
+            economia += annotation.get(&(year, month)).copied().unwrap_or(0);
             // Custo de vida = Saídas fixas + Diário realizado (cartão já entra em fixed_out via lump).
             let cost_of_living_cents = fixed_out + daily_realized;
             // Performance = Entradas − (Saídas + Diário) — fórmula fiel à planilha.
@@ -429,6 +435,7 @@ pub fn month_metrics_for(
     today: NaiveDate,
     events: &[CashflowEvent],
     months: &[(i32, u32)],
+    annotation: &std::collections::HashMap<(i32, u32), i64>,
 ) -> Vec<MonthMetric> {
     let ends: Vec<MonthEnd> = months
         .iter()
@@ -438,7 +445,7 @@ pub fn month_metrics_for(
             balance_cents: 0,
         })
         .collect();
-    month_metrics(today, events, &ends)
+    month_metrics(today, events, &ends, annotation)
 }
 
 /// Eventos `Daily` projetados da **previsão de diário**: para cada dia do MÊS CORRENTE após `today`
@@ -490,7 +497,16 @@ pub fn project(
     events: &[CashflowEvent],
     horizon_end: NaiveDate,
 ) -> Forecast {
-    project_with_metrics(seed_cents, today, events, events, horizon_end)
+    // Sem anotação da aba Economia: só os eventos (inclui transfers de reserva REAIS) decidem o
+    // Economizado%. As métricas de produção que precisam da anotação chamam `project_with_metrics`.
+    project_with_metrics(
+        seed_cents,
+        today,
+        events,
+        events,
+        horizon_end,
+        &std::collections::HashMap::new(),
+    )
 }
 
 /// Como [`project`], mas as MÉTRICAS por mês (performance/poupança) usam um conjunto de eventos
@@ -507,6 +523,7 @@ pub fn project_with_metrics(
     chain_events: &[CashflowEvent],
     metric_events: &[CashflowEvent],
     horizon_end: NaiveDate,
+    annotation: &std::collections::HashMap<(i32, u32), i64>,
 ) -> Forecast {
     let mut daily = Vec::new();
     let mut balance = seed_cents;
@@ -530,7 +547,7 @@ pub fn project_with_metrics(
     let month_end = month_end_points(&daily);
     let deepest_deficit = deepest(&daily);
     let cash_floor_cents = deepest_deficit.map(|p| p.balance_cents.max(0)).unwrap_or(0);
-    let months = month_metrics(today, metric_events, &month_end);
+    let months = month_metrics(today, metric_events, &month_end, annotation);
 
     Forecast {
         daily,
