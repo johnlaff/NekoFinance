@@ -14,13 +14,9 @@ import {
 import { safeErrorMessage } from "../../lib/errors";
 import { formatBRL } from "../../lib/format";
 import { withLoading } from "../../lib/withLoading";
-
-const KIND_LABEL: Record<string, string> = {
-  entrada: "Entrada",
-  saida: "Saída",
-  diario: "Diário",
-  economia: "Economia",
-};
+// Lógica pura/constantes do write-back vivem em `./writeBack` (fora deste arquivo de componente,
+// para o Fast Refresh tratá-lo como só-de-componentes). Consumidores importam de lá diretamente.
+import { KIND_LABEL } from "./writeBack";
 
 // Qual seção tem o diálogo de 2ª confirmação aberto (uma de cada vez). `null` = nenhum.
 type ConfirmTarget = null | "grid" | "econ";
@@ -179,7 +175,7 @@ const CONFIRM_ACTIONS: CSSProperties = {
  * backdrop sem código próprio. Re-renderiza/fecha conforme o `count` (a seção alvo já decide quando
  * montar este componente).
  */
-function ConfirmDialog({
+export function ConfirmDialog({
   count,
   scope,
   onConfirm,

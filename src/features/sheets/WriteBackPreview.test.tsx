@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { WriteBackPreview } from "./WriteBackPreview";
+import { isSafeForFastPath } from "./writeBack";
 import type { CellWrite, WriteBackPreviewResult } from "../../lib/api";
 import { mockCommands, mockInvoke } from "../../test/commands";
 
@@ -210,5 +211,72 @@ describe("WriteBackPreview", () => {
       ).length;
       expect(after).toBeGreaterThan(previewCallsBefore);
     });
+  });
+});
+
+// Pré-condição do caminho rápido "Sincronizar" (plano 039): só colapsa os cliques quando o diff é
+// de só-valor, sem conflito, sem multi-cartão e com um token de frescura presente. Qualquer falha
+// cai no fluxo completo — as salvaguardas do backend rodam de qualquer forma.
+describe("isSafeForFastPath", () => {
+  const SAFE_CHANGED: CellWrite[] = [
+    {
+      a1: "E3",
+      row: 2,
+      col: 4,
+      date: "2026-06-01",
+      kind: "diario",
+      current: "50,00",
+      proposed: "75,00",
+      value_cents: 7500,
+      changed: true,
+    },
+  ];
+
+  it("returns true for a clean amount-only diff", () => {
+    expect(isSafeForFastPath(true, 0, false, SAFE_CHANGED, "rev-1")).toBe(true);
+  });
+
+  it("returns true for entrada/saida/diario kinds", () => {
+    const kinds: CellWrite[] = [
+      { ...SAFE_CHANGED[0]!, kind: "entrada", a1: "C3" },
+      { ...SAFE_CHANGED[0]!, kind: "saida", a1: "D3" },
+      { ...SAFE_CHANGED[0]!, kind: "diario", a1: "E3" },
+    ];
+    expect(isSafeForFastPath(true, 0, false, kinds, "rev-1")).toBe(true);
+  });
+
+  it("returns false when disabled", () => {
+    expect(isSafeForFastPath(false, 0, false, SAFE_CHANGED, "rev-1")).toBe(false);
+  });
+
+  it("returns false when conflict count > 0", () => {
+    expect(isSafeForFastPath(true, 1, false, SAFE_CHANGED, "rev-1")).toBe(false);
+  });
+
+  it("returns false when multiCardWarning is true", () => {
+    expect(isSafeForFastPath(true, 0, true, SAFE_CHANGED, "rev-1")).toBe(false);
+  });
+
+  it("returns false when changed list is empty", () => {
+    expect(isSafeForFastPath(true, 0, false, [], "rev-1")).toBe(false);
+  });
+
+  it("returns false when previewRevision is null or empty", () => {
+    expect(isSafeForFastPath(true, 0, false, SAFE_CHANGED, null)).toBe(false);
+    expect(isSafeForFastPath(true, 0, false, SAFE_CHANGED, "")).toBe(false);
+  });
+
+  it("returns false when any changed cell has a formula-column kind (balance/date)", () => {
+    const withBalance: CellWrite[] = [
+      ...SAFE_CHANGED,
+      { ...SAFE_CHANGED[0]!, kind: "balance", a1: "F3", col: 5 },
+    ];
+    expect(isSafeForFastPath(true, 0, false, withBalance, "rev-1")).toBe(false);
+
+    const withDate: CellWrite[] = [
+      ...SAFE_CHANGED,
+      { ...SAFE_CHANGED[0]!, kind: "date", a1: "A3", col: 0 },
+    ];
+    expect(isSafeForFastPath(true, 0, false, withDate, "rev-1")).toBe(false);
   });
 });

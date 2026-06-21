@@ -562,6 +562,22 @@ export function upsertDailyBudget(amountCents: number): Promise<void> {
   return invoke("upsert_daily_budget", { amountCents });
 }
 
+// --- Lembrete agendado no nível do sistema (plano 039) ---
+
+/**
+ * Registra (ou atualiza) o lembrete agendado no nível do SISTEMA no horário `HH:MM`
+ * informado, para que dispare mesmo com o app fechado. Idempotente. Melhor-esforço:
+ * o laço em-app continua como fallback, então uma falha aqui não deve bloquear o salvamento.
+ */
+export function registerOsReminder(timeHhmm: string): Promise<void> {
+  return invoke("register_os_reminder", { timeHhmm });
+}
+
+/** Remove o lembrete agendado no nível do sistema. No-op quando não há registro. */
+export function unregisterOsReminder(): Promise<void> {
+  return invoke("unregister_os_reminder");
+}
+
 // --- Eventos do backend (sync em segundo plano, plano 026) ---
 
 /** Carga útil do evento `neko://sync-done` emitido pela tarefa de sync de leitura. */

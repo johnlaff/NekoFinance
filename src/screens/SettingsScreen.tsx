@@ -17,7 +17,9 @@ import {
   getAppInfo,
   getAppSetting,
   isTauri,
+  registerOsReminder,
   setAppSetting,
+  unregisterOsReminder,
   upsertDailyBudget,
   type AuthStatus,
 } from "../lib/api";
@@ -62,12 +64,18 @@ const TETO_CTL_STYLE: React.CSSProperties = {
 /**
  * Configurações do lembrete diário: liga/desliga e horário preferido.
  * Persiste em `app_setting` via os comandos existentes. Disponível só no shell
- * desktop (isTauri) — a notificação dispara enquanto o app estiver aberto.
+ * desktop (isTauri). Além do laço em-app (dispara com o app aberto), registra um
+ * agendamento no nível do sistema (plano 039) para o aviso disparar mesmo com o
+ * app fechado. O registro no sistema é melhor-esforço: o laço em-app é o fallback,
+ * então uma falha ali apenas mostra um aviso, sem bloquear o salvamento.
  */
 function DailyReminderSection() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [time, setTime] = useState("20:00");
   const [saving, setSaving] = useState(false);
+  // Aviso não-bloqueante quando o agendamento no nível do sistema falha (ex.: plataforma
+  // ainda sem suporte). O lembrete em-app continua funcionando como fallback.
+  const [osWarn, setOsWarn] = useState<string | null>(null);
 
   // Carrega as configurações atuais na montagem. Uma falha de leitura mantém o
   // padrão (ligado, 20:00) em vez de quebrar a tela — leitura de KV não é crítica.
@@ -87,11 +95,30 @@ function DailyReminderSection() {
     })();
   }, []);
 
+  // Sincroniza o agendamento no nível do sistema com o estado atual. Melhor-esforço:
+  // nunca lança; uma falha vira só um aviso (o laço em-app cobre o caso).
+  async function syncOsReminder(on: boolean, at: string) {
+    try {
+      if (on) await registerOsReminder(at);
+      else await unregisterOsReminder();
+      setOsWarn(null);
+    } catch (e) {
+      setOsWarn(
+        safeErrorMessage(
+          e,
+          "Não foi possível agendar no sistema; o lembrete ainda dispara com o app aberto.",
+        ),
+      );
+    }
+  }
+
   async function handleToggle(val: string) {
     const next = val === "on";
     setEnabled(next);
     setSaving(true);
     await setAppSetting("daily_reminder_enabled", next ? "true" : "false");
+    // Liga → agenda no horário atual; desliga → remove o agendamento do sistema.
+    await syncOsReminder(next, time);
     setSaving(false);
   }
 
@@ -100,6 +127,8 @@ function DailyReminderSection() {
     setTime(val);
     setSaving(true);
     await setAppSetting("daily_reminder_time", val);
+    // Reagenda no novo horário (idempotente — sobrescreve a entrada existente).
+    if (enabled) await syncOsReminder(true, val);
     setSaving(false);
   }
 
@@ -110,15 +139,21 @@ function DailyReminderSection() {
     <Section
       icon={Bell}
       title="Lembrete diário"
-      sub="Notificação nativa enquanto o app está aberto."
+      sub="Notificação nativa no horário escolhido — dispara mesmo com o app fechado."
     >
       <div className="set-panel">
         <div className="set-row">
           <div className="set-row__main">
             <div className="set-row__t">Ativar lembrete</div>
             <div className="set-row__d">
-              Envia uma notificação nativa no horário escolhido. Disponível enquanto o
-              Neko estiver aberto.
+              Envia uma notificação nativa no horário escolhido — agendada no sistema
+              para disparar mesmo com o Neko fechado.
+              {osWarn ? (
+                <strong role="alert" style={{ color: "var(--brass-400)" }}>
+                  {" "}
+                  {osWarn}
+                </strong>
+              ) : null}
             </div>
           </div>
           <div className="set-row__ctl">

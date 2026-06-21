@@ -184,6 +184,9 @@ describe("DailyReminderSection", () => {
         return Promise.resolve(key in values ? values[key] : null);
       }
       if (cmd === "set_app_setting") return Promise.resolve(undefined);
+      // Agendamento no nível do sistema (plano 039): melhor-esforço; aqui sempre resolve.
+      if (cmd === "register_os_reminder" || cmd === "unregister_os_reminder")
+        return Promise.resolve(undefined);
       return Promise.reject(new Error(`unmocked command: ${cmd}`));
     });
   }

@@ -1,9 +1,12 @@
 //! Daily reminder notification (plan 030).
 //!
 //! Fires a native OS notification at the user-configured time when the app is
-//! running. Desktop-only; no push when the app is closed (the loop lives inside
-//! the desktop process — see Maintenance notes in the plan for the deferred
-//! OS-scheduler approach).
+//! running. Desktop-only; this loop lives inside the desktop process, so on its
+//! own it cannot push when the app is closed. Plan 039 adds an OS-level
+//! scheduled entry (`os_scheduler`) that launches the binary with `--remind` at
+//! the chosen time even when the app is closed; this in-app loop is kept as the
+//! always-available fallback (and the only path on platforms whose OS-scheduler
+//! is still phased — see `os_scheduler`).
 //!
 //! Reuses the plan-026 notification plugin (`tauri_plugin_notification`) and the
 //! background-task shape of `sync_task::spawn_background_sync` (spawn a Tokio

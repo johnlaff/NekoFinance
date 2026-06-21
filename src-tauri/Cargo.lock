@@ -2602,6 +2602,7 @@ dependencies = [
  "chrono",
  "hex",
  "keyring",
+ "notify-rust",
  "oauth2",
  "open",
  "rand 0.10.1",
