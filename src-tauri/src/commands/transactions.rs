@@ -518,20 +518,61 @@ pub async fn update_transaction_items_cmd(
     Ok(())
 }
 
-/// Apaga um lançamento pelo id (plano 043): inclui linhas importadas. A planilha é a fonte da
-/// verdade — apagar aqui NÃO apaga da planilha; o próximo import recria a linha. O painel de ações
-/// no Livro-razão avisa o usuário disso (notice de "Linha importada").
+/// Apaga um lançamento pelo id (plano 043/047): inclui linhas importadas. A planilha é a fonte da
+/// verdade — apagar aqui NÃO apaga da planilha. O painel de ações no Livro-razão avisa o usuário
+/// disso (notice de "Linha importada").
+///
+/// Plano 047: o delete agora limpa, na MESMA transação, a metadata de sync que de outro modo deixaria
+/// órfãos e desfaria o delete: (1) as linhas DERIVADAS (Entradas compensatórias `derived:%:<id>:%`,
+/// sem FK para o pai); (2) o `sync_log` da linha (id determinístico `log:<id>`, sem FK) — sem isto o
+/// próximo import RECRIARIA a linha apagada via diff/upsert; (3) os `import_conflict` da linha (sem FK
+/// CASCADE) — conflitos órfãos bloqueariam o write-back para sempre. As `line_item` filhas somem via
+/// `ON DELETE CASCADE`. Após o fix o delete é "sticky": o próximo import NÃO recria a linha.
 #[tauri::command]
 pub async fn delete_transaction_cmd(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
+    let mut tx = pool
+        .inner()
+        .begin()
+        .await
+        .map_err(|e| format!("delete (begin): {e}"))?;
+
     let affected = sqlx::query(r#"DELETE FROM "transaction" WHERE id = ?1"#)
         .bind(&id)
-        .execute(pool.inner())
+        .execute(&mut *tx)
         .await
         .map_err(|e| format!("delete: {e}"))?
         .rows_affected();
     if affected == 0 {
+        // `tx` é descartada sem commit → rollback automático.
         return Err("lançamento não encontrado".into());
     }
+
+    // Linhas derivadas (Entradas compensatórias `derived:<kind>:<id>:<i>`): sem FK para o pai, são
+    // limpas só no import; aqui replicamos o diff-delete de `import.rs`.
+    sqlx::query(r#"DELETE FROM "transaction" WHERE id LIKE 'derived:%:' || ?1 || ':%'"#)
+        .bind(&id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("delete derived rows: {e}"))?;
+
+    // `sync_log` da linha (sem FK ao `transaction`): sem remover, o próximo import recria a linha.
+    // Delete manual remove o registro de import em TODAS as abas (sem filtro de `source_sheet`).
+    sqlx::query("DELETE FROM sync_log WHERE entity_id = ?1 AND entity_type = 'transaction'")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("delete sync_log: {e}"))?;
+
+    // Conflitos de import órfãos (sem FK CASCADE) bloqueariam o write-back; somem com a linha.
+    sqlx::query("DELETE FROM import_conflict WHERE transaction_id = ?1")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("delete import_conflict: {e}"))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| format!("delete (commit): {e}"))?;
     Ok(())
 }
 
@@ -562,6 +603,33 @@ pub async fn update_transaction_cmd(
     let new_date =
         NaiveDate::parse_from_str(&date, "%Y-%m-%d").map_err(|e| format!("data inválida: {e}"))?;
     let is_projection = new_date > chrono::Local::now().date_naive();
+
+    // Plano 047: se a linha é ITEMIZADA (tem `line_item`) e o NOVO valor difere do total atual, a
+    // quebra não reflete mais o total → limpa os itens (a Σ ficaria divergente no write-back). O
+    // usuário re-insere a quebra pelo editor de itens. Idempotente: sem itens ou valor inalterado, é
+    // no-op. Consulta o valor + a contagem de itens numa só query (LEFT JOIN agregado).
+    let current: Option<(i64, i64)> = sqlx::query_as(
+        r#"SELECT t.amount, COUNT(li.id)
+           FROM "transaction" t
+           LEFT JOIN line_item li ON li.transaction_id = t.id
+           WHERE t.id = ?1
+           GROUP BY t.amount"#,
+    )
+    .bind(&id)
+    .fetch_optional(pool.inner())
+    .await
+    .map_err(|e| format!("update (load items): {e}"))?;
+    if let Some((old_amount, item_count)) = current
+        && item_count > 0
+        && old_amount != amount_cents
+    {
+        sqlx::query("DELETE FROM line_item WHERE transaction_id = ?1")
+            .bind(&id)
+            .execute(pool.inner())
+            .await
+            .map_err(|e| format!("update (clear stale items): {e}"))?;
+    }
+
     let affected = sqlx::query(
         r#"UPDATE "transaction"
            SET type = ?2, amount = ?3, description = ?4, payment_method = ?5,
@@ -943,6 +1011,228 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(amount, 9900, "o novo valor foi gravado");
+    }
+
+    // --- Plano 047: delete limpa órfãos + update limpa itens stale ---
+
+    // Núcleo do `delete_transaction_cmd` sem o wrapper `State` (mesmo padrão de `run_update_items`).
+    // Replica 1:1 o caminho transacional: DELETE da linha + derivadas + sync_log + import_conflict.
+    async fn run_delete_txn(pool: &SqlitePool, id: &str) -> Result<(), String> {
+        let mut tx = pool
+            .begin()
+            .await
+            .map_err(|e| format!("delete (begin): {e}"))?;
+        let affected = sqlx::query(r#"DELETE FROM "transaction" WHERE id = ?1"#)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("delete: {e}"))?
+            .rows_affected();
+        if affected == 0 {
+            return Err("lançamento não encontrado".into());
+        }
+        sqlx::query(r#"DELETE FROM "transaction" WHERE id LIKE 'derived:%:' || ?1 || ':%'"#)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("delete derived rows: {e}"))?;
+        sqlx::query("DELETE FROM sync_log WHERE entity_id = ?1 AND entity_type = 'transaction'")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("delete sync_log: {e}"))?;
+        sqlx::query("DELETE FROM import_conflict WHERE transaction_id = ?1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("delete import_conflict: {e}"))?;
+        tx.commit()
+            .await
+            .map_err(|e| format!("delete (commit): {e}"))?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn delete_imported_row_cleans_sync_log_conflict_and_derived() {
+        // Plano 047 (P1): apagar uma linha importada precisa remover sua metadata de sync — senão o
+        // próximo import recria a linha (sync_log) e um conflito órfão bloqueia o write-back.
+        let pool = test_pool().await;
+
+        // Perfil (FK de sync_log.profile_id → profile → person).
+        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-1', 'Tester')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO profile (id, person_id) VALUES ('pr-1', 'pe-1')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Linha importada + seu sync_log (id determinístico) + um import_conflict aberto + uma
+        // Entrada derivada (id prefixado `derived:`).
+        insert_imported_txn(&pool, "tx-1", 1000, 1000).await;
+        sqlx::query(
+            "INSERT INTO sync_log (id, event_type, entity_type, entity_id, profile_id, source_sheet) \
+             VALUES ('log:tx-1', 'import', 'transaction', 'tx-1', 'pr-1', '2026')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO import_conflict (id, transaction_id, field, base_value, local_value, sheet_value) \
+             VALUES ('cf-1', 'tx-1', 'amount', '100', '200', '300')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        insert_txn(&pool, "derived:reembolso:tx-1:0", 500).await;
+
+        run_delete_txn(&pool, "tx-1").await.unwrap();
+
+        // A linha-pai sumiu.
+        let parent: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE id = 'tx-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(parent.0, 0, "a linha importada foi removida");
+
+        // A Entrada derivada sumiu (sem FK ao pai — limpa explicitamente).
+        let derived: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM \"transaction\" WHERE id = 'derived:reembolso:tx-1:0'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(derived.0, 0, "a linha derivada foi removida");
+
+        // O sync_log sumiu → o próximo import NÃO recria a linha (sem fantasma).
+        let log: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sync_log WHERE entity_id = 'tx-1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(log.0, 0, "o sync_log foi removido (sem recriação fantasma)");
+
+        // O conflito órfão sumiu → o write-back não fica bloqueado.
+        let conflict: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM import_conflict WHERE transaction_id = 'tx-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            conflict.0, 0,
+            "o conflito órfão foi removido (write-back livre)"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_amount_clears_stale_line_items() {
+        // Plano 047 (P2): editar o VALOR de uma linha itemizada limpa a quebra (Σ não bate mais).
+        let pool = test_pool().await;
+        insert_txn(&pool, "tx-2", 5000).await;
+        // Dois itens somando o total atual (5000).
+        for (amt, desc, pos) in [(2000, "A", 0), (3000, "B", 1)] {
+            sqlx::query(
+                "INSERT INTO line_item (id, transaction_id, amount_cents, description, position) \
+                 VALUES (?1, 'tx-2', ?2, ?3, ?4)",
+            )
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(amt as i64)
+            .bind(desc)
+            .bind(pos as i64)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Replica a lógica de limpeza de `update_transaction_cmd` com NOVO valor diferente.
+        run_update_amount_clears_items(&pool, "tx-2", 8000)
+            .await
+            .unwrap();
+
+        let (amount,): (i64,) =
+            sqlx::query_as("SELECT amount FROM \"transaction\" WHERE id = 'tx-2'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(amount, 8000, "o novo total foi gravado");
+        let items: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM line_item WHERE transaction_id = 'tx-2'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(items.0, 0, "a quebra stale foi limpa ao mudar o valor");
+    }
+
+    #[tokio::test]
+    async fn update_amount_unchanged_or_no_items_keeps_items() {
+        // Guarda do outro lado: sem itens NÃO falha; e valor INALTERADO preserva a quebra.
+        let pool = test_pool().await;
+
+        // (a) Sem itens: não falha.
+        insert_txn(&pool, "tx-3", 5000).await;
+        run_update_amount_clears_items(&pool, "tx-3", 9000)
+            .await
+            .unwrap();
+
+        // (b) Itemizada com o MESMO valor: a quebra sobrevive.
+        insert_txn(&pool, "tx-4", 5000).await;
+        sqlx::query(
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position) \
+             VALUES ('li-4', 'tx-4', 5000, 'só', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        run_update_amount_clears_items(&pool, "tx-4", 5000)
+            .await
+            .unwrap();
+        let items: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM line_item WHERE transaction_id = 'tx-4'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(items.0, 1, "valor inalterado preserva a quebra");
+    }
+
+    // Espelha a limpeza condicional de itens de `update_transaction_cmd` (que recebe `State` e não é
+    // testável direto): SELECT do total + contagem de itens; se itemizada E o valor mudou, DELETE dos
+    // itens; depois grava o novo total.
+    async fn run_update_amount_clears_items(
+        pool: &SqlitePool,
+        id: &str,
+        amount_cents: i64,
+    ) -> Result<(), String> {
+        let current: Option<(i64, i64)> = sqlx::query_as(
+            r#"SELECT t.amount, COUNT(li.id)
+               FROM "transaction" t
+               LEFT JOIN line_item li ON li.transaction_id = t.id
+               WHERE t.id = ?1
+               GROUP BY t.amount"#,
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| format!("update (load items): {e}"))?;
+        if let Some((old_amount, item_count)) = current
+            && item_count > 0
+            && old_amount != amount_cents
+        {
+            sqlx::query("DELETE FROM line_item WHERE transaction_id = ?1")
+                .bind(id)
+                .execute(pool)
+                .await
+                .map_err(|e| format!("update (clear stale items): {e}"))?;
+        }
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query(r#"UPDATE "transaction" SET amount = ?2, updated_at = ?3 WHERE id = ?1"#)
+            .bind(id)
+            .bind(amount_cents)
+            .bind(&now)
+            .execute(pool)
+            .await
+            .map_err(|e| format!("update: {e}"))?;
+        Ok(())
     }
 
     // --- Plano 045: due_date + contas a vencer + parcelas ---

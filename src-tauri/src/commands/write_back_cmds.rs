@@ -497,6 +497,15 @@ pub async fn apply_write_back(
     oauth::token_store::ensure_write_scope(&app_dir.0, &client_id, resolved_secret.as_deref())
         .await?;
 
+    // Plano 047: foto do `modifiedTime` ANTES de ler os VALORES da aba (mesmo padrão de
+    // `preview_write_back_status`). No caminho LEGADO (sem `preview_revision`), esta foto é o "estado
+    // que o apply assumiu como base": comparada com a foto pós-plano, fecha o TOCTOU mesmo sem o
+    // token de prévia da UI rica. Uma edição concorrente entre as duas fotos AVANÇA o `modifiedTime`
+    // → o gate de frescura dispara e o apply aborta (nenhum diff velho chega à planilha).
+    let early_client =
+        make_authenticated_client(&app_dir.0, &client_id, client_secret.clone()).await?;
+    let early_revision = early_client.get_file_modified_time(&spreadsheet_id).await?;
+
     let (client, plan) = build_write_back_plan(
         &app_dir.0,
         pool.inner(),
@@ -507,8 +516,14 @@ pub async fn apply_write_back(
     )
     .await?;
 
-    // Re-verifica a frescura (Step 4): aborta sem escrever se o `modifiedTime` avançou.
-    guard_sheet_unchanged(&client, &spreadsheet_id, preview_revision.as_deref()).await?;
+    // Re-verifica a frescura (Step 4) SEMPRE — nenhum caminho de apply escapa do gate. Foto pós-plano
+    // do `modifiedTime`; compara com o token da prévia rica (`preview_revision`) quando presente, ou
+    // com a foto inicial (`early_revision`) no caminho legado. Aborta sem escrever se DIVERGIR.
+    let post_plan_revision = client.get_file_modified_time(&spreadsheet_id).await?;
+    match preview_revision.as_deref().filter(|s| !s.trim().is_empty()) {
+        Some(seen) => staleness_check(seen, &post_plan_revision)?,
+        None => staleness_check(&early_revision, &post_plan_revision)?,
+    }
 
     // Só as células que MUDARAM; range com nome da aba ('2026'!E3).
     let changed: Vec<&CellWrite> = plan.iter().filter(|c| c.changed).collect();
@@ -724,10 +739,26 @@ async fn realign_credit_lump(
         return Ok(0); // sem cartão com ciclo → crédito caiu na própria data; nada a colapsar.
     };
 
+    // Plano 047: limita o scan ao período relevante. Sem bound, uma compra de ANOS atrás com o mesmo
+    // dia-do-mês produziria o mesmo `cycle_due_date` calculado e seria realinhada por engano (base
+    // zerada → no-conflito espúrio no próximo import). Um ciclo de fatura abrange ~2 meses, então
+    // ir 2 anos para trás (1º de janeiro) é uma janela conservadora: larga o bastante para conter as
+    // compras de qualquer ciclo único, mas exclui compras de anos anteriores.
+    let cutoff = {
+        let due = NaiveDate::parse_from_str(due_date, "%Y-%m-%d")
+            .unwrap_or_else(|_| chrono::Local::now().date_naive());
+        NaiveDate::from_ymd_opt(due.year() - 2, 1, 1)
+            .unwrap_or(due)
+            .format("%Y-%m-%d")
+            .to_string()
+    };
+
     let candidates: Vec<(String, String)> = sqlx::query_as(
         "SELECT id, date FROM \"transaction\" \
-         WHERE type='expense' AND payment_method='credit'",
+         WHERE type='expense' AND payment_method='credit' \
+           AND date >= ?1",
     )
+    .bind(&cutoff)
     .fetch_all(&mut **tx)
     .await
     .map_err(|e| format!("query credit candidates: {e}"))?;
@@ -1261,5 +1292,91 @@ mod tests {
             Some(15000),
             "a base da Economia do mês é realinhada para o `value_cents` escrito"
         );
+    }
+
+    // Plano 047 (P2): `realign_credit_lump` antes scaneava TODAS as compras de crédito sem bound de
+    // data. Uma compra de ANOS atrás com o mesmo dia-do-mês produz o mesmo `cycle_due_date` calculado
+    // e era realinhada por engano (base zerada → no-conflito espúrio no próximo import). O fix limita
+    // o scan a `date >= 1º/jan do ano-2`, excluindo compras de anos anteriores.
+    #[tokio::test]
+    async fn realign_credit_lump_ignores_purchases_from_prior_years() {
+        let p = pool().await;
+
+        // Mesmo cartão do teste de lump: fecha dia 25, vence dia 5.
+        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-1', 'Tester')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day) \
+             VALUES ('card-1', 'Cartão', 'credit_card', 'pe-1', 25, 5)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        // Compra RECENTE: 20/MAI/2026 (≤ 25) → vence 05/JUN/2026.
+        // Compra ANTIGA: 20/MAI/2023 (mesmo dia-do-mês) → vence 05/JUN/2023 (mesmo padrão de dia).
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, payment_method, is_fixed, is_projection, source_amount) \
+             VALUES ('buy-2026', 'expense', 3000, '2026-05-20', 'credit', 0, 0, 3000), \
+                    ('buy-2023', 'expense', 7000, '2023-05-20', 'credit', 0, 0, 7000)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        // Write-back do lump da fatura de 05/JUN/2026.
+        let cell = CellWrite {
+            a1: "F5".into(),
+            row: 4,
+            col: 5,
+            date: "2026-06-05".into(),
+            kind: "saida".into(),
+            current: "0,00".into(),
+            proposed: "30,00".into(),
+            value_cents: 3000,
+            changed: true,
+            formula: None,
+            note_text: None,
+        };
+        let realigned = record_write_back_audit(&p, "2026", &[&cell]).await.unwrap();
+        assert_eq!(
+            realigned, 1,
+            "só a compra de 2026 entra no ciclo de 05/JUN/2026 (a de 2023 fica fora da janela)"
+        );
+
+        // A compra de 2026 teve a base zerada (NULL).
+        let (recent,): (Option<i64>,) =
+            sqlx::query_as("SELECT source_amount FROM \"transaction\" WHERE id = 'buy-2026'")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert!(recent.is_none(), "a base da compra de 2026 é zerada");
+
+        // A compra de 2023 permanece INTACTA (fora do bound de data → nunca avaliada).
+        let (old,): (Option<i64>,) =
+            sqlx::query_as("SELECT source_amount FROM \"transaction\" WHERE id = 'buy-2023'")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(
+            old,
+            Some(7000),
+            "a compra de ano anterior não é realinhada por engano"
+        );
+    }
+
+    // Plano 047 (P2): o gate de frescura (Step 4 do plano 028) agora roda SEMPRE no apply, inclusive
+    // no caminho legado (sem `preview_revision`). `apply_write_back` depende de IO de rede, então
+    // testamos a decisão PURA (`staleness_check`): revisão igual passa, revisão diferente aborta.
+    #[tokio::test]
+    async fn staleness_check_rejects_different_revision() {
+        // Mesma revisão → OK (a planilha não mudou desde a foto).
+        staleness_check("2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z").unwrap();
+
+        // Revisão diferente → aborta (a planilha avançou; exige re-revisão).
+        let err = staleness_check("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z").unwrap_err();
+        assert_eq!(err, SHEET_CHANGED_MSG, "diff stale é rejeitado");
     }
 }
