@@ -61,6 +61,9 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 046  | Performance correction: subtract economia (it lives in the Saída column) — refines 040 | P1       | S–M    | —          | DONE (pkg F)               |
 | 047  | F1 bugs: delete-orphan cleanup (P1) + line-item reconcile + budget atomicity + 2 more  | P1       | M      | —          | DONE (pkg F)               |
 | 048  | F2 annotation fidelity: note section headers round-trip + thermometer −R$500 boundary  | P2       | M      | —          | DONE (pkg F)               |
+| 049  | P1: update_transaction_cmd atomicity + realized_monthly_baseline ABS sign              | P1       | S–M    | —          | TODO (pkg G)               |
+| 050  | P2: economia write-back staleness + saw_december (+ conflict-cleanup/boundary tests)   | P2       | M      | —          | TODO (pkg G)               |
+| 051  | Performance = income − cost_of_living (economia=Saída; supersedes 046) + no-double-cnt | P1       | M      | —          | TODO (pkg G)               |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale)
 
