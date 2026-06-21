@@ -577,19 +577,21 @@ async fn import_rows_core(
                         // `is_user_edited = 0`: derivado da nota (não-editado), reset explícito.
                         let item_id = format!("li:{}:{}", txn_id, item.position);
                         sqlx::query(
-                            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, is_user_edited) \
-                             VALUES (?1, ?2, ?3, ?4, ?5, 0) \
+                            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, is_user_edited, section) \
+                             VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6) \
                              ON CONFLICT(id) DO UPDATE SET \
                                amount_cents=excluded.amount_cents, \
                                description=excluded.description, \
                                position=excluded.position, \
-                               is_user_edited=0",
+                               is_user_edited=0, \
+                               section=excluded.section",
                         )
                         .bind(&item_id)
                         .bind(&txn_id)
                         .bind(item.amount_cents)
                         .bind(&item.description)
                         .bind(item.position as i64)
+                        .bind(item.section.as_deref())
                         .execute(&mut **tx)
                         .await
                         .map_err(|e| format!("insert line_item {item_id}: {e}"))?;
@@ -871,6 +873,9 @@ pub(crate) struct NoteLineItem {
     pub description: String,
     /// Posição 0-based na nota (ordem de aparição).
     pub position: usize,
+    /// Cabeçalho de seção imediatamente anterior a este item na nota original
+    /// (ex.: "CONTAS:", "CARTÕES:"). `None` quando o item não está sob um cabeçalho.
+    pub section: Option<String>,
 }
 
 /// Parseia as linhas itemizadas de uma nota de célula (Plan 035).
@@ -881,7 +886,9 @@ pub(crate) struct NoteLineItem {
 /// GRAMÁTICA: cada linha começando com `R$` (com ou sem espaço entre `R$` e o número)
 /// é tratada como um item; o que vem antes do primeiro traço é o valor, o resto é a
 /// descrição. Linhas que NÃO começam com `R$` (cabeçalhos, trailers `Total = …`,
-/// linhas de orçamento separadas por tab, linhas em branco) são puladas em silêncio.
+/// linhas de orçamento separadas por tab) NÃO viram itens, mas a última linha não-`R$`
+/// não-vazia vista é guardada como o `section` (cabeçalho) dos itens seguintes — ela é
+/// reproduzida no write-back (plano 048). Linhas em branco preservam o `section` atual.
 ///
 /// Tolerâncias:
 /// - `R$<número>` e `R$ <número>` (espaço opcional após `R$`)
@@ -898,14 +905,20 @@ pub(crate) struct NoteLineItem {
 /// PURA — sem I/O, sem DB, sem panics.
 pub(crate) fn parse_itemized_note(note: &str) -> Vec<NoteLineItem> {
     let mut items = Vec::new();
+    // Cabeçalho de seção mais recente (última linha não-`R$` não-vazia). Plano 048.
+    let mut current_section: Option<String> = None;
     for (pos, line) in note.lines().enumerate() {
         let trimmed = line.trim();
-        // Só linhas que começam com `R$` (case-insensitive) são itens.
-        let rest = if trimmed.len() >= 2 && trimmed[..2].eq_ignore_ascii_case("r$") {
-            trimmed[2..].trim_start()
-        } else {
+        if trimmed.is_empty() {
+            // Linha em branco: preserva o contexto de seção (espaçamento da gramática), pula.
             continue;
-        };
+        }
+        // Linha não-`R$` → trata como cabeçalho de seção: atualiza o contexto e pula.
+        if trimmed.len() < 2 || !trimmed[..2].eq_ignore_ascii_case("r$") {
+            current_section = Some(trimmed.to_string());
+            continue;
+        }
+        let rest = trimmed[2..].trim_start();
         // Separador no PRIMEIRO traço: o que vem antes é o valor, o resto é a descrição.
         // Usar o primeiro traço permite descrições com traço (ex.: "Produto A - loja B")
         // sem truncar, porque o valor (positivo) nunca contém traço.
@@ -923,6 +936,7 @@ pub(crate) fn parse_itemized_note(note: &str) -> Vec<NoteLineItem> {
             amount_cents,
             description: desc_part.to_string(),
             position: pos,
+            section: current_section.clone(),
         });
     }
     items
@@ -3207,6 +3221,35 @@ mod tests {
         let items = parse_itemized_note("R$ 1234.5600 - Item");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].amount_cents, 123_456);
+    }
+
+    // Plano 048: parse_itemized_note captura o cabeçalho de seção das linhas não-`R$`.
+    #[test]
+    fn itemized_captures_section_header() {
+        let note = "CONTAS:\nR$ 100,00 - Item A\nR$ 50,00 - Item B";
+        let items = parse_itemized_note(note);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].section.as_deref(), Some("CONTAS:"));
+        assert_eq!(items[1].section.as_deref(), Some("CONTAS:"));
+    }
+
+    // Plano 048: duas seções separadas por linha em branco → cada item recebe seu cabeçalho.
+    #[test]
+    fn itemized_two_sections_assign_correct_header() {
+        let note = "CONTAS:\nR$ 100,00 - Item A\n\nCARTÕES:\nR$ 200,00 - Item B";
+        let items = parse_itemized_note(note);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].section.as_deref(), Some("CONTAS:"));
+        assert_eq!(items[1].section.as_deref(), Some("CARTÕES:"));
+    }
+
+    // Plano 048: item sem cabeçalho anterior → section = None.
+    #[test]
+    fn itemized_no_header_yields_none_section() {
+        let note = "R$ 150,00 - Item sem cabeçalho";
+        let items = parse_itemized_note(note);
+        assert_eq!(items.len(), 1);
+        assert!(items[0].section.is_none());
     }
 
     // --- Plan 035: persistência de line_item no import (camada DB) ---

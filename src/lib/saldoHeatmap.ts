@@ -47,7 +47,7 @@ export function saldoBand(
   cents: number,
   t: SaldoBandThresholds = SALDO_BAND_THRESHOLDS_CENTS,
 ): SaldoBand {
-  if (cents <= t.critical) return "critical";
+  if (cents < t.critical) return "critical";
   if (cents < t.positive) return "negative";
   if (cents <= t.tight) return "tight";
   if (cents <= t.ok) return "ok";

@@ -130,8 +130,8 @@ async fn load_txn_items(
     pool: &SqlitePool,
     transaction_id: &str,
 ) -> Result<Option<Vec<write_back::TxnLineItem>>, String> {
-    let rows: Vec<(i64, String)> = sqlx::query_as(
-        "SELECT amount_cents, description FROM line_item \
+    let rows: Vec<(i64, String, Option<String>)> = sqlx::query_as(
+        "SELECT amount_cents, description, section FROM line_item \
          WHERE transaction_id = ?1 ORDER BY position",
     )
     .bind(transaction_id)
@@ -143,10 +143,13 @@ async fn load_txn_items(
     }
     Ok(Some(
         rows.into_iter()
-            .map(|(amount_cents, description)| write_back::TxnLineItem {
-                amount_cents,
-                description,
-            })
+            .map(
+                |(amount_cents, description, section)| write_back::TxnLineItem {
+                    amount_cents,
+                    description,
+                    section,
+                },
+            )
             .collect(),
     ))
 }

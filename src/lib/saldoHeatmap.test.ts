@@ -19,11 +19,12 @@ describe("saldoBand — termômetro com limiares absolutos da planilha", () => {
     [100_000, "tight"],
     [50_000, "tight"],
     [0, "tight"],
-    // R$ 0 a −R$ 499,99 → vermelho claro (negativo)
+    // R$ 0 a −R$ 500,00 → vermelho claro (negativo). −R$500,00 EXATO = negativo (planilha: lessThan, não <=).
     [-1, "negative"],
     [-49_999, "negative"],
-    // abaixo de −R$ 500 → vermelho forte (crítico)
-    [-50_000, "critical"],
+    [-50_000, "negative"], // boundary: −500,00 exato → negativo (strict <)
+    // abaixo de −R$ 500 (strict) → vermelho forte (crítico)
+    [-50_001, "critical"],
     [-60_000, "critical"],
   ] as const)("saldo %d centavos → %s", (cents, band) => {
     expect(saldoBand(cents)).toBe(band);
@@ -39,7 +40,9 @@ describe("saldoBand — termômetro com limiares absolutos da planilha", () => {
     const t = { critical: -100_000, positive: 0, tight: 50_000, ok: 100_000 };
     expect(saldoBand(40_000, t)).toBe("tight");
     expect(saldoBand(120_000, t)).toBe("comfortable");
-    expect(saldoBand(-100_000, t)).toBe("critical");
+    // strict <: o limiar exato cai em "negativo"; só abaixo dele vira "crítico".
+    expect(saldoBand(-100_000, t)).toBe("negative");
+    expect(saldoBand(-100_001, t)).toBe("critical");
   });
 });
 
