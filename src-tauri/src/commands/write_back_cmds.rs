@@ -184,22 +184,6 @@ pub(crate) async fn guard_no_pending_conflicts(pool: &SqlitePool) -> Result<(), 
     Ok(())
 }
 
-/// Re-verifica a frescura da planilha: compara o `modifiedTime` atual do Drive com o `preview_revision`
-/// que o dono viu na prévia. Se AVANÇOU, aborta (Step 4). `preview_revision = None` ⇒ sem checagem
-/// (compatibilidade: o frontend só passa o token a partir do PR-B; até lá o gate fica inerte, e o
-/// envio real continua atrás de `WRITE_BACK_ENABLED`).
-pub(crate) async fn guard_sheet_unchanged(
-    client: &SheetsClient,
-    spreadsheet_id: &str,
-    preview_revision: Option<&str>,
-) -> Result<(), String> {
-    let Some(seen) = preview_revision.filter(|s| !s.trim().is_empty()) else {
-        return Ok(());
-    };
-    let current = client.get_file_modified_time(spreadsheet_id).await?;
-    staleness_check(seen, &current)
-}
-
 /// Decisão PURA da re-verificação de frescura (Step 4): a aprovação do dono vale para a revisão que
 /// ele VIU (`seen`); se o `current` (modifiedTime relido no apply) for DIFERENTE, a planilha mudou
 /// → aborta. Comparação por igualdade exata da string RFC-3339 do Drive (qualquer edição a avança).
@@ -945,6 +929,15 @@ pub async fn apply_economia_write_back(
     oauth::token_store::ensure_write_scope(&app_dir.0, &client_id, resolved_secret.as_deref())
         .await?;
 
+    // Gate de frescura SEMPRE-LIGADO (espelha `apply_write_back` / padrão do plano 047). Foto do
+    // `modifiedTime` ANTES de ler os VALORES da aba para que o token corresponda a um estado NÃO mais
+    // novo que o diff. No caminho LEGADO (sem `preview_revision`), `early_revision` é a base que o
+    // apply assumiu; uma edição concorrente entre as duas fotos AVANÇA o `modifiedTime` → o gate
+    // dispara → nenhum diff velho chega à planilha.
+    let early_client =
+        make_authenticated_client(&app_dir.0, &client_id, client_secret.clone()).await?;
+    let early_revision = early_client.get_file_modified_time(&spreadsheet_id).await?;
+
     let (client, plan) = build_economia_plan(
         &app_dir.0,
         pool.inner(),
@@ -955,8 +948,14 @@ pub async fn apply_economia_write_back(
     )
     .await?;
 
-    // Re-verifica a frescura (Step 4) antes de escrever.
-    guard_sheet_unchanged(&client, &spreadsheet_id, preview_revision.as_deref()).await?;
+    // Re-verifica a frescura (Step 4) SEMPRE — nenhum caminho de apply escapa do gate. Foto pós-plano;
+    // compara com o token da prévia rica (`preview_revision`) quando presente, ou com a foto inicial
+    // (`early_revision`) no caminho legado. Aborta sem escrever se DIVERGIR.
+    let post_plan_revision = client.get_file_modified_time(&spreadsheet_id).await?;
+    match preview_revision.as_deref().filter(|s| !s.trim().is_empty()) {
+        Some(seen) => staleness_check(seen, &post_plan_revision)?,
+        None => staleness_check(&early_revision, &post_plan_revision)?,
+    }
 
     // Células efetivamente escritas (já filtradas por `changed`); reusadas para a auditoria.
     let written: Vec<&CellWrite> = plan.iter().filter(|c| c.changed).collect();
