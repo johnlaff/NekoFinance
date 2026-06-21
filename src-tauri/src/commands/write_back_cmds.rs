@@ -609,6 +609,17 @@ pub(crate) async fn record_write_back_audit(
         .map_err(|e| format!("begin audit: {e}"))?;
     let mut realigned = 0usize;
     for c in cells {
+        // Plano 055 (P2): RE-CHAVEAR uma linha MANUAL (id-UUID, fora do `sync_log`) que acabou de ser
+        // escrita numa célula da grade diária para o `row_id` DETERMINÍSTICO daquela (aba, data, kind,
+        // slot 0) e registrá-la no `sync_log`. Sem isto, o próximo import dessa célula computaria o id
+        // determinístico, NÃO acharia linha (a manual tem id UUID), INSERIRIA um gêmeo → duplicata
+        // (a manual + a importada) que conta DUAS vezes no Saldo/totais. Após o re-chaveamento, o
+        // import faz UPSERT na MESMA linha (idempotente). Roda ANTES do realinho de `source_amount`
+        // para que o realinho a seguir atinja a linha já re-chaveada. NUNCA sobrescreve uma linha
+        // importada existente (ver `rekey_manual_row_to_deterministic`).
+        rekey_manual_row_to_deterministic(&mut tx, sheet_name, c, profile_id.as_ref(), &now)
+            .await?;
+
         // O kind `saida` cobre DOIS casos físicos na mesma célula: (a) Saídas fixas de débito 1:1 e
         // (b) o LUMP de cartão no vencimento — soma de compras de crédito (`is_fixed=0`,
         // `payment_method='credit'`) agrupadas por `cycle_due_date`. O caso (b) não tem linha 1:1
@@ -691,6 +702,154 @@ pub(crate) async fn record_write_back_audit(
         .await
         .map_err(|e| format!("commit audit: {e}"))?;
     Ok(realigned)
+}
+
+/// Plano 055 (P2): converte uma linha MANUAL recém-escrita numa célula da grade diária em uma linha
+/// SHEET-BACKED de primeira classe, re-chaveando-a para o `row_id` DETERMINÍSTICO de `(aba, data,
+/// kind, slot 0)` e registrando-a no `sync_log`. Isto fecha a duplicata do round-trip
+/// manual→write-back→re-import: sem o re-chaveamento, o import recomputa o id determinístico daquela
+/// célula, não acha a linha (id-UUID), e INSERE um gêmeo (dupla contagem no Saldo/totais). Depois
+/// dele, o import faz UPSERT na MESMA linha (idempotente).
+///
+/// SLOT: a grade canônica tem no máximo UMA linha por `(data, kind)` (uma célula por dia×coluna; ver
+/// `parse_rows_with_layout`) e `plan_write_back` agrega tudo da mesma `(data, kind)` numa única
+/// célula → o slot do import é sempre `0`. Por isso o alvo é `row_id(aba, data, kind, 0)`.
+///
+/// GARANTIA DE NÃO-COLISÃO (condição de STOP do plano): só re-chaveia quando
+/// (1) o alvo determinístico AINDA NÃO EXISTE como linha (senão sobrescreveria uma linha importada);
+/// (2) há EXATAMENTE UMA linha candidata manual em `(data, critério-do-kind)` que NÃO está no
+///     `sync_log` (linha importada/derivada nunca conta como candidata) e cujo id DIFERE do alvo.
+/// 0 ou 2+ candidatas → mapeamento 1:1 ambíguo → NÃO re-chaveia (deixa como está). O LUMP de cartão
+/// (várias compras de crédito) é naturalmente excluído pelo critério `saida` (débito fixo não-crédito).
+///
+/// FKs: as tabelas-filhas (`split`, `transaction_tag`, `line_item`, `import_conflict`) referenciam
+/// `transaction.id` como `ON DELETE CASCADE` SEM `ON UPDATE CASCADE`; com `foreign_keys=ON` (produção)
+/// um `UPDATE` cru do id quebraria a FK das filhas. Por isso COPIAMOS o pai para o novo id, repontamos
+/// as filhas e só então apagamos o pai antigo — ordem segura sob `NO ACTION` (o novo pai já existe ao
+/// repontar; a antiga não tem mais filhas ao ser apagada). O alvo é garantidamente livre por (1).
+async fn rekey_manual_row_to_deterministic(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    sheet_name: &str,
+    c: &CellWrite,
+    profile_id: Option<&(String,)>,
+    now: &str,
+) -> Result<(), String> {
+    // Economia é anotação (sem linha na grade diária / sem row_id determinístico) — fora de escopo.
+    let kind = match c.kind.as_str() {
+        "entrada" => import::RowKind::Entrada,
+        "saida" => import::RowKind::Saida,
+        "diario" => import::RowKind::Diario,
+        _ => return Ok(()),
+    };
+
+    // (1) Alvo determinístico (slot 0). Se JÁ EXISTE uma linha com esse id, é uma linha importada
+    //     daquela célula → NÃO re-chavear (sobrescreveria/colidiria). STOP silencioso e seguro.
+    let target = import::row_id(sheet_name, &c.date, kind, 0);
+    let (target_exists,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE id = ?1")
+            .bind(&target)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(|e| format!("rekey target check: {e}"))?;
+    if target_exists > 0 {
+        return Ok(());
+    }
+
+    // (2) Candidatas manuais (mesmos critérios do realinho de `source_amount`, espelhando
+    //     `load_write_back_txns`), restritas às que NÃO estão no `sync_log` (linha importada/derivada
+    //     nunca é candidata, via `NOT IN`) e cujo id difere do alvo (`id <> ?2`). EXATAMENTE UMA →
+    //     re-chaveia; senão → no-op. SQL literal por arm (sem string dinâmica): `?1`=data, `?2`=alvo.
+    //     A cláusula `id NOT IN (SELECT entity_id FROM sync_log ...)` exclui linhas importadas.
+    let select_sql: &'static str = match kind {
+        import::RowKind::Entrada => concat!(
+            "SELECT id FROM \"transaction\" WHERE date = ?1 AND type='income' \
+             AND id NOT LIKE 'derived:%' AND ",
+            "id NOT IN (SELECT entity_id FROM sync_log WHERE entity_type='transaction') AND id <> ?2"
+        ),
+        import::RowKind::Diario => concat!(
+            "SELECT id FROM \"transaction\" WHERE date = ?1 AND type='expense' AND is_fixed = 0 \
+             AND (payment_method IS NULL OR payment_method <> 'credit') AND ",
+            "id NOT IN (SELECT entity_id FROM sync_log WHERE entity_type='transaction') AND id <> ?2"
+        ),
+        import::RowKind::Saida => concat!(
+            "SELECT id FROM \"transaction\" WHERE date = ?1 AND type='expense' AND is_fixed = 1 \
+             AND (payment_method IS NULL OR payment_method <> 'credit') AND ",
+            "id NOT IN (SELECT entity_id FROM sync_log WHERE entity_type='transaction') AND id <> ?2"
+        ),
+    };
+    let candidates: Vec<(String,)> = sqlx::query_as(select_sql)
+        .bind(&c.date)
+        .bind(&target)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(|e| format!("rekey candidates: {e}"))?;
+    let [(old_id,)] = candidates.as_slice() else {
+        // 0 candidatas (já era determinística/importada) ou 2+ (ambíguo) → não re-chaveia.
+        return Ok(());
+    };
+    let old_id = old_id.clone();
+
+    // Copia o pai para o novo id (alvo livre por (1)), repointa as filhas, apaga o pai antigo.
+    sqlx::query(
+        "INSERT INTO \"transaction\" \
+           (id, type, amount, description, date, payment_method, is_fixed, from_account_id, \
+            to_account_id, is_projection, recurrence_id, source_amount, source_description, \
+            source_note, due_date, created_at, updated_at) \
+         SELECT ?1, type, amount, description, date, payment_method, is_fixed, from_account_id, \
+            to_account_id, is_projection, recurrence_id, source_amount, source_description, \
+            source_note, due_date, created_at, ?3 \
+         FROM \"transaction\" WHERE id = ?2",
+    )
+    .bind(&target)
+    .bind(&old_id)
+    .bind(now)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| format!("rekey copy parent: {e}"))?;
+
+    // Reponta as filhas (literais por tabela; sqlx exige &'static str). Cobre TODA tabela que
+    // referencia `transaction.id`: `split`/`transaction_tag`/`line_item` (FK ON DELETE CASCADE) e
+    // `import_conflict` (mesma coluna, sem FK). `?1`=novo id, `?2`=id antigo.
+    for stmt in [
+        "UPDATE split SET transaction_id = ?1 WHERE transaction_id = ?2",
+        "UPDATE transaction_tag SET transaction_id = ?1 WHERE transaction_id = ?2",
+        "UPDATE line_item SET transaction_id = ?1 WHERE transaction_id = ?2",
+        "UPDATE import_conflict SET transaction_id = ?1 WHERE transaction_id = ?2",
+    ] {
+        sqlx::query(stmt)
+            .bind(&target)
+            .bind(&old_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| format!("rekey repoint child ({stmt}): {e}"))?;
+    }
+
+    sqlx::query("DELETE FROM \"transaction\" WHERE id = ?1")
+        .bind(&old_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| format!("rekey delete old parent: {e}"))?;
+
+    // Registra a linha re-chaveada no `sync_log` (event_type `import`, id determinístico `log:<id>`),
+    // para que o PRÓXIMO import a reconheça como a MESMA linha (UPSERT) e o diff-delete não a remova.
+    if let Some((pid,)) = profile_id {
+        let log_id = format!("log:{target}");
+        sqlx::query(
+            "INSERT INTO sync_log (id, event_type, entity_type, entity_id, profile_id, timestamp, source_sheet) \
+             VALUES (?1, 'import', 'transaction', ?2, ?3, ?4, ?5) \
+             ON CONFLICT(id) DO UPDATE SET timestamp = excluded.timestamp",
+        )
+        .bind(&log_id)
+        .bind(&target)
+        .bind(pid)
+        .bind(now)
+        .bind(sheet_name)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| format!("rekey sync_log: {e}"))?;
+    }
+
+    Ok(())
 }
 
 /// Realinha a base (`source_amount`) das transações de uma célula `saida`. Cobre os dois casos
@@ -848,12 +1007,20 @@ pub(crate) async fn load_economia_by_month(
         }
     }
 
-    // (B) Transfers→reserva/ilíquido MANUAIS (plano 003), agregados por mês.
+    // (B) Transfers→reserva/ilíquido MANUAIS (plano 003), agregados por mês. Plano 055 (P3): aplica o
+    // MESMO filtro de tag-exclude (`exclude_from_totals` via `NOT EXISTS`) que `realized_annual_economia`
+    // usa — sem ele, um transfer de reserva marcado "Ignorar" some da MÉTRICA mas era ESCRITO na coluna
+    // Economia da planilha (inconsistente). Com o filtro, a coluna Economia e o Economizado% concordam.
     let rows: Vec<(String, i64)> = sqlx::query_as(
         "SELECT substr(t.date, 6, 2), COALESCE(SUM(ABS(t.amount)), 0) FROM \"transaction\" t \
          LEFT JOIN account a ON a.id = t.to_account_id \
          WHERE t.date >= ?1 AND t.date < ?2 AND t.type = 'transfer' \
            AND a.liquidity IN ('reserve','illiquid') \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM transaction_tag tt2 \
+               JOIN tag tg ON tg.id = tt2.tag_id \
+               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
+           ) \
          GROUP BY substr(t.date, 6, 2)",
     )
     .bind(format!("{year:04}-01-01"))
@@ -1373,20 +1540,270 @@ mod tests {
         assert_eq!(err, SHEET_CHANGED_MSG, "diff stale é rejeitado");
     }
 
+    // Plano 055 (P3): `load_economia_by_month` (origem da coluna Economia do write-back) somava os
+    // transfers→reserva SEM o filtro de tag-exclude que `realized_annual_economia` aplica. Um transfer
+    // marcado "Ignorar" some da MÉTRICA mas era escrito na coluna Economia da planilha (inconsistente).
+    // Com o filtro, a coluna NÃO recebe o transfer ignorado — paridade com o caminho da métrica.
+    #[tokio::test]
+    async fn economia_writeback_excludes_ignored_reserve_transfer() {
+        let p = pool().await;
+
+        // Conta reserva destino dos transfers.
+        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-1', 'Tester')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, balance, liquidity) \
+             VALUES ('res-1', 'Reserva', 'savings', 'pe-1', 0, 'reserve')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        // Dois transfers→reserva em MARÇO: 500,00 marcado "Ignorar" + 300,00 normal.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) \
+             VALUES ('tr-ignored', 'transfer', 50_000, '2026-03-20', 'res-1', 0), \
+                    ('tr-counted', 'transfer', 30_000, '2026-03-21', 'res-1', 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let tag = crate::tags::create_tag(&p, "Ignorar", "var(--cat-jade)", None, false)
+            .await
+            .unwrap();
+        crate::tags::update_tag_exclude(&p, &tag, true)
+            .await
+            .unwrap();
+        crate::tags::set_transaction_tags(&p, "tr-ignored", std::slice::from_ref(&tag))
+            .await
+            .unwrap();
+
+        let by_month = load_economia_by_month(&p, 2026).await.unwrap();
+        // Março (índice 2) carrega só o transfer SEM a tag excluída (30_000), não 80_000.
+        assert_eq!(
+            by_month[2], 30_000,
+            "a coluna Economia omite o transfer→reserva marcado Ignorar (paridade com a métrica)"
+        );
+        // Demais meses zerados.
+        assert_eq!(by_month.iter().sum::<i64>(), 30_000);
+    }
+
+    // Plano 055 (P2): uma transação MANUAL (id-UUID, fora do `sync_log`) escrita de volta numa célula
+    // antes VAZIA é re-chaveada para o `row_id` determinístico de `(aba, data, kind, 0)` e registrada
+    // no `sync_log`. Sem isto, o re-import da planilha computaria o id determinístico, não acharia a
+    // linha (id-UUID) e INSERIRIA um gêmeo → duplicata (dupla contagem). Com o re-chaveamento, o
+    // re-import faz UPSERT na MESMA linha → EXATAMENTE UMA linha; o valor (totais/Saldo) não muda.
+    #[tokio::test]
+    async fn manual_writeback_then_reimport_yields_single_row() {
+        use crate::google_sheets::import::{self, ImportedRow, RowKind};
+        let p = pool().await;
+
+        // Linha MANUAL criada no app: id-UUID, NÃO está no sync_log. Saída fixa de 120,00 em 06/JAN.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, source_amount) \
+             VALUES ('manual-uuid-1', 'expense', 12_000, '2026-01-06', 1, 0, 12_000)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        // Precisa de um profile para o sync_log da re-chaveada (FK NOT NULL).
+        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-1', 'Tester')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO profile (id, person_id) VALUES ('pf-1', 'pe-1')")
+            .execute(&p)
+            .await
+            .unwrap();
+
+        // Write-back dessa linha para a célula (antes vazia) de Saída de 06/JAN/2026.
+        let cell = CellWrite {
+            a1: "E3".into(),
+            row: 2,
+            col: 4,
+            date: "2026-01-06".into(),
+            kind: "saida".into(),
+            current: "".into(),
+            proposed: "120,00".into(),
+            value_cents: 12_000,
+            changed: true,
+            formula: None,
+            note_text: None,
+        };
+        record_write_back_audit(&p, "2026", &[&cell]).await.unwrap();
+
+        // A linha UUID virou a determinística `row_id("2026","2026-01-06",Saida,0)`; nenhum gêmeo.
+        let target = import::row_id("2026", "2026-01-06", RowKind::Saida, 0);
+        let (uuid_gone,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE id = 'manual-uuid-1'")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(uuid_gone, 0, "a linha UUID foi re-chaveada (não duplicada)");
+        let (has_target,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE id = ?1")
+                .bind(&target)
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(
+            has_target, 1,
+            "a linha agora tem o id determinístico do import"
+        );
+
+        // RE-IMPORT da MESMA célula (a Saída de 06/JAN reaparece na planilha): faz UPSERT na MESMA
+        // linha, não insere gêmeo. (`import_rows` calcula o mesmo `row_id` para slot 0.)
+        let rows = vec![ImportedRow {
+            date: "2026-01-06".into(),
+            amount: -12_000,
+            description: "Saída 2026-01-06".into(),
+            is_projection: false,
+            kind: RowKind::Saida,
+            raw_note: String::new(),
+        }];
+        import::import_rows(&p, "2026", &rows, "pf-1")
+            .await
+            .unwrap();
+
+        // EXATAMENTE UMA linha (sem o gêmeo importado); valor preservado (totais/Saldo inalterados).
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE date = '2026-01-06'")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(count, 1, "manual→write-back→re-import = uma única linha");
+        let (amount,): (i64,) = sqlx::query_as("SELECT amount FROM \"transaction\" WHERE id = ?1")
+            .bind(&target)
+            .fetch_one(&p)
+            .await
+            .unwrap();
+        assert_eq!(
+            amount, 12_000,
+            "o valor (totais/Saldo) não muda no round-trip"
+        );
+    }
+
+    // Plano 055 (P2): a GARANTIA de não-colisão. Se a célula JÁ tem uma linha importada (id
+    // determinístico no `sync_log`), o re-chaveamento NÃO roda — nunca sobrescreve/colide com ela.
+    // A linha manual separada permanece intacta (caso degenerado: 2 linhas na mesma célula).
+    #[tokio::test]
+    async fn rekey_never_overwrites_existing_imported_row() {
+        use crate::google_sheets::import::{self, RowKind};
+        let p = pool().await;
+        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-1', 'Tester')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO profile (id, person_id) VALUES ('pf-1', 'pe-1')")
+            .execute(&p)
+            .await
+            .unwrap();
+
+        // Linha IMPORTADA já ocupa a célula determinística (id = row_id, registrada no sync_log).
+        let target = import::row_id("2026", "2026-01-06", RowKind::Saida, 0);
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, source_amount) \
+             VALUES (?1, 'expense', 12_000, '2026-01-06', 1, 0, 12_000)",
+        )
+        .bind(&target)
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO sync_log (id, event_type, entity_type, entity_id, profile_id, source_sheet) \
+             VALUES (?1, 'import', 'transaction', ?2, 'pf-1', '2026')",
+        )
+        .bind(format!("log:{target}"))
+        .bind(&target)
+        .execute(&p)
+        .await
+        .unwrap();
+
+        // Uma linha manual SEPARADA na mesma data/kind (caso degenerado, não-canônico).
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, source_amount) \
+             VALUES ('manual-uuid-2', 'expense', 9_000, '2026-01-06', 1, 0, 9_000)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let cell = CellWrite {
+            a1: "E3".into(),
+            row: 2,
+            col: 4,
+            date: "2026-01-06".into(),
+            kind: "saida".into(),
+            current: "120,00".into(),
+            proposed: "120,00".into(),
+            value_cents: 12_000,
+            changed: true,
+            formula: None,
+            note_text: None,
+        };
+        record_write_back_audit(&p, "2026", &[&cell]).await.unwrap();
+
+        // O alvo determinístico continua sendo a linha IMPORTADA original (valor intacto, não 9_000).
+        let (amount,): (i64,) = sqlx::query_as("SELECT amount FROM \"transaction\" WHERE id = ?1")
+            .bind(&target)
+            .fetch_one(&p)
+            .await
+            .unwrap();
+        assert_eq!(
+            amount, 12_000,
+            "a linha importada existente não é sobrescrita"
+        );
+        // A manual NÃO foi re-chaveada (o alvo já existia → STOP seguro).
+        let (manual_alive,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE id = 'manual-uuid-2'")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(
+            manual_alive, 1,
+            "a manual não é re-chaveada quando o alvo já existe"
+        );
+    }
+
     // Bug 3 (plano 053): o braço `entrada` da auditoria realinhava o `source_amount` de TODAS as
     // rendas da data, inclusive linhas `derived:%` (sintetizadas, ex.: reembolso) que não vêm 1:1 da
     // planilha. `load_write_back_txns` já as exclui; a auditoria precisa do mesmo filtro, senão a base
     // de uma linha derivada é sobrescrita e o próximo import vê conflito espúrio.
     #[tokio::test]
     async fn audit_entrada_skips_derived_rows() {
+        use crate::google_sheets::import::{self, RowKind};
         let p = pool().await;
 
-        // Renda importada 1:1 (realinhável) + linha derivada (NÃO realinhável), mesma data.
+        // Renda IMPORTADA 1:1 (id determinístico + linha em sync_log → sheet-backed, realinhável e NÃO
+        // re-chaveada pelo plano 055) + linha derivada (NÃO realinhável), mesma data.
+        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-1', 'Tester')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO profile (id, person_id) VALUES ('pf-1', 'pe-1')")
+            .execute(&p)
+            .await
+            .unwrap();
+        let inc_id = import::row_id("2026", "2026-03-01", RowKind::Entrada, 0);
         sqlx::query(
             "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, source_amount) \
-             VALUES ('inc-1', 'income', 5000, '2026-03-01', 0, 0, 5000), \
+             VALUES (?1, 'income', 5000, '2026-03-01', 0, 0, 5000), \
                     ('derived:reimb-1', 'income', 1000, '2026-03-01', 0, 0, 1000)",
         )
+        .bind(&inc_id)
+        .execute(&p)
+        .await
+        .unwrap();
+        // sync_log marca a renda 1:1 como importada (impede o re-chaveamento do plano 055).
+        sqlx::query(
+            "INSERT INTO sync_log (id, event_type, entity_type, entity_id, profile_id, source_sheet) \
+             VALUES (?1, 'import', 'transaction', ?2, 'pf-1', '2026')",
+        )
+        .bind(format!("log:{inc_id}"))
+        .bind(&inc_id)
         .execute(&p)
         .await
         .unwrap();
@@ -1408,7 +1825,8 @@ mod tests {
 
         // A renda 1:1 é realinhada ao valor escrito.
         let (inc,): (Option<i64>,) =
-            sqlx::query_as("SELECT source_amount FROM \"transaction\" WHERE id = 'inc-1'")
+            sqlx::query_as("SELECT source_amount FROM \"transaction\" WHERE id = ?1")
+                .bind(&inc_id)
                 .fetch_one(&p)
                 .await
                 .unwrap();

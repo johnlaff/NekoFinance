@@ -160,8 +160,14 @@ pub fn run() {
                         let guard = guard_focus.clone();
                         let handle = handle_focus.clone();
                         tauri::async_runtime::spawn(async move {
-                            if let Err(e) =
-                                sync_task::run_probe(&pool, &app_dir, &handle, &guard).await
+                            if let Err(e) = sync_task::run_probe(
+                                &pool,
+                                &app_dir,
+                                &handle,
+                                &guard,
+                                sync_task::ProbeTrigger::Focus,
+                            )
+                            .await
                             {
                                 eprintln!("[sync/focus] probe error: {e}");
                             }

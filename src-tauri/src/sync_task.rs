@@ -42,6 +42,26 @@ const DEFAULT_POLL_INTERVAL_SECS: u64 = 30;
 /// `max_connections = 1`, so background + user-triggered imports must not overlap).
 pub type SyncGuard = tokio::sync::Mutex<()>;
 
+/// What triggered a probe. The focus-debounce key (`sheets_last_focus_probe_at`) is OWNED by the
+/// focus path: only a `Focus`-triggered probe reads/writes it. Plan 055 (P3): the interval-loop tick
+/// must NOT touch it — writing it on every tick made the 60 s focus-debounce suppress the NEXT
+/// interval tick, so a configured 30 s interval effectively polled ~60 s. The interval has its own
+/// cadence (the `read_interval_secs` sleep in `spawn_background_sync`); it doesn't need the debounce.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeTrigger {
+    /// Window regained focus (e.g. user switched back from the spreadsheet). Debounced.
+    Focus,
+    /// The timed background-poll tick. NOT debounced — its cadence is the sleep interval.
+    Interval,
+}
+
+impl ProbeTrigger {
+    /// Whether this probe participates in the focus-debounce (read + write of the debounce key).
+    fn uses_focus_debounce(self) -> bool {
+        matches!(self, ProbeTrigger::Focus)
+    }
+}
+
 #[derive(Deserialize)]
 struct LastImport {
     #[serde(rename = "spreadsheetId")]
@@ -140,6 +160,7 @@ pub async fn run_probe(
     app_dir: &Path,
     app_handle: &tauri::AppHandle,
     import_guard: &SyncGuard,
+    trigger: ProbeTrigger,
 ) -> Result<(), String> {
     // 1. Toggle off → nothing to do. Absent key = default ON.
     let enabled = crate::commands::app_setting_get(pool, "sheets_bg_sync_enabled")
@@ -150,16 +171,22 @@ pub async fn run_probe(
         return Ok(());
     }
 
-    // Focus debounce (shared by the interval loop and the focus path): skip if a
-    // probe ran within MIN_FOCUS_DEBOUNCE_SECS.
+    // Focus debounce — OWNED by the focus path (plan 055). A FOCUS probe within
+    // MIN_FOCUS_DEBOUNCE_SECS of the last focus probe is skipped, then records `now`. The INTERVAL
+    // tick neither reads nor writes this key: its cadence is the loop's sleep, and writing it would
+    // suppress the next interval tick (the bug this fixes). So a 30 s interval keeps a 30 s cadence.
     let now = now_unix();
-    if let Some(raw) = crate::commands::app_setting_get(pool, "sheets_last_focus_probe_at").await?
-        && let Ok(last) = raw.trim().parse::<u64>()
-        && now.saturating_sub(last) < MIN_FOCUS_DEBOUNCE_SECS
-    {
-        return Ok(());
+    if trigger.uses_focus_debounce() {
+        if let Some(raw) =
+            crate::commands::app_setting_get(pool, "sheets_last_focus_probe_at").await?
+            && let Ok(last) = raw.trim().parse::<u64>()
+            && now.saturating_sub(last) < MIN_FOCUS_DEBOUNCE_SECS
+        {
+            return Ok(());
+        }
+        crate::commands::app_setting_set(pool, "sheets_last_focus_probe_at", &now.to_string())
+            .await?;
     }
-    crate::commands::app_setting_set(pool, "sheets_last_focus_probe_at", &now.to_string()).await?;
 
     // 2. Which spreadsheet? Nothing imported yet → nothing to sync.
     let Some(raw_last) = crate::commands::app_setting_get(pool, "sheets_last_import").await? else {
@@ -271,7 +298,15 @@ pub fn spawn_background_sync(
             let interval_secs = read_interval_secs(&pool).await;
             tokio::time::sleep(tokio::time::Duration::from_secs(interval_secs)).await;
 
-            if let Err(e) = run_probe(&pool, &app_dir, &app_handle, &import_guard).await {
+            if let Err(e) = run_probe(
+                &pool,
+                &app_dir,
+                &app_handle,
+                &import_guard,
+                ProbeTrigger::Interval,
+            )
+            .await
+            {
                 eprintln!("[sync] probe error: {e}");
             }
         }
@@ -296,6 +331,23 @@ mod tests {
         crate::commands::app_setting_set(pool, key, value)
             .await
             .unwrap();
+    }
+
+    // Plano 055 (P3): a chave de focus-debounce (`sheets_last_focus_probe_at`) é EXCLUSIVA do caminho
+    // de FOCO. Antes, `run_probe` a escrevia em TODO probe — inclusive no tick do intervalo — e o
+    // debounce de 60 s então suprimia o PRÓXIMO tick, fazendo um intervalo de 30 s polar a ~60 s. A
+    // decisão pura `uses_focus_debounce` deve ser `true` só para `Focus` (lê/escreve a chave) e
+    // `false` para `Interval` (cadência é o sleep do loop; não toca a chave).
+    #[test]
+    fn only_focus_probe_uses_focus_debounce() {
+        assert!(
+            ProbeTrigger::Focus.uses_focus_debounce(),
+            "o probe de FOCO usa o debounce (lê + escreve a chave)"
+        );
+        assert!(
+            !ProbeTrigger::Interval.uses_focus_debounce(),
+            "o tick do INTERVALO NÃO toca a chave de focus-debounce (cadência = sleep do loop)"
+        );
     }
 
     #[tokio::test]
