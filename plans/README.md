@@ -66,6 +66,7 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 051  | Performance = income − cost_of_living (economia=Saída; supersedes 046) + no-double-cnt | P1       | M      | —          | DONE (pkg G)               |
 | 052  | Complete economia=Saída: Economia tab as annotation (no Saldo double-count; Econ% src) | P1       | M–L    | —          | DONE (pkg H)               |
 | 053  | Bug bundle: daily_spend_today SUM(ABS) + update amount guard + audit/clamp P3s         | P2       | S–M    | —          | DONE (pkg H)               |
+| 054  | Final consistency nits: effective_daily_ceiling SUM(ABS) + annual-savings tag-exclude  | P3       | S      | —          | DONE (pkg I)               |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale)
 
