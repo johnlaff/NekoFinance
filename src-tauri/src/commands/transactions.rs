@@ -591,17 +591,49 @@ pub async fn update_transaction_cmd(
     is_fixed: bool,
     date: String,
 ) -> Result<(), String> {
+    update_transaction_inner(
+        pool.inner(),
+        &id,
+        &txn_type,
+        amount_cents,
+        description,
+        payment_method,
+        is_fixed,
+        &date,
+    )
+    .await
+}
+
+/// Caminho real do `update_transaction_cmd`, testável diretamente (recebe `&SqlitePool`, não
+/// `State`). Espelha o par `create_transaction` / `create_transaction_inner`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn update_transaction_inner(
+    pool: &SqlitePool,
+    id: &str,
+    txn_type: &str,
+    amount_cents: i64,
+    description: Option<String>,
+    payment_method: Option<String>,
+    is_fixed: bool,
+    date: &str,
+) -> Result<(), String> {
     // `type` precisa ser atualizável: trocar entrada↔saída no form muda renda↔despesa, e sem isto
     // o sinal do lançamento no forecast ficaria errado. Mesmo conjunto válido do create.
-    if !matches!(txn_type.as_str(), "income" | "expense") {
+    if !matches!(txn_type, "income" | "expense") {
         return Err(format!("tipo inválido: {txn_type}"));
+    }
+    // `amount` é magnitude positiva (o sinal vem do `type`); espelha `create_transaction_inner`.
+    // Sem este guard, o update poderia gravar 0/negativo, violando o invariante e quebrando as
+    // agregações que somam magnitudes. Rejeita antes de qualquer acesso ao banco.
+    if amount_cents <= 0 {
+        return Err("valor deve ser positivo (magnitude)".into());
     }
     let now = chrono::Utc::now().to_rfc3339();
     // Re-deriva `is_projection` a partir da NOVA data (espelha `create_transaction_inner`):
     // editar uma projeção futura para hoje/passado precisa limpar o flag, senão fica um
     // "Previsto" fantasma na previsão. Hoje é realizado → só datas estritamente futuras projetam.
     let new_date =
-        NaiveDate::parse_from_str(&date, "%Y-%m-%d").map_err(|e| format!("data inválida: {e}"))?;
+        NaiveDate::parse_from_str(date, "%Y-%m-%d").map_err(|e| format!("data inválida: {e}"))?;
     let is_projection = new_date > chrono::Local::now().date_naive();
 
     // Plano 049: a limpeza dos `line_item` e o UPDATE do total do pai precisam ser ATÔMICOS. Antes
@@ -610,7 +642,6 @@ pub async fn update_transaction_cmd(
     // tudo na mesma `sqlx::Transaction`, com commit só no fim. O early-return em `affected == 0`
     // descarta `tx` sem commit → rollback automático (mesmo padrão do delete).
     let mut tx = pool
-        .inner()
         .begin()
         .await
         .map_err(|e| format!("update (begin): {e}"))?;
@@ -619,23 +650,26 @@ pub async fn update_transaction_cmd(
     // quebra não reflete mais o total → limpa os itens (a Σ ficaria divergente no write-back). O
     // usuário re-insere a quebra pelo editor de itens. Idempotente: sem itens ou valor inalterado, é
     // no-op. Consulta o valor + a contagem de itens numa só query (LEFT JOIN agregado).
-    let current: Option<(i64, i64)> = sqlx::query_as(
-        r#"SELECT t.amount, COUNT(li.id)
+    // Plano 053: a troca de TIPO (entrada↔saída) também invalida a quebra mesmo com o mesmo valor —
+    // itens de renda numa linha de despesa ficam semanticamente errados e confundem o write-back.
+    // Por isso a query também carrega o `type` antigo e a limpeza dispara em mudança de tipo.
+    let current: Option<(i64, i64, String)> = sqlx::query_as(
+        r#"SELECT t.amount, COUNT(li.id), t.type
            FROM "transaction" t
            LEFT JOIN line_item li ON li.transaction_id = t.id
            WHERE t.id = ?1
-           GROUP BY t.amount"#,
+           GROUP BY t.amount, t.type"#,
     )
-    .bind(&id)
+    .bind(id)
     .fetch_optional(&mut *tx)
     .await
     .map_err(|e| format!("update (load items): {e}"))?;
-    if let Some((old_amount, item_count)) = current
+    if let Some((old_amount, item_count, old_type)) = current
         && item_count > 0
-        && old_amount != amount_cents
+        && (old_amount != amount_cents || old_type.as_str() != txn_type)
     {
         sqlx::query("DELETE FROM line_item WHERE transaction_id = ?1")
-            .bind(&id)
+            .bind(id)
             .execute(&mut *tx)
             .await
             .map_err(|e| format!("update (clear stale items): {e}"))?;
@@ -647,13 +681,13 @@ pub async fn update_transaction_cmd(
                is_fixed = ?6, date = ?7, is_projection = ?8, updated_at = ?9
            WHERE id = ?1"#,
     )
-    .bind(&id)
-    .bind(&txn_type)
+    .bind(id)
+    .bind(txn_type)
     .bind(amount_cents)
     .bind(&description)
     .bind(&payment_method)
     .bind(is_fixed as i64)
-    .bind(&date)
+    .bind(date)
     .bind(is_projection as i64)
     .bind(&now)
     .execute(&mut *tx)
@@ -957,6 +991,120 @@ mod tests {
             item_count.0, 0,
             "stale line_items cleared when amount changed"
         );
+    }
+
+    // Bug 2 (plano 053): `update_transaction_inner` precisa rejeitar `amount <= 0`, espelhando
+    // `create_transaction_inner`. `amount` é magnitude positiva; zero/negativo violaria o invariante
+    // e quebraria as agregações que somam magnitudes. A linha no banco deve ficar INTOCADA.
+    #[tokio::test]
+    async fn update_transaction_cmd_rejects_zero_amount() {
+        let pool = test_pool().await;
+        insert_txn(&pool, "tx-guard", 1000).await;
+
+        let err = update_transaction_inner(
+            &pool,
+            "tx-guard",
+            "expense",
+            0,
+            None,
+            None,
+            false,
+            "2026-03-10",
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("positivo"), "err: {err}");
+
+        // A linha não foi tocada.
+        let (amount,): (i64,) =
+            sqlx::query_as(r#"SELECT amount FROM "transaction" WHERE id = 'tx-guard'"#)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(amount, 1000, "amount inalterado após rejeição");
+    }
+
+    #[tokio::test]
+    async fn update_transaction_cmd_rejects_negative_amount() {
+        let pool = test_pool().await;
+        insert_txn(&pool, "tx-guard-neg", 1000).await;
+
+        let err = update_transaction_inner(
+            &pool,
+            "tx-guard-neg",
+            "expense",
+            -500,
+            None,
+            None,
+            false,
+            "2026-03-10",
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("positivo"), "err: {err}");
+
+        let (amount,): (i64,) =
+            sqlx::query_as(r#"SELECT amount FROM "transaction" WHERE id = 'tx-guard-neg'"#)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(amount, 1000, "amount inalterado após rejeição");
+    }
+
+    // Bug 4 (plano 053): trocar o TIPO (entrada↔saída) de uma linha ITEMIZADA com o MESMO valor
+    // precisa limpar os `line_item` — itens de renda numa linha de despesa ficam semanticamente
+    // errados e confundem o write-back. O bug antigo só limpava quando o VALOR mudava.
+    #[tokio::test]
+    async fn update_transaction_cmd_clears_items_on_type_change() {
+        let pool = test_pool().await;
+        // Pai 'income' com valor 1000.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, created_at, updated_at) \
+             VALUES ('tx-type', 'income', 1000, '2026-03-10', 0, 0, '2026-03-10T00:00:00Z', '2026-03-10T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Duas linhas de quebra.
+        sqlx::query(
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, is_user_edited) \
+             VALUES ('li-t-a', 'tx-type', 600, 'Part A', 0, 1), \
+                    ('li-t-b', 'tx-type', 400, 'Part B', 1, 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Troca income → expense com o MESMO valor (1000).
+        update_transaction_inner(
+            &pool,
+            "tx-type",
+            "expense",
+            1000,
+            None,
+            None,
+            false,
+            "2026-03-10",
+        )
+        .await
+        .unwrap();
+
+        // Itens limpos apesar do valor inalterado.
+        let item_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM line_item WHERE transaction_id = 'tx-type'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(item_count.0, 0, "itens limpos na troca de tipo");
+
+        // O total do pai segue 1000 (só o valor não mudou; o tipo sim).
+        let (amount, ttype): (i64, String) =
+            sqlx::query_as(r#"SELECT amount, type FROM "transaction" WHERE id = 'tx-type'"#)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(amount, 1000, "amount inalterado");
+        assert_eq!(ttype, "expense", "tipo atualizado");
     }
 
     // Espelha a lógica de re-deriva de `is_projection` de `update_transaction_cmd`
