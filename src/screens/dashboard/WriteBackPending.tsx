@@ -8,6 +8,7 @@ import {
 import { KIND_LABEL, isSafeForFastPath } from "../../features/sheets/writeBack";
 import type { WriteBackPendingState } from "../../hooks/useWriteBackPending";
 import { applyWriteBack, previewWriteBackStatus, type CellWrite } from "../../lib/api";
+import { invalidateCommands } from "../../lib/useCommand";
 import { safeErrorMessage } from "../../lib/errors";
 import { fmtDayMonth } from "../../lib/format";
 
@@ -196,6 +197,7 @@ export function WriteBackPending({ writeBack }: { writeBack: WriteBackPendingSta
       );
       applyingFastRef.current = false;
       setFastPath(null);
+      invalidateCommands(); // os números mudaram — derruba todo cache de tela (igual ao import)
       writeBack.refresh();
     } catch (e) {
       applyingFastRef.current = false;

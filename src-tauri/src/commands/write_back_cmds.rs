@@ -226,6 +226,23 @@ pub(crate) async fn multi_card_warning(pool: &SqlitePool) -> Result<bool, String
     Ok(with_cycle > 1 || without_cycle > 0)
 }
 
+/// Cria um `SheetsClient` autenticado (mesmo caminho de token de `build_write_back_plan`/
+/// `build_economia_plan`). Usado pelas prévias RICAS para buscar o `modifiedTime` ANTES de ler os
+/// VALORES da aba — assim o `preview_revision` corresponde a um estado NÃO mais novo que o diff
+/// (fecha o TOCTOU: uma edição concorrente após a foto do `modifiedTime` só pode tornar o estado de
+/// apply MAIS novo, disparando o gate de frescura e forçando re-revisão; nunca aprova um diff velho).
+async fn make_authenticated_client(
+    app_dir: &std::path::Path,
+    client_id: &str,
+    client_secret: Option<String>,
+) -> Result<SheetsClient, String> {
+    let client_secret = oauth::pkce::resolve_client_secret(client_secret);
+    let token =
+        oauth::token_store::ensure_valid_token(app_dir, client_id, client_secret.as_deref())
+            .await?;
+    Ok(SheetsClient::new(token))
+}
+
 /// Núcleo compartilhado por `preview_write_back` (read-only) e `apply_write_back` (escreve): lê a
 /// aba, resolve layout+mappings, carrega as transações do ano e planeja o diff célula a célula.
 /// Devolve o `SheetsClient` autenticado (para o apply reusar na escrita) + o plano.
@@ -308,7 +325,13 @@ pub async fn preview_write_back_status(
     client_id: String,
     client_secret: Option<String>,
 ) -> Result<WriteBackPreviewResult, String> {
-    let (client, cells) = build_write_back_plan(
+    // Foto do `modifiedTime` ANTES de ler os VALORES (fecha o TOCTOU): o token de frescura passa a
+    // corresponder a um estado NÃO mais novo que o diff. Uma edição entre esta foto (T1) e a leitura
+    // dos valores (T2) só pode deixar o estado de apply mais novo → o gate de frescura dispara.
+    let early_client =
+        make_authenticated_client(&app_dir.0, &client_id, client_secret.clone()).await?;
+    let preview_revision = early_client.get_file_modified_time(&spreadsheet_id).await?;
+    let (_client, cells) = build_write_back_plan(
         &app_dir.0,
         pool.inner(),
         &spreadsheet_id,
@@ -317,7 +340,6 @@ pub async fn preview_write_back_status(
         client_secret,
     )
     .await?;
-    let preview_revision = client.get_file_modified_time(&spreadsheet_id).await?;
     let conflicts_pending = unresolved_conflict_count(pool.inner()).await? > 0;
     let multi_card_warning = multi_card_warning(pool.inner()).await?;
     Ok(WriteBackPreviewResult {
@@ -846,7 +868,11 @@ pub async fn preview_economia_write_back_status(
     client_id: String,
     client_secret: Option<String>,
 ) -> Result<WriteBackPreviewResult, String> {
-    let (client, cells) = build_economia_plan(
+    // Foto do `modifiedTime` ANTES de ler os VALORES (fecha o TOCTOU; ver `preview_write_back_status`).
+    let early_client =
+        make_authenticated_client(&app_dir.0, &client_id, client_secret.clone()).await?;
+    let preview_revision = early_client.get_file_modified_time(&spreadsheet_id).await?;
+    let (_client, cells) = build_economia_plan(
         &app_dir.0,
         pool.inner(),
         &spreadsheet_id,
@@ -855,7 +881,6 @@ pub async fn preview_economia_write_back_status(
         client_secret,
     )
     .await?;
-    let preview_revision = client.get_file_modified_time(&spreadsheet_id).await?;
     let conflicts_pending = unresolved_conflict_count(pool.inner()).await? > 0;
     Ok(WriteBackPreviewResult {
         cells,
@@ -1158,6 +1183,83 @@ mod tests {
             other,
             Some(9000),
             "compra de outro vencimento não é tocada pelo realinho do lump"
+        );
+    }
+
+    // Bug 1 (plano 042) — guarda de regressão (sem fix de código; a re-verificação confirmou que os
+    // dois lados já produzem `economia:YYYY-MM`). A Economia é mensal: a transação-resumo tem id
+    // determinístico `economia:YYYY-MM` (ver `store_economia_entries`) e a célula da aba Economia
+    // carrega `date = "YYYY-MM"` (ver `plan_economia_write_back`). O braço `economia` da auditoria
+    // realinha a base (`source_amount`) por `id = format!("economia:{}", c.date) AND type='transfer'`.
+    // Este teste prova o round-trip do id: a base do mês escrito é realinhada para o `value_cents`,
+    // de modo que o próximo import (sheet == base) NÃO acusa conflito espúrio. Se um refactor mudar
+    // o formato do id/date de um lado só (ex.: adicionar precisão de dia), este teste falha rápido.
+    #[tokio::test]
+    async fn economia_write_back_audit_realigns_source_amount() {
+        let p = pool().await;
+
+        // Perfil (FK do sync_log) + conta de reserva (destino do transfer da Economia).
+        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-test', 'Tester')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO profile (id, person_id) VALUES ('pr-test', 'pe-test')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, liquidity) \
+             VALUES ('reserve-1', 'Reserva', 'savings', 'pe-test', 'reserve')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        // Transação-resumo de Economia EXATAMENTE como `store_economia_entries` a cria:
+        // id = "economia:2026-06" (YYYY-MM), date = último dia do mês (YYYY-MM-DD). Base sentinela
+        // (99999 ≠ value_cents=15000) para o assert do valor atualizado ser inequívoco.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, description, date, to_account_id, source_amount) \
+             VALUES ('economia:2026-06', 'transfer', 15000, 'Economia (importada da aba Economia)', '2026-06-30', 'reserve-1', 99999)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        // Célula da aba Economia como `plan_economia_write_back` a emite: kind="economia",
+        // date="2026-06" (YYYY-MM, NÃO YYYY-MM-DD).
+        let cell = CellWrite {
+            a1: "C3".into(),
+            row: 2,
+            col: 2,
+            date: "2026-06".into(),
+            kind: "economia".into(),
+            current: "0,00".into(),
+            proposed: "150,00".into(),
+            value_cents: 15000,
+            changed: true,
+            formula: None,
+            note_text: None,
+        };
+        let realigned = record_write_back_audit(&p, "Economia", &[&cell])
+            .await
+            .unwrap();
+        assert_eq!(
+            realigned, 1,
+            "id `economia:2026-06` (de date=\"2026-06\") casa a linha-resumo → 1 realinhada"
+        );
+
+        // A base do mês é realinhada para o valor escrito → próximo import vê base == sheet (sem conflito).
+        let (src,): (Option<i64>,) = sqlx::query_as(
+            "SELECT source_amount FROM \"transaction\" WHERE id = 'economia:2026-06'",
+        )
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        assert_eq!(
+            src,
+            Some(15000),
+            "a base da Economia do mês é realinhada para o `value_cents` escrito"
         );
     }
 }
