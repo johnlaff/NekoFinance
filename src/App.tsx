@@ -4,6 +4,8 @@ import { AppShell, type Screen } from "./shell/AppShell";
 import { DashboardScreen } from "./screens/DashboardScreen";
 import { TotaisScreen } from "./screens/TotaisScreen";
 import { AnnualScreen } from "./screens/AnnualScreen";
+import { YearGridScreen } from "./screens/YearGridScreen";
+import { EconomiaCompareScreen } from "./screens/EconomiaCompareScreen";
 import { HorizonteScreen } from "./screens/HorizonteScreen";
 import { TagsScreen } from "./screens/TagsScreen";
 import { TransactionsScreen } from "./screens/TransactionsScreen";
@@ -87,6 +89,8 @@ function App() {
             )}
             {screen === "totais" && <TotaisScreen />}
             {screen === "anuais" && <AnnualScreen />}
+            {screen === "ano-inteiro" && <YearGridScreen />}
+            {screen === "economia-compare" && <EconomiaCompareScreen />}
             {screen === "horizonte" && <HorizonteScreen />}
             {screen === "tags" && <TagsScreen />}
             {screen === "transactions" && (
