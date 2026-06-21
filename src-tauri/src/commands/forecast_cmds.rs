@@ -230,8 +230,11 @@ pub(crate) async fn realized_monthly_baseline(
 ) -> Result<i64, String> {
     let cur_ym = today_naive.format("%Y-%m").to_string();
     // Sem filtro `is_projection` (congelado/stale): meses completos já passaram, a data decide.
+    // Plano 049: `ABS` porque despesas IMPORTADAS são gravadas negativas (`-amount_out`) e manuais
+    // positivas; um `SUM(amount)` de sinal misto se cancela e corrompe a mediana (e o reserve floor
+    // que dela deriva). Espelha o `ABS` já usado em `month_grid` / `effective_daily_ceiling`.
     let rows: Vec<(i64,)> = sqlx::query_as(
-        "SELECT SUM(amount) FROM \"transaction\" \
+        "SELECT SUM(ABS(amount)) FROM \"transaction\" \
          WHERE type='expense' AND date < ?1 \
          GROUP BY substr(date,1,7) ORDER BY substr(date,1,7) DESC LIMIT 6",
     )
@@ -1413,6 +1416,51 @@ mod tests {
         );
         assert_eq!(day15.daily_out_cents, 0);
         assert_eq!(day15.income_cents, 0);
+    }
+
+    // Plano 049: mesma família de bug do `month_grid` acima, agora em `realized_monthly_baseline`.
+    // Despesas importadas são negativas, manuais positivas; um `SUM(amount)` de sinal misto se
+    // cancela e produz uma mediana errada (possivelmente negativa), corrompendo o reserve floor.
+    #[tokio::test]
+    async fn realized_monthly_baseline_sums_magnitudes_not_signed_amounts() {
+        let p = pool().await;
+        // `today` num mês posterior → o mês de teste já está completo (antes de cur_ym-01).
+        let today = NaiveDate::from_ymd_opt(2026, 5, 1).unwrap();
+
+        // Despesa importada: valor negativo, simulando -amount_out do import.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_projection) \
+             VALUES ('imp-bl', 'expense', -90000, '2026-04-10', 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        // Despesa manual: valor positivo.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_projection) \
+             VALUES ('man-bl', 'expense', 60000, '2026-04-20', 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        // Só um mês na janela → mediana = total do mês.
+        // Correto: ABS(-90000) + 60000 = 150_000.
+        // Errado (antes do fix): -90000 + 60000 = -30_000.
+        let baseline = realized_monthly_baseline(&p, today).await.unwrap();
+        assert_eq!(
+            baseline, 150_000,
+            "realized_monthly_baseline must sum magnitudes (ABS), not signed amounts"
+        );
+
+        // reserve_floor = baseline × RESERVE_MIN_MONTHS (6). Verifica que o piso é positivo e
+        // coerente (não negativo, como aconteceria com a baseline corrompida).
+        let floor = reserve_floor(&p, today).await.unwrap();
+        assert!(
+            floor >= 150_000 * RESERVE_MIN_MONTHS,
+            "reserve_floor must be at least baseline × RESERVE_MIN_MONTHS"
+        );
     }
 
     // --- Plano 045: quebra por categoria do orçamento Diário ---
