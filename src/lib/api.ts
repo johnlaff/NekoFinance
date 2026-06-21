@@ -273,6 +273,24 @@ export function getLineItems(transactionId: string): Promise<LineItem[]> {
   return invoke<LineItem[]>("get_line_items_cmd", { transactionId });
 }
 
+/** Uma parte itemizada EDITÁVEL no form (plano 036). Sem `id`/`transaction_id`: o backend
+ * recria as linhas (clear + reinsert) a cada edição. `position` é a ordem 0-based. */
+export interface LineItemDraft {
+  amount_cents: number; // magnitude positiva, centavos inteiros
+  description: string;
+  position: number;
+}
+
+/** Substitui TODAS as partes de um lançamento e fixa o total do pai = Σ partes (plano 036). As
+ * partes ficam marcadas como editadas localmente — sobrevivem ao próximo re-import enquanto a nota
+ * da planilha não mudar. Lista vazia é rejeitada pelo backend (use o valor simples nesse caso). */
+export function updateTransactionItems(
+  transactionId: string,
+  items: LineItemDraft[],
+): Promise<void> {
+  return invoke("update_transaction_items_cmd", { transactionId, items });
+}
+
 /** Cria um lançamento manual. Com `recurrence`, gera a série projetada. Para `transfer` (Economia),
  * `toAccountId` é obrigatório e precisa ser uma conta reserve/illiquid. Retorna o id criado. */
 export function createTransaction(input: {
@@ -442,15 +460,23 @@ export function previewWriteBackStatus(
   });
 }
 
+/** Resultado do write-back (plano 036): nº de células escritas + um aviso não-bloqueante quando a
+ * NOTA de célula itemizada não pôde ser gravada (o valor/fórmula já foi escrito com sucesso). */
+export interface WriteBackResult {
+  written: number;
+  note_warning: string | null;
+}
+
 /** Aplica o write-back (escreve as células divergentes). Atrás da flag: rejeita enquanto
  * desligado (nunca escreve). `previewRevision` (do `previewWriteBackStatus`) amarra a aprovação à
- * revisão vista: se a planilha mudou, o backend aborta com erro de re-revisão. Retorna nº escritas. */
+ * revisão vista: se a planilha mudou, o backend aborta com erro de re-revisão. Células itemizadas
+ * (≥2 partes) escrevem `=SUM(...)` + nota por-parte; as normais seguem número cru (plano 036). */
 export function applyWriteBack(
   spreadsheetId: string,
   sheetName: string,
   clientId: string,
   previewRevision?: string | null,
-): Promise<number> {
+): Promise<WriteBackResult> {
   return invoke("apply_write_back", {
     spreadsheetId,
     sheetName,

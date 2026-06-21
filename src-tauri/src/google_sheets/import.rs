@@ -505,57 +505,96 @@ async fn import_rows_core(
         }
         // --- fim Plan 023 ---
 
-        // --- Plan 035: nota itemizada → linhas em line_item ---
+        // --- Plan 035/036: nota itemizada → linhas em line_item ---
         // O estilo de anotação do usuário é a célula itemizada: o TOTAL da célula é a
         // SOMA de partes, cada parte descrita em uma linha da nota. Aqui surfeamos essas
         // partes como filhos descritivos (passado E projetado), sem NUNCA mexer no total.
         //
-        // Idempotência: clear-then-reinsert por transação a cada import (a nota é
-        // autoritativa, como no bloco 023). Roda para realizado E projetado.
+        // PRESERVAÇÃO DE EDIÇÃO LOCAL (plano 036): o app deixa o dono EDITAR as partes
+        // (`update_transaction_items_cmd` grava com `is_user_edited = 1`). Essas edições
+        // locais são autoritativas até a NOTA da planilha mudar. Por isso só re-derivamos
+        // da nota quando ela MUDOU desde o último import — comparando `row.raw_note` com o
+        // `source_note` (base) guardado no pai. Espelha o merge de 3 vias do `source_amount`:
+        // base = nota vista no último import; local = itens editados no app; entrante = nota
+        // atual. Nota inalterada + itens editados → mantém o local; nota mudou → a nota vence
+        // (re-deriva), consistente com o bloco 023.
         //
         // SEGURO POR PADRÃO: se a nota não tem ≥2 linhas `R$` OU o somatório das partes
         // diverge do total da célula além de 1 centavo (arredondamento), nenhum item é
         // gravado — só o total da transação fica. O total do pai jamais é alterado.
         {
-            let items = parse_itemized_note(&row.raw_note);
-            let parts_sum: i64 = items.iter().map(|i| i.amount_cents).sum();
-            let parent_total = row.amount.abs();
-            // Exige ≥2 partes (1 parte não é um breakdown) e somatório casando com o total.
-            let sum_matches = items.len() >= 2 && (parts_sum - parent_total).abs() <= 1;
-
-            // Sempre limpa os itens antigos desta txn (idempotente no re-import).
-            sqlx::query("DELETE FROM line_item WHERE transaction_id = ?1")
+            // Base (nota do último import) + se há item editado pelo usuário nesta txn.
+            let (prev_source_note, has_user_edited): (Option<String>, i64) = {
+                let snote: Option<(Option<String>,)> =
+                    sqlx::query_as(r#"SELECT source_note FROM "transaction" WHERE id = ?1"#)
+                        .bind(&txn_id)
+                        .fetch_optional(&mut **tx)
+                        .await
+                        .map_err(|e| format!("load source_note for {txn_id}: {e}"))?;
+                let (edited,): (i64,) = sqlx::query_as(
+                    "SELECT COUNT(*) FROM line_item WHERE transaction_id = ?1 AND is_user_edited = 1",
+                )
                 .bind(&txn_id)
+                .fetch_one(&mut **tx)
+                .await
+                .map_err(|e| format!("count user-edited items for {txn_id}: {e}"))?;
+                (snote.and_then(|(n,)| n), edited)
+            };
+            let note_changed = prev_source_note.as_deref() != Some(row.raw_note.as_str());
+            let keep_local = has_user_edited > 0 && !note_changed;
+
+            // Sempre realinha a base da nota (igual ao realinho de `source_amount` do write-back):
+            // a nota atual da planilha passa a ser a base do próximo import.
+            sqlx::query(r#"UPDATE "transaction" SET source_note = ?2 WHERE id = ?1"#)
+                .bind(&txn_id)
+                .bind(&row.raw_note)
                 .execute(&mut **tx)
                 .await
-                .map_err(|e| format!("clear line_items for {txn_id}: {e}"))?;
+                .map_err(|e| format!("set source_note for {txn_id}: {e}"))?;
 
-            if sum_matches {
-                for item in &items {
-                    // Id determinístico `li:<txn_id>:<pos>` → re-import estável (UPSERT),
-                    // load-bearing para o write-back do plano 036.
-                    let item_id = format!("li:{}:{}", txn_id, item.position);
-                    sqlx::query(
-                        "INSERT INTO line_item (id, transaction_id, amount_cents, description, position) \
-                         VALUES (?1, ?2, ?3, ?4, ?5) \
-                         ON CONFLICT(id) DO UPDATE SET \
-                           amount_cents=excluded.amount_cents, \
-                           description=excluded.description, \
-                           position=excluded.position",
-                    )
-                    .bind(&item_id)
+            if !keep_local {
+                let items = parse_itemized_note(&row.raw_note);
+                let parts_sum: i64 = items.iter().map(|i| i.amount_cents).sum();
+                let parent_total = row.amount.abs();
+                // Exige ≥2 partes (1 parte não é um breakdown) e somatório casando com o total.
+                let sum_matches = items.len() >= 2 && (parts_sum - parent_total).abs() <= 1;
+
+                // Limpa os itens antigos desta txn (idempotente no re-import; a nota é autoritativa).
+                sqlx::query("DELETE FROM line_item WHERE transaction_id = ?1")
                     .bind(&txn_id)
-                    .bind(item.amount_cents)
-                    .bind(&item.description)
-                    .bind(item.position as i64)
                     .execute(&mut **tx)
                     .await
-                    .map_err(|e| format!("insert line_item {item_id}: {e}"))?;
+                    .map_err(|e| format!("clear line_items for {txn_id}: {e}"))?;
+
+                if sum_matches {
+                    for item in &items {
+                        // Id determinístico `li:<txn_id>:<pos>` → re-import estável (UPSERT).
+                        // `is_user_edited = 0`: derivado da nota (não-editado), reset explícito.
+                        let item_id = format!("li:{}:{}", txn_id, item.position);
+                        sqlx::query(
+                            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, is_user_edited) \
+                             VALUES (?1, ?2, ?3, ?4, ?5, 0) \
+                             ON CONFLICT(id) DO UPDATE SET \
+                               amount_cents=excluded.amount_cents, \
+                               description=excluded.description, \
+                               position=excluded.position, \
+                               is_user_edited=0",
+                        )
+                        .bind(&item_id)
+                        .bind(&txn_id)
+                        .bind(item.amount_cents)
+                        .bind(&item.description)
+                        .bind(item.position as i64)
+                        .execute(&mut **tx)
+                        .await
+                        .map_err(|e| format!("insert line_item {item_id}: {e}"))?;
+                    }
                 }
+                // Somatório não bate ou nota sem itens: nenhum item inserido; total do pai intacto.
             }
-            // Somatório não bate ou nota sem itens: nenhum item inserido; total do pai intacto.
+            // keep_local: itens editados no app sobrevivem (a nota não mudou) — nada a fazer.
         }
-        // --- fim Plan 035 ---
+        // --- fim Plan 035/036 ---
 
         // sync_log com id determinístico (1:1 com o txn) → UPSERT idempotente.
         let log_id = format!("log:{txn_id}");
@@ -3254,5 +3293,110 @@ mod tests {
 
         let txn_id = row_id("2026", "2026-02-15", RowKind::Saida, 0);
         assert_eq!(count_line_items(&pool, &txn_id).await, 0);
+    }
+
+    // Plano 036: edição LOCAL das partes sobrevive ao re-import enquanto a nota da planilha não
+    // muda. O importer só re-deriva da nota quando `source_note` (base) difere da nota atual.
+    #[tokio::test]
+    async fn user_edited_items_survive_reimport_when_note_unchanged() {
+        let pool = test_pool().await;
+        let rows = vec![imported_note(
+            "2026-04-10",
+            -15_000,
+            "R$ 100,00 - Parte A\nR$ 50,00 - Parte B",
+            false,
+        )];
+        import_rows(&pool, "2026", &rows, "p1").await.unwrap();
+        let txn_id = row_id("2026", "2026-04-10", RowKind::Saida, 0);
+        assert_eq!(count_line_items(&pool, &txn_id).await, 2);
+
+        // O dono EDITA as partes no app: 3 partes, marcadas is_user_edited = 1.
+        sqlx::query("DELETE FROM line_item WHERE transaction_id = ?1")
+            .bind(&txn_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for (i, amt) in [(0, 5000), (1, 5000), (2, 5000)] {
+            sqlx::query(
+                "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, is_user_edited) \
+                 VALUES (?1, ?2, ?3, 'editado', ?4, 1)",
+            )
+            .bind(format!("user:{txn_id}:{i}"))
+            .bind(&txn_id)
+            .bind(amt)
+            .bind(i)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        assert_eq!(count_line_items(&pool, &txn_id).await, 3);
+
+        // Re-import com a MESMA nota → as 3 partes editadas pelo dono PERMANECEM (nota inalterada).
+        import_rows(&pool, "2026", &rows, "p1").await.unwrap();
+        assert_eq!(
+            count_line_items(&pool, &txn_id).await,
+            3,
+            "itens editados sobrevivem ao re-import com nota inalterada"
+        );
+        let (edited,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM line_item WHERE transaction_id = ?1 AND is_user_edited = 1",
+        )
+        .bind(&txn_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(edited, 3, "a marca de edição local é preservada");
+    }
+
+    // Plano 036: quando a NOTA da planilha muda, ela vence — re-deriva e descarta a edição local
+    // (a nota é autoritativa; o dono deve editar a planilha primeiro, depois refinar no app).
+    #[tokio::test]
+    async fn user_edited_items_overwritten_when_note_changes() {
+        let pool = test_pool().await;
+        let first = vec![imported_note(
+            "2026-04-11",
+            -15_000,
+            "R$ 100,00 - Parte A\nR$ 50,00 - Parte B",
+            false,
+        )];
+        import_rows(&pool, "2026", &first, "p1").await.unwrap();
+        let txn_id = row_id("2026", "2026-04-11", RowKind::Saida, 0);
+
+        // Edição local (1 parte marcada como editada).
+        sqlx::query("DELETE FROM line_item WHERE transaction_id = ?1")
+            .bind(&txn_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, is_user_edited) \
+             VALUES (?1, ?2, 15000, 'só local', 0, 1)",
+        )
+        .bind(format!("user:{txn_id}:0"))
+        .bind(&txn_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Re-import com a nota MUDADA (mesmo total, 3 partes) → a nota vence: 3 itens derivados.
+        let second = vec![imported_note(
+            "2026-04-11",
+            -15_000,
+            "R$ 50,00 - Parte A\nR$ 50,00 - Parte B\nR$ 50,00 - Parte C",
+            false,
+        )];
+        import_rows(&pool, "2026", &second, "p1").await.unwrap();
+        assert_eq!(count_line_items(&pool, &txn_id).await, 3);
+        let (edited,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM line_item WHERE transaction_id = ?1 AND is_user_edited = 1",
+        )
+        .bind(&txn_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            edited, 0,
+            "nota nova é autoritativa: itens re-derivados (não-editados)"
+        );
     }
 }

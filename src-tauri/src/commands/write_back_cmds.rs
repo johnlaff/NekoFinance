@@ -12,8 +12,8 @@ pub(crate) async fn load_write_back_txns(
     year: i32,
 ) -> Result<Vec<WriteBackTxn>, String> {
     // 1) Entrada + Saída/Diário (expense não-crédito) do ano, cada um na sua data.
-    let rows: Vec<(String, String, i64, i64)> = sqlx::query_as(
-        "SELECT type, date, amount, is_fixed FROM \"transaction\" \
+    let rows: Vec<(String, String, String, i64, i64)> = sqlx::query_as(
+        "SELECT id, type, date, amount, is_fixed FROM \"transaction\" \
          WHERE date >= ?1 AND date < ?2 \
            AND NOT (type='expense' AND payment_method='credit') \
            AND id NOT LIKE 'derived:%'",
@@ -25,25 +25,29 @@ pub(crate) async fn load_write_back_txns(
     .map_err(|e| format!("query txns: {e}"))?;
 
     let mut out = Vec::new();
-    for (t, date, amount, is_fixed) in rows {
+    for (id, t, date, amount, is_fixed) in rows {
         let mag = amount.abs();
-        match t.as_str() {
-            "income" => out.push(WriteBackTxn {
-                date,
-                kind: import::RowKind::Entrada,
-                amount_cents: mag,
-            }),
-            "expense" => out.push(WriteBackTxn {
-                date,
-                kind: if is_fixed != 0 {
+        // Plano 036: carrega as partes itemizadas desta linha (vazio = não itemizada → escrita RAW
+        // de hoje). N+1 aceitável: write-back é manual e infrequente. Lump de cartão (seção 2) não
+        // tem linha 1:1 importável e segue sem breakdown (items = None).
+        let kind = match t.as_str() {
+            "income" => import::RowKind::Entrada,
+            "expense" => {
+                if is_fixed != 0 {
                     import::RowKind::Saida
                 } else {
                     import::RowKind::Diario
-                },
-                amount_cents: mag,
-            }),
-            _ => {} // transfer (Economia) → aba Economia
-        }
+                }
+            }
+            _ => continue, // transfer (Economia) → aba Economia
+        };
+        let items = load_txn_items(pool, &id).await?;
+        out.push(WriteBackTxn {
+            date,
+            kind,
+            amount_cents: mag,
+            items,
+        });
     }
 
     // 2) Cartão → lump no vencimento. Com cartão configurado, junta as compras cujo VENCIMENTO cai
@@ -89,6 +93,8 @@ pub(crate) async fn load_write_back_txns(
                     date: due_date,
                     kind: import::RowKind::Saida,
                     amount_cents: cents,
+                    // Lump de cartão = soma de compras; sem linha 1:1 → sem breakdown itemizado.
+                    items: None,
                 });
             }
         }
@@ -108,11 +114,41 @@ pub(crate) async fn load_write_back_txns(
                     date,
                     kind: import::RowKind::Saida,
                     amount_cents: amount.abs(),
+                    items: None, // crédito por compra (sem cartão) também não itemiza.
                 });
             }
         }
     }
     Ok(out)
+}
+
+/// Plano 036: partes itemizadas de uma transação como `TxnLineItem` (valor + descrição), para o
+/// write-back reconstruir `=SUM(...)` + nota. `None` quando há < 2 partes — uma única parte não é um
+/// breakdown (não há fórmula a montar), então cai na escrita RAW numérica de hoje. Ordenado por
+/// `position` para a fórmula/nota saírem na ordem do dono.
+async fn load_txn_items(
+    pool: &SqlitePool,
+    transaction_id: &str,
+) -> Result<Option<Vec<write_back::TxnLineItem>>, String> {
+    let rows: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT amount_cents, description FROM line_item \
+         WHERE transaction_id = ?1 ORDER BY position",
+    )
+    .bind(transaction_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("query line items: {e}"))?;
+    if rows.len() < 2 {
+        return Ok(None);
+    }
+    Ok(Some(
+        rows.into_iter()
+            .map(|(amount_cents, description)| write_back::TxnLineItem {
+                amount_cents,
+                description,
+            })
+            .collect(),
+    ))
 }
 
 /// Mensagem (typed-error por string, como o resto deste módulo) quando há conflitos de import
@@ -398,10 +434,25 @@ pub(crate) async fn backup_db(
     Ok(dest.to_string())
 }
 
+/// Resultado do `apply_write_back` (plano 036): nº de células escritas + um aviso NÃO-bloqueante
+/// quando a escrita da NOTA de célula itemizada falhou (ex.: token sem escopo de escrita). O valor
+/// (total/fórmula) já foi escrito com sucesso — a nota é enriquecimento, então sua falha não aborta.
+#[derive(serde::Serialize)]
+pub struct WriteBackResult {
+    pub written: usize,
+    pub note_warning: Option<String>,
+}
+
 /// Aplica o write-back: escreve as células DIVERGENTES de volta na aba. Trava-mestra: enquanto
 /// `WRITE_BACK_ENABLED` estiver desligado, falha cedo e NÃO escreve nada. A UI já obteve o diff via
 /// `preview_write_back` e o humano aprovou; aqui só replanejamos (a planilha pode ter mudado) e
-/// escrevemos as células que ainda diferem. Retorna quantas células foram escritas.
+/// escrevemos as células que ainda diferem.
+///
+/// Plano 036: células ITEMIZADAS (≥2 partes) escrevem a FÓRMULA `=SUM(...)` via USER_ENTERED + a
+/// NOTA por-parte; células normais seguem RAW numérico (inalterado). A nota é fase 2 best-effort:
+/// se falhar (ex.: 403 readonly), devolvemos um `note_warning` em vez de abortar — o valor já está
+/// gravado. TODOS os gates do plano 028 (flag, conflito, escopo, frescura, blocklist de fórmula via
+/// `plan_write_back`) permanecem intactos e ANTES de qualquer escrita.
 #[tauri::command]
 pub async fn apply_write_back(
     app_dir: State<'_, AppDataDir>,
@@ -413,7 +464,7 @@ pub async fn apply_write_back(
     // Token de frescura devolvido por `preview_write_back_status` (Step 4). `None` no caminho legado
     // da UI atual; quando presente, o apply ABORTA se a planilha mudou desde a prévia.
     preview_revision: Option<String>,
-) -> Result<usize, String> {
+) -> Result<WriteBackResult, String> {
     write_back::ensure_write_back_enabled()?;
     // Gate de conflito (Step 3): nunca escrever sob conflitos de import pendentes — ANTES de tocar
     // o cliente do Sheets.
@@ -437,10 +488,14 @@ pub async fn apply_write_back(
     // Re-verifica a frescura (Step 4): aborta sem escrever se o `modifiedTime` avançou.
     guard_sheet_unchanged(&client, &spreadsheet_id, preview_revision.as_deref()).await?;
 
-    // Só as células que MUDARAM; range com nome da aba ('2026'!E3); valor numérico em reais.
+    // Só as células que MUDARAM; range com nome da aba ('2026'!E3).
     let changed: Vec<&CellWrite> = plan.iter().filter(|c| c.changed).collect();
-    let updates: Vec<(String, f64)> = changed
+
+    // Plano 036: separa as células itemizadas (fórmula USER_ENTERED) das normais (RAW numérico).
+    // Não-itemizadas seguem EXATAMENTE como hoje — número cru, RAW, locale-independente.
+    let raw_updates: Vec<(String, f64)> = changed
         .iter()
+        .filter(|c| c.formula.is_none())
         .map(|c| {
             (
                 format!("{}!{}", quote_sheet(&sheet_name), c.a1),
@@ -448,10 +503,43 @@ pub async fn apply_write_back(
             )
         })
         .collect();
+    let formula_updates: Vec<(String, String)> = changed
+        .iter()
+        .filter_map(|c| {
+            c.formula
+                .as_ref()
+                .map(|f| (format!("{}!{}", quote_sheet(&sheet_name), c.a1), f.clone()))
+        })
+        .collect();
 
-    let written = client
-        .batch_update_values(&spreadsheet_id, &updates)
+    let mut written = client
+        .batch_update_values(&spreadsheet_id, &raw_updates)
         .await?;
+    written += client
+        .batch_update_formulas(&spreadsheet_id, &formula_updates)
+        .await?;
+
+    // Fase 2 (plano 036): notas de célula das itemizadas. Best-effort, NÃO-FATAL — o valor já foi
+    // escrito; a nota é enriquecimento. A1 SEM nome de aba (o `batch_update_notes` resolve a aba).
+    let note_updates: Vec<(String, String)> = changed
+        .iter()
+        .filter_map(|c| c.note_text.as_ref().map(|n| (c.a1.clone(), n.clone())))
+        .collect();
+    let note_warning: Option<String> = if note_updates.is_empty() {
+        None
+    } else {
+        match client
+            .batch_update_notes(&spreadsheet_id, &sheet_name, &note_updates)
+            .await
+        {
+            Ok(_) => None,
+            Err(e) if e.starts_with("NOTE_WRITE_PERMISSION:") => Some(
+                "Notas de célula não foram atualizadas: consentimento de escrita necessário."
+                    .into(),
+            ),
+            Err(e) => Some(format!("Notas de célula: {e}")),
+        }
+    };
 
     // Auditoria pós-escrita (Step 7): realinha o `source_*` das transações escritas + registra a
     // escrita no `sync_log`, para que o próximo import reconheça os valores como a NOVA base (sem
@@ -460,7 +548,10 @@ pub async fn apply_write_back(
         record_write_back_audit(pool.inner(), &sheet_name, &changed).await?;
     }
 
-    Ok(written)
+    Ok(WriteBackResult {
+        written,
+        note_warning,
+    })
 }
 
 /// Auditoria pós-escrita do write-back (plano 028 Step 7). Faz DUAS coisas, atômicas:
@@ -1031,6 +1122,8 @@ mod tests {
             proposed: "50,00".into(),
             value_cents: 5000, // 3000 + 2000, o lump da fatura
             changed: true,
+            formula: None,
+            note_text: None,
         };
         let realigned = record_write_back_audit(&p, "2026", &[&cell]).await.unwrap();
         assert_eq!(

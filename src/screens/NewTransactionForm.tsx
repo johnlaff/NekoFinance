@@ -8,11 +8,15 @@ import {
   updateSeriesAll,
   updateSeriesFrom,
   updateTransaction,
+  updateTransactionItems,
   type Frequency,
+  type LineItem,
+  type LineItemDraft,
   type PocketAccount,
   type SeriesEdit,
   type Tag,
 } from "../lib/api";
+import { LineItemEditor } from "../design-system/components/LineItemEditor";
 import { safeErrorMessage } from "../lib/errors";
 import { parseBRLToCents, todayISO } from "../lib/format";
 import { FORM_KINDS, fieldsToKind, kindToFields } from "../lib/movement";
@@ -28,6 +32,17 @@ export interface TransactionEditValues {
   is_fixed: boolean;
   /** Prefixo uuid da série (derivado do id "uuid:index"); null = lançamento único. */
   recurrence_id: string | null;
+  /** Partes itemizadas já persistidas (plano 036). Ausente/vazio = lançamento sem partes. */
+  items?: LineItem[];
+}
+
+/** `LineItem` (persistido) → `LineItemDraft` (editável no form). Descarta id/transaction_id. */
+function toDrafts(items: LineItem[] | undefined): LineItemDraft[] {
+  return (items ?? []).map((it, i) => ({
+    amount_cents: it.amount_cents,
+    description: it.description,
+    position: i,
+  }));
 }
 
 /** Centavos → string editável pt-BR ("1234,50"), que volta limpo por `parseBRLToCents`. */
@@ -116,6 +131,8 @@ interface FormState {
   repeat: boolean;
   frequency: Frequency;
   repetitions: number;
+  /** Partes itemizadas (plano 036). Com ≥1 parte, o Valor vira somente-leitura (= Σ partes). */
+  items: LineItemDraft[];
   busy: boolean;
   error: string | null;
 }
@@ -132,6 +149,7 @@ function makeInitialForm(initial?: TransactionEditValues): FormState {
       repeat: false,
       frequency: "mensal",
       repetitions: 12,
+      items: toDrafts(initial.items),
       busy: false,
       error: null,
     };
@@ -146,6 +164,7 @@ function makeInitialForm(initial?: TransactionEditValues): FormState {
     repeat: false,
     frequency: "mensal",
     repetitions: 12,
+    items: [],
     busy: false,
     error: null,
   };
@@ -154,12 +173,15 @@ function makeInitialForm(initial?: TransactionEditValues): FormState {
 type FormAction =
   | { type: "set"; patch: Partial<FormState> }
   | { type: "toggleTag"; id: string }
+  | { type: "setItems"; items: LineItemDraft[] }
   | { type: "submitStart" }
   | { type: "submitSuccess" }
   | { type: "fail"; error: string };
 
 function formReducer(s: FormState, a: FormAction): FormState {
   switch (a.type) {
+    case "setItems":
+      return { ...s, items: a.items };
     case "set":
       // Trocar de tipo de movimento limpa a conta-destino: ela só faz sentido para Economia, e um
       // valor remanescente não deve poluir os outros tipos (o backend já ignora, isto é só higiene).
@@ -183,6 +205,7 @@ function formReducer(s: FormState, a: FormAction): FormState {
         description: "",
         selectedTags: [],
         repeat: false,
+        items: [],
         busy: false,
       };
     case "fail":
@@ -364,6 +387,69 @@ function ReserveAccountPicker({
   );
 }
 
+/** Linha Valor + Data. Com partes ativas, o Valor é somente-leitura (= Σ partes). Extraído do
+ * form para mantê-lo enxuto (uma unidade visual coesa, sem estado próprio). */
+function AmountDateFields({
+  amount,
+  date,
+  itemsActive,
+  itemsTotal,
+  dispatch,
+}: {
+  amount: string;
+  date: string;
+  itemsActive: boolean;
+  itemsTotal: number;
+  dispatch: Dispatch<FormAction>;
+}) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr",
+        gap: "var(--space-4)",
+      }}
+    >
+      <div>
+        <label htmlFor="ntf-amount" style={label}>
+          Valor
+        </label>
+        {/* Com partes ativas, o Valor = Σ partes (somente-leitura, auto-calculado). */}
+        <input
+          id="ntf-amount"
+          inputMode="decimal"
+          placeholder="R$ 0,00"
+          value={itemsActive ? centsToInput(itemsTotal) : amount}
+          readOnly={itemsActive}
+          onChange={(e) => dispatch({ type: "set", patch: { amount: e.target.value } })}
+          style={{
+            ...field,
+            fontFamily: "var(--font-money)",
+            ...(itemsActive
+              ? { background: "var(--surface-2)", color: "var(--text-muted)" }
+              : null),
+          }}
+        />
+        {itemsActive && (
+          <p style={HINT_TEXT}>Total calculado a partir das partes detalhadas.</p>
+        )}
+      </div>
+      <div>
+        <label htmlFor="ntf-date" style={label}>
+          Data
+        </label>
+        <input
+          id="ntf-date"
+          type="date"
+          value={date}
+          onChange={(e) => dispatch({ type: "set", patch: { date: e.target.value } })}
+          style={field}
+        />
+      </div>
+    </div>
+  );
+}
+
 export function NewTransactionForm({
   onCreated,
   initialValues,
@@ -385,6 +471,7 @@ export function NewTransactionForm({
     repeat,
     frequency,
     repetitions,
+    items,
     busy,
     error,
   } = form;
@@ -419,18 +506,26 @@ export function NewTransactionForm({
     };
   }, []);
 
-  const amountCents = parseBRLToCents(amount);
+  // Itemização só faz sentido fora da Economia (a aba Economia não tem nota por-célula).
+  const itemsEnabled = kind !== "economia";
+  const itemsActive = itemsEnabled && items.length > 0;
+  const itemsTotal = items.reduce((sum, it) => sum + it.amount_cents, 0);
+  // Com partes ativas, o TOTAL é a SOMA delas (campo Valor somente-leitura); senão, o valor digitado.
+  const typedAmount = parseBRLToCents(amount);
+  const effectiveAmount = itemsActive ? itemsTotal : typedAmount;
+
   const canSubmit =
-    amountCents != null &&
-    amountCents > 0 &&
+    effectiveAmount != null &&
+    effectiveAmount > 0 &&
     !busy &&
     (kind !== "economia" || toAccountId !== "");
 
   async function submit() {
-    if (amountCents == null || amountCents <= 0) {
+    if (effectiveAmount == null || effectiveAmount <= 0) {
       dispatch({ type: "fail", error: "Informe um valor válido." });
       return;
     }
+    const amountCents = effectiveAmount;
     dispatch({ type: "submitStart" });
     const fields = kindToFields(kind);
     // try/catch sem `finally`: o React Compiler não otimiza componentes com try/finally.
@@ -439,7 +534,7 @@ export function NewTransactionForm({
         const recId = initialValues.recurrence_id;
         if (recId) {
           // Série recorrente: a escolha "toda a série" vs "deste ponto em diante" (o passado
-          // fica intacto em updateSeriesFrom).
+          // fica intacto em updateSeriesFrom). Itens são por-instância → fora do escopo de série.
           const all = window.confirm(
             "Aplicar a alteração em toda a série?\n\nOK = toda a série\nCancela = este e os futuros",
           );
@@ -463,12 +558,17 @@ export function NewTransactionForm({
             isFixed: fields.isFixed,
             date,
           });
+          // Plano 036: persiste as partes editadas (ou as limpa quando o dono removeu todas). Dois
+          // round-trips (não-atômicos): o pai já foi salvo; o update de itens reaplica o total.
+          if (itemsActive) {
+            await updateTransactionItems(initialValues.id, items);
+          }
         }
         dispatch({ type: "submitSuccess" });
         onSaved?.();
         return;
       }
-      await createTransaction({
+      const newId = await createTransaction({
         txnType: fields.txnType,
         amountCents,
         description: description.trim() || null,
@@ -479,6 +579,12 @@ export function NewTransactionForm({
         recurrence: repeat ? { frequency, repetitions } : null,
         toAccountId: kind === "economia" ? toAccountId : null,
       });
+      // Plano 036: itens só em lançamento ÚNICO (não-recorrente; a série é por-instância). Segundo
+      // round-trip após o create — STOP documentado: um crash entre os dois deixaria a transação
+      // sem partes (recuperável: o dono re-detalha; o total do pai já está correto).
+      if (itemsActive && !repeat) {
+        await updateTransactionItems(newId, items);
+      }
       dispatch({ type: "submitSuccess" });
       onCreated?.();
     } catch (e) {
@@ -541,41 +647,13 @@ export function NewTransactionForm({
         )}
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: "var(--space-4)",
-        }}
-      >
-        <div>
-          <label htmlFor="ntf-amount" style={label}>
-            Valor
-          </label>
-          <input
-            id="ntf-amount"
-            inputMode="decimal"
-            placeholder="R$ 0,00"
-            value={amount}
-            onChange={(e) =>
-              dispatch({ type: "set", patch: { amount: e.target.value } })
-            }
-            style={{ ...field, fontFamily: "var(--font-money)" }}
-          />
-        </div>
-        <div>
-          <label htmlFor="ntf-date" style={label}>
-            Data
-          </label>
-          <input
-            id="ntf-date"
-            type="date"
-            value={date}
-            onChange={(e) => dispatch({ type: "set", patch: { date: e.target.value } })}
-            style={field}
-          />
-        </div>
-      </div>
+      <AmountDateFields
+        amount={amount}
+        date={date}
+        itemsActive={itemsActive}
+        itemsTotal={itemsTotal}
+        dispatch={dispatch}
+      />
 
       <div>
         <label htmlFor="ntf-desc" style={label}>
@@ -591,6 +669,16 @@ export function NewTransactionForm({
           style={field}
         />
       </div>
+
+      {/* Detalhamento em partes (plano 036): só fora da Economia e fora de séries recorrentes
+          (itens são por-instância). Vale para novo, passado e previsto. */}
+      {itemsEnabled && !initialValues?.recurrence_id && (
+        <LineItemEditor
+          items={items}
+          onChange={(next) => dispatch({ type: "setItems", items: next })}
+          disabled={busy}
+        />
+      )}
 
       {!editing && kind === "economia" && (
         <ReserveAccountPicker

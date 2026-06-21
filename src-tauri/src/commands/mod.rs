@@ -2003,6 +2003,8 @@ mod tests {
             proposed: "1500,00".into(),
             value_cents: 1500,
             changed: true,
+            formula: None,
+            note_text: None,
         };
         let realigned = record_write_back_audit(&pool, "2026", &[&cell])
             .await
@@ -2101,6 +2103,8 @@ mod tests {
             proposed: "550,00".into(),
             value_cents: 55000,
             changed: true,
+            formula: None,
+            note_text: None,
         };
         let realigned = record_write_back_audit(&pool, "2026", &[&cell])
             .await
@@ -2226,6 +2230,8 @@ mod tests {
             proposed: "350,00".into(),
             value_cents: 35000,
             changed: true,
+            formula: None,
+            note_text: None,
         };
         let realigned = record_write_back_audit(&pool, "Economia", &[&cell])
             .await

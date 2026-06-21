@@ -40,6 +40,7 @@ pub fn run() {
             commands::create_transaction,
             commands::delete_transaction_cmd,
             commands::update_transaction_cmd,
+            commands::update_transaction_items_cmd,
             commands::get_pockets,
             commands::create_account,
             commands::detect_sheet_layout,

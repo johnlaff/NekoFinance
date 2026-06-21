@@ -9,12 +9,18 @@ import { CalendarCheck } from "lucide-react";
 import { Button } from "../../design-system/components/Button";
 import { Money } from "../../design-system/components/Money";
 import { MovBadge, type MovKind } from "../../design-system/components/MovBadge";
-import { createTransaction, type DashboardSummary } from "../../lib/api";
+import {
+  createTransaction,
+  updateTransactionItems,
+  type DashboardSummary,
+  type LineItemDraft,
+} from "../../lib/api";
 import { safeErrorMessage } from "../../lib/errors";
 import { formatBRL, parseBRLToCents, todayISO } from "../../lib/format";
 import { invalidateCommands } from "../../lib/useCommand";
 import { FORM_KINDS, kindToFields } from "../../lib/movement";
 import { SR_ONLY } from "../../design-system/srOnly";
+import { LineItemEditor } from "../../design-system/components/LineItemEditor";
 
 // Chips do check-in rápido — a mesma ordem canônica do form completo. Economia exige uma
 // conta-destino (transfer só vale com reserva/ilíquida), que pede um seletor — fora do caminho
@@ -80,12 +86,27 @@ const QUICK_HINT_STYLE: CSSProperties = {
   color: "var(--text-faint)",
 };
 
+// Toggle "Detalhar" — discreto (link-button), para não pesar o caminho rápido (estático/hoisted).
+const DETALHAR_BTN: CSSProperties = {
+  marginTop: "var(--space-2)",
+  padding: 0,
+  border: 0,
+  background: "transparent",
+  color: "var(--text-muted)",
+  cursor: "pointer",
+  fontFamily: "var(--font-sans)",
+  fontSize: "var(--fs-micro)",
+};
+
 // Estado do check-in agrupado num reducer (uma atualização lógica = um render), no mesmo estilo
 // do form completo, em vez de useStates relacionados que fariam fan-out de renders.
 interface CheckinState {
   kind: MovKind;
   description: string;
   amount: string;
+  /** Plano 036: detalhamento em partes (revelado pelo toggle "Detalhar"). */
+  showItems: boolean;
+  items: LineItemDraft[];
   busy: boolean;
   error: string | null;
 }
@@ -94,12 +115,16 @@ const INITIAL_CHECKIN: CheckinState = {
   kind: "diario", // padrão = caminho rápido
   description: "",
   amount: "",
+  showItems: false,
+  items: [],
   busy: false,
   error: null,
 };
 
 type CheckinAction =
   | { type: "set"; patch: Partial<CheckinState> }
+  | { type: "toggleItems" }
+  | { type: "setItems"; items: LineItemDraft[] }
   | { type: "submitStart" }
   | { type: "submitSuccess" }
   | { type: "fail"; error: string };
@@ -108,11 +133,22 @@ function checkinReducer(s: CheckinState, a: CheckinAction): CheckinState {
   switch (a.type) {
     case "set":
       return { ...s, ...a.patch };
+    case "toggleItems":
+      return { ...s, showItems: !s.showItems };
+    case "setItems":
+      return { ...s, items: a.items };
     case "submitStart":
       return { ...s, busy: true, error: null };
     case "submitSuccess":
       // Reset dos campos voláteis; mantém o tipo (e data=hoje) p/ lançamentos em sequência.
-      return { ...s, amount: "", description: "", busy: false };
+      return {
+        ...s,
+        amount: "",
+        description: "",
+        showItems: false,
+        items: [],
+        busy: false,
+      };
     case "fail":
       return { ...s, busy: false, error: a.error };
   }
@@ -139,7 +175,7 @@ export function DailyCheckinCard({
   onAmountRef?: ((ref: HTMLInputElement | null) => void) | undefined;
 }) {
   const [state, dispatch] = useReducer(checkinReducer, INITIAL_CHECKIN);
-  const { kind, description, amount, busy, error } = state;
+  const { kind, description, amount, showItems, items, busy, error } = state;
   const amountRef = useRef<HTMLInputElement>(null);
 
   // useEffectEvent: o efeito de mount roda uma vez, mas sempre lê o onAmountRef mais recente sem
@@ -155,7 +191,11 @@ export function DailyCheckinCard({
   const overspent = ceiling > 0 && remaining < 0;
   const pct = ceiling > 0 ? Math.min(100, Math.round((spent / ceiling) * 100)) : 0;
 
-  const cents = parseBRLToCents(amount);
+  // Plano 036: com partes detalhadas, o valor = Σ partes (campo somente-leitura); senão, o digitado.
+  const itemsActive = showItems && items.length > 0;
+  const itemsTotal = items.reduce((sum, it) => sum + it.amount_cents, 0);
+  const typedCents = parseBRLToCents(amount);
+  const cents = itemsActive ? itemsTotal : typedCents;
   const canSubmit = cents != null && cents > 0 && !busy;
 
   async function logSpend() {
@@ -167,7 +207,7 @@ export function DailyCheckinCard({
     // Tipo, fixo e método derivam do mesmo mapeamento do form completo (não hardcoded).
     const fields = kindToFields(kind);
     try {
-      await createTransaction({
+      const newId = await createTransaction({
         txnType: fields.txnType,
         amountCents: cents,
         description: description.trim() || null,
@@ -177,6 +217,11 @@ export function DailyCheckinCard({
         tagIds: [],
         recurrence: null,
       });
+      // Plano 036: persiste as partes (segundo round-trip, reaplica o total). STOP documentado: um
+      // crash entre os dois deixaria a transação sem partes (recuperável; total já correto).
+      if (itemsActive) {
+        await updateTransactionItems(newId, items);
+      }
       invalidateCommands();
       // Reset dos campos voláteis; mantém o tipo (e data=hoje) para lançamentos em sequência.
       dispatch({ type: "submitSuccess" });
@@ -339,14 +384,24 @@ export function DailyCheckinCard({
             aria-label="Valor do lançamento (R$)"
             inputMode="decimal"
             placeholder="Valor de hoje (R$) — débito, PIX, dinheiro ou crédito"
-            value={amount}
+            // Plano 036: com partes detalhadas, o valor = Σ partes (somente-leitura).
+            value={itemsActive ? formatBRL(itemsTotal) : amount}
+            readOnly={itemsActive}
             onChange={(e) =>
               dispatch({ type: "set", patch: { amount: e.target.value } })
             }
             onKeyDown={(e) => {
               if (e.key === "Enter" && canSubmit) void logSpend();
             }}
-            style={DAILY_INPUT_STYLE}
+            style={
+              itemsActive
+                ? {
+                    ...DAILY_INPUT_STYLE,
+                    background: "var(--surface-2)",
+                    color: "var(--text-muted)",
+                  }
+                : DAILY_INPUT_STYLE
+            }
           />
           <Button
             variant="primary"
@@ -356,6 +411,25 @@ export function DailyCheckinCard({
             {busy ? "…" : "Registrar"}
           </Button>
         </div>
+
+        {/* Detalhar em partes (plano 036): colapsado por padrão — o caminho rápido continua rápido. */}
+        <button
+          type="button"
+          aria-expanded={showItems}
+          onClick={() => dispatch({ type: "toggleItems" })}
+          style={DETALHAR_BTN}
+        >
+          {showItems ? "Ocultar detalhamento ▴" : "Detalhar em partes ▾"}
+        </button>
+        {showItems && (
+          <div style={{ marginTop: "var(--space-2)" }}>
+            <LineItemEditor
+              items={items}
+              onChange={(next) => dispatch({ type: "setItems", items: next })}
+              disabled={busy}
+            />
+          </div>
+        )}
         {/* Dica do tipo selecionado (não-Diário): orienta sem poluir o caminho rápido. */}
         {kind === "saida" && (
           <p style={QUICK_HINT_STYLE}>Saída = despesa fixa do mês (débito).</p>

@@ -126,6 +126,8 @@ function toEditValues(t: TransactionRow): TransactionEditValues {
     payment_method: t.payment_method || null,
     is_fixed: t.is_fixed,
     recurrence_id: recurrenceIdOf(t.id),
+    // Plano 036: pré-carrega as partes itemizadas no form de edição (a linha já as traz do backend).
+    items: t.line_items,
   };
 }
 
