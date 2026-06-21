@@ -1,11 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useReducer, useState } from "react";
 import {
   Bell,
   FileUp,
   HardDrive,
   Landmark,
   Link2,
+  ListTree,
+  Plus,
   SlidersHorizontal,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -16,14 +19,17 @@ import {
   backupDatabase,
   getAppInfo,
   getAppSetting,
+  getDailyBudgetCategories,
   isTauri,
   registerOsReminder,
   setAppSetting,
   unregisterOsReminder,
   upsertDailyBudget,
+  upsertDailyBudgetWithCategories,
+  type DailyBudgetCategoryInput,
   type AuthStatus,
 } from "../lib/api";
-import { parseBRLToCents } from "../lib/format";
+import { formatBRL, parseBRLToCents } from "../lib/format";
 import { safeErrorMessage } from "../lib/errors";
 import { useCommand } from "../lib/useCommand";
 import { Button } from "../design-system/components/Button";
@@ -59,6 +65,87 @@ const TETO_CTL_STYLE: React.CSSProperties = {
   display: "flex",
   gap: "var(--space-2)",
   alignItems: "center",
+};
+
+// --- Estilos da quebra por categoria do Diário (plano 045). Hoistados (React Compiler). ---
+
+const CAT_ROW_STYLE: React.CSSProperties = {
+  display: "flex",
+  gap: "var(--space-2)",
+  alignItems: "center",
+  marginBottom: "var(--space-2)",
+};
+
+const CAT_NAME_INPUT_STYLE: React.CSSProperties = {
+  fontFamily: "var(--font-sans)",
+  fontSize: "var(--fs-body)",
+  background: "var(--bg-subtle)",
+  border: "var(--bw-hair) solid var(--border-input)",
+  borderRadius: "var(--radius-xs)",
+  color: "var(--text)",
+  padding: "4px 8px",
+  height: "var(--hit-min)",
+  flex: 1,
+};
+
+const CAT_AMOUNT_INPUT_STYLE: React.CSSProperties = {
+  fontFamily: "var(--font-money)",
+  fontSize: "var(--fs-body)",
+  background: "var(--bg-subtle)",
+  border: "var(--bw-hair) solid var(--border-input)",
+  borderRadius: "var(--radius-xs)",
+  color: "var(--text)",
+  padding: "4px 8px",
+  height: "var(--hit-min)",
+  width: "12ch",
+};
+
+const CAT_SUMMARY_STYLE: React.CSSProperties = {
+  margin: "var(--space-3) 0 0",
+  fontSize: "var(--fs-sm)",
+  color: "var(--text-muted)",
+};
+
+const CAT_WARN_STYLE: React.CSSProperties = {
+  color: "var(--brass-400)",
+};
+
+const CAT_REMOVE_BTN_STYLE: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: "var(--hit-min)",
+  height: "var(--hit-min)",
+  background: "transparent",
+  border: "var(--bw-hair) solid var(--border)",
+  borderRadius: "var(--radius-xs)",
+  color: "var(--text-muted)",
+  cursor: "pointer",
+  flex: "none",
+};
+
+const CAT_ACTIONS_STYLE: React.CSSProperties = {
+  display: "flex",
+  gap: "var(--space-2)",
+  alignItems: "center",
+  marginTop: "var(--space-3)",
+};
+
+const CAT_LEGEND_STYLE: React.CSSProperties = {
+  display: "block",
+  fontSize: "var(--fs-label)",
+  fontWeight: "var(--fw-semibold)",
+  letterSpacing: "var(--ls-label)",
+  textTransform: "uppercase",
+  color: "var(--text-muted)",
+  marginBottom: "var(--space-2)",
+  padding: 0,
+};
+
+const CAT_FIELDSET_STYLE: React.CSSProperties = {
+  border: "none",
+  margin: 0,
+  padding: "var(--space-3) 0 0",
 };
 
 /**
@@ -299,6 +386,321 @@ function DailyTetoCeilingSection() {
   );
 }
 
+/** Contador monotônico para chaves estáveis de linha (sobrevive a reordenações sem index-key). */
+let catRowSeq = 0;
+function nextCatKey(): string {
+  catRowSeq += 1;
+  return `cat-${catRowSeq}`;
+}
+
+/** Uma linha editável da quebra por categoria do Diário (rascunho no form). */
+interface CatDraft {
+  /** Chave estável de render (não persistida); evita o uso do índice como key. */
+  key: string;
+  name: string;
+  amount: string; // string pt-BR editável; convertida em centavos no save
+}
+
+interface DiarioCatState {
+  total: string; // teto mensal do Diário (R$), string editável
+  rows: CatDraft[];
+  loading: boolean;
+  saving: boolean;
+  saved: boolean;
+  error: string | null;
+}
+
+type DiarioCatAction =
+  | { type: "loaded"; total: string; rows: CatDraft[] }
+  | { type: "setTotal"; value: string }
+  | { type: "setName"; index: number; value: string }
+  | { type: "setAmount"; index: number; value: string }
+  | { type: "addRow" }
+  | { type: "removeRow"; index: number }
+  | { type: "saveStart" }
+  | { type: "saveOk" }
+  | { type: "saveErr"; error: string };
+
+const DIARIO_CAT_INITIAL: DiarioCatState = {
+  total: "",
+  rows: [],
+  loading: true,
+  saving: false,
+  saved: false,
+  error: null,
+};
+
+function diarioCatReducer(s: DiarioCatState, a: DiarioCatAction): DiarioCatState {
+  switch (a.type) {
+    case "loaded":
+      return { ...s, total: a.total, rows: a.rows, loading: false };
+    case "setTotal":
+      return { ...s, total: a.value, saved: false };
+    case "setName":
+      return {
+        ...s,
+        saved: false,
+        rows: s.rows.map((r, i) => (i === a.index ? { ...r, name: a.value } : r)),
+      };
+    case "setAmount":
+      return {
+        ...s,
+        saved: false,
+        rows: s.rows.map((r, i) => (i === a.index ? { ...r, amount: a.value } : r)),
+      };
+    case "addRow":
+      return {
+        ...s,
+        saved: false,
+        rows: [...s.rows, { key: nextCatKey(), name: "", amount: "" }],
+      };
+    case "removeRow":
+      return { ...s, saved: false, rows: s.rows.filter((_, i) => i !== a.index) };
+    case "saveStart":
+      return { ...s, saving: true, error: null, saved: false };
+    case "saveOk":
+      return { ...s, saving: false, saved: true };
+    case "saveErr":
+      return { ...s, saving: false, error: a.error };
+  }
+}
+
+/** Centavos → string editável pt-BR ("1234,50"), que `parseBRLToCents` lê de volta limpo. */
+function centsToBRLInput(cents: number): string {
+  return (cents / 100).toFixed(2).replace(".", ",");
+}
+
+/** Categorias-exemplo genéricas (não são termos proprietários de método). */
+const DIARIO_CAT_PLACEHOLDERS = [
+  "Alimentação",
+  "Transporte",
+  "Farmácia",
+  "Lazer",
+  "Outros",
+];
+
+/**
+ * Quebra por categoria do orçamento Diário (plano 045): lista de categorias nomeadas com um alvo
+ * mensal cada, cuja soma forma o teto mensal do Diário. O teto/dia é `total ÷ dias do mês corrente`,
+ * computado aqui só para exibição — o engine continua lendo o `daily_budget.amount` (escrito junto).
+ * Persiste via `upsertDailyBudgetWithCategories`. Disponível só no shell desktop.
+ */
+function DiarioCategorySection() {
+  const [s, dispatch] = useReducer(diarioCatReducer, DIARIO_CAT_INITIAL);
+
+  // Carrega a quebra atual na montagem (não-crítico: falha mantém o estado vazio).
+  useEffect(() => {
+    if (!isTauri) return;
+    void (async () => {
+      try {
+        const [cats, totalDisplay] = await Promise.all([
+          getDailyBudgetCategories(),
+          getAppSetting("daily_diario_ceiling_display"),
+        ]);
+        const rows: CatDraft[] = cats.map((c) => ({
+          key: nextCatKey(),
+          name: c.name,
+          amount: centsToBRLInput(c.amount_cents),
+        }));
+        dispatch({ type: "loaded", total: totalDisplay ?? "", rows });
+      } catch {
+        dispatch({ type: "loaded", total: "", rows: [] });
+      }
+    })();
+  }, []);
+
+  // Dias do mês corrente (para o teto/dia exibido).
+  const now = new Date();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+
+  const totalCents = parseBRLToCents(s.total);
+  const catSumCents = s.rows.reduce(
+    (sum, r) => sum + (parseBRLToCents(r.amount) ?? 0),
+    0,
+  );
+  // Teto mensal efetivo: o total informado, ou (em branco) a soma das categorias.
+  const effectiveTotal =
+    totalCents != null && totalCents > 0 ? totalCents : catSumCents;
+  const dailyRate = daysInMonth > 0 ? Math.floor(effectiveTotal / daysInMonth) : 0;
+  // Aviso suave (não-bloqueante) quando a soma das categorias diverge do total informado.
+  const mismatch =
+    totalCents != null &&
+    totalCents > 0 &&
+    s.rows.length > 0 &&
+    catSumCents !== totalCents;
+
+  // Sem `finally` de propósito: o React Compiler não otimiza componentes com try/finally.
+  async function handleSave() {
+    dispatch({ type: "saveStart" });
+    // O teto mensal gravado é o total informado (ou a soma das categorias quando o total está em branco).
+    const amountCents = effectiveTotal;
+    const categories: DailyBudgetCategoryInput[] = [];
+    for (let i = 0; i < s.rows.length; i++) {
+      const r = s.rows[i]!;
+      const cents = parseBRLToCents(r.amount);
+      const name = r.name.trim();
+      if (name === "" && (cents == null || cents <= 0)) continue; // linha vazia: ignora
+      if (cents == null || cents <= 0) {
+        dispatch({
+          type: "saveErr",
+          error: `Informe um valor válido para "${name || "categoria sem nome"}".`,
+        });
+        return;
+      }
+      categories.push({
+        name: name || `Categoria ${i + 1}`,
+        amount_cents: cents,
+        position: categories.length,
+      });
+    }
+    try {
+      await upsertDailyBudgetWithCategories(amountCents, categories);
+      // Mantém o display do teto em sync com a seção de teto simples.
+      await setAppSetting(
+        "daily_diario_ceiling_display",
+        amountCents > 0 ? centsToBRLInput(amountCents) : "",
+      );
+      dispatch({ type: "saveOk" });
+    } catch (e) {
+      dispatch({
+        type: "saveErr",
+        error: safeErrorMessage(e, "Não foi possível salvar as categorias."),
+      });
+    }
+  }
+
+  if (!isTauri) return null;
+  if (s.loading) return null;
+
+  return (
+    <Section
+      icon={ListTree}
+      title="Categorias do Diário"
+      sub="Distribua o teto mensal do Diário entre categorias (ex.: Alimentação, Transporte). O teto por dia é a soma ÷ dias do mês."
+    >
+      <div className="set-panel set-panel--pad">
+        <div className="set-row">
+          <div className="set-row__main">
+            <div className="set-row__t">Teto mensal do Diário (R$)</div>
+            <div className="set-row__d">
+              Em branco = usar a soma das categorias abaixo como teto mensal.
+            </div>
+          </div>
+          <div className="set-row__ctl" style={TETO_CTL_STYLE}>
+            <input
+              type="text"
+              inputMode="decimal"
+              placeholder="ex.: 1.250,00"
+              value={s.total}
+              onChange={(e) =>
+                dispatch({ type: "setTotal", value: e.currentTarget.value })
+              }
+              disabled={s.saving}
+              style={TETO_INPUT_STYLE}
+              aria-label="Teto mensal do Diário em reais"
+            />
+          </div>
+        </div>
+
+        <fieldset style={CAT_FIELDSET_STYLE}>
+          <legend style={CAT_LEGEND_STYLE}>Categorias</legend>
+          {s.rows.length === 0 ? (
+            <p style={{ ...CAT_SUMMARY_STYLE, marginTop: 0 }}>
+              Nenhuma categoria ainda. Adicione abaixo para acompanhar o gasto por
+              categoria durante o mês.
+            </p>
+          ) : (
+            s.rows.map((r, i) => (
+              <div key={r.key} style={CAT_ROW_STYLE}>
+                <input
+                  type="text"
+                  placeholder={
+                    DIARIO_CAT_PLACEHOLDERS[i % DIARIO_CAT_PLACEHOLDERS.length]
+                  }
+                  value={r.name}
+                  onChange={(e) =>
+                    dispatch({
+                      type: "setName",
+                      index: i,
+                      value: e.currentTarget.value,
+                    })
+                  }
+                  disabled={s.saving}
+                  style={CAT_NAME_INPUT_STYLE}
+                  aria-label={`Nome da categoria ${i + 1}`}
+                />
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="ex.: 300,00"
+                  value={r.amount}
+                  onChange={(e) =>
+                    dispatch({
+                      type: "setAmount",
+                      index: i,
+                      value: e.currentTarget.value,
+                    })
+                  }
+                  disabled={s.saving}
+                  style={CAT_AMOUNT_INPUT_STYLE}
+                  aria-label={`Valor mensal da categoria ${i + 1} em reais`}
+                />
+                <button
+                  type="button"
+                  onClick={() => dispatch({ type: "removeRow", index: i })}
+                  disabled={s.saving}
+                  style={CAT_REMOVE_BTN_STYLE}
+                  aria-label={`Remover categoria ${i + 1}`}
+                >
+                  <X size={15} strokeWidth={1.75} />
+                </button>
+              </div>
+            ))
+          )}
+        </fieldset>
+
+        <p style={CAT_SUMMARY_STYLE}>
+          Total {formatBRL(effectiveTotal)} — {formatBRL(dailyRate)}/dia ({daysInMonth}{" "}
+          dias no mês atual).
+          {mismatch ? (
+            <strong role="status" style={CAT_WARN_STYLE}>
+              {" "}
+              A soma das categorias ({formatBRL(catSumCents)}) difere do teto informado.
+            </strong>
+          ) : null}
+          {s.saved ? <strong> Salvo.</strong> : null}
+          {s.error ? (
+            <strong role="alert" style={{ color: "var(--danger-400)" }}>
+              {" "}
+              {s.error}
+            </strong>
+          ) : null}
+        </p>
+
+        <div style={CAT_ACTIONS_STYLE}>
+          <Button
+            variant="ghost"
+            size="sm"
+            iconLeft={<Plus size={15} strokeWidth={2} />}
+            onClick={() => dispatch({ type: "addRow" })}
+            disabled={s.saving}
+          >
+            Adicionar categoria
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void handleSave()}
+            disabled={s.saving}
+          >
+            {s.saving ? "Salvando…" : "Salvar categorias"}
+          </Button>
+        </div>
+      </div>
+    </Section>
+  );
+}
+
 /** Backup local do banco: escolhe o destino no save dialog nativo e grava via VACUUM INTO. */
 function DataBackupRow() {
   const [busy, setBusy] = useState(false);
@@ -438,6 +840,8 @@ export function SettingsScreen({
       <DailyReminderSection />
 
       <DailyTetoCeilingSection />
+
+      <DiarioCategorySection />
 
       <Section
         icon={HardDrive}

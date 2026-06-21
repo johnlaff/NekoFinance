@@ -120,7 +120,7 @@ pub async fn create_recurring_series(
 /// Índice da ocorrência embutido no id `{rec_id}:{i}`. Cortar "deste ponto em diante" pelo ÍNDICE
 /// (não pela data) é order-independent — robusto se uma janela rolante futura gerar datas não
 /// estritamente crescentes, onde `date >= pivot` apagaria/editaria ocorrências erradas.
-fn occurrence_index(transaction_id: &str) -> Option<i64> {
+pub(crate) fn occurrence_index(transaction_id: &str) -> Option<i64> {
     transaction_id
         .rsplit_once(':')
         .and_then(|(_, i)| i.parse().ok())

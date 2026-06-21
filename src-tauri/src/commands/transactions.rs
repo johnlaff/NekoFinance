@@ -62,6 +62,14 @@ pub struct TransactionRow {
     pub provenance: String,
     /// Partes itemizadas da nota (vazio = lançamento não itemizado). Plan 035 — só leitura.
     pub line_items: Vec<LineItemOnRow>,
+    /// Plano 045: data de vencimento opcional ("YYYY-MM-DD"); None = sem lembrete de conta.
+    /// Metadado consultivo (calendário) — NÃO afeta o Saldo/forecast (que usa `date`).
+    pub due_date: Option<String>,
+    /// Plano 045: posição 1-based na série de parcelas (1 = primeira). None fora de série recorrente.
+    pub installment_index: Option<i64>,
+    /// Plano 045: total de parcelas da série. None fora de série recorrente. Derivado de
+    /// `recurrence.repetitions` + o índice embutido no id `{rec_id}:{i}` (não-armazenado).
+    pub installment_total: Option<i64>,
 }
 
 #[tauri::command]
@@ -86,6 +94,10 @@ pub(crate) struct RecentRow {
     owners: String,
     /// `source_amount` é NULL quando nunca veio da planilha (lançamento manual no app).
     has_source: i64,
+    /// Plano 045: vencimento opcional ("YYYY-MM-DD"); NULL = sem lembrete de conta.
+    due_date: Option<String>,
+    /// Plano 045: série a que pertence (NULL = lançamento avulso). Usado para derivar "N/M parcelas".
+    recurrence_id: Option<String>,
 }
 
 pub(crate) async fn recent_transactions(
@@ -100,7 +112,8 @@ pub(crate) async fn recent_transactions(
                     (SELECT DISTINCT p.name FROM split s \
                      JOIN person p ON p.id = s.owner_person_id \
                      WHERE s.transaction_id = t.id ORDER BY p.name COLLATE NOCASE)), '') AS owners, \
-                (t.source_amount IS NOT NULL) AS has_source \
+                (t.source_amount IS NOT NULL) AS has_source, \
+                t.due_date, t.recurrence_id \
          FROM \"transaction\" t ORDER BY t.date DESC LIMIT ?1",
     )
     .bind(limit)
@@ -173,34 +186,86 @@ pub(crate) async fn recent_transactions(
             .push(li);
     }
 
+    // Plano 045: total de parcelas (`repetitions`) por série, em UM batch pelos `recurrence_id`
+    // DISTINTOS das linhas retornadas — sem N+1 (mesmo padrão das tags/itens acima). O caso comum
+    // (linhas sem série) não paga nada quando o conjunto de ids de recorrência é vazio.
+    let rec_ids: Vec<String> = {
+        let mut set: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for r in &rows {
+            if let Some(rid) = &r.recurrence_id {
+                set.insert(rid.clone());
+            }
+        }
+        set.into_iter().collect()
+    };
+    let reps_by_rec: std::collections::HashMap<String, i64> = if rec_ids.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        let placeholders = vec!["?"; rec_ids.len()].join(",");
+        let sql = format!(
+            "SELECT id, repetitions FROM recurrence \
+             WHERE id IN ({placeholders}) AND repetitions IS NOT NULL"
+        );
+        let mut q = sqlx::query_as::<_, (String, i64)>(sqlx::AssertSqlSafe(sql));
+        for id in &rec_ids {
+            q = q.bind(id);
+        }
+        q.fetch_all(pool)
+            .await
+            .map_err(|e| format!("recurrence reps query: {e}"))?
+            .into_iter()
+            .collect()
+    };
+
     Ok(rows
         .into_iter()
-        .map(|r| TransactionRow {
-            tags: tags_by_txn.get(&r.id).cloned().unwrap_or_default(),
-            line_items: items_by_txn.get(&r.id).cloned().unwrap_or_default(),
-            id: r.id,
-            r#type: r.r#type,
-            amount: r.amount,
-            description: r.description,
-            date: r.date,
-            payment_method: r.payment_method,
-            is_projection: r.is_projection != 0,
-            is_fixed: r.is_fixed != 0,
-            owners: if r.owners.is_empty() {
+        .map(|r| {
+            let tags = tags_by_txn.get(&r.id).cloned().unwrap_or_default();
+            let line_items = items_by_txn.get(&r.id).cloned().unwrap_or_default();
+            // Plano 045: "N/M parcelas" só quando a linha pertence a uma série COM repetições.
+            // Índice 1-based vem do sufixo `:{i}` do id (0-based → +1); total vem de `repetitions`.
+            let (installment_index, installment_total) = match &r.recurrence_id {
+                Some(rid) => match reps_by_rec.get(rid) {
+                    Some(total) => (
+                        crate::recurrence::occurrence_index(&r.id).map(|i| i + 1),
+                        Some(*total),
+                    ),
+                    None => (None, None),
+                },
+                None => (None, None),
+            };
+            let owners = if r.owners.is_empty() {
                 Vec::new()
             } else {
                 // Ordena no Rust (não depende da ordem do GROUP_CONCAT, que não é contratual).
                 let mut o: Vec<String> = r.owners.split('|').map(str::to_owned).collect();
                 o.sort_by_key(|s| s.to_lowercase());
                 o
-            },
-            provenance: if r.is_projection != 0 {
+            };
+            let provenance = if r.is_projection != 0 {
                 "projetado".to_string()
             } else if r.has_source != 0 {
                 "importado".to_string()
             } else {
                 "manual".to_string()
-            },
+            };
+            TransactionRow {
+                tags,
+                line_items,
+                id: r.id,
+                r#type: r.r#type,
+                amount: r.amount,
+                description: r.description,
+                date: r.date,
+                payment_method: r.payment_method,
+                is_projection: r.is_projection != 0,
+                is_fixed: r.is_fixed != 0,
+                owners,
+                provenance,
+                due_date: r.due_date,
+                installment_index,
+                installment_total,
+            }
         })
         .collect())
 }
@@ -231,6 +296,7 @@ pub async fn create_transaction(
     tag_ids: Vec<String>,
     recurrence: Option<RecurrenceInput>,
     to_account_id: Option<String>,
+    due_date: Option<String>,
 ) -> Result<String, String> {
     create_transaction_inner(
         pool.inner(),
@@ -243,6 +309,7 @@ pub async fn create_transaction(
         &tag_ids,
         recurrence,
         to_account_id.as_deref(),
+        due_date.as_deref(),
     )
     .await
 }
@@ -259,6 +326,7 @@ pub(crate) async fn create_transaction_inner(
     tag_ids: &[String],
     recurrence: Option<RecurrenceInput>,
     to_account_id: Option<&str>,
+    due_date: Option<&str>,
 ) -> Result<String, String> {
     // Tipos aceitos no caminho manual: income/expense (gasto/renda) e transfer (Economia). Para
     // transfer, a conta-destino precisa ser reserve/illiquid — a mesma forma que o import grava,
@@ -337,8 +405,8 @@ pub(crate) async fn create_transaction_inner(
         None
     };
     sqlx::query(
-        "INSERT INTO \"transaction\" (id, type, amount, description, date, payment_method, is_fixed, to_account_id, is_projection, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+        "INSERT INTO \"transaction\" (id, type, amount, description, date, payment_method, is_fixed, to_account_id, is_projection, due_date, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
     )
     .bind(&id)
     .bind(txn_type)
@@ -349,6 +417,7 @@ pub(crate) async fn create_transaction_inner(
     .bind(is_fixed as i64)
     .bind(dest)
     .bind(is_projection as i64)
+    .bind(due_date)
     .bind(&now)
     .execute(pool)
     .await
@@ -516,6 +585,55 @@ pub async fn update_transaction_cmd(
         return Err("lançamento não encontrado".into());
     }
     Ok(())
+}
+
+/// Plano 045: uma conta a vencer — um lançamento com `due_date` na janela [hoje, horizonte].
+#[derive(serde::Serialize, sqlx::FromRow)]
+pub struct UpcomingBill {
+    pub id: String,
+    pub description: String,
+    pub amount: i64,
+    pub due_date: String,
+    pub is_projection: bool,
+}
+
+/// Núcleo puro: contas com `due_date` nos próximos `days` dias (inclui hoje), ordenadas por
+/// vencimento. `today` é injetado (determinístico/testável). A janela superior é uma data CALCULADA
+/// em Rust (não interpolação de SQL) e ligada por placeholder — evita o aviso de `AssertSqlSafe`.
+/// Limite 100 para não devolver um conjunto ilimitado. NÃO toca Saldo/forecast (só leitura de `due_date`).
+pub(crate) async fn upcoming_bills_inner(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+    days: i64,
+) -> Result<Vec<UpcomingBill>, String> {
+    let today = today_naive.format("%Y-%m-%d").to_string();
+    // `days` negativo viraria uma janela invertida (vazia); satura em 0 = só hoje.
+    let upper = today_naive
+        .checked_add_signed(chrono::Duration::days(days.max(0)))
+        .unwrap_or(today_naive)
+        .format("%Y-%m-%d")
+        .to_string();
+    sqlx::query_as::<_, UpcomingBill>(
+        "SELECT id, COALESCE(description,'') AS description, ABS(amount) AS amount, \
+                due_date, is_projection \
+         FROM \"transaction\" \
+         WHERE due_date IS NOT NULL AND due_date >= ?1 AND due_date <= ?2 \
+         ORDER BY due_date ASC LIMIT 100",
+    )
+    .bind(&today)
+    .bind(&upper)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("upcoming bills: {e}"))
+}
+
+/// Contas a vencer nos próximos `days` dias. Adapter fino sobre o núcleo puro (clock injetado aqui).
+#[tauri::command]
+pub async fn get_upcoming_bills_cmd(
+    pool: State<'_, SqlitePool>,
+    days: i64,
+) -> Result<Vec<UpcomingBill>, String> {
+    upcoming_bills_inner(pool.inner(), chrono::Local::now().date_naive(), days).await
 }
 
 #[cfg(test)]
@@ -825,5 +943,126 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(amount, 9900, "o novo valor foi gravado");
+    }
+
+    // --- Plano 045: due_date + contas a vencer + parcelas ---
+
+    #[tokio::test]
+    async fn recent_transactions_carry_due_date() {
+        let pool = test_pool().await;
+        // Uma linha COM vencimento e uma SEM.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, due_date, created_at, updated_at) \
+             VALUES ('due-1', 'expense', 1000, '2026-06-01', 1, 0, '2026-07-10', '2026-06-01T00:00:00Z', '2026-06-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        insert_txn(&pool, "nodue-1", 2000).await;
+
+        let rows = recent_transactions(&pool, 50).await.unwrap();
+        let with_due = rows.iter().find(|r| r.id == "due-1").unwrap();
+        assert_eq!(with_due.due_date.as_deref(), Some("2026-07-10"));
+        let without_due = rows.iter().find(|r| r.id == "nodue-1").unwrap();
+        assert_eq!(without_due.due_date, None, "sem vencimento → None");
+    }
+
+    #[tokio::test]
+    async fn create_transaction_inner_stores_due_date() {
+        let pool = test_pool().await;
+        let id = create_transaction_inner(
+            &pool,
+            "expense",
+            5000,
+            Some("Conta demo".into()),
+            "2026-06-01",
+            Some("pix".into()),
+            true,
+            &[],
+            None,
+            None,
+            Some("2026-08-10"),
+        )
+        .await
+        .unwrap();
+        let (due,): (Option<String>,) =
+            sqlx::query_as("SELECT due_date FROM \"transaction\" WHERE id = ?1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(due.as_deref(), Some("2026-08-10"));
+    }
+
+    #[tokio::test]
+    async fn get_upcoming_bills_returns_bills_in_window() {
+        let pool = test_pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+        // Uma vence em 5 dias (na janela de 10), outra em 90 dias (fora).
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, due_date, created_at, updated_at) \
+             VALUES ('near', 'expense', 1000, '2026-06-01', 1, 0, '2026-06-06', '2026-06-01T00:00:00Z', '2026-06-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, due_date, created_at, updated_at) \
+             VALUES ('far', 'expense', 2000, '2026-06-01', 1, 0, '2026-08-30', '2026-06-01T00:00:00Z', '2026-06-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Sem due_date: nunca aparece.
+        insert_txn(&pool, "nodue", 3000).await;
+
+        let bills = upcoming_bills_inner(&pool, today, 10).await.unwrap();
+        assert_eq!(bills.len(), 1, "só a conta dentro da janela");
+        assert_eq!(bills[0].id, "near");
+        assert_eq!(bills[0].amount, 1000, "magnitude (ABS)");
+    }
+
+    #[tokio::test]
+    async fn installment_index_and_total_populated_for_series() {
+        let pool = test_pool().await;
+        // Série de 6 parcelas mensais.
+        let tmpl = crate::recurrence::RecurringTemplate {
+            txn_type: "expense".into(),
+            amount: 10000,
+            description: Some("Parcela demo".into()),
+            start: NaiveDate::from_ymd_opt(2026, 6, 5).unwrap(),
+            payment_method: Some("credit".into()),
+            is_fixed: false,
+        };
+        let rec_id = crate::recurrence::create_recurring_series(
+            &pool,
+            &tmpl,
+            crate::recurrence::Frequency::Mensal,
+            6,
+        )
+        .await
+        .unwrap();
+
+        let rows = recent_transactions(&pool, 50).await.unwrap();
+        let first = rows.iter().find(|r| r.id == format!("{rec_id}:0")).unwrap();
+        assert_eq!(first.installment_index, Some(1), "0-based → 1-based");
+        assert_eq!(first.installment_total, Some(6));
+        let third = rows.iter().find(|r| r.id == format!("{rec_id}:2")).unwrap();
+        assert_eq!(third.installment_index, Some(3));
+        assert_eq!(
+            third.installment_total,
+            Some(6),
+            "total igual em toda a série"
+        );
+    }
+
+    #[tokio::test]
+    async fn installment_fields_null_for_single_transaction() {
+        let pool = test_pool().await;
+        insert_txn(&pool, "single", 1000).await;
+        let rows = recent_transactions(&pool, 50).await.unwrap();
+        let row = rows.iter().find(|r| r.id == "single").unwrap();
+        assert_eq!(row.installment_index, None);
+        assert_eq!(row.installment_total, None);
     }
 }

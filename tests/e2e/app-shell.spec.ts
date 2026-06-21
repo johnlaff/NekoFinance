@@ -73,6 +73,9 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     const splitRow = page.getByRole("row", { name: /Despesa demo variável/ });
     await expect(splitRow.getByText("Pessoa A")).toBeVisible();
     await expect(splitRow.getByText("Pessoa B")).toBeVisible();
+    // Plano 045: chip de vencimento (linha com due_date) e badge "N/M parcelas" (série).
+    await expect(page.getByLabel("Vencimento: 28/06/2026")).toBeVisible();
+    await expect(page.getByText("3/12 parcelas")).toBeVisible();
     await page.screenshot({
       fullPage: true,
       path: testInfo.outputPath("transactions.png"),
@@ -112,11 +115,13 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
       path: testInfo.outputPath("totais.png"),
     });
 
-    // Horizonte — trajetória do saldo + detalhe diário.
+    // Horizonte — trajetória do saldo + detalhe diário + vencimentos próximos (plano 045).
     await nav("Horizonte").click();
     await expect(page.getByText(/quanto mais verde, mais folga/)).toBeVisible();
     await expect(page.getByText("Detalhe diário")).toBeVisible();
     await expect(page.getByText("Junho")).toBeVisible();
+    await expect(page.getByText("Vencimentos próximos")).toBeVisible();
+    await expect(page.getByText("Compromisso fixo demo")).toBeVisible();
     await page.screenshot({
       fullPage: true,
       path: testInfo.outputPath("horizonte.png"),

@@ -349,6 +349,142 @@ pub async fn upsert_daily_budget(
     upsert_daily_budget_inner(pool.inner(), amount_cents).await
 }
 
+// --- Plano 045: quebra por categoria do orçamento Diário ---
+
+/// Uma categoria do orçamento mensal do Diário (leitura). `amount_cents` é o alvo mensal positivo.
+#[derive(serde::Serialize, sqlx::FromRow)]
+pub struct DailyBudgetCategoryRow {
+    pub id: String,
+    pub name: String,
+    pub amount_cents: i64,
+    pub position: i64,
+}
+
+/// Entrada de categoria vinda do app (escrita). `position` é a ordem 0-based de exibição.
+#[derive(serde::Deserialize)]
+pub struct CategoryInput {
+    pub name: String,
+    pub amount_cents: i64,
+    pub position: i64,
+}
+
+/// Puro: valor MENSAL → teto por DIA do mês informado. O teto diário do método é o orçamento
+/// mensal dividido pelos dias do mês (ex.: 3100 ÷ 31 = 100/dia). `days_in_month = 0` → 0 (sem panic).
+/// Espelha a mesma intenção do `effective_daily_ceiling` (a tela computa a exibição; o engine
+/// continua lendo o `daily_budget.amount` como o teto/dia escrito pelo dono).
+///
+/// A derivação do teto/dia exibido vive HOJE na UI (`DiarioCategorySection`, em TypeScript) para não
+/// pagar um round-trip; este núcleo puro existe como fonte-da-verdade testável da fórmula, pronto
+/// para um futuro caller backend (ex.: auto-parse de notas) — daí `allow(dead_code)` deliberado.
+#[allow(dead_code)]
+pub(crate) fn monthly_to_daily_rate(amount_cents: i64, days_in_month: u32) -> i64 {
+    if days_in_month == 0 {
+        return 0;
+    }
+    amount_cents / days_in_month as i64
+}
+
+/// Núcleo puro: grava o teto total do Diário + uma quebra opcional por categoria.
+///
+/// 1. Reaproveita `upsert_daily_budget_inner` para escrever/deprecar a linha de TOTAL — assim o
+///    engine (`effective_daily_ceiling`, que lê `daily_budget WHERE status='active' AND amount>0`)
+///    segue funcionando sem mudança: a quebra por categoria é só drill-down de UI.
+/// 2. Se `amount_cents > 0` e `categories` não-vazio: localiza o id do orçamento recém-ativado e
+///    substitui (DELETE + INSERT) as categorias dele numa ÚNICA transação SQLite.
+/// 3. `categories` vazio: nada a fazer na tabela de categorias (o total-only continua válido).
+///
+/// Validação: cada `category.amount_cents > 0`; senão retorna Err sem tocar no banco.
+pub(crate) async fn upsert_daily_budget_with_categories_inner(
+    pool: &SqlitePool,
+    amount_cents: i64,
+    categories: &[CategoryInput],
+) -> Result<(), String> {
+    // Valida ANTES de escrever (atomicidade lógica: ou tudo válido, ou nada muda).
+    for c in categories {
+        if c.amount_cents <= 0 {
+            return Err("cada categoria deve ter valor positivo (magnitude)".into());
+        }
+    }
+
+    // Passo 1: escreve/depreca o TOTAL pelo mesmo caminho do teto simples (engine inalterado).
+    upsert_daily_budget_inner(pool, amount_cents).await?;
+
+    // Passo 2: só anexa categorias quando há um teto explícito ativo E uma quebra informada.
+    if amount_cents > 0 && !categories.is_empty() {
+        let budget: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM daily_budget WHERE status='active' ORDER BY start_date DESC LIMIT 1",
+        )
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| format!("upsert categories (budget id): {e}"))?;
+        let Some((budget_id,)) = budget else {
+            // Sem perfil (upsert_daily_budget_inner foi no-op): nada a anexar.
+            return Ok(());
+        };
+
+        let mut tx = pool
+            .begin()
+            .await
+            .map_err(|e| format!("upsert categories (begin): {e}"))?;
+        sqlx::query("DELETE FROM daily_budget_category WHERE budget_id = ?1")
+            .bind(&budget_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("upsert categories (clear): {e}"))?;
+        for c in categories {
+            sqlx::query(
+                "INSERT INTO daily_budget_category (id, budget_id, name, amount_cents, position) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+            )
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&budget_id)
+            .bind(&c.name)
+            .bind(c.amount_cents)
+            .bind(c.position)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("upsert categories (insert): {e}"))?;
+        }
+        tx.commit()
+            .await
+            .map_err(|e| format!("upsert categories (commit): {e}"))?;
+    }
+    Ok(())
+}
+
+/// Núcleo puro: categorias do orçamento Diário ATIVO (vazio quando não há orçamento/quebra).
+pub(crate) async fn get_daily_budget_categories_inner(
+    pool: &SqlitePool,
+) -> Result<Vec<DailyBudgetCategoryRow>, String> {
+    sqlx::query_as::<_, DailyBudgetCategoryRow>(
+        "SELECT dbc.id, dbc.name, dbc.amount_cents, dbc.position \
+         FROM daily_budget_category dbc \
+         JOIN daily_budget db ON db.id = dbc.budget_id \
+         WHERE db.status='active' ORDER BY dbc.position",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("get daily budget categories: {e}"))
+}
+
+/// Grava o teto total do Diário + a quebra por categoria. Adapter fino sobre o núcleo puro.
+#[tauri::command]
+pub async fn upsert_daily_budget_with_categories_cmd(
+    pool: State<'_, SqlitePool>,
+    amount_cents: i64,
+    categories: Vec<CategoryInput>,
+) -> Result<(), String> {
+    upsert_daily_budget_with_categories_inner(pool.inner(), amount_cents, &categories).await
+}
+
+/// Lê as categorias do orçamento Diário ativo (vazio = sem quebra). Adapter fino.
+#[tauri::command]
+pub async fn get_daily_budget_categories_cmd(
+    pool: State<'_, SqlitePool>,
+) -> Result<Vec<DailyBudgetCategoryRow>, String> {
+    get_daily_budget_categories_inner(pool.inner()).await
+}
+
 /// Piso de reserva = colchão intocável que a folga de caixa não pode comer.
 ///
 /// Lógica em duas camadas:
@@ -1250,5 +1386,136 @@ mod tests {
         );
         assert_eq!(day15.daily_out_cents, 0);
         assert_eq!(day15.income_cents, 0);
+    }
+
+    // --- Plano 045: quebra por categoria do orçamento Diário ---
+
+    /// Insere um perfil — pré-condição de `upsert_daily_budget_inner` (escreve por person_id).
+    async fn seed_person(pool: &SqlitePool) {
+        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-045', 'Tester')")
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    fn cat(name: &str, amount_cents: i64, position: i64) -> CategoryInput {
+        CategoryInput {
+            name: name.into(),
+            amount_cents,
+            position,
+        }
+    }
+
+    #[tokio::test]
+    async fn upsert_daily_budget_with_categories_stores_breakdown() {
+        let p = pool().await;
+        seed_person(&p).await;
+        // Total 1250,00 quebrado em 3 categorias genéricas que somam o total.
+        let cats = vec![
+            cat("Transport", 30000, 0),
+            cat("Groceries", 50000, 1),
+            cat("Leisure", 45000, 2),
+        ];
+        upsert_daily_budget_with_categories_inner(&p, 125000, &cats)
+            .await
+            .unwrap();
+
+        let rows = get_daily_budget_categories_inner(&p).await.unwrap();
+        assert_eq!(rows.len(), 3, "as 3 categorias persistem");
+        let sum: i64 = rows.iter().map(|r| r.amount_cents).sum();
+        assert_eq!(sum, 125000, "a soma das categorias bate com o total");
+        // A ordem segue `position`.
+        assert_eq!(rows[0].name, "Transport");
+        assert_eq!(rows[2].name, "Leisure");
+
+        // O TOTAL continua na tabela daily_budget (engine inalterado).
+        let total = effective_daily_ceiling(&p, NaiveDate::from_ymd_opt(2026, 6, 15).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(total, 125000, "o teto total ativo é o escrito");
+
+        // Reescrever substitui (clear + reinsert), não acumula.
+        upsert_daily_budget_with_categories_inner(&p, 125000, &[cat("Shopping", 125000, 0)])
+            .await
+            .unwrap();
+        let rows2 = get_daily_budget_categories_inner(&p).await.unwrap();
+        assert_eq!(rows2.len(), 1, "a quebra anterior foi substituída");
+        assert_eq!(rows2[0].name, "Shopping");
+    }
+
+    #[tokio::test]
+    async fn upsert_daily_budget_with_categories_without_cats_ok() {
+        let p = pool().await;
+        seed_person(&p).await;
+        // Sem quebra: grava só o total; nenhuma categoria inserida.
+        upsert_daily_budget_with_categories_inner(&p, 60000, &[])
+            .await
+            .unwrap();
+        let rows = get_daily_budget_categories_inner(&p).await.unwrap();
+        assert!(rows.is_empty(), "total-only não cria categorias");
+        let total = effective_daily_ceiling(&p, NaiveDate::from_ymd_opt(2026, 6, 15).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(total, 60000);
+    }
+
+    #[tokio::test]
+    async fn upsert_daily_budget_with_categories_deprecates_old() {
+        let p = pool().await;
+        seed_person(&p).await;
+        upsert_daily_budget_with_categories_inner(&p, 100000, &[cat("Groceries", 100000, 0)])
+            .await
+            .unwrap();
+        // Segunda chamada depreca o orçamento anterior e cria nova quebra no novo orçamento ativo.
+        upsert_daily_budget_with_categories_inner(&p, 80000, &[cat("Transport", 80000, 0)])
+            .await
+            .unwrap();
+
+        // Só UM orçamento ativo (o novo); o anterior foi deprecado.
+        let active: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM daily_budget WHERE status='active'")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(
+            active.0, 1,
+            "um único orçamento ativo após o segundo upsert"
+        );
+
+        // A leitura traz só as categorias do orçamento ATIVO.
+        let rows = get_daily_budget_categories_inner(&p).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "Transport");
+    }
+
+    #[tokio::test]
+    async fn upsert_daily_budget_with_categories_rejects_zero_category() {
+        let p = pool().await;
+        seed_person(&p).await;
+        let err = upsert_daily_budget_with_categories_inner(&p, 50000, &[cat("Bad", 0, 0)])
+            .await
+            .unwrap_err();
+        assert!(err.contains("positivo"), "err: {err}");
+        // Nada foi escrito (validação antes de qualquer write).
+        let any: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM daily_budget WHERE status='active'")
+            .fetch_one(&p)
+            .await
+            .unwrap();
+        assert_eq!(any.0, 0, "categoria inválida não grava nem o total");
+    }
+
+    #[tokio::test]
+    async fn get_daily_budget_categories_returns_empty_without_budget() {
+        let p = pool().await;
+        // Sem orçamento ativo → vetor vazio (não-panic).
+        let rows = get_daily_budget_categories_inner(&p).await.unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn monthly_to_daily_rate_divides_correctly() {
+        assert_eq!(monthly_to_daily_rate(3100, 31), 100);
+        assert_eq!(monthly_to_daily_rate(125000, 31), 4032); // 4032,25 truncado
+        assert_eq!(monthly_to_daily_rate(100, 0), 0, "dias=0 não causa panic");
     }
 }

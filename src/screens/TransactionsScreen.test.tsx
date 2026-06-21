@@ -80,6 +80,28 @@ describe("TransactionsScreen", () => {
     expect(screen.getByText("Do app")).toBeInTheDocument();
   });
 
+  it("mostra o chip de vencimento e o badge de parcelas (plano 045)", async () => {
+    const dueTxn = {
+      ...TXNS[0]!,
+      id: "due-1",
+      description: "Conta a vencer demo",
+      due_date: "2026-07-10",
+    };
+    // RECURRING_TXN carrega installment_index=3 / installment_total=6.
+    mockCommands({ get_recent_transactions: [dueTxn, RECURRING_TXN] });
+    render(<TransactionsScreen query="" onGoToSettings={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Conta a vencer demo")).toBeInTheDocument();
+    });
+    // Chip de vencimento com a data formatada (DD/MM/YYYY).
+    expect(screen.getByText("10/07/2026")).toBeInTheDocument();
+    expect(screen.getByLabelText("Vencimento: 10/07/2026")).toBeInTheDocument();
+    // Badge "N/M parcelas" para o lançamento de série.
+    expect(screen.getByText("3/6 parcelas")).toBeInTheDocument();
+    expect(screen.getByLabelText("Parcela 3 de 6")).toBeInTheDocument();
+  });
+
   it("applies the controlled query from the global header search", async () => {
     // A tela não tem mais busca própria: o filtro chega só pela prop `query` (⌘K do header).
     render(<TransactionsScreen query="crédito" onGoToSettings={vi.fn()} />);

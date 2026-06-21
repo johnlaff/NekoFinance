@@ -1,8 +1,10 @@
 import type { CSSProperties } from "react";
-import { getForecast } from "../lib/api";
-import { formatBRL } from "../lib/format";
+import { CalendarClock } from "lucide-react";
+import { getForecast, getUpcomingBills } from "../lib/api";
+import { fmtDate, formatBRL } from "../lib/format";
 import { useCommand } from "../lib/useCommand";
 import { Money } from "../design-system/components/Money";
+import { ProvBadge } from "../design-system/components/ProvBadge";
 import { EmptyState } from "../design-system/components/EmptyState";
 import { BalanceTrajectory } from "../design-system/components/BalanceTrajectory";
 import {
@@ -44,6 +46,104 @@ const DAY_CELL_BASE: CSSProperties = {
   borderRadius: "var(--radius-sm)",
   fontVariantNumeric: "tabular-nums",
 };
+
+// --- Vencimentos próximos (plano 045). Estilos hoistados (React Compiler). ---
+
+const BILLS_TITLE_STYLE: CSSProperties = {
+  fontSize: "var(--fs-label)",
+  fontWeight: "var(--fw-semibold)",
+  letterSpacing: "var(--ls-label)",
+  textTransform: "uppercase",
+  color: "var(--text-faint)",
+  margin: "var(--space-6) 0 var(--space-3)",
+};
+
+const BILLS_LIST_STYLE: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "var(--space-2)",
+  listStyle: "none",
+  margin: 0,
+  padding: 0,
+};
+
+const BILL_ROW_STYLE: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "var(--space-3)",
+  padding: "var(--space-3)",
+  background: "var(--surface)",
+  border: "var(--bw-hair) solid var(--border)",
+  borderRadius: "var(--radius-sm)",
+};
+
+const BILL_DATE_CHIP_STYLE: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "5px",
+  padding: "2px 8px",
+  borderRadius: "var(--radius-pill)",
+  background: "var(--surface-2)",
+  border: "var(--bw-hair) solid var(--border)",
+  fontSize: "var(--fs-micro)",
+  fontWeight: "var(--fw-medium)",
+  color: "var(--text-muted)",
+  whiteSpace: "nowrap",
+  flex: "none",
+};
+
+const BILL_DESC_STYLE: CSSProperties = {
+  flex: 1,
+  fontSize: "var(--fs-sm)",
+  color: "var(--text)",
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
+/** Janela do calendário de contas a vencer (dias a partir de hoje). */
+const BILLS_WINDOW_DAYS = 60;
+
+const fetchUpcomingBills = () => getUpcomingBills(BILLS_WINDOW_DAYS);
+
+/**
+ * Calendário/lista de contas a vencer (plano 045): lê os lançamentos com `due_date` nos próximos
+ * {@link BILLS_WINDOW_DAYS} dias e os lista por vencimento. Conteúdo aditivo do Horizonte — NÃO
+ * altera o Saldo/forecast (o vencimento é metadado consultivo; o caixa usa a data de caixa).
+ */
+function UpcomingBillsSection() {
+  const billsQ = useCommand("get_upcoming_bills:60", fetchUpcomingBills);
+  const bills = billsQ.data ?? [];
+
+  return (
+    <section aria-labelledby="horizon-bills-title">
+      <h2 id="horizon-bills-title" style={BILLS_TITLE_STYLE}>
+        Vencimentos próximos
+      </h2>
+      {bills.length === 0 ? (
+        <EmptyState
+          title="Nenhum vencimento nos próximos 60 dias"
+          description="Lançamentos de Saída ou Cartão com uma data de vencimento aparecem aqui como lembrete de conta a pagar."
+        />
+      ) : (
+        <ul style={BILLS_LIST_STYLE}>
+          {bills.map((b) => (
+            <li key={b.id} style={BILL_ROW_STYLE}>
+              <span style={BILL_DATE_CHIP_STYLE}>
+                <CalendarClock size={12} strokeWidth={1.75} aria-hidden="true" />
+                {fmtDate(b.due_date)}
+              </span>
+              <span style={BILL_DESC_STYLE}>{b.description || "—"}</span>
+              {b.is_projection && <ProvBadge provenance="projetado" />}
+              <Money cents={-Math.abs(b.amount)} size="sm" sign="auto" />
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
 
 export function HorizonteScreen() {
   const forecastQ = useCommand("get_forecast", getForecast);
@@ -205,6 +305,8 @@ export function HorizonteScreen() {
           </div>
         ))}
       </section>
+
+      <UpcomingBillsSection />
     </div>
   );
 }

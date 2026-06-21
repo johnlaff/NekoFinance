@@ -72,6 +72,12 @@ export interface TransactionRow {
   provenance: string;
   /** Partes itemizadas da nota (vazio = lançamento não itemizado). Plano 035 — só leitura. */
   line_items: LineItem[];
+  /** Vencimento opcional ("YYYY-MM-DD"); null = sem lembrete de conta (plano 045). Consultivo. */
+  due_date: string | null;
+  /** Posição 1-based na série de parcelas; null = não é lançamento de série (plano 045). */
+  installment_index: number | null;
+  /** Total de parcelas da série; null = não é lançamento de série (plano 045). */
+  installment_total: number | null;
 }
 
 export interface SheetInfo {
@@ -267,6 +273,20 @@ export function getRecentTransactions(limit: number): Promise<TransactionRow[]> 
   return invoke("get_recent_transactions", { limit });
 }
 
+/** Uma conta a vencer (plano 045): um lançamento com `due_date` na janela consultada. */
+export interface UpcomingBill {
+  id: string;
+  description: string;
+  amount: number; // magnitude (centavos)
+  due_date: string;
+  is_projection: boolean;
+}
+
+/** Contas com `due_date` nos próximos `days` dias (inclui hoje), ordenadas por vencimento. */
+export function getUpcomingBills(days: number): Promise<UpcomingBill[]> {
+  return invoke("get_upcoming_bills_cmd", { days });
+}
+
 /** Partes itemizadas de um lançamento (breakdown da nota de célula, plano 035). */
 // react-doctor-disable-next-line deslop/unused-export -- plano 035: ponte do frontend (comando Tauri pronto/testado); o Livro-razão usa o batch line_items, este getter sob demanda atende o plano 036
 export function getLineItems(transactionId: string): Promise<LineItem[]> {
@@ -304,6 +324,8 @@ export function createTransaction(input: {
   recurrence: { frequency: Frequency; repetitions: number } | null;
   /** Obrigatório (não-nulo) quando `txnType = "transfer"`. Ausente/nulo nos demais (income/expense). */
   toAccountId?: string | null;
+  /** Vencimento opcional ("YYYY-MM-DD") p/ o calendário de contas (plano 045). Não afeta o Saldo. */
+  dueDate?: string | null;
 }): Promise<string> {
   return invoke("create_transaction", input);
 }
@@ -560,6 +582,40 @@ export function setAppSetting(key: string, value: string): Promise<void> {
  */
 export function upsertDailyBudget(amountCents: number): Promise<void> {
   return invoke("upsert_daily_budget", { amountCents });
+}
+
+// --- Quebra por categoria do orçamento Diário (plano 045) ---
+
+/** Uma categoria do orçamento mensal do Diário (leitura). `amount_cents` é o alvo mensal positivo. */
+export interface DailyBudgetCategory {
+  id: string;
+  name: string;
+  amount_cents: number;
+  position: number;
+}
+
+/** Categoria editável do orçamento Diário (escrita). Sem `id`: o backend recria as linhas. */
+export interface DailyBudgetCategoryInput {
+  name: string;
+  amount_cents: number; // centavos positivos
+  position: number;
+}
+
+/** Lê as categorias do orçamento Diário ativo. Vetor vazio = sem quebra definida. */
+export function getDailyBudgetCategories(): Promise<DailyBudgetCategory[]> {
+  return invoke("get_daily_budget_categories_cmd");
+}
+
+/**
+ * Grava o teto total do Diário + uma quebra opcional por categoria.
+ * `categories` pode ser vazio (mantém o total-only e limpa qualquer quebra anterior).
+ * `amountCents = 0` desativa o teto explícito (o engine cai no fallback de média).
+ */
+export function upsertDailyBudgetWithCategories(
+  amountCents: number,
+  categories: DailyBudgetCategoryInput[],
+): Promise<void> {
+  return invoke("upsert_daily_budget_with_categories_cmd", { amountCents, categories });
 }
 
 // --- Lembrete agendado no nível do sistema (plano 039) ---
