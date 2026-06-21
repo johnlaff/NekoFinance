@@ -178,7 +178,34 @@ pub(crate) async fn realized_annual_economia(
             format!("{cur_ym}-01"),
         )
     };
-    let row: (i64,) = sqlx::query_as(
+
+    // Lado A: anotação da aba Economia (`economia_annotation`, import via store_economia_entries) —
+    // decisão do dono (plano 052). Mesma janela de meses COMPLETOS, com o deslocamento de JANEIRO
+    // para DEZEMBRO do ano anterior, para ficar simétrico com `realized_annual_savings`.
+    let annotation_sum: (i64,) = if is_january {
+        sqlx::query_as(
+            "SELECT COALESCE(SUM(amount_cents), 0) FROM economia_annotation \
+             WHERE year = ?1 AND month = 12",
+        )
+        .bind(today_naive.year() as i64 - 1)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| format!("annotation economia (jan): {e}"))?
+    } else {
+        sqlx::query_as(
+            "SELECT COALESCE(SUM(amount_cents), 0) FROM economia_annotation \
+             WHERE year = ?1 AND month < ?2",
+        )
+        .bind(today_naive.year() as i64)
+        .bind(today_naive.month() as i64)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| format!("annotation economia: {e}"))?
+    };
+
+    // Lado B: transfers→reserva/ilíquido MANUAIS criados no Neko (plano 003). Disjuntos da anotação:
+    // a anotação só vem do import da aba; o transfer manual nunca entra em `economia_annotation`.
+    let transfer_sum: (i64,) = sqlx::query_as(
         "SELECT COALESCE(SUM(ABS(t.amount)), 0) FROM \"transaction\" t \
          LEFT JOIN account a ON a.id = t.to_account_id \
          WHERE t.date >= ?1 AND t.date < ?2 \
@@ -193,8 +220,33 @@ pub(crate) async fn realized_annual_economia(
     .bind(&upper)
     .fetch_one(pool)
     .await
-    .map_err(|e| format!("realized economia: {e}"))?;
-    Ok(row.0)
+    .map_err(|e| format!("realized economia transfers: {e}"))?;
+
+    Ok(annotation_sum.0 + transfer_sum.0)
+}
+
+/// Anotação da aba Economia (`economia_annotation`, plano 052) para os ANOS informados, indexada por
+/// `(ano, mês)` em centavos. Alimenta `month_metrics_for`/`project_with_metrics` como parcela ADITIVA
+/// do Economizado% — disjunta dos transfers de reserva REAIS (que chegam via eventos de caixa).
+pub(crate) async fn load_economia_annotation(
+    pool: &SqlitePool,
+    years: &[i32],
+) -> Result<std::collections::HashMap<(i32, u32), i64>, String> {
+    let mut out = std::collections::HashMap::new();
+    for &year in years {
+        let rows: Vec<(i64, i64)> =
+            sqlx::query_as("SELECT month, amount_cents FROM economia_annotation WHERE year = ?1")
+                .bind(year as i64)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| format!("annotation for year {year}: {e}"))?;
+        for (m, cents) in rows {
+            if (1..=12).contains(&m) {
+                out.insert((year, m as u32), cents);
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Renda e net do ANO INTEIRO projetado (todas as linhas do ano). Exibido só como contraste com
@@ -805,8 +857,18 @@ pub(crate) async fn forecast_dto(
     let seed = projection_seed(pool, today_naive).await?;
     let events = load_forecast_events(pool, today_naive, horizon_end).await?;
     let metric_events = load_metric_events(pool, today_naive, &events).await?;
-    let fc =
-        forecast::project_with_metrics(seed, today_naive, &events, &metric_events, horizon_end);
+    // Anotação da aba Economia (plano 052) para os anos cobertos pelo horizonte — parcela aditiva do
+    // Economizado% por mês, disjunta dos transfers de reserva reais (que já chegam nos eventos).
+    let years: Vec<i32> = (today_naive.year()..=horizon_end.year()).collect();
+    let annotation = load_economia_annotation(pool, &years).await?;
+    let fc = forecast::project_with_metrics(
+        seed,
+        today_naive,
+        &events,
+        &metric_events,
+        horizon_end,
+        &annotation,
+    );
 
     let reserve_floor_cents = reserve_floor(pool, today_naive).await?;
     // Poupança ANUAL realizada (não o mês isolado, não o ano projetado-incompleto).
@@ -1003,7 +1065,8 @@ pub(crate) async fn annual_metrics(
 ) -> Result<AnnualMetricsDto, String> {
     let events = load_year_events(pool, year).await?;
     let months: Vec<(i32, u32)> = (1..=12).map(|m| (year, m)).collect();
-    let metrics = forecast::month_metrics_for(today, &events, &months);
+    let annotation = load_economia_annotation(pool, &[year]).await?;
+    let metrics = forecast::month_metrics_for(today, &events, &months, &annotation);
     let months = metrics
         .iter()
         .map(|m| MonthMetricDto {
@@ -1378,6 +1441,113 @@ mod tests {
         assert_eq!(
             income, 100000,
             "guardrail simétrico: renda de dezembro também é vista em 1º/jan"
+        );
+    }
+
+    // Bug 2 (plano 052): o Economizado% (savings_rate_bps) reflete a ANOTAÇÃO da aba Economia mesmo
+    // quando o dono poupa só via Saída no grid (sem transfer de reserva → nenhum EventKind::Economia).
+    // Antes, `economia = 0` → savings_rate_bps = 0, divergindo da planilha.
+    #[tokio::test]
+    async fn savings_rate_reflects_annotation() {
+        let income = forecast::CashflowEvent {
+            date: NaiveDate::from_ymd_opt(2026, 3, 15).unwrap(),
+            kind: forecast::EventKind::Income,
+            amount_cents: 100_000,
+            realized: true,
+        };
+        let mut annotation = std::collections::HashMap::new();
+        annotation.insert((2026, 3u32), 25_000i64); // anotou 250,00 de economia em março
+
+        let today = NaiveDate::from_ymd_opt(2026, 3, 31).unwrap();
+        let metrics = forecast::month_metrics_for(
+            today,
+            std::slice::from_ref(&income),
+            &[(2026, 3)],
+            &annotation,
+        );
+
+        assert_eq!(metrics.len(), 1);
+        assert_eq!(
+            metrics[0].economia_cents, 25_000,
+            "economia_cents = anotação"
+        );
+        // Economizado% = 25.000 / 100.000 = 25% = 2500 bps.
+        assert_eq!(metrics[0].savings_rate_bps, 2500);
+    }
+
+    // Bug 3 (plano 052): `realized_annual_economia` (numerador do guardrail safe_to_spend) soma a
+    // ANOTAÇÃO da aba Economia + os transfers de reserva REAIS (plano 003). Sem isso, quem poupa só
+    // via Saída no grid via guardrail com numerador 0 e era restringido indevidamente.
+    #[tokio::test]
+    async fn realized_annual_economia_includes_annotation() {
+        let p = pool().await;
+
+        // Anotação jan–mai/2026 = 5 × 100,00.
+        for m in 1..=5i64 {
+            sqlx::query(
+                "INSERT INTO economia_annotation (profile_id, year, month, amount_cents, updated_at) \
+                 VALUES ('', 2026, ?1, 10000, '2026-06-01T00:00:00Z')",
+            )
+            .bind(m)
+            .execute(&p)
+            .await
+            .unwrap();
+        }
+
+        // Transfer de reserva MANUAL (plano 003) em março: conta reserva + transação transfer.
+        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-1', 'Tester')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, balance, liquidity) \
+             VALUES ('acc-res', 'Reserva', 'savings', 'pe-1', 0, 'reserve')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) \
+             VALUES ('econ-mar', 'transfer', 8000, '2026-03-20', 'acc-res', 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        let economia = realized_annual_economia(&p, today).await.unwrap();
+        // 5 × 10.000 (anotação) + 8.000 (transfer manual) = 58.000 — sem dupla contagem.
+        assert_eq!(economia, 58_000);
+    }
+
+    // Bugs 1+3 (plano 052): a anotação e os transfers reais são DISJUNTOS — `store_economia_entries`
+    // grava só em `economia_annotation`, jamais um transfer fantasma em `transaction`. Logo
+    // `realized_annual_economia` conta a anotação UMA vez (sem dupla contagem) e o lado-transfer fica 0.
+    #[tokio::test]
+    async fn annotation_and_transfer_no_double_count() {
+        let p = pool().await;
+
+        let written =
+            crate::commands::write_back_cmds::store_economia_entries(&p, &[(2026, 3, 20000)])
+                .await
+                .unwrap();
+        assert_eq!(written, 1);
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        let economia = realized_annual_economia(&p, today).await.unwrap();
+        assert_eq!(
+            economia, 20_000,
+            "só a anotação conta (sem transfer fantasma)"
+        );
+
+        let (transfers,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE type='transfer'")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(
+            transfers, 0,
+            "a anotação não gera nenhum transfer em `transaction`"
         );
     }
 

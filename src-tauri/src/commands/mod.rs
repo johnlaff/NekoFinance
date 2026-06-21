@@ -311,6 +311,8 @@ mod tests {
         .unwrap();
     }
 
+    // Plano 052: a aba Economia é uma ANOTAÇÃO em `economia_annotation` (não uma transação). Um
+    // valor zerado/em branco remove a anotação do mês. Nada toca o `transaction`/o Saldo.
     #[tokio::test]
     async fn economia_import_zero_removes_stale_month() {
         let pool = fixture_pool().await;
@@ -322,11 +324,12 @@ mod tests {
                 .unwrap(),
             1
         );
-        let (stored,): (i64,) =
-            sqlx::query_as("SELECT amount FROM \"transaction\" WHERE id='economia:2026-01'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let (stored,): (i64,) = sqlx::query_as(
+            "SELECT amount_cents FROM economia_annotation WHERE year=2026 AND month=1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         assert_eq!(stored, 100_000);
 
         assert_eq!(
@@ -336,15 +339,23 @@ mod tests {
             1
         );
         let (remaining,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE id='economia:2026-01'")
+            sqlx::query_as("SELECT COUNT(*) FROM economia_annotation WHERE year=2026 AND month=1")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
         assert_eq!(remaining, 0);
+
+        // Nunca cria linha em `transaction` (sem dupla contagem no Saldo).
+        let (txns,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM \"transaction\"")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(txns, 0);
     }
 
-    // Regressão (review): store_economia_entries grava upsert+delete numa única transação. Uma
-    // chamada com meses mistos (>0 e =0) deve aplicar TODOS atomicamente, criando a reserva 1×.
+    // Regressão (review + plano 052): store_economia_entries grava upsert+delete numa única
+    // transação na tabela `economia_annotation`. Uma chamada com meses mistos (>0 e =0) deve aplicar
+    // TODOS atomicamente; nenhuma conta de reserva é criada (a anotação não é movimento de caixa).
     #[tokio::test]
     async fn economia_mixed_entries_commit_in_one_transaction() {
         let pool = fixture_pool().await;
@@ -359,18 +370,24 @@ mod tests {
         assert_eq!(n, 3);
 
         let (count,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE id LIKE 'economia:2026-%'")
+            sqlx::query_as("SELECT COUNT(*) FROM economia_annotation WHERE year=2026")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
         assert_eq!(count, 2, "jan e mar gravados; fev (0) não cria linha");
 
+        // A anotação NÃO cria conta de reserva nem transação (decisão do dono, plano 052).
         let (reserves,): (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM account WHERE liquidity='reserve'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(reserves, 1, "a conta de reserva é criada uma única vez");
+        assert_eq!(reserves, 0, "a anotação não cria conta de reserva");
+        let (txns,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM \"transaction\"")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(txns, 0, "a anotação não cria transação");
     }
 
     // M2: backup via VACUUM INTO grava um arquivo SQLite válido e não-vazio. Usa uma fonte em
@@ -2263,9 +2280,10 @@ mod tests {
         );
     }
 
-    // P2a: a auditoria de write-back trata o kind `economia` — realinha a base da linha mensal
-    // `economia:YYYY-MM` E grava a trilha no sync_log. Antes a Economia caía em `_ => continue`
-    // (nenhum realinho, nenhuma trilha). Garante que `apply_economia_write_back` audita de fato.
+    // P2a + plano 052: a auditoria de write-back trata o kind `economia` — alinha a ANOTAÇÃO local
+    // (`economia_annotation`) ao valor escrito na origem E grava a trilha no sync_log. Antes realinhava
+    // a base de uma transação `economia:YYYY-MM`; agora a aba Economia é uma anotação (sem transação).
+    // O alinhamento garante que o próximo import veja origem == anotação (sem conflito espúrio).
     #[tokio::test]
     async fn write_back_audit_handles_economia_kind() {
         let pool = fixture_pool().await;
@@ -2278,10 +2296,10 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        // Linha mensal de Economia (transfer) com a base antiga.
+        // Anotação local com o valor ANTIGO (300,00); o write-back escreve 350,00 na origem.
         sqlx::query(
-            "INSERT INTO \"transaction\" (id, type, amount, date, is_projection, source_amount) \
-             VALUES ('economia:2026-01','transfer',30000,'2026-01-31',0,30000)",
+            "INSERT INTO economia_annotation (profile_id, year, month, amount_cents, updated_at) \
+             VALUES ('', 2026, 1, 30000, '2026-01-31T00:00:00Z')",
         )
         .execute(&pool)
         .await
@@ -2303,14 +2321,22 @@ mod tests {
         let realigned = record_write_back_audit(&pool, "Economia", &[&cell])
             .await
             .unwrap();
-        assert_eq!(realigned, 1, "a linha mensal de Economia é realinhada");
+        assert_eq!(realigned, 1, "a anotação mensal de Economia é alinhada");
 
-        let (source_amount,): (Option<i64>,) =
-            sqlx::query_as("SELECT source_amount FROM \"transaction\" WHERE id='economia:2026-01'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(source_amount, Some(35000), "base da Economia realinhada");
+        let (amount_cents,): (i64,) = sqlx::query_as(
+            "SELECT amount_cents FROM economia_annotation WHERE year=2026 AND month=1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(amount_cents, 35000, "anotação alinhada ao valor escrito");
+
+        // A auditoria NÃO cria nenhuma transação (sem dupla contagem no Saldo).
+        let (txns,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM \"transaction\"")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(txns, 0);
 
         let (audit,): (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM sync_log WHERE event_type='write_back' AND source_sheet='Economia'",

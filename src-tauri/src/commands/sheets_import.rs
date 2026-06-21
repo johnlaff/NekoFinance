@@ -473,9 +473,11 @@ pub async fn detect_sheet_layout(
     Ok(layout)
 }
 
-/// Importa a aba `Economia` da planilha → transações `transfer→reserva` (a representação da Economia
-/// registrada do método). Id determinístico `economia:{ano}-{mês}` ⇒ re-import ATUALIZA, não duplica.
-/// É o que faltava: sem isso, o Economizado%/ColchaoCard e o write-back da Economia ficam zerados.
+/// Importa a aba `Economia` da planilha → ANOTAÇÃO de métrica em `economia_annotation` (plano 052):
+/// o Economizado% (= Economia/Entradas) é uma anotação manual, NÃO um movimento de caixa. A poupança
+/// já é lançada como Saída no grid (→ cost_of_living → Saldo uma vez); gravar a aba como transação
+/// duplicaria o desconto no Saldo. Chave `(perfil, ano, mês)` ⇒ re-import ATUALIZA, não duplica.
+/// Alimenta o Economizado%/ColchaoCard e o write-back da Economia sem tocar o Saldo.
 #[tauri::command]
 pub async fn import_economia_sheet(
     app_dir: State<'_, AppDataDir>,

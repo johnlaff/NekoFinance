@@ -644,19 +644,38 @@ pub(crate) async fn record_write_back_audit(
                 .await
             }
             "economia" => {
-                // Economia é mensal: a célula carrega `date = "YYYY-MM"` e a transação-resumo tem
-                // id determinístico `economia:YYYY-MM` (ver `store_economia_entries`). Realinha a
-                // base desse mês para o valor escrito, igual aos demais kinds — assim o próximo
-                // import não acusa conflito espúrio na Economia.
-                sqlx::query(
-                    "UPDATE \"transaction\" SET source_amount = ?1, updated_at = ?2 \
-                     WHERE id = ?3 AND type = 'transfer'",
-                )
-                .bind(c.value_cents)
-                .bind(&now)
-                .bind(format!("economia:{}", c.date))
-                .execute(&mut *tx)
-                .await
+                // Economia é mensal e, desde o plano 052, é uma ANOTAÇÃO em `economia_annotation`
+                // (não mais uma transação `economia:YYYY-MM`). A célula carrega `date = "YYYY-MM"`.
+                // Após escrever na origem, alinhamos a anotação local ao valor escrito (upsert; ou
+                // delete se zerado) — assim o próximo import vê origem == anotação, sem conflito
+                // espúrio. É o análogo do realinho de `source_amount` dos demais kinds.
+                let (yy, mm) = c
+                    .date
+                    .split_once('-')
+                    .and_then(|(y, m)| Some((y.parse::<i64>().ok()?, m.parse::<i64>().ok()?)))
+                    .ok_or_else(|| format!("data de economia inválida: {}", c.date))?;
+                if c.value_cents > 0 {
+                    sqlx::query(
+                        "INSERT INTO economia_annotation (profile_id, year, month, amount_cents, updated_at) \
+                         VALUES ('', ?1, ?2, ?3, ?4) \
+                         ON CONFLICT(profile_id, year, month) DO UPDATE SET \
+                           amount_cents=excluded.amount_cents, updated_at=excluded.updated_at",
+                    )
+                    .bind(yy)
+                    .bind(mm)
+                    .bind(c.value_cents)
+                    .bind(&now)
+                    .execute(&mut *tx)
+                    .await
+                } else {
+                    sqlx::query(
+                        "DELETE FROM economia_annotation WHERE profile_id='' AND year=?1 AND month=?2",
+                    )
+                    .bind(yy)
+                    .bind(mm)
+                    .execute(&mut *tx)
+                    .await
+                }
             }
             _ => continue, // kind desconhecido: nada a realinhar nem a auditar
         }
@@ -802,12 +821,31 @@ async fn record_write_back_log(
     Ok(())
 }
 
-/// Economia REGISTRADA por mês (1..=12) do ano: soma dos transfers→reserva/ilíquido. É o numerador
-/// do Economizado% do método e o que vai para a coluna `Economia` da aba homônima no write-back.
+/// Economia REGISTRADA por mês (1..=12) do ano: numerador do Economizado% do método e o que vai
+/// para a coluna `Economia` da aba homônima no write-back. Soma DUAS fontes disjuntas (plano 052):
+/// (A) a anotação manual da aba Economia (`economia_annotation`) e (B) os transfers→reserva/ilíquido
+/// MANUAIS criados no Neko (plano 003). Nunca há sobreposição: a anotação só vem do import da aba;
+/// o transfer manual nunca entra em `economia_annotation` — então somar não duplica.
 pub(crate) async fn load_economia_by_month(
     pool: &SqlitePool,
     year: i32,
 ) -> Result<[i64; 12], String> {
+    let mut by = [0i64; 12];
+
+    // (A) Anotação da aba Economia.
+    let annot: Vec<(i64, i64)> =
+        sqlx::query_as("SELECT month, amount_cents FROM economia_annotation WHERE year = ?1")
+            .bind(year as i64)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| format!("query economia annotation: {e}"))?;
+    for (m, cents) in annot {
+        if (1..=12).contains(&m) {
+            by[(m - 1) as usize] += cents;
+        }
+    }
+
+    // (B) Transfers→reserva/ilíquido MANUAIS (plano 003), agregados por mês.
     let rows: Vec<(String, i64)> = sqlx::query_as(
         "SELECT substr(t.date, 6, 2), COALESCE(SUM(ABS(t.amount)), 0) FROM \"transaction\" t \
          LEFT JOIN account a ON a.id = t.to_account_id \
@@ -820,14 +858,14 @@ pub(crate) async fn load_economia_by_month(
     .fetch_all(pool)
     .await
     .map_err(|e| format!("query economia: {e}"))?;
-    let mut by = [0i64; 12];
     for (mm, cents) in rows {
         if let Ok(m) = mm.parse::<usize>()
             && (1..=12).contains(&m)
         {
-            by[m - 1] = cents;
+            by[m - 1] += cents;
         }
     }
+
     Ok(by)
 }
 
@@ -975,87 +1013,46 @@ pub async fn apply_economia_write_back(
     Ok(n)
 }
 
-/// Conta de RESERVA destino da Economia. Usa a primeira `liquidity='reserve'`; se não houver, cria
-/// uma "Reserva" padrão (savings/reserve) do 1º titular — assim a Economia importada tem para onde ir.
-pub(crate) async fn ensure_reserve_account(pool: &SqlitePool) -> Result<String, String> {
-    if let Some((id,)) = sqlx::query_as::<_, (String,)>(
-        "SELECT id FROM account WHERE liquidity='reserve' ORDER BY created_at LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| format!("query reserve: {e}"))?
-    {
-        return Ok(id);
-    }
-    let owner: Option<(String,)> =
-        sqlx::query_as("SELECT id FROM person ORDER BY created_at LIMIT 1")
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| format!("query person: {e}"))?;
-    let id = uuid::Uuid::new_v4().to_string();
-    sqlx::query(
-        "INSERT INTO account (id, name, type, owner_person_id, balance, liquidity) \
-         VALUES (?1, 'Reserva', 'savings', ?2, 0, 'reserve')",
-    )
-    .bind(&id)
-    .bind(owner.map(|(p,)| p))
-    .execute(pool)
-    .await
-    .map_err(|e| format!("create reserve: {e}"))?;
-    Ok(id)
-}
-
+/// Persiste os valores da aba Economia como uma ANOTAÇÃO de métrica (decisão do dono, plano 052):
+/// a poupança já é lançada como Saída no grid mensal (→ FixedOut/Daily → cost_of_living → Saldo UMA
+/// vez). A aba Economia é a anotação manual do Economizado% (= Economia/Entradas), NÃO um segundo
+/// movimento de caixa. Por isso gravamos em `economia_annotation` (fora do `transaction`), nunca como
+/// `type='transfer'` — assim o valor NÃO entra na cadeia do Saldo (sem dupla contagem). É distinto do
+/// transfer-de-reserva MANUAL (plano 003), que continua um movimento real e entra no Saldo via
+/// `EventKind::Economia`. Os upserts/deletes correm numa ÚNICA transação.
 pub(crate) async fn store_economia_entries(
     pool: &SqlitePool,
     entries: &[(i32, u32, i64)],
 ) -> Result<usize, String> {
-    let today = chrono::Local::now().date_naive();
     let now = chrono::Utc::now().to_rfc3339();
-
-    // A conta de reserva é pré-requisito das linhas com economia > 0 — resolvida ANTES da transação
-    // (assim um import só de zeros/deleções não cria uma reserva à toa). Os upserts/deletes correm
-    // numa ÚNICA transação: uma falha no meio deixaria o Economizado%/ColchaoCard parcialmente errado.
-    let needs_reserve = entries.iter().any(|(_, _, cents)| *cents > 0);
-    let reserve_id = if needs_reserve {
-        Some(ensure_reserve_account(pool).await?)
-    } else {
-        None
-    };
-
     let mut tx = pool.begin().await.map_err(|e| format!("begin: {e}"))?;
     let mut count = 0usize;
 
     for (year, month, cents) in entries {
-        let last = forecast::last_day_of_month(*year, *month);
-        let date = last.format("%Y-%m-%d").to_string();
-        let id = format!("economia:{year:04}-{month:02}");
-
         if *cents > 0 {
-            let Some(reserve) = reserve_id.as_ref() else {
-                return Err("conta de reserva não resolvida para a Economia".into());
-            };
-            let is_projection = (last > today) as i64;
             sqlx::query(
-                "INSERT INTO \"transaction\" (id, type, amount, description, date, to_account_id, is_projection, created_at, updated_at) \
-                 VALUES (?1, 'transfer', ?2, 'Economia (importada da aba Economia)', ?3, ?4, ?5, ?6, ?6) \
-                 ON CONFLICT(id) DO UPDATE SET amount=excluded.amount, date=excluded.date, \
-                   is_projection=excluded.is_projection, updated_at=excluded.updated_at",
+                "INSERT INTO economia_annotation (profile_id, year, month, amount_cents, updated_at) \
+                 VALUES ('', ?1, ?2, ?3, ?4) \
+                 ON CONFLICT(profile_id, year, month) DO UPDATE SET \
+                   amount_cents=excluded.amount_cents, updated_at=excluded.updated_at",
             )
-            .bind(&id)
+            .bind(year)
+            .bind(*month as i64)
             .bind(cents)
-            .bind(&date)
-            .bind(reserve)
-            .bind(is_projection)
             .bind(&now)
             .execute(&mut *tx)
             .await
-            .map_err(|e| format!("upsert economia: {e}"))?;
+            .map_err(|e| format!("upsert annotation {year}-{month:02}: {e}"))?;
         } else {
-            sqlx::query("DELETE FROM \"transaction\" WHERE id = ?1")
-                .bind(&id)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| format!("delete economia: {e}"))?;
+            // Célula zerada/em branco = o dono removeu a anotação; apaga a linha.
+            sqlx::query(
+                "DELETE FROM economia_annotation WHERE profile_id='' AND year=?1 AND month=?2",
+            )
+            .bind(year)
+            .bind(*month as i64)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("delete annotation {year}-{month:02}: {e}"))?;
         }
         count += 1;
     }
@@ -1219,80 +1216,71 @@ mod tests {
         );
     }
 
-    // Bug 1 (plano 042) — guarda de regressão (sem fix de código; a re-verificação confirmou que os
-    // dois lados já produzem `economia:YYYY-MM`). A Economia é mensal: a transação-resumo tem id
-    // determinístico `economia:YYYY-MM` (ver `store_economia_entries`) e a célula da aba Economia
-    // carrega `date = "YYYY-MM"` (ver `plan_economia_write_back`). O braço `economia` da auditoria
-    // realinha a base (`source_amount`) por `id = format!("economia:{}", c.date) AND type='transfer'`.
-    // Este teste prova o round-trip do id: a base do mês escrito é realinhada para o `value_cents`,
-    // de modo que o próximo import (sheet == base) NÃO acusa conflito espúrio. Se um refactor mudar
-    // o formato do id/date de um lado só (ex.: adicionar precisão de dia), este teste falha rápido.
+    // Bug 1 (plano 052) — a aba Economia é uma ANOTAÇÃO de métrica, não um movimento de caixa.
+    // `store_economia_entries` grava em `economia_annotation` (fora do `transaction`) → nunca cria
+    // uma linha `economia:YYYY-MM` nem entra na cadeia do Saldo. Sem isso, a mesma poupança (já
+    // lançada como Saída no grid) seria descontada do Saldo uma 2ª vez (dupla contagem do P0).
     #[tokio::test]
-    async fn economia_write_back_audit_realigns_source_amount() {
+    async fn annotation_does_not_create_transaction_row() {
         let p = pool().await;
 
-        // Perfil (FK do sync_log) + conta de reserva (destino do transfer da Economia).
-        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-test', 'Tester')")
-            .execute(&p)
+        let count = store_economia_entries(&p, &[(2026, 6, 50000)])
             .await
             .unwrap();
-        sqlx::query("INSERT INTO profile (id, person_id) VALUES ('pr-test', 'pe-test')")
-            .execute(&p)
-            .await
-            .unwrap();
-        sqlx::query(
-            "INSERT INTO account (id, name, type, owner_person_id, liquidity) \
-             VALUES ('reserve-1', 'Reserva', 'savings', 'pe-test', 'reserve')",
-        )
-        .execute(&p)
-        .await
-        .unwrap();
+        assert_eq!(count, 1);
 
-        // Transação-resumo de Economia EXATAMENTE como `store_economia_entries` a cria:
-        // id = "economia:2026-06" (YYYY-MM), date = último dia do mês (YYYY-MM-DD). Base sentinela
-        // (99999 ≠ value_cents=15000) para o assert do valor atualizado ser inequívoco.
-        sqlx::query(
-            "INSERT INTO \"transaction\" (id, type, amount, description, date, to_account_id, source_amount) \
-             VALUES ('economia:2026-06', 'transfer', 15000, 'Economia (importada da aba Economia)', '2026-06-30', 'reserve-1', 99999)",
-        )
-        .execute(&p)
-        .await
-        .unwrap();
-
-        // Célula da aba Economia como `plan_economia_write_back` a emite: kind="economia",
-        // date="2026-06" (YYYY-MM, NÃO YYYY-MM-DD).
-        let cell = CellWrite {
-            a1: "C3".into(),
-            row: 2,
-            col: 2,
-            date: "2026-06".into(),
-            kind: "economia".into(),
-            current: "0,00".into(),
-            proposed: "150,00".into(),
-            value_cents: 15000,
-            changed: true,
-            formula: None,
-            note_text: None,
-        };
-        let realigned = record_write_back_audit(&p, "Economia", &[&cell])
-            .await
-            .unwrap();
+        // Nenhuma linha de transação com o antigo id `economia:YYYY-MM` (esquema aposentado).
+        let (txn_rows,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE id = 'economia:2026-06'")
+                .fetch_one(&p)
+                .await
+                .unwrap();
         assert_eq!(
-            realigned, 1,
-            "id `economia:2026-06` (de date=\"2026-06\") casa a linha-resumo → 1 realinhada"
+            txn_rows, 0,
+            "a aba Economia NÃO cria linha em `transaction`"
         );
 
-        // A base do mês é realinhada para o valor escrito → próximo import vê base == sheet (sem conflito).
-        let (src,): (Option<i64>,) = sqlx::query_as(
-            "SELECT source_amount FROM \"transaction\" WHERE id = 'economia:2026-06'",
+        // Nenhum transfer fantasma (a anotação não é um movimento de caixa).
+        let (transfers,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE type='transfer'")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(
+            transfers, 0,
+            "a anotação não vira transfer (sem dupla contagem no Saldo)"
+        );
+
+        // A anotação É persistida na tabela própria.
+        let (amount,): (i64,) = sqlx::query_as(
+            "SELECT amount_cents FROM economia_annotation WHERE year=2026 AND month=6",
         )
         .fetch_one(&p)
         .await
         .unwrap();
-        assert_eq!(
-            src,
-            Some(15000),
-            "a base da Economia do mês é realinhada para o `value_cents` escrito"
+        assert_eq!(amount, 50000);
+    }
+
+    // Bug 1 (plano 052) — a anotação não é carregada como evento de caixa, então o Saldo projetado
+    // não a desconta (sem dupla contagem). `signed()`/Performance ficam intactos: só transfers REAIS
+    // (plano 003) seguem como `EventKind::Economia` e tocam o Saldo.
+    #[tokio::test]
+    async fn annotation_not_loaded_as_cashflow_event() {
+        let p = pool().await;
+        store_economia_entries(&p, &[(2026, 6, 50000)])
+            .await
+            .unwrap();
+
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 5, 1).unwrap();
+        let horizon = chrono::NaiveDate::from_ymd_opt(2026, 12, 31).unwrap();
+        let events = crate::commands::forecast_cmds::load_cashflow_events(&p, today, horizon)
+            .await
+            .unwrap();
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e.kind, forecast::EventKind::Economia)),
+            "a anotação da aba Economia não aparece como EventKind::Economia (não toca o Saldo)"
         );
     }
 
