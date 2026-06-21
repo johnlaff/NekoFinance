@@ -386,11 +386,16 @@ pub(crate) fn monthly_to_daily_rate(amount_cents: i64, days_in_month: u32) -> i6
 
 /// Núcleo puro: grava o teto total do Diário + uma quebra opcional por categoria.
 ///
-/// 1. Reaproveita `upsert_daily_budget_inner` para escrever/deprecar a linha de TOTAL — assim o
-///    engine (`effective_daily_ceiling`, que lê `daily_budget WHERE status='active' AND amount>0`)
-///    segue funcionando sem mudança: a quebra por categoria é só drill-down de UI.
-/// 2. Se `amount_cents > 0` e `categories` não-vazio: localiza o id do orçamento recém-ativado e
-///    substitui (DELETE + INSERT) as categorias dele numa ÚNICA transação SQLite.
+/// Plano 047: TODOS os passos (deprecar antigos + inserir o novo total + limpar/inserir categorias)
+/// rodam numa ÚNICA `sqlx::Transaction` — atômico de ponta a ponta. Antes, o total ia pelo
+/// `upsert_daily_budget_inner` (commit imediato no pool) e as categorias iam numa transação SEPARADA;
+/// um crash entre os dois deixava um orçamento ativo SEM categorias, ou categorias velhas do
+/// orçamento anterior. O `upsert_daily_budget_inner` permanece intacto para o caminho simples.
+///
+/// 1. Espelha o `upsert_daily_budget_inner`: depreca os ativos e insere o novo TOTAL (engine
+///    inalterado — `effective_daily_ceiling` lê `daily_budget WHERE status='active' AND amount>0`).
+/// 2. Se `amount_cents > 0` e `categories` não-vazio: usa o id recém-inserido (sem SELECT extra) e
+///    substitui (DELETE + INSERT) as categorias.
 /// 3. `categories` vazio: nada a fazer na tabela de categorias (o total-only continua válido).
 ///
 /// Validação: cada `category.amount_cents > 0`; senão retorna Err sem tocar no banco.
@@ -399,56 +404,78 @@ pub(crate) async fn upsert_daily_budget_with_categories_inner(
     amount_cents: i64,
     categories: &[CategoryInput],
 ) -> Result<(), String> {
-    // Valida ANTES de escrever (atomicidade lógica: ou tudo válido, ou nada muda).
+    // Valida ANTES de abrir a transação (atomicidade lógica: ou tudo válido, ou nada muda).
     for c in categories {
         if c.amount_cents <= 0 {
             return Err("cada categoria deve ter valor positivo (magnitude)".into());
         }
     }
 
-    // Passo 1: escreve/depreca o TOTAL pelo mesmo caminho do teto simples (engine inalterado).
-    upsert_daily_budget_inner(pool, amount_cents).await?;
+    // Obtém o person_id do primeiro perfil (padrão single-user) — igual ao `upsert_daily_budget_inner`.
+    let person: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM person ORDER BY created_at LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("upsert_daily_budget (person): {e}"))?;
+    let Some((person_id,)) = person else {
+        // Nenhum perfil ainda — silencioso (usuário novo sem import).
+        return Ok(());
+    };
 
-    // Passo 2: só anexa categorias quando há um teto explícito ativo E uma quebra informada.
-    if amount_cents > 0 && !categories.is_empty() {
-        let budget: Option<(String,)> = sqlx::query_as(
-            "SELECT id FROM daily_budget WHERE status='active' ORDER BY start_date DESC LIMIT 1",
-        )
-        .fetch_optional(pool)
+    let mut tx = pool
+        .begin()
         .await
-        .map_err(|e| format!("upsert categories (budget id): {e}"))?;
-        let Some((budget_id,)) = budget else {
-            // Sem perfil (upsert_daily_budget_inner foi no-op): nada a anexar.
-            return Ok(());
-        };
+        .map_err(|e| format!("upsert daily budget (begin): {e}"))?;
 
-        let mut tx = pool
-            .begin()
-            .await
-            .map_err(|e| format!("upsert categories (begin): {e}"))?;
-        sqlx::query("DELETE FROM daily_budget_category WHERE budget_id = ?1")
-            .bind(&budget_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| format!("upsert categories (clear): {e}"))?;
-        for c in categories {
-            sqlx::query(
-                "INSERT INTO daily_budget_category (id, budget_id, name, amount_cents, position) \
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-            )
-            .bind(uuid::Uuid::new_v4().to_string())
-            .bind(&budget_id)
-            .bind(&c.name)
-            .bind(c.amount_cents)
-            .bind(c.position)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| format!("upsert categories (insert): {e}"))?;
+    // Depreca os registros ativos anteriores (todos, não só o primeiro).
+    sqlx::query("UPDATE daily_budget SET status='deprecated' WHERE status='active'")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("upsert_daily_budget (deprecate): {e}"))?;
+
+    if amount_cents > 0 {
+        let budget_id = uuid::Uuid::new_v4().to_string();
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        sqlx::query(
+            "INSERT INTO daily_budget (id, person_id, amount, start_date, status) \
+             VALUES (?1, ?2, ?3, ?4, 'active')",
+        )
+        .bind(&budget_id)
+        .bind(&person_id)
+        .bind(amount_cents)
+        .bind(&today)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("upsert_daily_budget (insert): {e}"))?;
+
+        // Só anexa categorias quando há um teto explícito ativo E uma quebra informada. Usa o
+        // `budget_id` recém-inserido (sem SELECT extra) → não há janela entre inserir e categorizar.
+        if !categories.is_empty() {
+            sqlx::query("DELETE FROM daily_budget_category WHERE budget_id = ?1")
+                .bind(&budget_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("upsert categories (clear): {e}"))?;
+            for c in categories {
+                sqlx::query(
+                    "INSERT INTO daily_budget_category (id, budget_id, name, amount_cents, position) \
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                )
+                .bind(uuid::Uuid::new_v4().to_string())
+                .bind(&budget_id)
+                .bind(&c.name)
+                .bind(c.amount_cents)
+                .bind(c.position)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("upsert categories (insert): {e}"))?;
+            }
         }
-        tx.commit()
-            .await
-            .map_err(|e| format!("upsert categories (commit): {e}"))?;
     }
+
+    tx.commit()
+        .await
+        .map_err(|e| format!("upsert daily budget (commit): {e}"))?;
     Ok(())
 }
 
@@ -1502,6 +1529,65 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(any.0, 0, "categoria inválida não grava nem o total");
+    }
+
+    #[tokio::test]
+    async fn upsert_daily_budget_with_categories_is_atomic() {
+        // Plano 047 (P2): total + categorias gravam numa ÚNICA transação. Caminho feliz: ambos
+        // confirmam juntos; nenhum orçamento ATIVO fica sem suas categorias.
+        let p = pool().await;
+        seed_person(&p).await;
+
+        upsert_daily_budget_with_categories_inner(
+            &p,
+            10000,
+            &[cat("Alpha", 6000, 0), cat("Beta", 4000, 1)],
+        )
+        .await
+        .unwrap();
+
+        // Exatamente um orçamento ativo e suas duas categorias, ambos presentes (atômico).
+        let active: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM daily_budget WHERE status='active'")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(active.0, 1, "um orçamento ativo");
+        let cats: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM daily_budget_category")
+            .fetch_one(&p)
+            .await
+            .unwrap();
+        assert_eq!(
+            cats.0, 2,
+            "as duas categorias foram gravadas junto com o total"
+        );
+
+        // Nenhuma categoria pende de um orçamento deprecado (todas referenciam o ativo).
+        let orphan: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM daily_budget_category c \
+             JOIN daily_budget b ON b.id = c.budget_id \
+             WHERE b.status <> 'active'",
+        )
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        assert_eq!(orphan.0, 0, "nenhuma categoria sob orçamento deprecado");
+
+        // Desativar (amount_cents = 0): nenhum orçamento ativo; a leitura do ATIVO não traz categorias.
+        upsert_daily_budget_with_categories_inner(&p, 0, &[])
+            .await
+            .unwrap();
+        let active_after: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM daily_budget WHERE status='active'")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(active_after.0, 0, "desativado: nenhum orçamento ativo");
+        let rows = get_daily_budget_categories_inner(&p).await.unwrap();
+        assert!(
+            rows.is_empty(),
+            "sem orçamento ativo, a quebra ativa lida é vazia"
+        );
     }
 
     #[tokio::test]

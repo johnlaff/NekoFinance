@@ -59,7 +59,7 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 044  | Parity views: full-year 12-month grid + dual-year Economia side-by-side                | P1       | L      | —          | DONE (pkg E)               |
 | 045  | Parity: Diário budget categories + due-date/fatura calendar (+ installments)           | P2       | L      | —          | DONE (pkg E)               |
 | 046  | Performance correction: subtract economia (it lives in the Saída column) — refines 040 | P1       | S–M    | —          | DONE (pkg F)               |
-| 047  | F1 bugs: delete-orphan cleanup (P1) + line-item reconcile + budget atomicity + 2 more  | P1       | M      | —          | TODO (pkg F)               |
+| 047  | F1 bugs: delete-orphan cleanup (P1) + line-item reconcile + budget atomicity + 2 more  | P1       | M      | —          | DONE (pkg F)               |
 | 048  | F2 annotation fidelity: note section headers round-trip + thermometer −R$500 boundary  | P2       | M      | —          | TODO (pkg F)               |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale)
