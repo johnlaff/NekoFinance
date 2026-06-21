@@ -11,6 +11,7 @@ import { InfoPopover } from "../design-system/components/InfoPopover";
 import {
   currentMonthMetric,
   performanceStatus,
+  economizadoStatus,
   custoVidaStatus,
   type Status,
 } from "./totaisStatus";
@@ -310,6 +311,7 @@ export function TotaisScreen() {
               {pct}%
             </span>
           }
+          status={economizadoStatus(m.savings_rate_bps)}
           sublabel={`no ano: ${ytdPct}% acumulado · meta 20–30% (média anual)`}
         />
         <MetricRow
@@ -317,7 +319,7 @@ export function TotaisScreen() {
           term="custo_de_vida"
           value={<Money cents={m.cost_of_living_cents} size="lg" />}
           status={custoVidaStatus(m.cost_of_living_cents, m.income_cents)}
-          sublabel="= Saída Total (saídas + diário)"
+          sublabel="= Saída Total (saídas incl. cartão + diário)"
         />
         <MetricRow
           label="Diário médio"

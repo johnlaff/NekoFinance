@@ -53,6 +53,7 @@ pub fn run() {
             commands::apply_economia_write_back,
             commands::get_app_setting,
             commands::set_app_setting,
+            commands::upsert_daily_budget,
             commands::backup_database,
             commands::save_sheet_mapping,
             commands::get_sheet_mappings,

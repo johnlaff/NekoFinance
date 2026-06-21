@@ -86,6 +86,22 @@ const QUICK_HINT_STYLE: CSSProperties = {
   color: "var(--text-faint)",
 };
 
+// Coluna título + subtítulo do cabeçalho (mantém o head como 2 filhos flex: grupo | status).
+const CARD_TITLE_GROUP: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 2,
+  minWidth: 0,
+};
+
+// Subtítulo discreto: enquadra o card como "qualquer gasto de hoje", não só o ritual do Diário —
+// importante para quem registra tudo no crédito (Diário=0) e nunca usaria o Diário.
+const CARD_SUBTITLE: CSSProperties = {
+  fontSize: "var(--fs-micro)",
+  color: "var(--text-faint)",
+  fontWeight: "var(--fw-regular)",
+};
+
 // Toggle "Detalhar" — discreto (link-button), para não pesar o caminho rápido (estático/hoisted).
 const DETALHAR_BTN: CSSProperties = {
   marginTop: "var(--space-2)",
@@ -111,8 +127,28 @@ interface CheckinState {
   error: string | null;
 }
 
+// Persiste o último tipo usado entre sessões (localStorage), espelhando o padrão do ThemeToggle.
+// Quem registra tudo no crédito (Diário=0) reabre o card no Cartão, não num Diário que não usa.
+const LAST_KIND_KEY = "neko_last_kind";
+
+function readLastKind(): MovKind {
+  if (typeof window === "undefined") return "diario";
+  const stored = localStorage.getItem(LAST_KIND_KEY);
+  // Valida: precisa ser um dos 5 movimentos canônicos.
+  if (
+    stored === "entrada" ||
+    stored === "saida" ||
+    stored === "diario" ||
+    stored === "cartao" ||
+    stored === "economia"
+  ) {
+    return stored;
+  }
+  return "diario";
+}
+
 const INITIAL_CHECKIN: CheckinState = {
-  kind: "diario", // padrão = caminho rápido
+  kind: "diario", // sobrescrito por initCheckin() com o tipo persistido a cada mount
   description: "",
   amount: "",
   showItems: false,
@@ -120,6 +156,12 @@ const INITIAL_CHECKIN: CheckinState = {
   busy: false,
   error: null,
 };
+
+// Inicializador preguiçoso do useReducer: lê o último tipo do localStorage A CADA mount
+// (não só no carregamento do módulo), restaurando a escolha do dono entre sessões.
+function initCheckin(): CheckinState {
+  return { ...INITIAL_CHECKIN, kind: readLastKind() };
+}
 
 type CheckinAction =
   | { type: "set"; patch: Partial<CheckinState> }
@@ -155,6 +197,55 @@ function checkinReducer(s: CheckinState, a: CheckinAction): CheckinState {
 }
 
 /**
+ * Seletor de tipo — 5 movimentos do método. role=radiogroup; cada chip é um radio.
+ * Extraído do card (componente próprio) para manter o pai enxuto e cada peça focada.
+ * Economia exige conta-destino (seletor) → fora do caminho rápido: chip desabilitado.
+ */
+function KindSelector({
+  kind,
+  onSelect,
+}: {
+  kind: MovKind;
+  onSelect: (k: MovKind) => void;
+}) {
+  return (
+    <div role="radiogroup" aria-label="Tipo de movimento" style={QUICK_KIND_ROW}>
+      {QUICK_KINDS.map((k) => {
+        const active = k === kind;
+        const economiaDisabled = k === "economia";
+        const btnStyle: CSSProperties = active
+          ? {
+              ...QUICK_KIND_BTN_BASE,
+              background: "var(--surface-selected)",
+              borderColor: "var(--primary)",
+            }
+          : economiaDisabled
+            ? { ...QUICK_KIND_BTN_BASE, cursor: "not-allowed", opacity: 0.5 }
+            : QUICK_KIND_BTN_BASE;
+        return (
+          <button
+            key={k}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            disabled={economiaDisabled}
+            title={
+              economiaDisabled
+                ? "Economia precisa de uma conta-destino — registre em Lançamentos."
+                : undefined
+            }
+            onClick={() => onSelect(k)}
+            style={btnStyle}
+          >
+            <MovBadge kind={k} showLabel size={14} />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
  * Check-in diário — o ritual do método: a cada dia o dono registra o gasto e vê o quanto já gastou
  * contra o teto do dia. Registro rápido sem sair da tela: tipo (5 movimentos) + descrição opcional
  * + valor. O caminho rápido continua rápido — Diário/hoje por padrão; o tipo persiste entre
@@ -174,7 +265,7 @@ export function DailyCheckinCard({
   /** Chamado uma vez após o mount com o ref do `<input>` de valor; deixa o AppShell focá-lo (tecla N). */
   onAmountRef?: ((ref: HTMLInputElement | null) => void) | undefined;
 }) {
-  const [state, dispatch] = useReducer(checkinReducer, INITIAL_CHECKIN);
+  const [state, dispatch] = useReducer(checkinReducer, undefined, initCheckin);
   const { kind, description, amount, showItems, items, busy, error } = state;
   const amountRef = useRef<HTMLInputElement>(null);
 
@@ -240,14 +331,22 @@ export function DailyCheckinCard({
   return (
     <section aria-labelledby="dash-checkin-title" className="dash-card">
       <div className="dash-card__head">
-        <span className="dash-card__title" id="dash-checkin-title">
-          <CalendarCheck
-            size={16}
-            strokeWidth={1.75}
-            className="dash-card__ic"
-            aria-hidden="true"
-          />
-          Diário de hoje
+        <span style={CARD_TITLE_GROUP}>
+          <span className="dash-card__title" id="dash-checkin-title">
+            <CalendarCheck
+              size={16}
+              strokeWidth={1.75}
+              className="dash-card__ic"
+              aria-hidden="true"
+            />
+            Diário de hoje
+          </span>
+          <span
+            style={CARD_SUBTITLE}
+            aria-label="Registre aqui qualquer gasto do dia — Diário, compra no cartão ou saída fixa"
+          >
+            Diário, cartão ou saída — registre o que aconteceu hoje
+          </span>
         </span>
         <span
           style={{
@@ -327,41 +426,14 @@ export function DailyCheckinCard({
           </p>
         )}
 
-        {/* Seletor de tipo — 5 movimentos do método. role=radiogroup; cada chip é um radio. */}
-        <div role="radiogroup" aria-label="Tipo de movimento" style={QUICK_KIND_ROW}>
-          {QUICK_KINDS.map((k) => {
-            const active = k === kind;
-            // Economia exige conta-destino (seletor) → fora do caminho rápido: chip desabilitado.
-            const economiaDisabled = k === "economia";
-            const btnStyle: CSSProperties = active
-              ? {
-                  ...QUICK_KIND_BTN_BASE,
-                  background: "var(--surface-selected)",
-                  borderColor: "var(--primary)",
-                }
-              : economiaDisabled
-                ? { ...QUICK_KIND_BTN_BASE, cursor: "not-allowed", opacity: 0.5 }
-                : QUICK_KIND_BTN_BASE;
-            return (
-              <button
-                key={k}
-                type="button"
-                role="radio"
-                aria-checked={active}
-                disabled={economiaDisabled}
-                title={
-                  economiaDisabled
-                    ? "Economia precisa de uma conta-destino — registre em Lançamentos."
-                    : undefined
-                }
-                onClick={() => dispatch({ type: "set", patch: { kind: k } })}
-                style={btnStyle}
-              >
-                <MovBadge kind={k} showLabel size={14} />
-              </button>
-            );
-          })}
-        </div>
+        <KindSelector
+          kind={kind}
+          onSelect={(k) => {
+            dispatch({ type: "set", patch: { kind: k } });
+            // Persiste o tipo escolhido p/ restaurar no próximo mount (localStorage).
+            localStorage.setItem(LAST_KIND_KEY, k);
+          }}
+        />
 
         <input
           id="qac-desc"
@@ -432,7 +504,9 @@ export function DailyCheckinCard({
         )}
         {/* Dica do tipo selecionado (não-Diário): orienta sem poluir o caminho rápido. */}
         {kind === "saida" && (
-          <p style={QUICK_HINT_STYLE}>Saída = despesa fixa do mês (débito).</p>
+          <p style={QUICK_HINT_STYLE}>
+            Saída = despesa fixa do mês — contas, fatura no vencimento.
+          </p>
         )}
         {kind === "cartao" && (
           <p style={QUICK_HINT_STYLE}>Cartão = compra no crédito (entra na fatura).</p>

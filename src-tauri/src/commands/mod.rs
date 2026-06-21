@@ -1751,6 +1751,68 @@ mod tests {
         );
     }
 
+    // --- upsert_daily_budget -----------------------------------------------------------
+
+    // O teto gravado por upsert_daily_budget_inner é lido de volta por effective_daily_ceiling
+    // (mesma fonte: daily_budget WHERE status='active'). Re-gravar depreca o anterior e mantém
+    // exatamente UMA linha ativa. amount=0 desativa o teto (engine cai no fallback).
+    #[tokio::test]
+    async fn upsert_daily_budget_writes_active_budget_read_by_ceiling() {
+        let pool = fixture_pool().await;
+        let pid = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO person (id, name) VALUES (?1, 'Tester')")
+            .bind(&pid)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+
+        // Grava 5.000 → uma linha ativa, e effective_daily_ceiling a lê.
+        upsert_daily_budget_inner(&pool, 5_000).await.unwrap();
+        let active: Vec<(i64,)> =
+            sqlx::query_as("SELECT amount FROM daily_budget WHERE status='active'")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(active.len(), 1, "exatamente uma linha ativa");
+        assert_eq!(active[0].0, 5_000);
+        assert_eq!(
+            effective_daily_ceiling(&pool, today).await.unwrap(),
+            5_000,
+            "o teto gravado vence o fallback de média"
+        );
+
+        // Re-grava 8.000 → o anterior é deprecado; segue havendo só UMA linha ativa = 8.000.
+        upsert_daily_budget_inner(&pool, 8_000).await.unwrap();
+        let active: Vec<(i64,)> =
+            sqlx::query_as("SELECT amount FROM daily_budget WHERE status='active'")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            active.len(),
+            1,
+            "deprecate-and-replace mantém uma linha ativa"
+        );
+        assert_eq!(active[0].0, 8_000);
+        assert_eq!(effective_daily_ceiling(&pool, today).await.unwrap(), 8_000);
+
+        // amount=0 desativa o teto explícito → não resta linha ativa; ceiling cai no fallback (0 aqui).
+        upsert_daily_budget_inner(&pool, 0).await.unwrap();
+        let active_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM daily_budget WHERE status='active'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(active_count.0, 0, "zero desativa o teto explícito");
+        assert_eq!(
+            effective_daily_ceiling(&pool, today).await.unwrap(),
+            0,
+            "sem teto e sem mês anterior, cai no fallback (0)"
+        );
+    }
+
     // --- load_write_back_txns ----------------------------------------------------------
 
     // Insere uma despesa com payment_method/is_fixed explícitos, realizada (is_projection=0).

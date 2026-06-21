@@ -5,6 +5,7 @@ import {
   HardDrive,
   Landmark,
   Link2,
+  SlidersHorizontal,
   type LucideIcon,
 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -17,8 +18,10 @@ import {
   getAppSetting,
   isTauri,
   setAppSetting,
+  upsertDailyBudget,
   type AuthStatus,
 } from "../lib/api";
+import { parseBRLToCents } from "../lib/format";
 import { safeErrorMessage } from "../lib/errors";
 import { useCommand } from "../lib/useCommand";
 import { Button } from "../design-system/components/Button";
@@ -34,6 +37,26 @@ const TIME_INPUT_STYLE: React.CSSProperties = {
   color: "var(--text)",
   padding: "4px 8px",
   height: "var(--hit-min)",
+};
+
+// Estilo estático do campo de teto diário (React Compiler: nunca inline em JSX).
+const TETO_INPUT_STYLE: React.CSSProperties = {
+  fontFamily: "var(--font-money)",
+  fontSize: "var(--fs-body)",
+  background: "var(--bg-subtle)",
+  border: "var(--bw-hair) solid var(--border-input)",
+  borderRadius: "var(--radius-xs)",
+  color: "var(--text)",
+  padding: "4px 8px",
+  height: "var(--hit-min)",
+  width: "10ch",
+};
+
+// Linha de controle do teto (input + botão lado a lado). Estática/hoistada.
+const TETO_CTL_STYLE: React.CSSProperties = {
+  display: "flex",
+  gap: "var(--space-2)",
+  alignItems: "center",
 };
 
 /**
@@ -130,6 +153,112 @@ function DailyReminderSection() {
             </div>
           </div>
         )}
+      </div>
+    </Section>
+  );
+}
+
+/**
+ * Configura o teto de gasto Diário por dia (para quem gasta no variável, não só no crédito).
+ * Persiste em `daily_budget` via `upsert_daily_budget`; quando zerado, o engine usa o
+ * fallback de média do mês anterior — nenhum teto explícito. Um valor de exibição é guardado
+ * em `app_setting` só para pré-preencher o campo no próximo mount.
+ * Disponível somente no shell desktop (isTauri).
+ */
+function DailyTetoCeilingSection() {
+  const [raw, setRaw] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Carrega o teto exibido na montagem para pré-preencher o campo.
+  useEffect(() => {
+    if (!isTauri) return;
+    void (async () => {
+      try {
+        const val = await getAppSetting("daily_diario_ceiling_display");
+        if (val) setRaw(val);
+      } catch {
+        // leitura não-crítica; ignora
+      }
+    })();
+  }, []);
+
+  // Sem `finally` de propósito: o React Compiler não otimiza componentes com try/finally.
+  async function handleSave() {
+    const cents = parseBRLToCents(raw);
+    // String em branco vira 0 (desativa o teto). Valor não-parseável é rejeitado.
+    const cleared = raw.trim() === "";
+    if (!cleared && (cents == null || cents < 0)) {
+      setErr(
+        "Informe um valor válido (ex.: 50,00) ou deixe em branco para usar a média.",
+      );
+      return;
+    }
+    const amountCents = cleared ? 0 : (cents ?? 0);
+    setSaving(true);
+    setErr(null);
+    setSaved(false);
+    try {
+      await upsertDailyBudget(amountCents);
+      // Guarda o display para restaurar no próximo mount (vazio quando desativado).
+      await setAppSetting("daily_diario_ceiling_display", amountCents > 0 ? raw : "");
+      setSaving(false);
+      setSaved(true);
+    } catch (e) {
+      setSaving(false);
+      setErr(safeErrorMessage(e, "Não foi possível salvar o teto."));
+    }
+  }
+
+  if (!isTauri) return null;
+
+  return (
+    <Section
+      icon={SlidersHorizontal}
+      title="Teto do Diário"
+      sub="Defina quanto pretende gastar por dia no variável. Deixe em branco para usar a média do mês anterior."
+    >
+      <div className="set-panel">
+        <div className="set-row">
+          <div className="set-row__main">
+            <div className="set-row__t">Teto diário (R$)</div>
+            <div className="set-row__d">
+              Orienta a barra de progresso do check-in e o forecast dos dias futuros do
+              mês. Em branco = usar a média do mês anterior automaticamente.
+              {saved ? <strong> Salvo.</strong> : null}
+              {err ? (
+                <strong role="alert" style={{ color: "var(--danger-400)" }}>
+                  {" "}
+                  {err}
+                </strong>
+              ) : null}
+            </div>
+          </div>
+          <div className="set-row__ctl" style={TETO_CTL_STYLE}>
+            <input
+              type="text"
+              inputMode="decimal"
+              placeholder="ex.: 50,00"
+              value={raw}
+              onChange={(e) => {
+                setRaw(e.currentTarget.value);
+                setSaved(false);
+              }}
+              disabled={saving}
+              style={TETO_INPUT_STYLE}
+              aria-label="Teto diário em reais"
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void handleSave()}
+              disabled={saving}
+            >
+              {saving ? "Salvando…" : "Salvar"}
+            </Button>
+          </div>
+        </div>
       </div>
     </Section>
   );
@@ -272,6 +401,8 @@ export function SettingsScreen({
       </Section>
 
       <DailyReminderSection />
+
+      <DailyTetoCeilingSection />
 
       <Section
         icon={HardDrive}
