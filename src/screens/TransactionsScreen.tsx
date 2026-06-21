@@ -70,6 +70,14 @@ const EDIT_FORM_WRAP_STYLE: React.CSSProperties = {
   marginBottom: "var(--space-4)",
 };
 
+// Aviso discreto no painel de ações de uma linha importada (plano 043): editar/apagar agora valem
+// para importados, mas a planilha é a fonte da verdade — daí a nota sobre re-import. Hoisted.
+const IMPORTED_NOTICE_STYLE: React.CSSProperties = {
+  margin: "0 0 var(--space-2)",
+  fontSize: "var(--fs-micro)",
+  color: "var(--text-faint)",
+};
+
 // Plan 035: breakdown itemizado (lista de partes da nota de célula), só leitura.
 const LINE_ITEMS_LIST_STYLE: React.CSSProperties = {
   display: "flex",
@@ -384,6 +392,13 @@ function ActionPanelRow({
             {actionError}
           </p>
         ) : null}
+        {t.provenance === "importado" && (
+          <p style={IMPORTED_NOTICE_STYLE}>
+            Linha importada da planilha — edições ficam no app; um re-import pode
+            sobrescrever o valor se a planilha mudou. Apagar aqui não apaga da planilha;
+            o próximo import restaura a linha.
+          </p>
+        )}
         <div style={ACTION_PANEL_STYLE}>
           <Button size="sm" variant="ghost" onClick={onEdit}>
             Editar

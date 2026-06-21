@@ -292,6 +292,60 @@ describe("TransactionsScreen — apagar/editar (ações da linha)", () => {
   });
 });
 
+describe("TransactionsScreen — painel de ações de linha importada (plano 043)", () => {
+  beforeEach(() => {
+    mockInvoke.mockReset();
+  });
+
+  it("mostra o aviso de re-import no painel de ações de uma linha importada", async () => {
+    const user = userEvent.setup();
+    // t1 (Despesa demo variável) tem provenance "importado" nas fixtures.
+    mockCommands({ get_recent_transactions: TXNS, list_tags_cmd: [] });
+    render(<TransactionsScreen query="" onGoToSettings={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getByText("Despesa demo variável")).toBeInTheDocument();
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /Ações para Despesa demo variável/ }),
+    );
+    expect(screen.getByText(/Linha importada da planilha/)).toBeInTheDocument();
+  });
+
+  it("o botão Editar dispara mesmo numa linha importada (não fica desabilitado)", async () => {
+    const user = userEvent.setup();
+    mockCommands({ get_recent_transactions: TXNS, list_tags_cmd: [] });
+    render(<TransactionsScreen query="" onGoToSettings={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getByText("Despesa demo variável")).toBeInTheDocument();
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /Ações para Despesa demo variável/ }),
+    );
+    const editar = screen.getByRole("button", { name: "Editar" });
+    expect(editar).not.toBeDisabled();
+    // Editar abre o form inline de edição (não há rejeição silenciosa para importados).
+    await user.click(editar);
+    expect(screen.getByRole("button", { name: "Salvar" })).toBeInTheDocument();
+  });
+
+  it("NÃO mostra o aviso de importado numa linha manual", async () => {
+    const user = userEvent.setup();
+    // t2 (Compromisso demo no crédito) tem provenance "manual" nas fixtures.
+    mockCommands({ get_recent_transactions: TXNS, list_tags_cmd: [] });
+    render(<TransactionsScreen query="" onGoToSettings={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getByText("Compromisso demo no crédito")).toBeInTheDocument();
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /Ações para Compromisso demo no crédito/ }),
+    );
+    expect(screen.queryByText(/Linha importada da planilha/)).not.toBeInTheDocument();
+  });
+});
+
 describe("TransactionsScreen — breakdown itemizado", () => {
   beforeEach(() => {
     mockInvoke.mockReset();

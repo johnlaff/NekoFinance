@@ -32,7 +32,7 @@ const PROV: Record<Prov, { label: string; dot: string; entry: GlossaryEntry }> =
     dot: "var(--secondary)",
     entry: {
       title: "Previsto",
-      body: "Ainda não aconteceu. É uma previsão que o app criou para completar o futuro. Vira real quando o lançamento de verdade chega.",
+      body: "Ainda não aconteceu. Pode ser um compromisso que você registrou ou uma projeção automática. Vira real quando o lançamento de verdade chega.",
     },
   },
 };

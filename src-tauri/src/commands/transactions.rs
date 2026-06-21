@@ -371,10 +371,10 @@ pub struct LineItemInput {
 
 /// Plan 036: substitui TODAS as partes itemizadas de um lançamento e fixa o total do pai = Σ partes.
 ///
-/// Diferente de `update_transaction_cmd`, este comando NÃO tem o guarda `source_amount IS NULL`: o
-/// dono precisa poder detalhar/editar a quebra de um lançamento IMPORTADO (esse é o ponto da
-/// feature). O `source_amount` (base do merge de 3 vias) não é tocado — o breakdown local é uma
-/// representação mais rica da MESMA célula; um eventual conflito de total fica para o re-import
+/// Vale também para lançamentos IMPORTADOS: o dono precisa poder detalhar/editar a quebra de uma
+/// linha vinda da planilha (esse é o ponto da feature; o plano 043 alinhou os comandos escalares à
+/// mesma política). O `source_amount` (base do merge de 3 vias) não é tocado — o breakdown local é
+/// uma representação mais rica da MESMA célula; um eventual conflito de total fica para o re-import
 /// resolver. As partes inseridas são marcadas `is_user_edited = 1` para SOBREVIVEREM ao próximo
 /// re-import enquanto a nota da planilha não mudar (ver o bloco do plano 035/036 no importer).
 ///
@@ -449,28 +449,26 @@ pub async fn update_transaction_items_cmd(
     Ok(())
 }
 
-/// Apaga um lançamento manual (não importado) pelo id. O guarda `source_amount IS NULL` impede
-/// remover histórico vindo da planilha pelo app — esses precisam de um fluxo próprio.
+/// Apaga um lançamento pelo id (plano 043): inclui linhas importadas. A planilha é a fonte da
+/// verdade — apagar aqui NÃO apaga da planilha; o próximo import recria a linha. O painel de ações
+/// no Livro-razão avisa o usuário disso (notice de "Linha importada").
 #[tauri::command]
 pub async fn delete_transaction_cmd(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
-    let affected =
-        sqlx::query(r#"DELETE FROM "transaction" WHERE id = ?1 AND source_amount IS NULL"#)
-            .bind(&id)
-            .execute(pool.inner())
-            .await
-            .map_err(|e| format!("delete: {e}"))?
-            .rows_affected();
+    let affected = sqlx::query(r#"DELETE FROM "transaction" WHERE id = ?1"#)
+        .bind(&id)
+        .execute(pool.inner())
+        .await
+        .map_err(|e| format!("delete: {e}"))?
+        .rows_affected();
     if affected == 0 {
-        return Err(
-            "lançamento não encontrado ou importado da planilha (não pode ser apagado pelo app)"
-                .into(),
-        );
+        return Err("lançamento não encontrado".into());
     }
     Ok(())
 }
 
-/// Edita um lançamento manual (valor, descrição, método, fixo, data) pelo id. Mesmo guarda de
-/// `delete_transaction_cmd`: importados da planilha não são editáveis pelo app.
+/// Edita um lançamento (valor, descrição, método, fixo, data) pelo id (plano 043): inclui linhas
+/// importadas. A edição fica no app; um re-import pode sobrescrever o valor se a planilha mudou
+/// (o merge de 3 vias reconcilia). O painel de ações avisa o usuário disso.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn update_transaction_cmd(
@@ -499,7 +497,7 @@ pub async fn update_transaction_cmd(
         r#"UPDATE "transaction"
            SET type = ?2, amount = ?3, description = ?4, payment_method = ?5,
                is_fixed = ?6, date = ?7, is_projection = ?8, updated_at = ?9
-           WHERE id = ?1 AND source_amount IS NULL"#,
+           WHERE id = ?1"#,
     )
     .bind(&id)
     .bind(&txn_type)
@@ -515,10 +513,7 @@ pub async fn update_transaction_cmd(
     .map_err(|e| format!("update: {e}"))?
     .rows_affected();
     if affected == 0 {
-        return Err(
-            "lançamento não encontrado ou importado da planilha (não pode ser editado pelo app)"
-                .into(),
-        );
+        return Err("lançamento não encontrado".into());
     }
     Ok(())
 }
@@ -708,7 +703,7 @@ mod tests {
             r#"UPDATE "transaction"
                SET type = ?2, amount = ?3, description = ?4, payment_method = ?5,
                    is_fixed = ?6, date = ?7, is_projection = ?8, updated_at = ?9
-               WHERE id = ?1 AND source_amount IS NULL"#,
+               WHERE id = ?1"#,
         )
         .bind(id)
         .bind("expense")
@@ -757,5 +752,78 @@ mod tests {
             is_projection, 0,
             "editing date to today must clear is_projection (Bug 3)"
         );
+    }
+
+    // Insere uma linha "importada" (com `source_amount` preenchido, como o import grava) para
+    // cobrir a remoção do guarda `source_amount IS NULL` do plano 043.
+    async fn insert_imported_txn(pool: &SqlitePool, id: &str, amount: i64, source_amount: i64) {
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, source_amount, date, is_fixed, is_projection, created_at, updated_at) \
+             VALUES (?1, 'expense', ?2, ?3, '2026-03-10', 0, 0, '2026-03-10T00:00:00Z', '2026-03-10T00:00:00Z')",
+        )
+        .bind(id)
+        .bind(amount)
+        .bind(source_amount)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn delete_imported_row_succeeds() {
+        // Regressão plano 043: apagar não é mais bloqueado por `source_amount IS NOT NULL`.
+        let pool = test_pool().await;
+        insert_imported_txn(&pool, "imp-del", 1000, 1000).await;
+
+        let affected = sqlx::query(r#"DELETE FROM "transaction" WHERE id = ?1"#)
+            .bind("imp-del")
+            .execute(&pool)
+            .await
+            .unwrap()
+            .rows_affected();
+        assert_eq!(affected, 1, "linha importada deve ser apagável (plano 043)");
+
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE id = 'imp-del'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count.0, 0, "a linha importada foi removida");
+    }
+
+    #[tokio::test]
+    async fn update_imported_row_succeeds() {
+        // Regressão plano 043: editar não é mais bloqueado por `source_amount IS NOT NULL`.
+        let pool = test_pool().await;
+        insert_imported_txn(&pool, "imp-upd", 5000, 5000).await;
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let affected = sqlx::query(
+            r#"UPDATE "transaction"
+               SET type = ?2, amount = ?3, description = ?4, payment_method = ?5,
+                   is_fixed = ?6, date = ?7, is_projection = ?8, updated_at = ?9
+               WHERE id = ?1"#,
+        )
+        .bind("imp-upd")
+        .bind("expense")
+        .bind(9900_i64)
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind(0_i64)
+        .bind("2026-03-11")
+        .bind(0_i64)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap()
+        .rows_affected();
+        assert_eq!(affected, 1, "linha importada deve ser editável (plano 043)");
+
+        let (amount,): (i64,) =
+            sqlx::query_as("SELECT amount FROM \"transaction\" WHERE id = 'imp-upd'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(amount, 9900, "o novo valor foi gravado");
     }
 }
