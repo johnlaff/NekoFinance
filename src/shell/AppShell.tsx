@@ -2,8 +2,10 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   Calculator,
   CalendarRange,
+  GitCompareArrows,
   HelpCircle,
   LayoutDashboard,
+  LayoutList,
   Lock,
   Receipt,
   Search,
@@ -23,6 +25,8 @@ export type Screen =
   | "dashboard"
   | "totais"
   | "anuais"
+  | "ano-inteiro" // grade dia a dia dos 12 meses
+  | "economia-compare" // Economia: dois anos lado a lado
   | "horizonte"
   | "transactions"
   | "tags"
@@ -34,6 +38,8 @@ const SCREEN_META: Record<Screen, { title: string; crumb: string }> = {
   dashboard: { title: "Dashboard", crumb: "Quanto posso gastar hoje" },
   totais: { title: "Totais", crumb: "Cálculos do mês" },
   anuais: { title: "Visão anual", crumb: "O ano inteiro" },
+  "ano-inteiro": { title: "Ano inteiro", crumb: "Grade dia a dia — 12 meses" },
+  "economia-compare": { title: "Economia comparada", crumb: "Dois anos lado a lado" },
   horizonte: { title: "Horizonte de saldos", crumb: "Projeção mês a mês" },
   transactions: { title: "Lançamentos", crumb: "Histórico completo" },
   tags: { title: "Tags", crumb: "Rótulos do mês" },
@@ -57,6 +63,8 @@ const NAV_PRIMARY: NavItem[] = [
 const NAV_ANALYSIS: NavItem[] = [
   { key: "totais", label: "Totais", icon: Calculator },
   { key: "anuais", label: "Anual", icon: TrendingUp },
+  { key: "ano-inteiro", label: "Ano inteiro", icon: LayoutList },
+  { key: "economia-compare", label: "Economia comparada", icon: GitCompareArrows },
   { key: "horizonte", label: "Horizonte", icon: CalendarRange },
   { key: "tags", label: "Tags", icon: TagsIcon },
 ];

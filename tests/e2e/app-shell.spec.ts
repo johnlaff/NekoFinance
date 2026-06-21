@@ -96,7 +96,9 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     });
   });
 
-  test("método screens render: Totais, Horizonte, Tags", async ({ page }, testInfo) => {
+  test("método screens render: Totais, Horizonte, Anual, Ano inteiro, Economia comparada, Tags", async ({
+    page,
+  }, testInfo) => {
     const nav = (name: string | RegExp) => page.getByRole("button", { name });
 
     // Totais — 4 métricas-herói + status do método. Os rótulos são botões (InfoPopover).
@@ -127,6 +129,31 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     await page.screenshot({
       fullPage: true,
       path: testInfo.outputPath("anual.png"),
+    });
+
+    // Ano inteiro — grade dia a dia dos 12 meses, lado a lado num único scroll.
+    await nav("Ano inteiro").click();
+    await expect(page.getByRole("heading", { name: "Ano inteiro" })).toBeVisible();
+    // Os 12 meses viram regiões nomeadas (Janeiro … Dezembro).
+    await expect(page.getByRole("region", { name: "Janeiro" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Dezembro" })).toBeVisible();
+    await expect(page.getByRole("region")).toHaveCount(12);
+    await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath("ano-inteiro.png"),
+    });
+
+    // Economia comparada — dois anos consecutivos lado a lado (par base = ano−1 · ano).
+    await nav("Economia comparada").click();
+    await expect(
+      page.getByRole("heading", { name: /^Economia: \d{4} vs \d{4}$/ }),
+    ).toBeVisible();
+    // 12 linhas de mês (Jan … Dez) na tabela comparativa.
+    await expect(page.getByText("Jan", { exact: true })).toBeVisible();
+    await expect(page.getByText("Dez", { exact: true })).toBeVisible();
+    await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath("economia-comparada.png"),
     });
 
     // Tags — lista colorida com "! Pagar" no topo.
