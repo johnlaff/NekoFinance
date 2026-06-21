@@ -63,7 +63,7 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 048  | F2 annotation fidelity: note section headers round-trip + thermometer −R$500 boundary  | P2       | M      | —          | DONE (pkg F)               |
 | 049  | P1: update_transaction_cmd atomicity + realized_monthly_baseline ABS sign              | P1       | S–M    | —          | DONE (pkg G)               |
 | 050  | P2: economia write-back staleness + saw_december (+ conflict-cleanup/boundary tests)   | P2       | M      | —          | DONE (pkg G)               |
-| 051  | Performance = income − cost_of_living (economia=Saída; supersedes 046) + no-double-cnt | P1       | M      | —          | TODO (pkg G)               |
+| 051  | Performance = income − cost_of_living (economia=Saída; supersedes 046) + no-double-cnt | P1       | M      | —          | DONE (pkg G)               |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale)
 
@@ -112,11 +112,16 @@ already-built UI. All are high-leverage with clean verification stories.
 
 - **`saldoHeatmap.ts` thresholds**: correct — absolute R$ bands match the spreadsheet's
   conditional formatting (critical −500, tight 1000, ok 2000). No change.
-- **Performance formula in `forecast/mod.rs`**: corrected by plans 040 + 046. The formula is
-  `income − cost_of_living − economia` (spreadsheet-parity, 2026-06-21): economia is recorded
-  as a Saída in the month grid and is therefore subtracted by the sheet. `daily_projected` is
-  excluded (the sheet's Performance row uses realized figures only). The savings guardrail and
-  Economizado% are computed independently and are unaffected.
+- **Performance formula in `forecast/mod.rs`** — 🔒 DECISION LOCKED, FINAL via plans 040 → 046 → 051.
+  Formula: `income − cost_of_living` (Entradas − (Saídas + Diário)). Economia is NOT a separate
+  deduction: the savings expense row is already in `cost_of_living` (expense → FixedOut/Daily);
+  the Economia-tab transfer is a savings-rate annotation that feeds `savings_rate_bps` only, not
+  Performance. Subtracting `economia` again (plan 046) was a double-count — plan 051 reverts it.
+  `daily_projected` stays excluded (the sheet's Performance row uses realized figures only). **Do
+  NOT re-add `− economia`** to the formula — the oscillation 040↔046 is closed; only a new explicit
+  owner decision (not a "fidelity correction") may reopen it. Documented in `specs/011-engine-five-types/spec.md`.
+  Part 2 (a pre-existing, orthogonal Saldo-chain double-count risk when the same savings is logged
+  BOTH as a grid Saída AND in the Economia tab) is DOCUMENTED and DEFERRED — see spec 011 §Parte 2.
 - **`classify()` routing credit expenses to FixedOut**: by design (the fatura folds into a
   Saída lump at the due date — ADR-0001). Not a bug.
 - **First month of an imported year has no prior-year carry-over seed**: structural; the seed

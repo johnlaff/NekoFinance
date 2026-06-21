@@ -64,8 +64,10 @@ pub struct MonthMetric {
     pub daily_out_cents: i64,
     pub real_daily_avg_cents: i64,
     pub savings_rate_bps: i64,
-    /// Economia lançada no mês (numerador do Economizado%). Desconta a Performance porque a
-    /// planilha a registra como Saída no grid mensal (fiel ao método — 2026-06-21).
+    /// Economia lançada no mês — numerador do Economizado% (savings_rate_bps). NÃO desconta a
+    /// Performance diretamente: a poupança já entra em cost_of_living como Saída no grid (expense
+    /// row → FixedOut/Daily). Esta linha é o transfer da aba Economia = anotação de taxa, não
+    /// duplo movimento. DECISÃO DO DONO 2026-06-21 final — plano 051 reverte o plano 046.
     pub economia_cents: i64,
     /// Saída TOTAL lançada no mês = fixas + diário (realizado + projetado/pré-lançado). É o que a
     /// [`month_coverage`] usa para julgar "mês completo" (quanto do gasto típico já está lançado),
@@ -372,12 +374,14 @@ fn month_metrics(
             }
             // Custo de vida = Saídas fixas + Diário realizado (cartão já entra em fixed_out via lump).
             let cost_of_living_cents = fixed_out + daily_realized;
-            // Performance = Entradas − (Saídas + Diário + Economia) — fórmula fiel da planilha.
-            // DECISÃO DO DONO (2026-06-21): a Economia é lançada como Saída no grid mensal, portanto
-            // a planilha já a desconta da Performance (Saída Total inclui o lançamento de economia).
+            // Performance = Entradas − (Saídas + Diário) — fórmula fiel à planilha.
+            // DECISÃO DO DONO (2026-06-21, FINAL): a economia é lançada como Saída (expense) no grid
+            // mensal → torna-se FixedOut/Daily → já está em cost_of_living. A aba Economia importa um
+            // transfer separado (EventKind::Economia) que alimenta savings_rate_bps (Economizado%), mas
+            // NÃO é deduzido da Performance de novo — subtrair `economia` aqui seria dupla contagem.
             // `daily_projected` NÃO é descontado (a planilha usa o realizado; a projeção serve só ao
             // saldo de caixa e não tem correspondência na linha de Performance da planilha).
-            let performance_cents = income - cost_of_living_cents - economia;
+            let performance_cents = income - cost_of_living_cents;
 
             let first = NaiveDate::from_ymd_opt(year, month, 1).expect("valid month");
             let last = last_day_of_month(year, month);
@@ -834,9 +838,10 @@ mod tests {
         assert_eq!(m.economia_cents, 250000);
         // Economizado% = economia (250) ÷ renda (1000) = 25% = 2500 bps (não mais o superávit).
         assert_eq!(m.savings_rate_bps, 2500);
-        // Performance = renda (1000) − custo de vida (diário 200) − economia (250) = 550
-        // (a economia é lançada como Saída na planilha, portanto desconta a Performance).
-        assert_eq!(m.performance_cents, 550_000);
+        // Performance = renda (1000) − custo de vida (diário 200) = 800
+        // (economia não desconta Performance de novo — já está em cost_of_living como Saída
+        // no grid; o transfer da aba Economia alimenta savings_rate_bps, não Performance).
+        assert_eq!(m.performance_cents, 800_000);
         assert_eq!(m.cost_of_living_cents, 200000); // só diário realizado (sem economia)
     }
 
@@ -1043,8 +1048,9 @@ mod tests {
         assert_eq!(m.performance_cents, 1000000); // previsão NÃO desconta performance
     }
 
-    // Regressão: economia desconta Performance; previsão de diário NÃO desconta (planilha-parity
-    // 2026-06-21 — economia é lançada como Saída no grid; daily_projected não tem linha na planilha).
+    // Regressão: economia NÃO desconta Performance diretamente (já está em cost_of_living como
+    // Saída no grid — evita dupla contagem plano 051). Previsão de diário NÃO desconta (não tem
+    // linha na Performance da planilha). DECISÃO FINAL 2026-06-21.
     #[test]
     fn performance_excludes_only_projected() {
         let events = [
@@ -1064,37 +1070,40 @@ mod tests {
         let m = f.months.iter().find(|m| m.month == 4).unwrap();
         // cost_of_living = fixed_out(300) + daily_realized(50) = 350_000
         assert_eq!(m.cost_of_living_cents, 350_000);
-        // performance = income(1_000) − cost_of_living(350) − economia(200) = 450_000
-        // (economia desconta Performance; daily_projected NÃO desconta — não está na planilha)
-        assert_eq!(m.performance_cents, 450_000);
+        // performance = income(1_000) − cost_of_living(350) = 650_000
+        // (economia NÃO desconta Performance — já em cost_of_living como Saída no grid;
+        // daily_projected NÃO desconta — só afeta o saldo de caixa)
+        assert_eq!(m.performance_cents, 650_000);
         // economia still feeds savings_rate
         assert_eq!(m.economia_cents, 200_000);
         assert_eq!(m.savings_rate_bps, 2_000); // 200/1000 = 20%
     }
 
-    // Guarda dupla-contagem: um mês com Economia lançada tem Performance = renda − custo_de_vida
-    // − economia; a Economia NÃO está dentro do custo_de_vida (FixedOut/Daily são disjuntos de
-    // EventKind::Economia na classificação — cada evento só cai em um braço do match).
+    // Regressão dupla-contagem (plano 051): economia NÃO é subtraída da Performance — ela
+    // já está em cost_of_living como Saída no grid (expense → FixedOut/Daily). O transfer da
+    // aba Economia é só anotação de taxa (savings_rate_bps). DECISÃO FINAL 2026-06-21.
     #[test]
-    fn performance_economia_subtracted_once_no_double_count() {
-        // Arrange: renda 5_000_000, Saída fixa 1_000_000, Diário realizado 500_000, Economia 800_000.
+    fn performance_economia_not_double_counted() {
+        // Arrange: renda 5_000_000, Saída fixa 1_000_000, Diário realizado 500_000.
+        // Economia 800_000 representa o transfer da aba Economia (anotação de taxa).
+        // A poupança real já está no custo de vida como expense row (FixedOut ou Daily).
         let events = [
             ev("2026-05-01", EventKind::Income, 5_000_000),
             ev("2026-05-10", EventKind::FixedOut, 1_000_000),
             ev("2026-05-15", EventKind::Daily, 500_000), // realized
-            ev("2026-05-20", EventKind::Economia, 800_000), // savings transfer
+            ev("2026-05-20", EventKind::Economia, 800_000), // savings-rate annotation
         ];
         let f = project(0, d("2026-05-01"), &events, d("2026-05-31"));
         let m = f.months.iter().find(|m| m.month == 5).unwrap();
 
         // cost_of_living = FixedOut(1_000) + Daily(500) = 1_500_000 (Economia NOT in here)
         assert_eq!(m.cost_of_living_cents, 1_500_000);
-        // economia_cents reported separately
+        // economia_cents is reported separately (feeds savings_rate_bps only)
         assert_eq!(m.economia_cents, 800_000);
-        // performance = income(5_000) − cost_of_living(1_500) − economia(800) = 2_700_000
-        // (would be 3_500_000 if economia were omitted, or 1_900_000 if double-counted)
-        assert_eq!(m.performance_cents, 2_700_000);
-        // savings_rate_bps = 800_000 / 5_000_000 = 1600 bps (16%)
+        // performance = income(5_000) − cost_of_living(1_500) = 3_500_000
+        // (NOT 2_700_000 — that was the double-count introduced by plan 046)
+        assert_eq!(m.performance_cents, 3_500_000);
+        // savings_rate_bps = 800_000 / 5_000_000 = 1600 bps (16%) — unaffected
         assert_eq!(m.savings_rate_bps, 1_600);
     }
 }
