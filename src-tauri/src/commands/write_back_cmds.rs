@@ -621,9 +621,12 @@ pub(crate) async fn record_write_back_audit(
         // kind (string da célula) → critério de seleção da(s) transação(ões) na data.
         let updated = match c.kind.as_str() {
             "entrada" => {
+                // Exclui linhas `derived:%` (sintetizadas, ex.: reembolso) — espelha
+                // `load_write_back_txns`. Sem isto, o realinho de entrada sobrescreveria o
+                // `source_amount` de linhas derivadas que não vêm 1:1 da planilha.
                 sqlx::query(
                     "UPDATE \"transaction\" SET source_amount = ?1, updated_at = ?2 \
-                     WHERE date = ?3 AND type = 'income'",
+                     WHERE date = ?3 AND type = 'income' AND id NOT LIKE 'derived:%'",
                 )
                 .bind(c.value_cents)
                 .bind(&now)
@@ -1368,5 +1371,60 @@ mod tests {
         // Revisão diferente → aborta (a planilha avançou; exige re-revisão).
         let err = staleness_check("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z").unwrap_err();
         assert_eq!(err, SHEET_CHANGED_MSG, "diff stale é rejeitado");
+    }
+
+    // Bug 3 (plano 053): o braço `entrada` da auditoria realinhava o `source_amount` de TODAS as
+    // rendas da data, inclusive linhas `derived:%` (sintetizadas, ex.: reembolso) que não vêm 1:1 da
+    // planilha. `load_write_back_txns` já as exclui; a auditoria precisa do mesmo filtro, senão a base
+    // de uma linha derivada é sobrescrita e o próximo import vê conflito espúrio.
+    #[tokio::test]
+    async fn audit_entrada_skips_derived_rows() {
+        let p = pool().await;
+
+        // Renda importada 1:1 (realinhável) + linha derivada (NÃO realinhável), mesma data.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, source_amount) \
+             VALUES ('inc-1', 'income', 5000, '2026-03-01', 0, 0, 5000), \
+                    ('derived:reimb-1', 'income', 1000, '2026-03-01', 0, 0, 1000)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let cell = CellWrite {
+            a1: "B3".into(),
+            row: 2,
+            col: 1,
+            date: "2026-03-01".into(),
+            kind: "entrada".into(),
+            current: "50,00".into(),
+            proposed: "99,00".into(),
+            value_cents: 9900,
+            changed: true,
+            formula: None,
+            note_text: None,
+        };
+        record_write_back_audit(&p, "2026", &[&cell]).await.unwrap();
+
+        // A renda 1:1 é realinhada ao valor escrito.
+        let (inc,): (Option<i64>,) =
+            sqlx::query_as("SELECT source_amount FROM \"transaction\" WHERE id = 'inc-1'")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(inc, Some(9900), "a renda importada 1:1 é realinhada");
+
+        // A linha derivada NÃO é tocada.
+        let (der,): (Option<i64>,) = sqlx::query_as(
+            "SELECT source_amount FROM \"transaction\" WHERE id = 'derived:reimb-1'",
+        )
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        assert_eq!(
+            der,
+            Some(1000),
+            "a linha derivada não é realinhada pelo braço entrada"
+        );
     }
 }

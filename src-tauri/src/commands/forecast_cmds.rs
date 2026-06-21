@@ -1233,14 +1233,16 @@ pub(crate) async fn dashboard_summary(
 
     // Diário de HOJE como MAGNITUDE positiva (o card faz `teto - gasto` e `gasto/teto`).
     // - Sinal: por convenção, `amount` é gravado como magnitude positiva (import faz `.abs()`,
-    //   `create_transaction` exige `> 0`); o sinal vem do `type`. `ABS()` é defesa-em-profundidade,
-    //   espelhando o `amount.abs()` do forecast — robusto caso algum writer grave com sinal.
+    //   `create_transaction` exige `> 0`); o sinal vem do `type`. Usamos `SUM(ABS(amount))` para
+    //   somar a MAGNITUDE de cada linha — robusto caso algum writer grave com sinal (despesas
+    //   importadas chegam negativas, lançamentos manuais positivos): num dia misto, `ABS(SUM(...))`
+    //   cancelaria parcialmente antes do ABS. Mesmo padrão de `realized_monthly_baseline`/`month_grid`.
     // - Fonte única: o gasto do dia vem das transações Diário (despesa variável não-crédito);
     //   sem nenhuma transação no dia, a soma é 0. O ritual diário é uma transação Diário comum.
     let daily_spend: (i64,) = sqlx::query_as(
-        "SELECT ABS(COALESCE((SELECT SUM(amount) FROM \"transaction\" \
-                              WHERE type='expense' AND is_fixed=0 AND is_projection=0 AND date = ?1 \
-                                AND (payment_method IS NULL OR payment_method <> 'credit')), 0))",
+        "SELECT COALESCE((SELECT SUM(ABS(amount)) FROM \"transaction\" \
+                          WHERE type='expense' AND is_fixed=0 AND is_projection=0 AND date = ?1 \
+                            AND (payment_method IS NULL OR payment_method <> 'credit')), 0)",
     )
     .bind(&today)
     .fetch_one(pool)
@@ -1821,5 +1823,57 @@ mod tests {
         assert_eq!(monthly_to_daily_rate(3100, 31), 100);
         assert_eq!(monthly_to_daily_rate(125000, 31), 4032); // 4032,25 truncado
         assert_eq!(monthly_to_daily_rate(100, 0), 0, "dias=0 não causa panic");
+    }
+
+    // Bug 1 (plano 053): `daily_spend_today` precisa somar a MAGNITUDE de cada linha do dia
+    // (`SUM(ABS(amount))`), não o ABS da soma assinada. Despesas importadas chegam negativas e
+    // lançamentos manuais positivos: num dia misto, `ABS(SUM(...))` cancelaria parcialmente antes
+    // do ABS, sub-reportando o "Diário de hoje". Guarda contra a regressão para o padrão antigo.
+    #[tokio::test]
+    async fn daily_spend_today_sums_magnitudes_not_signed_amounts() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        let today_str = today.format("%Y-%m-%d").to_string();
+
+        // Conta com saldo: dá ao `dashboard_summary` um seed de projeção válido.
+        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-1', 'Tester')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, balance, liquidity) \
+             VALUES ('acc-1', 'Corrente', 'bank', 'pe-1', 100000, 'liquid')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        // Despesa IMPORTADA do dia, gravada NEGATIVA (simula `-amount_out` da planilha).
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('imp-1', 'expense', -5000, ?1, 0, 0)",
+        )
+        .bind(&today_str)
+        .execute(&p)
+        .await
+        .unwrap();
+        // Despesa MANUAL do dia, gravada POSITIVA (magnitude).
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('man-1', 'expense', 3000, ?1, 0, 0)",
+        )
+        .bind(&today_str)
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let summary = dashboard_summary(&p, today).await.unwrap();
+
+        // Soma das magnitudes: 5000 + 3000 = 8000. O bug antigo (`ABS(SUM(amount))`) daria
+        // ABS(-5000 + 3000) = 2000.
+        assert_eq!(
+            summary.daily_spend_today, 8000,
+            "Diário de hoje soma magnitudes (SUM(ABS)), não o ABS da soma assinada"
+        );
     }
 }

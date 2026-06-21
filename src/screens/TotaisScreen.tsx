@@ -226,9 +226,17 @@ export function TotaisScreen() {
   // Economizado% do MÉTODO = Economia registrada (transfers→reserva) ÷ Entradas — NÃO o net
   // superávit (colchão, que vai no ColchaoCard); espelha a coluna % da aba Economia da planilha.
   const a = forecast.annual_savings;
-  const ytdPct = Math.round(
+  // Economizado% acumulado pode passar de 100% num mês de renda baixa com um aporte único grande.
+  // Não somos relativos ao baseline (o termômetro é absoluto); apenas evitamos exibir ">100%" como
+  // um número solto — preservamos o sinal ">100%" como rótulo claro e a barra fica no teto (100).
+  const ytdPctRaw = Math.round(
     (a.registered_economia_cents / Math.max(1, a.realized_income_cents)) * 100,
   );
+  const ytdPct = Math.min(ytdPctRaw, 100);
+  const ytdPctLabel =
+    ytdPctRaw > 100
+      ? `no ano: >100% acumulado · meta 20–30% (média anual)`
+      : `no ano: ${ytdPct}% acumulado · meta 20–30% (média anual)`;
   const monthLabel = monthNamePtBR(`${ymOf(m)}-01`);
   const monthCap = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
 
@@ -312,7 +320,7 @@ export function TotaisScreen() {
             </span>
           }
           status={economizadoStatus(m.savings_rate_bps)}
-          sublabel={`no ano: ${ytdPct}% acumulado · meta 20–30% (média anual)`}
+          sublabel={ytdPctLabel}
         />
         <MetricRow
           label="Custo de vida"
