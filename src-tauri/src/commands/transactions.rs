@@ -604,6 +604,17 @@ pub async fn update_transaction_cmd(
         NaiveDate::parse_from_str(&date, "%Y-%m-%d").map_err(|e| format!("data inválida: {e}"))?;
     let is_projection = new_date > chrono::Local::now().date_naive();
 
+    // Plano 049: a limpeza dos `line_item` e o UPDATE do total do pai precisam ser ATÔMICOS. Antes
+    // rodavam como dois statements auto-commit separados; um crash entre eles deixava os itens
+    // apagados mas o total antigo no pai (ou o novo total sem itens). Espelha `delete_transaction_cmd`:
+    // tudo na mesma `sqlx::Transaction`, com commit só no fim. O early-return em `affected == 0`
+    // descarta `tx` sem commit → rollback automático (mesmo padrão do delete).
+    let mut tx = pool
+        .inner()
+        .begin()
+        .await
+        .map_err(|e| format!("update (begin): {e}"))?;
+
     // Plano 047: se a linha é ITEMIZADA (tem `line_item`) e o NOVO valor difere do total atual, a
     // quebra não reflete mais o total → limpa os itens (a Σ ficaria divergente no write-back). O
     // usuário re-insere a quebra pelo editor de itens. Idempotente: sem itens ou valor inalterado, é
@@ -616,7 +627,7 @@ pub async fn update_transaction_cmd(
            GROUP BY t.amount"#,
     )
     .bind(&id)
-    .fetch_optional(pool.inner())
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| format!("update (load items): {e}"))?;
     if let Some((old_amount, item_count)) = current
@@ -625,7 +636,7 @@ pub async fn update_transaction_cmd(
     {
         sqlx::query("DELETE FROM line_item WHERE transaction_id = ?1")
             .bind(&id)
-            .execute(pool.inner())
+            .execute(&mut *tx)
             .await
             .map_err(|e| format!("update (clear stale items): {e}"))?;
     }
@@ -645,13 +656,18 @@ pub async fn update_transaction_cmd(
     .bind(&date)
     .bind(is_projection as i64)
     .bind(&now)
-    .execute(pool.inner())
+    .execute(&mut *tx)
     .await
     .map_err(|e| format!("update: {e}"))?
     .rows_affected();
     if affected == 0 {
+        // `tx` é descartada sem commit → rollback automático.
         return Err("lançamento não encontrado".into());
     }
+
+    tx.commit()
+        .await
+        .map_err(|e| format!("update (commit): {e}"))?;
     Ok(())
 }
 
@@ -870,6 +886,77 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("positivo"), "err: {err}");
+    }
+
+    // Plano 049: o `update_transaction_cmd` limpava os `line_item` e atualizava o total do pai em
+    // dois statements auto-commit separados (não atômico). Este teste replica o caminho de troca de
+    // valor numa única `sqlx::Transaction` (igual ao comando corrigido) e verifica que, após o
+    // commit, OS DOIS lados ficam consistentes: itens removidos E total do pai = novo valor.
+    #[tokio::test]
+    async fn update_transaction_cmd_clears_items_and_updates_amount_atomically() {
+        let pool = test_pool().await;
+        // Pai com valor 1000.
+        insert_txn(&pool, "tx-upd", 1000).await;
+        // Duas linhas de quebra.
+        sqlx::query(
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, is_user_edited) \
+             VALUES ('li-a', 'tx-upd', 600, 'Part A', 0, 1), \
+                    ('li-b', 'tx-upd', 400, 'Part B', 1, 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Mesma sequência do comando corrigido: abre transação, limpa itens stale, atualiza o pai.
+        let new_amount: i64 = 2000;
+        let mut tx = pool.begin().await.unwrap();
+        let current: Option<(i64, i64)> = sqlx::query_as(
+            r#"SELECT t.amount, COUNT(li.id)
+               FROM "transaction" t
+               LEFT JOIN line_item li ON li.transaction_id = t.id
+               WHERE t.id = ?1
+               GROUP BY t.amount"#,
+        )
+        .bind("tx-upd")
+        .fetch_optional(&mut *tx)
+        .await
+        .unwrap();
+        if let Some((old_amount, item_count)) = current
+            && item_count > 0
+            && old_amount != new_amount
+        {
+            sqlx::query("DELETE FROM line_item WHERE transaction_id = ?1")
+                .bind("tx-upd")
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+        }
+        sqlx::query(r#"UPDATE "transaction" SET amount = ?2, updated_at = ?3 WHERE id = ?1"#)
+            .bind("tx-upd")
+            .bind(new_amount)
+            .bind(chrono::Utc::now().to_rfc3339())
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        // Os dois lados devem ficar consistentes após o commit.
+        let (amount,): (i64,) =
+            sqlx::query_as(r#"SELECT amount FROM "transaction" WHERE id = 'tx-upd'"#)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(amount, 2000, "parent amount updated to new value");
+
+        let item_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM line_item WHERE transaction_id = 'tx-upd'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            item_count.0, 0,
+            "stale line_items cleared when amount changed"
+        );
     }
 
     // Espelha a lógica de re-deriva de `is_projection` de `update_transaction_cmd`
