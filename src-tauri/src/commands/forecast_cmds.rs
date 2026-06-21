@@ -136,12 +136,20 @@ pub(crate) async fn realized_annual_savings(
             format!("{cur_ym}-01"),
         )
     };
+    // Mesmo filtro `exclude_from_totals` ("Ignorar") de `load_year_events`/`annual_metrics`: uma
+    // linha marcada cai fora da MÉTRICA, então também não pode entrar no net de poupança realizada,
+    // senão o guardrail e o painel de métricas divergem.
     let row: (i64, i64) = sqlx::query_as(
         "SELECT \
-           COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END), 0), \
-           COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END), 0) \
-         FROM \"transaction\" WHERE date >= ?1 AND date < ?2 \
-           AND type IN ('income','expense')",
+           COALESCE(SUM(CASE WHEN t.type='income' THEN t.amount ELSE 0 END), 0), \
+           COALESCE(SUM(CASE WHEN t.type='expense' THEN t.amount ELSE 0 END), 0) \
+         FROM \"transaction\" t WHERE t.date >= ?1 AND t.date < ?2 \
+           AND t.type IN ('income','expense') \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM transaction_tag tt2 \
+               JOIN tag tg ON tg.id = tt2.tag_id \
+               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
+           )",
     )
     .bind(&lower)
     .bind(&upper)
@@ -259,11 +267,19 @@ pub(crate) async fn projected_annual_savings(
     // malformada que começa com o ano mas não é ISO válida (review P2).
     let start = format!("{}-01-01", today_naive.year());
     let end = format!("{}-12-31", today_naive.year());
+    // Mesmo filtro `exclude_from_totals` de `realized_annual_savings`/`load_year_events`: linhas
+    // "Ignorar" ficam fora da projeção de poupança como ficam fora das métricas.
     let row: (i64, i64) = sqlx::query_as(
         "SELECT \
-           COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END), 0), \
-           COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END), 0) \
-         FROM \"transaction\" WHERE date >= ?1 AND date <= ?2 AND type IN ('income','expense')",
+           COALESCE(SUM(CASE WHEN t.type='income' THEN t.amount ELSE 0 END), 0), \
+           COALESCE(SUM(CASE WHEN t.type='expense' THEN t.amount ELSE 0 END), 0) \
+         FROM \"transaction\" t WHERE t.date >= ?1 AND t.date <= ?2 \
+           AND t.type IN ('income','expense') \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM transaction_tag tt2 \
+               JOIN tag tg ON tg.id = tt2.tag_id \
+               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
+           )",
     )
     .bind(&start)
     .bind(&end)
@@ -339,8 +355,12 @@ pub(crate) async fn effective_daily_ceiling(
     };
     let prev_ym = last_prev.format("%Y-%m").to_string();
     let days_prev = last_prev.day() as i64;
+    // `SUM(ABS(amount))` por linha (não `ABS(SUM(amount))`): despesas IMPORTADAS chegam negativas
+    // (`-amount_out`) e manuais positivas; num mês de sinal misto o ABS externo da soma assinada
+    // cancelaria parcialmente, sub-reportando o Diário médio. Invariante de agregação de despesa em
+    // TODOS os sites de query (month_grid / realized_monthly_baseline / daily_spend_today).
     let sum: (i64,) = sqlx::query_as(
-        "SELECT ABS(COALESCE(SUM(amount), 0)) FROM \"transaction\" \
+        "SELECT COALESCE(SUM(ABS(amount)), 0) FROM \"transaction\" \
          WHERE type='expense' AND is_fixed=0 AND is_projection=0 \
            AND (payment_method IS NULL OR payment_method <> 'credit') \
            AND substr(date,1,7) = ?1",
@@ -1874,6 +1894,101 @@ mod tests {
         assert_eq!(
             summary.daily_spend_today, 8000,
             "Diário de hoje soma magnitudes (SUM(ABS)), não o ABS da soma assinada"
+        );
+    }
+
+    // Plano 054: o fallback de média do mês anterior em `effective_daily_ceiling` precisa somar a
+    // MAGNITUDE de cada linha (`SUM(ABS(amount))`), não o ABS da soma assinada. Despesas importadas
+    // chegam negativas e manuais positivas; num mês de sinal misto o ABS externo da soma cancelaria
+    // parcialmente, sub-reportando o teto diário. Último site que estava no padrão antigo.
+    #[tokio::test]
+    async fn effective_daily_ceiling_sums_magnitudes_not_signed_amounts() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+
+        // Mês anterior COMPLETO = maio/2026 (31 dias). Sem orçamento explícito → cai no fallback.
+        // Despesa de diário IMPORTADA (negativa) + MANUAL (positiva), ambas não-fixas, não-crédito.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('prev-imp', 'expense', -6200, '2026-05-10', 0, 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('prev-man', 'expense', 3100, '2026-05-20', 0, 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let ceiling = effective_daily_ceiling(&p, today).await.unwrap();
+        // Soma das magnitudes = 6200 + 3100 = 9300; ÷ 31 dias de maio = 300. O bug antigo
+        // (`ABS(SUM(amount))`) daria ABS(-6200 + 3100) = 3100 ÷ 31 = 100.
+        assert_eq!(
+            ceiling, 300,
+            "o teto diário soma magnitudes (SUM(ABS)), não o ABS da soma assinada"
+        );
+    }
+
+    // Plano 054: `realized_annual_savings` precisa aplicar o MESMO filtro `exclude_from_totals`
+    // ("Ignorar") de `load_year_events`/`annual_metrics`. Uma linha marcada cai fora da métrica;
+    // se entrasse no net de poupança realizada, o guardrail e o painel de métricas divergiriam.
+    #[tokio::test]
+    async fn realized_annual_savings_excludes_ignorar_tagged_rows() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+
+        // Janela = meses completos de 2026: [2026-01-01, 2026-06-01). Renda + despesa em maio.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_projection) \
+             VALUES ('inc-keep', 'income', 100000, '2026-05-05', 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_projection) \
+             VALUES ('exp-keep', 'expense', 40000, '2026-05-06', 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        // Baseline sem tags: renda 100000, net = 100000 − 40000 = 60000.
+        let (income, savings) = realized_annual_savings(&p, today).await.unwrap();
+        assert_eq!((income, savings), (100000, 60000));
+
+        // Linha extra de renda E de despesa, ambas marcadas "Ignorar" — não podem contar.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_projection) \
+             VALUES ('inc-ign', 'income', 50000, '2026-05-07', 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        tag_as_excluded(&p, "inc-ign").await; // cria a tag 'tg-ignore' e marca a renda
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_projection) \
+             VALUES ('exp-ign', 'expense', 70000, '2026-05-08', 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO transaction_tag (transaction_id, tag_id) VALUES ('exp-ign','tg-ignore')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        // Os totais NÃO mudam: as linhas "Ignorar" são filtradas como em `load_year_events`.
+        let (income2, savings2) = realized_annual_savings(&p, today).await.unwrap();
+        assert_eq!(
+            (income2, savings2),
+            (100000, 60000),
+            "linhas 'Ignorar' não entram na poupança realizada (paridade com load_year_events)"
         );
     }
 }
