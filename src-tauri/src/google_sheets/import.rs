@@ -1438,12 +1438,14 @@ pub fn parse_economia_sheet(rows: &[Vec<String>]) -> Vec<(i32, u32, i64)> {
             continue;
         }
         // Lê as linhas de mês logo abaixo do cabeçalho; cada bloco lê a SUA coluna de mês e de
-        // Economia. Para quando nenhuma coluna de bloco nomeia um mês (TOTAL/linha vazia/próximo
-        // cabeçalho) ou logo após dezembro.
+        // Economia. Para SOMENTE quando nenhuma coluna de bloco nomeia um mês (TOTAL/linha vazia/
+        // próximo cabeçalho → `!any`). Não há atalho por dezembro: num layout assimétrico lado a
+        // lado (ano anterior completo até dez, ano corrente parcial), um break ao ver o dez do ano
+        // anterior truncaria as linhas restantes do ano corrente. `month_number_from_name` rejeita
+        // "TOTAL"/"Totais"/números puros, então o `!any` para no fim de cada bloco com segurança.
         let mut rr = r + 1;
         while rr < rows.len() {
             let mut any = false;
-            let mut saw_december = false;
             for &(month_col, year, econ_col) in &blocks {
                 let Some(month) = rows[rr]
                     .get(month_col)
@@ -1454,17 +1456,11 @@ pub fn parse_economia_sheet(rows: &[Vec<String>]) -> Vec<(i32, u32, i64)> {
                 any = true;
                 let cents = rows[rr].get(econ_col).map(|c| parse_number(c)).unwrap_or(0);
                 out.push((year, month, cents));
-                if month == 12 {
-                    saw_december = true;
-                }
             }
             if !any {
                 break;
             }
             rr += 1;
-            if saw_december {
-                break;
-            }
         }
         r = rr;
     }
@@ -2015,6 +2011,84 @@ mod tests {
         assert_eq!(
             y2026.iter().find(|&&(_, mo, _)| mo == 2).unwrap().2,
             200_000
+        );
+    }
+
+    #[test]
+    fn parse_economia_sheet_asymmetric_blocks_no_premature_break() {
+        // Regressão (plano 050): bloco do ano anterior COMPLETO (12 meses) ao lado do bloco do ano
+        // corrente PARCIAL (8 meses com valor; 9–12 em branco, ainda não preenchidos). O bug antigo:
+        // ao ver o dezembro do ano anterior, um break encerrava o loop inteiro e truncava as linhas
+        // restantes do ano corrente. Correção: parar só no `!any` (linha sem nenhum mês válido).
+        //
+        // Layout: ano anterior em col B (idx 1) / Economia col D (idx 3);
+        //         ano corrente em col F (idx 5) / Economia col H (idx 7).
+        let header = vec![
+            "".to_string(),
+            "2025".to_string(),
+            "Entradas".to_string(),
+            "Economia".to_string(),
+            "".to_string(),
+            "2026".to_string(),
+            "Entradas".to_string(),
+            "Economia".to_string(),
+        ];
+        let month_names = [
+            "jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez",
+        ];
+        let mut rows = vec![header];
+        for (i, &name) in month_names.iter().enumerate() {
+            // Ano corrente: meses 1–8 têm valor; 9–12 em branco (parse_number("") == 0).
+            let eco_current = if i < 8 {
+                format!("{}.00", (i + 1) * 1000)
+            } else {
+                String::new()
+            };
+            rows.push(vec![
+                "".to_string(),
+                name.to_string(),
+                "5000.00".to_string(),
+                format!("{}.00", (i + 1) * 500), // ano anterior: todos os 12 meses
+                "".to_string(),
+                name.to_string(),
+                "8000.00".to_string(),
+                eco_current,
+            ]);
+        }
+
+        let got = parse_economia_sheet(&rows);
+
+        // Ano anterior deve ter todos os 12 meses (sem break prematuro).
+        let prior: Vec<_> = got
+            .iter()
+            .filter(|&&(y, _, _)| y == 2025)
+            .copied()
+            .collect();
+        assert_eq!(prior.len(), 12, "ano anterior deve ter todos os 12 meses");
+
+        // Ano corrente deve ter todos os 12 meses (9–12 em branco → 0 centavos, mas presentes).
+        let current: Vec<_> = got
+            .iter()
+            .filter(|&&(y, _, _)| y == 2026)
+            .copied()
+            .collect();
+        assert_eq!(
+            current.len(),
+            12,
+            "ano corrente deve ter os 12 meses mesmo com linhas finais em branco"
+        );
+
+        // Spot-check: dezembro do ano anterior presente e correto.
+        assert_eq!(
+            prior.iter().find(|&&(_, mo, _)| mo == 12).unwrap().2,
+            600_000, // 12 * 500 = 6000 (R$) → parse_number("6000.00") = 600_000 centavos
+            "dezembro do ano anterior presente e correto"
+        );
+        // Spot-check: setembro do ano corrente (em branco na planilha) é 0, não ausente.
+        assert_eq!(
+            current.iter().find(|&&(_, mo, _)| mo == 9).unwrap().2,
+            0,
+            "setembro do ano corrente (em branco) é 0 centavos, não faltante"
         );
     }
 
@@ -3017,6 +3091,62 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(after, 0, "Entrada derivada removida junto com o pai");
+    }
+
+    #[tokio::test]
+    async fn diff_delete_removes_orphan_import_conflict() {
+        // Regressão (plano 050, bug já fechado pelo 047): uma linha importada, com um conflito de
+        // import EM ABERTO registrado contra ela, e depois removida da planilha (re-import sem essa
+        // linha) → o conflito NÃO pode sobreviver (um conflito órfão bloquearia o write-back).
+        let pool = test_pool().await;
+
+        // Importa duas linhas: a primeira recebe o conflito; a segunda é a âncora que mantém o
+        // re-import seguinte não-vazio (o diff-delete só roda em re-import não-vazio).
+        let v1 = vec![
+            imported("2026-03-01", -10_000),
+            imported("2026-03-02", -5_000),
+        ];
+        import_rows(&pool, "2026", &v1, "p1").await.unwrap();
+
+        // Id da transação criada pelo import (SHA-256 hex, sem prefixo `derived:`).
+        let (txn_id,): (String,) =
+            sqlx::query_as("SELECT id FROM \"transaction\" WHERE date = '2026-03-01'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        // Insere um conflito EM ABERTO (resolved_at NULL) para essa transação.
+        let conf_id = format!("conf:{txn_id}:amount");
+        sqlx::query(
+            "INSERT INTO import_conflict (id, transaction_id, field, base_value, local_value, sheet_value, created_at) \
+             VALUES (?1, ?2, 'amount', '10000', '12000', '11000', '2026-03-01T00:00:00Z')",
+        )
+        .bind(&conf_id)
+        .bind(&txn_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let (before,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM import_conflict WHERE transaction_id = ?1")
+                .bind(&txn_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(before, 1, "conflito existe antes do re-import");
+
+        // Re-import que OMITE a linha do conflito (simula a linha removida da planilha).
+        let v2 = vec![imported("2026-03-02", -5_000)];
+        import_rows(&pool, "2026", &v2, "p1").await.unwrap();
+
+        // Conflito órfão deve sumir junto com a transação removida pelo diff-delete.
+        let (after,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM import_conflict WHERE transaction_id = ?1")
+                .bind(&txn_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(after, 0, "conflito órfão removido pelo diff-delete");
     }
 
     #[tokio::test]

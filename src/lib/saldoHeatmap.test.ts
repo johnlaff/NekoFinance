@@ -10,13 +10,17 @@ describe("saldoBand — termômetro com limiares absolutos da planilha", () => {
   it.each([
     // > R$ 2.000 → verde forte (folga)
     [250_000, "comfortable"],
+    // Fronteira R$ 2.000 (três pontos): 200_001 → folga; 200_000 → ok (≤ inclusivo); 199_999 → ok.
     [200_001, "comfortable"],
     // R$ 1.000–2.000 → verde claro (ok). R$ 2.000 exato cai em "ok" (prioridade da planilha).
     [200_000, "ok"],
+    [199_999, "ok"],
     [150_000, "ok"],
+    // Fronteira R$ 1.000 (três pontos): 100_001 → ok; 100_000 → apertado (≤ inclusivo); 99_999 → apertado.
     [100_001, "ok"],
     // R$ 0–1.000 → âmbar (apertado). R$ 1.000 exato cai em "apertado".
     [100_000, "tight"],
+    [99_999, "tight"],
     [50_000, "tight"],
     [0, "tight"],
     // R$ 0 a −R$ 500,00 → vermelho claro (negativo). −R$500,00 EXATO = negativo (planilha: lessThan, não <=).
