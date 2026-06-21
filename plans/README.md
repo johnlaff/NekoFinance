@@ -57,7 +57,7 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 042  | Write-back/sync correctness: fast-path invalidate + preview TOCTOU (+ economia test)   | P1       | M      | —          | DONE (pkg E)               |
 | 043  | Edit/delete + UX integrity: imported-row edits, items on series, provenance, dead-ends | P1       | M      | —          | DONE (pkg E)               |
 | 044  | Parity views: full-year 12-month grid + dual-year Economia side-by-side                | P1       | L      | —          | DONE (pkg E)               |
-| 045  | Parity: Diário budget categories + due-date/fatura calendar (+ installments)           | P2       | L      | —          | TODO (pkg E)               |
+| 045  | Parity: Diário budget categories + due-date/fatura calendar (+ installments)           | P2       | L      | —          | DONE (pkg E)               |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale)
 

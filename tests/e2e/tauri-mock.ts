@@ -242,6 +242,9 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         tags: [],
         provenance: "importado",
         line_items: [],
+        due_date: null,
+        installment_index: null,
+        installment_total: null,
       },
       {
         id: "t2",
@@ -256,6 +259,9 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         tags: [],
         provenance: "manual",
         line_items: [],
+        due_date: null,
+        installment_index: 3,
+        installment_total: 12,
       },
       {
         id: "t3",
@@ -270,6 +276,9 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         tags: [],
         provenance: "importado",
         line_items: [],
+        due_date: "2026-06-28",
+        installment_index: null,
+        installment_total: null,
       },
       {
         id: "t4",
@@ -284,6 +293,9 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         tags: [],
         provenance: "projetado",
         line_items: [],
+        due_date: null,
+        installment_index: null,
+        installment_total: null,
       },
       {
         id: "t5",
@@ -298,6 +310,19 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         tags: [],
         provenance: "projetado",
         line_items: [],
+        due_date: null,
+        installment_index: null,
+        installment_total: null,
+      },
+    ];
+
+    const UPCOMING_BILLS = [
+      {
+        id: "t3",
+        description: "Compromisso fixo demo",
+        amount: 12500,
+        due_date: "2026-06-28",
+        is_projection: false,
       },
     ];
 
@@ -405,6 +430,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
       list_tags_cmd: TAG_TOTALS,
       get_annual_metrics: ANNUAL,
       get_recent_transactions: TXNS,
+      get_upcoming_bills_cmd: UPCOMING_BILLS,
       get_import_conflicts: [],
       create_transaction: "e2e-txn-id",
       get_app_info: APP_INFO,

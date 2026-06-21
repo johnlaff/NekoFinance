@@ -745,6 +745,7 @@ mod tests {
             std::slice::from_ref(&tag),
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -791,6 +792,7 @@ mod tests {
                 repetitions: 3,
             }),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -830,6 +832,7 @@ mod tests {
                 &[],
                 None,
                 None,
+                None,
             )
             .await
             .is_err(),
@@ -848,6 +851,7 @@ mod tests {
                 &[],
                 None,
                 None,
+                None,
             )
             .await
             .is_err(),
@@ -863,6 +867,7 @@ mod tests {
                 None,
                 false,
                 &[],
+                None,
                 None,
                 None,
             )
@@ -895,6 +900,7 @@ mod tests {
             &[],
             None,
             Some(&reserve_id),
+            None,
         )
         .await
         .expect("transfer para reserva deve ser aceito");
@@ -932,6 +938,7 @@ mod tests {
             &[],
             None,
             Some(&liquid_id),
+            None,
         )
         .await;
         assert!(

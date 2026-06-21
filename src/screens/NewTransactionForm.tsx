@@ -34,6 +34,8 @@ export interface TransactionEditValues {
   recurrence_id: string | null;
   /** Partes itemizadas já persistidas (plano 036). Ausente/vazio = lançamento sem partes. */
   items?: LineItem[];
+  /** Vencimento opcional ("YYYY-MM-DD"); null = sem lembrete de conta (plano 045). */
+  due_date?: string | null;
 }
 
 /** `LineItem` (persistido) → `LineItemDraft` (editável no form). Descarta id/transaction_id. */
@@ -128,6 +130,8 @@ interface FormState {
   selectedTags: string[];
   /** Conta-destino da Economia (transfer): id de uma conta reserve/illiquid. Vazio fora do kind. */
   toAccountId: string;
+  /** Vencimento opcional ("YYYY-MM-DD"); só Saída/Cartão. Vazio = sem lembrete (plano 045). */
+  dueDate: string;
   repeat: boolean;
   frequency: Frequency;
   repetitions: number;
@@ -146,6 +150,7 @@ function makeInitialForm(initial?: TransactionEditValues): FormState {
       date: initial.date,
       selectedTags: [],
       toAccountId: "",
+      dueDate: initial.due_date ?? "",
       repeat: false,
       frequency: "mensal",
       repetitions: 12,
@@ -161,6 +166,7 @@ function makeInitialForm(initial?: TransactionEditValues): FormState {
     date: todayISO(),
     selectedTags: [],
     toAccountId: "",
+    dueDate: "",
     repeat: false,
     frequency: "mensal",
     repetitions: 12,
@@ -204,6 +210,7 @@ function formReducer(s: FormState, a: FormAction): FormState {
         amount: "",
         description: "",
         selectedTags: [],
+        dueDate: "",
         repeat: false,
         items: [],
         busy: false,
@@ -450,6 +457,31 @@ function AmountDateFields({
   );
 }
 
+/** Campo de vencimento opcional (só Saída/Cartão). Extraído para manter o form enxuto e abaixo do
+ * limite de tamanho do React Doctor. Alimenta o calendário de contas próximas; não toca o Saldo. */
+function DueDateField({
+  dueDate,
+  dispatch,
+}: {
+  dueDate: string;
+  dispatch: Dispatch<FormAction>;
+}) {
+  return (
+    <div>
+      <label htmlFor="ntf-due-date" style={label}>
+        Vencimento (opcional)
+      </label>
+      <input
+        id="ntf-due-date"
+        type="date"
+        value={dueDate}
+        onChange={(e) => dispatch({ type: "set", patch: { dueDate: e.target.value } })}
+        style={field}
+      />
+    </div>
+  );
+}
+
 export function NewTransactionForm({
   onCreated,
   initialValues,
@@ -468,6 +500,7 @@ export function NewTransactionForm({
     date,
     selectedTags,
     toAccountId,
+    dueDate,
     repeat,
     frequency,
     repetitions,
@@ -583,6 +616,11 @@ export function NewTransactionForm({
         tagIds: selectedTags,
         recurrence: repeat ? { frequency, repetitions } : null,
         toAccountId: kind === "economia" ? toAccountId : null,
+        // Vencimento só vale para conta a pagar (Saída/Cartão); demais tipos não têm lembrete.
+        dueDate:
+          (kind === "saida" || kind === "cartao") && dueDate.trim()
+            ? dueDate.trim()
+            : null,
       });
       // Plano 036: itens só em lançamento ÚNICO (não-recorrente; a série é por-instância). Segundo
       // round-trip após o create — STOP documentado: um crash entre os dois deixaria a transação
@@ -674,6 +712,12 @@ export function NewTransactionForm({
           style={field}
         />
       </div>
+
+      {/* Vencimento opcional: só Saída/Cartão (conta a pagar). Alimenta o calendário de
+          contas próximas no Horizonte; NÃO altera o Saldo/forecast (que usa a data de caixa). */}
+      {!editing && (kind === "saida" || kind === "cartao") && (
+        <DueDateField dueDate={dueDate} dispatch={dispatch} />
+      )}
 
       {/* Detalhamento em partes (planos 036/043): fora da Economia, vale para novo, passado e
           previsto — inclusive numa ocorrência de série recorrente. Como itens são por-instância,

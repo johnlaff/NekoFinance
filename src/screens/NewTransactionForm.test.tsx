@@ -110,6 +110,34 @@ describe("NewTransactionForm", () => {
     await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("list_tags_cmd"));
   });
 
+  it("vencimento (plano 045): só aparece em Saída/Cartão e viaja no create", async () => {
+    const user = userEvent.setup();
+    mockCommands({ list_tags_cmd: [], create_transaction: "due-id" });
+    render(<NewTransactionForm />);
+
+    // Diário (padrão) não mostra o campo de vencimento.
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("list_tags_cmd"));
+    expect(screen.queryByLabelText("Vencimento (opcional)")).not.toBeInTheDocument();
+
+    // Saída revela o campo; preenchê-lo o envia como dueDate.
+    await user.click(screen.getByRole("button", { name: /Saída/ }));
+    const due = screen.getByLabelText("Vencimento (opcional)");
+    expect(due).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Valor"), "1.200,00");
+    await user.type(due, "2026-08-10");
+    await user.click(screen.getByRole("button", { name: "Lançar" }));
+
+    await waitFor(() => {
+      const call = mockInvoke.mock.calls.find((c) => c[0] === "create_transaction");
+      expect(call?.[1]).toMatchObject({
+        txnType: "expense",
+        isFixed: true,
+        amountCents: 120000,
+        dueDate: "2026-08-10",
+      });
+    });
+  });
+
   it("lança Economia como transfer para conta reserva", async () => {
     const user = userEvent.setup();
     mockCommands({

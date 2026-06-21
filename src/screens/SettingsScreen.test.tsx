@@ -142,6 +142,105 @@ describe("SettingsScreen", () => {
     ).toBeInTheDocument();
   });
 
+  it("DiarioCategorySection: estado vazio mostra o botão de adicionar categoria", async () => {
+    mockCommands({
+      get_app_info: APP_INFO,
+      get_app_setting: null,
+      set_app_setting: undefined,
+      get_daily_budget_categories_cmd: [],
+      upsert_daily_budget_with_categories_cmd: undefined,
+    });
+    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
+
+    expect(
+      await screen.findByRole("button", { name: "Adicionar categoria" }),
+    ).toBeInTheDocument();
+    // Resumo derivado com 0 categorias: total R$ 0,00.
+    expect(screen.getByText(/Total R\$ 0,00/)).toBeInTheDocument();
+  });
+
+  it("DiarioCategorySection: renderiza as categorias existentes (nome + valor)", async () => {
+    mockCommands({
+      get_app_info: APP_INFO,
+      get_app_setting: "1.250,00",
+      set_app_setting: undefined,
+      get_daily_budget_categories_cmd: [
+        { id: "c1", name: "Alimentação", amount_cents: 30000, position: 0 },
+        { id: "c2", name: "Transporte", amount_cents: 20000, position: 1 },
+      ],
+      upsert_daily_budget_with_categories_cmd: undefined,
+    });
+    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
+
+    expect(await screen.findByDisplayValue("Alimentação")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Transporte")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("300,00")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("200,00")).toBeInTheDocument();
+  });
+
+  it("DiarioCategorySection: Salvar chama upsert_daily_budget_with_categories_cmd com os args", async () => {
+    const user = userEvent.setup();
+    mockCommands({
+      get_app_info: APP_INFO,
+      get_app_setting: null,
+      set_app_setting: undefined,
+      get_daily_budget_categories_cmd: [],
+      upsert_daily_budget_with_categories_cmd: undefined,
+    });
+    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
+
+    // Define o teto total e adiciona uma categoria.
+    await user.type(
+      await screen.findByLabelText("Teto mensal do Diário em reais"),
+      "1.250,00",
+    );
+    await user.click(screen.getByRole("button", { name: "Adicionar categoria" }));
+    await user.type(screen.getByLabelText("Nome da categoria 1"), "Alimentação");
+    await user.type(
+      screen.getByLabelText("Valor mensal da categoria 1 em reais"),
+      "300,00",
+    );
+    await user.click(screen.getByRole("button", { name: "Salvar categorias" }));
+
+    await waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith(
+        "upsert_daily_budget_with_categories_cmd",
+        {
+          amountCents: 125000,
+          categories: [{ name: "Alimentação", amount_cents: 30000, position: 0 }],
+        },
+      );
+    });
+  });
+
+  it("DiarioCategorySection: mostra o teto/dia derivado (total ÷ dias do mês)", async () => {
+    // Total = soma das categorias quando o teto fica em branco (60000 cents). O teto/dia depende
+    // dos dias do mês ATUAL; calculamos o esperado pela mesma fórmula para não depender de relógio
+    // fixo (que quebra `findBy*` sob fake timers).
+    const now = new Date();
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const expectedRate = Math.floor(60000 / daysInMonth); // cents/dia
+    const reais = (expectedRate / 100).toFixed(2).replace(".", ",");
+
+    mockCommands({
+      get_app_info: APP_INFO,
+      get_app_setting: null,
+      set_app_setting: undefined,
+      get_daily_budget_categories_cmd: [
+        { id: "c1", name: "Alimentação", amount_cents: 60000, position: 0 },
+      ],
+      upsert_daily_budget_with_categories_cmd: undefined,
+    });
+    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
+
+    expect(
+      await screen.findByText(new RegExp(`R\\$ ${reais}/dia`)),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(new RegExp(`${daysInMonth} dias no mês atual`)),
+    ).toBeInTheDocument();
+  });
+
   it("DailyTetoCeilingSection: mostra o campo de teto e chama upsert_daily_budget ao salvar", async () => {
     const user = userEvent.setup();
     // isTauri é true no ambiente de teste (setup.ts define window.__TAURI_INTERNALS__),

@@ -1,5 +1,6 @@
 import { Fragment, useReducer } from "react";
 import {
+  CalendarClock,
   ChevronDown,
   ChevronRight,
   MoreHorizontal,
@@ -96,6 +97,41 @@ const LINE_ITEM_STYLE: React.CSSProperties = {
   color: "var(--text-muted)",
 };
 
+// Plano 045: chip de vencimento (conta a pagar) e badge de "N/M parcelas". Estilo do ProvBadge —
+// fundo/borda discretos, micro-tipografia. Hoistados (convenção do React Compiler/Doctor).
+const DUE_DATE_CHIP_STYLE: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "5px",
+  height: 20,
+  marginLeft: 6,
+  padding: "0 8px",
+  borderRadius: "var(--radius-pill)",
+  background: "var(--surface-2)",
+  border: "var(--bw-hair) solid var(--border)",
+  fontSize: "var(--fs-micro)",
+  fontWeight: "var(--fw-medium)",
+  color: "var(--text-muted)",
+  whiteSpace: "nowrap",
+  verticalAlign: "middle",
+};
+
+const INSTALLMENT_BADGE_STYLE: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  height: 20,
+  marginLeft: 6,
+  padding: "0 8px",
+  borderRadius: "var(--radius-pill)",
+  background: "var(--surface-2)",
+  border: "var(--bw-hair) solid var(--border)",
+  fontSize: "var(--fs-micro)",
+  fontWeight: "var(--fw-medium)",
+  color: "var(--text-muted)",
+  whiteSpace: "nowrap",
+  verticalAlign: "middle",
+};
+
 /** Rótulo amigável do método de pagamento (Débito, PIX…); entrada sem método vira "Entrada". */
 function methodLabel(t: TransactionRow): string {
   if (t.payment_method) return METHOD_LABELS[t.payment_method] ?? t.payment_method;
@@ -136,6 +172,8 @@ function toEditValues(t: TransactionRow): TransactionEditValues {
     recurrence_id: recurrenceIdOf(t.id),
     // Plano 036: pré-carrega as partes itemizadas no form de edição (a linha já as traz do backend).
     items: t.line_items,
+    // Plano 045: pré-carrega o vencimento (exibição); a edição escalar não o reescreve neste passo.
+    due_date: t.due_date,
   };
 }
 
@@ -318,6 +356,23 @@ function LedgerDataRow({
           "—"
         )}{" "}
         <ProvBadge provenance={t.provenance} />
+        {t.due_date && (
+          <span
+            style={DUE_DATE_CHIP_STYLE}
+            aria-label={`Vencimento: ${fmtDate(t.due_date)}`}
+          >
+            <CalendarClock size={11} strokeWidth={1.75} aria-hidden="true" />
+            {fmtDate(t.due_date)}
+          </span>
+        )}
+        {t.installment_index != null && t.installment_total != null && (
+          <span
+            style={INSTALLMENT_BADGE_STYLE}
+            aria-label={`Parcela ${t.installment_index} de ${t.installment_total}`}
+          >
+            {t.installment_index}/{t.installment_total} parcelas
+          </span>
+        )}
         {t.owners.length >= 2 && (
           <span
             style={{

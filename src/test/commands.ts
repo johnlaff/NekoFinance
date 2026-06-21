@@ -64,6 +64,9 @@ export const TXNS: TransactionRow[] = [
     tags: [],
     provenance: "importado",
     line_items: [],
+    due_date: null,
+    installment_index: null,
+    installment_total: null,
   },
   {
     id: "t2",
@@ -78,6 +81,9 @@ export const TXNS: TransactionRow[] = [
     tags: [],
     provenance: "manual",
     line_items: [],
+    due_date: null,
+    installment_index: null,
+    installment_total: null,
   },
   {
     id: "t3",
@@ -92,6 +98,9 @@ export const TXNS: TransactionRow[] = [
     tags: [],
     provenance: "projetado",
     line_items: [],
+    due_date: null,
+    installment_index: null,
+    installment_total: null,
   },
 ];
 
@@ -109,6 +118,9 @@ export const RECURRING_TXN: TransactionRow = {
   tags: [],
   provenance: "projetado",
   line_items: [],
+  due_date: null,
+  installment_index: 3,
+  installment_total: 6,
 };
 
 /** Totais por titular de um mês (multi-titular) para a seção "Por titular" dos Totais. */
