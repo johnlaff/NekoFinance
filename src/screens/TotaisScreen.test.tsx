@@ -111,4 +111,31 @@ describe("TotaisScreen (render)", () => {
       screen.queryByRole("region", { name: "Por titular" }),
     ).not.toBeInTheDocument();
   });
+
+  it("Economizado mostra badge de status (Dentro do ideal quando >= 20%)", async () => {
+    mockInvoke.mockReset();
+    // FORECAST tem savings_rate_bps: 2500 em junho → "Dentro do ideal".
+    mockCommands({ get_forecast: FORECAST, owner_totals_for_month_cmd: [] });
+    render(<TotaisScreen />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Economizado")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Dentro do ideal")).toBeInTheDocument();
+  });
+
+  it("Custo de vida sublabel menciona cartão", async () => {
+    mockInvoke.mockReset();
+    mockCommands({ get_forecast: FORECAST, owner_totals_for_month_cmd: [] });
+    render(<TotaisScreen />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Custo de vida")).toBeInTheDocument();
+    });
+    // O sublabel da métrica passa a mencionar "incl. cartão", alinhado ao hint do rodapé —
+    // por isso há 2+ ocorrências (sublabel + rodapé). A presença do sublabel é o que importa.
+    expect(
+      screen.getByText("= Saída Total (saídas incl. cartão + diário)"),
+    ).toBeInTheDocument();
+  });
 });

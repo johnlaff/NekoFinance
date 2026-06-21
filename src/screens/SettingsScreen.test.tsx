@@ -141,6 +141,30 @@ describe("SettingsScreen", () => {
       await screen.findByRole("button", { name: /Conectar Google/ }),
     ).toBeInTheDocument();
   });
+
+  it("DailyTetoCeilingSection: mostra o campo de teto e chama upsert_daily_budget ao salvar", async () => {
+    const user = userEvent.setup();
+    // isTauri é true no ambiente de teste (setup.ts define window.__TAURI_INTERNALS__),
+    // então a seção renderiza. get_app_setting=null deixa o campo vazio na montagem.
+    mockCommands({
+      get_app_info: APP_INFO,
+      get_app_setting: null,
+      set_app_setting: undefined,
+      upsert_daily_budget: undefined,
+    });
+    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
+
+    const input = await screen.findByLabelText("Teto diário em reais");
+    await user.type(input, "50,00");
+    await user.click(screen.getByRole("button", { name: "Salvar" }));
+
+    await waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith(
+        "upsert_daily_budget",
+        expect.objectContaining({ amountCents: 5000 }),
+      );
+    });
+  });
 });
 
 describe("DailyReminderSection", () => {

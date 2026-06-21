@@ -297,6 +297,58 @@ pub(crate) async fn effective_daily_ceiling(
     Ok(if days_prev > 0 { sum.0 / days_prev } else { 0 })
 }
 
+/// Núcleo puro do upsert do teto diário (testável sem o `State` do Tauri).
+/// Depreca TODOS os registros ativos anteriores e insere um novo com `status='active'` quando
+/// `amount_cents > 0`. `amount_cents = 0` apenas depreca (desativa o teto explícito — o engine
+/// cai no fallback de média do mês anterior em `effective_daily_ceiling`).
+pub(crate) async fn upsert_daily_budget_inner(
+    pool: &SqlitePool,
+    amount_cents: i64,
+) -> Result<(), String> {
+    // Obtém o person_id do primeiro perfil (padrão single-user).
+    let person: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM person ORDER BY created_at LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("upsert_daily_budget (person): {e}"))?;
+    let Some((person_id,)) = person else {
+        // Nenhum perfil ainda — silencioso (usuário novo sem import).
+        return Ok(());
+    };
+    // Depreca os registros ativos anteriores (todos, não só o primeiro).
+    sqlx::query("UPDATE daily_budget SET status='deprecated' WHERE status='active'")
+        .execute(pool)
+        .await
+        .map_err(|e| format!("upsert_daily_budget (deprecate): {e}"))?;
+
+    if amount_cents > 0 {
+        let id = uuid::Uuid::new_v4().to_string();
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        sqlx::query(
+            "INSERT INTO daily_budget (id, person_id, amount, start_date, status) \
+             VALUES (?1, ?2, ?3, ?4, 'active')",
+        )
+        .bind(&id)
+        .bind(&person_id)
+        .bind(amount_cents)
+        .bind(&today)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("upsert_daily_budget (insert): {e}"))?;
+    }
+    Ok(())
+}
+
+/// Grava (ou atualiza) o teto diário configurado pelo dono (gasto variável ativo).
+/// Adapter fino sobre `upsert_daily_budget_inner` (funcional-core / imperative-shell).
+#[tauri::command]
+pub async fn upsert_daily_budget(
+    pool: State<'_, SqlitePool>,
+    amount_cents: i64,
+) -> Result<(), String> {
+    upsert_daily_budget_inner(pool.inner(), amount_cents).await
+}
+
 /// Piso de reserva = colchão intocável que a folga de caixa não pode comer.
 ///
 /// Lógica em duas camadas:

@@ -554,6 +554,14 @@ export function setAppSetting(key: string, value: string): Promise<void> {
   return invoke("set_app_setting", { key, value });
 }
 
+/**
+ * Grava o teto de gasto Diário por dia configurado pelo dono.
+ * `amountCents = 0` desativa o teto explícito — o engine usa o fallback de média.
+ */
+export function upsertDailyBudget(amountCents: number): Promise<void> {
+  return invoke("upsert_daily_budget", { amountCents });
+}
+
 // --- Eventos do backend (sync em segundo plano, plano 026) ---
 
 /** Carga útil do evento `neko://sync-done` emitido pela tarefa de sync de leitura. */

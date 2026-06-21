@@ -25,6 +25,8 @@ function lastCreateCall() {
 describe("DailyCheckinCard", () => {
   beforeEach(() => {
     mockInvoke.mockReset();
+    // O card persiste o último tipo em localStorage; limpa para isolar cada teste do tipo padrão.
+    localStorage.clear();
   });
 
   it("mostra o diário de hoje contra o teto e o disponível", () => {
@@ -181,5 +183,32 @@ describe("DailyCheckinCard", () => {
     );
     expect(onAmountRef).toHaveBeenCalledTimes(1);
     expect(onAmountRef.mock.calls[0]?.[0]).toBeInstanceOf(HTMLInputElement);
+  });
+
+  it("persiste o tipo selecionado no localStorage e restaura na próxima montagem", async () => {
+    const user = userEvent.setup();
+    mockCommands({});
+
+    const { unmount } = render(
+      <DailyCheckinCard summary={SUMMARY} onLogged={vi.fn()} />,
+    );
+    // Seleciona Cartão.
+    await user.click(screen.getByRole("radio", { name: /Cartão/ }));
+    expect(localStorage.getItem("neko_last_kind")).toBe("cartao");
+    unmount();
+
+    // Remonta — deve restaurar Cartão como tipo ativo.
+    render(<DailyCheckinCard summary={SUMMARY} onLogged={vi.fn()} />);
+    expect(screen.getByRole("radio", { name: /Cartão/ })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
+  it("hint da Saída não menciona débito (texto method-neutral)", () => {
+    mockCommands({});
+    render(<DailyCheckinCard summary={SUMMARY} onLogged={vi.fn()} />);
+    // O texto "(débito)" não deve aparecer no DOM independente do chip selecionado.
+    expect(document.body.textContent).not.toContain("(débito)");
   });
 });
