@@ -534,7 +534,8 @@ export function NewTransactionForm({
         const recId = initialValues.recurrence_id;
         if (recId) {
           // Série recorrente: a escolha "toda a série" vs "deste ponto em diante" (o passado
-          // fica intacto em updateSeriesFrom). Itens são por-instância → fora do escopo de série.
+          // fica intacto em updateSeriesFrom). Os campos escalares aplicam à série; as partes
+          // detalhadas (plano 043) são por-instância → persistidas só nesta ocorrência.
           const all = window.confirm(
             "Aplicar a alteração em toda a série?\n\nOK = toda a série\nCancela = este e os futuros",
           );
@@ -548,6 +549,10 @@ export function NewTransactionForm({
             await updateSeriesAll(recId, edit);
           } else {
             await updateSeriesFrom(initialValues.id, edit);
+          }
+          // Plano 043: itens são por-ocorrência → usa o id desta instância (não o recId da série).
+          if (itemsActive) {
+            await updateTransactionItems(initialValues.id, items);
           }
         } else {
           await updateTransaction(initialValues.id, {
@@ -670,14 +675,22 @@ export function NewTransactionForm({
         />
       </div>
 
-      {/* Detalhamento em partes (plano 036): só fora da Economia e fora de séries recorrentes
-          (itens são por-instância). Vale para novo, passado e previsto. */}
-      {itemsEnabled && !initialValues?.recurrence_id && (
-        <LineItemEditor
-          items={items}
-          onChange={(next) => dispatch({ type: "setItems", items: next })}
-          disabled={busy}
-        />
+      {/* Detalhamento em partes (planos 036/043): fora da Economia, vale para novo, passado e
+          previsto — inclusive numa ocorrência de série recorrente. Como itens são por-instância,
+          a edição numa série atinge só esta ocorrência (nota explicativa abaixo). */}
+      {itemsEnabled && (
+        <>
+          {initialValues?.recurrence_id && (
+            <p style={HINT_TEXT}>
+              Partes detalhadas se aplicam somente a esta ocorrência da série.
+            </p>
+          )}
+          <LineItemEditor
+            items={items}
+            onChange={(next) => dispatch({ type: "setItems", items: next })}
+            disabled={busy}
+          />
+        </>
       )}
 
       {!editing && kind === "economia" && (

@@ -86,6 +86,20 @@ const QUICK_HINT_STYLE: CSSProperties = {
   color: "var(--text-faint)",
 };
 
+// Link discreto sob os chips: leva ao form completo de Lançamentos p/ registrar uma Economia
+// (que exige seletor de conta-destino). Só aparece quando o pai fornece `onGoToLancamentos`.
+const ECONOMIA_LINK_STYLE: CSSProperties = {
+  marginTop: "var(--space-1)",
+  padding: 0,
+  border: 0,
+  background: "transparent",
+  color: "var(--primary)",
+  cursor: "pointer",
+  fontFamily: "var(--font-sans)",
+  fontSize: "var(--fs-micro)",
+  textDecoration: "underline",
+};
+
 // Coluna título + subtítulo do cabeçalho (mantém o head como 2 filhos flex: grupo | status).
 const CARD_TITLE_GROUP: CSSProperties = {
   display: "flex",
@@ -204,43 +218,58 @@ function checkinReducer(s: CheckinState, a: CheckinAction): CheckinState {
 function KindSelector({
   kind,
   onSelect,
+  onGoToLancamentos,
 }: {
   kind: MovKind;
   onSelect: (k: MovKind) => void;
+  /**
+   * Plano 043: quando fornecido, mostra um link "Registrar Economia → Lançamentos" sob os chips,
+   * tornando o chip Economia desabilitado em um caminho navegável em vez de um beco sem saída.
+   * Opcional porque a navegação por aba mora no shell (App.tsx), fora do escopo deste plano; o pai
+   * (DashboardScreen) deve threadear esse callback quando a navegação por aba estiver disponível.
+   */
+  onGoToLancamentos?: (() => void) | undefined;
 }) {
   return (
-    <div role="radiogroup" aria-label="Tipo de movimento" style={QUICK_KIND_ROW}>
-      {QUICK_KINDS.map((k) => {
-        const active = k === kind;
-        const economiaDisabled = k === "economia";
-        const btnStyle: CSSProperties = active
-          ? {
-              ...QUICK_KIND_BTN_BASE,
-              background: "var(--surface-selected)",
-              borderColor: "var(--primary)",
-            }
-          : economiaDisabled
-            ? { ...QUICK_KIND_BTN_BASE, cursor: "not-allowed", opacity: 0.5 }
-            : QUICK_KIND_BTN_BASE;
-        return (
-          <button
-            key={k}
-            type="button"
-            role="radio"
-            aria-checked={active}
-            disabled={economiaDisabled}
-            title={
-              economiaDisabled
-                ? "Economia precisa de uma conta-destino — registre em Lançamentos."
-                : undefined
-            }
-            onClick={() => onSelect(k)}
-            style={btnStyle}
-          >
-            <MovBadge kind={k} showLabel size={14} />
-          </button>
-        );
-      })}
+    <div>
+      <div role="radiogroup" aria-label="Tipo de movimento" style={QUICK_KIND_ROW}>
+        {QUICK_KINDS.map((k) => {
+          const active = k === kind;
+          const economiaDisabled = k === "economia";
+          const btnStyle: CSSProperties = active
+            ? {
+                ...QUICK_KIND_BTN_BASE,
+                background: "var(--surface-selected)",
+                borderColor: "var(--primary)",
+              }
+            : economiaDisabled
+              ? { ...QUICK_KIND_BTN_BASE, cursor: "not-allowed", opacity: 0.5 }
+              : QUICK_KIND_BTN_BASE;
+          return (
+            <button
+              key={k}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              disabled={economiaDisabled}
+              title={
+                economiaDisabled
+                  ? "Economia precisa de uma conta-destino — abra a aba Lançamentos e use o form completo."
+                  : undefined
+              }
+              onClick={() => onSelect(k)}
+              style={btnStyle}
+            >
+              <MovBadge kind={k} showLabel size={14} />
+            </button>
+          );
+        })}
+      </div>
+      {onGoToLancamentos && (
+        <button type="button" onClick={onGoToLancamentos} style={ECONOMIA_LINK_STYLE}>
+          Registrar Economia → Lançamentos
+        </button>
+      )}
     </div>
   );
 }
@@ -257,6 +286,7 @@ export function DailyCheckinCard({
   monthAvgCents = 0,
   onLogged,
   onAmountRef,
+  onGoToTransactions,
 }: {
   summary: DashboardSummary;
   /** Diário médio do mês corrente (Σ realizado ÷ dias decorridos) — referência de ritmo. */
@@ -264,6 +294,12 @@ export function DailyCheckinCard({
   onLogged: () => void;
   /** Chamado uma vez após o mount com o ref do `<input>` de valor; deixa o AppShell focá-lo (tecla N). */
   onAmountRef?: ((ref: HTMLInputElement | null) => void) | undefined;
+  /**
+   * Plano 043: navega para a aba Lançamentos (form completo) — usado pelo link da Economia, que
+   * exige um seletor de conta-destino fora do caminho rápido. Opcional: a navegação por aba mora
+   * no shell; o pai a fornece quando disponível.
+   */
+  onGoToTransactions?: (() => void) | undefined;
 }) {
   const [state, dispatch] = useReducer(checkinReducer, undefined, initCheckin);
   const { kind, description, amount, showItems, items, busy, error } = state;
@@ -433,6 +469,7 @@ export function DailyCheckinCard({
             // Persiste o tipo escolhido p/ restaurar no próximo mount (localStorage).
             localStorage.setItem(LAST_KIND_KEY, k);
           }}
+          onGoToLancamentos={onGoToTransactions}
         />
 
         <input
