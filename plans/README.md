@@ -58,7 +58,7 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 043  | Edit/delete + UX integrity: imported-row edits, items on series, provenance, dead-ends | P1       | M      | —          | DONE (pkg E)               |
 | 044  | Parity views: full-year 12-month grid + dual-year Economia side-by-side                | P1       | L      | —          | DONE (pkg E)               |
 | 045  | Parity: Diário budget categories + due-date/fatura calendar (+ installments)           | P2       | L      | —          | DONE (pkg E)               |
-| 046  | Performance correction: subtract economia (it lives in the Saída column) — refines 040 | P1       | S–M    | —          | TODO (pkg F)               |
+| 046  | Performance correction: subtract economia (it lives in the Saída column) — refines 040 | P1       | S–M    | —          | DONE (pkg F)               |
 | 047  | F1 bugs: delete-orphan cleanup (P1) + line-item reconcile + budget atomicity + 2 more  | P1       | M      | —          | TODO (pkg F)               |
 | 048  | F2 annotation fidelity: note section headers round-trip + thermometer −R$500 boundary  | P2       | M      | —          | TODO (pkg F)               |
 
@@ -109,11 +109,11 @@ already-built UI. All are high-leverage with clean verification stories.
 
 - **`saldoHeatmap.ts` thresholds**: correct — absolute R$ bands match the spreadsheet's
   conditional formatting (critical −500, tight 1000, ok 2000). No change.
-- **Performance formula in `forecast/mod.rs`**: changed by plan 040 (2026-06-20) to
-  `income − cost_of_living` (spreadsheet-parity). The richer App/method formula (which also
-  subtracted Economia and projected remaining Diário) was removed from the display metric by
-  owner decision; the savings guardrail and Economizado% are unaffected. This is a deliberate
-  reversal of the spec 011 formula — do not "fix" it back to the App/method formula.
+- **Performance formula in `forecast/mod.rs`**: corrected by plans 040 + 046. The formula is
+  `income − cost_of_living − economia` (spreadsheet-parity, 2026-06-21): economia is recorded
+  as a Saída in the month grid and is therefore subtracted by the sheet. `daily_projected` is
+  excluded (the sheet's Performance row uses realized figures only). The savings guardrail and
+  Economizado% are computed independently and are unaffected.
 - **`classify()` routing credit expenses to FixedOut**: by design (the fatura folds into a
   Saída lump at the due date — ADR-0001). Not a bug.
 - **First month of an imported year has no prior-year carry-over seed**: structural; the seed

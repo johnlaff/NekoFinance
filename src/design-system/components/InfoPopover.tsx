@@ -46,7 +46,7 @@ const GLOSSARY: Record<string, GlossaryEntry> = {
   },
   performance: {
     title: "Performance",
-    body: "A foto do mês: Entradas menos Saídas (incluem fixas e fatura do cartão) e Diário. É o mesmo cálculo da sua planilha — igual ao que você já conhece.",
+    body: "A foto do mês: Entradas menos Saídas (incluem fixas, fatura do cartão e o que você guardou como Economia) e Diário. É o mesmo cálculo da sua planilha.",
   },
   economizado: {
     title: "Economizado",
