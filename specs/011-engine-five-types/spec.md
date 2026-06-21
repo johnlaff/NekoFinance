@@ -48,6 +48,25 @@ savings_rate_bps = economia × 10000 / income             (0 se income ≤ 0)
 real_daily_avg   = daily_realized / dias_decorridos      (inalterado)
 ```
 
+## Revisão da fórmula de Performance (2026-06-20)
+
+**Decisão do dono**: a Performance exibida foi alterada para paridade com a planilha.
+
+```
+performance = income − cost_of_living          # = Entradas − (Saídas + Diário)
+```
+
+Os termos `− economia` e `− daily_projected` foram removidos da fórmula de exibição.
+Economia continua sendo o numerador do Economizado% e continua alimentando o guardrail de
+poupança anual via `realized_annual_economia` (independente de `performance_cents`).
+A previsão de diário restante continua reduzindo o saldo de caixa projetado (correto para o
+forecast); ela não afeta mais a Performance.
+
+Esta é uma reversão deliberada em relação à fórmula do spec original. O motivo: o usuário
+compara a Performance do Neko com a linha correspondente na sua planilha — qualquer divergência
+quebra a confiança. Paridade de planilha prevalece sobre a fidelidade ao comportamento do App
+nesta métrica específica.
+
 ## DoD
 
 - `EventKind::Economia` + `signed` + `classify(…, to_liquidity)` com testes.

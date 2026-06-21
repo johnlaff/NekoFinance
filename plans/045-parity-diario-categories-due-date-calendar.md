@@ -723,7 +723,8 @@ Machine-checkable. ALL must hold before marking this plan DONE:
 - [ ] `npm run check` exits 0 (full gate clean)
 - [ ] Migration files are additive only — no existing migration edited
 - [ ] No private data, real names, private category labels, or method-app references
-      appear in any new file (`grep -rE 'breno|pluggy|oficial' src/ src-tauri/` returns zero matches)
+      appear in any new file (scan `src/` and `src-tauri/` for the forbidden brand/source terms
+      listed in the local `.private-forbidden-patterns` denylist — zero matches; `npm run privacy:scan`)
 - [ ] `git diff --name-only HEAD` shows only files from the in-scope list
 - [ ] `plans/README.md` status row updated to DONE
 
