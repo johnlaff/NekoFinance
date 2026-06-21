@@ -52,6 +52,12 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 037  | P1 flow fixes: tag-exclude out of Saldo projection; credit-lump audit; Jan-1 economia  | P1       | M      | —          | DONE (pkg D)               |
 | 038  | Dual-reality UX: daily-teto config + credit-first quick-add + Economizado badge        | P1       | M      | —          | DONE (pkg D)               |
 | 039  | Daily ease: OS-scheduler reminder (app closed) + 1-click Sincronizar fast path         | P2       | M      | —          | DONE (pkg D)               |
+| 040  | Performance = spreadsheet formula (Entradas − (Saídas + Diário)) — owner decision      | P1       | S–M    | —          | TODO (pkg E)               |
+| 041  | Forecast/import correctness: is_projection (today+edit+checksum) + month_grid sign     | P1       | M      | —          | TODO (pkg E)               |
+| 042  | Write-back/sync correctness: fast-path invalidate + preview TOCTOU (+ economia test)   | P1       | M      | —          | TODO (pkg E)               |
+| 043  | Edit/delete + UX integrity: imported-row edits, items on series, provenance, dead-ends | P1       | M      | —          | TODO (pkg E)               |
+| 044  | Parity views: full-year 12-month grid + dual-year Economia side-by-side                | P1       | L      | —          | TODO (pkg E)               |
+| 045  | Parity: Diário budget categories + due-date/fatura calendar (+ installments)           | P2       | L      | —          | TODO (pkg E)               |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale)
 
