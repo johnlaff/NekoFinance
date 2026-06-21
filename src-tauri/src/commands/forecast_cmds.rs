@@ -887,10 +887,14 @@ pub(crate) async fn month_grid(
     // Fluxos por dia, separados por tipo (Entrada / Saída fixa / Diário variável).
     let flows: Vec<(String, i64, i64, i64)> = sqlx::query_as(
         // Crédito entra em Saída como a fatura (lump no vencimento), não em Diário — espelha forecast::classify.
+        // ABS() POR LINHA nas saídas: importadas são gravadas negativas (`-amount_out`), manuais
+        // são positivas — ambas type='expense'. Somar cru dá total de sinal misto; `SUM(ABS(..))`
+        // soma as MAGNITUDES, então as duas fontes no mesmo dia se acumulam corretamente (não se
+        // cancelam). Entradas ficam fora (sempre positivas). Espelha o `amount.abs()` do forecast.
         "SELECT date, \
                 COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END), 0), \
-                COALESCE(SUM(CASE WHEN type='expense' AND (COALESCE(is_fixed,0)=1 OR payment_method='credit') THEN amount ELSE 0 END), 0), \
-                COALESCE(SUM(CASE WHEN type='expense' AND COALESCE(is_fixed,0)=0 AND COALESCE(payment_method,'')<>'credit' THEN amount ELSE 0 END), 0) \
+                COALESCE(SUM(CASE WHEN type='expense' AND (COALESCE(is_fixed,0)=1 OR payment_method='credit') THEN ABS(amount) ELSE 0 END), 0), \
+                COALESCE(SUM(CASE WHEN type='expense' AND COALESCE(is_fixed,0)=0 AND COALESCE(payment_method,'')<>'credit' THEN ABS(amount) ELSE 0 END), 0) \
          FROM \"transaction\" WHERE date BETWEEN ?1 AND ?2 GROUP BY date",
     )
     .bind(&first_s)
@@ -1209,5 +1213,42 @@ mod tests {
             income, 100000,
             "guardrail simétrico: renda de dezembro também é vista em 1º/jan"
         );
+    }
+
+    #[tokio::test]
+    async fn month_grid_expense_total_is_magnitude_regardless_of_sign() {
+        // Bug 4: imported expenses are stored negative (-amount_out); manual are positive.
+        // month_grid must return the magnitude (ABS) so both sources add up correctly.
+        let p = pool().await;
+
+        // Simulate an imported expense (negative amount, is_fixed=1 = Saída).
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, created_at, updated_at) \
+             VALUES ('imp-exp', 'expense', -150000, '2026-03-15', 1, 0, '2026-03-15T00:00:00Z', '2026-03-15T00:00:00Z')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        // Simulate a manual expense (positive amount, is_fixed=1 = Saída).
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, created_at, updated_at) \
+             VALUES ('man-exp', 'expense', 80000, '2026-03-15', 1, 0, '2026-03-15T00:00:00Z', '2026-03-15T00:00:00Z')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let grid = month_grid(&p, 2026, 3).await.unwrap();
+        let day15 = grid.iter().find(|d| d.date == "2026-03-15").unwrap();
+
+        // fixed_out must be the sum of magnitudes: 150_000 + 80_000 = 230_000.
+        // Before fix: -150_000 + 80_000 = -70_000 (wrong sign, wrong value).
+        assert_eq!(
+            day15.fixed_out_cents, 230_000,
+            "month_grid fixed_out must be magnitude regardless of storage sign (Bug 4)"
+        );
+        assert_eq!(day15.daily_out_cents, 0);
+        assert_eq!(day15.income_cents, 0);
     }
 }

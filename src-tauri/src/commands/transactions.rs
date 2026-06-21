@@ -489,10 +489,16 @@ pub async fn update_transaction_cmd(
         return Err(format!("tipo inválido: {txn_type}"));
     }
     let now = chrono::Utc::now().to_rfc3339();
+    // Re-deriva `is_projection` a partir da NOVA data (espelha `create_transaction_inner`):
+    // editar uma projeção futura para hoje/passado precisa limpar o flag, senão fica um
+    // "Previsto" fantasma na previsão. Hoje é realizado → só datas estritamente futuras projetam.
+    let new_date =
+        NaiveDate::parse_from_str(&date, "%Y-%m-%d").map_err(|e| format!("data inválida: {e}"))?;
+    let is_projection = new_date > chrono::Local::now().date_naive();
     let affected = sqlx::query(
         r#"UPDATE "transaction"
            SET type = ?2, amount = ?3, description = ?4, payment_method = ?5,
-               is_fixed = ?6, date = ?7, updated_at = ?8
+               is_fixed = ?6, date = ?7, is_projection = ?8, updated_at = ?9
            WHERE id = ?1 AND source_amount IS NULL"#,
     )
     .bind(&id)
@@ -502,6 +508,7 @@ pub async fn update_transaction_cmd(
     .bind(&payment_method)
     .bind(is_fixed as i64)
     .bind(&date)
+    .bind(is_projection as i64)
     .bind(&now)
     .execute(pool.inner())
     .await
@@ -682,5 +689,73 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("positivo"), "err: {err}");
+    }
+
+    // Espelha a lógica de re-deriva de `is_projection` de `update_transaction_cmd`
+    // (que recebe `State<'_, SqlitePool>` e não é diretamente testável), igual ao
+    // padrão de `run_update_items`.
+    async fn run_update_txn_date(
+        pool: &SqlitePool,
+        id: &str,
+        new_date: &str,
+    ) -> Result<(), String> {
+        use chrono::NaiveDate;
+        let new_date_parsed = NaiveDate::parse_from_str(new_date, "%Y-%m-%d")
+            .map_err(|e| format!("data inválida: {e}"))?;
+        let is_projection = new_date_parsed > chrono::Local::now().date_naive();
+        let now = chrono::Utc::now().to_rfc3339();
+        let affected = sqlx::query(
+            r#"UPDATE "transaction"
+               SET type = ?2, amount = ?3, description = ?4, payment_method = ?5,
+                   is_fixed = ?6, date = ?7, is_projection = ?8, updated_at = ?9
+               WHERE id = ?1 AND source_amount IS NULL"#,
+        )
+        .bind(id)
+        .bind("expense")
+        .bind(1000_i64)
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind(0_i64)
+        .bind(new_date)
+        .bind(is_projection as i64)
+        .bind(&now)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("update: {e}"))?
+        .rows_affected();
+        if affected == 0 {
+            return Err("not found".into());
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_transaction_date_to_today_clears_is_projection() {
+        let pool = test_pool().await;
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let future = "2099-12-31";
+
+        // Insert a future transaction (is_projection = 1).
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, created_at, updated_at) \
+             VALUES ('tx-upd', 'expense', 1000, ?1, 0, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .bind(future)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Edit the date to today.
+        run_update_txn_date(&pool, "tx-upd", &today).await.unwrap();
+
+        let (is_projection,): (i64,) =
+            sqlx::query_as("SELECT is_projection FROM \"transaction\" WHERE id = 'tx-upd'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            is_projection, 0,
+            "editing date to today must clear is_projection (Bug 3)"
+        );
     }
 }
