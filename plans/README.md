@@ -52,7 +52,7 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 037  | P1 flow fixes: tag-exclude out of Saldo projection; credit-lump audit; Jan-1 economia  | P1       | M      | —          | DONE (pkg D)               |
 | 038  | Dual-reality UX: daily-teto config + credit-first quick-add + Economizado badge        | P1       | M      | —          | DONE (pkg D)               |
 | 039  | Daily ease: OS-scheduler reminder (app closed) + 1-click Sincronizar fast path         | P2       | M      | —          | DONE (pkg D)               |
-| 040  | Performance = spreadsheet formula (Entradas − (Saídas + Diário)) — owner decision      | P1       | S–M    | —          | TODO (pkg E)               |
+| 040  | Performance = spreadsheet formula (Entradas − (Saídas + Diário)) — owner decision      | P1       | S–M    | —          | DONE (pkg E)               |
 | 041  | Forecast/import correctness: is_projection (today+edit+checksum) + month_grid sign     | P1       | M      | —          | TODO (pkg E)               |
 | 042  | Write-back/sync correctness: fast-path invalidate + preview TOCTOU (+ economia test)   | P1       | M      | —          | TODO (pkg E)               |
 | 043  | Edit/delete + UX integrity: imported-row edits, items on series, provenance, dead-ends | P1       | M      | —          | TODO (pkg E)               |
@@ -106,8 +106,11 @@ already-built UI. All are high-leverage with clean verification stories.
 
 - **`saldoHeatmap.ts` thresholds**: correct — absolute R$ bands match the spreadsheet's
   conditional formatting (critical −500, tight 1000, ok 2000). No change.
-- **Performance formula in `forecast/mod.rs`**: correct — subtracts Economia and projected
-  remaining Diário, and `savings_rate_bps` uses registered Economia. No change.
+- **Performance formula in `forecast/mod.rs`**: changed by plan 040 (2026-06-20) to
+  `income − cost_of_living` (spreadsheet-parity). The richer App/method formula (which also
+  subtracted Economia and projected remaining Diário) was removed from the display metric by
+  owner decision; the savings guardrail and Economizado% are unaffected. This is a deliberate
+  reversal of the spec 011 formula — do not "fix" it back to the App/method formula.
 - **`classify()` routing credit expenses to FixedOut**: by design (the fatura folds into a
   Saída lump at the due date — ADR-0001). Not a bug.
 - **First month of an imported year has no prior-year carry-over seed**: structural; the seed
