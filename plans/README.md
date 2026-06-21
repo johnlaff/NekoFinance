@@ -64,6 +64,8 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 049  | P1: update_transaction_cmd atomicity + realized_monthly_baseline ABS sign              | P1       | S–M    | —          | DONE (pkg G)               |
 | 050  | P2: economia write-back staleness + saw_december (+ conflict-cleanup/boundary tests)   | P2       | M      | —          | DONE (pkg G)               |
 | 051  | Performance = income − cost_of_living (economia=Saída; supersedes 046) + no-double-cnt | P1       | M      | —          | DONE (pkg G)               |
+| 052  | Complete economia=Saída: Economia tab as annotation (no Saldo double-count; Econ% src) | P1       | M–L    | —          | TODO (pkg H)               |
+| 053  | Bug bundle: daily_spend_today SUM(ABS) + update amount guard + audit/clamp P3s         | P2       | S–M    | —          | TODO (pkg H)               |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale)
 
