@@ -195,8 +195,9 @@ impl SheetsClient {
     /// Escreve células via `values:batchUpdate`. `updates` = lista de (range A1 COM nome de aba,
     /// ex.: `'2026'!E3`, valor numérico em reais). Escrevemos NÚMERO cru com `valueInputOption=RAW`
     /// — o Sheets armazena o número exato e o display pt-BR ("75,00") vem do formato da célula;
-    /// assim a escrita é independente do locale (espelha o `UNFORMATTED_VALUE` da leitura). Esta é
-    /// a ÚNICA via de escrita real; só roda atrás de `WRITE_BACK_ENABLED` + aprovação humana.
+    /// assim a escrita é independente do locale (espelha o `UNFORMATTED_VALUE` da leitura). É a via
+    /// de escrita das células NÃO-itemizadas (as itemizadas usam `batch_update_formulas`, plano 036);
+    /// só roda atrás de `WRITE_BACK_ENABLED` + aprovação humana.
     pub async fn batch_update_values(
         &self,
         spreadsheet_id: &str,
@@ -260,6 +261,182 @@ impl SheetsClient {
             .map_err(|e| format!("batchUpdate parse: {e}"))?;
         verify_batch_update_response(&json, chunk.len())
     }
+
+    /// Plano 036: escreve FÓRMULAS (`=SUM(...)`) via `values:batchUpdate` com
+    /// `valueInputOption=USER_ENTERED` — assim o Sheets INTERPRETA a string como fórmula (com
+    /// `RAW`, `=SUM(...)` viraria texto literal). É a contrapartida itemizada do
+    /// `batch_update_values` (que segue RAW numérico para as células NÃO-itemizadas, inalterado).
+    /// `updates` = lista de (range A1 COM nome de aba, string da fórmula). Confere a resposta
+    /// (totalUpdatedCells) igual ao caminho RAW.
+    pub async fn batch_update_formulas(
+        &self,
+        spreadsheet_id: &str,
+        updates: &[(String, String)],
+    ) -> Result<usize, String> {
+        if updates.is_empty() {
+            return Ok(0);
+        }
+        let data: Vec<serde_json::Value> = updates
+            .iter()
+            .map(|(range, formula)| serde_json::json!({ "range": range, "values": [[formula]] }))
+            .collect();
+        let body = serde_json::json!({ "valueInputOption": "USER_ENTERED", "data": data });
+
+        let url = format!(
+            "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values:batchUpdate",
+        );
+        let resp = crate::http::send_with_retry(
+            crate::http::client()
+                .post(&url)
+                .bearer_auth(&self.token.access_token)
+                .json(&body),
+        )
+        .await
+        .map_err(|e| format!("formulas batchUpdate request: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!(
+                "Sheets formulas batchUpdate error {status}: {body}"
+            ));
+        }
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("formulas batchUpdate parse: {e}"))?;
+        verify_batch_update_response(&json, updates.len())
+    }
+
+    /// Resolve o `sheetId` numérico de uma aba pelo nome (via `spreadsheets.get?fields=sheets.properties`).
+    /// O `updateCells` exige `GridRange.sheetId` (numérico), não o nome — e a notação A1 não o carrega.
+    pub async fn get_sheet_id_by_name(
+        &self,
+        spreadsheet_id: &str,
+        sheet_name: &str,
+    ) -> Result<i64, String> {
+        let url = format!(
+            "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}?fields=sheets.properties",
+        );
+        let resp = crate::http::send_with_retry(
+            crate::http::client()
+                .get(&url)
+                .bearer_auth(&self.token.access_token),
+        )
+        .await
+        .map_err(|e| format!("sheet props request: {e}"))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("Sheets props error {status}: {body}"));
+        }
+        let json: serde_json::Value = resp.json().await.map_err(|e| format!("props parse: {e}"))?;
+        parse_sheet_names(&json)
+            .into_iter()
+            .find(|s| s.title == sheet_name)
+            .map(|s| s.sheet_id)
+            .ok_or_else(|| format!("aba '{sheet_name}' não encontrada na planilha"))
+    }
+
+    /// Escreve NOTAS de célula via `spreadsheets.batchUpdate` (request `updateCells` com
+    /// `fields="note"`). É SEPARADO de `values:batchUpdate` — notas são METADADO de célula, não
+    /// valor, e exigem o endpoint `spreadsheets` (não `spreadsheets/values`). Plano 036: a nota
+    /// carrega o detalhe por-parte (`R$ <valor> - <descrição>`) que acompanha a fórmula `=SUM(...)`.
+    ///
+    /// `note_updates`: lista de (A1 SEM nome de aba, ex.: `E3`, texto da nota). String vazia limpa a
+    /// nota. Todas as notas vão para a aba `sheet_name`. Devolve a contagem de células atualizadas.
+    ///
+    /// ESCOPO OAuth: exige `spreadsheets` (leitura-e-escrita) — o mesmo que o write-back de valores já
+    /// pede (plano 028). Se o token só tiver `spreadsheets.readonly` (tokens pré-028), a API responde
+    /// 403 `insufficient permission`; aqui isso é NÃO-FATAL: devolvemos um erro prefixado com
+    /// `"NOTE_WRITE_PERMISSION:"` para o caller tratar como aviso (o valor já foi escrito com sucesso),
+    /// sem bloquear o write-back. Plano 036 Step 3.
+    pub async fn batch_update_notes(
+        &self,
+        spreadsheet_id: &str,
+        sheet_name: &str,
+        note_updates: &[(String, String)],
+    ) -> Result<usize, String> {
+        if note_updates.is_empty() {
+            return Ok(0);
+        }
+        let sheet_id = self
+            .get_sheet_id_by_name(spreadsheet_id, sheet_name)
+            .await?;
+
+        let mut requests = Vec::with_capacity(note_updates.len());
+        for (a1, note) in note_updates {
+            let (row, col) = parse_a1_cell(a1)?;
+            requests.push(serde_json::json!({
+                "updateCells": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": row,
+                        "endRowIndex": row + 1,
+                        "startColumnIndex": col,
+                        "endColumnIndex": col + 1,
+                    },
+                    "rows": [{ "values": [{ "note": note }] }],
+                    "fields": "note",
+                }
+            }));
+        }
+        let body = serde_json::json!({ "requests": requests });
+
+        let url =
+            format!("https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}:batchUpdate",);
+        let resp = crate::http::send_with_retry(
+            crate::http::client()
+                .post(&url)
+                .bearer_auth(&self.token.access_token)
+                .json(&body),
+        )
+        .await
+        .map_err(|e| format!("notes batchUpdate request: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            // 403 = token sem escopo de escrita (readonly). NÃO-FATAL para o write-back de valores.
+            if status.as_u16() == 403 {
+                return Err(format!("NOTE_WRITE_PERMISSION: {status}: {body}"));
+            }
+            return Err(format!("Sheets notes batchUpdate error {status}: {body}"));
+        }
+        Ok(note_updates.len())
+    }
+}
+
+/// Converte uma célula A1 SEM nome de aba (ex.: `E3`, `AA12`) em índices 0-based `(linha, coluna)`
+/// para o `GridRange` do `updateCells`. Pura e testável. Erro em string vazia, sem letras ou sem
+/// dígitos. Não suporta ranges (`A1:B2`) — o write-back de notas é sempre célula a célula.
+pub(crate) fn parse_a1_cell(a1: &str) -> Result<(usize, usize), String> {
+    let s = a1.trim();
+    let split = s
+        .find(|c: char| c.is_ascii_digit())
+        .ok_or_else(|| format!("A1 sem linha: '{a1}'"))?;
+    let (letters, digits) = s.split_at(split);
+    if letters.is_empty() {
+        return Err(format!("A1 sem coluna: '{a1}'"));
+    }
+    let mut col: usize = 0;
+    for ch in letters.chars() {
+        let up = ch.to_ascii_uppercase();
+        if !up.is_ascii_uppercase() {
+            return Err(format!("A1 coluna inválida: '{a1}'"));
+        }
+        col = col * 26 + (up as usize - 'A' as usize + 1);
+    }
+    let col = col
+        .checked_sub(1)
+        .ok_or_else(|| format!("A1 coluna inválida: '{a1}'"))?;
+    let row1: usize = digits
+        .parse()
+        .map_err(|_| format!("A1 linha inválida: '{a1}'"))?;
+    let row = row1
+        .checked_sub(1)
+        .ok_or_else(|| format!("A1 linha inválida (0): '{a1}'"))?;
+    Ok((row, col))
 }
 
 /// Limite seguro de ranges por requisição `values:batchUpdate`. Mantém uma folga ampla sob qualquer
@@ -379,6 +556,21 @@ mod tests {
         assert!(err.contains("3"));
         // Campo ausente (resposta inesperada) é tratado como 0 confirmadas → erro.
         assert!(verify_batch_update_response(&json!({}), 1).is_err());
+    }
+
+    // Plano 036: A1 (sem aba) → índices 0-based para o GridRange do updateCells (escrita de nota).
+    #[test]
+    fn parse_a1_cell_maps_to_zero_based_grid_indices() {
+        assert_eq!(parse_a1_cell("A1"), Ok((0, 0)));
+        assert_eq!(parse_a1_cell("E3"), Ok((2, 4)));
+        assert_eq!(parse_a1_cell("Z1"), Ok((0, 25)));
+        assert_eq!(parse_a1_cell("AA12"), Ok((11, 26)));
+        assert_eq!(parse_a1_cell(" D4 "), Ok((3, 3)));
+        // Inválidos: sem dígito, sem letra, linha 0.
+        assert!(parse_a1_cell("E").is_err());
+        assert!(parse_a1_cell("3").is_err());
+        assert!(parse_a1_cell("E0").is_err());
+        assert!(parse_a1_cell("").is_err());
     }
 
     // Spec 010 slice 0: o path ao vivo normaliza números cru → 4 casas fixas, sem locale.

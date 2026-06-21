@@ -33,6 +33,13 @@ pub fn ensure_write_back_enabled() -> Result<(), String> {
     Ok(())
 }
 
+/// Uma parte itemizada de uma célula no caminho de escrita (plano 036). Magnitude positiva.
+#[derive(Debug, Clone)]
+pub struct TxnLineItem {
+    pub amount_cents: i64,
+    pub description: String,
+}
+
 /// Uma transação candidata a voltar para a planilha (magnitude positiva; o sinal/coluna vem do tipo).
 #[derive(Debug, Clone)]
 pub struct WriteBackTxn {
@@ -40,6 +47,9 @@ pub struct WriteBackTxn {
     pub kind: RowKind,
     /// Magnitude em centavos (sempre ≥ 0).
     pub amount_cents: i64,
+    /// Plano 036: quando `Some`, a célula é itemizada e deve ser escrita como `=SUM(a+b+c)` com uma
+    /// nota por-parte; quando `None`, escreve o total numérico simples (comportamento RAW de hoje).
+    pub items: Option<Vec<TxnLineItem>>,
 }
 
 /// Uma célula que o write-back tocaria: onde (A1), o que está lá hoje, e o que entraria.
@@ -58,6 +68,12 @@ pub struct CellWrite {
     pub value_cents: i64,
     /// `true` quando o valor proposto difere do atual (por número, não por formatação).
     pub changed: bool,
+    /// Plano 036: fórmula `=SUM(...)` pré-montada quando a célula é itemizada (≥2 partes). `None`
+    /// ⇒ escrita RAW numérica (comportamento de hoje, inalterado para células não-itemizadas).
+    pub formula: Option<String>,
+    /// Plano 036: nota de célula por-parte pré-montada (escrita via `batchUpdate`/`updateCells`).
+    /// `None` quando a célula não é itemizada (nenhuma nota a escrever).
+    pub note_text: Option<String>,
 }
 
 /// Índice de coluna 0-based → letras A1 (0→A, 25→Z, 26→AA…). Base-26 bijetiva.
@@ -79,6 +95,56 @@ pub fn col_to_a1(mut col: usize) -> String {
 fn cents_to_ptbr(cents: i64) -> String {
     let c = cents.abs();
     format!("{},{:02}", c / 100, c % 100)
+}
+
+/// Plano 036: número para DENTRO da fórmula `=SUM(...)` — DECIMAL COM PONTO, não vírgula.
+/// As fórmulas reais da planilha do dono usam ponto (`SUM(18.33+2.32)`); escrever vírgula via
+/// `USER_ENTERED` num locale ponto-decimal seria interpretado como múltiplos argumentos
+/// (`50,00` → dois números) e gravaria um valor ERRADO. A nota da célula segue em vírgula
+/// (`cents_to_ptbr`); só a fórmula usa ponto.
+fn cents_to_formula(cents: i64) -> String {
+    let c = cents.abs();
+    format!("{}.{:02}", c / 100, c % 100)
+}
+
+/// Plano 036: monta a fórmula `=SUM(a+b+c)` de uma célula itemizada, reconstruindo o estilo do dono
+/// (o total da célula é a SOMA das partes). Os addends são os VALORES das partes com PONTO decimal
+/// (locale-safe p/ `USER_ENTERED`, igual às fórmulas reais) — ex.: `[5000, 7500]` → `"=SUM(50.00+75.00)"`.
+///
+/// SEGURANÇA (anti-injeção de fórmula): a fórmula é montada SÓ a partir dos valores numéricos das
+/// partes; a `description` de cada item NUNCA entra na string da fórmula. Assim uma descrição que
+/// comece com `=`/`+`/`-`/`@` jamais vira fórmula ativa na planilha por esta via. (A descrição vai
+/// para a NOTA da célula, que o Sheets trata como texto puro — ver `build_itemized_note`.)
+///
+/// Pré-condição: `items` não-vazio. Vazio devolve `"=SUM()"` (defensivo; o caller só chama com ≥1).
+pub fn build_itemized_cell_value(items: &[TxnLineItem]) -> String {
+    let addends: Vec<String> = items
+        .iter()
+        .map(|it| cents_to_formula(it.amount_cents))
+        .collect();
+    format!("=SUM({})", addends.join("+"))
+}
+
+/// Plano 036: monta a NOTA por-parte que acompanha a fórmula, no formato do dono — uma linha por
+/// item `R$ <valor> - <descrição>` (vírgula decimal, 2 casas). É a INVERSA do parser de notas
+/// itemizadas do plano 035 (`parse_itemized_note`): o que esta função escreve, aquele parser relê.
+///
+/// Descrição vazia vira `"<sem descrição>"` (placeholder método-neutro) para a linha continuar
+/// parseável. A descrição é TEXTO de nota — o Sheets não a interpreta como fórmula (sem risco de
+/// injeção), então é escrita como veio (sanitização de fórmula é só na célula, ver acima).
+pub fn build_itemized_note(items: &[TxnLineItem]) -> String {
+    items
+        .iter()
+        .map(|it| {
+            let desc = if it.description.trim().is_empty() {
+                "<sem descrição>"
+            } else {
+                it.description.trim()
+            };
+            format!("R$ {} - {}", cents_to_ptbr(it.amount_cents), desc)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn kind_offset(kind: RowKind, mappings: &[(String, i32)]) -> Option<usize> {
@@ -160,6 +226,11 @@ pub fn plan_write_back(
     // Agrega por célula-alvo (data, kind): a planilha guarda UM valor por célula, então duas
     // transações do mesmo dia/tipo SOMAM — senão emitiríamos dois CellWrites para a mesma célula,
     // um sobrescrevendo o outro silenciosamente. `amount_cents` vira magnitude (abs).
+    //
+    // Plano 036: a célula só pode ter UMA fórmula `=SUM(...)`. Se DUAS+ transações caem na mesma
+    // célula e qualquer uma é itemizada, não dá para combinar breakdowns numa única fórmula
+    // consistente — caímos para o total RAW (items = None) somando as magnitudes. Mantém a escrita
+    // correta (o total bate) sem corromper a fórmula; o dono refina o breakdown caso a caso.
     let mut aggregated: Vec<WriteBackTxn> = Vec::new();
     for txn in txns {
         if let Some(e) = aggregated
@@ -167,11 +238,13 @@ pub fn plan_write_back(
             .find(|e| e.date == txn.date && e.kind == txn.kind)
         {
             e.amount_cents += txn.amount_cents.abs();
+            e.items = None; // colisão de célula → sem fórmula itemizada (total RAW).
         } else {
             aggregated.push(WriteBackTxn {
                 date: txn.date.clone(),
                 kind: txn.kind,
                 amount_cents: txn.amount_cents.abs(),
+                items: txn.items.clone(),
             });
         }
     }
@@ -206,6 +279,16 @@ pub fn plan_write_back(
             .unwrap_or_default();
         let proposed = cents_to_ptbr(txn.amount_cents);
         let changed = parse_number(&current) != txn.amount_cents.abs();
+        // Plano 036: célula itemizada (≥2 partes) escreve a fórmula `=SUM(...)` (USER_ENTERED) +
+        // nota por-parte. 1 parte ou nenhuma → escrita RAW numérica (sem fórmula nem nota), igual
+        // a hoje. O `value_cents`/`proposed` do diff seguem sendo o TOTAL (a UI mostra o número).
+        let (formula, note_text) = match txn.items.as_deref() {
+            Some(items) if items.len() >= 2 => (
+                Some(build_itemized_cell_value(items)),
+                Some(build_itemized_note(items)),
+            ),
+            _ => (None, None),
+        };
         out.push(CellWrite {
             a1: format!("{}{}", col_to_a1(col), row + 1),
             row,
@@ -216,6 +299,8 @@ pub fn plan_write_back(
             proposed,
             value_cents: txn.amount_cents,
             changed,
+            formula,
+            note_text,
         });
     }
     out
@@ -307,6 +392,9 @@ pub fn plan_economia_write_back(
                 proposed: cents_to_ptbr(cents),
                 value_cents: cents,
                 changed: current_cents != cents,
+                // A aba Economia não tem nota por-célula (escopo: só a grade diária é itemizada).
+                formula: None,
+                note_text: None,
             });
         }
         if month == 12 {
@@ -383,6 +471,7 @@ mod tests {
             date: "2026-01-01".into(),
             kind: RowKind::Diario,
             amount_cents: 7500,
+            items: None,
         }];
         let plan = plan_write_back(&grid(), &layout(), &mappings(), &txns);
         assert_eq!(plan.len(), 1);
@@ -400,6 +489,7 @@ mod tests {
             date: "2026-01-01".into(),
             kind: RowKind::Entrada,
             amount_cents: 100_000,
+            items: None,
         }];
         let plan = plan_write_back(&grid(), &layout(), &mappings(), &txns);
         assert_eq!(plan.len(), 1);
@@ -414,6 +504,7 @@ mod tests {
             date: "2026-01-01".into(),
             kind: RowKind::Saida,
             amount_cents: 3000,
+            items: None,
         }];
         let plan = plan_write_back(&grid(), &layout(), &mappings(), &txns);
         assert_eq!(plan[0].a1, "D3"); // Saída = col 3 (D)
@@ -440,16 +531,19 @@ mod tests {
                 date: "2026-01-01".into(),
                 kind: RowKind::Entrada,
                 amount_cents: 1000,
+                items: None,
             },
             WriteBackTxn {
                 date: "2026-01-01".into(),
                 kind: RowKind::Saida,
                 amount_cents: 2000,
+                items: None,
             },
             WriteBackTxn {
                 date: "2026-01-01".into(),
                 kind: RowKind::Diario,
                 amount_cents: 3000,
+                items: None,
             },
         ];
         let plan = plan_write_back(&grid(), &layout(), &mappings, &txns);
@@ -650,6 +744,7 @@ mod tests {
             date: "2026-01-01".into(),
             kind: RowKind::Diario,
             amount_cents: 3000,
+            items: None,
         }];
         assert!(plan_write_back(&grid(), &l, &mappings(), &txns).is_empty());
     }
@@ -662,11 +757,13 @@ mod tests {
                 date: "2026-01-01".into(),
                 kind: RowKind::Diario,
                 amount_cents: 3000,
+                items: None,
             },
             WriteBackTxn {
                 date: "2026-01-01".into(),
                 kind: RowKind::Diario,
                 amount_cents: 4500,
+                items: None,
             },
         ];
         let plan = plan_write_back(&grid(), &layout(), &mappings(), &txns);
@@ -686,6 +783,7 @@ mod tests {
             date: "2026-01-02".into(),
             kind: RowKind::Saida,
             amount_cents: 20_000,
+            items: None,
         }];
         let plan = plan_write_back(&g, &layout(), &mappings(), &txns);
         assert_eq!(plan.len(), 1, "o dia em float precisa casar a linha");
@@ -709,11 +807,13 @@ mod tests {
                 date: "2025-01-01".into(), // outro ano
                 kind: RowKind::Entrada,
                 amount_cents: 1000,
+                items: None,
             },
             WriteBackTxn {
                 date: "2026-12-01".into(), // mês sem bloco na grade de teste
                 kind: RowKind::Entrada,
                 amount_cents: 1000,
+                items: None,
             },
         ];
         assert!(plan_write_back(&grid(), &layout(), &mappings(), &txns).is_empty());
@@ -729,5 +829,134 @@ mod tests {
         } else {
             assert!(ensure_write_back_enabled().is_err());
         }
+    }
+
+    // --- Plano 036: construtores puros da fórmula/nota itemizada + plano itemizado ---
+
+    fn ti(amount_cents: i64, description: &str) -> TxnLineItem {
+        TxnLineItem {
+            amount_cents,
+            description: description.into(),
+        }
+    }
+
+    #[test]
+    fn build_itemized_cell_value_two_items() {
+        let items = vec![ti(5000, "Conta A"), ti(7500, "Conta B")];
+        assert_eq!(build_itemized_cell_value(&items), "=SUM(50.00+75.00)");
+    }
+
+    #[test]
+    fn build_itemized_cell_value_three_items_with_fraction() {
+        let items = vec![ti(5000, "A"), ti(7500, "B"), ti(120050, "C")];
+        assert_eq!(
+            build_itemized_cell_value(&items),
+            "=SUM(50.00+75.00+1200.50)"
+        );
+    }
+
+    #[test]
+    fn build_itemized_note_two_items() {
+        let items = vec![ti(5000, "Conta A"), ti(7500, "Conta B")];
+        assert_eq!(
+            build_itemized_note(&items),
+            "R$ 50,00 - Conta A\nR$ 75,00 - Conta B",
+        );
+    }
+
+    #[test]
+    fn build_itemized_note_empty_description_fallback() {
+        let items = vec![ti(1000, "")];
+        assert_eq!(build_itemized_note(&items), "R$ 10,00 - <sem descrição>");
+    }
+
+    #[test]
+    fn build_itemized_cell_value_sanitizes_formula_injection() {
+        // SEGURANÇA: uma descrição começando com '=' ou '+' NUNCA pode entrar na fórmula. A fórmula
+        // é montada só com os valores numéricos das partes; a descrição vai para a NOTA (texto puro).
+        let items = vec![ti(100, "=HYPERLINK(\"http://x\")"), ti(200, "+malicioso")];
+        let formula = build_itemized_cell_value(&items);
+        assert_eq!(formula, "=SUM(1.00+2.00)");
+        assert!(formula.starts_with("=SUM("));
+        assert!(!formula.contains("HYPERLINK"));
+        assert!(!formula.contains("malicioso"));
+    }
+
+    #[test]
+    fn build_itemized_note_round_trips_to_parse() {
+        // CONTRATO: a nota montada deve ser parseável pelo parser do plano 035 (mesma gramática
+        // `R$ <valor> - <descrição>`). `build_itemized_note` é a inversa de `parse_itemized_note`.
+        use super::super::import::parse_itemized_note;
+        let items = vec![ti(5000, "Conta A"), ti(120050, "Parcela carro")];
+        let note = build_itemized_note(&items);
+        let parsed = parse_itemized_note(&note);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].amount_cents, 5000);
+        assert_eq!(parsed[0].description, "Conta A");
+        assert_eq!(parsed[1].amount_cents, 120050);
+        assert_eq!(parsed[1].description, "Parcela carro");
+    }
+
+    #[test]
+    fn plan_itemized_cell_carries_formula_and_note() {
+        // Uma transação itemizada (≥2 partes) no dia 1 (Diário) → o CellWrite carrega a fórmula
+        // `=SUM(...)` e a nota por-parte; o total/diff seguem em reais pt-BR como sempre.
+        let txns = vec![WriteBackTxn {
+            date: "2026-01-01".into(),
+            kind: RowKind::Diario,
+            amount_cents: 12500,
+            items: Some(vec![ti(5000, "Parte A"), ti(7500, "Parte B")]),
+        }];
+        let plan = plan_write_back(&grid(), &layout(), &mappings(), &txns);
+        assert_eq!(plan.len(), 1);
+        let w = &plan[0];
+        assert_eq!(w.a1, "E3");
+        assert_eq!(w.formula.as_deref(), Some("=SUM(50.00+75.00)"));
+        assert_eq!(
+            w.note_text.as_deref(),
+            Some("R$ 50,00 - Parte A\nR$ 75,00 - Parte B")
+        );
+        assert_eq!(w.proposed, "125,00"); // diff segue mostrando o TOTAL
+        assert_eq!(w.value_cents, 12500);
+    }
+
+    #[test]
+    fn plan_single_item_stays_raw_numeric() {
+        // Uma única parte NÃO é breakdown → sem fórmula/nota (escrita RAW numérica de hoje).
+        let txns = vec![WriteBackTxn {
+            date: "2026-01-01".into(),
+            kind: RowKind::Diario,
+            amount_cents: 5000,
+            items: Some(vec![ti(5000, "Único")]),
+        }];
+        let plan = plan_write_back(&grid(), &layout(), &mappings(), &txns);
+        assert_eq!(plan.len(), 1);
+        assert!(plan[0].formula.is_none());
+        assert!(plan[0].note_text.is_none());
+    }
+
+    #[test]
+    fn plan_collision_on_same_cell_falls_back_to_raw_total() {
+        // Duas transações na MESMA célula (dia 1, Diário), uma itemizada: não dá para combinar dois
+        // breakdowns numa fórmula → cai para o total RAW (sem fórmula/nota), somando as magnitudes.
+        let txns = vec![
+            WriteBackTxn {
+                date: "2026-01-01".into(),
+                kind: RowKind::Diario,
+                amount_cents: 12500,
+                items: Some(vec![ti(5000, "A"), ti(7500, "B")]),
+            },
+            WriteBackTxn {
+                date: "2026-01-01".into(),
+                kind: RowKind::Diario,
+                amount_cents: 2000,
+                items: None,
+            },
+        ];
+        let plan = plan_write_back(&grid(), &layout(), &mappings(), &txns);
+        assert_eq!(plan.len(), 1, "uma célula-alvo");
+        assert!(plan[0].formula.is_none(), "colisão → sem fórmula");
+        assert!(plan[0].note_text.is_none(), "colisão → sem nota");
+        assert_eq!(plan[0].proposed, "145,00"); // 125,00 + 20,00 somados como total RAW
     }
 }

@@ -51,7 +51,7 @@ function baseHandlers(over: Record<string, unknown> = {}) {
     preview_write_back_status: previewResult(),
     preview_economia_write_back_status: previewResult({ cells: [] }),
     get_import_conflicts: [],
-    apply_write_back: 1,
+    apply_write_back: { written: 1, note_warning: null },
     apply_economia_write_back: 0,
     ...over,
   };
@@ -136,10 +136,12 @@ describe("WriteBackPreview", () => {
   it("desabilita o Aprovar enquanto um envio está em andamento (sem duplo-clique)", async () => {
     const user = userEvent.setup();
     // apply pendente que só resolve quando dispararmos: prova o estado "Enviando…".
-    let resolveApply!: (n: number) => void;
-    const pending = new Promise<number>((res) => {
-      resolveApply = res;
-    });
+    let resolveApply!: (r: { written: number; note_warning: string | null }) => void;
+    const pending = new Promise<{ written: number; note_warning: string | null }>(
+      (res) => {
+        resolveApply = res;
+      },
+    );
     mockCommands(baseHandlers({ apply_write_back: pending }));
     render(<WriteBackPreview spreadsheetId="ss" sheetName="2026" clientId="cid" />);
     await waitFor(() => expect(screen.getByText("habilitado")).toBeInTheDocument());
@@ -152,7 +154,7 @@ describe("WriteBackPreview", () => {
     const sending = await screen.findByRole("button", { name: "Enviando…" });
     expect(sending).toBeDisabled();
 
-    resolveApply(1);
+    resolveApply({ written: 1, note_warning: null });
     await waitFor(() => expect(screen.getByText(/Enviado: 1/)).toBeInTheDocument());
   });
 

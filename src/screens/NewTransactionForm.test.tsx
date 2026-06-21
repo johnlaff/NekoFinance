@@ -165,6 +165,78 @@ describe("NewTransactionForm", () => {
     });
   });
 
+  describe("line items (plano 036)", () => {
+    it("adicionar duas partes torna o Valor somente-leitura e mostra a soma", async () => {
+      const user = userEvent.setup();
+      mockCommands({ list_tags_cmd: [], create_transaction: "new-id" });
+      render(<NewTransactionForm onCreated={vi.fn()} />);
+
+      await user.click(screen.getByRole("button", { name: "+ Adicionar item" }));
+      await user.type(screen.getByLabelText("Valor do item 1"), "50,00");
+      await user.click(screen.getByRole("button", { name: "+ Adicionar item" }));
+      await user.type(screen.getByLabelText("Valor do item 2"), "75,00");
+
+      // O campo Valor do form agora reflete a SOMA e fica somente-leitura.
+      const amountField = screen.getByLabelText("Valor");
+      expect(amountField).toHaveValue("125,00");
+      expect(amountField).toHaveAttribute("readonly");
+    });
+
+    it("remover a última parte reabilita o campo Valor", async () => {
+      const user = userEvent.setup();
+      mockCommands({ list_tags_cmd: [], create_transaction: "new-id" });
+      render(<NewTransactionForm onCreated={vi.fn()} />);
+
+      await user.click(screen.getByRole("button", { name: "+ Adicionar item" }));
+      await user.type(screen.getByLabelText("Valor do item 1"), "30,00");
+      const amountField = screen.getByLabelText("Valor");
+      expect(amountField).toHaveAttribute("readonly");
+
+      await user.click(screen.getByRole("button", { name: "Remover item 1" }));
+      expect(screen.getByLabelText("Valor")).not.toHaveAttribute("readonly");
+    });
+
+    it("ao enviar com partes, chama update_transaction_items_cmd após create_transaction", async () => {
+      const user = userEvent.setup();
+      mockCommands({
+        list_tags_cmd: [],
+        create_transaction: "new-id",
+        update_transaction_items_cmd: null,
+      });
+      const onCreated = vi.fn();
+      render(<NewTransactionForm onCreated={onCreated} />);
+
+      await user.click(screen.getByRole("button", { name: "+ Adicionar item" }));
+      await user.type(screen.getByLabelText("Valor do item 1"), "50,00");
+      await user.type(screen.getByLabelText("Descrição do item 1"), "Parte A");
+      await user.click(screen.getByRole("button", { name: "+ Adicionar item" }));
+      await user.type(screen.getByLabelText("Valor do item 2"), "75,00");
+      await user.click(screen.getByRole("button", { name: "Lançar" }));
+
+      await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+
+      const createIdx = mockInvoke.mock.calls.findIndex(
+        (c) => c[0] === "create_transaction",
+      );
+      const itemsIdx = mockInvoke.mock.calls.findIndex(
+        (c) => c[0] === "update_transaction_items_cmd",
+      );
+      expect(createIdx).toBeGreaterThanOrEqual(0);
+      expect(itemsIdx).toBeGreaterThan(createIdx); // itens DEPOIS do create
+      const itemsCall = mockInvoke.mock.calls[itemsIdx];
+      expect(itemsCall?.[1]).toMatchObject({
+        transactionId: "new-id",
+        items: [
+          { amount_cents: 5000, description: "Parte A", position: 0 },
+          { amount_cents: 7500, description: "", position: 1 },
+        ],
+      });
+      // O total enviado ao create é a SOMA das partes (aritmética, não string).
+      const createCall = mockInvoke.mock.calls[createIdx];
+      expect(createCall?.[1]).toMatchObject({ amountCents: 12500 });
+    });
+  });
+
   it("desabilita Lançar sem conta reserva disponível", async () => {
     const user = userEvent.setup();
     mockCommands({

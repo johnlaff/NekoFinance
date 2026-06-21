@@ -489,13 +489,19 @@ export function WriteBackPreview({
     dispatch({ type: "confirm", value: null });
     await withLoading(setApplying, async () => {
       try {
-        const n = await applyWriteBack(
+        const result = await applyWriteBack(
           spreadsheetId,
           sheetName,
           clientId,
           previewRevision,
         );
-        dispatch({ type: "applyMsg", value: `Enviado: ${n} célula(s) atualizada(s).` });
+        // Aviso não-bloqueante (plano 036): a nota de célula itemizada pode ter falhado mesmo com o
+        // valor/fórmula já gravado — anexamos à mensagem em vez de tratar como erro.
+        const suffix = result.note_warning ? ` ${result.note_warning}` : "";
+        dispatch({
+          type: "applyMsg",
+          value: `Enviado: ${result.written} célula(s) atualizada(s).${suffix}`,
+        });
         // Pós-envio: refaz a prévia para refletir o novo estado da planilha — um 2º envio idêntico
         // não dispara (o diff fica vazio). Não reusa o `previewRevision` antigo. `keepMessages` para
         // a mensagem de sucesso sobreviver à re-prévia.

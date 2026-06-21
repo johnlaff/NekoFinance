@@ -302,7 +302,7 @@ test.describe("write-back para a planilha (Tauri mockado, sem escrita real)", ()
       conflicts_pending: false,
       multi_card_warning: false,
     },
-    apply_write_back: 1,
+    apply_write_back: { written: 1, note_warning: null },
   };
 
   test("renderiza o diff e o diálogo de confirmação gera o envio (cancelar não escreve)", async ({
