@@ -51,7 +51,7 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 036  | Itemized transactions — EDIT line items + write-back round-trip (SUM + note)           | P1       | L      | 035        | DONE (pkg D)               |
 | 037  | P1 flow fixes: tag-exclude out of Saldo projection; credit-lump audit; Jan-1 economia  | P1       | M      | —          | DONE (pkg D)               |
 | 038  | Dual-reality UX: daily-teto config + credit-first quick-add + Economizado badge        | P1       | M      | —          | DONE (pkg D)               |
-| 039  | Daily ease: OS-scheduler reminder (app closed) + 1-click Sincronizar fast path         | P2       | M      | —          | TODO (pkg D)               |
+| 039  | Daily ease: OS-scheduler reminder (app closed) + 1-click Sincronizar fast path         | P2       | M      | —          | DONE (pkg D)               |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale)
 

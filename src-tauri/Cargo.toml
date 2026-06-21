@@ -37,3 +37,7 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 aes-gcm = "0.10"
 sha2 = "0.11"
 hex = "0.4"
+# Standalone notifier for the `--remind` CLI path (plan 039): the OS scheduler
+# launches the binary with `--remind` when the app is closed, with no Tauri
+# AppHandle available. Cross-platform (Linux dbus / macOS / Windows WinRT toast).
+notify-rust = "=4.18.0"

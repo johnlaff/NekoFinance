@@ -6,6 +6,7 @@ mod forecast;
 mod google_sheets;
 mod http;
 mod oauth;
+mod os_scheduler;
 mod recurrence;
 mod reminder_task;
 mod splits;
@@ -54,6 +55,8 @@ pub fn run() {
             commands::get_app_setting,
             commands::set_app_setting,
             commands::upsert_daily_budget,
+            commands::register_os_reminder,
+            commands::unregister_os_reminder,
             commands::backup_database,
             commands::save_sheet_mapping,
             commands::get_sheet_mappings,

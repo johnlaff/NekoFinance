@@ -221,6 +221,7 @@ function routeDashboard(opts: {
   preview?: unknown;
   conflicts?: unknown;
   writeBackEnabled?: unknown;
+  applyWriteBack?: unknown;
 }) {
   invalidateCommands();
   mockInvoke.mockImplementation(
@@ -240,6 +241,12 @@ function routeDashboard(opts: {
           return opts.preview instanceof Error
             ? Promise.reject(opts.preview)
             : Promise.resolve(opts.preview ?? { cells: [], preview_revision: "x" });
+        case "apply_write_back":
+          return opts.applyWriteBack instanceof Error
+            ? Promise.reject(opts.applyWriteBack)
+            : Promise.resolve(
+                opts.applyWriteBack ?? { written: 2, note_warning: null },
+              );
         case "get_import_conflicts":
           return Promise.resolve(opts.conflicts ?? []);
         case "write_back_enabled":
@@ -270,7 +277,7 @@ describe("DashboardScreen — write-back pendente (plano 031)", () => {
     );
   });
 
-  it("clicar no indicador abre o painel de aprovação existente", async () => {
+  it("'Revisar e enviar' abre o painel de aprovação completo (plano 028)", async () => {
     const user = userEvent.setup();
     routeDashboard({
       appSetting: { sheets_last_import: MAPPING_JSON, sheets_last_sheet: "2026" },
@@ -278,11 +285,14 @@ describe("DashboardScreen — write-back pendente (plano 031)", () => {
     });
     render(<DashboardScreen onAskMia={vi.fn()} />);
 
-    const trigger = await screen.findByRole("button", {
-      name: /local → planilha pendente/,
-    });
+    // O selo mostra a contagem; o fluxo completo fica atrás de "Revisar e enviar".
+    await waitFor(() =>
+      expect(
+        screen.getByText(/2 célula\(s\) local → planilha pendente\(s\)/),
+      ).toBeInTheDocument(),
+    );
     expect(screen.queryByText("Write-back para a planilha")).not.toBeInTheDocument();
-    await user.click(trigger);
+    await user.click(screen.getByRole("button", { name: "Revisar e enviar" }));
 
     // O MESMO componente de aprovação (plano 028) aparece — cabeçalho + botão de prévia.
     await waitFor(() =>
@@ -339,5 +349,112 @@ describe("DashboardScreen — write-back pendente (plano 031)", () => {
       screen.queryByRole("button", { name: /local → planilha pendente/ }),
     ).not.toBeInTheDocument();
     expect(screen.getByText(/Envio desativado nas Configurações/)).toBeInTheDocument();
+  });
+});
+
+// Caminho rápido "Sincronizar" (plano 039): colapsa os cliques para mudanças de só-valor seguras
+// (prévia silenciosa → resumo inline → 1 confirmação) — SEM colapsar nenhuma salvaguarda. Cai no
+// fluxo completo quando o diff não é seguro (conflito, multi-cartão, risco de coluna de fórmula).
+describe("DashboardScreen — caminho rápido Sincronizar (plano 039)", () => {
+  beforeEach(() => {
+    mockInvoke.mockReset();
+  });
+
+  it("diff seguro: Sincronizar abre a confirmação inline e UMA confirmação escreve com o previewRevision", async () => {
+    const user = userEvent.setup();
+    routeDashboard({
+      appSetting: { sheets_last_import: MAPPING_JSON, sheets_last_sheet: "2026" },
+      preview: PREVIEW_2_PENDING, // só células `saida` (kind seguro), sem conflito/multi-cartão
+    });
+    render(<DashboardScreen onAskMia={vi.fn()} />);
+
+    await user.click(await screen.findByRole("button", { name: "Sincronizar" }));
+
+    // Confirmação aparece SEM expandir o painel completo; ainda não escreveu.
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+    expect(screen.queryByText("Write-back para a planilha")).not.toBeInTheDocument();
+    // Resumo inline lista as células (≤ 5 → uma linha).
+    expect(screen.getByText(/2 célula\(s\):/)).toBeInTheDocument();
+    expect(mockInvoke).not.toHaveBeenCalledWith("apply_write_back", expect.anything());
+
+    await user.click(screen.getByRole("button", { name: "Confirmar envio" }));
+
+    // UMA escrita, com o token de frescura DAQUELA prévia.
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith(
+        "apply_write_back",
+        expect.objectContaining({ previewRevision: "rev-abc" }),
+      ),
+    );
+    const applyCalls = mockInvoke.mock.calls.filter((c) => c[0] === "apply_write_back");
+    expect(applyCalls).toHaveLength(1);
+  });
+
+  it("cancelar a confirmação não escreve nada", async () => {
+    const user = userEvent.setup();
+    routeDashboard({
+      appSetting: { sheets_last_import: MAPPING_JSON, sheets_last_sheet: "2026" },
+      preview: PREVIEW_2_PENDING,
+    });
+    render(<DashboardScreen onAskMia={vi.fn()} />);
+
+    await user.click(await screen.findByRole("button", { name: "Sincronizar" }));
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Cancelar" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(mockInvoke).not.toHaveBeenCalledWith("apply_write_back", expect.anything());
+  });
+
+  it("diff NÃO seguro (multi-cartão): Sincronizar cai no fluxo completo, sem confirmação rápida", async () => {
+    const user = userEvent.setup();
+    routeDashboard({
+      appSetting: { sheets_last_import: MAPPING_JSON, sheets_last_sheet: "2026" },
+      preview: { ...PREVIEW_2_PENDING, multi_card_warning: true },
+    });
+    render(<DashboardScreen onAskMia={vi.fn()} />);
+
+    await user.click(await screen.findByRole("button", { name: "Sincronizar" }));
+
+    // Sem confirmação rápida; em vez disso, o painel multi-etapas completo abre.
+    await waitFor(() =>
+      expect(screen.getByText("Write-back para a planilha")).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mockInvoke).not.toHaveBeenCalledWith("apply_write_back", expect.anything());
+  });
+
+  it("diff NÃO seguro (coluna de fórmula): Sincronizar cai no fluxo completo", async () => {
+    const user = userEvent.setup();
+    const withFormula = {
+      ...PREVIEW_2_PENDING,
+      cells: [
+        ...PREVIEW_2_PENDING.cells,
+        {
+          a1: "F7",
+          row: 7,
+          col: 6,
+          date: "2026-06-03",
+          kind: "balance", // coluna de fórmula → nunca pelo caminho rápido
+          current: "R$ 0,00",
+          proposed: "R$ 10,00",
+          value_cents: 1000,
+          changed: true,
+        },
+      ],
+    };
+    routeDashboard({
+      appSetting: { sheets_last_import: MAPPING_JSON, sheets_last_sheet: "2026" },
+      preview: withFormula,
+    });
+    render(<DashboardScreen onAskMia={vi.fn()} />);
+
+    await user.click(await screen.findByRole("button", { name: "Sincronizar" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("Write-back para a planilha")).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mockInvoke).not.toHaveBeenCalledWith("apply_write_back", expect.anything());
   });
 });
