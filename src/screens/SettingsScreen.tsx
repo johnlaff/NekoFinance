@@ -9,15 +9,20 @@ import {
   Link,
   Lock,
   Plus,
+  RefreshCw,
   Settings,
   Shield,
   Sparkles,
   X,
 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
+import { PocketsCard } from "../features/pockets/PocketsCard";
 import { PocketsManager } from "../features/pockets/PocketsManager";
+import { ConflictGate } from "../features/reconcile/ConflictGate";
 import { GoogleSheetsPanel } from "../features/sheets/GoogleSheetsPanel";
 import { LocalXlsxImport } from "../features/sheets/LocalXlsxImport";
+import { WriteBackPending } from "./dashboard/WriteBackPending";
+import { useWriteBackPending } from "../hooks/useWriteBackPending";
 import {
   backupDatabase,
   getAppInfo,
@@ -821,6 +826,7 @@ export function SettingsScreen({
   onAuthChange: (status: AuthStatus) => void;
 }) {
   const appInfo = useCommand("get_app_info", getAppInfo).data ?? null;
+  const writeBack = useWriteBackPending();
 
   const [miaLocal, setMiaLocal] = useState(true);
   const [animacoes, setAnimacoes] = useState(true);
@@ -895,6 +901,33 @@ export function SettingsScreen({
         </div>
       </section>
 
+      {/* ── Sincronização ──────────────────────────────────────── */}
+      <section className="card">
+        <div className="card__head">
+          <span className="card__title">
+            <RefreshCw size={16} strokeWidth={1.75} className="ic" />
+            Sincronização
+          </span>
+        </div>
+        <div className="card__body">
+          <ConflictGate onResolved={writeBack.refresh} />
+          <WriteBackPending writeBack={writeBack} />
+          {!writeBack.loading &&
+            writeBack.pendingCount === 0 &&
+            writeBack.conflictCount === 0 && (
+              <p
+                style={{
+                  fontSize: "var(--fs-sm)",
+                  color: "var(--text-muted)",
+                  margin: 0,
+                }}
+              >
+                Nenhuma alteração pendente de envio para a planilha.
+              </p>
+            )}
+        </div>
+      </section>
+
       {/* ── Bolsos ─────────────────────────────────────────────── */}
       <section className="card">
         <div className="card__head">
@@ -904,6 +937,7 @@ export function SettingsScreen({
           </span>
         </div>
         <div className="card__body">
+          <PocketsCard />
           <PocketsManager />
         </div>
       </section>

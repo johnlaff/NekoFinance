@@ -1,9 +1,25 @@
 import "./lancamentos.css";
 import { useState, useMemo } from "react";
-import { CalendarRange, ChevronRight, Pencil, Plus, Search, Tags } from "lucide-react";
+import {
+  CalendarRange,
+  ChevronRight,
+  Pencil,
+  Plus,
+  Search,
+  Tags,
+  Trash2,
+} from "lucide-react";
 import { Button } from "../design-system/components/Button";
 import { SegmentedControl } from "../design-system/components/SegmentedControl";
-import { getRecentTransactions, isTauri, type TransactionRow } from "../lib/api";
+import {
+  deleteTransaction,
+  getRecentTransactions,
+  isTauri,
+  listTags,
+  setTransactionTags,
+  type Tag,
+  type TransactionRow,
+} from "../lib/api";
 import { useCommand, invalidateCommands } from "../lib/useCommand";
 import {
   fmtBRL,
@@ -101,17 +117,107 @@ const FILTER_CHIPS: { key: FilterKey; label: string; color: string }[] = [
 // Sub-components
 // ---------------------------------------------------------------------------
 
+/** Inline tag picker shown within the row's expanded panel. */
+function TagPicker({
+  transactionId,
+  currentTagIds,
+  allTags,
+  onDone,
+}: {
+  transactionId: string;
+  currentTagIds: string[];
+  allTags: Tag[];
+  onDone: () => void;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(currentTagIds));
+  const [saving, setSaving] = useState(false);
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function save() {
+    setSaving(true);
+    setTransactionTags(transactionId, Array.from(selected))
+      .then(() => {
+        invalidateCommands();
+        onDone();
+      })
+      .catch(() => undefined)
+      .finally(() => setSaving(false));
+  }
+
+  return (
+    <div className="lc-tagpicker">
+      <div className="lc-tagpicker__chips">
+        {allTags.length === 0 ? (
+          <span style={{ fontSize: 12, color: "var(--text-faint)" }}>
+            Nenhuma tag criada ainda.
+          </span>
+        ) : (
+          allTags.map((tag) => {
+            const on = selected.has(tag.id);
+            return (
+              <button
+                key={tag.id}
+                type="button"
+                className={"lc-tagchip" + (on ? " is-on" : "")}
+                style={
+                  on
+                    ? {
+                        background: `color-mix(in srgb, ${tag.color} 20%, transparent)`,
+                        borderColor: tag.color,
+                        color: tag.color,
+                      }
+                    : undefined
+                }
+                onClick={() => toggle(tag.id)}
+                aria-pressed={on}
+              >
+                {tag.emoji ? `${tag.emoji} ` : ""}
+                {tag.name}
+              </button>
+            );
+          })
+        )}
+      </div>
+      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={() => void save()}
+          disabled={saving}
+        >
+          Aplicar
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onDone}>
+          Cancelar
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /** A single transaction row with optional expanded parts panel. */
 function Row({
   t,
   open,
   onToggle,
   onEdit,
+  onDelete,
+  allTags,
 }: {
   t: TransactionRow;
   open: boolean;
   onToggle: () => void;
   onEdit: (t: TransactionRow) => void;
+  onDelete: (t: TransactionRow) => void;
+  allTags: Tag[];
 }) {
   const mvType = toMovementType(t);
   const tm = TYPE_META[mvType];
@@ -120,6 +226,8 @@ function Row({
   const isToday = t.date === TODAY;
   const isEntrada = mvType === "entrada";
   const hasItems = t.line_items.length > 1;
+  const isImported = t.provenance === "importado";
+  const [showTagPicker, setShowTagPicker] = useState(false);
 
   const installmentLabel =
     t.installment_index != null && t.installment_total != null
@@ -159,6 +267,19 @@ function Row({
           </span>
           {hasItems && <span className="lc-tag">{`${t.line_items.length} itens`}</span>}
           {installmentLabel && <span className="lc-tag">{installmentLabel}</span>}
+          {t.tags.map((tag) => (
+            <span
+              key={tag.id}
+              className="lc-tag"
+              style={{
+                borderColor: `color-mix(in srgb, ${tag.color} 40%, transparent)`,
+                color: tag.color,
+              }}
+            >
+              {tag.emoji ? `${tag.emoji} ` : ""}
+              {tag.name}
+            </span>
+          ))}
           {isFuture && (
             <span
               className="lc-pill"
@@ -220,11 +341,19 @@ function Row({
               Lançamento simples · sem itens detalhados
             </p>
           )}
+
+          {isImported && (
+            <p className="lc-parts__note" style={{ color: "var(--brass-400)" }}>
+              Lançamento importado · edição e exclusão via planilha
+            </p>
+          )}
+
           <div className="lc-part-actions">
             <Button
               size="sm"
               variant="ghost"
               iconLeft={<Pencil size={13} strokeWidth={1.75} />}
+              disabled={isImported}
               onClick={(e?: React.MouseEvent) => {
                 e?.stopPropagation();
                 onEdit(t);
@@ -236,11 +365,35 @@ function Row({
               size="sm"
               variant="ghost"
               iconLeft={<Tags size={13} strokeWidth={1.75} />}
-              onClick={(e?: React.MouseEvent) => e?.stopPropagation()}
+              onClick={(e?: React.MouseEvent) => {
+                e?.stopPropagation();
+                setShowTagPicker((v) => !v);
+              }}
             >
               Tags
             </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              iconLeft={<Trash2 size={13} strokeWidth={1.75} />}
+              disabled={isImported}
+              onClick={(e?: React.MouseEvent) => {
+                e?.stopPropagation();
+                onDelete(t);
+              }}
+            >
+              Apagar
+            </Button>
           </div>
+
+          {showTagPicker && (
+            <TagPicker
+              transactionId={t.id}
+              currentTagIds={t.tags.map((tag) => tag.id)}
+              allTags={allTags}
+              onDone={() => setShowTagPicker(false)}
+            />
+          )}
         </div>
       )}
     </>
@@ -273,6 +426,8 @@ function Group({
   openIds,
   toggle,
   onEdit,
+  onDelete,
+  allTags,
 }: {
   title: string;
   today: boolean;
@@ -280,6 +435,8 @@ function Group({
   openIds: ReadonlySet<string>;
   toggle: (id: string) => void;
   onEdit: (t: TransactionRow) => void;
+  onDelete: (t: TransactionRow) => void;
+  allTags: Tag[];
 }) {
   const sum = rows.reduce((s, t) => s + signedCents(t), 0);
   return (
@@ -292,6 +449,8 @@ function Group({
           open={openIds.has(t.id)}
           onToggle={() => toggle(t.id)}
           onEdit={onEdit}
+          onDelete={onDelete}
+          allTags={allTags}
         />
       ))}
     </>
@@ -330,6 +489,8 @@ export function TransactionsScreen() {
     getRecentTransactions(FETCH_LIMIT),
   );
 
+  const { data: allTags } = useCommand("list_tags:lc", listTags);
+
   const [view, setView] = useState<ViewMode>("anchor");
   const [filter, setFilter] = useState<FilterKey>("todos");
   const [showFuture, setShowFuture] = useState(false);
@@ -347,11 +508,31 @@ export function TransactionsScreen() {
   }
 
   function handleEdit(t: TransactionRow) {
-    openCompose({ mode: "edit", transactionId: t.id });
+    openCompose({
+      mode: "edit",
+      transactionId: t.id,
+      type: toMovementType(t),
+      date: t.date,
+      description: t.description,
+      amountCents: Math.abs(t.amount),
+      provenance: t.provenance,
+    });
+  }
+
+  function handleDelete(t: TransactionRow) {
+    if (t.provenance === "importado") return; // guard: backend also rejects this
+    const confirmed = window.confirm(
+      `Apagar "${t.description || "lançamento"}"? Esta ação não pode ser desfeita.`,
+    );
+    if (!confirmed) return;
+    void deleteTransaction(t.id)
+      .then(() => invalidateCommands())
+      .catch((err: unknown) => {
+        console.error("Falha ao apagar lançamento:", err);
+      });
   }
 
   function handleNew() {
-    invalidateCommands();
     openCompose({ mode: "new" });
   }
 
@@ -450,6 +631,8 @@ export function TransactionsScreen() {
           openIds={openIds}
           toggle={toggle}
           onEdit={handleEdit}
+          onDelete={handleDelete}
+          allTags={allTags ?? []}
         />
         {inMonthRows.length === 0 && (
           <div className="lc-empty">
@@ -513,6 +696,8 @@ export function TransactionsScreen() {
                     openIds={openIds}
                     toggle={toggle}
                     onEdit={handleEdit}
+                    onDelete={handleDelete}
+                    allTags={allTags ?? []}
                   />
                 ))}
           </>
@@ -527,6 +712,8 @@ export function TransactionsScreen() {
             openIds={openIds}
             toggle={toggle}
             onEdit={handleEdit}
+            onDelete={handleDelete}
+            allTags={allTags ?? []}
           />
         ) : (
           <div className="lc-gh lc-gh--today">
@@ -547,6 +734,8 @@ export function TransactionsScreen() {
             openIds={openIds}
             toggle={toggle}
             onEdit={handleEdit}
+            onDelete={handleDelete}
+            allTags={allTags ?? []}
           />
         ))}
 

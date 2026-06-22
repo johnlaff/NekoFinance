@@ -3,13 +3,15 @@ import { Check, Pencil, Plus, Table2, X } from "lucide-react";
 import { Button } from "../design-system/components/Button";
 import {
   createTransaction,
+  getLineItems,
   getPockets,
   isTauri,
+  updateTransaction,
   updateTransactionItems,
   type PocketAccount,
 } from "../lib/api";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
-import { parseBRLToCents, todayISO } from "../lib/format";
+import { formatBRL, parseBRLToCents, todayISO } from "../lib/format";
 import { fmtBRL, TYPE_META, type MovementType } from "../lib/nkFormat";
 import type { ComposeOptions } from "./appContext";
 
@@ -41,6 +43,50 @@ function mapType(t: MovementType): {
   }
 }
 
+/** Converts magnitude cents → pt-BR input string ("1.234,56"). */
+function centsToInput(cents: number): string {
+  // formatBRL returns "R$ 1.234,56"; strip the currency prefix for the input field.
+  return formatBRL(Math.abs(cents))
+    .replace(/^[R$\s−]+/, "")
+    .trim();
+}
+
+interface LineItemInput {
+  amount_cents: number;
+  description: string;
+  position: number;
+}
+
+/** Persiste o lançamento (edição ou criação) + itens. Module-level de propósito: o React
+ *  Compiler não compila `try` dentro de componentes, então a sequência de awaits vive aqui e
+ *  o componente só encadeia .then/.catch/.finally. */
+async function persistLancamento(p: {
+  transactionId?: string | undefined;
+  fields: {
+    txnType: "income" | "expense" | "transfer";
+    amountCents: number;
+    description: string | null;
+    date: string;
+    paymentMethod: string | null;
+    isFixed: boolean;
+  };
+  toAccountId: string | null;
+  items: LineItemInput[] | null;
+}): Promise<void> {
+  if (p.transactionId) {
+    await updateTransaction(p.transactionId, p.fields);
+    if (p.items) await updateTransactionItems(p.transactionId, p.items);
+  } else {
+    const newId = await createTransaction({
+      ...p.fields,
+      tagIds: [],
+      recurrence: null,
+      toAccountId: p.toAccountId,
+    });
+    if (p.items) await updateTransactionItems(newId, p.items);
+  }
+}
+
 export function Compose({
   open,
   options,
@@ -52,20 +98,57 @@ export function Compose({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const isEditMode = options.mode === "edit";
+
   // App remonta o Compose (via `key`) a cada abertura → os inicializadores leem as opções frescas.
   const [type, setType] = useState<MovementType>(options.type ?? "diario");
   const [date, setDate] = useState(options.date ?? todayISO());
-  const [desc, setDesc] = useState("");
+  const [desc, setDesc] = useState(options.description ?? "");
   const [composed, setComposed] = useState(false);
-  const [single, setSingle] = useState("");
+  const [single, setSingle] = useState(
+    options.amountCents != null && options.amountCents > 0
+      ? centsToInput(options.amountCents)
+      : "",
+  );
   const [parts, setParts] = useState<Part[]>([{ desc: "", amt: "" }]);
   const [toAccountId, setToAccountId] = useState("");
   const [saving, setSaving] = useState(false);
+  const [loadingItems, setLoadingItems] = useState(false);
 
   const pocketsQ = useCommand("get_pockets", getPockets);
   const reserveAccounts: PocketAccount[] = (pocketsQ.data?.accounts ?? []).filter(
     (a) => a.liquidity === "reserve" || a.liquidity === "illiquid",
   );
+
+  // In edit mode: load existing line items and pre-fill composed state.
+  useEffect(() => {
+    if (!isEditMode || !options.transactionId || !isTauri) return;
+    // Wrap in Promise.resolve so setState calls happen inside async callbacks,
+    // avoiding the react-hooks/set-state-in-effect synchronous-in-body constraint.
+    void Promise.resolve().then(() => {
+      setLoadingItems(true);
+      return getLineItems(options.transactionId!)
+        .then((items) => {
+          if (items.length >= 2) {
+            setComposed(true);
+            setParts(
+              items
+                .slice()
+                .sort((a, b) => a.position - b.position)
+                .map((li) => ({
+                  desc: li.description,
+                  amt: centsToInput(li.amount_cents),
+                })),
+            );
+          }
+          // If 0 or 1 item, keep single-value mode (already set from amountCents in options).
+        })
+        .catch(() => {
+          // Non-fatal: keep the simple single-value pre-fill.
+        })
+        .finally(() => setLoadingItems(false));
+    });
+  }, [isEditMode, options.transactionId]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -100,7 +183,8 @@ export function Compose({
       : "";
 
   const economiaNeedsAccount = type === "economia" && toAccountId === "";
-  const canSave = isTauri && total > 0 && !economiaNeedsAccount && !saving;
+  const canSave =
+    isTauri && total > 0 && !economiaNeedsAccount && !saving && !loadingItems;
 
   const setPart = (i: number, k: keyof Part, v: string) =>
     setParts((ps) => ps.map((p, j) => (j === i ? { ...p, [k]: v } : p)));
@@ -108,39 +192,39 @@ export function Compose({
   const rmPart = (i: number) =>
     setParts((ps) => (ps.length > 1 ? ps.filter((_, j) => j !== i) : ps));
 
-  async function save() {
+  function save() {
     if (!canSave) return;
     const m = mapType(type);
+    const items =
+      composed && effectiveParts.length >= 1
+        ? effectiveParts.map((p, i) => ({
+            amount_cents: parseBRLToCents(p.amt) ?? 0,
+            description: p.desc || "",
+            position: i,
+          }))
+        : null;
     setSaving(true);
-    try {
-      const newId = await createTransaction({
+    persistLancamento({
+      transactionId:
+        isEditMode && options.transactionId ? options.transactionId : undefined,
+      fields: {
         txnType: m.txnType,
         amountCents: total,
         description: desc || null,
         date,
         paymentMethod: m.paymentMethod,
         isFixed: m.isFixed,
-        tagIds: [],
-        recurrence: null,
-        toAccountId: type === "economia" ? toAccountId : null,
-      });
-      // Partes itemizadas (nota da célula) quando composto.
-      if (composed && effectiveParts.length >= 1) {
-        await updateTransactionItems(
-          newId,
-          effectiveParts.map((p, i) => ({
-            amount_cents: parseBRLToCents(p.amt) ?? 0,
-            description: p.desc || "",
-            position: i,
-          })),
-        );
-      }
-      invalidateCommands();
-      onSaved();
-      onClose();
-    } finally {
-      setSaving(false);
-    }
+      },
+      toAccountId: type === "economia" ? toAccountId : null,
+      items,
+    })
+      .then(() => {
+        invalidateCommands();
+        onSaved();
+        onClose();
+      })
+      .catch(() => undefined)
+      .finally(() => setSaving(false));
   }
 
   return (
@@ -149,7 +233,7 @@ export function Compose({
       <aside
         className={"cmp neko-app" + (open ? " is-open" : "")}
         role="dialog"
-        aria-label="Novo lançamento"
+        aria-label={isEditMode ? "Editar lançamento" : "Novo lançamento"}
         aria-hidden={!open}
       >
         <div className="cmp-head">
@@ -171,9 +255,13 @@ export function Compose({
             {meta.glyph}
           </span>
           <div style={{ flex: 1 }}>
-            <div className="cmp-head__t">Novo lançamento</div>
+            <div className="cmp-head__t">
+              {isEditMode ? "Editar lançamento" : "Novo lançamento"}
+            </div>
             <div className="cmp-head__s">
-              Grava 1:1 na planilha · precisa da sua confirmação
+              {isEditMode
+                ? "Atualiza o lançamento local · reflita no write-back"
+                : "Grava 1:1 na planilha · precisa da sua confirmação"}
             </div>
           </div>
           <button className="sh-iconbtn" onClick={onClose} aria-label="Fechar">
@@ -386,7 +474,7 @@ export function Compose({
             onClick={() => void save()}
             disabled={!canSave}
           >
-            Salvar lançamento
+            {isEditMode ? "Salvar alterações" : "Salvar lançamento"}
           </Button>
           <Button variant="ghost" onClick={onClose}>
             Cancelar

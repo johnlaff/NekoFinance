@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { mockTauri } from "./tauri-mock";
 
+// ---------------------------------------------------------------------------
+// Main suite — new redesign 2026 shell
+// ---------------------------------------------------------------------------
+
 test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
   test.beforeEach(async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
@@ -8,51 +12,44 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     await page.goto("/");
   });
 
-  test("dashboard renders the forecast-first reading surface", async ({
+  // -------------------------------------------------------------------------
+  // (1) Hoje — redesign surface
+  // -------------------------------------------------------------------------
+
+  test("Hoje renders the redesign surface with mocked data", async ({
     page,
   }, testInfo) => {
-    // O saldo projetado vive no cabeçalho do herói (o metric tile redundante foi removido).
-    await expect(page.getByText(/Saldo no fim de/)).toBeVisible();
-    // Pockets card (spec 007): grouped balances + net worth (patrimônio is a quiet footer)
-    await expect(page.getByText("Bolsos", { exact: true })).toBeVisible();
-    await expect(page.getByText("R$ 35.420,00")).toBeVisible();
-    await expect(page.getByText("Pode gastar até")).toBeVisible();
-    await expect(page.getByText(/Junho de 2026/)).toBeVisible();
-    // Stats do herói: reserva + nº de lançamentos (escopado ao herói; "Lançamentos"
-    // também é item de navegação).
-    await expect(
-      page.locator(".dash-hero__stats").getByText("Lançamentos"),
-    ).toBeVisible();
-    // Chained daily table: today marked, salary day visible
-    await expect(page.getByRole("table").getByText("hoje").first()).toBeVisible();
-    await expect(page.getByText("R$ 12.340,00").first()).toBeVisible();
+    // Hero: "Pode gastar hoje" is the new headline
+    await expect(page.getByText("Pode gastar hoje")).toBeVisible();
 
-    // Diário de hoje: card com o disponível do dia e registro rápido (tipo + descrição + valor).
-    await expect(page.locator("#dash-checkin-title")).toHaveText("Diário de hoje");
-    await expect(page.getByText(/disponível/)).toBeVisible();
-    // Seletor dos 5 tipos de movimento (Economia direciona ao form completo → desabilitada).
-    const checkin = page.locator("section[aria-labelledby='dash-checkin-title']");
-    await expect(
-      checkin.getByRole("radiogroup", { name: "Tipo de movimento" }),
-    ).toBeVisible();
-    await expect(checkin.getByRole("radio", { name: /Diário/ })).toHaveAttribute(
+    // Forecast aside: "Saldo no fim de" month label
+    await expect(page.getByText(/Saldo no fim de/)).toBeVisible();
+
+    // Hero stats dl (Saldo hoje / Reserva / Teto diário)
+    await expect(page.getByText("Saldo hoje", { exact: true })).toBeVisible();
+    await expect(page.getByText("Reserva", { exact: true })).toBeVisible();
+    await expect(page.getByText("Teto diário", { exact: true })).toBeVisible();
+
+    // CheckinCard: "Check-in de hoje" card title
+    await expect(page.getByText("Check-in de hoje")).toBeVisible();
+
+    // Type chips: Diário / Cartão / Saída (only 3 in checkin, no Economia)
+    const radiogroup = page.getByRole("radiogroup", { name: "Tipo de movimento" });
+    await expect(radiogroup).toBeVisible();
+    await expect(radiogroup.getByRole("radio", { name: /Diário/ })).toHaveAttribute(
       "aria-checked",
       "true",
     );
-    await expect(checkin.getByRole("radio", { name: /Economia/ })).toBeDisabled();
-    // Descrição opcional + valor, sem sair da tela.
-    await checkin.getByLabel("Descrição (opcional)").fill("mercado");
-    await checkin.getByLabel(/Valor do lançamento/).fill("9,90");
-    await checkin.getByRole("button", { name: "Registrar" }).click();
-    // Campos limpam após registrar (o dashboard refaz a busca); o tipo é mantido.
-    await expect(checkin.getByLabel(/Valor do lançamento/)).toHaveValue("");
-    await expect(checkin.getByLabel("Descrição (opcional)")).toHaveValue("");
+    await expect(radiogroup.getByRole("radio", { name: /Cartão/ })).toBeVisible();
+    await expect(radiogroup.getByRole("radio", { name: /Saída/ })).toBeVisible();
 
-    // Rodapé do MonthLedgerCard fiel à planilha: linhas Saída Total e Resultado do mês.
-    await expect(page.getByRole("row", { name: /Saída Total/ })).toBeVisible();
-    await expect(
-      page.getByRole("row", { name: /^Resultado do mês/ }).first(),
-    ).toBeVisible();
+    // Value input + Registrar button
+    await expect(page.getByLabel("Valor")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Registrar" })).toBeVisible();
+
+    // UpcomingCard: "A pagar em breve" (from mock UPCOMING_BILLS)
+    await expect(page.getByText("A pagar em breve")).toBeVisible();
+    await expect(page.getByText("Compromisso fixo demo")).toBeVisible();
 
     await page.screenshot({
       fullPage: true,
@@ -60,109 +57,166 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     });
   });
 
-  test("sidebar navigation switches screens and marks the current item", async ({
+  // -------------------------------------------------------------------------
+  // (2) Sidebar nav — switches screens + aria-current
+  // -------------------------------------------------------------------------
+
+  test("sidebar nav groups Finanças / Sistema and switches screens with aria-current", async ({
     page,
   }, testInfo) => {
-    const nav = (name: string | RegExp) => page.getByRole("button", { name });
+    // Check sidebar group headings
+    await expect(page.getByText("Finanças", { exact: true })).toBeVisible();
+    await expect(page.getByText("Sistema", { exact: true })).toBeVisible();
 
-    await nav("Lançamentos").click();
-    await expect(nav("Lançamentos")).toHaveAttribute("aria-current", "page");
+    // Default: Hoje is active
+    await expect(page.getByRole("button", { name: "Hoje" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+
+    // Navigate to Lançamentos
+    await page.getByRole("button", { name: "Lançamentos", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Lançamentos", exact: true }),
+    ).toHaveAttribute("aria-current", "page");
+    // The transactions screen renders transaction data from mock
     await expect(page.getByText("Despesa demo variável")).toBeVisible();
-    await expect(page.getByText("5 exibidas")).toBeVisible();
-    // Multi-titular: o lançamento dividido mostra os OwnerChips dos titulares.
-    const splitRow = page.getByRole("row", { name: /Despesa demo variável/ });
-    await expect(splitRow.getByText("Pessoa A")).toBeVisible();
-    await expect(splitRow.getByText("Pessoa B")).toBeVisible();
-    // Plano 045: chip de vencimento (linha com due_date) e badge "N/M parcelas" (série).
-    await expect(page.getByLabel("Vencimento: 28/06/2026")).toBeVisible();
-    await expect(page.getByText("3/12 parcelas")).toBeVisible();
-    await page.screenshot({
-      fullPage: true,
-      path: testInfo.outputPath("transactions.png"),
-    });
 
-    // Metodologia foi rebaixada: chega-se a ela pelo item "Ajuda" em Sistema.
-    await nav("Ajuda").click();
-    await expect(page.getByText(/Previsibilidade primeiro/)).toBeVisible();
-    await expect(page.getByText("Débito e crédito: dois ritmos")).toBeVisible();
-    await page.screenshot({
-      fullPage: true,
-      path: testInfo.outputPath("methodology.png"),
-    });
+    // Navigate to Tags
+    await page.getByRole("button", { name: "Tags" }).click();
+    await expect(page.getByRole("button", { name: "Tags" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await expect(page.getByText("! Pagar", { exact: true })).toBeVisible();
 
-    await nav("Configurações e privacidade").click();
+    // Navigate to Configurações (Sistema group)
+    await page.getByRole("button", { name: "Configurações" }).click();
+    await expect(page.getByRole("button", { name: "Configurações" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
     await expect(page.getByText(/app\.neko\.finance/)).toBeVisible();
-    await expect(page.getByText("Importar arquivo local")).toBeVisible();
+
     await page.screenshot({
       fullPage: true,
-      path: testInfo.outputPath("settings.png"),
+      path: testInfo.outputPath("nav.png"),
     });
   });
 
-  test("método screens render: Totais, Horizonte, Anual, Ano inteiro, Economia comparada, Tags", async ({
+  // -------------------------------------------------------------------------
+  // (3) Lançar button opens the Compose drawer
+  // -------------------------------------------------------------------------
+
+  test("Lançar button opens Compose dialog; Cancelar closes it", async ({
     page,
   }, testInfo) => {
-    const nav = (name: string | RegExp) => page.getByRole("button", { name });
+    // Topbar "Lançar" button
+    await page.getByRole("button", { name: "Lançar" }).click();
 
-    // Totais — 4 métricas-herói + status do método. Os rótulos são botões (InfoPopover).
-    await nav("Totais").click();
-    await expect(nav("Performance")).toBeVisible();
-    await expect(nav("Custo de vida")).toBeVisible();
-    await expect(nav("Diário médio")).toBeVisible();
-    await expect(page.getByText("Sobrou dinheiro")).toBeVisible();
+    // Dialog opens with correct role + label
+    const dialog = page.getByRole("dialog", { name: "Novo lançamento" });
+    await expect(dialog).toBeVisible();
+
+    // Contains "Tipo de movimento" chips
+    await expect(dialog.getByText("Tipo de movimento")).toBeVisible();
+
+    // Contains "Salvar lançamento" and "Cancelar"
+    await expect(
+      dialog.getByRole("button", { name: "Salvar lançamento" }),
+    ).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Cancelar" })).toBeVisible();
+
+    await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath("compose.png"),
+    });
+
+    // Cancelar closes the dialog
+    await dialog.getByRole("button", { name: "Cancelar" }).click();
+    await expect(
+      page.getByRole("dialog", { name: "Novo lançamento" }),
+    ).not.toBeVisible();
+  });
+
+  test("tecla N opens the compose drawer from Hoje screen", async ({ page }) => {
+    // Ensure focus is on body (not in an input)
+    await page.locator("body").click({ position: { x: 5, y: 5 } });
+    await page.keyboard.press("n");
+    const dialog = page.getByRole("dialog", { name: "Novo lançamento" });
+    await expect(dialog).toBeVisible();
+  });
+
+  test("tecla N opens the compose drawer from another screen", async ({ page }) => {
+    // Navigate away first
+    await page.getByRole("button", { name: "Lançamentos" }).click();
+    await expect(page.getByText("Despesa demo variável")).toBeVisible();
+    // Press N outside an input
+    await page.locator("body").press("n");
+    const dialog = page.getByRole("dialog", { name: "Novo lançamento" });
+    await expect(dialog).toBeVisible();
+  });
+
+  // -------------------------------------------------------------------------
+  // (4) Individual screens render correctly
+  // -------------------------------------------------------------------------
+
+  test("Este mês (TotaisScreen) renders performance metric", async ({
+    page,
+  }, testInfo) => {
+    await page.getByRole("button", { name: "Este mês" }).click();
+    await expect(page.getByRole("button", { name: "Este mês" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    // TotaisScreen renders "Performance" and "Custo de vida" tiles
+    await expect(page.getByText("Performance")).toBeVisible();
+    await expect(page.getByText("Custo de vida")).toBeVisible();
     await page.screenshot({
       fullPage: true,
       path: testInfo.outputPath("totais.png"),
     });
+  });
 
-    // Horizonte — trajetória do saldo + detalhe diário + vencimentos próximos (plano 045).
-    await nav("Horizonte").click();
-    await expect(page.getByText(/quanto mais verde, mais folga/)).toBeVisible();
-    await expect(page.getByText("Detalhe diário")).toBeVisible();
-    await expect(page.getByText("Junho")).toBeVisible();
-    await expect(page.getByText("Vencimentos próximos")).toBeVisible();
-    await expect(page.getByText("Compromisso fixo demo")).toBeVisible();
+  test("Calendário (YearGridScreen) renders the month calendar", async ({
+    page,
+  }, testInfo) => {
+    await page.getByRole("button", { name: "Calendário" }).click();
+    await expect(page.getByRole("button", { name: "Calendário" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    // Calendar has segmented control with "Mês" / "Ano inteiro"
+    await expect(page.getByText("Mês", { exact: true })).toBeVisible();
+    await expect(page.getByText("Ano inteiro", { exact: true })).toBeVisible();
     await page.screenshot({
       fullPage: true,
-      path: testInfo.outputPath("horizonte.png"),
+      path: testInfo.outputPath("calendario.png"),
     });
+  });
 
-    // Visão anual — tabela das 4 métricas por mês.
-    await nav("Anual").click();
-    await expect(page.getByRole("heading", { name: "Visão anual" })).toBeVisible();
-    await expect(page.getByText("Jun", { exact: true })).toBeVisible();
-    await page.screenshot({
-      fullPage: true,
-      path: testInfo.outputPath("anual.png"),
-    });
-
-    // Ano inteiro — grade dia a dia dos 12 meses, lado a lado num único scroll.
-    await nav("Ano inteiro").click();
-    await expect(page.getByRole("heading", { name: "Ano inteiro" })).toBeVisible();
-    // Os 12 meses viram regiões nomeadas (Janeiro … Dezembro).
-    await expect(page.getByRole("region", { name: "Janeiro" })).toBeVisible();
-    await expect(page.getByRole("region", { name: "Dezembro" })).toBeVisible();
-    await expect(page.getByRole("region")).toHaveCount(12);
-    await page.screenshot({
-      fullPage: true,
-      path: testInfo.outputPath("ano-inteiro.png"),
-    });
-
-    // Economia comparada — dois anos consecutivos lado a lado (par base = ano−1 · ano).
-    await nav("Economia comparada").click();
+  test("O ano (AnnualScreen) renders the year view with month abbreviations", async ({
+    page,
+  }, testInfo) => {
+    await page.getByRole("button", { name: "O ano", exact: true }).click();
     await expect(
-      page.getByRole("heading", { name: /^Economia: \d{4} vs \d{4}$/ }),
-    ).toBeVisible();
-    // 12 linhas de mês (Jan … Dez) na tabela comparativa.
-    await expect(page.getByText("Jan", { exact: true })).toBeVisible();
-    await expect(page.getByText("Dez", { exact: true })).toBeVisible();
+      page.getByRole("button", { name: "O ano", exact: true }),
+    ).toHaveAttribute("aria-current", "page");
+    // Annual screen has "Este ano" / "Comparar anos" segmented tabs
+    await expect(page.getByText("Este ano")).toBeVisible();
+    await expect(page.getByText("Comparar anos")).toBeVisible();
+    // Shows month abbreviations in the chart
+    await expect(page.getByText("Jun", { exact: true }).first()).toBeVisible();
     await page.screenshot({
       fullPage: true,
-      path: testInfo.outputPath("economia-comparada.png"),
+      path: testInfo.outputPath("ano.png"),
     });
+  });
 
-    // Tags — lista colorida com "! Pagar" no topo.
-    await nav("Tags").click();
+  test("Tags (TagsScreen) renders tag list with demo tags", async ({
+    page,
+  }, testInfo) => {
+    await page.getByRole("button", { name: "Tags" }).click();
     await expect(page.getByText("! Pagar", { exact: true })).toBeVisible();
     await expect(page.getByText("Categoria demo A", { exact: true })).toBeVisible();
     await expect(page.getByText("Categoria demo B", { exact: true })).toBeVisible();
@@ -172,214 +226,85 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     });
   });
 
-  test("novo lançamento: abre o form, preenche e lança", async ({ page }) => {
-    await page.getByRole("button", { name: "Lançamentos" }).click();
-    await page.getByRole("button", { name: "Novo lançamento" }).click();
-
-    // Form visível com o seletor de tipo e os campos.
-    await expect(page.getByText("Tipo de movimento")).toBeVisible();
-    await page.getByLabel("Valor").fill("42,50");
-    await page.getByLabel("Descrição", { exact: true }).fill("Despesa demo");
-    // Anexa uma tag.
-    await page.getByRole("button", { name: /Categoria demo A/ }).click();
-    await page.getByRole("button", { name: "Lançar" }).click();
-
-    // Após lançar, o form fecha (botão volta a "Novo lançamento").
-    await expect(page.getByRole("button", { name: "Novo lançamento" })).toBeVisible();
-  });
-
-  test("dashboard hero button reaches the honest Mia placeholder", async ({ page }) => {
-    await page
-      .locator(".dash-hero")
-      .getByRole("button", { name: "Conhecer a Mia" })
-      .click();
-    await expect(page.getByText("O que a Mia vai fazer")).toBeVisible();
-    await expect(page.getByText("Em desenvolvimento")).toBeVisible();
-  });
-
-  test("transactions filter narrows by scope", async ({ page }) => {
-    await page.getByRole("button", { name: "Lançamentos" }).click();
-    await page.getByRole("radio", { name: "Crédito" }).click();
-    await expect(page.getByText("1 exibida")).toBeVisible();
-    await expect(page.getByText("Compromisso demo no crédito")).toBeVisible();
-    await expect(page.getByText("Despesa demo variável")).not.toBeVisible();
-  });
-
-  test("ctrl/cmd+k focuses the header search", async ({ page }) => {
-    await page.keyboard.press("ControlOrMeta+k");
-    await expect(page.getByLabel("Buscar lançamentos")).toBeFocused();
-  });
-
-  test("tecla N foca o campo de valor do check-in rápido", async ({ page }) => {
-    // Tira o foco de qualquer campo de texto (clica numa área neutra) e pressiona N.
-    await page.locator("main.ak-main").click({ position: { x: 5, y: 5 } });
-    await page.keyboard.press("n");
-    await expect(page.getByLabel(/Valor do lançamento/)).toBeFocused();
-  });
-
-  test("tecla N de outra tela navega ao dashboard e foca o check-in", async ({
+  test("Horizonte (HorizonteScreen) renders the trajectory card", async ({
     page,
-  }) => {
-    await page.getByRole("button", { name: "Lançamentos" }).click();
-    await expect(page.getByText("Despesa demo variável")).toBeVisible();
-    await page.locator("main.ak-main").click({ position: { x: 5, y: 5 } });
-    await page.keyboard.press("n");
-    await expect(page.getByLabel(/Valor do lançamento/)).toBeFocused();
+  }, testInfo) => {
+    await page.getByRole("button", { name: "Horizonte" }).click();
+    await expect(page.getByRole("button", { name: "Horizonte" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await expect(page.getByText("Horizonte de saldos")).toBeVisible();
+    await expect(page.getByText("Trajetória até dezembro")).toBeVisible();
+    await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath("horizonte.png"),
+    });
   });
 
-  test("page has a main landmark, a labelled nav and the hero forecast region", async ({
-    page,
-  }) => {
-    await expect(page.locator("main.ak-main")).toBeVisible();
+  // -------------------------------------------------------------------------
+  // (5) Theme toggle
+  // -------------------------------------------------------------------------
+
+  test("theme toggle switches between dark and light", async ({ page }) => {
+    await page.getByRole("button", { name: "Alternar para tema claro" }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+
+    await page.getByRole("button", { name: "Alternar para tema escuro" }).click();
+    await expect(page.locator("html")).not.toHaveAttribute("data-theme", "light");
+  });
+
+  // -------------------------------------------------------------------------
+  // (6) Structural landmarks
+  // -------------------------------------------------------------------------
+
+  test("page has a main landmark and a labelled nav", async ({ page }) => {
+    await expect(page.locator("main.sh-main")).toBeVisible();
     await expect(
       page.getByRole("navigation", { name: "Navegação principal" }),
-    ).toBeVisible();
-    // O metric tile foi removido; a região complementar do herói (saldo projetado) permanece nomeada.
-    await expect(
-      page.getByRole("complementary", { name: "Saldo projetado do mês" }),
     ).toBeVisible();
   });
 });
 
+// ---------------------------------------------------------------------------
+// Onboarding — first-use flow
+// ---------------------------------------------------------------------------
+
 test.describe("onboarding de primeiro uso", () => {
   test("mostra os 5 passos e fecha ao concluir", async ({ page }, testInfo) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
-    // Onboarding ainda não feito → overlay aparece.
+    // Onboarding not yet done → overlay appears (get_app_setting returns null)
     await mockTauri(page, { get_app_setting: null });
     await page.goto("/");
 
-    await expect(page.getByRole("dialog", { name: /Boas-vindas/ })).toBeVisible();
+    await expect(
+      page.getByRole("dialog", { name: /Boas-vindas ao Neko Finance/ }),
+    ).toBeVisible();
     await expect(page.getByText("Bem-vindo ao Neko")).toBeVisible();
     await page.screenshot({
       fullPage: true,
       path: testInfo.outputPath("onboarding.png"),
     });
 
-    // Avança pelos passos até "Começar".
+    // Advance through 4 steps (total 5)
     for (let i = 0; i < 4; i++) {
       await page.getByRole("button", { name: /Avançar/ }).click();
     }
     await expect(page.getByText("Sua meta de poupança")).toBeVisible();
     await page.getByRole("button", { name: /Começar/ }).click();
 
-    // Overlay fecha; o app fica acessível.
-    await expect(page.getByRole("dialog", { name: /Boas-vindas/ })).not.toBeVisible();
-    await expect(page.getByText(/Saldo no fim de/)).toBeVisible();
+    // Overlay closes; the app is accessible
+    await expect(
+      page.getByRole("dialog", { name: /Boas-vindas ao Neko Finance/ }),
+    ).not.toBeVisible();
+    // Dashboard visible
+    await expect(page.getByText("Pode gastar hoje")).toBeVisible();
   });
 });
 
-test.describe("write-back para a planilha (Tauri mockado, sem escrita real)", () => {
-  // Comandos do fluxo de import (conectado → escolher → prévia → mapeamento) + do write-back. O mock
-  // do Tauri NÃO faz IO real: `apply_write_back` aqui é um stub que conta como chamado, mas o teste
-  // só chega ao diálogo de 2ª confirmação e CANCELA — provando que um clique não escreve sozinho.
-  const WB_OVERRIDES = {
-    check_auth_status: "connected",
-    list_user_spreadsheets: [
-      { id: "ss1", name: "Planilha demo", modified_time: "2026-06-20T10:00:00.000Z" },
-    ],
-    list_sheet_names: [{ title: "2026", sheet_id: 0 }],
-    fetch_sheet_preview: {
-      headers: ["Data", "Entrada", "Saída", "Diário", "Saldo"],
-      rows: [["1", "0", "0", "50,00", "100,00"]],
-      total_rows: 1,
-    },
-    detect_sheet_layout: {
-      id: "lay1",
-      sheet_name: "2026",
-      year: 2026,
-      month_names_row: 0,
-      header_row: 1,
-      data_start_row: 2,
-      day_column: 0,
-      block_size: 5,
-      date_direction: "down",
-    },
-    get_sheet_mappings: [
-      {
-        id: "m1",
-        sheet_name: "2026",
-        column_letter: "D",
-        column_header: "Diário",
-        target_table: "transaction",
-        target_field: "amount_daily",
-        date_direction: "down",
-        layout_id: "lay1",
-        block_offset: 3,
-        is_active: 1,
-      },
-    ],
-    write_back_enabled: true,
-    get_import_conflicts: [],
-    preview_write_back_status: {
-      cells: [
-        {
-          a1: "E3",
-          row: 2,
-          col: 4,
-          date: "2026-01-01",
-          kind: "diario",
-          current: "50,00",
-          proposed: "75,00",
-          value_cents: 7500,
-          changed: true,
-        },
-      ],
-      preview_revision: "2026-06-20T10:00:00.000Z",
-      conflicts_pending: false,
-      multi_card_warning: false,
-    },
-    preview_economia_write_back_status: {
-      cells: [],
-      preview_revision: "2026-06-20T10:00:00.000Z",
-      conflicts_pending: false,
-      multi_card_warning: false,
-    },
-    apply_write_back: { written: 1, note_warning: null },
-  };
-
-  test("renderiza o diff e o diálogo de confirmação gera o envio (cancelar não escreve)", async ({
-    page,
-  }, testInfo) => {
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await mockTauri(page, WB_OVERRIDES);
-    await page.goto("/");
-
-    await page.getByRole("button", { name: "Configurações e privacidade" }).click();
-
-    // Conectado → escolhe a planilha → a aba-ano → detecta layout → chega ao mapeamento.
-    await page.getByLabel("Planilha", { exact: true }).selectOption("ss1");
-    await page.getByRole("button", { name: "2026" }).click();
-    await page.getByRole("button", { name: "Detectar layout" }).click();
-
-    // O painel de write-back aparece (flag habilitada).
-    await expect(page.getByText("Write-back para a planilha")).toBeVisible();
-    await expect(page.getByText("habilitado")).toBeVisible();
-
-    // Gera a prévia → mostra a célula divergente.
-    await page.getByRole("button", { name: "Gerar prévia do diff" }).click();
-    await expect(page.getByText(/1 célula\(s\) divergente\(s\)/)).toBeVisible();
-    await page.screenshot({
-      fullPage: true,
-      path: testInfo.outputPath("writeback-preview.png"),
-    });
-
-    // Aprovar abre o diálogo de 2ª confirmação — nada foi escrito ainda.
-    await page.getByRole("button", { name: /Aprovar e enviar/ }).click();
-    const dialog = page.getByRole("dialog");
-    await expect(dialog).toBeVisible();
-    await expect(dialog.getByText(/Enviar 1 célula\(s\)/)).toBeVisible();
-
-    // Cancelar fecha o diálogo sem enviar.
-    await dialog.getByRole("button", { name: "Cancelar" }).click();
-    await expect(page.getByRole("dialog")).not.toBeVisible();
-    await expect(page.getByText(/Enviado:/)).not.toBeVisible();
-
-    // Reabrir e confirmar mostra o resultado do envio (mock — sem rede real).
-    await page.getByRole("button", { name: /Aprovar e enviar/ }).click();
-    await page.getByRole("button", { name: "Confirmar envio" }).click();
-    await expect(page.getByText(/Enviado: 1/)).toBeVisible();
-  });
-});
+// ---------------------------------------------------------------------------
+// Theme switch — View Transitions path, motion enabled
+// ---------------------------------------------------------------------------
 
 test.describe("theme switch (View Transitions path, motion enabled)", () => {
   test("circular reveal lands on the light theme and back", async ({ page }) => {

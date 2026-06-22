@@ -63,10 +63,6 @@ export function monthOf(iso: string): number {
   const p = iso.split("-")[1];
   return p ? parseInt(p, 10) - 1 : 0;
 }
-export function dayOf(iso: string): number {
-  const p = iso.split("-")[2];
-  return p ? parseInt(p, 10) : 0;
-}
 
 export interface SaldoBand {
   key: "none" | "critical" | "negative" | "tight" | "ok" | "comfortable";

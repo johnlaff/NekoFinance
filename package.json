@@ -32,6 +32,7 @@
     "preview": "vite preview",
     "privacy:scan": "bash scripts/privacy-scan.sh",
     "seed:fixture": "sqlite3 neko-finance.db < scripts/seed-forecast-fixture.sql",
+    "deadcode": "npx --yes knip",
     "tauri": "tauri"
   },
   "dependencies": {

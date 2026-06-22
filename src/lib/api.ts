@@ -720,33 +720,8 @@ export function getAnnualMetrics(year: number): Promise<AnnualMetrics> {
   return invoke("get_annual_metrics", { year });
 }
 
-/** Um dia da grade mensal (visão fiel à planilha). `balance_cents` é o Saldo da planilha (null se o
- * dia não foi importado). */
-export interface MonthGridDay {
-  date: string;
-  day: number;
-  income_cents: number;
-  fixed_out_cents: number;
-  daily_out_cents: number;
-  balance_cents: number | null;
-}
-
-/** Grade Data|Entrada|Saída|Diário|Saldo de QUALQUER mês (passado/futuro), fiel à planilha. */
-export function getMonthGrid(year: number, month: number): Promise<MonthGridDay[]> {
-  return invoke("get_month_grid", { year, month });
-}
-
 export function listTags(): Promise<Tag[]> {
   return invoke("list_tags_cmd");
-}
-
-export function createTag(
-  name: string,
-  color: string,
-  emoji: string | null,
-  isSpecial: boolean,
-): Promise<string> {
-  return invoke("create_tag_cmd", { name, color, emoji, isSpecial });
 }
 
 export function setTransactionTags(
@@ -754,11 +729,6 @@ export function setTransactionTags(
   tagIds: string[],
 ): Promise<void> {
   return invoke("set_transaction_tags_cmd", { transactionId, tagIds });
-}
-
-/** Liga/desliga "Ignorar nos cálculos" para uma tag (sai das métricas, não do Saldo). */
-export function updateTagExclude(tagId: string, exclude: boolean): Promise<void> {
-  return invoke("update_tag_exclude_cmd", { tagId, exclude });
 }
 
 export function tagTotalsForMonth(year: number, month: number): Promise<TagTotal[]> {
@@ -783,6 +753,7 @@ export interface OwnerTotal {
   total_cents: number;
 }
 
+/** @internal Tauri bridge — UI pending (spec 016/017). */
 // react-doctor-disable-next-line deslop/unused-export -- spec 017: ponte do frontend (comando Tauri pronto/testado), UI multi-titular pendente
 export function splitsForTransaction(transactionId: string): Promise<SplitRow[]> {
   return invoke("splits_for_transaction_cmd", { transactionId });
@@ -799,6 +770,7 @@ export function ownerTotalsForMonth(
 
 export type Frequency = "diaria" | "semanal" | "mensal";
 
+/** @internal Tauri bridge — UI pending (spec 016/017). */
 // react-doctor-disable-next-line deslop/unused-export -- spec 016: ponte do frontend (comando Tauri pronto/testado), UI de recorrências pendente
 export function createRecurringSeries(input: {
   txnType: string;
@@ -813,12 +785,12 @@ export function createRecurringSeries(input: {
   return invoke("create_recurring_series_cmd", input);
 }
 
-/** Apaga a ocorrência indicada e todas as posteriores ("deste ponto em diante"). */
+/** @internal Tauri bridge — UI pending (spec 016/017). Apaga a ocorrência indicada e todas as posteriores ("deste ponto em diante"). */
 export function deleteSeriesFrom(transactionId: string): Promise<number> {
   return invoke("delete_series_from_cmd", { transactionId });
 }
 
-/** Apaga toda a série + a linha de recorrência. */
+/** @internal Tauri bridge — UI pending (spec 016/017). Apaga toda a série + a linha de recorrência. */
 export function deleteSeriesAll(recurrenceId: string): Promise<number> {
   return invoke("delete_series_all_cmd", { recurrenceId });
 }

@@ -286,6 +286,41 @@
   gap: 8px;
   margin-top: 10px;
 }
+/* tag picker inline panel */
+.lc-tagpicker {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.lc-tagpicker__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.lc-tagchip {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  transition: var(--t-hover);
+}
+.lc-tagchip:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.lc-tagchip.is-on {
+  border-width: 1.5px;
+}
 .lc-empty {
   padding: 48px 18px;
   text-align: center;

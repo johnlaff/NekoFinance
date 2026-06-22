@@ -7,6 +7,11 @@ export interface ComposeOptions {
   type?: MovementType;
   date?: string;
   transactionId?: string;
+  /** Pre-fill fields for edit mode (magnitude in cents, always positive). */
+  description?: string;
+  amountCents?: number;
+  /** "importado" rows cannot be deleted; passed so Compose can show a guard. */
+  provenance?: string;
 }
 
 export interface NekoApp {
