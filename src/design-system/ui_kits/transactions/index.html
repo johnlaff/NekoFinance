@@ -1,10 +1,10 @@
-<!-- @startingPoint section="Neko App" subtitle="Import review with Sheets mapping & owner assignment" viewport="1440x900" -->
-<!-- @dsCard group="Neko App" viewport="1440x900" name="Transactions / Import review" subtitle="Master table + detail panel + Google Sheets column mapping" -->
+<!-- @startingPoint section="Neko App" subtitle="Historical ledger with filters, movement types and provenance" viewport="1440x900" -->
+<!-- @dsCard group="Neko App" viewport="1440x900" name="Lançamentos" subtitle="Livro-razão histórico — filtros, tipos de movimento, proveniência e tags" -->
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="pt-BR" data-theme="dark">
   <head>
     <meta charset="utf-8" />
-    <title>Neko Finance — Transactions</title>
+    <title>Neko Finance — Lançamentos</title>
     <link rel="stylesheet" href="../../styles.css" />
     <style>
       html,
@@ -42,9 +42,20 @@
     <script src="../dashboard/AppShell.jsx"></script>
     <script type="text/babel" src="TransactionsScreen.jsx"></script>
     <script type="text/babel">
-      ReactDOM.createRoot(document.getElementById("app")).render(
-        <window.TransactionsApp />,
-      );
+      function App() {
+        const [nav, setNav] = React.useState("transactions");
+        return (
+          <window.AppShell
+            active={nav}
+            onNav={setNav}
+            title="Lançamentos"
+            crumb="Histórico completo"
+          >
+            <window.TransactionsScreen />
+          </window.AppShell>
+        );
+      }
+      ReactDOM.createRoot(document.getElementById("app")).render(<App />);
     </script>
   </body>
 </html>

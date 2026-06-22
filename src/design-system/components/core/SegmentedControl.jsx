@@ -1,17 +1,18 @@
 import React from "react";
 
 const CSS = `
-.nk-seg{display:inline-flex;padding:3px;background:var(--surface);border:1px solid var(--border);
-  border-radius:var(--radius-sm);gap:2px;font-family:var(--font-sans);}
-.nk-seg__opt{appearance:none;border:none;background:none;cursor:pointer;height:28px;padding:0 13px;
-  border-radius:4px;font-size:13px;font-weight:600;color:var(--text-muted);white-space:nowrap;
-  display:inline-flex;align-items:center;gap:7px;transition:var(--t-hover);}
-.nk-seg__opt:hover{color:var(--text);}
-.nk-seg__opt[aria-selected="true"]{background:var(--surface-elevated);color:var(--text-strong);
-  box-shadow:var(--shadow-1);}
-.nk-seg__opt:focus-visible{outline:none;box-shadow:0 0 0 2px var(--bg),0 0 0 4px var(--focus-ring);}
-.nk-seg__dot{width:8px;height:8px;border-radius:50%;flex:none;}
-.nk-seg--sm .nk-seg__opt{height:24px;padding:0 10px;font-size:12px;}
+.nk-seg{display:inline-flex;padding:2px;background:var(--bg-subtle);
+  border-radius:var(--radius-xs);gap:2px;font-family:var(--font-sans);}
+.nk-seg__opt{appearance:none;border:none;background:transparent;cursor:pointer;
+  min-height:32px;padding:4px 14px;
+  border-radius:calc(var(--radius-xs) - 1px);
+  font-family:var(--font-sans);font-size:var(--fs-body);font-weight:var(--fw-medium);
+  color:var(--text-muted);white-space:nowrap;transition:var(--t-hover);}
+.nk-seg__opt:hover:not(:disabled){color:var(--text);}
+.nk-seg__opt[aria-checked="true"]{background:var(--surface-selected);color:var(--primary);}
+.nk-seg__opt:focus-visible{outline:none;box-shadow:var(--shadow-focus);}
+.nk-seg__opt:disabled{cursor:not-allowed;opacity:0.5;}
+.nk-seg--sm .nk-seg__opt{min-height:28px;padding:2px 10px;font-size:var(--fs-sm);}
 `;
 
 function useCSS() {
@@ -25,35 +26,72 @@ function useCSS() {
 }
 
 export function SegmentedControl({
-  options = [],
-  value,
+  options = [
+    { value: "dia", label: "Dia" },
+    { value: "semana", label: "Semana" },
+    { value: "mes", label: "Mês" },
+  ],
+  value = "mes",
   onChange = () => {},
   size = "md",
   className = "",
+  disabled = false,
+  ariaLabel,
 }) {
   useCSS();
+
+  const handleKeyDown = (e, idx) => {
+    if (disabled || options.length === 0) return;
+    let next;
+    switch (e.key) {
+      case "ArrowRight":
+      case "ArrowDown":
+        next = (idx + 1) % options.length;
+        break;
+      case "ArrowLeft":
+      case "ArrowUp":
+        next = (idx - 1 + options.length) % options.length;
+        break;
+      case "Home":
+        next = 0;
+        break;
+      case "End":
+        next = options.length - 1;
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+    const target = options[next];
+    if (!target) return;
+    onChange(target.value);
+    const group = e.currentTarget.parentElement;
+    const radios = group && group.querySelectorAll('[role="radio"]');
+    if (radios && radios[next]) radios[next].focus();
+  };
+
   return (
     <div
-      role="tablist"
+      role="radiogroup"
+      aria-label={ariaLabel}
       className={["nk-seg", size === "sm" ? "nk-seg--sm" : "", className]
         .filter(Boolean)
         .join(" ")}
     >
-      {options.map((o) => {
-        const opt = typeof o === "string" ? { value: o, label: o } : o;
-        const selected = opt.value === value;
+      {options.map((opt, idx) => {
+        const isActive = value === opt.value;
         return (
           <button
             key={opt.value}
-            role="tab"
+            role="radio"
             type="button"
-            aria-selected={selected}
+            aria-checked={isActive}
+            tabIndex={isActive ? 0 : -1}
+            disabled={disabled}
             className="nk-seg__opt"
-            onClick={() => onChange(opt.value)}
+            onClick={() => !disabled && onChange(opt.value)}
+            onKeyDown={(e) => handleKeyDown(e, idx)}
           >
-            {opt.dot ? (
-              <span className="nk-seg__dot" style={{ background: opt.dot }} />
-            ) : null}
             {opt.label}
           </button>
         );

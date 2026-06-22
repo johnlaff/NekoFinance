@@ -17,5 +17,7 @@ export interface EmptyStateProps {
 /**
  * Unified empty / loading / skeleton / error placeholder. Keeps the four
  * non-content states visually consistent across the app.
+ *
+ * @startingPoint section="Copilot" subtitle="EmptyState — non-content state placeholder" viewport="420x260"
  */
 export function EmptyState(props: EmptyStateProps): JSX.Element;

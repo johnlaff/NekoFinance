@@ -1,527 +1,1011 @@
-/* Neko Finance — Dashboard screen. Composes DS finance components +
-   hand-built SVG charts using chart tokens. Exposes window.DashboardScreen. */
-const DASH_NS = window.NekoFinanceDesignSystem_9bd1cd;
+/* Neko Finance — Dashboard screen (reconciled).
+   "Quanto posso gastar hoje" — hero KPI + BalanceTrajectory + DailyCheckin + cards de análise.
+   Todas as seções espelham os componentes reais: ColchaoCard, DailyCheckinCard, MonthLedgerCard,
+   PerformanceCard, PrevisibilidadeCard, WriteBackPending, LastLoggedBanner.
+   PT-BR copy · R$ em mono tabular · zero dependências externas.
+   Expõe window.DashboardScreen. */
+
+const NS = window.NekoFinanceDesignSystem_9bd1cd;
 const {
-  MetricTile,
-  HealthBadge,
-  OwnerChip,
-  TransactionRow,
-  SegmentedControl,
   Badge,
   Button,
-} = DASH_NS;
-const DashIcon = window.Icon;
+  Disclosure,
+  Money,
+  BalanceTrajectory,
+  PhaseBadge,
+  MovBadge,
+  MonthNav,
+} = NS;
+const Icon = window.Icon;
 
-const dashCSS = `
-.dash{display:flex;flex-direction:column;gap:18px;max-width:1180px;}
-.dash-hero{display:flex;align-items:center;gap:18px;padding:18px 20px;background:var(--surface);
-  border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow-1);}
-.dash-hero__txt{flex:1;min-width:0;}
-.dash-hero__line{font-size:15px;line-height:1.5;color:var(--text-muted);}
-.dash-hero__line b{color:var(--text-strong);font-weight:700;}
-.dash-hero__money{font-family:var(--font-money);font-variant-numeric:tabular-nums;font-weight:600;color:var(--text);}
-.dash-grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
-.dash-2col{display:grid;grid-template-columns:1.6fr 1fr;gap:14px;}
-.dash-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);box-shadow:var(--shadow-1);}
-.dash-card__head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 16px 8px;}
-.dash-card__title{font-size:14px;font-weight:700;color:var(--text-strong);display:flex;align-items:center;gap:8px;}
-.dash-card__ic{color:var(--text-faint);}
-.dash-card__body{padding:8px 16px 16px;}
-.dash-legend{display:flex;flex-direction:column;gap:9px;}
-.dash-leg{display:flex;align-items:center;gap:9px;font-size:12.5px;}
-.dash-leg__dot{width:9px;height:9px;border-radius:3px;flex:none;}
-.dash-leg__name{color:var(--text-muted);flex:1;}
-.dash-leg__amt{font-family:var(--font-money);font-variant-numeric:tabular-nums;font-weight:600;color:var(--text);}
-.dash-leg__pct{color:var(--text-faint);font-size:11px;width:34px;text-align:right;}
-.dash-acct{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--border);}
-.dash-acct:last-child{border-bottom:none;}
-.dash-acct__ic{width:34px;height:34px;border-radius:9px;background:var(--surface-elevated);border:1px solid var(--border);
-  display:flex;align-items:center;justify-content:center;color:var(--text-muted);flex:none;}
-.dash-acct__nm{font-size:13px;font-weight:600;color:var(--text);}
-.dash-acct__sub{font-size:11px;color:var(--text-faint);}
-.dash-acct__amt{margin-left:auto;font-family:var(--font-money);font-variant-numeric:tabular-nums;font-weight:600;font-size:14px;}
-.dash-split{display:flex;flex-direction:column;gap:13px;}
-.dash-splitrow__top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;}
-.dash-splitrow__lbl{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--text);}
-.dash-splitrow__amt{font-family:var(--font-money);font-variant-numeric:tabular-nums;font-size:12.5px;color:var(--text-muted);}
-.dash-bar{height:8px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
-.dash-bar__fill{height:100%;border-radius:999px;}
-.dash-sectit{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--text-faint);}
-@media (max-width:1080px){
-  .dash-grid4{grid-template-columns:repeat(2,1fr);}
-  .dash-2col{grid-template-columns:1fr;}
-}`;
-
-function injectDash() {
-  if (document.getElementById("dash-css")) return;
+/* ---- CSS (once-only) ---- */
+(function injectDashCSS() {
+  if (document.getElementById("dashboard-css")) return;
   const s = document.createElement("style");
-  s.id = "dash-css";
-  s.textContent = dashCSS;
+  s.id = "dashboard-css";
+  s.textContent = `
+/* Layout */
+.dash { display:flex; flex-direction:column; gap:var(--space-7); max-width:1100px; }
+
+/* Cards compartilhados */
+.dash-card {
+  background: var(--surface);
+  border: var(--bw-hair) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+}
+.dash-card__head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-5);
+  padding: var(--space-5) var(--space-6) var(--space-4);
+}
+.dash-card__title {
+  display: flex; align-items: center; gap: var(--space-3);
+  font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--text-strong);
+}
+.dash-card__ic { color: var(--text-faint); }
+.dash-card__body { padding: var(--space-4) var(--space-6) var(--space-6); }
+
+/* Hero */
+.dash-hero {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: var(--space-7);
+  padding: var(--space-7) var(--space-8);
+  background: var(--surface);
+  border: var(--bw-hair) solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+@media (max-width: 900px) { .dash-hero { grid-template-columns: 1fr; } }
+
+.dash-hero__lead { display:flex; flex-direction:column; gap: var(--space-4); min-width:0; }
+.dash-hero__label {
+  font-size: var(--fs-sm); font-weight: var(--fw-medium);
+  color: var(--text-muted); letter-spacing: var(--ls-label); text-transform: uppercase;
+}
+.dash-hero__kpi {
+  font-family: var(--font-money); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-display-hero); font-weight: var(--fw-bold);
+  color: var(--text-strong); letter-spacing: var(--ls-tight);
+  line-height: var(--lh-tight);
+  display: flex; align-items: baseline; gap: var(--space-3);
+}
+.dash-hero__kpi-suffix {
+  font-family: var(--font-sans); font-size: var(--fs-body);
+  font-weight: var(--fw-regular); color: var(--text-muted);
+}
+.dash-hero__reason {
+  font-size: var(--fs-sm); color: var(--text-muted); max-width: 480px;
+  line-height: var(--lh-normal);
+}
+.dash-hero__row { display:flex; align-items:center; gap: var(--space-6); flex-wrap: wrap; }
+.dash-hero__stats { display:flex; gap: var(--space-7); margin:0; padding:0; }
+.dash-hero__stats > div { display:flex; flex-direction:column; gap: var(--space-1); }
+.dash-hero__stats dt {
+  font-size: var(--fs-micro); font-weight: var(--fw-medium); color: var(--text-faint);
+  letter-spacing: var(--ls-label); text-transform: uppercase;
+}
+.dash-hero__stats dd {
+  font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--text);
+  font-family: var(--font-money); font-variant-numeric: tabular-nums;
+  margin: 0;
+}
+
+/* Forecast aside */
+.dash-hero__forecast {
+  display: flex; flex-direction: column; gap: var(--space-3);
+  min-width: 0;
+}
+.dash-hero__forecast-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--fs-sm); color: var(--text-muted);
+}
+.dash-hero__forecast-foot {
+  font-size: var(--fs-micro); color: var(--text-faint); margin: 0;
+  line-height: var(--lh-normal);
+}
+.dash-hero__forecast-foot .negative { color: var(--money-neg); }
+
+/* Déficit banner */
+.dash-deficit {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  background: var(--danger-tint);
+  border: var(--bw-hair) solid var(--danger-500);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-sm); color: var(--money-neg);
+}
+
+/* Aviso de último lançamento */
+.dash-banner {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  background: var(--bg-subtle);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-sm); color: var(--text-muted);
+}
+.dash-banner__ic { color: var(--primary); flex-shrink: 0; }
+
+/* WriteBack pending */
+.dash-wb {
+  display: grid; gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  background: var(--bg-subtle);
+  border: var(--bw-hair) solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.dash-wb__head {
+  display: flex; align-items: center; gap: var(--space-3);
+  color: var(--brass-400); font-size: var(--fs-sm);
+}
+.dash-wb__actions { display:flex; gap: var(--space-3); flex-wrap: wrap; }
+
+/* Check-in diário */
+.dash-checkin__body { padding: var(--space-4) var(--space-6) var(--space-5); display:flex; flex-direction:column; gap:var(--space-4); }
+.dash-checkin__top {
+  display: flex; align-items: baseline; justify-content: space-between;
+  font-size: var(--fs-sm);
+}
+.dash-checkin__spent { font-family: var(--font-money); font-variant-numeric: tabular-nums; }
+.dash-checkin__bar-track {
+  height: 6px; border-radius: var(--radius-pill); background: var(--bg-subtle); overflow: hidden;
+}
+.dash-checkin__bar-fill {
+  height: 100%; border-radius: var(--radius-pill);
+  background: var(--type-diario);
+  transform-origin: left;
+  transition: transform var(--dur-slow) var(--ease-entrance);
+}
+.dash-checkin__bar-fill--over { background: var(--danger-500); }
+@media (prefers-reduced-motion: reduce) {
+  .dash-checkin__bar-fill { transition: none; }
+}
+.dash-checkin__kinds {
+  display: flex; gap: var(--space-2); flex-wrap: wrap;
+}
+.dash-checkin__kind-btn {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  height: 32px; padding: 0 var(--space-3);
+  border-radius: var(--radius-sm); cursor: pointer;
+  border: var(--bw-hair) solid var(--border);
+  background: transparent; color: var(--text);
+  font-family: var(--font-sans); font-size: var(--fs-sm);
+  transition: var(--t-hover);
+}
+.dash-checkin__kind-btn--active {
+  background: var(--surface-selected); border-color: var(--primary);
+}
+.dash-checkin__inputs {
+  display: flex; gap: var(--space-3); align-items: center;
+}
+.dash-checkin__input {
+  flex: 1; height: 36px; padding: 0 var(--space-3);
+  background: var(--bg-subtle);
+  border: var(--bw-hair) solid var(--border-input);
+  border-radius: var(--radius-xs);
+  color: var(--text); font-family: var(--font-money); font-size: var(--fs-body);
+}
+.dash-checkin__desc {
+  font-family: var(--font-sans);
+}
+.dash-checkin__hint {
+  font-size: var(--fs-micro); color: var(--text-faint); margin: 0;
+}
+.dash-checkin__avg {
+  font-size: var(--fs-micro); color: var(--text-faint); margin: 0;
+}
+
+/* Previsibilidade */
+.dash-predict__head-trusted {
+  font-size: var(--fs-micro); color: var(--text-faint);
+}
+.dash-predict__ok { font-size: var(--fs-sm); color: var(--success-500); margin: 0; }
+.dash-predict__warn { font-size: var(--fs-sm); color: var(--money-neg); margin: 0; }
+.dash-predict__neutral { font-size: var(--fs-sm); color: var(--text-muted); margin: 0; }
+.dash-predict__rows { display:flex; flex-direction:column; gap: var(--space-4); margin-top: var(--space-4); }
+.dash-predict__row { display:flex; align-items:center; gap: var(--space-4); font-size: var(--fs-sm); }
+.dash-predict__month { width: 64px; color: var(--text-muted); flex-shrink:0; }
+.dash-predict__bar {
+  flex: 1; height: 5px; border-radius: var(--radius-pill);
+  background: var(--bg-subtle); overflow:hidden;
+}
+.dash-predict__fill { height:100%; background: var(--chart-1); border-radius: var(--radius-pill); }
+.dash-predict__pct { font-size: var(--fs-micro); color: var(--text-faint); white-space: nowrap; }
+.dash-predict__savings {
+  margin-top: var(--space-5); padding-top: var(--space-4);
+  border-top: var(--bw-hair) solid var(--border);
+  font-size: var(--fs-sm); color: var(--text-muted);
+}
+
+/* Colchão */
+.dash-colchao__nums { display:flex; gap: var(--space-7); flex-wrap: wrap; margin-bottom: var(--space-5); }
+.dash-colchao__num { display:flex; flex-direction:column; gap: var(--space-1); }
+.dash-colchao__label { font-size: var(--fs-micro); color: var(--text-faint); letter-spacing: var(--ls-label); text-transform: uppercase; }
+.dash-colchao__val { font-family: var(--font-money); font-variant-numeric: tabular-nums; font-size: var(--fs-money-md); color: var(--text); }
+.dash-colchao__val--muted { color: var(--text-faint); }
+.dash-colchao__text { font-size: var(--fs-sm); color: var(--text-muted); margin: 0 0 var(--space-4); line-height: var(--lh-normal); }
+
+/* Performance por mês */
+.dash-perf__hint { font-size: var(--fs-micro); color: var(--text-faint); }
+.dash-perf__row {
+  display: flex; gap: var(--space-5);
+  padding: var(--space-4) var(--space-6) var(--space-6);
+  flex-wrap: wrap;
+}
+.dash-perf__cell {
+  flex: 1; min-width: 120px;
+  display: flex; flex-direction:column; gap: var(--space-1);
+  padding: var(--space-4) var(--space-5);
+  background: var(--bg-subtle);
+  border-radius: var(--radius-sm);
+  border: var(--bw-hair) solid var(--border);
+}
+.dash-perf__cell.is-incomplete { opacity: 0.7; }
+.dash-perf__month { font-size: var(--fs-micro); color: var(--text-faint); letter-spacing: var(--ls-label); text-transform: uppercase; }
+.dash-perf__val { font-family: var(--font-money); font-variant-numeric: tabular-nums; font-size: var(--fs-money-md); color: var(--text); }
+.dash-perf__val--muted { color: var(--text-muted); }
+.dash-perf__rate { font-size: var(--fs-micro); color: var(--text-faint); }
+
+/* Dia a dia (grade do mês) */
+.dash-ledger-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.dash-ledger-table {
+  width: 100%; border-collapse: collapse;
+  font-size: var(--fs-sm); line-height: var(--lh-snug);
+}
+.dash-ledger-table thead th {
+  padding: var(--space-3) var(--space-5);
+  border-bottom: var(--bw-hair) solid var(--border);
+  font-size: var(--fs-micro); font-weight: var(--fw-semibold);
+  color: var(--text-faint); letter-spacing: var(--ls-label); text-transform: uppercase;
+  text-align: right; white-space: nowrap;
+}
+.dash-ledger-table thead th:first-child { text-align: left; }
+.dash-ledger-table tbody td {
+  padding: var(--space-3) var(--space-5);
+  border-bottom: var(--bw-hair) solid var(--border);
+  color: var(--text); font-family: var(--font-money); font-variant-numeric: tabular-nums;
+  text-align: right; white-space: nowrap;
+}
+.dash-ledger-table tbody td:first-child { font-family: var(--font-sans); text-align: left; }
+.dash-ledger-table tbody tr.is-today td { background: var(--surface-selected); }
+.dash-ledger-table tfoot td, .dash-ledger-table tfoot th {
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--fs-sm); font-weight: var(--fw-semibold);
+  border-top: var(--bw-hair) solid var(--border-strong);
+  font-family: var(--font-money); font-variant-numeric: tabular-nums;
+  text-align: right; white-space: nowrap; color: var(--text);
+}
+.dash-ledger-table tfoot th { font-family: var(--font-sans); text-align: left; }
+.dash-today-tag {
+  margin-left: var(--space-2);
+  padding: 1px 5px;
+  background: var(--surface-selected);
+  border-radius: var(--radius-xs);
+  font-size: var(--fs-micro); color: var(--primary);
+  vertical-align: middle;
+}
+.money-pos { color: var(--money-pos); }
+.money-neg { color: var(--money-neg); }
+`;
   document.head.appendChild(s);
+})();
+
+/* ---- helpers ---- */
+function fmtBRL(cents) {
+  const abs = Math.abs(cents);
+  const n = (abs / 100).toLocaleString("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return "R$ " + n;
+}
+function moneyColor(cents) {
+  if (cents > 0) return "var(--money-pos)";
+  if (cents < 0) return "var(--money-neg)";
+  return "var(--text-muted)";
 }
 
-/* ---- Cashflow area + bars chart ---- */
-function CashflowChart() {
-  const W = 660,
-    H = 180,
-    pad = { l: 8, r: 8, t: 10, b: 22 };
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"];
-  const income = [6200, 6200, 6450, 6200, 6800, 6200];
-  const spend = [4100, 5200, 3900, 4600, 4200, 3142];
-  const max = 7200;
-  const iw = W - pad.l - pad.r;
-  const ih = H - pad.t - pad.b;
-  const x = (i) => pad.l + (iw / (months.length - 1)) * i;
-  const y = (v) => pad.t + ih * (1 - v / max);
-  const linePath = (arr) =>
-    arr
-      .map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(v).toFixed(1)}`)
-      .join(" ");
-  const areaPath =
-    linePath(income) +
-    ` L${x(months.length - 1)} ${pad.t + ih} L${x(0)} ${pad.t + ih} Z`;
-  const grid = [0, 0.25, 0.5, 0.75, 1];
-  return (
-    <svg
-      viewBox={`0 0 ${W} ${H}`}
-      style={{ width: "100%", height: "auto", display: "block" }}
-    >
-      {grid.map((g, i) => (
-        <line
-          key={i}
-          x1={pad.l}
-          x2={W - pad.r}
-          y1={pad.t + ih * g}
-          y2={pad.t + ih * g}
-          stroke="var(--chart-grid)"
-          strokeWidth="1"
-        />
-      ))}
-      <defs>
-        <linearGradient id="cf" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="var(--chart-1)" stopOpacity="0.22" />
-          <stop offset="100%" stopColor="var(--chart-1)" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <path d={areaPath} fill="url(#cf)" />
-      {spend.map((v, i) => (
-        <rect
-          key={i}
-          x={x(i) - 7}
-          y={y(v)}
-          width="14"
-          height={pad.t + ih - y(v)}
-          rx="3"
-          fill="var(--chart-2)"
-          opacity="0.55"
-        />
-      ))}
-      <path
-        d={linePath(income)}
-        fill="none"
-        stroke="var(--chart-1)"
-        strokeWidth="2.5"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-      {income.map((v, i) => (
-        <circle
-          key={i}
-          cx={x(i)}
-          cy={y(v)}
-          r="3"
-          fill="var(--bg)"
-          stroke="var(--chart-1)"
-          strokeWidth="2"
-        />
-      ))}
-      {months.map((m, i) => (
-        <text
-          key={i}
-          x={x(i)}
-          y={H - 6}
-          textAnchor="middle"
-          fontSize="10.5"
-          fill="var(--chart-axis)"
-          fontFamily="var(--font-mono)"
-        >
-          {m}
-        </text>
-      ))}
-    </svg>
-  );
-}
+/* ---- Sub-componentes estáticos de demo ---- */
 
-/* ---- Category donut ---- */
-function Donut({ data }) {
-  const total = data.reduce((s, d) => s + d.value, 0);
-  const R = 52,
-    sw = 16,
-    C = 2 * Math.PI * R;
-  // Offsets cumulativos puramente funcionais (prefix-sum), sem reatribuir variável durante o
-  // render — o React Compiler rejeita reatribuição capturada em closure.
-  const offsets = data.map(
-    (_, i) => -C * (data.slice(0, i).reduce((s, x) => s + x.value, 0) / total),
-  );
-  return (
-    <svg viewBox="0 0 140 140" style={{ width: 140, height: 140 }}>
-      <g transform="rotate(-90 70 70)">
-        {data.map((d, i) => {
-          const frac = d.value / total;
-          const dash = `${(C * frac).toFixed(1)} ${(C * (1 - frac)).toFixed(1)}`;
-          const off = offsets[i];
-          return (
-            <circle
-              key={i}
-              cx="70"
-              cy="70"
-              r={R}
-              fill="none"
-              stroke={d.color}
-              strokeWidth={sw}
-              strokeDasharray={dash}
-              strokeDashoffset={off}
-            />
-          );
-        })}
-      </g>
-      <text
-        x="70"
-        y="65"
-        textAnchor="middle"
-        fontSize="11"
-        fill="var(--text-faint)"
-        fontFamily="var(--font-sans)"
-      >
-        Spending
-      </text>
-      <text
-        x="70"
-        y="84"
-        textAnchor="middle"
-        fontSize="17"
-        fontWeight="700"
-        fill="var(--text-strong)"
-        fontFamily="var(--font-money)"
-      >
-        $3,142
-      </text>
-    </svg>
-  );
-}
+/** Herói: "Pode gastar até" + BalanceTrajectory. */
+function HeroSection() {
+  // Dados fictícios representativos para a tela de demo.
+  const safeToSpend = 32700; // R$ 327,00
+  const monthEndBalance = 215400; // R$ 2.154,00
+  const today = "2026-06-21";
+  const savingsBinds = false;
+  const reserveMonths = 7.4;
+  const txnCount = 226;
 
-function DashboardScreen({ onAskMia = () => {} }) {
-  injectDash();
-  const cats = [
-    { name: "Housing", value: 1450, color: "var(--chart-1)" },
-    { name: "Groceries", value: 642, color: "var(--chart-2)" },
-    { name: "Transport", value: 380, color: "var(--chart-3)" },
-    { name: "Subscriptions", value: 270, color: "var(--chart-4)" },
-    { name: "Dining", value: 400, color: "var(--chart-5)" },
-  ];
-  const total = cats.reduce((s, c) => s + c.value, 0);
+  // Trajetória diária fictícia — 30 dias de junho com tendência realista.
+  const daily = Array.from({ length: 30 }, (_, i) => {
+    const d = String(i + 1).padStart(2, "0");
+    const past = i < 21;
+    const balance = past
+      ? Math.round(3200 * 100 - i * 52 * 100 + (i % 7 === 0 ? 650000 : 0))
+      : Math.round(2500 * 100 - (i - 20) * 48 * 100);
+    return {
+      date: `2026-06-${d}`,
+      balance_cents: balance,
+      projected: !past,
+    };
+  });
+
   return (
-    <div className="dash">
-      <div className="dash-hero">
-        <HealthBadge level="strong" sublabel="3.1 months runway" size="lg" />
-        <div className="dash-hero__txt">
-          <div className="dash-hero__line">
-            You're <b>$1,678</b> ahead this month. Spending is <b>6% under</b> your
-            average, with <span className="dash-hero__money">$642</span> in shared
-            groceries awaiting an owner.
-          </div>
+    <section className="dash-hero" aria-label="Quanto posso gastar hoje">
+      <div className="dash-hero__lead">
+        <p className="dash-hero__label">Pode gastar até</p>
+        <p className="dash-hero__kpi">
+          {fmtBRL(safeToSpend)}
+          <span className="dash-hero__kpi-suffix">hoje</span>
+        </p>
+        <p className="dash-hero__reason">
+          {savingsBinds
+            ? "O menor de dois limites: respeita sua meta de guardar 25% no ano."
+            : "O menor de dois limites: o que o caixa aguenta sem nenhum dia no vermelho."}
+        </p>
+        <div className="dash-hero__row">
+          <dl className="dash-hero__stats">
+            <div>
+              <dt>Reserva</dt>
+              <dd>{reserveMonths.toFixed(1)} meses</dd>
+            </div>
+            <div>
+              <dt>Lançamentos</dt>
+              <dd>{txnCount}</dd>
+            </div>
+          </dl>
+          <Button
+            variant="secondary"
+            size="sm"
+            iconLeft={<Icon name="sparkles" size={15} />}
+          >
+            Conhecer a Mia
+          </Button>
         </div>
-        <Button
-          variant="secondary"
-          iconLeft={<DashIcon name="sparkles" size={16} />}
-          onClick={onAskMia}
-        >
-          Ask Mia
-        </Button>
       </div>
 
-      <div className="dash-grid4">
-        <MetricTile
-          label="Net worth"
-          value="$182,400"
-          icon={<DashIcon name="trendingUp" size={15} />}
-          delta="+1.8%"
-          deltaDir="up"
-          sublabel="this quarter"
-        />
-        <MetricTile
-          label="Net cashflow"
-          value="$4,820.00"
-          delta="+12.4%"
-          deltaDir="up"
-          sublabel="vs. last month"
-          spark={[40, 55, 48, 70, 62, 88, 100]}
-        />
-        <MetricTile
-          label="Spending"
-          value="$3,142.18"
-          delta="6.1%"
-          deltaDir="down"
-          sublabel="under budget"
-        />
-        <MetricTile
-          label="Savings rate"
-          value="34%"
-          delta="+3 pts"
-          deltaDir="up"
-          sublabel="of net income"
-        />
-      </div>
+      <aside className="dash-hero__forecast" aria-label="Saldo projetado do mês">
+        <div className="dash-hero__forecast-head">
+          <span>Saldo no fim de junho</span>
+          <span
+            style={{
+              fontFamily: "var(--font-money)",
+              fontVariantNumeric: "tabular-nums",
+              fontSize: "var(--fs-sm)",
+              fontWeight: "var(--fw-semibold)",
+              color: moneyColor(monthEndBalance),
+            }}
+          >
+            {fmtBRL(monthEndBalance)}
+          </span>
+        </div>
+        <BalanceTrajectory daily={daily} today={today} variant="compact" />
+        <p className="dash-hero__forecast-foot">
+          Como seu saldo deve evoluir até o fim do mês.
+        </p>
+      </aside>
+    </section>
+  );
+}
 
-      <div className="dash-2col">
-        <div className="dash-card">
-          <div className="dash-card__head">
-            <span className="dash-card__title">
-              <DashIcon name="trendingUp" size={16} className="dash-card__ic" />
-              Cashflow
-            </span>
-            <SegmentedControl
-              size="sm"
-              value="6m"
-              onChange={() => {}}
-              options={[
-                { value: "3m", label: "3M" },
-                { value: "6m", label: "6M" },
-                { value: "1y", label: "1Y" },
-              ]}
+/** Aviso: último lançamento foi há 2 dias (demo). */
+function LastLoggedBanner() {
+  return (
+    <div className="dash-banner" role="status">
+      <Icon
+        name="calendar"
+        size={15}
+        style={{ color: "var(--primary)", flexShrink: 0 }}
+      />
+      <span>Você lançou pela última vez há 2 dias.</span>
+    </div>
+  );
+}
+
+/** Check-in diário — versão estática do DailyCheckinCard. */
+function DailyCheckinCard() {
+  const [kind, setKind] = React.useState("diario");
+  const ceiling = 32700;
+  const spent = 14500;
+  const remaining = ceiling - spent;
+  const pct = Math.min(100, Math.round((spent / ceiling) * 100));
+  const overspent = remaining < 0;
+
+  const KINDS = ["entrada", "saida", "diario", "cartao", "economia"];
+
+  return (
+    <section aria-labelledby="dash-checkin-title" className="dash-card">
+      <div className="dash-card__head">
+        <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <span className="dash-card__title" id="dash-checkin-title">
+            <Icon
+              name="calendar"
+              size={16}
+              className="dash-card__ic"
+              aria-hidden="true"
             />
-          </div>
-          <div className="dash-card__body">
-            <CashflowChart />
-            <div
+            Diário de hoje
+          </span>
+          <span style={{ fontSize: "var(--fs-micro)", color: "var(--text-faint)" }}>
+            Diário, cartão ou saída — registre o que aconteceu hoje
+          </span>
+        </span>
+        <span
+          style={{
+            fontSize: "var(--fs-sm)",
+            fontWeight: "var(--fw-semibold)",
+            color: overspent ? "var(--danger-500)" : "var(--text-muted)",
+          }}
+        >
+          {overspent
+            ? `${fmtBRL(-remaining)} acima do teto`
+            : `${fmtBRL(remaining)} disponível`}
+        </span>
+      </div>
+      <div className="dash-checkin__body">
+        <div className="dash-checkin__top">
+          <span style={{ color: "var(--text-muted)" }}>Diário registrado hoje</span>
+          <span className="dash-checkin__spent">
+            <span
               style={{
-                display: "flex",
-                gap: 18,
-                marginTop: 6,
-                fontSize: 11.5,
-                color: "var(--text-muted)",
+                fontFamily: "var(--font-money)",
+                fontVariantNumeric: "tabular-nums",
+                fontWeight: "var(--fw-bold)",
               }}
             >
-              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span
-                  style={{
-                    width: 14,
-                    height: 3,
-                    borderRadius: 2,
-                    background: "var(--chart-1)",
-                  }}
-                />
-                Income
-              </span>
-              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span
-                  style={{
-                    width: 10,
-                    height: 10,
-                    borderRadius: 2,
-                    background: "var(--chart-2)",
-                    opacity: 0.55,
-                  }}
-                />
-                Spending
-              </span>
-            </div>
-          </div>
-        </div>
-        <div className="dash-card">
-          <div className="dash-card__head">
-            <span className="dash-card__title">
-              <DashIcon name="piggy" size={16} className="dash-card__ic" />
-              By category
+              {fmtBRL(spent)}
             </span>
-          </div>
-          <div
-            className="dash-card__body"
-            style={{ display: "flex", gap: 14, alignItems: "center" }}
-          >
-            <Donut data={cats} />
-            <div className="dash-legend" style={{ flex: 1 }}>
-              {cats.map((c) => (
-                <div className="dash-leg" key={c.name}>
-                  <span className="dash-leg__dot" style={{ background: c.color }} />
-                  <span className="dash-leg__name">{c.name}</span>
-                  <span className="dash-leg__amt">${c.value.toLocaleString()}</span>
-                  <span className="dash-leg__pct">
-                    {Math.round((c.value / total) * 100)}%
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="dash-2col">
-        <div className="dash-card">
-          <div className="dash-card__head">
-            <span className="dash-card__title">
-              <DashIcon name="wallet" size={16} className="dash-card__ic" />
-              Accounts & cards
-            </span>
-            <Button
-              variant="ghost"
-              size="sm"
-              iconLeft={<DashIcon name="plus" size={15} />}
+            <span
+              style={{ color: "var(--text-faint)", fontWeight: "var(--fw-regular)" }}
             >
-              Add
-            </Button>
+              {" / "}
+              {fmtBRL(ceiling)}
+            </span>
+          </span>
+        </div>
+
+        {/* Barra de progresso */}
+        <progress
+          value={pct}
+          max={100}
+          aria-label={`${pct}% do teto diário usado`}
+          style={{
+            position: "absolute",
+            width: 1,
+            height: 1,
+            overflow: "hidden",
+            clip: "rect(0,0,0,0)",
+          }}
+        />
+        <div aria-hidden="true" className="dash-checkin__bar-track">
+          <div
+            className={`dash-checkin__bar-fill${overspent ? " dash-checkin__bar-fill--over" : ""}`}
+            style={{ width: "100%", transform: `scaleX(${pct / 100})` }}
+          />
+        </div>
+
+        <p className="dash-checkin__avg">Média do mês: R$ 145,00/dia</p>
+
+        {/* Seletor de tipo */}
+        <div
+          className="dash-checkin__kinds"
+          role="radiogroup"
+          aria-label="Tipo de movimento"
+        >
+          {KINDS.map((k) => (
+            <button
+              key={k}
+              type="button"
+              role="radio"
+              aria-checked={kind === k}
+              disabled={k === "economia"}
+              onClick={() => setKind(k)}
+              className={`dash-checkin__kind-btn${kind === k ? " dash-checkin__kind-btn--active" : ""}`}
+              style={k === "economia" ? { opacity: 0.5, cursor: "not-allowed" } : {}}
+            >
+              <MovBadge kind={k} showLabel size={14} />
+            </button>
+          ))}
+        </div>
+
+        <input
+          aria-label="Descrição (opcional)"
+          placeholder="Descrição (opcional) — ex.: mercado, aluguel…"
+          className="dash-checkin__input dash-checkin__desc"
+          defaultValue=""
+        />
+
+        <div className="dash-checkin__inputs">
+          <input
+            aria-label="Valor do lançamento (R$)"
+            inputMode="decimal"
+            placeholder="Valor de hoje (R$)"
+            className="dash-checkin__input"
+          />
+          <Button variant="primary">Registrar</Button>
+        </div>
+
+        {kind === "saida" && (
+          <p className="dash-checkin__hint">
+            Saída = despesa fixa do mês — contas, fatura no vencimento.
+          </p>
+        )}
+        {kind === "cartao" && (
+          <p className="dash-checkin__hint">
+            Cartão = compra no crédito (entra na fatura).
+          </p>
+        )}
+        {kind === "entrada" && (
+          <p className="dash-checkin__hint">Entrada = renda recebida no mês.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** PrevisibilidadeCard — versão estática. */
+function PrevisibilidadeCard() {
+  const incompleteMonths = [
+    { label: "julho", pct: 38, falta: 182400 },
+    { label: "agosto", pct: 12, falta: 274100 },
+  ];
+
+  return (
+    <section aria-labelledby="dash-predict-title" className="dash-card">
+      <div className="dash-card__head">
+        <span className="dash-card__title" id="dash-predict-title">
+          <Icon
+            name="calendarRange"
+            size={16}
+            className="dash-card__ic"
+            aria-hidden="true"
+          />
+          Previsibilidade
+        </span>
+        <span className="dash-predict__head-trusted">
+          confiável até <strong>junho</strong>
+        </span>
+      </div>
+      <div className="dash-card__body">
+        <p className="dash-predict__warn">
+          A partir de <strong>julho</strong> faltam{" "}
+          <span
+            style={{
+              fontFamily: "var(--font-money)",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            R$ 4.564,00
+          </span>{" "}
+          de gastos não lançados. A projeção está otimista até você pré-lançar.
+        </p>
+        <div className="dash-predict__rows">
+          {incompleteMonths.map((m) => (
+            <div
+              key={m.label}
+              className="dash-predict__row"
+              aria-label={`${m.label}: ${m.pct}% do gasto típico lançado, falta ${fmtBRL(m.falta)}`}
+            >
+              <span className="dash-predict__month">{m.label}</span>
+              <span className="dash-predict__bar" aria-hidden="true">
+                <span className="dash-predict__fill" style={{ width: `${m.pct}%` }} />
+              </span>
+              <span className="dash-predict__pct">
+                {m.pct}% · falta {fmtBRL(m.falta)}
+              </span>
+            </div>
+          ))}
+        </div>
+        <Disclosure title="Como pré-lançar o ano">
+          <p
+            style={{
+              fontSize: "var(--fs-sm)",
+              color: "var(--text-muted)",
+              margin: 0,
+              lineHeight: "var(--lh-normal)",
+            }}
+          >
+            Em cada mês à frente, lance o <strong>saldo de hoje</strong> (só
+            conta-corrente), o <strong>salário</strong> conservador, as{" "}
+            <strong>contas fixas</strong>, a <strong>fatura do cartão</strong> no
+            vencimento e o <strong>diário estimado</strong> em todos os dias. Futuro
+            vazio engana a previsão.
+          </p>
+        </Disclosure>
+        <p className="dash-predict__savings">
+          Economizado no ano: <strong>8%</strong> realizado, referência 20 a 30%
+        </p>
+      </div>
+    </section>
+  );
+}
+
+/** ColchaoCard — versão estática. */
+function ColchaoCard() {
+  const colchaoCents = 183200;
+  const registeredEconomia = 0;
+  const realizedRatePct = "8.4";
+
+  return (
+    <section aria-labelledby="dash-colchao-title" className="dash-card">
+      <div className="dash-card__head">
+        <span className="dash-card__title" id="dash-colchao-title">
+          <Icon
+            name="sparkles"
+            size={16}
+            className="dash-card__ic"
+            aria-hidden="true"
+          />
+          Seu colchão
+        </span>
+        <PhaseBadge phase="calibrate" />
+      </div>
+      <div className="dash-card__body">
+        <div className="dash-colchao__nums">
+          <div className="dash-colchao__num">
+            <span className="dash-colchao__label">Economia registrada</span>
+            <span
+              className={`dash-colchao__val${registeredEconomia <= 0 ? " dash-colchao__val--muted" : ""}`}
+              style={{
+                color:
+                  registeredEconomia > 0 ? "var(--money-pos)" : "var(--text-faint)",
+              }}
+            >
+              {fmtBRL(registeredEconomia)}
+            </span>
           </div>
-          <div className="dash-card__body" style={{ paddingTop: 0 }}>
-            {[
-              {
-                nm: "Joint Checking",
-                sub: "Chase ·· 4821",
-                amt: "$12,408.52",
-                ic: "wallet",
-                owner: "shared",
-              },
-              {
-                nm: "Alex — Savings",
-                sub: "Ally ·· 9920",
-                amt: "$96,140.00",
-                ic: "piggy",
-                owner: "personal",
-              },
-              {
-                nm: "Sam — Amex Gold",
-                sub: "Credit ·· 1007",
-                amt: "−$1,344.18",
-                ic: "creditCard",
-                owner: "partner",
-              },
-            ].map((a) => (
-              <div className="dash-acct" key={a.nm}>
-                <span className="dash-acct__ic">
-                  <DashIcon name={a.ic} size={17} />
+          <div className="dash-colchao__num">
+            <span className="dash-colchao__label">
+              Colchão este ano (sobra até hoje)
+            </span>
+            <span className="dash-colchao__val" style={{ color: "var(--money-pos)" }}>
+              {fmtBRL(colchaoCents)} · {realizedRatePct}%
+            </span>
+          </div>
+        </div>
+        <p className="dash-colchao__text">
+          Você guarda o que sobra como colchão para cobrir os meses negativos sem sacar
+          investimento. Adaptação válida do método.
+        </p>
+        <Disclosure title="Próximo nível, quando quiser">
+          <p
+            style={{
+              fontSize: "var(--fs-sm)",
+              color: "var(--text-muted)",
+              margin: 0,
+              lineHeight: "var(--lh-normal)",
+            }}
+          >
+            Registrar a Economia (meta 20 a 30% da renda) como uma saída mensal e
+            separar a reserva. Isso vira hábito e protege de sacar investimento na hora
+            errada.
+          </p>
+        </Disclosure>
+      </div>
+    </section>
+  );
+}
+
+/** PerformanceCard — versão estática. */
+function PerformanceCard() {
+  const months = [
+    { label: "junho", performance: 53200, rate: 8, incomplete: false },
+    { label: "julho", performance: 71400, rate: 0, incomplete: true },
+    { label: "agosto", performance: 60100, rate: 0, incomplete: true },
+    { label: "setembro", performance: 58900, rate: 0, incomplete: true },
+  ];
+
+  return (
+    <section aria-labelledby="dash-perf-title" className="dash-card">
+      <div className="dash-card__head">
+        <span
+          className="dash-card__title"
+          id="dash-perf-title"
+          title="Caixa não é poupança: um mês pode ter saldo positivo e ainda assim performance baixa."
+        >
+          <Icon
+            name="trendingUp"
+            size={16}
+            className="dash-card__ic"
+            aria-hidden="true"
+          />
+          Performance por mês
+        </span>
+        <span className="dash-perf__hint">referência anual 20–30%</span>
+      </div>
+      <div className="dash-perf__row">
+        {months.map((m) => (
+          <div
+            key={m.label}
+            className={`dash-perf__cell${m.incomplete ? " is-incomplete" : ""}`}
+            aria-label={
+              m.incomplete
+                ? `${m.label}: incompleto, projeção otimista`
+                : `${m.label}: performance ${fmtBRL(m.performance)}, economizado ${m.rate}%`
+            }
+          >
+            <span className="dash-perf__month">{m.label}</span>
+            {m.incomplete ? (
+              <>
+                <span className={`dash-perf__val dash-perf__val--muted`}>
+                  {fmtBRL(m.performance)}
                 </span>
-                <div>
-                  <div className="dash-acct__nm">{a.nm}</div>
-                  <div className="dash-acct__sub">{a.sub}</div>
-                </div>
                 <span
-                  className="dash-acct__amt"
+                  className="dash-perf__rate"
+                  style={{ color: "var(--warning-500)" }}
+                >
+                  <Icon
+                    name="alertTriangle"
+                    size={11}
+                    style={{ verticalAlign: "-1px", marginRight: 3 }}
+                  />
+                  incompleto
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="dash-perf__val" style={{ color: "var(--money-pos)" }}>
+                  {fmtBRL(m.performance)}
+                </span>
+                <span className="dash-perf__rate">economizado {m.rate}%</span>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** MonthLedgerCard — versão estática "Dia a dia". */
+function MonthLedgerCard() {
+  const [ym, setYm] = React.useState("2026-06");
+  const today = "2026-06-21";
+  const year = 2026;
+  const monthLabel = "Junho";
+
+  // Amostra representativa: alguns dias com dados
+  const rows = [
+    {
+      date: "2026-06-18",
+      label: "18/06",
+      entrada: 0,
+      saida: 0,
+      diario: 4200,
+      saldo: 324800,
+    },
+    {
+      date: "2026-06-19",
+      label: "19/06",
+      entrada: 0,
+      saida: 85000,
+      diario: 0,
+      saldo: 239800,
+    },
+    {
+      date: "2026-06-20",
+      label: "20/06",
+      entrada: 0,
+      saida: 0,
+      diario: 6700,
+      saldo: 233100,
+    },
+    {
+      date: "2026-06-21",
+      label: "21/06",
+      entrada: 0,
+      saida: 0,
+      diario: 14500,
+      saldo: 218600,
+    },
+    {
+      date: "2026-06-22",
+      label: "22/06",
+      entrada: 0,
+      saida: 0,
+      diario: null,
+      saldo: null,
+    },
+    {
+      date: "2026-06-23",
+      label: "23/06",
+      entrada: 0,
+      saida: 0,
+      diario: null,
+      saldo: null,
+    },
+  ];
+
+  // Saldo heatmap simplificado
+  function saldoStyle(cents) {
+    if (cents == null) return {};
+    if (cents < 0)
+      return { background: "rgba(224, 98, 91, 0.32)", color: "var(--text)" };
+    if (cents < 50000)
+      return { background: "rgba(224, 163, 62, 0.16)", color: "var(--text)" };
+    if (cents < 200000)
+      return { background: "rgba(52, 185, 129, 0.15)", color: "var(--text)" };
+    return { background: "rgba(52, 185, 129, 0.30)", color: "var(--text)" };
+  }
+
+  const foot = {
+    entrada: rows.reduce((s, r) => s + (r.entrada || 0), 0),
+    saida: rows.reduce((s, r) => s + (r.saida || 0), 0),
+    diario: rows.reduce((s, r) => s + (r.diario || 0), 0),
+  };
+  foot.saidaTotal = foot.saida + foot.diario;
+  foot.performance = foot.entrada - foot.saidaTotal;
+
+  return (
+    <div className="dash-card">
+      <div className="dash-card__head">
+        <span className="dash-card__title">
+          <Icon name="calendarRange" size={16} className="dash-card__ic" />
+          Dia a dia
+        </span>
+        <MonthNav
+          label={`${monthLabel} de ${year}`}
+          onPrev={() => {}}
+          onNext={() => {}}
+          onToday={() => {}}
+          atToday={true}
+          prevLabel="Mês anterior"
+          nextLabel="Próximo mês"
+        />
+      </div>
+      <div className="dash-card__body" style={{ padding: 0 }}>
+        <div className="dash-ledger-scroll">
+          <table className="dash-ledger-table">
+            <thead>
+              <tr>
+                <th scope="col" style={{ textAlign: "left" }}>
+                  Data
+                </th>
+                <th scope="col">Entrada</th>
+                <th scope="col" title="Saídas fixas e a fatura do cartão no vencimento">
+                  Saída
+                </th>
+                <th scope="col">Diário</th>
+                <th scope="col">Saldo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.date} className={r.date === today ? "is-today" : ""}>
+                  <td style={{ fontFamily: "var(--font-sans)" }}>
+                    {r.label}
+                    {r.date === today && <span className="dash-today-tag">hoje</span>}
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    {r.entrada ? (
+                      <span className="money-pos">{fmtBRL(r.entrada)}</span>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    {r.saida ? fmtBRL(r.saida) : "—"}
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    {r.diario ? fmtBRL(r.diario) : "—"}
+                  </td>
+                  <td style={{ textAlign: "right", ...saldoStyle(r.saldo) }}>
+                    {r.saldo != null ? fmtBRL(r.saldo) : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr>
+                <th scope="row">Total</th>
+                <td style={{ textAlign: "right" }}>
+                  {foot.entrada > 0 ? (
+                    <span className="money-pos">{fmtBRL(foot.entrada)}</span>
+                  ) : (
+                    "—"
+                  )}
+                </td>
+                <td style={{ textAlign: "right" }}>{fmtBRL(foot.saida)}</td>
+                <td style={{ textAlign: "right" }}>{fmtBRL(foot.diario)}</td>
+                <td style={{ textAlign: "right", color: "var(--text-faint)" }}>—</td>
+              </tr>
+              <tr>
+                <th scope="row">Saída Total</th>
+                <td
+                  colSpan={3}
                   style={{
-                    color: a.amt.startsWith("−") ? "var(--money-neg)" : "var(--text)",
+                    textAlign: "right",
+                    color: "var(--text-faint)",
+                    fontSize: "var(--fs-micro)",
                   }}
                 >
-                  {a.amt}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="dash-card">
-          <div className="dash-card__head">
-            <span className="dash-card__title">
-              <DashIcon name="shield" size={16} className="dash-card__ic" />
-              Responsibility split
-            </span>
-          </div>
-          <div className="dash-card__body">
-            <div className="dash-split">
-              {[
-                {
-                  lbl: "Personal — Alex",
-                  amt: "$1,612",
-                  pct: 51,
-                  c: "var(--owner-personal)",
-                  type: "personal",
-                },
-                {
-                  lbl: "Partner — Sam",
-                  amt: "$888",
-                  pct: 28,
-                  c: "var(--owner-partner)",
-                  type: "partner",
-                },
-                {
-                  lbl: "Shared household",
-                  amt: "$642",
-                  pct: 21,
-                  c: "var(--owner-shared)",
-                  type: "shared",
-                },
-              ].map((r) => (
-                <div key={r.lbl}>
-                  <div className="dash-splitrow__top">
-                    <span className="dash-splitrow__lbl">
-                      <span
-                        style={{
-                          width: 9,
-                          height: 9,
-                          borderRadius: 3,
-                          background: r.c,
-                        }}
-                      />
-                      {r.lbl}
-                    </span>
-                    <span className="dash-splitrow__amt">
-                      {r.amt} · {r.pct}%
-                    </span>
-                  </div>
-                  <div className="dash-bar">
-                    <div
-                      className="dash-bar__fill"
-                      style={{ width: r.pct + "%", background: r.c }}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="dash-card">
-        <div className="dash-card__head">
-          <span className="dash-card__title">
-            <DashIcon name="receipt" size={16} className="dash-card__ic" />
-            Recent activity
-          </span>
-          <Badge tone="warning" dot>
-            6 need an owner
-          </Badge>
-        </div>
-        <div className="dash-card__body" style={{ padding: 0 }}>
-          <TransactionRow
-            date="08 Jun"
-            merchant="Whole Foods Market"
-            owner={<OwnerChip name="Household" type="shared" bare />}
-            amount="642.18"
-            status="needs-owner"
-            confidence="low"
-          />
-          <TransactionRow
-            date="08 Jun"
-            merchant="Acme Payroll"
-            owner={<OwnerChip name="Alex Tan" type="personal" bare />}
-            amount="6,200.00"
-            positive
-            status="reconciled"
-          />
-          <TransactionRow
-            date="07 Jun"
-            merchant="Pacific Gas & Electric"
-            owner={<OwnerChip name="Household" type="shared" bare />}
-            amount="148.90"
-            status="reconciled"
-          />
-          <TransactionRow
-            date="06 Jun"
-            merchant="Spotify"
-            owner={<OwnerChip name="Sam Okafor" type="partner" bare />}
-            amount="14.99"
-            status="imported"
-            confidence="high"
-          />
+                  saídas + diário
+                </td>
+                <td style={{ textAlign: "right" }}>{fmtBRL(foot.saidaTotal)}</td>
+              </tr>
+              <tr>
+                <th
+                  scope="row"
+                  title="Resultado contábil do mês: entradas menos saída total."
+                >
+                  Resultado do mês
+                </th>
+                <td
+                  colSpan={3}
+                  style={{
+                    textAlign: "right",
+                    color: "var(--text-faint)",
+                    fontSize: "var(--fs-micro)",
+                  }}
+                >
+                  entradas − saída total
+                </td>
+                <td style={{ textAlign: "right", color: moneyColor(foot.performance) }}>
+                  {foot.performance >= 0 ? "" : "−"}
+                  {fmtBRL(Math.abs(foot.performance))}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
         </div>
       </div>
     </div>
   );
 }
+
+/** WriteBack pending — versão estática (1 célula local pendente de envio). */
+function WriteBackPending() {
+  return (
+    <div className="dash-wb">
+      <div className="dash-wb__head">
+        <Icon name="download" size={15} style={{ flexShrink: 0 }} aria-hidden="true" />
+        <span aria-live="polite">1 célula local → planilha pendente</span>
+      </div>
+      <div className="dash-wb__actions">
+        <Button variant="primary" size="sm">
+          Sincronizar
+        </Button>
+        <Button variant="ghost" size="sm">
+          Revisar e enviar
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/* ---- Tela completa ---- */
+function DashboardScreen(props) {
+  return (
+    <div className="dash">
+      <HeroSection />
+
+      {/* Aviso: escassez de caixa prevista (ausente neste demo — dados positivos) */}
+      {/* <DeficitBanner /> */}
+
+      {/* WriteBack pendente: 1 célula local → planilha */}
+      <WriteBackPending />
+
+      {/* Último lançamento foi há 2 dias */}
+      <LastLoggedBanner />
+
+      {/* Check-in diário */}
+      <DailyCheckinCard />
+
+      {/* Previsibilidade: meses futuros incompletos */}
+      <PrevisibilidadeCard />
+
+      {/* Colchão: coaching do método */}
+      <ColchaoCard />
+
+      {/* Performance por mês */}
+      <PerformanceCard />
+
+      {/* Dia a dia: grade do mês */}
+      <MonthLedgerCard />
+    </div>
+  );
+}
+
 window.DashboardScreen = DashboardScreen;

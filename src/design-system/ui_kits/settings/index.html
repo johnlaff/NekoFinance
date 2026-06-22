@@ -1,10 +1,10 @@
-<!-- @startingPoint section="Neko App" subtitle="Settings — local data, OAuth, AI keys, update channel" viewport="1440x900" -->
-<!-- @dsCard group="Neko App" viewport="1440x980" name="Settings / privacy" subtitle="Connection, AI provider, privacy, people & ownership, updates" -->
+<!-- @startingPoint section="Neko App" subtitle="Settings — local data, Google Sheets OAuth, daily budget, privacy" viewport="1440x900" -->
+<!-- @dsCard group="Neko App" viewport="1440x900" name="Configurações e privacidade" subtitle="Conexão, importação local, bolsos, lembrete diário, teto do Diário, seus dados" -->
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="pt-BR" data-theme="dark">
   <head>
     <meta charset="utf-8" />
-    <title>Neko Finance — Settings</title>
+    <title>Neko Finance — Configurações e privacidade</title>
     <link rel="stylesheet" href="../../styles.css" />
     <style>
       html,
@@ -42,9 +42,20 @@
     <script src="../dashboard/AppShell.jsx"></script>
     <script type="text/babel" src="SettingsScreen.jsx"></script>
     <script type="text/babel">
-      ReactDOM.createRoot(document.getElementById("app")).render(
-        <window.SettingsApp />,
-      );
+      function App() {
+        const [nav, setNav] = React.useState("settings");
+        return (
+          <window.AppShell
+            active={nav}
+            onNav={setNav}
+            title="Configurações e privacidade"
+            crumb="Local · este dispositivo"
+          >
+            <window.SettingsScreen />
+          </window.AppShell>
+        );
+      }
+      ReactDOM.createRoot(document.getElementById("app")).render(<App />);
     </script>
   </body>
 </html>

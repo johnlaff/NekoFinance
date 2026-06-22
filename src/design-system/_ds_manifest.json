@@ -1,27 +1,149 @@
 {
   "namespace": "NekoFinanceDesignSystem_9bd1cd",
   "components": [
-    { "name": "ChatBubble", "sourcePath": "components/copilot/ChatBubble.jsx" },
-    { "name": "Citation", "sourcePath": "components/copilot/Citation.jsx" },
-    { "name": "EmptyState", "sourcePath": "components/copilot/EmptyState.jsx" },
-    { "name": "Badge", "sourcePath": "components/core/Badge.jsx" },
-    { "name": "Button", "sourcePath": "components/core/Button.jsx" },
-    { "name": "Input", "sourcePath": "components/core/Input.jsx" },
+    {
+      "name": "ChatBubble",
+      "sourcePath": "components/copilot/ChatBubble.jsx"
+    },
+    {
+      "name": "Citation",
+      "sourcePath": "components/copilot/Citation.jsx"
+    },
+    {
+      "name": "EmptyState",
+      "sourcePath": "components/copilot/EmptyState.jsx"
+    },
+    {
+      "name": "MiaAvatar",
+      "sourcePath": "components/copilot/MiaAvatar.jsx"
+    },
+    {
+      "name": "Badge",
+      "sourcePath": "components/core/Badge.jsx"
+    },
+    {
+      "name": "Button",
+      "sourcePath": "components/core/Button.jsx"
+    },
+    {
+      "name": "Disclosure",
+      "sourcePath": "components/core/Disclosure.jsx"
+    },
+    {
+      "name": "InfoPopover",
+      "sourcePath": "components/core/InfoPopover.jsx"
+    },
+    {
+      "name": "Input",
+      "sourcePath": "components/core/Input.jsx"
+    },
+    {
+      "name": "MonthNav",
+      "sourcePath": "components/core/MonthNav.jsx"
+    },
+    {
+      "name": "NekoMark",
+      "sourcePath": "components/core/NekoMark.jsx"
+    },
     {
       "name": "SegmentedControl",
       "sourcePath": "components/core/SegmentedControl.jsx"
     },
-    { "name": "Switch", "sourcePath": "components/core/Switch.jsx" },
+    {
+      "name": "Switch",
+      "sourcePath": "components/core/Switch.jsx"
+    },
     {
       "name": "ApprovalDiffCard",
       "sourcePath": "components/finance/ApprovalDiffCard.jsx"
     },
-    { "name": "HealthBadge", "sourcePath": "components/finance/HealthBadge.jsx" },
-    { "name": "MetricTile", "sourcePath": "components/finance/MetricTile.jsx" },
-    { "name": "OwnerChip", "sourcePath": "components/finance/OwnerChip.jsx" },
-    { "name": "TransactionRow", "sourcePath": "components/finance/TransactionRow.jsx" }
+    {
+      "name": "BalanceTrajectory",
+      "sourcePath": "components/finance/BalanceTrajectory.jsx"
+    },
+    {
+      "name": "HealthBadge",
+      "sourcePath": "components/finance/HealthBadge.jsx"
+    },
+    {
+      "name": "LineItemEditor",
+      "sourcePath": "components/finance/LineItemEditor.jsx"
+    },
+    {
+      "name": "MetricTile",
+      "sourcePath": "components/finance/MetricTile.jsx"
+    },
+    {
+      "name": "Money",
+      "sourcePath": "components/finance/Money.jsx"
+    },
+    {
+      "name": "MovBadge",
+      "sourcePath": "components/finance/MovBadge.jsx"
+    },
+    {
+      "name": "OwnerChip",
+      "sourcePath": "components/finance/OwnerChip.jsx"
+    },
+    {
+      "name": "PhaseBadge",
+      "sourcePath": "components/finance/PhaseBadge.jsx"
+    },
+    {
+      "name": "ProvBadge",
+      "sourcePath": "components/finance/ProvBadge.jsx"
+    },
+    {
+      "name": "TransactionRow",
+      "sourcePath": "components/finance/TransactionRow.jsx"
+    }
   ],
   "startingPoints": [
+    {
+      "name": "ChatBubble",
+      "path": "components/copilot/ChatBubble.jsx",
+      "previewPath": "components/copilot/copilot.card.html",
+      "kind": "component",
+      "section": "Copilot",
+      "subtitle": "ChatBubble",
+      "viewport": "320x140"
+    },
+    {
+      "name": "Citation",
+      "path": "components/copilot/Citation.jsx",
+      "previewPath": "components/copilot/copilot.card.html",
+      "kind": "component",
+      "section": "Copilot",
+      "subtitle": "Citation",
+      "viewport": "320x140"
+    },
+    {
+      "name": "EmptyState",
+      "path": "components/copilot/EmptyState.jsx",
+      "previewPath": "components/copilot/copilot.card.html",
+      "kind": "component",
+      "section": "Copilot",
+      "subtitle": "EmptyState",
+      "viewport": "320x140"
+    },
+    {
+      "name": "MiaAvatar",
+      "path": "components/copilot/MiaAvatar.jsx",
+      "previewPath": "components/copilot/copilot.card.html",
+      "kind": "component",
+      "section": "Copilot",
+      "subtitle": "MiaAvatar",
+      "viewport": "320x140"
+    },
+    {
+      "name": "Badge",
+      "path": "components/core/Badge.jsx",
+      "previewPath": "components/core/core.card.html",
+      "kind": "component",
+      "section": "Core",
+      "subtitle": "Badge",
+      "viewport": "320x140"
+    },
     {
       "name": "Button",
       "path": "components/core/Button.jsx",
@@ -32,13 +154,103 @@
       "viewport": "700x150"
     },
     {
+      "name": "Disclosure",
+      "path": "components/core/Disclosure.jsx",
+      "previewPath": "components/core/core.card.html",
+      "kind": "component",
+      "section": "Core",
+      "subtitle": "Disclosure",
+      "viewport": "320x140"
+    },
+    {
+      "name": "InfoPopover",
+      "path": "components/core/InfoPopover.jsx",
+      "previewPath": "components/core/core.card.html",
+      "kind": "component",
+      "section": "Core",
+      "subtitle": "InfoPopover",
+      "viewport": "320x140"
+    },
+    {
+      "name": "Input",
+      "path": "components/core/Input.jsx",
+      "previewPath": "components/core/core.card.html",
+      "kind": "component",
+      "section": "Core",
+      "subtitle": "Input",
+      "viewport": "320x140"
+    },
+    {
+      "name": "MonthNav",
+      "path": "components/core/MonthNav.jsx",
+      "previewPath": "components/core/core.card.html",
+      "kind": "component",
+      "section": "Core",
+      "subtitle": "MonthNav — month/year navigator",
+      "viewport": "420x60"
+    },
+    {
+      "name": "NekoMark",
+      "path": "components/core/NekoMark.jsx",
+      "previewPath": "components/core/core.card.html",
+      "kind": "component",
+      "section": "Core",
+      "subtitle": "NekoMark — app logo mark SVG",
+      "viewport": "160x160"
+    },
+    {
+      "name": "SegmentedControl",
+      "path": "components/core/SegmentedControl.jsx",
+      "previewPath": "components/core/core.card.html",
+      "kind": "component",
+      "section": "Core",
+      "subtitle": "SegmentedControl",
+      "viewport": "320x140"
+    },
+    {
+      "name": "Switch",
+      "path": "components/core/Switch.jsx",
+      "previewPath": "components/core/core.card.html",
+      "kind": "component",
+      "section": "Core",
+      "subtitle": "Switch",
+      "viewport": "320x140"
+    },
+    {
       "name": "ApprovalDiffCard",
       "path": "components/finance/ApprovalDiffCard.jsx",
       "previewPath": "components/finance/finance.card.html",
       "kind": "component",
       "section": "Finance",
-      "subtitle": "ApprovalDiffCard — human-approved sheet write",
-      "viewport": "520x320"
+      "subtitle": "ApprovalDiffCard",
+      "viewport": "320x140"
+    },
+    {
+      "name": "BalanceTrajectory",
+      "path": "components/finance/BalanceTrajectory.jsx",
+      "previewPath": "components/finance/finance.card.html",
+      "kind": "component",
+      "section": "Finance",
+      "subtitle": "BalanceTrajectory",
+      "viewport": "320x140"
+    },
+    {
+      "name": "HealthBadge",
+      "path": "components/finance/HealthBadge.jsx",
+      "previewPath": "components/finance/finance.card.html",
+      "kind": "component",
+      "section": "Finance",
+      "subtitle": "HealthBadge",
+      "viewport": "320x140"
+    },
+    {
+      "name": "LineItemEditor",
+      "path": "components/finance/LineItemEditor.jsx",
+      "previewPath": "components/finance/finance.card.html",
+      "kind": "component",
+      "section": "Finance",
+      "subtitle": "LineItemEditor",
+      "viewport": "320x140"
     },
     {
       "name": "MetricTile",
@@ -47,64 +259,184 @@
       "kind": "component",
       "section": "Finance",
       "subtitle": "MetricTile — KPI value + delta",
+      "viewport": "320x160"
+    },
+    {
+      "name": "Money",
+      "path": "components/finance/Money.jsx",
+      "previewPath": "components/finance/finance.card.html",
+      "kind": "component",
+      "section": "Finance",
+      "subtitle": "Money — BRL amount in tabular mono",
+      "viewport": "260x120"
+    },
+    {
+      "name": "MovBadge",
+      "path": "components/finance/MovBadge.jsx",
+      "previewPath": "components/finance/finance.card.html",
+      "kind": "component",
+      "section": "Finance",
+      "subtitle": "MovBadge",
       "viewport": "320x140"
     },
     {
-      "name": "copilot",
+      "name": "OwnerChip",
+      "path": "components/finance/OwnerChip.jsx",
+      "previewPath": "components/finance/finance.card.html",
+      "kind": "component",
+      "section": "Finance",
+      "subtitle": "OwnerChip — transaction owner chip",
+      "viewport": "320x120"
+    },
+    {
+      "name": "PhaseBadge",
+      "path": "components/finance/PhaseBadge.jsx",
+      "previewPath": "components/finance/finance.card.html",
+      "kind": "component",
+      "section": "Finance",
+      "subtitle": "PhaseBadge",
+      "viewport": "320x140"
+    },
+    {
+      "name": "ProvBadge",
+      "path": "components/finance/ProvBadge.jsx",
+      "previewPath": "components/finance/finance.card.html",
+      "kind": "component",
+      "section": "Finance",
+      "subtitle": "ProvBadge",
+      "viewport": "320x140"
+    },
+    {
+      "name": "TransactionRow",
+      "path": "components/finance/TransactionRow.jsx",
+      "previewPath": "components/finance/finance.card.html",
+      "kind": "component",
+      "section": "Finance",
+      "subtitle": "TransactionRow",
+      "viewport": "320x140"
+    },
+    {
+      "name": "Ano inteiro",
+      "path": "ui_kits/ano-inteiro/index.html",
+      "previewPath": "ui_kits/ano-inteiro/index.html",
+      "kind": "screen",
+      "section": "Neko App",
+      "subtitle": "Grade dia a dia — 12 meses com heatmap de saldo",
+      "viewport": "1440x900"
+    },
+    {
+      "name": "Visão anual",
+      "path": "ui_kits/anuais/index.html",
+      "previewPath": "ui_kits/anuais/index.html",
+      "kind": "screen",
+      "section": "Neko App",
+      "subtitle": "Entradas, economia e métricas do ano inteiro em uma tabela",
+      "viewport": "1440x900"
+    },
+    {
+      "name": "Mia",
       "path": "ui_kits/copilot/index.html",
       "previewPath": "ui_kits/copilot/index.html",
       "kind": "screen",
       "section": "Neko App",
-      "subtitle": "Copilot chat with cited calcs & human-approved sheet diff",
+      "subtitle": "Copiloto em desenvolvimento — fatos do método sem IA",
       "viewport": "1440x900"
     },
     {
-      "name": "dashboard",
+      "name": "Dashboard",
       "path": "ui_kits/dashboard/index.html",
       "previewPath": "ui_kits/dashboard/index.html",
       "kind": "screen",
       "section": "Neko App",
-      "subtitle": "Local-first finance dashboard",
+      "subtitle": "Quanto posso gastar hoje — hero KPI, trajetória de saldo e check-in diário",
       "viewport": "1440x900"
     },
     {
-      "name": "index",
-      "path": "index.html",
-      "previewPath": "index.html",
+      "name": "Economia comparada",
+      "path": "ui_kits/economia-compare/index.html",
+      "previewPath": "ui_kits/economia-compare/index.html",
       "kind": "screen",
       "section": "Neko App",
-      "subtitle": "Full app — dashboard, transactions, copilot (self-contained)",
+      "subtitle": "Entradas, Economia e Economizado% dois anos lado a lado",
       "viewport": "1440x900"
     },
     {
-      "name": "methodology",
+      "name": "Horizonte de saldos",
+      "path": "ui_kits/horizonte/index.html",
+      "previewPath": "ui_kits/horizonte/index.html",
+      "kind": "screen",
+      "section": "Neko App",
+      "subtitle": "Projeção mês a mês do saldo com termômetro de folga/aperto",
+      "viewport": "1440x900"
+    },
+    {
+      "name": "Ajuda",
       "path": "ui_kits/methodology/index.html",
       "previewPath": "ui_kits/methodology/index.html",
       "kind": "screen",
       "section": "Neko App",
-      "subtitle": "Methodology — private, source-neutral rules & insights",
+      "subtitle": "Sete princípios do método explicados em cards",
       "viewport": "1440x900"
     },
     {
-      "name": "settings",
+      "name": "Configurações e privacidade",
       "path": "ui_kits/settings/index.html",
       "previewPath": "ui_kits/settings/index.html",
       "kind": "screen",
       "section": "Neko App",
-      "subtitle": "Settings — local data, OAuth, AI keys, update channel",
+      "subtitle": "Conexão, importação local, bolsos, lembrete diário, teto do Diário, seus dados",
       "viewport": "1440x900"
     },
     {
-      "name": "transactions",
+      "name": "Tags",
+      "path": "ui_kits/tags/index.html",
+      "previewPath": "ui_kits/tags/index.html",
+      "kind": "screen",
+      "section": "Neko App",
+      "subtitle": "Rótulos do mês — totais por tag, ignorar nos cálculos, criar nova tag",
+      "viewport": "1440x900"
+    },
+    {
+      "name": "Totais",
+      "path": "ui_kits/totais/index.html",
+      "previewPath": "ui_kits/totais/index.html",
+      "kind": "screen",
+      "section": "Neko App",
+      "subtitle": "Cálculos do mês — performance, economizado, custo de vida e diário médio",
+      "viewport": "1440x900"
+    },
+    {
+      "name": "Lançamentos",
       "path": "ui_kits/transactions/index.html",
       "previewPath": "ui_kits/transactions/index.html",
       "kind": "screen",
       "section": "Neko App",
-      "subtitle": "Import review with Sheets mapping & owner assignment",
+      "subtitle": "Livro-razão histórico — filtros, tipos de movimento, proveniência e tags",
       "viewport": "1440x900"
     }
   ],
   "cards": [
+    {
+      "path": "components/core/core.card.html",
+      "group": "Components",
+      "viewport": "760x1000",
+      "subtitle": "Badge · Button · Input · SegmentedControl · Switch · Disclosure · InfoPopover · MonthNav · NekoMark",
+      "name": "Core — controles, entradas e identidade"
+    },
+    {
+      "path": "components/finance/finance.card.html",
+      "group": "Components",
+      "viewport": "760x1400",
+      "subtitle": "Money · MetricTile · HealthBadge · MovBadge · OwnerChip · PhaseBadge · ProvBadge · TransactionRow · LineItemEditor · BalanceTrajectory · ApprovalDiffCard",
+      "name": "Finance — lançamentos, métricas, aprovações e trajetória"
+    },
+    {
+      "path": "components/copilot/copilot.card.html",
+      "group": "Components",
+      "viewport": "760x1000",
+      "subtitle": "ChatBubble · Citation · EmptyState · MiaAvatar",
+      "name": "Copilot — Mia chat, citações, estados"
+    },
     {
       "path": "guidelines/brand-logo.card.html",
       "group": "Brand",
@@ -155,62 +487,6 @@
       "name": "Semantic — Status"
     },
     {
-      "path": "components/copilot/copilot.card.html",
-      "group": "Components",
-      "viewport": "700x440",
-      "subtitle": "ChatBubble · Citation (inline + tool) · EmptyState",
-      "name": "Copilot — Mia chat, citations, states"
-    },
-    {
-      "path": "components/core/core.card.html",
-      "group": "Components",
-      "viewport": "700x360",
-      "subtitle": "Button · Input · SegmentedControl · Badge · Switch",
-      "name": "Core — buttons, inputs, toggles"
-    },
-    {
-      "path": "components/finance/finance.card.html",
-      "group": "Components",
-      "viewport": "700x560",
-      "subtitle": "MetricTile · HealthBadge · OwnerChip · TransactionRow · ApprovalDiffCard",
-      "name": "Finance — tiles, owners, rows, approvals"
-    },
-    {
-      "path": "ui_kits/copilot/index.html",
-      "group": "Neko App",
-      "viewport": "1440x900",
-      "subtitle": "Mia chat, deterministic tool results, and a live approval diff",
-      "name": "Copilot approval flow"
-    },
-    {
-      "path": "ui_kits/dashboard/index.html",
-      "group": "Neko App",
-      "viewport": "1440x900",
-      "subtitle": "Health, cashflow, categories, accounts, responsibility split",
-      "name": "Dashboard"
-    },
-    {
-      "path": "ui_kits/methodology/index.html",
-      "group": "Neko App",
-      "viewport": "1440x980",
-      "subtitle": "Editorial rules engine in the Newsreader voice, with derived insights",
-      "name": "Methodology / insights"
-    },
-    {
-      "path": "ui_kits/settings/index.html",
-      "group": "Neko App",
-      "viewport": "1440x980",
-      "subtitle": "Connection, AI provider, privacy, people & ownership, updates",
-      "name": "Settings / privacy"
-    },
-    {
-      "path": "ui_kits/transactions/index.html",
-      "group": "Neko App",
-      "viewport": "1440x900",
-      "subtitle": "Master table + detail panel + Google Sheets column mapping",
-      "name": "Transactions / Import review"
-    },
-    {
       "path": "guidelines/spacing-elevation.card.html",
       "group": "Spacing",
       "viewport": "700x170",
@@ -258,6 +534,83 @@
       "viewport": "700x210",
       "subtitle": "Geist Mono, tabular-nums. Always right-aligned, sign-colored",
       "name": "Money — tabular mono"
+    },
+    {
+      "path": "ui_kits/ano-inteiro/index.html",
+      "group": "Neko App",
+      "viewport": "1440x900",
+      "subtitle": "Grade dia a dia — 12 meses com heatmap de saldo",
+      "name": "Ano inteiro"
+    },
+    {
+      "path": "ui_kits/anuais/index.html",
+      "group": "Neko App",
+      "viewport": "1440x900",
+      "subtitle": "Entradas, economia e métricas do ano inteiro em uma tabela",
+      "name": "Visão anual"
+    },
+    {
+      "path": "ui_kits/copilot/index.html",
+      "group": "Neko App",
+      "viewport": "1440x900",
+      "subtitle": "Copiloto em desenvolvimento — fatos do método sem IA",
+      "name": "Mia"
+    },
+    {
+      "path": "ui_kits/dashboard/index.html",
+      "group": "Neko App",
+      "viewport": "1440x900",
+      "subtitle": "Quanto posso gastar hoje — hero KPI, trajetória de saldo e check-in diário",
+      "name": "Dashboard"
+    },
+    {
+      "path": "ui_kits/economia-compare/index.html",
+      "group": "Neko App",
+      "viewport": "1440x900",
+      "subtitle": "Entradas, Economia e Economizado% dois anos lado a lado",
+      "name": "Economia comparada"
+    },
+    {
+      "path": "ui_kits/horizonte/index.html",
+      "group": "Neko App",
+      "viewport": "1440x900",
+      "subtitle": "Projeção mês a mês do saldo com termômetro de folga/aperto",
+      "name": "Horizonte de saldos"
+    },
+    {
+      "path": "ui_kits/methodology/index.html",
+      "group": "Neko App",
+      "viewport": "1440x900",
+      "subtitle": "Sete princípios do método explicados em cards",
+      "name": "Ajuda"
+    },
+    {
+      "path": "ui_kits/settings/index.html",
+      "group": "Neko App",
+      "viewport": "1440x900",
+      "subtitle": "Conexão, importação local, bolsos, lembrete diário, teto do Diário, seus dados",
+      "name": "Configurações e privacidade"
+    },
+    {
+      "path": "ui_kits/tags/index.html",
+      "group": "Neko App",
+      "viewport": "1440x900",
+      "subtitle": "Rótulos do mês — totais por tag, ignorar nos cálculos, criar nova tag",
+      "name": "Tags"
+    },
+    {
+      "path": "ui_kits/totais/index.html",
+      "group": "Neko App",
+      "viewport": "1440x900",
+      "subtitle": "Cálculos do mês — performance, economizado, custo de vida e diário médio",
+      "name": "Totais"
+    },
+    {
+      "path": "ui_kits/transactions/index.html",
+      "group": "Neko App",
+      "viewport": "1440x900",
+      "subtitle": "Livro-razão histórico — filtros, tipos de movimento, proveniência e tags",
+      "name": "Lançamentos"
     }
   ],
   "globalCssPaths": [
@@ -1670,7 +2023,12 @@
       "annotation": "other"
     }
   ],
-  "themes": [{ "selector": "[data-theme=\"light\"]", "label": "Light" }],
+  "themes": [
+    {
+      "selector": "[data-theme=\"light\"]",
+      "label": "Light"
+    }
+  ],
   "fonts": [
     {
       "family": "Hanken Grotesk",

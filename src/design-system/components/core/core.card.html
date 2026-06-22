@@ -1,6 +1,6 @@
-<!-- @dsCard group="Components" viewport="700x360" name="Core — buttons, inputs, toggles" subtitle="Button · Input · SegmentedControl · Badge · Switch" -->
+<!-- @dsCard group="Components" viewport="760x1000" name="Core — controles, entradas e identidade" subtitle="Badge · Button · Input · SegmentedControl · Switch · Disclosure · InfoPopover · MonthNav · NekoMark" -->
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="pt-BR" data-theme="dark">
   <head>
     <meta charset="utf-8" />
     <link rel="stylesheet" href="../../styles.css" />
@@ -15,7 +15,7 @@
       .grid {
         display: flex;
         flex-direction: column;
-        gap: 18px;
+        gap: 20px;
       }
       .group {
         display: flex;
@@ -34,6 +34,11 @@
         gap: 10px;
         align-items: center;
         flex-wrap: wrap;
+      }
+      .stack {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
       }
     </style>
   </head>
@@ -56,74 +61,294 @@
     ></script>
     <script src="../../_ds_bundle.js"></script>
     <script type="text/babel">
-      const { Button, Input, SegmentedControl, Badge, Switch } =
-        window.NekoFinanceDesignSystem_9bd1cd;
+      const {
+        Badge,
+        Button,
+        Input,
+        SegmentedControl,
+        Switch,
+        Disclosure,
+        InfoPopover,
+        MonthNav,
+        NekoMark,
+      } = window.NekoFinanceDesignSystem_9bd1cd;
+
       function Demo() {
-        const [scope, setScope] = React.useState("personal");
-        const [on, setOn] = React.useState(true);
+        const [periodo, setPeriodo] = React.useState("mes");
+        const [escopo, setEscopo] = React.useState("todos");
+        const [aprovacao, setAprovacao] = React.useState(true);
+        const [sincAuto, setSincAuto] = React.useState(false);
+        const [mes, setMes] = React.useState(5); // junho = índice 5
+
+        const nomesMes = [
+          "Janeiro",
+          "Fevereiro",
+          "Março",
+          "Abril",
+          "Maio",
+          "Junho",
+          "Julho",
+          "Agosto",
+          "Setembro",
+          "Outubro",
+          "Novembro",
+          "Dezembro",
+        ];
+        const labelMes = `${nomesMes[mes]} de 2026`;
+        const mesAtual = 5;
+
         return (
           <div className="grid">
+            {/* BADGE */}
             <div className="group">
-              <div className="lbl">Buttons</div>
+              <div className="lbl">Badge — tons e variantes</div>
               <div className="rowx">
-                <Button variant="primary">Approve change</Button>
-                <Button variant="secondary">Add account</Button>
-                <Button variant="ghost">Cancel</Button>
-                <Button variant="danger">Disconnect</Button>
-                <Button variant="primary" disabled>
-                  Disabled
-                </Button>
-                <Button variant="secondary" size="sm">
-                  Small
-                </Button>
-              </div>
-            </div>
-            <div className="group">
-              <div className="lbl">Inputs</div>
-              <div className="rowx" style={{ alignItems: "flex-start" }}>
-                <div style={{ width: 200 }}>
-                  <Input label="Account name" placeholder="Joint checking" />
-                </div>
-                <div style={{ width: 160 }}>
-                  <Input label="Balance" money prefix="$" defaultValue="12408.52" />
-                </div>
-                <div style={{ width: 200 }}>
-                  <Input label="Sheet ID" error="Not shared with Neko." />
-                </div>
-              </div>
-            </div>
-            <div className="group">
-              <div className="lbl">Segmented · Badges · Switch</div>
-              <div className="rowx">
-                <SegmentedControl
-                  value={scope}
-                  onChange={setScope}
-                  options={[
-                    { value: "all", label: "All" },
-                    {
-                      value: "personal",
-                      label: "Personal",
-                      dot: "var(--owner-personal)",
-                    },
-                    { value: "partner", label: "Partner", dot: "var(--owner-partner)" },
-                    { value: "shared", label: "Shared", dot: "var(--owner-shared)" },
-                  ]}
-                />
                 <Badge tone="success" dot>
-                  Reconciled
+                  Reconciliado
                 </Badge>
                 <Badge tone="warning" dot>
-                  Needs owner
+                  Aguardando dono
                 </Badge>
-                <Badge tone="primary" square>
-                  AI
+                <Badge tone="danger">Pendente</Badge>
+                <Badge tone="info">Importado</Badge>
+                <Badge tone="primary">Saída</Badge>
+                <Badge tone="secondary" square>
+                  Cartão
                 </Badge>
-                <Switch checked={on} onChange={setOn} label="Require approval" />
+              </div>
+            </div>
+
+            {/* BUTTON */}
+            <div className="group">
+              <div className="lbl">Button — variantes e tamanhos</div>
+              <div className="rowx">
+                <Button variant="primary">Salvar alteração</Button>
+                <Button variant="secondary">Adicionar conta</Button>
+                <Button variant="ghost">Cancelar</Button>
+                <Button variant="danger">Desconectar</Button>
+              </div>
+              <div className="rowx">
+                <Button variant="primary" size="lg">
+                  Confirmar importação
+                </Button>
+                <Button variant="secondary" size="sm">
+                  Editar
+                </Button>
+                <Button variant="ghost" size="sm">
+                  Ignorar
+                </Button>
+                <Button variant="primary" disabled>
+                  Processando…
+                </Button>
+              </div>
+            </div>
+
+            {/* INPUT */}
+            <div className="group">
+              <div className="lbl">Input — texto, valor e estados</div>
+              <div className="rowx" style={{ alignItems: "flex-start" }}>
+                <div style={{ width: 210 }}>
+                  <Input
+                    label="Descrição"
+                    placeholder="Ex.: Mercado, salário, aluguel…"
+                  />
+                </div>
+                <div style={{ width: 160 }}>
+                  <Input
+                    label="Valor"
+                    money
+                    prefix="R$"
+                    inputMode="decimal"
+                    placeholder="0,00"
+                    defaultValue="1.234,50"
+                  />
+                </div>
+                <div style={{ width: 160 }}>
+                  <Input label="Data" type="date" defaultValue="2026-06-21" />
+                </div>
+              </div>
+              <div className="rowx" style={{ alignItems: "flex-start" }}>
+                <div style={{ width: 210 }}>
+                  <Input
+                    label="Total calculado"
+                    money
+                    prefix="R$"
+                    readOnly
+                    defaultValue="3.500,00"
+                    hint="Soma das partes detalhadas."
+                  />
+                </div>
+                <div style={{ width: 210 }}>
+                  <Input
+                    label="ID da planilha"
+                    error="Planilha não compartilhada com o Neko."
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* SEGMENTED CONTROL */}
+            <div className="group">
+              <div className="lbl">SegmentedControl — seleção exclusiva</div>
+              <div className="stack">
+                <SegmentedControl
+                  ariaLabel="Período"
+                  value={periodo}
+                  onChange={setPeriodo}
+                  options={[
+                    { value: "dia", label: "Dia" },
+                    { value: "semana", label: "Semana" },
+                    { value: "mes", label: "Mês" },
+                    { value: "ano", label: "Ano" },
+                  ]}
+                />
+                <SegmentedControl
+                  ariaLabel="Escopo"
+                  value={escopo}
+                  onChange={setEscopo}
+                  size="sm"
+                  options={[
+                    { value: "todos", label: "Todos" },
+                    { value: "pessoal", label: "Pessoal" },
+                    { value: "parceiro", label: "Parceiro" },
+                    { value: "compartilhado", label: "Compartilhado" },
+                  ]}
+                />
+              </div>
+            </div>
+
+            {/* SWITCH */}
+            <div className="group">
+              <div className="lbl">Switch — ativação imediata</div>
+              <div className="rowx">
+                <Switch
+                  checked={aprovacao}
+                  onChange={setAprovacao}
+                  label="Exigir aprovação manual"
+                />
+                <Switch
+                  checked={sincAuto}
+                  onChange={setSincAuto}
+                  label="Sincronização automática"
+                />
+                <Switch checked={false} disabled label="Notificações (indisponível)" />
+              </div>
+            </div>
+
+            {/* DISCLOSURE */}
+            <div className="group">
+              <div className="lbl">Disclosure — painel expansível</div>
+              <div className="stack">
+                <Disclosure
+                  title="Lançamentos de junho"
+                  summary="R$ 4.820,00 · 12 lançamentos"
+                  defaultOpen={false}
+                >
+                  <p
+                    style={{
+                      margin: 0,
+                      color: "var(--text-muted)",
+                      fontSize: "var(--fs-sm)",
+                    }}
+                  >
+                    Conteúdo detalhado aparece aqui ao expandir o painel. Inclui data,
+                    descrição, valor e categoria de cada lançamento.
+                  </p>
+                </Disclosure>
+                <Disclosure
+                  title="Alerta de teto diário"
+                  summary="Você ultrapassou o limite ontem"
+                  accent="warn"
+                  bare={false}
+                  defaultOpen
+                >
+                  <p
+                    style={{
+                      margin: 0,
+                      color: "var(--text-muted)",
+                      fontSize: "var(--fs-sm)",
+                    }}
+                  >
+                    Gasto ontem: R$ 320,00 — teto configurado: R$ 250,00. Revise as
+                    despesas variáveis do dia.
+                  </p>
+                </Disclosure>
+              </div>
+            </div>
+
+            {/* INFO POPOVER */}
+            <div className="group">
+              <div className="lbl">InfoPopover — glossário do método</div>
+              <div className="rowx">
+                <InfoPopover term="pode_gastar">Pode Gastar</InfoPopover>
+                <InfoPopover term="reserva">Reserva</InfoPopover>
+                <InfoPopover term="caixa">Caixa</InfoPopover>
+                <InfoPopover term="performance">Performance</InfoPopover>
+                <InfoPopover
+                  term={{
+                    title: "Diário",
+                    body: "Gasto variável do dia a dia — mercado, café, transporte.",
+                  }}
+                >
+                  Diário
+                </InfoPopover>
+                <InfoPopover term="custo_de_vida" width={320}>
+                  Custo de Vida
+                </InfoPopover>
+              </div>
+            </div>
+
+            {/* MONTH NAV */}
+            <div className="group">
+              <div className="lbl">MonthNav — navegação temporal</div>
+              <div className="stack">
+                <MonthNav
+                  label={labelMes}
+                  onPrev={() => setMes((m) => Math.max(0, m - 1))}
+                  onNext={() => setMes((m) => Math.min(11, m + 1))}
+                  onToday={() => setMes(mesAtual)}
+                  canPrev={mes > 0}
+                  canNext={mes < 11}
+                  atToday={mes === mesAtual}
+                />
+              </div>
+            </div>
+
+            {/* NEKO MARK */}
+            <div className="group">
+              <div className="lbl">NekoMark — logotipo escalável</div>
+              <div className="rowx" style={{ alignItems: "flex-end" }}>
+                <NekoMark
+                  width={20}
+                  height={20}
+                  color="var(--text-faint)"
+                  aria-hidden={true}
+                />
+                <NekoMark
+                  width={32}
+                  height={32}
+                  color="var(--primary)"
+                  aria-label="Neko Finance"
+                />
+                <NekoMark
+                  width={48}
+                  height={48}
+                  color="var(--primary)"
+                  aria-label="Neko Finance"
+                />
+                <NekoMark
+                  width={64}
+                  height={64}
+                  color="var(--secondary)"
+                  aria-label="Neko Finance"
+                />
+                <NekoMark width={80} height={80} aria-label="Neko Finance" />
               </div>
             </div>
           </div>
         );
       }
+
       ReactDOM.createRoot(document.getElementById("root")).render(<Demo />);
     </script>
   </body>

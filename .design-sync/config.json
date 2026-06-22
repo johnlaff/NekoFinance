@@ -1,0 +1,32 @@
+{
+  "projectId": "77a60fba-0912-49d6-99a0-d86480d05bda",
+  "projectName": "Neko Finance Design System",
+  "shape": "off-script",
+  "globalName": "NekoFinanceDesignSystem_9bd1cd",
+  "dsRoot": "src/design-system",
+  "note": "Off-script: the DS is hand-authored in claude.ai/design's own bundle format (not the package/storybook converter). Rebuild + upload pipeline lives in .ds-sync/ — see .design-sync/NOTES.md.",
+  "rebuild": "node .ds-sync/build-bundle.mjs && node .ds-sync/build-manifest.mjs",
+  "verify": "node .ds-sync/render-card.mjs <card.html|http-url> [shot.png]",
+  "uploadIncludeGlobs": [
+    "_ds_bundle.js",
+    "_ds_manifest.json",
+    "styles.css",
+    "readme.md",
+    "tokens/**",
+    "assets/**",
+    "components/core/**",
+    "components/finance/**",
+    "components/copilot/**",
+    "ui_kits/**",
+    "guidelines/**"
+  ],
+  "uploadExclude": [
+    "components/*.tsx",
+    "components/*.test.*",
+    "srOnly.ts",
+    "_adherence.oxlintrc.json",
+    "SKILL.md",
+    "index.html",
+    "*:Zone.Identifier"
+  ]
+}

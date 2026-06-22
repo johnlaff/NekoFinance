@@ -1,10 +1,10 @@
-<!-- @startingPoint section="Neko App" subtitle="Copilot chat with cited calcs & human-approved sheet diff" viewport="1440x900" -->
-<!-- @dsCard group="Neko App" viewport="1440x900" name="Copilot approval flow" subtitle="Mia chat, deterministic tool results, and a live approval diff" -->
+<!-- @startingPoint section="Neko App" subtitle="Mia copilot stub with deterministic method facts" viewport="1440x900" -->
+<!-- @dsCard group="Neko App" viewport="1440x900" name="Mia" subtitle="Copiloto em desenvolvimento — fatos do método sem IA" -->
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="pt-BR" data-theme="dark">
   <head>
     <meta charset="utf-8" />
-    <title>Neko Finance — Ask Mia</title>
+    <title>Neko Finance — Mia</title>
     <link rel="stylesheet" href="../../styles.css" />
     <style>
       html,
@@ -42,7 +42,15 @@
     <script src="../dashboard/AppShell.jsx"></script>
     <script type="text/babel" src="CopilotScreen.jsx"></script>
     <script type="text/babel">
-      ReactDOM.createRoot(document.getElementById("app")).render(<window.CopilotApp />);
+      function App() {
+        const [nav, setNav] = React.useState("copilot");
+        return (
+          <window.AppShell active={nav} onNav={setNav} title="Mia" crumb="Copiloto">
+            <window.CopilotScreen />
+          </window.AppShell>
+        );
+      }
+      ReactDOM.createRoot(document.getElementById("app")).render(<App />);
     </script>
   </body>
 </html>

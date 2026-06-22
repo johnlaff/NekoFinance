@@ -1,6 +1,6 @@
-<!-- @dsCard group="Components" viewport="700x440" name="Copilot — Mia chat, citations, states" subtitle="ChatBubble · Citation (inline + tool) · EmptyState" -->
+<!-- @dsCard group="Components" viewport="760x1000" name="Copilot — Mia chat, citações, estados" subtitle="ChatBubble · Citation · EmptyState · MiaAvatar" -->
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="pt-BR" data-theme="dark">
   <head>
     <meta charset="utf-8" />
     <link rel="stylesheet" href="../../styles.css" />
@@ -10,18 +10,17 @@
         background: var(--bg);
         color: var(--text);
         font-family: var(--font-sans);
-        padding: 20px;
+        padding: 22px;
       }
-      .wrap {
-        display: grid;
-        grid-template-columns: 1fr 320px;
-        gap: 22px;
-        align-items: start;
-      }
-      .chat {
+      .grid {
         display: flex;
         flex-direction: column;
-        gap: 12px;
+        gap: 28px;
+      }
+      .group {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
       }
       .lbl {
         font-size: 10.5px;
@@ -29,12 +28,43 @@
         letter-spacing: 0.08em;
         text-transform: uppercase;
         color: var(--text-faint);
-        margin-bottom: 10px;
       }
-      .states {
+      .stack {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .rowx {
+        display: flex;
+        gap: 14px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .states-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .state-box {
         border: 1px solid var(--border);
         border-radius: 10px;
         overflow: hidden;
+      }
+      .avatar-row {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+      }
+      .avatar-label {
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-top: 4px;
+      }
+      .avatar-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
       }
     </style>
   </head>
@@ -57,52 +87,142 @@
     ></script>
     <script src="../../_ds_bundle.js"></script>
     <script type="text/babel">
-      const { ChatBubble, Citation, EmptyState, Button } =
+      const { ChatBubble, Citation, EmptyState, MiaAvatar, Button } =
         window.NekoFinanceDesignSystem_9bd1cd;
+
       function Demo() {
         return (
-          <div className="wrap">
-            <div>
-              <div className="lbl">Mia chat · cited & deterministic</div>
-              <div className="chat">
-                <ChatBubble from="user" userInitials="AT">
-                  How much did we spend on dining last month?
+          <div className="grid">
+            {/* ── MiaAvatar ── */}
+            <div className="group">
+              <div className="lbl">MiaAvatar — tamanhos</div>
+              <div className="rowx">
+                <div className="avatar-item">
+                  <MiaAvatar width={24} height={24} />
+                  <span className="avatar-label">24</span>
+                </div>
+                <div className="avatar-item">
+                  <MiaAvatar width={32} height={32} />
+                  <span className="avatar-label">32</span>
+                </div>
+                <div className="avatar-item">
+                  <MiaAvatar />
+                  <span className="avatar-label">40 (padrão)</span>
+                </div>
+                <div className="avatar-item">
+                  <MiaAvatar width={56} height={56} />
+                  <span className="avatar-label">56</span>
+                </div>
+                <div className="avatar-item">
+                  <MiaAvatar width={72} height={72} />
+                  <span className="avatar-label">72</span>
+                </div>
+              </div>
+            </div>
+
+            {/* ── ChatBubble ── */}
+            <div className="group">
+              <div className="lbl">ChatBubble — conversa com a Mia</div>
+              <div className="stack">
+                <ChatBubble from="user" userInitials="JL">
+                  Quanto gastei com alimentação no mês passado?
                 </ChatBubble>
+
                 <ChatBubble from="mia">
                   <p>
-                    You spent <span className="nk-chat__money">$486.20</span> on dining
-                    in May <Citation index={1} source="11 rows" /> — about <b>11%</b> of
-                    variable spending.
+                    Em maio você gastou{" "}
+                    <span className="nk-chat__money">R$ 486,20</span> com alimentação{" "}
+                    <Citation index={1} source="Aba 'Maio 2025' · 11 linhas" /> — cerca
+                    de <b>14%</b> do total de saídas variáveis.
                   </p>
                   <Citation
                     variant="tool"
-                    fn="sum(Dining, May 2025)"
+                    fn="soma(Alimentação, Maio 2025)"
                     lines={[
-                      { label: "Bottega · 12 May", value: "78.00" },
-                      { label: "Tonkotsu · 19 May", value: "44.20" },
-                      { label: "+ 9 more", value: "364.00" },
+                      { label: "iFood · 03 mai", value: "94,50" },
+                      { label: "Mercado Extra · 10 mai", value: "187,30" },
+                      { label: "Restaurante Maia · 17 mai", value: "78,40" },
+                      { label: "+ 8 mais", value: "126,00" },
                     ]}
-                    total={{ label: "Total", value: "$486.20" }}
-                    source="Sheet ‘Expenses 2025’ · 11 rows"
+                    total={{ label: "Total", value: "R$ 486,20" }}
+                    source="Aba 'Maio 2025' · 11 linhas"
                   />
                 </ChatBubble>
+
+                <ChatBubble from="user" userInitials="JL">
+                  E esse mês, como estou em relação ao teto diário?
+                </ChatBubble>
+
+                <ChatBubble from="mia">
+                  <p>
+                    Até hoje (dia 21) você usou{" "}
+                    <span className="nk-chat__money">R$ 1.842,00</span> das{" "}
+                    <span className="nk-chat__money">R$ 2.310,00</span> disponíveis{" "}
+                    <Citation index={2} source="Teto diário · junho" /> — restam{" "}
+                    <b>9 dias</b> e um saldo de{" "}
+                    <span className="nk-chat__money">R$ 468,00</span>. Seu ritmo diário
+                    médio está em <span className="nk-chat__money">R$ 87,71</span>,
+                    levemente abaixo do teto de{" "}
+                    <span className="nk-chat__money">R$ 110,00/dia</span>.
+                  </p>
+                </ChatBubble>
+
                 <ChatBubble from="mia" thinking />
               </div>
             </div>
-            <div>
-              <div className="lbl">States</div>
-              <div className="states">
-                <EmptyState
-                  variant="empty"
-                  title="No transactions yet"
-                  description="Connect a Google Sheet and Mia will import and categorize your activity."
-                  action={<Button variant="primary">Connect Google Sheets</Button>}
+
+            {/* ── Citation standalone ── */}
+            <div className="group">
+              <div className="lbl">Citation — chip inline e bloco de cálculo</div>
+              <div className="stack">
+                <Citation
+                  variant="tool"
+                  fn="soma(Cartão, Junho 2025)"
+                  lines={[
+                    { label: "Nubank · fatura 05/jun", value: "1.230,40" },
+                    { label: "Inter · fatura 12/jun", value: "845,90" },
+                    { label: "C6 · fatura 18/jun", value: "312,00" },
+                  ]}
+                  total={{ label: "Total cartões", value: "R$ 2.388,30" }}
+                  source="Aba 'Junho 2025' · 3 cartões"
                 />
+              </div>
+            </div>
+
+            {/* ── EmptyState — quatro variantes ── */}
+            <div className="group">
+              <div className="lbl">
+                EmptyState — variantes (empty · skeleton · loading · error)
+              </div>
+              <div className="states-grid">
+                <div className="state-box">
+                  <EmptyState
+                    variant="empty"
+                    title="Nenhuma transação ainda"
+                    description="Conecte uma planilha Google e a Mia vai importar e categorizar suas movimentações."
+                    action={<Button variant="primary">Conectar Planilha</Button>}
+                  />
+                </div>
+                <div className="state-box">
+                  <EmptyState variant="skeleton" skeletonRows={5} />
+                </div>
+                <div className="state-box">
+                  <EmptyState variant="loading" title="Lendo sua planilha…" />
+                </div>
+                <div className="state-box">
+                  <EmptyState
+                    variant="error"
+                    title="Não foi possível acessar a aba"
+                    description="Verifique se a planilha está compartilhada com a conta conectada."
+                    action={<Button variant="secondary">Tentar novamente</Button>}
+                  />
+                </div>
               </div>
             </div>
           </div>
         );
       }
+
       ReactDOM.createRoot(document.getElementById("root")).render(<Demo />);
     </script>
   </body>

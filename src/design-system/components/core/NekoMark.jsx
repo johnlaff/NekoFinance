@@ -1,0 +1,38 @@
+import React from "react";
+
+// NekoMark — app logo mark (cat-face SVG, 48×48 viewBox).
+// Renders with `currentColor`, so tinting via `color` or `className` works.
+// No dependencies, no external imports, no CSS injection needed — pure SVG.
+
+export function NekoMark({
+  width = 48,
+  height = 48,
+  color = "var(--primary)",
+  className = "",
+  style = {},
+  "aria-label": ariaLabel = "Neko",
+  "aria-hidden": ariaHidden,
+}) {
+  const hasLabel = ariaLabel && ariaHidden !== true && ariaHidden !== "true";
+  return (
+    <svg
+      viewBox="0 0 48 48"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      role={hasLabel ? "img" : undefined}
+      aria-label={hasLabel ? ariaLabel : undefined}
+      aria-hidden={!hasLabel ? true : undefined}
+      width={width}
+      height={height}
+      className={className}
+      style={{ color, flexShrink: 0, ...style }}
+    >
+      <path
+        fill="currentColor"
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="M12 17 L9.2 5.4 L20 13.2 C22 12.6 26 12.6 28 13.2 L38.8 5.4 L36 17 C39.4 20 40.5 23.5 40.5 27 C40.5 35 33.5 41.5 24 41.5 C14.5 41.5 7.5 35 7.5 27 C7.5 23.5 8.6 20 12 17 Z M18.5 25.5 C18.5 27.2 17.6 28.5 16.4 28.5 C15.2 28.5 14.3 27.2 14.3 25.5 C14.3 23.8 15.2 22.5 16.4 22.5 C17.6 22.5 18.5 23.8 18.5 25.5 Z M33.7 25.5 C33.7 27.2 32.8 28.5 31.6 28.5 C30.4 28.5 29.5 27.2 29.5 25.5 C29.5 23.8 30.4 22.5 31.6 22.5 C32.8 22.5 33.7 23.8 33.7 25.5 Z M24 30.2 L22 28.6 C22.6 28.1 25.4 28.1 26 28.6 Z"
+      />
+    </svg>
+  );
+}
