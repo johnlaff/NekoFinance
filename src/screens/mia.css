@@ -47,6 +47,15 @@
   padding: 14px 20px 18px;
 }
 
+.mia-badge {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--success-400);
+  background: var(--success-tint);
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+
 /* Mia chat */
 .mia {
   display: grid;

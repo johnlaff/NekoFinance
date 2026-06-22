@@ -48,6 +48,7 @@ function MiniTrajectory({ daily, today }: { daily: ForecastDay[]; today: string 
     const ro = new ResizeObserver((entries) => {
       for (const e of entries) setW(Math.max(120, e.contentRect.width));
     });
+    // react-doctor-disable-next-line react-doctor/no-initialize-state -- width is measured from the DOM after mount (responsive SVG); no value exists before layout
     ro.observe(ref.current);
     return () => ro.disconnect();
   }, []);

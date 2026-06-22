@@ -51,33 +51,306 @@ function StatusChip({ level, label }: { level: string; label: string }) {
   };
   const t = colors[level] ?? colors["watch"]!;
   return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        padding: "4px 11px 4px 9px",
-        borderRadius: "var(--radius-pill)",
-        fontSize: 12,
-        fontWeight: 600,
-        background: t.bg,
-        color: t.fg,
-      }}
-    >
+    <span className="status-chip" style={{ background: t.bg, color: t.fg }}>
       <span
         aria-hidden="true"
-        style={{
-          width: 7,
-          height: 7,
-          borderRadius: "50%",
-          background: t.dot,
-          flex: "none",
-        }}
+        className="status-chip__dot"
+        style={{ background: t.dot }}
       />
       {label}
     </span>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Sub-components (split from the giant TotaisScreen for no-giant-component)
+// ---------------------------------------------------------------------------
+
+interface HeroTilesProps {
+  isCurrent: boolean;
+  performance: number;
+  entradas: number;
+  saidaTotal: number;
+  custoVida: number;
+  economia: number;
+  economizadoPct: number;
+  ytdPctLabel: string;
+  perfStatus: { level: string; label: string };
+  custoStatus: { level: string; label: string };
+  econStatus: { level: string; label: string };
+}
+
+function HeroTiles({
+  isCurrent,
+  performance,
+  entradas,
+  saidaTotal,
+  custoVida,
+  economia,
+  economizadoPct,
+  ytdPctLabel,
+  perfStatus,
+  custoStatus,
+  econStatus,
+}: HeroTilesProps) {
+  return (
+    <div className="mes-result">
+      {/* Resultado */}
+      <div className="mes-tile mes-tile--hero">
+        <p className="mes-tile__lab">
+          <TrendingUp size={14} strokeWidth={1.75} />
+          <span>Performance</span>
+          {isCurrent ? (
+            <span style={{ fontWeight: 400, textTransform: "none" }}> (parcial)</span>
+          ) : null}
+        </p>
+        <div
+          className="mes-tile__val"
+          style={{
+            color: performance >= 0 ? "var(--money-pos)" : "var(--money-neg)",
+          }}
+        >
+          {fmtSigned(performance)}
+        </div>
+        <p className="mes-tile__sub">
+          Entradas {fmtBRL(entradas)} − Saída total {fmtBRL(saidaTotal)}
+        </p>
+        <div style={{ marginTop: 10 }}>
+          <StatusChip level={perfStatus.level} label={perfStatus.label} />
+        </div>
+      </div>
+
+      {/* Custo de vida */}
+      <div className="mes-tile">
+        <p className="mes-tile__lab">
+          <Wallet size={14} strokeWidth={1.75} />
+          Custo de vida
+        </p>
+        <div className="mes-tile__val" style={{ color: "var(--text-strong)" }}>
+          {fmtBRL(custoVida)}
+        </div>
+        <p className="mes-tile__sub">= Saída Total (saídas incl. cartão + diário)</p>
+        <div style={{ marginTop: 10 }}>
+          <StatusChip level={custoStatus.level} label={custoStatus.label} />
+        </div>
+      </div>
+
+      {/* Economizado */}
+      <div className="mes-tile">
+        <p className="mes-tile__lab">
+          <PiggyBank size={14} strokeWidth={1.75} />
+          Economizado
+        </p>
+        <div
+          className="mes-tile__val"
+          style={{
+            color: economizadoPct >= 20 ? "var(--money-pos)" : "var(--warning-400)",
+          }}
+        >
+          {economizadoPct.toFixed(0)}%
+        </div>
+        <p className="mes-tile__sub">
+          {fmtBRL(economia)} guardados · meta de 20% a 30%
+        </p>
+        <p className="mes-tile__sub mes-tile__sub--ytd">{ytdPctLabel}</p>
+        <div style={{ marginTop: 10 }}>
+          <StatusChip level={econStatus.level} label={econStatus.label} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface OutPartsCardProps {
+  saidaTotal: number;
+  economia: number;
+  outParts: { name: string; val: number; color: string }[];
+  outTotal: number;
+}
+
+function OutPartsCard({ saidaTotal, economia, outParts, outTotal }: OutPartsCardProps) {
+  return (
+    <section className="card" aria-label="Para onde foi o dinheiro">
+      <div className="card__head">
+        <span className="card__title">
+          <LayoutList size={16} strokeWidth={1.75} className="ic" />
+          Para onde foi o dinheiro
+        </span>
+        <span className="card__head-money">{fmtBRL(saidaTotal + economia)}</span>
+      </div>
+      <div className="card__body">
+        <div className="mes-bar">
+          {outParts.map((p) =>
+            p.val > 0 ? (
+              <span
+                key={p.name}
+                className="mes-bar__seg"
+                style={{
+                  background: p.color,
+                  width: ((p.val / outTotal) * 100).toFixed(2) + "%",
+                }}
+              />
+            ) : null,
+          )}
+        </div>
+        <div className="mes-leg">
+          {outParts.map((p) => (
+            <div className="mes-leg__row" key={p.name}>
+              <span className="mes-leg__dot" style={{ background: p.color }} />
+              <span className="mes-leg__name">{p.name}</span>
+              <span className="mes-leg__amt">{fmtBRL(p.val)}</span>
+              <span className="mes-leg__pct">
+                {Math.round((p.val / outTotal) * 100)}%
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+interface FlowCardProps {
+  entradas: number;
+  saidaTotal: number;
+  performance: number;
+}
+
+function FlowCard({ entradas, saidaTotal, performance }: FlowCardProps) {
+  return (
+    <section className="card" aria-label="Entrou e Saiu">
+      <div className="card__head">
+        <span className="card__title">
+          <GitCompare size={16} strokeWidth={1.75} className="ic" />
+          Entrou × Saiu
+        </span>
+      </div>
+      <div className="card__body">
+        <div className="mes-flow">
+          <div className="mes-flow__row">
+            <span className="mes-flow__lab">Entradas</span>
+            <span className="mes-flow__track">
+              <span
+                className="mes-flow__fill"
+                style={{ width: "100%", background: "var(--money-pos)" }}
+              />
+            </span>
+            <span className="mes-flow__amt" style={{ color: "var(--money-pos)" }}>
+              {fmtBRL(entradas)}
+            </span>
+          </div>
+          <div className="mes-flow__row">
+            <span className="mes-flow__lab">Saída total</span>
+            <span className="mes-flow__track">
+              <span
+                className="mes-flow__fill"
+                style={{
+                  width:
+                    Math.min(100, (saidaTotal / Math.max(entradas, 1)) * 100).toFixed(
+                      2,
+                    ) + "%",
+                  background: "var(--type-saida)",
+                }}
+              />
+            </span>
+            <span className="mes-flow__amt" style={{ color: "var(--money-neg)" }}>
+              {fmtBRL(saidaTotal)}
+            </span>
+          </div>
+        </div>
+        <div className="mes-flow__summary">
+          <span className="mes-flow__summary-lab">Sobrou no mês</span>
+          <span
+            className="mes-flow__summary-val"
+            style={{
+              color: performance >= 0 ? "var(--money-pos)" : "var(--money-neg)",
+            }}
+          >
+            {fmtSigned(performance)}
+          </span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+interface TrendCardProps {
+  trend: { year: number; month: number; performance_cents: number }[];
+  maxAbs: number;
+  activeYear: number;
+  activeMonth: number;
+}
+
+function TrendCard({ trend, maxAbs, activeYear, activeMonth }: TrendCardProps) {
+  return (
+    <section className="card" aria-label="Resultado nos últimos meses">
+      <div className="card__head">
+        <span className="card__title">
+          <TrendingUp size={16} strokeWidth={1.75} className="ic" />
+          Resultado nos últimos meses
+        </span>
+        <span className="mes-trend__ref-label">referência anual de 20% a 30%</span>
+      </div>
+      <div className="card__body">
+        <div className="mes-trend">
+          {trend.map((t, i) => {
+            const h = (Math.abs(t.performance_cents) / maxAbs) * 100;
+            const pos = t.performance_cents >= 0;
+            const isSel = t.year === activeYear && t.month === activeMonth;
+            const abbr = MES_ABBR[t.month - 1] ?? "";
+            return (
+              <div className="mes-trend__col" key={`${t.year}-${t.month}-${i}`}>
+                <span className="mes-trend__val-label">
+                  {fmtCompact(t.performance_cents)}
+                </span>
+                <div
+                  className="mes-trend__bar"
+                  style={{
+                    height: h.toFixed(2) + "%",
+                    background: pos ? "var(--money-pos)" : "var(--money-neg)",
+                    opacity: isSel ? 1 : 0.45,
+                  }}
+                />
+                <span className="mes-trend__m">{abbr}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+interface OwnerTotalsCardProps {
+  ownerTotals: OwnerTotal[];
+}
+
+function OwnerTotalsCard({ ownerTotals }: OwnerTotalsCardProps) {
+  return (
+    <section className="card" aria-label="Por titular">
+      <div className="card__head">
+        <span className="card__title">Por titular</span>
+      </div>
+      <div className="card__body">
+        <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
+          {ownerTotals.map((o) => (
+            <span
+              key={o.owner_person_id}
+              style={{ display: "flex", flexDirection: "column", gap: 8 }}
+            >
+              <OwnerChip name={o.owner_name} avatar />
+              <Money cents={o.total_cents} size="md" />
+            </span>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main screen — thin composition
+// ---------------------------------------------------------------------------
 
 export function TotaisScreen() {
   const forecastQ = useCommand("get_forecast", getForecast);
@@ -199,237 +472,42 @@ export function TotaisScreen() {
       </div>
 
       {/* Hero tiles: Resultado, Custo de vida, Economizado */}
-      <div className="mes-result">
-        {/* Resultado */}
-        <div className="mes-tile mes-tile--hero">
-          <p className="mes-tile__lab">
-            <TrendingUp size={14} strokeWidth={1.75} />
-            <span>Performance</span>
-            {isCurrent ? (
-              <span style={{ fontWeight: 400, textTransform: "none" }}> (parcial)</span>
-            ) : null}
-          </p>
-          <div
-            className="mes-tile__val"
-            style={{
-              color: performance >= 0 ? "var(--money-pos)" : "var(--money-neg)",
-            }}
-          >
-            {fmtSigned(performance)}
-          </div>
-          <p className="mes-tile__sub">
-            Entradas {fmtBRL(entradas)} − Saída total {fmtBRL(saidaTotal)}
-          </p>
-          <div style={{ marginTop: 10 }}>
-            <StatusChip level={perfStatus.level} label={perfStatus.label} />
-          </div>
-        </div>
-
-        {/* Custo de vida */}
-        <div className="mes-tile">
-          <p className="mes-tile__lab">
-            <Wallet size={14} strokeWidth={1.75} />
-            Custo de vida
-          </p>
-          <div className="mes-tile__val" style={{ color: "var(--text-strong)" }}>
-            {fmtBRL(custoVida)}
-          </div>
-          <p className="mes-tile__sub">= Saída Total (saídas incl. cartão + diário)</p>
-          <div style={{ marginTop: 10 }}>
-            <StatusChip level={custoStatus.level} label={custoStatus.label} />
-          </div>
-        </div>
-
-        {/* Economizado */}
-        <div className="mes-tile">
-          <p className="mes-tile__lab">
-            <PiggyBank size={14} strokeWidth={1.75} />
-            Economizado
-          </p>
-          <div
-            className="mes-tile__val"
-            style={{
-              color: economizadoPct >= 20 ? "var(--money-pos)" : "var(--warning-400)",
-            }}
-          >
-            {economizadoPct.toFixed(0)}%
-          </div>
-          <p className="mes-tile__sub">
-            {fmtBRL(economia)} guardados · meta de 20% a 30%
-          </p>
-          <p className="mes-tile__sub" style={{ marginTop: 4, fontSize: 11.5 }}>
-            {ytdPctLabel}
-          </p>
-          <div style={{ marginTop: 10 }}>
-            <StatusChip level={econStatus.level} label={econStatus.label} />
-          </div>
-        </div>
-      </div>
+      <HeroTiles
+        isCurrent={isCurrent}
+        performance={performance}
+        entradas={entradas}
+        saidaTotal={saidaTotal}
+        custoVida={custoVida}
+        economia={economia}
+        economizadoPct={economizadoPct}
+        ytdPctLabel={ytdPctLabel}
+        perfStatus={perfStatus}
+        custoStatus={custoStatus}
+        econStatus={econStatus}
+      />
 
       {/* Two-column cards */}
       <div className="mes-grid2">
-        {/* Para onde foi o dinheiro */}
-        <section className="card" aria-label="Para onde foi o dinheiro">
-          <div className="card__head">
-            <span className="card__title">
-              <LayoutList size={16} strokeWidth={1.75} className="ic" />
-              Para onde foi o dinheiro
-            </span>
-            <span
-              style={{
-                fontFamily: "var(--font-money)",
-                fontSize: 12.5,
-                color: "var(--text-faint)",
-              }}
-            >
-              {fmtBRL(saidaTotal + economia)}
-            </span>
-          </div>
-          <div className="card__body">
-            <div className="mes-bar">
-              {outParts.map((p) =>
-                p.val > 0 ? (
-                  <span
-                    key={p.name}
-                    className="mes-bar__seg"
-                    style={{
-                      background: p.color,
-                      width: ((p.val / outTotal) * 100).toFixed(2) + "%",
-                    }}
-                  />
-                ) : null,
-              )}
-            </div>
-            <div className="mes-leg">
-              {outParts.map((p) => (
-                <div className="mes-leg__row" key={p.name}>
-                  <span className="mes-leg__dot" style={{ background: p.color }} />
-                  <span className="mes-leg__name">{p.name}</span>
-                  <span className="mes-leg__amt">{fmtBRL(p.val)}</span>
-                  <span className="mes-leg__pct">
-                    {Math.round((p.val / outTotal) * 100)}%
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* Entrou × Saiu */}
-        <section className="card" aria-label="Entrou e Saiu">
-          <div className="card__head">
-            <span className="card__title">
-              <GitCompare size={16} strokeWidth={1.75} className="ic" />
-              Entrou × Saiu
-            </span>
-          </div>
-          <div className="card__body">
-            <div className="mes-flow">
-              <div className="mes-flow__row">
-                <span className="mes-flow__lab">Entradas</span>
-                <span className="mes-flow__track">
-                  <span
-                    className="mes-flow__fill"
-                    style={{ width: "100%", background: "var(--money-pos)" }}
-                  />
-                </span>
-                <span className="mes-flow__amt" style={{ color: "var(--money-pos)" }}>
-                  {fmtBRL(entradas)}
-                </span>
-              </div>
-              <div className="mes-flow__row">
-                <span className="mes-flow__lab">Saída total</span>
-                <span className="mes-flow__track">
-                  <span
-                    className="mes-flow__fill"
-                    style={{
-                      width:
-                        Math.min(
-                          100,
-                          (saidaTotal / Math.max(entradas, 1)) * 100,
-                        ).toFixed(2) + "%",
-                      background: "var(--type-saida)",
-                    }}
-                  />
-                </span>
-                <span className="mes-flow__amt" style={{ color: "var(--money-neg)" }}>
-                  {fmtBRL(saidaTotal)}
-                </span>
-              </div>
-            </div>
-            <div
-              style={{
-                marginTop: 18,
-                paddingTop: 14,
-                borderTop: "1px solid var(--border)",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "baseline",
-              }}
-            >
-              <span style={{ fontSize: 13, color: "var(--text-muted)" }}>
-                Sobrou no mês
-              </span>
-              <span
-                style={{
-                  fontFamily: "var(--font-money)",
-                  fontVariantNumeric: "tabular-nums",
-                  fontSize: 18,
-                  fontWeight: 700,
-                  color: performance >= 0 ? "var(--money-pos)" : "var(--money-neg)",
-                }}
-              >
-                {fmtSigned(performance)}
-              </span>
-            </div>
-          </div>
-        </section>
+        <OutPartsCard
+          saidaTotal={saidaTotal}
+          economia={economia}
+          outParts={outParts}
+          outTotal={outTotal}
+        />
+        <FlowCard
+          entradas={entradas}
+          saidaTotal={saidaTotal}
+          performance={performance}
+        />
       </div>
 
       {/* Resultado nos últimos meses (trend) */}
-      <section className="card" aria-label="Resultado nos últimos meses">
-        <div className="card__head">
-          <span className="card__title">
-            <TrendingUp size={16} strokeWidth={1.75} className="ic" />
-            Resultado nos últimos meses
-          </span>
-          <span style={{ fontSize: 11.5, color: "var(--text-faint)" }}>
-            referência anual de 20% a 30%
-          </span>
-        </div>
-        <div className="card__body">
-          <div className="mes-trend">
-            {trend.map((t, i) => {
-              const h = (Math.abs(t.performance_cents) / maxAbs) * 100;
-              const pos = t.performance_cents >= 0;
-              const isSel = t.year === m.year && t.month === m.month;
-              const abbr = MES_ABBR[t.month - 1] ?? "";
-              return (
-                <div className="mes-trend__col" key={`${t.year}-${t.month}-${i}`}>
-                  <span
-                    style={{
-                      fontFamily: "var(--font-money)",
-                      fontSize: 10.5,
-                      color: "var(--text-faint)",
-                    }}
-                  >
-                    {fmtCompact(t.performance_cents)}
-                  </span>
-                  <div
-                    className="mes-trend__bar"
-                    style={{
-                      height: h.toFixed(2) + "%",
-                      background: pos ? "var(--money-pos)" : "var(--money-neg)",
-                      opacity: isSel ? 1 : 0.45,
-                    }}
-                  />
-                  <span className="mes-trend__m">{abbr}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </section>
+      <TrendCard
+        trend={trend}
+        maxAbs={maxAbs}
+        activeYear={m.year}
+        activeMonth={m.month}
+      />
 
       {/* Diário médio tile (text anchor kept for tests) */}
       <section className="card" aria-label="Diário médio">
@@ -448,26 +526,7 @@ export function TotaisScreen() {
       </section>
 
       {/* Por titular (shown only when 2+ owners) */}
-      {ownerTotals.length >= 2 && (
-        <section className="card" aria-label="Por titular">
-          <div className="card__head">
-            <span className="card__title">Por titular</span>
-          </div>
-          <div className="card__body">
-            <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
-              {ownerTotals.map((o) => (
-                <span
-                  key={o.owner_person_id}
-                  style={{ display: "flex", flexDirection: "column", gap: 8 }}
-                >
-                  <OwnerChip name={o.owner_name} avatar />
-                  <Money cents={o.total_cents} size="md" />
-                </span>
-              ))}
-            </div>
-          </div>
-        </section>
-      )}
+      {ownerTotals.length >= 2 && <OwnerTotalsCard ownerTotals={ownerTotals} />}
 
       {!isTauri && (
         <p style={{ color: "var(--text-faint)", fontSize: 12 }}>

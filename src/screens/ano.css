@@ -3,6 +3,33 @@
   flex-direction: column;
   gap: 18px;
 }
+.ano-nav-btn {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+.ano-nav-year {
+  border: none;
+  background: transparent;
+  font-weight: 700;
+  font-size: 20px;
+  color: var(--text-strong);
+  padding: 0 4px;
+  font-family: var(--font-sans);
+}
+.ano-chart__caption {
+  padding: 0 20px 14px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
 .ano-head {
   display: flex;
   align-items: center;

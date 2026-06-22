@@ -600,18 +600,29 @@
 /* ============================================================
    Compose drawer ("Lançar") — de Compose.jsx
    ============================================================ */
-.cmp-scrim {
+
+/* Native <dialog> as full-screen transparent layer; ::backdrop provides the scrim. */
+.cmp-dialog {
   position: fixed;
   inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+  z-index: 80;
+  /* Hide when closed — display:none is set by the browser when not open */
+}
+.cmp-dialog::backdrop {
   background: var(--bg-scrim, rgba(0, 0, 0, 0.5));
   opacity: 0;
-  pointer-events: none;
   transition: opacity var(--dur-base) var(--ease-standard);
-  z-index: 80;
 }
-.cmp-scrim.is-open {
+.cmp-dialog[open]::backdrop {
   opacity: 1;
-  pointer-events: auto;
 }
 .cmp {
   position: fixed;
@@ -636,7 +647,7 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .cmp,
-  .cmp-scrim {
+  .cmp-dialog::backdrop {
     transition: none;
   }
 }
@@ -646,6 +657,19 @@
   gap: 12px;
   padding: 18px 22px;
   border-bottom: 1px solid var(--border);
+  flex: none;
+}
+/* Icon badge in the compose header (replaces 8-prop inline style). */
+.cmp-head__icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  color: var(--text-on-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 16px;
   flex: none;
 }
 .cmp-head__t {
@@ -681,6 +705,21 @@
   text-transform: uppercase;
   color: var(--text-faint);
   margin-bottom: 9px;
+}
+/* Date + Description two-column row */
+.cmp-date-desc-row {
+  display: flex;
+  gap: 12px;
+}
+.cmp-date-col {
+  width: 160px;
+}
+/* Valor section header row (label + mode switch) */
+.cmp-valor-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
 }
 .cmp-types {
   display: flex;
@@ -736,6 +775,11 @@
 .cmp-field--money {
   font-family: var(--font-money);
   font-variant-numeric: tabular-nums;
+}
+/* Large money input (single-value mode) */
+.cmp-field--big {
+  font-size: 18px;
+  height: 48px;
 }
 .neko-app .cmp-field {
   background: var(--surface-2);
@@ -875,6 +919,22 @@
   gap: 5px;
   padding: 11px 14px;
   border-bottom: 1px solid var(--border);
+}
+/* "Valor da célula" label (was inline style; min 12px per no-tiny-text). */
+.cmp-prev__cell-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+/* Cell value (money display) */
+.cmp-prev__cell-val {
+  font-family: var(--font-money);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--text-strong);
 }
 .cmp-prev__noteh {
   display: flex;

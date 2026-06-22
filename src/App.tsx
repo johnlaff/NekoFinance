@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import "./App.css";
 import "./redesign.css";
 import { AppShell, type Screen } from "./shell/AppShell";
@@ -60,7 +60,7 @@ function App() {
 
   // Dicas numéricas da nav (saldo de hoje, performance do mês). Reusam o cache compartilhado.
   const forecastQ = useCommand("get_forecast", getForecast);
-  const hints = useMemo<Partial<Record<Screen, string>>>(() => {
+  const hints: Partial<Record<Screen, string>> = (() => {
     const out: Partial<Record<Screen, string>> = {};
     const f = forecastQ.data;
     if (f) out.hoje = fmtCompact(Math.max(0, f.safe_to_spend_today_cents));
@@ -72,16 +72,13 @@ function App() {
       if (mm) out.mes = fmtCompact(mm.performance_cents);
     }
     return out;
-  }, [forecastQ.data]);
+  })();
 
-  const nekoApp = useMemo(
-    () => ({
-      navigate: (s: Screen) => setScreen(s),
-      openCompose: (options: ComposeOptions = {}) =>
-        setCompose((c) => ({ open: true, options, seq: c.seq + 1 })),
-    }),
-    [],
-  );
+  const nekoApp = {
+    navigate: (s: Screen) => setScreen(s),
+    openCompose: (options: ComposeOptions = {}) =>
+      setCompose((c) => ({ open: true, options, seq: c.seq + 1 })),
+  };
 
   return (
     <NekoAppProvider value={nekoApp}>

@@ -205,18 +205,7 @@ export function CopilotScreen() {
           <MiaAvatar width={30} height={30} />
         </span>
         Mia
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: 600,
-            color: "var(--success-400)",
-            background: "var(--success-tint)",
-            padding: "3px 8px",
-            borderRadius: 999,
-          }}
-        >
-          Lê sua planilha · responde local
-        </span>
+        <span className="mia-badge">Lê sua planilha · responde local</span>
       </div>
 
       {/* Chat area */}

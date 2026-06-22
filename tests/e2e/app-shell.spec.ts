@@ -43,8 +43,9 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     await expect(radiogroup.getByRole("radio", { name: /Cartão/ })).toBeVisible();
     await expect(radiogroup.getByRole("radio", { name: /Saída/ })).toBeVisible();
 
-    // Value input + Registrar button
-    await expect(page.getByLabel("Valor")).toBeVisible();
+    // Value input + Registrar button. exact:true so it matches the check-in's
+    // "Valor" and not the always-mounted Compose dialog's "Valor único".
+    await expect(page.getByLabel("Valor", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Registrar" })).toBeVisible();
 
     // UpcomingCard: "A pagar em breve" (from mock UPCOMING_BILLS)

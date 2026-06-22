@@ -1,5 +1,5 @@
 import "./lancamentos.css";
-import { useState, useMemo } from "react";
+import { useState, useReducer } from "react";
 import {
   CalendarRange,
   ChevronRight,
@@ -98,6 +98,20 @@ function groupByMonth(rows: TransactionRow[]): [string, TransactionRow[]][] {
 /** Current month index (0-based), relative to the current year month. */
 function currentMonthIndex(): number {
   return new Date().getMonth();
+}
+
+/** Delete a transaction row, refreshing on success. Module-scope so React Compiler sees it as stable. */
+function handleDelete(t: TransactionRow): void {
+  if (t.provenance === "importado") return; // guard: backend also rejects this
+  const confirmed = window.confirm(
+    `Apagar "${t.description || "lançamento"}"? Esta ação não pode ser desfeita.`,
+  );
+  if (!confirmed) return;
+  void deleteTransaction(t.id)
+    .then(() => invalidateCommands())
+    .catch((err: unknown) => {
+      console.error("Falha ao apagar lançamento:", err);
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -236,11 +250,10 @@ function Row({
 
   return (
     <>
-      <div
+      <button
+        type="button"
         className={"lc-row" + (isFuture ? " lc-row--future" : "")}
         onClick={onToggle}
-        role="button"
-        tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
@@ -248,6 +261,7 @@ function Row({
           }
         }}
         aria-expanded={open}
+        aria-label={t.description || "Lançamento"}
       >
         <span className="lc-row__date">{fmtDayMonth(t.date)}</span>
         <span className="lc-row__type" style={{ color: tm.color }}>
@@ -310,7 +324,7 @@ function Row({
           {isEntrada ? "+" : "−"}
           {fmtBRL(totalCents)}
         </span>
-      </div>
+      </button>
       {open && (
         <div className="lc-parts">
           {t.line_items.length > 0 ? (
@@ -321,7 +335,7 @@ function Row({
                 {hasItems ? " · viram a nota da célula na planilha" : ""}
               </p>
               {t.line_items.map((li, i) => (
-                <div className="lc-part" key={li.id ?? i}>
+                <div className="lc-part" key={li.id ?? `li-${i}`}>
                   <span className="lc-part__desc">{li.description}</span>
                   <span
                     className="lc-part__amt"
@@ -475,6 +489,329 @@ function Skeleton() {
 }
 
 // ---------------------------------------------------------------------------
+// Toolbar sub-component
+// ---------------------------------------------------------------------------
+
+function LcToolbar({
+  view,
+  mOffset,
+  search,
+  onViewChange,
+  onMonthPrev,
+  onMonthNext,
+  onSearchChange,
+  onNew,
+}: {
+  view: ViewMode;
+  mOffset: number;
+  search: string;
+  onViewChange: (v: ViewMode) => void;
+  onMonthPrev: () => void;
+  onMonthNext: () => void;
+  onSearchChange: (q: string) => void;
+  onNew: () => void;
+}) {
+  // mOffset is read only for determining rendered label when needed; no direct use here
+  void mOffset;
+  return (
+    <div className="lc-tools">
+      <SegmentedControl
+        size="sm"
+        ariaLabel="Modo de visualização"
+        value={view}
+        onChange={(v) => onViewChange(v as ViewMode)}
+        options={[
+          { value: "anchor", label: "Linha do tempo" },
+          { value: "monthOnly", label: "Por mês" },
+        ]}
+      />
+      {view === "monthOnly" && (
+        <div style={{ display: "inline-flex", gap: 4 }}>
+          <button
+            className="sh-iconbtn"
+            onClick={onMonthPrev}
+            aria-label="Mês anterior"
+            type="button"
+          >
+            <ChevronRight
+              size={15}
+              strokeWidth={1.75}
+              style={{ transform: "rotate(180deg)" }}
+            />
+          </button>
+          <button
+            className="sh-iconbtn"
+            onClick={onMonthNext}
+            aria-label="Próximo mês"
+            type="button"
+          >
+            <ChevronRight size={15} strokeWidth={1.75} />
+          </button>
+        </div>
+      )}
+      <span className="lc-tools__sp" />
+      <label className="lc-search">
+        <Search size={14} strokeWidth={1.75} />
+        <input
+          placeholder="Buscar…"
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+          aria-label="Buscar lançamentos"
+        />
+      </label>
+      <Button
+        size="sm"
+        variant="primary"
+        iconLeft={<Plus size={14} strokeWidth={1.75} />}
+        onClick={onNew}
+      >
+        Novo
+      </Button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Future banner sub-component
+// ---------------------------------------------------------------------------
+
+function FutureBanner({
+  count,
+  sum,
+  expanded,
+  onToggle,
+}: {
+  count: number;
+  sum: number;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="lc-future"
+      onClick={onToggle}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onToggle();
+        }
+      }}
+      aria-expanded={expanded}
+      aria-label="Lançamentos futuros já previstos"
+    >
+      <span className="lc-future__ic">
+        <CalendarRange size={16} strokeWidth={1.75} />
+      </span>
+      <div>
+        <div className="lc-future__t">{count} lançamentos futuros já previstos</div>
+        <div className="lc-future__s">
+          {expanded ? "Toque para recolher" : "Toque para ver. Não atrapalham aqui."}
+        </div>
+      </div>
+      <span className="lc-future__amt">
+        {fmtSigned(sum)}
+        <br />
+        <ChevronRight
+          size={14}
+          strokeWidth={1.75}
+          style={expanded ? { transform: "rotate(90deg)" } : undefined}
+        />
+      </span>
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Anchor view sub-component
+// ---------------------------------------------------------------------------
+
+function AnchorView({
+  futureRows,
+  todayRows,
+  pastRows,
+  todayLabel,
+  allRows,
+  transactions,
+  openIds,
+  toggle,
+  onEdit,
+  onDelete,
+  allTags,
+}: {
+  futureRows: TransactionRow[];
+  todayRows: TransactionRow[];
+  pastRows: TransactionRow[];
+  todayLabel: string;
+  allRows: TransactionRow[];
+  transactions: TransactionRow[] | undefined;
+  openIds: ReadonlySet<string>;
+  toggle: (id: string) => void;
+  onEdit: (t: TransactionRow) => void;
+  onDelete: (t: TransactionRow) => void;
+  allTags: Tag[];
+}) {
+  const [showFuture, setShowFuture] = useState(false);
+  const futureSum = futureRows.reduce((s, t) => s + signedCents(t), 0);
+
+  return (
+    <div className="lc-card">
+      {futureRows.length > 0 && (
+        <>
+          <FutureBanner
+            count={futureRows.length}
+            sum={futureSum}
+            expanded={showFuture}
+            onToggle={() => setShowFuture((v) => !v)}
+          />
+          {showFuture &&
+            groupByMonth(futureRows)
+              .slice()
+              .reverse()
+              .map(([k, rows]) => (
+                <Group
+                  key={k}
+                  title={"Futuro · " + monthLabel(k)}
+                  today={false}
+                  rows={rows.slice().sort((a, b) => (a.date < b.date ? -1 : 1))}
+                  openIds={openIds}
+                  toggle={toggle}
+                  onEdit={onEdit}
+                  onDelete={onDelete}
+                  allTags={allTags}
+                />
+              ))}
+        </>
+      )}
+
+      {/* Today section */}
+      {todayRows.length > 0 ? (
+        <Group
+          title={todayLabel}
+          today
+          rows={todayRows}
+          openIds={openIds}
+          toggle={toggle}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          allTags={allTags}
+        />
+      ) : (
+        <div className="lc-gh lc-gh--today">
+          <span className="lc-gh__t">{todayLabel}</span>
+          <span className="lc-gh__sum" style={{ color: "var(--text-faint)" }}>
+            sem lançamentos
+          </span>
+        </div>
+      )}
+
+      {/* Past months */}
+      {groupByMonth(pastRows).map(([k, rows]) => (
+        <Group
+          key={k}
+          title={monthLabel(k)}
+          today={false}
+          rows={rows}
+          openIds={openIds}
+          toggle={toggle}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          allTags={allTags}
+        />
+      ))}
+
+      {allRows.length === 0 && (
+        <div className="lc-empty">
+          {transactions?.length === 0
+            ? "Importe sua planilha em Configurações para começar."
+            : "Nenhum resultado para o filtro atual."}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Month-only view sub-component
+// ---------------------------------------------------------------------------
+
+function MonthView({
+  targetKey,
+  inMonthRows,
+  openIds,
+  toggle,
+  onEdit,
+  onDelete,
+  allTags,
+}: {
+  targetKey: string;
+  inMonthRows: TransactionRow[];
+  openIds: ReadonlySet<string>;
+  toggle: (id: string) => void;
+  onEdit: (t: TransactionRow) => void;
+  onDelete: (t: TransactionRow) => void;
+  allTags: Tag[];
+}) {
+  return (
+    <div className="lc-card">
+      <Group
+        title={monthLabel(targetKey)}
+        today={targetKey === TODAY.slice(0, 7)}
+        rows={inMonthRows}
+        openIds={openIds}
+        toggle={toggle}
+        onEdit={onEdit}
+        onDelete={onDelete}
+        allTags={allTags}
+      />
+      {inMonthRows.length === 0 && (
+        <div className="lc-empty">Nenhum lançamento neste mês para o filtro atual.</div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main component state
+// ---------------------------------------------------------------------------
+
+interface LcState {
+  view: ViewMode;
+  filter: FilterKey;
+  openIds: ReadonlySet<string>;
+  mOffset: number;
+  search: string;
+}
+
+type LcAction =
+  | { type: "SET_VIEW"; view: ViewMode }
+  | { type: "SET_FILTER"; filter: FilterKey }
+  | { type: "TOGGLE_OPEN"; id: string }
+  | { type: "SET_M_OFFSET"; delta: number }
+  | { type: "SET_SEARCH"; search: string };
+
+function lcReducer(state: LcState, action: LcAction): LcState {
+  switch (action.type) {
+    case "SET_VIEW":
+      return { ...state, view: action.view };
+    case "SET_FILTER":
+      return { ...state, filter: action.filter };
+    case "TOGGLE_OPEN": {
+      const next = new Set(state.openIds);
+      if (next.has(action.id)) next.delete(action.id);
+      else next.add(action.id);
+      return { ...state, openIds: next };
+    }
+    case "SET_M_OFFSET":
+      return { ...state, mOffset: state.mOffset + action.delta };
+    case "SET_SEARCH":
+      return { ...state, search: action.search };
+    default:
+      return state;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
@@ -491,20 +828,18 @@ export function TransactionsScreen() {
 
   const { data: allTags } = useCommand("list_tags:lc", listTags);
 
-  const [view, setView] = useState<ViewMode>("anchor");
-  const [filter, setFilter] = useState<FilterKey>("todos");
-  const [showFuture, setShowFuture] = useState(false);
-  const [openIds, setOpenIds] = useState<ReadonlySet<string>>(() => new Set());
-  const [mOffset, setMOffset] = useState(0);
-  const [search, setSearch] = useState("");
+  const [state, dispatch] = useReducer(lcReducer, {
+    view: "anchor",
+    filter: "todos",
+    openIds: new Set<string>(),
+    mOffset: 0,
+    search: "",
+  });
+
+  const { view, filter, openIds, mOffset, search } = state;
 
   function toggle(id: string) {
-    setOpenIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+    dispatch({ type: "TOGGLE_OPEN", id });
   }
 
   function handleEdit(t: TransactionRow) {
@@ -519,44 +854,24 @@ export function TransactionsScreen() {
     });
   }
 
-  function handleDelete(t: TransactionRow) {
-    if (t.provenance === "importado") return; // guard: backend also rejects this
-    const confirmed = window.confirm(
-      `Apagar "${t.description || "lançamento"}"? Esta ação não pode ser desfeita.`,
-    );
-    if (!confirmed) return;
-    void deleteTransaction(t.id)
-      .then(() => invalidateCommands())
-      .catch((err: unknown) => {
-        console.error("Falha ao apagar lançamento:", err);
-      });
-  }
-
   function handleNew() {
     openCompose({ mode: "new" });
   }
 
-  // Derive filtered + searched rows
-  const allRows: TransactionRow[] = useMemo(() => {
-    const rows = transactions ?? [];
-    let filtered = rows;
-    if (filter !== "todos") {
-      filtered = filtered.filter((t) => toMovementType(t) === filter);
-    }
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      filtered = filtered.filter(
-        (t) => t.description?.toLowerCase().includes(q) || t.date.includes(q),
-      );
-    }
-    return filtered;
-  }, [transactions, filter, search]);
+  // Derive filtered + searched rows (React Compiler caches these)
+  const rows = transactions ?? [];
+  const filteredByType =
+    filter !== "todos" ? rows.filter((t) => toMovementType(t) === filter) : rows;
+  const allRows: TransactionRow[] = search.trim()
+    ? filteredByType.filter((t) => {
+        const q = search.trim().toLowerCase();
+        return t.description?.toLowerCase().includes(q) || t.date.includes(q);
+      })
+    : filteredByType;
 
-  const futureRows = useMemo(() => allRows.filter((t) => t.date > TODAY), [allRows]);
-  const todayRows = useMemo(() => allRows.filter((t) => t.date === TODAY), [allRows]);
-  const pastRows = useMemo(() => allRows.filter((t) => t.date < TODAY), [allRows]);
-
-  const futureSum = futureRows.reduce((s, t) => s + signedCents(t), 0);
+  const futureRows = allRows.filter((t) => t.date > TODAY);
+  const todayRows = allRows.filter((t) => t.date === TODAY);
+  const pastRows = allRows.filter((t) => t.date < TODAY);
 
   // Today label for group header
   const todayParts = TODAY.split("-");
@@ -572,10 +887,7 @@ export function TransactionsScreen() {
   const targetYear = String(targetDate.getFullYear());
   const targetMonth = String(targetDate.getMonth() + 1).padStart(2, "0");
   const targetKey = `${targetYear}-${targetMonth}`;
-  const inMonthRows = useMemo(
-    () => allRows.filter((t) => monthKey(t.date) === targetKey),
-    [allRows, targetKey],
-  );
+  const inMonthRows = allRows.filter((t) => monthKey(t.date) === targetKey);
 
   // Web-preview fallback
   if (!isTauri) {
@@ -605,13 +917,7 @@ export function TransactionsScreen() {
           Não foi possível carregar os lançamentos.{" "}
           <button
             type="button"
-            style={{
-              color: "var(--primary)",
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              padding: 0,
-            }}
+            className="lc-retry-btn"
             onClick={() => {
               invalidateCommands();
             }}
@@ -623,190 +929,47 @@ export function TransactionsScreen() {
     );
   } else if (view === "monthOnly") {
     content = (
-      <div className="lc-card">
-        <Group
-          title={monthLabel(targetKey)}
-          today={targetKey === TODAY.slice(0, 7)}
-          rows={inMonthRows}
-          openIds={openIds}
-          toggle={toggle}
-          onEdit={handleEdit}
-          onDelete={handleDelete}
-          allTags={allTags ?? []}
-        />
-        {inMonthRows.length === 0 && (
-          <div className="lc-empty">
-            Nenhum lançamento neste mês para o filtro atual.
-          </div>
-        )}
-      </div>
+      <MonthView
+        targetKey={targetKey}
+        inMonthRows={inMonthRows}
+        openIds={openIds}
+        toggle={toggle}
+        onEdit={handleEdit}
+        onDelete={handleDelete}
+        allTags={allTags ?? []}
+      />
     );
   } else {
-    // anchor view: future collapsed at top, today highlighted, past below
     content = (
-      <div className="lc-card">
-        {futureRows.length > 0 && (
-          <>
-            <div
-              className="lc-future"
-              onClick={() => setShowFuture((v) => !v)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  setShowFuture((v) => !v);
-                }
-              }}
-              aria-expanded={showFuture}
-            >
-              <span className="lc-future__ic">
-                <CalendarRange size={16} strokeWidth={1.75} />
-              </span>
-              <div>
-                <div className="lc-future__t">
-                  {futureRows.length} lançamentos futuros já previstos
-                </div>
-                <div className="lc-future__s">
-                  {showFuture
-                    ? "Toque para recolher"
-                    : "Toque para ver. Não atrapalham aqui."}
-                </div>
-              </div>
-              <span className="lc-future__amt">
-                {fmtSigned(futureSum)}
-                <br />
-                <ChevronRight
-                  size={14}
-                  strokeWidth={1.75}
-                  style={showFuture ? { transform: "rotate(90deg)" } : undefined}
-                />
-              </span>
-            </div>
-            {showFuture &&
-              groupByMonth(futureRows)
-                .slice()
-                .reverse()
-                .map(([k, rows]) => (
-                  <Group
-                    key={k}
-                    title={"Futuro · " + monthLabel(k)}
-                    today={false}
-                    rows={rows.slice().sort((a, b) => (a.date < b.date ? -1 : 1))}
-                    openIds={openIds}
-                    toggle={toggle}
-                    onEdit={handleEdit}
-                    onDelete={handleDelete}
-                    allTags={allTags ?? []}
-                  />
-                ))}
-          </>
-        )}
-
-        {/* Today section */}
-        {todayRows.length > 0 ? (
-          <Group
-            title={todayLabel}
-            today
-            rows={todayRows}
-            openIds={openIds}
-            toggle={toggle}
-            onEdit={handleEdit}
-            onDelete={handleDelete}
-            allTags={allTags ?? []}
-          />
-        ) : (
-          <div className="lc-gh lc-gh--today">
-            <span className="lc-gh__t">{todayLabel}</span>
-            <span className="lc-gh__sum" style={{ color: "var(--text-faint)" }}>
-              sem lançamentos
-            </span>
-          </div>
-        )}
-
-        {/* Past months */}
-        {groupByMonth(pastRows).map(([k, rows]) => (
-          <Group
-            key={k}
-            title={monthLabel(k)}
-            today={false}
-            rows={rows}
-            openIds={openIds}
-            toggle={toggle}
-            onEdit={handleEdit}
-            onDelete={handleDelete}
-            allTags={allTags ?? []}
-          />
-        ))}
-
-        {allRows.length === 0 && (
-          <div className="lc-empty">
-            {transactions?.length === 0
-              ? "Importe sua planilha em Configurações para começar."
-              : "Nenhum resultado para o filtro atual."}
-          </div>
-        )}
-      </div>
+      <AnchorView
+        futureRows={futureRows}
+        todayRows={todayRows}
+        pastRows={pastRows}
+        todayLabel={todayLabel}
+        allRows={allRows}
+        transactions={transactions}
+        openIds={openIds}
+        toggle={toggle}
+        onEdit={handleEdit}
+        onDelete={handleDelete}
+        allTags={allTags ?? []}
+      />
     );
   }
 
   return (
     <div className="lc">
       {/* Toolbar */}
-      <div className="lc-tools">
-        <SegmentedControl
-          size="sm"
-          ariaLabel="Modo de visualização"
-          value={view}
-          onChange={(v) => setView(v as ViewMode)}
-          options={[
-            { value: "anchor", label: "Linha do tempo" },
-            { value: "monthOnly", label: "Por mês" },
-          ]}
-        />
-        {view === "monthOnly" && (
-          <div style={{ display: "inline-flex", gap: 4 }}>
-            <button
-              className="sh-iconbtn"
-              onClick={() => setMOffset((o) => o - 1)}
-              aria-label="Mês anterior"
-              type="button"
-            >
-              <ChevronRight
-                size={15}
-                strokeWidth={1.75}
-                style={{ transform: "rotate(180deg)" }}
-              />
-            </button>
-            <button
-              className="sh-iconbtn"
-              onClick={() => setMOffset((o) => o + 1)}
-              aria-label="Próximo mês"
-              type="button"
-            >
-              <ChevronRight size={15} strokeWidth={1.75} />
-            </button>
-          </div>
-        )}
-        <span className="lc-tools__sp" />
-        <label className="lc-search">
-          <Search size={14} strokeWidth={1.75} />
-          <input
-            placeholder="Buscar…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            aria-label="Buscar lançamentos"
-          />
-        </label>
-        <Button
-          size="sm"
-          variant="primary"
-          iconLeft={<Plus size={14} strokeWidth={1.75} />}
-          onClick={handleNew}
-        >
-          Novo
-        </Button>
-      </div>
+      <LcToolbar
+        view={view}
+        mOffset={mOffset}
+        search={search}
+        onViewChange={(v) => dispatch({ type: "SET_VIEW", view: v })}
+        onMonthPrev={() => dispatch({ type: "SET_M_OFFSET", delta: -1 })}
+        onMonthNext={() => dispatch({ type: "SET_M_OFFSET", delta: 1 })}
+        onSearchChange={(q) => dispatch({ type: "SET_SEARCH", search: q })}
+        onNew={handleNew}
+      />
 
       {/* Filter chips */}
       <div className="lc-filters">
@@ -815,7 +978,7 @@ export function TransactionsScreen() {
             key={f.key}
             type="button"
             className={"lc-fchip" + (filter === f.key ? " is-on" : "")}
-            onClick={() => setFilter(f.key)}
+            onClick={() => dispatch({ type: "SET_FILTER", filter: f.key })}
             style={
               filter === f.key
                 ? { background: `color-mix(in srgb,${f.color} 16%, transparent)` }

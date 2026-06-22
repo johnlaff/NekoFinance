@@ -100,6 +100,10 @@ function padTo12(months: MonthMetric[], year: number): MonthMetric[] {
   });
 }
 
+function getEcon(arr: MonthMetric[], mNum: number): number {
+  return arr.find((m) => m.month === mNum)?.economia_cents ?? 0;
+}
+
 // ------------------------------------------------------------------ sub-components --
 
 function YearNav({
@@ -115,27 +119,13 @@ function YearNav({
   onToday: () => void;
   atToday: boolean;
 }) {
-  const navBtnStyle: React.CSSProperties = {
-    border: "1px solid var(--border)",
-    borderRadius: "var(--radius-sm)",
-    background: "transparent",
-    color: "var(--text)",
-    cursor: "pointer",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    width: 28,
-    height: 28,
-    padding: 0,
-  };
-
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
       <button
         type="button"
         onClick={onPrev}
         aria-label="Ano anterior"
-        style={navBtnStyle}
+        className="ano-nav-btn"
       >
         <ChevronLeft size={14} strokeWidth={1.75} />
       </button>
@@ -144,16 +134,8 @@ function YearNav({
         onClick={onToday}
         disabled={atToday}
         aria-label="Ir para o ano atual"
-        style={{
-          border: "none",
-          background: "transparent",
-          cursor: atToday ? "default" : "pointer",
-          fontWeight: 700,
-          fontSize: 20,
-          color: "var(--text-strong)",
-          padding: "0 4px",
-          fontFamily: "var(--font-sans)",
-        }}
+        className="ano-nav-year"
+        style={{ cursor: atToday ? "default" : "pointer" }}
       >
         {year}
       </button>
@@ -161,7 +143,7 @@ function YearNav({
         type="button"
         onClick={onNext}
         aria-label="Próximo ano"
-        style={navBtnStyle}
+        className="ano-nav-btn"
       >
         <ChevronRight size={14} strokeWidth={1.75} />
       </button>
@@ -202,9 +184,7 @@ function AnoChart({
           );
         })}
       </div>
-      <div
-        style={{ padding: "0 20px 14px", fontSize: 11.5, color: "var(--text-faint)" }}
-      >
+      <div className="ano-chart__caption">
         Resultado por mês · meses à frente em tom mais claro (projeção)
       </div>
     </>
@@ -321,9 +301,6 @@ function AnoCmpSection({
   currentMonthIdx: number;
   currentYear: number;
 }) {
-  const getEcon = (arr: MonthMetric[], mNum: number) =>
-    arr.find((m) => m.month === mNum)?.economia_cents ?? 0;
-
   const pairs = MES_ABBR.map((_, i) => ({
     a: getEcon(monthsA, i + 1),
     b: getEcon(monthsB, i + 1),

@@ -1,4 +1,4 @@
-import { createContext, useContext } from "react";
+import { createContext, use } from "react";
 import type { Screen } from "./AppShell";
 import type { MovementType } from "../lib/nkFormat";
 
@@ -27,7 +27,7 @@ export const NekoAppProvider = NekoAppContext.Provider;
 
 /** Hook de navegação/compose para as telas. Lança se usado fora do provider. */
 export function useNekoApp(): NekoApp {
-  const ctx = useContext(NekoAppContext);
+  const ctx = use(NekoAppContext);
   if (!ctx) throw new Error("useNekoApp must be used within NekoAppProvider");
   return ctx;
 }
