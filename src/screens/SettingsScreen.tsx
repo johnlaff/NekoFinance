@@ -25,12 +25,15 @@ import { WriteBackPending } from "./dashboard/WriteBackPending";
 import { useWriteBackPending } from "../hooks/useWriteBackPending";
 import {
   backupDatabase,
+  checkAuthStatus,
   getAppInfo,
   getAppSetting,
   getDailyBudgetCategories,
+  GOOGLE_CLIENT_ID,
   isTauri,
   registerOsReminder,
   setAppSetting,
+  startOAuthFlow,
   unregisterOsReminder,
   upsertDailyBudget,
   upsertDailyBudgetWithCategories,
@@ -39,7 +42,7 @@ import {
 } from "../lib/api";
 import { formatBRL, parseBRLToCents } from "../lib/format";
 import { safeErrorMessage } from "../lib/errors";
-import { useCommand } from "../lib/useCommand";
+import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { Button } from "../design-system/components/Button";
 import { SegmentedControl } from "../design-system/components/SegmentedControl";
 
@@ -818,6 +821,16 @@ function DataBackupRow() {
 // Main exported component
 // ---------------------------------------------------------------------------
 
+/** Após iniciar o OAuth, o token chega de forma assíncrona (consentimento no navegador). Sonda o
+ *  status até conectar (≤ 2 min). Recursão com setTimeout evita await-dentro-de-loop. Module-scope:
+ *  não usa estado local. */
+async function pollConnected(attempt: number): Promise<AuthStatus> {
+  if (attempt >= 60) return checkAuthStatus();
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+  const status = await checkAuthStatus();
+  return status === "connected" ? status : pollConnected(attempt + 1);
+}
+
 export function SettingsScreen({
   authStatus,
   onAuthChange,
@@ -830,8 +843,24 @@ export function SettingsScreen({
 
   const [miaLocal, setMiaLocal] = useState(true);
   const [animacoes, setAnimacoes] = useState(true);
+  const [reconnecting, setReconnecting] = useState(false);
 
   const isConnected = authStatus === "connected";
+
+  /** Força um novo fluxo OAuth (token novo). Necessário quando o app reporta "conectado" mas o
+   *  refresh token está morto (HTTP 400) — sem isso não há como refazer a autenticação. */
+  function handleReconnect() {
+    if (!GOOGLE_CLIENT_ID || reconnecting) return;
+    setReconnecting(true);
+    startOAuthFlow(GOOGLE_CLIENT_ID)
+      .then(() => pollConnected(0))
+      .then((status) => {
+        onAuthChange(status);
+        invalidateCommands();
+      })
+      .catch(() => undefined)
+      .finally(() => setReconnecting(false));
+  }
 
   return (
     <div className="xs">
@@ -857,8 +886,13 @@ export function SettingsScreen({
                   : "Desconectado"
             }
             right={
-              <Button size="sm" variant="ghost" onClick={() => undefined}>
-                {isConnected ? "Gerenciar" : "Reconectar"}
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => handleReconnect()}
+                disabled={reconnecting || !GOOGLE_CLIENT_ID}
+              >
+                {reconnecting ? "Reconectando…" : "Reconectar"}
               </Button>
             }
           />
