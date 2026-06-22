@@ -20,6 +20,17 @@ export XWIN_ACCEPT_LICENSE=1
 # remaining CRT imports are ucrt (api-ms-win-crt-*), an OS component on Win10/11.
 export STATIC_VCRUNTIME=true
 
+# Bake the OAuth client secret into the binary so the BACKGROUND sync token refresh has it.
+# The frontend bundle already bakes VITE_GOOGLE_CLIENT_SECRET; the Rust side reads it at compile
+# time via option_env!("GOOGLE_CLIENT_SECRET"). Without it, the background refresh 400s and the
+# Google connection "drops after ~1h". Sourced from the local gitignored .env (desktop-client
+# secret — not confidential; it already ships inside the frontend bundle).
+if [[ -z "${GOOGLE_CLIENT_SECRET:-}" && -f .env ]]; then
+  GOOGLE_CLIENT_SECRET="$(grep -E '^VITE_GOOGLE_CLIENT_SECRET=' .env | head -1 | sed -E "s/^[^=]*=//; s/\r$//; s/^[\"']//; s/[\"']$//")"  # gitleaks:allow -- value read from the local gitignored .env at build time; nothing secret is committed here
+  export GOOGLE_CLIENT_SECRET
+  [[ -n "$GOOGLE_CLIENT_SECRET" ]] && echo "Baked GOOGLE_CLIENT_SECRET for background token refresh."
+fi
+
 MODE="msvc"
 BUNDLE_ARGS=(--no-bundle)
 for arg in "$@"; do

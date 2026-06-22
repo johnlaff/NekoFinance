@@ -47,14 +47,19 @@ impl OAuthConfig {
     }
 }
 
-/// Resolve o client secret SEM expô-lo no bundle do frontend: usa o valor recebido (se houver) ou,
-/// na falta dele, o env do PROCESSO Rust (`GOOGLE_CLIENT_SECRET`). Para um cliente desktop o secret
-/// é opcional (PKCE basta — RFC 8252); manter o segredo fora do JS é a postura correta. Esta função
-/// LÊ o ambiente — pertence ao shell imperativo (chamada nos comandos), não ao core puro.
+/// Resolve o client secret em três níveis: o valor recebido do frontend (se houver), senão o env do
+/// PROCESSO Rust (`GOOGLE_CLIENT_SECRET`), e por fim o valor EMBUTIDO no build
+/// (`option_env!("GOOGLE_CLIENT_SECRET")`). O último nível cobre o sync em BACKGROUND: ele não recebe
+/// o secret do frontend e o `.exe` empacotado não tem env de processo — sem ele o refresh em
+/// background falha (HTTP 400) e a conexão "cai em ~1h". O secret de um cliente desktop não é
+/// confidencial (já acompanha o app, como o `VITE_GOOGLE_CLIENT_SECRET` no bundle do frontend), então
+/// embuti-lo no binário não amplia a exposição. Esta função LÊ o ambiente — pertence ao shell
+/// imperativo (chamada nos comandos), não ao core puro.
 pub fn resolve_client_secret(provided: Option<String>) -> Option<String> {
     provided
         .filter(|s| !s.trim().is_empty())
         .or_else(|| std::env::var("GOOGLE_CLIENT_SECRET").ok())
+        .or_else(|| option_env!("GOOGLE_CLIENT_SECRET").map(str::to_string))
         .filter(|s| !s.trim().is_empty())
 }
 
