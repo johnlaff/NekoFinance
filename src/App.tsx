@@ -1,31 +1,48 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import "./App.css";
+import "./redesign.css";
 import { AppShell, type Screen } from "./shell/AppShell";
+import { NekoAppProvider, type ComposeOptions } from "./shell/appContext";
+import { Compose } from "./shell/Compose";
 import { DashboardScreen } from "./screens/DashboardScreen";
+import { TransactionsScreen } from "./screens/TransactionsScreen";
 import { TotaisScreen } from "./screens/TotaisScreen";
 import { AnnualScreen } from "./screens/AnnualScreen";
 import { YearGridScreen } from "./screens/YearGridScreen";
-import { EconomiaCompareScreen } from "./screens/EconomiaCompareScreen";
 import { HorizonteScreen } from "./screens/HorizonteScreen";
 import { TagsScreen } from "./screens/TagsScreen";
-import { TransactionsScreen } from "./screens/TransactionsScreen";
 import { CopilotScreen } from "./screens/CopilotScreen";
-import { MethodologyScreen } from "./screens/MethodologyScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { OnboardingFlow, ONBOARDING_KEY } from "./features/onboarding/OnboardingFlow";
-import { checkAuthStatus, getAppSetting, isTauri, type AuthStatus } from "./lib/api";
+import {
+  checkAuthStatus,
+  getAppSetting,
+  getForecast,
+  isTauri,
+  type AuthStatus,
+} from "./lib/api";
+import { useCommand } from "./lib/useCommand";
+import { fmtCompact } from "./lib/nkFormat";
 
 function App() {
-  const [screen, setScreen] = useState<Screen>("dashboard");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [screen, setScreen] = useState<Screen>("hoje");
   const [authStatus, setAuthStatus] = useState<AuthStatus>(
     isTauri ? "loading" : "disconnected",
   );
-  // `null` = ainda carregando a preferência; evita um flash do onboarding já concluído.
-  // Fora do Tauri (preview web) não há onboarding.
   const [showOnboarding, setShowOnboarding] = useState<boolean | null>(
     isTauri ? null : false,
   );
+
+  // Estado do compositor de lançamento (drawer "Lançar"). `seq` remonta o Compose a cada abertura.
+  const [compose, setCompose] = useState<{
+    open: boolean;
+    options: ComposeOptions;
+    seq: number;
+  }>({
+    open: false,
+    options: {},
+    seq: 0,
+  });
 
   useEffect(() => {
     if (!isTauri) return;
@@ -41,73 +58,75 @@ function App() {
       .catch(() => setShowOnboarding(false));
   }, []);
 
-  // Ponte do atalho "N": o DashboardScreen entrega o ref do campo de valor; o AppShell chama
-  // handleQuickAdd ao pressionar "N". Fora do dashboard, navega e foca depois do card montar (rAF).
-  const quickAddInputRef = useRef<HTMLInputElement | null>(null);
-
-  // React Compiler memoizes; no manual useCallback needed.
-  const handleSearch = (query: string) => {
-    setSearchQuery(query);
-    setScreen("transactions");
-  };
-
-  const handleQuickAdd = () => {
-    if (screen !== "dashboard") {
-      setScreen("dashboard");
-      requestAnimationFrame(() => quickAddInputRef.current?.focus());
-    } else {
-      quickAddInputRef.current?.focus();
+  // Dicas numéricas da nav (saldo de hoje, performance do mês). Reusam o cache compartilhado.
+  const forecastQ = useCommand("get_forecast", getForecast);
+  const hints: Partial<Record<Screen, string>> = (() => {
+    const out: Partial<Record<Screen, string>> = {};
+    const f = forecastQ.data;
+    if (f) out.hoje = fmtCompact(Math.max(0, f.safe_to_spend_today_cents));
+    if (f) {
+      const ym = f.today.slice(0, 7);
+      const mm = f.months.find(
+        (m) => `${m.year}-${String(m.month).padStart(2, "0")}` === ym,
+      );
+      if (mm) out.mes = fmtCompact(mm.performance_cents);
     }
+    return out;
+  })();
+
+  const nekoApp = {
+    navigate: (s: Screen) => setScreen(s),
+    openCompose: (options: ComposeOptions = {}) =>
+      setCompose((c) => ({ open: true, options, seq: c.seq + 1 })),
   };
 
   return (
-    <>
+    <NekoAppProvider value={nekoApp}>
       {showOnboarding && (
         <OnboardingFlow
           onDone={() => setShowOnboarding(false)}
-          onGoToSettings={() => setScreen("settings")}
+          onGoToSettings={() => setScreen("config")}
         />
       )}
-      {/* Enquanto o onboarding (aria-modal) está aberto, o resto fica `inert`: teclado, ponteiro e
-          leitor de tela não alcançam o fundo. `display:contents` não cria caixa de layout. */}
       <div style={{ display: "contents" }} inert={showOnboarding === true}>
         <AppShell
           active={screen}
           onNavigate={setScreen}
-          onSearch={handleSearch}
           authStatus={authStatus}
-          onQuickAdd={handleQuickAdd}
+          onCompose={() =>
+            setCompose((c) => ({
+              open: true,
+              options: { mode: "new" },
+              seq: c.seq + 1,
+            }))
+          }
+          hints={hints}
         >
-          <div key={screen} className="ak-screen">
-            {screen === "dashboard" && (
-              <DashboardScreen
-                onAskMia={() => setScreen("copilot")}
-                onQuickAddAmountRef={(el) => {
-                  quickAddInputRef.current = el;
-                }}
-              />
-            )}
-            {screen === "totais" && <TotaisScreen />}
-            {screen === "anuais" && <AnnualScreen />}
-            {screen === "ano-inteiro" && <YearGridScreen />}
-            {screen === "economia-compare" && <EconomiaCompareScreen />}
+          <div key={screen} className="ak-screen neko-app">
+            {screen === "hoje" && <DashboardScreen />}
+            {screen === "lancamentos" && <TransactionsScreen />}
+            {screen === "mes" && <TotaisScreen />}
+            {screen === "ano" && <AnnualScreen />}
+            {screen === "calendario" && <YearGridScreen />}
             {screen === "horizonte" && <HorizonteScreen />}
             {screen === "tags" && <TagsScreen />}
-            {screen === "transactions" && (
-              <TransactionsScreen
-                query={searchQuery}
-                onGoToSettings={() => setScreen("settings")}
-              />
-            )}
-            {screen === "copilot" && <CopilotScreen />}
-            {screen === "methodology" && <MethodologyScreen />}
-            {screen === "settings" && (
+            {screen === "mia" && <CopilotScreen />}
+            {screen === "config" && (
               <SettingsScreen authStatus={authStatus} onAuthChange={setAuthStatus} />
             )}
           </div>
         </AppShell>
+        <Compose
+          key={compose.seq}
+          open={compose.open}
+          options={compose.options}
+          onClose={() => setCompose((c) => ({ ...c, open: false }))}
+          onSaved={() => {
+            /* dados já invalidados dentro do Compose; o próximo render rebusca */
+          }}
+        />
       </div>
-    </>
+    </NekoAppProvider>
   );
 }
 

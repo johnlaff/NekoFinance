@@ -1,14 +1,13 @@
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent } from "react";
 import {
+  Bell,
   Calculator,
   CalendarRange,
-  GitCompareArrows,
-  HelpCircle,
   LayoutDashboard,
   LayoutList,
   Lock,
+  Plus,
   Receipt,
-  Search,
   Settings,
   Sparkles,
   Table2,
@@ -17,35 +16,32 @@ import {
   Unlink,
 } from "lucide-react";
 import { NekoMark } from "../design-system/components/NekoMark";
+import { Button } from "../design-system/components/Button";
 import { ThemeToggle } from "./ThemeToggle";
-import { SR_ONLY } from "../design-system/srOnly";
 import type { AuthStatus } from "../lib/api";
 
+/** Nova IA (redesign 2026): cada item = uma pergunta/objetivo único. */
 export type Screen =
-  | "dashboard"
-  | "totais"
-  | "anuais"
-  | "ano-inteiro" // grade dia a dia dos 12 meses
-  | "economia-compare" // Economia: dois anos lado a lado
+  | "hoje"
+  | "lancamentos"
+  | "mes"
+  | "ano"
+  | "calendario"
   | "horizonte"
-  | "transactions"
   | "tags"
-  | "copilot"
-  | "methodology"
-  | "settings";
+  | "mia"
+  | "config";
 
 const SCREEN_META: Record<Screen, { title: string; crumb: string }> = {
-  dashboard: { title: "Dashboard", crumb: "Quanto posso gastar hoje" },
-  totais: { title: "Totais", crumb: "Cálculos do mês" },
-  anuais: { title: "Visão anual", crumb: "O ano inteiro" },
-  "ano-inteiro": { title: "Ano inteiro", crumb: "Grade dia a dia — 12 meses" },
-  "economia-compare": { title: "Economia comparada", crumb: "Dois anos lado a lado" },
-  horizonte: { title: "Horizonte de saldos", crumb: "Projeção mês a mês" },
-  transactions: { title: "Lançamentos", crumb: "Histórico completo" },
-  tags: { title: "Tags", crumb: "Rótulos do mês" },
-  copilot: { title: "Mia", crumb: "Copiloto" },
-  methodology: { title: "Ajuda", crumb: "Como o Neko calcula" },
-  settings: { title: "Configurações e privacidade", crumb: "Local · este dispositivo" },
+  hoje: { title: "Hoje", crumb: "Quanto posso gastar hoje" },
+  lancamentos: { title: "Lançamentos", crumb: "Seu livro-razão" },
+  mes: { title: "Este mês", crumb: "Como o mês está indo" },
+  ano: { title: "O ano", crumb: "O ano num olhar" },
+  calendario: { title: "Calendário", crumb: "Saúde do saldo dia a dia" },
+  horizonte: { title: "Horizonte", crumb: "Para onde o saldo vai" },
+  tags: { title: "Tags", crumb: "Gasto por tag" },
+  mia: { title: "Mia", crumb: "Sua copilota financeira" },
+  config: { title: "Configurações", crumb: "Conexão e privacidade" },
 };
 
 interface NavItem {
@@ -54,41 +50,44 @@ interface NavItem {
   icon: typeof LayoutDashboard;
 }
 
-// Início = o que se toca em toda conferência noturna (<30s). Análise = visões diagnósticas.
-const NAV_PRIMARY: NavItem[] = [
-  { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { key: "transactions", label: "Lançamentos", icon: Receipt },
-];
-
-const NAV_ANALYSIS: NavItem[] = [
-  { key: "totais", label: "Totais", icon: Calculator },
-  { key: "anuais", label: "Anual", icon: TrendingUp },
-  { key: "ano-inteiro", label: "Ano inteiro", icon: LayoutList },
-  { key: "economia-compare", label: "Economia comparada", icon: GitCompareArrows },
+const NAV_FINANCAS: NavItem[] = [
+  { key: "hoje", label: "Hoje", icon: LayoutDashboard },
+  { key: "lancamentos", label: "Lançamentos", icon: Receipt },
+  { key: "mes", label: "Este mês", icon: Calculator },
+  { key: "ano", label: "O ano", icon: TrendingUp },
+  { key: "calendario", label: "Calendário", icon: LayoutList },
   { key: "horizonte", label: "Horizonte", icon: CalendarRange },
   { key: "tags", label: "Tags", icon: TagsIcon },
 ];
 
-/** Item de navegação da barra lateral. Vocabulário único reusado pelos três grupos. */
+const NAV_SISTEMA: NavItem[] = [
+  { key: "mia", label: "Mia", icon: Sparkles },
+  { key: "config", label: "Configurações", icon: Settings },
+];
+
+/** Item da barra lateral. Dica numérica opcional (saldo de hoje, performance do mês). */
 function NavButton({
   item,
   active,
   onNavigate,
+  hint,
 }: {
   item: NavItem;
   active: Screen;
   onNavigate: (screen: Screen) => void;
+  hint?: string | undefined;
 }) {
   const Icon = item.icon;
   return (
     <button
       type="button"
-      className={`ak-item ${active === item.key ? "ak-item--active" : ""}`}
+      className={`sh-item ${active === item.key ? "sh-item--active" : ""}`}
       aria-current={active === item.key ? "page" : undefined}
       onClick={() => onNavigate(item.key)}
     >
-      <Icon size={18} strokeWidth={1.75} className="ak-item__ic" />
+      <Icon size={18} strokeWidth={1.75} className="sh-item__ic" />
       <span>{item.label}</span>
+      {hint ? <span className="sh-item__hint">{hint}</span> : null}
     </button>
   );
 }
@@ -96,39 +95,27 @@ function NavButton({
 export function AppShell({
   active,
   onNavigate,
-  onSearch,
   authStatus,
   children,
-  onQuickAdd,
+  onCompose,
+  hints,
 }: {
   active: Screen;
   onNavigate: (screen: Screen) => void;
-  onSearch: (query: string) => void;
   authStatus: AuthStatus;
   children: React.ReactNode;
-  /** Chamado ao pressionar "N" (fora de campos de texto). O App leva o foco ao check-in rápido. */
-  onQuickAdd?: () => void;
+  /** Abre o compositor de lançamento (botão "Lançar" e atalho "N"). */
+  onCompose?: () => void;
+  /** Dicas numéricas da nav: { hoje: "R$ 27,17", mes: "R$ 1,2 mil" }. */
+  hints?: Partial<Record<Screen, string>>;
 }) {
-  const [searchDraft, setSearchDraft] = useState("");
-  const searchRef = useRef<HTMLInputElement>(null);
   const meta = SCREEN_META[active];
   const connected = authStatus === "connected";
-  const isMac =
-    typeof navigator !== "undefined" && /mac/i.test(navigator.platform ?? "");
 
-  // O atalho "N" só dispara um callback que vem do pai (fluxo de dados para baixo). useEffectEvent
-  // lê o `onQuickAdd` mais recente sem virar dependência — o listener de teclado assina só no mount.
-  const triggerQuickAdd = useEffectEvent(() => onQuickAdd?.());
-
+  // Atalho "N" = novo lançamento (lê o callback mais recente via useEffectEvent; assina só no mount).
+  const triggerCompose = useEffectEvent(() => onCompose?.());
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        searchRef.current?.focus();
-        searchRef.current?.select();
-        return;
-      }
-      // "N" = novo lançamento rápido: só sem modificadores e fora de campos de texto/seleção.
       if (
         e.key === "n" &&
         !e.metaKey &&
@@ -139,7 +126,7 @@ export function AppShell({
         !(e.target instanceof HTMLSelectElement)
       ) {
         e.preventDefault();
-        triggerQuickAdd();
+        triggerCompose();
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -147,122 +134,91 @@ export function AppShell({
   }, []);
 
   return (
-    <div className="ak">
-      <aside className="ak-side">
-        <div className="ak-brand">
-          <span className="ak-brand__mark">
-            <NekoMark width={26} height={26} />
+    <div className="sh">
+      <aside className="sh-side">
+        <div className="sh-brand">
+          <span className="sh-brand__mark">
+            <NekoMark width={30} height={30} />
           </span>
-          <span className="ak-brand__name">Neko</span>
-          <span className="ak-brand__tag">
-            <Lock size={11} strokeWidth={1.75} />
+          <span className="sh-brand__name">Neko</span>
+          <span className="sh-brand__tag">
+            <Lock size={10} strokeWidth={2} />
             Local
           </span>
         </div>
 
-        <nav className="ak-nav" aria-label="Navegação principal">
-          <div className="ak-navh">Início</div>
-          {NAV_PRIMARY.map((n) => (
+        <nav className="sh-nav" aria-label="Navegação principal">
+          <div className="sh-navh">Finanças</div>
+          {NAV_FINANCAS.map((n) => (
+            <NavButton
+              key={n.key}
+              item={n}
+              active={active}
+              onNavigate={onNavigate}
+              hint={hints?.[n.key]}
+            />
+          ))}
+          <div className="sh-navh">Sistema</div>
+          {NAV_SISTEMA.map((n) => (
             <NavButton key={n.key} item={n} active={active} onNavigate={onNavigate} />
           ))}
-
-          <div className="ak-navh">Análise</div>
-          {NAV_ANALYSIS.map((n) => (
-            <NavButton key={n.key} item={n} active={active} onNavigate={onNavigate} />
-          ))}
-
-          <div className="ak-navh">Sistema</div>
-          <NavButton
-            item={{
-              key: "settings",
-              label: "Configurações e privacidade",
-              icon: Settings,
-            }}
-            active={active}
-            onNavigate={onNavigate}
-          />
-          {/* Metodologia rebaixada: doc estático acessível por "Ajuda", não mais um par das telas do dia. */}
-          <NavButton
-            item={{ key: "methodology", label: "Ajuda", icon: HelpCircle }}
-            active={active}
-            onNavigate={onNavigate}
-          />
-          {/* Mia ainda é um stub ("Em desenvolvimento") → entra aqui, não compete com as telas diárias. */}
-          <NavButton
-            item={{ key: "copilot", label: "Mia", icon: Sparkles }}
-            active={active}
-            onNavigate={onNavigate}
-          />
         </nav>
 
-        <div className="ak-side__foot">
+        <div className="sh-foot">
           <button
             type="button"
-            className="ak-conn ak-conn--btn"
-            onClick={() => onNavigate("settings")}
+            className="sh-conn"
+            onClick={() => onNavigate("config")}
             title="Gerenciar conexão em Configurações"
           >
-            <span className={`ak-conn__ic ${connected ? "" : "ak-conn__ic--off"}`}>
+            <span className={`sh-conn__ic ${connected ? "" : "sh-conn__ic--off"}`}>
               {connected ? (
-                <Table2 size={14} strokeWidth={1.75} />
+                <Table2 size={15} strokeWidth={1.75} />
               ) : (
-                <Unlink size={14} strokeWidth={1.75} />
+                <Unlink size={15} strokeWidth={1.75} />
               )}
             </span>
-            <span className="ak-conn__txt">
-              <span className="ak-conn__t">Google Sheets</span>
-              <span className="ak-conn__s">
+            <span>
+              <span className="sh-conn__t" style={{ display: "block" }}>
+                {connected ? "Planilha conectada" : "Planilha"}
+              </span>
+              <span className="sh-conn__s">
                 {authStatus === "connected"
-                  ? "Conectado"
+                  ? "Sincronizada há 2 min"
                   : authStatus === "expired"
                     ? "Sessão expirada"
                     : authStatus === "loading"
                       ? "Verificando…"
-                      : "Desconectado"}
+                      : "Desconectada"}
               </span>
             </span>
           </button>
         </div>
       </aside>
 
-      <main className="ak-main">
-        <header className="ak-top">
-          <div className="ak-top__titles">
-            <div className="ak-top__title">{meta.title}</div>
-            <div className="ak-top__crumb">{meta.crumb}</div>
+      <main className="sh-main">
+        <header className="sh-top">
+          <div>
+            <div className="sh-top__title">{meta.title}</div>
+            <div className="sh-top__crumb">{meta.crumb}</div>
           </div>
-          <div className="ak-spacer" />
-          <form
-            className="ak-search"
-            role="search"
-            onSubmit={(e) => {
-              e.preventDefault();
-              onSearch(searchDraft);
-            }}
+          <div className="sh-spacer" />
+          <Button
+            size="sm"
+            variant="primary"
+            iconLeft={<Plus size={15} strokeWidth={2} />}
+            onClick={() => onCompose?.()}
           >
-            <Search size={15} strokeWidth={1.75} />
-            <input
-              ref={searchRef}
-              aria-label="Buscar lançamentos"
-              placeholder="Buscar lançamentos…"
-              type="search"
-              value={searchDraft}
-              onChange={(e) => setSearchDraft(e.target.value)}
-            />
-            <kbd className="ak-kbd" aria-hidden="true">
-              {isMac ? "⌘K" : "Ctrl K"}
-            </kbd>
-          </form>
-          {/* Atalho global de novo lançamento (foca o check-in do dashboard). Pista discreta. */}
-          <span className="ak-kbd-hint" title="Novo lançamento (N)">
-            <kbd className="ak-kbd" aria-hidden="true">
-              N
-            </kbd>
-            <span style={SR_ONLY}>Atalho N: novo lançamento</span>
-          </span>
+            Lançar
+          </Button>
           <ThemeToggle />
+          <button type="button" className="sh-iconbtn" aria-label="Notificações">
+            <Bell size={17} strokeWidth={1.75} />
+          </button>
         </header>
-        <div className="ak-body">{children}</div>
+        <div className="sh-body">
+          <div className="sh-bodyinner">{children}</div>
+        </div>
       </main>
     </div>
   );

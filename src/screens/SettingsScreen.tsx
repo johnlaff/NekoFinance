@@ -1,20 +1,28 @@
+import "./config.css";
 import { useEffect, useReducer, useState } from "react";
 import {
   Bell,
+  Database,
   FileUp,
   HardDrive,
   Landmark,
-  Link2,
-  ListTree,
+  Link,
+  Lock,
   Plus,
-  SlidersHorizontal,
+  RefreshCw,
+  Settings,
+  Shield,
+  Sparkles,
   X,
-  type LucideIcon,
 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
+import { PocketsCard } from "../features/pockets/PocketsCard";
 import { PocketsManager } from "../features/pockets/PocketsManager";
+import { ConflictGate } from "../features/reconcile/ConflictGate";
 import { GoogleSheetsPanel } from "../features/sheets/GoogleSheetsPanel";
 import { LocalXlsxImport } from "../features/sheets/LocalXlsxImport";
+import { WriteBackPending } from "./dashboard/WriteBackPending";
+import { useWriteBackPending } from "../hooks/useWriteBackPending";
 import {
   backupDatabase,
   getAppInfo,
@@ -35,7 +43,10 @@ import { useCommand } from "../lib/useCommand";
 import { Button } from "../design-system/components/Button";
 import { SegmentedControl } from "../design-system/components/SegmentedControl";
 
-// Estilo estático do campo de horário (React Compiler: nunca inline em JSX).
+// ---------------------------------------------------------------------------
+// Inline styles (hoisted — React Compiler: never inline in JSX)
+// ---------------------------------------------------------------------------
+
 const TIME_INPUT_STYLE: React.CSSProperties = {
   fontFamily: "var(--font-money)",
   fontSize: "var(--fs-body)",
@@ -47,7 +58,6 @@ const TIME_INPUT_STYLE: React.CSSProperties = {
   height: "var(--hit-min)",
 };
 
-// Estilo estático do campo de teto diário (React Compiler: nunca inline em JSX).
 const TETO_INPUT_STYLE: React.CSSProperties = {
   fontFamily: "var(--font-money)",
   fontSize: "var(--fs-body)",
@@ -60,14 +70,11 @@ const TETO_INPUT_STYLE: React.CSSProperties = {
   width: "10ch",
 };
 
-// Linha de controle do teto (input + botão lado a lado). Estática/hoistada.
 const TETO_CTL_STYLE: React.CSSProperties = {
   display: "flex",
   gap: "var(--space-2)",
   alignItems: "center",
 };
-
-// --- Estilos da quebra por categoria do Diário (plano 045). Hoistados (React Compiler). ---
 
 const CAT_ROW_STYLE: React.CSSProperties = {
   display: "flex",
@@ -148,24 +155,72 @@ const CAT_FIELDSET_STYLE: React.CSSProperties = {
   padding: "var(--space-3) 0 0",
 };
 
-/**
- * Configurações do lembrete diário: liga/desliga e horário preferido.
- * Persiste em `app_setting` via os comandos existentes. Disponível só no shell
- * desktop (isTauri). Além do laço em-app (dispara com o app aberto), registra um
- * agendamento no nível do sistema (plano 039) para o aviso disparar mesmo com o
- * app fechado. O registro no sistema é melhor-esforço: o laço em-app é o fallback,
- * então uma falha ali apenas mostra um aviso, sem bloquear o salvamento.
- */
+// ---------------------------------------------------------------------------
+// Toggle switch — matches the redesign's .sw/.sw__k exactly
+// ---------------------------------------------------------------------------
+
+function Toggle({
+  on,
+  onClick,
+  label,
+}: {
+  on: boolean;
+  onClick: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      className={"sw " + (on ? "on" : "off")}
+      onClick={onClick}
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+    >
+      <span className="sw__k" />
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// cfg-item row helper — mirrors the redesign's `item()` closure
+// ---------------------------------------------------------------------------
+
+function CfgItem({
+  icon: Icon,
+  title,
+  sub,
+  right,
+}: {
+  icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
+  title: string;
+  sub: string;
+  right?: React.ReactNode;
+}) {
+  return (
+    <div className="cfg-item">
+      <span className="cfg-item__ic">
+        <Icon size={17} strokeWidth={1.75} />
+      </span>
+      <div>
+        <div className="cfg-item__t">{title}</div>
+        <div className="cfg-item__s">{sub}</div>
+      </div>
+      {right != null ? <span className="cfg-item__r">{right}</span> : null}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// DailyReminderSection — OS-level reminder toggle + time picker
+// ---------------------------------------------------------------------------
+
 function DailyReminderSection() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [time, setTime] = useState("20:00");
   const [saving, setSaving] = useState(false);
-  // Aviso não-bloqueante quando o agendamento no nível do sistema falha (ex.: plataforma
-  // ainda sem suporte). O lembrete em-app continua funcionando como fallback.
   const [osWarn, setOsWarn] = useState<string | null>(null);
 
-  // Carrega as configurações atuais na montagem. Uma falha de leitura mantém o
-  // padrão (ligado, 20:00) em vez de quebrar a tela — leitura de KV não é crítica.
   useEffect(() => {
     if (!isTauri) return;
     void (async () => {
@@ -174,16 +229,14 @@ function DailyReminderSection() {
           getAppSetting("daily_reminder_enabled"),
           getAppSetting("daily_reminder_time"),
         ]);
-        setEnabled(en !== "false"); // ausente = ligado por padrão
+        setEnabled(en !== "false");
         if (t) setTime(t);
       } catch {
-        setEnabled(true); // assume o padrão e segue renderizando a seção
+        setEnabled(true);
       }
     })();
   }, []);
 
-  // Sincroniza o agendamento no nível do sistema com o estado atual. Melhor-esforço:
-  // nunca lança; uma falha vira só um aviso (o laço em-app cobre o caso).
   async function syncOsReminder(on: boolean, at: string) {
     try {
       if (on) await registerOsReminder(at);
@@ -204,7 +257,6 @@ function DailyReminderSection() {
     setEnabled(next);
     setSaving(true);
     await setAppSetting("daily_reminder_enabled", next ? "true" : "false");
-    // Liga → agenda no horário atual; desliga → remove o agendamento do sistema.
     await syncOsReminder(next, time);
     setSaving(false);
   }
@@ -214,27 +266,29 @@ function DailyReminderSection() {
     setTime(val);
     setSaving(true);
     await setAppSetting("daily_reminder_time", val);
-    // Reagenda no novo horário (idempotente — sobrescreve a entrada existente).
     if (enabled) await syncOsReminder(true, val);
     setSaving(false);
   }
 
-  if (!isTauri) return null;
-  if (enabled === null) return null; // ainda carregando
+  if (!isTauri || enabled === null) return null;
 
   return (
-    <Section
-      icon={Bell}
-      title="Lembrete diário"
-      sub="Notificação nativa no horário escolhido — dispara mesmo com o app fechado."
-    >
-      <div className="set-panel">
-        <div className="set-row">
-          <div className="set-row__main">
-            <div className="set-row__t">Ativar lembrete</div>
-            <div className="set-row__d">
-              Envia uma notificação nativa no horário escolhido — agendada no sistema
-              para disparar mesmo com o Neko fechado.
+    <section className="card">
+      <div className="card__head">
+        <span className="card__title">
+          <Bell size={16} strokeWidth={1.75} className="ic" />
+          Notificações
+        </span>
+      </div>
+      <div className="cfg-sec">
+        <div className="cfg-item">
+          <span className="cfg-item__ic">
+            <Bell size={17} strokeWidth={1.75} />
+          </span>
+          <div>
+            <div className="cfg-item__t">Lembrete diário</div>
+            <div className="cfg-item__s">
+              Notificação nativa no horário escolhido — dispara mesmo com o app fechado.
               {osWarn ? (
                 <strong role="alert" style={{ color: "var(--brass-400)" }}>
                   {" "}
@@ -243,7 +297,7 @@ function DailyReminderSection() {
               ) : null}
             </div>
           </div>
-          <div className="set-row__ctl">
+          <span className="cfg-item__r">
             <SegmentedControl
               options={[
                 { value: "on", label: "Ligado" },
@@ -255,15 +309,18 @@ function DailyReminderSection() {
               disabled={saving}
               ariaLabel="Ativar ou desativar lembrete diário"
             />
-          </div>
+          </span>
         </div>
-        {enabled && (
-          <div className="set-row">
-            <div className="set-row__main">
-              <div className="set-row__t">Horário</div>
-              <div className="set-row__d">Hora local (24 h) para receber o aviso.</div>
+        {enabled ? (
+          <div className="cfg-item">
+            <span className="cfg-item__ic">
+              <Bell size={17} strokeWidth={1.75} />
+            </span>
+            <div>
+              <div className="cfg-item__t">Horário</div>
+              <div className="cfg-item__s">Hora local (24 h) para receber o aviso.</div>
             </div>
-            <div className="set-row__ctl">
+            <span className="cfg-item__r">
               <input
                 type="time"
                 value={time}
@@ -272,28 +329,24 @@ function DailyReminderSection() {
                 style={TIME_INPUT_STYLE}
                 aria-label="Horário do lembrete diário"
               />
-            </div>
+            </span>
           </div>
-        )}
+        ) : null}
       </div>
-    </Section>
+    </section>
   );
 }
 
-/**
- * Configura o teto de gasto Diário por dia (para quem gasta no variável, não só no crédito).
- * Persiste em `daily_budget` via `upsert_daily_budget`; quando zerado, o engine usa o
- * fallback de média do mês anterior — nenhum teto explícito. Um valor de exibição é guardado
- * em `app_setting` só para pré-preencher o campo no próximo mount.
- * Disponível somente no shell desktop (isTauri).
- */
+// ---------------------------------------------------------------------------
+// DailyTetoCeilingSection — daily spend ceiling input
+// ---------------------------------------------------------------------------
+
 function DailyTetoCeilingSection() {
   const [raw, setRaw] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Carrega o teto exibido na montagem para pré-preencher o campo.
   useEffect(() => {
     if (!isTauri) return;
     void (async () => {
@@ -301,15 +354,13 @@ function DailyTetoCeilingSection() {
         const val = await getAppSetting("daily_diario_ceiling_display");
         if (val) setRaw(val);
       } catch {
-        // leitura não-crítica; ignora
+        // non-critical
       }
     })();
   }, []);
 
-  // Sem `finally` de propósito: o React Compiler não otimiza componentes com try/finally.
   async function handleSave() {
     const cents = parseBRLToCents(raw);
-    // String em branco vira 0 (desativa o teto). Valor não-parseável é rejeitado.
     const cleared = raw.trim() === "";
     if (!cleared && (cents == null || cents < 0)) {
       setErr(
@@ -323,7 +374,6 @@ function DailyTetoCeilingSection() {
     setSaved(false);
     try {
       await upsertDailyBudget(amountCents);
-      // Guarda o display para restaurar no próximo mount (vazio quando desativado).
       await setAppSetting("daily_diario_ceiling_display", amountCents > 0 ? raw : "");
       setSaving(false);
       setSaved(true);
@@ -336,18 +386,22 @@ function DailyTetoCeilingSection() {
   if (!isTauri) return null;
 
   return (
-    <Section
-      icon={SlidersHorizontal}
-      title="Teto do Diário"
-      sub="Defina quanto pretende gastar por dia no variável. Deixe em branco para usar a média do mês anterior."
-    >
-      <div className="set-panel">
-        <div className="set-row">
-          <div className="set-row__main">
-            <div className="set-row__t">Teto diário (R$)</div>
-            <div className="set-row__d">
-              Orienta a barra de progresso do check-in e o forecast dos dias futuros do
-              mês. Em branco = usar a média do mês anterior automaticamente.
+    <section className="card">
+      <div className="card__head">
+        <span className="card__title">
+          <Settings size={16} strokeWidth={1.75} className="ic" />
+          Teto do Diário
+        </span>
+      </div>
+      <div className="cfg-sec">
+        <div className="cfg-item">
+          <span className="cfg-item__ic">
+            <Settings size={17} strokeWidth={1.75} />
+          </span>
+          <div>
+            <div className="cfg-item__t">Teto diário (R$)</div>
+            <div className="cfg-item__s">
+              Orienta o forecast dos dias futuros. Em branco = média do mês anterior.
               {saved ? <strong> Salvo.</strong> : null}
               {err ? (
                 <strong role="alert" style={{ color: "var(--danger-400)" }}>
@@ -357,7 +411,7 @@ function DailyTetoCeilingSection() {
               ) : null}
             </div>
           </div>
-          <div className="set-row__ctl" style={TETO_CTL_STYLE}>
+          <span className="cfg-item__r" style={TETO_CTL_STYLE}>
             <input
               type="text"
               inputMode="decimal"
@@ -379,30 +433,31 @@ function DailyTetoCeilingSection() {
             >
               {saving ? "Salvando…" : "Salvar"}
             </Button>
-          </div>
+          </span>
         </div>
       </div>
-    </Section>
+    </section>
   );
 }
 
-/** Contador monotônico para chaves estáveis de linha (sobrevive a reordenações sem index-key). */
+// ---------------------------------------------------------------------------
+// DiarioCategorySection — per-category Diário budget breakdown
+// ---------------------------------------------------------------------------
+
 let catRowSeq = 0;
 function nextCatKey(): string {
   catRowSeq += 1;
   return `cat-${catRowSeq}`;
 }
 
-/** Uma linha editável da quebra por categoria do Diário (rascunho no form). */
 interface CatDraft {
-  /** Chave estável de render (não persistida); evita o uso do índice como key. */
   key: string;
   name: string;
-  amount: string; // string pt-BR editável; convertida em centavos no save
+  amount: string;
 }
 
 interface DiarioCatState {
-  total: string; // teto mensal do Diário (R$), string editável
+  total: string;
   rows: CatDraft[];
   loading: boolean;
   saving: boolean;
@@ -465,12 +520,10 @@ function diarioCatReducer(s: DiarioCatState, a: DiarioCatAction): DiarioCatState
   }
 }
 
-/** Centavos → string editável pt-BR ("1234,50"), que `parseBRLToCents` lê de volta limpo. */
 function centsToBRLInput(cents: number): string {
   return (cents / 100).toFixed(2).replace(".", ",");
 }
 
-/** Categorias-exemplo genéricas (não são termos proprietários de método). */
 const DIARIO_CAT_PLACEHOLDERS = [
   "Alimentação",
   "Transporte",
@@ -479,16 +532,9 @@ const DIARIO_CAT_PLACEHOLDERS = [
   "Outros",
 ];
 
-/**
- * Quebra por categoria do orçamento Diário (plano 045): lista de categorias nomeadas com um alvo
- * mensal cada, cuja soma forma o teto mensal do Diário. O teto/dia é `total ÷ dias do mês corrente`,
- * computado aqui só para exibição — o engine continua lendo o `daily_budget.amount` (escrito junto).
- * Persiste via `upsertDailyBudgetWithCategories`. Disponível só no shell desktop.
- */
 function DiarioCategorySection() {
   const [s, dispatch] = useReducer(diarioCatReducer, DIARIO_CAT_INITIAL);
 
-  // Carrega a quebra atual na montagem (não-crítico: falha mantém o estado vazio).
   useEffect(() => {
     if (!isTauri) return;
     void (async () => {
@@ -509,7 +555,6 @@ function DiarioCategorySection() {
     })();
   }, []);
 
-  // Dias do mês corrente (para o teto/dia exibido).
   const now = new Date();
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
 
@@ -518,28 +563,24 @@ function DiarioCategorySection() {
     (sum, r) => sum + (parseBRLToCents(r.amount) ?? 0),
     0,
   );
-  // Teto mensal efetivo: o total informado, ou (em branco) a soma das categorias.
   const effectiveTotal =
     totalCents != null && totalCents > 0 ? totalCents : catSumCents;
   const dailyRate = daysInMonth > 0 ? Math.floor(effectiveTotal / daysInMonth) : 0;
-  // Aviso suave (não-bloqueante) quando a soma das categorias diverge do total informado.
   const mismatch =
     totalCents != null &&
     totalCents > 0 &&
     s.rows.length > 0 &&
     catSumCents !== totalCents;
 
-  // Sem `finally` de propósito: o React Compiler não otimiza componentes com try/finally.
   async function handleSave() {
     dispatch({ type: "saveStart" });
-    // O teto mensal gravado é o total informado (ou a soma das categorias quando o total está em branco).
     const amountCents = effectiveTotal;
     const categories: DailyBudgetCategoryInput[] = [];
     for (let i = 0; i < s.rows.length; i++) {
       const r = s.rows[i]!;
       const cents = parseBRLToCents(r.amount);
       const name = r.name.trim();
-      if (name === "" && (cents == null || cents <= 0)) continue; // linha vazia: ignora
+      if (name === "" && (cents == null || cents <= 0)) continue;
       if (cents == null || cents <= 0) {
         dispatch({
           type: "saveErr",
@@ -555,7 +596,6 @@ function DiarioCategorySection() {
     }
     try {
       await upsertDailyBudgetWithCategories(amountCents, categories);
-      // Mantém o display do teto em sync com a seção de teto simples.
       await setAppSetting(
         "daily_diario_ceiling_display",
         amountCents > 0 ? centsToBRLInput(amountCents) : "",
@@ -569,24 +609,31 @@ function DiarioCategorySection() {
     }
   }
 
-  if (!isTauri) return null;
-  if (s.loading) return null;
+  if (!isTauri || s.loading) return null;
 
   return (
-    <Section
-      icon={ListTree}
-      title="Categorias do Diário"
-      sub="Distribua o teto mensal do Diário entre categorias (ex.: Alimentação, Transporte). O teto por dia é a soma ÷ dias do mês."
-    >
-      <div className="set-panel set-panel--pad">
-        <div className="set-row">
-          <div className="set-row__main">
-            <div className="set-row__t">Teto mensal do Diário (R$)</div>
-            <div className="set-row__d">
-              Em branco = usar a soma das categorias abaixo como teto mensal.
-            </div>
+    <section className="card">
+      <div className="card__head">
+        <span className="card__title">
+          <Settings size={16} strokeWidth={1.75} className="ic" />
+          Categorias do Diário
+        </span>
+      </div>
+      <div className="card__body">
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            gap: 12,
+            marginBottom: "var(--space-3)",
+          }}
+        >
+          <div style={{ fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>
+            Distribua o teto mensal entre categorias. Em branco = soma das categorias
+            como teto.
           </div>
-          <div className="set-row__ctl" style={TETO_CTL_STYLE}>
+          <div style={TETO_CTL_STYLE}>
             <input
               type="text"
               inputMode="decimal"
@@ -697,17 +744,19 @@ function DiarioCategorySection() {
           </Button>
         </div>
       </div>
-    </Section>
+    </section>
   );
 }
 
-/** Backup local do banco: escolhe o destino no save dialog nativo e grava via VACUUM INTO. */
+// ---------------------------------------------------------------------------
+// DataBackupRow — backup button row inside Seus dados card
+// ---------------------------------------------------------------------------
+
 function DataBackupRow() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  // Sem `finally` de propósito: o React Compiler não otimiza componentes com try/finally.
   async function doBackup() {
     setMsg(null);
     setErr(null);
@@ -722,7 +771,7 @@ function DataBackupRow() {
       setErr(safeErrorMessage(e, "Não foi possível abrir o seletor de arquivo."));
       return;
     }
-    if (!dest) return; // usuário cancelou
+    if (!dest) return;
     setBusy(true);
     try {
       await backupDatabase(dest);
@@ -735,12 +784,15 @@ function DataBackupRow() {
   }
 
   return (
-    <div className="set-row">
-      <div className="set-row__main">
-        <div className="set-row__t">Backup do banco</div>
-        <div className="set-row__d">
-          Salva uma cópia íntegra (.db) onde você escolher — leve para outro disco ou
-          dispositivo. {msg ? <strong>{msg}</strong> : null}
+    <div className="cfg-item">
+      <span className="cfg-item__ic">
+        <HardDrive size={17} strokeWidth={1.75} />
+      </span>
+      <div>
+        <div className="cfg-item__t">Backup do banco</div>
+        <div className="cfg-item__s">
+          Salva uma cópia íntegra (.db) onde você escolher.{" "}
+          {msg ? <strong>{msg}</strong> : null}
           {err ? (
             <strong role="alert" style={{ color: "var(--danger-400)" }}>
               {err}
@@ -748,7 +800,7 @@ function DataBackupRow() {
           ) : null}
         </div>
       </div>
-      <div className="set-row__ctl">
+      <span className="cfg-item__r">
         <Button
           variant="secondary"
           size="sm"
@@ -757,35 +809,14 @@ function DataBackupRow() {
         >
           {busy ? "Salvando…" : "Fazer backup"}
         </Button>
-      </div>
+      </span>
     </div>
   );
 }
 
-function Section({
-  icon: Icon,
-  title,
-  sub,
-  children,
-}: {
-  icon: LucideIcon;
-  title: string;
-  sub?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section>
-      <div className="set-sec__head">
-        <h2 className="set-sec__title">
-          <Icon size={17} strokeWidth={1.75} className="set-sec__ic" />
-          {title}
-        </h2>
-        {sub ? <div className="set-sec__sub">{sub}</div> : null}
-      </div>
-      {children}
-    </section>
-  );
-}
+// ---------------------------------------------------------------------------
+// Main exported component
+// ---------------------------------------------------------------------------
 
 export function SettingsScreen({
   authStatus,
@@ -795,89 +826,238 @@ export function SettingsScreen({
   onAuthChange: (status: AuthStatus) => void;
 }) {
   const appInfo = useCommand("get_app_info", getAppInfo).data ?? null;
+  const writeBack = useWriteBackPending();
+
+  const [miaLocal, setMiaLocal] = useState(true);
+  const [animacoes, setAnimacoes] = useState(true);
+
+  const isConnected = authStatus === "connected";
 
   return (
-    <div className="set">
-      <Section
-        icon={Link2}
-        title="Conexão Google Sheets"
-        sub="O Neko lê sua planilha. Nada é escrito sem a sua aprovação."
-      >
-        <div className="set-panel set-panel--pad">
+    <div className="xs">
+      <div className="xs-title">Configurações e privacidade</div>
+
+      {/* ── Planilha conectada ─────────────────────────────────── */}
+      <section className="card">
+        <div className="card__head">
+          <span className="card__title">
+            <Database size={16} strokeWidth={1.75} className="ic" />
+            Planilha conectada
+          </span>
+        </div>
+        <div className="cfg-sec">
+          <CfgItem
+            icon={Link}
+            title="Google Sheets"
+            sub={
+              isConnected
+                ? "Conectado — dados sincronizados com a sua planilha"
+                : authStatus === "loading"
+                  ? "Verificando conexão…"
+                  : "Desconectado"
+            }
+            right={
+              <Button size="sm" variant="ghost" onClick={() => undefined}>
+                {isConnected ? "Gerenciar" : "Reconectar"}
+              </Button>
+            }
+          />
+          <CfgItem
+            icon={Lock}
+            title="Acesso somente leitura"
+            sub="O Neko nunca escreve na planilha sem a sua aprovação"
+            right={<span className="cfg-badge cfg-badge--local">Ativo</span>}
+          />
+        </div>
+        <div className="card__body">
           <GoogleSheetsPanel authStatus={authStatus} onAuthChange={onAuthChange} />
         </div>
-      </Section>
+      </section>
 
-      <Section
-        icon={FileUp}
-        title="Importar arquivo local"
-        sub="Use uma cópia .xlsx da planilha quando não quiser conectar a conta Google."
-      >
-        <div className="set-panel">
-          <div className="set-row">
-            <div className="set-row__main">
-              <div className="set-row__t">Planilha .xlsx</div>
-              <div className="set-row__d">
-                Importa todas as abas, detectando o layout de blocos mensais
-                automaticamente. Linhas já importadas antes são ignoradas.
+      {/* ── Importar arquivo local ─────────────────────────────── */}
+      <section className="card">
+        <div className="card__head">
+          <span className="card__title">
+            <FileUp size={16} strokeWidth={1.75} className="ic" />
+            Importar arquivo local
+          </span>
+        </div>
+        <div className="cfg-sec">
+          <div className="cfg-item">
+            <span className="cfg-item__ic">
+              <FileUp size={17} strokeWidth={1.75} />
+            </span>
+            <div>
+              <div className="cfg-item__t">Planilha .xlsx</div>
+              <div className="cfg-item__s">
+                Importa todas as abas, detectando o layout automaticamente. Linhas já
+                importadas são ignoradas.
               </div>
             </div>
-            <div className="set-row__ctl">
+            <span className="cfg-item__r">
               <LocalXlsxImport />
-            </div>
+            </span>
           </div>
         </div>
-      </Section>
+      </section>
 
-      <Section
-        icon={Landmark}
-        title="Bolsos"
-        sub="Conta, poupança, vale, previdência e FGTS: só dinheiro líquido entra no saldo projetado."
-      >
-        <PocketsManager />
-      </Section>
+      {/* ── Sincronização ──────────────────────────────────────── */}
+      <section className="card">
+        <div className="card__head">
+          <span className="card__title">
+            <RefreshCw size={16} strokeWidth={1.75} className="ic" />
+            Sincronização
+          </span>
+        </div>
+        <div className="card__body">
+          <ConflictGate onResolved={writeBack.refresh} />
+          <WriteBackPending writeBack={writeBack} />
+          {!writeBack.loading &&
+            writeBack.pendingCount === 0 &&
+            writeBack.conflictCount === 0 && (
+              <p
+                style={{
+                  fontSize: "var(--fs-sm)",
+                  color: "var(--text-muted)",
+                  margin: 0,
+                }}
+              >
+                Nenhuma alteração pendente de envio para a planilha.
+              </p>
+            )}
+        </div>
+      </section>
 
+      {/* ── Bolsos ─────────────────────────────────────────────── */}
+      <section className="card">
+        <div className="card__head">
+          <span className="card__title">
+            <Landmark size={16} strokeWidth={1.75} className="ic" />
+            Bolsos
+          </span>
+        </div>
+        <div className="card__body">
+          <PocketsCard />
+          <PocketsManager />
+        </div>
+      </section>
+
+      {/* ── Lembrete diário (desktop only) ────────────────────── */}
       <DailyReminderSection />
 
+      {/* ── Teto do Diário (desktop only) ─────────────────────── */}
       <DailyTetoCeilingSection />
 
+      {/* ── Categorias do Diário (desktop only) ───────────────── */}
       <DiarioCategorySection />
 
-      <Section
-        icon={HardDrive}
-        title="Seus dados"
-        sub="O Neko é local-first: não existe conta Neko nem backend."
-      >
-        <div className="set-panel">
-          <div className="set-row">
-            <div className="set-row__main">
-              <div className="set-row__t">Onde ficam os dados</div>
-              <div className="set-row__d">
+      {/* ── Privacidade ────────────────────────────────────────── */}
+      <section className="card">
+        <div className="card__head">
+          <span className="card__title">
+            <Shield size={16} strokeWidth={1.75} className="ic" />
+            Privacidade
+          </span>
+        </div>
+        <div className="cfg-sec">
+          <CfgItem
+            icon={Lock}
+            title="Tudo neste dispositivo"
+            sub="Seus dados não saem do computador"
+            right={<span className="cfg-badge cfg-badge--local">Local</span>}
+          />
+          <CfgItem
+            icon={Sparkles}
+            title="Mia responde localmente"
+            sub="Sem enviar dados financeiros para a nuvem"
+            right={
+              <Toggle
+                on={miaLocal}
+                onClick={() => setMiaLocal((v) => !v)}
+                label="Mia responde localmente"
+              />
+            }
+          />
+        </div>
+      </section>
+
+      {/* ── Aparência ──────────────────────────────────────────── */}
+      <section className="card">
+        <div className="card__head">
+          <span className="card__title">
+            <Settings size={16} strokeWidth={1.75} className="ic" />
+            Aparência
+          </span>
+        </div>
+        <div className="cfg-sec">
+          <CfgItem
+            icon={Sparkles}
+            title="Animações"
+            sub="Transições e gráficos animados"
+            right={
+              <Toggle
+                on={animacoes}
+                onClick={() => setAnimacoes((v) => !v)}
+                label="Animações"
+              />
+            }
+          />
+        </div>
+      </section>
+
+      {/* ── Seus dados ─────────────────────────────────────────── */}
+      <section className="card">
+        <div className="card__head">
+          <span className="card__title">
+            <HardDrive size={16} strokeWidth={1.75} className="ic" />
+            Seus dados
+          </span>
+        </div>
+        <div className="cfg-sec">
+          <div className="cfg-item">
+            <span className="cfg-item__ic">
+              <HardDrive size={17} strokeWidth={1.75} />
+            </span>
+            <div>
+              <div className="cfg-item__t">Onde ficam os dados</div>
+              <div className="cfg-item__s">
                 Banco SQLite em <code>{appInfo ? appInfo.db_path : "—"}</code>, somente
                 neste dispositivo.
               </div>
             </div>
           </div>
           <DataBackupRow />
-          <div className="set-row">
-            <div className="set-row__main">
-              <div className="set-row__t">Telemetria</div>
-              <div className="set-row__d">
+          <div className="cfg-item">
+            <span className="cfg-item__ic">
+              <Shield size={17} strokeWidth={1.75} />
+            </span>
+            <div>
+              <div className="cfg-item__t">Telemetria</div>
+              <div className="cfg-item__s">
                 O Neko não envia nenhum dado de uso. Suas finanças não saem da sua
                 máquina.
               </div>
             </div>
           </div>
-          <div className="set-row">
-            <div className="set-row__main">
-              <div className="set-row__t">Versão</div>
-              <div className="set-row__d">
+          <div className="cfg-item">
+            <span className="cfg-item__ic">
+              <Settings size={17} strokeWidth={1.75} />
+            </span>
+            <div>
+              <div className="cfg-item__t">Versão</div>
+              <div className="cfg-item__s">
                 Neko Finance {appInfo ? `v${appInfo.version}` : "—"} · Tauri desktop
               </div>
             </div>
           </div>
         </div>
-      </Section>
+      </section>
+
+      {!isTauri ? (
+        <p style={{ fontSize: 12, color: "var(--text-faint)" }}>
+          Preview web — abra o app desktop para ver seus dados reais.
+        </p>
+      ) : null}
     </div>
   );
 }

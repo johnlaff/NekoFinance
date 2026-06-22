@@ -97,5 +97,25 @@ Current app navigation (NOT the readme's stale "9 telas"):
   They use realistic DEMO data (some via Math.random → non-deterministic screenshots), not live data.
 - DS-only primitives (Input, Switch, ChatBubble, Citation) have no production .tsx; reconciled vs app usage.
   Citation is speculative (chat not shipped — Mia is a stub). Re-check if the Mia chat ever ships.
+
+## Reverse flow — redesign → app (2026-06-22)
+
+The user redesigned the app in claude.ai/design (cleaner, less cluttered) under `redesign/` in project
+`77a60fba-0912-49d6-99a0-d86480d05bda` and asked to make the app identical to it. This is the REVERSE of the
+sync above (pull the design DOWN into the app, not push the DS up).
+
+- **Connector used:** the `claude_design` MCP connector is the `DesignSync` tool (endpoint
+  api.anthropic.com/v1/design/mcp), authorized via `/design-login` (scopes user:design:read/write). There is
+  NO separate `claude_design` MCP server in this session — DesignSync IS that connector.
+- **Import mechanism:** `DesignSync get_project` (confirm connected/authorized) + `list_files` +
+  `get_file redesign/Neko.html` (the canonical entry the user named) and the screen sources
+  (`Hoje.jsx`, `Lancamentos.jsx`, `Mes.jsx`, `Ano.jsx`, `Calendario.jsx`, `Horizonte.jsx`, `Compose.jsx`,
+  `Shell.jsx`, `data.jsx`, `Extras.jsx`). Implemented into `src/` (shell + 9 screens + Compose + redesign.css).
+- **Canonical source of truth = `redesign/Neko.html`** in the connector. Its `SCREENS` map (9: hoje,
+  lancamentos, mes, ano, calendario, horizonte, tags, mia, config) + titles/crumbs were verified 1:1 against
+  `src/shell/AppShell.tsx` SCREEN_META (exact match). `NekoShell`→AppShell, `ComposeHost`→Compose. The
+  "Polimento 2026" `#app` CSS overrides were ported into `src/redesign.css` (`.neko-app` scope). `TweaksPanel`
+  is prototype-only (font/density/anim switcher) — intentionally NOT in the app.
+- To re-verify drift later: `DesignSync get_file redesign/Neko.html` and diff its SCREENS/crumbs vs AppShell.
 - The app self-compiles `_ds_manifest.json` from `@dsCard` markers on upload; the uploaded manifest is a
   best-effort copy. Keep `@dsCard` (line 1 of \*.card.html; line 2 of ui_kit index.html) + `@startingPoint` intact.

@@ -1,265 +1,263 @@
+import "./calendario.css";
 import { useState } from "react";
-import { getMonthGrid, type MonthGridDay } from "../lib/api";
+import {
+  getForecast,
+  getAnnualMetrics,
+  isTauri,
+  type ForecastDay,
+  type MonthMetric,
+} from "../lib/api";
 import { useCommand } from "../lib/useCommand";
+import { SegmentedControl } from "../design-system/components/SegmentedControl";
 import { MonthNav } from "../design-system/components/MonthNav";
-import { EmptyState } from "../design-system/components/EmptyState";
-import { Money } from "../design-system/components/Money";
-import { fmtDayMonth } from "../lib/format";
-import { saldoBand, SALDO_BAND_FILL, SALDO_BAND_LABEL } from "../lib/saldoHeatmap";
+import { fmtBRL, fmtCompact, MES, saldoBand } from "../lib/nkFormat";
+import { todayISO } from "../lib/format";
 
-const MONTHS_PT = [
-  "Janeiro",
-  "Fevereiro",
-  "Março",
-  "Abril",
-  "Maio",
-  "Junho",
-  "Julho",
-  "Agosto",
-  "Setembro",
-  "Outubro",
-  "Novembro",
-  "Dezembro",
-] as const;
+const DOW = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
-// Estilos estáticos hoistados fora do componente (convenção do React Compiler).
-const PAGE_STYLE: React.CSSProperties = {
-  maxWidth: 1100,
-  margin: "0 auto",
-  padding: "var(--space-2)",
-};
-const HEADER_STYLE: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  gap: "var(--space-4)",
-  marginBottom: "var(--space-6)",
-  flexWrap: "wrap",
-};
-const H1_STYLE: React.CSSProperties = {
-  fontSize: "var(--fs-h2)",
-  fontWeight: "var(--fw-bold)",
-  letterSpacing: "var(--ls-tight)",
-  margin: 0,
-};
-const SUBTITLE_STYLE: React.CSSProperties = {
-  color: "var(--text-muted)",
-  fontSize: "var(--fs-sm)",
-  margin: "var(--space-1) 0 0",
-};
-const SECTIONS_STYLE: React.CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  gap: "var(--space-6)",
-};
-const H2_STYLE: React.CSSProperties = {
-  fontSize: "var(--fs-title)",
-  fontWeight: "var(--fw-bold)",
-  margin: "0 0 var(--space-3)",
-  color: "var(--text-strong)",
-};
-const BODY_STYLE: React.CSSProperties = { padding: 0 };
-const TH_STYLE: React.CSSProperties = {
-  textAlign: "right",
-  fontSize: "var(--fs-label)",
-  fontWeight: "var(--fw-semibold)",
-  letterSpacing: "var(--ls-label)",
-  textTransform: "uppercase",
-  color: "var(--text-muted)",
-  padding: "var(--space-2) var(--space-3)",
-  whiteSpace: "nowrap",
-};
-const TD_DATE: React.CSSProperties = {
-  padding: "var(--space-2) var(--space-3)",
-  whiteSpace: "nowrap",
-};
-const TD_NUM: React.CSSProperties = {
-  textAlign: "right",
-  padding: "var(--space-2) var(--space-3)",
-  whiteSpace: "nowrap",
-};
-const TD_SALDO_EMPTY: React.CSSProperties = {
-  ...TD_NUM,
-  color: "var(--text-faint)",
-};
+const SEG_OPTIONS = [
+  { value: "mes", label: "Mês" },
+  { value: "ano", label: "Ano inteiro" },
+];
 
-interface MonthGrid {
-  month: number;
-  label: string;
-  loading: boolean;
-  data: MonthGridDay[];
+/** Builds the day-of-month matrix for a given year/month (0-based month index).
+ *  Returns an array of day numbers (1-N) or null for empty leading/trailing cells.
+ *  The first column is Sunday (index 0). */
+function monthMatrix(year: number, month: number): (number | null)[] {
+  const dim = new Date(year, month + 1, 0).getDate();
+  const firstWeekday = new Date(year, month, 1).getDay(); // 0=Sun
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < firstWeekday; i++) cells.push(null);
+  for (let d = 1; d <= dim; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+  return cells;
 }
+
+/** Build an ISO date string from year, 0-based month, and day number. */
+function isoDate(year: number, month: number, day: number): string {
+  const mm = String(month + 1).padStart(2, "0");
+  const dd = String(day).padStart(2, "0");
+  return `${year}-${mm}-${dd}`;
+}
+
+/** Index ForecastDay[] into a Map keyed by ISO date for O(1) lookup. */
+function indexByDate(days: ForecastDay[]): Map<string, ForecastDay> {
+  const m = new Map<string, ForecastDay>();
+  for (const d of days) m.set(d.date, d);
+  return m;
+}
+
+const LEGEND = (
+  <div className="cal-legend">
+    <span>
+      <i style={{ background: "var(--saldo-band-comfortable-fill)" }} />
+      Folga
+    </span>
+    <span>
+      <i style={{ background: "var(--saldo-band-ok-fill)" }} />
+      OK
+    </span>
+    <span>
+      <i style={{ background: "var(--saldo-band-tight-fill)" }} />
+      Apertado
+    </span>
+    <span>
+      <i style={{ background: "var(--saldo-band-negative-fill)" }} />
+      Negativo
+    </span>
+    <span>
+      <i style={{ background: "var(--saldo-band-critical-fill)" }} />
+      Crítico
+    </span>
+  </div>
+);
 
 export function YearGridScreen() {
-  const thisYear = new Date().getFullYear();
-  const [year, setYear] = useState(thisYear);
+  const TODAY = todayISO();
+  const thisYear = parseInt(TODAY.slice(0, 4), 10);
+  const thisMonth = parseInt(TODAY.slice(5, 7), 10) - 1; // 0-based
 
-  // 12 fetches paralelos — um por mês. As chaves embutem ano e mês, então mudar
-  // o ano gera chaves novas e dispara buscas frescas. As setas nunca mudam de
-  // número entre renders (sempre exatamente 12), respeitando as Rules of Hooks.
-  const m01 = useCommand(`month_grid:${year}-01`, () => getMonthGrid(year, 1));
-  const m02 = useCommand(`month_grid:${year}-02`, () => getMonthGrid(year, 2));
-  const m03 = useCommand(`month_grid:${year}-03`, () => getMonthGrid(year, 3));
-  const m04 = useCommand(`month_grid:${year}-04`, () => getMonthGrid(year, 4));
-  const m05 = useCommand(`month_grid:${year}-05`, () => getMonthGrid(year, 5));
-  const m06 = useCommand(`month_grid:${year}-06`, () => getMonthGrid(year, 6));
-  const m07 = useCommand(`month_grid:${year}-07`, () => getMonthGrid(year, 7));
-  const m08 = useCommand(`month_grid:${year}-08`, () => getMonthGrid(year, 8));
-  const m09 = useCommand(`month_grid:${year}-09`, () => getMonthGrid(year, 9));
-  const m10 = useCommand(`month_grid:${year}-10`, () => getMonthGrid(year, 10));
-  const m11 = useCommand(`month_grid:${year}-11`, () => getMonthGrid(year, 11));
-  const m12 = useCommand(`month_grid:${year}-12`, () => getMonthGrid(year, 12));
+  const [tab, setTab] = useState<string>("mes");
+  const [off, setOff] = useState(0);
 
-  const grids: MonthGrid[] = [
-    { month: 1, label: MONTHS_PT[0], loading: m01.loading, data: m01.data ?? [] },
-    { month: 2, label: MONTHS_PT[1], loading: m02.loading, data: m02.data ?? [] },
-    { month: 3, label: MONTHS_PT[2], loading: m03.loading, data: m03.data ?? [] },
-    { month: 4, label: MONTHS_PT[3], loading: m04.loading, data: m04.data ?? [] },
-    { month: 5, label: MONTHS_PT[4], loading: m05.loading, data: m05.data ?? [] },
-    { month: 6, label: MONTHS_PT[5], loading: m06.loading, data: m06.data ?? [] },
-    { month: 7, label: MONTHS_PT[6], loading: m07.loading, data: m07.data ?? [] },
-    { month: 8, label: MONTHS_PT[7], loading: m08.loading, data: m08.data ?? [] },
-    { month: 9, label: MONTHS_PT[8], loading: m09.loading, data: m09.data ?? [] },
-    { month: 10, label: MONTHS_PT[9], loading: m10.loading, data: m10.data ?? [] },
-    { month: 11, label: MONTHS_PT[10], loading: m11.loading, data: m11.data ?? [] },
-    { month: 12, label: MONTHS_PT[11], loading: m12.loading, data: m12.data ?? [] },
-  ];
+  // Clamp month offset to valid range (0–11).
+  const rawMonth = thisMonth + off;
+  const clampedMonth = Math.max(0, Math.min(11, rawMonth));
 
-  return (
-    <div style={PAGE_STYLE}>
-      <header style={HEADER_STYLE}>
-        <div>
-          <h1 style={H1_STYLE}>Ano inteiro</h1>
-          <p style={SUBTITLE_STYLE}>
-            Grade Data · Entrada · Saída · Diário · Saldo para cada mês de {year}.
-          </p>
-        </div>
-        <MonthNav
-          label={String(year)}
-          onPrev={() => setYear((y) => y - 1)}
-          onNext={() => setYear((y) => y + 1)}
-          onToday={() => setYear(thisYear)}
-          atToday={year === thisYear}
-          prevLabel="Ano anterior"
-          nextLabel="Próximo ano"
-        />
-      </header>
+  // Tauri data: forecast gives per-day balance for the heatmap.
+  const forecastQ = useCommand("get_forecast", getForecast);
+  const forecast = forecastQ.data;
+  const dailyAll: ForecastDay[] = forecast?.daily ?? [];
+  const balanceMap = indexByDate(dailyAll);
 
-      <div style={SECTIONS_STYLE}>
-        {grids.map((g) => (
-          <MonthSection
-            key={g.month}
-            label={g.label}
-            loading={g.loading}
-            grid={g.data}
+  // Annual metrics for the year-view month summaries.
+  const annualQ = useCommand(`get_annual_metrics:${thisYear}`, () =>
+    getAnnualMetrics(thisYear),
+  );
+  const annualMetrics: MonthMetric[] = annualQ.data?.months ?? [];
+  // Index by 0-based month for quick lookup (API months are 1-based).
+  const monthMetricMap = new Map<number, MonthMetric>();
+  for (const mm of annualMetrics) monthMetricMap.set(mm.month - 1, mm);
+
+  // ---- Year view ----
+  if (tab === "ano") {
+    return (
+      <div className="cal">
+        <div className="cal-head">
+          <div className="cal-title">Ano inteiro · {thisYear}</div>
+          <SegmentedControl
+            size="sm"
+            ariaLabel="Visão"
+            value={tab}
+            onChange={setTab}
+            options={SEG_OPTIONS}
           />
-        ))}
+        </div>
+        <section className="card">
+          <div style={{ padding: "16px 18px 0" }}>{LEGEND}</div>
+          <div className="cal-year">
+            {MES.map((name, m) => {
+              const cells = monthMatrix(thisYear, m);
+              const metric = monthMetricMap.get(m);
+              const perf = metric?.performance_cents ?? null;
+              return (
+                <div key={m}>
+                  <div className="cal-mini__h">
+                    <span>{name}</span>
+                    {perf != null ? (
+                      <span
+                        className="cal-mini__perf"
+                        style={{
+                          color: perf >= 0 ? "var(--money-pos)" : "var(--money-neg)",
+                        }}
+                      >
+                        {fmtCompact(perf)}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="cal-mini__grid">
+                    {cells.map((d, i) => {
+                      if (d == null) return <span key={i} />;
+                      const iso = isoDate(thisYear, m, d);
+                      const row = balanceMap.get(iso);
+                      const band = saldoBand(row?.balance_cents ?? null);
+                      const future = iso > TODAY;
+                      return (
+                        <span
+                          key={i}
+                          className={
+                            "cal-mini__cell" +
+                            (iso === TODAY ? " cal-mini__cell--today" : "")
+                          }
+                          title={`${String(d).padStart(2, "0")}/${String(m + 1).padStart(2, "0")} · ${row != null ? fmtBRL(row.balance_cents) : "—"}`}
+                          style={{
+                            background:
+                              band.fill === "transparent"
+                                ? "var(--bg-subtle)"
+                                : band.fill,
+                            opacity: future ? 0.45 : 1,
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+        {!isTauri && (
+          <p style={{ color: "var(--text-faint)", fontSize: 12 }}>
+            Preview web — abra o app desktop para ver seus dados.
+          </p>
+        )}
       </div>
-    </div>
-  );
-}
+    );
+  }
 
-// Puramente apresentacional — sem estado, sem efeitos (React Compiler friendly).
-function MonthSection({
-  label,
-  loading,
-  grid,
-}: {
-  label: string;
-  loading: boolean;
-  grid: MonthGridDay[];
-}) {
-  const hasData = grid.some(
-    (d) =>
-      d.income_cents ||
-      d.fixed_out_cents ||
-      d.daily_out_cents ||
-      d.balance_cents != null,
-  );
+  // ---- Month view ----
+  const m = clampedMonth;
+  const cells = monthMatrix(thisYear, m);
+  const atToday = m === thisMonth;
 
   return (
-    <section aria-label={label}>
-      <h2 style={H2_STYLE}>{label}</h2>
-      <div className="dash-card">
-        <div className="dash-card__body" style={BODY_STYLE}>
-          {loading ? (
-            <EmptyState variant="skeleton" skeletonRows={5} />
-          ) : !hasData ? (
-            <EmptyState
-              variant="empty"
-              title="Sem lançamentos"
-              description="Nenhum dado importado para este mês."
-            />
-          ) : (
-            <div className="fc-scroll">
-              <table className="txn-table fc-table">
-                <thead>
-                  <tr>
-                    <th scope="col" style={TH_STYLE}>
-                      Data
-                    </th>
-                    <th scope="col" style={TH_STYLE}>
-                      Entrada
-                    </th>
-                    <th scope="col" style={TH_STYLE}>
-                      Saída
-                    </th>
-                    <th scope="col" style={TH_STYLE}>
-                      Diário
-                    </th>
-                    <th scope="col" style={TH_STYLE}>
-                      Saldo
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {grid.map((d) => (
-                    <tr key={d.date}>
-                      <td style={TD_DATE}>{fmtDayMonth(d.date)}</td>
-                      <td style={TD_NUM}>
-                        {d.income_cents ? (
-                          <Money cents={d.income_cents} size="sm" sign="auto" />
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td style={TD_NUM}>
-                        {d.fixed_out_cents ? (
-                          <Money cents={d.fixed_out_cents} size="sm" />
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td style={TD_NUM}>
-                        {d.daily_out_cents ? (
-                          <Money cents={d.daily_out_cents} size="sm" />
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      {d.balance_cents == null ? (
-                        <td style={TD_SALDO_EMPTY}>—</td>
-                      ) : (
-                        <td
-                          className="money"
-                          style={{
-                            ...TD_NUM,
-                            background: SALDO_BAND_FILL[saldoBand(d.balance_cents)],
-                            color: "var(--text)",
-                          }}
-                          title={`Saldo ${SALDO_BAND_LABEL[saldoBand(d.balance_cents)]}`}
-                        >
-                          <Money cents={d.balance_cents} size="sm" sign="none" />
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+    <div className="cal">
+      <div className="cal-head">
+        <div className="cal-title">Calendário</div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <MonthNav
+            label={`${MES[m]} de ${thisYear}`}
+            atToday={atToday}
+            onPrev={() => setOff((o) => o - 1)}
+            onNext={() => setOff((o) => o + 1)}
+            onToday={() => setOff(0)}
+            prevLabel="Anterior"
+            nextLabel="Próximo"
+          />
+          <SegmentedControl
+            size="sm"
+            ariaLabel="Visão"
+            value={tab}
+            onChange={setTab}
+            options={SEG_OPTIONS}
+          />
         </div>
       </div>
-    </section>
+      <section className="card">
+        <div style={{ padding: "16px 18px 0" }}>{LEGEND}</div>
+        <div className="cal-dow">
+          {DOW.map((d) => (
+            <span key={d}>{d}</span>
+          ))}
+        </div>
+        <div className="cal-grid">
+          {cells.map((d, i) => {
+            if (d == null)
+              return <div key={`empty-${i}`} className="cal-cell cal-cell--empty" />;
+            const iso = isoDate(thisYear, m, d);
+            const row = balanceMap.get(iso);
+            const band = saldoBand(row?.balance_cents ?? null);
+            const future = iso > TODAY;
+            return (
+              <div
+                key={iso}
+                className={
+                  "cal-cell" +
+                  (iso === TODAY ? " cal-cell--today" : "") +
+                  (future ? " cal-cell--future" : "")
+                }
+                style={{
+                  background:
+                    band.fill === "transparent" ? "var(--surface)" : band.fill,
+                }}
+                title={
+                  row != null
+                    ? `Saldo ${fmtBRL(row.balance_cents)}`
+                    : iso > TODAY
+                      ? "Projeção indisponível"
+                      : "Sem dados"
+                }
+              >
+                <span className="cal-cell__d">{d}</span>
+                {row != null ? (
+                  <span className="cal-cell__s" style={{ color: band.text }}>
+                    {fmtCompact(row.balance_cents)}
+                  </span>
+                ) : (
+                  <span className="cal-cell__s" style={{ color: "var(--text-faint)" }}>
+                    —
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </section>
+      {!isTauri && (
+        <p style={{ color: "var(--text-faint)", fontSize: 12 }}>
+          Preview web — abra o app desktop para ver seus dados.
+        </p>
+      )}
+    </div>
   );
 }

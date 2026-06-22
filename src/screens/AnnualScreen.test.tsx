@@ -16,7 +16,7 @@ const mk = (month: number, perf: number, cost: number): MonthMetric => ({
   daily_out_cents: 0,
   real_daily_avg_cents: 0,
   economia_cents: 0,
-  savings_rate_bps: month === 3 ? 2200 : 0,
+  savings_rate_bps: 0,
 });
 
 const ANNUAL: AnnualMetrics = {
@@ -27,23 +27,25 @@ const ANNUAL: AnnualMetrics = {
 };
 
 describe("AnnualScreen", () => {
-  it("renderiza a tabela anual das 4 métricas por mês", async () => {
+  it("renderiza a tabela anual (redesign) com as colunas e 12 meses", async () => {
     mockInvoke.mockReset();
     mockCommands({ get_annual_metrics: ANNUAL });
     render(<AnnualScreen />);
 
-    // Espera a TABELA carregar (o heading aparece antes dos dados async — evita corrida).
-    await waitFor(() => expect(screen.getByText("Performance")).toBeInTheDocument());
-    expect(screen.getByText("Visão anual")).toBeInTheDocument();
-    expect(screen.getByText("Custo de vida")).toBeInTheDocument();
-    expect(screen.getByText("Economizado")).toBeInTheDocument();
-    expect(screen.getByText("Diário médio")).toBeInTheDocument();
+    // Espera a tabela carregar — cabeçalho único "Saldo fim" como âncora.
+    await waitFor(() => expect(screen.getByText("Saldo fim")).toBeInTheDocument());
+    // Cabeçalhos do redesign — "Saída total" aparece no KPI e no cabeçalho, por isso getAllByText.
+    expect(screen.getAllByText("Saída total").length).toBeGreaterThan(0);
+    expect(screen.getByText("Resultado")).toBeInTheDocument();
+    expect(screen.getByText("Diário")).toBeInTheDocument();
+    expect(screen.getByText("Economia")).toBeInTheDocument();
+    expect(screen.getByText("Entradas")).toBeInTheDocument();
     // 12 meses (linhas do corpo).
-    expect(screen.getByText("Jan")).toBeInTheDocument();
-    expect(screen.getByText("Mar")).toBeInTheDocument();
-    expect(screen.getByText("Dez")).toBeInTheDocument();
-    // O Economizado de março (22%).
-    expect(screen.getByText("22%")).toBeInTheDocument();
+    expect(screen.getByText("Janeiro")).toBeInTheDocument();
+    expect(screen.getByText("Março")).toBeInTheDocument();
+    expect(screen.getByText("Dezembro")).toBeInTheDocument();
+    // Rodapé "Realizado" (antigo "Total").
+    expect(screen.getByText("Realizado")).toBeInTheDocument();
   });
 
   it("linha TOTAL: Economizado% anual é ΣEconomia/ΣEntradas (ponderado, não média das taxas)", async () => {
@@ -78,8 +80,12 @@ describe("AnnualScreen", () => {
     mockCommands({ get_annual_metrics: { year: 2026, months } });
     render(<AnnualScreen />);
 
-    await waitFor(() => expect(screen.getByText("Total")).toBeInTheDocument());
-    expect(screen.getByText("15%")).toBeInTheDocument(); // anual ponderado
-    expect(screen.queryByText("20%")).not.toBeInTheDocument(); // não é a média simples
+    // Aguarda o rodapé "Realizado" aparecer (substitui o antigo "Total").
+    await waitFor(() => expect(screen.getByText("Realizado")).toBeInTheDocument());
+    // Economizado% ponderado no tfoot: ΣEconomia/ΣEntradas = 60k/400k = 15%.
+    // Pode aparecer também no KPI card, então verificamos que existe ao menos uma ocorrência.
+    expect(screen.getAllByText("15%").length).toBeGreaterThan(0);
+    // Não é a média simples de 30%+10%=20%.
+    expect(screen.queryByText("20%")).not.toBeInTheDocument();
   });
 });

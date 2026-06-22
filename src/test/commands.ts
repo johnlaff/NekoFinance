@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   DashboardSummary,
   Forecast,
-  MonthGridDay,
   OwnerTotal,
   Pockets,
   TransactionRow,
@@ -38,16 +37,6 @@ export const SUMMARY: DashboardSummary = {
   reserve_trend: "down",
   transaction_count: 42,
   last_real_tx_date: "2026-06-19",
-};
-
-export const EMPTY_SUMMARY: DashboardSummary = {
-  balance: 0,
-  daily_budget: 0,
-  daily_spend_today: 0,
-  reserve_months: 0,
-  reserve_trend: "flat",
-  transaction_count: 0,
-  last_real_tx_date: null,
 };
 
 export const TXNS: TransactionRow[] = [
@@ -103,25 +92,6 @@ export const TXNS: TransactionRow[] = [
     installment_total: null,
   },
 ];
-
-/** Lançamento com id no formato de série recorrente ("uuid:index"). */
-export const RECURRING_TXN: TransactionRow = {
-  id: "rec-uuid-abc:2",
-  type: "expense",
-  amount: 50000,
-  description: "Compromisso recorrente demo",
-  date: "2026-06-01",
-  payment_method: "debit",
-  is_projection: true,
-  is_fixed: true,
-  owners: [],
-  tags: [],
-  provenance: "projetado",
-  line_items: [],
-  due_date: null,
-  installment_index: 3,
-  installment_total: 6,
-};
 
 /** Totais por titular de um mês (multi-titular) para a seção "Por titular" dos Totais. */
 export const OWNER_TOTALS: OwnerTotal[] = [
@@ -281,68 +251,4 @@ export const FORECAST: Forecast = {
     },
   ],
   month_end: [{ year: 2026, month: 6, balance_cents: 1287700 }],
-};
-
-/** Grade do mês (get_month_grid) espelhando os dias do FORECAST para junho/2026. */
-export const MONTH_GRID: MonthGridDay[] = FORECAST.daily.map((d) => ({
-  date: d.date,
-  day: Number(d.date.slice(8, 10)),
-  income_cents: d.income_cents,
-  fixed_out_cents: d.fixed_out_cents,
-  daily_out_cents: d.daily_out_cents,
-  balance_cents: d.balance_cents,
-}));
-
-export const DEFICIT_FORECAST: Forecast = {
-  ...FORECAST,
-  safe_to_spend_today_cents: 0,
-  deepest_deficit: { date: "2026-06-28", balance_cents: -42000 },
-  daily: [
-    ...FORECAST.daily.slice(0, 2),
-    {
-      date: "2026-06-28",
-      income_cents: 0,
-      fixed_out_cents: 629700,
-      daily_out_cents: 0,
-      economia_cents: 0,
-      balance_cents: -42000,
-    },
-  ],
-};
-
-export const EMPTY_FORECAST: Forecast = {
-  today: "2026-06-10",
-  horizon_end: "2026-06-30",
-  annual_savings: {
-    realized_income_cents: 0,
-    realized_savings_cents: 0,
-    realized_rate_bps: 0,
-    registered_economia_cents: 0,
-    projected_income_cents: 0,
-    projected_savings_cents: 0,
-    projected_rate_bps: 0,
-    target_bps: 2500,
-  },
-  coverage: [],
-  baseline_outflow_cents: 0,
-  trusted_through_month: null,
-  total_missing_cents: 0,
-  safe_to_spend_today_cents: 0,
-  cash_headroom_cents: 0,
-  savings_headroom_cents: 0,
-  binding_guardrail: "cash",
-  savings_target_bps: 2500,
-  months: [],
-  deepest_deficit: { date: "2026-06-10", balance_cents: 0 },
-  daily: [
-    {
-      date: "2026-06-10",
-      income_cents: 0,
-      fixed_out_cents: 0,
-      daily_out_cents: 0,
-      economia_cents: 0,
-      balance_cents: 0,
-    },
-  ],
-  month_end: [{ year: 2026, month: 6, balance_cents: 0 }],
 };
