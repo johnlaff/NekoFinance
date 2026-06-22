@@ -1,416 +1,824 @@
-/* Neko Finance — Transactions / import review. Master table + detail panel +
-   Google Sheets column mapping with AI confidence. Exposes window.TransactionsApp. */
-const TX_NS = window.NekoFinanceDesignSystem_9bd1cd;
-const { TransactionRow, OwnerChip, Badge, SegmentedControl, Button, Input } = TX_NS;
-const TxIcon = window.Icon;
+/* Neko Finance — Livro-razão (Lançamentos). Tabela de histórico com filtros, tipos de
+   movimento (MovBadge), proveniência (ProvBadge), tags, titulares (OwnerChip) e painel
+   de ações inline. Expõe window.TransactionsScreen. */
+const NS = window.NekoFinanceDesignSystem_9bd1cd;
+const {
+  Badge,
+  Button,
+  SegmentedControl,
+  OwnerChip,
+  MovBadge,
+  ProvBadge,
+  Money,
+  EmptyState,
+} = NS;
+const Icon = window.Icon;
 
-const txCSS = `
-.tx{display:flex;flex-direction:column;gap:14px;}
-.tx-banner{display:flex;align-items:center;gap:13px;padding:13px 16px;background:var(--info-tint);
-  border:1px solid rgba(79,166,206,.25);border-radius:var(--radius-md);}
-.tx-banner__ic{width:32px;height:32px;border-radius:9px;background:var(--surface);color:var(--info-400);
-  display:flex;align-items:center;justify-content:center;flex:none;}
-.tx-banner__t{font-size:13.5px;font-weight:600;color:var(--text);}
-.tx-banner__s{font-size:12px;color:var(--text-muted);margin-top:1px;}
-.tx-banner__s b{color:var(--warning-400);font-weight:600;}
-.tx-tools{display:flex;align-items:center;gap:10px;}
-.tx-tools__sp{flex:1;}
-.tx-grid{display:grid;grid-template-columns:1fr 384px;gap:14px;align-items:start;}
-.tx-tablewrap{border:1px solid var(--border);border-radius:var(--radius-md);overflow:hidden;background:var(--surface);}
-.tx-thead{display:grid;grid-template-columns:84px minmax(0,1fr) auto auto 132px;gap:14px;padding:9px 14px;
-  border-bottom:1px solid var(--border);background:var(--bg-subtle);font-size:10.5px;font-weight:700;
-  letter-spacing:.06em;text-transform:uppercase;color:var(--text-faint);}
-.tx-thead span:last-child{text-align:right;}
-.tx-thead span:nth-child(3),.tx-thead span:nth-child(4){text-align:right;}
-/* detail panel */
-.tx-detail{border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface);
-  box-shadow:var(--shadow-1);position:sticky;top:0;overflow:hidden;}
-.tx-d__head{padding:15px 16px;border-bottom:1px solid var(--border);}
-.tx-d__merchant{font-size:16px;font-weight:700;color:var(--text-strong);letter-spacing:-0.01em;}
-.tx-d__meta{display:flex;align-items:center;gap:8px;margin-top:6px;}
-.tx-d__amt{font-family:var(--font-money);font-variant-numeric:tabular-nums;font-size:26px;font-weight:600;
-  color:var(--text-strong);margin-top:10px;}
-.tx-d__src{font-family:var(--font-money);font-size:10.5px;color:var(--text-faint);margin-top:7px;display:flex;align-items:center;gap:6px;}
-.tx-d__body{padding:14px 16px;display:flex;flex-direction:column;gap:16px;}
-.tx-field__lbl{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text-faint);
-  margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;}
-.tx-sugg{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:600;color:var(--primary);}
-.tx-opts{display:flex;flex-wrap:wrap;gap:7px;}
-.tx-opt{display:inline-flex;align-items:center;gap:7px;padding:7px 11px;border-radius:var(--radius-sm);
-  border:1px solid var(--border);background:var(--surface-elevated);font-size:12.5px;font-weight:600;color:var(--text-muted);
+(function injectCSS() {
+  if (document.getElementById("txs-css")) return;
+  const s = document.createElement("style");
+  s.id = "txs-css";
+  s.textContent = `
+.dash{display:flex;flex-direction:column;gap:14px;}
+.dash-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);box-shadow:var(--shadow-1);}
+.dash-card__body{padding:8px 16px 16px;}
+
+/* ---- toolbar ---- */
+.txs-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.txs-tools__sp{flex:1;}
+
+/* ---- ledger table ---- */
+.txn-table{width:100%;border-collapse:collapse;font-size:var(--fs-sm);font-family:var(--font-sans);}
+.txn-table thead tr{border-bottom:1px solid var(--border);background:var(--bg-subtle);}
+.txn-table th{padding:8px 12px;text-align:left;font-size:10.5px;font-weight:700;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--text-faint);white-space:nowrap;}
+.txn-table th:last-child{width:32px;padding-right:8px;}
+.txn-table td{padding:9px 12px;vertical-align:middle;border-bottom:1px solid var(--border);color:var(--text);}
+.txn-table tr:last-child td{border-bottom:none;}
+.txn-table tr.projection td{opacity:.65;}
+.txn-table tr:hover td{background:var(--surface-hover);}
+.txn-table td:nth-child(5){text-align:right;font-family:var(--font-money);font-variant-numeric:tabular-nums;
+  white-space:nowrap;}
+.txn-table td:last-child{text-align:right;padding-right:8px;}
+
+/* month separator */
+.txn-month-sep th{padding:10px 12px 6px;font-size:11px;font-weight:700;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--text-faint);border-bottom:1px solid var(--border);
+  background:var(--bg);}
+
+/* expandable sub-rows */
+.txn-tag-editor td{padding:6px 12px 10px;background:var(--bg-subtle);border-bottom:1px solid var(--border);}
+
+/* tag chip */
+.txn-chip{display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 7px 0 5px;
+  border-radius:var(--radius-pill);background:var(--surface-2);border:var(--bw-hair) solid currentColor;
+  font-size:var(--fs-micro);font-weight:var(--fw-medium);margin-left:5px;vertical-align:middle;}
+.txn-tag-dot{width:6px;height:6px;border-radius:50%;flex:none;}
+
+/* inline action buttons */
+.txn-tag-btn{border:none;background:none;cursor:pointer;color:var(--text-faint);padding:2px 4px;
+  border-radius:var(--radius-xs);line-height:1;vertical-align:middle;transition:var(--t-hover);}
+.txn-tag-btn:hover{color:var(--text);background:var(--surface-hover);}
+
+/* method text */
+.txn-method{color:var(--text-muted);font-size:var(--fs-sm);}
+
+/* tag picker */
+.txn-tag-picker{display:flex;flex-wrap:wrap;gap:6px;}
+.txn-tag-opt{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:var(--radius-sm);
+  border:var(--bw-hair) solid var(--border);background:var(--surface-elevated);
+  font-size:var(--fs-sm);font-weight:var(--fw-medium);color:var(--text-muted);
   cursor:pointer;transition:var(--t-hover);}
-.tx-opt:hover{border-color:var(--border-strong);color:var(--text);}
-.tx-opt--on{border-color:var(--primary);background:var(--primary-quiet);color:var(--text-strong);}
-.tx-opt__dot{width:8px;height:8px;border-radius:50%;}
-.tx-roles{display:flex;flex-direction:column;gap:8px;}
-.tx-role{display:flex;align-items:center;justify-content:space-between;gap:10px;}
-.tx-role__k{font-size:12px;color:var(--text-muted);}
-.tx-map{border-top:1px solid var(--border);}
-.tx-map__row{display:grid;grid-template-columns:1fr auto 1fr auto;gap:10px;align-items:center;padding:8px 16px;
-  font-size:12px;border-bottom:1px solid var(--border);}
-.tx-map__row:last-child{border-bottom:none;}
-.tx-map__col{font-family:var(--font-money);color:var(--text-muted);}
-.tx-map__arrow{color:var(--text-faint);}
-.tx-map__field{font-weight:600;color:var(--text);}
-.tx-d__foot{display:flex;gap:8px;padding:14px 16px;border-top:1px solid var(--border);background:var(--bg-subtle);}
-.tx-map__head{padding:12px 16px 6px;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text-faint);}
-@media (max-width:1180px){
-  .tx-grid{grid-template-columns:1fr;}
-  .tx-detail{position:static;}
+.txn-tag-opt.is-on{border-color:var(--primary);background:var(--primary-quiet);color:var(--text-strong);}
+.txn-tag-opt:hover:not(.is-on){border-color:var(--border-strong);color:var(--text);}
+
+/* inline error */
+.txs-inline-error{margin:0 0 6px;font-size:var(--fs-sm);color:var(--danger-400);}
+
+/* action panel */
+.txn-imported-notice{margin:0 0 6px;font-size:var(--fs-micro);color:var(--text-faint);}
+
+/* due date chip */
+.txn-due-chip{display:inline-flex;align-items:center;gap:5px;height:20px;margin-left:6px;padding:0 8px;
+  border-radius:var(--radius-pill);background:var(--surface-2);border:var(--bw-hair) solid var(--border);
+  font-size:var(--fs-micro);font-weight:var(--fw-medium);color:var(--text-muted);
+  white-space:nowrap;vertical-align:middle;}
+
+/* installment badge */
+.txn-inst-badge{display:inline-flex;align-items:center;height:20px;margin-left:6px;padding:0 8px;
+  border-radius:var(--radius-pill);background:var(--surface-2);border:var(--bw-hair) solid var(--border);
+  font-size:var(--fs-micro);font-weight:var(--fw-medium);color:var(--text-muted);
+  white-space:nowrap;vertical-align:middle;}
+
+/* line items list */
+.txn-items-list{display:flex;flex-direction:column;gap:var(--space-1);margin:0;
+  padding-left:var(--space-6);list-style:none;}
+.txn-item-row{display:flex;gap:var(--space-3);align-items:baseline;font-size:var(--fs-sm);
+  color:var(--text-muted);}
+
+/* generic / italic description */
+.txn-desc-faint{color:var(--text-faint);font-style:italic;}
+
+@media (prefers-reduced-motion:reduce){
+  .txn-tag-btn,.txn-tag-opt{transition:none;}
 }
 `;
-function injectTx() {
-  if (document.getElementById("tx-css")) return;
-  const s = document.createElement("style");
-  s.id = "tx-css";
-  s.textContent = txCSS;
   document.head.appendChild(s);
+})();
+
+/* ---- Demo data ---- */
+const DEMO_TRANSACTIONS = [
+  /* Junho 2026 */
+  {
+    id: "t-001",
+    date: "2026-06-20",
+    type: "expense",
+    is_fixed: false,
+    payment_method: "credit",
+    provenance: "manual",
+    description: "iFood — Jantar",
+    amount: -4750,
+    owners: [],
+    tags: [{ id: "tag-1", name: "Alimentação", color: "#e0a33e", emoji: "" }],
+    line_items: [],
+    due_date: null,
+    installment_index: null,
+    installment_total: null,
+    is_projection: false,
+  },
+  {
+    id: "t-002",
+    date: "2026-06-18",
+    type: "expense",
+    is_fixed: true,
+    payment_method: "debit",
+    provenance: "importado",
+    description: "Aluguel — Junho",
+    amount: -180000,
+    owners: [],
+    tags: [],
+    line_items: [],
+    due_date: null,
+    installment_index: null,
+    installment_total: null,
+    is_projection: false,
+  },
+  {
+    id: "t-003",
+    date: "2026-06-17",
+    type: "income",
+    is_fixed: false,
+    payment_method: null,
+    provenance: "importado",
+    description: "Salário — Empresa XYZ",
+    amount: 620000,
+    owners: [],
+    tags: [],
+    line_items: [],
+    due_date: null,
+    installment_index: null,
+    installment_total: null,
+    is_projection: false,
+  },
+  {
+    id: "t-004",
+    date: "2026-06-15",
+    type: "expense",
+    is_fixed: false,
+    payment_method: "pix",
+    provenance: "manual",
+    description: "Mercado Livre — Fone de ouvido",
+    amount: -25990,
+    owners: [],
+    tags: [{ id: "tag-2", name: "Eletrônicos", color: "#5fa8dc", emoji: "" }],
+    line_items: [],
+    due_date: null,
+    installment_index: 2,
+    installment_total: 3,
+    is_projection: false,
+  },
+  {
+    id: "t-005",
+    date: "2026-06-12",
+    type: "expense",
+    is_fixed: false,
+    payment_method: "credit",
+    provenance: "importado",
+    description: "Supermercado Extra",
+    amount: -38400,
+    owners: [],
+    tags: [],
+    line_items: [
+      { id: "li-1", description: "Hortifruti", amount_cents: 8900 },
+      { id: "li-2", description: "Limpeza", amount_cents: 12300 },
+      { id: "li-3", description: "Laticínios", amount_cents: 17200 },
+    ],
+    due_date: null,
+    installment_index: null,
+    installment_total: null,
+    is_projection: false,
+  },
+  {
+    id: "t-006",
+    date: "2026-06-10",
+    type: "transfer",
+    is_fixed: false,
+    payment_method: "pix",
+    provenance: "manual",
+    description: "Poupança — aporte mensal",
+    amount: -50000,
+    owners: [],
+    tags: [],
+    line_items: [],
+    due_date: null,
+    installment_index: null,
+    installment_total: null,
+    is_projection: false,
+  },
+  {
+    id: "t-007",
+    date: "2026-06-05",
+    type: "expense",
+    is_fixed: true,
+    payment_method: "debit",
+    provenance: "importado",
+    description: "Netflix",
+    amount: -5490,
+    owners: [],
+    tags: [],
+    line_items: [],
+    due_date: null,
+    installment_index: null,
+    installment_total: null,
+    is_projection: false,
+  },
+  /* Maio 2026 */
+  {
+    id: "t-008",
+    date: "2026-05-30",
+    type: "expense",
+    is_fixed: false,
+    payment_method: "pix",
+    provenance: "importado",
+    description: "Dentista",
+    amount: -35000,
+    owners: [],
+    tags: [],
+    line_items: [],
+    due_date: null,
+    installment_index: null,
+    installment_total: null,
+    is_projection: false,
+  },
+  {
+    id: "t-009",
+    date: "2026-05-17",
+    type: "income",
+    is_fixed: false,
+    payment_method: null,
+    provenance: "importado",
+    description: "Salário — Empresa XYZ",
+    amount: 620000,
+    owners: [],
+    tags: [],
+    line_items: [],
+    due_date: null,
+    installment_index: null,
+    installment_total: null,
+    is_projection: false,
+  },
+  {
+    id: "t-010",
+    date: "2026-05-10",
+    type: "expense",
+    is_fixed: false,
+    payment_method: "credit",
+    provenance: "importado",
+    description: "Posto Ipiranga",
+    amount: -9200,
+    owners: [],
+    tags: [],
+    line_items: [],
+    due_date: null,
+    installment_index: null,
+    installment_total: null,
+    is_projection: false,
+  },
+  /* projetados */
+  {
+    id: "t-011",
+    date: "2026-07-01",
+    type: "expense",
+    is_fixed: true,
+    payment_method: "debit",
+    provenance: "projetado",
+    description: "Aluguel — Julho",
+    amount: -180000,
+    owners: [],
+    tags: [],
+    line_items: [],
+    due_date: "2026-07-05",
+    installment_index: null,
+    installment_total: null,
+    is_projection: true,
+  },
+];
+
+const METHOD_LABELS = {
+  debit: "Débito",
+  credit: "Crédito",
+  pix: "PIX",
+  cash: "Dinheiro",
+};
+
+function methodLabel(t) {
+  if (t.payment_method) return METHOD_LABELS[t.payment_method] ?? t.payment_method;
+  return t.type === "income" ? "Entrada" : "—";
 }
 
-const TX_DATA = [
-  {
-    id: 1,
-    date: "08 Jun",
-    merchant: "Whole Foods Market",
-    cat: "Groceries",
-    catC: "var(--chart-2)",
-    ownerN: "Household",
-    ownerT: "shared",
-    amt: "642.18",
-    status: "needs-owner",
-    conf: "low",
-    raw: "WHOLEFDS #1042 SF CA",
-  },
-  {
-    id: 2,
-    date: "08 Jun",
-    merchant: "Acme Payroll",
-    cat: "Income",
-    catC: "var(--chart-1)",
-    ownerN: "Alex Tan",
-    ownerT: "personal",
-    amt: "6,200.00",
-    pos: true,
-    status: "reconciled",
-    conf: "high",
-    raw: "ACME CORP DIR DEP",
-  },
-  {
-    id: 3,
-    date: "07 Jun",
-    merchant: "Pacific Gas & Electric",
-    cat: "Housing",
-    catC: "var(--chart-1)",
-    ownerN: "Household",
-    ownerT: "shared",
-    amt: "148.90",
-    status: "reconciled",
-    conf: "high",
-    raw: "PG&E AUTOPAY",
-  },
-  {
-    id: 4,
-    date: "07 Jun",
-    merchant: "Blue Bottle Coffee",
-    cat: "Dining",
-    catC: "var(--chart-5)",
-    ownerN: "Sam Okafor",
-    ownerT: "partner",
-    amt: "9.50",
-    status: "needs-owner",
-    conf: "medium",
-    raw: "SQ *BLUE BOTTLE",
-  },
-  {
-    id: 5,
-    date: "06 Jun",
-    merchant: "Spotify",
-    cat: "Subscriptions",
-    catC: "var(--chart-4)",
-    ownerN: "Sam Okafor",
-    ownerT: "partner",
-    amt: "14.99",
-    status: "imported",
-    conf: "high",
-    raw: "SPOTIFY P0A1B2",
-  },
-  {
-    id: 6,
-    date: "06 Jun",
-    merchant: "Shell",
-    cat: "Transport",
-    catC: "var(--chart-3)",
-    ownerN: "—",
-    ownerT: "personal",
-    amt: "58.20",
-    status: "needs-owner",
-    conf: "low",
-    raw: "SHELL OIL 5731",
-  },
-];
-const CATS = [
-  { n: "Groceries", c: "var(--chart-2)" },
-  { n: "Dining", c: "var(--chart-5)" },
-  { n: "Housing", c: "var(--chart-1)" },
-  { n: "Transport", c: "var(--chart-3)" },
-  { n: "Subscriptions", c: "var(--chart-4)" },
-];
+function movKind(t) {
+  if (t.type === "income") return "entrada";
+  if (t.type === "transfer") return "economia";
+  if (t.is_fixed) return "saida";
+  if (t.payment_method === "credit") return "cartao";
+  return "diario";
+}
 
-function TransactionsApp() {
-  injectTx();
-  const [nav, setNav] = React.useState("transactions");
-  const [selId, setSelId] = React.useState(1);
-  const [scope, setScope] = React.useState("all");
-  const sel = TX_DATA.find((t) => t.id === selId);
-  const [cat, setCat] = React.useState(sel.cat);
-  const [ownerType, setOwnerType] = React.useState(sel.ownerT);
-  // Reset ao trocar de lançamento via ajuste-durante-render (padrão React), não via effect:
-  // evita o render-em-cascata do setState-no-effect.
-  const [prevSelId, setPrevSelId] = React.useState(selId);
-  if (selId !== prevSelId) {
-    setPrevSelId(selId);
-    setCat(sel.cat);
-    setOwnerType(sel.ownerT);
-  }
-  const rows = TX_DATA.filter((t) => scope === "all" || t.ownerT === scope);
+function fmtDate(iso) {
+  const [y, m, d] = iso.split("-");
+  return `${d}/${m}/${y}`;
+}
 
-  const right = React.createElement(
-    Button,
-    {
-      variant: "secondary",
-      size: "sm",
-      iconLeft: React.createElement(TxIcon, { name: "refresh", size: 15 }),
-    },
-    "Re-sync sheet",
+function monthLabel(ym) {
+  const months = [
+    "Janeiro",
+    "Fevereiro",
+    "Março",
+    "Abril",
+    "Maio",
+    "Junho",
+    "Julho",
+    "Agosto",
+    "Setembro",
+    "Outubro",
+    "Novembro",
+    "Dezembro",
+  ];
+  const [y, m] = ym.split("-");
+  return `${months[parseInt(m, 10) - 1]} de ${y}`;
+}
+
+function fmtBRL(cents) {
+  const abs = Math.abs(cents);
+  const reais = Math.floor(abs / 100);
+  const centavos = String(abs % 100).padStart(2, "0");
+  const formatted = reais.toLocaleString("pt-BR");
+  const prefix = cents < 0 ? "− R$ " : "R$ ";
+  return `${prefix}${formatted},${centavos}`;
+}
+
+/* ---- Tag chip (somente leitura) ---- */
+function TagChip({ tag }) {
+  return (
+    <span className="txn-chip" style={{ borderColor: tag.color, color: "var(--text)" }}>
+      <span
+        aria-hidden="true"
+        className="txn-tag-dot"
+        style={{ background: tag.color }}
+      />
+      {tag.emoji ? `${tag.emoji} ` : ""}
+      {tag.name}
+    </span>
   );
+}
+
+/* ---- Painel de itens itemizados ---- */
+function LineItemsPanel({ t }) {
+  if (!t.line_items || t.line_items.length === 0) return null;
+  const sign = t.type === "income" ? 1 : -1;
+  return (
+    <tr className="txn-tag-editor">
+      <td colSpan={6}>
+        <ul
+          className="txn-items-list"
+          aria-label={`Itens de ${t.description || "lançamento"}`}
+        >
+          {t.line_items.map((li) => (
+            <li key={li.id} className="txn-item-row">
+              <span
+                style={{
+                  fontFamily: "var(--font-money)",
+                  fontVariantNumeric: "tabular-nums",
+                  fontSize: "var(--fs-sm)",
+                  color: sign < 0 ? "var(--money-neg)" : "var(--money-pos)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {fmtBRL(sign * Math.abs(li.amount_cents))}
+              </span>
+              <span>{li.description}</span>
+            </li>
+          ))}
+        </ul>
+      </td>
+    </tr>
+  );
+}
+
+/* ---- Painel de ações (Editar / Apagar) ---- */
+function ActionPanel({ t, onClose }) {
+  const isImported = t.provenance === "importado";
+  const isRecurring = t.id.includes(":");
+  return (
+    <tr className="txn-tag-editor">
+      <td colSpan={6}>
+        {isImported && (
+          <p className="txn-imported-notice">
+            Linha importada da planilha — edições ficam no app; um re-import pode
+            sobrescrever o valor se a planilha mudou. Apagar aqui não apaga da planilha;
+            o próximo import restaura a linha.
+          </p>
+        )}
+        <div
+          style={{
+            display: "flex",
+            gap: "var(--space-3)",
+            flexWrap: "wrap",
+            alignItems: "center",
+          }}
+        >
+          <Button size="sm" variant="ghost" onClick={onClose}>
+            Editar
+          </Button>
+          {isRecurring ? (
+            <Button size="sm" variant="ghost" onClick={onClose}>
+              Apagar da série
+            </Button>
+          ) : (
+            <Button size="sm" variant="ghost" onClick={onClose}>
+              Apagar
+            </Button>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+/* ---- Painel de editor de tags ---- */
+function TagEditorPanel({ t, onClose }) {
+  const allTags = [
+    { id: "tag-1", name: "Alimentação", color: "#e0a33e", emoji: "" },
+    { id: "tag-2", name: "Eletrônicos", color: "#5fa8dc", emoji: "" },
+    { id: "tag-3", name: "Saúde", color: "#4fd39a", emoji: "" },
+    { id: "tag-4", name: "Lazer", color: "#c98bd4", emoji: "" },
+    { id: "tag-5", name: "Moradia", color: "#e0625b", emoji: "" },
+  ];
+  const activeIds = new Set(t.tags.map((x) => x.id));
+  return (
+    <tr className="txn-tag-editor">
+      <td colSpan={6}>
+        <span className="txn-tag-picker">
+          {allTags.map((tag) => {
+            const on = activeIds.has(tag.id);
+            return (
+              <button
+                key={tag.id}
+                type="button"
+                aria-pressed={on}
+                className={`txn-tag-opt${on ? " is-on" : ""}`}
+              >
+                <span
+                  aria-hidden="true"
+                  className="txn-tag-dot"
+                  style={{ background: tag.color }}
+                />
+                {tag.name}
+              </button>
+            );
+          })}
+        </span>
+      </td>
+    </tr>
+  );
+}
+
+/* ---- Linha do ledger ---- */
+function LedgerRow({
+  t,
+  itemsOpen,
+  actionOpen,
+  tagOpen,
+  onToggleItems,
+  onToggleAction,
+  onToggleTag,
+}) {
+  const hasItems = t.line_items && t.line_items.length > 0;
+  const isGeneric =
+    t.description && /^(Entrada|Saída|Diário) \d{4}-\d{2}-\d{2}$/.test(t.description);
+  return (
+    <tr className={t.is_projection ? "projection" : ""}>
+      {/* Data */}
+      <td style={{ whiteSpace: "nowrap", color: "var(--text-muted)" }}>
+        {fmtDate(t.date)}
+      </td>
+      {/* Tipo */}
+      <td>
+        <MovBadge kind={movKind(t)} showLabel size={16} />
+      </td>
+      {/* Descrição */}
+      <td>
+        {hasItems && (
+          <button
+            type="button"
+            className="txn-tag-btn"
+            aria-label={`${itemsOpen ? "Fechar" : "Ver"} itens de ${t.description || "lançamento"}`}
+            aria-expanded={itemsOpen}
+            onClick={onToggleItems}
+          >
+            {itemsOpen ? (
+              <Icon name="chevronDown" size={13} />
+            ) : (
+              <Icon name="chevronRight" size={13} />
+            )}
+          </button>
+        )}{" "}
+        {t.description ? (
+          <span
+            className={isGeneric ? "txn-desc-faint" : ""}
+            title={
+              isGeneric ? "Sem nota na célula — reimporte via Google Sheets" : undefined
+            }
+          >
+            {t.description}
+          </span>
+        ) : (
+          "—"
+        )}{" "}
+        <ProvBadge provenance={t.provenance} />
+        {t.due_date && (
+          <span
+            className="txn-due-chip"
+            aria-label={`Vencimento: ${fmtDate(t.due_date)}`}
+          >
+            <Icon name="calendar" size={11} />
+            {fmtDate(t.due_date)}
+          </span>
+        )}
+        {t.installment_index != null && t.installment_total != null && (
+          <span
+            className="txn-inst-badge"
+            aria-label={`Parcela ${t.installment_index} de ${t.installment_total}`}
+          >
+            {t.installment_index}/{t.installment_total} parcelas
+          </span>
+        )}
+        {t.owners && t.owners.length >= 2 && (
+          <span
+            style={{
+              display: "inline-flex",
+              gap: 4,
+              marginLeft: 6,
+              verticalAlign: "middle",
+            }}
+          >
+            {t.owners.map((name) => (
+              <OwnerChip key={name} name={name} />
+            ))}
+          </span>
+        )}
+        {t.tags && t.tags.map((tag) => <TagChip key={tag.id} tag={tag} />)}
+        <button
+          type="button"
+          className="txn-tag-btn"
+          aria-label={`Editar tags de ${t.description || "lançamento"}`}
+          aria-expanded={tagOpen}
+          onClick={onToggleTag}
+          style={{ marginLeft: 4 }}
+        >
+          <Icon name="tags" size={13} />
+        </button>
+      </td>
+      {/* Método */}
+      <td>
+        <span className="txn-method">{methodLabel(t)}</span>
+      </td>
+      {/* Valor */}
+      <td style={{ textAlign: "right" }}>
+        <span
+          style={{
+            fontFamily: "var(--font-money)",
+            fontVariantNumeric: "tabular-nums",
+            fontSize: "var(--fs-sm)",
+            fontWeight: "var(--fw-semibold)",
+            color:
+              t.type === "income"
+                ? "var(--money-pos)"
+                : t.is_projection
+                  ? "var(--text-faint)"
+                  : "var(--money-neg)",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {fmtBRL(t.type === "income" ? Math.abs(t.amount) : -Math.abs(t.amount))}
+        </span>
+      </td>
+      {/* Ações */}
+      <td style={{ width: 32, textAlign: "right", paddingRight: 8 }}>
+        <button
+          type="button"
+          className="txn-tag-btn"
+          aria-label={`Ações para ${t.description || "lançamento"}`}
+          aria-expanded={actionOpen}
+          onClick={onToggleAction}
+        >
+          <Icon name="more" size={13} />
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+/* ---- Tabela do Livro-razão ---- */
+function LedgerTable({ rows }) {
+  const [itemsId, setItemsId] = React.useState(null);
+  const [actionId, setActionId] = React.useState(null);
+  const [tagId, setTagId] = React.useState(null);
+
+  function toggleItems(id) {
+    setItemsId((prev) => (prev === id ? null : id));
+  }
+  function toggleAction(id) {
+    setActionId((prev) => (prev === id ? null : id));
+  }
+  function toggleTag(id) {
+    setTagId((prev) => (prev === id ? null : id));
+  }
 
   return (
-    <window.AppShell
-      active={nav}
-      onNav={(k) => (window.__nekoRoute ? window.__nekoRoute(k) : setNav(k))}
-      title="Transactions"
-      crumb="Import review · Expenses 2025"
-      right={right}
-    >
-      <div className="tx">
-        <div className="tx-banner">
-          <span className="tx-banner__ic">
-            <TxIcon name="table" size={17} />
-          </span>
-          <div style={{ flex: 1 }}>
-            <div className="tx-banner__t">
-              Imported 248 rows from “Expenses 2025 → Aug”
-            </div>
-            <div className="tx-banner__s">
-              <b>6 need an owner</b> · 12 low-confidence categories · mapped 8 of 8
-              columns
-            </div>
-          </div>
-          <Button variant="ghost" size="sm">
-            Review mapping
-          </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            iconLeft={<TxIcon name="check" size={15} />}
-          >
-            Confirm all clean
-          </Button>
-        </div>
-
-        <div className="tx-tools">
-          <SegmentedControl
-            value={scope}
-            onChange={setScope}
-            options={[
-              { value: "all", label: "All" },
-              { value: "personal", label: "Personal", dot: "var(--owner-personal)" },
-              { value: "partner", label: "Partner", dot: "var(--owner-partner)" },
-              { value: "shared", label: "Shared", dot: "var(--owner-shared)" },
-            ]}
-          />
-          <Badge tone="neutral">{rows.length} shown</Badge>
-          <span className="tx-tools__sp" />
-          <Button
-            variant="ghost"
-            size="sm"
-            iconLeft={<TxIcon name="filter" size={15} />}
-          >
-            Confidence
-          </Button>
-        </div>
-
-        <div className="tx-grid">
-          <div className="tx-tablewrap">
-            <div className="tx-thead">
-              <span>Date</span>
-              <span>Merchant</span>
-              <span>Owner</span>
-              <span>Status</span>
-              <span>Amount</span>
-            </div>
-            {rows.map((t) => (
-              <TransactionRow
-                key={t.id}
-                date={t.date}
-                merchant={t.merchant}
-                category={t.cat}
-                categoryColor={t.catC}
-                owner={
-                  <OwnerChip
-                    name={t.ownerN === "—" ? "Unassigned" : t.ownerN}
-                    type={t.ownerT}
-                    bare
-                  />
-                }
-                amount={t.amt}
-                positive={t.pos}
-                status={t.status}
-                confidence={t.conf}
-                selected={t.id === selId}
-                onClick={() => setSelId(t.id)}
+    <table className="txn-table">
+      <thead>
+        <tr>
+          <th scope="col">Data</th>
+          <th scope="col">Tipo</th>
+          <th scope="col">Descrição</th>
+          <th scope="col">Método</th>
+          <th scope="col">Valor</th>
+          <th scope="col" aria-label="Ações" />
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((t, i) => {
+          const ym = t.date.slice(0, 7);
+          const showMonth = i === 0 || rows[i - 1].date.slice(0, 7) !== ym;
+          return (
+            <React.Fragment key={t.id}>
+              {showMonth && (
+                <tr className="txn-month-sep">
+                  <th scope="colgroup" colSpan={6}>
+                    {monthLabel(ym)}
+                  </th>
+                </tr>
+              )}
+              <LedgerRow
+                t={t}
+                itemsOpen={itemsId === t.id}
+                actionOpen={actionId === t.id}
+                tagOpen={tagId === t.id}
+                onToggleItems={() => toggleItems(t.id)}
+                onToggleAction={() => toggleAction(t.id)}
+                onToggleTag={() => toggleTag(t.id)}
               />
-            ))}
-          </div>
-
-          <div className="tx-detail">
-            <div className="tx-d__head">
-              <div className="tx-d__merchant">{sel.merchant}</div>
-              <div className="tx-d__meta">
-                <Badge
-                  tone={
-                    sel.status === "reconciled"
-                      ? "success"
-                      : sel.status === "imported"
-                        ? "info"
-                        : "warning"
-                  }
-                  dot
-                >
-                  {sel.status === "needs-owner"
-                    ? "Needs owner"
-                    : sel.status === "imported"
-                      ? "Imported"
-                      : "Reconciled"}
-                </Badge>
-                <span style={{ fontSize: 11.5, color: "var(--text-faint)" }}>
-                  {sel.date} · 2025
-                </span>
-              </div>
-              <div
-                className="tx-d__amt"
-                style={{ color: sel.pos ? "var(--money-pos)" : "var(--text-strong)" }}
-              >
-                {sel.pos ? "+ " : "− "}${sel.amt}
-              </div>
-              <div className="tx-d__src">
-                <TxIcon name="table" size={12} />
-                Sheet ‘Expenses 2025’ · row 1,204 · “{sel.raw}”
-              </div>
-            </div>
-            <div className="tx-d__body">
-              <div>
-                <div className="tx-field__lbl">
-                  <span>Category</span>
-                  <span className="tx-sugg">
-                    <TxIcon name="sparkles" size={12} />
-                    Mia: {sel.cat} ({sel.conf})
-                  </span>
-                </div>
-                <div className="tx-opts">
-                  {CATS.map((c) => (
-                    <button
-                      key={c.n}
-                      className={"tx-opt" + (cat === c.n ? " tx-opt--on" : "")}
-                      onClick={() => setCat(c.n)}
-                    >
-                      <span className="tx-opt__dot" style={{ background: c.c }} />
-                      {c.n}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <div className="tx-field__lbl">
-                  <span>Ownership</span>
-                </div>
-                <SegmentedControl
-                  value={ownerType}
-                  onChange={setOwnerType}
-                  options={[
-                    {
-                      value: "personal",
-                      label: "Personal",
-                      dot: "var(--owner-personal)",
-                    },
-                    { value: "partner", label: "Partner", dot: "var(--owner-partner)" },
-                    { value: "shared", label: "Shared", dot: "var(--owner-shared)" },
-                  ]}
-                />
-              </div>
-              <div>
-                <div className="tx-field__lbl">
-                  <span>Roles</span>
-                </div>
-                <div className="tx-roles">
-                  <div className="tx-role">
-                    <span className="tx-role__k">Payer</span>
-                    <OwnerChip name="Sam Okafor" type="partner" bare />
-                  </div>
-                  <div className="tx-role">
-                    <span className="tx-role__k">Beneficiary</span>
-                    <OwnerChip
-                      name={ownerType === "shared" ? "Household" : "Alex Tan"}
-                      type={ownerType === "shared" ? "shared" : "personal"}
-                      bare
-                    />
-                  </div>
-                  <div className="tx-role">
-                    <span className="tx-role__k">Responsible</span>
-                    <OwnerChip
-                      name={ownerType === "shared" ? "Household" : "Alex Tan"}
-                      type={ownerType}
-                      bare
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="tx-map">
-              <div className="tx-map__head">Sheet column mapping</div>
-              {[
-                { col: "Col B · Date", field: "date", conf: "high" },
-                { col: "Col C · Description", field: "merchant", conf: "high" },
-                { col: "Col D · Amount", field: "amount", conf: "high" },
-                { col: "Col F · Tag", field: "category", conf: "low" },
-              ].map((m) => (
-                <div className="tx-map__row" key={m.field}>
-                  <span className="tx-map__col">{m.col}</span>
-                  <span className="tx-map__arrow">→</span>
-                  <span className="tx-map__field">{m.field}</span>
-                  <Badge tone={m.conf === "high" ? "success" : "warning"}>
-                    {m.conf}
-                  </Badge>
-                </div>
-              ))}
-            </div>
-            <div className="tx-d__foot">
-              <Button
-                variant="primary"
-                size="sm"
-                fullWidth
-                iconLeft={<TxIcon name="check" size={15} />}
-              >
-                Confirm & next
-              </Button>
-              <Button variant="ghost" size="sm">
-                Skip
-              </Button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </window.AppShell>
+              {itemsId === t.id && <LineItemsPanel t={t} />}
+              {actionId === t.id && (
+                <ActionPanel t={t} onClose={() => setActionId(null)} />
+              )}
+              {tagId === t.id && (
+                <TagEditorPanel t={t} onClose={() => setTagId(null)} />
+              )}
+            </React.Fragment>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
-window.TransactionsApp = TransactionsApp;
+
+/* ---- Formulário inline de novo lançamento (stub visual) ---- */
+function NewLancamentoForm({ onClose }) {
+  return (
+    <div
+      style={{
+        marginBottom: "var(--space-4)",
+        background: "var(--surface)",
+        border: "1px solid var(--border)",
+        borderRadius: "var(--radius-md)",
+        padding: "var(--space-6)",
+        display: "flex",
+        flexDirection: "column",
+        gap: "var(--space-4)",
+      }}
+    >
+      <div
+        style={{
+          fontWeight: "var(--fw-semibold)",
+          fontSize: "var(--fs-sm)",
+          color: "var(--text-strong)",
+        }}
+      >
+        Novo lançamento
+      </div>
+      <div style={{ display: "flex", gap: "var(--space-4)", flexWrap: "wrap" }}>
+        {[
+          { label: "Tipo", placeholder: "Diário" },
+          { label: "Valor (R$)", placeholder: "0,00" },
+          { label: "Data", placeholder: "21/06/2026" },
+          { label: "Descrição", placeholder: "Ex.: Farmácia" },
+        ].map(({ label, placeholder }) => (
+          <label
+            key={label}
+            style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 120 }}
+          >
+            <span
+              style={{
+                fontSize: "var(--fs-micro)",
+                fontWeight: "var(--fw-bold)",
+                textTransform: "uppercase",
+                letterSpacing: ".06em",
+                color: "var(--text-faint)",
+              }}
+            >
+              {label}
+            </span>
+            <input
+              placeholder={placeholder}
+              style={{
+                height: "var(--hit-min)",
+                padding: "0 10px",
+                background: "var(--surface-2)",
+                border: "var(--bw-hair) solid var(--border)",
+                borderRadius: "var(--radius-sm)",
+                color: "var(--text)",
+                fontFamily: "var(--font-sans)",
+                fontSize: "var(--fs-sm)",
+                outline: "none",
+              }}
+            />
+          </label>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: "var(--space-3)" }}>
+        <Button size="sm" variant="primary">
+          Salvar
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onClose}>
+          Cancelar
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/* ---- Tela principal ---- */
+function TransactionsScreen() {
+  const [scope, setScope] = React.useState("all");
+  const [showForm, setShowForm] = React.useState(false);
+
+  const filtered = React.useMemo(() => {
+    const txns = [...DEMO_TRANSACTIONS].sort((a, b) => b.date.localeCompare(a.date));
+    if (scope === "credit") return txns.filter((t) => t.payment_method === "credit");
+    if (scope === "future") return txns.filter((t) => t.is_projection);
+    return txns;
+  }, [scope]);
+
+  return (
+    <div className="dash">
+      {/* Toolbar */}
+      <div className="txs-tools">
+        <SegmentedControl
+          size="sm"
+          ariaLabel="Filtrar lançamentos por escopo"
+          value={scope}
+          onChange={setScope}
+          options={[
+            { value: "all", label: "Todas" },
+            { value: "credit", label: "Crédito" },
+            { value: "future", label: "Futuro" },
+          ]}
+        />
+        <span className="txs-tools__sp" />
+        <Badge tone="secondary">
+          {filtered.length} {filtered.length === 1 ? "exibida" : "exibidas"}
+        </Badge>
+        <Button
+          size="sm"
+          variant={showForm ? "ghost" : "primary"}
+          iconLeft={<Icon name="plus" size={15} />}
+          onClick={() => setShowForm((v) => !v)}
+        >
+          {showForm ? "Fechar" : "Novo lançamento"}
+        </Button>
+      </div>
+
+      {/* Formulário inline */}
+      {showForm && <NewLancamentoForm onClose={() => setShowForm(false)} />}
+
+      {/* Tabela */}
+      <div className="dash-card">
+        <div className="dash-card__body" style={{ padding: 0 }}>
+          {filtered.length === 0 ? (
+            <EmptyState
+              variant="empty"
+              title="Nenhum lançamento encontrado"
+              description="Nenhum resultado para o filtro atual."
+            />
+          ) : (
+            <LedgerTable rows={filtered} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+window.TransactionsScreen = TransactionsScreen;

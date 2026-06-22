@@ -1,7 +1,7 @@
-<!-- @startingPoint section="Neko App" subtitle="Local-first finance dashboard" viewport="1440x900" -->
-<!-- @dsCard group="Neko App" viewport="1440x900" name="Dashboard" subtitle="Health, cashflow, categories, accounts, responsibility split" -->
+<!-- @startingPoint section="Neko App" subtitle="Local-first personal finance dashboard" viewport="1440x900" -->
+<!-- @dsCard group="Neko App" viewport="1440x900" name="Dashboard" subtitle="Quanto posso gastar hoje — hero KPI, trajetória de saldo e check-in diário" -->
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="pt-BR" data-theme="dark">
   <head>
     <meta charset="utf-8" />
     <title>Neko Finance — Dashboard</title>
@@ -49,9 +49,9 @@
             active={nav}
             onNav={setNav}
             title="Dashboard"
-            crumb="June 2025 · all accounts"
+            crumb="Quanto posso gastar hoje"
           >
-            <window.DashboardScreen onAskMia={() => setNav("copilot")} />
+            <window.DashboardScreen />
           </window.AppShell>
         );
       }

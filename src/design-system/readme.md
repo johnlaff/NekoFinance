@@ -54,15 +54,23 @@ assets/
   neko-mark.svg           brand mark (friendly geometric cat head)
   mia-avatar.svg          copilot avatar
 guidelines/*.card.html    foundation specimen cards (Design System tab)
-components/core/          Button, Input, SegmentedControl, Badge, Switch
-components/finance/       MetricTile, HealthBadge, OwnerChip, TransactionRow, ApprovalDiffCard
-components/copilot/       ChatBubble, Citation, EmptyState
-ui_kits/dashboard/        Dashboard screen recreation (+ AppShell, shared icons)
-ui_kits/transactions/     Transactions / import review recreation
-ui_kits/copilot/          Copilot approval flow recreation
-ui_kits/settings/         Settings / privacy recreation
-ui_kits/methodology/      Methodology / insights recreation (editorial voice)
-index.html                Self-contained front door — full app, all 5 screens, theme toggle
+components/core/          Badge, Button, Input, SegmentedControl, Switch, Disclosure,
+                          InfoPopover, MonthNav, NekoMark
+components/finance/       ApprovalDiffCard, BalanceTrajectory, HealthBadge, LineItemEditor,
+                          MetricTile, Money, MovBadge, OwnerChip, PhaseBadge, ProvBadge,
+                          TransactionRow
+components/copilot/       ChatBubble, Citation, EmptyState, MiaAvatar
+ui_kits/dashboard/        Dashboard ("Quanto posso gastar hoje") + AppShell + shared icons
+ui_kits/transactions/     Lançamentos — historical ledger
+ui_kits/totais/           Totais — month calculations (performance, custo de vida, economizado)
+ui_kits/anuais/           Anual — yearly view, all months at a glance
+ui_kits/ano-inteiro/      Ano inteiro — month-by-month daily grid with balance heatmap
+ui_kits/economia-compare/ Economia comparada — two years side by side
+ui_kits/horizonte/        Horizonte de saldos — month-by-month balance projection
+ui_kits/tags/             Tags — monthly tag totals with include/ignore
+ui_kits/settings/         Configurações e privacidade
+ui_kits/methodology/      Ajuda — method-principle help cards
+ui_kits/copilot/          Mia — copilot stub ("Em desenvolvimento") + known method facts
 SKILL.md                  Agent Skill manifest
 ```
 
@@ -177,9 +185,9 @@ Rules: money & all figures → **mono, tabular, right-aligned in columns**; head
 
 ## 11 · Component inventory
 
-**Core** — `Button` (primary/secondary/ghost/danger × sm/md/lg), `Input` (label/affix/money/error), `SegmentedControl`, `Badge` (6 tones, dot/square), `Switch`.
-**Finance** — `MetricTile`, `HealthBadge` (strong/steady/watch/risk + ring), `OwnerChip` (personal/partner/shared + payer/beneficiary/responsible roles), `TransactionRow` (status + confidence meter), `ApprovalDiffCard` (before→after, pending/approved/rejected).
-**Copilot** — `ChatBubble` (mia/user, thinking), `Citation` (inline chip + deterministic tool block), `EmptyState` (empty/loading/skeleton/error).
+**Core** — `Badge` (tones, dot/square), `Button` (primary/secondary/ghost/danger × sm/md/lg), `Input` (label/affix/money/error), `SegmentedControl`, `Switch`, `Disclosure` (collapsible, card/warn), `InfoPopover` (method-glossary tooltips), `MonthNav` (prev/next + "Hoje"), `NekoMark` (brand mark).
+**Finance** — `ApprovalDiffCard` (before→after, pending/approved/rejected), `BalanceTrajectory` (area chart, full/compact, zero-line band), `HealthBadge` (strong/steady/watch/risk + ring), `LineItemEditor` ("detalhar em partes"), `MetricTile` (KPI + delta + spark), `Money` (R$ tabular mono, sign colors), `MovBadge` (entrada/saída/diário/economia/cartão), `OwnerChip` (personal/partner/shared via `who`, `note` role), `PhaseBadge` (Mapear/Calibrar/Operar), `ProvBadge` (importado/manual/projetado), `TransactionRow` (`desc`/`provenance`/`future`/`lump`/`passthrough`).
+**Copilot** — `ChatBubble` (mia/user, thinking), `Citation` (inline chip + deterministic CALC block), `EmptyState` (empty/loading/skeleton/error), `MiaAvatar`.
 
 Each lives in `components/<group>/<Name>.{jsx,d.ts,prompt.md}` with a directory `*.card.html` specimen. Consume via `const { Name } = window.NekoFinanceDesignSystem_9bd1cd`.
 

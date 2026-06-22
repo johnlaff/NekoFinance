@@ -62,11 +62,22 @@
     document.head.appendChild(s);
   }
 
+  // Daily screens — mirrors src/shell/AppShell.tsx nav order (PT-BR).
   const NAV = [
     { key: "dashboard", label: "Dashboard", icon: "dashboard" },
-    { key: "transactions", label: "Transactions", icon: "receipt", badge: 6 },
-    { key: "copilot", label: "Ask Mia", icon: "sparkles" },
-    { key: "methodology", label: "Methodology", icon: "book" },
+    { key: "transactions", label: "Lançamentos", icon: "receipt" },
+    { key: "totais", label: "Totais", icon: "calculator" },
+    { key: "anuais", label: "Anual", icon: "trendingUp" },
+    { key: "ano-inteiro", label: "Ano inteiro", icon: "layoutList" },
+    { key: "economia-compare", label: "Economia comparada", icon: "gitCompare" },
+    { key: "horizonte", label: "Horizonte", icon: "calendarRange" },
+    { key: "tags", label: "Tags", icon: "tags" },
+  ];
+  // Secondary — settings, the demoted methodology ("Ajuda"), and Mia (a stub).
+  const SYSTEM = [
+    { key: "settings", label: "Configurações e privacidade", icon: "settings" },
+    { key: "methodology", label: "Ajuda", icon: "help" },
+    { key: "copilot", label: "Mia", icon: "sparkles" },
   ];
 
   function Mark() {
@@ -149,7 +160,7 @@
         React.createElement(
           "nav",
           { className: "ak-nav" },
-          React.createElement("div", { className: "ak-navh" }, "Finances"),
+          React.createElement("div", { className: "ak-navh" }, "Finanças"),
           ...NAV.map((n) =>
             React.createElement(
               "button",
@@ -177,19 +188,22 @@
                 : null,
             ),
           ),
-          React.createElement("div", { className: "ak-navh" }, "System"),
-          React.createElement(
-            "button",
-            {
-              className: "ak-item" + (active === "settings" ? " ak-item--active" : ""),
-              onClick: () => onNav("settings"),
-            },
-            React.createElement(Icon, {
-              name: "settings",
-              size: 18,
-              className: "ak-item__ic",
-            }),
-            React.createElement("span", null, "Settings & privacy"),
+          React.createElement("div", { className: "ak-navh" }, "Sistema"),
+          ...SYSTEM.map((n) =>
+            React.createElement(
+              "button",
+              {
+                key: n.key,
+                className: "ak-item" + (active === n.key ? " ak-item--active" : ""),
+                onClick: () => onNav(n.key),
+              },
+              React.createElement(Icon, {
+                name: n.icon,
+                size: 18,
+                className: "ak-item__ic",
+              }),
+              React.createElement("span", null, n.label),
+            ),
           ),
         ),
         React.createElement(
@@ -209,12 +223,12 @@
               React.createElement(
                 "div",
                 { className: "ak-conn__t" },
-                "Sheets connected",
+                "Planilha conectada",
               ),
               React.createElement(
                 "div",
                 { className: "ak-conn__s" },
-                "Synced 2m ago · read-only",
+                "Sincronizada há 2 min · somente leitura",
               ),
             ),
           ),
@@ -241,7 +255,7 @@
             { className: "ak-search" },
             React.createElement(Icon, { name: "search", size: 15 }),
             React.createElement("input", {
-              placeholder: "Search transactions, rules…",
+              placeholder: "Buscar lançamentos…",
             }),
           ),
           right || null,

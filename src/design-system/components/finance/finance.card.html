@@ -1,6 +1,6 @@
-<!-- @dsCard group="Components" viewport="700x560" name="Finance — tiles, owners, rows, approvals" subtitle="MetricTile · HealthBadge · OwnerChip · TransactionRow · ApprovalDiffCard" -->
+<!-- @dsCard group="Components" viewport="760x1400" name="Finance — lançamentos, métricas, aprovações e trajetória" subtitle="Money · MetricTile · HealthBadge · MovBadge · OwnerChip · PhaseBadge · ProvBadge · TransactionRow · LineItemEditor · BalanceTrajectory · ApprovalDiffCard" -->
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="pt-BR" data-theme="dark">
   <head>
     <meta charset="utf-8" />
     <link rel="stylesheet" href="../../styles.css" />
@@ -15,7 +15,7 @@
       .stack {
         display: flex;
         flex-direction: column;
-        gap: 16px;
+        gap: 20px;
       }
       .lbl {
         font-size: 10.5px;
@@ -36,6 +36,11 @@
         border-radius: 10px;
         overflow: hidden;
         background: var(--surface);
+      }
+      .tile-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
       }
     </style>
   </head>
@@ -59,115 +64,322 @@
     <script src="../../_ds_bundle.js"></script>
     <script type="text/babel">
       const {
+        Money,
         MetricTile,
         HealthBadge,
+        MovBadge,
         OwnerChip,
+        PhaseBadge,
+        ProvBadge,
         TransactionRow,
+        LineItemEditor,
+        BalanceTrajectory,
         ApprovalDiffCard,
         Button,
       } = window.NekoFinanceDesignSystem_9bd1cd;
+
+      const forecastDays = Array.from({ length: 30 }, (_, i) => {
+        const d = new Date("2026-06-01");
+        d.setDate(d.getDate() + i);
+        const base = 482000;
+        const trend = i * -4800;
+        const noise = Math.sin(i * 1.3) * 18000;
+        return {
+          date: d.toISOString().slice(0, 10),
+          balance_cents: base + trend + noise,
+        };
+      });
+
       function Demo() {
         return (
           <div className="stack">
+            {/* ── Money ── */}
             <div>
-              <div className="lbl">Metric tiles & health</div>
-              <div className="rowx">
-                <div style={{ width: 230 }}>
-                  <MetricTile
-                    label="Net cashflow"
-                    value="$4,820.00"
-                    delta="+12.4%"
-                    deltaDir="up"
-                    sublabel="vs. last month"
-                    spark={[40, 55, 48, 70, 62, 88, 100]}
-                  />
-                </div>
-                <div style={{ width: 230 }}>
-                  <MetricTile
-                    label="Spending"
-                    value="$3,142.18"
-                    delta="6.1%"
-                    deltaDir="down"
-                    sublabel="under budget"
-                  />
-                </div>
-                <HealthBadge level="strong" sublabel="3.1 months runway" size="lg" />
+              <div className="lbl">Money — valor BRL em mono tabular</div>
+              <div className="rowx" style={{ alignItems: "center", gap: 20 }}>
+                <Money cents={482000} size="display" sign="auto" />
+                <Money cents={-3875000} size="lg" sign="auto" />
+                <Money cents={0} size="md" sign="auto" />
+                <Money cents={1234567} size="sm" hideCents />
+                <Money cents={99900} size="md" sign="none" />
               </div>
             </div>
+
+            {/* ── MetricTile ── */}
             <div>
-              <div className="lbl">Owner chips · payer / beneficiary / responsible</div>
-              <div className="rowx">
-                <OwnerChip name="Alex Tan" type="personal" />
-                <OwnerChip name="Sam Okafor" type="partner" role="Payer" />
-                <OwnerChip name="Household" type="shared" role="Responsible" />
+              <div className="lbl">MetricTile — KPI do painel</div>
+              <div className="tile-row">
+                <MetricTile
+                  label="Saldo do mês"
+                  value="R$ 4.820,00"
+                  delta="+12,4%"
+                  deltaDir="up"
+                  sublabel="vs. mês anterior"
+                  spark={[40, 55, 48, 70, 62, 88, 100]}
+                />
+                <MetricTile
+                  label="Gastos"
+                  value="R$ 3.142,18"
+                  delta="6,1%"
+                  deltaDir="down"
+                  sublabel="abaixo do orçamento"
+                />
+                <MetricTile
+                  label="Reserva"
+                  value="R$ 12.000,00"
+                  deltaDir="neutral"
+                  sublabel="sem variação"
+                />
               </div>
             </div>
+
+            {/* ── HealthBadge ── */}
             <div>
-              <div className="lbl">Transaction rows</div>
+              <div className="lbl">
+                HealthBadge — saúde financeira (todos os níveis)
+              </div>
+              <div className="rowx">
+                <HealthBadge
+                  level="strong"
+                  label="Sobrou dinheiro"
+                  sublabel="3,1 meses de reserva"
+                  size="lg"
+                />
+                <HealthBadge level="steady" score={74} sublabel="dentro da renda" />
+                <HealthBadge level="watch" score={48} sublabel="gastos +18%" />
+                <HealthBadge
+                  level="risk"
+                  label="Em risco"
+                  sublabel="limite ultrapassado"
+                />
+              </div>
+            </div>
+
+            {/* ── MovBadge ── */}
+            <div>
+              <div className="lbl">MovBadge — os 5 pilares do método</div>
+              <div className="rowx" style={{ marginBottom: 8 }}>
+                <MovBadge kind="entrada" size={18} />
+                <MovBadge kind="saida" size={18} />
+                <MovBadge kind="diario" size={18} />
+                <MovBadge kind="economia" size={18} />
+                <MovBadge kind="cartao" size={18} />
+              </div>
+              <div className="rowx">
+                <MovBadge kind="entrada" showLabel size={20} />
+                <MovBadge kind="saida" showLabel size={20} />
+                <MovBadge kind="diario" showLabel size={20} />
+                <MovBadge kind="economia" showLabel size={20} />
+                <MovBadge kind="cartao" showLabel size={20} />
+              </div>
+            </div>
+
+            {/* ── OwnerChip ── */}
+            <div>
+              <div className="lbl">
+                OwnerChip — titular (pessoal · parceiro(a) · compartilhado)
+              </div>
+              <div className="rowx">
+                <OwnerChip who="personal" />
+                <OwnerChip who="partner" note="paga" />
+                <OwnerChip who="shared" />
+                <OwnerChip who="personal" name="João" avatar note="responsável" />
+                <OwnerChip who="partner" name="Ana" avatar />
+                <OwnerChip who="shared" avatar />
+                <OwnerChip who="partner" bare />
+              </div>
+            </div>
+
+            {/* ── PhaseBadge ── */}
+            <div>
+              <div className="lbl">PhaseBadge — jornada de adaptação do método</div>
+              <div className="rowx" style={{ alignItems: "center" }}>
+                <PhaseBadge phase="map" />
+                <PhaseBadge phase="calibrate" />
+                <PhaseBadge phase="operate" />
+              </div>
+            </div>
+
+            {/* ── ProvBadge ── */}
+            <div>
+              <div className="lbl">ProvBadge — procedência do lançamento</div>
+              <div className="rowx">
+                <ProvBadge provenance="importado" />
+                <ProvBadge provenance="manual" />
+                <ProvBadge provenance="projetado" />
+              </div>
+            </div>
+
+            {/* ── TransactionRow ── */}
+            <div>
+              <div className="lbl">TransactionRow — linhas de extrato</div>
               <div className="tbl">
                 <TransactionRow
-                  date="08 Jun"
-                  merchant="Whole Foods Market"
-                  owner={<OwnerChip name="Household" type="shared" bare />}
-                  amount="642.18"
-                  status="needs-owner"
-                  confidence="low"
+                  date="21/06"
+                  desc="Fatura Nubank"
+                  amount={-24750}
+                  method="Crédito"
+                  provenance="importado"
+                  note="Uber · Mercado Livre · Netflix"
+                  owner={<OwnerChip who="personal" name="João" bare />}
+                  lump={[
+                    { what: "Uber", amount: -3200 },
+                    { what: "Mercado Livre", amount: -18950 },
+                    { what: "Netflix", amount: -2600 },
+                  ]}
+                  defaultOpen
                 />
                 <TransactionRow
-                  date="07 Jun"
-                  merchant="Acme Payroll"
-                  owner={<OwnerChip name="Alex Tan" type="personal" bare />}
-                  amount="6,200.00"
-                  positive
-                  status="reconciled"
-                />
-                <TransactionRow
-                  date="06 Jun"
-                  merchant="Spotify"
-                  owner={<OwnerChip name="Sam Okafor" type="partner" bare />}
-                  amount="14.99"
-                  status="imported"
-                  confidence="high"
+                  date="20/06"
+                  desc="Salário — empresa"
+                  amount={820000}
+                  method="Transferência"
+                  provenance="manual"
+                  owner={<OwnerChip who="personal" name="João" bare />}
                   selected
+                />
+                <TransactionRow
+                  date="18/06"
+                  desc="Supermercado Pão de Açúcar"
+                  amount={-34220}
+                  method="Débito"
+                  provenance="conciliado"
+                  owner={<OwnerChip who="shared" bare />}
+                />
+                <TransactionRow
+                  date="30/06"
+                  desc="Aluguel julho"
+                  amount={-250000}
+                  method="Transferência"
+                  provenance="projetado"
+                  future
+                  note="Vencimento dia 30"
+                />
+                <TransactionRow
+                  date="15/06"
+                  desc="Repasse — parcela academia"
+                  amount={-9900}
+                  method="Pix"
+                  provenance="manual"
+                  owner={<OwnerChip who="partner" name="Ana" bare />}
+                  passthrough
                 />
               </div>
             </div>
+
+            {/* ── LineItemEditor ── */}
             <div>
-              <div className="lbl">Approval diff card</div>
+              <div className="lbl">LineItemEditor — partes de uma transação</div>
+              <LineItemEditor
+                items={[
+                  {
+                    amount_cents: 8500,
+                    description: "Supermercado Pão de Açúcar",
+                    position: 0,
+                  },
+                  {
+                    amount_cents: 3200,
+                    description: "Padaria da esquina",
+                    position: 1,
+                  },
+                  { amount_cents: 1490, description: "Hortifrúti", position: 2 },
+                ]}
+                onChange={(next) => console.log("LineItemEditor onChange", next)}
+              />
+            </div>
+
+            {/* ── BalanceTrajectory ── */}
+            <div>
+              <div className="lbl">
+                BalanceTrajectory — trajetória do saldo projetado (full)
+              </div>
+              <BalanceTrajectory
+                daily={forecastDays}
+                today="2026-06-21"
+                variant="full"
+              />
+            </div>
+            <div>
+              <div className="lbl">
+                BalanceTrajectory — compacta (embutida no tile herói)
+              </div>
+              <BalanceTrajectory
+                daily={forecastDays}
+                today="2026-06-21"
+                variant="compact"
+              />
+            </div>
+
+            {/* ── ApprovalDiffCard ── */}
+            <div>
+              <div className="lbl">
+                ApprovalDiffCard — aprovação de escrita na planilha
+              </div>
               <ApprovalDiffCard
-                title="Re-categorize 3 transactions"
-                sheet="Expenses 2025"
+                title="Recategorizar 3 transações"
+                sheet="Gastos 2025"
                 range="D1204:E1206"
                 changes={[
-                  { field: "Category", before: "Uncategorized", after: "Groceries" },
-                  { field: "Owner", after: "Household (shared)" },
+                  { field: "Categoria", before: "Sem categoria", after: "Alimentação" },
+                  { field: "Dono", after: "Compartilhado" },
+                  { field: "Valor", before: "R$ 342,18", after: "R$ 342,20" },
                 ]}
                 note={
                   <span>
-                    Matched merchant <b>“Whole Foods”</b> to your Groceries rule (3
-                    prior rows).
+                    Estabelecimento <b>"Pão de Açúcar"</b> identificado pela regra de
+                    Alimentação (3 linhas anteriores).
                   </span>
                 }
                 status="pending"
                 actions={
                   <>
                     <Button variant="primary" size="sm">
-                      Approve &amp; write
+                      Aprovar e escrever
                     </Button>
                     <Button variant="ghost" size="sm">
-                      Edit
+                      Editar
                     </Button>
                     <span style={{ flex: 1 }} />
                     <Button variant="danger" size="sm">
-                      Reject
+                      Recusar
                     </Button>
                   </>
                 }
               />
+              <div style={{ marginTop: 12 }}>
+                <ApprovalDiffCard
+                  title="Lançamento aprovado"
+                  sheet="Gastos 2025"
+                  range="F820"
+                  changes={[{ field: "Tag", before: "Sem tag", after: "Lazer" }]}
+                  status="approved"
+                  actions={
+                    <Button variant="ghost" size="sm">
+                      Ver na planilha
+                    </Button>
+                  }
+                />
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <ApprovalDiffCard
+                  title="Mudança recusada"
+                  sheet="Gastos 2025"
+                  range="D990:D991"
+                  changes={[{ field: "Categoria", before: "Saúde", after: "Beleza" }]}
+                  note={<span>Reclassificação automática recusada pelo usuário.</span>}
+                  status="rejected"
+                  actions={
+                    <Button variant="ghost" size="sm">
+                      Reabrir
+                    </Button>
+                  }
+                />
+              </div>
             </div>
           </div>
         );
       }
+
       ReactDOM.createRoot(document.getElementById("root")).render(<Demo />);
     </script>
   </body>

@@ -54,6 +54,16 @@
       '<path d="M19 11a5 5 0 0 0-5-5H9a6 6 0 0 0-6 6 4 4 0 0 0 2 3.5V19h3v-2h4v2h3v-3a5 5 0 0 0 2-4Z"/><path d="M16 10h.01"/>',
     key: '<circle cx="7.5" cy="15.5" r="3.5"/><path d="m10 13 8-8M15 5l3 3M14 9l2 2"/>',
     download: '<path d="M12 3v12M7 11l5 5 5-5M5 21h14"/>',
+    calculator:
+      '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h8M8 10h.01M12 10h.01M16 10h.01M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01M16 18h.01"/>',
+    layoutList:
+      '<rect x="3" y="4" width="6" height="6" rx="1"/><rect x="3" y="14" width="6" height="6" rx="1"/><path d="M13 5h8M13 9h5M13 15h8M13 19h5"/>',
+    gitCompare:
+      '<circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/>',
+    calendarRange:
+      '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M16 3v4M8 3v4M7 14h.01M11 14h6M7 18h6M17 18h.01"/>',
+    tags: '<path d="M11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4l-8.7-8.7A2 2 0 0 0 11.2 2Z"/><circle cx="7.5" cy="7.5" r="1.4"/>',
+    help: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
   };
   function Icon({ name, size = 18, stroke = 1.75, className = "", style = {} }) {
     const d = P[name] || "";

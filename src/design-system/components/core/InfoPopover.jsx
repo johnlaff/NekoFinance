@@ -1,0 +1,344 @@
+import React from "react";
+
+// InfoPopover — didactic term explainer for the Neko method (PT-BR glossary).
+// Wraps a trigger label; opens a positioned popover on click/hover/keyboard.
+// Portal-free in the DS recreation: uses fixed positioning relative to the
+// wrapper's bounding rect (same visual result without createPortal).
+// CSS-injection pattern (like MetricTile/ChatBubble).
+
+const CSS = `
+.nk-pop-wrap{position:relative;display:inline-flex;}
+
+/* Trigger button */
+.nk-term{
+  display:inline-flex;align-items:center;gap:4px;
+  background:none;border:none;padding:0;margin:0;cursor:pointer;
+  font-family:inherit;font-size:inherit;font-weight:inherit;color:inherit;
+  text-decoration:underline;text-decoration-color:var(--border-strong);
+  text-underline-offset:2px;text-decoration-style:dotted;
+  border-radius:var(--radius-xs);
+  transition:var(--t-hover);
+}
+.nk-term:hover,.nk-term:focus-visible{
+  color:var(--primary);
+  text-decoration-color:var(--primary);
+  outline:none;
+}
+.nk-term:focus-visible{
+  box-shadow:var(--shadow-focus);
+}
+.nk-term--plain{
+  text-decoration:none;
+}
+
+/* "i" marker badge */
+.nk-term__i{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:13px;height:13px;flex:none;
+  border-radius:var(--radius-circle);
+  background:var(--surface-2);
+  border:1px solid var(--border-strong);
+  font-family:var(--font-sans);
+  font-size:9px;font-weight:700;
+  color:var(--text-faint);
+  letter-spacing:0;
+  line-height:1;
+  vertical-align:middle;
+  user-select:none;
+}
+.nk-term:hover .nk-term__i,
+.nk-term:focus-visible .nk-term__i{
+  background:var(--primary-quiet);
+  border-color:var(--primary);
+  color:var(--primary);
+}
+
+/* Popover panel */
+.nk-pop{
+  position:fixed;z-index:9000;
+  display:flex;flex-direction:column;gap:5px;
+  padding:12px 14px;
+  background:var(--surface-elevated);
+  border:1px solid var(--border-strong);
+  border-radius:var(--radius-md);
+  box-shadow:var(--elev-overlay);
+  pointer-events:auto;
+}
+
+/* Fade-in animation */
+.nk-pop{
+  animation:nk-pop-in var(--dur-fast) var(--ease-entrance) both;
+}
+@keyframes nk-pop-in{
+  from{opacity:0;transform:translateY(3px);}
+  to{opacity:1;transform:translateY(0);}
+}
+.nk-pop--top{
+  animation:nk-pop-in-top var(--dur-fast) var(--ease-entrance) both;
+}
+@keyframes nk-pop-in-top{
+  from{opacity:0;transform:translateY(-3px);}
+  to{opacity:1;transform:translateY(0);}
+}
+@media(prefers-reduced-motion:reduce){
+  .nk-pop,.nk-pop--top{animation:none;}
+}
+
+/* Arrow */
+.nk-pop::before{
+  content:"";position:absolute;
+  width:10px;height:10px;
+  background:var(--surface-elevated);
+  border:1px solid var(--border-strong);
+  transform:rotate(45deg);
+  left:var(--arrow-x,12px);
+}
+.nk-pop--bottom::before{
+  top:-6px;
+  border-bottom-color:transparent;border-right-color:transparent;
+}
+.nk-pop--top::before{
+  bottom:-6px;
+  border-top-color:transparent;border-left-color:transparent;
+}
+
+/* Popover content */
+.nk-pop__title{
+  font-family:var(--font-sans);
+  font-size:12px;font-weight:700;
+  color:var(--text-strong);
+  letter-spacing:var(--ls-snug);
+  line-height:1.2;
+}
+.nk-pop__body{
+  font-family:var(--font-sans);
+  font-size:13px;
+  color:var(--text);
+  line-height:var(--lh-relaxed);
+}
+.nk-pop__hint{
+  font-family:var(--font-sans);
+  font-size:11px;
+  color:var(--text-faint);
+  margin-top:2px;
+}
+`;
+
+/** Canonical PT-BR glossary for the Neko method. */
+const GLOSSARY = {
+  pode_gastar: {
+    title: "Pode gastar hoje",
+    body: "O quanto dá para gastar hoje sem furar o mês. É o menor de dois limites: o que o caixa aguenta e o que respeita sua meta de poupança.",
+  },
+  piso_caixa: {
+    title: "Limite do caixa",
+    body: "O máximo por dia que mantém nenhum dia do mês no vermelho, olhando o saldo projetado.",
+  },
+  folga_poupanca: {
+    title: "Limite da poupança",
+    body: "O máximo por dia que ainda deixa você guardar a meta do ano (20% a 30% da renda).",
+  },
+  reserva: {
+    title: "Reserva",
+    body: "Quantos meses de custo de vida você cobre com o que tem guardado. A meta mínima é 6 meses; a partir de 12 é a 'paz' financeira.",
+  },
+  caixa: {
+    title: "Caixa",
+    body: "É dinheiro de passagem, não a sua riqueza. O que está na conta hoje, antes das contas do mês.",
+  },
+  previsibilidade: {
+    title: "Previsibilidade",
+    body: "O quanto do gasto típico de cada mês futuro já está lançado. Futuro vazio engana a previsão.",
+  },
+  colchao: {
+    title: "Colchão",
+    body: "O que sobra e você guarda para cobrir meses negativos sem sacar investimento. Adaptação válida do método.",
+  },
+  performance: {
+    title: "Performance",
+    body: "A foto do mês: Entradas menos Saídas (incluem fixas e fatura do cartão) e Diário. É o mesmo cálculo da sua planilha.",
+  },
+  economizado: {
+    title: "Economizado",
+    body: "Quanto da renda você guardou como Economia. A meta do método é de 20% a 30% no ano.",
+  },
+  custo_de_vida: {
+    title: "Custo de vida",
+    body: "Saídas fixas, diário e cartão somados. O que custa manter sua vida no mês.",
+  },
+  diario_medio: {
+    title: "Diário médio",
+    body: "A média do gasto variável por dia até hoje. Ajuda a saber se o ritmo do mês está saudável.",
+  },
+  cartao: {
+    title: "Cartão",
+    body: "Compras no cartão viram fatura no vencimento. Gastar hoje no crédito afunda os meses à frente.",
+  },
+};
+
+function useCSS() {
+  React.useEffect(() => {
+    if (document.getElementById("nk-pop-css")) return;
+    const s = document.createElement("style");
+    s.id = "nk-pop-css";
+    s.textContent = CSS;
+    document.head.appendChild(s);
+  }, []);
+}
+
+// Simple counter for unique IDs without useId (DS bundle compatibility).
+let _idCounter = 0;
+function useSafeId() {
+  const ref = React.useRef(null);
+  if (ref.current === null) ref.current = `nk-pop-${++_idCounter}`;
+  return ref.current;
+}
+
+export function InfoPopover({
+  term = "reserva",
+  children,
+  hideMarker = false,
+  width = 280,
+  className = "",
+}) {
+  useCSS();
+
+  const entry = typeof term === "string" ? (GLOSSARY[term] ?? { body: term }) : term;
+
+  const [open, setOpen] = React.useState(false);
+  const [pos, setPos] = React.useState(null);
+  const wrapRef = React.useRef(null);
+  const popRef = React.useRef(null);
+  const hoverTimer = React.useRef(undefined);
+  const id = useSafeId();
+
+  React.useEffect(() => {
+    if (!open) return;
+
+    const dismiss = () => setOpen(false);
+    const dismissAndRefocus = () => {
+      dismiss();
+      wrapRef.current?.querySelector(".nk-term")?.focus();
+    };
+
+    const place = () => {
+      const trigger = wrapRef.current?.querySelector(".nk-term");
+      if (!trigger) return;
+      const r = trigger.getBoundingClientRect();
+      const MARGIN = 12;
+      const GAP = 9;
+      const popH = popRef.current ? popRef.current.offsetHeight : 96;
+      const below =
+        r.bottom + GAP + popH + MARGIN <= window.innerHeight ||
+        r.top - GAP - popH < MARGIN;
+      const top = below ? r.bottom + GAP : r.top - GAP - popH;
+      let left = r.left;
+      left = Math.min(left, window.innerWidth - width - MARGIN);
+      left = Math.max(MARGIN, left);
+      const arrowX = Math.max(12, Math.min(width - 20, r.left + r.width / 2 - left));
+      setPos({ left, top, side: below ? "bottom" : "top", arrowX });
+    };
+
+    place();
+    const raf = requestAnimationFrame(place);
+
+    const onKey = (e) => {
+      if (e.key === "Escape") dismissAndRefocus();
+    };
+    const onDoc = (e) => {
+      const t = e.target;
+      if (wrapRef.current?.contains(t) || popRef.current?.contains(t)) return;
+      dismiss();
+    };
+    const onScroll = () => place();
+
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onDoc);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onScroll);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onDoc);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [open, width]);
+
+  // Clean up hover timer on unmount.
+  React.useEffect(() => () => clearTimeout(hoverTimer.current), []);
+
+  const show = () => {
+    clearTimeout(hoverTimer.current);
+    setOpen(true);
+  };
+  const hideSoon = () => {
+    clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => setOpen(false), 140);
+  };
+
+  const marker = !hideMarker ? (
+    <span className="nk-term__i" aria-hidden="true">
+      i
+    </span>
+  ) : null;
+
+  // Default demo children when none supplied.
+  const trigger =
+    children ?? (typeof term === "string" ? term.replace(/_/g, " ") : "termo");
+
+  return (
+    <span
+      className="nk-pop-wrap"
+      ref={wrapRef}
+      onMouseEnter={show}
+      onMouseLeave={hideSoon}
+    >
+      <button
+        type="button"
+        className={["nk-term", hideMarker ? "nk-term--plain" : "", className]
+          .filter(Boolean)
+          .join(" ")}
+        aria-describedby={open ? id : undefined}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(true);
+        }}
+      >
+        {trigger}
+        {marker}
+      </button>
+
+      {open && pos
+        ? (() => {
+            // DS preview renders into the same page — no createPortal available.
+            // We render inside the wrapper but use `position:fixed` so the
+            // popover escapes overflow clipping.
+            return (
+              <span
+                className={`nk-pop nk-pop--${pos.side}`}
+                role="tooltip"
+                id={id}
+                ref={popRef}
+                style={{
+                  left: `${pos.left}px`,
+                  top: `${pos.top}px`,
+                  width: `${width}px`,
+                  "--arrow-x": `${pos.arrowX}px`,
+                }}
+                onMouseEnter={show}
+                onMouseLeave={hideSoon}
+              >
+                {entry.title ? (
+                  <span className="nk-pop__title">{entry.title}</span>
+                ) : null}
+                <span className="nk-pop__body">{entry.body}</span>
+                <span className="nk-pop__hint">Esc para fechar</span>
+              </span>
+            );
+          })()
+        : null}
+    </span>
+  );
+}

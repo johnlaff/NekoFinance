@@ -1,17 +1,22 @@
 import * as React from "react";
 
+/**
+ * Small status / category label. Always pairs a tone with a word —
+ * color is never the only signal, keeping status accessible.
+ *
+ * @startingPoint section="Core" subtitle="Badge — small status / category label" viewport="360x80"
+ */
 export interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
-  /** Semantic tone — drives tint background + text color. */
-  tone?: "neutral" | "success" | "warning" | "danger" | "info" | "primary";
-  /** Show a leading status dot in the tone color. */
+  /**
+   * Semantic tone — drives tint background + text color.
+   * @default "primary"
+   */
+  tone?: "success" | "warning" | "danger" | "info" | "primary" | "secondary";
+  /** Show a leading status dot in the tone color (currentColor). */
   dot?: boolean;
-  /** Square (xs radius) instead of pill — for counts / codes. */
+  /** Square (4 px radius) instead of pill — for counts / codes. */
   square?: boolean;
   children?: React.ReactNode;
 }
 
-/**
- * Small status / category label. Always pairs color with a word — never
- * color alone — so status stays accessible.
- */
 export function Badge(props: BadgeProps): JSX.Element;

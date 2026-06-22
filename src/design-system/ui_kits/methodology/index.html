@@ -1,10 +1,10 @@
-<!-- @startingPoint section="Neko App" subtitle="Methodology — private, source-neutral rules & insights" viewport="1440x900" -->
-<!-- @dsCard group="Neko App" viewport="1440x980" name="Methodology / insights" subtitle="Editorial rules engine in the Newsreader voice, with derived insights" -->
+<!-- @startingPoint section="Neko App" subtitle="Help screen with method-principle cards" viewport="1440x900" -->
+<!-- @dsCard group="Neko App" viewport="1440x900" name="Ajuda" subtitle="Sete princípios do método explicados em cards" -->
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="pt-BR" data-theme="dark">
   <head>
     <meta charset="utf-8" />
-    <title>Neko Finance — Methodology</title>
+    <title>Neko Finance — Ajuda</title>
     <link rel="stylesheet" href="../../styles.css" />
     <style>
       html,
@@ -42,9 +42,20 @@
     <script src="../dashboard/AppShell.jsx"></script>
     <script type="text/babel" src="MethodologyScreen.jsx"></script>
     <script type="text/babel">
-      ReactDOM.createRoot(document.getElementById("app")).render(
-        <window.MethodologyApp />,
-      );
+      function App() {
+        const [nav, setNav] = React.useState("methodology");
+        return (
+          <window.AppShell
+            active={nav}
+            onNav={setNav}
+            title="Ajuda"
+            crumb="Como o Neko calcula"
+          >
+            <window.MethodologyScreen />
+          </window.AppShell>
+        );
+      }
+      ReactDOM.createRoot(document.getElementById("app")).render(<App />);
     </script>
   </body>
 </html>

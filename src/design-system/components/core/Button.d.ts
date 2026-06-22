@@ -5,12 +5,10 @@ import * as React from "react";
  * @startingPoint section="Core" subtitle="Button — primary / secondary / ghost / danger" viewport="700x150"
  */
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  /** Visual style. primary = jade fill, secondary = bordered surface, ghost = quiet, danger = destructive. */
+  /** Visual style. primary = jade fill, secondary = brass quiet tint, ghost = bordered quiet, danger = danger tint with danger text. */
   variant?: "primary" | "secondary" | "ghost" | "danger";
-  /** Control height. sm 30 / md 36 / lg 44. */
+  /** Control height. sm 28px / md 36px / lg 44px. */
   size?: "sm" | "md" | "lg";
-  /** Stretch to fill container width. */
-  fullWidth?: boolean;
   /** 16×16 icon node rendered before the label. */
   iconLeft?: React.ReactNode;
   /** 16×16 icon node rendered after the label. */

@@ -1,97 +1,332 @@
 import React from "react";
 
-const CSS = `
-.nk-txn{display:grid;grid-template-columns:84px minmax(0,1fr) auto auto 132px;align-items:center;gap:14px;
-  padding:0 14px;height:var(--row-h-default);border-bottom:1px solid var(--border);font-family:var(--font-sans);
-  cursor:default;transition:background var(--dur-fast) var(--ease-standard);}
-.nk-txn:hover{background:var(--surface-hover);}
-.nk-txn--selected{background:var(--surface-selected);box-shadow:inset 2px 0 0 var(--primary);}
-.nk-txn--flag{box-shadow:inset 2px 0 0 var(--warning-500);}
-.nk-txn__date{font-family:var(--font-money);font-variant-numeric:tabular-nums;font-size:12px;color:var(--text-faint);}
-.nk-txn__main{min-width:0;display:flex;flex-direction:column;gap:2px;}
-.nk-txn__merchant{font-size:13.5px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.nk-txn__owner{display:flex;justify-content:flex-end;}
-.nk-txn__status{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;justify-content:flex-end;min-width:96px;}
-.nk-txn__dot{width:7px;height:7px;border-radius:50%;flex:none;}
-.nk-txn__conf{display:inline-flex;gap:2px;align-items:center;}
-.nk-txn__conf i{width:3px;border-radius:1px;background:currentColor;display:inline-block;}
-.nk-txn__amt{font-family:var(--font-money);font-variant-numeric:tabular-nums;font-size:14px;font-weight:600;text-align:right;}
-.nk-txn__amt--pos{color:var(--money-pos);}
-.nk-txn__amt--neg{color:var(--text);}
-`;
+/**
+ * TransactionRow — linha de lançamento fiel ao método: data, descrição, método, valor, procedência,
+ * titular e nota. Quando o lançamento é um lump de fatura (Saída agregada), expande os itens da
+ * nota da célula. Portado do production TransactionRow.tsx; inline-style convention (zero classes).
+ */
 
-function useCSS() {
-  React.useEffect(() => {
-    if (document.getElementById("nk-txn-css")) return;
-    const s = document.createElement("style");
-    s.id = "nk-txn-css";
-    s.textContent = CSS;
-    document.head.appendChild(s);
-  }, []);
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Formata centavos BRL → "R$ 1.234,56" (− real, U+2212). */
+function formatBRL(cents) {
+  const neg = cents < 0;
+  const v = Math.abs(cents) / 100;
+  const s = v.toLocaleString("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return (neg ? "−R$ " : "R$ ") + s;
 }
 
-const STATUS = {
-  reconciled: { c: "var(--success-500)", t: "var(--success-400)", label: "Reconciled" },
-  imported: { c: "var(--info-500)", t: "var(--info-400)", label: "Imported" },
-  "needs-owner": {
-    c: "var(--warning-500)",
-    t: "var(--warning-400)",
-    label: "Needs owner",
-  },
+// ---------------------------------------------------------------------------
+// Provenance
+// ---------------------------------------------------------------------------
+
+const PROV = {
+  importado: { label: "Da planilha", color: "var(--prov-imported)" },
+  manual: { label: "Do app", color: "var(--prov-app)" },
+  projetado: { label: "Previsto", color: "var(--prov-projected)" },
+  conciliado: { label: "Conferido", color: "var(--prov-reconciled)" },
 };
 
+function ProvBadge({ provenance }) {
+  if (!provenance) return null;
+  const g = PROV[provenance];
+  if (!g) return null;
+  return (
+    <span
+      title={g.label}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "6px",
+        fontSize: "var(--fs-micro)",
+        fontWeight: "var(--fw-semibold)",
+        color: "var(--text-muted)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          width: 7,
+          height: 7,
+          borderRadius: "50%",
+          flex: "none",
+          background: g.color,
+        }}
+      />
+      {g.label}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Static style objects (defined outside the component to avoid re-creation)
+// ---------------------------------------------------------------------------
+
+const PASSTHROUGH_BADGE_STYLE = {
+  fontSize: "var(--fs-label)",
+  fontWeight: "var(--fw-bold)",
+  textTransform: "uppercase",
+  letterSpacing: "0.04em",
+  color: "var(--info-400)",
+  background: "var(--info-tint)",
+  padding: "1px 6px",
+  borderRadius: "4px",
+  whiteSpace: "nowrap",
+};
+
+const LUMP_TOGGLE_BASE = {
+  width: 18,
+  height: 18,
+  display: "grid",
+  placeItems: "center",
+  border: "none",
+  background: "transparent",
+  color: "var(--text-faint)",
+  borderRadius: "4px",
+  cursor: "pointer",
+  flexShrink: 0,
+  transition: "transform var(--dur-fast) var(--ease-standard)",
+};
+
+function moneyStyle(amount) {
+  return {
+    fontFamily: "var(--font-money)",
+    fontVariantNumeric: "tabular-nums",
+    fontWeight: "var(--fw-semibold)",
+    fontSize: "var(--fs-money-sm)",
+    textAlign: "right",
+    whiteSpace: "nowrap",
+    color: amount > 0 ? "var(--money-pos)" : "var(--text)",
+  };
+}
+
+function lumpItemKey(it) {
+  return `${it.what}:${it.amount}:${it.passthrough ? "repasse" : "normal"}`;
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+
 export function TransactionRow({
-  date,
-  merchant,
+  date = "21/06",
+  desc = "Supermercado Extra",
+  amount = -38500,
+  method = "Débito",
+  provenance = "importado",
   owner = null,
-  amount,
-  positive = false,
-  status = "reconciled",
-  confidence = null,
+  note = null,
+  passthrough = false,
+  future = false,
+  lump = null,
+  defaultOpen = false,
   selected = false,
-  onClick,
+  onClick = null,
   className = "",
 }) {
-  useCSS();
-  const st = STATUS[status] || STATUS.reconciled;
-  const flag = status === "needs-owner";
-  const bars = { high: 3, medium: 2, low: 1 }[confidence] || 0;
+  const [open, setOpen] = React.useState(defaultOpen);
+  const hasLump = Array.isArray(lump) && lump.length > 0;
+
+  const toggleStyle = {
+    ...LUMP_TOGGLE_BASE,
+    transform: open ? "rotate(90deg)" : "none",
+  };
+
+  const rowInteractionProps = onClick
+    ? {
+        onClick,
+        onKeyDown: (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onClick();
+          }
+        },
+        role: "button",
+        tabIndex: 0,
+      }
+    : {};
+
+  const futureBackground = future
+    ? "repeating-linear-gradient(135deg, transparent, transparent 9px, color-mix(in srgb, var(--brass-500) 4%, transparent) 9px, color-mix(in srgb, var(--brass-500) 4%, transparent) 18px)"
+    : "transparent";
+
+  const showMeta = provenance || owner || note;
+
   return (
     <div
-      className={[
-        "nk-txn",
-        selected ? "nk-txn--selected" : "",
-        flag && !selected ? "nk-txn--flag" : "",
-        className,
-      ]
-        .filter(Boolean)
-        .join(" ")}
-      onClick={onClick}
+      className={className}
+      style={{
+        borderBottom: "var(--bw-hair) solid var(--border)",
+        fontFamily: "var(--font-sans)",
+        background: selected ? "var(--surface-selected)" : futureBackground,
+        boxShadow: selected ? "inset 2px 0 0 var(--primary)" : "none",
+      }}
     >
-      <span className="nk-txn__date">{date}</span>
-      <span className="nk-txn__main">
-        <span className="nk-txn__merchant">{merchant}</span>
-      </span>
-      <span className="nk-txn__owner">{owner}</span>
-      <span className="nk-txn__status" style={{ color: st.t }}>
-        {confidence ? (
-          <span className="nk-txn__conf" title={`${confidence} confidence`}>
-            {[0, 1, 2].map((i) => (
-              <i
-                key={i}
-                style={{ height: `${6 + i * 3}px`, opacity: i < bars ? 1 : 0.25 }}
-              />
-            ))}
+      {/* Main row */}
+      <div
+        {...rowInteractionProps}
+        style={{
+          display: "grid",
+          gridTemplateColumns: "58px 1fr auto auto",
+          alignItems: "center",
+          gap: "14px",
+          padding: "12px 18px",
+        }}
+      >
+        {/* Date */}
+        <span
+          style={{
+            fontSize: "var(--fs-sm)",
+            color: "var(--text-faint)",
+            fontFamily: "var(--font-money)",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {date}
+        </span>
+
+        {/* Desc + meta */}
+        <div
+          style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: "4px" }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            {hasLump ? (
+              <button
+                type="button"
+                aria-expanded={open}
+                aria-label={open ? "Fechar itens" : "Abrir itens"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpen((o) => !o);
+                }}
+                style={toggleStyle}
+              >
+                ›
+              </button>
+            ) : (
+              <span style={{ width: 18, flexShrink: 0 }} />
+            )}
+            <span
+              style={{
+                fontSize: "var(--fs-body)",
+                color: "var(--text)",
+                overflowWrap: "anywhere",
+              }}
+            >
+              {desc}
+            </span>
+            {passthrough ? <span style={PASSTHROUGH_BADGE_STYLE}>repasse</span> : null}
+          </div>
+
+          {showMeta ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                flexWrap: "wrap",
+                paddingLeft: 26,
+              }}
+            >
+              <ProvBadge provenance={provenance} />
+              {owner}
+              {note ? (
+                <span
+                  style={{
+                    fontSize: "var(--fs-micro)",
+                    color: "var(--text-faint)",
+                    fontStyle: "italic",
+                  }}
+                >
+                  {`"${note}"`}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+
+        {/* Method pill */}
+        {method ? (
+          <span
+            style={{
+              fontSize: "var(--fs-micro)",
+              color: "var(--text-muted)",
+              padding: "3px 9px",
+              border: "var(--bw-hair) solid var(--border)",
+              borderRadius: "var(--radius-pill)",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {method}
           </span>
-        ) : (
-          <span className="nk-txn__dot" style={{ background: st.c }} />
-        )}
-        {st.label}
-      </span>
-      <span className={`nk-txn__amt nk-txn__amt--${positive ? "pos" : "neg"}`}>
-        {positive ? "+ " : ""}
-        {amount}
-      </span>
+        ) : null}
+
+        {/* Amount */}
+        <span style={{ ...moneyStyle(amount), opacity: passthrough ? 0.55 : 1 }}>
+          {formatBRL(amount)}
+        </span>
+      </div>
+
+      {/* Lump expand panel */}
+      {hasLump && open ? (
+        <div
+          style={{
+            padding: "4px 18px 14px 76px",
+            background: "var(--bg-subtle)",
+            borderTop: "1px dashed var(--border)",
+          }}
+        >
+          {lump.map((it) => (
+            <div
+              key={lumpItemKey(it)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                padding: "7px 0",
+                borderBottom: "var(--bw-hair) solid var(--border)",
+                fontSize: "var(--fs-sm)",
+              }}
+            >
+              <span
+                style={{ color: "var(--text-faint)", fontFamily: "var(--font-money)" }}
+              >
+                ↳
+              </span>
+              <span
+                style={{
+                  flex: 1,
+                  color: "var(--text-muted)",
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {it.what}
+              </span>
+              {it.owner || null}
+              <span style={moneyStyle(it.amount)}>{formatBRL(it.amount)}</span>
+            </div>
+          ))}
+          <p
+            style={{
+              margin: "10px 0 0",
+              fontSize: "var(--fs-micro)",
+              color: "var(--text-faint)",
+            }}
+          >
+            Esse detalhe vem das notas da célula da planilha. Cada item é preservado;
+            nunca vira um "Saída" genérico.
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 }

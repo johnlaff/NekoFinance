@@ -1,19 +1,26 @@
 import * as React from "react";
 
+/**
+ * Identifies the owner of a transaction or account — personal, partner, or shared.
+ * Renders a colored dot + label (default) or an avatar ring + initials (avatar mode).
+ * @startingPoint section="Finance" subtitle="OwnerChip — transaction owner chip" viewport="320x120"
+ */
 export interface OwnerChipProps {
-  /** Person or group name; initials are derived for the avatar. */
-  name: string;
-  /** Ownership class — sets the avatar accent. shared shows a split avatar. */
-  type?: "personal" | "partner" | "shared";
-  /** Optional role qualifier shown after a divider: "Payer", "Beneficiary", "Responsible". */
-  role?: string;
-  /** Drop the pill background/border (for use inside dense rows). */
+  /** Ownership category — sets the accent color and default label. */
+  who?: "personal" | "partner" | "shared";
+  /** Override the default label ("Eu", "Parceiro(a)", "Compartilhado"). */
+  name?: string;
+  /** Secondary qualifier, e.g. "paga". Avoids the ARIA-reserved `role` attribute name. */
+  note?: string;
+  /** Strip the pill background and border (for use inside dense rows). */
   bare?: boolean;
+  /** Show a circular avatar with initials instead of the colored dot. */
+  avatar?: boolean;
   className?: string;
 }
 
 /**
- * Identifies who owns / is responsible for a transaction or budget line.
- * Encodes the personal / partner / shared distinction that is core to Neko.
+ * Identifies the owner of a transaction or account — personal, partner, or shared.
+ * Renders a colored dot + label (default) or an avatar ring + initials (avatar mode).
  */
 export function OwnerChip(props: OwnerChipProps): JSX.Element;
