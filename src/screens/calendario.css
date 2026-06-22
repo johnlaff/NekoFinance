@@ -1,0 +1,146 @@
+.cal {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.cal-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+}
+.cal-legend {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.cal-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.cal-legend i {
+  width: 13px;
+  height: 13px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+/* big month */
+.cal-dow {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+  padding: 16px 18px 0;
+}
+.cal-dow span {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  text-align: center;
+}
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+  padding: 8px 18px 18px;
+}
+.cal-cell {
+  aspect-ratio: 1.25;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  padding: 7px 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-width: 0;
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+.cal-cell:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-2);
+}
+.cal-cell--empty {
+  background: transparent;
+  border: none;
+}
+.cal-cell--today {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+.cal-cell__d {
+  font-family: var(--font-money);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+}
+.cal-cell__s {
+  font-family: var(--font-money);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: right;
+}
+.cal-cell--future {
+  opacity: 0.5;
+}
+/* year of minis */
+.cal-year {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 18px;
+  padding: 18px;
+}
+@media (max-width: 900px) {
+  .cal-year {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 560px) {
+  .cal-year {
+    grid-template-columns: 1fr;
+  }
+}
+.cal-mini__h {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  text-transform: capitalize;
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+}
+.cal-mini__perf {
+  font-family: var(--font-money);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+.cal-mini__grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+}
+.cal-mini__cell {
+  aspect-ratio: 1;
+  border-radius: 3px;
+}
+.cal-mini__cell--today {
+  outline: 1.5px solid var(--primary);
+  outline-offset: -1.5px;
+}

@@ -1,0 +1,92 @@
+/* Neko Finance — TagsScreen redesign styles (ported verbatim from Extras.jsx ScreenTags).
+   Class names are kept exactly as the redesign prototype uses them.
+   Do NOT edit redesign.css or App.css — this file is self-contained. */
+
+.xs {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.xs-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+}
+.card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px 4px;
+}
+.card__title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+.card__title .ic {
+  color: var(--text-faint);
+}
+.card__body {
+  padding: 14px 20px 18px;
+}
+/* tags */
+.tg-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.tg-row:last-child {
+  border-bottom: none;
+}
+.tg-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  flex: none;
+}
+.tg-name {
+  font-size: 14px;
+  color: var(--text);
+  width: 130px;
+  flex: none;
+}
+.tg-track {
+  flex: 1;
+  height: 10px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-subtle);
+  overflow: hidden;
+}
+.tg-fill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+}
+.tg-amt {
+  font-family: var(--font-money);
+  font-variant-numeric: tabular-nums;
+  font-size: 13.5px;
+  font-weight: 600;
+  width: 110px;
+  text-align: right;
+  flex: none;
+}
+.tg-ignore {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  cursor: pointer;
+  background: none;
+  border: none;
+}

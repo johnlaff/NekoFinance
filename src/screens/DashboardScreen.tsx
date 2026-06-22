@@ -1,230 +1,443 @@
-import { useState } from "react";
-import { AlertTriangle, Sparkles } from "lucide-react";
-import { PocketsCard } from "../features/pockets/PocketsCard";
-import { ConflictGate } from "../features/reconcile/ConflictGate";
-import { useWriteBackPending } from "../hooks/useWriteBackPending";
+import { useEffect, useRef, useState } from "react";
+import { Calendar, CalendarRange, CheckCircle2, SlidersHorizontal } from "lucide-react";
 import { Button } from "../design-system/components/Button";
-import { EmptyState } from "../design-system/components/EmptyState";
-import { Money } from "../design-system/components/Money";
-import { BalanceTrajectory } from "../design-system/components/BalanceTrajectory";
-import { InfoPopover } from "../design-system/components/InfoPopover";
-import { getDashboardSummary, getForecast, isTauri } from "../lib/api";
-import { fmtDayMonth, formatBRL, monthNamePtBR } from "../lib/format";
+import {
+  createTransaction,
+  getDashboardSummary,
+  getForecast,
+  getUpcomingBills,
+  isTauri,
+  type ForecastDay,
+} from "../lib/api";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
-import { PrevisibilidadeCard } from "./dashboard/PrevisibilidadeCard";
-import { ColchaoCard } from "./dashboard/ColchaoCard";
-import { colchaoPhase } from "./dashboard/colchaoPhase";
-import { PerformanceCard } from "./dashboard/PerformanceCard";
-import { DailyCheckinCard } from "./dashboard/DailyCheckinCard";
-import { LastLoggedBanner } from "./dashboard/LastLoggedBanner";
-import { MonthLedgerCard } from "./dashboard/MonthLedgerCard";
-import { WriteBackPending } from "./dashboard/WriteBackPending";
+import { parseBRLToCents } from "../lib/format";
+import {
+  fmtBRL,
+  MES,
+  MES_ABBR,
+  monthOf,
+  saldoBand,
+  TYPE_META,
+  type MovementType,
+} from "../lib/nkFormat";
+import { useNekoApp } from "../shell/appContext";
 
-export function DashboardScreen({
-  onAskMia,
-  onQuickAddAmountRef,
-}: {
-  onAskMia: () => void;
-  /** Ref do campo de valor do check-in rápido — repassado ao AppShell p/ o atalho "N". */
-  onQuickAddAmountRef?: (ref: HTMLInputElement | null) => void;
-}) {
-  // Chaves de cache COMPARTILHADAS (sem sufixo) → o dashboard reaproveita o `get_forecast` /
-  // `get_dashboard_summary` já buscados por outras telas, em vez de um slot privado que forçava
-  // re-fetch a cada visita. `invalidateCommands()` (em handleLogged/handleReload) limpa o cache
-  // inteiro, então o próximo render rebusca fresco. `ledgerKey` força só o re-fetch do grid mensal.
-  const [ledgerKey, setLedgerKey] = useState(0);
-  // Indicador de write-back pendente (planos 031/039): conta as células local → planilha por enviar
-  // e os conflitos que bloqueiam o envio. O selo + caminho rápido "Sincronizar" + fallback completo
-  // vivem em `<WriteBackPending>` (que owna o próprio estado de envio).
-  const writeBack = useWriteBackPending();
+const WEEKDAYS = [
+  "Domingo",
+  "Segunda-feira",
+  "Terça-feira",
+  "Quarta-feira",
+  "Quinta-feira",
+  "Sexta-feira",
+  "Sábado",
+];
+
+function eyebrowDate(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y || !m || !d) return "";
+  const wd = new Date(y, m - 1, d).getDay();
+  return `${WEEKDAYS[wd] ?? ""}, ${d} de ${(MES[m - 1] ?? "").toLowerCase()}`;
+}
+
+/** Mini-gráfico de área do saldo do mês (porte do protótipo). */
+function MiniTrajectory({ daily, today }: { daily: ForecastDay[]; today: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [w, setW] = useState(340);
+  useEffect(() => {
+    if (!ref.current || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) setW(Math.max(120, e.contentRect.width));
+    });
+    ro.observe(ref.current);
+    return () => ro.disconnect();
+  }, []);
+  if (daily.length === 0)
+    return <div ref={ref} style={{ width: "100%", height: 96 }} />;
+  const H = 96,
+    padTop = 10,
+    padBot = 10;
+  const vals = daily.map((d) => d.balance_cents);
+  const min = Math.min(...vals, 0),
+    max = Math.max(...vals, 0);
+  const range = max - min || 1;
+  const innerH = H - padTop - padBot;
+  const x = (i: number) => (daily.length <= 1 ? w / 2 : (i / (daily.length - 1)) * w);
+  const y = (c: number) => padTop + innerH - ((c - min) / range) * innerH;
+  const pts = daily.map((d, i) => [x(i), y(d.balance_cents)] as const);
+  const linePts = pts.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+  const first = pts[0]!;
+  const last = pts[pts.length - 1]!;
+  const areaD =
+    `M ${first[0].toFixed(1)},${H - padBot} L ` +
+    linePts.split(" ").join(" L ") +
+    ` L ${last[0].toFixed(1)},${H - padBot} Z`;
+  const todayIdx = daily.findIndex((d) => d.date === today);
+  const minIdx = vals.indexOf(Math.min(...vals));
+  const hasDeficit = min < 0;
+  const zeroY = y(0);
+  return (
+    <div ref={ref} style={{ width: "100%", lineHeight: 0 }}>
+      <svg
+        width={w}
+        height={H}
+        viewBox={`0 0 ${w} ${H}`}
+        preserveAspectRatio="xMidYMid meet"
+        role="img"
+        aria-label="Saldo projetado do mês"
+        style={{ display: "block" }}
+      >
+        <defs>
+          <linearGradient id="mini-grad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="var(--primary)" stopOpacity="0.26" />
+            <stop offset="100%" stopColor="var(--primary)" stopOpacity="0.02" />
+          </linearGradient>
+        </defs>
+        {hasDeficit ? (
+          <line
+            x1={0}
+            x2={w}
+            y1={zeroY}
+            y2={zeroY}
+            stroke="var(--danger-400)"
+            strokeWidth="1"
+            strokeDasharray="3 4"
+            opacity="0.7"
+          />
+        ) : null}
+        <path d={areaD} fill="url(#mini-grad)" />
+        <polyline
+          points={linePts}
+          fill="none"
+          stroke="var(--primary)"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        {minIdx >= 0 && minIdx !== todayIdx ? (
+          <circle
+            cx={x(minIdx)}
+            cy={y(vals[minIdx]!)}
+            r="3"
+            fill={hasDeficit ? "var(--danger-400)" : "var(--text-faint)"}
+          />
+        ) : null}
+        {todayIdx >= 0 ? (
+          <circle
+            cx={x(todayIdx)}
+            cy={y(daily[todayIdx]!.balance_cents)}
+            r="3.5"
+            fill="var(--primary)"
+            stroke="var(--surface)"
+            strokeWidth="2"
+          />
+        ) : null}
+      </svg>
+    </div>
+  );
+}
+
+const CHECKIN_TYPES: MovementType[] = ["diario", "cartao", "saida"];
+
+export function DashboardScreen() {
+  const { openCompose, navigate } = useNekoApp();
   const summaryQ = useCommand("get_dashboard_summary", getDashboardSummary);
   const forecastQ = useCommand("get_forecast", getForecast);
-  const summary = summaryQ.data ?? null;
-  const forecast = forecastQ.data ?? null;
-  const loading = summaryQ.loading || forecastQ.loading;
-  const error = summaryQ.error ?? forecastQ.error;
+  const billsQ = useCommand("get_upcoming_bills", () => getUpcomingBills(45));
 
-  if (!isTauri) {
-    return (
-      <div className="dash">
-        <div className="dash-hero">
-          <div className="dash-hero__txt">
-            <div className="dash-hero__line">
-              <b>Preview web.</b> Abra o app desktop para ver seus dados.
+  const summary = summaryQ.data;
+  const forecast = forecastQ.data;
+  const today = forecast?.today ?? "";
+  const month = today ? monthOf(today) : new Date().getMonth();
+
+  const ceiling = summary?.daily_budget ?? 0;
+  const spent = summary?.daily_spend_today ?? 0;
+  const safeToSpend = Math.max(0, forecast?.safe_to_spend_today_cents ?? 0);
+  const reserve = summary?.reserve_months ?? 0;
+  const endBalance = summary?.balance ?? 0;
+  const monthDaily = (forecast?.daily ?? []).filter((d) => monthOf(d.date) === month);
+  const saldoHoje =
+    monthDaily.find((d) => d.date === today)?.balance_cents ?? endBalance;
+  const minSaldo = monthDaily.length
+    ? Math.min(...monthDaily.map((d) => d.balance_cents))
+    : (forecast?.deepest_deficit?.balance_cents ?? endBalance);
+  const endBand = saldoBand(endBalance);
+
+  return (
+    <div className="hoje neko-app">
+      <section className="hoje-hero">
+        <div>
+          <p className="hoje-hero__eyebrow">{eyebrowDate(today)}</p>
+          <p className="hoje-hero__label">Pode gastar hoje</p>
+          <p className="hoje-hero__kpi">
+            {fmtBRL(safeToSpend)} <small>sem furar o teto</small>
+          </p>
+          <p className="hoje-hero__reason">
+            É o menor de dois limites: o teto diário de {fmtBRL(ceiling)} e o que o
+            caixa aguenta sem nenhum dia no vermelho até o fim do mês.
+          </p>
+          <dl className="hoje-hero__stats">
+            <div>
+              <dt>Saldo hoje</dt>
+              <dd>{fmtBRL(saldoHoje)}</dd>
             </div>
-          </div>
+            <div>
+              <dt>Reserva</dt>
+              <dd>{reserve.toFixed(1)} meses</dd>
+            </div>
+            <div>
+              <dt>Teto diário</dt>
+              <dd>{fmtBRL(ceiling)}</dd>
+            </div>
+          </dl>
         </div>
-      </div>
-    );
-  }
+        <aside className="hoje-fc">
+          <div className="hoje-fc__top">
+            <span className="hoje-fc__lab">
+              Saldo no fim de {(MES[month] ?? "").toLowerCase()}
+            </span>
+            <span
+              className="hoje-chip"
+              style={{
+                background: `color-mix(in srgb, ${endBand.text} 14%, transparent)`,
+                color: endBand.text,
+              }}
+            >
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  background: endBand.text,
+                }}
+              />
+              {endBand.label}
+            </span>
+          </div>
+          <div className="hoje-fc__val" style={{ color: endBand.text }}>
+            {fmtBRL(endBalance)}
+          </div>
+          <MiniTrajectory daily={monthDaily} today={today} />
+          <p className="hoje-fc__foot">
+            {minSaldo < 0
+              ? `Atenção: chega a ${fmtBRL(minSaldo)} no pior dia.`
+              : `Menor saldo previsto no mês: ${fmtBRL(minSaldo)}.`}
+          </p>
+        </aside>
+      </section>
 
-  if (loading) {
-    return (
-      <div className="dash">
-        <EmptyState variant="skeleton" skeletonRows={6} />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="dash">
-        <EmptyState
-          variant="error"
-          title="Não foi possível carregar os dados"
-          description={error}
-          action={
-            <Button variant="primary" onClick={handleReload}>
-              Tentar novamente
-            </Button>
-          }
+      <div className="hoje-grid">
+        <CheckinCard
+          ceiling={ceiling}
+          spent={spent}
+          remaining={ceiling - spent}
+          today={today}
+          lastReal={summary?.last_real_tx_date ?? null}
+          onCompose={openCompose}
+        />
+        <UpcomingCard
+          onSeeAll={() => navigate("lancamentos")}
+          bills={billsQ.data ?? []}
         />
       </div>
-    );
-  }
 
-  const deficit =
-    forecast?.deepest_deficit && forecast.deepest_deficit.balance_cents < 0
-      ? forecast.deepest_deficit
-      : null;
+      {!isTauri && (
+        <p style={{ color: "var(--text-faint)", fontSize: 12 }}>
+          Preview web — abra o app desktop para ver seus dados.
+        </p>
+      )}
+    </div>
+  );
+}
 
-  // Guardrail duplo (caixa × poupança). "Pode gastar" honesto = o mais apertado dos dois.
-  const savingsBinds = forecast?.binding_guardrail === "savings";
-  const targetPct = forecast ? Math.round(forecast.savings_target_bps / 100) : 25;
-  const hasData = (summary?.transaction_count ?? 0) > 0;
-  // Diário médio do mês corrente (Σ diário realizado ÷ dias decorridos) para o ritmo no check-in.
-  const ym = forecast?.today.slice(0, 7);
-  const monthDailyAvgCents =
-    forecast?.months.find((m) => `${m.year}-${String(m.month).padStart(2, "0")}` === ym)
-      ?.real_daily_avg_cents ?? 0;
+function CheckinCard({
+  ceiling,
+  spent,
+  remaining,
+  today,
+  lastReal,
+  onCompose,
+}: {
+  ceiling: number;
+  spent: number;
+  remaining: number;
+  today: string;
+  lastReal: string | null;
+  onCompose: (opts?: { mode?: "new"; type?: MovementType; date?: string }) => void;
+}) {
+  const [kind, setKind] = useState<MovementType>("diario");
+  const [amount, setAmount] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  function handleLogged() {
-    invalidateCommands();
-    setLedgerKey((k) => k + 1);
-    // Um lançamento local pode ter criado uma nova divergência → re-mede o write-back pendente.
-    writeBack.refresh();
-  }
+  const pct = ceiling > 0 ? Math.min(100, Math.round((spent / ceiling) * 100)) : 0;
+  const over = remaining < 0;
 
-  function handleReload() {
-    invalidateCommands();
-    setLedgerKey((k) => k + 1);
+  function register() {
+    const cents = parseBRLToCents(amount);
+    if (!cents || cents <= 0 || !isTauri) return;
+    setSaving(true);
+    createTransaction({
+      txnType: "expense",
+      amountCents: cents,
+      description: null,
+      date: today,
+      paymentMethod: kind === "cartao" ? "credito" : null,
+      isFixed: kind === "saida",
+      tagIds: [],
+      recurrence: null,
+    })
+      .then(() => {
+        setAmount("");
+        invalidateCommands();
+      })
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      .catch(() => {})
+      .finally(() => setSaving(false));
   }
 
   return (
-    <div className="dash">
-      <section className="dash-hero" aria-label="Quanto posso gastar hoje">
-        <div className="dash-hero__lead">
-          <p className="dash-hero__label">
-            <InfoPopover term="pode_gastar">Pode gastar até</InfoPopover>
-          </p>
-          <p className="dash-hero__kpi">
-            {forecast ? formatBRL(forecast.safe_to_spend_today_cents) : "—"}
-            <span className="dash-hero__kpi-suffix">hoje</span>
-          </p>
-          <p className="dash-hero__reason">
-            {!forecast
-              ? "Importe sua planilha para ver a previsão."
-              : savingsBinds
-                ? `O menor de dois limites: respeita sua meta de guardar ${targetPct}% no ano.`
-                : "O menor de dois limites: o que o caixa aguenta sem nenhum dia no vermelho."}
-          </p>
-          <div className="dash-hero__row">
-            {summary && summary.transaction_count > 0 && (
-              <dl className="dash-hero__stats">
-                <div>
-                  <dt>Reserva</dt>
-                  <dd>{summary.reserve_months.toFixed(1)} meses</dd>
-                </div>
-                <div>
-                  <dt>Lançamentos</dt>
-                  <dd>{summary.transaction_count}</dd>
-                </div>
-              </dl>
-            )}
-            <Button
-              variant="secondary"
-              size="sm"
-              iconLeft={<Sparkles size={15} strokeWidth={1.75} />}
-              onClick={onAskMia}
-            >
-              Conhecer a Mia
-            </Button>
-          </div>
+    <section className="card">
+      <div className="card__head">
+        <span className="card__title">
+          <Calendar size={16} strokeWidth={1.75} className="ic" />
+          Check-in de hoje
+        </span>
+        <span
+          style={{
+            fontSize: 12.5,
+            fontWeight: 600,
+            color: over ? "var(--danger-400)" : "var(--text-muted)",
+          }}
+        >
+          {over ? `${fmtBRL(-remaining)} acima` : `${fmtBRL(remaining)} livre`}
+        </span>
+      </div>
+      <div className="card__body">
+        <div className="ci-top">
+          <span style={{ color: "var(--text-muted)" }}>Diário de hoje</span>
+          <span className="ci-spent">
+            {fmtBRL(spent)}
+            <span style={{ color: "var(--text-faint)", fontWeight: 400 }}>
+              {" "}
+              / {fmtBRL(ceiling)}
+            </span>
+          </span>
+        </div>
+        <div className="ci-track">
+          <div
+            className="ci-fill"
+            style={{
+              width: `${pct}%`,
+              background: over ? "var(--danger-500)" : "var(--type-diario)",
+            }}
+          />
         </div>
 
-        {forecast && forecast.daily.length > 1 && (
-          <aside className="dash-hero__forecast" aria-label="Saldo projetado do mês">
-            <div className="dash-hero__forecast-head">
-              <span>Saldo no fim de {monthNamePtBR(forecast.today)}</span>
-              <Money
-                cents={forecast.month_end[0]?.balance_cents ?? 0}
-                size="md"
-                sign="auto"
-              />
-            </div>
-            <BalanceTrajectory
-              daily={forecast.daily}
-              today={forecast.today}
-              variant="compact"
-            />
-            <p className="dash-hero__forecast-foot">
-              {deficit ? (
-                <span className="negative">
-                  Pode faltar em {fmtDayMonth(deficit.date)}:{" "}
-                  <Money cents={deficit.balance_cents} size="sm" sign="negative" />
-                </span>
-              ) : (
-                "Como seu saldo deve evoluir até o fim do mês."
-              )}
-            </p>
-          </aside>
+        <div className="ci-types" role="radiogroup" aria-label="Tipo de movimento">
+          {CHECKIN_TYPES.map((k) => {
+            const tm = TYPE_META[k];
+            const sel = kind === k;
+            return (
+              <button
+                type="button"
+                key={k}
+                role="radio"
+                aria-checked={sel}
+                className="ci-type"
+                onClick={() => setKind(k)}
+                style={
+                  sel
+                    ? {
+                        color: "var(--text-strong)",
+                        background: `color-mix(in srgb, ${tm.color} 16%, transparent)`,
+                      }
+                    : undefined
+                }
+              >
+                <span className="ci-type__dot" style={{ background: tm.color }} />
+                {tm.name}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="ci-row">
+          <input
+            className="ci-input"
+            inputMode="decimal"
+            placeholder="Valor de hoje (R$)"
+            aria-label="Valor"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void register();
+            }}
+          />
+          <Button variant="primary" onClick={() => void register()} disabled={saving}>
+            Registrar
+          </Button>
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <button
+            type="button"
+            className="ci-compose"
+            onClick={() => onCompose({ mode: "new", type: kind, date: today })}
+          >
+            <SlidersHorizontal size={13} strokeWidth={1.75} />
+            Compor por itens (descrever cada valor)
+          </button>
+        </div>
+        <div className="ci-done">
+          <CheckCircle2 size={14} strokeWidth={1.75} />
+          {lastReal === today
+            ? "Em dia. Você já lançou hoje."
+            : "Lance o gasto de hoje para manter o saldo fiel."}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function UpcomingCard({
+  bills,
+  onSeeAll,
+}: {
+  bills: { id: string; description: string; amount: number; due_date: string }[];
+  onSeeAll: () => void;
+}) {
+  return (
+    <section className="card">
+      <div className="card__head">
+        <span className="card__title">
+          <CalendarRange size={16} strokeWidth={1.75} className="ic" />A pagar em breve
+        </span>
+        <Button size="sm" variant="ghost" onClick={onSeeAll}>
+          Ver tudo
+        </Button>
+      </div>
+      <div className="card__body" style={{ paddingTop: 4 }}>
+        {bills.length === 0 ? (
+          <div style={{ color: "var(--text-faint)", fontSize: 13, padding: "8px 0" }}>
+            Nada vencendo nos próximos dias.
+          </div>
+        ) : (
+          bills.map((e) => {
+            const d = parseInt(e.due_date.split("-")[2] ?? "0", 10);
+            const mm = MES_ABBR[monthOf(e.due_date)];
+            return (
+              <div className="up-row" key={e.id}>
+                <div className="up-when">
+                  <div className="up-when__d">{d}</div>
+                  <div className="up-when__m">{mm}</div>
+                </div>
+                <div className="up-desc">
+                  <div className="up-desc__t">{e.description}</div>
+                </div>
+                <div className="up-amt">−{fmtBRL(e.amount)}</div>
+              </div>
+            );
+          })
         )}
-      </section>
-
-      {deficit && (
-        <output className="dash-deficit">
-          <AlertTriangle size={15} strokeWidth={1.75} />
-          <span>
-            Buraco previsto de{" "}
-            <Money cents={deficit.balance_cents} size="sm" sign="negative" /> em{" "}
-            {fmtDayMonth(deficit.date)}. Precisa de entrada nova ou corte até lá.
-          </span>
-        </output>
-      )}
-
-      {/* Conflitos de importação (plano 013): bloqueiam o write-back. Aparecem aqui também (não só
-          em Lançamentos) para serem resolvidos sem sair do dashboard. O componente se auto-busca e
-          some quando não há conflitos. Reaproveitado como está — sem reimplementar o gate humano. */}
-      <ConflictGate onResolved={writeBack.refresh} />
-
-      {/* Selo de write-back pendente + caminho rápido "Sincronizar" (plano 039) + fallback para o
-          painel de aprovação multi-etapas (plano 028). Some sozinho quando não há nada a enviar. */}
-      <WriteBackPending writeBack={writeBack} />
-
-      {summary && hasData && (
-        <LastLoggedBanner lastRealTxDate={summary.last_real_tx_date} />
-      )}
-
-      {summary && hasData && (
-        <DailyCheckinCard
-          summary={summary}
-          monthAvgCents={monthDailyAvgCents}
-          onLogged={handleLogged}
-          onAmountRef={onQuickAddAmountRef}
-        />
-      )}
-
-      {forecast && hasData && <PrevisibilidadeCard forecast={forecast} />}
-
-      {forecast && hasData && (
-        <ColchaoCard forecast={forecast} phase={colchaoPhase(summary, forecast)} />
-      )}
-
-      {forecast && <PerformanceCard forecast={forecast} />}
-
-      {forecast && <MonthLedgerCard today={forecast.today} reloadKey={ledgerKey} />}
-
-      <PocketsCard />
-    </div>
+      </div>
+    </section>
   );
 }

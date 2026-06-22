@@ -1,154 +1,308 @@
-import { Badge } from "../design-system/components/Badge";
+import "./mia.css";
+import { useState } from "react";
+import { Send, Sparkles } from "lucide-react";
+import { Button } from "../design-system/components/Button";
 import { MiaAvatar } from "../design-system/components/MiaAvatar";
-import {
-  getDashboardSummary,
-  getForecast,
-  type DashboardSummary,
-  type Forecast,
-} from "../lib/api";
-import { formatBRL, monthNamePtBR } from "../lib/format";
+import { getDashboardSummary, getForecast, isTauri } from "../lib/api";
 import { useCommand } from "../lib/useCommand";
+import { fmtBRL } from "../lib/nkFormat";
 
-/**
- * Fatos determinísticos que a Mia já pode afirmar HOJE — derivados do motor (sem IA), como prova de
- * valor enquanto o chat não existe. São frases do método: reserva em meses, performance do mês,
- * pode-gastar e economizado no ano. Tudo vem de comandos já existentes (get_dashboard_summary /
- * get_forecast); nada é gerado por linguagem.
- */
-function miaKnownFacts(
-  summary: DashboardSummary | undefined,
-  forecast: Forecast | undefined,
-): string[] {
-  const facts: string[] = [];
-  if (summary && summary.transaction_count > 0) {
-    facts.push(
-      `Sua reserva cobre ${summary.reserve_months.toFixed(1)} meses de custo de vida (a meta mínima é 6).`,
-    );
-  }
-  if (forecast) {
-    // Economizado% do método = Economia registrada ÷ Entradas (não o net superávit/colchão).
-    // Vem antes da performance/pode-gastar para não ser descartado pelo corte de 3 fatos.
-    const a = forecast.annual_savings;
-    const ytd = Math.round(
-      (a.registered_economia_cents / Math.max(1, a.realized_income_cents)) * 100,
-    );
-    facts.push(`No ano, você economizou ${ytd}% (referência 20–30%).`);
-    const ym = forecast.today.slice(0, 7);
-    const cur = forecast.months.find(
-      (m) => `${m.year}-${String(m.month).padStart(2, "0")}` === ym,
-    );
-    if (cur) {
-      // Mês corrente: a performance inclui a previsão do diário que ainda falta — qualificamos.
-      facts.push(
-        `A performance projetada de ${monthNamePtBR(forecast.today)} está em ${formatBRL(cur.performance_cents)} (inclui o diário que ainda falta no mês).`,
-      );
-    }
-    facts.push(
-      `Você pode gastar até ${formatBRL(forecast.safe_to_spend_today_cents)} hoje sem furar suas metas.`,
-    );
-  }
-  return facts.slice(0, 3);
+/* ------------------------------------------------------------------ */
+/* Suggestion chips (static, seeded)                                   */
+/* ------------------------------------------------------------------ */
+
+const SUGG_CHIPS = [
+  "Por que o saldo cai em agosto?",
+  "Resumo do mês",
+  "Onde gastei mais?",
+  "Pré-lançar o próximo mês",
+];
+
+/* ------------------------------------------------------------------ */
+/* Message shape                                                        */
+/* ------------------------------------------------------------------ */
+
+type Sender = "mia" | "user";
+
+interface Message {
+  id: number;
+  sender: Sender;
+  text: string;
+  calc?: string;
 }
 
+let _nextId = 1;
+function nextId() {
+  return _nextId++;
+}
+
+/* ------------------------------------------------------------------ */
+/* Deterministic "can-spend today" answer                              */
+/* ------------------------------------------------------------------ */
+
+interface SpendAnswer {
+  safe: number;
+  ceiling: number;
+  spent: number;
+  remaining: number;
+}
+
+function buildSpendAnswer(
+  dailyBudget: number,
+  dailySpendToday: number,
+  safeToSpendTodayCents: number,
+): SpendAnswer {
+  const ceiling = dailyBudget;
+  const spent = dailySpendToday;
+  const safe = Math.max(0, safeToSpendTodayCents);
+  const remaining = ceiling - spent;
+  return { safe, ceiling, spent, remaining };
+}
+
+function spendAnswerText(ans: SpendAnswer): string {
+  return (
+    `Hoje você pode gastar até ` +
+    `**${fmtBRL(ans.safe)}** sem furar o teto diário nem deixar nenhum dia no vermelho até o fim do mês.`
+  );
+}
+
+function spendAnswerCalc(ans: SpendAnswer): string {
+  return (
+    `teto diário = ${fmtBRL(ans.ceiling)}\n` +
+    `já gasto hoje = ${fmtBRL(ans.spent)}\n` +
+    `livre = ${fmtBRL(ans.remaining)}`
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Greeting + seeded conversation                                       */
+/* ------------------------------------------------------------------ */
+
+function buildInitialMessages(ans: SpendAnswer | null): Message[] {
+  const greeting: Message = {
+    id: nextId(),
+    sender: "mia",
+    text: "Oi! Posso explicar seus números, achar cobranças e sugerir lançamentos. Toda alteração na planilha passa pela sua aprovação.",
+  };
+
+  if (!ans) {
+    return [greeting];
+  }
+
+  const userQ: Message = {
+    id: nextId(),
+    sender: "user",
+    text: "Quanto posso gastar hoje?",
+  };
+
+  const miaReply: Message = {
+    id: nextId(),
+    sender: "mia",
+    text: spendAnswerText(ans),
+    calc: spendAnswerCalc(ans),
+  };
+
+  return [greeting, userQ, miaReply];
+}
+
+/* ------------------------------------------------------------------ */
+/* Render a single bubble text (bold via **…**)                        */
+/* ------------------------------------------------------------------ */
+
+function BubbleText({ text }: { text: string }) {
+  const parts = text.split(/\*\*(.+?)\*\*/g);
+  return (
+    <>
+      {parts.map((part, i) =>
+        i % 2 === 1 ? <strong key={`b-${i}-${part}`}>{part}</strong> : part,
+      )}
+    </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Avatar shorthand                                                     */
+/* ------------------------------------------------------------------ */
+
+function MiaAv() {
+  return (
+    <span className="mia-av">
+      <MiaAvatar width={32} height={32} />
+    </span>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* CopilotScreen                                                        */
+/* ------------------------------------------------------------------ */
+
 export function CopilotScreen() {
-  const summary = useCommand("get_dashboard_summary", getDashboardSummary).data;
-  const forecast = useCommand("get_forecast", getForecast).data;
-  const facts = miaKnownFacts(summary, forecast);
+  const summaryQ = useCommand("get_dashboard_summary", getDashboardSummary);
+  const forecastQ = useCommand("get_forecast", getForecast);
+
+  const summary = summaryQ.data;
+  const forecast = forecastQ.data;
+
+  const loading = summaryQ.loading || forecastQ.loading;
+
+  // Build the spend answer once we have data (undefined when not in Tauri / still loading)
+  const spendAns: SpendAnswer | null =
+    summary && forecast
+      ? buildSpendAnswer(
+          summary.daily_budget,
+          summary.daily_spend_today,
+          forecast.safe_to_spend_today_cents,
+        )
+      : null;
+
+  const [messages, setMessages] = useState<Message[]>(() => buildInitialMessages(null));
+  const [seeded, setSeeded] = useState(false);
+  const [input, setInput] = useState("");
+
+  // Once data arrives, inject the seeded conversation (once only)
+  if (spendAns && !seeded) {
+    setSeeded(true);
+    setMessages(buildInitialMessages(spendAns));
+  }
+
+  function submitMessage(text: string) {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const userMsg: Message = {
+      id: nextId(),
+      sender: "user",
+      text: trimmed,
+    };
+    const miaReply: Message = {
+      id: nextId(),
+      sender: "mia",
+      text: "Ainda estou aprendendo a responder essa pergunta. Por enquanto, consulte os números no painel principal.",
+    };
+    setMessages((prev) => [...prev, userMsg, miaReply]);
+    setInput("");
+  }
+
+  function handleChip(chip: string) {
+    submitMessage(chip);
+  }
+
+  function handleSend() {
+    submitMessage(input);
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter") handleSend();
+  }
 
   return (
-    <div className="dash">
-      <div className="assistant-panel cop-panel">
-        <div className="assistant-header">
-          <MiaAvatar width={48} height={48} />
-          <div>
-            <p className="assistant-label">Copiloto</p>
-            <h2 className="assistant-name">Mia</h2>
-          </div>
-          <span className="cop-panel__badge">
-            <Badge tone="warning">Em desenvolvimento</Badge>
-          </span>
-        </div>
-        <p>
-          O chat da Mia ainda não está disponível nesta versão. Tudo o que você vê no
-          app hoje é calculado pelo motor determinístico — nada é gerado por IA.
-        </p>
-      </div>
-
-      {facts.length > 0 && (
-        <section
-          aria-labelledby="mia-knows-title"
+    <div className="xs">
+      {/* Title bar */}
+      <div
+        className="xs-title"
+        style={{ display: "flex", alignItems: "center", gap: 10 }}
+      >
+        <span className="mia-av" style={{ width: 30, height: 30 }}>
+          <MiaAvatar width={30} height={30} />
+        </span>
+        Mia
+        <span
           style={{
-            background: "var(--surface)",
-            border: "var(--bw-hair) solid var(--border)",
-            borderRadius: "var(--radius-md)",
-            boxShadow: "var(--shadow-1)",
-            padding: "var(--space-6)",
-            marginBottom: "var(--space-6)",
+            fontSize: 11,
+            fontWeight: 600,
+            color: "var(--success-400)",
+            background: "var(--success-tint)",
+            padding: "3px 8px",
+            borderRadius: 999,
           }}
         >
-          <h2
-            id="mia-knows-title"
-            style={{
-              fontSize: "var(--fs-label)",
-              fontWeight: "var(--fw-semibold)",
-              letterSpacing: "var(--ls-label)",
-              textTransform: "uppercase",
-              color: "var(--text-muted)",
-              margin: "0 0 var(--space-4)",
-            }}
-          >
-            O que a Mia já sabe · números do método, sem IA
-          </h2>
-          <ul
-            style={{
-              listStyle: "none",
-              margin: 0,
-              padding: 0,
-              display: "flex",
-              flexDirection: "column",
-              gap: "var(--space-3)",
-            }}
-          >
-            {facts.map((f) => (
-              <li
-                key={f}
-                style={{
-                  display: "flex",
-                  gap: "var(--space-3)",
-                  alignItems: "baseline",
-                  color: "var(--text)",
-                  fontSize: "var(--fs-body)",
-                }}
-              >
-                <span aria-hidden="true" style={{ color: "var(--primary)" }}>
-                  ↳
-                </span>
-                {f}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+          Lê sua planilha · responde local
+        </span>
+      </div>
 
-      <div className="roadmap-panel">
-        <div>
-          <h2>O que a Mia vai fazer</h2>
+      {/* Chat area */}
+      <div className="mia">
+        {/* Message stream */}
+        <div className="mia-stream">
+          {loading && !seeded ? (
+            /* Quiet skeleton while first fetch is in-flight */
+            <>
+              <div className="mia-msg">
+                <MiaAv />
+                <div className="mia-bub" style={{ width: "60%" }}>
+                  <div
+                    className="mia-skeleton"
+                    style={{ width: "80%", marginBottom: 6 }}
+                  />
+                  <div className="mia-skeleton" style={{ width: "55%" }} />
+                </div>
+              </div>
+            </>
+          ) : (
+            messages.map((msg) => (
+              <div
+                key={msg.id}
+                className={`mia-msg${msg.sender === "user" ? " mia-msg--user" : ""}`}
+              >
+                {msg.sender === "mia" && <MiaAv />}
+                <div className="mia-bub">
+                  <BubbleText text={msg.text} />
+                  {msg.calc && <div className="mia-calc">{msg.calc}</div>}
+                </div>
+              </div>
+            ))
+          )}
+
+          {/* Web-preview notice */}
+          {!isTauri && !loading && (
+            <div
+              style={{
+                color: "var(--text-faint)",
+                fontSize: 12,
+                padding: "8px 0",
+              }}
+            >
+              Preview web — abra o app desktop para ver seus dados reais.
+            </div>
+          )}
         </div>
+
+        {/* Bottom: chips + input */}
         <div>
-          <ol>
-            <li>
-              Diagnóstico em linguagem natural: padrões de gasto, evolução da reserva e
-              o peso real do crédito — sempre em modo leitura.
-            </li>
-            <li>
-              Respostas a decisões: “posso comprar?”, “à vista ou parcelado?” — usando o
-              saldo projetado, nunca cálculo improvisado.
-            </li>
-            <li>
-              Escrita na planilha somente com a sua aprovação explícita, mostrando um
-              diff antes → depois de cada alteração.
-            </li>
-          </ol>
+          <div className="mia-sugg">
+            {SUGG_CHIPS.map((s) => (
+              <button
+                type="button"
+                key={s}
+                className="mia-chip"
+                onClick={() => handleChip(s)}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+          <div className="mia-input">
+            <Sparkles
+              size={16}
+              strokeWidth={1.75}
+              style={{ color: "var(--primary)", flexShrink: 0 }}
+            />
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Pergunte à Mia sobre suas finanças…"
+              aria-label="Mensagem para a Mia"
+            />
+            <Button
+              variant="primary"
+              size="sm"
+              iconLeft={<Send size={14} strokeWidth={1.75} />}
+              onClick={handleSend}
+              disabled={!input.trim()}
+            >
+              Enviar
+            </Button>
+          </div>
         </div>
       </div>
     </div>

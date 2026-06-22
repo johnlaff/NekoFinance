@@ -1,0 +1,183 @@
+/* Neko Finance — Mia (CopilotScreen) styles.
+   Verbatim port of the .mia-* / .xs / .card CSS from Extras.jsx (ScreenMia).
+   Scoped to this screen only; do NOT edit redesign.css or App.css. */
+
+.xs {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.xs-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+}
+
+.card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px 4px;
+}
+
+.card__title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+
+.card__title .ic {
+  color: var(--text-faint);
+}
+
+.card__body {
+  padding: 14px 20px 18px;
+}
+
+/* Mia chat */
+.mia {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  height: calc(100vh - var(--topbar-h) - 90px);
+  min-height: 480px;
+}
+
+.mia-stream {
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 4px 2px 16px;
+}
+
+.mia-msg {
+  display: flex;
+  gap: 11px;
+  max-width: 78%;
+}
+
+.mia-msg--user {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+
+.mia-av {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  flex: none;
+  background: var(--ink-700, #1a2220);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.mia-bub {
+  padding: 12px 15px;
+  border-radius: 14px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.mia-msg:not(.mia-msg--user) .mia-bub {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top-left-radius: 4px;
+}
+
+.mia-msg--user .mia-bub {
+  background: var(--primary-quiet);
+  border: 1px solid color-mix(in srgb, var(--primary) 22%, transparent);
+  border-top-right-radius: 4px;
+}
+
+.mia-calc {
+  margin-top: 9px;
+  padding: 10px 12px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.7;
+  white-space: pre-line;
+}
+
+.mia-sugg {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.mia-chip {
+  padding: 7px 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: var(--t-hover);
+  font-family: var(--font-sans);
+}
+
+.mia-chip:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.mia-input {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.mia-input input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+}
+
+/* Loading skeleton */
+.mia-skeleton {
+  height: 14px;
+  border-radius: 4px;
+  background: var(--bg-subtle);
+  animation: mia-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes mia-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
