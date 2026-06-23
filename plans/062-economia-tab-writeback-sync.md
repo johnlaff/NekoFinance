@@ -15,6 +15,7 @@
 - **Depends on**: plans/060-engine-five-type-alignment.md
 - **Category**: methodology / sync
 - **Planned at**: commit `da2d3e9`, 2026-06-22
+- **Completed**: 2026-06-23 on branch `advisor/062-economia-tab-writeback-sync`
 
 ## Why this matters
 
@@ -114,11 +115,34 @@ economia diff appear there for approval alongside the year-grid diff. **Verify**
 
 ## Done criteria
 
-- [ ] Economia-tab amount column is proposed from the engine's auto economia (patrimônio excluded)
-- [ ] Only the amount column is written; the `%` formula column is never overwritten
-- [ ] Write requires the structured diff + human approval; round-trip identity holds (no duplicate)
-- [ ] `npm run rust:check`, `npm run typecheck`, `npm run e2e` exit 0
-- [ ] `plans/README.md` updated
+- [x] Economia-tab amount column is proposed from the engine's auto economia (patrimônio excluded)
+- [x] Only the amount column is written; the `%` formula column is never overwritten
+- [x] Write requires the structured diff + human approval; round-trip identity holds (no duplicate)
+- [x] `npm run rust:check`, `npm run typecheck`, `npm run e2e` exit 0
+- [x] `plans/README.md` updated
+
+## Completion notes
+
+- `load_economia_by_month` now sources the proposed amount from `line_item` rows whose section
+  classifies as `ItemKind::Economia`; it excludes Patrimônio, stale `economia_annotation`, manual
+  transfers, excluded-tag parents, and description/bank-name fallback.
+- The existing Economia write-back planner still writes only the discovered `Economia` amount column
+  in the target year block; existing tests continue to guard `Entradas`/`%` formula columns.
+- Round-trip audit still aligns `economia_annotation`, and a regression test ensures that annotation
+  is not added back on top of auto-derived items.
+
+Verification run:
+
+- `cargo test --manifest-path src-tauri/Cargo.toml economia`
+- `npm run typecheck`
+- `npm run test:run`
+- `npm run rust:check`
+- `npm run e2e`
+- `npm run doctor`
+- `npm run ui:audit`
+- `npm run privacy:scan`
+- `npm run deadcode`
+- `npm run check`
 
 ## STOP conditions
 

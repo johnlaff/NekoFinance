@@ -983,56 +983,45 @@ async fn record_write_back_log(
     Ok(())
 }
 
-/// Economia REGISTRADA por mês (1..=12) do ano: numerador do Economizado% do método e o que vai
-/// para a coluna `Economia` da aba homônima no write-back. Soma DUAS fontes disjuntas (plano 052):
-/// (A) a anotação manual da aba Economia (`economia_annotation`) e (B) os transfers→reserva/ilíquido
-/// MANUAIS criados no Neko (plano 003). Nunca há sobreposição: a anotação só vem do import da aba;
-/// o transfer manual nunca entra em `economia_annotation` — então somar não duplica.
+/// Economia AUTO-derivada por mês (1..=12) do ano para escrever na coluna `Economia` da aba
+/// homônima. Plano 062: a proposta vem somente dos itens de nota classificados por seção como
+/// `ItemKind::Economia`; `INVESTIMENTO`/Patrimônio, anotações importadas da própria aba e transfers
+/// manuais não alimentam a proposta, evitando eco/dobra no round-trip.
 pub(crate) async fn load_economia_by_month(
     pool: &SqlitePool,
     year: i32,
 ) -> Result<[i64; 12], String> {
     let mut by = [0i64; 12];
 
-    // (A) Anotação da aba Economia.
-    let annot: Vec<(i64, i64)> =
-        sqlx::query_as("SELECT month, amount_cents FROM economia_annotation WHERE year = ?1")
-            .bind(year as i64)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| format!("query economia annotation: {e}"))?;
-    for (m, cents) in annot {
-        if (1..=12).contains(&m) {
-            by[(m - 1) as usize] += cents;
-        }
-    }
-
-    // (B) Transfers→reserva/ilíquido MANUAIS (plano 003), agregados por mês. Plano 055 (P3): aplica o
-    // MESMO filtro de tag-exclude (`exclude_from_totals` via `NOT EXISTS`) que `realized_annual_economia`
-    // usa — sem ele, um transfer de reserva marcado "Ignorar" some da MÉTRICA mas era ESCRITO na coluna
-    // Economia da planilha (inconsistente). Com o filtro, a coluna Economia e o Economizado% concordam.
-    let rows: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT substr(t.date, 6, 2), COALESCE(SUM(ABS(t.amount)), 0) FROM \"transaction\" t \
-         LEFT JOIN account a ON a.id = t.to_account_id \
-         WHERE t.date >= ?1 AND t.date < ?2 AND t.type = 'transfer' \
-           AND a.liquidity IN ('reserve','illiquid') \
+    let rows: Vec<(String, i64, String, Option<String>)> = sqlx::query_as(
+        "SELECT t.date, li.amount_cents, li.description, li.section \
+         FROM line_item li \
+         JOIN \"transaction\" t ON t.id = li.transaction_id \
+         WHERE t.date >= ?1 AND t.date < ?2 \
+           AND t.type = 'expense' \
            AND NOT EXISTS ( \
                SELECT 1 FROM transaction_tag tt2 \
                JOIN tag tg ON tg.id = tt2.tag_id \
                WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
            ) \
-         GROUP BY substr(t.date, 6, 2)",
+         ORDER BY t.date, li.position",
     )
     .bind(format!("{year:04}-01-01"))
     .bind(format!("{}-01-01", year + 1))
     .fetch_all(pool)
     .await
-    .map_err(|e| format!("query economia: {e}"))?;
-    for (mm, cents) in rows {
-        if let Ok(m) = mm.parse::<usize>()
+    .map_err(|e| format!("query economia line items: {e}"))?;
+
+    for (date, cents, description, section) in rows {
+        let kind = import::classify_line_item(section.as_deref(), description.as_str());
+        if kind != import::ItemKind::Economia {
+            continue;
+        }
+        if let Some(mm) = date.get(5..7)
+            && let Ok(m) = mm.parse::<usize>()
             && (1..=12).contains(&m)
         {
-            by[m - 1] += cents;
+            by[m - 1] += cents.abs();
         }
     }
 
@@ -1061,7 +1050,7 @@ pub(crate) async fn build_economia_plan(
     Ok((client, plan))
 }
 
-/// Preview READ-ONLY do write-back da Economia (transfers→reserva → coluna `Economia` por mês).
+/// Preview READ-ONLY do write-back da Economia (itens `ECONOMIA:` → coluna `Economia` por mês).
 #[tauri::command]
 pub async fn preview_economia_write_back(
     app_dir: State<'_, AppDataDir>,
@@ -1540,32 +1529,25 @@ mod tests {
         assert_eq!(err, SHEET_CHANGED_MSG, "diff stale é rejeitado");
     }
 
-    // Plano 055 (P3): `load_economia_by_month` (origem da coluna Economia do write-back) somava os
-    // transfers→reserva SEM o filtro de tag-exclude que `realized_annual_economia` aplica. Um transfer
-    // marcado "Ignorar" some da MÉTRICA mas era escrito na coluna Economia da planilha (inconsistente).
-    // Com o filtro, a coluna NÃO recebe o transfer ignorado — paridade com o caminho da métrica.
+    // Plano 062: o write-back da aba Economia vem dos itens `ECONOMIA:`. O filtro "Ignorar" continua
+    // valendo no pai: se a transação foi marcada fora dos totais, nenhum item dela pode ir para a
+    // coluna Economia da planilha.
     #[tokio::test]
-    async fn economia_writeback_excludes_ignored_reserve_transfer() {
+    async fn economia_writeback_excludes_ignored_itemized_transaction() {
         let p = pool().await;
 
-        // Conta reserva destino dos transfers.
-        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-1', 'Tester')")
-            .execute(&p)
-            .await
-            .unwrap();
         sqlx::query(
-            "INSERT INTO account (id, name, type, owner_person_id, balance, liquidity) \
-             VALUES ('res-1', 'Reserva', 'savings', 'pe-1', 0, 'reserve')",
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('tx-ignored', 'expense', 50_000, '2026-03-20', 1, 0), \
+                    ('tx-counted', 'expense', 30_000, '2026-03-21', 1, 0)",
         )
         .execute(&p)
         .await
         .unwrap();
-
-        // Dois transfers→reserva em MARÇO: 500,00 marcado "Ignorar" + 300,00 normal.
         sqlx::query(
-            "INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) \
-             VALUES ('tr-ignored', 'transfer', 50_000, '2026-03-20', 'res-1', 0), \
-                    ('tr-counted', 'transfer', 30_000, '2026-03-21', 'res-1', 0)",
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, is_user_edited, section) \
+             VALUES ('li-ignored', 'tx-ignored', 50_000, 'Reserva ignorada', 0, 0, 'ECONOMIA:'), \
+                    ('li-counted', 'tx-counted', 30_000, 'Reserva contada', 0, 0, 'ECONOMIA:')",
         )
         .execute(&p)
         .await
@@ -1577,18 +1559,149 @@ mod tests {
         crate::tags::update_tag_exclude(&p, &tag, true)
             .await
             .unwrap();
-        crate::tags::set_transaction_tags(&p, "tr-ignored", std::slice::from_ref(&tag))
+        crate::tags::set_transaction_tags(&p, "tx-ignored", std::slice::from_ref(&tag))
             .await
             .unwrap();
 
         let by_month = load_economia_by_month(&p, 2026).await.unwrap();
-        // Março (índice 2) carrega só o transfer SEM a tag excluída (30_000), não 80_000.
+        // Março (índice 2) carrega só o item cujo pai NÃO tem tag excluída (30_000), não 80_000.
         assert_eq!(
             by_month[2], 30_000,
-            "a coluna Economia omite o transfer→reserva marcado Ignorar (paridade com a métrica)"
+            "a coluna Economia omite itens de transações marcadas Ignorar"
         );
         // Demais meses zerados.
         assert_eq!(by_month.iter().sum::<i64>(), 30_000);
+    }
+
+    // Plano 062: a coluna Economia da aba homônima passa a ser proposta a partir da Economia
+    // AUTO-derivada dos itens de nota. A fonte é seção `ECONOMIA:`; anotação importada antiga,
+    // transfers manuais e `INVESTIMENTO:`/Patrimônio NÃO entram, e descrição/banco sem seção não
+    // serve como fallback.
+    #[tokio::test]
+    async fn economia_writeback_uses_auto_line_items_not_annotations_transfers_or_patrimonio() {
+        let p = pool().await;
+
+        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-1', 'Tester')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, balance, liquidity) \
+             VALUES ('res-1', 'Reserva', 'savings', 'pe-1', 0, 'reserve'), \
+                    ('ill-1', 'Previdência', 'pension', 'pe-1', 0, 'illiquid')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        // Fontes antigas/stale do write-back: não devem alimentar a proposta do plano 062.
+        sqlx::query(
+            "INSERT INTO economia_annotation (profile_id, year, month, amount_cents, updated_at) \
+             VALUES ('', 2026, 3, 999_000, '2026-03-31T00:00:00Z')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) \
+             VALUES ('tr-reserve', 'transfer', 30_000, '2026-03-24', 'res-1', 0), \
+                    ('tr-illiquid', 'transfer', 60_000, '2026-03-25', 'ill-1', 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('tx-auto', 'expense', 150_000, '2026-03-20', 1, 0), \
+                    ('tx-no-section', 'expense', 50_000, '2026-03-21', 1, 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, is_user_edited, section) \
+             VALUES ('li-eco', 'tx-auto', 40_000, 'Reserva mensal', 0, 0, 'ECONOMIA:'), \
+                    ('li-pat', 'tx-auto', 70_000, 'Previdência privada', 1, 0, 'INVESTIMENTO:'), \
+                    ('li-saida', 'tx-auto', 40_000, 'Aluguel', 2, 0, 'CONTAS:'), \
+                    ('li-bank-desc', 'tx-no-section', 50_000, 'Banco Exemplo - reserva', 0, 0, NULL)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let by_month = load_economia_by_month(&p, 2026).await.unwrap();
+        assert_eq!(
+            by_month[2], 40_000,
+            "março propõe só a soma dos itens sob seção ECONOMIA"
+        );
+        assert_eq!(
+            by_month.iter().sum::<i64>(),
+            40_000,
+            "sem anotação antiga, transfer, patrimônio ou fallback por descrição/banco"
+        );
+    }
+
+    // Plano 062: round-trip limpo. O apply realinha `economia_annotation` para que o import da aba
+    // veja origem == app, mas a próxima proposta NÃO pode somar a anotação em cima dos itens
+    // auto-derivados — senão cada write-back duplicaria a Economia local.
+    #[tokio::test]
+    async fn economia_writeback_round_trip_annotation_does_not_double_count_auto_items() {
+        let p = pool().await;
+
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('tx-auto', 'expense', 40_000, '2026-01-20', 1, 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, is_user_edited, section) \
+             VALUES ('li-eco', 'tx-auto', 40_000, 'Reserva mensal', 0, 0, 'ECONOMIA:')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let before = load_economia_by_month(&p, 2026).await.unwrap();
+        assert_eq!(before[0], 40_000);
+
+        let cell = CellWrite {
+            a1: "I5".into(),
+            row: 4,
+            col: 8,
+            date: "2026-01".into(),
+            kind: "economia".into(),
+            current: "0,00".into(),
+            proposed: "400,00".into(),
+            value_cents: 40_000,
+            changed: true,
+            formula: None,
+            note_text: None,
+        };
+        let realigned = record_write_back_audit(&p, "Economia", &[&cell])
+            .await
+            .unwrap();
+        assert_eq!(
+            realigned, 1,
+            "a anotação do mês é alinhada ao valor escrito"
+        );
+
+        let (annotation,): (i64,) = sqlx::query_as(
+            "SELECT amount_cents FROM economia_annotation WHERE year=2026 AND month=1",
+        )
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        assert_eq!(annotation, 40_000);
+
+        let after = load_economia_by_month(&p, 2026).await.unwrap();
+        assert_eq!(
+            after[0], 40_000,
+            "a proposta continua igual aos itens auto-derivados, sem somar a anotação"
+        );
+        assert_eq!(after.iter().sum::<i64>(), 40_000);
     }
 
     // Plano 055 (P2): uma transação MANUAL (id-UUID, fora do `sync_log`) escrita de volta numa célula
