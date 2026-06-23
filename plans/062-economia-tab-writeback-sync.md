@@ -20,7 +20,7 @@
 
 Once the engine derives Economia automatically (plan 060) from the classified note items, the
 spreadsheet's **Economia tab** (where the owner today types the monthly economia by hand) must be
-kept in sync — the owner's requirement: *"o Neko sempre deve casar com a planilha"*. This plan
+kept in sync — the owner's requirement: _"o Neko sempre deve casar com a planilha"_. This plan
 feeds the auto-derived monthly economia totals into the **existing economia write-back path** so
 the app proposes filling the Economia tab, with a diff the owner approves, and a clean
 round-trip (re-import sees the same value, no duplicate/drift).
@@ -45,16 +45,17 @@ round-trip (re-import sees the same value, no duplicate/drift).
 
 ## Commands you will need
 
-| Purpose         | Command                                                      | Expected |
-|-----------------|-------------------------------------------------------------|----------|
-| Rust check+test | `npm run rust:check`                                        | exit 0   |
+| Purpose         | Command                                                    | Expected |
+| --------------- | ---------------------------------------------------------- | -------- |
+| Rust check+test | `npm run rust:check`                                       | exit 0   |
 | Targeted test   | `cargo test --manifest-path src-tauri/Cargo.toml economia` | pass     |
-| Frontend types  | `npm run typecheck`                                         | exit 0   |
-| E2E             | `npm run e2e`                                               | pass     |
+| Frontend types  | `npm run typecheck`                                        | exit 0   |
+| E2E             | `npm run e2e`                                              | pass     |
 
 ## Scope
 
 **In scope:**
+
 - The economia write-back command(s) in `src-tauri/src/commands/write_back_cmds.rs` (+ its
   helpers) — source the proposed Economia-tab amount from the engine's auto-derived monthly
   economia (plan 060) instead of (or in addition to) a manual value.
@@ -64,6 +65,7 @@ round-trip (re-import sees the same value, no duplicate/drift).
 - Tests.
 
 **Out of scope:**
+
 - The engine math (plan 060) and the classifier (plan 059).
 - Overwriting the `%` formula column or any year-grid cell — only the Economia **amount** column.
 - Writing to the sheet without the existing diff + approval gate. Never auto-apply.

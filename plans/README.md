@@ -68,8 +68,8 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 053  | Bug bundle: daily_spend_today SUM(ABS) + update amount guard + audit/clamp P3s         | P2       | S–M    | —          | DONE (pkg H)               |
 | 054  | Final consistency nits: effective_daily_ceiling SUM(ABS) + annual-savings tag-exclude  | P3       | S      | —          | DONE (pkg I)               |
 | 055  | Write-back↔re-import identity (no dup) + economia write-back tag-filter + sync cadence | P2       | M      | —          | DONE (pkg J)               |
-| 056  | Lançamentos opens on "Por mês" (default + first option) — redesign UX bug             | P2       | S      | —          | TODO (pkg K)               |
-| 057  | Compose tags Cartão with engine "credit" (was "credito" → misclassified as Diário)    | P1       | S      | —          | TODO (pkg K)               |
+| 056  | Lançamentos opens on "Por mês" (default + first option) — redesign UX bug              | P2       | S      | —          | TODO (pkg K)               |
+| 057  | Compose tags Cartão with engine "credit" (was "credito" → misclassified as Diário)     | P1       | S      | —          | TODO (pkg K)               |
 | 058  | Restore past balances: Calendário/O ano/Este mês (re-add getMonthGrid; redesign regr.) | P1       | M      | —          | TODO (pkg K)               |
 | 059  | Spec (5-type alignment, owner-reopened) + section classifier (no bank fallback)        | P1       | M      | —          | TODO (pkg K)               |
 | 060  | Engine 5-type: cartão/economia/patrimônio buckets, custo de vida excludes savings      | P1       | L      | 059        | TODO (pkg K)               |

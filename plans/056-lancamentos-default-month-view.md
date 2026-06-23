@@ -46,20 +46,22 @@ what the user wants.
 
 ## Commands you will need
 
-| Purpose   | Command              | Expected on success      |
-|-----------|----------------------|--------------------------|
-| Typecheck | `npm run typecheck`  | exit 0, no errors        |
-| Lint      | `npm run lint`       | exit 0                   |
-| Unit test | `npm run test:run`   | all pass                 |
-| E2E       | `npm run e2e`        | all pass (14 currently)  |
+| Purpose   | Command             | Expected on success     |
+| --------- | ------------------- | ----------------------- |
+| Typecheck | `npm run typecheck` | exit 0, no errors       |
+| Lint      | `npm run lint`      | exit 0                  |
+| Unit test | `npm run test:run`  | all pass                |
+| E2E       | `npm run e2e`       | all pass (14 currently) |
 
 ## Scope
 
 **In scope:**
+
 - `src/screens/TransactionsScreen.tsx`
 - `src/screens/TransactionsScreen.test.tsx` (create if absent)
 
 **Out of scope (do NOT touch):**
+
 - The `ViewMode` type, the reducer actions, the by-month / timeline rendering branches —
   they already work; only the order + default change.
 - Any other screen.
@@ -75,6 +77,7 @@ what the user wants.
 ### Step 1: Make "Por mês" the default view
 
 In `src/screens/TransactionsScreen.tsx` line ~832, change the `useReducer` initial state:
+
 ```tsx
 view: "monthOnly",
 ```
@@ -85,6 +88,7 @@ view: "monthOnly",
 
 In `src/screens/TransactionsScreen.tsx` lines ~524–525, swap the two option objects so
 "Por mês" renders first:
+
 ```tsx
 { value: "monthOnly", label: "Por mês" },
 { value: "anchor", label: "Linha do tempo" },

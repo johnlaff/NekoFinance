@@ -19,7 +19,7 @@
 ## Why this matters
 
 Three redesigned screens stopped showing **past** balances, hiding data the user already has
-in the spreadsheet. The user's north-star principle is *"o app supera a planilha, nunca menos"*
+in the spreadsheet. The user's north-star principle is _"o app supera a planilha, nunca menos"_
 — the app must never show less than the sheet. Today (assume today = 2026-06-22):
 
 - **Calendário** (`YearGridScreen`): daily saldo shows "—" for past days (1–21 June); only
@@ -78,18 +78,19 @@ commands that DO expose realized history still exist and are untouched:
 
 ## Commands you will need
 
-| Purpose      | Command                         | Expected on success |
-|--------------|---------------------------------|---------------------|
-| Typecheck    | `npm run typecheck`             | exit 0              |
-| Lint         | `npm run lint`                  | exit 0              |
-| Unit test    | `npm run test:run`              | all pass            |
-| E2E          | `npm run e2e`                   | all pass            |
-| Rust (binding sanity) | `npm run rust:check`   | exit 0 (only if you touch Rust — you should NOT need to) |
-| Find cmd name | `grep -rn "month_grid" src-tauri/src` | shows the registered command name |
+| Purpose               | Command                               | Expected on success                                      |
+| --------------------- | ------------------------------------- | -------------------------------------------------------- |
+| Typecheck             | `npm run typecheck`                   | exit 0                                                   |
+| Lint                  | `npm run lint`                        | exit 0                                                   |
+| Unit test             | `npm run test:run`                    | all pass                                                 |
+| E2E                   | `npm run e2e`                         | all pass                                                 |
+| Rust (binding sanity) | `npm run rust:check`                  | exit 0 (only if you touch Rust — you should NOT need to) |
+| Find cmd name         | `grep -rn "month_grid" src-tauri/src` | shows the registered command name                        |
 
 ## Scope
 
 **In scope:**
+
 - `src/lib/api.ts` — re-add the `getMonthGrid` binding + `MonthGridDay` type.
 - `src/screens/YearGridScreen.tsx` — use month-grid balances for the displayed month's days.
 - `src/screens/AnnualScreen.tsx` — fill "Saldo fim" for past months.
@@ -98,12 +99,13 @@ commands that DO expose realized history still exist and are untouched:
   `MONTH_GRID`-style mock fixture for the new command).
 
 **Out of scope (do NOT touch):**
+
 - Any Rust file. The commands already exist; if a command is genuinely missing or unregistered,
   that is a STOP condition (do not add Rust).
-- The forecast formula / engine. This plan only sources *past* balances from existing commands;
-  it must not change how *future* projection works.
+- The forecast formula / engine. This plan only sources _past_ balances from existing commands;
+  it must not change how _future_ projection works.
 - `getMonthGrid`'s removal from knip: re-adding the binding makes it used again; if `npm run
-  deadcode` (knip) complains it is unused, that means a screen isn't actually calling it — fix
+deadcode` (knip) complains it is unused, that means a screen isn't actually calling it — fix
   the wiring, don't re-delete.
 
 ## Git workflow
@@ -117,6 +119,7 @@ commands that DO expose realized history still exist and are untouched:
 
 In `src/lib/api.ts`, add the type + function mirroring the Rust DTO and the existing binding
 style. Use the **actual registered command name** (verify via grep, likely `get_month_grid`):
+
 ```ts
 export interface MonthGridDay {
   date: string;
@@ -130,6 +133,7 @@ export function getMonthGrid(year: number, month: number): Promise<MonthGridDay[
   return invoke("get_month_grid", { year, month });
 }
 ```
+
 **Verify**: `npm run typecheck` → exit 0.
 
 ### Step 2: Add a mock fixture for the command
@@ -156,11 +160,12 @@ realized history. Approach: for each past month of the displayed year, take the 
 a non-null `balance_cents`** from `getMonthGrid(year, month)` as that month's end balance; for
 the current + future months keep the existing `forecast.month_end[]` source. Adjust the
 `showEndBal` guard (~line 234) so past months with a realized end balance also render.
+
 - To avoid 12 calls, you MAY fetch only the past months of the displayed year (Jan..current-1).
 - If you find this too chatty and want a single query instead, that is a documented
   alternative but it requires a new Rust command — which is **out of scope**; do the
   per-past-month `getMonthGrid` approach here.
-**Verify**: `npm run typecheck && npm run lint` → exit 0.
+  **Verify**: `npm run typecheck && npm run lint` → exit 0.
 
 ### Step 5: Este mês — trend over past months
 

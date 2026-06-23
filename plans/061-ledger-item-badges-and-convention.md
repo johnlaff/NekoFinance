@@ -17,14 +17,14 @@
 
 ## Why this matters
 
-Plans 059/060 make the app *know* each note item's kind (Saída / Cartão / Diário / Economia /
+Plans 059/060 make the app _know_ each note item's kind (Saída / Cartão / Diário / Economia /
 Patrimônio / Ajuste) and the new metric buckets (Cartão total, Economia%, Patrimônio). This plan
 surfaces them to the user: in **Lançamentos**, expanding a Saída lump shows its items with a kind
 badge + a "itens não batem" marker when the note sum diverges (warn-only — the app never
 fabricates a value, per the owner's decision); and the metric screens (Este mês / O ano) show the
 new **Gastos com cartão** bucket, the automatic **Economia%**, and **Patrimônio** as a separate
 long-term line (excluded from custo de vida and from the accessible Economia%). It also documents
-the lightweight note **convention** so the user's *new* notes parse cleanly — without rewriting
+the lightweight note **convention** so the user's _new_ notes parse cleanly — without rewriting
 the existing spreadsheet.
 
 ## Current state
@@ -48,18 +48,19 @@ the existing spreadsheet.
 
 ## Commands you will need
 
-| Purpose   | Command             | Expected |
-|-----------|---------------------|----------|
-| Typecheck | `npm run typecheck` | exit 0   |
-| Lint      | `npm run lint`      | exit 0   |
-| Unit test | `npm run test:run`  | all pass |
-| E2E       | `npm run e2e`       | all pass |
-| Privacy   | `npm run privacy:scan` | passes |
-| UI audit  | `npm run ui:audit`  | exit 0   |
+| Purpose   | Command                | Expected |
+| --------- | ---------------------- | -------- |
+| Typecheck | `npm run typecheck`    | exit 0   |
+| Lint      | `npm run lint`         | exit 0   |
+| Unit test | `npm run test:run`     | all pass |
+| E2E       | `npm run e2e`          | all pass |
+| Privacy   | `npm run privacy:scan` | passes   |
+| UI audit  | `npm run ui:audit`     | exit 0   |
 
 ## Scope
 
 **In scope:**
+
 - `src/lib/api.ts` — extend the line-item type with the derived `kind` (from plan 060).
 - `src/screens/TransactionsScreen.tsx` (+ `src/screens/lancamentos.css`) — kind badge per item
   in the expanded row; "itens não batem" marker when divergence-flagged.
@@ -67,6 +68,7 @@ the existing spreadsheet.
 - `docs/note-conventions.md` (create) — the lightweight, method-neutral note convention.
 
 **Out of scope (do NOT touch):**
+
 - The Rust engine/import (done in 059/060), the forecast math, other screens.
 - Any change that alters the spreadsheet or suggests rewriting existing notes.
 - New colors/tokens — reuse `TYPE_META` / `--type-*` / existing warning token.
@@ -108,6 +110,7 @@ badges render and the "itens não batem" marker shows only when flagged. Pattern
 
 Create `docs/note-conventions.md` describing the supported grammar (method-neutral, no private
 data):
+
 - Section headers in ALL-CAPS: `CONTAS` (saída fixa), `CARTÕES`/`FATURAS` (cartão), `ECONOMIA`
   (poupança acessível), `INVESTIMENTO` (patrimônio/previdência — longo prazo, separado da
   economia), `OUTROS` (saída), `AJUSTES` (Diferença).

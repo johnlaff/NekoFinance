@@ -32,6 +32,7 @@ The owner **explicitly authorized** reopening the locked finance model (plans 04
 explicit owner decision may reopen it — this is that decision. The spec (Step 0) must record it.
 
 **Canonical model to implement (from the methodology reference material + the spreadsheet, cross-checked):**
+
 - **5 types**: Entrada, Saída, Diário, **Cartão**, **Economia** (App enum strings, unaccented:
   `Entrada/Saida/Diario/Cartao/Economia`).
 - **Custo de vida = Saídas fixas + Diário + Cartão (+ previsão de diário). EXCLUI economia e
@@ -72,15 +73,16 @@ explicit owner decision may reopen it — this is that decision. The spec (Step 
 
 ## Commands you will need
 
-| Purpose         | Command                                                        | Expected |
-|-----------------|---------------------------------------------------------------|----------|
-| Rust check+test | `npm run rust:check`                                          | exit 0   |
-| Targeted test   | `cargo test --manifest-path src-tauri/Cargo.toml classify`   | pass     |
-| Privacy scan    | `npm run privacy:scan`                                        | passes   |
+| Purpose         | Command                                                    | Expected |
+| --------------- | ---------------------------------------------------------- | -------- |
+| Rust check+test | `npm run rust:check`                                       | exit 0   |
+| Targeted test   | `cargo test --manifest-path src-tauri/Cargo.toml classify` | pass     |
+| Privacy scan    | `npm run privacy:scan`                                     | passes   |
 
 ## Scope
 
 **In scope:**
+
 - `specs/<NNN>-classificacao-notas-5-tipos/spec.md` (create; `ls specs/` for the next number) —
   record the canonical 5-type model, the owner decision reopening 051/052, the section→type
   table, the previdência=patrimônio rule, divergence=warn-only, and the Saldo/Performance
@@ -89,6 +91,7 @@ explicit owner decision may reopen it — this is that decision. The spec (Step 
   layout) — `ItemKind` enum + `classify_line_item` pure fn + tests.
 
 **Out of scope (this plan):**
+
 - Engine math / metrics / cost-of-living / Economia% (plan 060).
 - Economia-tab write-back (plan 062). UI (plan 061).
 - The bank-name fallback (explicitly dropped).
@@ -116,6 +119,7 @@ downstream plans (060 engine, 061 UI, 062 Economia-tab write-back).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ItemKind { Saida, Cartao, Diario, Economia, Patrimonio, Ajuste }
 ```
+
 (`Saida` = fixed Saída/CONTAS/OUTROS; `Ajuste` = AJUSTES/Diferença line.)
 
 **Verify**: `cargo check --manifest-path src-tauri/Cargo.toml` → exit 0.

@@ -30,7 +30,7 @@ split into its true types.
 ## 🔓 Owner decision (reopens locked 051/052)
 
 The README "considered and rejected" note and `specs/011-engine-five-types` locked
-`Performance = income − cost_of_living` with economia *inside* cost_of_living, and warned only an
+`Performance = income − cost_of_living` with economia _inside_ cost_of_living, and warned only an
 explicit owner decision may reopen it. **That decision has been made** (recorded in the plan 059
 spec). Implement the canonical model below.
 
@@ -65,20 +65,21 @@ inflated by economia), Economia%, and the Cartão/Patrimônio buckets change.
 - Neko pockets already distinguish `reserve` (liquid) vs `illiquid` accounts — map **Patrimônio**
   to the illiquid concept.
 - DTOs (`MonthMetricDto` in `forecast_cmds.rs`) currently expose `income/performance/
-  cost_of_living/fixed_out/daily_out/economia/savings_rate_bps` — you will ADD `cartao_cents`
+cost_of_living/fixed_out/daily_out/economia/savings_rate_bps` — you will ADD `cartao_cents`
   and `patrimonio_cents` (additive; don't remove fields).
 
 ## Commands you will need
 
-| Purpose         | Command                                                       | Expected |
-|-----------------|--------------------------------------------------------------|----------|
-| Rust check+test | `npm run rust:check`                                          | exit 0   |
-| Engine tests    | `cargo test --manifest-path src-tauri/Cargo.toml forecast`   | pass     |
-| Frontend types  | `npm run typecheck`                                           | exit 0 (if you touch the TS DTOs) |
+| Purpose         | Command                                                    | Expected                          |
+| --------------- | ---------------------------------------------------------- | --------------------------------- |
+| Rust check+test | `npm run rust:check`                                       | exit 0                            |
+| Engine tests    | `cargo test --manifest-path src-tauri/Cargo.toml forecast` | pass                              |
+| Frontend types  | `npm run typecheck`                                        | exit 0 (if you touch the TS DTOs) |
 
 ## Scope
 
 **In scope:**
+
 - `src-tauri/src/forecast/mod.rs` — add `EventKind::Cartao` + `EventKind::Patrimonio`; make the
   metric loop attribute **per line-item** (via `classify_line_item`) when a transaction has
   classified items, else fall back to the transaction-level `classify()`; recompute
@@ -90,6 +91,7 @@ inflated by economia), Economia%, and the Cartão/Patrimônio buckets change.
 - Tests in the Rust files.
 
 **Out of scope:**
+
 - The classifier itself (plan 059). The Economia-tab write-back (plan 062). UI (plan 061).
 - Removing/renaming existing DTO fields (additive only — don't break current screens).
 - Changing the Saldo chain (`sheet_daily_balance`) — it is the sheet's truth; do not recompute.
@@ -124,7 +126,7 @@ amount. **Verify**: `cargo check ...` → exit 0.
   already subtracted everything that left the account). Confirm numerically in tests.
 - `savings_rate_bps = round(economia / income)` (basis points), income>0 else 0.
 - Expose `cartao_cents`, `patrimonio_cents`.
-**Verify**: `cargo test ... forecast` → existing tests adjusted + compile.
+  **Verify**: `cargo test ... forecast` → existing tests adjusted + compile.
 
 ### Step 4: DTOs + TS type
 
@@ -141,7 +143,7 @@ Add `cartao_cents` + `patrimonio_cents` to `MonthMetricDto` (and `MonthMetric` i
   `INVESTIMENTO`, assert: cost_of_living excludes the economia + patrimônio portions; cartao_cents
   == the CARTÕES sum; economia feeds savings_rate; patrimonio_cents == the INVESTIMENTO sum.
 - Use the exact worked-example month and assert every row of the target table.
-**Verify**: `cargo test ... forecast` → all pass, including regression + the worked-example test.
+  **Verify**: `cargo test ... forecast` → all pass, including regression + the worked-example test.
 
 ## Test plan
 

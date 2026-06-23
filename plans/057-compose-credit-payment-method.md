@@ -19,7 +19,7 @@
 ## Why this matters
 
 A lançamento created/edited as **Cartão** in the redesigned Compose drawer is silently
-**misclassified by the forecast engine** as a *Diário* (daily variable) expense instead of a
+**misclassified by the forecast engine** as a _Diário_ (daily variable) expense instead of a
 card/fixed-out expense. The Compose maps the "cartao" chip to `paymentMethod: "credito"`
 (Portuguese), but the rest of the system — `src/lib/movement.ts` and the Rust engine — keys
 off the exact string `"credit"` (English). Money is therefore put in the wrong bucket, so
@@ -46,20 +46,22 @@ off the exact string `"credit"` (English). Money is therefore put in the wrong b
 
 ## Commands you will need
 
-| Purpose   | Command             | Expected on success     |
-|-----------|---------------------|-------------------------|
-| Typecheck | `npm run typecheck` | exit 0                  |
-| Lint      | `npm run lint`      | exit 0                  |
-| Unit test | `npm run test:run`  | all pass                |
-| E2E       | `npm run e2e`       | all pass                |
+| Purpose   | Command             | Expected on success |
+| --------- | ------------------- | ------------------- |
+| Typecheck | `npm run typecheck` | exit 0              |
+| Lint      | `npm run lint`      | exit 0              |
+| Unit test | `npm run test:run`  | all pass            |
+| E2E       | `npm run e2e`       | all pass            |
 
 ## Scope
 
 **In scope:**
+
 - `src/shell/Compose.tsx`
 - `src/shell/Compose.test.tsx` (create if absent) OR an existing Compose test file
 
 **Out of scope (do NOT touch):**
+
 - `src/lib/movement.ts` — already correct (`"credit"`); it is the reference, not the bug.
 - The Rust engine — already correct.
 - Any change to `paymentMethod` for non-cartão types (entrada/saida/diario/economia).
@@ -74,6 +76,7 @@ off the exact string `"credit"` (English). Money is therefore put in the wrong b
 ### Step 1: Fix the literal
 
 In `src/shell/Compose.tsx` `mapType()`, change the cartao case to:
+
 ```tsx
 case "cartao":
   return { txnType: "expense", isFixed: false, paymentMethod: "credit" };
@@ -85,6 +88,7 @@ case "cartao":
 
 Add a unit test that calls/exercises the Compose cartao mapping and asserts the produced
 `paymentMethod` is `"credit"`. Two acceptable approaches:
+
 - If `mapType` is exported (or can be exported without widening the public surface), test it
   directly: `expect(mapType("cartao").paymentMethod).toBe("credit")`.
 - Otherwise, render Compose (with `mockCommands` + `NekoAppProvider`, pattern from
