@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { TransactionsScreen } from "./TransactionsScreen";
 import { NekoAppProvider } from "../shell/appContext";
@@ -42,5 +43,46 @@ describe("TransactionsScreen (Lançamentos)", () => {
     expect(
       month.compareDocumentPosition(timeline) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+
+  it("shows kind badges and a quiet divergence marker for itemized rows", async () => {
+    const txns = [
+      {
+        ...TXNS[1]!,
+        id: "itemized-061",
+        amount: 10_000,
+        description: "Despesa itemizada",
+        date: "2026-06-15",
+        payment_method: "debit",
+        is_fixed: true,
+        line_items: [
+          {
+            id: "li-card",
+            transaction_id: "itemized-061",
+            amount_cents: 4_000,
+            description: "Compra crédito",
+            position: 0,
+            kind: "cartao",
+          },
+          {
+            id: "li-saida",
+            transaction_id: "itemized-061",
+            amount_cents: 3_000,
+            description: "Conta fixa",
+            position: 1,
+            kind: "saida",
+          },
+        ],
+      },
+    ];
+    mockCommands({ get_recent_transactions: txns });
+    renderLedger();
+
+    const row = await screen.findByRole("button", { name: "Despesa itemizada" });
+    await userEvent.click(row);
+
+    expect(screen.getByLabelText("Item classificado como Cartão")).toBeInTheDocument();
+    expect(screen.getByLabelText("Item classificado como Saída")).toBeInTheDocument();
+    expect(screen.getByText("itens não batem")).toBeInTheDocument();
   });
 });

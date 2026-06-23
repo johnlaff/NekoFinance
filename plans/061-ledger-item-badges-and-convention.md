@@ -63,7 +63,7 @@ the existing spreadsheet.
 
 - `src/lib/api.ts` — extend the line-item type with the derived `kind` (from plan 060).
 - `src/screens/TransactionsScreen.tsx` (+ `src/screens/lancamentos.css`) — kind badge per item
-  in the expanded row; "itens não batem" marker when divergence-flagged.
+  in the expanded row; "itens não batem" marker when the item sum diverges from the parent total.
 - `src/screens/TransactionsScreen.test.tsx` — assert badges render per kind.
 - `docs/note-conventions.md` (create) — the lightweight, method-neutral note convention.
 
@@ -91,17 +91,17 @@ plus the new metric fields `cartao_cents` and `patrimonio_cents` on `MonthMetric
 ### Step 2: Render kind badges in the expanded row
 
 In `TransactionsScreen.tsx`, where the expanded row lists items, render a small badge per item
-using `TYPE_META` for cartao/saida/economia and a neutral/warning style for `conta`/`ajuste`
-(reuse an existing chip class). When the transaction is divergence-flagged (plan 060), show a
-quiet "itens não batem" note near the breakdown. Keep it calm and uncluttered (PRODUCT.md).
+using `TYPE_META` for cartao/saida/economia and a neutral/warning style for `patrimonio`/`ajuste`
+(reuse an existing chip class). When the item sum diverges from the parent total, show a quiet
+"itens não batem" note near the breakdown. Keep it calm and uncluttered (PRODUCT.md).
 
 **Verify**: `npm run typecheck && npm run lint && npm run ui:audit` → exit 0.
 
 ### Step 3: Test the badges
 
 In `TransactionsScreen.test.tsx`, with `mockCommands` returning a transaction whose items
-include a `kind:"cartao"` and a `kind:"conta"` item (+ a divergence-flagged case), assert both
-badges render and the "itens não batem" marker shows only when flagged. Pattern:
+include a `kind:"cartao"` and a `kind:"saida"` item (+ a divergent item sum), assert both
+badges render and the "itens não batem" marker shows only when divergent. Pattern:
 `DashboardScreen.test.tsx`.
 
 **Verify**: `npm run test:run` → all pass, including the new badge tests.
@@ -125,20 +125,20 @@ data):
 
 ## Test plan
 
-- Badge per kind renders (cartao/conta at minimum); divergence marker conditional.
+- Badge per kind renders (cartao/saida at minimum); divergence marker conditional.
 - Convention doc exists, is private-data-free.
 - e2e still green (Lançamentos nav + content unaffected by additive badges).
 
 ## Done criteria
 
-- [ ] Line-item type carries `kind`; badges render per kind in the expanded ledger row
-- [ ] Divergence-flagged transactions show a quiet "itens não batem" marker
-- [ ] `docs/note-conventions.md` exists, method-neutral, data-free
-- [ ] `npm run typecheck`, `npm run lint`, `npm run ui:audit` exit 0
-- [ ] `npm run test:run` exits 0; new badge tests pass
-- [ ] `npm run e2e` exits 0
-- [ ] `npm run privacy:scan` passes
-- [ ] `plans/README.md` status row updated
+- [x] Line-item type carries `kind`; badges render per kind in the expanded ledger row
+- [x] Transactions with divergent item sums show a quiet "itens não batem" marker
+- [x] `docs/note-conventions.md` exists, method-neutral, data-free
+- [x] `npm run typecheck`, `npm run lint`, `npm run ui:audit` exit 0
+- [x] `npm run test:run` exits 0; new badge tests pass
+- [x] `npm run e2e` exits 0
+- [x] `npm run privacy:scan` passes
+- [x] `plans/README.md` status row updated
 
 ## STOP conditions
 

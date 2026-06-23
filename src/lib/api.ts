@@ -46,12 +46,22 @@ export interface TagRef {
 }
 
 /** Uma parte de um lançamento itemizado (breakdown da nota de célula, plano 035). */
+export type LineItemKind =
+  | "saida"
+  | "cartao"
+  | "diario"
+  | "economia"
+  | "patrimonio"
+  | "ajuste";
+
 export interface LineItem {
   id: string;
   transaction_id: string;
   amount_cents: number;
   description: string;
   position: number;
+  /** Classificação derivada da seção da nota; nunca de nome de banco/descrição. */
+  kind: LineItemKind;
 }
 
 export interface TransactionRow {
