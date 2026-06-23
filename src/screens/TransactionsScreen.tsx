@@ -521,8 +521,8 @@ function LcToolbar({
         value={view}
         onChange={(v) => onViewChange(v as ViewMode)}
         options={[
-          { value: "anchor", label: "Linha do tempo" },
           { value: "monthOnly", label: "Por mês" },
+          { value: "anchor", label: "Linha do tempo" },
         ]}
       />
       {view === "monthOnly" && (
@@ -829,7 +829,7 @@ export function TransactionsScreen() {
   const { data: allTags } = useCommand("list_tags:lc", listTags);
 
   const [state, dispatch] = useReducer(lcReducer, {
-    view: "anchor",
+    view: "monthOnly",
     filter: "todos",
     openIds: new Set<string>(),
     mOffset: 0,
