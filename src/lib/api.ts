@@ -691,7 +691,7 @@ export function importSheetData(
   });
 }
 
-/** Importa a aba `Economia` (poupança por mês) → transfers→reserva. Retorna nº de meses importados. */
+/** Importa a aba `Economia` como anotação mensal de Economia. Retorna nº de meses importados. */
 export function importEconomiaSheet(
   spreadsheetId: string,
   clientId: string,

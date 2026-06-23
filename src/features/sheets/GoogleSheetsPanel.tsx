@@ -451,7 +451,7 @@ function useSheetImport(
           importResult:
             count === 0
               ? "Nenhuma Economia encontrada na aba Economia."
-              : `Economia importada: ${count} mês(es) (poupança → reserva).`,
+              : `Economia importada: ${count} mês(es) como métrica mensal.`,
         });
       } catch (e) {
         fail(e, "Não foi possível importar a aba Economia.");
