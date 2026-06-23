@@ -785,16 +785,6 @@ export function createRecurringSeries(input: {
   return invoke("create_recurring_series_cmd", input);
 }
 
-/** @internal Tauri bridge — UI pending (spec 016/017). Apaga a ocorrência indicada e todas as posteriores ("deste ponto em diante"). */
-export function deleteSeriesFrom(transactionId: string): Promise<number> {
-  return invoke("delete_series_from_cmd", { transactionId });
-}
-
-/** @internal Tauri bridge — UI pending (spec 016/017). Apaga toda a série + a linha de recorrência. */
-export function deleteSeriesAll(recurrenceId: string): Promise<number> {
-  return invoke("delete_series_all_cmd", { recurrenceId });
-}
-
 export interface SeriesEdit {
   amount: number;
   description: string | null;

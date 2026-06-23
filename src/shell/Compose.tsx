@@ -34,7 +34,7 @@ function mapType(t: MovementType): {
     case "saida":
       return { txnType: "expense", isFixed: true, paymentMethod: null };
     case "cartao":
-      return { txnType: "expense", isFixed: false, paymentMethod: "credito" };
+      return { txnType: "expense", isFixed: false, paymentMethod: "credit" };
     case "economia":
       return { txnType: "transfer", isFixed: false, paymentMethod: null };
     case "diario":

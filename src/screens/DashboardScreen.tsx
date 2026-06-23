@@ -281,7 +281,7 @@ function CheckinCard({
       amountCents: cents,
       description: null,
       date: today,
-      paymentMethod: kind === "cartao" ? "credito" : null,
+      paymentMethod: kind === "cartao" ? "credit" : null,
       isFixed: kind === "saida",
       tagIds: [],
       recurrence: null,

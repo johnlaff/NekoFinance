@@ -13,12 +13,7 @@ import {
   performanceStatus,
   economizadoStatus,
   custoVidaStatus,
-  SAVINGS_MIN_BPS,
 } from "./totaisStatus";
-
-// Re-export the canonical constant so external importers (tests, AnnualScreen) can pull it from
-// a single source without creating a circular dep. The real definition lives in totaisStatus.ts.
-export { SAVINGS_MIN_BPS };
 
 /** "YYYY-MM" from a MonthMetric. */
 function ymOf(m: { year: number; month: number }): string {
