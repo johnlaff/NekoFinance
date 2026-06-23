@@ -15,6 +15,7 @@
 - **Depends on**: none (foundation for plans 060, 061, 062)
 - **Category**: methodology / spec
 - **Planned at**: commit `da2d3e9`, 2026-06-22 (design confirmed with the owner via interview)
+- **Completed**: 2026-06-23 via PR #90 (`8fd40a960cdbb7ac21af79e45bc9153b858c7585`)
 
 ## Why this matters
 
@@ -149,11 +150,11 @@ no section → Saida; a bank name in the description with no section (e.g. "R$ 1
 
 ## Done criteria
 
-- [ ] `specs/<NNN>-classificacao-notas-5-tipos/spec.md` exists, records the owner decision, data-free
-- [ ] `ItemKind` + `classify_line_item` compile; section-only (no bank fallback)
-- [ ] `cargo test ... classify` passes incl. the "no fallback" and Patrimonio/Economia cases
-- [ ] `npm run rust:check` exits 0; `npm run privacy:scan` passes
-- [ ] No files outside scope modified; `plans/README.md` row updated
+- [x] `specs/<NNN>-classificacao-notas-5-tipos/spec.md` exists, records the owner decision, data-free
+- [x] `ItemKind` + `classify_line_item` compile; section-only (no bank fallback)
+- [x] `cargo test ... classify` passes incl. the "no fallback" and Patrimonio/Economia cases
+- [x] `npm run rust:check` exits 0; `npm run privacy:scan` passes
+- [x] No files outside scope modified; `plans/README.md` row updated
 
 ## STOP conditions
 

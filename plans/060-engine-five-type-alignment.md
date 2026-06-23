@@ -15,6 +15,7 @@
 - **Depends on**: plans/059-line-item-classification-core.md
 - **Category**: methodology / engine
 - **Planned at**: commit `da2d3e9`, 2026-06-22
+- **Completed**: 2026-06-23 via PR #91 (`a0c0ebd82e789e5301e114967b65238f1ea07031`)
 
 ## Why this matters
 
@@ -155,13 +156,13 @@ Add `cartao_cents` + `patrimonio_cents` to `MonthMetricDto` (and `MonthMetric` i
 
 ## Done criteria
 
-- [ ] `EventKind` has Cartao + Patrimonio; metric loop attributes per line-item without double-count
-- [ ] `cost_of_living = fixed_out + daily + cartao` (economia + patrimônio excluded)
-- [ ] `performance` + Saldo unchanged vs pre-plan (regression test proves it)
-- [ ] `savings_rate_bps = economia / income`; `cartao_cents` + `patrimonio_cents` exposed
-- [ ] `npm run rust:check` + `npm run typecheck` exit 0
-- [ ] worked-example test asserts the full target table
-- [ ] `plans/README.md` updated
+- [x] `EventKind` has Cartao + Patrimonio; metric loop attributes per line-item without double-count
+- [x] `cost_of_living = fixed_out + daily + cartao` (economia + patrimônio excluded)
+- [x] `performance` + Saldo unchanged vs pre-plan (regression test proves it)
+- [x] `savings_rate_bps = economia / income`; `cartao_cents` + `patrimonio_cents` exposed
+- [x] `npm run rust:check` + `npm run typecheck` exit 0
+- [x] worked-example test asserts the full target table
+- [x] `plans/README.md` updated
 
 ## STOP conditions
 
