@@ -117,8 +117,8 @@ data):
 - One item per line: `R$ <valor> - <descrição>` (the parser tolerates `R$10,00`, `10,00- desc`,
   double spaces).
 - Items should sum to the cell value; use an `AJUSTES` line `R$ <x> - Diferença` to close it.
-- Note that classification is by **section first**, with a card/bank-name fallback only for
-  unheaded notes, and that "Fatura <telecom>" is a bill, not a card.
+- Note that classification is by **section only**: unheaded/unknown notes default to Saída.
+  There is no card/bank-name fallback.
 - State explicitly: this is for **new** notes; existing notes are never rewritten by the app.
 
 **Verify**: `npm run privacy:scan` → passes (no real names/values).

@@ -14,8 +14,10 @@ const mk = (month: number, perf: number, cost: number): MonthMetric => ({
   cost_of_living_cents: cost,
   fixed_out_cents: cost,
   daily_out_cents: 0,
+  cartao_cents: 0,
   real_daily_avg_cents: 0,
   economia_cents: 0,
+  patrimonio_cents: 0,
   savings_rate_bps: 0,
 });
 
@@ -86,8 +88,10 @@ describe("AnnualScreen", () => {
       cost_of_living_cents: 0,
       fixed_out_cents: 0,
       daily_out_cents: 0,
+      cartao_cents: 0,
       real_daily_avg_cents: 0,
       economia_cents: 0,
+      patrimonio_cents: 0,
       savings_rate_bps: 0,
     });
     const months = Array.from({ length: 12 }, (_, i) => base(i + 1));

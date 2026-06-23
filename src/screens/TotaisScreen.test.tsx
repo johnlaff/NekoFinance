@@ -146,6 +146,32 @@ describe("TotaisScreen (render)", () => {
     expect(within(trend).getByText("Jun")).toBeInTheDocument();
   });
 
+  it("Para onde foi o dinheiro usa o bucket Cartão do MonthMetric", async () => {
+    mockInvoke.mockReset();
+    const forecast = {
+      ...FORECAST,
+      months: FORECAST.months.map((month) =>
+        month.month === 6
+          ? {
+              ...month,
+              fixed_out_cents: 100_000,
+              daily_out_cents: 50_000,
+              cartao_cents: 150_000,
+              cost_of_living_cents: 300_000,
+            }
+          : month,
+      ),
+    };
+    mockCommands({ get_forecast: forecast, owner_totals_for_month_cmd: [] });
+    render(<TotaisScreen />);
+
+    const outflow = await screen.findByRole("region", {
+      name: "Para onde foi o dinheiro",
+    });
+    expect(within(outflow).getByText("Cartão")).toBeInTheDocument();
+    expect(within(outflow).getByText(/1\.500,00/)).toBeInTheDocument();
+  });
+
   it("Custo de vida sublabel menciona cartão", async () => {
     mockInvoke.mockReset();
     mockCommands({ get_forecast: FORECAST, owner_totals_for_month_cmd: [] });
