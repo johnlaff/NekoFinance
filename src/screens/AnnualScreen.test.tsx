@@ -1,8 +1,8 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { AnnualScreen } from "./AnnualScreen";
 import type { AnnualMetrics, MonthMetric } from "../lib/api";
-import { mockCommands, mockInvoke } from "../test/commands";
+import { FORECAST, mockCommands, mockInvoke } from "../test/commands";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -26,10 +26,38 @@ const ANNUAL: AnnualMetrics = {
   ),
 };
 
+const monthGridHandler = (args?: Record<string, unknown>) => {
+  const month = Number(args?.["month"]);
+  const mm = String(month).padStart(2, "0");
+  return [
+    {
+      date: `2026-${mm}-28`,
+      day: 28,
+      income_cents: 0,
+      fixed_out_cents: 0,
+      daily_out_cents: 0,
+      balance_cents: month === 1 ? 111000 : month === 5 ? 555000 : null,
+    },
+  ];
+};
+
 describe("AnnualScreen", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date("2026-06-10T12:00:00-03:00"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("renderiza a tabela anual (redesign) com as colunas e 12 meses", async () => {
     mockInvoke.mockReset();
-    mockCommands({ get_annual_metrics: ANNUAL });
+    mockCommands({
+      get_annual_metrics: ANNUAL,
+      get_forecast: FORECAST,
+      get_month_grid: monthGridHandler,
+    });
     render(<AnnualScreen />);
 
     // Espera a tabela carregar — cabeçalho único "Saldo fim" como âncora.
@@ -77,7 +105,11 @@ describe("AnnualScreen", () => {
       economia_cents: 30_000,
       savings_rate_bps: 1000,
     };
-    mockCommands({ get_annual_metrics: { year: 2026, months } });
+    mockCommands({
+      get_annual_metrics: { year: 2026, months },
+      get_forecast: FORECAST,
+      get_month_grid: monthGridHandler,
+    });
     render(<AnnualScreen />);
 
     // Aguarda o rodapé "Realizado" aparecer (substitui o antigo "Total").
@@ -87,5 +119,33 @@ describe("AnnualScreen", () => {
     expect(screen.getAllByText("15%").length).toBeGreaterThan(0);
     // Não é a média simples de 30%+10%=20%.
     expect(screen.queryByText("20%")).not.toBeInTheDocument();
+  });
+
+  it("preenche Saldo fim de meses passados a partir do month-grid realizado", async () => {
+    mockInvoke.mockReset();
+    mockCommands({
+      get_annual_metrics: ANNUAL,
+      get_forecast: FORECAST,
+      get_month_grid: monthGridHandler,
+    });
+    render(<AnnualScreen />);
+
+    await waitFor(() => expect(screen.getByText("Saldo fim")).toBeInTheDocument());
+    expect(screen.getByText(/1\.110,00/)).toBeInTheDocument();
+    expect(screen.getByText(/5\.550,00/)).toBeInTheDocument();
+  });
+
+  it("mostra Saldo fim histórico quando o ano exibido é anterior ao forecast", async () => {
+    mockInvoke.mockReset();
+    mockCommands({
+      get_annual_metrics: ANNUAL,
+      get_forecast: { ...FORECAST, today: "2027-06-10", month_end: [] },
+      get_month_grid: monthGridHandler,
+    });
+    render(<AnnualScreen />);
+
+    await waitFor(() => expect(screen.getByText("Saldo fim")).toBeInTheDocument());
+    expect(screen.getByText(/1\.110,00/)).toBeInTheDocument();
+    expect(screen.getByText(/5\.550,00/)).toBeInTheDocument();
   });
 });

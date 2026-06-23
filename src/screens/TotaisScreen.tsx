@@ -1,7 +1,14 @@
 import "./mes.css";
 import { useState } from "react";
 import { TrendingUp, Wallet, PiggyBank, LayoutList, GitCompare } from "lucide-react";
-import { getForecast, ownerTotalsForMonth, isTauri, type OwnerTotal } from "../lib/api";
+import {
+  getAnnualMetrics,
+  getForecast,
+  ownerTotalsForMonth,
+  isTauri,
+  type MonthMetric,
+  type OwnerTotal,
+} from "../lib/api";
 import { useCommand } from "../lib/useCommand";
 import { MonthNav } from "../design-system/components/MonthNav";
 import { EmptyState } from "../design-system/components/EmptyState";
@@ -18,6 +25,36 @@ import {
 /** "YYYY-MM" from a MonthMetric. */
 function ymOf(m: { year: number; month: number }): string {
   return `${m.year}-${String(m.month).padStart(2, "0")}`;
+}
+
+const _annualFetcherCache = new Map<
+  number,
+  () => ReturnType<typeof getAnnualMetrics>
+>();
+function annualFetcher(year: number): () => ReturnType<typeof getAnnualMetrics> {
+  const cached = _annualFetcherCache.get(year);
+  if (cached) return cached;
+  const fn = () => getAnnualMetrics(year);
+  _annualFetcherCache.set(year, fn);
+  return fn;
+}
+
+function mergePastAnnualWithForecastMonths(
+  annualMonths: MonthMetric[],
+  forecastMonths: MonthMetric[],
+  today: string,
+): MonthMetric[] {
+  const todayYm = today.slice(0, 7);
+  const byMonth = new Map<string, MonthMetric>();
+  for (const month of annualMonths) {
+    if (ymOf(month) < todayYm) byMonth.set(ymOf(month), month);
+  }
+  for (const month of forecastMonths) {
+    byMonth.set(ymOf(month), month);
+  }
+  return Array.from(byMonth.values()).toSorted(
+    (a, b) => a.year - b.year || a.month - b.month,
+  );
 }
 
 /** StatusChip: a small dot + label badge matching the existing design vocabulary. */
@@ -351,6 +388,11 @@ export function TotaisScreen() {
   const forecastQ = useCommand("get_forecast", getForecast);
   const [selectedYm, setSelectedYm] = useState<string | null>(null);
   const forecast = forecastQ.data ?? null;
+  const forecastYear = Number(forecast?.today.slice(0, 4)) || new Date().getFullYear();
+  const annualQ = useCommand(
+    `annual_metrics:${forecastYear}:totais`,
+    annualFetcher(forecastYear),
+  );
 
   // Derive owner query key before any conditional return to keep hook order stable.
   const activeYmForOwners = selectedYm ?? forecast?.today.slice(0, 7) ?? "";
@@ -374,8 +416,10 @@ export function TotaisScreen() {
     );
   }
 
-  const months = forecast.months.toSorted(
-    (a, b) => a.year - b.year || a.month - b.month,
+  const months = mergePastAnnualWithForecastMonths(
+    annualQ.data?.months ?? [],
+    forecast.months,
+    forecast.today,
   );
   const todayYm = forecast.today.slice(0, 7);
   const activeYm = selectedYm ?? todayYm;

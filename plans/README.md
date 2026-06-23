@@ -70,7 +70,7 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 055  | Write-back↔re-import identity (no dup) + economia write-back tag-filter + sync cadence | P2       | M      | —          | DONE (pkg J)               |
 | 056  | Lançamentos opens on "Por mês" (default + first option) — redesign UX bug              | P2       | S      | —          | DONE (pkg K)               |
 | 057  | Compose tags Cartão with engine "credit" (was "credito" → misclassified as Diário)     | P1       | S      | —          | DONE (pkg K)               |
-| 058  | Restore past balances: Calendário/O ano/Este mês (re-add getMonthGrid; redesign regr.) | P1       | M      | —          | TODO (pkg K)               |
+| 058  | Restore past balances: Calendário/O ano/Este mês (re-add getMonthGrid; redesign regr.) | P1       | M      | —          | DONE (pkg K)               |
 | 059  | Spec (5-type alignment, owner-reopened) + section classifier (no bank fallback)        | P1       | M      | —          | TODO (pkg K)               |
 | 060  | Engine 5-type: cartão/economia/patrimônio buckets, custo de vida excludes savings      | P1       | L      | 059        | TODO (pkg K)               |
 | 061  | Lançamentos kind badges + cartão/economia%/patrimônio surfaces + convention doc        | P3       | M      | 059, 060   | TODO (pkg K)               |

@@ -3,9 +3,11 @@ import { useState } from "react";
 import {
   getForecast,
   getAnnualMetrics,
+  getMonthGrid,
   isTauri,
   type ForecastDay,
   type MonthMetric,
+  type MonthGridDay,
 } from "../lib/api";
 import { useCommand } from "../lib/useCommand";
 import { SegmentedControl } from "../design-system/components/SegmentedControl";
@@ -47,6 +49,37 @@ function indexByDate(days: ForecastDay[]): Map<string, ForecastDay> {
   return m;
 }
 
+function indexGridByDate(days: MonthGridDay[]): Map<string, MonthGridDay> {
+  const m = new Map<string, MonthGridDay>();
+  for (const d of days) m.set(d.date, d);
+  return m;
+}
+
+const _annualFetcherCache = new Map<
+  number,
+  () => ReturnType<typeof getAnnualMetrics>
+>();
+function annualFetcher(year: number): () => ReturnType<typeof getAnnualMetrics> {
+  const cached = _annualFetcherCache.get(year);
+  if (cached) return cached;
+  const fn = () => getAnnualMetrics(year);
+  _annualFetcherCache.set(year, fn);
+  return fn;
+}
+
+const _monthGridFetcherCache = new Map<string, () => ReturnType<typeof getMonthGrid>>();
+function monthGridFetcher(
+  year: number,
+  month: number,
+): () => ReturnType<typeof getMonthGrid> {
+  const key = `${year}-${month}`;
+  const cached = _monthGridFetcherCache.get(key);
+  if (cached) return cached;
+  const fn = () => getMonthGrid(year, month);
+  _monthGridFetcherCache.set(key, fn);
+  return fn;
+}
+
 const LEGEND = (
   <div className="cal-legend">
     <span>
@@ -84,20 +117,29 @@ export function YearGridScreen() {
   const rawMonth = thisMonth + off;
   const clampedMonth = Math.max(0, Math.min(11, rawMonth));
 
-  // Tauri data: forecast gives per-day balance for the heatmap.
+  // Tauri data: forecast gives today-forward projected balances; month-grid restores past sheet balances.
   const forecastQ = useCommand("get_forecast", getForecast);
   const forecast = forecastQ.data;
   const dailyAll: ForecastDay[] = forecast?.daily ?? [];
-  const balanceMap = indexByDate(dailyAll);
+  const forecastBalanceMap = indexByDate(dailyAll);
+  const monthNum = clampedMonth + 1;
+  const monthGridQ = useCommand(
+    `get_month_grid:${thisYear}:${monthNum}`,
+    monthGridFetcher(thisYear, monthNum),
+  );
+  const realizedBalanceMap = indexGridByDate(monthGridQ.data ?? []);
 
   // Annual metrics for the year-view month summaries.
-  const annualQ = useCommand(`get_annual_metrics:${thisYear}`, () =>
-    getAnnualMetrics(thisYear),
-  );
+  const annualQ = useCommand(`get_annual_metrics:${thisYear}`, annualFetcher(thisYear));
   const annualMetrics: MonthMetric[] = annualQ.data?.months ?? [];
   // Index by 0-based month for quick lookup (API months are 1-based).
   const monthMetricMap = new Map<number, MonthMetric>();
   for (const mm of annualMetrics) monthMetricMap.set(mm.month - 1, mm);
+
+  const balanceForDate = (iso: string): number | null => {
+    if (iso < TODAY) return realizedBalanceMap.get(iso)?.balance_cents ?? null;
+    return forecastBalanceMap.get(iso)?.balance_cents ?? null;
+  };
 
   // ---- Year view ----
   if (tab === "ano") {
@@ -139,8 +181,8 @@ export function YearGridScreen() {
                     {cells.map((d, i) => {
                       if (d == null) return <span key={i} />;
                       const iso = isoDate(thisYear, m, d);
-                      const row = balanceMap.get(iso);
-                      const band = saldoBand(row?.balance_cents ?? null);
+                      const balance = balanceForDate(iso);
+                      const band = saldoBand(balance);
                       const future = iso > TODAY;
                       return (
                         <span
@@ -149,7 +191,7 @@ export function YearGridScreen() {
                             "cal-mini__cell" +
                             (iso === TODAY ? " cal-mini__cell--today" : "")
                           }
-                          title={`${String(d).padStart(2, "0")}/${String(m + 1).padStart(2, "0")} · ${row != null ? fmtBRL(row.balance_cents) : "—"}`}
+                          title={`${String(d).padStart(2, "0")}/${String(m + 1).padStart(2, "0")} · ${balance != null ? fmtBRL(balance) : "—"}`}
                           style={{
                             background:
                               band.fill === "transparent"
@@ -215,8 +257,8 @@ export function YearGridScreen() {
             if (d == null)
               return <div key={`empty-${i}`} className="cal-cell cal-cell--empty" />;
             const iso = isoDate(thisYear, m, d);
-            const row = balanceMap.get(iso);
-            const band = saldoBand(row?.balance_cents ?? null);
+            const balance = balanceForDate(iso);
+            const band = saldoBand(balance);
             const future = iso > TODAY;
             return (
               <div
@@ -231,17 +273,17 @@ export function YearGridScreen() {
                     band.fill === "transparent" ? "var(--surface)" : band.fill,
                 }}
                 title={
-                  row != null
-                    ? `Saldo ${fmtBRL(row.balance_cents)}`
+                  balance != null
+                    ? `Saldo ${fmtBRL(balance)}`
                     : iso > TODAY
                       ? "Projeção indisponível"
                       : "Sem dados"
                 }
               >
                 <span className="cal-cell__d">{d}</span>
-                {row != null ? (
+                {balance != null ? (
                   <span className="cal-cell__s" style={{ color: band.text }}>
-                    {fmtCompact(row.balance_cents)}
+                    {fmtCompact(balance)}
                   </span>
                 ) : (
                   <span className="cal-cell__s" style={{ color: "var(--text-faint)" }}>
