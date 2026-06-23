@@ -458,12 +458,12 @@ export function TotaisScreen() {
   const economizadoPct = m.savings_rate_bps / 100;
   const fixedOut = m.fixed_out_cents;
   const dailyOut = m.daily_out_cents;
+  const cartao = m.cartao_cents;
 
   // "Para onde foi o dinheiro" bar segments.
-  // cartão is included in fixed_out_cents per MonthMetric docs. No separate field exists.
   const outParts = [
     { name: "Saídas fixas", val: fixedOut, color: "var(--type-saida)" },
-    { name: "Cartão", val: 0, color: "var(--type-cartao)" },
+    { name: "Cartão", val: cartao, color: "var(--type-cartao)" },
     { name: "Diário", val: dailyOut, color: "var(--type-diario)" },
     { name: "Economia", val: economia, color: "var(--type-economia)" },
   ];

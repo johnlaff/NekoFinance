@@ -17,15 +17,18 @@ use chrono::{Datelike, NaiveDate};
 pub enum EventKind {
     /// Entrada — income (salary, reimbursement, freela…).
     Income,
-    /// Saída — fixed outflow: fixed bills + the fatura lump at the card due date (credit settles as one lump, not per-purchase).
+    /// Saída — fixed outflow, excluding credit-card bucket once item/transaction classification knows it.
     FixedOut,
     /// Diário — variable daily débito/cash spend (Régua 1).
     Daily,
-    /// Economia — guardar (transfer to real savings: reserve, ou illiquid p/ FGTS/previdência).
-    /// NÃO inclui `restricted` (vale-refeição = gasto restrito). Leaves the spending balance
-    /// (signed −, mirroring the app's single conta), but is "saved" not "spent": it is the
-    /// numerator of Economizado% and a term of Performance, yet is NOT part of Custo de vida.
+    /// Cartão — credit-card bill/purchase bucket. It is inside custo de vida but visible apart.
+    Cartao,
+    /// Economia — guardar em reserva acessível. Leaves the spending balance (signed −), feeds
+    /// Economia%, and is excluded from custo de vida.
     Economia,
+    /// Patrimônio — long-term/illiquid investment. Leaves the spending balance, but is excluded
+    /// from custo de vida and from accessible Economia%.
+    Patrimonio,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,22 +60,22 @@ pub struct MonthMetric {
     pub income_cents: i64,
     pub performance_cents: i64,
     pub cost_of_living_cents: i64,
-    /// Saídas FIXAS realizadas (coluna Saída da planilha; cartão entra como lump aqui). Exposto à
-    /// parte de `cost_of_living_cents` para o rodapé mensal ENTRADAS | SAÍDAS | DIÁRIO.
+    /// Saídas FIXAS realizadas (coluna Saída sem cartão/economia/patrimônio).
     pub fixed_out_cents: i64,
-    /// Diário REALIZADO (coluna Diário). `cost_of_living = fixed_out + daily_out`.
+    /// Diário REALIZADO (coluna Diário).
     pub daily_out_cents: i64,
+    /// Gastos com cartão, bucket próprio dentro do custo de vida.
+    pub cartao_cents: i64,
     pub real_daily_avg_cents: i64,
     pub savings_rate_bps: i64,
-    /// Economia lançada no mês — numerador do Economizado% (savings_rate_bps). NÃO desconta a
-    /// Performance diretamente: a poupança já entra em cost_of_living como Saída no grid (expense
-    /// row → FixedOut/Daily). Esta linha é o transfer da aba Economia = anotação de taxa, não
-    /// duplo movimento. DECISÃO DO DONO 2026-06-21 final — plano 051 reverte o plano 046.
+    /// Economia lançada no mês — numerador do Economizado% (savings_rate_bps). Excluída do custo
+    /// de vida, mas descontada da Performance como todo dinheiro que saiu.
     pub economia_cents: i64,
-    /// Saída TOTAL lançada no mês = fixas + diário (realizado + projetado/pré-lançado). É o que a
-    /// [`month_coverage`] usa para julgar "mês completo" (quanto do gasto típico já está lançado),
-    /// distinto de `cost_of_living_cents` (só realizado). Não inclui economia (a baseline é de
-    /// despesas, não de transferências).
+    /// Patrimônio/long-term/illiquid. Excluído de custo de vida e Economia% acessível, mas reduz
+    /// Performance/Saldo como saída.
+    pub patrimonio_cents: i64,
+    /// Saída TOTAL lançada no mês para cobertura = custo de vida lançado (fixas + diário realizado
+    /// + diário projetado/pré-lançado + cartão). Não inclui economia/patrimônio.
     pub total_outflow_cents: i64,
 }
 
@@ -223,19 +226,19 @@ pub fn month_coverage(
 fn signed(e: &CashflowEvent) -> i64 {
     match e.kind {
         EventKind::Income => e.amount_cents,
-        // Economia leaves the spending balance too (guardar reduz o disponível), mirroring the
-        // app's single conta — só que é poupança, não gasto (ver Economizado% nas métricas).
-        EventKind::FixedOut | EventKind::Daily | EventKind::Economia => -e.amount_cents,
+        EventKind::FixedOut
+        | EventKind::Daily
+        | EventKind::Cartao
+        | EventKind::Economia
+        | EventKind::Patrimonio => -e.amount_cents,
     }
 }
 
 /// Row→event classification rule (the shell maps DB rows through this).
-/// `income` → Entrada; an `expense` on credit or marked fixed → Saída (a fatura lump or fixed bill);
-/// any other `expense` → Diário (variable débito/cash). A `transfer` is **Economia** only when its
-/// destination is real savings — `reserve` (reserva) or `illiquid` (FGTS/previdência = poupança
-/// forçada). `restricted` (vale-refeição) é dinheiro de gasto RESTRITO, **não** poupança: contá-lo
-/// como Economia inflaria o Economizado% (= Economia/Entradas) sem respaldo no método. Demais
-/// transferências (entre contas líquidas, ou para vale) são net-zero para a poupança → ignoradas.
+/// `income` → Entrada; a credit `expense` → Cartão; fixed `expense` → Saída; any other `expense`
+/// → Diário. A `transfer` is **Economia** only when its destination is accessible reserve;
+/// `illiquid` destinations are Patrimônio. `restricted` (vale-refeição) is restricted spending,
+/// not savings. Other transfers are net-zero for the method → ignored.
 /// `to_liquidity` é a `liquidity` da conta-destino (None p/ não-transfers ou contas sem classe).
 pub fn classify(
     txn_type: &str,
@@ -246,15 +249,17 @@ pub fn classify(
     match txn_type {
         "income" => Some(EventKind::Income),
         "expense" => {
-            if is_fixed || payment_method == Some("credit") {
+            if payment_method == Some("credit") {
+                Some(EventKind::Cartao)
+            } else if is_fixed {
                 Some(EventKind::FixedOut)
             } else {
                 Some(EventKind::Daily)
             }
         }
         "transfer" => match to_liquidity {
-            // Poupar de verdade: reserva ou poupança forçada (FGTS/previdência) = Economia.
-            Some("reserve") | Some("illiquid") => Some(EventKind::Economia),
+            Some("reserve") => Some(EventKind::Economia),
+            Some("illiquid") => Some(EventKind::Patrimonio),
             // Vale-refeição (restricted) é gasto restrito, não poupança; e transferências entre
             // contas líquidas são net-zero → nenhuma conta como Economia.
             _ => None,
@@ -354,7 +359,9 @@ fn month_metrics(
             let mut fixed_out = 0i64;
             let mut daily_realized = 0i64;
             let mut daily_projected = 0i64;
+            let mut cartao = 0i64;
             let mut economia = 0i64;
+            let mut patrimonio = 0i64;
             for e in events
                 .iter()
                 .filter(|e| e.date.year() == year && e.date.month() == month)
@@ -371,23 +378,21 @@ fn month_metrics(
                         }
                     }
                     EventKind::Economia => economia += e.amount_cents,
+                    EventKind::Cartao => cartao += e.amount_cents,
+                    EventKind::Patrimonio => patrimonio += e.amount_cents,
                 }
             }
             // Anotação da aba Economia para este mês (import via store_economia_entries, plano 052).
             // Disjunta dos transfers de reserva MANUAIS (já somados em EventKind::Economia acima):
-            // a anotação só vem do import da aba e nunca vira transação → somar não duplica. Alimenta
-            // o Economizado% (savings_rate_bps) e o `economia_cents`, NÃO a Performance nem o Saldo.
+            // a anotação só vem do import da aba e nunca vira transação → somar não duplica.
             economia += annotation.get(&(year, month)).copied().unwrap_or(0);
-            // Custo de vida = Saídas fixas + Diário realizado (cartão já entra em fixed_out via lump).
-            let cost_of_living_cents = fixed_out + daily_realized;
-            // Performance = Entradas − (Saídas + Diário) — fórmula fiel à planilha.
-            // DECISÃO DO DONO (2026-06-21, FINAL): a economia é lançada como Saída (expense) no grid
-            // mensal → torna-se FixedOut/Daily → já está em cost_of_living. A aba Economia importa um
-            // transfer separado (EventKind::Economia) que alimenta savings_rate_bps (Economizado%), mas
-            // NÃO é deduzido da Performance de novo — subtrair `economia` aqui seria dupla contagem.
-            // `daily_projected` NÃO é descontado (a planilha usa o realizado; a projeção serve só ao
-            // saldo de caixa e não tem correspondência na linha de Performance da planilha).
-            let performance_cents = income - cost_of_living_cents;
+            // Custo de vida = Saídas fixas + Diário realizado + Cartão. Economia e Patrimônio são
+            // outflows reais, mas não são custo de vida.
+            let cost_of_living_cents = fixed_out + daily_realized + cartao;
+            // Performance = Entradas − TODOS os outflows reais classificados. A previsão de diário
+            // continua fora da Performance; ela só protege o saldo projetado.
+            let performance_cents =
+                income - (fixed_out + daily_realized + cartao + economia + patrimonio);
 
             let first = NaiveDate::from_ymd_opt(year, month, 1).expect("valid month");
             let last = last_day_of_month(year, month);
@@ -419,10 +424,12 @@ fn month_metrics(
                 cost_of_living_cents,
                 fixed_out_cents: fixed_out,
                 daily_out_cents: daily_realized,
+                cartao_cents: cartao,
                 real_daily_avg_cents,
                 savings_rate_bps,
                 economia_cents: economia,
-                total_outflow_cents: fixed_out + daily_realized + daily_projected,
+                patrimonio_cents: patrimonio,
+                total_outflow_cents: fixed_out + daily_realized + daily_projected + cartao,
             }
         })
         .collect()
@@ -761,9 +768,11 @@ mod tests {
             cost_of_living_cents: cost,
             fixed_out_cents: cost,
             daily_out_cents: 0,
+            cartao_cents: 0,
             real_daily_avg_cents: 0,
             savings_rate_bps: 0,
             economia_cents: 0,
+            patrimonio_cents: 0,
             total_outflow_cents: cost,
         };
         // Mês corrente (jun) ignorado; jul completo (R$ 1.000), ago esparso (R$ 380).
@@ -791,9 +800,11 @@ mod tests {
             cost_of_living_cents: cost,
             fixed_out_cents: cost,
             daily_out_cents: 0,
+            cartao_cents: 0,
             real_daily_avg_cents: 0,
             savings_rate_bps: 0,
             economia_cents: 0,
+            patrimonio_cents: 0,
             total_outflow_cents: cost,
         };
         let months = [mm(2026, 7, 1_000), mm(2026, 8, 380)];
@@ -828,6 +839,29 @@ mod tests {
         assert_eq!(m.performance_cents, 400000); // 1000 - 600
     }
 
+    // Plano 060: modelo canônico de 5 tipos. Cartão entra no custo de vida como bucket próprio;
+    // Economia sai do custo de vida, mas continua reduzindo Performance porque o dinheiro saiu.
+    #[test]
+    fn five_type_worked_example_matches_target_table() {
+        let events = [
+            ev("2026-03-05", EventKind::Income, 1_000_000),
+            ev("2026-03-10", EventKind::FixedOut, 300_000),
+            ev("2026-03-12", EventKind::Daily, 200_000),
+            ev("2026-03-15", EventKind::Cartao, 150_000),
+            ev("2026-03-20", EventKind::Economia, 100_000),
+        ];
+        let f = project(0, d("2026-03-01"), &events, d("2026-03-31"));
+        let m = f.months.iter().find(|m| m.month == 3).unwrap();
+
+        assert_eq!(m.cost_of_living_cents, 650_000); // 300 + 200 + 150
+        assert_eq!(m.cartao_cents, 150_000);
+        assert_eq!(m.economia_cents, 100_000);
+        assert_eq!(m.patrimonio_cents, 0);
+        assert_eq!(m.savings_rate_bps, 1_000); // 100 / 1000 = 10%
+        assert_eq!(m.performance_cents, 250_000); // 1000 - (300 + 200 + 150 + 100)
+        assert_eq!(f.month_end[0].balance_cents, 250_000);
+    }
+
     // T5.3 — cash ≠ performance: month ends negative in cash while performance is positive.
     #[test]
     fn cash_differs_from_performance() {
@@ -855,10 +889,9 @@ mod tests {
         assert_eq!(m.economia_cents, 250000);
         // Economizado% = economia (250) ÷ renda (1000) = 25% = 2500 bps (não mais o superávit).
         assert_eq!(m.savings_rate_bps, 2500);
-        // Performance = renda (1000) − custo de vida (diário 200) = 800
-        // (economia não desconta Performance de novo — já está em cost_of_living como Saída
-        // no grid; o transfer da aba Economia alimenta savings_rate_bps, não Performance).
-        assert_eq!(m.performance_cents, 800_000);
+        // Performance = renda (1000) − diário (200) − economia (250) = 550.
+        // Economia fica fora do custo de vida, mas reduz Performance uma vez.
+        assert_eq!(m.performance_cents, 550_000);
         assert_eq!(m.cost_of_living_cents, 200000); // só diário realizado (sem economia)
     }
 
@@ -903,8 +936,8 @@ mod tests {
         ); // fixed bill
         assert_eq!(
             classify("expense", false, Some("credit"), None),
-            Some(EventKind::FixedOut)
-        ); // credit lump
+            Some(EventKind::Cartao)
+        ); // credit bucket
         assert_eq!(
             classify("expense", false, Some("debit"), None),
             Some(EventKind::Daily)
@@ -915,7 +948,7 @@ mod tests {
         );
     }
 
-    // Economia: transfer p/ bolso não-líquido = Economia; entre líquidos = net-zero (skip).
+    // Economia/Patrimônio: reserve = Economia; illiquid = Patrimônio; entre líquidos = net-zero.
     #[test]
     fn classify_transfer_to_reserve_is_economia() {
         // Poupança real (reserva) → Economia.
@@ -923,10 +956,10 @@ mod tests {
             classify("transfer", false, None, Some("reserve")),
             Some(EventKind::Economia)
         );
-        // FGTS/previdência (illiquid) = poupança forçada → Economia.
+        // FGTS/previdência (illiquid) = Patrimônio, não Economia acessível.
         assert_eq!(
             classify("transfer", false, None, Some("illiquid")),
-            Some(EventKind::Economia)
+            Some(EventKind::Patrimonio)
         );
         // Vale-refeição (restricted) é gasto restrito, NÃO poupança → não conta como Economia.
         assert_eq!(classify("transfer", false, None, Some("restricted")), None);
@@ -1065,9 +1098,8 @@ mod tests {
         assert_eq!(m.performance_cents, 1000000); // previsão NÃO desconta performance
     }
 
-    // Regressão: economia NÃO desconta Performance diretamente (já está em cost_of_living como
-    // Saída no grid — evita dupla contagem plano 051). Previsão de diário NÃO desconta (não tem
-    // linha na Performance da planilha). DECISÃO FINAL 2026-06-21.
+    // Regressão: economia desconta Performance uma vez, mas previsão de diário NÃO desconta (não
+    // tem linha na Performance da planilha).
     #[test]
     fn performance_excludes_only_projected() {
         let events = [
@@ -1087,20 +1119,17 @@ mod tests {
         let m = f.months.iter().find(|m| m.month == 4).unwrap();
         // cost_of_living = fixed_out(300) + daily_realized(50) = 350_000
         assert_eq!(m.cost_of_living_cents, 350_000);
-        // performance = income(1_000) − cost_of_living(350) = 650_000
-        // (economia NÃO desconta Performance — já em cost_of_living como Saída no grid;
-        // daily_projected NÃO desconta — só afeta o saldo de caixa)
-        assert_eq!(m.performance_cents, 650_000);
+        // performance = income(1_000) − fixed(300) − daily(50) − economia(200) = 450_000.
+        // daily_projected NÃO desconta — só afeta o saldo de caixa.
+        assert_eq!(m.performance_cents, 450_000);
         // economia still feeds savings_rate
         assert_eq!(m.economia_cents, 200_000);
         assert_eq!(m.savings_rate_bps, 2_000); // 200/1000 = 20%
     }
 
-    // Regressão dupla-contagem (plano 051): economia NÃO é subtraída da Performance — ela
-    // já está em cost_of_living como Saída no grid (expense → FixedOut/Daily). O transfer da
-    // aba Economia é só anotação de taxa (savings_rate_bps). DECISÃO FINAL 2026-06-21.
+    // Plano 060: economia reduz Performance uma vez, mas fica fora de custo de vida.
     #[test]
-    fn performance_economia_not_double_counted() {
+    fn performance_counts_economia_as_outflow_once() {
         // Arrange: renda 5_000_000, Saída fixa 1_000_000, Diário realizado 500_000.
         // Economia 800_000 representa o transfer da aba Economia (anotação de taxa).
         // A poupança real já está no custo de vida como expense row (FixedOut ou Daily).
@@ -1115,11 +1144,10 @@ mod tests {
 
         // cost_of_living = FixedOut(1_000) + Daily(500) = 1_500_000 (Economia NOT in here)
         assert_eq!(m.cost_of_living_cents, 1_500_000);
-        // economia_cents is reported separately (feeds savings_rate_bps only)
+        // economia_cents is reported separately and feeds savings_rate_bps.
         assert_eq!(m.economia_cents, 800_000);
-        // performance = income(5_000) − cost_of_living(1_500) = 3_500_000
-        // (NOT 2_700_000 — that was the double-count introduced by plan 046)
-        assert_eq!(m.performance_cents, 3_500_000);
+        // performance = income(5_000) − fixed(1_000) − daily(500) − economia(800) = 2_700_000
+        assert_eq!(m.performance_cents, 2_700_000);
         // savings_rate_bps = 800_000 / 5_000_000 = 1600 bps (16%) — unaffected
         assert_eq!(m.savings_rate_bps, 1_600);
     }

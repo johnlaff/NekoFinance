@@ -72,7 +72,7 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 057  | Compose tags Cartão with engine "credit" (was "credito" → misclassified as Diário)     | P1       | S      | —          | DONE (pkg K)               |
 | 058  | Restore past balances: Calendário/O ano/Este mês (re-add getMonthGrid; redesign regr.) | P1       | M      | —          | DONE (pkg K)               |
 | 059  | Spec (5-type alignment, owner-reopened) + section classifier (no bank fallback)        | P1       | M      | —          | DONE (pkg K)               |
-| 060  | Engine 5-type: cartão/economia/patrimônio buckets, custo de vida excludes savings      | P1       | L      | 059        | TODO (pkg K)               |
+| 060  | Engine 5-type: cartão/economia/patrimônio buckets, custo de vida excludes savings      | P1       | L      | 059        | DONE (pkg K)               |
 | 061  | Lançamentos kind badges + cartão/economia%/patrimônio surfaces + convention doc        | P3       | M      | 059, 060   | TODO (pkg K)               |
 | 062  | Auto-economia write-back to the Economia tab (diff + approval, round-trip)             | P2       | M      | 060        | TODO (pkg K)               |
 
@@ -119,7 +119,7 @@ every spreadsheet tab/note.
 - 🔒 **Invariant (plan 060 regression):** **Saldo and Performance do NOT change** — the money
   leaves the account in both models. Only custo-de-vida (stops being inflated by savings),
   Economia% (becomes automatic), and the now-visible Cartão/Patrimônio buckets change.
-- **Classification is by SECTION only (no bank-name fallback** — dropped per owner: too
+- **Classification is by SECTION only (no bank-name fallback)** — dropped per owner: too
   error-prone). Section→type: CONTAS→Saída fixa; CARTÕES/FATURAS→Cartão; INVESTIMENTO→Patrimônio;
   ECONOMIA→Economia; OUTROS→Saída; AJUSTES→Diferença.
 - **Divergence (items ≠ cell): WARN ONLY** (owner) — the app never fabricates a value; it flags

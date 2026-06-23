@@ -155,14 +155,18 @@ export interface MonthMetric {
   income_cents: number;
   performance_cents: number;
   cost_of_living_cents: number;
-  /** Saídas fixas realizadas (coluna Saída; cartão entra como lump). */
+  /** Saídas fixas realizadas (coluna Saída sem cartão/economia/patrimônio). */
   fixed_out_cents: number;
-  /** Diário realizado (coluna Diário). cost_of_living = fixed_out + daily_out. */
+  /** Diário realizado (coluna Diário). */
   daily_out_cents: number;
+  /** Cartão realizado, bucket próprio dentro do custo de vida. */
+  cartao_cents: number;
   /** Diário médio = Σ diário realizado ÷ dias decorridos (D/N). */
   real_daily_avg_cents: number;
   /** Economia lançada no mês (numerador do Economizado%). */
   economia_cents: number;
+  /** Patrimônio/long-term/illiquid, fora de custo de vida e Economia% acessível. */
+  patrimonio_cents: number;
   savings_rate_bps: number;
 }
 

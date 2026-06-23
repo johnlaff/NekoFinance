@@ -1,5 +1,10 @@
 # Spec 011 — Engine: 5 tipos de 1ª classe + previsão de diário no forecast
 
+> Atualização 2026-06-23: a decisão travada de 2026-06-21 sobre `economia=Saída` foi reaberta por
+> decisão explícita do dono e supersedida pela [Spec 020](../020-classificacao-notas-5-tipos/spec.md).
+> O modelo atual separa Cartão, Economia e Patrimônio; custo de vida exclui economia/patrimônio, e
+> Performance desconta os outflows reais uma única vez.
+
 > Fonte: síntese do método + a planilha (notas locais privadas). Corrige a raiz comum de 3
 > divergências do que o método pede.
 

@@ -649,6 +649,129 @@ pub(crate) async fn forecast_horizon_end(
     Ok(horizon)
 }
 
+#[derive(sqlx::FromRow)]
+struct MetricTxnRow {
+    id: String,
+    ttype: String,
+    amount: i64,
+    date: String,
+    payment_method: String,
+    is_fixed: i64,
+    is_projection: i64,
+    to_liquidity: String,
+}
+
+struct MetricLineItemRow {
+    amount_cents: i64,
+    description: String,
+    section: Option<String>,
+}
+
+fn event_kind_for_item_kind(kind: import::ItemKind) -> forecast::EventKind {
+    match kind {
+        import::ItemKind::Saida | import::ItemKind::Ajuste => forecast::EventKind::FixedOut,
+        import::ItemKind::Diario => forecast::EventKind::Daily,
+        import::ItemKind::Cartao => forecast::EventKind::Cartao,
+        import::ItemKind::Economia => forecast::EventKind::Economia,
+        import::ItemKind::Patrimonio => forecast::EventKind::Patrimonio,
+    }
+}
+
+async fn load_metric_db_events(
+    pool: &SqlitePool,
+    start_inclusive: NaiveDate,
+    end_exclusive: NaiveDate,
+) -> Result<Vec<CashflowEvent>, String> {
+    let start = start_inclusive.format("%Y-%m-%d").to_string();
+    let end = end_exclusive.format("%Y-%m-%d").to_string();
+
+    let txn_rows: Vec<MetricTxnRow> = sqlx::query_as(
+        "SELECT t.id, t.type AS ttype, t.amount, t.date, \
+                COALESCE(t.payment_method,'') AS payment_method, \
+                t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity \
+         FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
+         WHERE t.date >= ?1 AND t.date < ?2 \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM transaction_tag tt2 \
+               JOIN tag tg ON tg.id = tt2.tag_id \
+               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
+           )",
+    )
+    .bind(&start)
+    .bind(&end)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("query metric transactions: {e}"))?;
+
+    let item_rows: Vec<(String, i64, String, Option<String>)> = sqlx::query_as(
+        "SELECT li.transaction_id, li.amount_cents, li.description, li.section \
+         FROM line_item li \
+         JOIN \"transaction\" t ON t.id = li.transaction_id \
+         WHERE t.date >= ?1 AND t.date < ?2 \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM transaction_tag tt2 \
+               JOIN tag tg ON tg.id = tt2.tag_id \
+               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
+           ) \
+         ORDER BY li.transaction_id, li.position",
+    )
+    .bind(&start)
+    .bind(&end)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("query metric line items: {e}"))?;
+
+    let mut items_by_txn: std::collections::HashMap<String, Vec<MetricLineItemRow>> =
+        std::collections::HashMap::new();
+    for (transaction_id, amount_cents, description, section) in item_rows {
+        items_by_txn
+            .entry(transaction_id)
+            .or_default()
+            .push(MetricLineItemRow {
+                amount_cents,
+                description,
+                section,
+            });
+    }
+
+    let mut events = Vec::new();
+    for row in txn_rows {
+        if row.ttype == "expense"
+            && let Some(items) = items_by_txn.get(&row.id)
+            && !items.is_empty()
+        {
+            let Some(date) = NaiveDate::parse_from_str(&row.date, "%Y-%m-%d").ok() else {
+                continue;
+            };
+            for item in items {
+                let kind =
+                    import::classify_line_item(item.section.as_deref(), item.description.as_str());
+                events.push(CashflowEvent {
+                    date,
+                    kind: event_kind_for_item_kind(kind),
+                    amount_cents: item.amount_cents.abs(),
+                    realized: row.is_projection == 0,
+                });
+            }
+            continue;
+        }
+
+        if let Some(event) = map_cashflow_row((
+            row.ttype,
+            row.amount,
+            row.date,
+            row.payment_method,
+            row.is_fixed,
+            row.is_projection,
+            row.to_liquidity,
+        )) {
+            events.push(event);
+        }
+    }
+
+    Ok(events)
+}
+
 /// Loads forward cashflow events for the projection window: future transactions (date > today,
 /// avoiding double-counting today's already-realized spending baked into the balance snapshot).
 /// Credit bills are already carried as a single outflow on the due date by these transaction rows.
@@ -722,27 +845,10 @@ pub(crate) async fn load_realized_month_events(
     month_start: NaiveDate,
     today_naive: NaiveDate,
 ) -> Result<Vec<CashflowEvent>, String> {
-    let start = month_start.format("%Y-%m-%d").to_string();
-    let today = today_naive.format("%Y-%m-%d").to_string();
-
-    let rows: Vec<(String, i64, String, String, i64, i64, String)> = sqlx::query_as(
-        "SELECT t.type, t.amount, t.date, COALESCE(t.payment_method,''), t.is_fixed, t.is_projection, \
-                COALESCE(a.liquidity,'') \
-         FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
-         WHERE t.date >= ?1 AND t.date <= ?2 \
-           AND NOT EXISTS ( \
-               SELECT 1 FROM transaction_tag tt2 \
-               JOIN tag tg ON tg.id = tt2.tag_id \
-               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
-           )",
-    )
-    .bind(&start)
-    .bind(&today)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| format!("query realized month: {e}"))?;
-
-    Ok(rows.into_iter().filter_map(map_cashflow_row).collect())
+    let end_exclusive = today_naive
+        .succ_opt()
+        .ok_or("data de hoje inválida para intervalo de métricas")?;
+    load_metric_db_events(pool, month_start, end_exclusive).await
 }
 
 /// Eventos para as MÉTRICAS por mês = futuros (encadeamento) + realizados do mês corrente.
@@ -750,12 +856,30 @@ pub(crate) async fn load_realized_month_events(
 pub(crate) async fn load_metric_events(
     pool: &SqlitePool,
     today_naive: NaiveDate,
-    future_events: &[CashflowEvent],
+    horizon_end: NaiveDate,
 ) -> Result<Vec<CashflowEvent>, String> {
     let month_start = NaiveDate::from_ymd_opt(today_naive.year(), today_naive.month(), 1)
         .ok_or("data de hoje inválida")?;
+    let end_exclusive = horizon_end
+        .succ_opt()
+        .ok_or("horizonte inválido para intervalo de métricas")?;
     let mut metric = load_realized_month_events(pool, month_start, today_naive).await?;
-    metric.extend_from_slice(future_events);
+    let future_start = today_naive
+        .succ_opt()
+        .ok_or("data de hoje inválida para intervalo futuro de métricas")?;
+    metric.extend(load_metric_db_events(pool, future_start, end_exclusive).await?);
+    let daily_ceiling = effective_daily_ceiling(pool, today_naive).await?;
+    let days_with_daily: std::collections::HashSet<NaiveDate> = metric
+        .iter()
+        .filter(|e| e.kind == forecast::EventKind::Daily)
+        .map(|e| e.date)
+        .collect();
+    metric.extend(forecast::project_daily_ceiling(
+        daily_ceiling,
+        today_naive,
+        horizon_end,
+        &days_with_daily,
+    ));
     Ok(metric)
 }
 
@@ -789,14 +913,18 @@ pub struct MonthMetricDto {
     pub income_cents: i64,
     pub performance_cents: i64,
     pub cost_of_living_cents: i64,
-    /// Saídas fixas realizadas (coluna Saída; cartão entra como lump). Para o rodapé ENTRADAS|SAÍDAS|DIÁRIO.
+    /// Saídas fixas realizadas (coluna Saída sem cartão/economia/patrimônio).
     pub fixed_out_cents: i64,
-    /// Diário realizado (coluna Diário). `cost_of_living = fixed_out + daily_out`.
+    /// Diário realizado (coluna Diário).
     pub daily_out_cents: i64,
+    /// Cartão realizado, bucket próprio dentro do custo de vida.
+    pub cartao_cents: i64,
     /// Diário médio do mês = Σ diário realizado ÷ dias decorridos (D/N). Antes morria no DTO.
     pub real_daily_avg_cents: i64,
     /// Economia lançada no mês (numerador do Economizado%).
     pub economia_cents: i64,
+    /// Patrimônio/long-term/illiquid, fora de custo de vida e Economia% acessível.
+    pub patrimonio_cents: i64,
     pub savings_rate_bps: i64,
 }
 
@@ -876,7 +1004,7 @@ pub(crate) async fn forecast_dto(
     let horizon_end = forecast_horizon_end(pool, today_naive).await?;
     let seed = projection_seed(pool, today_naive).await?;
     let events = load_forecast_events(pool, today_naive, horizon_end).await?;
-    let metric_events = load_metric_events(pool, today_naive, &events).await?;
+    let metric_events = load_metric_events(pool, today_naive, horizon_end).await?;
     // Anotação da aba Economia (plano 052) para os anos cobertos pelo horizonte — parcela aditiva do
     // Economizado% por mês, disjunta dos transfers de reserva reais (que já chegam nos eventos).
     let years: Vec<i32> = (today_naive.year()..=horizon_end.year()).collect();
@@ -975,9 +1103,13 @@ pub(crate) async fn forecast_dto(
         let entry = flows.entry(e.date).or_default();
         match e.kind {
             forecast::EventKind::Income => entry.0 += e.amount_cents,
-            forecast::EventKind::FixedOut => entry.1 += e.amount_cents,
+            forecast::EventKind::FixedOut | forecast::EventKind::Cartao => {
+                entry.1 += e.amount_cents
+            }
             forecast::EventKind::Daily => entry.2 += e.amount_cents,
             forecast::EventKind::Economia => entry.3 += e.amount_cents,
+            // ForecastDayDto is a legacy day-flow shape; monthly DTOs expose Patrimônio.
+            forecast::EventKind::Patrimonio => {}
         }
     }
 
@@ -1036,8 +1168,10 @@ pub(crate) async fn forecast_dto(
                 cost_of_living_cents: m.cost_of_living_cents,
                 fixed_out_cents: m.fixed_out_cents,
                 daily_out_cents: m.daily_out_cents,
+                cartao_cents: m.cartao_cents,
                 real_daily_avg_cents: m.real_daily_avg_cents,
                 economia_cents: m.economia_cents,
+                patrimonio_cents: m.patrimonio_cents,
                 savings_rate_bps: m.savings_rate_bps,
             })
             .collect(),
@@ -1052,24 +1186,9 @@ pub(crate) async fn load_year_events(
     pool: &SqlitePool,
     year: i32,
 ) -> Result<Vec<CashflowEvent>, String> {
-    let rows: Vec<(String, i64, String, String, i64, i64, String)> = sqlx::query_as(
-        "SELECT t.type, t.amount, t.date, COALESCE(t.payment_method,''), t.is_fixed, t.is_projection, \
-                COALESCE(a.liquidity,'') \
-         FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
-         WHERE t.date >= ?1 AND t.date < ?2 \
-           AND NOT EXISTS ( \
-               SELECT 1 FROM transaction_tag tt2 \
-               JOIN tag tg ON tg.id = tt2.tag_id \
-               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
-           )",
-    )
-    .bind(format!("{year:04}-01-01"))
-    .bind(format!("{}-01-01", year + 1))
-    .fetch_all(pool)
-    .await
-    .map_err(|e| format!("query year events: {e}"))?;
-
-    Ok(rows.into_iter().filter_map(map_cashflow_row).collect())
+    let start = NaiveDate::from_ymd_opt(year, 1, 1).ok_or("ano inválido")?;
+    let end = NaiveDate::from_ymd_opt(year + 1, 1, 1).ok_or("ano inválido")?;
+    load_metric_db_events(pool, start, end).await
 }
 
 #[derive(serde::Serialize)]
@@ -1097,8 +1216,10 @@ pub(crate) async fn annual_metrics(
             cost_of_living_cents: m.cost_of_living_cents,
             fixed_out_cents: m.fixed_out_cents,
             daily_out_cents: m.daily_out_cents,
+            cartao_cents: m.cartao_cents,
             real_daily_avg_cents: m.real_daily_avg_cents,
             economia_cents: m.economia_cents,
+            patrimonio_cents: m.patrimonio_cents,
             savings_rate_bps: m.savings_rate_bps,
         })
         .collect();
@@ -1495,6 +1616,65 @@ mod tests {
         );
         // Economizado% = 25.000 / 100.000 = 25% = 2500 bps.
         assert_eq!(metrics[0].savings_rate_bps, 2500);
+    }
+
+    // Plano 060: uma Saída itemizada é atribuída por seção, sem contar o pai de novo.
+    #[tokio::test]
+    async fn annual_metrics_attributes_line_items_by_section_without_double_counting_parent() {
+        let p = pool().await;
+
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_projection) \
+             VALUES ('income-060', 'income', 1000000, '2026-03-01', 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('expense-060', 'expense', 800000, '2026-03-15', 1, 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        for (position, section, amount, description) in [
+            (0, "CONTAS:", 300_000, "fixo"),
+            (1, "DIÁRIO:", 200_000, "variavel"),
+            (2, "CARTÕES:", 150_000, "cartao"),
+            (3, "ECONOMIA:", 100_000, "reserva"),
+            (4, "INVESTIMENTO:", 50_000, "longo prazo"),
+        ] {
+            sqlx::query(
+                "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, section) \
+                 VALUES (?1, 'expense-060', ?2, ?3, ?4, ?5)",
+            )
+            .bind(format!("li-060-{position}"))
+            .bind(amount)
+            .bind(description)
+            .bind(position)
+            .bind(section)
+            .execute(&p)
+            .await
+            .unwrap();
+        }
+
+        let annual = annual_metrics(&p, 2026, NaiveDate::from_ymd_opt(2026, 3, 31).unwrap())
+            .await
+            .unwrap();
+        let mar = annual.months.iter().find(|m| m.month == 3).unwrap();
+
+        assert_eq!(mar.fixed_out_cents, 300_000);
+        assert_eq!(mar.daily_out_cents, 200_000);
+        assert_eq!(mar.cartao_cents, 150_000);
+        assert_eq!(mar.economia_cents, 100_000);
+        assert_eq!(mar.patrimonio_cents, 50_000);
+        assert_eq!(mar.cost_of_living_cents, 650_000); // 300 + 200 + 150
+        assert_eq!(mar.savings_rate_bps, 1_000); // 100 / 1000 = 10%
+        assert_eq!(
+            mar.performance_cents, 200_000,
+            "performance conta os itens uma vez: 1000 - 800"
+        );
     }
 
     // Bug 3 (plano 052): `realized_annual_economia` (numerador do guardrail safe_to_spend) soma a
