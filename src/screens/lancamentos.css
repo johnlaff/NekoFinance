@@ -274,6 +274,19 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
+}
+.lc-parts__warn {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid color-mix(in srgb, var(--warning-400) 34%, transparent);
+  background: color-mix(in srgb, var(--warning-400) 10%, transparent);
+  color: var(--warning-400);
+  font-size: 10.5px;
+  font-weight: 700;
 }
 .lc-part {
   display: flex;
@@ -293,6 +306,34 @@
   font-size: 13px;
   color: var(--text-muted);
   min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.lc-part__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lc-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  font-size: 10.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  flex: none;
+}
+.lc-kind__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
 }
 .lc-part-actions {
   display: flex;
@@ -370,5 +411,60 @@
   }
   50% {
     opacity: 0.45;
+  }
+}
+
+@media (max-width: 720px) {
+  .lc-row {
+    grid-template-columns: 48px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "date desc amt"
+      ". type amt";
+    gap: 4px 8px;
+    min-height: 64px;
+    padding: 8px 10px;
+  }
+  .lc-row__date {
+    grid-area: date;
+  }
+  .lc-row__type {
+    grid-area: type;
+    min-width: 0;
+  }
+  .lc-row__desc {
+    grid-area: desc;
+    min-width: 0;
+  }
+  .lc-row__amt {
+    grid-area: amt;
+    max-width: 84px;
+    font-size: 12.5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .lc-parts {
+    padding: 10px 10px 14px 58px;
+  }
+  .lc-parts__note {
+    align-items: flex-start;
+  }
+  .lc-part {
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .lc-part__desc {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .lc-part__text {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .lc-part__amt {
+    max-width: 76px;
+    font-size: 12px;
+  }
+  .lc-part-actions {
+    flex-wrap: wrap;
   }
 }

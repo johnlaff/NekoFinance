@@ -11,13 +11,48 @@ pub struct TagOnRow {
 
 /// Plan 035: uma parte itemizada de um lançamento (breakdown da nota de célula).
 /// O total do lançamento pai é a SOMA destas partes; aqui só leitura (edição = plano 036).
-#[derive(Debug, serde::Serialize, sqlx::FromRow, Clone)]
+#[derive(Debug, serde::Serialize, Clone)]
 pub struct LineItemOnRow {
     pub id: String,
     pub transaction_id: String,
     pub amount_cents: i64,
     pub description: String,
     pub position: i64,
+    /// Kind derivado da seção da nota, sem fallback por descrição/banco.
+    pub kind: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct LineItemDbRow {
+    id: String,
+    transaction_id: String,
+    amount_cents: i64,
+    description: String,
+    position: i64,
+    section: Option<String>,
+}
+
+fn line_item_kind_slug(kind: import::ItemKind) -> &'static str {
+    match kind {
+        import::ItemKind::Saida => "saida",
+        import::ItemKind::Cartao => "cartao",
+        import::ItemKind::Diario => "diario",
+        import::ItemKind::Economia => "economia",
+        import::ItemKind::Patrimonio => "patrimonio",
+        import::ItemKind::Ajuste => "ajuste",
+    }
+}
+
+fn line_item_on_row(row: LineItemDbRow) -> LineItemOnRow {
+    let kind = import::classify_line_item(row.section.as_deref(), row.description.as_str());
+    LineItemOnRow {
+        id: row.id,
+        transaction_id: row.transaction_id,
+        amount_cents: row.amount_cents,
+        description: row.description,
+        position: row.position,
+        kind: line_item_kind_slug(kind).to_string(),
+    }
 }
 
 /// Retorna as partes itemizadas de um lançamento (vazio = lançamento não itemizado).
@@ -25,14 +60,15 @@ pub(crate) async fn line_items_for_transaction(
     pool: &SqlitePool,
     transaction_id: &str,
 ) -> Result<Vec<LineItemOnRow>, String> {
-    sqlx::query_as::<_, LineItemOnRow>(
-        "SELECT id, transaction_id, amount_cents, description, position \
+    let rows: Vec<LineItemDbRow> = sqlx::query_as(
+        "SELECT id, transaction_id, amount_cents, description, position, section \
          FROM line_item WHERE transaction_id = ?1 ORDER BY position",
     )
     .bind(transaction_id)
     .fetch_all(pool)
     .await
-    .map_err(|e| format!("line_items_for_transaction: {e}"))
+    .map_err(|e| format!("line_items_for_transaction: {e}"))?;
+    Ok(rows.into_iter().map(line_item_on_row).collect())
 }
 
 #[tauri::command]
@@ -165,17 +201,20 @@ pub(crate) async fn recent_transactions(
     } else {
         let placeholders = vec!["?"; ids.len()].join(",");
         let sql = format!(
-            "SELECT id, transaction_id, amount_cents, description, position \
+            "SELECT id, transaction_id, amount_cents, description, position, section \
              FROM line_item WHERE transaction_id IN ({placeholders}) \
              ORDER BY transaction_id, position"
         );
-        let mut q = sqlx::query_as::<_, LineItemOnRow>(sqlx::AssertSqlSafe(sql));
+        let mut q = sqlx::query_as::<_, LineItemDbRow>(sqlx::AssertSqlSafe(sql));
         for id in &ids {
             q = q.bind(id);
         }
         q.fetch_all(pool)
             .await
             .map_err(|e| format!("line_item query: {e}"))?
+            .into_iter()
+            .map(line_item_on_row)
+            .collect()
     };
     let mut items_by_txn: std::collections::HashMap<String, Vec<LineItemOnRow>> =
         std::collections::HashMap::new();
@@ -870,6 +909,50 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(rows, vec![(500, 1), (750, 1)]);
+    }
+
+    #[tokio::test]
+    async fn line_items_carry_section_derived_kind_without_bank_fallback() {
+        let pool = test_pool().await;
+        insert_txn(&pool, "tx-kind", 3000).await;
+
+        for (id, amount, description, position, section) in [
+            (
+                "li-kind-card",
+                1000,
+                "compra no credito",
+                0,
+                Some("CARTÕES:"),
+            ),
+            (
+                "li-kind-bank-name",
+                2000,
+                "Banco Exemplo - compra no cartao",
+                1,
+                None,
+            ),
+        ] {
+            sqlx::query(
+                "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, section) \
+                 VALUES (?1, 'tx-kind', ?2, ?3, ?4, ?5)",
+            )
+            .bind(id)
+            .bind(amount)
+            .bind(description)
+            .bind(position)
+            .bind(section)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let items = line_items_for_transaction(&pool, "tx-kind").await.unwrap();
+
+        assert_eq!(items[0].kind, "cartao");
+        assert_eq!(
+            items[1].kind, "saida",
+            "sem seção, nome de banco/cartão na descrição não muda o kind"
+        );
     }
 
     #[tokio::test]

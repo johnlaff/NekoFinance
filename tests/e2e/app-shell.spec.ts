@@ -158,6 +158,30 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     await expect(dialog).toBeVisible();
   });
 
+  test("Lançamentos shows classified item badges in the expanded row", async ({
+    page,
+  }, testInfo) => {
+    await page.getByRole("button", { name: "Lançamentos", exact: true }).click();
+    await page.getByRole("button", { name: "Compromisso fixo demo" }).click();
+
+    await expect(page.getByLabel("Item classificado como Cartão")).toBeVisible();
+    await expect(page.getByLabel("Item classificado como Saída")).toBeVisible();
+    await expect(page.getByText("itens não batem")).toBeVisible();
+
+    await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath("lancamentos-item-badges.png"),
+    });
+
+    await page.setViewportSize({ width: 390, height: 840 });
+    await expect(page.getByLabel("Item classificado como Cartão")).toBeVisible();
+    await expect(page.getByLabel("Item classificado como Saída")).toBeVisible();
+    await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath("lancamentos-item-badges-mobile.png"),
+    });
+  });
+
   // -------------------------------------------------------------------------
   // (4) Individual screens render correctly
   // -------------------------------------------------------------------------

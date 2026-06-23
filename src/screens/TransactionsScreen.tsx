@@ -17,6 +17,7 @@ import {
   isTauri,
   listTags,
   setTransactionTags,
+  type LineItemKind,
   type Tag,
   type TransactionRow,
 } from "../lib/api";
@@ -43,6 +44,10 @@ const TODAY = todayISO();
 
 type FilterKey = "todos" | MovementType;
 type ViewMode = "monthOnly" | "anchor";
+interface LineItemKindMeta {
+  name: string;
+  color: string;
+}
 
 // ---------------------------------------------------------------------------
 // Type mapping: TransactionRow → MovementType (the 5 pillars of the method)
@@ -126,6 +131,15 @@ const FILTER_CHIPS: { key: FilterKey; label: string; color: string }[] = [
   { key: "diario", label: "Diário", color: "var(--type-diario)" },
   { key: "economia", label: "Economia", color: "var(--type-economia)" },
 ];
+
+const LINE_ITEM_KIND_META: Record<LineItemKind, LineItemKindMeta> = {
+  saida: { name: TYPE_META.saida.name, color: TYPE_META.saida.color },
+  cartao: { name: TYPE_META.cartao.name, color: TYPE_META.cartao.color },
+  diario: { name: TYPE_META.diario.name, color: TYPE_META.diario.color },
+  economia: { name: TYPE_META.economia.name, color: TYPE_META.economia.color },
+  patrimonio: { name: "Patrimônio", color: "var(--text-muted)" },
+  ajuste: { name: "Ajuste", color: "var(--warning-400)" },
+};
 
 // ---------------------------------------------------------------------------
 // Sub-components
@@ -240,6 +254,12 @@ function Row({
   const isToday = t.date === TODAY;
   const isEntrada = mvType === "entrada";
   const hasItems = t.line_items.length > 1;
+  const lineItemsTotal = t.line_items.reduce(
+    (sum, item) => sum + Math.abs(item.amount_cents),
+    0,
+  );
+  const lineItemsDiverge =
+    t.line_items.length > 0 && Math.abs(lineItemsTotal - totalCents) > 1;
   const isImported = t.provenance === "importado";
   const [showTagPicker, setShowTagPicker] = useState(false);
 
@@ -333,21 +353,44 @@ function Row({
                 <Pencil size={11} strokeWidth={1.75} />
                 {`${t.line_items.length} ${t.line_items.length === 1 ? "item" : "itens"}`}
                 {hasItems ? " · viram a nota da célula na planilha" : ""}
+                {lineItemsDiverge && (
+                  <span className="lc-parts__warn">itens não batem</span>
+                )}
               </p>
-              {t.line_items.map((li, i) => (
-                <div className="lc-part" key={li.id ?? `li-${i}`}>
-                  <span className="lc-part__desc">{li.description}</span>
-                  <span
-                    className="lc-part__amt"
-                    style={{
-                      color: isEntrada ? "var(--money-pos)" : "var(--money-neg)",
-                    }}
-                  >
-                    {isEntrada ? "+" : "−"}
-                    {fmtBRL(Math.abs(li.amount_cents))}
-                  </span>
-                </div>
-              ))}
+              {t.line_items.map((li, i) => {
+                const kind = LINE_ITEM_KIND_META[li.kind];
+                return (
+                  <div className="lc-part" key={li.id ?? `li-${i}`}>
+                    <span className="lc-part__desc">
+                      <span
+                        className="lc-kind"
+                        aria-label={`Item classificado como ${kind.name}`}
+                        style={{
+                          color: kind.color,
+                          borderColor: `color-mix(in srgb, ${kind.color} 34%, transparent)`,
+                          background: `color-mix(in srgb, ${kind.color} 10%, transparent)`,
+                        }}
+                      >
+                        <span
+                          className="lc-kind__dot"
+                          style={{ background: kind.color }}
+                        />
+                        {kind.name}
+                      </span>
+                      <span className="lc-part__text">{li.description}</span>
+                    </span>
+                    <span
+                      className="lc-part__amt"
+                      style={{
+                        color: isEntrada ? "var(--money-pos)" : "var(--money-neg)",
+                      }}
+                    >
+                      {isEntrada ? "+" : "−"}
+                      {fmtBRL(Math.abs(li.amount_cents))}
+                    </span>
+                  </div>
+                );
+              })}
             </>
           ) : (
             <p className="lc-parts__note">
