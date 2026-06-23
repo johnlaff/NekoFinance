@@ -68,6 +68,13 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 053  | Bug bundle: daily_spend_today SUM(ABS) + update amount guard + audit/clamp P3s         | P2       | S–M    | —          | DONE (pkg H)               |
 | 054  | Final consistency nits: effective_daily_ceiling SUM(ABS) + annual-savings tag-exclude  | P3       | S      | —          | DONE (pkg I)               |
 | 055  | Write-back↔re-import identity (no dup) + economia write-back tag-filter + sync cadence | P2       | M      | —          | DONE (pkg J)               |
+| 056  | Lançamentos opens on "Por mês" (default + first option) — redesign UX bug              | P2       | S      | —          | TODO (pkg K)               |
+| 057  | Compose tags Cartão with engine "credit" (was "credito" → misclassified as Diário)     | P1       | S      | —          | TODO (pkg K)               |
+| 058  | Restore past balances: Calendário/O ano/Este mês (re-add getMonthGrid; redesign regr.) | P1       | M      | —          | TODO (pkg K)               |
+| 059  | Spec (5-type alignment, owner-reopened) + section classifier (no bank fallback)        | P1       | M      | —          | TODO (pkg K)               |
+| 060  | Engine 5-type: cartão/economia/patrimônio buckets, custo de vida excludes savings      | P1       | L      | 059        | TODO (pkg K)               |
+| 061  | Lançamentos kind badges + cartão/economia%/patrimônio surfaces + convention doc        | P3       | M      | 059, 060   | TODO (pkg K)               |
+| 062  | Auto-economia write-back to the Economia tab (diff + approval, round-trip)             | P2       | M      | 060        | TODO (pkg K)               |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale)
 
@@ -87,6 +94,38 @@ Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED 
 - Plans 005, 006, 007, 008, 009, 012, 013, 014, 015, 016, 017, 018 are independent of each other.
 - **023 supersedes the note-grammar of the merged 004** (`@nome:`/`#credito` → `#dividir:`/`#reembolso:` + net-zero). 022, 023, 024, 025 are independent of each other.
 - **021 (real-time sync) is now unblocked** — its prerequisites 001 + 002 are merged.
+
+### Package K — note-classification + post-redesign fixes (2026-06-22, commit `da2d3e9`)
+
+Authored after the 2026 UI redesign (PR #84) + the OAuth fix (PR #85) merged. Scope was sharpened
+via an owner interview (`/grill-me`) + a full read of the methodology reference material and
+every spreadsheet tab/note.
+
+- **056, 057, 058 are independent** quick wins; do them first (056 UX, 057 silent
+  cartão-misclassification P1, 058 restores past balances the redesign hid — owner principle
+  "o app supera a planilha, nunca menos"). 058 re-introduces `getMonthGrid` in `src/lib/api.ts`
+  (Rust `month_grid`/`annual_metrics` already exist; only the frontend binding was dropped).
+- **059 → 060 → {061, 062}** is the 5-type-alignment chain: 059 (spec + section classifier) →
+  060 (engine: cartão/economia/patrimônio buckets) → 061 (UI surfaces) + 062 (Economia-tab
+  write-back so the app matches the sheet).
+- 🔓 **OWNER DECISION — reopens the locked finance model.** The owner explicitly authorized
+  aligning Neko to the canonical 5-type method, which **supersedes the
+  economia=Saída framing of plans 051/052** and `specs/011-engine-five-types`. The README note
+  below said only an explicit owner decision may reopen it — this is that decision. Canonical
+  model: **5 types** (Entrada/Saída/Diário/**Cartão**/**Economia**); **custo de vida = Saídas +
+  Diário + Cartão (EXCLUI economia e patrimônio)**; **Economia% = economia ÷ entradas** (auto);
+  **Cartão** is its own visible bucket; **previdência/long-term = Patrimônio** (illiquid),
+  excluded from both custo de vida and the accessible Economia%.
+- 🔒 **Invariant (plan 060 regression):** **Saldo and Performance do NOT change** — the money
+  leaves the account in both models. Only custo-de-vida (stops being inflated by savings),
+  Economia% (becomes automatic), and the now-visible Cartão/Patrimônio buckets change.
+- **Classification is by SECTION only (no bank-name fallback** — dropped per owner: too
+  error-prone). Section→type: CONTAS→Saída fixa; CARTÕES/FATURAS→Cartão; INVESTIMENTO→Patrimônio;
+  ECONOMIA→Economia; OUTROS→Saída; AJUSTES→Diferença.
+- **Divergence (items ≠ cell): WARN ONLY** (owner) — the app never fabricates a value; it flags
+  "itens não batem" and trusts the cell total.
+- **062 reuses the existing economia write-back** (plans 052/055) to fill the Economia tab from
+  the auto-derived economia, with diff + approval + round-trip identity (no duplicate).
 
 ## Fidelity decisions (2026-06-20)
 
@@ -116,7 +155,13 @@ already-built UI. All are high-leverage with clean verification stories.
 
 - **`saldoHeatmap.ts` thresholds**: correct — absolute R$ bands match the spreadsheet's
   conditional formatting (critical −500, tight 1000, ok 2000). No change.
-- **Performance formula in `forecast/mod.rs`** — 🔒 DECISION LOCKED, FINAL via plans 040 → 046 → 051.
+- **Performance formula in `forecast/mod.rs`** — 🔓 **REOPENED 2026-06-22 by explicit owner
+  decision (pkg K, plans 059–062)** — see the Package K note above. The owner authorized aligning
+  to the canonical 5-type method: `cost_of_living` now EXCLUDES economia + patrimônio, Cartão
+  becomes its own bucket, Economia% = economia ÷ entradas. **Performance itself is unchanged**
+  (income − all-outflows); only `cost_of_living`/Economia%/the new buckets change. The note below
+  is the prior locked state, kept for history:
+  ~~🔒 DECISION LOCKED, FINAL via plans 040 → 046 → 051.~~
   Formula: `income − cost_of_living` (Entradas − (Saídas + Diário)). Economia is NOT a separate
   deduction: the savings expense row is already in `cost_of_living` (expense → FixedOut/Daily);
   the Economia-tab transfer is a savings-rate annotation that feeds `savings_rate_bps` only, not
