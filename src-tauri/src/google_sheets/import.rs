@@ -871,11 +871,59 @@ pub(crate) struct NoteLineItem {
     /// Magnitude em centavos (positiva). Mesma convenção de `transaction.amount`.
     pub amount_cents: i64,
     pub description: String,
+    /// Classificação derivada do cabeçalho de seção, sem fallback por descrição.
+    pub kind: ItemKind,
     /// Posição 0-based na nota (ordem de aparição).
     pub position: usize,
     /// Cabeçalho de seção imediatamente anterior a este item na nota original
     /// (ex.: "CONTAS:", "CARTÕES:"). `None` quando o item não está sob um cabeçalho.
     pub section: Option<String>,
+}
+
+/// Plano 059: bucket derivado de um item de nota. `Ajuste` é operacional
+/// (reconciliação/diferença), não um bucket financeiro principal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ItemKind {
+    Saida,
+    Cartao,
+    Diario,
+    Economia,
+    Patrimonio,
+    Ajuste,
+}
+
+fn normalize_item_section(section: &str) -> String {
+    let section = section.trim().trim_end_matches(':').trim();
+    let mut normalized = String::with_capacity(section.len());
+    for ch in section.chars().flat_map(char::to_lowercase) {
+        match ch {
+            'á' | 'à' | 'â' | 'ã' | 'ä' => normalized.push('a'),
+            'é' | 'è' | 'ê' | 'ë' => normalized.push('e'),
+            'í' | 'ì' | 'î' | 'ï' => normalized.push('i'),
+            'ó' | 'ò' | 'ô' | 'õ' | 'ö' => normalized.push('o'),
+            'ú' | 'ù' | 'û' | 'ü' => normalized.push('u'),
+            'ç' => normalized.push('c'),
+            other => normalized.push(other),
+        }
+    }
+    normalized
+}
+
+/// Classifica um item pela seção imediatamente anterior. A descrição é
+/// deliberadamente ignorada: não existe fallback por banco/emissor/palavra-chave.
+pub(crate) fn classify_line_item(section: Option<&str>, _description: &str) -> ItemKind {
+    let Some(section) = section else {
+        return ItemKind::Saida;
+    };
+    match normalize_item_section(section).as_str() {
+        "contas" | "outros" => ItemKind::Saida,
+        "diario" => ItemKind::Diario,
+        "cartao" | "cartoes" | "fatura" | "faturas" => ItemKind::Cartao,
+        "investimento" => ItemKind::Patrimonio,
+        "economia" => ItemKind::Economia,
+        "ajuste" | "ajustes" => ItemKind::Ajuste,
+        _ => ItemKind::Saida,
+    }
 }
 
 /// Parseia as linhas itemizadas de uma nota de célula (Plan 035).
@@ -932,11 +980,13 @@ pub(crate) fn parse_itemized_note(note: &str) -> Vec<NoteLineItem> {
         if amount_cents <= 0 {
             continue; // valor inválido, zero ou negativo → pula
         }
+        let section = current_section.clone();
         items.push(NoteLineItem {
             amount_cents,
             description: desc_part.to_string(),
+            kind: classify_line_item(section.as_deref(), desc_part),
             position: pos,
-            section: current_section.clone(),
+            section,
         });
     }
     items
@@ -3380,6 +3430,73 @@ mod tests {
         let items = parse_itemized_note(note);
         assert_eq!(items.len(), 1);
         assert!(items[0].section.is_none());
+    }
+
+    // Plano 059: classificação pura de itens por seção, sem I/O.
+    #[test]
+    fn classify_line_item_maps_known_sections_to_kinds() {
+        assert_eq!(
+            classify_line_item(Some("CONTAS:"), "Aluguel"),
+            ItemKind::Saida
+        );
+        assert_eq!(classify_line_item(Some("OUTROS"), "Taxa"), ItemKind::Saida);
+        assert_eq!(
+            classify_line_item(Some("DIÁRIO:"), "Mercado"),
+            ItemKind::Diario
+        );
+        assert_eq!(
+            classify_line_item(Some("DIARIO"), "Mercado"),
+            ItemKind::Diario
+        );
+        assert_eq!(
+            classify_line_item(Some("CARTÕES:"), "Compra parcelada"),
+            ItemKind::Cartao
+        );
+        assert_eq!(
+            classify_line_item(Some("CARTOES"), "Compra parcelada"),
+            ItemKind::Cartao
+        );
+        assert_eq!(
+            classify_line_item(Some("FATURAS:"), "Fatura mensal"),
+            ItemKind::Cartao
+        );
+        assert_eq!(
+            classify_line_item(Some("Fatura:"), "Fatura mensal"),
+            ItemKind::Cartao
+        );
+        assert_eq!(
+            classify_line_item(Some("Investimento:"), "Previdencia"),
+            ItemKind::Patrimonio
+        );
+        assert_eq!(
+            classify_line_item(Some("ECONOMIA"), "Reserva"),
+            ItemKind::Economia
+        );
+        assert_eq!(
+            classify_line_item(Some("AJUSTES"), "Diferenca"),
+            ItemKind::Ajuste
+        );
+    }
+
+    #[test]
+    fn classify_line_item_defaults_unknown_or_missing_section_to_saida() {
+        assert_eq!(classify_line_item(None, "Sem secao"), ItemKind::Saida);
+        assert_eq!(
+            classify_line_item(Some("Juros"), "Taxa avulsa"),
+            ItemKind::Saida
+        );
+    }
+
+    #[test]
+    fn classify_line_item_has_no_bank_name_fallback() {
+        assert_eq!(
+            classify_line_item(None, "Banco Exemplo - compra no cartao"),
+            ItemKind::Saida
+        );
+        assert_eq!(
+            classify_line_item(Some("OUTROS"), "Fatura Banco Exemplo"),
+            ItemKind::Saida
+        );
     }
 
     // --- Plan 035: persistência de line_item no import (camada DB) ---
