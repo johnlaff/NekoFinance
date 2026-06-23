@@ -720,6 +720,19 @@ export function getAnnualMetrics(year: number): Promise<AnnualMetrics> {
   return invoke("get_annual_metrics", { year });
 }
 
+export interface MonthGridDay {
+  date: string;
+  day: number;
+  income_cents: number;
+  fixed_out_cents: number;
+  daily_out_cents: number;
+  balance_cents: number | null;
+}
+
+export function getMonthGrid(year: number, month: number): Promise<MonthGridDay[]> {
+  return invoke("get_month_grid", { year, month });
+}
+
 export function listTags(): Promise<Tag[]> {
   return invoke("list_tags_cmd");
 }

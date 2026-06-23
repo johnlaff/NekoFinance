@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi } from "vitest";
 import { TotaisScreen } from "./TotaisScreen";
@@ -10,7 +10,13 @@ import {
   SAVINGS_MIN_BPS,
 } from "./totaisStatus";
 import type { MonthMetric } from "../lib/api";
-import { FORECAST, OWNER_TOTALS, mockCommands, mockInvoke } from "../test/commands";
+import {
+  ANNUAL_METRICS,
+  FORECAST,
+  OWNER_TOTALS,
+  mockCommands,
+  mockInvoke,
+} from "../test/commands";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -122,6 +128,22 @@ describe("TotaisScreen (render)", () => {
       expect(screen.getByText("Economizado")).toBeInTheDocument();
     });
     expect(screen.getByText("Dentro do ideal")).toBeInTheDocument();
+  });
+
+  it("trend inclui meses realizados anteriores vindos do annual metrics", async () => {
+    mockInvoke.mockReset();
+    mockCommands({
+      get_forecast: FORECAST,
+      get_annual_metrics: ANNUAL_METRICS,
+      owner_totals_for_month_cmd: [],
+    });
+    render(<TotaisScreen />);
+
+    const trend = await screen.findByRole("region", {
+      name: "Resultado nos últimos meses",
+    });
+    expect(within(trend).getByText("Mai")).toBeInTheDocument();
+    expect(within(trend).getByText("Jun")).toBeInTheDocument();
   });
 
   it("Custo de vida sublabel menciona cartão", async () => {

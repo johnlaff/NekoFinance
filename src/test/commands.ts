@@ -1,8 +1,10 @@
 import type { Mock } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AnnualMetrics,
   DashboardSummary,
   Forecast,
+  MonthGridDay,
   OwnerTotal,
   Pockets,
   TransactionRow,
@@ -10,6 +12,16 @@ import type {
 import { invalidateCommands } from "../lib/useCommand";
 
 type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+type MockValue = string | number | boolean | null | undefined | object;
+type MockCommandHandler = (
+  args: Record<string, unknown> | undefined,
+  cmd: string,
+) => MockValue | Promise<MockValue>;
+type MockHandler = MockValue | MockCommandHandler;
+
+function isMockCommandHandler(value: MockHandler): value is MockCommandHandler {
+  return typeof value === "function";
+}
 
 /**
  * Test helper for Tauri command mocking. Each test file is responsible for
@@ -18,12 +30,15 @@ type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown
  */
 export const mockInvoke = invoke as unknown as Mock<InvokeFn>;
 
-export function mockCommands(handlers: Record<string, unknown>) {
+export function mockCommands(handlers: Record<string, MockHandler>) {
   invalidateCommands(); // each scenario starts with a cold command cache
-  mockInvoke.mockImplementation((cmd) => {
+  mockInvoke.mockImplementation((cmd, args) => {
     if (cmd in handlers) {
       const value = handlers[cmd];
-      return value instanceof Error ? Promise.reject(value) : Promise.resolve(value);
+      const resolved = isMockCommandHandler(value) ? value(args, cmd) : value;
+      return resolved instanceof Error
+        ? Promise.reject(resolved)
+        : Promise.resolve(resolved);
     }
     return Promise.reject(new Error(`unmocked command: ${cmd}`));
   });
@@ -251,4 +266,62 @@ export const FORECAST: Forecast = {
     },
   ],
   month_end: [{ year: 2026, month: 6, balance_cents: 1287700 }],
+};
+
+export const MONTH_GRID: MonthGridDay[] = [
+  {
+    date: "2026-06-01",
+    day: 1,
+    income_cents: 0,
+    fixed_out_cents: 0,
+    daily_out_cents: 0,
+    balance_cents: 910000,
+  },
+  {
+    date: "2026-06-02",
+    day: 2,
+    income_cents: 0,
+    fixed_out_cents: 120000,
+    daily_out_cents: 4300,
+    balance_cents: 785700,
+  },
+  {
+    date: "2026-06-03",
+    day: 3,
+    income_cents: 0,
+    fixed_out_cents: 0,
+    daily_out_cents: 0,
+    balance_cents: null,
+  },
+];
+
+export const ANNUAL_METRICS: AnnualMetrics = {
+  year: 2026,
+  months: [
+    {
+      year: 2026,
+      month: 1,
+      income_cents: 600000,
+      performance_cents: 180000,
+      cost_of_living_cents: 420000,
+      fixed_out_cents: 300000,
+      daily_out_cents: 120000,
+      real_daily_avg_cents: 3871,
+      economia_cents: 90000,
+      savings_rate_bps: 1500,
+    },
+    {
+      year: 2026,
+      month: 5,
+      income_cents: 650000,
+      performance_cents: 250000,
+      cost_of_living_cents: 400000,
+      fixed_out_cents: 280000,
+      daily_out_cents: 120000,
+      real_daily_avg_cents: 3871,
+      economia_cents: 130000,
+      savings_rate_bps: 2000,
+    },
+    ...FORECAST.months,
+  ],
 };

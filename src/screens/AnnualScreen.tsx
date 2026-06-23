@@ -5,11 +5,14 @@ import { SegmentedControl } from "../design-system/components/SegmentedControl";
 import {
   getAnnualMetrics,
   getForecast,
+  getMonthGrid,
   isTauri,
   type MonthMetric,
   type MonthEnd,
+  type MonthGridDay,
 } from "../lib/api";
 import { useCommand } from "../lib/useCommand";
+import { todayISO } from "../lib/format";
 import {
   fmtBRL,
   fmtCompact,
@@ -40,6 +43,31 @@ function stableFetcher(year: number): () => ReturnType<typeof getAnnualMetrics> 
   return fn;
 }
 
+const _historicalEndFetcherCache = new Map<string, () => Promise<MonthEnd[]>>();
+function stableHistoricalEndFetcher(
+  year: number,
+  today: string,
+): () => Promise<MonthEnd[]> {
+  const key = `${year}:${today}`;
+  const cached = _historicalEndFetcherCache.get(key);
+  if (cached) return cached;
+  const fn = async () => {
+    const monthNums = pastMonthNumbersForYear(year, today);
+    const grids = await Promise.all(
+      monthNums.map(async (month) => ({
+        month,
+        days: await getMonthGrid(year, month),
+      })),
+    );
+    return grids.flatMap(({ month, days }) => {
+      const balance = lastNonNullBalance(days);
+      return balance == null ? [] : [{ year, month, balance_cents: balance }];
+    });
+  };
+  _historicalEndFetcherCache.set(key, fn);
+  return fn;
+}
+
 // ------------------------------------------------------------------ helpers --
 
 function yearOf(iso: string): number {
@@ -56,6 +84,32 @@ function buildEndMap(ends: MonthEnd[]): Map<string, number> {
     map.set(`${e.year}-${e.month}`, e.balance_cents);
   }
   return map;
+}
+
+function pastMonthNumbersForYear(year: number, today: string): number[] {
+  const forecastYear = yearOf(today);
+  const currentMonth = monthIndexOf(today) + 1;
+  if (year < forecastYear) return Array.from({ length: 12 }, (_, i) => i + 1);
+  if (year > forecastYear) return [];
+  return Array.from({ length: Math.max(0, currentMonth - 1) }, (_, i) => i + 1);
+}
+
+function lastNonNullBalance(days: MonthGridDay[]): number | null {
+  for (let i = days.length - 1; i >= 0; i -= 1) {
+    const balance = days[i]?.balance_cents;
+    if (balance != null) return balance;
+  }
+  return null;
+}
+
+function realizedMonthCutoff(
+  year: number,
+  forecastYear: number,
+  currentMonthIdx: number,
+): number {
+  if (year < forecastYear) return 11;
+  if (year > forecastYear) return -1;
+  return currentMonthIdx;
 }
 
 interface AnnualTotals {
@@ -196,13 +250,11 @@ function AnoTable({
   currentMonthIdx,
   endMap,
   year,
-  forecastYear,
 }: {
   months: MonthMetric[];
   currentMonthIdx: number;
   endMap: Map<string, number>;
   year: number;
-  forecastYear: number;
 }) {
   const rows = padTo12(months, year);
   const realized = rows.filter((m) => m.month - 1 <= currentMonthIdx);
@@ -230,8 +282,9 @@ function AnoTable({
           const rowClass = isCurrent ? "is-current" : isFuture ? "is-future" : "";
           const endBal = endMap.get(`${year}-${m.month}`);
           const band = saldoBand(endBal ?? null);
-          // Saldo fim only available from Forecast (current year). Show dash for past years.
-          const showEndBal = year === forecastYear && endBal !== undefined;
+          // Saldo fim can come from forecast for current/future months or from
+          // month-grid history for realized months in any displayed year.
+          const showEndBal = endBal !== undefined;
           return (
             <tr key={m.month} className={rowClass}>
               <td>{MES[mIdx]}</td>
@@ -377,15 +430,22 @@ export function AnnualScreen() {
   const cmpQA = useCommand(`annual_metrics:${yearA}`, stableFetcher(yearA));
   const cmpQB = useCommand(`annual_metrics:${yearB}`, stableFetcher(yearB));
 
-  const today = forecastQ.data?.today ?? "";
+  const today = forecastQ.data?.today ?? todayISO();
   const forecastYear = today ? yearOf(today) : thisYear;
   const currentMonthIdx = today ? monthIndexOf(today) : new Date().getMonth();
+  const displayedMonthCutoff = realizedMonthCutoff(year, forecastYear, currentMonthIdx);
+  const historicalEndsQ = useCommand(
+    `month_grid_end_balances:${year}:${today}`,
+    stableHistoricalEndFetcher(year, today),
+  );
 
   const months: MonthMetric[] = annualQ.data?.months ?? [];
+  const historicalEndMap = buildEndMap(historicalEndsQ.data ?? []);
   const endMap = buildEndMap(forecastQ.data?.month_end ?? []);
+  for (const [key, value] of historicalEndMap) endMap.set(key, value);
 
   // KPI totals over realized months only (matches prototype)
-  const realizedMonths = months.filter((m) => m.month - 1 <= currentMonthIdx);
+  const realizedMonths = months.filter((m) => m.month - 1 <= displayedMonthCutoff);
   const totEnt = realizedMonths.reduce((s, m) => s + m.income_cents, 0);
   const totSaida = realizedMonths.reduce((s, m) => s + m.cost_of_living_cents, 0);
   const totPerf = totEnt - totSaida;
@@ -393,7 +453,9 @@ export function AnnualScreen() {
   const econPct = totEnt > 0 ? (totEcon / totEnt) * 100 : 0;
 
   const loading =
-    annualQ.loading || (tab === "cmp" && (cmpQA.loading || cmpQB.loading));
+    annualQ.loading ||
+    historicalEndsQ.loading ||
+    (tab === "cmp" && (cmpQA.loading || cmpQB.loading));
 
   // Pad to 12 for the bar chart (need all 12 slots)
   const rows12 = padTo12(months, year);
@@ -470,16 +532,15 @@ export function AnnualScreen() {
           </div>
 
           <section className="card">
-            <AnoChart months={rows12} currentMonthIdx={currentMonthIdx} />
+            <AnoChart months={rows12} currentMonthIdx={displayedMonthCutoff} />
           </section>
 
           <section className="card" style={{ overflowX: "auto" }}>
             <AnoTable
               months={months}
-              currentMonthIdx={currentMonthIdx}
+              currentMonthIdx={displayedMonthCutoff}
               endMap={endMap}
               year={year}
-              forecastYear={forecastYear}
             />
           </section>
 
