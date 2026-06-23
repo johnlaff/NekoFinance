@@ -17,6 +17,7 @@
 - **Depends on**: none
 - **Category**: bug
 - **Planned at**: commit `da2d3e9`, 2026-06-22
+- **Completed**: 2026-06-23 via PR #88 (`24aaa8453dd15c09578973d8940655e322814707`)
 
 ## Why this matters
 
@@ -118,14 +119,14 @@ in the DOM.
 
 ## Done criteria
 
-- [ ] `grep -n 'view: "monthOnly"' src/screens/TransactionsScreen.tsx` → matches the initializer
-- [ ] "Por mês" option object precedes "Linha do tempo" in the SegmentedControl options array
-- [ ] `npm run typecheck` exits 0
-- [ ] `npm run lint` exits 0
-- [ ] `npm run test:run` exits 0; the new default-view test exists and passes
-- [ ] `npm run e2e` exits 0
-- [ ] No files outside the in-scope list modified (`git status`)
-- [ ] `plans/README.md` status row updated
+- [x] `grep -n 'view: "monthOnly"' src/screens/TransactionsScreen.tsx` → matches the initializer
+- [x] "Por mês" option object precedes "Linha do tempo" in the SegmentedControl options array
+- [x] `npm run typecheck` exits 0
+- [x] `npm run lint` exits 0
+- [x] `npm run test:run` exits 0; the new default-view test exists and passes
+- [x] `npm run e2e` exits 0
+- [x] No files outside the in-scope list modified (`git status`)
+- [x] `plans/README.md` status row updated
 
 ## STOP conditions
 

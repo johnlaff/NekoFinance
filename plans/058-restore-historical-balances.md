@@ -15,6 +15,7 @@
 - **Depends on**: none
 - **Category**: bug (regression introduced by the 2026 redesign, PR #84)
 - **Planned at**: commit `da2d3e9`, 2026-06-22
+- **Completed**: 2026-06-23 via PR #89 (`2b22468b286dc5f6d2d9cc4833071abbbcb99e30`)
 
 ## Why this matters
 
@@ -194,14 +195,14 @@ balances (not "—") and the trend includes >1 month.
 
 ## Done criteria
 
-- [ ] `src/lib/api.ts` exports `getMonthGrid` + `MonthGridDay`
-- [ ] `npm run typecheck` exits 0
-- [ ] `npm run lint` exits 0
-- [ ] `npm run test:run` exits 0; new/updated tests assert past balances render in all three screens
-- [ ] `npm run e2e` exits 0
-- [ ] `npm run deadcode` (knip) shows no NEW unused exports (getMonthGrid is now used)
-- [ ] No Rust files modified (`git status`)
-- [ ] `plans/README.md` status row updated
+- [x] `src/lib/api.ts` exports `getMonthGrid` + `MonthGridDay`
+- [x] `npm run typecheck` exits 0
+- [x] `npm run lint` exits 0
+- [x] `npm run test:run` exits 0; new/updated tests assert past balances render in all three screens
+- [x] `npm run e2e` exits 0
+- [x] `npm run deadcode` (knip) shows no NEW unused exports (getMonthGrid is now used)
+- [x] No Rust files modified (`git status`)
+- [x] `plans/README.md` status row updated
 
 ## STOP conditions
 
