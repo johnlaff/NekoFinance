@@ -97,3 +97,11 @@ set before reviving any of these.
 ## Rule
 
 Before adding new dependencies, check the registry again and choose the newest version that satisfies peer dependencies, engine requirements, and Tauri compatibility. If latest is incompatible, document the reason here.
+
+## Security-audit exceptions (cargo-audit)
+
+Tracked in `.cargo/audit.toml` (read by CI's `cargo audit` step). Current entries:
+
+| Advisory                              | Crate             | Why ignored                                                                                                                                                                           | Remove when                                         |
+| ------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| RUSTSEC-2026-0194 / RUSTSEC-2026-0195 | `quick-xml` <0.41 | Only remaining path is `plist 1.9.0` ← `tauri-utils 2.9.2` (pins 0.39; no newer release). Surface is Tauri's own plist parsing of first-party config, not third-party XML at runtime. | `cargo tree -i quick-xml` shows ≥0.41 (Tauri bump). |
