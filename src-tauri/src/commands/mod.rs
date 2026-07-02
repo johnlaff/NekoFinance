@@ -1125,13 +1125,21 @@ mod tests {
         let fc = forecast_dto(&pool, today).await.unwrap();
 
         assert_eq!(fc.horizon_end, "2026-12-31");
-        // Performance de junho = MÊS INTEIRO realizado: inclui os R$ 700k já realizados em 10/jun,
-        // que o cálculo antigo (só futuros) ignorava (o P0). A PREVISÃO de diário restante reduz o
-        // saldo de caixa projetado (correto para o forecast), mas NÃO desconta a Performance
-        // (paridade com planilha — DECISÃO DO DONO 2026-06-20).
+        // Performance de junho = MÊS INTEIRO: inclui os R$ 700k já realizados em 10/jun (que o
+        // cálculo só-futuros ignorava) E a previsão de diário restante (teto × dias que faltam) —
+        // o mês corrente considera o que ainda vai ser gasto e melhora conforme o gasto real
+        // fica abaixo do teto.
         let jun = fc.months.iter().find(|m| m.month == 6).unwrap();
-        // Performance = Entradas − (Saídas + Diário realizado) = 1_000_000 − 1_100_000 = −100_000.
-        assert_eq!(jun.performance_cents, -100_000);
+        // Base realizada: Entradas − (Saídas + Diário realizado) = 1_000_000 − 1_100_000 =
+        // −100_000; a previsão restante desconta por cima. O esperado é derivado FORA da
+        // resposta: teto × 17 dias restantes (14–30/jun; o pré-lançado de 30/jun é Saída fixa,
+        // não Diário, então não bloqueia nenhum dia do teto).
+        let ceiling = crate::commands::forecast_cmds::effective_daily_ceiling(&pool, today)
+            .await
+            .unwrap();
+        assert!(ceiling > 0, "fixture gera teto de diário");
+        assert_eq!(jun.daily_projected_cents, 17 * ceiling);
+        assert_eq!(jun.performance_cents, -100_000 - 17 * ceiling);
         // Poupança ANUAL (meses completos jan–mai, abaixo da meta) manda → pode gastar 0.
         assert_eq!(fc.binding_guardrail, "savings");
         assert_eq!(fc.safe_to_spend_today_cents, 0);
@@ -1140,6 +1148,33 @@ mod tests {
         // tem folga e não é a que morde; a poupança anual (negativa) é a binding.
         assert!(fc.cash_headroom_cents > 0);
         assert_eq!(fc.savings_target_bps, 2500);
+    }
+
+    // A Performance do MÊS CORRENTE tem que ser idêntica na visão anual e no forecast/Totais —
+    // ambas descontam a mesma previsão de diário restante (teto injetado nos dois caminhos).
+    #[tokio::test]
+    async fn annual_and_forecast_agree_on_current_month_performance() {
+        let pool = fixture_pool().await;
+        insert_sheet_balance(&pool, "2026", "2026-06-13", 1_700_000).await;
+        insert_sheet_balance(&pool, "2026", "2026-12-31", 2_500_000).await;
+        for m in [1, 2, 3, 4, 5] {
+            insert_realized(&pool, "income", 200_000, &format!("2026-{m:02}-05")).await;
+            insert_realized(&pool, "expense", 220_000, &format!("2026-{m:02}-10")).await;
+        }
+        insert_realized(&pool, "income", 400_000, "2026-06-05").await;
+        insert_realized(&pool, "expense", 700_000, "2026-06-10").await;
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let fc = forecast_dto(&pool, today).await.unwrap();
+        let annual = crate::commands::forecast_cmds::annual_metrics(&pool, 2026, today)
+            .await
+            .unwrap();
+
+        let jun_fc = fc.months.iter().find(|m| m.month == 6).unwrap();
+        let jun_an = annual.months.iter().find(|m| m.month == 6).unwrap();
+        assert!(jun_fc.daily_projected_cents > 0);
+        assert_eq!(jun_an.daily_projected_cents, jun_fc.daily_projected_cents);
+        assert_eq!(jun_an.performance_cents, jun_fc.performance_cents);
     }
 
     async fn insert_reserve_account(pool: &sqlx::SqlitePool, balance: i64) {

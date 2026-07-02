@@ -64,6 +64,10 @@ pub struct MonthMetric {
     pub fixed_out_cents: i64,
     /// Diário REALIZADO (coluna Diário).
     pub daily_out_cents: i64,
+    /// Previsão de diário do mês (teto dos dias futuros + diários pré-lançados). Entra na
+    /// Performance — o mês corrente considera o que ainda vai ser gasto — mas fica fora do
+    /// custo de vida, que reporta só o realizado.
+    pub daily_projected_cents: i64,
     /// Gastos com cartão, bucket próprio dentro do custo de vida.
     pub cartao_cents: i64,
     pub real_daily_avg_cents: i64,
@@ -370,10 +374,13 @@ fn month_metrics(
                     EventKind::Income => income += e.amount_cents,
                     EventKind::FixedOut => fixed_out += e.amount_cents,
                     EventKind::Daily => {
-                        if e.realized {
+                        // A DATA decide realizado × previsão (o flag `realized` vem de
+                        // `is_projection`, que fica congelado no import e vira stale quando o
+                        // dia passa): dia já vivido é realizado; dia futuro é previsão (teto dos
+                        // dias restantes + diários pré-lançados). Mês passado nunca tem previsão.
+                        if e.date <= today {
                             daily_realized += e.amount_cents;
                         } else {
-                            // Previsão de diário (teto dos dias futuros) + diários futuros pré-lançados.
                             daily_projected += e.amount_cents;
                         }
                     }
@@ -395,10 +402,11 @@ fn month_metrics(
             // Custo de vida = Saídas fixas + Diário realizado + Cartão. Economia e Patrimônio são
             // outflows reais, mas não são custo de vida.
             let cost_of_living_cents = fixed_out + daily_realized + cartao;
-            // Performance = Entradas − TODOS os outflows reais classificados. A previsão de diário
-            // continua fora da Performance; ela só protege o saldo projetado.
-            let performance_cents =
-                income - (fixed_out + daily_realized + cartao + economia + patrimonio);
+            // Performance = Entradas − (fixas + diário + cartão + economia + patrimônio + previsão
+            // de diário restante). A previsão entra: o mês corrente já considera o que ainda vai
+            // ser gasto até o fim do mês e melhora conforme o gasto real fica abaixo do teto.
+            let performance_cents = income
+                - (fixed_out + daily_realized + daily_projected + cartao + economia + patrimonio);
 
             let first = NaiveDate::from_ymd_opt(year, month, 1).expect("valid month");
             let last = last_day_of_month(year, month);
@@ -430,6 +438,7 @@ fn month_metrics(
                 cost_of_living_cents,
                 fixed_out_cents: fixed_out,
                 daily_out_cents: daily_realized,
+                daily_projected_cents: daily_projected,
                 cartao_cents: cartao,
                 real_daily_avg_cents,
                 savings_rate_bps,
@@ -774,6 +783,7 @@ mod tests {
             cost_of_living_cents: cost,
             fixed_out_cents: cost,
             daily_out_cents: 0,
+            daily_projected_cents: 0,
             cartao_cents: 0,
             real_daily_avg_cents: 0,
             savings_rate_bps: 0,
@@ -806,6 +816,7 @@ mod tests {
             cost_of_living_cents: cost,
             fixed_out_cents: cost,
             daily_out_cents: 0,
+            daily_projected_cents: 0,
             cartao_cents: 0,
             real_daily_avg_cents: 0,
             savings_rate_bps: 0,
@@ -839,7 +850,8 @@ mod tests {
             ev("2026-03-10", EventKind::FixedOut, 400000),
             ev("2026-03-12", EventKind::Daily, 200000),
         ];
-        let f = project(0, d("2026-03-01"), &events, d("2026-03-31"));
+        // Visão retrospectiva (hoje ≥ todos os eventos): tudo é realizado.
+        let f = project(0, d("2026-03-12"), &events, d("2026-03-31"));
         let m = f.months.iter().find(|m| m.month == 3).unwrap();
         assert_eq!(m.cost_of_living_cents, 600000); // 400 + 200
         assert_eq!(m.performance_cents, 400000); // 1000 - 600
@@ -856,16 +868,28 @@ mod tests {
             ev("2026-03-15", EventKind::Cartao, 150_000),
             ev("2026-03-20", EventKind::Economia, 100_000),
         ];
+        // Visão prospectiva (hoje antes dos eventos): o mês inteiro é pré-lançado. O Diário
+        // futuro entra como PREVISÃO (mesma coluna da planilha; a data decide), com o mesmo
+        // desconto na Performance; custo de vida reporta só o realizado (0 aqui).
         let f = project(0, d("2026-03-01"), &events, d("2026-03-31"));
         let m = f.months.iter().find(|m| m.month == 3).unwrap();
 
-        assert_eq!(m.cost_of_living_cents, 650_000); // 300 + 200 + 150
+        assert_eq!(m.cost_of_living_cents, 450_000); // fixas 300 + cartão 150 (diário ainda é previsão)
+        assert_eq!(m.daily_projected_cents, 200_000);
+        assert_eq!(m.total_outflow_cents, 650_000); // 300 + 200 + 150 (lançado, p/ cobertura)
         assert_eq!(m.cartao_cents, 150_000);
         assert_eq!(m.economia_cents, 100_000);
         assert_eq!(m.patrimonio_cents, 0);
         assert_eq!(m.savings_rate_bps, 1_000); // 100 / 1000 = 10%
         assert_eq!(m.performance_cents, 250_000); // 1000 - (300 + 200 + 150 + 100)
         assert_eq!(f.month_end[0].balance_cents, 250_000);
+
+        // A MESMA tabela, vista do fim do mês (hoje ≥ todos os eventos): tudo realizado.
+        let f = project(0, d("2026-03-20"), &events, d("2026-03-31"));
+        let m = f.months.iter().find(|m| m.month == 3).unwrap();
+        assert_eq!(m.cost_of_living_cents, 650_000); // 300 + 200 + 150
+        assert_eq!(m.daily_projected_cents, 0);
+        assert_eq!(m.performance_cents, 250_000); // idêntica: a previsão virou realizado
     }
 
     // Regressão: desde que o write-back deriva a aba Economia dos itens ECONOMIA
@@ -933,6 +957,65 @@ mod tests {
         let m = f.months.iter().find(|m| m.month == 3).unwrap();
         assert_eq!(m.economia_cents, 50_000);
         assert_eq!(m.performance_cents, 950_000);
+    }
+
+    // A Performance do mês CORRENTE desconta também a previsão de diário restante (teto dos dias
+    // futuros + diários pré-lançados): o mês nasce mostrando o cenário cheio e melhora conforme o
+    // gasto real fica abaixo do teto. Custo de vida segue só com o realizado.
+    #[test]
+    fn performance_includes_remaining_daily_forecast() {
+        let events = [
+            ev("2026-03-05", EventKind::Income, 1_000_000),
+            ev("2026-03-10", EventKind::FixedOut, 300_000),
+            ev("2026-03-12", EventKind::Daily, 200_000), // realizado
+            CashflowEvent {
+                date: d("2026-03-20"),
+                kind: EventKind::Daily,
+                amount_cents: 150_000, // previsão (dias futuros × teto)
+                realized: false,
+            },
+        ];
+        let f = project(0, d("2026-03-12"), &events, d("2026-03-31"));
+        let m = f.months.iter().find(|m| m.month == 3).unwrap();
+        assert_eq!(m.daily_projected_cents, 150_000);
+        assert_eq!(
+            m.daily_out_cents, 200_000,
+            "realizado não mistura com previsão"
+        );
+        assert_eq!(
+            m.cost_of_living_cents, 500_000,
+            "custo de vida = realizado (300 + 200)"
+        );
+        assert_eq!(
+            m.performance_cents, 350_000,
+            "1000 − (300 + 200 + 150 de previsão)"
+        );
+    }
+
+    // Flag `is_projection` congelado (stale) num mês JÁ ENCERRADO: a data decide — o diário
+    // conta como realizado e o mês passado não carrega previsão nenhuma (nem muda de valor
+    // retroativamente por falta de re-import).
+    #[test]
+    fn past_month_ignores_stale_projection_flag() {
+        let events = [
+            ev("2026-06-05", EventKind::Income, 1_000_000),
+            CashflowEvent {
+                date: d("2026-06-20"),
+                kind: EventKind::Daily,
+                amount_cents: 80_000,
+                realized: false, // stale: importado como futuro e nunca re-importado
+            },
+        ];
+        let metrics = month_metrics_for(
+            d("2026-07-02"),
+            &events,
+            &[(2026, 6)],
+            &std::collections::HashMap::new(),
+        );
+        let m = metrics.iter().find(|m| m.month == 6).unwrap();
+        assert_eq!(m.daily_projected_cents, 0, "mês encerrado não tem previsão");
+        assert_eq!(m.daily_out_cents, 80_000);
+        assert_eq!(m.performance_cents, 920_000);
     }
 
     // T5.3 — cash ≠ performance: month ends negative in cash while performance is positive.
@@ -1150,11 +1233,10 @@ mod tests {
         );
     }
 
-    // Confirma que a previsão de diário (daily_projected) NÃO desconta a Performance
-    // (paridade com planilha — DECISÃO DO DONO 2026-06-20).
-    // Custo de vida = 0 (sem diário realizado); previsão é só para o saldo de caixa.
+    // A previsão de diário (teto dos dias restantes) desconta a Performance do mês corrente,
+    // mas fica FORA do custo de vida e do diário médio (que reportam só o realizado).
     #[test]
-    fn performance_excludes_daily_projected_ceiling() {
+    fn daily_ceiling_feeds_performance_not_cost_of_living() {
         let mut events = vec![ev("2026-03-01", EventKind::Income, 1000000)];
         // 11..31 de março = 21 dias × 100.00 = 210.00 de previsão restante.
         events.extend(project_daily_ceiling(
@@ -1167,14 +1249,15 @@ mod tests {
         let m = f.months.iter().find(|m| m.month == 3).unwrap();
         assert_eq!(m.cost_of_living_cents, 0); // previsão NÃO entra no custo de vida
         assert_eq!(m.real_daily_avg_cents, 0); // previsão NÃO conta como realizado
-        // Performance = income − cost_of_living = 1_000_000 − 0 = 1_000_000.
-        assert_eq!(m.performance_cents, 1000000); // previsão NÃO desconta performance
+        assert_eq!(m.daily_projected_cents, 210_000);
+        // Performance = 1_000_000 − 210_000 de previsão restante.
+        assert_eq!(m.performance_cents, 790_000);
     }
 
-    // Regressão: economia desconta Performance uma vez, mas previsão de diário NÃO desconta (não
-    // tem linha na Performance da planilha).
+    // Regressão: economia e previsão de diário descontam a Performance uma vez cada;
+    // custo de vida e diário médio seguem só com o realizado.
     #[test]
-    fn performance_excludes_only_projected() {
+    fn performance_subtracts_economia_and_projected_once() {
         let events = [
             ev("2026-04-01", EventKind::Income, 1_000_000),
             ev("2026-04-05", EventKind::FixedOut, 300_000),
@@ -1192,9 +1275,8 @@ mod tests {
         let m = f.months.iter().find(|m| m.month == 4).unwrap();
         // cost_of_living = fixed_out(300) + daily_realized(50) = 350_000
         assert_eq!(m.cost_of_living_cents, 350_000);
-        // performance = income(1_000) − fixed(300) − daily(50) − economia(200) = 450_000.
-        // daily_projected NÃO desconta — só afeta o saldo de caixa.
-        assert_eq!(m.performance_cents, 450_000);
+        // performance = income(1_000) − fixed(300) − diário(50) − previsão(30) − economia(200).
+        assert_eq!(m.performance_cents, 420_000);
         // economia still feeds savings_rate
         assert_eq!(m.economia_cents, 200_000);
         assert_eq!(m.savings_rate_bps, 2_000); // 200/1000 = 20%
@@ -1212,7 +1294,8 @@ mod tests {
             ev("2026-05-15", EventKind::Daily, 500_000), // realized
             ev("2026-05-20", EventKind::Economia, 800_000), // savings-rate annotation
         ];
-        let f = project(0, d("2026-05-01"), &events, d("2026-05-31"));
+        // Visão retrospectiva (hoje ≥ todos os eventos): tudo é realizado.
+        let f = project(0, d("2026-05-20"), &events, d("2026-05-31"));
         let m = f.months.iter().find(|m| m.month == 5).unwrap();
 
         // cost_of_living = FixedOut(1_000) + Daily(500) = 1_500_000 (Economia NOT in here)
