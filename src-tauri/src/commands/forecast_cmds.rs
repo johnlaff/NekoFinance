@@ -1254,8 +1254,9 @@ pub(crate) async fn forecast_dto(
 
 // --- Visão anual (spec 019 month-views) ---
 
-/// Todos os eventos do ANO (realizado + projetado), classificados — sem o teto de diário (que só
-/// vale para o mês corrente no forecast). Para a visão anual das 4 métricas.
+/// Todos os eventos do ANO (realizado + projetado), classificados. O teto de diário do mês
+/// corrente é injetado pelo chamador (`annual_metrics`), espelhando o forecast — a Performance
+/// do mesmo mês precisa ser idêntica nas duas visões. Para a visão anual das 4 métricas.
 pub(crate) async fn load_year_events(
     pool: &SqlitePool,
     year: i32,
@@ -1276,7 +1277,25 @@ pub(crate) async fn annual_metrics(
     year: i32,
     today: NaiveDate,
 ) -> Result<AnnualMetricsDto, String> {
-    let events = load_year_events(pool, year).await?;
+    let mut events = load_year_events(pool, year).await?;
+    // Mesmo teto de diário do forecast para o MÊS CORRENTE: sem ele, a Performance do mesmo mês
+    // divergia entre a visão anual e o Totais (o teto só existe no caminho do forecast). O
+    // project_daily_ceiling já se limita ao fim do mês corrente.
+    if year == today.year() {
+        let daily_ceiling = effective_daily_ceiling(pool, today).await?;
+        let days_with_daily: std::collections::HashSet<NaiveDate> = events
+            .iter()
+            .filter(|e| e.kind == forecast::EventKind::Daily)
+            .map(|e| e.date)
+            .collect();
+        let month_end = forecast::last_day_of_month(today.year(), today.month());
+        events.extend(forecast::project_daily_ceiling(
+            daily_ceiling,
+            today,
+            month_end,
+            &days_with_daily,
+        ));
+    }
     let months: Vec<(i32, u32)> = (1..=12).map(|m| (year, m)).collect();
     let annotation = load_economia_annotation(pool, &[year]).await?;
     let metrics = forecast::month_metrics_for(today, &events, &months, &annotation);

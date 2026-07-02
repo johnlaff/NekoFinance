@@ -137,7 +137,10 @@ function HeroTiles({
           <TrendingUp size={14} strokeWidth={1.75} />
           <span>Performance</span>
           {isCurrent ? (
-            <span style={{ fontWeight: 400, textTransform: "none" }}> (parcial)</span>
+            <span style={{ fontWeight: 400, textTransform: "none" }}>
+              {" "}
+              (com previsão)
+            </span>
           ) : null}
         </p>
         <div
@@ -272,6 +275,38 @@ interface FlowCardProps {
   performance: number;
 }
 
+function FlowRow({
+  label,
+  value,
+  entradas,
+  fill,
+  amtColor,
+  fillOpacity,
+}: {
+  label: string;
+  value: number;
+  entradas: number;
+  fill: string;
+  amtColor: string;
+  fillOpacity?: number;
+}) {
+  const width = Math.min(100, (value / Math.max(entradas, 1)) * 100).toFixed(2) + "%";
+  return (
+    <div className="mes-flow__row">
+      <span className="mes-flow__lab">{label}</span>
+      <span className="mes-flow__track">
+        <span
+          className="mes-flow__fill"
+          style={{ width, background: fill, opacity: fillOpacity }}
+        />
+      </span>
+      <span className="mes-flow__amt" style={{ color: amtColor }}>
+        {fmtBRL(value)}
+      </span>
+    </div>
+  );
+}
+
 function FlowCard({
   entradas,
   saidaTotal,
@@ -290,102 +325,49 @@ function FlowCard({
       </div>
       <div className="card__body">
         <div className="mes-flow">
-          <div className="mes-flow__row">
-            <span className="mes-flow__lab">Entradas</span>
-            <span className="mes-flow__track">
-              <span
-                className="mes-flow__fill"
-                style={{ width: "100%", background: "var(--money-pos)" }}
-              />
-            </span>
-            <span className="mes-flow__amt" style={{ color: "var(--money-pos)" }}>
-              {fmtBRL(entradas)}
-            </span>
-          </div>
-          <div className="mes-flow__row">
-            <span className="mes-flow__lab">Saída total</span>
-            <span className="mes-flow__track">
-              <span
-                className="mes-flow__fill"
-                style={{
-                  width:
-                    Math.min(100, (saidaTotal / Math.max(entradas, 1)) * 100).toFixed(
-                      2,
-                    ) + "%",
-                  background: "var(--type-saida)",
-                }}
-              />
-            </span>
-            <span className="mes-flow__amt" style={{ color: "var(--money-neg)" }}>
-              {fmtBRL(saidaTotal)}
-            </span>
-          </div>
-          {/* Economia é um termo do resultado (Performance = Entradas − Saída total −
-              Economia); sem ela a aritmética exibida não fecharia com o "Sobrou no mês". */}
+          <FlowRow
+            label="Entradas"
+            value={entradas}
+            entradas={entradas}
+            fill="var(--money-pos)"
+            amtColor="var(--money-pos)"
+          />
+          <FlowRow
+            label="Saída total"
+            value={saidaTotal}
+            entradas={entradas}
+            fill="var(--type-saida)"
+            amtColor="var(--money-neg)"
+          />
+          {/* Economia, previsão de diário restante e Patrimônio são termos do resultado:
+              sem eles a aritmética exibida não fecharia com o "Sobrou no mês". */}
           {economia > 0 ? (
-            <div className="mes-flow__row">
-              <span className="mes-flow__lab">Economia</span>
-              <span className="mes-flow__track">
-                <span
-                  className="mes-flow__fill"
-                  style={{
-                    width:
-                      Math.min(100, (economia / Math.max(entradas, 1)) * 100).toFixed(
-                        2,
-                      ) + "%",
-                    background: "var(--type-economia)",
-                  }}
-                />
-              </span>
-              <span className="mes-flow__amt" style={{ color: "var(--type-economia)" }}>
-                {fmtBRL(economia)}
-              </span>
-            </div>
+            <FlowRow
+              label="Economia"
+              value={economia}
+              entradas={entradas}
+              fill="var(--type-economia)"
+              amtColor="var(--type-economia)"
+            />
           ) : null}
-          {/* Previsão de diário restante: o que ainda vai ser gasto até o fim do mês também
-              é termo do resultado — o "Sobrou no mês" já desconta o teto dos dias futuros. */}
           {previsaoDiario > 0 ? (
-            <div className="mes-flow__row">
-              <span className="mes-flow__lab">Previsão de diário</span>
-              <span className="mes-flow__track">
-                <span
-                  className="mes-flow__fill"
-                  style={{
-                    width:
-                      Math.min(
-                        100,
-                        (previsaoDiario / Math.max(entradas, 1)) * 100,
-                      ).toFixed(2) + "%",
-                    background: "var(--type-diario)",
-                    opacity: 0.55,
-                  }}
-                />
-              </span>
-              <span className="mes-flow__amt" style={{ color: "var(--text-muted)" }}>
-                {fmtBRL(previsaoDiario)}
-              </span>
-            </div>
+            <FlowRow
+              label="Previsão de diário"
+              value={previsaoDiario}
+              entradas={entradas}
+              fill="var(--type-diario)"
+              amtColor="var(--text-muted)"
+              fillOpacity={0.55}
+            />
           ) : null}
-          {/* Patrimônio também é termo do resultado (previdência/ilíquido sai do saldo). */}
           {patrimonio > 0 ? (
-            <div className="mes-flow__row">
-              <span className="mes-flow__lab">Patrimônio</span>
-              <span className="mes-flow__track">
-                <span
-                  className="mes-flow__fill"
-                  style={{
-                    width:
-                      Math.min(100, (patrimonio / Math.max(entradas, 1)) * 100).toFixed(
-                        2,
-                      ) + "%",
-                    background: "var(--text-muted)",
-                  }}
-                />
-              </span>
-              <span className="mes-flow__amt" style={{ color: "var(--text-muted)" }}>
-                {fmtBRL(patrimonio)}
-              </span>
-            </div>
+            <FlowRow
+              label="Patrimônio"
+              value={patrimonio}
+              entradas={entradas}
+              fill="var(--text-muted)"
+              amtColor="var(--text-muted)"
+            />
           ) : null}
         </div>
         <div className="mes-flow__summary">

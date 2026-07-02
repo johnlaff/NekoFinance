@@ -15,10 +15,9 @@ conforme o gasto real fica abaixo do teto. Os meses passados não mudam (previs�
 meses futuros seguem descontando apenas o que estiver pré-lançado na planilha.
 
 Isto substitui a decisão anterior (2026-06-20) de manter a previsão fora da Performance.
-Fundamentação: o modelo de referência da metodologia trata a previsão como parte da
-Performance do mês em andamento, e a estrutura da planilha (a soma da coluna Diário cobre
-o mês inteiro, incluindo dias futuros pré-preenchidos) produz o mesmo resultado quando
-usada como ensinado. Decisão do dono do produto em 2026-07-02.
+Fundamentação: a estrutura da planilha produz exatamente esse resultado quando usada como
+ensinado — a soma da coluna Diário cobre o mês inteiro, incluindo dias futuros
+pré-preenchidos com o gasto planejado. Decisão do dono do produto em 2026-07-02.
 
 ## O que NÃO muda
 

@@ -265,80 +265,99 @@ function AnoTable({
   const econPct = totals.income > 0 ? (totals.economia / totals.income) * 100 : 0;
 
   return (
-    <table className="ano-tbl">
-      <thead>
-        <tr>
-          <th>Mês</th>
-          <th>Entradas</th>
-          <th>Saída total</th>
-          <th>Diário</th>
-          <th>Economia</th>
-          <th>Resultado</th>
-          <th>Saldo fim</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((m) => {
-          const mIdx = m.month - 1;
-          const isCurrent = mIdx === currentMonthIdx;
-          const isFuture = mIdx > currentMonthIdx;
-          const rowClass = isCurrent ? "is-current" : isFuture ? "is-future" : "";
-          const endBal = endMap.get(`${year}-${m.month}`);
-          const band = saldoBand(endBal ?? null);
-          // Saldo fim can come from forecast for current/future months or from
-          // month-grid history for realized months in any displayed year.
-          const showEndBal = endBal !== undefined;
-          return (
-            <tr key={m.month} className={rowClass}>
-              <td>{MES[mIdx]}</td>
-              <td
-                style={{
-                  color: mIdx <= currentMonthIdx ? "var(--money-pos)" : undefined,
-                }}
-              >
-                {fmtBRL(m.income_cents)}
-              </td>
-              <td>{fmtBRL(m.cost_of_living_cents)}</td>
-              <td>{fmtBRL(m.daily_out_cents)}</td>
-              <td>{fmtBRL(m.economia_cents)}</td>
-              <td
-                style={{
-                  color:
-                    m.performance_cents >= 0 ? "var(--money-pos)" : "var(--money-neg)",
-                }}
-              >
-                {fmtSigned(m.performance_cents)}
-              </td>
-              <td style={{ color: showEndBal ? band.text : "var(--text-faint)" }}>
-                {showEndBal ? fmtBRL(endBal) : "—"}
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-      <tfoot>
-        <tr>
-          <td>Realizado</td>
-          <td>{fmtBRL(totals.income)}</td>
-          <td>{fmtBRL(totals.saidaTotal)}</td>
-          <td>{fmtBRL(totals.diario)}</td>
-          <td>{fmtBRL(totals.economia)}</td>
-          <td
-            style={{
-              color: totals.performance >= 0 ? "var(--money-pos)" : "var(--money-neg)",
-            }}
-          >
-            {fmtSigned(totals.performance)}
-          </td>
-          <td
-            title={`Economizado acumulado: ${econPct.toFixed(0)}%`}
-            style={{ color: "var(--text-faint)" }}
-          >
-            {econPct.toFixed(0)}%
-          </td>
-        </tr>
-      </tfoot>
-    </table>
+    <>
+      <table className="ano-tbl">
+        <thead>
+          <tr>
+            <th>Mês</th>
+            <th>Entradas</th>
+            <th>Saída total</th>
+            <th>Diário</th>
+            <th>Economia</th>
+            <th>Resultado</th>
+            <th>Saldo fim</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((m) => {
+            const mIdx = m.month - 1;
+            const isCurrent = mIdx === currentMonthIdx;
+            const isFuture = mIdx > currentMonthIdx;
+            const rowClass = isCurrent ? "is-current" : isFuture ? "is-future" : "";
+            const endBal = endMap.get(`${year}-${m.month}`);
+            const band = saldoBand(endBal ?? null);
+            // Saldo fim can come from forecast for current/future months or from
+            // month-grid history for realized months in any displayed year.
+            const showEndBal = endBal !== undefined;
+            return (
+              <tr key={m.month} className={rowClass}>
+                <td>{MES[mIdx]}</td>
+                <td
+                  style={{
+                    color: mIdx <= currentMonthIdx ? "var(--money-pos)" : undefined,
+                  }}
+                >
+                  {fmtBRL(m.income_cents)}
+                </td>
+                <td>{fmtBRL(m.cost_of_living_cents)}</td>
+                <td>{fmtBRL(m.daily_out_cents)}</td>
+                <td>{fmtBRL(m.economia_cents)}</td>
+                <td
+                  style={{
+                    color:
+                      m.performance_cents >= 0
+                        ? "var(--money-pos)"
+                        : "var(--money-neg)",
+                  }}
+                >
+                  {fmtSigned(m.performance_cents)}
+                  {m.daily_projected_cents > 0 ? (
+                    <span
+                      title={`Inclui previsão de diário de ${fmtBRL(m.daily_projected_cents)}`}
+                      style={{ color: "var(--text-faint)" }}
+                    >
+                      †
+                    </span>
+                  ) : null}
+                </td>
+                <td style={{ color: showEndBal ? band.text : "var(--text-faint)" }}>
+                  {showEndBal ? fmtBRL(endBal) : "—"}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td>Realizado{rows.some((m) => m.daily_projected_cents > 0) ? "†" : ""}</td>
+            <td>{fmtBRL(totals.income)}</td>
+            <td>{fmtBRL(totals.saidaTotal)}</td>
+            <td>{fmtBRL(totals.diario)}</td>
+            <td>{fmtBRL(totals.economia)}</td>
+            <td
+              style={{
+                color:
+                  totals.performance >= 0 ? "var(--money-pos)" : "var(--money-neg)",
+              }}
+            >
+              {fmtSigned(totals.performance)}
+            </td>
+            <td
+              title={`Economizado acumulado: ${econPct.toFixed(0)}%`}
+              style={{ color: "var(--text-faint)" }}
+            >
+              {econPct.toFixed(0)}%
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+      {rows.some((m) => m.daily_projected_cents > 0) ? (
+        <p className="ano-foot-note">
+          † Resultado inclui a previsão de diário restante (o que ainda vai ser gasto
+          até o fim do mês) — as demais colunas mostram só o realizado.
+        </p>
+      ) : null}
+    </>
   );
 }
 
