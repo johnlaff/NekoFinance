@@ -38,13 +38,14 @@ spec). Implement the canonical model below.
 ### Target model (must match the worked example)
 
 For a month with Entradas 10.000, fixed Saídas 3.000, Diário 2.000, Cartão 1.500, Economia 1.000:
-| Metric | Target value |
-|---|---|
-| Custo de vida | **6.500** = Saídas(3.000) + Diário(2.000) + Cartão(1.500) — economia/patrimônio EXCLUDED |
-| Gastos com cartão | **1.500** (own bucket) |
-| Economia % | **10%** = economia(1.000) ÷ entradas(10.000) |
-| **Performance** | **2.500** = entradas − total-outflow(7.500) — **UNCHANGED vs today** |
-| **Saldo** | **UNCHANGED vs today** |
+
+| Metric            | Target value                                                                             |
+| ----------------- | ---------------------------------------------------------------------------------------- |
+| Custo de vida     | **6.500** = Saídas(3.000) + Diário(2.000) + Cartão(1.500) — economia/patrimônio EXCLUDED |
+| Gastos com cartão | **1.500** (own bucket)                                                                   |
+| Economia %        | **10%** = economia(1.000) ÷ entradas(10.000)                                             |
+| **Performance**   | **2.500** = entradas − total-outflow(7.500) — **UNCHANGED vs today**                     |
+| **Saldo**         | **UNCHANGED vs today**                                                                   |
 
 **Hard invariant**: Saldo and Performance are identical to the pre-plan values for every
 existing fixture (the money leaves the account in both models). Only custo-de-vida (no longer

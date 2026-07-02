@@ -42,7 +42,7 @@ only protection today is an indirect DB flag.
   (~:17) gates `apply_write_back` + `apply_economia_write_back`. Preview paths
   are flag-independent (read-only).
 - **Pure planners**: `plan_write_back` (`write_back.rs:118`) and
-  `plan_economia_write_back` (~:213) → `Vec<CellWrite>`. `CellWrite` (~:36) has
+  `plan_economia_write_back` (~~:213) → `Vec<CellWrite>`. `CellWrite` (~~:36) has
   `current`, `proposed`, `value_cents`, `changed`. Apply filters `changed`
   (`write_back_cmds.rs:303-315`).
 - **Write API**: `SheetsClient::batch_update_values`
