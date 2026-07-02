@@ -48,7 +48,7 @@ export interface TagRef {
 
 /** Uma parte de um lançamento itemizado (breakdown da nota de célula, plano 035). */
 export type LineItemKind =
-  "saida" | "cartao" | "diario" | "economia" | "patrimonio" | "ajuste";
+  "entrada" | "saida" | "cartao" | "diario" | "economia" | "patrimonio" | "ajuste";
 
 export interface LineItem {
   id: string;
@@ -56,7 +56,10 @@ export interface LineItem {
   amount_cents: number;
   description: string;
   position: number;
-  /** Classificação derivada da seção da nota; nunca de nome de banco/descrição. */
+  /**
+   * Classificação derivada da seção da nota; nunca de nome de banco/descrição.
+   * Pai `income` → "entrada" (os kinds de seção só fatiam saídas).
+   */
   kind: LineItemKind;
 }
 
