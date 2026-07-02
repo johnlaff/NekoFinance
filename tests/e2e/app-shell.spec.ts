@@ -7,6 +7,10 @@ import { mockTauri } from "./tauri-mock";
 
 test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
   test.beforeEach(async ({ page }) => {
+    // Relógio congelado na data das fixtures do mock (today: 2026-06-10): a visão mensal
+    // default de Lançamentos filtra pelo mês corrente REAL — sem isto a suíte passava em
+    // junho e quebrava em 1º de julho (time-bomb; auditoria 2026-07).
+    await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
     await page.emulateMedia({ reducedMotion: "reduce" });
     await mockTauri(page);
     await page.goto("/");
