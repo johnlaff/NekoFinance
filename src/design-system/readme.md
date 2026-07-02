@@ -93,10 +93,11 @@ Neko's voice is **calm, plain, and exact** — a competent partner, not a cheerl
 - **Emoji:** None. **Cat puns:** None.
 
 **Examples** (copy de produção é PT-BR; tags são para CLASSIFICAR, não "categorizar" — categorias foram rebaixadas a tags na spec 015)
-| Don't | Do |
-|---|---|
-| "Opa! Algo deu errado 😿" | "Não consegui acessar essa planilha." |
-| "Seus Gastos Estão Ótimos!" | "Os gastos estão 6% abaixo da sua média." |
+
+| Don't                          | Do                                                     |
+| ------------------------------ | ------------------------------------------------------ |
+| "Opa! Algo deu errado 😿"      | "Não consegui acessar essa planilha."                  |
+| "Seus Gastos Estão Ótimos!"    | "Os gastos estão 6% abaixo da sua média."              |
 | "Categorizamos tudo para você" | "Classifiquei 3 gastos com tags — aprove para salvar." |
 
 ---

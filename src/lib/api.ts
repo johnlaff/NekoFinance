@@ -48,12 +48,7 @@ export interface TagRef {
 
 /** Uma parte de um lançamento itemizado (breakdown da nota de célula, plano 035). */
 export type LineItemKind =
-  | "saida"
-  | "cartao"
-  | "diario"
-  | "economia"
-  | "patrimonio"
-  | "ajuste";
+  "saida" | "cartao" | "diario" | "economia" | "patrimonio" | "ajuste";
 
 export interface LineItem {
   id: string;
@@ -237,13 +232,7 @@ export interface Forecast {
 
 /** Pocket types accepted by `create_account` (credit_card is the invoice slice). */
 export type PocketType =
-  | "bank"
-  | "wallet"
-  | "business"
-  | "savings"
-  | "meal_voucher"
-  | "pension"
-  | "fgts";
+  "bank" | "wallet" | "business" | "savings" | "meal_voucher" | "pension" | "fgts";
 
 export interface PocketAccount {
   id: string;
