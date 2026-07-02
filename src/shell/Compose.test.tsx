@@ -45,4 +45,37 @@ describe("Compose", () => {
       );
     });
   });
+
+  it("saves Saída with the canonical debit payment method (kindToFields)", async () => {
+    const user = userEvent.setup();
+    mockCommands({
+      get_pockets: EMPTY_POCKETS,
+      create_transaction: "txn-saida",
+    });
+
+    render(
+      <Compose
+        open
+        options={{ mode: "new", type: "saida", date: "2026-06-23" }}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+
+    await user.type(screen.getByLabelText("Valor único"), "300,00");
+    await user.click(screen.getByRole("button", { name: "Salvar lançamento" }));
+
+    await waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith(
+        "create_transaction",
+        expect.objectContaining({
+          txnType: "expense",
+          amountCents: 30000,
+          date: "2026-06-23",
+          paymentMethod: "debit",
+          isFixed: true,
+        }),
+      );
+    });
+  });
 });

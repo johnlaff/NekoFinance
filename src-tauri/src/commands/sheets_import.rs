@@ -165,11 +165,30 @@ pub(crate) async fn import_one_tab(
     // Notas de célula = a descrição real de cada lançamento (quem/o quê/quanto por item). Sem
     // elas, o parser só tem fallback estrutural ("Entrada/Saída {data}"). Se a API de notas
     // falhar, os valores ainda entram, mas essas descrições não são tratadas como fonte canônica.
-    let (notes, descriptions_trusted) =
-        match client.get_sheet_notes(spreadsheet_id, sheet_name).await {
-            Ok(notes) => (notes, true),
-            Err(_) => (Vec::new(), false),
-        };
+    let (notes, descriptions_trusted) = match client
+        .get_sheet_notes(spreadsheet_id, sheet_name)
+        .await
+    {
+        Ok(notes) => (notes, true),
+        Err(e) => {
+            // Ciclo DEGRADADO: os valores ainda entram, mas itens
+            // classificados e `source_note` ficam CONGELADOS (gate de confiança no
+            // `import_rows_core`) e a `raw_note` sai do checksum — uma falha transitória da
+            // API de notas não pode reimportar destrutivamente nem apagar classificação.
+            eprintln!(
+                "[import] notas de célula indisponíveis em '{sheet_name}': {e} — ciclo degradado (classificação preservada)"
+            );
+            (Vec::new(), false)
+        }
+    };
+    // Sinaliza (ou limpa) o ciclo degradado para a UI (painel do Google Sheets) — sem isto a
+    // degradação era invisível fora do stderr. KV local apenas.
+    crate::commands::write_back_cmds::app_setting_set(
+        pool,
+        "notes_degraded_last_sheet",
+        if descriptions_trusted { "" } else { sheet_name },
+    )
+    .await?;
     let imported_rows = import::parse_rows_with_layout(&rows, &layout, &mappings, &notes)?;
     let options = import::ImportRowsOptions {
         descriptions_trusted,
@@ -418,8 +437,14 @@ pub async fn import_local_xlsx(
         }
     }
 
+    // Sem notas de célula o classificador de 5 tipos não roda — quem
+    // importa só por .xlsx veria Cartão/Economia dobrados em Saída sem saber por quê. O aviso
+    // torna a degradação explícita; a classificação do último import ao vivo é preservada
+    // (gate de confiança no `import_rows_core`).
     Ok(format!(
-        "Imported {} total rows from: {}",
+        "Imported {} total rows from: {}. Aviso: arquivos .xlsx não carregam notas de célula — a \
+         classificação por seção (Cartão/Economia/Patrimônio) exige o import ao vivo do Google \
+         Sheets; itens já classificados foram preservados.",
         total,
         sheets_imported.join(", ")
     ))

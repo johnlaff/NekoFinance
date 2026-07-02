@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { TransactionsScreen } from "./TransactionsScreen";
 import { NekoAppProvider } from "../shell/appContext";
 import { TXNS, mockCommands, mockInvoke } from "../test/commands";
@@ -21,7 +21,15 @@ function renderLedger() {
 
 describe("TransactionsScreen (Lançamentos)", () => {
   beforeEach(() => {
+    // A tela abre no "Por mês" do MÊS CORRENTE; congela o relógio em junho/2026 para
+    // alinhar com as fixtures datadas (2026-06-…) em qualquer data real de execução.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date("2026-06-20T12:00:00-03:00"));
     mockInvoke.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("renders the ledger with the loaded transactions", async () => {
@@ -78,8 +86,10 @@ describe("TransactionsScreen (Lançamentos)", () => {
     mockCommands({ get_recent_transactions: txns });
     renderLedger();
 
+    // userEvent + fake timers: os delays internos precisam avançar o relógio falso.
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     const row = await screen.findByRole("button", { name: "Despesa itemizada" });
-    await userEvent.click(row);
+    await user.click(row);
 
     expect(screen.getByLabelText("Item classificado como Cartão")).toBeInTheDocument();
     expect(screen.getByLabelText("Item classificado como Saída")).toBeInTheDocument();

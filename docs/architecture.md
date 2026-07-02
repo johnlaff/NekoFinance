@@ -4,17 +4,16 @@ Neko Finance is designed as a local-first desktop app. The repo is public-safe; 
 
 ## Runtime Layers
 
-| Layer            | Responsibility                                                                                                                                                                                                                                                                  |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| React UI         | Dashboards, chat/captain panel, approval dialogs, data mapping screens.                                                                                                                                                                                                         |
-| Tauri shell      | Desktop runtime, local file access, secure OS integrations, command bridge.                                                                                                                                                                                                     |
-| Forecast core    | Pure Rust projection engine (`src-tauri/src/forecast/`): chained daily balance, month-end,                                                                                                                                                                                      |
-|                  | future deficit, safe-to-spend, monthly metrics. No IO; commands are thin adapters (spec 003/005).                                                                                                                                                                               |
-| Local storage    | SQLite (WAL) for normalized finance data, settings, and sync state. Full-text search was prototyped (migration 0015) and removed (migration 0010-drop) — tables were never populated; search is client-side. Re-add with triggers and rebuild when FTS is actually implemented. |
-| Local retrieval  | LanceDB for anonymized methodology chunks and future semantic retrieval (not built yet).                                                                                                                                                                                        |
-| Google connector | OAuth desktop flow, Google Sheets read/write, sync checkpoints.                                                                                                                                                                                                                 |
-| Copilot          | CopilotScreen já mostra um preview determinístico (reserva, performance, pode-gastar, economizado%)                                                                                                                                                                             |
-|                  | derivado do forecast core. O chat/agente com tools e escrita aprovada ainda não foi construído.                                                                                                                                                                                 |
+| Layer            | Responsibility                                                                                                                                                                                                                                                                                                     |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| React UI         | Dashboards, chat/captain panel, approval dialogs, data mapping screens.                                                                                                                                                                                                                                            |
+| Tauri shell      | Desktop runtime, local file access, secure OS integrations, command bridge.                                                                                                                                                                                                                                        |
+| Forecast core    | Pure Rust projection engine (`src-tauri/src/forecast/`): chained daily balance, month-end,                                                                                                                                                                                                                         |
+|                  | future deficit, safe-to-spend, monthly metrics. No IO; commands are thin adapters (spec 003/005).                                                                                                                                                                                                                  |
+| Local storage    | SQLite (WAL) for normalized finance data, settings, and sync state. Full-text search was prototyped (migration 0015) and removed (migration 0010-drop) — tables were never populated; search is client-side. Re-add with triggers and rebuild when FTS is actually implemented.                                    |
+| Local retrieval  | LanceDB for anonymized methodology chunks and future semantic retrieval (not built yet).                                                                                                                                                                                                                           |
+| Google connector | OAuth desktop flow, Google Sheets read/write, sync checkpoints.                                                                                                                                                                                                                                                    |
+| Copilot          | `CopilotScreen` is a chat-shaped UI, not an agent yet: one deterministic answer ("quanto posso gastar hoje", from `get_dashboard_summary` + `get_forecast`) plus static seeded/suggestion messages. Free-form input gets a canned "still learning" reply — no tool-calling backend, retrieval, or LLM is wired in. |
 
 ## Data Boundaries
 
@@ -28,34 +27,39 @@ Neko Finance is designed as a local-first desktop app. The repo is public-safe; 
 | Raw source material/transcripts/videos | External private archive             | Forbidden.                    |
 | Vector indexes/embeddings              | Local ignored dirs                   | Forbidden.                    |
 
-## Copilot Contract
+## Copilot Contract (target — not yet implemented)
+
+The rules below are the contract the copilot must satisfy once it exists. Today `CopilotScreen`
+has no tool-calling backend, so none of this is wired in yet (see the Copilot row above).
 
 - Deterministic tools calculate totals, categories, budgets, deltas, and sheet diffs.
 - The model can explain, diagnose, rank options, and draft proposed changes.
 - The model cannot write material changes to Google Sheets directly.
 - Every write requires a structured diff, validation, and explicit approval in the UI.
-- Retrieval uses formal rules first, then FTS/vector context from anonymized methodology chunks.
+- Retrieval (once built) should use formal rules first, then any local retrieval layer — no
+  full-text or vector index exists in the app today (see Local storage / Local retrieval rows).
 
 ## MVP Slices
 
 Done (see `specs/` for the full spec/plan/tasks of each):
 
 1. ✅ Scaffold and privacy guardrails.
-2. ✅ Local SQLite schema (spec 001): accounts, transactions, splits, daily check-ins, reserve, sheet sync metadata.
+2. ✅ Local SQLite schema (spec 001): accounts, transactions, splits, reserve, sheet sync metadata. (An early daily-check-in table had no production writer and was later dropped — see CONTEXT.md.)
 3. ✅ Google OAuth desktop flow + Sheets/local-xlsx import with layout detection (spec 002).
 4. ✅ Forecast core (spec 003): pure projection engine. O herói do dashboard é "pode gastar até X hoje" (guardrail duplo caixa × poupança anual); o saldo projetado de fim de mês é o aside secundário.
-5. ✅ Navigable app shell, PT-BR copy (spec 004); screens grew to nine (Dashboard, Totais, Anual, Horizonte, Lançamentos, Tags, Mia, Metodologia, Configurações).
+5. ✅ Navigable app shell, PT-BR copy (spec 004); screens grew to nine (Hoje/Dashboard, Lançamentos, Este mês/Totais, O ano/Anual, Calendário, Horizonte, Tags, Mia, Configurações).
 6. ✅ Forecast view (spec 005): safe-to-spend, deficit warning, daily projection table.
 7. ✅ Account liquidity classes feeding a correct projection seed (spec 007); five first-class movement types in the engine (spec 011).
 8. ✅ Motion & interaction polish (spec 006) and the Design System production contract (spec 009): tokens, accessible component contracts, dark-first WCAG AA, reduced-motion.
 9. ✅ Robust import + stable identity, three-way-merge reconciliation, conflict gate (specs 010/012/013); tags + categories→tags demotion, recurrence, multi-titular splits, write-back preview, month/annual views (specs 014, 015, 016, 017, 018, 019).
+10. ✅ Engine model reopened to make Cartão and Patrimônio explicit `EventKind` buckets (6 total) and classify note line items by spreadsheet section (spec 020).
 
 Next:
 
-10. First-class invoice entity with per-owner splits and net-zero reimbursement links.
-11. Copilot (Mia) with deterministic tools first (read-only), then human-approved sheet diffs.
-12. Gated bidirectional write-back (per-cell checksum) — flips the system of record to SQLite (ADR-0003).
-13. Evals for diagnoses and safe write behavior; what-if scenarios.
+11. First-class invoice entity with per-owner splits and net-zero reimbursement links.
+12. Copilot (Mia) with deterministic tools first (read-only), then human-approved sheet diffs.
+13. Gated bidirectional write-back (per-cell checksum) — flips the system of record to SQLite (ADR-0003).
+14. Evals for diagnoses and safe write behavior; what-if scenarios.
 
 ## Naming Note
 

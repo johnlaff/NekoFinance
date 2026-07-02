@@ -172,6 +172,86 @@ describe("TotaisScreen (render)", () => {
     expect(within(outflow).getByText(/1\.500,00/)).toBeInTheDocument();
   });
 
+  it("Performance: subtexto inclui a Economia como termo e a conta fecha (economia > 0)", async () => {
+    mockInvoke.mockReset();
+    // Junho: 7.000 − 2.500 − 1.000 = 3.500 (Performance do motor, que desconta a economia).
+    const forecast = {
+      ...FORECAST,
+      months: FORECAST.months.map((month) =>
+        month.month === 6
+          ? {
+              ...month,
+              income_cents: 700_000,
+              cost_of_living_cents: 250_000,
+              economia_cents: 100_000,
+              performance_cents: 350_000,
+            }
+          : month,
+      ),
+    };
+    mockCommands({ get_forecast: forecast, owner_totals_for_month_cmd: [] });
+    render(<TotaisScreen />);
+
+    await waitFor(() => expect(screen.getByText("Performance")).toBeInTheDocument());
+
+    // Os três termos exibidos fecham com o valor da Performance mostrado acima.
+    expect(
+      screen.getByText(
+        (content, el) =>
+          el?.classList.contains("mes-tile__sub") === true &&
+          content ===
+            "Entradas R$ 7.000,00 − Saída total R$ 2.500,00 − Economia R$ 1.000,00",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("+R$ 3.500,00").length).toBeGreaterThan(0);
+
+    // O FlowCard também expõe a Economia como linha própria do fluxo.
+    const flow = screen.getByRole("region", { name: "Entrou e Saiu" });
+    expect(within(flow).getByText("Economia")).toBeInTheDocument();
+    expect(within(flow).getByText(/1\.000,00/)).toBeInTheDocument();
+  });
+
+  it("Performance: Patrimônio também é termo explícito e a conta fecha (patrimonio > 0)", async () => {
+    mockInvoke.mockReset();
+    // Junho 7.000 − 2.500 − 1.000 − 500 = 3.000; sem o termo
+    // Patrimônio o subtexto implicava 3.500 ao lado de uma Performance de 3.000.
+    const forecast = {
+      ...FORECAST,
+      months: FORECAST.months.map((month) =>
+        month.month === 6
+          ? {
+              ...month,
+              income_cents: 700_000,
+              cost_of_living_cents: 250_000,
+              economia_cents: 100_000,
+              patrimonio_cents: 50_000,
+              performance_cents: 300_000,
+            }
+          : month,
+      ),
+    };
+    mockCommands({ get_forecast: forecast, owner_totals_for_month_cmd: [] });
+    render(<TotaisScreen />);
+
+    await waitFor(() => expect(screen.getByText("Performance")).toBeInTheDocument());
+
+    expect(
+      screen.getByText(
+        (content, el) =>
+          el?.classList.contains("mes-tile__sub") === true &&
+          content ===
+            "Entradas R$ 7.000,00 − Saída total R$ 2.500,00 − Economia R$ 1.000,00 − Patrimônio R$ 500,00",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("+R$ 3.000,00").length).toBeGreaterThan(0);
+
+    // FlowCard expõe a linha Patrimônio; "Para onde foi o dinheiro" soma os 3 grupos no header.
+    const flow = screen.getByRole("region", { name: "Entrou e Saiu" });
+    expect(within(flow).getByText("Patrimônio")).toBeInTheDocument();
+    const outCard = screen.getByRole("region", { name: "Para onde foi o dinheiro" });
+    expect(within(outCard).getByText("R$ 4.000,00")).toBeInTheDocument();
+  });
+
   it("Custo de vida sublabel menciona cartão", async () => {
     mockInvoke.mockReset();
     mockCommands({ get_forecast: FORECAST, owner_totals_for_month_cmd: [] });

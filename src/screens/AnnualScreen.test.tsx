@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { AnnualScreen } from "./AnnualScreen";
 import type { AnnualMetrics, MonthMetric } from "../lib/api";
@@ -123,6 +123,33 @@ describe("AnnualScreen", () => {
     expect(screen.getAllByText("15%").length).toBeGreaterThan(0);
     // Não é a média simples de 30%+10%=20%.
     expect(screen.queryByText("20%")).not.toBeInTheDocument();
+  });
+
+  it("KPI Performance acum. soma performance_cents do motor (mês com economia > 0)", async () => {
+    mockInvoke.mockReset();
+    const months = Array.from({ length: 12 }, (_, i) => mk(i + 1, 0, 0));
+    // Março: Entradas 7.000, Saída total 2.500, Economia 2.000 → Performance do motor = 2.500.
+    // A re-derivação local (Entradas − Saída total = 4.500) ignoraria a Economia.
+    months[2] = {
+      ...mk(3, 250_000, 250_000),
+      income_cents: 700_000,
+      economia_cents: 200_000,
+    };
+    mockCommands({
+      get_annual_metrics: { year: 2026, months },
+      get_forecast: FORECAST,
+      get_month_grid: monthGridHandler,
+    });
+    render(<AnnualScreen />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Performance acum.")).toBeInTheDocument(),
+    );
+    const kpi = screen.getByText("Performance acum.").closest(".ano-kpi")!;
+    expect(within(kpi as HTMLElement).getByText("R$ 2,5 mil")).toBeInTheDocument();
+    expect(
+      within(kpi as HTMLElement).queryByText("R$ 4,5 mil"),
+    ).not.toBeInTheDocument();
   });
 
   it("preenche Saldo fim de meses passados a partir do month-grid realizado", async () => {

@@ -159,10 +159,13 @@ pub(crate) async fn realized_annual_savings(
     Ok((row.0, row.0 - row.1)) // (renda, poupança=net) dos meses completos
 }
 
-/// Economia REGISTRADA do ano até hoje (meses completos): transfers cujo destino é conta
-/// reserva/ilíquida — mesma classificação de `forecast::classify`. É o numerador do "Economizado"
-/// do método (Economia/Entradas), DISTINTO do net superávit de `realized_annual_savings` (que é o
+/// Economia REGISTRADA do ano até hoje (meses completos). É o numerador do "Economizado" do
+/// método (Economia/Entradas), DISTINTO do net superávit de `realized_annual_savings` (que é o
 /// "colchão" do Neko). Existir os dois lado a lado sem se confundir foi um achado da review.
+///
+/// Espelha o motor MENSAL: por mês, `max(derivado, anotação da aba)`, onde o
+/// derivado = itens de nota ECONOMIA + transfers manuais → conta RESERVA. Transfer para conta
+/// ILÍQUIDA é previdência/patrimônio — fora do Economizado%, como no mensal.
 pub(crate) async fn realized_annual_economia(
     pool: &SqlitePool,
     today_naive: NaiveDate,
@@ -187,37 +190,17 @@ pub(crate) async fn realized_annual_economia(
         )
     };
 
-    // Lado A: anotação da aba Economia (`economia_annotation`, import via store_economia_entries) —
-    // decisão do dono (plano 052). Mesma janela de meses COMPLETOS, com o deslocamento de JANEIRO
-    // para DEZEMBRO do ano anterior, para ficar simétrico com `realized_annual_savings`.
-    let annotation_sum: (i64,) = if is_january {
-        sqlx::query_as(
-            "SELECT COALESCE(SUM(amount_cents), 0) FROM economia_annotation \
-             WHERE year = ?1 AND month = 12",
-        )
-        .bind(today_naive.year() as i64 - 1)
-        .fetch_one(pool)
-        .await
-        .map_err(|e| format!("annotation economia (jan): {e}"))?
-    } else {
-        sqlx::query_as(
-            "SELECT COALESCE(SUM(amount_cents), 0) FROM economia_annotation \
-             WHERE year = ?1 AND month < ?2",
-        )
-        .bind(today_naive.year() as i64)
-        .bind(today_naive.month() as i64)
-        .fetch_one(pool)
-        .await
-        .map_err(|e| format!("annotation economia: {e}"))?
-    };
+    // Derivado por mês ("YYYY-MM"): itens de nota ECONOMIA (pacote K) + transfers→reserva MANUAIS
+    // (plano 003). Espelha `load_metric_db_events` + `forecast::classify`: 'illiquid' é
+    // previdência/PATRIMÔNIO, não economia — fora do Economizado% (o anual
+    // somava 'illiquid' indevidamente e ignorava os itens de nota).
+    let mut derived: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
 
-    // Lado B: transfers→reserva/ilíquido MANUAIS criados no Neko (plano 003). Disjuntos da anotação:
-    // a anotação só vem do import da aba; o transfer manual nunca entra em `economia_annotation`.
-    let transfer_sum: (i64,) = sqlx::query_as(
-        "SELECT COALESCE(SUM(ABS(t.amount)), 0) FROM \"transaction\" t \
-         LEFT JOIN account a ON a.id = t.to_account_id \
-         WHERE t.date >= ?1 AND t.date < ?2 \
-           AND t.type='transfer' AND a.liquidity IN ('reserve','illiquid') \
+    let item_rows: Vec<(String, i64, String, Option<String>)> = sqlx::query_as(
+        "SELECT t.date, li.amount_cents, li.description, li.section \
+         FROM line_item li \
+         JOIN \"transaction\" t ON t.id = li.transaction_id \
+         WHERE t.date >= ?1 AND t.date < ?2 AND t.type = 'expense' \
            AND NOT EXISTS ( \
                SELECT 1 FROM transaction_tag tt2 \
                JOIN tag tg ON tg.id = tt2.tag_id \
@@ -226,11 +209,83 @@ pub(crate) async fn realized_annual_economia(
     )
     .bind(&lower)
     .bind(&upper)
-    .fetch_one(pool)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("annual economia line items: {e}"))?;
+    for (date, cents, description, section) in item_rows {
+        if import::classify_line_item(section.as_deref(), &description)
+            == import::ItemKind::Economia
+            && let Some(ym) = date.get(0..7)
+        {
+            *derived.entry(ym.to_string()).or_insert(0) += cents.abs();
+        }
+    }
+
+    // A janela de meses COMPLETOS decide, não o flag `is_projection` (que fica congelado
+    // quando a data passa — mesma regra de staleness do savings, ver commands::tests).
+    let transfer_rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT substr(t.date, 1, 7), COALESCE(SUM(ABS(t.amount)), 0) FROM \"transaction\" t \
+         LEFT JOIN account a ON a.id = t.to_account_id \
+         WHERE t.date >= ?1 AND t.date < ?2 \
+           AND t.type='transfer' AND a.liquidity = 'reserve' \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM transaction_tag tt2 \
+               JOIN tag tg ON tg.id = tt2.tag_id \
+               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
+           ) \
+         GROUP BY substr(t.date, 1, 7)",
+    )
+    .bind(&lower)
+    .bind(&upper)
+    .fetch_all(pool)
     .await
     .map_err(|e| format!("realized economia transfers: {e}"))?;
+    for (ym, cents) in transfer_rows {
+        *derived.entry(ym).or_insert(0) += cents;
+    }
 
-    Ok(annotation_sum.0 + transfer_sum.0)
+    // Anotação da aba Economia (`economia_annotation`, plano 052) por mês, na MESMA janela de meses
+    // COMPLETOS (com o deslocamento de JANEIRO para DEZEMBRO, simétrico a `realized_annual_savings`).
+    let annotation_rows: Vec<(i64, i64, i64)> = if is_january {
+        sqlx::query_as(
+            "SELECT year, month, COALESCE(SUM(amount_cents), 0) FROM economia_annotation \
+             WHERE year = ?1 AND month = 12 GROUP BY year, month",
+        )
+        .bind(today_naive.year() as i64 - 1)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("annotation economia (jan): {e}"))?
+    } else {
+        sqlx::query_as(
+            "SELECT year, month, COALESCE(SUM(amount_cents), 0) FROM economia_annotation \
+             WHERE year = ?1 AND month < ?2 GROUP BY year, month",
+        )
+        .bind(today_naive.year() as i64)
+        .bind(today_naive.month() as i64)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("annotation economia: {e}"))?
+    };
+    let mut annotation_by: std::collections::HashMap<String, i64> =
+        std::collections::HashMap::new();
+    for (y, m, cents) in annotation_rows {
+        annotation_by.insert(format!("{y:04}-{m:02}"), cents);
+    }
+
+    // Regra do MÁXIMO por mês (mesma de `month_metrics`): após o
+    // round-trip do write-back (plano 062) a anotação espelha o derivado — somar dobraria. O mês
+    // vale o maior dos dois; mês só-planilha usa a anotação, excedente digitado à mão ainda conta.
+    let mut months: std::collections::HashSet<&String> = derived.keys().collect();
+    months.extend(annotation_by.keys());
+    let total: i64 = months
+        .into_iter()
+        .map(|ym| {
+            let d = derived.get(ym).copied().unwrap_or(0);
+            let a = annotation_by.get(ym).copied().unwrap_or(0);
+            d.max(a)
+        })
+        .sum();
+    Ok(total)
 }
 
 /// Anotação da aba Economia (`economia_annotation`, plano 052) para os ANOS informados, indexada por
@@ -750,6 +805,22 @@ async fn load_metric_db_events(
                     date,
                     kind: event_kind_for_item_kind(kind),
                     amount_cents: item.amount_cents.abs(),
+                    realized: row.is_projection == 0,
+                });
+            }
+            // A célula é a dona do TOTAL: se as partes da nota não somam o pai, o resíduo
+            // (célula − Σ|partes|) entra como Saída fixa COM SINAL — a convenção AJUSTES
+            // "Diferença" da planilha aplicada na leitura, sem item sintético persistido.
+            // Um resíduo negativo (partes > célula) REDUZ fixed_out para os baldes fecharem
+            // com o total; por isso este evento é a exceção documentada à convenção
+            // "amount_cents sempre positivo" do CashflowEvent (só métrica, nunca na cadeia).
+            let parts_sum: i64 = items.iter().map(|i| i.amount_cents.abs()).sum();
+            let residual = row.amount.abs() - parts_sum;
+            if residual != 0 {
+                events.push(CashflowEvent {
+                    date,
+                    kind: forecast::EventKind::FixedOut,
+                    amount_cents: residual,
                     realized: row.is_projection == 0,
                 });
             }
@@ -1718,8 +1789,137 @@ mod tests {
 
         let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
         let economia = realized_annual_economia(&p, today).await.unwrap();
-        // 5 × 10.000 (anotação) + 8.000 (transfer manual) = 58.000 — sem dupla contagem.
-        assert_eq!(economia, 58_000);
+        // Regra do MÁXIMO por mês (espelha o mensal). Março vale
+        // max(transfer 8.000, anotação 10.000) = 10.000 — a aba é o registro consolidado do mês,
+        // não uma parcela aditiva. Total: 5 × 10.000 = 50.000 (antes somava 58.000, dobrando o
+        // dinheiro que o write-back da aba deriva dos próprios lançamentos).
+        assert_eq!(economia, 50_000);
+    }
+
+    // O numerador ANUAL do Economizado espelha o MENSAL —
+    // (a) itens de nota ECONOMIA contam; (b) transfer para conta ILÍQUIDA é previdência/patrimônio,
+    // NÃO economia (o anual somava 'illiquid' indevidamente, inflando o Economizado% e afrouxando o
+    // guardrail); (c) anotação igual ao derivado (round-trip do write-back 062) não duplica.
+    #[tokio::test]
+    async fn annual_economia_mirrors_monthly_classification() {
+        let p = pool().await;
+
+        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-1', 'Tester')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, balance, liquidity) \
+             VALUES ('acc-res', 'Reserva', 'savings', 'pe-1', 0, 'reserve')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, balance, liquidity) \
+             VALUES ('acc-prev', 'Previdência', 'pension', 'pe-1', 0, 'illiquid')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        // (a) Janeiro: Saída itemizada com item de seção ECONOMIA (pacote K) de 300,00.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('t-jan', 'expense', 30000, '2026-01-10', 1, 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, is_user_edited, section) \
+             VALUES ('li:t-jan:0', 't-jan', 30000, 'Poupança', 0, 0, 'ECONOMIA')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        // Round-trip do write-back: a aba Economia já espelha o derivado de janeiro → conta UMA vez.
+        crate::commands::write_back_cmds::store_economia_entries(&p, &[(2026, 1, 30000)])
+            .await
+            .unwrap();
+
+        // (b) Fevereiro: transfer manual → reserva (economia líquida) de 200,00.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) \
+             VALUES ('t-fev', 'transfer', 20000, '2026-02-15', 'acc-res', 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        // (c) Março: transfer → ilíquido (previdência) de 500,00 — patrimônio, fora do Economizado.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) \
+             VALUES ('t-mar', 'transfer', 50000, '2026-03-15', 'acc-prev', 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        // (d) Agosto (FUTURO): ocorrência projetada de série → reserva — a janela de meses
+        // completos a deixa fora (o flag is_projection NÃO é o guarda; ver
+        // economia_ignores_stale_is_projection_flag).
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) \
+             VALUES ('t-ago-proj', 'transfer', 70000, '2026-08-15', 'acc-res', 1)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        let economia = realized_annual_economia(&p, today).await.unwrap();
+        // jan max(30.000, 30.000) + fev max(20.000, 0) = 50.000; previdência e futuro fora.
+        assert_eq!(economia, 50_000);
+    }
+
+    // Célula 100,00 com nota somando 120,00 — o resíduo −20,00
+    // entra como Saída fixa COM SINAL para os baldes fecharem com o total da célula (a
+    // convenção AJUSTES "Diferença" da planilha aplicada na leitura, sem item sintético).
+    #[tokio::test]
+    async fn metric_events_reconcile_item_residual_with_sign() {
+        let p = pool().await;
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('t-res', 'expense', 10000, '2026-03-10', 1, 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, is_user_edited, section) \
+             VALUES ('li:t-res:1', 't-res', 12000, 'Banco A', 1, 0, 'CARTÕES')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let start = NaiveDate::from_ymd_opt(2026, 3, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+        let events = load_metric_db_events(&p, start, end).await.unwrap();
+
+        let cartao: i64 = events
+            .iter()
+            .filter(|e| e.kind == forecast::EventKind::Cartao)
+            .map(|e| e.amount_cents)
+            .sum();
+        let fixed: i64 = events
+            .iter()
+            .filter(|e| e.kind == forecast::EventKind::FixedOut)
+            .map(|e| e.amount_cents)
+            .sum();
+        assert_eq!(cartao, 12_000);
+        assert_eq!(fixed, -2_000, "resíduo com sinal reduz a Saída fixa");
+        assert_eq!(
+            cartao + fixed,
+            10_000,
+            "os baldes fecham com o total da célula"
+        );
     }
 
     // Bugs 1+3 (plano 052): a anotação e os transfers reais são DISJUNTOS — `store_economia_entries`

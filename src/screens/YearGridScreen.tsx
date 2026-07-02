@@ -80,6 +80,24 @@ function monthGridFetcher(
   return fn;
 }
 
+/** Fetcher estável que agrega o month-grid dos 12 meses do ano (visão "Ano inteiro"):
+ *  sem ele, as células dos meses fora do mês exibido ficariam sem saldo realizado. */
+const _yearGridFetcherCache = new Map<number, () => Promise<MonthGridDay[]>>();
+function yearGridFetcher(year: number): () => Promise<MonthGridDay[]> {
+  const cached = _yearGridFetcherCache.get(year);
+  if (cached) return cached;
+  const fn = async () => {
+    const grids = await Promise.all(
+      Array.from({ length: 12 }, (_, i) => getMonthGrid(year, i + 1)),
+    );
+    return grids.flat();
+  };
+  _yearGridFetcherCache.set(year, fn);
+  return fn;
+}
+
+const emptyGridFetcher = () => Promise.resolve<MonthGridDay[]>([]);
+
 const LEGEND = (
   <div className="cal-legend">
     <span>
@@ -127,7 +145,16 @@ export function YearGridScreen() {
     `get_month_grid:${thisYear}:${monthNum}`,
     monthGridFetcher(thisYear, monthNum),
   );
-  const realizedBalanceMap = indexGridByDate(monthGridQ.data ?? []);
+  // Visão "Ano inteiro": agrega o grid dos 12 meses (a key muda com a aba, então o
+  // hook roda sempre — sem hooks condicionais — e só busca o ano quando necessário).
+  const yearGridQ = useCommand(
+    tab === "ano" ? `get_month_grid:year:${thisYear}` : "get_month_grid:year:off",
+    tab === "ano" ? yearGridFetcher(thisYear) : emptyGridFetcher,
+  );
+  const realizedBalanceMap = indexGridByDate([
+    ...(yearGridQ.data ?? []),
+    ...(monthGridQ.data ?? []),
+  ]);
 
   // Annual metrics for the year-view month summaries.
   const annualQ = useCommand(`get_annual_metrics:${thisYear}`, annualFetcher(thisYear));

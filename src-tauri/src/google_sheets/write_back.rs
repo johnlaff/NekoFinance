@@ -304,11 +304,25 @@ pub fn plan_write_back(
         // Plano 036: célula itemizada (≥2 partes) escreve a fórmula `=SUM(...)` (USER_ENTERED) +
         // nota por-parte. 1 parte ou nenhuma → escrita RAW numérica (sem fórmula nem nota), igual
         // a hoje. O `value_cents`/`proposed` do diff seguem sendo o TOTAL (a UI mostra o número).
+        //
+        // GUARDA DE SOMA: itens com soma divergente da
+        // célula são persistidos (a classificação sobrevive; o resíduo é reconciliado na
+        // leitura). Reconstruir `=SUM(...)`/nota a partir deles ESCREVERIA um total diferente
+        // do que o dono tem na célula — então a fórmula/nota só sai quando Σ|partes| casa com
+        // o total (±1 centavo); senão, escrita RAW do total e a nota do dono fica intocada.
         let (formula, note_text) = match txn.items.as_deref() {
-            Some(items) if items.len() >= 2 => (
-                Some(build_itemized_cell_value(items)),
-                Some(build_itemized_note(items)),
-            ),
+            Some(items)
+                if items.len() >= 2
+                    && (items.iter().map(|i| i.amount_cents.abs()).sum::<i64>()
+                        - txn.amount_cents.abs())
+                    .abs()
+                        <= 1 =>
+            {
+                (
+                    Some(build_itemized_cell_value(items)),
+                    Some(build_itemized_note(items)),
+                )
+            }
             _ => (None, None),
         };
         out.push(CellWrite {
@@ -1000,6 +1014,27 @@ mod tests {
         );
         assert_eq!(w.proposed, "125,00"); // diff segue mostrando o TOTAL
         assert_eq!(w.value_cents, 12500);
+    }
+
+    #[test]
+    fn plan_mismatched_items_fall_back_to_raw_total() {
+        // Itens com soma divergente da célula PERSISTEM (classificação
+        // sobrevive), mas reconstruir `=SUM(...)`/nota a partir deles escreveria um total
+        // DIFERENTE do que o dono tem — a proposta cai para RAW do total e a nota fica intocada.
+        let txns = vec![WriteBackTxn {
+            date: "2026-01-01".into(),
+            kind: RowKind::Diario,
+            amount_cents: 10_000,
+            items: Some(vec![ti(6000, "A"), ti(6000, "B")]), // Σ 120,00 ≠ 100,00
+        }];
+        let plan = plan_write_back(&grid(), &layout(), &mappings(), &txns);
+        assert_eq!(plan.len(), 1);
+        assert!(plan[0].formula.is_none(), "soma divergente → sem fórmula");
+        assert!(
+            plan[0].note_text.is_none(),
+            "soma divergente → nota intocada"
+        );
+        assert_eq!(plan[0].proposed, "100,00", "o total da célula é a verdade");
     }
 
     #[test]

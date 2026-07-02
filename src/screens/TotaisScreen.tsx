@@ -105,6 +105,7 @@ interface HeroTilesProps {
   saidaTotal: number;
   custoVida: number;
   economia: number;
+  patrimonio: number;
   economizadoPct: number;
   ytdPctLabel: string;
   perfStatus: { level: string; label: string };
@@ -119,6 +120,7 @@ function HeroTiles({
   saidaTotal,
   custoVida,
   economia,
+  patrimonio,
   economizadoPct,
   ytdPctLabel,
   perfStatus,
@@ -144,8 +146,12 @@ function HeroTiles({
         >
           {fmtSigned(performance)}
         </div>
+        {/* A conta exibida precisa fechar com a Performance do motor: Economia e Patrimônio
+            são termos explícitos (Performance = Entradas − Saída total − Economia − Patrimônio). */}
         <p className="mes-tile__sub">
           Entradas {fmtBRL(entradas)} − Saída total {fmtBRL(saidaTotal)}
+          {economia > 0 ? <> − Economia {fmtBRL(economia)}</> : null}
+          {patrimonio > 0 ? <> − Patrimônio {fmtBRL(patrimonio)}</> : null}
         </p>
         <div style={{ marginTop: 10 }}>
           <StatusChip level={perfStatus.level} label={perfStatus.label} />
@@ -196,11 +202,18 @@ function HeroTiles({
 interface OutPartsCardProps {
   saidaTotal: number;
   economia: number;
+  patrimonio: number;
   outParts: { name: string; val: number; color: string }[];
   outTotal: number;
 }
 
-function OutPartsCard({ saidaTotal, economia, outParts, outTotal }: OutPartsCardProps) {
+function OutPartsCard({
+  saidaTotal,
+  economia,
+  patrimonio,
+  outParts,
+  outTotal,
+}: OutPartsCardProps) {
   return (
     <section className="card" aria-label="Para onde foi o dinheiro">
       <div className="card__head">
@@ -208,7 +221,9 @@ function OutPartsCard({ saidaTotal, economia, outParts, outTotal }: OutPartsCard
           <LayoutList size={16} strokeWidth={1.75} className="ic" />
           Para onde foi o dinheiro
         </span>
-        <span className="card__head-money">{fmtBRL(saidaTotal + economia)}</span>
+        <span className="card__head-money">
+          {fmtBRL(saidaTotal + economia + patrimonio)}
+        </span>
       </div>
       <div className="card__body">
         <div className="mes-bar">
@@ -245,10 +260,18 @@ function OutPartsCard({ saidaTotal, economia, outParts, outTotal }: OutPartsCard
 interface FlowCardProps {
   entradas: number;
   saidaTotal: number;
+  economia: number;
+  patrimonio: number;
   performance: number;
 }
 
-function FlowCard({ entradas, saidaTotal, performance }: FlowCardProps) {
+function FlowCard({
+  entradas,
+  saidaTotal,
+  economia,
+  patrimonio,
+  performance,
+}: FlowCardProps) {
   return (
     <section className="card" aria-label="Entrou e Saiu">
       <div className="card__head">
@@ -289,6 +312,49 @@ function FlowCard({ entradas, saidaTotal, performance }: FlowCardProps) {
               {fmtBRL(saidaTotal)}
             </span>
           </div>
+          {/* Economia é um termo do resultado (Performance = Entradas − Saída total −
+              Economia); sem ela a aritmética exibida não fecharia com o "Sobrou no mês". */}
+          {economia > 0 ? (
+            <div className="mes-flow__row">
+              <span className="mes-flow__lab">Economia</span>
+              <span className="mes-flow__track">
+                <span
+                  className="mes-flow__fill"
+                  style={{
+                    width:
+                      Math.min(100, (economia / Math.max(entradas, 1)) * 100).toFixed(
+                        2,
+                      ) + "%",
+                    background: "var(--type-economia)",
+                  }}
+                />
+              </span>
+              <span className="mes-flow__amt" style={{ color: "var(--type-economia)" }}>
+                {fmtBRL(economia)}
+              </span>
+            </div>
+          ) : null}
+          {/* Patrimônio também é termo do resultado (previdência/ilíquido sai do saldo). */}
+          {patrimonio > 0 ? (
+            <div className="mes-flow__row">
+              <span className="mes-flow__lab">Patrimônio</span>
+              <span className="mes-flow__track">
+                <span
+                  className="mes-flow__fill"
+                  style={{
+                    width:
+                      Math.min(100, (patrimonio / Math.max(entradas, 1)) * 100).toFixed(
+                        2,
+                      ) + "%",
+                    background: "var(--text-muted)",
+                  }}
+                />
+              </span>
+              <span className="mes-flow__amt" style={{ color: "var(--text-muted)" }}>
+                {fmtBRL(patrimonio)}
+              </span>
+            </div>
+          ) : null}
         </div>
         <div className="mes-flow__summary">
           <span className="mes-flow__summary-lab">Sobrou no mês</span>
@@ -455,6 +521,7 @@ export function TotaisScreen() {
   const saidaTotal = m.cost_of_living_cents; // custo de vida = saída total
   const custoVida = m.cost_of_living_cents;
   const economia = m.economia_cents;
+  const patrimonio = m.patrimonio_cents;
   const economizadoPct = m.savings_rate_bps / 100;
   const fixedOut = m.fixed_out_cents;
   const dailyOut = m.daily_out_cents;
@@ -466,8 +533,9 @@ export function TotaisScreen() {
     { name: "Cartão", val: cartao, color: "var(--type-cartao)" },
     { name: "Diário", val: dailyOut, color: "var(--type-diario)" },
     { name: "Economia", val: economia, color: "var(--type-economia)" },
+    { name: "Patrimônio", val: patrimonio, color: "var(--text-muted)" },
   ];
-  const outTotal = Math.max(saidaTotal + economia, 1);
+  const outTotal = Math.max(saidaTotal + economia + patrimonio, 1);
 
   // Trend: last 6 months in chronological order (most recent = current idx).
   const trendStart = Math.max(0, idx - 5);
@@ -518,6 +586,7 @@ export function TotaisScreen() {
         saidaTotal={saidaTotal}
         custoVida={custoVida}
         economia={economia}
+        patrimonio={patrimonio}
         economizadoPct={economizadoPct}
         ytdPctLabel={ytdPctLabel}
         perfStatus={perfStatus}
@@ -530,12 +599,15 @@ export function TotaisScreen() {
         <OutPartsCard
           saidaTotal={saidaTotal}
           economia={economia}
+          patrimonio={patrimonio}
           outParts={outParts}
           outTotal={outTotal}
         />
         <FlowCard
           entradas={entradas}
           saidaTotal={saidaTotal}
+          economia={economia}
+          patrimonio={patrimonio}
           performance={performance}
         />
       </div>

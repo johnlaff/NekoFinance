@@ -46,5 +46,11 @@ AJUSTES:
 R$ 0,10 - diferenca de arredondamento
 ```
 
-When the item total does not match the cell total, the app treats it as a warning condition. It
-does not fabricate values or change the spreadsheet total.
+When the item total does not match the cell total, the importer keeps the parsed items as they
+are (no synthetic item is stored). The remainder (cell total − sum of items) is reconciled at
+read time by the metrics engine as a signed fixed-outflow adjustment — the same role as a manual
+`AJUSTES` line — so the financial buckets always add up to the cell total. Write-back falls back
+to writing the plain cell total (no `=SUM()` formula, note untouched) whenever the stored items
+do not sum to it. The cell total is always the source of truth and is never changed by the app.
+A single classified item under a section header is a valid breakdown on its own; a single line
+without a section header is treated as a memo, not a breakdown.

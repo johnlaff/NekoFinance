@@ -36,7 +36,7 @@ import {
 import { extractSpreadsheetId } from "../../lib/spreadsheet-url";
 import { safeErrorMessage } from "../../lib/errors";
 import { isEconomiaTab, isMetricTab } from "../../lib/sheet-tabs";
-import { invalidateCommands } from "../../lib/useCommand";
+import { invalidateCommands, useCommand } from "../../lib/useCommand";
 import { withLoading } from "../../lib/withLoading";
 import { WriteBackPreview } from "./WriteBackPreview";
 
@@ -534,6 +534,33 @@ function useSheetImport(
   };
 }
 
+const NOTES_DEGRADED_KEY = "notes_degraded_last_sheet";
+const fetchNotesDegraded = () => getAppSetting(NOTES_DEGRADED_KEY);
+
+/** Aviso do ciclo degradado: o último sync não conseguiu ler as NOTAS de célula (a
+ *  classificação Cartão/Economia/Patrimônio ficou congelada no último ciclo saudável).
+ *  O backend grava/limpa a chave a cada ciclo; sem valor → nada a mostrar. */
+function NotesDegradedNotice() {
+  const q = useCommand(`get_app_setting:${NOTES_DEGRADED_KEY}`, fetchNotesDegraded);
+  if (!q.data) return null;
+  return (
+    <p
+      role="status"
+      style={{
+        margin: 0,
+        padding: "6px 10px",
+        borderRadius: "var(--radius-md)",
+        background: "var(--warning-tint)",
+        color: "var(--warning-400)",
+        fontSize: 12.5,
+      }}
+    >
+      No último sync as notas de célula de «{q.data}» não puderam ser lidas — a
+      classificação por seção segue a do último ciclo saudável.
+    </p>
+  );
+}
+
 function PickStep({
   state,
   onSpreadsheetSelect,
@@ -591,6 +618,7 @@ function PickStep({
             />
             <span className="gs-bgsync__label">Atualização automática</span>
           </label>
+          <NotesDegradedNotice />
           <span className="gs-label" style={{ marginTop: "var(--space-2)" }}>
             Ou importar outra planilha/aba
           </span>

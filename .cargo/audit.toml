@@ -1,0 +1,13 @@
+# Exceções do cargo-audit (CI roda da raiz do repo: `cargo audit --file src-tauri/Cargo.lock`).
+# Regra do projeto: toda exceção tem justificativa concreta e data de revisão (docs/version-matrix.md).
+[advisories]
+ignore = [
+    # quick-xml <0.41 (2 advisories): DoS por alocação de namespaces (RUSTSEC-2026-0195) e
+    # custo quadrático em atributos duplicados (RUSTSEC-2026-0194). Único caminho restante:
+    # plist 1.9.0 (o mais novo) ← tauri-utils 2.9.2, que pina quick-xml 0.39. Sem fix
+    # alcançável até o tauri-utils/plist atualizarem. Superfície: parsing de plist interno do
+    # Tauri em build/config própria — não processa XML de terceiros em runtime. Reavaliar a
+    # cada bump do Tauri (remover assim que `cargo tree -i quick-xml` mostrar >=0.41).
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]

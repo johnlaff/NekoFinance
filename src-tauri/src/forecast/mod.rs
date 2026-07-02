@@ -383,9 +383,15 @@ fn month_metrics(
                 }
             }
             // Anotação da aba Economia para este mês (import via store_economia_entries, plano 052).
-            // Disjunta dos transfers de reserva MANUAIS (já somados em EventKind::Economia acima):
-            // a anotação só vem do import da aba e nunca vira transação → somar não duplica.
-            economia += annotation.get(&(year, month)).copied().unwrap_or(0);
+            // Desde o pacote K a aba é DERIVADA dos itens ECONOMIA + transfers→reserva (write-back
+            // 062): após o round-trip, anotação e eventos representam o MESMO dinheiro — somar
+            // dobraria. Regra: o mês vale o MAIOR entre o derivado (eventos acima) e a anotação.
+            // Mês só-planilha usa a anotação; excedente digitado à mão ainda conta. Trade-off
+            // deliberado: dinheiro GENUINAMENTE disjunto (anotação só-planilha + transfer manual
+            // ainda não escrito de volta) fica subcontado até o próximo write-back alinhar a aba —
+            // preferível à dupla contagem permanente que o `+=` causava após cada round-trip.
+            let annotation_cents = annotation.get(&(year, month)).copied().unwrap_or(0);
+            economia = economia.max(annotation_cents);
             // Custo de vida = Saídas fixas + Diário realizado + Cartão. Economia e Patrimônio são
             // outflows reais, mas não são custo de vida.
             let cost_of_living_cents = fixed_out + daily_realized + cartao;
@@ -860,6 +866,73 @@ mod tests {
         assert_eq!(m.savings_rate_bps, 1_000); // 100 / 1000 = 10%
         assert_eq!(m.performance_cents, 250_000); // 1000 - (300 + 200 + 150 + 100)
         assert_eq!(f.month_end[0].balance_cents, 250_000);
+    }
+
+    // Regressão: desde que o write-back deriva a aba Economia dos itens ECONOMIA
+    // (plano 062), a anotação e os eventos representam o MESMO dinheiro após o round-trip.
+    // Somar os dois dobrava o Economizado% e derrubava a Performance duas vezes.
+    #[test]
+    fn annotation_equal_to_derived_economia_counts_once() {
+        let events = [
+            ev("2026-03-05", EventKind::Income, 1_000_000),
+            ev("2026-03-20", EventKind::Economia, 100_000),
+        ];
+        let mut annotation = std::collections::HashMap::new();
+        annotation.insert((2026i32, 3u32), 100_000i64);
+        let f = project_with_metrics(
+            0,
+            d("2026-03-01"),
+            &events,
+            &events,
+            d("2026-03-31"),
+            &annotation,
+        );
+        let m = f.months.iter().find(|m| m.month == 3).unwrap();
+        assert_eq!(m.economia_cents, 100_000); // uma vez, não 200_000
+        assert_eq!(m.savings_rate_bps, 1_000); // 10%, não 20%
+        assert_eq!(m.performance_cents, 900_000); // 1000 − 100, não 1000 − 200
+    }
+
+    // Excedente digitado à mão na aba Economia (acima do derivado) ainda conta: a aba é o
+    // registro do método; o mês vale o MAIOR entre derivado e anotação.
+    #[test]
+    fn annotation_excess_over_derived_still_counts() {
+        let events = [
+            ev("2026-03-05", EventKind::Income, 1_000_000),
+            ev("2026-03-20", EventKind::Economia, 100_000),
+        ];
+        let mut annotation = std::collections::HashMap::new();
+        annotation.insert((2026i32, 3u32), 160_000i64);
+        let f = project_with_metrics(
+            0,
+            d("2026-03-01"),
+            &events,
+            &events,
+            d("2026-03-31"),
+            &annotation,
+        );
+        let m = f.months.iter().find(|m| m.month == 3).unwrap();
+        assert_eq!(m.economia_cents, 160_000);
+        assert_eq!(m.performance_cents, 840_000);
+    }
+
+    // Mês só-planilha (sem eventos derivados): a anotação continua valendo sozinha (plano 052).
+    #[test]
+    fn annotation_only_month_still_counts() {
+        let events = [ev("2026-03-05", EventKind::Income, 1_000_000)];
+        let mut annotation = std::collections::HashMap::new();
+        annotation.insert((2026i32, 3u32), 50_000i64);
+        let f = project_with_metrics(
+            0,
+            d("2026-03-01"),
+            &events,
+            &events,
+            d("2026-03-31"),
+            &annotation,
+        );
+        let m = f.months.iter().find(|m| m.month == 3).unwrap();
+        assert_eq!(m.economia_cents, 50_000);
+        assert_eq!(m.performance_cents, 950_000);
     }
 
     // T5.3 — cash ≠ performance: month ends negative in cash while performance is positive.

@@ -10,7 +10,9 @@ import {
   type ForecastDay,
 } from "../lib/api";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
+import { EmptyState } from "../design-system/components/EmptyState";
 import { parseBRLToCents } from "../lib/format";
+import { kindToFields } from "../lib/movement";
 import {
   fmtBRL,
   MES,
@@ -147,6 +149,30 @@ export function DashboardScreen() {
 
   const summary = summaryQ.data;
   const forecast = forecastQ.data;
+  const fetchError = summaryQ.error ?? forecastQ.error;
+
+  // Nunca renderizar R$ 0,00 fingindo dado real: se QUALQUER uma das duas fontes do herói
+  // falhou sem dado (nem cache), os números não podem ser calculados — estado de erro com
+  // retry. O banner "dados antigos" fica só para quando todas as fontes têm cache.
+  const summaryMissing = Boolean(summaryQ.error) && !summary;
+  const forecastMissing = Boolean(forecastQ.error) && !forecast;
+  if (summaryMissing || forecastMissing) {
+    return (
+      <div className="hoje neko-app">
+        <EmptyState
+          variant="error"
+          title="Não foi possível carregar o painel"
+          description="Os números de hoje não puderam ser calculados. Verifique o app e tente de novo."
+          action={
+            <Button variant="primary" onClick={() => invalidateCommands()}>
+              Tentar novamente
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
+
   const today = forecast?.today ?? "";
   const month = today ? monthOf(today) : new Date().getMonth();
 
@@ -165,6 +191,21 @@ export function DashboardScreen() {
 
   return (
     <div className="hoje neko-app">
+      {fetchError ? (
+        <p
+          role="status"
+          style={{
+            margin: 0,
+            padding: "8px 12px",
+            borderRadius: "var(--radius-md)",
+            background: "var(--warning-tint)",
+            color: "var(--warning-400)",
+            fontSize: 12.5,
+          }}
+        >
+          Não foi possível atualizar agora — mostrando os últimos dados carregados.
+        </p>
+      ) : null}
       <section className="hoje-hero">
         <div>
           <p className="hoje-hero__eyebrow">{eyebrowDate(today)}</p>
@@ -276,13 +317,14 @@ function CheckinCard({
     const cents = parseBRLToCents(amount);
     if (!cents || cents <= 0 || !isTauri) return;
     setSaving(true);
+    const fields = kindToFields(kind);
     createTransaction({
-      txnType: "expense",
+      txnType: fields.txnType,
       amountCents: cents,
       description: null,
       date: today,
-      paymentMethod: kind === "cartao" ? "credit" : null,
-      isFixed: kind === "saida",
+      paymentMethod: fields.paymentMethod,
+      isFixed: fields.isFixed,
       tagIds: [],
       recurrence: null,
     })

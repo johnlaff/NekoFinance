@@ -450,7 +450,10 @@ export function AnnualScreen() {
   const realizedMonths = months.filter((m) => m.month - 1 <= displayedMonthCutoff);
   const totEnt = realizedMonths.reduce((s, m) => s + m.income_cents, 0);
   const totSaida = realizedMonths.reduce((s, m) => s + m.cost_of_living_cents, 0);
-  const totPerf = totEnt - totSaida;
+  // Nunca re-derivar: Performance = Entradas − (custo de vida + economia + patrimônio), já
+  // calculada pelo motor. Somar aqui de novo (totEnt − totSaida) ignora economia/patrimônio
+  // e diverge do rodapé "Realizado" da tabela abaixo.
+  const totPerf = realizedMonths.reduce((s, m) => s + m.performance_cents, 0);
   const totEcon = realizedMonths.reduce((s, m) => s + m.economia_cents, 0);
   const econPct = totEnt > 0 ? (totEcon / totEnt) * 100 : 0;
 

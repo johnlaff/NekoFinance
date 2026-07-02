@@ -58,14 +58,16 @@ The method's core metric: the day's Diário spend compared against daily_budget.
 A credit bill is **one outflow on the due date** (Saída lump), not a per-day accrual. During a cycle you increment a running total, but the recorded output is one lump at the vencimento — `classify()` + write-back already do this. The earlier "credit accumulates daily" track ("Régua 2") was retired (ADR-0001 / plans 022, 027); credit is never compared against income.
 
 **Forecast Engine Types** (forecast `EventKind`):
-The projection engine maps each transaction into exactly one bucket. The method has 5 movement types (entrada, saída, diário, economia, cartão); the engine collapses them into 4 `EventKind` variants because the card has no column of its own — its bill folds into the Saída lump at the due date:
+The projection engine maps each transaction into exactly one of 6 `EventKind` variants (`src-tauri/src/forecast/mod.rs`), aligned 1:1 with the method's 5 movement types (entrada, saída, diário, economia, cartão) plus a 6th bucket the engine splits out of "economia" for long-term/illiquid investment:
 
 - **Income** (Entrada): `type='income'`.
-- **FixedOut** (Saída fixa + Cartão): `type='expense'` with `is_fixed=1`, **or** any `payment_method='credit'` expense (the fatura lands as a Saída lump on the due date).
+- **FixedOut** (Saída fixa): `type='expense'` with `is_fixed=1`, excluding the credit-card bucket once item/transaction classification knows it.
 - **Daily** (Diário): `type='expense'`, `is_fixed=0`, non-credit (débito/PIX/dinheiro).
-- **Economia**: `type='transfer'` to a `reserve`/`illiquid` account (set aside, not spent).
+- **Cartao** (Cartão): credit-card bill/purchase bucket — its own column, folded into a single Saída lump on the due date. Inside custo de vida but tracked apart.
+- **Economia**: guardar em reserva acessível — leaves the spending balance, feeds Economizado%, excluded from custo de vida.
+- **Patrimonio** (Patrimônio): long-term/illiquid investment — leaves the spending balance but is excluded from both custo de vida and accessible Economia%.
 
-Derived metrics: `cost_of_living = FixedOut + Daily`; `Performance = Income − (cost_of_living + Economia + previsão de diário restante)`. The UI exposes the 5 method types via `MovBadge` (Cartão = credit expense); the engine buckets are the 4 above.
+Derived metrics: `cost_of_living = FixedOut + Daily + Cartao`; `Performance = Income − (FixedOut + Daily + Cartao + Economia + Patrimonio)`. The UI exposes the same buckets via `MovBadge`; engine and UI vocabularies match 1:1 (spec 011, PR #91).
 
 ### Savings & Protection
 

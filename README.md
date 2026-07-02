@@ -26,13 +26,15 @@ tokens, spreadsheet data, or personal finance caches are committed — see Priva
   the invoice due date).
 - **Google Sheets import** — OAuth (PKCE, loopback) + month-block layout detection, column
   mapping review, deduplicated imports. Or import a local `.xlsx` copy without any Google account.
-- **Nine navigable screens** — Dashboard, Totais, Anual, Horizonte, Lançamentos (filter + search),
-  Tags, Mia (deterministic preview), Metodologia, and Configurações e privacidade (connections, local
-  import, where-your-data-lives).
-- **Local SQLite store** (WAL) — 28 migrations: accounts/pockets + liquidity, transactions/splits, tags,
-  recurrences, daily check-ins (separate debit/daily and credit/fatura tracks), reserve tracking, sheet layouts,
-  three-way-merge reconciliation, sync log. During the import-only phase the spreadsheet is
-  the system of record and SQLite is the local mirror + enrichment layer (see `docs/adr/0003`).
+- **Nine navigable screens** — Hoje (dashboard), Lançamentos (filter + search), Este mês (Totais),
+  O ano (Anual), Calendário (monthly day-by-day grid), Horizonte (multi-month), Tags, Mia (chat UI
+  with one deterministic safe-to-spend answer today; free-form questions get a "still learning"
+  reply), and Configurações (connections, local import, where-your-data-lives).
+- **Local SQLite store** (WAL) — 36 migrations: accounts/pockets + liquidity, transactions/splits,
+  tags, recurrence, reserve tracking + snapshots, sheet layouts + note line-item classification,
+  three-way-merge reconciliation, sync log. FTS5 was added then removed (never populated; search is
+  client-side). During the import-only phase the spreadsheet is the system of record and SQLite is
+  the local mirror + enrichment layer (see `docs/adr/0003`).
 
 ## Stack
 
@@ -107,4 +109,4 @@ Details: `docs/building-windows.md`.
 - `docs/testing-strategy.md` — coverage, Playwright, React Doctor, eval policy
 - `docs/release-and-distribution.md` — release train and updater plan
 - `docs/methodology-pack.md` — private methodology pack contract
-- `specs/` — feature specs, plans, and task breakdowns (001–019)
+- `specs/` — feature specs, plans, and task breakdowns (001–020)
