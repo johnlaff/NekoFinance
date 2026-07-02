@@ -46,5 +46,9 @@ AJUSTES:
 R$ 0,10 - diferenca de arredondamento
 ```
 
-When the item total does not match the cell total, the app treats it as a warning condition. It
-does not fabricate values or change the spreadsheet total.
+When the item total does not match the cell total (beyond 1 cent of rounding), the importer keeps
+the parsed items and appends a synthetic `AJUSTES` item named `Diferença` worth the remainder
+(cell total − sum of items), mirroring the manual convention above. The cell total is always the
+source of truth: the app never changes the spreadsheet total, and the synthetic item only exists
+so the stored breakdown always sums to it. A single classified item under a section header is a
+valid breakdown on its own.
