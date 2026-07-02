@@ -752,11 +752,36 @@ export function listTags(): Promise<Tag[]> {
   return invoke("list_tags_cmd");
 }
 
+/** Cria uma tag livre (nome + cor + emoji opcional). `isSpecial` fixa a tag no topo ("! Pagar"). */
+export function createTag(
+  name: string,
+  color: string,
+  emoji: string | null,
+  isSpecial: boolean,
+): Promise<string> {
+  return invoke("create_tag_cmd", { name, color, emoji, isSpecial });
+}
+
 export function setTransactionTags(
   transactionId: string,
   tagIds: string[],
 ): Promise<void> {
   return invoke("set_transaction_tags_cmd", { transactionId, tagIds });
+}
+
+/** Renomeia/recolore uma tag (nome + cor + emoji). `is_special` re-deriva da convenção "!". */
+export function updateTag(
+  tagId: string,
+  name: string,
+  color: string,
+  emoji: string | null,
+): Promise<void> {
+  return invoke("update_tag_cmd", { tagId, name, color, emoji });
+}
+
+/** Liga/desliga "Ignorar nos cálculos" para uma tag (sai das métricas, não do Saldo). Plano 034. */
+export function updateTagExclude(tagId: string, exclude: boolean): Promise<void> {
+  return invoke("update_tag_exclude_cmd", { tagId, exclude });
 }
 
 export function tagTotalsForMonth(year: number, month: number): Promise<TagTotal[]> {
@@ -834,4 +859,16 @@ export function updateSeriesAll(
   edit: SeriesEdit,
 ): Promise<number> {
   return invoke("update_series_all_cmd", { recurrenceId, ...edit });
+}
+
+/** Apaga a ocorrência indicada e todas as posteriores ("deste ponto em diante"). O passado
+ * realizado fica intacto. Retorna quantas ocorrências foram removidas. */
+export function deleteSeriesFrom(transactionId: string): Promise<number> {
+  return invoke("delete_series_from_cmd", { transactionId });
+}
+
+/** Apaga TODA a série recorrente + a linha de recorrência. Retorna quantas ocorrências foram
+ * removidas. `recurrenceId` é o prefixo do id da ocorrência ("uuid:index" → "uuid"). */
+export function deleteSeriesAll(recurrenceId: string): Promise<number> {
+  return invoke("delete_series_all_cmd", { recurrenceId });
 }

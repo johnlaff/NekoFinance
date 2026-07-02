@@ -12,6 +12,8 @@ import {
 import { Button } from "../design-system/components/Button";
 import { SegmentedControl } from "../design-system/components/SegmentedControl";
 import {
+  deleteSeriesAll,
+  deleteSeriesFrom,
   deleteTransaction,
   getRecentTransactions,
   isTauri,
@@ -105,18 +107,59 @@ function currentMonthIndex(): number {
   return new Date().getMonth();
 }
 
-/** Delete a transaction row, refreshing on success. Module-scope so React Compiler sees it as stable. */
-function handleDelete(t: TransactionRow): void {
-  if (t.provenance === "importado") return; // guard: backend also rejects this
-  const confirmed = window.confirm(
-    `Apagar "${t.description || "lançamento"}"? Esta ação não pode ser desfeita.`,
+/**
+ * Recupera o id da recorrência a partir do id de uma ocorrência ("uuid:index" → "uuid").
+ * Sem dois-pontos = lançamento único (null). Evita ida ao backend só para saber se é série.
+ */
+function recurrenceIdOf(id: string): string | null {
+  return id.includes(":") ? id.slice(0, id.lastIndexOf(":")) : null;
+}
+
+/** True quando a linha é uma ocorrência de série recorrente (com parcelas COM repetições). */
+function isSeriesRow(t: TransactionRow): boolean {
+  return (
+    t.installment_index != null &&
+    t.installment_total != null &&
+    recurrenceIdOf(t.id) != null
   );
-  if (!confirmed) return;
-  void deleteTransaction(t.id)
+}
+
+/** Refresca a lista após um delete bem-sucedido; loga falhas sem quebrar a UI. */
+function afterDelete(run: Promise<unknown>): void {
+  void run
     .then(() => invalidateCommands())
     .catch((err: unknown) => {
       console.error("Falha ao apagar lançamento:", err);
     });
+}
+
+/**
+ * Apaga uma linha do Livro-razão. Numa ocorrência de série recorrente, oferece o escopo — toda a
+ * série / desta ocorrência em diante / só esta — via dois confirms (espelha o escopo do editar-série).
+ * Module-scope para o React Compiler vê-la como estável.
+ */
+function handleDelete(t: TransactionRow): void {
+  if (t.provenance === "importado") return; // guard: backend also rejects this
+  const recId = recurrenceIdOf(t.id);
+  if (isSeriesRow(t) && recId) {
+    const all = window.confirm(
+      "Apagar TODA a série recorrente?\n\nOK = apagar a série inteira\nCancela = escolher só esta ou as futuras",
+    );
+    if (all) {
+      afterDelete(deleteSeriesAll(recId));
+      return;
+    }
+    const fromHere = window.confirm(
+      "OK = apagar esta e todas as futuras da série.\nCancela = apagar somente esta ocorrência.",
+    );
+    afterDelete(fromHere ? deleteSeriesFrom(t.id) : deleteTransaction(t.id));
+    return;
+  }
+  const confirmed = window.confirm(
+    `Apagar "${t.description || "lançamento"}"? Esta ação não pode ser desfeita.`,
+  );
+  if (!confirmed) return;
+  afterDelete(deleteTransaction(t.id));
 }
 
 // ---------------------------------------------------------------------------
@@ -439,7 +482,7 @@ function Row({
                 onDelete(t);
               }}
             >
-              Apagar
+              {isSeriesRow(t) ? "Apagar da série" : "Apagar"}
             </Button>
           </div>
 

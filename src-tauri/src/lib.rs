@@ -68,6 +68,7 @@ pub fn run() {
             tags::list_tags_cmd,
             tags::set_transaction_tags_cmd,
             tags::tag_totals_for_month_cmd,
+            tags::update_tag_cmd,
             tags::update_tag_exclude_cmd,
             recurrence::create_recurring_series_cmd,
             recurrence::delete_series_from_cmd,

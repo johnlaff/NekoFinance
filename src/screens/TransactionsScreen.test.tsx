@@ -1,9 +1,10 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { TransactionsScreen } from "./TransactionsScreen";
 import { NekoAppProvider } from "../shell/appContext";
 import { TXNS, mockCommands, mockInvoke } from "../test/commands";
+import type { TransactionRow } from "../lib/api";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -17,6 +18,12 @@ function renderLedger() {
       <TransactionsScreen />
     </NekoAppProvider>,
   );
+}
+
+/** ISO date in the CURRENT month, so rows land in the default "Por mês" view regardless of clock. */
+function currentMonthISO(day = 15): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
 describe("TransactionsScreen (Lançamentos)", () => {
@@ -33,10 +40,11 @@ describe("TransactionsScreen (Lançamentos)", () => {
   });
 
   it("renders the ledger with the loaded transactions", async () => {
-    mockCommands({ get_recent_transactions: TXNS });
+    // Datas no mês corrente para o default "Por mês" (independe do relógio).
+    const rows = TXNS.map((t, i) => ({ ...t, date: currentMonthISO(10 + i) }));
+    mockCommands({ get_recent_transactions: rows });
     renderLedger();
-    // O default "Por mês" mostra o mês atual do fixture.
-    expect(await screen.findByText(TXNS[2]!.description)).toBeInTheDocument();
+    expect(await screen.findByText(rows[2]!.description)).toBeInTheDocument();
   });
 
   it("opens in Por mês view by default and lists it first", async () => {
@@ -60,7 +68,7 @@ describe("TransactionsScreen (Lançamentos)", () => {
         id: "itemized-061",
         amount: 10_000,
         description: "Despesa itemizada",
-        date: "2026-06-15",
+        date: currentMonthISO(15),
         payment_method: "debit",
         is_fixed: true,
         line_items: [
@@ -94,5 +102,96 @@ describe("TransactionsScreen (Lançamentos)", () => {
     expect(screen.getByLabelText("Item classificado como Cartão")).toBeInTheDocument();
     expect(screen.getByLabelText("Item classificado como Saída")).toBeInTheDocument();
     expect(screen.getByText("itens não batem")).toBeInTheDocument();
+  });
+});
+
+// Feature 3: apagar uma série recorrente com escopo (só esta / em diante / toda a série).
+describe("TransactionsScreen — apagar série recorrente", () => {
+  // Uma ocorrência de série no mês corrente (aparece na visão "Por mês" padrão).
+  function seriesRow(): TransactionRow {
+    const d = new Date();
+    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-15`;
+    return {
+      ...TXNS[1]!,
+      id: "rec-abc:2",
+      description: "Aluguel",
+      date: iso,
+      provenance: "manual",
+      installment_index: 3,
+      installment_total: 12,
+    };
+  }
+
+  async function openRowActions() {
+    const row = await screen.findByRole("button", { name: "Aluguel" });
+    await userEvent.click(row);
+    return screen.getByRole("button", { name: "Apagar da série" });
+  }
+
+  beforeEach(() => {
+    mockInvoke.mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("labels the delete action 'Apagar da série' on a recurring occurrence", async () => {
+    mockCommands({ get_recent_transactions: [seriesRow()], list_tags: [] });
+    renderLedger();
+    expect(await openRowActions()).toBeInTheDocument();
+  });
+
+  it("OK no 1º confirm apaga TODA a série (recurrence_id derivado do id)", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    mockCommands({
+      get_recent_transactions: [seriesRow()],
+      list_tags: [],
+      delete_series_all_cmd: 10,
+    });
+    renderLedger();
+    await userEvent.click(await openRowActions());
+
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith("delete_series_all_cmd", {
+        recurrenceId: "rec-abc",
+      }),
+    );
+  });
+
+  it("2º confirm OK apaga esta e as futuras (delete_series_from)", async () => {
+    vi.spyOn(window, "confirm")
+      .mockReturnValueOnce(false) // não é "toda a série"
+      .mockReturnValueOnce(true); // sim, "esta e as futuras"
+    mockCommands({
+      get_recent_transactions: [seriesRow()],
+      list_tags: [],
+      delete_series_from_cmd: 8,
+    });
+    renderLedger();
+    await userEvent.click(await openRowActions());
+
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith("delete_series_from_cmd", {
+        transactionId: "rec-abc:2",
+      }),
+    );
+  });
+
+  it("ambos confirms cancelados apagam só esta ocorrência", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    mockCommands({
+      get_recent_transactions: [seriesRow()],
+      list_tags: [],
+      delete_transaction_cmd: null,
+    });
+    renderLedger();
+    await userEvent.click(await openRowActions());
+
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith("delete_transaction_cmd", {
+        id: "rec-abc:2",
+      }),
+    );
   });
 });
