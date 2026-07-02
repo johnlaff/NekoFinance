@@ -165,20 +165,22 @@ pub(crate) async fn import_one_tab(
     // Notas de célula = a descrição real de cada lançamento (quem/o quê/quanto por item). Sem
     // elas, o parser só tem fallback estrutural ("Entrada/Saída {data}"). Se a API de notas
     // falhar, os valores ainda entram, mas essas descrições não são tratadas como fonte canônica.
-    let (notes, descriptions_trusted) =
-        match client.get_sheet_notes(spreadsheet_id, sheet_name).await {
-            Ok(notes) => (notes, true),
-            Err(e) => {
-                // Ciclo DEGRADADO (auditoria 2026-07, P0): os valores ainda entram, mas itens
-                // classificados e `source_note` ficam CONGELADOS (gate de confiança no
-                // `import_rows_core`) e a `raw_note` sai do checksum — uma falha transitória da
-                // API de notas não pode reimportar destrutivamente nem apagar classificação.
-                eprintln!(
-                    "[import] notas de célula indisponíveis em '{sheet_name}': {e} — ciclo degradado (classificação preservada)"
-                );
-                (Vec::new(), false)
-            }
-        };
+    let (notes, descriptions_trusted) = match client
+        .get_sheet_notes(spreadsheet_id, sheet_name)
+        .await
+    {
+        Ok(notes) => (notes, true),
+        Err(e) => {
+            // Ciclo DEGRADADO (auditoria 2026-07, P0): os valores ainda entram, mas itens
+            // classificados e `source_note` ficam CONGELADOS (gate de confiança no
+            // `import_rows_core`) e a `raw_note` sai do checksum — uma falha transitória da
+            // API de notas não pode reimportar destrutivamente nem apagar classificação.
+            eprintln!(
+                "[import] notas de célula indisponíveis em '{sheet_name}': {e} — ciclo degradado (classificação preservada)"
+            );
+            (Vec::new(), false)
+        }
+    };
     let imported_rows = import::parse_rows_with_layout(&rows, &layout, &mappings, &notes)?;
     let options = import::ImportRowsOptions {
         descriptions_trusted,

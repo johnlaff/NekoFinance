@@ -1664,8 +1664,7 @@ mod tests {
         // + transfers→reserva (a aba escrita casa com o Economizado% exibido). Anotação antiga,
         // ilíquido (patrimônio) e fallback por descrição/banco seguem fora.
         assert_eq!(
-            by_month[2],
-            70_000,
+            by_month[2], 70_000,
             "março = itens ECONOMIA (40.000) + transfer→reserva (30.000)"
         );
         assert_eq!(

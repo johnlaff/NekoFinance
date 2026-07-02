@@ -876,7 +876,14 @@ mod tests {
         ];
         let mut annotation = std::collections::HashMap::new();
         annotation.insert((2026i32, 3u32), 100_000i64);
-        let f = project_with_metrics(0, d("2026-03-01"), &events, &events, d("2026-03-31"), &annotation);
+        let f = project_with_metrics(
+            0,
+            d("2026-03-01"),
+            &events,
+            &events,
+            d("2026-03-31"),
+            &annotation,
+        );
         let m = f.months.iter().find(|m| m.month == 3).unwrap();
         assert_eq!(m.economia_cents, 100_000); // uma vez, não 200_000
         assert_eq!(m.savings_rate_bps, 1_000); // 10%, não 20%
@@ -893,7 +900,14 @@ mod tests {
         ];
         let mut annotation = std::collections::HashMap::new();
         annotation.insert((2026i32, 3u32), 160_000i64);
-        let f = project_with_metrics(0, d("2026-03-01"), &events, &events, d("2026-03-31"), &annotation);
+        let f = project_with_metrics(
+            0,
+            d("2026-03-01"),
+            &events,
+            &events,
+            d("2026-03-31"),
+            &annotation,
+        );
         let m = f.months.iter().find(|m| m.month == 3).unwrap();
         assert_eq!(m.economia_cents, 160_000);
         assert_eq!(m.performance_cents, 840_000);
@@ -905,7 +919,14 @@ mod tests {
         let events = [ev("2026-03-05", EventKind::Income, 1_000_000)];
         let mut annotation = std::collections::HashMap::new();
         annotation.insert((2026i32, 3u32), 50_000i64);
-        let f = project_with_metrics(0, d("2026-03-01"), &events, &events, d("2026-03-31"), &annotation);
+        let f = project_with_metrics(
+            0,
+            d("2026-03-01"),
+            &events,
+            &events,
+            d("2026-03-31"),
+            &annotation,
+        );
         let m = f.months.iter().find(|m| m.month == 3).unwrap();
         assert_eq!(m.economia_cents, 50_000);
         assert_eq!(m.performance_cents, 950_000);

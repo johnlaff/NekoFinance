@@ -3741,12 +3741,7 @@ mod tests {
     // senão o guard de idempotência quebrava e o re-import destrutivo rodava sempre.
     #[test]
     fn checksum_ignores_raw_note_when_untrusted() {
-        let with_note = vec![imported_note(
-            "2026-02-17",
-            -10_000,
-            "R$ 100,00 - X",
-            false,
-        )];
+        let with_note = vec![imported_note("2026-02-17", -10_000, "R$ 100,00 - X", false)];
         let without_note = vec![imported_desc("2026-02-17", -10_000, "Linha 2026-02-17")];
         assert_eq!(
             compute_import_checksum(&with_note, false),
