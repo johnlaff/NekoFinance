@@ -531,9 +531,10 @@ async fn import_rows_core(
         // (re-deriva), consistente com o bloco 023.
         //
         // SEGURO POR PADRÃO: o total do pai jamais é alterado. Quando o somatório das
-        // partes diverge da célula além de 1 centavo, um item sintético AJUSTES
-        // "Diferença" completa a soma (a mesma convenção usada à mão na planilha) — o
-        // breakdown sobrevive em vez de ser descartado (auditoria 2026-07).
+        // partes diverge da célula, o breakdown sobrevive (a classificação é preservada,
+        // auditoria 2026-07) e o resíduo célula − Σpartes é reconciliado COM SINAL no
+        // loader de métricas — a convenção AJUSTES "Diferença" da planilha, sem persistir
+        // item sintético. O write-back escreve RAW quando a soma não bate.
         //
         // GATE DE CONFIANÇA (auditoria 2026-07, P0): num ciclo degradado — falha da API
         // de notas ou import .xlsx (calamine não expõe notas) — toda `raw_note` chega
@@ -571,26 +572,20 @@ async fn import_rows_core(
                 .map_err(|e| format!("set source_note for {txn_id}: {e}"))?;
 
             if !keep_local {
-                let mut items = parse_itemized_note(&row.raw_note);
-                let parts_sum: i64 = items.iter().map(|i| i.amount_cents).sum();
-                let parent_total = row.amount.abs();
-                // 1 item já carrega classificação (a seção decide o balde financeiro) — o gate
-                // antigo de ≥2 partes jogava Economia/Cartão de item único no custo de vida.
-                // Divergência de soma além de 1 centavo vira item sintético AJUSTES "Diferença"
-                // = célula − soma das partes; os itens passam a SEMPRE somar o pai.
-                if !items.is_empty() {
-                    let residual = parent_total - parts_sum;
-                    if residual.abs() > 1 {
-                        items.push(NoteLineItem {
-                            amount_cents: residual,
-                            description: "Diferença".into(),
-                            kind: ItemKind::Ajuste,
-                            position: items.len(),
-                            section: Some("AJUSTES".into()),
-                        });
-                    }
-                }
-                let sum_matches = !items.is_empty();
+                let items = parse_itemized_note(&row.raw_note);
+                // Persistir itens é seguro quando eles CARREGAM classificação: ≥2 partes
+                // (breakdown de verdade) OU 1 parte SOB cabeçalho de seção — o gate antigo de
+                // ≥2 jogava Economia/Cartão de item único no custo de vida. Memo de linha única
+                // SEM seção não é breakdown (persistir migraria um Diário/Cartão para Saída).
+                //
+                // Soma divergente NÃO descarta mais o breakdown (a classificação sobrevive):
+                // o resíduo célula − Σpartes entra COM SINAL como Saída fixa no loader de
+                // métricas (a convenção AJUSTES "Diferença" da planilha, sem persistir item
+                // sintético — id/posição colidiriam e o sinal quebraria o write-back), e o
+                // write-back cai para escrita RAW do total quando a soma não bate. O total da
+                // célula do dono jamais é alterado.
+                let has_breakdown =
+                    items.len() >= 2 || (items.len() == 1 && items[0].section.is_some());
 
                 // Limpa os itens antigos desta txn (idempotente no re-import; a nota é autoritativa).
                 sqlx::query("DELETE FROM line_item WHERE transaction_id = ?1")
@@ -599,7 +594,7 @@ async fn import_rows_core(
                     .await
                     .map_err(|e| format!("clear line_items for {txn_id}: {e}"))?;
 
-                if sum_matches {
+                if has_breakdown {
                     for item in &items {
                         // Id determinístico `li:<txn_id>:<pos>` → re-import estável (UPSERT).
                         // `is_user_edited = 0`: derivado da nota (não-editado), reset explícito.
@@ -625,7 +620,7 @@ async fn import_rows_core(
                         .map_err(|e| format!("insert line_item {item_id}: {e}"))?;
                     }
                 }
-                // Somatório não bate ou nota sem itens: nenhum item inserido; total do pai intacto.
+                // Nota sem breakdown (vazia ou memo de 1 linha sem seção): nenhum item inserido.
             }
             // keep_local: itens editados no app sobrevivem (a nota não mudou) — nada a fazer.
         }
@@ -3549,12 +3544,13 @@ mod tests {
         assert_eq!(amount_by_date(&pool, "2026-02-10").await, 15_000);
     }
 
-    // Mismatch: partes não somam o total → item sintético AJUSTES "Diferença" completa a soma
-    // (auditoria 2026-07; antes o breakdown inteiro era descartado e a classificação se perdia).
+    // Mismatch: partes não somam o total → o breakdown SOBREVIVE (a classificação é o que
+    // importa; antes era descartado inteiro) sem nenhum item sintético persistido — o resíduo
+    // é reconciliado com sinal no loader de métricas e o write-back cai para RAW.
     #[tokio::test]
-    async fn line_items_sum_mismatch_gets_synthetic_diferenca() {
+    async fn line_items_sum_mismatch_keeps_breakdown_without_synthetic() {
         let pool = test_pool().await;
-        // Total R$ 100,00; nota soma R$ 120,00 → A + B + Diferença de −R$ 20,00.
+        // Total R$ 100,00; nota soma R$ 120,00 → os 2 itens persistem como estão.
         let rows = vec![imported_note(
             "2026-02-11",
             -10_000,
@@ -3564,27 +3560,38 @@ mod tests {
         import_rows(&pool, "2026", &rows, "p1").await.unwrap();
 
         let txn_id = row_id("2026", "2026-02-11", RowKind::Saida, 0);
-        assert_eq!(count_line_items(&pool, &txn_id).await, 3);
-        let (amount, desc, section): (i64, String, Option<String>) = sqlx::query_as(
-            "SELECT amount_cents, description, section FROM line_item \
-             WHERE transaction_id = ?1 AND position = 2",
+        assert_eq!(
+            count_line_items(&pool, &txn_id).await,
+            2,
+            "sem item sintético"
+        );
+        let (diferenca_count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM line_item WHERE transaction_id = ?1 AND description = 'Diferença'",
         )
         .bind(&txn_id)
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(amount, -2_000, "Diferença = célula − soma das partes");
-        assert_eq!(desc, "Diferença");
-        assert_eq!(section.as_deref(), Some("AJUSTES"));
-        // Os itens somam o pai; o total do pai segue intocado (a célula é a verdade).
-        let (items_sum,): (i64,) =
-            sqlx::query_as("SELECT SUM(amount_cents) FROM line_item WHERE transaction_id = ?1")
-                .bind(&txn_id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(items_sum, 10_000);
+        assert_eq!(diferenca_count, 0);
+        // O total do pai segue intocado (a célula é a verdade).
         assert_eq!(amount_by_date(&pool, "2026-02-11").await, 10_000);
+    }
+
+    // Memo de UMA linha sem cabeçalho de seção NÃO é breakdown: persistir migraria um
+    // Diário/Cartão para Saída fixa via classify_line_item(None) (review da auditoria 2026-07).
+    #[tokio::test]
+    async fn line_items_single_memo_without_section_not_stored() {
+        let pool = test_pool().await;
+        let rows = vec![imported_note(
+            "2026-02-18",
+            -5_000,
+            "R$ 50,00 - Mercado",
+            false,
+        )];
+        import_rows(&pool, "2026", &rows, "p1").await.unwrap();
+
+        let txn_id = row_id("2026", "2026-02-18", RowKind::Saida, 0);
+        assert_eq!(count_line_items(&pool, &txn_id).await, 0);
     }
 
     // Re-import idêntico: mesmos itens, sem duplicar (clear-then-reinsert).

@@ -1,8 +1,26 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { isTauri } from "./api";
 import { safeErrorMessage } from "./errors";
 
 const cache = new Map<string, unknown>();
+
+// Versão global do cache: cada invalidate incrementa e notifica os hooks montados, que
+// re-executam o fetch. Sem isso, invalidateCommands() só limpava o Map e o refetch ficava
+// para o PRÓXIMO mount — todo botão "Tentar novamente" e todo refresh pós-escrita em tela
+// já montada era um no-op silencioso (review da auditoria 2026-07).
+let cacheVersion = 0;
+const listeners = new Set<() => void>();
+
+function subscribeToInvalidations(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+function getCacheVersion() {
+  return cacheVersion;
+}
 
 interface CommandState<T> {
   cmd: string;
@@ -21,9 +39,12 @@ function stateFor<T>(cmd: string): CommandState<T> {
   };
 }
 
-/** Drops every cached response. Call after any write/import so finance numbers refresh. */
+/** Drops every cached response and refetches every mounted hook. Call after any
+ *  write/import so finance numbers refresh. */
 export function invalidateCommands() {
   cache.clear();
+  cacheVersion += 1;
+  for (const listener of listeners) listener();
 }
 
 /**
@@ -48,6 +69,7 @@ export function invalidateCommands() {
  */
 export function useCommand<T>(cmd: string, fetcher: () => Promise<T>) {
   const [state, setState] = useState<CommandState<T>>(() => stateFor<T>(cmd));
+  const version = useSyncExternalStore(subscribeToInvalidations, getCacheVersion);
   const visible = state.cmd === cmd ? state : stateFor<T>(cmd);
 
   useEffect(() => {
@@ -83,8 +105,9 @@ export function useCommand<T>(cmd: string, fetcher: () => Promise<T>) {
     // stable function ref). Adding fetcher to the deps would re-run the effect on
     // every render for callers that inline their arrow, breaking the "no skeleton
     // flash on remount" contract. See the JSDoc on useCommand for the requirement.
+    // `version` re-executa o fetch quando invalidateCommands() roda (retry/pós-escrita).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cmd]);
+  }, [cmd, version]);
 
   return {
     data: visible.data,

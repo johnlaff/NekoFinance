@@ -151,9 +151,12 @@ export function DashboardScreen() {
   const forecast = forecastQ.data;
   const fetchError = summaryQ.error ?? forecastQ.error;
 
-  // Nunca renderizar R$ 0,00 fingindo dado real: sem summary/forecast e com erro de
-  // fetch, mostra estado de erro com retry (mesmo padrão de TotaisScreen/Transactions).
-  if (fetchError && !summary && !forecast) {
+  // Nunca renderizar R$ 0,00 fingindo dado real: se QUALQUER uma das duas fontes do herói
+  // falhou sem dado (nem cache), os números não podem ser calculados — estado de erro com
+  // retry. O banner "dados antigos" fica só para quando todas as fontes têm cache.
+  const summaryMissing = Boolean(summaryQ.error) && !summary;
+  const forecastMissing = Boolean(forecastQ.error) && !forecast;
+  if (summaryMissing || forecastMissing) {
     return (
       <div className="hoje neko-app">
         <EmptyState

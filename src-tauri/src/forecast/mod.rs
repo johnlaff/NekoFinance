@@ -383,10 +383,13 @@ fn month_metrics(
                 }
             }
             // Anotação da aba Economia para este mês (import via store_economia_entries, plano 052).
-            // Desde o pacote K a aba é DERIVADA dos itens ECONOMIA + write-back (plano 062): após o
-            // round-trip, anotação e eventos representam o MESMO dinheiro — somar dobraria. Regra:
-            // o mês vale o MAIOR entre o derivado (eventos acima) e a anotação. Mês só-planilha
-            // (sem eventos) usa a anotação; excedente digitado à mão na aba ainda conta.
+            // Desde o pacote K a aba é DERIVADA dos itens ECONOMIA + transfers→reserva (write-back
+            // 062): após o round-trip, anotação e eventos representam o MESMO dinheiro — somar
+            // dobraria. Regra: o mês vale o MAIOR entre o derivado (eventos acima) e a anotação.
+            // Mês só-planilha usa a anotação; excedente digitado à mão ainda conta. Trade-off
+            // deliberado: dinheiro GENUINAMENTE disjunto (anotação só-planilha + transfer manual
+            // ainda não escrito de volta) fica subcontado até o próximo write-back alinhar a aba —
+            // preferível à dupla contagem permanente que o `+=` causava após cada round-trip.
             let annotation_cents = annotation.get(&(year, month)).copied().unwrap_or(0);
             economia = economia.max(annotation_cents);
             // Custo de vida = Saídas fixas + Diário realizado + Cartão. Economia e Patrimônio são

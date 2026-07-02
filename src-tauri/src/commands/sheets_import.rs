@@ -181,6 +181,14 @@ pub(crate) async fn import_one_tab(
             (Vec::new(), false)
         }
     };
+    // Sinaliza (ou limpa) o ciclo degradado para a UI (painel do Google Sheets) — sem isto a
+    // degradação era invisível fora do stderr (review da auditoria 2026-07). KV local apenas.
+    crate::commands::write_back_cmds::app_setting_set(
+        pool,
+        "notes_degraded_last_sheet",
+        if descriptions_trusted { "" } else { sheet_name },
+    )
+    .await?;
     let imported_rows = import::parse_rows_with_layout(&rows, &layout, &mappings, &notes)?;
     let options = import::ImportRowsOptions {
         descriptions_trusted,

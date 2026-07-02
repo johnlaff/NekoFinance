@@ -990,6 +990,7 @@ async fn record_write_back_log(
 pub(crate) async fn load_economia_by_month(
     pool: &SqlitePool,
     year: i32,
+    today: chrono::NaiveDate,
 ) -> Result<[i64; 12], String> {
     let mut by = [0i64; 12];
 
@@ -1027,11 +1028,15 @@ pub(crate) async fn load_economia_by_month(
 
     // Transfers manuais → conta RESERVA (plano 003) também são economia do mês — MESMA definição
     // do motor mensal/anual (auditoria 2026-07, #25): a aba que o app escreve tem que casar com o
-    // Economizado% que o app exibe. Ilíquido (previdência) é patrimônio: fica fora.
+    // Economizado% que o app exibe. Ilíquido (previdência) é patrimônio: fica fora. O corte é por
+    // DATA (`<= hoje`), não pelo flag is_projection (que fica congelado quando a data passa):
+    // a aba registra poupança FEITA — escrever ocorrências FUTURAS de série fabricaria economia
+    // que ainda não aconteceu (review da auditoria); os itens de nota seguem o ano inteiro porque
+    // nascem das células da própria planilha (round-trip de lumps pré-lançados).
     let transfers: Vec<(String, i64)> = sqlx::query_as(
         "SELECT substr(t.date, 1, 7), COALESCE(SUM(ABS(t.amount)), 0) FROM \"transaction\" t \
          LEFT JOIN account a ON a.id = t.to_account_id \
-         WHERE t.date >= ?1 AND t.date < ?2 \
+         WHERE t.date >= ?1 AND t.date < ?2 AND t.date <= ?3 \
            AND t.type='transfer' AND a.liquidity = 'reserve' \
            AND NOT EXISTS ( \
                SELECT 1 FROM transaction_tag tt2 \
@@ -1042,6 +1047,7 @@ pub(crate) async fn load_economia_by_month(
     )
     .bind(format!("{year:04}-01-01"))
     .bind(format!("{}-01-01", year + 1))
+    .bind(today.format("%Y-%m-%d").to_string())
     .fetch_all(pool)
     .await
     .map_err(|e| format!("query economia transfers: {e}"))?;
@@ -1074,7 +1080,7 @@ pub(crate) async fn build_economia_plan(
     let values = client
         .get_sheet_values(spreadsheet_id, "'Economia'")
         .await?;
-    let by_month = load_economia_by_month(pool, year).await?;
+    let by_month = load_economia_by_month(pool, year, chrono::Local::now().date_naive()).await?;
     let plan = write_back::plan_economia_write_back(&values.values, year, &by_month);
     Ok((client, plan))
 }
@@ -1592,7 +1598,13 @@ mod tests {
             .await
             .unwrap();
 
-        let by_month = load_economia_by_month(&p, 2026).await.unwrap();
+        let by_month = load_economia_by_month(
+            &p,
+            2026,
+            chrono::NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(),
+        )
+        .await
+        .unwrap();
         // Março (índice 2) carrega só o item cujo pai NÃO tem tag excluída (30_000), não 80_000.
         assert_eq!(
             by_month[2], 30_000,
@@ -1634,7 +1646,8 @@ mod tests {
         sqlx::query(
             "INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) \
              VALUES ('tr-reserve', 'transfer', 30_000, '2026-03-24', 'res-1', 0), \
-                    ('tr-illiquid', 'transfer', 60_000, '2026-03-25', 'ill-1', 0)",
+                    ('tr-illiquid', 'transfer', 60_000, '2026-03-25', 'ill-1', 0), \
+                    ('tr-reserve-proj', 'transfer', 80_000, '2026-08-10', 'res-1', 1)",
         )
         .execute(&p)
         .await
@@ -1659,7 +1672,13 @@ mod tests {
         .await
         .unwrap();
 
-        let by_month = load_economia_by_month(&p, 2026).await.unwrap();
+        let by_month = load_economia_by_month(
+            &p,
+            2026,
+            chrono::NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(),
+        )
+        .await
+        .unwrap();
         // Auditoria 2026-07 (#25): definição canônica ÚNICA de economia — itens de seção ECONOMIA
         // + transfers→reserva (a aba escrita casa com o Economizado% exibido). Anotação antiga,
         // ilíquido (patrimônio) e fallback por descrição/banco seguem fora.
@@ -1670,7 +1689,8 @@ mod tests {
         assert_eq!(
             by_month.iter().sum::<i64>(),
             70_000,
-            "sem anotação antiga, transfer ilíquido ou fallback por descrição/banco"
+            "sem anotação antiga, transfer ilíquido, ocorrência projetada de série \
+             ou fallback por descrição/banco"
         );
     }
 
@@ -1696,7 +1716,13 @@ mod tests {
         .await
         .unwrap();
 
-        let before = load_economia_by_month(&p, 2026).await.unwrap();
+        let before = load_economia_by_month(
+            &p,
+            2026,
+            chrono::NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(),
+        )
+        .await
+        .unwrap();
         assert_eq!(before[0], 40_000);
 
         let cell = CellWrite {
@@ -1728,7 +1754,13 @@ mod tests {
         .unwrap();
         assert_eq!(annotation, 40_000);
 
-        let after = load_economia_by_month(&p, 2026).await.unwrap();
+        let after = load_economia_by_month(
+            &p,
+            2026,
+            chrono::NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             after[0], 40_000,
             "a proposta continua igual aos itens auto-derivados, sem somar a anotação"

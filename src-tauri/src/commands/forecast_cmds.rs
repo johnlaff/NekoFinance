@@ -221,6 +221,8 @@ pub(crate) async fn realized_annual_economia(
         }
     }
 
+    // A janela de meses COMPLETOS decide, não o flag `is_projection` (que fica congelado
+    // quando a data passa — mesma regra de staleness do savings, ver commands::tests).
     let transfer_rows: Vec<(String, i64)> = sqlx::query_as(
         "SELECT substr(t.date, 1, 7), COALESCE(SUM(ABS(t.amount)), 0) FROM \"transaction\" t \
          LEFT JOIN account a ON a.id = t.to_account_id \
@@ -803,6 +805,22 @@ async fn load_metric_db_events(
                     date,
                     kind: event_kind_for_item_kind(kind),
                     amount_cents: item.amount_cents.abs(),
+                    realized: row.is_projection == 0,
+                });
+            }
+            // A célula é a dona do TOTAL: se as partes da nota não somam o pai, o resíduo
+            // (célula − Σ|partes|) entra como Saída fixa COM SINAL — a convenção AJUSTES
+            // "Diferença" da planilha aplicada na leitura, sem item sintético persistido.
+            // Um resíduo negativo (partes > célula) REDUZ fixed_out para os baldes fecharem
+            // com o total; por isso este evento é a exceção documentada à convenção
+            // "amount_cents sempre positivo" do CashflowEvent (só métrica, nunca na cadeia).
+            let parts_sum: i64 = items.iter().map(|i| i.amount_cents.abs()).sum();
+            let residual = row.amount.abs() - parts_sum;
+            if residual != 0 {
+                events.push(CashflowEvent {
+                    date,
+                    kind: forecast::EventKind::FixedOut,
+                    amount_cents: residual,
                     realized: row.is_projection == 0,
                 });
             }
@@ -1843,10 +1861,65 @@ mod tests {
         .await
         .unwrap();
 
+        // (d) Agosto (FUTURO): ocorrência projetada de série → reserva — a janela de meses
+        // completos a deixa fora (o flag is_projection NÃO é o guarda; ver
+        // economia_ignores_stale_is_projection_flag).
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) \
+             VALUES ('t-ago-proj', 'transfer', 70000, '2026-08-15', 'acc-res', 1)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
         let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
         let economia = realized_annual_economia(&p, today).await.unwrap();
-        // jan max(30.000, 30.000) + fev max(20.000, 0) = 50.000; previdência de março fora.
+        // jan max(30.000, 30.000) + fev max(20.000, 0) = 50.000; previdência e futuro fora.
         assert_eq!(economia, 50_000);
+    }
+
+    // Auditoria 2026-07 (review): célula 100,00 com nota somando 120,00 — o resíduo −20,00
+    // entra como Saída fixa COM SINAL para os baldes fecharem com o total da célula (a
+    // convenção AJUSTES "Diferença" da planilha aplicada na leitura, sem item sintético).
+    #[tokio::test]
+    async fn metric_events_reconcile_item_residual_with_sign() {
+        let p = pool().await;
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('t-res', 'expense', 10000, '2026-03-10', 1, 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, is_user_edited, section) \
+             VALUES ('li:t-res:1', 't-res', 12000, 'Banco A', 1, 0, 'CARTÕES')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let start = NaiveDate::from_ymd_opt(2026, 3, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+        let events = load_metric_db_events(&p, start, end).await.unwrap();
+
+        let cartao: i64 = events
+            .iter()
+            .filter(|e| e.kind == forecast::EventKind::Cartao)
+            .map(|e| e.amount_cents)
+            .sum();
+        let fixed: i64 = events
+            .iter()
+            .filter(|e| e.kind == forecast::EventKind::FixedOut)
+            .map(|e| e.amount_cents)
+            .sum();
+        assert_eq!(cartao, 12_000);
+        assert_eq!(fixed, -2_000, "resíduo com sinal reduz a Saída fixa");
+        assert_eq!(
+            cartao + fixed,
+            10_000,
+            "os baldes fecham com o total da célula"
+        );
     }
 
     // Bugs 1+3 (plano 052): a anotação e os transfers reais são DISJUNTOS — `store_economia_entries`

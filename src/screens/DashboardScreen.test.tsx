@@ -118,4 +118,22 @@ describe("DashboardScreen (Hoje)", () => {
     expect(screen.queryByText("Pode gastar hoje")).not.toBeInTheDocument();
     expect(screen.queryByText(/R\$\s?0,00/)).not.toBeInTheDocument();
   });
+
+  it("estado de erro também quando SÓ uma das fontes falha no primeiro load (sem zeros fabricados)", async () => {
+    // Review da auditoria 2026-07: com summary falhando e forecast OK, a tela renderizava o
+    // herói com teto/saldo/reserva = 0 e um banner mentindo "últimos dados carregados".
+    mockCommands({
+      get_dashboard_summary: new Error("db offline"),
+      get_forecast: FORECAST,
+      get_upcoming_bills: [],
+    });
+
+    renderHoje();
+
+    expect(
+      await screen.findByText("Não foi possível carregar o painel"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Pode gastar hoje")).not.toBeInTheDocument();
+    expect(screen.queryByText(/R\$\s?0,00/)).not.toBeInTheDocument();
+  });
 });
