@@ -103,6 +103,47 @@ describe("TransactionsScreen (Lançamentos)", () => {
     expect(screen.getByLabelText("Item classificado como Saída")).toBeInTheDocument();
     expect(screen.getByText("itens não batem")).toBeInTheDocument();
   });
+
+  it("items of an income row carry the Entrada badge, never Saída", async () => {
+    const txns = [
+      {
+        ...TXNS[2]!,
+        id: "income-itemized",
+        amount: 300_264,
+        description: "Entrada itemizada",
+        date: currentMonthISO(12),
+        line_items: [
+          {
+            id: "li-inc-1",
+            transaction_id: "income-itemized",
+            amount_cents: 257_764,
+            description: "salário",
+            position: 0,
+            kind: "entrada",
+          },
+          {
+            id: "li-inc-2",
+            transaction_id: "income-itemized",
+            amount_cents: 42_500,
+            description: "reembolso",
+            position: 1,
+            kind: "entrada",
+          },
+        ],
+      },
+    ];
+    mockCommands({ get_recent_transactions: txns });
+    renderLedger();
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const row = await screen.findByRole("button", { name: "Entrada itemizada" });
+    await user.click(row);
+
+    expect(screen.getAllByLabelText("Item classificado como Entrada")).toHaveLength(2);
+    expect(
+      screen.queryByLabelText("Item classificado como Saída"),
+    ).not.toBeInTheDocument();
+  });
 });
 
 // Feature 3: apagar uma série recorrente com escopo (só esta / em diante / toda a série).

@@ -19,6 +19,7 @@ pub struct LineItemOnRow {
     pub description: String,
     pub position: i64,
     /// Kind derivado da seção da nota, sem fallback por descrição/banco.
+    /// Pai `income` → "entrada" (os kinds de seção só fatiam saídas).
     pub kind: String,
 }
 
@@ -30,6 +31,9 @@ struct LineItemDbRow {
     description: String,
     position: i64,
     section: Option<String>,
+    /// `type` do lançamento pai — decide se o kind vem do classificador de seção
+    /// (pai despesa) ou é "entrada" (partes de uma entrada são entradas).
+    parent_type: String,
 }
 
 fn line_item_kind_slug(kind: import::ItemKind) -> &'static str {
@@ -44,14 +48,23 @@ fn line_item_kind_slug(kind: import::ItemKind) -> &'static str {
 }
 
 fn line_item_on_row(row: LineItemDbRow) -> LineItemOnRow {
-    let kind = import::classify_line_item(row.section.as_deref(), row.description.as_str());
+    // Os kinds de seção fatiam SAÍDAS em baldes (saída/cartão/diário/economia/
+    // patrimônio); partes de uma entrada são entradas, qualquer que seja a seção.
+    let kind = if row.parent_type == "income" {
+        "entrada"
+    } else {
+        line_item_kind_slug(import::classify_line_item(
+            row.section.as_deref(),
+            row.description.as_str(),
+        ))
+    };
     LineItemOnRow {
         id: row.id,
         transaction_id: row.transaction_id,
         amount_cents: row.amount_cents,
         description: row.description,
         position: row.position,
-        kind: line_item_kind_slug(kind).to_string(),
+        kind: kind.to_string(),
     }
 }
 
@@ -61,8 +74,10 @@ pub(crate) async fn line_items_for_transaction(
     transaction_id: &str,
 ) -> Result<Vec<LineItemOnRow>, String> {
     let rows: Vec<LineItemDbRow> = sqlx::query_as(
-        "SELECT id, transaction_id, amount_cents, description, position, section \
-         FROM line_item WHERE transaction_id = ?1 ORDER BY position",
+        "SELECT li.id, li.transaction_id, li.amount_cents, li.description, li.position, \
+                li.section, t.type AS parent_type \
+         FROM line_item li JOIN \"transaction\" t ON t.id = li.transaction_id \
+         WHERE li.transaction_id = ?1 ORDER BY li.position",
     )
     .bind(transaction_id)
     .fetch_all(pool)
@@ -201,9 +216,11 @@ pub(crate) async fn recent_transactions(
     } else {
         let placeholders = vec!["?"; ids.len()].join(",");
         let sql = format!(
-            "SELECT id, transaction_id, amount_cents, description, position, section \
-             FROM line_item WHERE transaction_id IN ({placeholders}) \
-             ORDER BY transaction_id, position"
+            "SELECT li.id, li.transaction_id, li.amount_cents, li.description, li.position, \
+                    li.section, t.type AS parent_type \
+             FROM line_item li JOIN \"transaction\" t ON t.id = li.transaction_id \
+             WHERE li.transaction_id IN ({placeholders}) \
+             ORDER BY li.transaction_id, li.position"
         );
         let mut q = sqlx::query_as::<_, LineItemDbRow>(sqlx::AssertSqlSafe(sql));
         for id in &ids {
@@ -952,6 +969,46 @@ mod tests {
         assert_eq!(
             items[1].kind, "saida",
             "sem seção, nome de banco/cartão na descrição não muda o kind"
+        );
+    }
+
+    #[tokio::test]
+    async fn line_items_of_income_parent_are_entrada() {
+        let pool = test_pool().await;
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, created_at, updated_at) \
+             VALUES ('tx-income', 'income', 300264, '2026-07-12', 0, 0, '2026-07-12T00:00:00Z', '2026-07-12T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        for (id, amount, description, position, section) in [
+            ("li-inc-plain", 257764, "salário", 0, None::<&str>),
+            ("li-inc-sec", 42500, "reembolso", 1, Some("CARTÕES:")),
+        ] {
+            sqlx::query(
+                "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, section) \
+                 VALUES (?1, 'tx-income', ?2, ?3, ?4, ?5)",
+            )
+            .bind(id)
+            .bind(amount)
+            .bind(description)
+            .bind(position)
+            .bind(section)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let items = line_items_for_transaction(&pool, "tx-income")
+            .await
+            .unwrap();
+
+        assert_eq!(items[0].kind, "entrada");
+        assert_eq!(
+            items[1].kind, "entrada",
+            "os kinds de seção fatiam saídas; uma seção na nota não rebaixa parte de entrada a balde de saída"
         );
     }
 

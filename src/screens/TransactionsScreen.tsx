@@ -176,6 +176,7 @@ const FILTER_CHIPS: { key: FilterKey; label: string; color: string }[] = [
 ];
 
 const LINE_ITEM_KIND_META: Record<LineItemKind, LineItemKindMeta> = {
+  entrada: { name: TYPE_META.entrada.name, color: TYPE_META.entrada.color },
   saida: { name: TYPE_META.saida.name, color: TYPE_META.saida.color },
   cartao: { name: TYPE_META.cartao.name, color: TYPE_META.cartao.color },
   diario: { name: TYPE_META.diario.name, color: TYPE_META.diario.color },
