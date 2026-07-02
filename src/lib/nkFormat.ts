@@ -7,6 +7,11 @@
  * `lib/format` for money. No data fetching here — screens wire real data from `lib/api`.
  */
 import { formatBRL } from "./format";
+import {
+  saldoBand as classifySaldoBand,
+  SALDO_BAND_FILL,
+  type SaldoBand as SaldoBandKey,
+} from "./saldoHeatmap";
 
 export type MovementType = "entrada" | "saida" | "diario" | "economia" | "cartao";
 
@@ -71,48 +76,28 @@ export interface SaldoBand {
   label: string;
 }
 
+/** Cor de texto e rótulo pt-BR por faixa do termômetro (apresentação; a classificação
+ *  canônica vive em `saldoHeatmap.ts`). */
+const SALDO_BAND_UI: Record<SaldoBandKey, { text: string; label: string }> = {
+  critical: { text: "var(--danger-400)", label: "Crítico" },
+  negative: { text: "var(--danger-400)", label: "Negativo" },
+  tight: { text: "var(--warning-400)", label: "Apertado" },
+  ok: { text: "var(--success-400)", label: "OK" },
+  comfortable: { text: "var(--success-400)", label: "Folga" },
+};
+
 /**
  * Termômetro de saldo — limiares ABSOLUTOS em centavos (canônico da planilha de ensino):
- * < −R$500 crítico · < R$0 negativo · < R$1000 apertado · < R$2000 OK · ≥ R$2000 folga.
- * NÃO relativizar ao baseline.
+ * < −R$500 crítico · < R$0 negativo · ≤ R$1000 apertado · ≤ R$2000 OK · > R$2000 folga.
+ * Fronteiras inclusivas (R$1.000 exato = apertado; R$2.000 exato = OK), como na formatação
+ * condicional da planilha. A classificação delega para `saldoHeatmap.saldoBand` — única
+ * fonte da regra. NÃO relativizar ao baseline.
  */
 export function saldoBand(cents: number | null | undefined): SaldoBand {
   if (cents == null)
     return { key: "none", fill: "transparent", text: "var(--text-faint)", label: "" };
-  if (cents < -50000)
-    return {
-      key: "critical",
-      fill: "var(--saldo-band-critical-fill)",
-      text: "var(--danger-400)",
-      label: "Crítico",
-    };
-  if (cents < 0)
-    return {
-      key: "negative",
-      fill: "var(--saldo-band-negative-fill)",
-      text: "var(--danger-400)",
-      label: "Negativo",
-    };
-  if (cents < 100000)
-    return {
-      key: "tight",
-      fill: "var(--saldo-band-tight-fill)",
-      text: "var(--warning-400)",
-      label: "Apertado",
-    };
-  if (cents < 200000)
-    return {
-      key: "ok",
-      fill: "var(--saldo-band-ok-fill)",
-      text: "var(--success-400)",
-      label: "OK",
-    };
-  return {
-    key: "comfortable",
-    fill: "var(--saldo-band-comfortable-fill)",
-    text: "var(--success-400)",
-    label: "Folga",
-  };
+  const key = classifySaldoBand(cents);
+  return { key, fill: SALDO_BAND_FILL[key], ...SALDO_BAND_UI[key] };
 }
 
 export interface TypeMeta {

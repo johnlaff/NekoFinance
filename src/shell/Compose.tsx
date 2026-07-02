@@ -12,6 +12,7 @@ import {
 } from "../lib/api";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { formatBRL, parseBRLToCents, todayISO } from "../lib/format";
+import { kindToFields } from "../lib/movement";
 import { fmtBRL, TYPE_META, type MovementType } from "../lib/nkFormat";
 import type { ComposeOptions } from "./appContext";
 
@@ -21,27 +22,6 @@ interface Part {
 }
 
 const TYPES: MovementType[] = ["entrada", "saida", "diario", "cartao", "economia"];
-
-/** txnType + flags por tipo de movimento (espelha NewTransactionForm). */
-function mapType(t: MovementType): {
-  txnType: "income" | "expense" | "transfer";
-  isFixed: boolean;
-  paymentMethod: string | null;
-} {
-  switch (t) {
-    case "entrada":
-      return { txnType: "income", isFixed: false, paymentMethod: null };
-    case "saida":
-      return { txnType: "expense", isFixed: true, paymentMethod: null };
-    case "cartao":
-      return { txnType: "expense", isFixed: false, paymentMethod: "credit" };
-    case "economia":
-      return { txnType: "transfer", isFixed: false, paymentMethod: null };
-    case "diario":
-    default:
-      return { txnType: "expense", isFixed: false, paymentMethod: null };
-  }
-}
 
 /** Converts magnitude cents → pt-BR input string ("1.234,56"). */
 function centsToInput(cents: number): string {
@@ -609,7 +589,7 @@ export function Compose({
 
   function save() {
     if (!canSave) return;
-    const m = mapType(type);
+    const m = kindToFields(type);
     const items =
       composed && effectiveParts.length >= 1
         ? effectiveParts.map((p, i) => ({

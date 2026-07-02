@@ -144,8 +144,11 @@ function HeroTiles({
         >
           {fmtSigned(performance)}
         </div>
+        {/* A conta exibida precisa fechar com a Performance do motor: quando há economia,
+            ela é um termo explícito (Performance = Entradas − Saída total − Economia). */}
         <p className="mes-tile__sub">
           Entradas {fmtBRL(entradas)} − Saída total {fmtBRL(saidaTotal)}
+          {economia > 0 ? <> − Economia {fmtBRL(economia)}</> : null}
         </p>
         <div style={{ marginTop: 10 }}>
           <StatusChip level={perfStatus.level} label={perfStatus.label} />
@@ -245,10 +248,11 @@ function OutPartsCard({ saidaTotal, economia, outParts, outTotal }: OutPartsCard
 interface FlowCardProps {
   entradas: number;
   saidaTotal: number;
+  economia: number;
   performance: number;
 }
 
-function FlowCard({ entradas, saidaTotal, performance }: FlowCardProps) {
+function FlowCard({ entradas, saidaTotal, economia, performance }: FlowCardProps) {
   return (
     <section className="card" aria-label="Entrou e Saiu">
       <div className="card__head">
@@ -289,6 +293,28 @@ function FlowCard({ entradas, saidaTotal, performance }: FlowCardProps) {
               {fmtBRL(saidaTotal)}
             </span>
           </div>
+          {/* Economia é um termo do resultado (Performance = Entradas − Saída total −
+              Economia); sem ela a aritmética exibida não fecharia com o "Sobrou no mês". */}
+          {economia > 0 ? (
+            <div className="mes-flow__row">
+              <span className="mes-flow__lab">Economia</span>
+              <span className="mes-flow__track">
+                <span
+                  className="mes-flow__fill"
+                  style={{
+                    width:
+                      Math.min(100, (economia / Math.max(entradas, 1)) * 100).toFixed(
+                        2,
+                      ) + "%",
+                    background: "var(--type-economia)",
+                  }}
+                />
+              </span>
+              <span className="mes-flow__amt" style={{ color: "var(--type-economia)" }}>
+                {fmtBRL(economia)}
+              </span>
+            </div>
+          ) : null}
         </div>
         <div className="mes-flow__summary">
           <span className="mes-flow__summary-lab">Sobrou no mês</span>
@@ -536,6 +562,7 @@ export function TotaisScreen() {
         <FlowCard
           entradas={entradas}
           saidaTotal={saidaTotal}
+          economia={economia}
           performance={performance}
         />
       </div>
