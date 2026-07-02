@@ -105,6 +105,34 @@ pub async fn update_tag_exclude(
     Ok(())
 }
 
+/// Renomeia/recolore uma tag existente (nome, cor e emoji). `is_special` segue a convenção do
+/// nome (`!` no início fixa no topo), então é re-derivado aqui — igual ao caminho de criação.
+/// Erro se a tag não existir. Não toca em `exclude_from_totals` (toggle próprio, plan 034).
+pub async fn update_tag(
+    pool: &SqlitePool,
+    tag_id: &str,
+    name: &str,
+    color: &str,
+    emoji: Option<&str>,
+) -> Result<(), String> {
+    let is_special = name.trim_start().starts_with('!');
+    let rows = sqlx::query(
+        "UPDATE tag SET name = ?1, color = ?2, emoji = ?3, is_special = ?4 WHERE id = ?5",
+    )
+    .bind(name)
+    .bind(color)
+    .bind(emoji)
+    .bind(is_special as i64)
+    .bind(tag_id)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("update_tag: {e}"))?;
+    if rows.rows_affected() == 0 {
+        return Err(format!("tag not found: {tag_id}"));
+    }
+    Ok(())
+}
+
 /// Total por tag no mês (`YYYY-MM`). Inclui tags sem lançamento (total 0). `is_special` no topo.
 pub async fn tag_totals_for_month(
     pool: &SqlitePool,
@@ -163,6 +191,17 @@ pub async fn tag_totals_for_month_cmd(
     month: u32,
 ) -> Result<Vec<TagTotal>, String> {
     tag_totals_for_month(pool.inner(), year, month).await
+}
+
+#[tauri::command]
+pub async fn update_tag_cmd(
+    pool: State<'_, SqlitePool>,
+    tag_id: String,
+    name: String,
+    color: String,
+    emoji: Option<String>,
+) -> Result<(), String> {
+    update_tag(pool.inner(), &tag_id, &name, &color, emoji.as_deref()).await
 }
 
 #[tauri::command]
@@ -246,5 +285,31 @@ mod tests {
         let get = |id: &str| totals.iter().find(|x| x.id == id).unwrap().total_cents;
         assert_eq!(get(&delivery), 10000 + 35000, "t1(troca)+t2 em junho");
         assert_eq!(get(&viagem), 0, "t1 deixou de ser Viagem; t3 é julho");
+    }
+
+    // Renomear/recolorir tag existente: `is_special` re-deriva da convenção `!` do nome;
+    // `exclude_from_totals` não é tocado (toggle próprio, plan 034).
+    #[tokio::test]
+    async fn update_tag_renames_recolors_and_rederives_special() {
+        let p = pool().await;
+        let id = create_tag(&p, "Viagem", "var(--cat-jade)", None, false)
+            .await
+            .unwrap();
+        update_tag_exclude(&p, &id, true).await.unwrap();
+
+        update_tag(&p, &id, "! Pagar", "var(--cat-brass)", Some("⚠️"))
+            .await
+            .unwrap();
+
+        let tags = list_tags(&p).await.unwrap();
+        let t = tags.iter().find(|t| t.id == id).unwrap();
+        assert_eq!(t.name, "! Pagar");
+        assert_eq!(t.color, "var(--cat-brass)");
+        assert_eq!(t.emoji.as_deref(), Some("⚠️"));
+        assert!(t.is_special, "nome com '!' fixa no topo (re-derivado)");
+        assert!(t.exclude_from_totals, "toggle do plan 034 preservado");
+
+        // Tag inexistente → erro explícito (não upsert silencioso).
+        assert!(update_tag(&p, "nope", "X", "c", None).await.is_err());
     }
 }
