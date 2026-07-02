@@ -150,6 +150,7 @@ function padTo12(months: MonthMetric[], year: number): MonthMetric[] {
         real_daily_avg_cents: 0,
         economia_cents: 0,
         patrimonio_cents: 0,
+        daily_projected_cents: 0,
         savings_rate_bps: 0,
       }
     );

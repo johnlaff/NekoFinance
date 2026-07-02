@@ -14,6 +14,7 @@ const mk = (month: number, perf: number, cost: number): MonthMetric => ({
   cost_of_living_cents: cost,
   fixed_out_cents: cost,
   daily_out_cents: 0,
+  daily_projected_cents: 0,
   cartao_cents: 0,
   real_daily_avg_cents: 0,
   economia_cents: 0,
@@ -38,6 +39,7 @@ const monthGridHandler = (args?: Record<string, unknown>) => {
       income_cents: 0,
       fixed_out_cents: 0,
       daily_out_cents: 0,
+      daily_projected_cents: 0,
       balance_cents: month === 1 ? 111000 : month === 5 ? 555000 : null,
     },
   ];
@@ -88,6 +90,7 @@ describe("AnnualScreen", () => {
       cost_of_living_cents: 0,
       fixed_out_cents: 0,
       daily_out_cents: 0,
+      daily_projected_cents: 0,
       cartao_cents: 0,
       real_daily_avg_cents: 0,
       economia_cents: 0,

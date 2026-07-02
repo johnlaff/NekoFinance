@@ -67,7 +67,7 @@ The projection engine maps each transaction into exactly one of 6 `EventKind` va
 - **Economia**: guardar em reserva acessível — leaves the spending balance, feeds Economizado%, excluded from custo de vida.
 - **Patrimonio** (Patrimônio): long-term/illiquid investment — leaves the spending balance but is excluded from both custo de vida and accessible Economia%.
 
-Derived metrics: `cost_of_living = FixedOut + Daily + Cartao`; `Performance = Income − (FixedOut + Daily + Cartao + Economia + Patrimonio)`. The UI exposes the same buckets via `MovBadge`; engine and UI vocabularies match 1:1 (spec 011, PR #91).
+Derived metrics: `cost_of_living = FixedOut + Daily(realized) + Cartao`; `Performance = Income − (FixedOut + Daily(realized) + Daily(projected/remaining forecast) + Cartao + Economia + Patrimonio)` — the current month accounts for what is still going to be spent until month-end and improves as real spending stays under the ceiling (spec 021). The UI exposes the same buckets via `MovBadge`; engine and UI vocabularies match 1:1 (specs 011/021, PR #91).
 
 ### Savings & Protection
 

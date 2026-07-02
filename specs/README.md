@@ -20,6 +20,9 @@ Implemented so far:
 - `020-classificacao-notas-5-tipos` — reopens the engine model to make all 5 method buckets
   (entrada/saída/diário/cartão/economia) plus patrimônio explicit, and classifies note line items
   by spreadsheet section instead of free text.
+- `021-performance-previsao-diario` — the current month's Performance also subtracts the
+  remaining daily forecast (ceiling × days left + pre-launched future dailies), so the month
+  starts at the full-scenario value and improves as real spending stays under the ceiling.
 
 `008-auto-import` is specced but deferred. Numbers are unique identifiers, not strict order.
 

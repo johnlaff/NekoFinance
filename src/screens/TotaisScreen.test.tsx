@@ -252,6 +252,44 @@ describe("TotaisScreen (render)", () => {
     expect(within(outCard).getByText("R$ 4.000,00")).toBeInTheDocument();
   });
 
+  it("Performance: previsão de diário restante é termo explícito e a conta fecha", async () => {
+    mockInvoke.mockReset();
+    // Junho em andamento: 7.000 − 2.500 − 1.200 de previsão restante = 3.300 (motor).
+    const forecast = {
+      ...FORECAST,
+      months: FORECAST.months.map((month) =>
+        month.month === 6
+          ? {
+              ...month,
+              income_cents: 700_000,
+              cost_of_living_cents: 250_000,
+              economia_cents: 0,
+              patrimonio_cents: 0,
+              daily_projected_cents: 120_000,
+              performance_cents: 330_000,
+            }
+          : month,
+      ),
+    };
+    mockCommands({ get_forecast: forecast, owner_totals_for_month_cmd: [] });
+    render(<TotaisScreen />);
+
+    await waitFor(() => expect(screen.getByText("Performance")).toBeInTheDocument());
+
+    expect(
+      screen.getByText(
+        (content, el) =>
+          el?.classList.contains("mes-tile__sub") === true &&
+          content ===
+            "Entradas R$ 7.000,00 − Saída total R$ 2.500,00 − Previsão de diário R$ 1.200,00",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("+R$ 3.300,00").length).toBeGreaterThan(0);
+
+    const flow = screen.getByRole("region", { name: "Entrou e Saiu" });
+    expect(within(flow).getByText("Previsão de diário")).toBeInTheDocument();
+  });
+
   it("Custo de vida sublabel menciona cartão", async () => {
     mockInvoke.mockReset();
     mockCommands({ get_forecast: FORECAST, owner_totals_for_month_cmd: [] });

@@ -106,6 +106,7 @@ interface HeroTilesProps {
   custoVida: number;
   economia: number;
   patrimonio: number;
+  previsaoDiario: number;
   economizadoPct: number;
   ytdPctLabel: string;
   perfStatus: { level: string; label: string };
@@ -121,6 +122,7 @@ function HeroTiles({
   custoVida,
   economia,
   patrimonio,
+  previsaoDiario,
   economizadoPct,
   ytdPctLabel,
   perfStatus,
@@ -146,12 +148,16 @@ function HeroTiles({
         >
           {fmtSigned(performance)}
         </div>
-        {/* A conta exibida precisa fechar com a Performance do motor: Economia e Patrimônio
-            são termos explícitos (Performance = Entradas − Saída total − Economia − Patrimônio). */}
+        {/* A conta exibida precisa fechar com a Performance do motor: Economia, Patrimônio e a
+            previsão de diário restante são termos explícitos (Performance = Entradas − Saída
+            total − Economia − Patrimônio − Previsão de diário). */}
         <p className="mes-tile__sub">
           Entradas {fmtBRL(entradas)} − Saída total {fmtBRL(saidaTotal)}
           {economia > 0 ? <> − Economia {fmtBRL(economia)}</> : null}
           {patrimonio > 0 ? <> − Patrimônio {fmtBRL(patrimonio)}</> : null}
+          {previsaoDiario > 0 ? (
+            <> − Previsão de diário {fmtBRL(previsaoDiario)}</>
+          ) : null}
         </p>
         <div style={{ marginTop: 10 }}>
           <StatusChip level={perfStatus.level} label={perfStatus.label} />
@@ -262,6 +268,7 @@ interface FlowCardProps {
   saidaTotal: number;
   economia: number;
   patrimonio: number;
+  previsaoDiario: number;
   performance: number;
 }
 
@@ -270,6 +277,7 @@ function FlowCard({
   saidaTotal,
   economia,
   patrimonio,
+  previsaoDiario,
   performance,
 }: FlowCardProps) {
   return (
@@ -331,6 +339,30 @@ function FlowCard({
               </span>
               <span className="mes-flow__amt" style={{ color: "var(--type-economia)" }}>
                 {fmtBRL(economia)}
+              </span>
+            </div>
+          ) : null}
+          {/* Previsão de diário restante: o que ainda vai ser gasto até o fim do mês também
+              é termo do resultado — o "Sobrou no mês" já desconta o teto dos dias futuros. */}
+          {previsaoDiario > 0 ? (
+            <div className="mes-flow__row">
+              <span className="mes-flow__lab">Previsão de diário</span>
+              <span className="mes-flow__track">
+                <span
+                  className="mes-flow__fill"
+                  style={{
+                    width:
+                      Math.min(
+                        100,
+                        (previsaoDiario / Math.max(entradas, 1)) * 100,
+                      ).toFixed(2) + "%",
+                    background: "var(--type-diario)",
+                    opacity: 0.55,
+                  }}
+                />
+              </span>
+              <span className="mes-flow__amt" style={{ color: "var(--text-muted)" }}>
+                {fmtBRL(previsaoDiario)}
               </span>
             </div>
           ) : null}
@@ -522,6 +554,7 @@ export function TotaisScreen() {
   const custoVida = m.cost_of_living_cents;
   const economia = m.economia_cents;
   const patrimonio = m.patrimonio_cents;
+  const previsaoDiario = m.daily_projected_cents;
   const economizadoPct = m.savings_rate_bps / 100;
   const fixedOut = m.fixed_out_cents;
   const dailyOut = m.daily_out_cents;
@@ -587,6 +620,7 @@ export function TotaisScreen() {
         custoVida={custoVida}
         economia={economia}
         patrimonio={patrimonio}
+        previsaoDiario={previsaoDiario}
         economizadoPct={economizadoPct}
         ytdPctLabel={ytdPctLabel}
         perfStatus={perfStatus}
@@ -608,6 +642,7 @@ export function TotaisScreen() {
           saidaTotal={saidaTotal}
           economia={economia}
           patrimonio={patrimonio}
+          previsaoDiario={previsaoDiario}
           performance={performance}
         />
       </div>

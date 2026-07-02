@@ -988,6 +988,8 @@ pub struct MonthMetricDto {
     pub fixed_out_cents: i64,
     /// Diário realizado (coluna Diário).
     pub daily_out_cents: i64,
+    /// Previsão de diário do mês (teto dos dias futuros + pré-lançados); desconta a Performance.
+    pub daily_projected_cents: i64,
     /// Cartão realizado, bucket próprio dentro do custo de vida.
     pub cartao_cents: i64,
     /// Diário médio do mês = Σ diário realizado ÷ dias decorridos (D/N). Antes morria no DTO.
@@ -1239,6 +1241,7 @@ pub(crate) async fn forecast_dto(
                 cost_of_living_cents: m.cost_of_living_cents,
                 fixed_out_cents: m.fixed_out_cents,
                 daily_out_cents: m.daily_out_cents,
+                daily_projected_cents: m.daily_projected_cents,
                 cartao_cents: m.cartao_cents,
                 real_daily_avg_cents: m.real_daily_avg_cents,
                 economia_cents: m.economia_cents,
@@ -1287,6 +1290,7 @@ pub(crate) async fn annual_metrics(
             cost_of_living_cents: m.cost_of_living_cents,
             fixed_out_cents: m.fixed_out_cents,
             daily_out_cents: m.daily_out_cents,
+            daily_projected_cents: m.daily_projected_cents,
             cartao_cents: m.cartao_cents,
             real_daily_avg_cents: m.real_daily_avg_cents,
             economia_cents: m.economia_cents,

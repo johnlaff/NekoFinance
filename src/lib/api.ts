@@ -170,6 +170,8 @@ export interface MonthMetric {
   fixed_out_cents: number;
   /** Diário realizado (coluna Diário). */
   daily_out_cents: number;
+  /** Previsão de diário do mês (teto dos dias futuros + pré-lançados); desconta a Performance. */
+  daily_projected_cents: number;
   /** Cartão realizado, bucket próprio dentro do custo de vida. */
   cartao_cents: number;
   /** Diário médio = Σ diário realizado ÷ dias decorridos (D/N). */

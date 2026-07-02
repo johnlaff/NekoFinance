@@ -217,6 +217,7 @@ export const FORECAST: Forecast = {
       real_daily_avg_cents: 0,
       economia_cents: 0,
       patrimonio_cents: 0,
+      daily_projected_cents: 0,
       savings_rate_bps: 2500,
     },
     {
@@ -231,6 +232,7 @@ export const FORECAST: Forecast = {
       real_daily_avg_cents: 0,
       economia_cents: 0,
       patrimonio_cents: 0,
+      daily_projected_cents: 0,
       savings_rate_bps: 1000,
     },
   ],
@@ -314,6 +316,7 @@ export const ANNUAL_METRICS: AnnualMetrics = {
       real_daily_avg_cents: 3871,
       economia_cents: 90000,
       patrimonio_cents: 0,
+      daily_projected_cents: 0,
       savings_rate_bps: 1500,
     },
     {
@@ -328,6 +331,7 @@ export const ANNUAL_METRICS: AnnualMetrics = {
       real_daily_avg_cents: 3871,
       economia_cents: 130000,
       patrimonio_cents: 0,
+      daily_projected_cents: 0,
       savings_rate_bps: 2000,
     },
     ...FORECAST.months,

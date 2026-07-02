@@ -1125,13 +1125,18 @@ mod tests {
         let fc = forecast_dto(&pool, today).await.unwrap();
 
         assert_eq!(fc.horizon_end, "2026-12-31");
-        // Performance de junho = MÊS INTEIRO realizado: inclui os R$ 700k já realizados em 10/jun,
-        // que o cálculo antigo (só futuros) ignorava (o P0). A PREVISÃO de diário restante reduz o
-        // saldo de caixa projetado (correto para o forecast), mas NÃO desconta a Performance
-        // (paridade com planilha — DECISÃO DO DONO 2026-06-20).
+        // Performance de junho = MÊS INTEIRO: inclui os R$ 700k já realizados em 10/jun (que o
+        // cálculo só-futuros ignorava) E a previsão de diário restante (teto × dias que faltam) —
+        // o mês corrente considera o que ainda vai ser gasto e melhora conforme o gasto real
+        // fica abaixo do teto.
         let jun = fc.months.iter().find(|m| m.month == 6).unwrap();
-        // Performance = Entradas − (Saídas + Diário realizado) = 1_000_000 − 1_100_000 = −100_000.
-        assert_eq!(jun.performance_cents, -100_000);
+        // Base realizada: Entradas − (Saídas + Diário realizado) = 1_000_000 − 1_100_000 =
+        // −100_000; a previsão restante (derivada do teto) desconta por cima.
+        assert!(
+            jun.daily_projected_cents > 0,
+            "junho em andamento tem previsão"
+        );
+        assert_eq!(jun.performance_cents, -100_000 - jun.daily_projected_cents);
         // Poupança ANUAL (meses completos jan–mai, abaixo da meta) manda → pode gastar 0.
         assert_eq!(fc.binding_guardrail, "savings");
         assert_eq!(fc.safe_to_spend_today_cents, 0);
