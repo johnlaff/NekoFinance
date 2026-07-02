@@ -1027,11 +1027,11 @@ pub(crate) async fn load_economia_by_month(
     }
 
     // Transfers manuais → conta RESERVA (plano 003) também são economia do mês — MESMA definição
-    // do motor mensal/anual (auditoria 2026-07, #25): a aba que o app escreve tem que casar com o
+    // do motor mensal/anual: a aba que o app escreve tem que casar com o
     // Economizado% que o app exibe. Ilíquido (previdência) é patrimônio: fica fora. O corte é por
     // DATA (`<= hoje`), não pelo flag is_projection (que fica congelado quando a data passa):
     // a aba registra poupança FEITA — escrever ocorrências FUTURAS de série fabricaria economia
-    // que ainda não aconteceu (review da auditoria); os itens de nota seguem o ano inteiro porque
+    // que ainda não aconteceu; os itens de nota seguem o ano inteiro porque
     // nascem das células da própria planilha (round-trip de lumps pré-lançados).
     let transfers: Vec<(String, i64)> = sqlx::query_as(
         "SELECT substr(t.date, 1, 7), COALESCE(SUM(ABS(t.amount)), 0) FROM \"transaction\" t \
@@ -1679,7 +1679,7 @@ mod tests {
         )
         .await
         .unwrap();
-        // Auditoria 2026-07 (#25): definição canônica ÚNICA de economia — itens de seção ECONOMIA
+        // Definição canônica ÚNICA de economia — itens de seção ECONOMIA
         // + transfers→reserva (a aba escrita casa com o Economizado% exibido). Anotação antiga,
         // ilíquido (patrimônio) e fallback por descrição/banco seguem fora.
         assert_eq!(

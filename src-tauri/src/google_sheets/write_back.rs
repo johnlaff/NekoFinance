@@ -305,7 +305,7 @@ pub fn plan_write_back(
         // nota por-parte. 1 parte ou nenhuma → escrita RAW numérica (sem fórmula nem nota), igual
         // a hoje. O `value_cents`/`proposed` do diff seguem sendo o TOTAL (a UI mostra o número).
         //
-        // GUARDA DE SOMA (auditoria 2026-07): desde o pacote K itens com soma divergente da
+        // GUARDA DE SOMA: itens com soma divergente da
         // célula são persistidos (a classificação sobrevive; o resíduo é reconciliado na
         // leitura). Reconstruir `=SUM(...)`/nota a partir deles ESCREVERIA um total diferente
         // do que o dono tem na célula — então a fórmula/nota só sai quando Σ|partes| casa com
@@ -1018,7 +1018,7 @@ mod tests {
 
     #[test]
     fn plan_mismatched_items_fall_back_to_raw_total() {
-        // Auditoria 2026-07 (review): itens com soma ≠ célula agora PERSISTEM (classificação
+        // Itens com soma divergente da célula PERSISTEM (classificação
         // sobrevive), mas reconstruir `=SUM(...)`/nota a partir deles escreveria um total
         // DIFERENTE do que o dono tem — a proposta cai para RAW do total e a nota fica intocada.
         let txns = vec![WriteBackTxn {

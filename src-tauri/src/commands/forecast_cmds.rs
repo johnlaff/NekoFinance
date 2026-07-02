@@ -163,7 +163,7 @@ pub(crate) async fn realized_annual_savings(
 /// método (Economia/Entradas), DISTINTO do net superávit de `realized_annual_savings` (que é o
 /// "colchão" do Neko). Existir os dois lado a lado sem se confundir foi um achado da review.
 ///
-/// Espelha o motor MENSAL (auditoria 2026-07): por mês, `max(derivado, anotação da aba)`, onde o
+/// Espelha o motor MENSAL: por mês, `max(derivado, anotação da aba)`, onde o
 /// derivado = itens de nota ECONOMIA + transfers manuais → conta RESERVA. Transfer para conta
 /// ILÍQUIDA é previdência/patrimônio — fora do Economizado%, como no mensal.
 pub(crate) async fn realized_annual_economia(
@@ -192,7 +192,7 @@ pub(crate) async fn realized_annual_economia(
 
     // Derivado por mês ("YYYY-MM"): itens de nota ECONOMIA (pacote K) + transfers→reserva MANUAIS
     // (plano 003). Espelha `load_metric_db_events` + `forecast::classify`: 'illiquid' é
-    // previdência/PATRIMÔNIO, não economia — fora do Economizado% (auditoria 2026-07; o anual
+    // previdência/PATRIMÔNIO, não economia — fora do Economizado% (o anual
     // somava 'illiquid' indevidamente e ignorava os itens de nota).
     let mut derived: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
 
@@ -272,7 +272,7 @@ pub(crate) async fn realized_annual_economia(
         annotation_by.insert(format!("{y:04}-{m:02}"), cents);
     }
 
-    // Regra do MÁXIMO por mês (mesma de `month_metrics`, P0 da auditoria 2026-07): após o
+    // Regra do MÁXIMO por mês (mesma de `month_metrics`): após o
     // round-trip do write-back (plano 062) a anotação espelha o derivado — somar dobraria. O mês
     // vale o maior dos dois; mês só-planilha usa a anotação, excedente digitado à mão ainda conta.
     let mut months: std::collections::HashSet<&String> = derived.keys().collect();
@@ -1789,14 +1789,14 @@ mod tests {
 
         let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
         let economia = realized_annual_economia(&p, today).await.unwrap();
-        // Auditoria 2026-07: regra do MÁXIMO por mês (espelha o mensal). Março vale
+        // Regra do MÁXIMO por mês (espelha o mensal). Março vale
         // max(transfer 8.000, anotação 10.000) = 10.000 — a aba é o registro consolidado do mês,
         // não uma parcela aditiva. Total: 5 × 10.000 = 50.000 (antes somava 58.000, dobrando o
         // dinheiro que o write-back da aba deriva dos próprios lançamentos).
         assert_eq!(economia, 50_000);
     }
 
-    // Auditoria 2026-07 (achados #4/#15): o numerador ANUAL do Economizado espelha o MENSAL —
+    // O numerador ANUAL do Economizado espelha o MENSAL —
     // (a) itens de nota ECONOMIA contam; (b) transfer para conta ILÍQUIDA é previdência/patrimônio,
     // NÃO economia (o anual somava 'illiquid' indevidamente, inflando o Economizado% e afrouxando o
     // guardrail); (c) anotação igual ao derivado (round-trip do write-back 062) não duplica.
@@ -1878,7 +1878,7 @@ mod tests {
         assert_eq!(economia, 50_000);
     }
 
-    // Auditoria 2026-07 (review): célula 100,00 com nota somando 120,00 — o resíduo −20,00
+    // Célula 100,00 com nota somando 120,00 — o resíduo −20,00
     // entra como Saída fixa COM SINAL para os baldes fecharem com o total da célula (a
     // convenção AJUSTES "Diferença" da planilha aplicada na leitura, sem item sintético).
     #[tokio::test]

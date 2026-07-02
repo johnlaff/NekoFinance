@@ -868,7 +868,7 @@ mod tests {
         assert_eq!(f.month_end[0].balance_cents, 250_000);
     }
 
-    // P0 (auditoria 2026-07): desde que o write-back deriva a aba Economia dos itens ECONOMIA
+    // Regressão: desde que o write-back deriva a aba Economia dos itens ECONOMIA
     // (plano 062), a anotação e os eventos representam o MESMO dinheiro após o round-trip.
     // Somar os dois dobrava o Economizado% e derrubava a Performance duas vezes.
     #[test]

@@ -7,7 +7,7 @@ const cache = new Map<string, unknown>();
 // Versão global do cache: cada invalidate incrementa e notifica os hooks montados, que
 // re-executam o fetch. Sem isso, invalidateCommands() só limpava o Map e o refetch ficava
 // para o PRÓXIMO mount — todo botão "Tentar novamente" e todo refresh pós-escrita em tela
-// já montada era um no-op silencioso (review da auditoria 2026-07).
+// já montada era um no-op silencioso.
 let cacheVersion = 0;
 const listeners = new Set<() => void>();
 

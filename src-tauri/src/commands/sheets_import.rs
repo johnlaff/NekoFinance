@@ -171,7 +171,7 @@ pub(crate) async fn import_one_tab(
     {
         Ok(notes) => (notes, true),
         Err(e) => {
-            // Ciclo DEGRADADO (auditoria 2026-07, P0): os valores ainda entram, mas itens
+            // Ciclo DEGRADADO: os valores ainda entram, mas itens
             // classificados e `source_note` ficam CONGELADOS (gate de confiança no
             // `import_rows_core`) e a `raw_note` sai do checksum — uma falha transitória da
             // API de notas não pode reimportar destrutivamente nem apagar classificação.
@@ -182,7 +182,7 @@ pub(crate) async fn import_one_tab(
         }
     };
     // Sinaliza (ou limpa) o ciclo degradado para a UI (painel do Google Sheets) — sem isto a
-    // degradação era invisível fora do stderr (review da auditoria 2026-07). KV local apenas.
+    // degradação era invisível fora do stderr. KV local apenas.
     crate::commands::write_back_cmds::app_setting_set(
         pool,
         "notes_degraded_last_sheet",
@@ -437,7 +437,7 @@ pub async fn import_local_xlsx(
         }
     }
 
-    // Auditoria 2026-07 (#10): sem notas de célula o classificador de 5 tipos não roda — quem
+    // Sem notas de célula o classificador de 5 tipos não roda — quem
     // importa só por .xlsx veria Cartão/Economia dobrados em Saída sem saber por quê. O aviso
     // torna a degradação explícita; a classificação do último import ao vivo é preservada
     // (gate de confiança no `import_rows_core`).

@@ -133,8 +133,7 @@ fn compute_checksum_with_options(rows: &[ImportedRow], descriptions_trusted: boo
         // o bloco de marcadores re-deriva splits/Entradas a partir da nota (autoritativa).
         // MAS só quando as notas vieram de verdade neste ciclo: num ciclo degradado
         // (falha da API de notas / .xlsx sem notas) toda `raw_note` chega vazia — hashear o
-        // vazio derrubava o guard de idempotência e disparava um re-import destrutivo
-        // (auditoria 2026-07, P0).
+        // vazio derrubava o guard de idempotência e disparava um re-import destrutivo.
         if descriptions_trusted {
             hasher.update(row.raw_note.as_bytes());
         }
@@ -531,12 +530,12 @@ async fn import_rows_core(
         // (re-deriva), consistente com o bloco 023.
         //
         // SEGURO POR PADRÃO: o total do pai jamais é alterado. Quando o somatório das
-        // partes diverge da célula, o breakdown sobrevive (a classificação é preservada,
-        // auditoria 2026-07) e o resíduo célula − Σpartes é reconciliado COM SINAL no
+        // partes diverge da célula, o breakdown sobrevive (a classificação é preservada)
+        // e o resíduo célula − Σpartes é reconciliado COM SINAL no
         // loader de métricas — a convenção AJUSTES "Diferença" da planilha, sem persistir
         // item sintético. O write-back escreve RAW quando a soma não bate.
         //
-        // GATE DE CONFIANÇA (auditoria 2026-07, P0): num ciclo degradado — falha da API
+        // GATE DE CONFIANÇA: num ciclo degradado — falha da API
         // de notas ou import .xlsx (calamine não expõe notas) — toda `raw_note` chega
         // VAZIA. Re-derivar aqui destruiria os itens classificados (Cartão/Economia/
         // Patrimônio) e as edições locais do último import bom. Itens e `source_note`
@@ -3578,7 +3577,7 @@ mod tests {
     }
 
     // Memo de UMA linha sem cabeçalho de seção NÃO é breakdown: persistir migraria um
-    // Diário/Cartão para Saída fixa via classify_line_item(None) (review da auditoria 2026-07).
+    // Diário/Cartão para Saída fixa via classify_line_item(None).
     #[tokio::test]
     async fn line_items_single_memo_without_section_not_stored() {
         let pool = test_pool().await;
@@ -3674,7 +3673,7 @@ mod tests {
     }
 
     // Uma única parte não é um breakdown → nenhum item (evita "item-fantasma").
-    // Auditoria 2026-07 (#5): 1 item também é classificação — uma célula "ECONOMIA\nR$ 100,00"
+    // 1 item também é classificação — uma célula "ECONOMIA\nR$ 100,00"
     // era descartada pelo gate de ≥2 partes e vazava para o custo de vida como Saída comum.
     #[tokio::test]
     async fn line_items_single_part_stored_and_classified() {
@@ -3701,7 +3700,7 @@ mod tests {
         );
     }
 
-    // Auditoria 2026-07 (P0): ciclo com notas indisponíveis (falha da API de notas / .xlsx) NÃO
+    // Ciclo com notas indisponíveis (falha da API de notas / .xlsx) NÃO
     // pode destruir os itens classificados nem a base `source_note` do último import bom.
     #[tokio::test]
     async fn untrusted_notes_preserve_line_items_and_source_note() {
@@ -3744,7 +3743,7 @@ mod tests {
         );
     }
 
-    // Auditoria 2026-07 (P0): num ciclo degradado a raw_note (vazia) não entra no checksum —
+    // Num ciclo degradado a raw_note (vazia) não entra no checksum —
     // senão o guard de idempotência quebrava e o re-import destrutivo rodava sempre.
     #[test]
     fn checksum_ignores_raw_note_when_untrusted() {

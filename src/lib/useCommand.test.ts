@@ -79,7 +79,7 @@ describe("useCommand", () => {
 
   it("invalidateCommands refetches hooks that continue montados (retry/pós-escrita)", async () => {
     // Sem isto, "Tentar novamente" e o refresh pós-escrita em tela já montada eram no-op:
-    // o cache era limpo mas o effect só re-rodava no próximo mount (review auditoria 2026-07).
+    // o cache era limpo mas o effect só re-rodava no próximo mount.
     const fetcher = vi.fn().mockResolvedValueOnce("v1").mockResolvedValueOnce("v2");
     const { result } = renderHook(() => useCommand("cmd_refetch", fetcher));
     await waitFor(() => {

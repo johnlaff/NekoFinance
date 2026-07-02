@@ -213,7 +213,7 @@ describe("TotaisScreen (render)", () => {
 
   it("Performance: Patrimônio também é termo explícito e a conta fecha (patrimonio > 0)", async () => {
     mockInvoke.mockReset();
-    // Review da auditoria 2026-07: junho 7.000 − 2.500 − 1.000 − 500 = 3.000; sem o termo
+    // Junho 7.000 − 2.500 − 1.000 − 500 = 3.000; sem o termo
     // Patrimônio o subtexto implicava 3.500 ao lado de uma Performance de 3.000.
     const forecast = {
       ...FORECAST,

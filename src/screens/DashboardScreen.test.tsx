@@ -120,7 +120,7 @@ describe("DashboardScreen (Hoje)", () => {
   });
 
   it("estado de erro também quando SÓ uma das fontes falha no primeiro load (sem zeros fabricados)", async () => {
-    // Review da auditoria 2026-07: com summary falhando e forecast OK, a tela renderizava o
+    // Com summary falhando e forecast OK, a tela renderizava o
     // herói com teto/saldo/reserva = 0 e um banner mentindo "últimos dados carregados".
     mockCommands({
       get_dashboard_summary: new Error("db offline"),
