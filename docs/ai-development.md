@@ -8,12 +8,15 @@
 
 ## Spec-First Workflow
 
-Use `specs/<number>-<slug>/` for non-trivial features. Each feature should contain:
+Use `specs/<number>-<slug>/` for non-trivial features. In practice most specs contain just:
 
 - `spec.md`: user stories, requirements, acceptance criteria, non-goals.
-- `plan.md`: architecture, data model changes, risks, dependencies, tests.
-- `tasks.md`: ordered implementation checklist.
-- `acceptance.md`: manual and automated verification.
+- `plan.md`: architecture, data model changes, risks, dependencies, tests (when the feature warrants one).
+- `tasks.md`: ordered implementation checklist (when the feature warrants one).
+
+`acceptance.md` (manual/automated verification checklist) is optional — only
+`specs/009-design-system-production-contract/` has one today. Add it when a feature needs an
+explicit manual verification pass beyond its automated tests; do not treat it as required boilerplate.
 
 ## AI Coding Guardrails
 

@@ -8,18 +8,19 @@ Neko Finance is single-device and local-first today, but the domain model must n
 - Support a partner/additional-card user later without reworking transactions.
 - Keep future cloud sync possible without adding a backend today.
 
-## Domain Concepts
+## Domain Concepts (implemented)
 
-| Concept                 | Meaning                                                                      |
-| ----------------------- | ---------------------------------------------------------------------------- |
-| `person`                | A human represented in local finance data.                                   |
-| `profile`               | App login/profile on this device. Initially one profile.                     |
-| `account`               | Bank account, credit card, wallet, or Google Sheet logical account.          |
-| `transaction`           | Normalized financial movement.                                               |
-| `owner_person_id`       | Person financially responsible for the transaction.                          |
-| `payer_person_id`       | Person/account that paid at the point of sale.                               |
-| `beneficiary_person_id` | Person who benefited from the purchase, if relevant.                         |
-| `split`                 | Allocation of one transaction across multiple responsible people/categories. |
+| Concept           | Meaning                                                                                        |
+| ------------------ | ----------------------------------------------------------------------------------------------- |
+| `person`           | A human represented in local finance data (`person` table).                                     |
+| `profile`          | App login/profile on this device. Initially one profile.                                        |
+| `account`          | Bank account, credit card, wallet, or savings/business account; has `owner_person_id`.           |
+| `transaction`      | Normalized financial movement (`type`, `payment_method`, `is_fixed`).                            |
+| `split`            | Allocation of one transaction across multiple responsible people. Carries `amount` and `owner_person_id` (who is responsible for that slice) — see `src-tauri/src/splits.rs`. |
+
+Ownership today is expressed through `account.owner_person_id` and `split.owner_person_id` only.
+There is no separate "who paid" or "who benefited" dimension on the transaction or split — those
+would need their own columns (see Future below).
 
 ## Rules
 
@@ -28,6 +29,19 @@ Neko Finance is single-device and local-first today, but the domain model must n
 - Shared expenses should be splits, not duplicated transactions.
 - Every future sync event should include a stable local actor/profile ID.
 - Local labels may use personal names, but public fixtures and docs must use generic names.
+
+## Future / Planned (not implemented)
+
+These concepts are useful shapes to keep in mind for later multi-person work, but do not exist in
+the schema or code today — no `payer_person_id` or `beneficiary_person_id` column exists anywhere:
+
+- A **payer** dimension: who paid at the point of sale, when it differs from who is responsible
+  (`owner_person_id`).
+- A **beneficiary** dimension: who benefited from the purchase, if relevant and distinct from payer
+  and owner.
+
+If added, these should be explicit nullable columns (not overload `owner_person_id`), with a
+migration and tests, following the same pattern as `split.owner_person_id`.
 
 ## Future SaaS Path
 

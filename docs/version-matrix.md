@@ -46,28 +46,53 @@ Checked on 2026-06-08 from npm and crates.io before scaffolding.
 | Tauri action           | `tauri-apps/tauri-action`     | `v0.6.2` | Latest tag checked.                                                                                     |
 | React Doctor action    | `millionco/react-doctor`      | `v2.1.0` | Latest tag checked; advisory workflow.                                                                  |
 
-## Planned Dependencies
+## Installed In `src-tauri/Cargo.toml` (Rust runtime, beyond the Tauri crates above)
 
-These are candidates for future slices. Note: several have since been installed as their slices landed (e.g. `@tauri-apps/api`, `sqlx`, `google-auth-library`/`googleapis` for OAuth+import, `ai` for the copilot groundwork) — check `package.json`/`Cargo.toml` for the authoritative installed set.
+OAuth and Google Sheets access are Rust-native, not a Node dependency: there is no `googleapis` or
+`google-auth-library` in `package.json`, and no AI SDK (`ai`, `@ai-sdk/*`, `@openai/agents`) either
+— the copilot backend has not been built yet (see `docs/architecture.md`).
 
-| Area              | Package                                       | Latest checked | Compatibility note                                                                               |
-| ----------------- | --------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------ |
-| Tauri JS API      | `@tauri-apps/api`                             | `2.11.0`       | Add when the frontend starts invoking Tauri commands.                                            |
-| Tauri opener JS   | `@tauri-apps/plugin-opener`                   | `2.5.4`        | Add only if the frontend needs opener bindings. Rust plugin remains installed.                   |
-| SQLite plugin     | `@tauri-apps/plugin-sql` / `tauri-plugin-sql` | `2.4.0`        | Use with SQLite feature when storage slice starts.                                               |
-| Rust SQLite       | `rusqlite`                                    | `0.40.1`       | Alternative if direct Rust storage is preferred.                                                 |
-| SQL toolkit       | `sqlx`                                        | `0.9.0`        | Requires Rust `1.94`; local Rust is `1.96`.                                                      |
-| Google APIs       | `googleapis`                                  | `173.0.0`      | Node `>=18`; local Node is `24.16`.                                                              |
-| Google auth       | `google-auth-library`                         | `10.7.0`       | Node `>=18`.                                                                                     |
-| AI SDK            | `ai`                                          | `6.0.198`      | Peer `zod ^3.25.76 &#124;&#124; ^4.1.8`.                                                         |
-| DeepSeek provider | `@ai-sdk/deepseek`                            | `2.0.35`       | Pair with AI SDK 6.                                                                              |
-| Google provider   | `@ai-sdk/google`                              | `3.0.80`       | Pair with AI SDK 6.                                                                              |
-| OpenAI Agents     | `@openai/agents`                              | `0.11.6`       | Candidate if Vercel AI SDK is not enough for agent orchestration.                                |
-| Schema validation | `zod`                                         | `4.4.3`        | Satisfies AI SDK peer range.                                                                     |
-| LanceDB Node      | `@lancedb/lancedb`                            | `0.30.0`       | Correct package name for Node.                                                                   |
-| Apache Arrow      | `apache-arrow`                                | `18.1.0`       | Latest compatible with `@lancedb/lancedb`; global latest `21.1.0` is outside LanceDB peer range. |
-| Query cache       | `@tanstack/react-query`                       | `5.101.0`      | Supports React 18/19.                                                                            |
-| Charts            | `recharts`                                    | `3.8.1`        | Supports React 19; requires `react-is` if used.                                                  |
+| Area                    | Crate            | Version pin | Notes                                                                                                  |
+| ----------------------- | ---------------- | ----------- | -------------------------------------------------------------------------------------------------- |
+| Async runtime           | `tokio`          | `1`, full   | Backs the Tauri commands and the OAuth loopback listener.                                            |
+| OAuth desktop flow      | `oauth2`         | `5`         | PKCE desktop flow (spec 002) — replaces any Node `google-auth-library` path.                          |
+| HTTP client             | `reqwest`        | `0.13`      | Google Sheets API calls (read + write-back) and general HTTP — replaces any Node `googleapis` path.   |
+| SQL toolkit             | `sqlx`           | `0.9`       | SQLite runtime, migrations. Requires Rust `1.94`; local Rust is `1.96`.                                |
+| Local browser launch    | `open`           | `5`         | Opens the OAuth consent URL in the system browser.                                                    |
+| xlsx import             | `calamine`       | `=0.35.0`   | Local `.xlsx` import path (no Google account required).                                              |
+| OS keychain             | `keyring`        | `3`         | Token storage; features `apple-native`, `windows-native`, `sync-secret-service`.                       |
+| At-rest encryption      | `aes-gcm`        | `0.10`      | Encrypts cached OAuth tokens.                                                                          |
+| Hashing                 | `sha2`, `hex`    | `0.11`, `0.4` | Checksums for sync log / reconciliation.                                                             |
+| Standalone reminder CLI | `notify-rust`    | `=4.18.0`   | Cross-platform OS notification for the `--remind` CLI path when the app is closed (plan 039).         |
+
+## Installed In `package.json` (frontend, beyond React/Vite/tooling above)
+
+| Area                | Package                        | Version  | Notes                                                        |
+| ------------------- | ------------------------------- | -------- | -------------------------------------------------------------- |
+| Tauri JS API        | `@tauri-apps/api`               | `2.11.0` | Frontend invokes Tauri commands via `src/lib/api.ts`.          |
+| Tauri dialog JS     | `@tauri-apps/plugin-dialog`     | `2.7.1`  | Native open/save dialogs (backup, local file import).          |
+| Icons               | `lucide-react`                  | `1.17.0` | Icon set used across screens and the design system.            |
+
+## Not Adopted / Superseded (kept for historical context)
+
+These were candidates considered early on; none are installed, and the paths they would have
+enabled were built differently. Check `package.json`/`Cargo.toml` for the authoritative installed
+set before reviving any of these.
+
+| Area              | Package                                       | Why not adopted                                                                                  |
+| ----------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Tauri opener JS   | `@tauri-apps/plugin-opener`                   | Rust plugin (`tauri-plugin-opener`) is installed; no frontend opener bindings needed so far.        |
+| SQLite plugin     | `@tauri-apps/plugin-sql` / `tauri-plugin-sql` | Storage uses `sqlx` directly from Rust commands instead of the JS SQL plugin.                       |
+| Rust SQLite       | `rusqlite`                                    | `sqlx` was chosen instead (async, migrations built in).                                             |
+| Google APIs       | `googleapis`                                  | OAuth + Sheets read/write are Rust-native (`oauth2` + `reqwest`), not a Node dependency.             |
+| Google auth       | `google-auth-library`                         | Same — superseded by the `oauth2` Rust crate.                                                       |
+| AI SDK            | `ai`, `@ai-sdk/deepseek`, `@ai-sdk/google`     | The copilot (Mia) backend/tool-calling has not been built yet; `CopilotScreen` is UI-only today.    |
+| OpenAI Agents     | `@openai/agents`                               | Same — no agent orchestration exists yet.                                                           |
+| Schema validation | `zod`                                         | No AI SDK / runtime-validated LLM output yet to justify it.                                          |
+| LanceDB Node      | `@lancedb/lancedb`                            | No vector/local retrieval layer is built; see `docs/architecture.md` (Local retrieval row).          |
+| Apache Arrow      | `apache-arrow`                                | Only needed alongside LanceDB, which is not installed.                                              |
+| Query cache       | `@tanstack/react-query`                       | Data fetching uses the project's own `useCommand` hook (`src/lib/useCommand.ts`) instead.            |
+| Charts            | `recharts`                                    | No charting library is in use yet; screens render custom SVG/CSS visualizations.                     |
 
 ## Rule
 
