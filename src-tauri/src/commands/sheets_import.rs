@@ -168,7 +168,16 @@ pub(crate) async fn import_one_tab(
     let (notes, descriptions_trusted) =
         match client.get_sheet_notes(spreadsheet_id, sheet_name).await {
             Ok(notes) => (notes, true),
-            Err(_) => (Vec::new(), false),
+            Err(e) => {
+                // Ciclo DEGRADADO (auditoria 2026-07, P0): os valores ainda entram, mas itens
+                // classificados e `source_note` ficam CONGELADOS (gate de confiança no
+                // `import_rows_core`) e a `raw_note` sai do checksum — uma falha transitória da
+                // API de notas não pode reimportar destrutivamente nem apagar classificação.
+                eprintln!(
+                    "[import] notas de célula indisponíveis em '{sheet_name}': {e} — ciclo degradado (classificação preservada)"
+                );
+                (Vec::new(), false)
+            }
         };
     let imported_rows = import::parse_rows_with_layout(&rows, &layout, &mappings, &notes)?;
     let options = import::ImportRowsOptions {
@@ -418,8 +427,14 @@ pub async fn import_local_xlsx(
         }
     }
 
+    // Auditoria 2026-07 (#10): sem notas de célula o classificador de 5 tipos não roda — quem
+    // importa só por .xlsx veria Cartão/Economia dobrados em Saída sem saber por quê. O aviso
+    // torna a degradação explícita; a classificação do último import ao vivo é preservada
+    // (gate de confiança no `import_rows_core`).
     Ok(format!(
-        "Imported {} total rows from: {}",
+        "Imported {} total rows from: {}. Aviso: arquivos .xlsx não carregam notas de célula — a \
+         classificação por seção (Cartão/Economia/Patrimônio) exige o import ao vivo do Google \
+         Sheets; itens já classificados foram preservados.",
         total,
         sheets_imported.join(", ")
     ))

@@ -131,7 +131,13 @@ fn compute_checksum_with_options(rows: &[ImportedRow], descriptions_trusted: boo
         // A nota crua entra no checksum: editar SÓ a nota de célula (ex.: retag de
         // `#reembolso:`/`#dividir:`) é uma mudança real que o re-import deve aplicar —
         // o bloco de marcadores re-deriva splits/Entradas a partir da nota (autoritativa).
-        hasher.update(row.raw_note.as_bytes());
+        // MAS só quando as notas vieram de verdade neste ciclo: num ciclo degradado
+        // (falha da API de notas / .xlsx sem notas) toda `raw_note` chega vazia — hashear o
+        // vazio derrubava o guard de idempotência e disparava um re-import destrutivo
+        // (auditoria 2026-07, P0).
+        if descriptions_trusted {
+            hasher.update(row.raw_note.as_bytes());
+        }
     }
     hex::encode(hasher.finalize())
 }
@@ -524,10 +530,17 @@ async fn import_rows_core(
         // atual. Nota inalterada + itens editados → mantém o local; nota mudou → a nota vence
         // (re-deriva), consistente com o bloco 023.
         //
-        // SEGURO POR PADRÃO: se a nota não tem ≥2 linhas `R$` OU o somatório das partes
-        // diverge do total da célula além de 1 centavo (arredondamento), nenhum item é
-        // gravado — só o total da transação fica. O total do pai jamais é alterado.
-        {
+        // SEGURO POR PADRÃO: o total do pai jamais é alterado. Quando o somatório das
+        // partes diverge da célula além de 1 centavo, um item sintético AJUSTES
+        // "Diferença" completa a soma (a mesma convenção usada à mão na planilha) — o
+        // breakdown sobrevive em vez de ser descartado (auditoria 2026-07).
+        //
+        // GATE DE CONFIANÇA (auditoria 2026-07, P0): num ciclo degradado — falha da API
+        // de notas ou import .xlsx (calamine não expõe notas) — toda `raw_note` chega
+        // VAZIA. Re-derivar aqui destruiria os itens classificados (Cartão/Economia/
+        // Patrimônio) e as edições locais do último import bom. Itens e `source_note`
+        // só mudam quando as notas vieram de verdade neste ciclo.
+        if options.descriptions_trusted {
             // Base (nota do último import) + se há item editado pelo usuário nesta txn.
             let (prev_source_note, has_user_edited): (Option<String>, i64) = {
                 let snote: Option<(Option<String>,)> =
@@ -558,11 +571,26 @@ async fn import_rows_core(
                 .map_err(|e| format!("set source_note for {txn_id}: {e}"))?;
 
             if !keep_local {
-                let items = parse_itemized_note(&row.raw_note);
+                let mut items = parse_itemized_note(&row.raw_note);
                 let parts_sum: i64 = items.iter().map(|i| i.amount_cents).sum();
                 let parent_total = row.amount.abs();
-                // Exige ≥2 partes (1 parte não é um breakdown) e somatório casando com o total.
-                let sum_matches = items.len() >= 2 && (parts_sum - parent_total).abs() <= 1;
+                // 1 item já carrega classificação (a seção decide o balde financeiro) — o gate
+                // antigo de ≥2 partes jogava Economia/Cartão de item único no custo de vida.
+                // Divergência de soma além de 1 centavo vira item sintético AJUSTES "Diferença"
+                // = célula − soma das partes; os itens passam a SEMPRE somar o pai.
+                if !items.is_empty() {
+                    let residual = parent_total - parts_sum;
+                    if residual.abs() > 1 {
+                        items.push(NoteLineItem {
+                            amount_cents: residual,
+                            description: "Diferença".into(),
+                            kind: ItemKind::Ajuste,
+                            position: items.len(),
+                            section: Some("AJUSTES".into()),
+                        });
+                    }
+                }
+                let sum_matches = !items.is_empty();
 
                 // Limpa os itens antigos desta txn (idempotente no re-import; a nota é autoritativa).
                 sqlx::query("DELETE FROM line_item WHERE transaction_id = ?1")
@@ -3521,11 +3549,12 @@ mod tests {
         assert_eq!(amount_by_date(&pool, "2026-02-10").await, 15_000);
     }
 
-    // Mismatch: partes não somam o total → nenhum item; total do pai intocado.
+    // Mismatch: partes não somam o total → item sintético AJUSTES "Diferença" completa a soma
+    // (auditoria 2026-07; antes o breakdown inteiro era descartado e a classificação se perdia).
     #[tokio::test]
-    async fn line_items_not_stored_when_sum_mismatches() {
+    async fn line_items_sum_mismatch_gets_synthetic_diferenca() {
         let pool = test_pool().await;
-        // Total R$ 100,00; nota soma R$ 120,00 (não bate) → 0 itens.
+        // Total R$ 100,00; nota soma R$ 120,00 → A + B + Diferença de −R$ 20,00.
         let rows = vec![imported_note(
             "2026-02-11",
             -10_000,
@@ -3535,7 +3564,26 @@ mod tests {
         import_rows(&pool, "2026", &rows, "p1").await.unwrap();
 
         let txn_id = row_id("2026", "2026-02-11", RowKind::Saida, 0);
-        assert_eq!(count_line_items(&pool, &txn_id).await, 0);
+        assert_eq!(count_line_items(&pool, &txn_id).await, 3);
+        let (amount, desc, section): (i64, String, Option<String>) = sqlx::query_as(
+            "SELECT amount_cents, description, section FROM line_item \
+             WHERE transaction_id = ?1 AND position = 2",
+        )
+        .bind(&txn_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(amount, -2_000, "Diferença = célula − soma das partes");
+        assert_eq!(desc, "Diferença");
+        assert_eq!(section.as_deref(), Some("AJUSTES"));
+        // Os itens somam o pai; o total do pai segue intocado (a célula é a verdade).
+        let (items_sum,): (i64,) =
+            sqlx::query_as("SELECT SUM(amount_cents) FROM line_item WHERE transaction_id = ?1")
+                .bind(&txn_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(items_sum, 10_000);
         assert_eq!(amount_by_date(&pool, "2026-02-11").await, 10_000);
     }
 
@@ -3619,19 +3667,95 @@ mod tests {
     }
 
     // Uma única parte não é um breakdown → nenhum item (evita "item-fantasma").
+    // Auditoria 2026-07 (#5): 1 item também é classificação — uma célula "ECONOMIA\nR$ 100,00"
+    // era descartada pelo gate de ≥2 partes e vazava para o custo de vida como Saída comum.
     #[tokio::test]
-    async fn line_items_single_part_not_stored() {
+    async fn line_items_single_part_stored_and_classified() {
         let pool = test_pool().await;
         let rows = vec![imported_note(
             "2026-02-15",
             -10_000,
-            "R$ 100,00 - Único",
+            "ECONOMIA\nR$ 100,00 - Poupança do mês",
             false,
         )];
         import_rows(&pool, "2026", &rows, "p1").await.unwrap();
 
         let txn_id = row_id("2026", "2026-02-15", RowKind::Saida, 0);
-        assert_eq!(count_line_items(&pool, &txn_id).await, 0);
+        assert_eq!(count_line_items(&pool, &txn_id).await, 1);
+        let (section,): (Option<String>,) =
+            sqlx::query_as("SELECT section FROM line_item WHERE transaction_id = ?1")
+                .bind(&txn_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            classify_line_item(section.as_deref(), ""),
+            ItemKind::Economia
+        );
+    }
+
+    // Auditoria 2026-07 (P0): ciclo com notas indisponíveis (falha da API de notas / .xlsx) NÃO
+    // pode destruir os itens classificados nem a base `source_note` do último import bom.
+    #[tokio::test]
+    async fn untrusted_notes_preserve_line_items_and_source_note() {
+        let pool = test_pool().await;
+        let note = "CARTÕES\nR$ 100,00 - Nubank\nR$ 50,00 - Inter";
+        let rows = vec![imported_note("2026-02-16", -15_000, note, false)];
+        import_rows(&pool, "2026", &rows, "p1").await.unwrap();
+
+        let txn_id = row_id("2026", "2026-02-16", RowKind::Saida, 0);
+        assert_eq!(count_line_items(&pool, &txn_id).await, 2);
+
+        // Ciclo degradado: mesma linha, raw_note vazia, notas NÃO confiáveis.
+        import_rows_with_options(
+            &pool,
+            "2026",
+            &[imported_desc("2026-02-16", -15_000, "Linha 2026-02-16")],
+            "p1",
+            ImportRowsOptions {
+                descriptions_trusted: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            count_line_items(&pool, &txn_id).await,
+            2,
+            "itens classificados sobrevivem ao ciclo sem notas"
+        );
+        let (source_note,): (Option<String>,) =
+            sqlx::query_as(r#"SELECT source_note FROM "transaction" WHERE id = ?1"#)
+                .bind(&txn_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            source_note.as_deref(),
+            Some(note),
+            "a base da nota não é clobberada pelo ciclo degradado"
+        );
+    }
+
+    // Auditoria 2026-07 (P0): num ciclo degradado a raw_note (vazia) não entra no checksum —
+    // senão o guard de idempotência quebrava e o re-import destrutivo rodava sempre.
+    #[test]
+    fn checksum_ignores_raw_note_when_untrusted() {
+        let with_note = vec![imported_note(
+            "2026-02-17",
+            -10_000,
+            "R$ 100,00 - X",
+            false,
+        )];
+        let without_note = vec![imported_desc("2026-02-17", -10_000, "Linha 2026-02-17")];
+        assert_eq!(
+            compute_import_checksum(&with_note, false),
+            compute_import_checksum(&without_note, false)
+        );
+        assert_ne!(
+            compute_import_checksum(&with_note, true),
+            compute_import_checksum(&without_note, true)
+        );
     }
 
     // Plano 036: edição LOCAL das partes sobrevive ao re-import enquanto a nota da planilha não
