@@ -1025,6 +1025,35 @@ pub(crate) async fn load_economia_by_month(
         }
     }
 
+    // Transfers manuais → conta RESERVA (plano 003) também são economia do mês — MESMA definição
+    // do motor mensal/anual (auditoria 2026-07, #25): a aba que o app escreve tem que casar com o
+    // Economizado% que o app exibe. Ilíquido (previdência) é patrimônio: fica fora.
+    let transfers: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT substr(t.date, 1, 7), COALESCE(SUM(ABS(t.amount)), 0) FROM \"transaction\" t \
+         LEFT JOIN account a ON a.id = t.to_account_id \
+         WHERE t.date >= ?1 AND t.date < ?2 \
+           AND t.type='transfer' AND a.liquidity = 'reserve' \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM transaction_tag tt2 \
+               JOIN tag tg ON tg.id = tt2.tag_id \
+               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
+           ) \
+         GROUP BY substr(t.date, 1, 7)",
+    )
+    .bind(format!("{year:04}-01-01"))
+    .bind(format!("{}-01-01", year + 1))
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("query economia transfers: {e}"))?;
+    for (ym, cents) in transfers {
+        if let Some(mm) = ym.get(5..7)
+            && let Ok(m) = mm.parse::<usize>()
+            && (1..=12).contains(&m)
+        {
+            by[m - 1] += cents;
+        }
+    }
+
     Ok(by)
 }
 
@@ -1631,14 +1660,18 @@ mod tests {
         .unwrap();
 
         let by_month = load_economia_by_month(&p, 2026).await.unwrap();
+        // Auditoria 2026-07 (#25): definição canônica ÚNICA de economia — itens de seção ECONOMIA
+        // + transfers→reserva (a aba escrita casa com o Economizado% exibido). Anotação antiga,
+        // ilíquido (patrimônio) e fallback por descrição/banco seguem fora.
         assert_eq!(
-            by_month[2], 40_000,
-            "março propõe só a soma dos itens sob seção ECONOMIA"
+            by_month[2],
+            70_000,
+            "março = itens ECONOMIA (40.000) + transfer→reserva (30.000)"
         );
         assert_eq!(
             by_month.iter().sum::<i64>(),
-            40_000,
-            "sem anotação antiga, transfer, patrimônio ou fallback por descrição/banco"
+            70_000,
+            "sem anotação antiga, transfer ilíquido ou fallback por descrição/banco"
         );
     }
 
