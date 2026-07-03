@@ -9,11 +9,11 @@ describe("ThemeToggle", () => {
     document.documentElement.removeAttribute("data-theme");
   });
 
-  it("switches themes via the fallback path when View Transitions are unavailable", async () => {
+  it("switches themes instantly when WAAPI is unavailable (jsdom path)", async () => {
     const user = userEvent.setup();
     render(<ThemeToggle />);
 
-    // jsdom has no document.startViewTransition → instant swap path.
+    // jsdom has no Element.animate → o guard troca o tema sem floreio.
     await user.click(screen.getByRole("button", { name: "Alternar para tema claro" }));
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
     expect(localStorage.getItem("neko-theme")).toBe("light");
@@ -24,86 +24,82 @@ describe("ThemeToggle", () => {
   });
 });
 
-describe("ThemeToggle — reveal via View Transitions", () => {
-  // jsdom não tem a API; o mock cobre só o que o componente usa (ready), com cast
-  // frouxo porque o ViewTransition da lib DOM tem mais membros que o necessário.
-  interface LooseDoc {
-    startViewTransition?: unknown;
+describe("ThemeToggle — reveal por overlay (WAAPI em elemento real)", () => {
+  interface FakeAnim {
+    listeners: Record<string, (() => void)[]>;
+    addEventListener: (type: string, cb: () => void) => void;
+    fire: (type: string) => void;
   }
-  const setVT = (fn: (cb: () => void) => unknown) => {
-    (document as unknown as LooseDoc).startViewTransition = fn;
+
+  const mkFakeAnim = (): FakeAnim => {
+    const listeners: Record<string, (() => void)[]> = {};
+    return {
+      listeners,
+      addEventListener: (type, cb) => {
+        (listeners[type] ??= []).push(cb);
+      },
+      fire: (type) => {
+        for (const cb of listeners[type] ?? []) cb();
+      },
+    };
   };
+
+  let anims: FakeAnim[] = [];
 
   beforeEach(() => {
     localStorage.clear();
     document.documentElement.removeAttribute("data-theme");
+    anims = [];
+    // jsdom não tem WAAPI; injeta um fake que captura os listeners de cada animate().
+    (HTMLElement.prototype as unknown as { animate: unknown }).animate = vi.fn(() => {
+      const anim = mkFakeAnim();
+      anims.push(anim);
+      return anim;
+    });
   });
 
   afterEach(() => {
-    delete (document as unknown as LooseDoc).startViewTransition;
+    delete (HTMLElement.prototype as unknown as { animate?: unknown }).animate;
   });
 
-  // Regressão da race que deixava o reveal invisível: o tema só pode ser aplicado
-  // DENTRO do callback da transição (depois do snapshot do tema velho). Um setTheme
-  // síncrono no clique dispararia o effect que aplica o tema antes da captura.
-  it("aplica o tema somente dentro do callback da transição, nunca antes", async () => {
-    let themeAtCallbackStart: string | null = "sentinela";
-    const snapshot = Promise.withResolvers<void>();
-
-    setVT((cb) => {
-      // Captura o estado do DOM no momento do "snapshot" (antes do callback).
-      themeAtCallbackStart = document.documentElement.getAttribute("data-theme");
-      cb();
-      snapshot.resolve();
-      return { ready: Promise.resolve(), finished: Promise.resolve() };
-    });
-
+  // Regressão do swap abrupto: o tema NÃO pode trocar antes de o overlay cobrir a
+  // tela (fim da animação de crescimento) — trocar cedo deixava o reveal invisível.
+  it("só troca o tema quando o círculo termina de crescer", async () => {
     const user = userEvent.setup();
     render(<ThemeToggle />);
     await user.click(screen.getByRole("button", { name: "Alternar para tema claro" }));
-    await snapshot.promise;
 
-    // No momento do snapshot o tema velho (dark = sem atributo) ainda valia.
-    expect(themeAtCallbackStart).toBeNull();
-    // Depois do callback, o DOM tem o tema novo e o estado React acompanhou.
+    // Overlay no DOM, crescimento em andamento — tema antigo ainda vale.
+    expect(anims.length).toBe(1);
+    expect(document.documentElement.getAttribute("data-theme")).toBeNull();
+
+    // Fim do crescimento → tema troca por baixo do overlay cheio + fade criado.
+    anims[0]!.fire("finish");
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    expect(localStorage.getItem("neko-theme")).toBe("light");
+    expect(anims.length).toBe(2);
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Alternar para tema escuro" }),
       ).toBeInTheDocument(),
     );
+
+    // Fim do fade → overlay removido.
+    anims[1]!.fire("finish");
+    expect(
+      document.querySelector("[aria-hidden='true'][style*='clip-path']"),
+    ).toBeNull();
   });
 
-  it("transição abortada ainda sincroniza o estado (ready rejeita)", async () => {
-    setVT((cb) => {
-      cb();
-      return {
-        ready: Promise.reject(new Error("skipped")),
-        finished: Promise.resolve(),
-      };
-    });
+  it("crescimento cancelado ainda troca o tema e remove o overlay", async () => {
     const user = userEvent.setup();
     render(<ThemeToggle />);
     await user.click(screen.getByRole("button", { name: "Alternar para tema claro" }));
 
+    anims[0]!.fire("cancel");
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Alternar para tema escuro" }),
-      ).toBeInTheDocument(),
-    );
-  });
-
-  it("startViewTransition quebrado em runtime cai para o overlay sem perder a troca", async () => {
-    setVT(
-      vi.fn(() => {
-        throw new Error("boom");
-      }),
-    );
-    const user = userEvent.setup();
-    render(<ThemeToggle />);
-    await user.click(screen.getByRole("button", { name: "Alternar para tema claro" }));
-
-    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    expect(
+      document.querySelector("[aria-hidden='true'][style*='clip-path']"),
+    ).toBeNull();
   });
 });

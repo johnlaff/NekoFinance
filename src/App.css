@@ -2245,8 +2245,10 @@ h3,
    durations collapse to 0ms under prefers-reduced-motion via tokens.
    ============================================================ */
 
-/* Theme switch: the View Transition is a single circular reveal driven from
-   ThemeToggle via WAAPI; kill the default crossfade so it is the only effect. */
+/* O reveal do tema usa overlay + WAAPI em elemento real (ThemeToggle) — a View
+   Transitions API não pinta os pseudo-elementos no WebView2. Nenhuma view transition
+   é iniciada pelo app hoje; esta regra fica como guarda para que um uso futuro da
+   API não herde o crossfade default por acidente. */
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation: none;
