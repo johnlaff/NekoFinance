@@ -124,14 +124,22 @@ export function playThemeReveal(
   );
   grow.addEventListener("finish", () => {
     logMotion(`reveal→${next}: cresceu em ${Math.round(performance.now() - t0)}ms`);
+    // Troca o tema por baixo do overlay AINDA opaco; um rAF garante que a nova
+    // paleta já pintou antes de o overlay começar a sumir (senão o dissolve revela
+    // um frame do tema em transição).
     apply();
-    const fade = overlay.animate([{ opacity: 1 }, { opacity: 0 }], {
-      duration: 160,
-      easing: "linear",
+    requestAnimationFrame(() => {
+      const fade = overlay.animate([{ opacity: 1 }, { opacity: 0 }], {
+        duration: 160,
+        easing: "linear",
+        // `forwards`: sem isso a animação reverte para opacity:1 no frame final
+        // antes da remoção — um flash da cor sólida sobre a UI (o "pisca").
+        fill: "forwards",
+      });
+      const cleanup = () => overlay.remove();
+      fade.addEventListener("finish", cleanup);
+      fade.addEventListener("cancel", cleanup);
     });
-    const cleanup = () => overlay.remove();
-    fade.addEventListener("finish", cleanup);
-    fade.addEventListener("cancel", cleanup);
   });
   grow.addEventListener("cancel", () => {
     logMotion(`reveal→${next}: CANCELADO em ${Math.round(performance.now() - t0)}ms`);

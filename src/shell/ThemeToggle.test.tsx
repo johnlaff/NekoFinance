@@ -73,16 +73,19 @@ describe("ThemeToggle — reveal por overlay (WAAPI em elemento real)", () => {
     expect(anims.length).toBe(1);
     expect(document.documentElement.getAttribute("data-theme")).toBeNull();
 
-    // Fim do crescimento → tema troca por baixo do overlay cheio + fade criado.
+    // Fim do crescimento → tema troca por baixo do overlay cheio.
     anims[0]!.fire("finish");
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
     expect(localStorage.getItem("neko-theme")).toBe("light");
-    expect(anims.length).toBe(2);
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Alternar para tema escuro" }),
       ).toBeInTheDocument(),
     );
+
+    // O fade é criado num requestAnimationFrame (deixa a nova paleta pintar antes
+    // de revelar) — aguarda o segundo animate() aparecer.
+    await waitFor(() => expect(anims.length).toBe(2));
 
     // Fim do fade → overlay removido.
     anims[1]!.fire("finish");
