@@ -41,6 +41,7 @@ import {
   type AuthStatus,
 } from "../lib/api";
 import { formatBRL, parseBRLToCents } from "../lib/format";
+import { motionUserOff, setMotionUserOff } from "../lib/motion";
 import { safeErrorMessage } from "../lib/errors";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { Button } from "../design-system/components/Button";
@@ -291,7 +292,8 @@ function DailyReminderSection() {
           <div>
             <div className="cfg-item__t">Lembrete diário</div>
             <div className="cfg-item__s">
-              Notificação nativa no horário escolhido — dispara mesmo com o app fechado.
+              Notificação nativa no horário escolhido — no Windows, dispara mesmo com o
+              app fechado.
               {osWarn ? (
                 <strong role="alert" style={{ color: "var(--brass-400)" }}>
                   {" "}
@@ -841,8 +843,8 @@ export function SettingsScreen({
   const appInfo = useCommand("get_app_info", getAppInfo).data ?? null;
   const writeBack = useWriteBackPending();
 
-  const [miaLocal, setMiaLocal] = useState(true);
-  const [animacoes, setAnimacoes] = useState(true);
+  // Persistido em localStorage e refletido em <html data-motion> (src/lib/motion.ts).
+  const [animacoes, setAnimacoes] = useState(() => !motionUserOff());
   const [reconnecting, setReconnecting] = useState(false);
 
   const isConnected = authStatus === "connected";
@@ -898,8 +900,8 @@ export function SettingsScreen({
           />
           <CfgItem
             icon={Lock}
-            title="Acesso somente leitura"
-            sub="O Neko nunca escreve na planilha sem a sua aprovação"
+            title="Escrita só com aprovação"
+            sub="Toda escrita na planilha exige prévia com diff e a sua confirmação"
             right={<span className="cfg-badge cfg-badge--local">Ativo</span>}
           />
         </div>
@@ -1000,17 +1002,12 @@ export function SettingsScreen({
             sub="Seus dados não saem do computador"
             right={<span className="cfg-badge cfg-badge--local">Local</span>}
           />
+          {/* Fato, não configuração: não existe caminho de nuvem para ligar/desligar. */}
           <CfgItem
             icon={Sparkles}
             title="Mia responde localmente"
             sub="Sem enviar dados financeiros para a nuvem"
-            right={
-              <Toggle
-                on={miaLocal}
-                onClick={() => setMiaLocal((v) => !v)}
-                label="Mia responde localmente"
-              />
-            }
+            right={<span className="cfg-badge cfg-badge--local">Local</span>}
           />
         </div>
       </section>
@@ -1027,11 +1024,15 @@ export function SettingsScreen({
           <CfgItem
             icon={Sparkles}
             title="Animações"
-            sub="Transições e gráficos animados"
+            sub="Transições e gráficos animados · o modo reduzido do sistema é sempre respeitado"
             right={
               <Toggle
                 on={animacoes}
-                onClick={() => setAnimacoes((v) => !v)}
+                onClick={() => {
+                  const next = !animacoes;
+                  setAnimacoes(next);
+                  setMotionUserOff(!next);
+                }}
                 label="Animações"
               />
             }

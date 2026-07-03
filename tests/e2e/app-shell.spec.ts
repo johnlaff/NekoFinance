@@ -198,9 +198,10 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
       "aria-current",
       "page",
     );
-    // TotaisScreen renders "Performance" and "Custo de vida" tiles
+    // TotaisScreen renders "Performance" and "Custo de vida" tiles. "Custo de vida" aparece
+    // mais de uma vez de propósito (tile, FlowCard e equação usam o MESMO termo) — first().
     await expect(page.getByText("Performance")).toBeVisible();
-    await expect(page.getByText("Custo de vida")).toBeVisible();
+    await expect(page.getByText("Custo de vida").first()).toBeVisible();
     await page.screenshot({
       fullPage: true,
       path: testInfo.outputPath("totais.png"),

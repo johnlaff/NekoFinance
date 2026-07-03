@@ -271,9 +271,10 @@ function AnoTable({
           <tr>
             <th>Mês</th>
             <th>Entradas</th>
-            <th>Saída total</th>
+            <th>Custo de vida</th>
             <th>Diário</th>
             <th>Economia</th>
+            <th>%</th>
             <th>Resultado</th>
             <th>Saldo fim</th>
           </tr>
@@ -302,6 +303,13 @@ function AnoTable({
                 <td>{fmtBRL(m.cost_of_living_cents)}</td>
                 <td>{fmtBRL(m.daily_out_cents)}</td>
                 <td>{fmtBRL(m.economia_cents)}</td>
+                {/* Economizado% do mês (economia ÷ entradas), como na coluna % da aba
+                    Economia da planilha; sem entradas não há taxa a mostrar. */}
+                <td style={{ color: "var(--text-muted)" }}>
+                  {m.income_cents > 0
+                    ? `${(m.savings_rate_bps / 100).toFixed(0)}%`
+                    : "—"}
+                </td>
                 <td
                   style={{
                     color:
@@ -329,11 +337,21 @@ function AnoTable({
         </tbody>
         <tfoot>
           <tr>
-            <td>Realizado{rows.some((m) => m.daily_projected_cents > 0) ? "†" : ""}</td>
+            {/* O † anota o Resultado SOMADO, que cobre só os meses realizados — meses
+                futuros com previsão não entram na soma, então não acionam o marcador. */}
+            <td>
+              Realizado{realized.some((m) => m.daily_projected_cents > 0) ? "†" : ""}
+            </td>
             <td>{fmtBRL(totals.income)}</td>
             <td>{fmtBRL(totals.saidaTotal)}</td>
             <td>{fmtBRL(totals.diario)}</td>
             <td>{fmtBRL(totals.economia)}</td>
+            <td
+              title={`Economizado acumulado: ${econPct.toFixed(0)}%`}
+              style={{ color: "var(--text-muted)" }}
+            >
+              {econPct.toFixed(0)}%
+            </td>
             <td
               style={{
                 color:
@@ -342,12 +360,7 @@ function AnoTable({
             >
               {fmtSigned(totals.performance)}
             </td>
-            <td
-              title={`Economizado acumulado: ${econPct.toFixed(0)}%`}
-              style={{ color: "var(--text-faint)" }}
-            >
-              {econPct.toFixed(0)}%
-            </td>
+            <td style={{ color: "var(--text-faint)" }}>—</td>
           </tr>
         </tfoot>
       </table>
@@ -527,7 +540,7 @@ export function AnnualScreen() {
               </div>
             </div>
             <div className="ano-kpi">
-              <p className="ano-kpi__l">Saída total</p>
+              <p className="ano-kpi__l">Custo de vida</p>
               <div className="ano-kpi__v" style={{ color: "var(--text-strong)" }}>
                 {fmtCompact(totSaida)}
               </div>

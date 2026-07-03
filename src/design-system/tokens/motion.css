@@ -36,3 +36,14 @@
     --dur-stagger-step: 0ms; /* @kind other */
   }
 }
+
+/* Toggle "Animações" desligado nas Configurações (src/lib/motion.ts) — mesmo colapso
+   do reduced-motion do SO, acionado por atributo em <html> em vez de media query. */
+:root[data-motion="off"] {
+  --dur-instant: 0ms; /* @kind other */
+  --dur-fast: 0ms; /* @kind other */
+  --dur-base: 0ms; /* @kind other */
+  --dur-slow: 0ms; /* @kind other */
+  --dur-deliberate: 0ms; /* @kind other */
+  --dur-stagger-step: 0ms; /* @kind other */
+}

@@ -66,8 +66,8 @@ describe("AnnualScreen", () => {
 
     // Espera a tabela carregar — cabeçalho único "Saldo fim" como âncora.
     await waitFor(() => expect(screen.getByText("Saldo fim")).toBeInTheDocument());
-    // Cabeçalhos do redesign — "Saída total" aparece no KPI e no cabeçalho, por isso getAllByText.
-    expect(screen.getAllByText("Saída total").length).toBeGreaterThan(0);
+    // Cabeçalhos do redesign — "Custo de vida" aparece no KPI e no cabeçalho, por isso getAllByText.
+    expect(screen.getAllByText("Custo de vida").length).toBeGreaterThan(0);
     expect(screen.getByText("Resultado")).toBeInTheDocument();
     expect(screen.getByText("Diário")).toBeInTheDocument();
     expect(screen.getByText("Economia")).toBeInTheDocument();

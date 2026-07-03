@@ -51,7 +51,7 @@ pub async fn fetch_sheet_preview(
     let client = SheetsClient::new(token);
 
     // Grade inteira (não A1:Z21) — a planilha real vai até a coluna BO (~71 col); A:Z cortaria
-    // JUNHO–DEZEMBRO no preview, como no import (auditoria vs planilha oficial, P1).
+    // JUNHO–DEZEMBRO no preview, como no import.
     let range = quote_sheet(&sheet_name);
     let values = client.get_sheet_values(&spreadsheet_id, &range).await?;
 

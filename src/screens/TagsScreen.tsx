@@ -64,6 +64,16 @@ type FormAction =
   | { type: "submitSuccess" }
   | { type: "submitError"; error: string };
 
+function toggleExclude(tagId: string, currentValue: boolean) {
+  void updateTagExclude(tagId, !currentValue)
+    .then(() => {
+      invalidateCommands();
+    })
+    .catch(() => {
+      // Silencioso — alternar é best-effort; o próximo refetch reflete o estado real.
+    });
+}
+
 function formReducer(s: FormState, a: FormAction): FormState {
   switch (a.type) {
     case "toggle":
@@ -157,16 +167,6 @@ export function TagsScreen() {
         error: safeErrorMessage(e, "Não foi possível salvar a tag. Tente novamente."),
       });
     }
-  }
-
-  function toggleExclude(tagId: string, currentValue: boolean) {
-    void updateTagExclude(tagId, !currentValue)
-      .then(() => {
-        invalidateCommands();
-      })
-      .catch(() => {
-        // Silencioso — alternar é best-effort; o próximo refetch reflete o estado real.
-      });
   }
 
   return (

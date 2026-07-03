@@ -968,9 +968,11 @@ pub(crate) fn classify_line_item(section: Option<&str>, _description: &str) -> I
 ///   (o marcador fica na descrição). Os dois parsers são leituras INDEPENDENTES da
 ///   mesma nota; este não substitui nem altera `parse_note_markers`.
 ///
-/// SEGURO POR PADRÃO: nota vazia ou sem linhas `R$` → lista vazia. A reconciliação
-/// (somatório das partes ≈ total do pai) é decidida na camada de persistência, não aqui:
-/// se não bater, nenhum item é gravado e o total do pai fica intocado.
+/// SEGURO POR PADRÃO: nota vazia ou sem linhas `R$` → lista vazia. Esta função só parseia;
+/// a persistência é decidida pelo caller (`import_rows_core`): com breakdown reconhecido os
+/// itens são persistidos MESMO com soma divergente da célula — a célula continua dona do
+/// total, e o resíduo (célula − Σ partes) é reconciliado com sinal no loader de métricas,
+/// enquanto o write-back cai para escrita RAW.
 ///
 /// PURA — sem I/O, sem DB, sem panics.
 pub(crate) fn parse_itemized_note(note: &str) -> Vec<NoteLineItem> {
@@ -1730,7 +1732,7 @@ mod tests {
     }
 
     // A nota da célula vira a descrição (com " · " no lugar das quebras); sem nota, fallback
-    // com a DATA real (não mais "Entrada 2026" genérico) — auditoria vs planilha oficial.
+    // com a DATA real (não um rótulo genérico "Entrada 2026").
     #[test]
     fn description_comes_from_cell_note_with_date_fallback() {
         let rows = real_geometry_rows(false);
