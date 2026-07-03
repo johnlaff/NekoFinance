@@ -36,6 +36,20 @@ jobs:
         with:
           persist-credentials: false
 
+      # O extrator Rust (build-mode none) resolve chamadas/tipos lendo as FONTES das
+      # crates via rust-analyzer; sem toolchain + `cargo fetch` o registry fica vazio e
+      # a métrica "calls with call target" cai abaixo do limiar (aviso de qualidade no
+      # tool status). Buscar as dependências antes do init resolve a causa raiz.
+      - name: Set up Rust toolchain (extractor dependency resolution)
+        if: matrix.language == 'rust'
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: 1.96.0
+
+      - name: Fetch Rust dependency sources
+        if: matrix.language == 'rust'
+        run: cargo fetch --manifest-path src-tauri/Cargo.toml
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a # v4
         with:
