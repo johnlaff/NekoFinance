@@ -75,6 +75,10 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 060  | Engine 5-type: cartão/economia/patrimônio buckets, custo de vida excludes savings      | P1       | L      | 059        | DONE (pkg K)               |
 | 061  | Lançamentos kind badges + cartão/economia%/patrimônio surfaces + convention doc        | P3       | M      | 059, 060   | DONE (pkg K)               |
 | 062  | Auto-economia write-back to the Economia tab (diff + approval, round-trip)             | P2       | M      | 060        | DONE (pkg K)               |
+| 063  | Ledger day headers show the chained Saldo (spreadsheet parity)                         | P1       | M      | —          | TODO                       |
+| 064  | Year comparison with Entradas + Economizado% (savings-tab parity)                      | P2       | S–M    | —          | TODO                       |
+| 065  | Calendar day cells: movements in tooltip/aria + click-through to the ledger            | P2       | M      | —          | TODO                       |
+| 066  | Sidebar shows real last-sync recency from sync_log                                     | P3       | S      | —          | TODO                       |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale)
 
@@ -151,6 +155,13 @@ If executing incrementally, do **001 → 002 → 008 → 017 → 015** first: th
 fixes, the dashboard double-pipeline perf win, the accessibility batch, and wiring the
 already-built UI. All are high-leverage with clean verification stories.
 
+## Round 11 batch (2026-07-03, planned at `290d538`)
+
+Plans 063–066 come from the round-11 adherence audit (multi-agent, adversarially
+verified). The 26 directly actionable findings were fixed in PR #106; these four
+are the surviving view-parity/trust features. Recommended order: 063 → 064 →
+065 → 066 (no hard dependencies; 063 has the highest user value).
+
 ## Findings considered and rejected (do not re-audit)
 
 - **`saldoHeatmap.ts` thresholds**: correct — absolute R$ bands match the spreadsheet's
@@ -173,6 +184,14 @@ already-built UI. All are high-leverage with clean verification stories.
   BOTH as a grid Saída AND in the Economia tab) is DOCUMENTED and DEFERRED — see spec 011 §Parte 2.
 - **`classify()` routing credit expenses to FixedOut**: by design (the fatura folds into a
   Saída lump at the due date — ADR-0001). Not a bug.
+- **Note line starting with `R$` but missing the `-` separator loses its description**
+  (round 11): explicit owner decision to fix the notes at the source instead of widening the
+  parser grammar. Revisit only on a new owner request.
+- **Signed updater (tauri-plugin-updater)** (round 11 market scan): consciously deferred while
+  distribution is manual (portable exe + GitHub Releases). Revisit when an auto-update channel
+  is wanted.
+- **Mia tools backend**: direction item, needs a product decision on scope (deterministic
+  finance tools only, per the engineering rules). Not planned in this batch.
 - **First month of an imported year has no prior-year carry-over seed**: structural; the seed
   comes from the live balance column, not a cross-year formula. Not a bug.
 - **Dormant granular category tree in the schema**: intentional — demoted to free tags
