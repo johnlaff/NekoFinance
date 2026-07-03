@@ -37,13 +37,23 @@ export function readMotionLog(): string[] {
   }
 }
 
-/** Duração do reveal a partir do token do DS (fallback cobre ambientes sem getComputedStyle). */
-function revealDurationMs(): number {
-  return (
-    parseFloat(
-      getComputedStyle(document.documentElement).getPropertyValue("--dur-deliberate"),
-    ) || 480
-  );
+/** Duração do reveal em ms. CONSTANTE, não lida do token: no WebView2 a leitura
+ *  `getComputedStyle(...).getPropertyValue("--dur-deliberate")` resolvia para ~0,
+ *  fazendo o disco encher em ~11ms ("a tela só piscou"). O valor casa o token
+ *  `--dur-deliberate` do DS; a leitura do token vai só para o log de diagnóstico. */
+const REVEAL_DURATION_MS = 480;
+
+/** Valor bruto do token (só para o log de diagnóstico — não governa a animação). */
+function rawDurationToken(): string {
+  try {
+    return (
+      getComputedStyle(document.documentElement)
+        .getPropertyValue("--dur-deliberate")
+        .trim() || "vazio"
+    );
+  } catch {
+    return "n/d";
+  }
 }
 
 /**
@@ -53,7 +63,7 @@ function revealDurationMs(): number {
  * do tema ANTIGO ainda ativo no html, deixando o reveal invisível no sentido
  * light→dark. Fallbacks cobrem ambientes sem resolução de estilo (jsdom).
  */
-export function resolveThemeBg(next: Theme): string {
+function resolveThemeBg(next: Theme): string {
   const html = document.documentElement;
   const prev = html.getAttribute("data-theme");
   if (next === "light") {
@@ -93,7 +103,7 @@ export function playThemeReveal(
   const bg = resolveThemeBg(next);
   const t0 = performance.now();
   logMotion(
-    `reveal→${next}: início x=${Math.round(x)} y=${Math.round(y)} r=${Math.round(radius)} bg=${bg}`,
+    `reveal→${next}: início dur=${REVEAL_DURATION_MS}ms token=${rawDurationToken()} bg=${bg}`,
   );
   overlay.setAttribute("aria-hidden", "true");
   overlay.style.cssText =
@@ -107,7 +117,7 @@ export function playThemeReveal(
       { clipPath: `circle(${radius}px at ${x}px ${y}px)` },
     ],
     {
-      duration: revealDurationMs(),
+      duration: REVEAL_DURATION_MS,
       easing: "cubic-bezier(0.16, 1, 0.3, 1)", // --ease-entrance
       fill: "forwards", // cobre a tela inteira enquanto o tema troca por baixo
     },

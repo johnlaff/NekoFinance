@@ -2258,13 +2258,13 @@ h3,
 @keyframes screen-enter {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(16px) scale(0.985);
   }
 }
 
 /* Duração deliberada (não --dur-base): a troca de tela remonta a árvore inteira e o
    primeiro frame chega com o layout já custeado — 200ms terminavam antes de o olho
-   registrar. 320ms/8px mantém a entrada calma porém perceptível. */
+   registrar. 16px + um leve scale tornam a entrada nitidamente sentida sem virar salto. */
 .ak-screen {
   animation: screen-enter var(--dur-slow) var(--ease-entrance) backwards;
 }
