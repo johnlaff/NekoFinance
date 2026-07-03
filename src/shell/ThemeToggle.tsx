@@ -42,10 +42,16 @@ function playViewTransitionReveal(
   y: number,
   radius: number,
   apply: () => void,
+  onSettled: () => void,
 ): void {
   const transition = document.startViewTransition(apply);
   transition.ready
     .then(() => {
+      // O estado React só pode atualizar DEPOIS do snapshot do tema velho: um
+      // re-render antes da captura aplicaria o tema novo cedo demais (via effect)
+      // e o círculo revelaria tema novo sobre tema novo — invisível. Pós-ready,
+      // o capture de `root` é vivo e o re-render (ícone) aparece através dele.
+      onSettled();
       document.documentElement.animate(
         {
           clipPath: [
@@ -61,7 +67,9 @@ function playViewTransitionReveal(
       );
     })
     .catch(() => {
-      // Transição abortada (troca rápida de tema, navegação) — o tema já foi aplicado.
+      // Transição abortada/sem suporte no caminho: o DOM já tem o tema novo
+      // (apply rodou); garante que o estado React acompanhe. Idempotente.
+      onSettled();
     });
 }
 
@@ -124,12 +132,19 @@ export function ThemeToggle() {
     );
 
     if (typeof document.startViewTransition === "function") {
-      // A troca visual é o atributo em <html>: applyTheme dentro do callback dá ao
-      // snapshot "novo" o tema de destino sem forçar render síncrono do React. O estado
-      // segue depois e o efeito reaplica o mesmo tema (idempotente).
+      // A troca visual é o atributo em <html>: applyTheme SÓ dentro do callback da
+      // transição (pós-snapshot do tema velho). setTheme aqui fora iniciaria um
+      // re-render cujo effect aplicaria o tema ANTES da captura — o snapshot velho
+      // nasceria com o tema novo e o reveal seria invisível. O estado React é
+      // atualizado pelo onSettled (pós-ready ou transição abortada).
       try {
-        playViewTransitionReveal(x, y, radius, () => applyTheme(next));
-        setTheme(next);
+        playViewTransitionReveal(
+          x,
+          y,
+          radius,
+          () => applyTheme(next),
+          () => setTheme(next),
+        );
         return;
       } catch {
         // API presente mas quebrada em runtime → cai para o overlay abaixo.
