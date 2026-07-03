@@ -46,6 +46,7 @@ import {
   setMotionPreference,
   systemPrefersReducedMotion,
 } from "../lib/motion";
+import { playThemeReveal, readMotionLog } from "../shell/themeReveal";
 import { safeErrorMessage } from "../lib/errors";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { Button } from "../design-system/components/Button";
@@ -349,15 +350,41 @@ function MotionDiagnostics() {
     }, 6000);
   }
 
+  // Roda o MESMO caminho do reveal de produção, do centro da tela, SEM trocar o
+  // tema (apply vazio): o disco da cor do tema oposto cresce e se dissolve sobre a
+  // UI atual. O verdict vira o log real do caminho (início/cresceu/cancelado).
+  function runRevealTest() {
+    if (running) return;
+    setRunning(true);
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+    const next =
+      document.documentElement.getAttribute("data-theme") === "light"
+        ? "dark"
+        : "light";
+    playThemeReveal(cx, cy, Math.hypot(cx, cy), next, () => {
+      // Só teste visual — o tema real não muda.
+    });
+    window.setTimeout(() => {
+      setRunning(false);
+      setVerdict(readMotionLog().slice(-2).join(" · ") || "sem log");
+    }, 1100);
+  }
+
   return (
     <CfgItem
       icon={Sparkles}
       title="Diagnóstico de animações"
       sub={verdict ?? facts}
       right={
-        <Button variant="secondary" onClick={runTest} disabled={running}>
-          {running ? "Testando…" : "Testar"}
-        </Button>
+        <span style={{ display: "inline-flex", gap: 8 }}>
+          <Button variant="secondary" onClick={runTest} disabled={running}>
+            {running ? "Testando…" : "Testar"}
+          </Button>
+          <Button variant="secondary" onClick={runRevealTest} disabled={running}>
+            Testar reveal
+          </Button>
+        </span>
       }
     />
   );
