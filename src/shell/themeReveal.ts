@@ -123,23 +123,33 @@ export function playThemeReveal(
     },
   );
   grow.addEventListener("finish", () => {
-    logMotion(`reveal→${next}: cresceu em ${Math.round(performance.now() - t0)}ms`);
-    // Troca o tema por baixo do overlay AINDA opaco; um rAF garante que a nova
-    // paleta já pintou antes de o overlay começar a sumir (senão o dissolve revela
-    // um frame do tema em transição).
+    const tGrow = Math.round(performance.now() - t0);
+    // Troca o tema por baixo do overlay AINDA opaco.
     apply();
-    requestAnimationFrame(() => {
-      const fade = overlay.animate([{ opacity: 1 }, { opacity: 0 }], {
-        duration: 160,
-        easing: "linear",
-        // `forwards`: sem isso a animação reverte para opacity:1 no frame final
-        // antes da remoção — um flash da cor sólida sobre a UI (o "pisca").
-        fill: "forwards",
-      });
-      const cleanup = () => overlay.remove();
-      fade.addEventListener("finish", cleanup);
-      fade.addEventListener("cancel", cleanup);
-    });
+    // Força recálculo de estilo + layout do novo tema AGORA (leitura de layout é
+    // síncrona no WebView2), em vez de deixar o browser deferir a repintura — é a
+    // repintura tardia da árvore inteira que aparecia como "cor sólida → depois a UI".
+    void document.documentElement.offsetWidth;
+    const tApply = performance.now();
+    // Dois requestAnimationFrame: o segundo só dispara DEPOIS de um ciclo de paint,
+    // então a nova paleta já está pintada sob o overlay opaco quando o dissolve começa.
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        logMotion(
+          `reveal→${next}: cresceu ${tGrow}ms · paint ${Math.round(performance.now() - tApply)}ms`,
+        );
+        const fade = overlay.animate([{ opacity: 1 }, { opacity: 0 }], {
+          duration: 220,
+          easing: "ease-out",
+          // `forwards`: sem isso a animação reverte para opacity:1 no frame final
+          // antes da remoção — um flash da cor sólida sobre a UI.
+          fill: "forwards",
+        });
+        const cleanup = () => overlay.remove();
+        fade.addEventListener("finish", cleanup);
+        fade.addEventListener("cancel", cleanup);
+      }),
+    );
   });
   grow.addEventListener("cancel", () => {
     logMotion(`reveal→${next}: CANCELADO em ${Math.round(performance.now() - t0)}ms`);
