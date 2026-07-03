@@ -32,15 +32,39 @@ function revealDurationMs(): number {
 }
 
 /**
- * Circular reveal do tema com overlay + WAAPI em elemento REAL — deliberadamente sem a
- * View Transitions API: no WebView2 a API responde sucesso mas o compositor não pinta a
- * árvore de pseudo-elementos (reveal invisível), enquanto animação WAAPI em elementos
- * comuns é confiável em todos os engines-alvo.
+ * Cor de fundo CONCRETA do tema de destino, resolvida flipando o atributo em <html>
+ * dentro do mesmo task síncrono (o browser não pinta no meio de um task — zero flash).
+ * Necessário porque custom properties HERDAM: um overlay sem atributo herdaria o --bg
+ * do tema ANTIGO ainda ativo no html, deixando o reveal invisível no sentido
+ * light→dark. Fallbacks cobrem ambientes sem resolução de estilo (jsdom).
+ */
+function resolveThemeBg(next: Theme): string {
+  const html = document.documentElement;
+  const prev = html.getAttribute("data-theme");
+  if (next === "light") {
+    html.setAttribute("data-theme", "light");
+  } else {
+    html.removeAttribute("data-theme");
+  }
+  const bg = getComputedStyle(html).getPropertyValue("--bg").trim();
+  if (prev === null) {
+    html.removeAttribute("data-theme");
+  } else {
+    html.setAttribute("data-theme", prev);
+  }
+  return bg || (next === "light" ? "#f4f4f0" : "#0e1413");
+}
+
+/**
+ * Circular reveal do tema com um CÍRCULO REAL crescendo por `transform: scale()` —
+ * deliberadamente sem View Transitions (o WebView2 não pinta os pseudo-elementos da
+ * transição) e sem `clip-path` animado (não compõe de forma confiável no mesmo engine).
+ * `transform` em elemento comum é a única primitiva comprovada em todos os alvos.
  *
- * Sequência: um overlay com a COR DE FUNDO do tema de destino cresce em círculo a partir
- * do ponto de clique POR CIMA da UI ainda no tema antigo; só quando o círculo cobre a
- * tela o tema real troca por baixo (`apply`), e o overlay se dissolve revelando a UI nova.
- * A troca fica escondida sob o overlay cheio — nunca há swap abrupto visível.
+ * Sequência: um disco com a cor de fundo do tema de destino escala do ponto de clique
+ * POR CIMA da UI ainda no tema antigo; quando cobre a tela, o tema real troca por
+ * baixo (`apply`) e o disco se dissolve revelando a UI nova. A troca fica escondida
+ * sob o disco cheio — nunca há swap abrupto visível.
  */
 function playOverlayReveal(
   x: number,
@@ -56,28 +80,23 @@ function playOverlayReveal(
     return;
   }
   overlay.setAttribute("aria-hidden", "true");
-  // `[data-theme="light"]` casa qualquer elemento, então o overlay resolve o --bg do tema de destino.
-  if (next === "light") overlay.setAttribute("data-theme", "light");
+  const diameter = Math.ceil(radius * 2);
   overlay.style.cssText =
-    "position:fixed;inset:0;z-index:9999;pointer-events:none;background:var(--bg);" +
-    `clip-path:circle(0px at ${x}px ${y}px);`;
+    `position:fixed;left:${Math.round(x - radius)}px;top:${Math.round(y - radius)}px;` +
+    `width:${diameter}px;height:${diameter}px;border-radius:50%;` +
+    `background:${resolveThemeBg(next)};transform:scale(0);` +
+    "z-index:9999;pointer-events:none;";
   document.body.appendChild(overlay);
 
   const swapAndRemove = () => {
     apply();
     overlay.remove();
   };
-  const grow = overlay.animate(
-    [
-      { clipPath: `circle(0px at ${x}px ${y}px)` },
-      { clipPath: `circle(${radius}px at ${x}px ${y}px)` },
-    ],
-    {
-      duration: revealDurationMs(),
-      easing: "cubic-bezier(0.16, 1, 0.3, 1)", // --ease-entrance
-      fill: "forwards", // cobre a tela inteira enquanto o tema troca por baixo
-    },
-  );
+  const grow = overlay.animate([{ transform: "scale(0)" }, { transform: "scale(1)" }], {
+    duration: revealDurationMs(),
+    easing: "cubic-bezier(0.16, 1, 0.3, 1)", // --ease-entrance
+    fill: "forwards", // cobre a tela inteira enquanto o tema troca por baixo
+  });
   grow.addEventListener("finish", () => {
     apply();
     const fade = overlay.animate([{ opacity: 1 }, { opacity: 0 }], {

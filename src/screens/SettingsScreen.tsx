@@ -264,7 +264,7 @@ function MotionDiagnostics() {
     };
 
     const results: string[] = [];
-    let pending = 2;
+    let pending = 3;
     const t0 = performance.now();
     const finish = () => {
       pending -= 1;
@@ -305,6 +305,30 @@ function MotionDiagnostics() {
       finish();
     });
 
+    // (c) clip-path animado via WAAPI — alguns compositors executam a animação
+    // (finish no tempo certo) sem PINTAR a interpolação; aqui só medimos o tempo,
+    // e o usuário reporta se VIU o quadrado alargar (a parte visual é o teste).
+    const clipDot = mkDot(64);
+    clipDot.style.borderRadius = "0";
+    clipDot.style.width = "220px";
+    clipDot.style.clipPath = "inset(0 206px 0 0)";
+    if (typeof clipDot.animate === "function") {
+      const clipAnim = clipDot.animate(
+        [{ clipPath: "inset(0 206px 0 0)" }, { clipPath: "inset(0 0 0 0)" }],
+        { duration: 600, iterations: 3, direction: "alternate", easing: "ease-in-out" },
+      );
+      clipAnim.addEventListener("finish", () => {
+        const dt = Math.round(performance.now() - t0);
+        clipDot.remove();
+        results.push(`clip-path terminou (${dt}ms) — viu a barra alargar?`);
+        finish();
+      });
+    } else {
+      clipDot.remove();
+      results.push("clip-path não testável");
+      finish();
+    }
+
     // Guarda: animação que nunca dispara/termina = motor não executa animações.
     window.setTimeout(() => {
       if (document.body.contains(waapiDot)) {
@@ -315,6 +339,11 @@ function MotionDiagnostics() {
       if (document.body.contains(cssDot)) {
         cssDot.remove();
         results.push("CSS nunca disparou — animações CSS não executam");
+        finish();
+      }
+      if (document.body.contains(clipDot)) {
+        clipDot.remove();
+        results.push("clip-path nunca terminou");
         finish();
       }
     }, 6000);

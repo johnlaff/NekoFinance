@@ -87,7 +87,7 @@ describe("ThemeToggle — reveal por overlay (WAAPI em elemento real)", () => {
     // Fim do fade → overlay removido.
     anims[1]!.fire("finish");
     expect(
-      document.querySelector("[aria-hidden='true'][style*='clip-path']"),
+      document.querySelector("[aria-hidden='true'][style*='border-radius']"),
     ).toBeNull();
   });
 
@@ -99,7 +99,7 @@ describe("ThemeToggle — reveal por overlay (WAAPI em elemento real)", () => {
     anims[0]!.fire("cancel");
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
     expect(
-      document.querySelector("[aria-hidden='true'][style*='clip-path']"),
+      document.querySelector("[aria-hidden='true'][style*='border-radius']"),
     ).toBeNull();
   });
 });
