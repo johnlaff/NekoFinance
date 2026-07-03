@@ -63,7 +63,8 @@ describe("TotaisScreen (render)", () => {
     await waitFor(() => {
       expect(screen.getByText("Performance")).toBeInTheDocument();
     });
-    expect(screen.getByText("Custo de vida")).toBeInTheDocument();
+    // "Custo de vida" nomeia o tile e a linha do FlowCard (mesmo conceito, mesmo termo).
+    expect(screen.getAllByText("Custo de vida").length).toBeGreaterThan(0);
     expect(screen.getByText("Economizado")).toBeInTheDocument();
     expect(screen.getByText("Diário médio")).toBeInTheDocument();
     // Status do método aparece (performance positiva no mock → "Sobrou dinheiro").
@@ -200,7 +201,7 @@ describe("TotaisScreen (render)", () => {
         (content, el) =>
           el?.classList.contains("mes-tile__sub") === true &&
           content ===
-            "Entradas R$ 7.000,00 − Saída total R$ 2.500,00 − Economia R$ 1.000,00",
+            "Entradas R$ 7.000,00 − Custo de vida R$ 2.500,00 − Economia R$ 1.000,00",
       ),
     ).toBeInTheDocument();
     expect(screen.getAllByText("+R$ 3.500,00").length).toBeGreaterThan(0);
@@ -240,7 +241,7 @@ describe("TotaisScreen (render)", () => {
         (content, el) =>
           el?.classList.contains("mes-tile__sub") === true &&
           content ===
-            "Entradas R$ 7.000,00 − Saída total R$ 2.500,00 − Economia R$ 1.000,00 − Patrimônio R$ 500,00",
+            "Entradas R$ 7.000,00 − Custo de vida R$ 2.500,00 − Economia R$ 1.000,00 − Patrimônio R$ 500,00",
       ),
     ).toBeInTheDocument();
     expect(screen.getAllByText("+R$ 3.000,00").length).toBeGreaterThan(0);
@@ -281,7 +282,7 @@ describe("TotaisScreen (render)", () => {
         (content, el) =>
           el?.classList.contains("mes-tile__sub") === true &&
           content ===
-            "Entradas R$ 7.000,00 − Saída total R$ 2.500,00 − Previsão de diário R$ 1.200,00",
+            "Entradas R$ 7.000,00 − Custo de vida R$ 2.500,00 − Previsão de diário R$ 1.200,00",
       ),
     ).toBeInTheDocument();
     expect(screen.getAllByText("+R$ 3.300,00").length).toBeGreaterThan(0);
@@ -290,18 +291,15 @@ describe("TotaisScreen (render)", () => {
     expect(within(flow).getByText("Previsão de diário")).toBeInTheDocument();
   });
 
-  it("Custo de vida sublabel menciona cartão", async () => {
+  it("Custo de vida sublabel soletra os 3 baldes (fixas + diário + cartão)", async () => {
     mockInvoke.mockReset();
     mockCommands({ get_forecast: FORECAST, owner_totals_for_month_cmd: [] });
     render(<TotaisScreen />);
 
     await waitFor(() => {
-      expect(screen.getByText("Custo de vida")).toBeInTheDocument();
+      expect(screen.getAllByText("Custo de vida").length).toBeGreaterThan(0);
     });
-    // O sublabel da métrica passa a mencionar "incl. cartão", alinhado ao hint do rodapé —
-    // por isso há 2+ ocorrências (sublabel + rodapé). A presença do sublabel é o que importa.
-    expect(
-      screen.getByText("= Saída Total (saídas incl. cartão + diário)"),
-    ).toBeInTheDocument();
+    // A definição exibida usa os mesmos 3 baldes irmãos do card "Para onde foi o dinheiro".
+    expect(screen.getByText("= Saídas fixas + Diário + Cartão")).toBeInTheDocument();
   });
 });

@@ -99,7 +99,6 @@ function StatusChip({ level, label }: { level: string; label: string }) {
 // ---------------------------------------------------------------------------
 
 interface HeroTilesProps {
-  isCurrent: boolean;
   performance: number;
   entradas: number;
   saidaTotal: number;
@@ -115,7 +114,6 @@ interface HeroTilesProps {
 }
 
 function HeroTiles({
-  isCurrent,
   performance,
   entradas,
   saidaTotal,
@@ -136,7 +134,7 @@ function HeroTiles({
         <p className="mes-tile__lab">
           <TrendingUp size={14} strokeWidth={1.75} />
           <span>Performance</span>
-          {isCurrent ? (
+          {previsaoDiario > 0 ? (
             <span style={{ fontWeight: 400, textTransform: "none" }}>
               {" "}
               (com previsão)
@@ -152,10 +150,10 @@ function HeroTiles({
           {fmtSigned(performance)}
         </div>
         {/* A conta exibida precisa fechar com a Performance do motor: Economia, Patrimônio e a
-            previsão de diário restante são termos explícitos (Performance = Entradas − Saída
-            total − Economia − Patrimônio − Previsão de diário). */}
+            previsão de diário restante são termos explícitos (Performance = Entradas − Custo de
+            vida − Economia − Patrimônio − Previsão de diário). */}
         <p className="mes-tile__sub">
-          Entradas {fmtBRL(entradas)} − Saída total {fmtBRL(saidaTotal)}
+          Entradas {fmtBRL(entradas)} − Custo de vida {fmtBRL(saidaTotal)}
           {economia > 0 ? <> − Economia {fmtBRL(economia)}</> : null}
           {patrimonio > 0 ? <> − Patrimônio {fmtBRL(patrimonio)}</> : null}
           {previsaoDiario > 0 ? (
@@ -176,7 +174,7 @@ function HeroTiles({
         <div className="mes-tile__val" style={{ color: "var(--text-strong)" }}>
           {fmtBRL(custoVida)}
         </div>
-        <p className="mes-tile__sub">= Saída Total (saídas incl. cartão + diário)</p>
+        <p className="mes-tile__sub">= Saídas fixas + Diário + Cartão</p>
         <div style={{ marginTop: 10 }}>
           <StatusChip level={custoStatus.level} label={custoStatus.label} />
         </div>
@@ -333,14 +331,15 @@ function FlowCard({
             amtColor="var(--money-pos)"
           />
           <FlowRow
-            label="Saída total"
+            label="Custo de vida"
             value={saidaTotal}
             entradas={entradas}
             fill="var(--type-saida)"
             amtColor="var(--money-neg)"
           />
-          {/* Economia, previsão de diário restante e Patrimônio são termos do resultado:
-              sem eles a aritmética exibida não fecharia com o "Sobrou no mês". */}
+          {/* Economia, Patrimônio e previsão de diário restante são termos do resultado:
+              sem eles a aritmética exibida não fecharia com o "Sobrou no mês". A ordem
+              espelha a equação do tile Performance. */}
           {economia > 0 ? (
             <FlowRow
               label="Economia"
@@ -348,6 +347,15 @@ function FlowCard({
               entradas={entradas}
               fill="var(--type-economia)"
               amtColor="var(--type-economia)"
+            />
+          ) : null}
+          {patrimonio > 0 ? (
+            <FlowRow
+              label="Patrimônio"
+              value={patrimonio}
+              entradas={entradas}
+              fill="var(--text-muted)"
+              amtColor="var(--text-muted)"
             />
           ) : null}
           {previsaoDiario > 0 ? (
@@ -358,15 +366,6 @@ function FlowCard({
               fill="var(--type-diario)"
               amtColor="var(--text-muted)"
               fillOpacity={0.55}
-            />
-          ) : null}
-          {patrimonio > 0 ? (
-            <FlowRow
-              label="Patrimônio"
-              value={patrimonio}
-              entradas={entradas}
-              fill="var(--text-muted)"
-              amtColor="var(--text-muted)"
             />
           ) : null}
         </div>
@@ -401,7 +400,6 @@ function TrendCard({ trend, maxAbs, activeYear, activeMonth }: TrendCardProps) {
           <TrendingUp size={16} strokeWidth={1.75} className="ic" />
           Resultado nos últimos meses
         </span>
-        <span className="mes-trend__ref-label">referência anual de 20% a 30%</span>
       </div>
       <div className="card__body">
         <div className="mes-trend">
@@ -595,7 +593,6 @@ export function TotaisScreen() {
 
       {/* Hero tiles: Resultado, Custo de vida, Economizado */}
       <HeroTiles
-        isCurrent={isCurrent}
         performance={performance}
         entradas={entradas}
         saidaTotal={saidaTotal}
@@ -649,7 +646,11 @@ export function TotaisScreen() {
           >
             <Money cents={m.real_daily_avg_cents} size="lg" />
           </div>
-          <p className="mes-tile__sub">média realizada por dia até hoje</p>
+          <p className="mes-tile__sub">
+            {isCurrent
+              ? "média realizada por dia até hoje"
+              : "média realizada por dia no mês"}
+          </p>
         </div>
       </section>
 

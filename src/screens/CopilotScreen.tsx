@@ -59,18 +59,21 @@ function buildSpendAnswer(
   return { safe, ceiling, spent, remaining };
 }
 
+// O valor promovido é o guardrail do motor (caixa + meta de poupança) — o teto diário é
+// a outra régua, mostrada na trilha de cálculo para o usuário comparar as duas.
 function spendAnswerText(ans: SpendAnswer): string {
   return (
     `Hoje você pode gastar até ` +
-    `**${fmtBRL(ans.safe)}** sem furar o teto diário nem deixar nenhum dia no vermelho até o fim do mês.`
+    `**${fmtBRL(ans.safe)}** sem deixar nenhum dia no vermelho nem comprometer a poupança do ano.`
   );
 }
 
 function spendAnswerCalc(ans: SpendAnswer): string {
   return (
+    `limite pelo caixa e poupança = ${fmtBRL(ans.safe)}\n` +
     `teto diário = ${fmtBRL(ans.ceiling)}\n` +
     `já gasto hoje = ${fmtBRL(ans.spent)}\n` +
-    `livre = ${fmtBRL(ans.remaining)}`
+    `livre pelo teto = ${fmtBRL(ans.remaining)}`
   );
 }
 

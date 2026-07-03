@@ -1702,6 +1702,44 @@ mod tests {
         assert_eq!(baseline, 200_000, "mediana de 3 valores = o do meio");
     }
 
+    // Uma célula de Saída pode aninhar itens de ECONOMIA/INVESTIMENTO no mesmo total. O custo de
+    // vida exclui esses baldes, então a baseline (que alimenta reserve_floor/coverage/reserve_months)
+    // deve medir o custo de vida classificado por item — não a saída bruta da transação-pai.
+    #[tokio::test]
+    async fn baseline_excludes_economia_and_patrimonio_line_items() {
+        let pool = fixture_pool().await;
+        // Março: despesa única de 8.000 itemizada — só 6.500 (CONTAS+DIÁRIO+CARTÕES) são custo de vida.
+        insert_realized_id(&pool, "tx-item-mar", "expense", 800_000, "2026-03-10").await;
+        for (id, cents, section, pos) in [
+            ("li-b-contas", 300_000_i64, "CONTAS", 0_i64),
+            ("li-b-diario", 200_000, "DIÁRIO", 1),
+            ("li-b-cartao", 150_000, "CARTÕES", 2),
+            ("li-b-econ", 100_000, "ECONOMIA", 3),
+            ("li-b-inv", 50_000, "INVESTIMENTO", 4),
+        ] {
+            sqlx::query(
+                "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, section) \
+                 VALUES (?1, 'tx-item-mar', ?2, 'parte', ?3, ?4)",
+            )
+            .bind(id)
+            .bind(cents)
+            .bind(pos)
+            .bind(section)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        // Abril: despesa simples, sem itens.
+        insert_realized(&pool, "expense", 500_000, "2026-04-10").await;
+
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        let baseline = realized_monthly_baseline(&pool, today).await.unwrap();
+        assert_eq!(
+            baseline, 575_000,
+            "mediana de [500_000, 650_000]: economia+patrimônio fora do custo de vida"
+        );
+    }
+
     // --- effective_daily_ceiling -------------------------------------------------------
 
     // Sem orçamento explícito: teto = Σ diário (não-fixo, não-crédito, não-projeção) do mês anterior

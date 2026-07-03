@@ -5,8 +5,8 @@ export const FORM_KINDS: MovKind[] = [
   "entrada",
   "saida",
   "diario",
-  "cartao",
   "economia",
+  "cartao",
 ];
 
 /** Campos do schema derivados de um tipo de movimento. */

@@ -7,7 +7,7 @@ describe("MovBadge", () => {
     ["entrada", "E", "Entrada"],
     ["saida", "S", "Saída"],
     ["diario", "D", "Diário"],
-    ["economia", "E", "Economia"],
+    ["economia", "P", "Economia"],
     ["cartao", "C", "Cartão"],
   ];
 
@@ -27,7 +27,9 @@ describe("MovBadge", () => {
     expect(glyph.style.background).toBe("var(--type-cartao)");
   });
 
-  it("entrada e economia compartilham a letra E mas cores diferentes", () => {
+  // O glifo distingue sozinho (aparece sem rótulo no Livro-razão, e cor-apenas
+  // falharia para daltônicos): Economia usa "P" para não colidir com Entrada.
+  it("entrada e economia têm glifos e cores distintos", () => {
     const e = render(<MovBadge kind="entrada" />).container.querySelector<HTMLElement>(
       "span[aria-hidden='true']",
     )!;
@@ -35,7 +37,7 @@ describe("MovBadge", () => {
       <MovBadge kind="economia" />,
     ).container.querySelector<HTMLElement>("span[aria-hidden='true']")!;
     expect(e.textContent).toBe("E");
-    expect(ec.textContent).toBe("E");
+    expect(ec.textContent).toBe("P");
     expect(e.style.background).not.toBe(ec.style.background);
   });
 

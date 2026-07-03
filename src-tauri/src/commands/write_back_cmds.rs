@@ -984,9 +984,10 @@ async fn record_write_back_log(
 }
 
 /// Economia AUTO-derivada por mês (1..=12) do ano para escrever na coluna `Economia` da aba
-/// homônima. Plano 062: a proposta vem somente dos itens de nota classificados por seção como
-/// `ItemKind::Economia`; `INVESTIMENTO`/Patrimônio, anotações importadas da própria aba e transfers
-/// manuais não alimentam a proposta, evitando eco/dobra no round-trip.
+/// homônima. A proposta usa a MESMA definição derivada do motor mensal/anual: itens de nota
+/// classificados por seção como `ItemKind::Economia` + transfers manuais → conta reserve com
+/// data ≤ hoje. Ficam fora: `INVESTIMENTO`/Patrimônio, a anotação importada da própria aba
+/// (evita eco/dobra no round-trip) e qualquer fallback por descrição/nome de banco.
 pub(crate) async fn load_economia_by_month(
     pool: &SqlitePool,
     year: i32,

@@ -184,7 +184,7 @@ export function AppShell({
               </span>
               <span className="sh-conn__s">
                 {authStatus === "connected"
-                  ? "Sincronizada há 2 min"
+                  ? "Conta Google ativa"
                   : authStatus === "expired"
                     ? "Sessão expirada"
                     : authStatus === "loading"

@@ -895,7 +895,7 @@ function ConnectView({
           <Link2 size={20} strokeWidth={1.75} />
         </div>
         <p className="gs-connect__text">
-          Conecte sua conta Google para importar os dados da planilha oficial.
+          Conecte sua conta Google para importar os dados da sua planilha.
         </p>
         <Button
           variant="primary"

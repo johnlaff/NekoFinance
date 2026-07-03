@@ -344,28 +344,36 @@ pub(crate) async fn projected_annual_savings(
     Ok((row.0, row.0 - row.1))
 }
 
-/// Gasto típico de um mês = MEDIANA da saída dos meses realizados COMPLETOS (anteriores ao mês
-/// corrente), dos **últimos 6 meses** (recentes representam melhor o padrão atual que meses
-/// antigos de anos anteriores — review ui-vs-planilha). Mediana para ser robusta a um mês atípico.
+/// Gasto típico de um mês = MEDIANA do CUSTO DE VIDA (fixas + diário + cartão, classificado por
+/// item de nota) dos meses realizados COMPLETOS, na janela dos **últimos 6 meses de calendário**
+/// (recentes representam melhor o padrão atual que meses antigos — review ui-vs-planilha).
+/// Mediana para ser robusta a um mês atípico. Itens ECONOMIA/INVESTIMENTO aninhados numa célula
+/// de Saída ficam FORA: são poupança, não custo — senão o piso de reserva, a cobertura de meses
+/// futuros e o `reserve_months` do dashboard inflam com dinheiro guardado.
 pub(crate) async fn realized_monthly_baseline(
     pool: &SqlitePool,
     today_naive: NaiveDate,
 ) -> Result<i64, String> {
-    let cur_ym = today_naive.format("%Y-%m").to_string();
     // Sem filtro `is_projection` (congelado/stale): meses completos já passaram, a data decide.
-    // Plano 049: `ABS` porque despesas IMPORTADAS são gravadas negativas (`-amount_out`) e manuais
-    // positivas; um `SUM(amount)` de sinal misto se cancela e corrompe a mediana (e o reserve floor
-    // que dela deriva). Espelha o `ABS` já usado em `month_grid` / `effective_daily_ceiling`.
-    let rows: Vec<(i64,)> = sqlx::query_as(
-        "SELECT SUM(ABS(amount)) FROM \"transaction\" \
-         WHERE type='expense' AND date < ?1 \
-         GROUP BY substr(date,1,7) ORDER BY substr(date,1,7) DESC LIMIT 6",
-    )
-    .bind(format!("{cur_ym}-01")) // WHERE vira range (usa o índice); GROUP/ORDER por mês ficam
-    .fetch_all(pool)
-    .await
-    .map_err(|e| format!("baseline: {e}"))?;
-    let mut vals: Vec<i64> = rows.into_iter().map(|(s,)| s).collect();
+    // O loader compartilhado já aplica ABS por item/transação e o filtro de tags excluídas.
+    let month_start = NaiveDate::from_ymd_opt(today_naive.year(), today_naive.month(), 1).unwrap();
+    let window_start = month_start - chrono::Months::new(6);
+    let events = load_metric_db_events(pool, window_start, month_start).await?;
+
+    let mut by_month: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for e in events {
+        match e.kind {
+            forecast::EventKind::FixedOut
+            | forecast::EventKind::Daily
+            | forecast::EventKind::Cartao => {
+                *by_month
+                    .entry(e.date.format("%Y-%m").to_string())
+                    .or_insert(0) += e.amount_cents;
+            }
+            _ => {}
+        }
+    }
+    let mut vals: Vec<i64> = by_month.into_values().collect();
     if vals.is_empty() {
         return Ok(0);
     }

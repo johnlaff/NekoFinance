@@ -166,13 +166,15 @@ function handleDelete(t: TransactionRow): void {
 // Filter chip definitions
 // ---------------------------------------------------------------------------
 
+// Ordem canônica dos 5 tipos (a mesma de FORM_KINDS) e rótulos no singular, iguais
+// aos nomes de TYPE_META — o mesmo vocabulário em todo seletor de tipo do app.
 const FILTER_CHIPS: { key: FilterKey; label: string; color: string }[] = [
   { key: "todos", label: "Todos", color: "var(--text-faint)" },
-  { key: "entrada", label: "Entradas", color: "var(--type-entrada)" },
-  { key: "saida", label: "Saídas", color: "var(--type-saida)" },
-  { key: "cartao", label: "Cartão", color: "var(--type-cartao)" },
+  { key: "entrada", label: "Entrada", color: "var(--type-entrada)" },
+  { key: "saida", label: "Saída", color: "var(--type-saida)" },
   { key: "diario", label: "Diário", color: "var(--type-diario)" },
   { key: "economia", label: "Economia", color: "var(--type-economia)" },
+  { key: "cartao", label: "Cartão", color: "var(--type-cartao)" },
 ];
 
 const LINE_ITEM_KIND_META: Record<LineItemKind, LineItemKindMeta> = {

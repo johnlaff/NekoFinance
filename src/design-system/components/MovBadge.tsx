@@ -1,19 +1,15 @@
+import { TYPE_META, type MovementType } from "../../lib/nkFormat";
+
 /**
  * MovBadge — o badge de TIPO DE MOVIMENTO (os 5 pilares do método).
  *
- * Glifos próprios dos tipos de movimento do método, com os tokens `--type-*` do Midnight
- * Ledger. No método, Entrada e Economia compartilham a letra "E" — a COR distingue (entrada = jade; economia = verde-escuro). Acessível: o círculo é decorativo
- * (`aria-hidden`) e o nome do tipo é sempre exposto a leitores de tela.
+ * Nome, glifo e cor vêm de `TYPE_META` (nkFormat) — fonte única da identidade visual
+ * dos tipos, para o mesmo tipo nunca aparecer com letra/cor diferente entre telas.
+ * Economia usa "P" (de poupar): "E" colidiria com Entrada no mesmo seletor, e o glifo
+ * aparece sem rótulo no Livro-razão — cor sozinha não distingue. Acessível: o círculo
+ * é decorativo (`aria-hidden`) e o nome do tipo é sempre exposto a leitores de tela.
  */
-export type MovKind = "entrada" | "saida" | "diario" | "economia" | "cartao";
-
-const KIND_META: Record<MovKind, { token: string; glyph: string; name: string }> = {
-  entrada: { token: "var(--type-entrada)", glyph: "E", name: "Entrada" },
-  saida: { token: "var(--type-saida)", glyph: "S", name: "Saída" },
-  diario: { token: "var(--type-diario)", glyph: "D", name: "Diário" },
-  economia: { token: "var(--type-economia)", glyph: "E", name: "Economia" },
-  cartao: { token: "var(--type-cartao)", glyph: "C", name: "Cartão" },
-};
+export type MovKind = MovementType;
 
 const SR_ONLY: React.CSSProperties = {
   position: "absolute",
@@ -54,12 +50,12 @@ export function MovBadge({
   size = 18,
   className = "",
 }: MovBadgeProps) {
-  const meta = KIND_META[kind];
+  const meta = TYPE_META[kind];
   const glyphStyle: React.CSSProperties = {
     ...GLYPH_BASE,
     width: size,
     height: size,
-    background: meta.token,
+    background: meta.color,
     fontSize: `${Math.round(size * 0.56)}px`,
   };
   return (

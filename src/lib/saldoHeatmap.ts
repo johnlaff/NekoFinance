@@ -1,7 +1,7 @@
 /**
  * Heatmap da coluna Saldo — termômetro fiel à planilha de referência.
  *
- * A planilha oficial pinta a coluna Saldo (E, K, Q… BS) por formatação condicional com limiares
+ * A planilha de referência pinta a coluna Saldo (E, K, Q… BS) por formatação condicional com limiares
  * ABSOLUTOS em reais: quanto maior o saldo mais verde; quanto menor, mais perto do vermelho. As
  * faixas abaixo reproduzem exatamente essas regras (operadores e valores conferidos célula a célula):
  *

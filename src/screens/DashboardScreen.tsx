@@ -224,7 +224,13 @@ export function DashboardScreen() {
             </div>
             <div>
               <dt>Reserva</dt>
-              <dd>{reserve.toFixed(1)} meses</dd>
+              <dd>
+                {reserve.toLocaleString("pt-BR", {
+                  minimumFractionDigits: 1,
+                  maximumFractionDigits: 1,
+                })}{" "}
+                meses
+              </dd>
             </div>
             <div>
               <dt>Teto diário</dt>
