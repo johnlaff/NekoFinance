@@ -41,7 +41,11 @@ import {
   type AuthStatus,
 } from "../lib/api";
 import { formatBRL, parseBRLToCents } from "../lib/format";
-import { motionUserOff, setMotionUserOff } from "../lib/motion";
+import {
+  motionEnabled,
+  setMotionPreference,
+  systemPrefersReducedMotion,
+} from "../lib/motion";
 import { safeErrorMessage } from "../lib/errors";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { Button } from "../design-system/components/Button";
@@ -844,7 +848,8 @@ export function SettingsScreen({
   const writeBack = useWriteBackPending();
 
   // Persistido em localStorage e refletido em <html data-motion> (src/lib/motion.ts).
-  const [animacoes, setAnimacoes] = useState(() => !motionUserOff());
+  // Ligar FORÇA animações mesmo com o SO em movimento reduzido (escolha explícita).
+  const [animacoes, setAnimacoes] = useState(() => motionEnabled());
   const [reconnecting, setReconnecting] = useState(false);
 
   const isConnected = authStatus === "connected";
@@ -1021,17 +1026,28 @@ export function SettingsScreen({
           </span>
         </div>
         <div className="cfg-sec">
+          {/* O sub é um diagnóstico vivo: expõe o que o motor do WebView reporta
+              (movimento reduzido? View Transitions?) para depurar sem devtools. */}
           <CfgItem
             icon={Sparkles}
             title="Animações"
-            sub="Transições e gráficos animados · o modo reduzido do sistema é sempre respeitado"
+            sub={[
+              systemPrefersReducedMotion()
+                ? animacoes
+                  ? "Forçando animações (o sistema pede movimento reduzido)"
+                  : "Seguindo o movimento reduzido do sistema"
+                : "Transições e gráficos animados",
+              ...(typeof document.startViewTransition !== "function"
+                ? ["sem View Transitions"]
+                : []),
+            ].join(" · ")}
             right={
               <Toggle
                 on={animacoes}
                 onClick={() => {
                   const next = !animacoes;
                   setAnimacoes(next);
-                  setMotionUserOff(!next);
+                  setMotionPreference(next ? "on" : "off");
                 }}
                 label="Animações"
               />

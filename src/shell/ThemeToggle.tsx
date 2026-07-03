@@ -127,9 +127,13 @@ export function ThemeToggle() {
       // A troca visual é o atributo em <html>: applyTheme dentro do callback dá ao
       // snapshot "novo" o tema de destino sem forçar render síncrono do React. O estado
       // segue depois e o efeito reaplica o mesmo tema (idempotente).
-      playViewTransitionReveal(x, y, radius, () => applyTheme(next));
-      setTheme(next);
-      return;
+      try {
+        playViewTransitionReveal(x, y, radius, () => applyTheme(next));
+        setTheme(next);
+        return;
+      } catch {
+        // API presente mas quebrada em runtime → cai para o overlay abaixo.
+      }
     }
 
     setTheme(next);

@@ -1,41 +1,50 @@
 /**
  * Preferência de animações do app (toggle "Animações" em Configurações).
  *
- * Duas fontes decidem se animação decorativa roda: o SO (`prefers-reduced-motion`,
- * sempre respeitado) e o toggle do app (persistido em localStorage). O toggle
- * desligado aplica `data-motion="off"` em <html>, que colapsa os tokens `--dur-*`
- * para 0ms (ver design-system/tokens/motion.css) — animações CSS morrem sozinhas.
- * Animações dirigidas por JS (WAAPI/View Transitions) devem consultar
- * `motionEnabled()` antes de rodar.
+ * Três estados persistidos em localStorage (`neko-motion`):
+ * - `"on"`  — FORÇA animações, mesmo quando o SO pede movimento reduzido. É uma
+ *   escolha explícita do usuário, mais específica que o default do sistema.
+ * - `"off"` — desliga animações decorativas.
+ * - ausente (`"system"`) — segue o `prefers-reduced-motion` do SO.
+ *
+ * O estado é refletido em `<html data-motion="on|off">` (ausente = system).
+ * O CSS decide por tokens: `--dur-*` colapsam para 0ms sob reduce/off e são
+ * restaurados sob `[data-motion="on"]` (ver design-system/tokens/motion.css).
+ * Animações dirigidas por JS (WAAPI/View Transitions) consultam `motionEnabled()`.
  */
 
 const MOTION_KEY = "neko-motion";
 
-export function motionUserOff(): boolean {
-  if (typeof window === "undefined") return false;
-  return localStorage.getItem(MOTION_KEY) === "off";
+export type MotionPreference = "on" | "off" | "system";
+
+export function motionPreference(): MotionPreference {
+  if (typeof window === "undefined") return "system";
+  const stored = localStorage.getItem(MOTION_KEY);
+  return stored === "on" || stored === "off" ? stored : "system";
 }
 
 /** Reflete a preferência persistida no atributo de <html>. Chamar no boot e a cada mudança. */
 export function applyMotionPreference(): void {
   if (typeof document === "undefined") return;
-  if (motionUserOff()) {
-    document.documentElement.setAttribute("data-motion", "off");
-  } else {
+  const pref = motionPreference();
+  if (pref === "system") {
     document.documentElement.removeAttribute("data-motion");
+  } else {
+    document.documentElement.setAttribute("data-motion", pref);
   }
 }
 
-export function setMotionUserOff(off: boolean): void {
-  if (off) {
-    localStorage.setItem(MOTION_KEY, "off");
-  } else {
+export function setMotionPreference(pref: MotionPreference): void {
+  if (pref === "system") {
     localStorage.removeItem(MOTION_KEY);
+  } else {
+    localStorage.setItem(MOTION_KEY, pref);
   }
   applyMotionPreference();
 }
 
-function prefersReducedMotion(): boolean {
+/** O que o SISTEMA pede — exposto para a linha de diagnóstico das Configurações. */
+export function systemPrefersReducedMotion(): boolean {
   return (
     typeof window !== "undefined" &&
     typeof window.matchMedia === "function" &&
@@ -43,7 +52,10 @@ function prefersReducedMotion(): boolean {
   );
 }
 
-/** Animações decorativas (JS) podem rodar? O SO e o toggle do app precisam permitir. */
+/** Animações decorativas (JS) podem rodar? "on" força; "off" nega; "system" segue o SO. */
 export function motionEnabled(): boolean {
-  return !prefersReducedMotion() && !motionUserOff();
+  const pref = motionPreference();
+  if (pref === "on") return true;
+  if (pref === "off") return false;
+  return !systemPrefersReducedMotion();
 }
