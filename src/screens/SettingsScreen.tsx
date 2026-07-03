@@ -220,6 +220,121 @@ function CfgItem({
 }
 
 // ---------------------------------------------------------------------------
+// MotionDiagnostics — autoteste visível de animação (Aparência)
+// ---------------------------------------------------------------------------
+
+/**
+ * Discrimina, na máquina do usuário e sem devtools, as três causas possíveis de
+ * "animações não aparecem": (a) o motor não executa animações (WAAPI com duração
+ * FIXA nunca termina/termina errado), (b) os tokens `--dur-*` estão colapsados
+ * (animação CSS com duração por token termina cedo demais), (c) motor e tokens
+ * ok — o problema está em quem dispara cada animação. Duas bolinhas varrem a
+ * tela ~1,5s; o resultado fica legível no próprio item.
+ */
+function MotionDiagnostics() {
+  const [verdict, setVerdict] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+
+  const facts = [
+    `sistema ${systemPrefersReducedMotion() ? "reduzido" : "normal"}`,
+    `toggle ${document.documentElement.getAttribute("data-motion") ?? "system"}`,
+    `tokens ${
+      getComputedStyle(document.documentElement)
+        .getPropertyValue("--dur-base")
+        .trim() || "?"
+    }`,
+    `view transitions ${
+      typeof document.startViewTransition === "function" ? "sim" : "não"
+    }`,
+  ].join(" · ");
+
+  function runTest() {
+    if (running) return;
+    setRunning(true);
+    setVerdict(null);
+
+    const mkDot = (bottom: number, className?: string) => {
+      const dot = document.createElement("div");
+      dot.style.cssText =
+        `position:fixed;left:16px;bottom:${bottom}px;width:14px;height:14px;` +
+        "border-radius:50%;background:var(--primary);z-index:9999;pointer-events:none;";
+      if (className) dot.className = className;
+      document.body.appendChild(dot);
+      return dot;
+    };
+
+    const results: string[] = [];
+    let pending = 2;
+    const t0 = performance.now();
+    const finish = () => {
+      pending -= 1;
+      if (pending > 0) return;
+      setRunning(false);
+      setVerdict(results.join(" · "));
+    };
+
+    // (a) WAAPI com duração FIXA — independe de tokens/CSS: o motor executa?
+    const waapiDot = mkDot(16);
+    if (typeof waapiDot.animate === "function") {
+      const anim = waapiDot.animate(
+        [{ transform: "translateX(0)" }, { transform: "translateX(220px)" }],
+        { duration: 600, iterations: 3, direction: "alternate", easing: "ease-in-out" },
+      );
+      anim.addEventListener("finish", () => {
+        const dt = Math.round(performance.now() - t0);
+        waapiDot.remove();
+        results.push(
+          dt < 900 ? `WAAPI anormal (${dt}ms; esperado ~1800ms)` : `WAAPI ok (${dt}ms)`,
+        );
+        finish();
+      });
+    } else {
+      waapiDot.remove();
+      results.push("WAAPI indisponível");
+      finish();
+    }
+
+    // (b) Animação CSS com duração por TOKEN — tokens colapsados terminam cedo.
+    const cssDot = mkDot(40, "nk-diag-dot");
+    cssDot.addEventListener("animationend", () => {
+      const dt = Math.round(performance.now() - t0);
+      cssDot.remove();
+      results.push(
+        dt < 700 ? `CSS anormal (${dt}ms — tokens zerados?)` : `CSS ok (${dt}ms)`,
+      );
+      finish();
+    });
+
+    // Guarda: animação que nunca dispara/termina = motor não executa animações.
+    window.setTimeout(() => {
+      if (document.body.contains(waapiDot)) {
+        waapiDot.remove();
+        results.push("WAAPI nunca terminou — motor não executa animações");
+        finish();
+      }
+      if (document.body.contains(cssDot)) {
+        cssDot.remove();
+        results.push("CSS nunca disparou — animações CSS não executam");
+        finish();
+      }
+    }, 6000);
+  }
+
+  return (
+    <CfgItem
+      icon={Sparkles}
+      title="Diagnóstico de animações"
+      sub={verdict ?? facts}
+      right={
+        <Button variant="secondary" onClick={runTest} disabled={running}>
+          {running ? "Testando…" : "Testar"}
+        </Button>
+      }
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
 // DailyReminderSection — OS-level reminder toggle + time picker
 // ---------------------------------------------------------------------------
 
@@ -1036,7 +1151,9 @@ export function SettingsScreen({
                 ? animacoes
                   ? "Forçando animações (o sistema pede movimento reduzido)"
                   : "Seguindo o movimento reduzido do sistema"
-                : "Transições e gráficos animados",
+                : animacoes
+                  ? "Transições e gráficos animados"
+                  : "Desligadas neste dispositivo",
               ...(typeof document.startViewTransition !== "function"
                 ? ["sem View Transitions"]
                 : []),
@@ -1053,6 +1170,7 @@ export function SettingsScreen({
               />
             }
           />
+          <MotionDiagnostics />
         </div>
       </section>
 

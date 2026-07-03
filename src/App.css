@@ -2271,6 +2271,20 @@ h3,
   }
 }
 
+/* Autoteste de animação (Configurações → Aparência): a bolinha CSS varre com
+   duração por TOKEN — se os tokens estiverem colapsados, termina cedo demais. */
+@keyframes nk-diag-sweep {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(220px);
+  }
+}
+.nk-diag-dot {
+  animation: nk-diag-sweep var(--dur-deliberate) var(--ease-standard) 3 alternate both;
+}
+
 /* Dashboard choreography: tiles stagger in one calm pass.
    Delay steps derive from --dur-instant so reduced motion zeroes them too. */
 .dash-grid4 > * {
