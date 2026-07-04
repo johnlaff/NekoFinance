@@ -742,6 +742,12 @@ export function getMonthGrid(year: number, month: number): Promise<MonthGridDay[
   return invoke("get_month_grid", { year, month });
 }
 
+/** Timestamp UTC ("YYYY-MM-DD HH:MM:SS") da última sincronização com a planilha
+ *  (import ou write-back), ou null quando não há histórico. */
+export function lastSyncAt(): Promise<string | null> {
+  return invoke("last_sync_at");
+}
+
 export function listTags(): Promise<Tag[]> {
   return invoke("list_tags_cmd");
 }
