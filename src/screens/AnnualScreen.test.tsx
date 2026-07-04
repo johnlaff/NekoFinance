@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within, fireEvent } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { AnnualScreen } from "./AnnualScreen";
 import type { AnnualMetrics, MonthMetric } from "../lib/api";
@@ -126,6 +126,61 @@ describe("AnnualScreen", () => {
     expect(screen.getAllByText("15%").length).toBeGreaterThan(0);
     // Não é a média simples de 30%+10%=20%.
     expect(screen.queryByText("20%")).not.toBeInTheDocument();
+  });
+
+  it("Comparar anos: mostra Economizado% por mês e resumo ponderado (absoluto maior ≠ taxa maior)", async () => {
+    mockInvoke.mockReset();
+    const base = (year: number, month: number): MonthMetric => ({
+      year,
+      month,
+      income_cents: 0,
+      performance_cents: 0,
+      cost_of_living_cents: 0,
+      fixed_out_cents: 0,
+      daily_out_cents: 0,
+      daily_projected_cents: 0,
+      cartao_cents: 0,
+      real_daily_avg_cents: 0,
+      economia_cents: 0,
+      patrimonio_cents: 0,
+      savings_rate_bps: 0,
+    });
+    // yearA=2025: Jan 30k/100k = 30%. yearB=2026: Jan 40k/400k = 10%.
+    // Economia absoluta MAIOR em B (40k>30k), mas a TAXA é MENOR (10%<30%) —
+    // exatamente o que a feature existe para expor. Dado só em janeiro (mês
+    // decorrido no ano corrente, cutoff = junho no relógio congelado).
+    const yearMonths = (year: number, income: number, economia: number, bps: number) => {
+      const arr = Array.from({ length: 12 }, (_, i) => base(year, i + 1));
+      arr[0] = { ...base(year, 1), income_cents: income, economia_cents: economia, savings_rate_bps: bps };
+      return arr;
+    };
+    mockCommands({
+      get_annual_metrics: (args?: Record<string, unknown>) => ({
+        year: Number(args?.["year"]),
+        months:
+          Number(args?.["year"]) === 2025
+            ? yearMonths(2025, 100_000, 30_000, 3000)
+            : yearMonths(2026, 400_000, 40_000, 1000),
+      }),
+      get_forecast: FORECAST,
+      get_month_grid: monthGridHandler,
+    });
+    render(<AnnualScreen />);
+
+    // Troca para a aba "Comparar anos".
+    await waitFor(() =>
+      expect(screen.getByRole("radio", { name: "Comparar anos" })).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("radio", { name: "Comparar anos" }));
+
+    // Taxa por mês: 30% (2025) e 10% (2026) presentes; a média simples 20% NÃO aparece.
+    await waitFor(() => expect(screen.getAllByText("30%").length).toBeGreaterThan(0));
+    expect(screen.getAllByText("10%").length).toBeGreaterThan(0);
+    expect(screen.queryByText("20%")).not.toBeInTheDocument();
+
+    // Resumo por ano: Entradas + Economizado% ponderado do ano corrente (só Jan).
+    expect(screen.getByText(/Economizado 30%/)).toBeInTheDocument();
+    expect(screen.getByText(/Economizado 10%/)).toBeInTheDocument();
   });
 
   it("KPI Performance acum. soma performance_cents do motor (mês com economia > 0)", async () => {

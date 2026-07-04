@@ -157,10 +157,6 @@ function padTo12(months: MonthMetric[], year: number): MonthMetric[] {
   });
 }
 
-function getEcon(arr: MonthMetric[], mNum: number): number {
-  return arr.find((m) => m.month === mNum)?.economia_cents ?? 0;
-}
-
 // ------------------------------------------------------------------ sub-components --
 
 function YearNav({
@@ -389,13 +385,36 @@ function AnoCmpSection({
   currentMonthIdx: number;
   currentYear: number;
 }) {
-  const pairs = MES_ABBR.map((_, i) => ({
-    a: getEcon(monthsA, i + 1),
-    b: getEcon(monthsB, i + 1),
-  }));
+  const pairs = MES_ABBR.map((_, i) => {
+    const mA = monthsA.find((m) => m.month === i + 1);
+    const mB = monthsB.find((m) => m.month === i + 1);
+    return {
+      a: mA?.economia_cents ?? 0,
+      b: mB?.economia_cents ?? 0,
+      // Economizado% do mês (basis points → %); null quando não houve entrada.
+      pctA: mA && mA.income_cents > 0 ? mA.savings_rate_bps / 100 : null,
+      pctB: mB && mB.income_cents > 0 ? mB.savings_rate_bps / 100 : null,
+    };
+  });
 
   const maxEcon = Math.max(...pairs.map((p) => Math.max(p.a, p.b)), 1);
   const yearBisCurrent = yearB === currentYear;
+
+  // Economizado% anual PONDERADO = Σ economia ÷ Σ entradas (nunca a média das
+  // taxas mensais). No ano corrente, só conta meses já decorridos.
+  function summarize(months: MonthMetric[], isCurrent: boolean) {
+    let income = 0;
+    let economia = 0;
+    for (const m of months) {
+      if (isCurrent && m.month - 1 > currentMonthIdx) continue;
+      income += m.income_cents;
+      economia += m.economia_cents;
+    }
+    return { income, economia, pct: income > 0 ? (economia / income) * 100 : null };
+  }
+  const sumA = summarize(monthsA, yearA === currentYear);
+  const sumB = summarize(monthsB, yearBisCurrent);
+  const pctLabel = (pct: number | null) => (pct != null ? `${Math.round(pct)}%` : "—");
 
   return (
     <section className="card">
@@ -409,13 +428,14 @@ function AnoCmpSection({
           {yearB}
         </span>
         <span style={{ marginLeft: "auto", color: "var(--text-faint)" }}>
-          Economia guardada por mês
+          Economia e Economizado% por mês
         </span>
       </div>
       <div className="ano-cmp">
         {MES_ABBR.map((mm, i) => {
-          const econA = pairs[i]?.a ?? 0;
-          const econB = pairs[i]?.b ?? 0;
+          const p = pairs[i];
+          const econA = p?.a ?? 0;
+          const econB = p?.b ?? 0;
           const isFutureB = yearBisCurrent && i > currentMonthIdx;
           return (
             <div className="ano-cmp__row" key={mm}>
@@ -439,9 +459,33 @@ function AnoCmpSection({
               >
                 {fmtCompact(econB)}
               </span>
+              <span className="ano-cmp__pct" style={{ color: "var(--chart-3)" }}>
+                {pctLabel(p?.pctA ?? null)}
+              </span>
+              <span
+                className="ano-cmp__pct"
+                style={{ color: "var(--primary)", opacity: isFutureB ? 0.4 : 1 }}
+              >
+                {pctLabel(p?.pctB ?? null)}
+              </span>
             </div>
           );
         })}
+      </div>
+      <div className="ano-cmp__foot">
+        {[
+          { y: yearA, s: sumA, color: "var(--chart-3)" },
+          { y: yearB, s: sumB, color: "var(--primary)" },
+        ].map(({ y, s, color }) => (
+          <div className="ano-cmp__sum" key={y}>
+            <span className="ano-cmp__sum-y" style={{ color }}>
+              {y}
+            </span>
+            <span>Entradas {fmtBRL(s.income)}</span>
+            <span>Economia {fmtBRL(s.economia)}</span>
+            <span className="ano-cmp__sum-pct">Economizado {pctLabel(s.pct)}</span>
+          </div>
+        ))}
       </div>
     </section>
   );
