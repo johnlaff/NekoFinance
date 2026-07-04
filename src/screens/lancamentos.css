@@ -194,6 +194,24 @@
   color: var(--text);
   font-size: 13px;
 }
+/* Today marker: a neutral "Hoje" chip + a stronger day label — NOT a jade
+   fill, so the brand green stays reserved for the Saldo thermometer (WCAG
+   1.4.1: the text label carries the meaning, not color alone). */
+.lc-gh__t--strong {
+  color: var(--text-strong);
+}
+.lc-gh__today {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-elevated);
+  color: var(--text-muted);
+  border: 1px solid var(--border-strong);
+  white-space: nowrap;
+}
 /* row — native <button> with grid reset so the layout is preserved */
 .lc-row {
   appearance: none;
