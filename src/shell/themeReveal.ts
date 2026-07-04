@@ -122,18 +122,24 @@ export function playThemeReveal(
     document.documentElement.getAttribute("data-theme") === "light",
   );
   const t0 = performance.now();
-  // Troca o tema AGORA e força a repintura da UI nova, escondida sob o overlay.
-  apply();
-  void document.documentElement.offsetWidth;
-  logMotion(
-    `reveal→${next}: início dur=${REVEAL_DURATION_MS}ms token=${rawDurationToken()} oldbg=${oldBg} · paint ${Math.round(performance.now() - t0)}ms`,
-  );
 
+  // ORDEM CRÍTICA: cobrir ANTES de trocar o tema. Se o tema trocasse primeiro, a paleta
+  // nova pintaria por 1 frame antes da cobertura entrar — um flash da UI inteira no clique
+  // (gritante em dark→light). Com a cobertura (cor do tema atual) já no DOM, o swap fica
+  // escondido sob ela desde o primeiro frame.
   overlay.setAttribute("aria-hidden", "true");
   overlay.style.cssText =
     `position:fixed;inset:0;z-index:9999;pointer-events:none;background:${oldBg};` +
     `clip-path:${coverWithHolePath(w, h, x, y, 0)};`;
   document.body.appendChild(overlay);
+  void document.documentElement.offsetWidth; // cobertura no DOM/pintável antes do swap
+
+  // Agora troca o tema, escondido sob a cobertura, e força o recálculo da nova paleta.
+  apply();
+  void document.documentElement.offsetWidth;
+  logMotion(
+    `reveal→${next}: início dur=${REVEAL_DURATION_MS}ms token=${rawDurationToken()} oldbg=${oldBg} · paint ${Math.round(performance.now() - t0)}ms`,
+  );
 
   let done = false;
   const cleanup = () => {
