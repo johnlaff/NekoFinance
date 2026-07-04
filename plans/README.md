@@ -11,74 +11,74 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 
 ## Execution order & status
 
-| Plan | Title                                                                                  | Priority | Effort | Depends on | Status                     |
-| ---- | -------------------------------------------------------------------------------------- | -------- | ------ | ---------- | -------------------------- |
-| 001  | Fix side-by-side Economia sheet layout (import + write-back)                           | P1       | S–M    | —          | DONE                       |
-| 002  | Make the sheet import atomic (single SQLite transaction)                               | P1       | S–M    | —          | DONE                       |
-| 003  | Allow manual Economia/transfer launch (engine + form)                                  | P1       | M      | —          | DONE                       |
-| 004  | Import owner splits and credit payment method                                          | P1       | L      | 002        | DONE                       |
-| 005  | Safe-to-spend guardrail uses registered Economia, not net-surplus proxy                | P2       | M      | —          | DONE                       |
-| 006  | Calibrate "operate" phase + reserve baseline to the method                             | P2       | S      | —          | DONE                       |
-| 007  | Correctness: engine/date edge cases + effect/transaction hygiene                       | P2       | S      | —          | DONE                       |
-| 008  | Dashboard: single forecast source + unified cache key                                  | P1       | S–M    | —          | DONE                       |
-| 009  | Bulk-insert import + index-friendly date filters                                       | P2       | S–M    | —          | DONE                       |
-| 010  | Characterization tests for money/forecast SQL helpers                                  | P2       | M      | —          | DONE                       |
-| 011  | Split the `commands.rs` god-module + dedupe the row mapper                             | P2       | L      | 010        | DONE                       |
-| 012  | Remove dead code + unify duplicate money formatters                                    | P2       | S      | —          | DONE                       |
-| 013  | Security hardening: token fail-closed, loopback timeout, CSP, privacy-scan             | P2       | S      | —          | DONE                       |
-| 014  | Documentation truth fixes                                                              | P2       | S      | —          | DONE                       |
-| 015  | Wire built-but-unwired UI: edit/delete transaction, recurrence series, owner totals    | P1       | M      | —          | DONE                       |
-| 016  | Navigation/IA restructure + dashboard de-duplication                                   | P1       | M      | —          | DONE                       |
-| 017  | Accessibility WCAG batch (contrast + landmarks)                                        | P1       | S      | —          | DONE                       |
-| 018  | Motion 2026: stagger static screens + token-driven durations                           | P2       | S–M    | —          | DONE                       |
-| 019  | SPIKE: first-class invoice (credit-bill) entity                                        | —        | spike  | 004        | TODO                       |
-| 020  | SPIKE: what-if / scenario branching of the forecast                                    | —        | spike  | —          | TODO                       |
-| 021  | SPIKE: real-time two-way Google Sheets sync                                            | —        | spike  | 001, 002   | SPIKE DONE — Phase 1 ready |
-| 022  | Remove the credit-accumulator fork residue (stay faithful: credit is a lump)           | P2       | M      | —          | DONE                       |
-| 023  | Rewrite note-marker convention → method-faithful #dividir:/#reembolso: + net-zero      | P1       | M      | —          | DONE                       |
-| 024  | SPIKE: decide the fate of the vestigial daily_checkin table                            | —        | spike  | —          | DONE — Option A            |
-| 025  | Minor fidelity polish (patrimônio de-emphasis, dead category prop, reserve ADR)        | P3       | S      | —          | DONE                       |
-| 026  | Real-time spreadsheet sync — Phase 1 (read-side): modifiedTime probe + background poll | —        | L      | 001, 002   | DONE                       |
-| 027  | Retire the vestigial daily_checkin table (spike 024 → Option A)                        | P2       | S–M    | —          | DONE                       |
-| 028  | Sync Phase 2 — enable human-approved write-back, safely                                | P1       | L      | 026        | DONE                       |
-| 029  | Frictionless daily quick-add (description + type + global shortcut)                    | P1       | M      | —          | DONE (pkg A)               |
-| 030  | Daily reminder via OS notification + "last logged" indicator                           | P1       | S–M    | —          | DONE (pkg A)               |
-| 031  | Surface write-back: pending indicator + send-from-dashboard                            | P1       | S–M    | 028        | DONE (pkg A)               |
-| 032  | Flow correctness: write-back audit, sync race, derived double-count, Jan-1 guardrail   | P1       | M      | —          | DONE (pkg B)               |
-| 033  | Adherence: reserve floor = cost-of-living × months; unify Economizado% threshold       | P2       | M      | —          | DONE (pkg C)               |
-| 034  | Tag "Ignorar/Calcular" toggle (exclude tagged movements from aggregations)             | P2       | M      | —          | DONE (pkg C)               |
-| 035  | Itemized transactions — model + import parse + VIEW the breakdown (past/future/new)    | P1       | L      | —          | DONE (pkg D)               |
-| 036  | Itemized transactions — EDIT line items + write-back round-trip (SUM + note)           | P1       | L      | 035        | DONE (pkg D)               |
-| 037  | P1 flow fixes: tag-exclude out of Saldo projection; credit-lump audit; Jan-1 economia  | P1       | M      | —          | DONE (pkg D)               |
-| 038  | Dual-reality UX: daily-teto config + credit-first quick-add + Economizado badge        | P1       | M      | —          | DONE (pkg D)               |
-| 039  | Daily ease: OS-scheduler reminder (app closed) + 1-click Sincronizar fast path         | P2       | M      | —          | DONE (pkg D)               |
-| 040  | Performance = spreadsheet formula (Entradas − (Saídas + Diário)) — owner decision      | P1       | S–M    | —          | DONE (pkg E)               |
-| 041  | Forecast/import correctness: is_projection (today+edit+checksum) + month_grid sign     | P1       | M      | —          | DONE (pkg E)               |
-| 042  | Write-back/sync correctness: fast-path invalidate + preview TOCTOU (+ economia test)   | P1       | M      | —          | DONE (pkg E)               |
-| 043  | Edit/delete + UX integrity: imported-row edits, items on series, provenance, dead-ends | P1       | M      | —          | DONE (pkg E)               |
-| 044  | Parity views: full-year 12-month grid + dual-year Economia side-by-side                | P1       | L      | —          | DONE (pkg E)               |
-| 045  | Parity: Diário budget categories + due-date/fatura calendar (+ installments)           | P2       | L      | —          | DONE (pkg E)               |
-| 046  | Performance correction: subtract economia (it lives in the Saída column) — refines 040 | P1       | S–M    | —          | DONE (pkg F)               |
-| 047  | F1 bugs: delete-orphan cleanup (P1) + line-item reconcile + budget atomicity + 2 more  | P1       | M      | —          | DONE (pkg F)               |
-| 048  | F2 annotation fidelity: note section headers round-trip + thermometer −R$500 boundary  | P2       | M      | —          | DONE (pkg F)               |
-| 049  | P1: update_transaction_cmd atomicity + realized_monthly_baseline ABS sign              | P1       | S–M    | —          | DONE (pkg G)               |
-| 050  | P2: economia write-back staleness + saw_december (+ conflict-cleanup/boundary tests)   | P2       | M      | —          | DONE (pkg G)               |
-| 051  | Performance = income − cost_of_living (economia=Saída; supersedes 046) + no-double-cnt | P1       | M      | —          | DONE (pkg G)               |
-| 052  | Complete economia=Saída: Economia tab as annotation (no Saldo double-count; Econ% src) | P1       | M–L    | —          | DONE (pkg H)               |
-| 053  | Bug bundle: daily_spend_today SUM(ABS) + update amount guard + audit/clamp P3s         | P2       | S–M    | —          | DONE (pkg H)               |
-| 054  | Final consistency nits: effective_daily_ceiling SUM(ABS) + annual-savings tag-exclude  | P3       | S      | —          | DONE (pkg I)               |
-| 055  | Write-back↔re-import identity (no dup) + economia write-back tag-filter + sync cadence | P2       | M      | —          | DONE (pkg J)               |
-| 056  | Lançamentos opens on "Por mês" (default + first option) — redesign UX bug              | P2       | S      | —          | DONE (pkg K)               |
-| 057  | Compose tags Cartão with engine "credit" (was "credito" → misclassified as Diário)     | P1       | S      | —          | DONE (pkg K)               |
-| 058  | Restore past balances: Calendário/O ano/Este mês (re-add getMonthGrid; redesign regr.) | P1       | M      | —          | DONE (pkg K)               |
-| 059  | Spec (5-type alignment, owner-reopened) + section classifier (no bank fallback)        | P1       | M      | —          | DONE (pkg K)               |
-| 060  | Engine 5-type: cartão/economia/patrimônio buckets, custo de vida excludes savings      | P1       | L      | 059        | DONE (pkg K)               |
-| 061  | Lançamentos kind badges + cartão/economia%/patrimônio surfaces + convention doc        | P3       | M      | 059, 060   | DONE (pkg K)               |
-| 062  | Auto-economia write-back to the Economia tab (diff + approval, round-trip)             | P2       | M      | 060        | DONE (pkg K)               |
+| Plan | Title                                                                                  | Priority | Effort | Depends on | Status                                                                                                       |
+| ---- | -------------------------------------------------------------------------------------- | -------- | ------ | ---------- | ------------------------------------------------------------------------------------------------------------ |
+| 001  | Fix side-by-side Economia sheet layout (import + write-back)                           | P1       | S–M    | —          | DONE                                                                                                         |
+| 002  | Make the sheet import atomic (single SQLite transaction)                               | P1       | S–M    | —          | DONE                                                                                                         |
+| 003  | Allow manual Economia/transfer launch (engine + form)                                  | P1       | M      | —          | DONE                                                                                                         |
+| 004  | Import owner splits and credit payment method                                          | P1       | L      | 002        | DONE                                                                                                         |
+| 005  | Safe-to-spend guardrail uses registered Economia, not net-surplus proxy                | P2       | M      | —          | DONE                                                                                                         |
+| 006  | Calibrate "operate" phase + reserve baseline to the method                             | P2       | S      | —          | DONE                                                                                                         |
+| 007  | Correctness: engine/date edge cases + effect/transaction hygiene                       | P2       | S      | —          | DONE                                                                                                         |
+| 008  | Dashboard: single forecast source + unified cache key                                  | P1       | S–M    | —          | DONE                                                                                                         |
+| 009  | Bulk-insert import + index-friendly date filters                                       | P2       | S–M    | —          | DONE                                                                                                         |
+| 010  | Characterization tests for money/forecast SQL helpers                                  | P2       | M      | —          | DONE                                                                                                         |
+| 011  | Split the `commands.rs` god-module + dedupe the row mapper                             | P2       | L      | 010        | DONE                                                                                                         |
+| 012  | Remove dead code + unify duplicate money formatters                                    | P2       | S      | —          | DONE                                                                                                         |
+| 013  | Security hardening: token fail-closed, loopback timeout, CSP, privacy-scan             | P2       | S      | —          | DONE                                                                                                         |
+| 014  | Documentation truth fixes                                                              | P2       | S      | —          | DONE                                                                                                         |
+| 015  | Wire built-but-unwired UI: edit/delete transaction, recurrence series, owner totals    | P1       | M      | —          | DONE                                                                                                         |
+| 016  | Navigation/IA restructure + dashboard de-duplication                                   | P1       | M      | —          | DONE                                                                                                         |
+| 017  | Accessibility WCAG batch (contrast + landmarks)                                        | P1       | S      | —          | DONE                                                                                                         |
+| 018  | Motion 2026: stagger static screens + token-driven durations                           | P2       | S–M    | —          | DONE                                                                                                         |
+| 019  | SPIKE: first-class invoice (credit-bill) entity                                        | —        | spike  | 004        | TODO                                                                                                         |
+| 020  | SPIKE: what-if / scenario branching of the forecast                                    | —        | spike  | —          | TODO                                                                                                         |
+| 021  | SPIKE: real-time two-way Google Sheets sync                                            | —        | spike  | 001, 002   | SPIKE DONE — Phase 1 ready                                                                                   |
+| 022  | Remove the credit-accumulator fork residue (stay faithful: credit is a lump)           | P2       | M      | —          | DONE                                                                                                         |
+| 023  | Rewrite note-marker convention → method-faithful #dividir:/#reembolso: + net-zero      | P1       | M      | —          | DONE                                                                                                         |
+| 024  | SPIKE: decide the fate of the vestigial daily_checkin table                            | —        | spike  | —          | DONE — Option A                                                                                              |
+| 025  | Minor fidelity polish (patrimônio de-emphasis, dead category prop, reserve ADR)        | P3       | S      | —          | DONE                                                                                                         |
+| 026  | Real-time spreadsheet sync — Phase 1 (read-side): modifiedTime probe + background poll | —        | L      | 001, 002   | DONE                                                                                                         |
+| 027  | Retire the vestigial daily_checkin table (spike 024 → Option A)                        | P2       | S–M    | —          | DONE                                                                                                         |
+| 028  | Sync Phase 2 — enable human-approved write-back, safely                                | P1       | L      | 026        | DONE                                                                                                         |
+| 029  | Frictionless daily quick-add (description + type + global shortcut)                    | P1       | M      | —          | DONE (pkg A)                                                                                                 |
+| 030  | Daily reminder via OS notification + "last logged" indicator                           | P1       | S–M    | —          | DONE (pkg A)                                                                                                 |
+| 031  | Surface write-back: pending indicator + send-from-dashboard                            | P1       | S–M    | 028        | DONE (pkg A)                                                                                                 |
+| 032  | Flow correctness: write-back audit, sync race, derived double-count, Jan-1 guardrail   | P1       | M      | —          | DONE (pkg B)                                                                                                 |
+| 033  | Adherence: reserve floor = cost-of-living × months; unify Economizado% threshold       | P2       | M      | —          | DONE (pkg C)                                                                                                 |
+| 034  | Tag "Ignorar/Calcular" toggle (exclude tagged movements from aggregations)             | P2       | M      | —          | DONE (pkg C)                                                                                                 |
+| 035  | Itemized transactions — model + import parse + VIEW the breakdown (past/future/new)    | P1       | L      | —          | DONE (pkg D)                                                                                                 |
+| 036  | Itemized transactions — EDIT line items + write-back round-trip (SUM + note)           | P1       | L      | 035        | DONE (pkg D)                                                                                                 |
+| 037  | P1 flow fixes: tag-exclude out of Saldo projection; credit-lump audit; Jan-1 economia  | P1       | M      | —          | DONE (pkg D)                                                                                                 |
+| 038  | Dual-reality UX: daily-teto config + credit-first quick-add + Economizado badge        | P1       | M      | —          | DONE (pkg D)                                                                                                 |
+| 039  | Daily ease: OS-scheduler reminder (app closed) + 1-click Sincronizar fast path         | P2       | M      | —          | DONE (pkg D)                                                                                                 |
+| 040  | Performance = spreadsheet formula (Entradas − (Saídas + Diário)) — owner decision      | P1       | S–M    | —          | DONE (pkg E)                                                                                                 |
+| 041  | Forecast/import correctness: is_projection (today+edit+checksum) + month_grid sign     | P1       | M      | —          | DONE (pkg E)                                                                                                 |
+| 042  | Write-back/sync correctness: fast-path invalidate + preview TOCTOU (+ economia test)   | P1       | M      | —          | DONE (pkg E)                                                                                                 |
+| 043  | Edit/delete + UX integrity: imported-row edits, items on series, provenance, dead-ends | P1       | M      | —          | DONE (pkg E)                                                                                                 |
+| 044  | Parity views: full-year 12-month grid + dual-year Economia side-by-side                | P1       | L      | —          | DONE (pkg E)                                                                                                 |
+| 045  | Parity: Diário budget categories + due-date/fatura calendar (+ installments)           | P2       | L      | —          | DONE (pkg E)                                                                                                 |
+| 046  | Performance correction: subtract economia (it lives in the Saída column) — refines 040 | P1       | S–M    | —          | DONE (pkg F)                                                                                                 |
+| 047  | F1 bugs: delete-orphan cleanup (P1) + line-item reconcile + budget atomicity + 2 more  | P1       | M      | —          | DONE (pkg F)                                                                                                 |
+| 048  | F2 annotation fidelity: note section headers round-trip + thermometer −R$500 boundary  | P2       | M      | —          | DONE (pkg F)                                                                                                 |
+| 049  | P1: update_transaction_cmd atomicity + realized_monthly_baseline ABS sign              | P1       | S–M    | —          | DONE (pkg G)                                                                                                 |
+| 050  | P2: economia write-back staleness + saw_december (+ conflict-cleanup/boundary tests)   | P2       | M      | —          | DONE (pkg G)                                                                                                 |
+| 051  | Performance = income − cost_of_living (economia=Saída; supersedes 046) + no-double-cnt | P1       | M      | —          | DONE (pkg G)                                                                                                 |
+| 052  | Complete economia=Saída: Economia tab as annotation (no Saldo double-count; Econ% src) | P1       | M–L    | —          | DONE (pkg H)                                                                                                 |
+| 053  | Bug bundle: daily_spend_today SUM(ABS) + update amount guard + audit/clamp P3s         | P2       | S–M    | —          | DONE (pkg H)                                                                                                 |
+| 054  | Final consistency nits: effective_daily_ceiling SUM(ABS) + annual-savings tag-exclude  | P3       | S      | —          | DONE (pkg I)                                                                                                 |
+| 055  | Write-back↔re-import identity (no dup) + economia write-back tag-filter + sync cadence | P2       | M      | —          | DONE (pkg J)                                                                                                 |
+| 056  | Lançamentos opens on "Por mês" (default + first option) — redesign UX bug              | P2       | S      | —          | DONE (pkg K)                                                                                                 |
+| 057  | Compose tags Cartão with engine "credit" (was "credito" → misclassified as Diário)     | P1       | S      | —          | DONE (pkg K)                                                                                                 |
+| 058  | Restore past balances: Calendário/O ano/Este mês (re-add getMonthGrid; redesign regr.) | P1       | M      | —          | DONE (pkg K)                                                                                                 |
+| 059  | Spec (5-type alignment, owner-reopened) + section classifier (no bank fallback)        | P1       | M      | —          | DONE (pkg K)                                                                                                 |
+| 060  | Engine 5-type: cartão/economia/patrimônio buckets, custo de vida excludes savings      | P1       | L      | 059        | DONE (pkg K)                                                                                                 |
+| 061  | Lançamentos kind badges + cartão/economia%/patrimônio surfaces + convention doc        | P3       | M      | 059, 060   | DONE (pkg K)                                                                                                 |
+| 062  | Auto-economia write-back to the Economia tab (diff + approval, round-trip)             | P2       | M      | 060        | DONE (pkg K)                                                                                                 |
 | 063  | Ledger day headers show the chained Saldo (spreadsheet parity)                         | P1       | M      | —          | DONE — MonthView regrouped by day (ascending) with chained Saldo pill + month banner (owner-approved design) |
-| 064  | Year comparison with Entradas + Economizado% (savings-tab parity)                      | P2       | S–M    | —          | DONE                       |
-| 065  | Calendar day cells: movements in tooltip/aria + click-through to the ledger            | P2       | M      | —          | DONE                       |
-| 066  | Sidebar shows real last-sync recency from sync_log                                     | P3       | S      | —          | DONE                       |
+| 064  | Year comparison with Entradas + Economizado% (savings-tab parity)                      | P2       | S–M    | —          | DONE                                                                                                         |
+| 065  | Calendar day cells: movements in tooltip/aria + click-through to the ledger            | P2       | M      | —          | DONE                                                                                                         |
+| 066  | Sidebar shows real last-sync recency from sync_log                                     | P3       | S      | —          | DONE                                                                                                         |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale)
 

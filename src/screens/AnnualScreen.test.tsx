@@ -149,9 +149,19 @@ describe("AnnualScreen", () => {
     // Economia absoluta MAIOR em B (40k>30k), mas a TAXA é MENOR (10%<30%) —
     // exatamente o que a feature existe para expor. Dado só em janeiro (mês
     // decorrido no ano corrente, cutoff = junho no relógio congelado).
-    const yearMonths = (year: number, income: number, economia: number, bps: number) => {
+    const yearMonths = (
+      year: number,
+      income: number,
+      economia: number,
+      bps: number,
+    ) => {
       const arr = Array.from({ length: 12 }, (_, i) => base(year, i + 1));
-      arr[0] = { ...base(year, 1), income_cents: income, economia_cents: economia, savings_rate_bps: bps };
+      arr[0] = {
+        ...base(year, 1),
+        income_cents: income,
+        economia_cents: economia,
+        savings_rate_bps: bps,
+      };
       return arr;
     };
     mockCommands({
