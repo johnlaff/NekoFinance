@@ -157,6 +157,11 @@ function padTo12(months: MonthMetric[], year: number): MonthMetric[] {
   });
 }
 
+/** Economizado% para exibição: "30%" ou "—" quando não há taxa. */
+function pctLabel(pct: number | null): string {
+  return pct != null ? `${Math.round(pct)}%` : "—";
+}
+
 // ------------------------------------------------------------------ sub-components --
 
 function YearNav({
@@ -414,7 +419,6 @@ function AnoCmpSection({
   }
   const sumA = summarize(monthsA, yearA === currentYear);
   const sumB = summarize(monthsB, yearBisCurrent);
-  const pctLabel = (pct: number | null) => (pct != null ? `${Math.round(pct)}%` : "—");
 
   return (
     <section className="card">

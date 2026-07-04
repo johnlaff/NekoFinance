@@ -345,7 +345,6 @@ function Row({
   const tm = TYPE_META[mvType];
   const totalCents = Math.abs(t.amount);
   const isFuture = t.date > TODAY;
-  const isToday = t.date === TODAY;
   const isEntrada = mvType === "entrada";
   const hasItems = t.line_items.length > 1;
   const lineItemsTotal = t.line_items.reduce(
@@ -418,14 +417,6 @@ function Row({
               style={{ background: "var(--brass-tint)", color: "var(--brass-400)" }}
             >
               Previsto
-            </span>
-          )}
-          {isToday && (
-            <span
-              className="lc-pill"
-              style={{ background: "var(--surface-selected)", color: "var(--primary)" }}
-            >
-              Hoje
             </span>
           )}
         </span>
@@ -561,17 +552,24 @@ function GroupHeader({
   today,
   sum,
   balance,
+  todayChip,
 }: {
   title: string;
   today: boolean;
   sum: number;
   /** Chained end-of-day balance in cents; renders the Saldo pill when present. */
   balance?: number | null | undefined;
+  /** Mark today with a neutral "Hoje" chip + stronger label (no jade fill) —
+   *  keeps the brand green reserved for the Saldo thermometer. */
+  todayChip?: boolean | undefined;
 }) {
   const band = balance != null ? saldoBand(balance) : null;
   return (
     <div className={"lc-gh" + (today ? " lc-gh--today" : "")}>
-      <span className="lc-gh__t">{title}</span>
+      <span className={"lc-gh__t" + (todayChip ? " lc-gh__t--strong" : "")}>
+        {title}
+      </span>
+      {todayChip && <span className="lc-gh__today">Hoje</span>}
       {band && (
         <span
           className="lc-gh__saldo"
@@ -593,6 +591,7 @@ function Group({
   rows,
   balance,
   hideDate,
+  todayChip,
   openIds,
   toggle,
   onEdit,
@@ -606,6 +605,8 @@ function Group({
   balance?: number | null | undefined;
   /** Hide the per-row date when the group header already carries the day. */
   hideDate?: boolean | undefined;
+  /** Render the neutral "Hoje" chip on the header (day-grouped view). */
+  todayChip?: boolean | undefined;
   openIds: ReadonlySet<string>;
   toggle: (id: string) => void;
   onEdit: (t: TransactionRow) => void;
@@ -615,7 +616,13 @@ function Group({
   const sum = rows.reduce((s, t) => s + signedCents(t), 0);
   return (
     <>
-      <GroupHeader title={title} today={today} sum={sum} balance={balance} />
+      <GroupHeader
+        title={title}
+        today={today}
+        sum={sum}
+        balance={balance}
+        todayChip={todayChip}
+      />
       {rows.map((t) => (
         <Row
           key={t.id}
@@ -937,7 +944,8 @@ function MonthView({
         <Group
           key={iso}
           title={dayHeaderLabel(iso)}
-          today={iso === TODAY}
+          today={false}
+          todayChip={iso === TODAY}
           balance={balanceByDate.get(iso)}
           hideDate
           rows={rows}

@@ -5,10 +5,19 @@ import { TransactionsScreen } from "./TransactionsScreen";
 import { NekoAppProvider } from "../shell/appContext";
 import { TXNS, mockCommands, mockInvoke } from "../test/commands";
 import type { TransactionRow } from "../lib/api";
+import type * as FormatModule from "../lib/format";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
+
+// `TODAY` no componente é const module-level (avaliado no import, antes do
+// setSystemTime do beforeEach). Fixar todayISO alinha "hoje" ao relógio
+// congelado (2026-06-20) e mata a armadilha de time-bomb nos testes de hoje.
+vi.mock("../lib/format", async (importOriginal) => {
+  const actual = await importOriginal<typeof FormatModule>();
+  return { ...actual, todayISO: () => "2026-06-20" };
+});
 
 const app = { navigate: vi.fn(), openCompose: vi.fn() };
 
@@ -168,6 +177,33 @@ describe("TransactionsScreen (Lançamentos)", () => {
     // do dia com rótulo acessível; o rótulo do dia é "weekday, dia" (03/06 = Qua).
     expect(await screen.findByLabelText(/Saldo do dia.*380,00/)).toBeInTheDocument();
     expect(screen.getByText("Qua, 3")).toBeInTheDocument();
+  });
+
+  it("Por mês: cabeçalho do dia de hoje traz o chip 'Hoje' (sem selo redundante na linha)", async () => {
+    // Relógio congelado em 2026-06-20 → hoje.
+    const todayIso = currentMonthISO(20);
+    const rows = [
+      { ...TXNS[1]!, id: "hoje-1", description: "Compra de hoje", date: todayIso },
+    ];
+    mockCommands({
+      get_recent_transactions: rows,
+      get_month_grid: [
+        {
+          date: todayIso,
+          day: 20,
+          income_cents: 0,
+          fixed_out_cents: 5_000,
+          daily_out_cents: 0,
+          balance_cents: 300_000,
+        },
+      ],
+    });
+    renderLedger();
+
+    // O marcador de hoje é um chip textual "Hoje" no cabeçalho do dia — e é o
+    // ÚNICO "Hoje" na tela (o selo redundante da linha foi removido).
+    expect(await screen.findByText("Hoje")).toBeInTheDocument();
+    expect(screen.getAllByText("Hoje")).toHaveLength(1);
   });
 
   it("Por mês: dia sem Saldo no grid não renderiza a pílula", async () => {
