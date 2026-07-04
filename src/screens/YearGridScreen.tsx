@@ -10,12 +10,32 @@ import {
   type MonthGridDay,
 } from "../lib/api";
 import { useCommand } from "../lib/useCommand";
+import { useNekoApp } from "../shell/appContext";
 import { SegmentedControl } from "../design-system/components/SegmentedControl";
 import { MonthNav } from "../design-system/components/MonthNav";
 import { fmtBRL, fmtCompact, MES, saldoBand } from "../lib/nkFormat";
 import { todayISO } from "../lib/format";
 
 const DOW = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+
+/** Movement-aware tooltip/aria label for a calendar day cell; zero movements
+ *  are omitted so the label stays readable. Falls back to the balance-only
+ *  strings when the day has no data. */
+function cellTitle(
+  iso: string,
+  today: string,
+  balance: number | null,
+  mv: { income: number; fixed: number; daily: number } | null,
+): string {
+  if (balance == null) return iso > today ? "Projeção indisponível" : "Sem dados";
+  const parts = [`Saldo ${fmtBRL(balance)}`];
+  if (mv) {
+    if (mv.income) parts.push(`Entrada ${fmtBRL(mv.income)}`);
+    if (mv.fixed) parts.push(`Saída fixa ${fmtBRL(mv.fixed)}`);
+    if (mv.daily) parts.push(`Diário ${fmtBRL(mv.daily)}`);
+  }
+  return parts.join(" · ");
+}
 
 const SEG_OPTIONS = [
   { value: "mes", label: "Mês" },
@@ -130,6 +150,7 @@ export function YearGridScreen() {
 
   const [tab, setTab] = useState<string>("mes");
   const [off, setOff] = useState(0);
+  const { navigate } = useNekoApp();
 
   // Clamp month offset to valid range (0–11).
   const rawMonth = thisMonth + off;
@@ -166,6 +187,19 @@ export function YearGridScreen() {
   const balanceForDate = (iso: string): number | null => {
     if (iso < TODAY) return realizedBalanceMap.get(iso)?.balance_cents ?? null;
     return forecastBalanceMap.get(iso)?.balance_cents ?? null;
+  };
+
+  // Full day movements for the cell tooltip/aria (both maps carry the fields).
+  const dayForDate = (
+    iso: string,
+  ): { income: number; fixed: number; daily: number } | null => {
+    const row = iso < TODAY ? realizedBalanceMap.get(iso) : forecastBalanceMap.get(iso);
+    if (!row) return null;
+    return {
+      income: row.income_cents,
+      fixed: row.fixed_out_cents,
+      daily: row.daily_out_cents,
+    };
   };
 
   // ---- Year view ----
@@ -287,8 +321,10 @@ export function YearGridScreen() {
             const balance = balanceForDate(iso);
             const band = saldoBand(balance);
             const future = iso > TODAY;
+            const label = cellTitle(iso, TODAY, balance, dayForDate(iso));
             return (
-              <div
+              <button
+                type="button"
                 key={iso}
                 className={
                   "cal-cell" +
@@ -299,13 +335,9 @@ export function YearGridScreen() {
                   background:
                     band.fill === "transparent" ? "var(--surface)" : band.fill,
                 }}
-                title={
-                  balance != null
-                    ? `Saldo ${fmtBRL(balance)}`
-                    : iso > TODAY
-                      ? "Projeção indisponível"
-                      : "Sem dados"
-                }
+                title={label}
+                aria-label={label}
+                onClick={() => navigate("lancamentos")}
               >
                 <span className="cal-cell__d">{d}</span>
                 {balance != null ? (
@@ -317,7 +349,7 @@ export function YearGridScreen() {
                     —
                   </span>
                 )}
-              </div>
+              </button>
             );
           })}
         </div>
