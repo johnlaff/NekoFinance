@@ -81,19 +81,17 @@ function resolveThemeBg(next: Theme): string {
 }
 
 /**
- * Reveal em DUAS fases, exclusivamente com `clip-path` (a única primitiva confirmada
- * visualmente no WebView2-alvo — `opacity` NÃO é usada em lugar nenhum, pois não há prova
- * de que o compositor a pinta aqui):
+ * Reveal de UMA fase, só com `clip-path` (única primitiva confirmada visualmente neste
+ * WebView2; `opacity` NÃO é usada — o compositor não a pinta aqui, era a causa do
+ * "cor sólida → depois a UI" das versões com dissolve).
  *
- * 1. GROW — um disco da cor do tema de destino cresce do ponto (x, y) por cima da UI
- *    ainda no tema antigo (fora do disco a UI antiga real permanece).
- * 2. Quando o disco cobre a tela, `apply` troca o tema por baixo e um flush síncrono +
- *    dois frames garantem que a nova paleta PINTOU sob o disco opaco.
- * 3. RETRACT — o disco recolhe de volta ao ponto de clique, revelando a UI nova
- *    (já pintada) das bordas para o centro. Sem cor sólida parada, sem dissolve de
- *    opacity, sem "cor sólida → depois a UI".
+ * Um disco da cor do tema de destino cresce do ponto (x, y) por cima da UI antiga (fora
+ * do disco a UI antiga real permanece). Quando cobre a tela, `apply` troca o tema por
+ * baixo, um flush síncrono garante a repintura (medida em ~9ms neste hardware) e no frame
+ * seguinte o overlay é REMOVIDO de uma vez, revelando a UI nova já pronta. Sem retract
+ * (que parecia um "loop"), sem cor sólida parada perceptível, sem opacity.
  *
- * Um cancelamento em qualquer fase aterrissa o tema via `apply` e remove o overlay.
+ * Um cancelamento aterrissa o tema via `apply` e remove o overlay.
  */
 export function playThemeReveal(
   x: number,
@@ -120,7 +118,6 @@ export function playThemeReveal(
     `clip-path:circle(0px at ${x}px ${y}px);`;
   document.body.appendChild(overlay);
 
-  const clipAt = (r: number) => `circle(${r}px at ${x}px ${y}px)`;
   let done = false;
   const cleanup = () => {
     if (done) return;
@@ -129,11 +126,14 @@ export function playThemeReveal(
   };
 
   const grow = overlay.animate(
-    [{ clipPath: clipAt(0) }, { clipPath: clipAt(radius) }],
+    [
+      { clipPath: `circle(0px at ${x}px ${y}px)` },
+      { clipPath: `circle(${radius}px at ${x}px ${y}px)` },
+    ],
     {
       duration: REVEAL_DURATION_MS,
       easing: "cubic-bezier(0.16, 1, 0.3, 1)", // --ease-entrance
-      fill: "forwards", // mantém o disco cheio enquanto o tema troca por baixo
+      fill: "forwards", // mantém o disco cheio no frame entre swap e remoção
     },
   );
   grow.addEventListener("cancel", () => {
@@ -145,29 +145,17 @@ export function playThemeReveal(
   });
   grow.addEventListener("finish", () => {
     const tGrow = Math.round(performance.now() - t0);
-    // Troca o tema por baixo do disco cheio e força o recálculo de estilo+layout AGORA
-    // (a repintura tardia da árvore era o que aparecia como "cor sólida → depois a UI").
+    // Troca o tema por baixo do disco cheio e força o recálculo de estilo+layout AGORA.
     apply();
     void document.documentElement.offsetWidth;
     const tApply = performance.now();
-    // Dois frames: o segundo só dispara após um ciclo de paint, garantindo que a nova
-    // paleta já está pintada sob o disco antes de o retract revelá-la.
-    requestAnimationFrame(() =>
-      requestAnimationFrame(() => {
-        logMotion(
-          `reveal→${next}: cresceu ${tGrow}ms · paint ${Math.round(performance.now() - tApply)}ms`,
-        );
-        const retract = overlay.animate(
-          [{ clipPath: clipAt(radius) }, { clipPath: clipAt(0) }],
-          {
-            duration: Math.round(REVEAL_DURATION_MS * 0.8),
-            easing: "cubic-bezier(0.4, 0, 0.2, 1)", // --ease-standard
-            fill: "forwards",
-          },
-        );
-        retract.addEventListener("finish", cleanup);
-        retract.addEventListener("cancel", cleanup);
-      }),
-    );
+    // Um frame para o paint (~9ms) concluir sob o disco, então remove o overlay de uma
+    // vez — a UI nova já está pronta atrás dele. Sem animação de saída (sem opacity).
+    requestAnimationFrame(() => {
+      logMotion(
+        `reveal→${next}: cresceu ${tGrow}ms · paint ${Math.round(performance.now() - tApply)}ms`,
+      );
+      cleanup();
+    });
   });
 }

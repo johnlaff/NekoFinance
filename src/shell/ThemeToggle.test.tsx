@@ -64,12 +64,12 @@ describe("ThemeToggle — reveal por overlay (WAAPI em elemento real)", () => {
 
   // Regressão do swap abrupto: o tema NÃO pode trocar antes de o overlay cobrir a
   // tela (fim da animação de crescimento) — trocar cedo deixava o reveal invisível.
-  it("só troca o tema quando o círculo termina de crescer", async () => {
+  it("só troca o tema quando o círculo termina de crescer e depois remove o overlay", async () => {
     const user = userEvent.setup();
     render(<ThemeToggle />);
     await user.click(screen.getByRole("button", { name: "Alternar para tema claro" }));
 
-    // Overlay no DOM, crescimento em andamento — tema antigo ainda vale.
+    // Uma única animação (grow); crescimento em andamento — tema antigo ainda vale.
     expect(anims.length).toBe(1);
     expect(document.documentElement.getAttribute("data-theme")).toBeNull();
 
@@ -83,15 +83,14 @@ describe("ThemeToggle — reveal por overlay (WAAPI em elemento real)", () => {
       ).toBeInTheDocument(),
     );
 
-    // O fade é criado num requestAnimationFrame (deixa a nova paleta pintar antes
-    // de revelar) — aguarda o segundo animate() aparecer.
-    await waitFor(() => expect(anims.length).toBe(2));
-
-    // Fim do fade → overlay removido.
-    anims[1]!.fire("finish");
-    expect(
-      document.querySelector("[aria-hidden='true'][style*='clip-path']"),
-    ).toBeNull();
+    // Sem animação de saída: o overlay é removido no requestAnimationFrame seguinte
+    // (depois que a nova paleta pintou). Nenhuma segunda animação é criada.
+    await waitFor(() =>
+      expect(
+        document.querySelector("[aria-hidden='true'][style*='clip-path']"),
+      ).toBeNull(),
+    );
+    expect(anims.length).toBe(1);
   });
 
   it("crescimento cancelado ainda troca o tema e remove o overlay", async () => {
