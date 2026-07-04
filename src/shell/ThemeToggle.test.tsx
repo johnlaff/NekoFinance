@@ -82,11 +82,13 @@ describe("ThemeToggle — reveal por overlay (WAAPI em elemento real)", () => {
       ).toBeInTheDocument(),
     );
 
-    // Fim do reveal (furo cheio, overlay invisível) → removido. Sem segunda animação.
+    // Fim do reveal (furo cheio, overlay invisível) → removido no frame seguinte.
     anims[0]!.fire("finish");
-    expect(
-      document.querySelector("[aria-hidden='true'][style*='clip-path']"),
-    ).toBeNull();
+    await waitFor(() =>
+      expect(
+        document.querySelector("[aria-hidden='true'][style*='clip-path']"),
+      ).toBeNull(),
+    );
     expect(anims.length).toBe(1);
   });
 

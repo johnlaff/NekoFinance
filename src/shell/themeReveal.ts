@@ -39,9 +39,13 @@ export function readMotionLog(): string[] {
 
 /** Duração do reveal em ms. CONSTANTE, não lida do token: no WebView2 a leitura
  *  `getComputedStyle(...).getPropertyValue("--dur-deliberate")` resolvia para ~0,
- *  fazendo o disco encher em ~11ms ("a tela só piscou"). O valor casa o token
- *  `--dur-deliberate` do DS; a leitura do token vai só para o log de diagnóstico. */
-const REVEAL_DURATION_MS = 480;
+ *  fazendo o disco encher em ~11ms ("a tela só piscou"). A leitura do token vai só para o
+ *  log de diagnóstico. */
+const REVEAL_DURATION_MS = 560;
+
+/** Easing suave (ease-out contido, sem o start abrupto do --ease-entrance) — o furo
+ *  cresce de forma controlada, sem sensação de "salto". */
+const REVEAL_EASING = "cubic-bezier(0.33, 0, 0.2, 1)"; // --ease-calm
 
 /** Valor bruto do token (só para o log de diagnóstico — não governa a animação). */
 function rawDurationToken(): string {
@@ -137,18 +141,24 @@ export function playThemeReveal(
     done = true;
     overlay.remove();
   };
+  // Furo termina com folga (6%) além do canto mais distante: garante que a tela toda já
+  // esteja recortada ANTES do fim, sem o canto tocando a borda do círculo no último frame
+  // (o "leve flick"). O overlay fica invisível o resto da animação.
+  const endRadius = Math.ceil(radius * 1.06);
 
   const grow = overlay.animate(
     [
       { clipPath: coverWithHolePath(w, h, x, y, 0) },
-      { clipPath: coverWithHolePath(w, h, x, y, radius) },
+      { clipPath: coverWithHolePath(w, h, x, y, endRadius) },
     ],
     {
       duration: REVEAL_DURATION_MS,
-      easing: "cubic-bezier(0.16, 1, 0.3, 1)", // --ease-entrance
+      easing: REVEAL_EASING,
       fill: "forwards", // furo cheio (overlay invisível) até a remoção
     },
   );
-  grow.addEventListener("finish", cleanup);
+  // Remove só no frame seguinte ao fim: o overlay já está totalmente recortado (invisível),
+  // então a remoção não coincide com nenhum frame visível.
+  grow.addEventListener("finish", () => requestAnimationFrame(cleanup));
   grow.addEventListener("cancel", cleanup);
 }
