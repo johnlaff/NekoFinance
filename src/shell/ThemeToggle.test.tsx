@@ -104,3 +104,49 @@ describe("ThemeToggle — reveal por overlay (WAAPI em elemento real)", () => {
     ).toBeNull();
   });
 });
+
+describe("ThemeToggle — caminho View Transitions (quando disponível)", () => {
+  interface LooseDoc {
+    startViewTransition?: unknown;
+  }
+  let rootAnimateSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    localStorage.clear();
+    document.documentElement.removeAttribute("data-theme");
+    // Mock da VT: roda o callback (swap) e resolve ready; captura a animação do pseudo.
+    (document as unknown as LooseDoc).startViewTransition = (cb: () => void) => {
+      cb();
+      return { ready: Promise.resolve() };
+    };
+    rootAnimateSpy = vi.fn();
+    (document.documentElement as unknown as { animate: unknown }).animate =
+      rootAnimateSpy;
+  });
+
+  afterEach(() => {
+    delete (document as unknown as LooseDoc).startViewTransition;
+    delete (document.documentElement as unknown as { animate?: unknown }).animate;
+  });
+
+  it("usa a View Transitions API: troca o tema no callback e anima o pseudo-elemento", async () => {
+    const user = userEvent.setup();
+    render(<ThemeToggle />);
+    await user.click(screen.getByRole("button", { name: "Alternar para tema claro" }));
+
+    // Tema trocado (dentro do callback da transição) e nenhum overlay de cobertura criado.
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    expect(
+      document.querySelector("[aria-hidden='true'][style*='clip-path']"),
+    ).toBeNull();
+
+    // Após ready: anima o clip-path no ::view-transition-new(root) com duração fixa.
+    await waitFor(() => expect(rootAnimateSpy).toHaveBeenCalledTimes(1));
+    const opts = rootAnimateSpy.mock.calls[0]![1] as {
+      pseudoElement?: string;
+      duration?: number;
+    };
+    expect(opts.pseudoElement).toBe("::view-transition-new(root)");
+    expect(opts.duration).toBeGreaterThan(100); // constante, não o token "~0"
+  });
+});

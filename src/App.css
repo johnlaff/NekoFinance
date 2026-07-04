@@ -2245,14 +2245,19 @@ h3,
    durations collapse to 0ms under prefers-reduced-motion via tokens.
    ============================================================ */
 
-/* O reveal do tema usa overlay + WAAPI em elemento real (ThemeToggle) — a View
-   Transitions API não pinta os pseudo-elementos no WebView2. Nenhuma view transition
-   é iniciada pelo app hoje; esta regra fica como guarda para que um uso futuro da
-   API não herde o crossfade default por acidente. */
+/* Reveal do tema (ThemeToggle): quando a View Transitions API existe, o snapshot do tema
+   ANTIGO fica embaixo (mostrando a UI real, sem sumir elementos) e o tema NOVO é revelado
+   por um círculo de clip-path crescendo do ponto de clique. Desliga o crossfade default
+   para o clip ser o único efeito; `display: block` mantém os dois snapshots pintados
+   durante toda a transição. */
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation: none;
   mix-blend-mode: normal;
+  display: block;
+}
+::view-transition-image-pair(root) {
+  isolation: auto;
 }
 
 @keyframes screen-enter {

@@ -2,12 +2,13 @@
  * Reveal circular do tema — módulo compartilhado entre o ThemeToggle (produção) e o
  * diagnóstico de animações das Configurações (botão "Testar reveal", mesmo caminho).
  *
- * Técnica: troca o tema JÁ e cobre com um overlay da cor ANTIGA; um FURO circular cresce
- * do ponto de clique (`clip-path: path()` com regra evenodd — ver `playThemeReveal`),
- * revelando a UI nova de dentro para fora. clip-path é a única primitiva validada
- * VISUALMENTE no hardware-alvo. Evitados de propósito: View Transitions (o WebView2 não
- * pinta os pseudo-elementos), `transform: scale()` a partir de 0 num elemento gigante
- * (raster inicial vazio) e `opacity` (o compositor não a pinta neste WebView2).
+ * Técnica: quando a View Transitions API existe (Chromium/WebView2), ela tira snapshot do
+ * tema antigo e do novo e o novo é revelado por um círculo de clip-path do clique — os
+ * elementos da UI nunca somem. Fallback (jsdom/engines sem a API): cobre com um overlay da
+ * cor antiga e abre um FURO circular via `clip-path: path()`. A duração é SEMPRE uma
+ * constante — o token resolve para "~0" via getComputedStyle neste WebView2. Evitados:
+ * `opacity` (o compositor não a pinta aqui) e `transform: scale()` de 0 num elemento
+ * gigante (raster inicial vazio).
  *
  * Cada etapa grava um evento em `nk-motion-log` (localStorage, últimos 8) — o
  * diagnóstico exibe o log para depurar o caminho real sem devtools.
@@ -101,6 +102,10 @@ function coverWithHolePath(
  * Sem corte seco, sem cor sólida parada, sem opacity, sem inversão de direção.
  * Um cancelamento aterrissa o overlay.
  */
+type DocWithVT = Document & {
+  startViewTransition?: (cb: () => void) => { ready: Promise<void> };
+};
+
 export function playThemeReveal(
   x: number,
   y: number,
@@ -108,6 +113,41 @@ export function playThemeReveal(
   next: Theme,
   apply: () => void,
 ): void {
+  // Caminho preferido: View Transitions API. Ela tira um snapshot do tema ANTIGO (a UI
+  // real, com todos os elementos) e do NOVO; o antigo fica embaixo enquanto um círculo de
+  // clip-path revela o novo a partir do clique — os elementos NUNCA somem (o problema da
+  // cobertura chapada). Duração FIXA (o token resolve para "~0" via getComputedStyle neste
+  // WebView2, ver REVEAL_DURATION_MS). Fallback abaixo cobre jsdom/engines sem a API.
+  const doc = document as DocWithVT;
+  if (typeof doc.startViewTransition === "function") {
+    logMotion(`reveal→${next}: via View Transitions (${REVEAL_DURATION_MS}ms)`);
+    try {
+      const transition = doc.startViewTransition(() => apply());
+      transition.ready
+        .then(() => {
+          document.documentElement.animate(
+            {
+              clipPath: [
+                `circle(0px at ${x}px ${y}px)`,
+                `circle(${Math.ceil(radius * 1.02)}px at ${x}px ${y}px)`,
+              ],
+            },
+            {
+              duration: REVEAL_DURATION_MS,
+              easing: REVEAL_EASING,
+              pseudoElement: "::view-transition-new(root)",
+            },
+          );
+        })
+        .catch(() => {
+          // Transição abortada — o tema já foi aplicado no callback.
+        });
+      return;
+    } catch {
+      // API presente mas quebrada em runtime → cai no fallback de cobertura.
+    }
+  }
+
   const overlay = document.createElement("div");
   if (typeof overlay.animate !== "function") {
     // Sem WAAPI (jsdom/engines antigos) → troca instantânea, sem floreio.
