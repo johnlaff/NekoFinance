@@ -62,9 +62,9 @@ describe("ThemeToggle — reveal por overlay (WAAPI em elemento real)", () => {
     delete (HTMLElement.prototype as unknown as { animate?: unknown }).animate;
   });
 
-  // Reveal "drain": o tema troca JÁ (UI nova pinta escondida sob o overlay da cor antiga)
-  // e o overlay encolhe revelando-a. Uma única animação (drain, clip full→0).
-  it("troca o tema imediatamente, cobre com a cor antiga e remove ao fim do drain", async () => {
+  // Reveal "buraco crescente": o tema troca JÁ (UI nova pinta escondida sob o overlay da
+  // cor antiga) e um furo circular cresce revelando-a. Uma única animação (o clip).
+  it("troca o tema imediatamente, cobre com a cor antiga e remove ao fim do reveal", async () => {
     const user = userEvent.setup();
     render(<ThemeToggle />);
     await user.click(screen.getByRole("button", { name: "Alternar para tema claro" }));
@@ -82,7 +82,7 @@ describe("ThemeToggle — reveal por overlay (WAAPI em elemento real)", () => {
       ).toBeInTheDocument(),
     );
 
-    // Fim do drain (clip já em 0, overlay invisível) → removido. Sem segunda animação.
+    // Fim do reveal (furo cheio, overlay invisível) → removido. Sem segunda animação.
     anims[0]!.fire("finish");
     expect(
       document.querySelector("[aria-hidden='true'][style*='clip-path']"),
@@ -90,7 +90,7 @@ describe("ThemeToggle — reveal por overlay (WAAPI em elemento real)", () => {
     expect(anims.length).toBe(1);
   });
 
-  it("drain cancelado remove o overlay e o tema permanece trocado", async () => {
+  it("reveal cancelado remove o overlay e o tema permanece trocado", async () => {
     const user = userEvent.setup();
     render(<ThemeToggle />);
     await user.click(screen.getByRole("button", { name: "Alternar para tema claro" }));

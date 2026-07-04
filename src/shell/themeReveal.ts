@@ -2,9 +2,9 @@
  * Reveal circular do tema — módulo compartilhado entre o ThemeToggle (produção) e o
  * diagnóstico de animações das Configurações (botão "Testar reveal", mesmo caminho).
  *
- * Técnica: troca o tema JÁ e cobre com um overlay da cor ANTIGA que ENCOLHE em
- * `clip-path: circle()` do raio total até 0 no ponto de clique (drain — ver
- * `playThemeReveal`), revelando a UI nova. clip-path é a única primitiva validada
+ * Técnica: troca o tema JÁ e cobre com um overlay da cor ANTIGA; um FURO circular cresce
+ * do ponto de clique (`clip-path: path()` com regra evenodd — ver `playThemeReveal`),
+ * revelando a UI nova de dentro para fora. clip-path é a única primitiva validada
  * VISUALMENTE no hardware-alvo. Evitados de propósito: View Transitions (o WebView2 não
  * pinta os pseudo-elementos), `transform: scale()` a partir de 0 num elemento gigante
  * (raster inicial vazio) e `opacity` (o compositor não a pinta neste WebView2).
@@ -63,20 +63,39 @@ function currentThemeBg(prevWasLight: boolean): string {
 }
 
 /**
- * Reveal "drain", só com `clip-path` — a única primitiva confirmada visualmente neste
- * WebView2 (`opacity` não pinta aqui; os pseudo-elementos de View Transitions também não;
- * daí este caminho manual):
+ * Retângulo da viewport com um FURO circular de raio `r` no ponto (cx, cy), como
+ * `clip-path: path(evenodd, …)`. O retângulo (preenchido) menos o círculo (regra
+ * evenodd → vira furo) = a cobertura fica visível em tudo MENOS no círculo. Crescer `r`
+ * abre o furo do clique para fora. `H`/`V` fecham o retângulo; dois arcos `A` desenham o
+ * círculo. A estrutura de comandos é idêntica em qualquer `r`, então a WAAPI interpola.
+ */
+function coverWithHolePath(
+  w: number,
+  h: number,
+  cx: number,
+  cy: number,
+  r: number,
+): string {
+  return (
+    `path(evenodd, "M0 0 H${w} V${h} H0 Z ` +
+    `M${cx - r} ${cy} A${r} ${r} 0 1 0 ${cx + r} ${cy} A${r} ${r} 0 1 0 ${cx - r} ${cy} Z")`
+  );
+}
+
+/**
+ * Reveal "buraco crescente", só com `clip-path` — a única primitiva confirmada
+ * visualmente neste WebView2 (`opacity` não pinta aqui; os pseudo-elementos de View
+ * Transitions também não; daí este caminho manual):
  *
  * 1. O tema é trocado JÁ (a UI nova pinta em ~0-9ms neste hardware) e imediatamente
- *    coberta por um overlay da cor do tema ANTIGO — o usuário continua vendo a cor de
- *    onde saiu, a repintura acontece escondida.
- * 2. Esse overlay encolhe em `clip-path: circle()` do raio total até 0 no ponto de clique,
- *    revelando a UI nova (já pronta) de forma animada e contínua.
- * 3. No fim o clip já está em 0 (overlay invisível) — removê-lo não pisca, porque não há
- *    mais um layer COBRINDO a tela para destruir (a causa do flick da remoção abrupta).
+ *    coberta por um overlay da cor do tema ANTIGO — a repintura acontece escondida.
+ * 2. Um FURO circular cresce do ponto de clique (`clip-path: path()` com regra evenodd),
+ *    revelando a UI nova de DENTRO PARA FORA — o efeito clássico "cresce do clique".
+ * 3. No fim o furo cobre a tela (overlay todo recortado, invisível) — removê-lo não
+ *    pisca, porque não há mais um layer COBRINDO a tela para destruir.
  *
- * Sem corte seco, sem cor sólida parada, sem retract em "loop", sem opacity. Um
- * cancelamento aterrissa o overlay invisível.
+ * Sem corte seco, sem cor sólida parada, sem opacity, sem inversão de direção.
+ * Um cancelamento aterrissa o overlay.
  */
 export function playThemeReveal(
   x: number,
@@ -92,6 +111,8 @@ export function playThemeReveal(
     apply();
     return;
   }
+  const w = window.innerWidth;
+  const h = window.innerHeight;
   // Cor do tema ATUAL (antes do swap) — é ela que o overlay usa para cobrir.
   const oldBg = currentThemeBg(
     document.documentElement.getAttribute("data-theme") === "light",
@@ -107,7 +128,7 @@ export function playThemeReveal(
   overlay.setAttribute("aria-hidden", "true");
   overlay.style.cssText =
     `position:fixed;inset:0;z-index:9999;pointer-events:none;background:${oldBg};` +
-    `clip-path:circle(${radius}px at ${x}px ${y}px);`;
+    `clip-path:${coverWithHolePath(w, h, x, y, 0)};`;
   document.body.appendChild(overlay);
 
   let done = false;
@@ -117,17 +138,17 @@ export function playThemeReveal(
     overlay.remove();
   };
 
-  const drain = overlay.animate(
+  const grow = overlay.animate(
     [
-      { clipPath: `circle(${radius}px at ${x}px ${y}px)` },
-      { clipPath: `circle(0px at ${x}px ${y}px)` },
+      { clipPath: coverWithHolePath(w, h, x, y, 0) },
+      { clipPath: coverWithHolePath(w, h, x, y, radius) },
     ],
     {
       duration: REVEAL_DURATION_MS,
-      easing: "cubic-bezier(0.4, 0, 0.2, 1)", // --ease-standard
-      fill: "forwards", // fica em clip(0) (invisível) até a remoção — sem flash de volta
+      easing: "cubic-bezier(0.16, 1, 0.3, 1)", // --ease-entrance
+      fill: "forwards", // furo cheio (overlay invisível) até a remoção
     },
   );
-  drain.addEventListener("finish", cleanup);
-  drain.addEventListener("cancel", cleanup);
+  grow.addEventListener("finish", cleanup);
+  grow.addEventListener("cancel", cleanup);
 }
