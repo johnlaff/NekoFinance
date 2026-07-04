@@ -76,6 +76,19 @@
   transform: translateY(-2px);
   box-shadow: var(--shadow-2);
 }
+/* The day cell is an interactive button (navigates to the ledger); reset the
+   native button chrome and keep the flex layout, add a visible focus ring. */
+button.cal-cell {
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+  width: 100%;
+}
+button.cal-cell:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
 .cal-cell--empty {
   background: transparent;
   border: none;

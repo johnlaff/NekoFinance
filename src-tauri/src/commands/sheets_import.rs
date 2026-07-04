@@ -588,3 +588,75 @@ pub async fn get_sheet_mappings(
         )
         .collect())
 }
+
+/// Timestamp (UTC, formato "YYYY-MM-DD HH:MM:SS" de `datetime('now')`) do evento
+/// de sincronização com a planilha mais recente — import ou write-back. `None`
+/// quando ainda não houve nenhuma sincronização. Semântica "última MUDANÇA":
+/// o `sync_log` só ganha linha quando algo entra/sai da planilha.
+#[tauri::command]
+pub async fn last_sync_at(pool: State<'_, SqlitePool>) -> Result<Option<String>, String> {
+    last_sync_at_query(pool.inner()).await
+}
+
+async fn last_sync_at_query(pool: &SqlitePool) -> Result<Option<String>, String> {
+    sqlx::query_scalar::<_, Option<String>>(
+        "SELECT MAX(timestamp) FROM sync_log WHERE event_type IN ('import', 'write_back')",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("last_sync_at: {e}"))
+}
+
+#[cfg(test)]
+mod last_sync_tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn test_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        // Este teste exercita apenas a query MAX(); dispensa a cadeia de FK
+        // person→profile→sync_log (sqlx liga foreign_keys por padrão).
+        sqlx::query("PRAGMA foreign_keys = OFF")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    async fn insert_sync(pool: &SqlitePool, id: &str, event_type: &str, ts: &str) {
+        sqlx::query(
+            "INSERT INTO sync_log (id, event_type, entity_type, entity_id, profile_id, timestamp, source_sheet) \
+             VALUES (?1, ?2, 'transaction', ?1, 'pr-1', ?3, '2026')",
+        )
+        .bind(id)
+        .bind(event_type)
+        .bind(ts)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn returns_most_recent_sync_timestamp() {
+        let pool = test_pool().await;
+        insert_sync(&pool, "a", "import", "2026-07-04 10:00:00").await;
+        insert_sync(&pool, "b", "write_back", "2026-07-04 10:18:00").await;
+        // Um evento não-sync não deve mascarar o MAX dos eventos de planilha.
+        insert_sync(&pool, "c", "local_edit", "2026-07-04 11:00:00").await;
+
+        let got = last_sync_at_query(&pool).await.unwrap();
+        assert_eq!(got.as_deref(), Some("2026-07-04 10:18:00"));
+    }
+
+    #[tokio::test]
+    async fn returns_none_without_history() {
+        let pool = test_pool().await;
+        let got = last_sync_at_query(&pool).await.unwrap();
+        assert_eq!(got, None);
+    }
+}

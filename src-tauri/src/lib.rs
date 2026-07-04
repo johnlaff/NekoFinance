@@ -64,6 +64,7 @@ pub fn run() {
             commands::save_sheet_mapping,
             commands::get_sheet_mappings,
             commands::list_user_spreadsheets,
+            commands::last_sync_at,
             tags::create_tag_cmd,
             tags::list_tags_cmd,
             tags::set_transaction_tags_cmd,

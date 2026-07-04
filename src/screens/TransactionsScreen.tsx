@@ -15,11 +15,13 @@ import {
   deleteSeriesAll,
   deleteSeriesFrom,
   deleteTransaction,
+  getMonthGrid,
   getRecentTransactions,
   isTauri,
   listTags,
   setTransactionTags,
   type LineItemKind,
+  type MonthGridDay,
   type Tag,
   type TransactionRow,
 } from "../lib/api";
@@ -29,6 +31,7 @@ import {
   fmtSigned,
   MES,
   monthOf,
+  saldoBand,
   TYPE_META,
   type MovementType,
 } from "../lib/nkFormat";
@@ -101,6 +104,48 @@ function groupByMonth(rows: TransactionRow[]): [string, TransactionRow[]][] {
   }
   return Array.from(map.entries()).toSorted((a, b) => (a[0] < b[0] ? 1 : -1));
 }
+
+const DOW = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+
+/** Group rows by ISO day in ASCENDING order (1 → 31) — statement order, so the
+ *  chained end-of-day Saldo reads naturally from top to bottom. */
+function groupByDay(rows: TransactionRow[]): [string, TransactionRow[]][] {
+  const map = new Map<string, TransactionRow[]>();
+  for (const t of rows) {
+    if (!map.has(t.date)) map.set(t.date, []);
+    map.get(t.date)!.push(t);
+  }
+  return Array.from(map.entries()).toSorted((a, b) => (a[0] < b[0] ? -1 : 1));
+}
+
+/** Day-group header label: weekday abbreviation + day-of-month, e.g. "Qua, 3". */
+function dayHeaderLabel(iso: string): string {
+  const [y, m, d] = iso.split("-").map((n) => parseInt(n, 10));
+  const weekday = new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1).getDay();
+  return `${DOW[weekday]}, ${d}`;
+}
+
+/** End-of-month Saldo = last chained balance in the grid (null when unknown). */
+function endOfMonthBalance(grid: MonthGridDay[]): number | null {
+  for (let i = grid.length - 1; i >= 0; i--) {
+    const balance = grid[i]?.balance_cents;
+    if (balance != null) return balance;
+  }
+  return null;
+}
+
+// Stable per-(year,month) fetchers for useCommand (its effect captures the first
+// fetcher ref; an inline arrow would fetch with a stale closure — see useCommand).
+const _monthGridFetchers = new Map<string, () => Promise<MonthGridDay[]>>();
+function monthGridFetcher(year: number, month: number): () => Promise<MonthGridDay[]> {
+  const key = `${year}-${month}`;
+  const cached = _monthGridFetchers.get(key);
+  if (cached) return cached;
+  const fn = () => getMonthGrid(year, month);
+  _monthGridFetchers.set(key, fn);
+  return fn;
+}
+const emptyGridFetcher = () => Promise.resolve<MonthGridDay[]>([]);
 
 /** Current month index (0-based), relative to the current year month. */
 function currentMonthIndex(): number {
@@ -285,6 +330,7 @@ function Row({
   onEdit,
   onDelete,
   allTags,
+  hideDate,
 }: {
   t: TransactionRow;
   open: boolean;
@@ -292,6 +338,8 @@ function Row({
   onEdit: (t: TransactionRow) => void;
   onDelete: (t: TransactionRow) => void;
   allTags: Tag[];
+  /** Omit the leading date column (day-grouped view already shows the day). */
+  hideDate?: boolean | undefined;
 }) {
   const mvType = toMovementType(t);
   const tm = TYPE_META[mvType];
@@ -318,7 +366,11 @@ function Row({
     <>
       <button
         type="button"
-        className={"lc-row" + (isFuture ? " lc-row--future" : "")}
+        className={
+          "lc-row" +
+          (isFuture ? " lc-row--future" : "") +
+          (hideDate ? " lc-row--nodate" : "")
+        }
         onClick={onToggle}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -329,7 +381,7 @@ function Row({
         aria-expanded={open}
         aria-label={t.description || "Lançamento"}
       >
-        <span className="lc-row__date">{fmtDayMonth(t.date)}</span>
+        {!hideDate && <span className="lc-row__date">{fmtDayMonth(t.date)}</span>}
         <span className="lc-row__type" style={{ color: tm.color }}>
           <span className="dot" style={{ background: tm.color }}>
             {tm.glyph}
@@ -503,19 +555,32 @@ function Row({
   );
 }
 
-/** A sticky day-group header with net sum. */
+/** A sticky day-group header: label + (optional chained Saldo pill) + net sum. */
 function GroupHeader({
   title,
   today,
   sum,
+  balance,
 }: {
   title: string;
   today: boolean;
   sum: number;
+  /** Chained end-of-day balance in cents; renders the Saldo pill when present. */
+  balance?: number | null | undefined;
 }) {
+  const band = balance != null ? saldoBand(balance) : null;
   return (
     <div className={"lc-gh" + (today ? " lc-gh--today" : "")}>
       <span className="lc-gh__t">{title}</span>
+      {band && (
+        <span
+          className="lc-gh__saldo"
+          style={{ background: band.fill, color: band.text }}
+          aria-label={`Saldo do dia ${fmtBRL(balance!)}`}
+        >
+          {fmtBRL(balance!)}
+        </span>
+      )}
       <span className="lc-gh__sum">{fmtSigned(sum)}</span>
     </div>
   );
@@ -526,6 +591,8 @@ function Group({
   title,
   today,
   rows,
+  balance,
+  hideDate,
   openIds,
   toggle,
   onEdit,
@@ -535,6 +602,10 @@ function Group({
   title: string;
   today: boolean;
   rows: TransactionRow[];
+  /** Chained end-of-day balance for day groups (Saldo pill in the header). */
+  balance?: number | null | undefined;
+  /** Hide the per-row date when the group header already carries the day. */
+  hideDate?: boolean | undefined;
   openIds: ReadonlySet<string>;
   toggle: (id: string) => void;
   onEdit: (t: TransactionRow) => void;
@@ -544,7 +615,7 @@ function Group({
   const sum = rows.reduce((s, t) => s + signedCents(t), 0);
   return (
     <>
-      <GroupHeader title={title} today={today} sum={sum} />
+      <GroupHeader title={title} today={today} sum={sum} balance={balance} />
       {rows.map((t) => (
         <Row
           key={t.id}
@@ -554,6 +625,7 @@ function Group({
           onEdit={onEdit}
           onDelete={onDelete}
           allTags={allTags}
+          hideDate={hideDate}
         />
       ))}
     </>
@@ -827,6 +899,8 @@ function AnchorView({
 function MonthView({
   targetKey,
   inMonthRows,
+  balanceByDate,
+  endBalance,
   openIds,
   toggle,
   onEdit,
@@ -835,24 +909,45 @@ function MonthView({
 }: {
   targetKey: string;
   inMonthRows: TransactionRow[];
+  /** ISO date → chained end-of-day balance (cents), from get_month_grid. */
+  balanceByDate: Map<string, number | null>;
+  /** Projected/realized Saldo at the end of the month (cents, null if unknown). */
+  endBalance: number | null;
   openIds: ReadonlySet<string>;
   toggle: (id: string) => void;
   onEdit: (t: TransactionRow) => void;
   onDelete: (t: TransactionRow) => void;
   allTags: Tag[];
 }) {
+  const days = groupByDay(inMonthRows);
   return (
     <div className="lc-card">
-      <Group
-        title={monthLabel(targetKey)}
-        today={targetKey === TODAY.slice(0, 7)}
-        rows={inMonthRows}
-        openIds={openIds}
-        toggle={toggle}
-        onEdit={onEdit}
-        onDelete={onDelete}
-        allTags={allTags}
-      />
+      {/* Month context banner — the toolbar has no month label; keep it here.
+          Shows the end-of-month Saldo (spreadsheet parity), falling back to the
+          month's net when no grid balance is available. */}
+      <div className="lc-gh lc-gh--month">
+        <span className="lc-gh__t">{monthLabel(targetKey)}</span>
+        <span className="lc-gh__sum">
+          {endBalance != null
+            ? `Saldo fim · ${fmtBRL(endBalance)}`
+            : fmtSigned(inMonthRows.reduce((s, t) => s + signedCents(t), 0))}
+        </span>
+      </div>
+      {days.map(([iso, rows]) => (
+        <Group
+          key={iso}
+          title={dayHeaderLabel(iso)}
+          today={iso === TODAY}
+          balance={balanceByDate.get(iso)}
+          hideDate
+          rows={rows}
+          openIds={openIds}
+          toggle={toggle}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          allTags={allTags}
+        />
+      ))}
       {inMonthRows.length === 0 && (
         <div className="lc-empty">Nenhum lançamento neste mês para o filtro atual.</div>
       )}
@@ -978,6 +1073,21 @@ export function TransactionsScreen() {
   const targetKey = `${targetYear}-${targetMonth}`;
   const inMonthRows = allRows.filter((t) => monthKey(t.date) === targetKey);
 
+  // Chained day balances for the "Por mês" view. Fetch only in that view (the
+  // timeline is month-scoped); the fetcher is stable per (year, month).
+  const isMonthView = view === "monthOnly";
+  const gridQ = useCommand(
+    isMonthView ? `month_grid:${targetKey}` : "month_grid:idle",
+    isMonthView
+      ? monthGridFetcher(Number(targetYear), Number(targetMonth))
+      : emptyGridFetcher,
+  );
+  const monthGrid = gridQ.data ?? [];
+  const balanceByDate = new Map<string, number | null>(
+    monthGrid.map((d) => [d.date, d.balance_cents]),
+  );
+  const endBalance = endOfMonthBalance(monthGrid);
+
   // Web-preview fallback
   if (!isTauri) {
     return (
@@ -1021,6 +1131,8 @@ export function TransactionsScreen() {
       <MonthView
         targetKey={targetKey}
         inMonthRows={inMonthRows}
+        balanceByDate={balanceByDate}
+        endBalance={endBalance}
         openIds={openIds}
         toggle={toggle}
         onEdit={handleEdit}

@@ -18,7 +18,24 @@ import {
 import { NekoMark } from "../design-system/components/NekoMark";
 import { Button } from "../design-system/components/Button";
 import { ThemeToggle } from "./ThemeToggle";
-import type { AuthStatus } from "../lib/api";
+import { lastSyncAt, type AuthStatus } from "../lib/api";
+import { useCommand } from "../lib/useCommand";
+
+/** Rótulo de recência pt-BR ("há 18 min") a partir do timestamp do sync_log.
+ *  `datetime('now')` do SQLite é UTC sem sufixo de fuso — parseia como UTC.
+ *  Calculado no render; atualiza no próximo invalidateCommands (sem setInterval). */
+function syncRecencyLabel(ts: string | null | undefined): string | null {
+  if (!ts) return null;
+  const then = new Date(ts.replace(" ", "T") + "Z").getTime();
+  if (Number.isNaN(then)) return null;
+  const min = Math.max(0, Math.floor((Date.now() - then) / 60000));
+  if (min < 1) return "agora mesmo";
+  if (min < 60) return `há ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `há ${h} h`;
+  const d = Math.floor(h / 24);
+  return `há ${d} ${d === 1 ? "dia" : "dias"}`;
+}
 
 /** Nova IA (redesign 2026): cada item = uma pergunta/objetivo único. */
 export type Screen =
@@ -112,6 +129,11 @@ export function AppShell({
   const meta = SCREEN_META[active];
   const connected = authStatus === "connected";
 
+  // Recência real da sincronização com a planilha (sync_log). Fica em silêncio
+  // (fallback "Conta Google ativa") enquanto não há histórico ou dado carregado.
+  const { data: lastSync } = useCommand("last_sync_at", lastSyncAt);
+  const syncLabel = connected ? syncRecencyLabel(lastSync) : null;
+
   // Atalho "N" = novo lançamento (lê o callback mais recente via useEffectEvent; assina só no mount).
   const triggerCompose = useEffectEvent(() => onCompose?.());
   useEffect(() => {
@@ -184,7 +206,9 @@ export function AppShell({
               </span>
               <span className="sh-conn__s">
                 {authStatus === "connected"
-                  ? "Conta Google ativa"
+                  ? syncLabel
+                    ? `Sincronizada ${syncLabel}`
+                    : "Conta Google ativa"
                   : authStatus === "expired"
                     ? "Sessão expirada"
                     : authStatus === "loading"
