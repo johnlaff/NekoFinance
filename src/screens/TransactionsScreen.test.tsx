@@ -144,6 +144,54 @@ describe("TransactionsScreen (Lançamentos)", () => {
       screen.queryByLabelText("Item classificado como Saída"),
     ).not.toBeInTheDocument();
   });
+
+  it("Por mês: cabeçalho do dia mostra o Saldo encadeado, colorido pela banda", async () => {
+    const rows = [
+      { ...TXNS[1]!, id: "saldo-1", description: "Aluguel", date: currentMonthISO(3) },
+    ];
+    mockCommands({
+      get_recent_transactions: rows,
+      get_month_grid: [
+        {
+          date: currentMonthISO(3),
+          day: 3,
+          income_cents: 0,
+          fixed_out_cents: 180_000,
+          daily_out_cents: 0,
+          balance_cents: 38_000, // R$ 380,00 → banda "apertado"
+        },
+      ],
+    });
+    renderLedger();
+
+    // O grupo do dia agrupa os lançamentos e o cabeçalho carrega o Saldo do fim
+    // do dia com rótulo acessível; o rótulo do dia é "weekday, dia" (03/06 = Qua).
+    expect(await screen.findByLabelText(/Saldo do dia.*380,00/)).toBeInTheDocument();
+    expect(screen.getByText("Qua, 3")).toBeInTheDocument();
+  });
+
+  it("Por mês: dia sem Saldo no grid não renderiza a pílula", async () => {
+    const rows = [
+      { ...TXNS[1]!, id: "saldo-2", description: "Aluguel", date: currentMonthISO(3) },
+    ];
+    mockCommands({
+      get_recent_transactions: rows,
+      get_month_grid: [
+        {
+          date: currentMonthISO(3),
+          day: 3,
+          income_cents: 0,
+          fixed_out_cents: 180_000,
+          daily_out_cents: 0,
+          balance_cents: null,
+        },
+      ],
+    });
+    renderLedger();
+
+    await screen.findByRole("button", { name: "Aluguel" });
+    expect(screen.queryByLabelText(/Saldo do dia/)).not.toBeInTheDocument();
+  });
 });
 
 // Feature 3: apagar uma série recorrente com escopo (só esta / em diante / toda a série).

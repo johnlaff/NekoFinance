@@ -134,6 +134,9 @@
   top: 0;
   z-index: 2;
   border-bottom: 1px solid var(--border);
+  /* On very narrow widths let the net sum wrap to a second line instead of
+     clipping against the card's overflow (the Saldo pill stays with the day). */
+  flex-wrap: wrap;
 }
 .lc-gh__t {
   font-size: 12.5px;
@@ -141,6 +144,7 @@
   letter-spacing: 0;
   text-transform: none;
   color: var(--text-muted);
+  white-space: nowrap;
 }
 .lc-gh--today {
   background: var(--surface-selected);
@@ -154,6 +158,41 @@
   font-variant-numeric: tabular-nums;
   font-size: 11.5px;
   color: var(--text-faint);
+}
+/* Chained end-of-day Saldo pill (day-grouped "Por mês"), colored by the
+   canonical thermometer band. Sits right after the day label; the net sum
+   keeps its margin-left:auto and stays flush-right. */
+.lc-gh__saldo {
+  font-family: var(--font-money);
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 3px 9px 3px 8px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+.lc-gh__saldo::before {
+  content: "Saldo";
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+/* Month context banner — static (the per-day headers below it are the sticky
+   ones), with a distinct surface so it reads as a section, not a day. */
+.lc-gh--month {
+  position: static;
+  background: var(--surface-2);
+}
+.lc-gh--month .lc-gh__t {
+  color: var(--text);
+  font-size: 13px;
 }
 /* row — native <button> with grid reset so the layout is preserved */
 .lc-row {
@@ -179,6 +218,10 @@
 }
 .lc-row--future {
   opacity: 0.62;
+}
+/* Day-grouped rows drop the leading date column (the day header carries it). */
+.lc-row--nodate {
+  grid-template-columns: 132px 1fr auto;
 }
 .lc-row__date {
   font-family: var(--font-money);

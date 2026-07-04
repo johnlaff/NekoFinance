@@ -75,7 +75,7 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 060  | Engine 5-type: cartão/economia/patrimônio buckets, custo de vida excludes savings      | P1       | L      | 059        | DONE (pkg K)               |
 | 061  | Lançamentos kind badges + cartão/economia%/patrimônio surfaces + convention doc        | P3       | M      | 059, 060   | DONE (pkg K)               |
 | 062  | Auto-economia write-back to the Economia tab (diff + approval, round-trip)             | P2       | M      | 060        | DONE (pkg K)               |
-| 063  | Ledger day headers show the chained Saldo (spreadsheet parity)                         | P1       | M      | —          | BLOCKED — "Por mês" is a single month Group, not per-day groups; delivering needs a MonthView day-grouping restructure (owner design call) |
+| 063  | Ledger day headers show the chained Saldo (spreadsheet parity)                         | P1       | M      | —          | DONE — MonthView regrouped by day (ascending) with chained Saldo pill + month banner (owner-approved design) |
 | 064  | Year comparison with Entradas + Economizado% (savings-tab parity)                      | P2       | S–M    | —          | DONE                       |
 | 065  | Calendar day cells: movements in tooltip/aria + click-through to the ledger            | P2       | M      | —          | DONE                       |
 | 066  | Sidebar shows real last-sync recency from sync_log                                     | P3       | S      | —          | DONE                       |
