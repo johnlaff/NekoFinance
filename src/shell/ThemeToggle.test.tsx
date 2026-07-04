@@ -62,38 +62,35 @@ describe("ThemeToggle — reveal por overlay (WAAPI em elemento real)", () => {
     delete (HTMLElement.prototype as unknown as { animate?: unknown }).animate;
   });
 
-  // Regressão do swap abrupto: o tema NÃO pode trocar antes de o overlay cobrir a
-  // tela (fim da animação de crescimento) — trocar cedo deixava o reveal invisível.
-  it("só troca o tema quando o círculo termina de crescer e depois remove o overlay", async () => {
+  // Reveal "drain": o tema troca JÁ (UI nova pinta escondida sob o overlay da cor antiga)
+  // e o overlay encolhe revelando-a. Uma única animação (drain, clip full→0).
+  it("troca o tema imediatamente, cobre com a cor antiga e remove ao fim do drain", async () => {
     const user = userEvent.setup();
     render(<ThemeToggle />);
     await user.click(screen.getByRole("button", { name: "Alternar para tema claro" }));
 
-    // Uma única animação (grow); crescimento em andamento — tema antigo ainda vale.
-    expect(anims.length).toBe(1);
-    expect(document.documentElement.getAttribute("data-theme")).toBeNull();
-
-    // Fim do crescimento → tema troca por baixo do overlay cheio.
-    anims[0]!.fire("finish");
+    // Tema já trocado no clique; overlay presente; uma animação (o drain).
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
     expect(localStorage.getItem("neko-theme")).toBe("light");
+    expect(anims.length).toBe(1);
+    expect(
+      document.querySelector("[aria-hidden='true'][style*='clip-path']"),
+    ).not.toBeNull();
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Alternar para tema escuro" }),
       ).toBeInTheDocument(),
     );
 
-    // Sem animação de saída: o overlay é removido no requestAnimationFrame seguinte
-    // (depois que a nova paleta pintou). Nenhuma segunda animação é criada.
-    await waitFor(() =>
-      expect(
-        document.querySelector("[aria-hidden='true'][style*='clip-path']"),
-      ).toBeNull(),
-    );
+    // Fim do drain (clip já em 0, overlay invisível) → removido. Sem segunda animação.
+    anims[0]!.fire("finish");
+    expect(
+      document.querySelector("[aria-hidden='true'][style*='clip-path']"),
+    ).toBeNull();
     expect(anims.length).toBe(1);
   });
 
-  it("crescimento cancelado ainda troca o tema e remove o overlay", async () => {
+  it("drain cancelado remove o overlay e o tema permanece trocado", async () => {
     const user = userEvent.setup();
     render(<ThemeToggle />);
     await user.click(screen.getByRole("button", { name: "Alternar para tema claro" }));
