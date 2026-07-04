@@ -6,12 +6,10 @@ on:
     tags:
       - "v*.*.*"
 
-# contents: write — create/update the draft release and upload assets
-# id-token + attestations — SLSA build provenance for the released binaries
+# Least privilege at the top level; the write scopes are granted per-job below
+# so the elevated token is never the default for the whole workflow.
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -19,6 +17,12 @@ concurrency:
 
 jobs:
   build-desktop:
+    # contents: write — create/update the draft release and upload assets
+    # id-token + attestations — SLSA build provenance for the released binaries
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:

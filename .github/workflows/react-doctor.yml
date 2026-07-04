@@ -9,11 +9,10 @@ on:
       - "package-lock.json"
       - "doctor.config.json"
 
+# Least privilege at the top level; the write scopes react-doctor needs to
+# annotate pull requests are granted at the job level below.
 permissions:
   contents: read
-  issues: write
-  pull-requests: write
-  statuses: write
 
 concurrency:
   group: react-doctor-${{ github.event.pull_request.number || github.ref }}
@@ -23,6 +22,11 @@ jobs:
   react-doctor:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      statuses: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
