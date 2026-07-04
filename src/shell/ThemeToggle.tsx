@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
 import { Moon, Sun } from "lucide-react";
 import { motionEnabled } from "../lib/motion";
+import { logMotion, playThemeReveal, type Theme } from "./themeReveal";
 
 const THEME_KEY = "neko-theme";
-
-type Theme = "dark" | "light";
 
 function getStoredTheme(): Theme {
   if (typeof window === "undefined") return "dark";
@@ -22,80 +21,6 @@ function applyTheme(theme: Theme) {
   localStorage.setItem(THEME_KEY, theme);
 }
 
-/** Duração do reveal a partir do token do DS (fallback cobre ambientes sem getComputedStyle). */
-function revealDurationMs(): number {
-  return (
-    parseFloat(
-      getComputedStyle(document.documentElement).getPropertyValue("--dur-deliberate"),
-    ) || 480
-  );
-}
-
-/**
- * Circular reveal do tema via View Transitions API: o frame do tema ANTIGO fica congelado
- * embaixo e o tema novo é revelado por um círculo que cresce a partir do ponto de clique
- * (clip-path animado no `::view-transition-new(root)`; o crossfade default é desligado no
- * CSS). É o efeito completo — o tema velho persiste fora do círculo enquanto ele cresce.
- */
-function playViewTransitionReveal(
-  x: number,
-  y: number,
-  radius: number,
-  apply: () => void,
-): void {
-  const transition = document.startViewTransition(apply);
-  transition.ready
-    .then(() => {
-      document.documentElement.animate(
-        {
-          clipPath: [
-            `circle(0px at ${x}px ${y}px)`,
-            `circle(${radius}px at ${x}px ${y}px)`,
-          ],
-        },
-        {
-          duration: revealDurationMs(),
-          easing: "cubic-bezier(0.16, 1, 0.3, 1)", // --ease-entrance
-          pseudoElement: "::view-transition-new(root)",
-        },
-      );
-    })
-    .catch(() => {
-      // Transição abortada (troca rápida de tema, navegação) — o tema já foi aplicado.
-    });
-}
-
-/**
- * Fallback sem View Transitions (WebKitGTK antigo, jsdom): um overlay com a cor de fundo
- * do tema de destino floresce em `clip-path: circle()` e se dissolve. Decorativo — o tema
- * já foi aplicado antes (o overlay nunca é a fonte da verdade), então o swap é correto
- * mesmo sem Web Animations API.
- */
-function playOverlayReveal(x: number, y: number, radius: number, next: Theme): void {
-  const overlay = document.createElement("div");
-  if (typeof overlay.animate !== "function") return; // sem WAAPI → sem floreio
-  overlay.setAttribute("aria-hidden", "true");
-  // `[data-theme="light"]` casa qualquer elemento, então o overlay resolve o --bg do tema de destino.
-  if (next === "light") overlay.setAttribute("data-theme", "light");
-  overlay.style.cssText =
-    "position:fixed;inset:0;z-index:9999;pointer-events:none;background:var(--bg);" +
-    `clip-path:circle(0px at ${x}px ${y}px);`;
-  document.body.appendChild(overlay);
-  const anim = overlay.animate(
-    [
-      { clipPath: `circle(0px at ${x}px ${y}px)`, opacity: 0.9 },
-      { clipPath: `circle(${radius}px at ${x}px ${y}px)`, opacity: 0 },
-    ],
-    {
-      duration: revealDurationMs(),
-      easing: "cubic-bezier(0.16, 1, 0.3, 1)", // --ease-entrance
-    },
-  );
-  const cleanup = () => overlay.remove();
-  anim.addEventListener("finish", cleanup);
-  anim.addEventListener("cancel", cleanup);
-}
-
 export function ThemeToggle() {
   const [theme, setTheme] = useState<Theme>(getStoredTheme);
 
@@ -109,6 +34,7 @@ export function ThemeToggle() {
 
     // SO em reduced motion ou toggle "Animações" desligado → troca instantânea.
     if (!motionEnabled()) {
+      logMotion(`reveal→${next}: pulado (motionEnabled=false)`);
       setTheme(next);
       return;
     }
@@ -123,17 +49,13 @@ export function ThemeToggle() {
       Math.max(y, window.innerHeight - y),
     );
 
-    if (typeof document.startViewTransition === "function") {
-      // A troca visual é o atributo em <html>: applyTheme dentro do callback dá ao
-      // snapshot "novo" o tema de destino sem forçar render síncrono do React. O estado
-      // segue depois e o efeito reaplica o mesmo tema (idempotente).
-      playViewTransitionReveal(x, y, radius, () => applyTheme(next));
+    // O tema (DOM + estado React) só troca quando o overlay já cobre a tela.
+    // applyTheme direto evita depender do agendamento do effect; o effect que o
+    // setTheme dispara reaplica o mesmo tema (idempotente).
+    playThemeReveal(x, y, radius, next, () => {
+      applyTheme(next);
       setTheme(next);
-      return;
-    }
-
-    setTheme(next);
-    playOverlayReveal(x, y, radius, next);
+    });
   };
 
   return (

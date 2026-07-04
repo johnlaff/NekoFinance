@@ -41,7 +41,12 @@ import {
   type AuthStatus,
 } from "../lib/api";
 import { formatBRL, parseBRLToCents } from "../lib/format";
-import { motionUserOff, setMotionUserOff } from "../lib/motion";
+import {
+  motionEnabled,
+  setMotionPreference,
+  systemPrefersReducedMotion,
+} from "../lib/motion";
+import { playThemeReveal, readMotionLog } from "../shell/themeReveal";
 import { safeErrorMessage } from "../lib/errors";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { Button } from "../design-system/components/Button";
@@ -212,6 +217,176 @@ function CfgItem({
       </div>
       {right != null ? <span className="cfg-item__r">{right}</span> : null}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// MotionDiagnostics — autoteste visível de animação (Aparência)
+// ---------------------------------------------------------------------------
+
+/**
+ * Discrimina, na máquina do usuário e sem devtools, as três causas possíveis de
+ * "animações não aparecem": (a) o motor não executa animações (WAAPI com duração
+ * FIXA nunca termina/termina errado), (b) os tokens `--dur-*` estão colapsados
+ * (animação CSS com duração por token termina cedo demais), (c) motor e tokens
+ * ok — o problema está em quem dispara cada animação. Duas bolinhas varrem a
+ * tela ~1,5s; o resultado fica legível no próprio item.
+ */
+function MotionDiagnostics() {
+  const [verdict, setVerdict] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+
+  const facts = [
+    `sistema ${systemPrefersReducedMotion() ? "reduzido" : "normal"}`,
+    `toggle ${document.documentElement.getAttribute("data-motion") ?? "system"}`,
+    `tokens ${
+      getComputedStyle(document.documentElement)
+        .getPropertyValue("--dur-base")
+        .trim() || "?"
+    }`,
+    `view transitions ${
+      typeof document.startViewTransition === "function" ? "sim" : "não"
+    }`,
+  ].join(" · ");
+
+  function runTest() {
+    if (running) return;
+    setRunning(true);
+    setVerdict(null);
+
+    const mkDot = (bottom: number, className?: string) => {
+      const dot = document.createElement("div");
+      dot.style.cssText =
+        `position:fixed;left:16px;bottom:${bottom}px;width:14px;height:14px;` +
+        "border-radius:50%;background:var(--primary);z-index:9999;pointer-events:none;";
+      if (className) dot.className = className;
+      document.body.appendChild(dot);
+      return dot;
+    };
+
+    const results: string[] = [];
+    let pending = 3;
+    const t0 = performance.now();
+    const finish = () => {
+      pending -= 1;
+      if (pending > 0) return;
+      setRunning(false);
+      setVerdict(results.join(" · "));
+    };
+
+    // (a) WAAPI com duração FIXA — independe de tokens/CSS: o motor executa?
+    const waapiDot = mkDot(16);
+    if (typeof waapiDot.animate === "function") {
+      const anim = waapiDot.animate(
+        [{ transform: "translateX(0)" }, { transform: "translateX(220px)" }],
+        { duration: 600, iterations: 3, direction: "alternate", easing: "ease-in-out" },
+      );
+      anim.addEventListener("finish", () => {
+        const dt = Math.round(performance.now() - t0);
+        waapiDot.remove();
+        results.push(
+          dt < 900 ? `WAAPI anormal (${dt}ms; esperado ~1800ms)` : `WAAPI ok (${dt}ms)`,
+        );
+        finish();
+      });
+    } else {
+      waapiDot.remove();
+      results.push("WAAPI indisponível");
+      finish();
+    }
+
+    // (b) Animação CSS com duração por TOKEN — tokens colapsados terminam cedo.
+    const cssDot = mkDot(40, "nk-diag-dot");
+    cssDot.addEventListener("animationend", () => {
+      const dt = Math.round(performance.now() - t0);
+      cssDot.remove();
+      results.push(
+        dt < 700 ? `CSS anormal (${dt}ms — tokens zerados?)` : `CSS ok (${dt}ms)`,
+      );
+      finish();
+    });
+
+    // (c) clip-path animado via WAAPI — alguns compositors executam a animação
+    // (finish no tempo certo) sem PINTAR a interpolação; aqui só medimos o tempo,
+    // e o usuário reporta se VIU o quadrado alargar (a parte visual é o teste).
+    const clipDot = mkDot(64);
+    clipDot.style.borderRadius = "0";
+    clipDot.style.width = "220px";
+    clipDot.style.clipPath = "inset(0 206px 0 0)";
+    if (typeof clipDot.animate === "function") {
+      const clipAnim = clipDot.animate(
+        [{ clipPath: "inset(0 206px 0 0)" }, { clipPath: "inset(0 0 0 0)" }],
+        { duration: 600, iterations: 3, direction: "alternate", easing: "ease-in-out" },
+      );
+      clipAnim.addEventListener("finish", () => {
+        const dt = Math.round(performance.now() - t0);
+        clipDot.remove();
+        results.push(`clip-path terminou (${dt}ms) — viu a barra alargar?`);
+        finish();
+      });
+    } else {
+      clipDot.remove();
+      results.push("clip-path não testável");
+      finish();
+    }
+
+    // Guarda: animação que nunca dispara/termina = motor não executa animações.
+    window.setTimeout(() => {
+      if (document.body.contains(waapiDot)) {
+        waapiDot.remove();
+        results.push("WAAPI nunca terminou — motor não executa animações");
+        finish();
+      }
+      if (document.body.contains(cssDot)) {
+        cssDot.remove();
+        results.push("CSS nunca disparou — animações CSS não executam");
+        finish();
+      }
+      if (document.body.contains(clipDot)) {
+        clipDot.remove();
+        results.push("clip-path nunca terminou");
+        finish();
+      }
+    }, 6000);
+  }
+
+  // Roda o MESMO caminho do reveal de produção, do centro da tela, SEM trocar o
+  // tema (apply vazio): o disco da cor do tema oposto cresce e se dissolve sobre a
+  // UI atual. O verdict vira o log real do caminho (início/cresceu/cancelado).
+  function runRevealTest() {
+    if (running) return;
+    setRunning(true);
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+    const next =
+      document.documentElement.getAttribute("data-theme") === "light"
+        ? "dark"
+        : "light";
+    playThemeReveal(cx, cy, Math.hypot(cx, cy), next, () => {
+      // Só teste visual — o tema real não muda.
+    });
+    window.setTimeout(() => {
+      setRunning(false);
+      setVerdict(readMotionLog().slice(-2).join(" · ") || "sem log");
+    }, 1100);
+  }
+
+  return (
+    <CfgItem
+      icon={Sparkles}
+      title="Diagnóstico de animações"
+      sub={verdict ?? facts}
+      right={
+        <span style={{ display: "inline-flex", gap: 8 }}>
+          <Button variant="secondary" onClick={runTest} disabled={running}>
+            {running ? "Testando…" : "Testar"}
+          </Button>
+          <Button variant="secondary" onClick={runRevealTest} disabled={running}>
+            Testar reveal
+          </Button>
+        </span>
+      }
+    />
   );
 }
 
@@ -844,7 +1019,8 @@ export function SettingsScreen({
   const writeBack = useWriteBackPending();
 
   // Persistido em localStorage e refletido em <html data-motion> (src/lib/motion.ts).
-  const [animacoes, setAnimacoes] = useState(() => !motionUserOff());
+  // Ligar FORÇA animações mesmo com o SO em movimento reduzido (escolha explícita).
+  const [animacoes, setAnimacoes] = useState(() => motionEnabled());
   const [reconnecting, setReconnecting] = useState(false);
 
   const isConnected = authStatus === "connected";
@@ -1021,22 +1197,36 @@ export function SettingsScreen({
           </span>
         </div>
         <div className="cfg-sec">
+          {/* O sub é um diagnóstico vivo: expõe o que o motor do WebView reporta
+              (movimento reduzido? View Transitions?) para depurar sem devtools. */}
           <CfgItem
             icon={Sparkles}
             title="Animações"
-            sub="Transições e gráficos animados · o modo reduzido do sistema é sempre respeitado"
+            sub={[
+              systemPrefersReducedMotion()
+                ? animacoes
+                  ? "Forçando animações (o sistema pede movimento reduzido)"
+                  : "Seguindo o movimento reduzido do sistema"
+                : animacoes
+                  ? "Transições e gráficos animados"
+                  : "Desligadas neste dispositivo",
+              ...(typeof document.startViewTransition !== "function"
+                ? ["sem View Transitions"]
+                : []),
+            ].join(" · ")}
             right={
               <Toggle
                 on={animacoes}
                 onClick={() => {
                   const next = !animacoes;
                   setAnimacoes(next);
-                  setMotionUserOff(!next);
+                  setMotionPreference(next ? "on" : "off");
                 }}
                 label="Animações"
               />
             }
           />
+          <MotionDiagnostics />
         </div>
       </section>
 

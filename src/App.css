@@ -662,10 +662,10 @@ h3,
   stroke-dasharray: 1;
   stroke-dashoffset: 0;
 }
-@media (prefers-reduced-motion: no-preference) {
-  .nk-spark__line {
-    animation: nk-spark-draw var(--dur-deliberate) var(--ease-entrance) both;
-  }
+/* Sem media query: os tokens --dur-* governam (0ms sob reduce/off ⇒ estático;
+   restaurados sob [data-motion="on"], que uma media query não enxergaria). */
+.nk-spark__line {
+  animation: nk-spark-draw var(--dur-deliberate) var(--ease-entrance) both;
 }
 @keyframes nk-spark-draw {
   from {
@@ -805,14 +805,13 @@ h3,
   margin-top: 2px;
   font-family: var(--font-money);
 }
-@media (prefers-reduced-motion: no-preference) {
-  /* Abaixo do termo: desce de cima (-3px). Acima (flip): sobe de baixo (+3px). Ambas animam. */
-  .nk-pop--bottom {
-    animation: nk-pop-in 0.16s var(--ease-entrance) both;
-  }
-  .nk-pop--top {
-    animation: nk-pop-in-top 0.16s var(--ease-entrance) both;
-  }
+/* Abaixo do termo: desce de cima (-3px). Acima (flip): sobe de baixo (+3px). Ambas animam.
+   Duração por token (não 0.16s fixo) para o colapso/force-on dos tokens governar. */
+.nk-pop--bottom {
+  animation: nk-pop-in var(--dur-fast) var(--ease-entrance) both;
+}
+.nk-pop--top {
+  animation: nk-pop-in-top var(--dur-fast) var(--ease-entrance) both;
 }
 @keyframes nk-pop-in {
   from {
@@ -1950,10 +1949,14 @@ h3,
   color: var(--text);
   font-weight: var(--fw-semibold);
 }
+/* Reduzido pelo SO (a menos que o toggle force) ou toggle desligado. */
 @media (prefers-reduced-motion: reduce) {
-  .nk-disc__bodywrap {
+  :root:not([data-motion="on"]) .nk-disc__bodywrap {
     transition: none;
   }
+}
+:root[data-motion="off"] .nk-disc__bodywrap {
+  transition: none;
 }
 
 /* Previsibilidade — cobertura dos meses futuros */
@@ -2242,23 +2245,33 @@ h3,
    durations collapse to 0ms under prefers-reduced-motion via tokens.
    ============================================================ */
 
-/* Theme switch: the View Transition is a single circular reveal driven from
-   ThemeToggle via WAAPI; kill the default crossfade so it is the only effect. */
+/* Reveal do tema (ThemeToggle): quando a View Transitions API existe, o snapshot do tema
+   ANTIGO fica embaixo (mostrando a UI real, sem sumir elementos) e o tema NOVO é revelado
+   por um círculo de clip-path crescendo do ponto de clique. Desliga o crossfade default
+   para o clip ser o único efeito; `display: block` mantém os dois snapshots pintados
+   durante toda a transição. */
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation: none;
   mix-blend-mode: normal;
+  display: block;
+}
+::view-transition-image-pair(root) {
+  isolation: auto;
 }
 
 @keyframes screen-enter {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(16px) scale(0.985);
   }
 }
 
+/* Duração deliberada (não --dur-base): a troca de tela remonta a árvore inteira e o
+   primeiro frame chega com o layout já custeado — 200ms terminavam antes de o olho
+   registrar. 16px + um leve scale tornam a entrada nitidamente sentida sem virar salto. */
 .ak-screen {
-  animation: screen-enter var(--dur-base) var(--ease-entrance) backwards;
+  animation: screen-enter var(--dur-slow) var(--ease-entrance) backwards;
 }
 
 @keyframes rise-in {
@@ -2266,6 +2279,20 @@ h3,
     opacity: 0;
     transform: translateY(6px);
   }
+}
+
+/* Autoteste de animação (Configurações → Aparência): a bolinha CSS varre com
+   duração por TOKEN — se os tokens estiverem colapsados, termina cedo demais. */
+@keyframes nk-diag-sweep {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(220px);
+  }
+}
+.nk-diag-dot {
+  animation: nk-diag-sweep var(--dur-deliberate) var(--ease-standard) 3 alternate both;
 }
 
 /* Dashboard choreography: tiles stagger in one calm pass.
@@ -2299,71 +2326,67 @@ h3,
 
 /* Lançamentos / Livro-razão: rows stagger in on first render.
    Pure-CSS choreography — the base (un-animated) state IS the final visible
-   state (the `rise-in` keyframe only declares `from`), so with this @media
-   off (reduced motion) or no JS, every row is fully opaque and in place.
-   Wrapped in `no-preference` so the animation engine never fires under
-   reduced motion; --dur-stagger-step also collapses to 0ms there. Cap at 12
+   state (the `rise-in` keyframe only declares `from`), so with 0ms durations
+   (reduced motion / toggle off) or no JS, every row is fully opaque and in
+   place. Sem media query: os tokens governam (0ms ⇒ estático; restaurados sob
+   [data-motion="on"], que uma media query não enxergaria). Cap at 12
    explicitly-delayed rows — beyond that the same max delay applies. */
-@media (prefers-reduced-motion: no-preference) {
-  .txn-table tbody tr {
-    animation: rise-in var(--dur-slow) var(--ease-entrance) backwards;
-  }
-  .txn-table tbody tr:nth-child(2) {
-    animation-delay: calc(var(--dur-stagger-step) * 1);
-  }
-  .txn-table tbody tr:nth-child(3) {
-    animation-delay: calc(var(--dur-stagger-step) * 2);
-  }
-  .txn-table tbody tr:nth-child(4) {
-    animation-delay: calc(var(--dur-stagger-step) * 3);
-  }
-  .txn-table tbody tr:nth-child(5) {
-    animation-delay: calc(var(--dur-stagger-step) * 4);
-  }
-  .txn-table tbody tr:nth-child(6) {
-    animation-delay: calc(var(--dur-stagger-step) * 5);
-  }
-  .txn-table tbody tr:nth-child(7) {
-    animation-delay: calc(var(--dur-stagger-step) * 6);
-  }
-  .txn-table tbody tr:nth-child(8) {
-    animation-delay: calc(var(--dur-stagger-step) * 7);
-  }
-  .txn-table tbody tr:nth-child(9) {
-    animation-delay: calc(var(--dur-stagger-step) * 8);
-  }
-  .txn-table tbody tr:nth-child(10) {
-    animation-delay: calc(var(--dur-stagger-step) * 9);
-  }
-  .txn-table tbody tr:nth-child(11) {
-    animation-delay: calc(var(--dur-stagger-step) * 10);
-  }
-  .txn-table tbody tr:nth-child(12) {
-    animation-delay: calc(var(--dur-stagger-step) * 11);
-  }
+.txn-table tbody tr {
+  animation: rise-in var(--dur-slow) var(--ease-entrance) backwards;
+}
+.txn-table tbody tr:nth-child(2) {
+  animation-delay: calc(var(--dur-stagger-step) * 1);
+}
+.txn-table tbody tr:nth-child(3) {
+  animation-delay: calc(var(--dur-stagger-step) * 2);
+}
+.txn-table tbody tr:nth-child(4) {
+  animation-delay: calc(var(--dur-stagger-step) * 3);
+}
+.txn-table tbody tr:nth-child(5) {
+  animation-delay: calc(var(--dur-stagger-step) * 4);
+}
+.txn-table tbody tr:nth-child(6) {
+  animation-delay: calc(var(--dur-stagger-step) * 5);
+}
+.txn-table tbody tr:nth-child(7) {
+  animation-delay: calc(var(--dur-stagger-step) * 6);
+}
+.txn-table tbody tr:nth-child(8) {
+  animation-delay: calc(var(--dur-stagger-step) * 7);
+}
+.txn-table tbody tr:nth-child(9) {
+  animation-delay: calc(var(--dur-stagger-step) * 8);
+}
+.txn-table tbody tr:nth-child(10) {
+  animation-delay: calc(var(--dur-stagger-step) * 9);
+}
+.txn-table tbody tr:nth-child(11) {
+  animation-delay: calc(var(--dur-stagger-step) * 10);
+}
+.txn-table tbody tr:nth-child(12) {
+  animation-delay: calc(var(--dur-stagger-step) * 11);
 }
 
 /* Horizonte: month columns stagger in horizontally on first render.
    Same always-visible-base guarantee as the table above. */
-@media (prefers-reduced-motion: no-preference) {
-  .nk-horizon-cols > div {
-    animation: rise-in var(--dur-slow) var(--ease-entrance) backwards;
-  }
-  .nk-horizon-cols > div:nth-child(2) {
-    animation-delay: calc(var(--dur-stagger-step) * 1);
-  }
-  .nk-horizon-cols > div:nth-child(3) {
-    animation-delay: calc(var(--dur-stagger-step) * 2);
-  }
-  .nk-horizon-cols > div:nth-child(4) {
-    animation-delay: calc(var(--dur-stagger-step) * 3);
-  }
-  .nk-horizon-cols > div:nth-child(5) {
-    animation-delay: calc(var(--dur-stagger-step) * 4);
-  }
-  .nk-horizon-cols > div:nth-child(6) {
-    animation-delay: calc(var(--dur-stagger-step) * 5);
-  }
+.nk-horizon-cols > div {
+  animation: rise-in var(--dur-slow) var(--ease-entrance) backwards;
+}
+.nk-horizon-cols > div:nth-child(2) {
+  animation-delay: calc(var(--dur-stagger-step) * 1);
+}
+.nk-horizon-cols > div:nth-child(3) {
+  animation-delay: calc(var(--dur-stagger-step) * 2);
+}
+.nk-horizon-cols > div:nth-child(4) {
+  animation-delay: calc(var(--dur-stagger-step) * 3);
+}
+.nk-horizon-cols > div:nth-child(5) {
+  animation-delay: calc(var(--dur-stagger-step) * 4);
+}
+.nk-horizon-cols > div:nth-child(6) {
+  animation-delay: calc(var(--dur-stagger-step) * 5);
 }
 
 @keyframes deficit-in {
@@ -2529,18 +2552,33 @@ h3,
   min-width: 200px;
 }
 
-/* ---- Reduced motion ---- */
+/* ---- Reduced motion ----
+   Vale sob o modo reduzido do SO (a menos que o toggle "Animações" force) e
+   sob o toggle desligado — mesmas regras, dois gatilhos. */
 @media (prefers-reduced-motion: reduce) {
-  .gs-spin {
+  :root:not([data-motion="on"]) .gs-spin {
     animation: none;
   }
 
-  .ak-item:active,
-  .ak-iconbtn:active {
+  :root:not([data-motion="on"]) .ak-item:active,
+  :root:not([data-motion="on"]) .ak-iconbtn:active {
     transform: none;
   }
 
-  .dash-grid4 > article:hover {
+  :root:not([data-motion="on"]) .dash-grid4 > article:hover {
     transform: none;
   }
+}
+
+:root[data-motion="off"] .gs-spin {
+  animation: none;
+}
+
+:root[data-motion="off"] .ak-item:active,
+:root[data-motion="off"] .ak-iconbtn:active {
+  transform: none;
+}
+
+:root[data-motion="off"] .dash-grid4 > article:hover {
+  transform: none;
 }
