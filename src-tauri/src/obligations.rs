@@ -155,8 +155,8 @@ async fn fetch_candidate_items(pool: &SqlitePool) -> Result<Vec<CandidateRow>, S
         "SELECT li.id AS line_item_id, li.transaction_id, li.amount_cents, li.description, \
                 li.section, t.date \
          FROM line_item li \
-         JOIN \"transaction\" t ON t.id = li.transaction_id",
-        // Quando scenario_id chegar (plano 067), adicionar `AND t.scenario_id IS NULL` aqui.
+         JOIN \"transaction\" t ON t.id = li.transaction_id \
+         WHERE t.scenario_id IS NULL",
     )
     .fetch_all(pool)
     .await

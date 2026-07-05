@@ -16,7 +16,8 @@ pub(crate) async fn load_write_back_txns(
         "SELECT id, type, date, amount, is_fixed FROM \"transaction\" \
          WHERE date >= ?1 AND date < ?2 \
            AND NOT (type='expense' AND payment_method='credit') \
-           AND id NOT LIKE 'derived:%'",
+           AND id NOT LIKE 'derived:%' \
+           AND scenario_id IS NULL",
     )
     .bind(format!("{year:04}-01-01"))
     .bind(format!("{}-01-01", year + 1))
@@ -68,7 +69,8 @@ pub(crate) async fn load_write_back_txns(
         Some((closing, due)) => {
             let credit: Vec<(String, i64)> = sqlx::query_as(
                 "SELECT date, amount FROM \"transaction\" \
-                 WHERE type='expense' AND payment_method='credit' AND date >= ?1 AND date <= ?2",
+                 WHERE type='expense' AND payment_method='credit' AND date >= ?1 AND date <= ?2 \
+                   AND scenario_id IS NULL",
             )
             .bind(format!("{:04}-12-01", year - 1))
             .bind(format!("{year:04}-12-31"))
@@ -102,7 +104,8 @@ pub(crate) async fn load_write_back_txns(
             // Sem cartão: não há ciclo para colapsar — crédito do ano cai na Saída da própria data.
             let credit: Vec<(String, i64)> = sqlx::query_as(
                 "SELECT date, amount FROM \"transaction\" \
-                 WHERE type='expense' AND payment_method='credit' AND date >= ?1 AND date < ?2",
+                 WHERE type='expense' AND payment_method='credit' AND date >= ?1 AND date < ?2 \
+                   AND scenario_id IS NULL",
             )
             .bind(format!("{year:04}-01-01"))
             .bind(format!("{}-01-01", year + 1))
@@ -1000,7 +1003,7 @@ pub(crate) async fn load_economia_by_month(
          FROM line_item li \
          JOIN \"transaction\" t ON t.id = li.transaction_id \
          WHERE t.date >= ?1 AND t.date < ?2 \
-           AND t.type = 'expense' \
+           AND t.type = 'expense' AND t.scenario_id IS NULL \
            AND NOT EXISTS ( \
                SELECT 1 FROM transaction_tag tt2 \
                JOIN tag tg ON tg.id = tt2.tag_id \
@@ -1038,7 +1041,7 @@ pub(crate) async fn load_economia_by_month(
         "SELECT substr(t.date, 1, 7), COALESCE(SUM(ABS(t.amount)), 0) FROM \"transaction\" t \
          LEFT JOIN account a ON a.id = t.to_account_id \
          WHERE t.date >= ?1 AND t.date < ?2 AND t.date <= ?3 \
-           AND t.type='transfer' AND a.liquidity = 'reserve' \
+           AND t.type='transfer' AND a.liquidity = 'reserve' AND t.scenario_id IS NULL \
            AND NOT EXISTS ( \
                SELECT 1 FROM transaction_tag tt2 \
                JOIN tag tg ON tg.id = tt2.tag_id \

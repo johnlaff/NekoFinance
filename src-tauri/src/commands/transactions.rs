@@ -560,15 +560,18 @@ pub async fn update_transaction_items_cmd(
         .map_err(|e| format!("insert item: {e}"))?;
     }
 
-    let affected =
-        sqlx::query(r#"UPDATE "transaction" SET amount = ?2, updated_at = ?3 WHERE id = ?1"#)
-            .bind(&transaction_id)
-            .bind(total_cents)
-            .bind(&now)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| format!("update parent total: {e}"))?
-            .rows_affected();
+    // `scenario_id IS NULL`: uma linha hipotética nunca é editada pelos comandos do livro real —
+    // se o id apontar para um cenário, `affected == 0` e cai no mesmo erro de "não encontrado".
+    let affected = sqlx::query(
+        r#"UPDATE "transaction" SET amount = ?2, updated_at = ?3 WHERE id = ?1 AND scenario_id IS NULL"#,
+    )
+    .bind(&transaction_id)
+    .bind(total_cents)
+    .bind(&now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| format!("update parent total: {e}"))?
+    .rows_affected();
     if affected == 0 {
         return Err("lançamento não encontrado".into());
     }
@@ -597,12 +600,15 @@ pub async fn delete_transaction_cmd(pool: State<'_, SqlitePool>, id: String) -> 
         .await
         .map_err(|e| format!("delete (begin): {e}"))?;
 
-    let affected = sqlx::query(r#"DELETE FROM "transaction" WHERE id = ?1"#)
-        .bind(&id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| format!("delete: {e}"))?
-        .rows_affected();
+    // `scenario_id IS NULL`: uma linha hipotética nunca é apagada pelos comandos do livro real —
+    // se o id apontar para um cenário, `affected == 0` e cai no mesmo erro de "não encontrado".
+    let affected =
+        sqlx::query(r#"DELETE FROM "transaction" WHERE id = ?1 AND scenario_id IS NULL"#)
+            .bind(&id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("delete: {e}"))?
+            .rows_affected();
     if affected == 0 {
         // `tx` é descartada sem commit → rollback automático.
         return Err("lançamento não encontrado".into());
@@ -718,7 +724,7 @@ pub(crate) async fn update_transaction_inner(
         r#"SELECT t.amount, COUNT(li.id), t.type
            FROM "transaction" t
            LEFT JOIN line_item li ON li.transaction_id = t.id
-           WHERE t.id = ?1
+           WHERE t.id = ?1 AND t.scenario_id IS NULL
            GROUP BY t.amount, t.type"#,
     )
     .bind(id)
@@ -736,11 +742,13 @@ pub(crate) async fn update_transaction_inner(
             .map_err(|e| format!("update (clear stale items): {e}"))?;
     }
 
+    // `scenario_id IS NULL`: uma linha hipotética nunca é editada pelos comandos do livro real —
+    // se o id apontar para um cenário, `affected == 0` e cai no mesmo erro de "não encontrado".
     let affected = sqlx::query(
         r#"UPDATE "transaction"
            SET type = ?2, amount = ?3, description = ?4, payment_method = ?5,
                is_fixed = ?6, date = ?7, is_projection = ?8, updated_at = ?9
-           WHERE id = ?1"#,
+           WHERE id = ?1 AND scenario_id IS NULL"#,
     )
     .bind(id)
     .bind(txn_type)
