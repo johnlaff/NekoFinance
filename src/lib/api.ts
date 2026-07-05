@@ -61,6 +61,9 @@ export interface LineItem {
    * Pai `income` → "entrada" (os kinds de seção só fatiam saídas).
    */
   kind: LineItemKind;
+  /** Cabeçalho de seção cru da nota (ex.: "CONTAS:"); null = sem seção. Usado ao propor
+   * `match_section` para marcar o item como obrigação recorrente (plano 069). */
+  section: string | null;
 }
 
 export interface TransactionRow {
@@ -895,4 +898,83 @@ export function deleteSeriesFrom(transactionId: string): Promise<number> {
  * removidas. `recurrenceId` é o prefixo do id da ocorrência ("uuid:index" → "uuid"). */
 export function deleteSeriesAll(recurrenceId: string): Promise<number> {
   return invoke("delete_series_all_cmd", { recurrenceId });
+}
+
+// --- Obrigações recorrentes (plano 069) ---
+//
+// `obligation` é uma EXTENSÃO do Neko, não um conceito do método/planilha: a planilha não
+// guarda nenhum vínculo entre as 12 ocorrências mensais de um item recorrente ("Aluguel" é só
+// uma linha repetida dentro da célula Saída, mês a mês, sem id nenhum ligando as doze). Aqui o
+// usuário nomeia o item recorrente UMA vez e o Neko resolve quais `line_item`s casam — sempre
+// via prévia confirmada pelo usuário, nunca por inferência silenciosa.
+
+/** Uma ocorrência (`line_item`) que casou com a regra de uma obrigação. */
+export interface ObligationLineItem {
+  line_item_id: string;
+  transaction_id: string;
+  amount_cents: number;
+  description: string;
+  /** Data ISO ("YYYY-MM-DD") do lançamento pai — a nota não carrega data própria. */
+  date: string;
+}
+
+/** Total de um mês (`YYYY-MM`) das ocorrências casadas de uma obrigação. */
+export interface ObligationMonthTotal {
+  year: number;
+  month: number;
+  total_cents: number;
+  count: number;
+}
+
+/** Uma obrigação recorrente confirmada pelo usuário: regra de casamento (descrição/seção já
+ * normalizadas) + o kind derivado da seção (mesmos kinds de `LineItemKind`, exceto "entrada"). */
+export interface Obligation {
+  id: string;
+  person_id: string;
+  name: string;
+  match_desc: string;
+  match_section: string | null;
+  kind: string;
+}
+
+/** Prévia do casamento — SEM salvar nada. Chame antes de `createObligation` para mostrar "isto
+ * vai agrupar N lançamentos" e só gravar após confirmação explícita do usuário. */
+export function previewObligationMatches(
+  matchDesc: string,
+  matchSection: string | null,
+): Promise<ObligationLineItem[]> {
+  return invoke("preview_obligation_matches_cmd", { matchDesc, matchSection });
+}
+
+/** Cria a obrigação (regra normalizada no backend). Chame só após o usuário confirmar a prévia
+ * de `previewObligationMatches`. */
+export function createObligation(
+  name: string,
+  matchDesc: string,
+  matchSection: string | null,
+): Promise<string> {
+  return invoke("create_obligation_cmd", { name, matchDesc, matchSection });
+}
+
+export function listObligations(): Promise<Obligation[]> {
+  return invoke("list_obligations_cmd");
+}
+
+/** Apaga a obrigação (a regra). Nunca apaga/edita os `line_item`s que ela agrupava — é
+ * view/índice, não dono do dado. */
+export function deleteObligation(id: string): Promise<void> {
+  return invoke("delete_obligation_cmd", { id });
+}
+
+/** Todas as ocorrências atualmente casadas por uma obrigação salva. */
+// react-doctor-disable-next-line deslop/unused-export -- plano 069: ponte do frontend (comando Tauri pronto/testado); a UI hoje mostra o agregado mensal via obligationHistory, esta lista crua por-ocorrência atende uma visão futura sem precisar de outro comando
+export function obligationItems(obligationId: string): Promise<ObligationLineItem[]> {
+  return invoke("obligation_items_cmd", { obligationId });
+}
+
+/** Totais por mês das ocorrências de uma obrigação — a série que a planilha não guarda. */
+export function obligationHistory(
+  obligationId: string,
+): Promise<ObligationMonthTotal[]> {
+  return invoke("obligation_history_cmd", { obligationId });
 }

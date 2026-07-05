@@ -21,6 +21,10 @@ pub struct LineItemOnRow {
     /// Kind derivado da seção da nota, sem fallback por descrição/banco.
     /// Pai `income` → "entrada" (os kinds de seção só fatiam saídas).
     pub kind: String,
+    /// Cabeçalho de seção cru da nota (ex.: "CONTAS:"), sem normalização. `None` = sem seção.
+    /// Plano 069: a UI precisa disto para propor `match_section` ao marcar o item como
+    /// obrigação recorrente — sem ele não há como restringir o casamento à seção do item.
+    pub section: Option<String>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -65,6 +69,7 @@ fn line_item_on_row(row: LineItemDbRow) -> LineItemOnRow {
         description: row.description,
         position: row.position,
         kind: kind.to_string(),
+        section: row.section,
     }
 }
 

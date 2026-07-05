@@ -37,6 +37,7 @@ import {
 } from "../lib/nkFormat";
 import { todayISO, fmtDayMonth } from "../lib/format";
 import { useNekoApp } from "../shell/appContext";
+import { MarkObligationAction, ObligationsCard } from "./ObligationsPanel";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -467,6 +468,7 @@ function Row({
                         {kind.name}
                       </span>
                       <span className="lc-part__text">{li.description}</span>
+                      <MarkObligationAction item={li} />
                     </span>
                     <span
                       className="lc-part__amt"
@@ -1199,6 +1201,8 @@ export function TransactionsScreen() {
           </button>
         ))}
       </div>
+
+      <ObligationsCard />
 
       {content}
 
