@@ -543,12 +543,13 @@ async fn import_rows_core(
         if options.descriptions_trusted {
             // Base (nota do último import) + se há item editado pelo usuário nesta txn.
             let (prev_source_note, has_user_edited): (Option<String>, i64) = {
-                let snote: Option<(Option<String>,)> =
-                    sqlx::query_as(r#"SELECT source_note FROM "transaction" WHERE id = ?1"#)
-                        .bind(&txn_id)
-                        .fetch_optional(&mut **tx)
-                        .await
-                        .map_err(|e| format!("load source_note for {txn_id}: {e}"))?;
+                let snote: Option<(Option<String>,)> = sqlx::query_as(
+                    r#"SELECT source_note FROM "transaction" WHERE id = ?1 AND scenario_id IS NULL"#,
+                )
+                .bind(&txn_id)
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(|e| format!("load source_note for {txn_id}: {e}"))?;
                 let (edited,): (i64,) = sqlx::query_as(
                     "SELECT COUNT(*) FROM line_item WHERE transaction_id = ?1 AND is_user_edited = 1",
                 )

@@ -606,6 +606,94 @@ mod tests {
         );
     }
 
+    // Plano 072 (slice A): fundação do isolamento de cenário — uma linha `"transaction"` marcada
+    // com `scenario_id` é hipotética ("e se") e TEM QUE ser invisível a toda leitura do livro real.
+    // Regressão-âncora desta slice: tira um snapshot do forecast/métricas/write-back ANTES de o
+    // cenário existir, insere um cenário com uma saída hipotética GRANDE na MESMA janela de datas
+    // do livro real (a prova de fogo: se qualquer leitura vazar o filtro `scenario_id IS NULL`, o
+    // valor muda), e exige que os quatro resultados fiquem byte-a-byte idênticos depois.
+    #[tokio::test]
+    async fn scenario_transaction_is_invisible_to_real_forecast_and_write_back() {
+        let pool = fixture_pool().await;
+        insert_liquid_account(&pool, 100_000).await; // cria o person (FK de scenario) + a conta
+
+        // Saldo da planilha: exercita o ramo do "gap" query de `projection_seed` (não só o
+        // fallback de bolsos líquidos).
+        insert_sheet_balance(&pool, "Principal", "2026-03-01", 100_000).await;
+
+        // Livro-razão real: mês de referência realizado + futuro pré-lançado.
+        insert_realized(&pool, "income", 500_000, "2026-03-05").await;
+        insert_realized(&pool, "expense", 100_000, "2026-03-10").await;
+        insert_projection(&pool, "expense", 30_000, "2026-03-20", "debit", 1).await;
+        insert_projection(&pool, "income", 20_000, "2026-03-25", "", 0).await;
+
+        let today = NaiveDate::from_ymd_opt(2026, 3, 15).unwrap();
+
+        // Snapshot ANTES do cenário existir.
+        let fc_before = serde_json::to_string(&forecast_dto(&pool, today).await.unwrap()).unwrap();
+        let dash_before =
+            serde_json::to_string(&dashboard_summary(&pool, today).await.unwrap()).unwrap();
+        let grid_before =
+            serde_json::to_string(&month_grid(&pool, 2026, 3).await.unwrap()).unwrap();
+        let wb_before = format!("{:?}", load_write_back_txns(&pool, 2026).await.unwrap());
+
+        // Cenário "e se" com uma saída fixa hipotética GRANDE (R$ 50.000,00) em 22/mar — dentro do
+        // horizonte de projeção corrente e do ano do write-back. Se qualquer leitura vazar o
+        // filtro, esta única linha muda o saldo projetado, o dia 22 da grade, o mês de março em
+        // `fc.months` E aparece como uma célula extra no plano de write-back — qualquer uma dessas
+        // mudanças reprova o teste.
+        let pid: (String,) = sqlx::query_as("SELECT id FROM person LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let scenario_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO scenario (id, name, person_id) VALUES (?1, ?2, ?3)")
+            .bind(&scenario_id)
+            .bind("E se eu perdesse o emprego?")
+            .bind(&pid.0)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // `payment_method='debit'` explícito (não NULL): garante que, SEM o filtro de cenário, a
+        // linha passaria pelo `NOT (type='expense' AND payment_method='credit')` do write-back —
+        // uma linha `credit`/NULL não seria um teste de fogo válido para essa cláusula.
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+                (id, type, amount, date, payment_method, is_fixed, is_projection, scenario_id) \
+             VALUES (?1, 'expense', ?2, '2026-03-22', 'debit', 1, 1, ?3)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(5_000_000i64)
+        .bind(&scenario_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Depois do cenário: todo resultado tem que bater byte-a-byte com o snapshot de antes.
+        let fc_after = serde_json::to_string(&forecast_dto(&pool, today).await.unwrap()).unwrap();
+        let dash_after =
+            serde_json::to_string(&dashboard_summary(&pool, today).await.unwrap()).unwrap();
+        let grid_after = serde_json::to_string(&month_grid(&pool, 2026, 3).await.unwrap()).unwrap();
+        let wb_after = format!("{:?}", load_write_back_txns(&pool, 2026).await.unwrap());
+
+        assert_eq!(
+            fc_before, fc_after,
+            "get_forecast não pode ver a linha do cenário"
+        );
+        assert_eq!(
+            dash_before, dash_after,
+            "dashboard_summary não pode ver a linha do cenário"
+        );
+        assert_eq!(
+            grid_before, grid_after,
+            "month_grid não pode ver a linha do cenário"
+        );
+        assert_eq!(
+            wb_before, wb_after,
+            "o write-back não pode ver a linha do cenário (nunca pode alcançar a planilha)"
+        );
+    }
+
     // REGRESSÃO: net superávit grande não satisfaz mais o guardrail de poupança — só a Economia
     // REGISTRADA (transfers→reserva) conta. Quem ganhou >> gastou mas NÃO transferiu para a reserva
     // tem Economizado = 0 pelo método, então a régua de poupança morde (não o proxy do net antigo).

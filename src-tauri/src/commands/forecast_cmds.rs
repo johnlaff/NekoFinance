@@ -68,7 +68,8 @@ pub(crate) async fn projection_seed(
     // ocorridas entre o último Saldo da planilha e hoje.
     let gap: (i64,) = sqlx::query_as(
         "SELECT COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE -amount END), 0) \
-         FROM \"transaction\" WHERE date > ?1 AND date <= ?2 AND type IN ('income','expense','transfer')",
+         FROM \"transaction\" WHERE date > ?1 AND date <= ?2 AND type IN ('income','expense','transfer') \
+           AND scenario_id IS NULL",
     )
     .bind(&seed_date)
     .bind(&today)
@@ -144,7 +145,7 @@ pub(crate) async fn realized_annual_savings(
            COALESCE(SUM(CASE WHEN t.type='income' THEN t.amount ELSE 0 END), 0), \
            COALESCE(SUM(CASE WHEN t.type='expense' THEN t.amount ELSE 0 END), 0) \
          FROM \"transaction\" t WHERE t.date >= ?1 AND t.date < ?2 \
-           AND t.type IN ('income','expense') \
+           AND t.type IN ('income','expense') AND t.scenario_id IS NULL \
            AND NOT EXISTS ( \
                SELECT 1 FROM transaction_tag tt2 \
                JOIN tag tg ON tg.id = tt2.tag_id \
@@ -200,7 +201,7 @@ pub(crate) async fn realized_annual_economia(
         "SELECT t.date, li.amount_cents, li.description, li.section \
          FROM line_item li \
          JOIN \"transaction\" t ON t.id = li.transaction_id \
-         WHERE t.date >= ?1 AND t.date < ?2 AND t.type = 'expense' \
+         WHERE t.date >= ?1 AND t.date < ?2 AND t.type = 'expense' AND t.scenario_id IS NULL \
            AND NOT EXISTS ( \
                SELECT 1 FROM transaction_tag tt2 \
                JOIN tag tg ON tg.id = tt2.tag_id \
@@ -227,7 +228,7 @@ pub(crate) async fn realized_annual_economia(
         "SELECT substr(t.date, 1, 7), COALESCE(SUM(ABS(t.amount)), 0) FROM \"transaction\" t \
          LEFT JOIN account a ON a.id = t.to_account_id \
          WHERE t.date >= ?1 AND t.date < ?2 \
-           AND t.type='transfer' AND a.liquidity = 'reserve' \
+           AND t.type='transfer' AND a.liquidity = 'reserve' AND t.scenario_id IS NULL \
            AND NOT EXISTS ( \
                SELECT 1 FROM transaction_tag tt2 \
                JOIN tag tg ON tg.id = tt2.tag_id \
@@ -329,7 +330,7 @@ pub(crate) async fn projected_annual_savings(
            COALESCE(SUM(CASE WHEN t.type='income' THEN t.amount ELSE 0 END), 0), \
            COALESCE(SUM(CASE WHEN t.type='expense' THEN t.amount ELSE 0 END), 0) \
          FROM \"transaction\" t WHERE t.date >= ?1 AND t.date <= ?2 \
-           AND t.type IN ('income','expense') \
+           AND t.type IN ('income','expense') AND t.scenario_id IS NULL \
            AND NOT EXISTS ( \
                SELECT 1 FROM transaction_tag tt2 \
                JOIN tag tg ON tg.id = tt2.tag_id \
@@ -426,7 +427,7 @@ pub(crate) async fn effective_daily_ceiling(
         "SELECT COALESCE(SUM(ABS(amount)), 0) FROM \"transaction\" \
          WHERE type='expense' AND is_fixed=0 AND is_projection=0 \
            AND (payment_method IS NULL OR payment_method <> 'credit') \
-           AND substr(date,1,7) = ?1",
+           AND substr(date,1,7) = ?1 AND scenario_id IS NULL",
     )
     .bind(&prev_ym)
     .fetch_one(pool)
@@ -687,12 +688,13 @@ pub(crate) async fn forecast_horizon_end(
     today_naive: NaiveDate,
 ) -> Result<NaiveDate, String> {
     let today = today_naive.format("%Y-%m-%d").to_string();
-    let max_txn: (Option<String>,) =
-        sqlx::query_as("SELECT MAX(date) FROM \"transaction\" WHERE date >= ?1")
-            .bind(&today)
-            .fetch_one(pool)
-            .await
-            .map_err(|e| format!("horizon txn: {e}"))?;
+    let max_txn: (Option<String>,) = sqlx::query_as(
+        "SELECT MAX(date) FROM \"transaction\" WHERE date >= ?1 AND scenario_id IS NULL",
+    )
+    .bind(&today)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("horizon txn: {e}"))?;
     let max_bal: (Option<String>,) =
         sqlx::query_as("SELECT MAX(date) FROM sheet_daily_balance WHERE date >= ?1")
             .bind(&today)
@@ -753,7 +755,7 @@ async fn load_metric_db_events(
                 COALESCE(t.payment_method,'') AS payment_method, \
                 t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity \
          FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
-         WHERE t.date >= ?1 AND t.date < ?2 \
+         WHERE t.date >= ?1 AND t.date < ?2 AND t.scenario_id IS NULL \
            AND NOT EXISTS ( \
                SELECT 1 FROM transaction_tag tt2 \
                JOIN tag tg ON tg.id = tt2.tag_id \
@@ -770,7 +772,7 @@ async fn load_metric_db_events(
         "SELECT li.transaction_id, li.amount_cents, li.description, li.section \
          FROM line_item li \
          JOIN \"transaction\" t ON t.id = li.transaction_id \
-         WHERE t.date >= ?1 AND t.date < ?2 \
+         WHERE t.date >= ?1 AND t.date < ?2 AND t.scenario_id IS NULL \
            AND NOT EXISTS ( \
                SELECT 1 FROM transaction_tag tt2 \
                JOIN tag tg ON tg.id = tt2.tag_id \
@@ -875,7 +877,7 @@ pub(crate) async fn load_cashflow_events(
         "SELECT t.type, t.amount, t.date, COALESCE(t.payment_method,''), t.is_fixed, t.is_projection, \
                 COALESCE(a.liquidity,'') \
          FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
-         WHERE t.date > ?1 AND t.date <= ?2",
+         WHERE t.date > ?1 AND t.date <= ?2 AND t.scenario_id IS NULL",
     )
     .bind(&today)
     .bind(&horizon)
@@ -1367,7 +1369,7 @@ pub(crate) async fn month_grid(
                 COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END), 0), \
                 COALESCE(SUM(CASE WHEN type='expense' AND (COALESCE(is_fixed,0)=1 OR payment_method='credit') THEN ABS(amount) ELSE 0 END), 0), \
                 COALESCE(SUM(CASE WHEN type='expense' AND COALESCE(is_fixed,0)=0 AND COALESCE(payment_method,'')<>'credit' THEN ABS(amount) ELSE 0 END), 0) \
-         FROM \"transaction\" WHERE date BETWEEN ?1 AND ?2 GROUP BY date",
+         FROM \"transaction\" WHERE date BETWEEN ?1 AND ?2 AND scenario_id IS NULL GROUP BY date",
     )
     .bind(&first_s)
     .bind(&last_s)
@@ -1485,7 +1487,8 @@ pub(crate) async fn dashboard_summary(
     let daily_spend: (i64,) = sqlx::query_as(
         "SELECT COALESCE((SELECT SUM(ABS(amount)) FROM \"transaction\" \
                           WHERE type='expense' AND is_fixed=0 AND is_projection=0 AND date = ?1 \
-                            AND (payment_method IS NULL OR payment_method <> 'credit')), 0)",
+                            AND (payment_method IS NULL OR payment_method <> 'credit') \
+                            AND scenario_id IS NULL), 0)",
     )
     .bind(&today)
     .fetch_one(pool)
@@ -1518,16 +1521,18 @@ pub(crate) async fn dashboard_summary(
 
     // Transações já realizadas: por DATA (≤ hoje), não pelo `is_projection` congelado (stale
     // quando o dono não re-importa por dias — auditoria de robustez a edições).
-    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE date <= ?1")
-        .bind(&today)
-        .fetch_one(pool)
-        .await
-        .map_err(|e| format!("query: {e}"))?;
+    let count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM \"transaction\" WHERE date <= ?1 AND scenario_id IS NULL",
+    )
+    .bind(&today)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("query: {e}"))?;
 
     // Data do lançamento REAL mais recente (não-projeção, ≤ hoje) — alimenta o aviso "lançou
     // pela última vez há X dias" do dashboard. NULL quando ainda não há lançamentos reais.
     let last_real: Option<(Option<String>,)> = sqlx::query_as(
-        "SELECT MAX(date) FROM \"transaction\" WHERE is_projection = 0 AND date <= ?1",
+        "SELECT MAX(date) FROM \"transaction\" WHERE is_projection = 0 AND date <= ?1 AND scenario_id IS NULL",
     )
     .bind(&today)
     .fetch_optional(pool)
