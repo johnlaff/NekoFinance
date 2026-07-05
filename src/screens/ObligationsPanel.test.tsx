@@ -161,7 +161,77 @@ describe("Obrigações recorrentes (plano 069)", () => {
     await user.click(screen.getByRole("button", { name: "Confirmar" }));
 
     await waitFor(() => {
-      expect(created).toMatchObject({ name: "Aluguel", matchDesc: "Aluguel" });
+      expect(created).toMatchObject({
+        name: "Aluguel",
+        matchDesc: "Aluguel",
+        matchSection: "CONTAS:",
+      });
+    });
+  });
+
+  it("desmarcar 'restringir à seção' envia matchSection nulo", async () => {
+    const txns = [
+      {
+        ...TXNS[1]!,
+        id: "itemized-aluguel-3",
+        amount: 150_000,
+        description: "Despesa itemizada",
+        date: currentMonthISO(5),
+        line_items: [
+          {
+            id: "li-aluguel-3",
+            transaction_id: "itemized-aluguel-3",
+            amount_cents: 150_000,
+            description: "Aluguel",
+            position: 0,
+            kind: "saida",
+            section: "CONTAS:",
+          },
+        ],
+      },
+    ];
+    let created: unknown = null;
+    mockCommands({
+      get_recent_transactions: txns,
+      list_obligations_cmd: [],
+      preview_obligation_matches_cmd: [
+        {
+          line_item_id: "li-aluguel-3",
+          transaction_id: "itemized-aluguel-3",
+          amount_cents: 150_000,
+          description: "Aluguel",
+          date: "2026-06-05",
+        },
+      ],
+      create_obligation_cmd: (args) => {
+        created = args;
+        return "ob-2";
+      },
+    });
+    renderLedger();
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const row = await screen.findByRole("button", { name: "Despesa itemizada" });
+    await user.click(row);
+    const markBtn = await screen.findByLabelText(
+      'Marcar "Aluguel" como obrigação recorrente',
+    );
+    await user.click(markBtn);
+    await waitFor(() => {
+      expect(screen.getByText("Isto vai agrupar 1 lançamento.")).toBeInTheDocument();
+    });
+
+    await user.click(
+      screen.getByRole("checkbox", { name: /Restringir à seção desta linha/i }),
+    );
+    await user.click(screen.getByRole("button", { name: "Confirmar" }));
+
+    await waitFor(() => {
+      expect(created).toMatchObject({
+        name: "Aluguel",
+        matchDesc: "Aluguel",
+        matchSection: null,
+      });
     });
   });
 
@@ -198,6 +268,9 @@ describe("Obrigações recorrentes (plano 069)", () => {
       expect(screen.getByText("Mai/2026")).toBeInTheDocument();
     });
     expect(screen.getAllByText("1 ocorrência")).toHaveLength(2);
+    // Média dos meses expandidos + indicador de tendência estável (dois valores iguais).
+    expect(screen.getByText("Média").parentElement).toHaveTextContent("R$ 1.500,00");
+    expect(screen.getByLabelText("estável")).toBeInTheDocument();
   });
 
   it("obrigação sem histórico ainda mostra o estado vazio, não quebra", async () => {
@@ -227,6 +300,48 @@ describe("Obrigações recorrentes (plano 069)", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Nenhuma ocorrência casada ainda.")).toBeInTheDocument();
+    });
+  });
+
+  it("painel de marcação foca o nome ao abrir", async () => {
+    const txns = [
+      {
+        ...TXNS[1]!,
+        id: "itemized-aluguel-4",
+        amount: 150_000,
+        description: "Despesa itemizada",
+        date: currentMonthISO(5),
+        line_items: [
+          {
+            id: "li-aluguel-4",
+            transaction_id: "itemized-aluguel-4",
+            amount_cents: 150_000,
+            description: "Aluguel",
+            position: 0,
+            kind: "saida",
+            section: "CONTAS:",
+          },
+        ],
+      },
+    ];
+    mockCommands({
+      get_recent_transactions: txns,
+      list_obligations_cmd: [],
+      preview_obligation_matches_cmd: [],
+    });
+    renderLedger();
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const row = await screen.findByRole("button", { name: "Despesa itemizada" });
+    await user.click(row);
+    const markBtn = await screen.findByLabelText(
+      'Marcar "Aluguel" como obrigação recorrente',
+    );
+    await user.click(markBtn);
+
+    const nameInput = screen.getByRole("textbox", { name: "Nome da obrigação" });
+    await waitFor(() => {
+      expect(nameInput).toHaveFocus();
     });
   });
 });

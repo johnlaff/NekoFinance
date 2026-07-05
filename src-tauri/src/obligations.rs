@@ -49,7 +49,7 @@ pub struct ObligationMonthTotal {
 
 // --- Normalização (locais a este módulo; ver banner acima sobre por que não há coluna) ---
 
-/// Remove um contador de parcela final (`"3/36"`, `"3 / 36"`) e o espaço que o precede.
+/// Remove um contador de parcela final NÃO ESPAÇADO (`"3/36"`) e o espaço que o precede.
 /// Uma parcela real embute esse contador MUTÁVEL dentro da descrição (ele muda a cada mês:
 /// `1/36`, `2/36`, ...), então uma comparação exata falharia entre meses sem este passo.
 /// Puro, sem regex: varre os dois grupos de dígitos separados por `/` a partir do fim.
@@ -100,11 +100,21 @@ fn fold_case_accents(s: &str) -> String {
     normalized
 }
 
-/// Normaliza uma descrição de item para casar entre meses: remove o contador de parcela final,
-/// funde caixa/acento. NUNCA usado para exibição — só para comparação da regra de casamento.
+/// Normaliza uma descrição de item para casar entre meses: remove o contador de parcela final
+/// (quando há um nome textual além do contador), funde caixa/acento. NUNCA usado para exibição
+/// — só para comparação da regra de casamento.
 pub(crate) fn normalize_desc(description: &str) -> String {
-    let stripped = strip_trailing_installment_counter(description.trim());
-    fold_case_accents(stripped)
+    let trimmed = description.trim();
+    let stripped = strip_trailing_installment_counter(trimmed);
+    // Só descarta o contador se o prefixo restante tiver pelo menos duas letras (um nome
+    // mínimo); senão "R$ 3/4" colapsaria para "r$" e "3/4" para vazio, gerando falsos
+    // positivos / regras vazias.
+    let alphabetic_count = stripped.chars().filter(|c| c.is_alphabetic()).count();
+    if alphabetic_count >= 2 {
+        fold_case_accents(stripped)
+    } else {
+        fold_case_accents(trimmed)
+    }
 }
 
 /// Normaliza uma seção para casar contra `obligation.match_section`. Reusa
@@ -443,6 +453,17 @@ mod tests {
         assert_eq!(normalize_desc("Netflix"), "netflix");
         // Números que não são um contador de parcela (não terminam a descrição) ficam intactos.
         assert_eq!(normalize_desc("Compra 12/2026 loja"), "compra 12/2026 loja");
+        // O contador muda entre meses, mas a base nomeada permanece — deve casar.
+        assert_eq!(normalize_desc("Aluguel 12/36"), normalize_desc("Aluguel 5/36"));
+    }
+
+    #[test]
+    fn normalize_desc_does_not_strip_counter_when_prefix_has_few_letters() {
+        // Apenas o contador: sem letras, não há nome para casar — mantém tudo.
+        assert_eq!(normalize_desc("3/4"), "3/4");
+        // Prefixo com menos de duas letras (símbolo monetário): o "3/4" é parte do valor,
+        // não uma parcela — não descarta.
+        assert_eq!(normalize_desc("R$ 3/4"), "r$ 3/4");
     }
 
     // --- normalize_section ---
@@ -486,6 +507,15 @@ mod tests {
             resolved.len(),
             preview.len(),
             "nº mostrado no preview == nº agrupado após salvar"
+        );
+
+        let preview_ids: std::collections::HashSet<_> =
+            preview.iter().map(|li| &li.line_item_id).collect();
+        let resolved_ids: std::collections::HashSet<_> =
+            resolved.iter().map(|li| &li.line_item_id).collect();
+        assert_eq!(
+            preview_ids, resolved_ids,
+            "preview e resolver devem devolver o MESMO conjunto de line_item ids"
         );
 
         let history = obligation_history(&p, &ob_id).await.unwrap();

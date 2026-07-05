@@ -9,7 +9,7 @@
  * - `MarkObligationAction`: botão + painel inline num item de nota, para criar a obrigação.
  * - `ObligationsCard`: lista as obrigações salvas + histórico mensal (média, tendência).
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ChevronRight,
   Minus,
@@ -95,6 +95,13 @@ function MarkObligationPanel({ item, onDone }: { item: LineItem; onDone: () => v
   const [restrictSection, setRestrictSection] = useState(item.section != null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
+
+  // Foca o campo Nome ao abrir (react-doctor no-autofocus: effect+ref em vez de `autoFocus`;
+  // painel acionado pelo usuário, mover foco ao 1º campo é o comportamento correto).
+  useEffect(() => {
+    nameRef.current?.focus();
+  }, []);
 
   const section = restrictSection ? item.section : null;
 
@@ -112,7 +119,8 @@ function MarkObligationPanel({ item, onDone }: { item: LineItem; onDone: () => v
   }
 
   // Sem try/finally (React Compiler não compila TryStatement com finalizer, ver React
-  // Doctor) — `setSaving(false)` mora nos dois branches em vez de num finally.
+  // Doctor). No sucesso `onDone()` desmonta o painel, então `setSaving(false)` só é
+  // necessário no caminho de erro.
   async function confirm() {
     const trimmedName = name.trim();
     const trimmedMatch = matchDesc.trim();
@@ -141,6 +149,7 @@ function MarkObligationPanel({ item, onDone }: { item: LineItem; onDone: () => v
         <label className="lc-obligation-panel__field">
           Nome
           <input
+            ref={nameRef}
             aria-label="Nome da obrigação"
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -168,7 +177,9 @@ function MarkObligationPanel({ item, onDone }: { item: LineItem; onDone: () => v
       <p className="lc-obligation-panel__preview" aria-live="polite">
         {previewQ.loading
           ? "Calculando…"
-          : `Isto vai agrupar ${previewCount} ${previewCount === 1 ? "lançamento" : "lançamentos"}.`}
+          : previewQ.error != null
+            ? "Não foi possível calcular a prévia."
+            : `Isto vai agrupar ${previewCount} ${previewCount === 1 ? "lançamento" : "lançamentos"}.`}
       </p>
       {error && (
         <p role="alert" className="lc-obligation-panel__error">
@@ -183,7 +194,13 @@ function MarkObligationPanel({ item, onDone }: { item: LineItem; onDone: () => v
           size="sm"
           variant="primary"
           onClick={handleConfirm}
-          disabled={saving || !name.trim() || !matchDesc.trim()}
+          disabled={
+            saving ||
+            !name.trim() ||
+            !matchDesc.trim() ||
+            previewQ.loading ||
+            previewQ.error != null
+          }
         >
           {saving ? "Salvando…" : "Confirmar"}
         </Button>
@@ -225,6 +242,10 @@ export function ObligationsCard() {
       <div className="card__body">
         {listQ.loading ? (
           <p style={{ color: "var(--text-faint)", fontSize: 13 }}>Carregando…</p>
+        ) : listQ.error != null ? (
+          <p role="alert" style={{ color: "var(--text-faint)", fontSize: 13 }}>
+            Não foi possível carregar as obrigações.
+          </p>
         ) : obligations.length === 0 ? (
           <p style={{ color: "var(--text-faint)", fontSize: 13 }}>
             Nenhuma obrigação marcada ainda. Abra um lançamento itemizado e use o ícone
@@ -263,13 +284,13 @@ function ObligationRow({
   const history = (historyQ.data ?? [])
     .slice()
     .sort((a, b) => a.year - b.year || a.month - b.month);
-  const avgCents =
-    history.length > 0
-      ? Math.round(history.reduce((s, h) => s + h.total_cents, 0) / history.length)
-      : 0;
+  const hasHistory = !historyQ.error && history.length > 0;
+  const avgCents = hasHistory
+    ? Math.round(history.reduce((s, h) => s + h.total_cents, 0) / history.length)
+    : 0;
   const last = history[history.length - 1];
   const prev = history[history.length - 2];
-  const trendCents = last && prev ? last.total_cents - prev.total_cents : 0;
+  const trendCents = hasHistory && last && prev ? last.total_cents - prev.total_cents : 0;
   const TrendIcon = trendCents > 0 ? TrendingUp : trendCents < 0 ? TrendingDown : Minus;
   const kindMeta = OBLIGATION_KIND_META[obligation.kind] ?? {
     name: obligation.kind,
@@ -303,14 +324,16 @@ function ObligationRow({
             <span className="lc-kind__dot" style={{ background: kindMeta.color }} />
             {kindMeta.name}
           </span>
-          {history.length > 0 ? (
+          {historyQ.error != null ? (
+            <span className="lc-obligation-row__avg">Não foi possível carregar.</span>
+          ) : hasHistory ? (
             <span className="lc-obligation-row__avg">
               Média <Money cents={avgCents} size="sm" />
             </span>
           ) : (
             <span className="lc-obligation-row__avg">sem ocorrências ainda</span>
           )}
-          {history.length >= 2 && (
+          {hasHistory && history.length >= 2 && (
             <span
               className={
                 "lc-obligation-row__trend" +
@@ -344,6 +367,10 @@ function ObligationRow({
         <div className="lc-obligation-history">
           {historyQ.loading ? (
             <p style={{ color: "var(--text-faint)", fontSize: 12 }}>Carregando…</p>
+          ) : historyQ.error != null ? (
+            <p role="alert" style={{ color: "var(--text-faint)", fontSize: 12 }}>
+              Não foi possível carregar.
+            </p>
           ) : history.length === 0 ? (
             <p style={{ color: "var(--text-faint)", fontSize: 12 }}>
               Nenhuma ocorrência casada ainda.
