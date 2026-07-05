@@ -454,7 +454,10 @@ mod tests {
         // Números que não são um contador de parcela (não terminam a descrição) ficam intactos.
         assert_eq!(normalize_desc("Compra 12/2026 loja"), "compra 12/2026 loja");
         // O contador muda entre meses, mas a base nomeada permanece — deve casar.
-        assert_eq!(normalize_desc("Aluguel 12/36"), normalize_desc("Aluguel 5/36"));
+        assert_eq!(
+            normalize_desc("Aluguel 12/36"),
+            normalize_desc("Aluguel 5/36")
+        );
     }
 
     #[test]
