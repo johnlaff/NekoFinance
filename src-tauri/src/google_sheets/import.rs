@@ -914,7 +914,10 @@ pub(crate) enum ItemKind {
     Ajuste,
 }
 
-fn normalize_item_section(section: &str) -> String {
+/// Plano 069: também usada pelo resolver de `obligation` (identidade de série confirmada pelo
+/// usuário) para casar `line_item.section` contra `obligation.match_section` sem duplicar a
+/// lógica de accent-fold/casefold.
+pub(crate) fn normalize_item_section(section: &str) -> String {
     let section = section.trim().trim_end_matches(':').trim();
     let mut normalized = String::with_capacity(section.len());
     for ch in section.chars().flat_map(char::to_lowercase) {

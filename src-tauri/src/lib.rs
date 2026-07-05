@@ -6,6 +6,7 @@ mod forecast;
 mod google_sheets;
 mod http;
 mod oauth;
+mod obligations;
 mod os_scheduler;
 mod recurrence;
 mod reminder_task;
@@ -80,6 +81,12 @@ pub fn run() {
             splits::owner_totals_for_month_cmd,
             conflicts::get_import_conflicts,
             conflicts::resolve_import_conflict,
+            obligations::preview_obligation_matches_cmd,
+            obligations::create_obligation_cmd,
+            obligations::list_obligations_cmd,
+            obligations::delete_obligation_cmd,
+            obligations::obligation_items_cmd,
+            obligations::obligation_history_cmd,
         ])
         .setup(|app| {
             use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
