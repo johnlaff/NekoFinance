@@ -1575,6 +1575,49 @@ h3,
   word-break: break-word;
 }
 
+/* Diagnósticos de precisão do import (plano 070): nota que não deu para itemizar ou item↔célula
+   divergente — informativo, não bloqueante (a célula continua dona do total). */
+.gs-diagnostics {
+  margin-top: var(--space-2);
+  font-size: var(--fs-micro);
+}
+.gs-diagnostics__summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  color: var(--text-muted);
+  list-style: none;
+}
+.gs-diagnostics__summary::-webkit-details-marker {
+  display: none;
+}
+.gs-diagnostics__list {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.gs-diagnostics__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-subtle);
+  border-radius: var(--radius-xs);
+}
+.gs-diagnostics__meta {
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-semibold);
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+}
+.gs-diagnostics__detail {
+  color: var(--text-muted);
+}
+
 .gs-connect {
   display: flex;
   flex-direction: column;
