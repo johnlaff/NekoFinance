@@ -1016,6 +1016,167 @@ pub(crate) fn parse_itemized_note(note: &str) -> Vec<NoteLineItem> {
     items
 }
 
+// --- Plano 070: diagnósticos de precisão do import (nota não itemizada / item↔célula divergente) ---
+//
+// Duas condições hoje são resolvidas em SILÊNCIO: (1) uma nota que não casa com a gramática de
+// `parse_itemized_note` não gera item nenhum; (2) a soma dos itens reconhecidos diverge do total
+// da célula (a célula continua dona do total — ver banner do Plan 035/036 acima). A DECISÃO de
+// dados está correta nos dois casos; o que faltava era tornar visível ONDE a itemização ficou
+// incompleta, sem re-decidir nada.
+
+/// Diagnóstico de precisão de um import — reporta, não decide. `sheet`/`cell`/`detail` são só
+/// apresentação; a persistência (célula dona do total, resíduo com sinal no loader de métricas)
+/// é inteiramente a de antes.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ImportDiagnostic {
+    pub sheet: String,
+    /// Sem endereço real de célula na coleta (roda sobre o lote já parseado, não sobre a grade
+    /// bruta linha/coluna) — rótulo sintético `"{date} ({kind})"`; colisões são aceitáveis, é só
+    /// um rótulo de exibição, não uma chave.
+    pub cell: String,
+    pub kind: DiagKind,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum DiagKind {
+    /// Nota não vazia que `parse_itemized_note` não reconheceu como itemização (0 itens). Um
+    /// memo de 1 linha sem cabeçalho de seção é INTENCIONALMENTE não-breakdown e não gera este
+    /// diagnóstico — ver o gate `has_breakdown` espelhado em `collect_import_diagnostics`.
+    NoteNotItemized,
+    /// Breakdown reconhecido (≥2 itens, ou 1 item sob seção) cuja soma diverge do total da
+    /// célula. A célula continua dona do total; isto só reporta o resíduo que o loader de
+    /// métricas (`forecast_cmds`) já reconcilia com sinal na leitura.
+    ItemsDoNotSumToCell,
+    /// A nota é o formato recorrente "plano de gastos mensal" (`Mensal<TAB>R$…<TAB>categoria`
+    /// repetido + `Total = R$…` + média diária `R$… / N Dias = R$…`) — não é itemização de
+    /// transação nem um erro de digitação isolado, então não leva os rótulos genéricos acima.
+    MonthlyBudgetPlanNote,
+}
+
+impl std::fmt::Display for DiagKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            DiagKind::NoteNotItemized => "nota não itemizada",
+            DiagKind::ItemsDoNotSumToCell => "itens não somam à célula",
+            DiagKind::MonthlyBudgetPlanNote => "plano de gastos mensal",
+        })
+    }
+}
+
+/// Formata centavos como BRL pt-BR (`R$ 1.234,56`) só para o TEXTO do diagnóstico — apresentação,
+/// não cálculo financeiro (a UI usa `<Money>` quando há um valor estruturado; aqui o dado já sai
+/// como frase pronta do backend).
+fn format_cents_brl(cents: i64) -> String {
+    let sign = if cents < 0 { "-" } else { "" };
+    let abs = cents.unsigned_abs();
+    let (reais, centavos) = (abs / 100, abs % 100);
+    let digits = reais.to_string();
+    let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, ch) in digits.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            grouped.push('.');
+        }
+        grouped.push(ch);
+    }
+    let reais_str: String = grouped.chars().rev().collect();
+    format!("{sign}R$ {reais_str},{centavos:02}")
+}
+
+/// Reconhece o formato recorrente "plano de gastos mensal": múltiplas linhas
+/// `Mensal<TAB>R$ <valor><TAB><categoria>`, um total (`Total = R$ <valor>`) e uma média diária
+/// (`R$ <valor> / <N> Dias = R$ <valor>`). Rotulá-la como `NoteNotItemized`/`ItemsDoNotSumToCell`
+/// genérico faria uma nota recorrente e intencional parecer um erro de digitação isolado.
+fn is_monthly_budget_plan_note(note: &str) -> bool {
+    let lines: Vec<String> = note
+        .lines()
+        .map(|l| l.trim().to_ascii_lowercase())
+        .collect();
+    let has_mensal = lines.iter().any(|l| l.starts_with("mensal"));
+    let has_total = lines
+        .iter()
+        .any(|l| l.starts_with("total") && l.contains("r$"));
+    let has_dias = lines
+        .iter()
+        .any(|l| l.contains("dias") && l.contains('/') && l.contains('='));
+    has_mensal && has_total && has_dias
+}
+
+/// Coleta os diagnósticos de precisão de um LOTE já parseado (Plano 070). PURA: só lê
+/// `row.raw_note`/`row.amount`, nunca toca o banco. Por isto sobrevive ao skip de checksum
+/// (dedup): o caller roda esta função sobre os MESMOS `rows` tanto quando o import escreve
+/// quanto quando o detecta como duplicata idêntica — o diagnóstico é função do LOTE parseado,
+/// não da escrita que aconteceu (ou não) nesta rodada.
+///
+/// Espelha exatamente o gate de itemização de `import_rows_core` (mesma gramática via
+/// `parse_itemized_note`, mesmo `has_breakdown`, mesmo resíduo `célula − Σ|partes|`) para nunca
+/// divergir do que de fato foi (ou seria) persistido.
+pub(crate) fn collect_import_diagnostics(
+    sheet_name: &str,
+    rows: &[ImportedRow],
+    descriptions_trusted: bool,
+) -> Vec<ImportDiagnostic> {
+    // Ciclo degradado (falha da API de notas / .xlsx sem notas legíveis): toda `raw_note` chega
+    // vazia — nada de novo para reportar (mesmo gate de confiança do import_rows_core).
+    if !descriptions_trusted {
+        return Vec::new();
+    }
+    let mut diagnostics = Vec::new();
+    for row in rows {
+        let raw_note = row.raw_note.trim();
+        if raw_note.is_empty() {
+            continue;
+        }
+        let items = parse_itemized_note(&row.raw_note);
+        let budget_plan = is_monthly_budget_plan_note(&row.raw_note);
+
+        if items.is_empty() {
+            let kind = if budget_plan {
+                DiagKind::MonthlyBudgetPlanNote
+            } else {
+                DiagKind::NoteNotItemized
+            };
+            diagnostics.push(ImportDiagnostic {
+                sheet: sheet_name.to_string(),
+                cell: format!("{} ({kind})", row.date),
+                kind,
+                detail: format!("Nota não reconhecida como itemização: \"{raw_note}\""),
+            });
+            continue;
+        }
+
+        // Mesmo gate de `import_rows_core`: memo de 1 linha sem seção não é breakdown — não é
+        // silêncio indevido, é a regra de dados (persistir migraria Diário/Cartão p/ Saída).
+        let has_breakdown = items.len() >= 2 || (items.len() == 1 && items[0].section.is_some());
+        if !has_breakdown {
+            continue;
+        }
+
+        let parts_sum: i64 = items.iter().map(|i| i.amount_cents.abs()).sum();
+        let cell_total = row.amount.abs();
+        let residual = cell_total - parts_sum;
+        if residual != 0 {
+            let kind = if budget_plan {
+                DiagKind::MonthlyBudgetPlanNote
+            } else {
+                DiagKind::ItemsDoNotSumToCell
+            };
+            diagnostics.push(ImportDiagnostic {
+                sheet: sheet_name.to_string(),
+                cell: format!("{} ({kind})", row.date),
+                kind,
+                detail: format!(
+                    "célula {} vs. itens {} (diferença {})",
+                    format_cents_brl(cell_total),
+                    format_cents_brl(parts_sum),
+                    format_cents_brl(residual),
+                ),
+            });
+        }
+    }
+    diagnostics
+}
+
 /// GRAMÁTICA DAS NOTAS (contrato público — opt-in, explícito, seguro por padrão).
 ///
 /// Cada linha da nota é analisada de forma independente. Uma linha só vira
@@ -3456,6 +3617,106 @@ mod tests {
         assert!(items[0].section.is_none());
     }
 
+    // --- Plano 070: diagnósticos de precisão (collect_import_diagnostics), sem I/O ---
+
+    #[test]
+    fn format_cents_brl_formats_pt_br() {
+        assert_eq!(format_cents_brl(123_456), "R$ 1.234,56");
+        assert_eq!(format_cents_brl(500), "R$ 5,00");
+        assert_eq!(format_cents_brl(-500), "-R$ 5,00");
+        assert_eq!(format_cents_brl(0), "R$ 0,00");
+    }
+
+    #[test]
+    fn is_monthly_budget_plan_note_requires_all_three_markers() {
+        assert!(is_monthly_budget_plan_note(
+            "Mensal\tR$ 300,00\tContas\nTotal = R$ 300,00\nR$ 300,00 / 30 Dias = R$ 10,00"
+        ));
+        // Só o cabeçalho "Mensal" (sem Total/Dias) não é o formato completo — é o caso já
+        // coberto por `itemized_skips_tab_separated_budget_lines` (item comum na sequência).
+        assert!(!is_monthly_budget_plan_note("Mensal\tR$ 300,00\tContas"));
+        assert!(!is_monthly_budget_plan_note("R$ 100,00 - Item A"));
+    }
+
+    // Nota de prosa sem nenhuma linha `R$` → 0 itens (parse_itemized_note) + 1 diagnóstico
+    // NoteNotItemized. A DECISÃO de dados (nenhum item persistido) não muda; isto só reporta.
+    #[test]
+    fn diagnostics_flag_prose_only_note_as_not_itemized() {
+        let rows = vec![imported_note(
+            "2026-03-01",
+            -5_000,
+            "Compra qualquer, sem valor detalhado na nota",
+            false,
+        )];
+        assert!(parse_itemized_note(&rows[0].raw_note).is_empty());
+
+        let diagnostics = collect_import_diagnostics("2026", &rows, true);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].kind, DiagKind::NoteNotItemized);
+        assert_eq!(diagnostics[0].sheet, "2026");
+    }
+
+    // Memo de 1 linha SEM seção é intencionalmente não-breakdown (mesmo gate de
+    // `import_rows_core`) — não deve gerar diagnóstico nenhum, mesmo tendo 1 item parseável.
+    #[test]
+    fn diagnostics_skip_single_memo_without_section_intentionally() {
+        let rows = vec![imported_note(
+            "2026-03-04",
+            -5_000,
+            "R$ 50,00 - Mercado",
+            false,
+        )];
+        assert_eq!(parse_itemized_note(&rows[0].raw_note).len(), 1);
+        assert!(collect_import_diagnostics("2026", &rows, true).is_empty());
+    }
+
+    // Nota limpa (itens somam o total) → zero diagnósticos.
+    #[test]
+    fn diagnostics_empty_for_clean_note() {
+        let rows = vec![imported_note(
+            "2026-03-02",
+            -15_000,
+            "R$ 100,00 - Parte A\nR$ 50,00 - Parte B",
+            false,
+        )];
+        assert!(collect_import_diagnostics("2026", &rows, true).is_empty());
+    }
+
+    // Formato recorrente "plano de gastos mensal" (não itemiza) → MonthlyBudgetPlanNote, NÃO o
+    // NoteNotItemized genérico (não é um erro de digitação isolado).
+    #[test]
+    fn diagnostics_label_monthly_budget_plan_note_distinctly() {
+        let note = "Mensal\tR$ 300,00\tContas\n\
+                     Mensal\tR$ 150,00\tLazer\n\
+                     Mensal\tR$ 400,00\tMercado\n\
+                     Mensal\tR$ 200,00\tTransporte\n\
+                     Mensal\tR$ 100,00\tOutros\n\
+                     Total = R$ 1.150,00\n\
+                     R$ 1.150,00 / 30 Dias = R$ 38,33";
+        assert!(
+            parse_itemized_note(note).is_empty(),
+            "nenhuma linha casa a gramática de item"
+        );
+        let rows = vec![imported_note("2026-03-03", -115_000, note, false)];
+        let diagnostics = collect_import_diagnostics("2026", &rows, true);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].kind, DiagKind::MonthlyBudgetPlanNote);
+    }
+
+    // Ciclo degradado (raw_note vazia / notas não confiáveis): nunca reporta — mesmo gate de
+    // confiança do `import_rows_core` (uma falha transitória da API de notas não deve gerar
+    // diagnóstico algum, já que não há nota real para avaliar).
+    #[test]
+    fn diagnostics_empty_when_descriptions_not_trusted() {
+        let rows = vec![imported_note(
+            "2026-03-05",
+            -5_000,
+            "prosa qualquer sem R$",
+            false,
+        )];
+        assert!(collect_import_diagnostics("2026", &rows, false).is_empty());
+    }
+
     // Plano 059: classificação pura de itens por seção, sem I/O.
     #[test]
     fn classify_line_item_maps_known_sections_to_kinds() {
@@ -3576,6 +3837,72 @@ mod tests {
         assert_eq!(diferenca_count, 0);
         // O total do pai segue intocado (a célula é a verdade).
         assert_eq!(amount_by_date(&pool, "2026-02-11").await, 10_000);
+    }
+
+    // Plano 070: o MESMO mismatch acima gera exatamente 1 diagnóstico ItemsDoNotSumToCell com
+    // os totais corretos — E os itens continuam persistidos (a célula segue dona do total). A
+    // claim "reportado, não redecidido" exige as duas asserções na mesma rodada.
+    #[tokio::test]
+    async fn diagnostics_report_sum_mismatch_while_items_still_persist() {
+        let pool = test_pool().await;
+        let rows = vec![imported_note(
+            "2026-02-11",
+            -10_000,
+            "R$ 60,00 - A\nR$ 60,00 - B",
+            false,
+        )];
+
+        let diagnostics = collect_import_diagnostics("2026", &rows, true);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].kind, DiagKind::ItemsDoNotSumToCell);
+        assert!(
+            diagnostics[0].detail.contains("R$ 100,00"),
+            "total da célula"
+        );
+        assert!(
+            diagnostics[0].detail.contains("R$ 120,00"),
+            "soma dos itens"
+        );
+
+        import_rows(&pool, "2026", &rows, "p1").await.unwrap();
+        let txn_id = row_id("2026", "2026-02-11", RowKind::Saida, 0);
+        assert_eq!(
+            count_line_items(&pool, &txn_id).await,
+            2,
+            "itens persistem apesar da divergência — a célula continua dona do total"
+        );
+    }
+
+    // Plano 070: uma reimportação com o MESMO lote é deduplicada por checksum (não escreve
+    // nada), mas o diagnóstico não pode desaparecer — ele é função do lote parseado, não da
+    // escrita. Prova direta do requisito "sobrevive ao checksum-dedup".
+    #[tokio::test]
+    async fn diagnostics_survive_checksum_deduped_reimport() {
+        let pool = test_pool().await;
+        let rows = vec![imported_note(
+            "2026-02-20",
+            -10_000,
+            "R$ 60,00 - A\nR$ 60,00 - B",
+            false,
+        )];
+
+        let first_write = import_rows(&pool, "2026", &rows, "p1").await.unwrap();
+        assert_eq!(first_write, 1, "1ª rodada escreve de fato");
+        let first_diagnostics = collect_import_diagnostics("2026", &rows, true);
+        assert_eq!(first_diagnostics.len(), 1);
+
+        // 2ª rodada: mesmo checksum → check_duplicate_import bate e import_rows_with_options
+        // retorna Ok(0) sem tocar o banco (ver import_rows_with_options acima).
+        let second_write = import_rows(&pool, "2026", &rows, "p1").await.unwrap();
+        assert_eq!(
+            second_write, 0,
+            "dedup: dataset idêntico, nada escrito de novo"
+        );
+        let second_diagnostics = collect_import_diagnostics("2026", &rows, true);
+        assert_eq!(
+            second_diagnostics, first_diagnostics,
+            "o diagnóstico sobrevive ao skip de checksum — é função do lote, não da escrita"
+        );
     }
 
     // Memo de UMA linha sem cabeçalho de seção NÃO é breakdown: persistir migraria um

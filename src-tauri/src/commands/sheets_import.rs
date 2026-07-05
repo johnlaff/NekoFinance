@@ -10,6 +10,16 @@ pub struct SheetInfo {
     pub sheet_id: i64,
 }
 
+/// Plano 070: retorno estruturado do import — mantém `count` NUMÉRICO (consumido
+/// aritmeticamente pelo frontend, ex. `importAllTabs`/`Acc`) e acrescenta os diagnósticos de
+/// precisão (nota não itemizada / item↔célula divergente) sem substituir nada que já existia.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ImportOutcome {
+    pub count: usize,
+    pub summary: String,
+    pub diagnostics: Vec<import::ImportDiagnostic>,
+}
+
 #[tauri::command]
 pub async fn list_sheet_names(
     app_dir: State<'_, AppDataDir>,
@@ -91,7 +101,7 @@ pub async fn import_sheet_data(
     profile_id: String,
     client_id: String,
     client_secret: Option<String>,
-) -> Result<usize, String> {
+) -> Result<ImportOutcome, String> {
     if layout_detect::is_metric_tab(&sheet_name) {
         return Err(format!(
             "'{sheet_name}' é uma aba de métricas do método (não tem transações). \
@@ -127,9 +137,13 @@ pub(crate) async fn import_one_tab(
     spreadsheet_id: &str,
     sheet_name: &str,
     profile_id: &str,
-) -> Result<usize, String> {
+) -> Result<ImportOutcome, String> {
     if layout_detect::is_metric_tab(sheet_name) {
-        return Ok(0);
+        return Ok(ImportOutcome {
+            count: 0,
+            summary: String::new(),
+            diagnostics: Vec::new(),
+        });
     }
 
     // Grade usada inteira: a planilha real tem 12 blocos mensais até a coluna BO (~71
@@ -139,7 +153,11 @@ pub(crate) async fn import_one_tab(
     let rows = values.values;
 
     if rows.len() < 3 {
-        return Ok(0);
+        return Ok(ImportOutcome {
+            count: 0,
+            summary: String::new(),
+            diagnostics: Vec::new(),
+        });
     }
 
     // Detecção de layout (leituras no pool). Quando NOVO, o INSERT do layout/mappings é adiado para
@@ -198,13 +216,23 @@ pub(crate) async fn import_one_tab(
         descriptions_trusted,
     };
 
+    // Plano 070: diagnósticos de precisão são função do LOTE já parseado (nota crua + total da
+    // célula), não da escrita — coletados ANTES do skip de checksum para que uma reimportação
+    // idêntica (dedup) continue reportando as mesmas notas que precisam de atenção.
+    let diagnostics =
+        import::collect_import_diagnostics(sheet_name, &imported_rows, descriptions_trusted);
+
     // Checksum + checagem de duplicata ANTES de abrir a transação (leitura no pool; dentro da tx
     // daria read-your-writes falso-negativo). Dataset idêntico ao último import → idempotente.
     let checksum = import::compute_import_checksum(&imported_rows, descriptions_trusted);
     if !imported_rows.is_empty()
         && import::check_duplicate_import(pool, sheet_name, &checksum).await?
     {
-        return Ok(0);
+        return Ok(ImportOutcome {
+            count: 0,
+            summary: String::new(),
+            diagnostics,
+        });
     }
 
     // Captura a coluna Saldo (o saldo corrente do método) → semente da projeção + visão histórica.
@@ -259,7 +287,11 @@ pub(crate) async fn import_one_tab(
         .await
         .map_err(|e| format!("commit import: {e}"))?;
 
-    Ok(count)
+    Ok(ImportOutcome {
+        count,
+        summary: format!("{count} linha(s) importada(s) de '{sheet_name}'."),
+        diagnostics,
+    })
 }
 
 /// Células numéricas do calamine viram string decimal-com-ponto de 4 casas fixas: `123.456`
@@ -659,7 +691,7 @@ pub async fn import_local_xlsx(
     guard: State<'_, std::sync::Arc<crate::sync_task::SyncGuard>>,
     file_path: String,
     profile_id: String,
-) -> Result<String, String> {
+) -> Result<ImportOutcome, String> {
     use calamine::{Reader, Xlsx, open_workbook};
 
     let workbook_path = validate_local_xlsx_path(&file_path)?;
@@ -681,6 +713,9 @@ pub async fn import_local_xlsx(
     // Sinaliza o aviso de degradação só quando FOR verdade: pelo menos uma aba importada ficou
     // sem notas legíveis. Um import onde toda aba trouxe notas não deve carregar aviso nenhum.
     let mut any_sheet_without_notes = false;
+    // Plano 070: diagnósticos de precisão acumulados por aba (nota não itemizada / item↔célula
+    // divergente) — surgem mesmo quando o import não escreve nada (aba deduplicada por checksum).
+    let mut all_diagnostics: Vec<import::ImportDiagnostic> = Vec::new();
 
     // Serializa contra o sync de fundo e o probe de foco no pool de 1 conexão (mesmo SyncGuard).
     // Segurado por TODO o loop de abas (cada aba é uma transação atômica própria).
@@ -756,6 +791,14 @@ pub async fn import_local_xlsx(
             if imported_rows.is_empty() {
                 continue;
             }
+
+            // Plano 070: coletado sobre o lote já parseado, ANTES do skip de checksum — sobrevive
+            // ao dedup (uma reimportação idêntica desta aba continua reportando as mesmas notas).
+            all_diagnostics.extend(import::collect_import_diagnostics(
+                sheet_name,
+                &imported_rows,
+                notes_found,
+            ));
 
             let options = import::ImportRowsOptions {
                 descriptions_trusted: notes_found,
@@ -833,12 +876,16 @@ pub async fn import_local_xlsx(
         ""
     };
 
-    Ok(format!(
-        "Imported {} total rows from: {}.{}",
-        total,
-        sheets_imported.join(", "),
-        warning
-    ))
+    Ok(ImportOutcome {
+        count: total,
+        summary: format!(
+            "Imported {} total rows from: {}.{}",
+            total,
+            sheets_imported.join(", "),
+            warning
+        ),
+        diagnostics: all_diagnostics,
+    })
 }
 
 #[tauri::command]

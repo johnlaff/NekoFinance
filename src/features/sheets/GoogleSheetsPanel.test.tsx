@@ -1,9 +1,10 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { GoogleSheetsPanel } from "./GoogleSheetsPanel";
+import { GoogleSheetsPanel, ImportDiagnosticsNotice } from "./GoogleSheetsPanel";
 import { mockInvoke } from "../../test/commands";
 import { invalidateCommands } from "../../lib/useCommand";
+import type { ImportDiagnostic } from "../../lib/api";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -76,5 +77,40 @@ describe("GoogleSheetsPanel — atualização automática (plano 026)", () => {
       name: /Atualização automática/,
     });
     expect(checkbox).toBeChecked();
+  });
+});
+
+// Plano 070: nota que não deu para itemizar ou item↔célula divergente — a mesma superfície é
+// reusada pelo import do Sheets e pelo import de .xlsx local (LocalXlsxImport), por isso é
+// testada como componente independente aqui.
+describe("ImportDiagnosticsNotice (plano 070)", () => {
+  const SAMPLE: ImportDiagnostic[] = [
+    {
+      sheet: "2026",
+      cell: "2026-02-11 (itens não somam à célula)",
+      kind: "ItemsDoNotSumToCell",
+      detail: "célula R$ 100,00 vs. itens R$ 120,00 (diferença -R$ 20,00)",
+    },
+  ];
+
+  it("mostra a contagem e a lista expandível quando há diagnósticos", async () => {
+    const user = userEvent.setup();
+    render(<ImportDiagnosticsNotice diagnostics={SAMPLE} />);
+
+    const toggle = screen.getByText(/1 nota precisa de atenção/);
+    expect(toggle).toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(screen.getByText(/célula R\$ 100,00/)).toBeInTheDocument();
+  });
+
+  it("pluraliza quando há mais de um diagnóstico", () => {
+    render(<ImportDiagnosticsNotice diagnostics={[...SAMPLE, SAMPLE[0]!]} />);
+    expect(screen.getByText(/2 notas precisam de atenção/)).toBeInTheDocument();
+  });
+
+  it("não renderiza nada quando não há diagnósticos", () => {
+    const { container } = render(<ImportDiagnosticsNotice diagnostics={[]} />);
+    expect(container).toBeEmptyDOMElement();
   });
 });

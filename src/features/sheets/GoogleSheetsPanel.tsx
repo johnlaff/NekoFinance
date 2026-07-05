@@ -28,6 +28,7 @@ import {
   setAppSetting,
   startOAuthFlow,
   type AuthStatus,
+  type ImportDiagnostic,
   type SheetInfo,
   type SheetMappingEntry,
   type SheetPreview,
@@ -82,6 +83,8 @@ interface SheetState {
   loading: boolean;
   importing: boolean;
   importResult: string | null;
+  /** Plano 070: nota que não deu para itemizar ou item↔célula divergente — informativo. */
+  importDiagnostics: ImportDiagnostic[];
   error: string | null;
   /** Erro técnico cru (do backend) — mostrado em "Detalhes técnicos" para suporte/diagnóstico. */
   errorDetail: string | null;
@@ -110,6 +113,7 @@ const initialSheetState: SheetState = {
   loading: false,
   importing: false,
   importResult: null,
+  importDiagnostics: [],
   error: null,
   errorDetail: null,
   step: "connect",
@@ -342,11 +346,11 @@ function useSheetImport(
 
   const runImport = async (spreadsheetId: string, sheetName: string) => {
     if (!spreadsheetId || !sheetName) return;
-    set({ importResult: null, error: null, errorDetail: null });
+    set({ importResult: null, importDiagnostics: [], error: null, errorDetail: null });
     await withLoading(setImporting, async () => {
       try {
         const profileId = crypto.randomUUID();
-        const count = await importSheetData(
+        const { count, diagnostics } = await importSheetData(
           spreadsheetId,
           sheetName,
           profileId,
@@ -359,6 +363,7 @@ function useSheetImport(
             count === 0
               ? "Tudo em dia: nenhuma linha nova (as já importadas são ignoradas)."
               : `${count} transações importadas.`,
+          importDiagnostics: diagnostics,
         });
       } catch (e) {
         fail(e, "Não foi possível importar a aba selecionada.");
@@ -373,7 +378,7 @@ function useSheetImport(
   // (que agora vale para a planilha inteira). Lista as abas antes, se preciso (ex.: re-sync no mount).
   const importAllTabs = async (spreadsheetId: string) => {
     if (!spreadsheetId) return;
-    set({ importResult: null, error: null, errorDetail: null });
+    set({ importResult: null, importDiagnostics: [], error: null, errorDetail: null });
     await withLoading(setImporting, async () => {
       try {
         let sheets = state.sheets;
@@ -388,6 +393,7 @@ function useSheetImport(
           txns: number;
           econ: number;
           years: string[];
+          diagnostics: ImportDiagnostic[];
         }
         const importFrom = async (i: number, acc: Acc): Promise<Acc> => {
           if (i >= sheets.length) return acc;
@@ -395,20 +401,23 @@ function useSheetImport(
           if (isEconomiaTab(s.title)) {
             acc.econ += await importEconomiaSheet(spreadsheetId, GOOGLE_CLIENT_ID);
           } else if (!isMetricTab(s.title)) {
-            acc.txns += await importSheetData(
+            const outcome = await importSheetData(
               spreadsheetId,
               s.title,
               profileId,
               GOOGLE_CLIENT_ID,
             );
+            acc.txns += outcome.count;
+            acc.diagnostics.push(...outcome.diagnostics);
             acc.years.push(s.title);
           }
           return importFrom(i + 1, acc);
         };
-        const { txns, econ, years } = await importFrom(0, {
+        const { txns, econ, years, diagnostics } = await importFrom(0, {
           txns: 0,
           econ: 0,
           years: [],
+          diagnostics: [],
         });
         invalidateCommands();
         await persistLastImport(spreadsheetId);
@@ -419,6 +428,7 @@ function useSheetImport(
           importResult: parts.length
             ? `Importado: ${parts.join(" + ")}.`
             : "Tudo em dia: nenhuma linha nova.",
+          importDiagnostics: diagnostics,
         });
       } catch (e) {
         fail(e, "Não foi possível importar as abas.");
@@ -438,7 +448,7 @@ function useSheetImport(
   const handleBackToPick = () => set({ step: "pick" });
 
   const handleImportEconomia = async () => {
-    set({ importResult: null, error: null, errorDetail: null });
+    set({ importResult: null, importDiagnostics: [], error: null, errorDetail: null });
     await withLoading(setImporting, async () => {
       try {
         const count = await importEconomiaSheet(
@@ -561,6 +571,39 @@ function NotesDegradedNotice() {
   );
 }
 
+/**
+ * Plano 070: torna visível quando uma nota não deu para itemizar OU os itens divergem do total
+ * da célula — a célula continua dona do total, isto só reporta (não recalcula nada). Só um
+ * componente (reusado nos passos do import do Sheets e no import de .xlsx local); informativo,
+ * nunca bloqueante — some quando `diagnostics` está vazio.
+ */
+export function ImportDiagnosticsNotice({
+  diagnostics,
+}: {
+  diagnostics: ImportDiagnostic[];
+}) {
+  if (diagnostics.length === 0) return null;
+  const n = diagnostics.length;
+  return (
+    <details className="gs-diagnostics">
+      <summary className="gs-diagnostics__summary">
+        <AlertCircle size={14} strokeWidth={1.75} />
+        {n} {n === 1 ? "nota precisa" : "notas precisam"} de atenção
+      </summary>
+      <ul className="gs-diagnostics__list">
+        {diagnostics.map((d, i) => (
+          <li key={`${d.sheet}-${d.cell}-${i}`} className="gs-diagnostics__item">
+            <span className="gs-diagnostics__meta">
+              {d.sheet} · {d.cell}
+            </span>
+            <span className="gs-diagnostics__detail">{d.detail}</span>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 function PickStep({
   state,
   onSpreadsheetSelect,
@@ -589,6 +632,7 @@ function PickStep({
     loading,
     importing,
     importResult,
+    importDiagnostics,
     lastImport,
     bgSyncEnabled,
   } = state;
@@ -734,6 +778,7 @@ function PickStep({
           {importResult}
         </output>
       )}
+      <ImportDiagnosticsNotice diagnostics={importDiagnostics} />
     </div>
   );
 }
@@ -749,7 +794,7 @@ function PreviewStep({
   onImport: () => void;
   onBack: () => void;
 }) {
-  const { preview, selectedSheet, importing, importResult } = state;
+  const { preview, selectedSheet, importing, importResult, importDiagnostics } = state;
   if (!preview) return null;
   return (
     <div className="gs-step">
@@ -800,6 +845,7 @@ function PreviewStep({
           {importResult}
         </output>
       )}
+      <ImportDiagnosticsNotice diagnostics={importDiagnostics} />
     </div>
   );
 }
@@ -815,8 +861,14 @@ function MappingStep({
   onImport: () => void;
   onBack: () => void;
 }) {
-  const { mappings, importing, importResult, selectedSpreadsheet, selectedSheet } =
-    state;
+  const {
+    mappings,
+    importing,
+    importResult,
+    importDiagnostics,
+    selectedSpreadsheet,
+    selectedSheet,
+  } = state;
   return (
     <div className="gs-step">
       <div className="gs-mapping-head">
@@ -867,6 +919,7 @@ function MappingStep({
           {importResult}
         </output>
       )}
+      <ImportDiagnosticsNotice diagnostics={importDiagnostics} />
 
       <WriteBackPreview
         spreadsheetId={selectedSpreadsheet}

@@ -37,7 +37,11 @@ describe("SettingsScreen", () => {
     const user = userEvent.setup();
     mockCommands({
       get_app_info: APP_INFO,
-      import_local_xlsx: "Imported 12 total rows from: 2026 (12 rows)",
+      import_local_xlsx: {
+        count: 12,
+        summary: "Imported 12 total rows from: 2026 (12 rows)",
+        diagnostics: [],
+      },
     });
     mockOpen.mockResolvedValue("/home/user/financas.xlsx");
 

@@ -94,6 +94,27 @@ export interface SheetInfo {
   sheet_id: number;
 }
 
+/** Plano 070: torna visível uma nota que não deu para itemizar, ou itens cujo somatório diverge
+ * do total da célula (a célula continua dona do total — isto só reporta). */
+export type DiagKind =
+  "NoteNotItemized" | "ItemsDoNotSumToCell" | "MonthlyBudgetPlanNote";
+
+export interface ImportDiagnostic {
+  sheet: string;
+  /** Rótulo sintético (sem endereço real de célula) — só para exibição. */
+  cell: string;
+  kind: DiagKind;
+  detail: string;
+}
+
+/** Retorno estruturado dos comandos de import — `count` é sempre numérico (usado
+ * aritmeticamente pelo `importAllTabs`); `diagnostics` nunca substitui a contagem. */
+export interface ImportOutcome {
+  count: number;
+  summary: string;
+  diagnostics: ImportDiagnostic[];
+}
+
 export interface UserSpreadsheet {
   id: string;
   name: string;
@@ -676,7 +697,7 @@ export function importSheetData(
   sheetName: string,
   profileId: string,
   clientId: string,
-): Promise<number> {
+): Promise<ImportOutcome> {
   return invoke("import_sheet_data", {
     spreadsheetId,
     sheetName,
@@ -698,7 +719,10 @@ export function importEconomiaSheet(
   });
 }
 
-export function importLocalXlsx(filePath: string, profileId: string): Promise<string> {
+export function importLocalXlsx(
+  filePath: string,
+  profileId: string,
+): Promise<ImportOutcome> {
   return invoke("import_local_xlsx", { filePath, profileId });
 }
 
