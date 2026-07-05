@@ -290,7 +290,8 @@ function ObligationRow({
     : 0;
   const last = history[history.length - 1];
   const prev = history[history.length - 2];
-  const trendCents = hasHistory && last && prev ? last.total_cents - prev.total_cents : 0;
+  const trendCents =
+    hasHistory && last && prev ? last.total_cents - prev.total_cents : 0;
   const TrendIcon = trendCents > 0 ? TrendingUp : trendCents < 0 ? TrendingDown : Minus;
   const kindMeta = OBLIGATION_KIND_META[obligation.kind] ?? {
     name: obligation.kind,
