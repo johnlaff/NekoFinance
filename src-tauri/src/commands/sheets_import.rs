@@ -1,4 +1,8 @@
 use super::*;
+use quick_xml::Reader as XmlReader;
+use quick_xml::events::{BytesRef, BytesStart, Event};
+use std::collections::HashMap;
+use std::path::Path;
 
 #[derive(serde::Serialize)]
 pub struct SheetInfo {
@@ -292,6 +296,319 @@ pub(crate) fn validate_local_xlsx_path(file_path: &str) -> Result<std::path::Pat
     Ok(canonical)
 }
 
+// --- Plano 068: recuperação de notas de célula no import local de .xlsx ---
+//
+// calamine expõe VALORES mas nunca notas de célula (comments/annotations) — não há accessor para
+// isso na 0.35 (o único hit de "comment" no seu código é `check_comments`, uma flag de validação
+// de `<!-- comentário XML -->` do parser interno, sem relação com anotações de planilha). As notas
+// existem de fato no arquivo: um `.xlsx` é um zip, e comentários de célula LEGADOS — exatamente o
+// que a API do Sheets chama de "nota" (sem autor, sem thread) — vivem em `xl/comments<N>.xml`,
+// referenciados pelo `.rels` da aba (`xl/worksheets/_rels/sheet<M>.xml.rels`). As funções abaixo
+// leem esse zip em paralelo ao calamine para reconstruir a MESMA grade `Vec<Vec<String>>` que
+// `SheetsClient::get_sheet_notes` devolve no caminho da API, para que `parse_rows_with_layout` /
+// `cell_raw_note` / `parse_itemized_note` (que já sabem processar notas) recebam dado real.
+
+/// Decodifica uma referência A1 (`"A1"`, `"AZ16"`, `"BL32"`) em (linha, coluna) 0-based. Suporta
+/// colunas MULTI-LETRA (a planilha real passa de Z — os blocos mensais vão até ~coluna BO).
+/// `None` para referências malformadas (sem letras, sem dígitos, ou linha/coluna < 1).
+fn decode_a1_ref(a1: &str) -> Option<(u32, u32)> {
+    let split_at = a1.find(|c: char| c.is_ascii_digit())?;
+    let (letters, digits) = a1.split_at(split_at);
+    if letters.is_empty() || digits.is_empty() || !letters.bytes().all(|b| b.is_ascii_alphabetic())
+    {
+        return None;
+    }
+    let mut col: u64 = 0;
+    for b in letters.bytes() {
+        col = col * 26 + u64::from(b.to_ascii_uppercase() - b'A' + 1);
+    }
+    let col0 = u32::try_from(col.checked_sub(1)?).ok()?;
+    let row1: u32 = digits.parse().ok()?;
+    let row0 = row1.checked_sub(1)?;
+    Some((row0, col0))
+}
+
+/// Extrai o valor (com entidades já resolvidas) de UM atributo pelo nome LOCAL — ignora o
+/// prefixo de namespace (`r:id` casa com `"id"`), espelhando como o próprio calamine resolve o
+/// mesmo atributo ao montar seu mapa aba→caminho interno (`read_workbook`, calamine `xlsx/mod.rs`).
+fn attr_by_local_name(
+    tag: &BytesStart<'_>,
+    reader: &XmlReader<&[u8]>,
+    local_name: &[u8],
+) -> Result<Option<String>, String> {
+    for attr in tag.attributes() {
+        let attr = attr.map_err(|e| format!("atributo: {e}"))?;
+        if attr.key.local_name().as_ref() == local_name {
+            let value = attr
+                .decoded_and_normalized_value(quick_xml::XmlVersion::Implicit1_0, reader.decoder())
+                .map_err(|e| format!("valor de atributo: {e}"))?;
+            return Ok(Some(value.into_owned()));
+        }
+    }
+    Ok(None)
+}
+
+/// Resolve UM `Event::GeneralRef` (entidade `&nome;` ou referência numérica `&#NNN;`) para o
+/// caractere real. quick-xml 0.41 passou a emitir essas referências como evento SEPARADO do texto
+/// ao redor (não mais pré-resolvidas dentro de `Event::Text`) — sem este passo extra, uma nota com
+/// `&amp;`/`&#10;` sairia com o nome da entidade literal em vez do caractere.
+fn resolve_general_ref(entity: &BytesRef<'_>) -> Result<String, String> {
+    let name = entity.decode().map_err(|e| format!("entidade: {e}"))?;
+    if let Some(resolved) = quick_xml::escape::resolve_xml_entity(&name) {
+        return Ok(resolved.to_string());
+    }
+    match entity
+        .resolve_char_ref()
+        .map_err(|e| format!("referência numérica: {e}"))?
+    {
+        Some(ch) => Ok(ch.to_string()),
+        None => Err(format!("entidade XML não reconhecida em nota: &{name};")),
+    }
+}
+
+/// Lê `xl/comments<N>.xml` → lista `(ref A1, texto)` na ordem do documento. O texto de UM
+/// comentário é a concatenação, SEM separador, de todo conteúdo textual dentro de `<t>` — runs
+/// (`<r><rPr/><t/></r>`) existem só para formatação; concatenar sem separador reproduz a MESMA
+/// string que `SheetsClient::get_sheet_notes` devolve para a mesma nota (o campo `note` da API do
+/// Sheets também é string plana, sem marcação de run). Acumular só dentro de `<t>` (e não em
+/// `<text>`) evita que espaço/indentação entre `<r>`/`<rPr>` vaze para dentro da nota.
+fn parse_comment_notes(xml: &str) -> Result<Vec<(String, String)>, String> {
+    let mut reader = XmlReader::from_str(xml);
+    let mut results: Vec<(String, String)> = Vec::new();
+    let mut current_ref: Option<String> = None;
+    let mut t_depth: usize = 0;
+    let mut acc = String::new();
+
+    loop {
+        match reader
+            .read_event()
+            .map_err(|e| format!("xl/comments*.xml: {e}"))?
+        {
+            Event::Start(e) => match e.local_name().as_ref() {
+                b"comment" => {
+                    current_ref = attr_by_local_name(&e, &reader, b"ref")?;
+                    acc.clear();
+                }
+                b"t" => t_depth += 1,
+                _ => {}
+            },
+            Event::Empty(e) if e.local_name().as_ref() == b"comment" => {
+                // `<comment ref="A1"/>` sem `<text>` — nota vazia, mas ainda é uma nota presente.
+                if let Some(r) = attr_by_local_name(&e, &reader, b"ref")? {
+                    results.push((r, String::new()));
+                }
+            }
+            Event::Text(t) if t_depth > 0 => {
+                acc.push_str(
+                    &t.xml10_content()
+                        .map_err(|e| format!("texto da nota: {e}"))?,
+                );
+            }
+            Event::GeneralRef(r) if t_depth > 0 => {
+                acc.push_str(&resolve_general_ref(&r)?);
+            }
+            Event::End(e) => match e.local_name().as_ref() {
+                b"t" => t_depth = t_depth.saturating_sub(1),
+                b"comment" => {
+                    if let Some(r) = current_ref.take() {
+                        results.push((r, std::mem::take(&mut acc)));
+                    }
+                }
+                _ => {}
+            },
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    Ok(results)
+}
+
+/// Lê `xl/workbook.xml` → lista `(nome da aba, r:id)` na ordem do documento — o `r:id` resolve o
+/// CAMINHO da aba via `xl/_rels/workbook.xml.rels` no próximo passo.
+fn parse_workbook_sheet_rids(xml: &str) -> Result<Vec<(String, String)>, String> {
+    let mut reader = XmlReader::from_str(xml);
+    let mut sheets = Vec::new();
+    loop {
+        match reader
+            .read_event()
+            .map_err(|e| format!("xl/workbook.xml: {e}"))?
+        {
+            Event::Start(e) | Event::Empty(e) if e.local_name().as_ref() == b"sheet" => {
+                let name = attr_by_local_name(&e, &reader, b"name")?;
+                let rid = attr_by_local_name(&e, &reader, b"id")?;
+                if let (Some(name), Some(rid)) = (name, rid) {
+                    sheets.push((name, rid));
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    Ok(sheets)
+}
+
+/// Lê um `.rels` (`Relationships` do OOXML) → lista `(Id, Type, Target)` na ordem do documento.
+fn parse_relationships(xml: &str) -> Result<Vec<(String, String, String)>, String> {
+    let mut reader = XmlReader::from_str(xml);
+    let mut rels = Vec::new();
+    loop {
+        match reader.read_event().map_err(|e| format!("rels: {e}"))? {
+            Event::Start(e) | Event::Empty(e) if e.local_name().as_ref() == b"Relationship" => {
+                let id = attr_by_local_name(&e, &reader, b"Id")?;
+                let ty = attr_by_local_name(&e, &reader, b"Type")?;
+                let target = attr_by_local_name(&e, &reader, b"Target")?;
+                if let (Some(id), Some(ty), Some(target)) = (id, ty, target) {
+                    rels.push((id, ty, target));
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    Ok(rels)
+}
+
+/// Resolve um `Target` de relationship RELATIVO ao diretório da PARTE de origem (não ao diretório
+/// `_rels/` — regra do OOXML: relacionamentos resolvem contra o diretório da parte que os declara,
+/// nunca contra a pasta `_rels` que os contém). `..` sobe um nível; alvo já absoluto (`/xl/...`)
+/// ignora `base_dir`.
+fn resolve_relative_target(base_dir: &str, target: &str) -> String {
+    if let Some(stripped) = target.strip_prefix('/') {
+        return stripped.to_string();
+    }
+    let mut segments: Vec<&str> = base_dir.split('/').filter(|s| !s.is_empty()).collect();
+    for part in target.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            other => segments.push(other),
+        }
+    }
+    segments.join("/")
+}
+
+/// Lê UMA entrada do zip como string UTF-8; `Ok(None)` quando a entrada não existe (relação
+/// OPCIONAL — ex.: aba sem nenhum comentário não tem `.rels` de comments) — NUNCA um erro.
+fn zip_entry_to_string(
+    zip: &mut zip::ZipArchive<std::fs::File>,
+    name: &str,
+) -> Result<Option<String>, String> {
+    use std::io::Read;
+    match zip.by_name(name) {
+        Ok(mut entry) => {
+            let mut buf = String::new();
+            entry
+                .read_to_string(&mut buf)
+                .map_err(|e| format!("ler {name}: {e}"))?;
+            Ok(Some(buf))
+        }
+        Err(zip::result::ZipError::FileNotFound) => Ok(None),
+        Err(e) => Err(format!("entrada do zip {name}: {e}")),
+    }
+}
+
+/// Notas de célula do `.xlsx` por aba — chave = nome EXATO da aba (igual a
+/// `workbook.sheet_names()` do calamine), valor = grade `[linha][coluna]` 0-based com ORIGEM
+/// ABSOLUTA (linha 0 = linha 1 da planilha, coluna 0 = coluna A). O alinhamento com a origem do
+/// `range` do calamine (que pode não começar em A1) é responsabilidade do chamador
+/// (`align_notes_grid`), já que este cálculo roda UMA vez para o workbook inteiro, antes do
+/// calamine abrir cada aba individualmente.
+///
+/// Erro só para partes OBRIGATÓRIAS ausentes/corrompidas (zip inválido, `xl/workbook.xml` ou
+/// `xl/_rels/workbook.xml.rels` ausentes/malformados — sinal de layout inesperado, por exemplo
+/// comentários THREADED do Sheets em `xl/threadedComments/` em vez do formato legado
+/// `xl/comments*.xml`). O chamador degrada para SEM notas em qualquer erro, então um formato
+/// diferente nunca quebra o import — só perde a itemização. Ausência de comentários numa aba
+/// ESPECÍFICA (sem `.rels` de comments) é normal e vira grade vazia para aquela aba, sem erro.
+fn read_xlsx_comments(path: &Path) -> Result<HashMap<String, Vec<Vec<String>>>, String> {
+    let file = std::fs::File::open(path).map_err(|e| format!("abrir .xlsx como zip: {e}"))?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("abrir .xlsx como zip: {e}"))?;
+
+    let workbook_xml = zip_entry_to_string(&mut zip, "xl/workbook.xml")?
+        .ok_or_else(|| "xl/workbook.xml ausente".to_string())?;
+    let sheets = parse_workbook_sheet_rids(&workbook_xml)?;
+
+    let rels_xml = zip_entry_to_string(&mut zip, "xl/_rels/workbook.xml.rels")?
+        .ok_or_else(|| "xl/_rels/workbook.xml.rels ausente".to_string())?;
+    let workbook_rels = parse_relationships(&rels_xml)?;
+    let rid_to_target: HashMap<&str, &str> = workbook_rels
+        .iter()
+        .map(|(id, _, target)| (id.as_str(), target.as_str()))
+        .collect();
+
+    let mut result = HashMap::new();
+    for (sheet_name, rid) in &sheets {
+        let Some(target) = rid_to_target.get(rid.as_str()) else {
+            continue;
+        };
+        let sheet_path = resolve_relative_target("xl", target);
+        let (sheet_dir, sheet_file) = match sheet_path.rsplit_once('/') {
+            Some((dir, file)) => (dir, file),
+            None => ("", sheet_path.as_str()),
+        };
+        let sheet_rels_path = if sheet_dir.is_empty() {
+            format!("_rels/{sheet_file}.rels")
+        } else {
+            format!("{sheet_dir}/_rels/{sheet_file}.rels")
+        };
+
+        let Some(sheet_rels_xml) = zip_entry_to_string(&mut zip, &sheet_rels_path)? else {
+            continue; // aba sem .rels próprio → sem comentários (grade ausente = vazia)
+        };
+        let sheet_rels = parse_relationships(&sheet_rels_xml)?;
+        let Some((_, _, comments_target)) = sheet_rels
+            .iter()
+            .find(|(_, ty, _)| ty.ends_with("/comments"))
+        else {
+            continue; // aba tem .rels mas nenhuma relação de comments (sem notas)
+        };
+        let comments_path = resolve_relative_target(sheet_dir, comments_target);
+        let Some(comments_xml) = zip_entry_to_string(&mut zip, &comments_path)? else {
+            continue;
+        };
+
+        let mut grid: Vec<Vec<String>> = Vec::new();
+        for (a1, text) in parse_comment_notes(&comments_xml)? {
+            let Some((row, col)) = decode_a1_ref(&a1) else {
+                continue; // ref malformada — ignora esta nota, não aborta a aba
+            };
+            let (row, col) = (row as usize, col as usize);
+            if grid.len() <= row {
+                grid.resize(row + 1, Vec::new());
+            }
+            if grid[row].len() <= col {
+                grid[row].resize(col + 1, String::new());
+            }
+            grid[row][col] = text;
+        }
+        result.insert(sheet_name.clone(), grid);
+    }
+    Ok(result)
+}
+
+/// Recorta a grade ABSOLUTA (linha 1/coluna A) de `read_xlsx_comments` para a MESMA origem do
+/// `range` do calamine (`range.start()`) — sem isto, `notes[r][c]` e `rows[r][c]` apontariam para
+/// células diferentes sempre que a aba não começar exatamente em A1 (calamine usa
+/// `HeaderRow::FirstNonEmptyRow` por padrão). Notas acima/à esquerda da origem são descartadas.
+fn align_notes_grid(absolute: &[Vec<String>], start: (u32, u32)) -> Vec<Vec<String>> {
+    let (start_row, start_col) = (start.0 as usize, start.1 as usize);
+    absolute
+        .iter()
+        .skip(start_row)
+        .map(|row| row.get(start_col..).map(|s| s.to_vec()).unwrap_or_default())
+        .collect()
+}
+
+/// `true` quando a grade tem PELO MENOS uma nota não-vazia — decide `descriptions_trusted` e o
+/// aviso de degradação: uma grade "presente" mas 100% vazia (aba sem nenhum comentário) deve se
+/// comportar como sem notas, não como notas confiáveis vazias.
+fn grid_has_any_note(grid: &[Vec<String>]) -> bool {
+    grid.iter()
+        .any(|row| row.iter().any(|cell| !cell.trim().is_empty()))
+}
+
 #[tauri::command]
 pub async fn import_local_xlsx(
     pool: State<'_, SqlitePool>,
@@ -305,9 +622,21 @@ pub async fn import_local_xlsx(
     let mut workbook: Xlsx<_> =
         open_workbook(&workbook_path).map_err(|e| format!("open error: {e}"))?;
 
+    // calamine não expõe notas de célula (ver banner acima); lemos o zip do .xlsx à parte para
+    // recuperá-las. Erro aqui (zip corrompido, layout inesperado) degrada para SEM notas — os
+    // valores ainda entram, mas o import não falha por conta de um anexo que este parser
+    // auxiliar não conseguiu ler.
+    let comments_by_sheet = read_xlsx_comments(&workbook_path).unwrap_or_else(|e| {
+        eprintln!("[import] notas de célula do .xlsx indisponíveis: {e} — import sem notas");
+        HashMap::new()
+    });
+
     let sheet_names = workbook.sheet_names().to_vec();
     let mut total = 0usize;
     let mut sheets_imported = Vec::new();
+    // Sinaliza o aviso de degradação só quando FOR verdade: pelo menos uma aba importada ficou
+    // sem notas legíveis. Um import onde toda aba trouxe notas não deve carregar aviso nenhum.
+    let mut any_sheet_without_notes = false;
 
     // Serializa contra o sync de fundo e o probe de foco no pool de 1 conexão (mesmo SyncGuard).
     // Segurado por TODO o loop de abas (cada aba é uma transação atômica própria).
@@ -366,18 +695,28 @@ pub async fn import_local_xlsx(
                 None => import::get_active_mappings_for_sheet(&pool, sheet_name).await?,
             };
 
-            // xlsx (calamine) não expõe notas de célula → fallback "Entrada/Saída {data}". As
-            // notas só vêm pelo caminho ao vivo (Sheets API), então o fallback não vira base
-            // canônica de descrição.
-            let imported_rows = import::parse_rows_with_layout(&rows, &layout, &mappings, &[])?;
+            // Notas de célula desta aba, realinhadas para a MESMA origem da grade de valores
+            // (calamine começa no primeiro range não-vazio, não necessariamente em A1) — sem
+            // isto `notes[r][c]` e `rows[r][c]` apontariam para células diferentes.
+            let sheet_notes: Vec<Vec<String>> = comments_by_sheet
+                .get(sheet_name)
+                .map(|absolute| align_notes_grid(absolute, range.start().unwrap_or((0, 0))))
+                .unwrap_or_default();
+            let notes_found = grid_has_any_note(&sheet_notes);
+            if !notes_found {
+                any_sheet_without_notes = true;
+            }
+
+            let imported_rows =
+                import::parse_rows_with_layout(&rows, &layout, &mappings, &sheet_notes)?;
             if imported_rows.is_empty() {
                 continue;
             }
 
             let options = import::ImportRowsOptions {
-                descriptions_trusted: false,
+                descriptions_trusted: notes_found,
             };
-            let checksum = import::compute_import_checksum(&imported_rows, false);
+            let checksum = import::compute_import_checksum(&imported_rows, notes_found);
             if import::check_duplicate_import(&pool, sheet_name, &checksum).await? {
                 continue;
             }
@@ -437,16 +776,24 @@ pub async fn import_local_xlsx(
         }
     }
 
-    // Sem notas de célula o classificador de 5 tipos não roda — quem
-    // importa só por .xlsx veria Cartão/Economia dobrados em Saída sem saber por quê. O aviso
-    // torna a degradação explícita; a classificação do último import ao vivo é preservada
-    // (gate de confiança no `import_rows_core`).
+    // Aviso de degradação CONDICIONAL (plano 068): só aparece quando alguma aba importada de
+    // fato ficou sem notas de célula legíveis — sem elas o classificador de 5 tipos não roda
+    // nessa aba (Cartão/Economia/Patrimônio caem em Saída sem itemização). Um import onde toda
+    // aba trouxe notas não carrega aviso nenhum; a classificação de imports anteriores é
+    // preservada (gate de confiança no `import_rows_core`) mesmo quando o aviso aparece.
+    let warning = if any_sheet_without_notes {
+        " Aviso: uma ou mais abas não carregaram notas de célula — a classificação por seção \
+         (Cartão/Economia/Patrimônio) dessas abas exige o import ao vivo do Google Sheets ou um \
+         .xlsx com anotações legíveis; itens já classificados foram preservados."
+    } else {
+        ""
+    };
+
     Ok(format!(
-        "Imported {} total rows from: {}. Aviso: arquivos .xlsx não carregam notas de célula — a \
-         classificação por seção (Cartão/Economia/Patrimônio) exige o import ao vivo do Google \
-         Sheets; itens já classificados foram preservados.",
+        "Imported {} total rows from: {}.{}",
         total,
-        sheets_imported.join(", ")
+        sheets_imported.join(", "),
+        warning
     ))
 }
 
@@ -605,6 +952,441 @@ async fn last_sync_at_query(pool: &SqlitePool) -> Result<Option<String>, String>
     .fetch_one(pool)
     .await
     .map_err(|e| format!("last_sync_at: {e}"))
+}
+
+#[cfg(test)]
+mod xlsx_comment_notes_tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+    use std::io::Write;
+    use zip::write::SimpleFileOptions;
+
+    // Fixture .xlsx: aba "2026", 2 blocos mensais (JANEIRO/FEVEREIRO, block_size 6) — o mínimo
+    // que `find_month_names_row` aceita (exige ≥2 nomes de mês na linha) — dia 1 com uma Saída de
+    // R$150,00 em C3. Mesma geometria de `real_geometry_rows` (google_sheets::import), reduzida.
+
+    const CONTENT_TYPES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/comments1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"/>
+</Types>"#;
+
+    const ROOT_RELS_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>"#;
+
+    const WORKBOOK_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="2026" sheetId="1" r:id="rId1"/>
+  </sheets>
+</workbook>"#;
+
+    const WORKBOOK_RELS_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>"#;
+
+    const SHEET1_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="A1" t="inlineStr"><is><t>JANEIRO</t></is></c>
+      <c r="G1" t="inlineStr"><is><t>FEVEREIRO</t></is></c>
+    </row>
+    <row r="2">
+      <c r="A2" t="inlineStr"><is><t>Data</t></is></c>
+      <c r="B2" t="inlineStr"><is><t>Entrada</t></is></c>
+      <c r="C2" t="inlineStr"><is><t>Saída</t></is></c>
+      <c r="D2" t="inlineStr"><is><t>Diário</t></is></c>
+      <c r="E2" t="inlineStr"><is><t>Saldo</t></is></c>
+      <c r="G2" t="inlineStr"><is><t>Data</t></is></c>
+      <c r="H2" t="inlineStr"><is><t>Entrada</t></is></c>
+      <c r="I2" t="inlineStr"><is><t>Saída</t></is></c>
+      <c r="J2" t="inlineStr"><is><t>Diário</t></is></c>
+      <c r="K2" t="inlineStr"><is><t>Saldo</t></is></c>
+    </row>
+    <row r="3">
+      <c r="A3"><v>1</v></c>
+      <c r="C3"><v>150</v></c>
+    </row>
+  </sheetData>
+</worksheet>"#;
+
+    const SHEET1_RELS_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="../comments1.xml"/>
+</Relationships>"#;
+
+    // Malformada de propósito: `<t>` fechado por `</text>` (mismatch) — `check_end_names` (default
+    // do quick-xml) deve rejeitar isto com erro, exercitando o fallback do Step 4.
+    const MALFORMED_COMMENTS_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <commentList>
+    <comment ref="C3"><text><r><t>oops</text></r></comment>
+  </commentList>
+</comments>"#;
+
+    fn comments_xml_with_note(note: &str) -> String {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <authors><author></author></authors>
+  <commentList>
+    <comment ref="C3" authorId="0"><text><r><t xml:space="preserve">{note}</t></r></text></comment>
+  </commentList>
+</comments>"#
+        )
+    }
+
+    enum FixtureComments<'a> {
+        /// Aba sem NENHUMA relação de comments (regressão: import sem notas, como hoje).
+        None,
+        /// Nota válida na célula C3 (a Saída de R$150,00 do dia 1/JANEIRO).
+        Notes(&'a str),
+        /// `xl/comments1.xml` deliberadamente malformado (Step 4: fallback sem falhar o import).
+        Malformed,
+    }
+
+    fn build_fixture_xlsx(comments: FixtureComments<'_>) -> Vec<u8> {
+        let mut buf = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let opts =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+            zip.start_file("[Content_Types].xml", opts).unwrap();
+            zip.write_all(CONTENT_TYPES_XML.as_bytes()).unwrap();
+
+            zip.start_file("_rels/.rels", opts).unwrap();
+            zip.write_all(ROOT_RELS_XML.as_bytes()).unwrap();
+
+            zip.start_file("xl/workbook.xml", opts).unwrap();
+            zip.write_all(WORKBOOK_XML.as_bytes()).unwrap();
+
+            zip.start_file("xl/_rels/workbook.xml.rels", opts).unwrap();
+            zip.write_all(WORKBOOK_RELS_XML.as_bytes()).unwrap();
+
+            zip.start_file("xl/worksheets/sheet1.xml", opts).unwrap();
+            zip.write_all(SHEET1_XML.as_bytes()).unwrap();
+
+            if !matches!(comments, FixtureComments::None) {
+                zip.start_file("xl/worksheets/_rels/sheet1.xml.rels", opts)
+                    .unwrap();
+                zip.write_all(SHEET1_RELS_XML.as_bytes()).unwrap();
+
+                zip.start_file("xl/comments1.xml", opts).unwrap();
+                let comments_xml = match comments {
+                    FixtureComments::Notes(note) => comments_xml_with_note(note),
+                    FixtureComments::Malformed => MALFORMED_COMMENTS_XML.to_string(),
+                    FixtureComments::None => unreachable!(),
+                };
+                zip.write_all(comments_xml.as_bytes()).unwrap();
+            }
+
+            zip.finish().unwrap();
+        }
+        buf
+    }
+
+    fn write_fixture_to_temp(comments: FixtureComments<'_>) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!("neko-notes-{}.xlsx", uuid::Uuid::new_v4()));
+        std::fs::write(&path, build_fixture_xlsx(comments)).unwrap();
+        path
+    }
+
+    async fn test_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        pool
+    }
+
+    async fn count_line_items(pool: &SqlitePool, txn_id: &str) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM line_item WHERE transaction_id = ?1")
+            .bind(txn_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn count_transactions(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM \"transaction\"")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// Reproduz o que `import_local_xlsx` faz por aba, sem o `tauri::State` (que o teste não
+    /// consegue construir): `read_xlsx_comments` → calamine `worksheet_range` → `align_notes_grid`
+    /// → detecção de layout → `parse_rows_with_layout`. Mesma sequência, pool-level.
+    fn parse_fixture_rows(path: &Path) -> (Vec<import::ImportedRow>, bool) {
+        use calamine::{Reader, Xlsx, open_workbook};
+
+        let comments_by_sheet = read_xlsx_comments(path).unwrap_or_default();
+        let mut workbook: Xlsx<_> = open_workbook(path).unwrap();
+        let range = workbook.worksheet_range("2026").unwrap();
+        let rows: Vec<Vec<String>> = range
+            .rows()
+            .map(|row| row.iter().map(xlsx_cell_to_string).collect())
+            .collect();
+
+        let layout = layout_detect::detect_layout(&rows, "2026").unwrap();
+        let mappings: Vec<(String, i32)> = layout_detect::generate_mappings(&layout)
+            .into_iter()
+            .filter(|m| m.is_active != 0)
+            .map(|m| (m.target_field, m.block_offset))
+            .collect();
+
+        let sheet_notes: Vec<Vec<String>> = comments_by_sheet
+            .get("2026")
+            .map(|absolute| align_notes_grid(absolute, range.start().unwrap_or((0, 0))))
+            .unwrap_or_default();
+        let notes_found = grid_has_any_note(&sheet_notes);
+
+        (
+            import::parse_rows_with_layout(&rows, &layout, &mappings, &sheet_notes).unwrap(),
+            notes_found,
+        )
+    }
+
+    // --- decode_a1_ref: coluna multi-letra (a planilha real passa de Z) ---
+
+    #[test]
+    fn decode_a1_ref_single_and_multi_letter_columns() {
+        assert_eq!(decode_a1_ref("A1"), Some((0, 0)));
+        assert_eq!(decode_a1_ref("C3"), Some((2, 2)));
+        assert_eq!(decode_a1_ref("Z1"), Some((0, 25)));
+        assert_eq!(decode_a1_ref("AA1"), Some((0, 26)));
+        assert_eq!(decode_a1_ref("AZ16"), Some((15, 51)));
+        assert_eq!(decode_a1_ref("BL32"), Some((31, 63)));
+        assert_eq!(decode_a1_ref("BP32"), Some((31, 67)));
+    }
+
+    #[test]
+    fn decode_a1_ref_rejects_malformed_refs() {
+        assert_eq!(decode_a1_ref(""), None);
+        assert_eq!(decode_a1_ref("1A"), None);
+        assert_eq!(decode_a1_ref("A0"), None);
+        assert_eq!(decode_a1_ref("A"), None);
+        assert_eq!(decode_a1_ref("3"), None);
+    }
+
+    // --- parse_comment_notes: entidades (quick-xml 0.41 separa `&nome;` do texto ao redor) ---
+
+    #[test]
+    fn parse_comment_notes_resolves_named_and_numeric_entities() {
+        let xml = r#"<?xml version="1.0"?>
+<comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <commentList>
+    <comment ref="A1"><text><r><t>Mercado &amp; Cia&#10;Total</t></r></text></comment>
+  </commentList>
+</comments>"#;
+        let notes = parse_comment_notes(xml).unwrap();
+        assert_eq!(
+            notes,
+            vec![("A1".to_string(), "Mercado & Cia\nTotal".to_string())]
+        );
+    }
+
+    #[test]
+    fn parse_comment_notes_empty_comment_without_text_element() {
+        let xml = r#"<?xml version="1.0"?>
+<comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <commentList>
+    <comment ref="B2"/>
+  </commentList>
+</comments>"#;
+        let notes = parse_comment_notes(xml).unwrap();
+        assert_eq!(notes, vec![("B2".to_string(), String::new())]);
+    }
+
+    // --- align_notes_grid / grid_has_any_note ---
+
+    #[test]
+    fn align_notes_grid_shifts_origin_and_drops_cells_outside_range() {
+        let absolute = vec![
+            vec!["".to_string(), "".to_string(), "".to_string()],
+            vec!["".to_string(), "".to_string(), "".to_string()],
+            vec!["".to_string(), "".to_string(), "nota".to_string()],
+        ];
+        // range começa em (1,1) — a nota em (2,2) absoluto deve virar (1,1) alinhado.
+        let aligned = align_notes_grid(&absolute, (1, 1));
+        assert_eq!(aligned.len(), 2);
+        assert_eq!(aligned[1][1], "nota");
+    }
+
+    #[test]
+    fn grid_has_any_note_detects_non_empty_and_empty() {
+        assert!(!grid_has_any_note(&[]));
+        assert!(!grid_has_any_note(&[vec![
+            "".to_string(),
+            "  ".to_string()
+        ]]));
+        assert!(grid_has_any_note(&[vec!["".to_string(), "x".to_string()]]));
+    }
+
+    // --- read_xlsx_comments: fixture .xlsx real (zip) com UMA nota conhecida ---
+
+    #[test]
+    fn read_xlsx_comments_finds_known_note_at_right_cell() {
+        let path = write_fixture_to_temp(FixtureComments::Notes(
+            "R$ 100,00 - Parte A\nR$ 50,00 - Parte B",
+        ));
+
+        let result = read_xlsx_comments(&path);
+        std::fs::remove_file(&path).unwrap();
+
+        let by_sheet = result.unwrap();
+        let grid = by_sheet.get("2026").expect("aba 2026 sem notas");
+        // C3 → (row0=2, col0=2) — igual à indexação usada por `cell_raw_note`.
+        assert_eq!(grid[2][2], "R$ 100,00 - Parte A\nR$ 50,00 - Parte B");
+    }
+
+    #[test]
+    fn read_xlsx_comments_sheet_without_rels_has_no_entry() {
+        let path = write_fixture_to_temp(FixtureComments::None);
+
+        let result = read_xlsx_comments(&path);
+        std::fs::remove_file(&path).unwrap();
+
+        let by_sheet = result.unwrap();
+        assert!(!by_sheet.contains_key("2026"));
+    }
+
+    #[test]
+    fn read_xlsx_comments_errors_on_malformed_comments_xml() {
+        let path = write_fixture_to_temp(FixtureComments::Malformed);
+
+        let result = read_xlsx_comments(&path);
+        std::fs::remove_file(&path).unwrap();
+
+        assert!(
+            result.is_err(),
+            "XML malformado deveria propagar erro (caller degrada p/ sem notas)"
+        );
+    }
+
+    // --- pipeline completo (pool-level, mirror de line_items_stored_when_note_sums_match_total) ---
+
+    #[tokio::test]
+    async fn xlsx_with_notes_recovers_description_and_line_items() {
+        let path = write_fixture_to_temp(FixtureComments::Notes(
+            "R$ 100,00 - Parte A\nR$ 50,00 - Parte B",
+        ));
+        let (rows, notes_found) = parse_fixture_rows(&path);
+        std::fs::remove_file(&path).unwrap();
+
+        assert!(notes_found, "fixture COM notas deveria marcar notes_found");
+        let saida = rows
+            .iter()
+            .find(|r| r.kind == import::RowKind::Saida)
+            .expect("linha de Saída não encontrada");
+        assert_eq!(saida.date, "2026-01-01");
+        assert_eq!(saida.amount, -15_000);
+        // Descrição real da nota — NÃO o fallback genérico "Saída {data}".
+        assert_eq!(
+            saida.description,
+            "R$ 100,00 - Parte A · R$ 50,00 - Parte B"
+        );
+        assert_eq!(saida.raw_note, "R$ 100,00 - Parte A\nR$ 50,00 - Parte B");
+
+        let pool = test_pool().await;
+        let options = import::ImportRowsOptions {
+            descriptions_trusted: notes_found,
+        };
+        let count = import::import_rows_with_options(&pool, "2026", &rows, "p1", options)
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+
+        let txn_id = import::row_id("2026", "2026-01-01", import::RowKind::Saida, 0);
+        assert_eq!(
+            count_line_items(&pool, &txn_id).await,
+            2,
+            "os 2 itens da nota devem virar line_item"
+        );
+    }
+
+    #[tokio::test]
+    async fn xlsx_without_notes_imports_generic_description_and_no_items() {
+        let path = write_fixture_to_temp(FixtureComments::None);
+        let (rows, notes_found) = parse_fixture_rows(&path);
+        std::fs::remove_file(&path).unwrap();
+
+        assert!(
+            !notes_found,
+            "fixture SEM notas não deveria marcar notes_found"
+        );
+        let saida = rows
+            .iter()
+            .find(|r| r.kind == import::RowKind::Saida)
+            .expect("linha de Saída não encontrada");
+        // Regressão: sem notas, a descrição cai no fallback estrutural de sempre (comportamento
+        // idêntico ao pré-plano-068).
+        assert_eq!(saida.description, "Saída 2026-01-01");
+        assert_eq!(saida.raw_note, "");
+
+        let pool = test_pool().await;
+        let options = import::ImportRowsOptions {
+            descriptions_trusted: notes_found,
+        };
+        import::import_rows_with_options(&pool, "2026", &rows, "p1", options)
+            .await
+            .unwrap();
+
+        let txn_id = import::row_id("2026", "2026-01-01", import::RowKind::Saida, 0);
+        assert_eq!(
+            count_line_items(&pool, &txn_id).await,
+            0,
+            "sem notas, nenhum line_item deve ser criado"
+        );
+    }
+
+    #[tokio::test]
+    async fn xlsx_with_notes_reimport_is_idempotent() {
+        let path = write_fixture_to_temp(FixtureComments::Notes(
+            "R$ 100,00 - Parte A\nR$ 50,00 - Parte B",
+        ));
+        let (rows, notes_found) = parse_fixture_rows(&path);
+        std::fs::remove_file(&path).unwrap();
+
+        let pool = test_pool().await;
+        let options = import::ImportRowsOptions {
+            descriptions_trusted: notes_found,
+        };
+        let checksum_a = import::compute_import_checksum(&rows, notes_found);
+        let checksum_b = import::compute_import_checksum(&rows, notes_found);
+        assert_eq!(checksum_a, checksum_b, "mesmo dataset → mesmo checksum");
+
+        let first = import::import_rows_with_options(&pool, "2026", &rows, "p1", options)
+            .await
+            .unwrap();
+        let second = import::import_rows_with_options(&pool, "2026", &rows, "p1", options)
+            .await
+            .unwrap();
+        assert_eq!(first, 1, "primeira importação grava a transação");
+        assert_eq!(second, 0, "reimport idêntico é no-op (checksum igual)");
+
+        assert_eq!(
+            count_transactions(&pool).await,
+            1,
+            "sem duplicar linha no reimport"
+        );
+        let txn_id = import::row_id("2026", "2026-01-01", import::RowKind::Saida, 0);
+        assert_eq!(
+            count_line_items(&pool, &txn_id).await,
+            2,
+            "itens da nota seguem 2 (sem duplicar)"
+        );
+    }
 }
 
 #[cfg(test)]
