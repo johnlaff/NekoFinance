@@ -308,9 +308,16 @@ pub(crate) fn validate_local_xlsx_path(file_path: &str) -> Result<std::path::Pat
 // `SheetsClient::get_sheet_notes` devolve no caminho da API, para que `parse_rows_with_layout` /
 // `cell_raw_note` / `parse_itemized_note` (que já sabem processar notas) recebam dado real.
 
+/// Limites REAIS da grade do Excel (`XFD1048576`): 1.048.576 linhas × 16.384 colunas. Uma `ref`
+/// além disso é impossível numa planilha válida — só aparece por corrupção/edição manual/arquivo
+/// forjado, e NÃO pode ser propagada para `grid.resize(row+1, ..)` (ver `decode_a1_ref`).
+const XLSX_MAX_ROWS: u32 = 1_048_576;
+const XLSX_MAX_COLS: u32 = 16_384;
+
 /// Decodifica uma referência A1 (`"A1"`, `"AZ16"`, `"BL32"`) em (linha, coluna) 0-based. Suporta
 /// colunas MULTI-LETRA (a planilha real passa de Z — os blocos mensais vão até ~coluna BO).
-/// `None` para referências malformadas (sem letras, sem dígitos, ou linha/coluna < 1).
+/// `None` para referências malformadas (sem letras, sem dígitos, linha/coluna < 1) OU fora dos
+/// limites da grade do Excel (`XFD1048576`).
 fn decode_a1_ref(a1: &str) -> Option<(u32, u32)> {
     let split_at = a1.find(|c: char| c.is_ascii_digit())?;
     let (letters, digits) = a1.split_at(split_at);
@@ -325,6 +332,14 @@ fn decode_a1_ref(a1: &str) -> Option<(u32, u32)> {
     let col0 = u32::try_from(col.checked_sub(1)?).ok()?;
     let row1: u32 = digits.parse().ok()?;
     let row0 = row1.checked_sub(1)?;
+    // Rejeita `ref` fora da grade real (ex.: `A4294967295`, bem-formada mas absurda). Sem isto, o
+    // `grid.resize(row+1, ..)` em `read_xlsx_comments` pediria dezenas/centenas de GB e o
+    // allocator ABORTA o processo — um abort não é `Err` capturável, então o `.unwrap_or_else`
+    // do chamador nunca degradaria. Aqui a `ref` inválida cai no mesmo caminho já testado de
+    // "pula esta nota".
+    if row0 >= XLSX_MAX_ROWS || col0 >= XLSX_MAX_COLS {
+        return None;
+    }
     Some((row0, col0))
 }
 
@@ -403,6 +418,11 @@ fn parse_comment_notes(xml: &str) -> Result<Vec<(String, String)>, String> {
                     &t.xml10_content()
                         .map_err(|e| format!("texto da nota: {e}"))?,
                 );
+            }
+            // `<t><![CDATA[..]]></t>` — conteúdo literal (sem escapes). Raro em notas, mas um
+            // exportador pode usá-lo; sem este ramo o texto seria SILENCIOSAMENTE descartado.
+            Event::CData(c) if t_depth > 0 => {
+                acc.push_str(&c.decode().map_err(|e| format!("CDATA da nota: {e}"))?);
             }
             Event::GeneralRef(r) if t_depth > 0 => {
                 acc.push_str(&resolve_general_ref(&r)?);
@@ -489,24 +509,44 @@ fn resolve_relative_target(base_dir: &str, target: &str) -> String {
     segments.join("/")
 }
 
-/// Lê UMA entrada do zip como string UTF-8; `Ok(None)` quando a entrada não existe (relação
-/// OPCIONAL — ex.: aba sem nenhum comentário não tem `.rels` de comments) — NUNCA um erro.
+/// Normaliza um caminho de parte OPC para lookup no zip: `\` → `/` e caixa baixa. O OOXML admite
+/// `\` como separador e trata nomes de parte como case-insensitive; sem normalizar, um `.xlsx`
+/// spec-legal com caixa mista/backslash leria valores (calamine normaliza internamente) mas
+/// perderia TODAS as notas silenciosamente. Espelha o cache de caminhos do calamine.
+fn normalize_zip_path(name: &str) -> String {
+    name.replace('\\', "/").to_ascii_lowercase()
+}
+
+/// Índice caminho-normalizado → nome REAL da entrada, construído uma vez a partir de
+/// `zip.file_names()`. Resolve o mismatch de caixa/separador entre os caminhos que MONTAMOS
+/// (`xl/comments1.xml`, `xl/worksheets/_rels/sheet1.xml.rels`) e como o arquivo de fato os
+/// armazenou.
+fn build_zip_name_index(zip: &zip::ZipArchive<std::fs::File>) -> HashMap<String, String> {
+    zip.file_names()
+        .map(|n| (normalize_zip_path(n), n.to_string()))
+        .collect()
+}
+
+/// Lê UMA entrada do zip como string UTF-8 via o índice normalizado; `Ok(None)` quando a entrada
+/// não existe (relação OPCIONAL — ex.: aba sem nenhum comentário não tem `.rels` de comments) —
+/// NUNCA um erro.
 fn zip_entry_to_string(
     zip: &mut zip::ZipArchive<std::fs::File>,
+    name_index: &HashMap<String, String>,
     name: &str,
 ) -> Result<Option<String>, String> {
     use std::io::Read;
-    match zip.by_name(name) {
-        Ok(mut entry) => {
-            let mut buf = String::new();
-            entry
-                .read_to_string(&mut buf)
-                .map_err(|e| format!("ler {name}: {e}"))?;
-            Ok(Some(buf))
-        }
-        Err(zip::result::ZipError::FileNotFound) => Ok(None),
-        Err(e) => Err(format!("entrada do zip {name}: {e}")),
-    }
+    let Some(actual) = name_index.get(&normalize_zip_path(name)) else {
+        return Ok(None);
+    };
+    let mut entry = zip
+        .by_name(actual)
+        .map_err(|e| format!("entrada do zip {name}: {e}"))?;
+    let mut buf = String::new();
+    entry
+        .read_to_string(&mut buf)
+        .map_err(|e| format!("ler {name}: {e}"))?;
+    Ok(Some(buf))
 }
 
 /// Notas de célula do `.xlsx` por aba — chave = nome EXATO da aba (igual a
@@ -525,12 +565,15 @@ fn zip_entry_to_string(
 fn read_xlsx_comments(path: &Path) -> Result<HashMap<String, Vec<Vec<String>>>, String> {
     let file = std::fs::File::open(path).map_err(|e| format!("abrir .xlsx como zip: {e}"))?;
     let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("abrir .xlsx como zip: {e}"))?;
+    // Índice montado UMA vez (empresta o zip imutavelmente); depois disto todo lookup é por nome
+    // real, tolerante a caixa/backslash.
+    let name_index = build_zip_name_index(&zip);
 
-    let workbook_xml = zip_entry_to_string(&mut zip, "xl/workbook.xml")?
+    let workbook_xml = zip_entry_to_string(&mut zip, &name_index, "xl/workbook.xml")?
         .ok_or_else(|| "xl/workbook.xml ausente".to_string())?;
     let sheets = parse_workbook_sheet_rids(&workbook_xml)?;
 
-    let rels_xml = zip_entry_to_string(&mut zip, "xl/_rels/workbook.xml.rels")?
+    let rels_xml = zip_entry_to_string(&mut zip, &name_index, "xl/_rels/workbook.xml.rels")?
         .ok_or_else(|| "xl/_rels/workbook.xml.rels ausente".to_string())?;
     let workbook_rels = parse_relationships(&rels_xml)?;
     let rid_to_target: HashMap<&str, &str> = workbook_rels
@@ -554,7 +597,8 @@ fn read_xlsx_comments(path: &Path) -> Result<HashMap<String, Vec<Vec<String>>>, 
             format!("{sheet_dir}/_rels/{sheet_file}.rels")
         };
 
-        let Some(sheet_rels_xml) = zip_entry_to_string(&mut zip, &sheet_rels_path)? else {
+        let Some(sheet_rels_xml) = zip_entry_to_string(&mut zip, &name_index, &sheet_rels_path)?
+        else {
             continue; // aba sem .rels próprio → sem comentários (grade ausente = vazia)
         };
         let sheet_rels = parse_relationships(&sheet_rels_xml)?;
@@ -565,7 +609,7 @@ fn read_xlsx_comments(path: &Path) -> Result<HashMap<String, Vec<Vec<String>>>, 
             continue; // aba tem .rels mas nenhuma relação de comments (sem notas)
         };
         let comments_path = resolve_relative_target(sheet_dir, comments_target);
-        let Some(comments_xml) = zip_entry_to_string(&mut zip, &comments_path)? else {
+        let Some(comments_xml) = zip_entry_to_string(&mut zip, &name_index, &comments_path)? else {
             continue;
         };
 
@@ -1031,13 +1075,18 @@ mod xlsx_comment_notes_tests {
   </commentList>
 </comments>"#;
 
-    fn comments_xml_with_note(note: &str) -> String {
+    /// Nome real da entrada do zip para `xl/comments1.xml` no caso padrão. A `SHEET1_RELS_XML`
+    /// aponta o Target lowercase (`../comments1.xml`), então um nome de entrada em caixa diferente
+    /// exercita a normalização de caminho (`normalize_zip_path`).
+    const DEFAULT_COMMENTS_PART: &str = "xl/comments1.xml";
+
+    fn comments_xml_with_ref(cell: &str, note: &str) -> String {
         format!(
             r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <authors><author></author></authors>
   <commentList>
-    <comment ref="C3" authorId="0"><text><r><t xml:space="preserve">{note}</t></r></text></comment>
+    <comment ref="{cell}" authorId="0"><text><r><t xml:space="preserve">{note}</t></r></text></comment>
   </commentList>
 </comments>"#
         )
@@ -1048,11 +1097,15 @@ mod xlsx_comment_notes_tests {
         None,
         /// Nota válida na célula C3 (a Saída de R$150,00 do dia 1/JANEIRO).
         Notes(&'a str),
+        /// Nota numa célula ARBITRÁRIA (para `ref` fora dos limites da grade, etc.).
+        NoteAtRef { cell: &'a str, note: &'a str },
         /// `xl/comments1.xml` deliberadamente malformado (Step 4: fallback sem falhar o import).
         Malformed,
     }
 
-    fn build_fixture_xlsx(comments: FixtureComments<'_>) -> Vec<u8> {
+    /// `comments_part` = nome REAL da entrada do zip para o arquivo de comentários (normalmente
+    /// `DEFAULT_COMMENTS_PART`; um nome em caixa diferente prova a normalização de caminho).
+    fn build_fixture_xlsx(comments: FixtureComments<'_>, comments_part: &str) -> Vec<u8> {
         let mut buf = Vec::new();
         {
             let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
@@ -1079,9 +1132,10 @@ mod xlsx_comment_notes_tests {
                     .unwrap();
                 zip.write_all(SHEET1_RELS_XML.as_bytes()).unwrap();
 
-                zip.start_file("xl/comments1.xml", opts).unwrap();
+                zip.start_file(comments_part, opts).unwrap();
                 let comments_xml = match comments {
-                    FixtureComments::Notes(note) => comments_xml_with_note(note),
+                    FixtureComments::Notes(note) => comments_xml_with_ref("C3", note),
+                    FixtureComments::NoteAtRef { cell, note } => comments_xml_with_ref(cell, note),
                     FixtureComments::Malformed => MALFORMED_COMMENTS_XML.to_string(),
                     FixtureComments::None => unreachable!(),
                 };
@@ -1094,8 +1148,15 @@ mod xlsx_comment_notes_tests {
     }
 
     fn write_fixture_to_temp(comments: FixtureComments<'_>) -> std::path::PathBuf {
+        write_fixture_to_temp_at(comments, DEFAULT_COMMENTS_PART)
+    }
+
+    fn write_fixture_to_temp_at(
+        comments: FixtureComments<'_>,
+        comments_part: &str,
+    ) -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!("neko-notes-{}.xlsx", uuid::Uuid::new_v4()));
-        std::fs::write(&path, build_fixture_xlsx(comments)).unwrap();
+        std::fs::write(&path, build_fixture_xlsx(comments, comments_part)).unwrap();
         path
     }
 
@@ -1179,6 +1240,23 @@ mod xlsx_comment_notes_tests {
         assert_eq!(decode_a1_ref("3"), None);
     }
 
+    // Bem-formada mas ABSURDA: além da grade real do Excel. Sem o bound, `grid.resize(row+1, ..)`
+    // pediria dezenas de GB e o allocator ABORTA o processo (não é `Err` capturável).
+    #[test]
+    fn decode_a1_ref_rejects_refs_outside_excel_grid() {
+        // Última célula válida da grade real (XFD1048576) → aceita.
+        assert_eq!(
+            decode_a1_ref("XFD1048576"),
+            Some((XLSX_MAX_ROWS - 1, XLSX_MAX_COLS - 1))
+        );
+        // Uma linha além do limite → None.
+        assert_eq!(decode_a1_ref("A1048577"), None);
+        // Uma coluna além do limite (XFE = 16.385) → None.
+        assert_eq!(decode_a1_ref("XFE1"), None);
+        // Linha bem-formada mas gigantesca (u32::MAX) → None (o cenário do crash).
+        assert_eq!(decode_a1_ref("A4294967295"), None);
+    }
+
     // --- parse_comment_notes: entidades (quick-xml 0.41 separa `&nome;` do texto ao redor) ---
 
     #[test]
@@ -1206,6 +1284,61 @@ mod xlsx_comment_notes_tests {
 </comments>"#;
         let notes = parse_comment_notes(xml).unwrap();
         assert_eq!(notes, vec![("B2".to_string(), String::new())]);
+    }
+
+    // CDATA dentro de `<t>` não pode ser descartado silenciosamente.
+    #[test]
+    fn parse_comment_notes_reads_cdata_text() {
+        let xml = r#"<?xml version="1.0"?>
+<comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <commentList>
+    <comment ref="A1"><text><r><t><![CDATA[R$ 10 & taxa]]></t></r></text></comment>
+  </commentList>
+</comments>"#;
+        let notes = parse_comment_notes(xml).unwrap();
+        assert_eq!(notes, vec![("A1".to_string(), "R$ 10 & taxa".to_string())]);
+    }
+
+    // --- INVARIANTE do plano: byte-identical com o caminho da API (`get_sheet_notes`) ---
+
+    // Uma nota canônica com quebra de linha, `&` (precisa virar `&amp;`) e não-ASCII.
+    const CANONICAL_NOTE: &str = "Café & Pão\nR$ 100,00 - Total";
+
+    // A MESMA nota, como um `.xlsx` a codifica em `xl/comments*.xml` (`&`→`&amp;`, `\n`→`&#10;`).
+    const CANONICAL_NOTE_XLSX_ENCODED: &str = "Café &amp; Pão&#10;R$ 100,00 - Total";
+
+    /// Extração no estilo do caminho da API do Sheets (`get_sheet_notes`, mod.rs:88-134): a nota é
+    /// o campo `c["note"]` puxado como string plana. Modelamos a MESMA forma de JSON e a lemos
+    /// EXATAMENTE como o caminho da API faz.
+    fn note_from_api_json(json: &serde_json::Value) -> String {
+        json["sheets"][0]["data"][0]["rowData"][0]["values"][0]["note"]
+            .as_str()
+            .unwrap_or("")
+            .to_string()
+    }
+
+    // O ponto TODO do plano 068: para a MESMA nota, a string do caminho `.xlsx` tem que ser
+    // byte-a-byte igual à do caminho da API — senão um reimport cruzado dispara `note_changed`
+    // (import.rs:561)/checksum espúrio. Este teste prova a igualdade diretamente.
+    #[test]
+    fn xlsx_note_string_is_byte_identical_to_get_sheet_notes() {
+        // (a) caminho da API: `c["note"]` chega já decodificado (JSON desescapa), verbatim.
+        let api_json = serde_json::json!({
+            "sheets": [{ "data": [{ "rowData": [
+                { "values": [ { "note": CANONICAL_NOTE } ] }
+            ]}]}]
+        });
+        let from_api = note_from_api_json(&api_json);
+        assert_eq!(from_api, CANONICAL_NOTE, "sanidade do modelo da API");
+
+        // (b) caminho .xlsx: a MESMA nota codificada em `xl/comments*.xml`, achatada pelo parser.
+        let comments_xml = comments_xml_with_ref("C3", CANONICAL_NOTE_XLSX_ENCODED);
+        let notes = parse_comment_notes(&comments_xml).unwrap();
+        let from_xlsx = &notes[0].1;
+        assert_eq!(*from_xlsx, CANONICAL_NOTE, "sanidade do modelo do .xlsx");
+
+        // A igualdade que importa: os dois caminhos produzem os MESMOS bytes.
+        assert_eq!(from_api, *from_xlsx);
     }
 
     // --- align_notes_grid / grid_has_any_note ---
@@ -1272,6 +1405,44 @@ mod xlsx_comment_notes_tests {
             result.is_err(),
             "XML malformado deveria propagar erro (caller degrada p/ sem notas)"
         );
+    }
+
+    // Ref bem-formada porém fora da grade do Excel: `read_xlsx_comments` NÃO pode alocar GB nem
+    // abortar — devolve Ok e simplesmente pula a nota (grade da aba sem nota).
+    #[test]
+    fn read_xlsx_comments_skips_out_of_grid_ref_without_crash() {
+        let path = write_fixture_to_temp(FixtureComments::NoteAtRef {
+            cell: "A4294967295",
+            note: "boom",
+        });
+
+        let result = read_xlsx_comments(&path);
+        std::fs::remove_file(&path).unwrap();
+
+        let by_sheet = result.unwrap();
+        let grid = by_sheet.get("2026").expect("aba 2026 deveria existir");
+        assert!(
+            !grid_has_any_note(grid),
+            "a nota fora da grade deve ser pulada, não alocada"
+        );
+    }
+
+    // OPC admite caixa mista no nome da parte: a entrada real do zip é `xl/Comments1.xml` mas o
+    // Target do rels é `../comments1.xml` (lowercase). A normalização de caminho tem que casar os
+    // dois — senão a nota some silenciosamente.
+    #[test]
+    fn read_xlsx_comments_resolves_mixed_case_part_name() {
+        let path = write_fixture_to_temp_at(
+            FixtureComments::Notes("R$ 100,00 - Parte A\nR$ 50,00 - Parte B"),
+            "xl/Comments1.xml",
+        );
+
+        let result = read_xlsx_comments(&path);
+        std::fs::remove_file(&path).unwrap();
+
+        let by_sheet = result.unwrap();
+        let grid = by_sheet.get("2026").expect("aba 2026 sem notas");
+        assert_eq!(grid[2][2], "R$ 100,00 - Parte A\nR$ 50,00 - Parte B");
     }
 
     // --- pipeline completo (pool-level, mirror de line_items_stored_when_note_sums_match_total) ---
@@ -1355,21 +1526,30 @@ mod xlsx_comment_notes_tests {
         let path = write_fixture_to_temp(FixtureComments::Notes(
             "R$ 100,00 - Parte A\nR$ 50,00 - Parte B",
         ));
-        let (rows, notes_found) = parse_fixture_rows(&path);
+        // DUAS leituras INDEPENDENTES do MESMO arquivo em disco: cada uma re-executa
+        // `read_xlsx_comments` → `align_notes_grid` → `parse_rows_with_layout`. Assim a igualdade
+        // de checksum de fato prova que o CAMINHO NOVO é determinístico (não é SHA sobre um único
+        // buffer em memória reusado).
+        let (rows_a, notes_a) = parse_fixture_rows(&path);
+        let (rows_b, notes_b) = parse_fixture_rows(&path);
         std::fs::remove_file(&path).unwrap();
 
         let pool = test_pool().await;
         let options = import::ImportRowsOptions {
-            descriptions_trusted: notes_found,
+            descriptions_trusted: notes_a,
         };
-        let checksum_a = import::compute_import_checksum(&rows, notes_found);
-        let checksum_b = import::compute_import_checksum(&rows, notes_found);
-        assert_eq!(checksum_a, checksum_b, "mesmo dataset → mesmo checksum");
+        let checksum_a = import::compute_import_checksum(&rows_a, notes_a);
+        let checksum_b = import::compute_import_checksum(&rows_b, notes_b);
+        assert_eq!(
+            checksum_a, checksum_b,
+            "duas leituras do disco → mesmo checksum (caminho novo é determinístico)"
+        );
 
-        let first = import::import_rows_with_options(&pool, "2026", &rows, "p1", options)
+        // Reimport = importar o resultado da SEGUNDA leitura de disco por cima da primeira.
+        let first = import::import_rows_with_options(&pool, "2026", &rows_a, "p1", options)
             .await
             .unwrap();
-        let second = import::import_rows_with_options(&pool, "2026", &rows, "p1", options)
+        let second = import::import_rows_with_options(&pool, "2026", &rows_b, "p1", options)
             .await
             .unwrap();
         assert_eq!(first, 1, "primeira importação grava a transação");
