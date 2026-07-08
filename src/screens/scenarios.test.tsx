@@ -59,6 +59,16 @@ describe("cenários 'e se' — helpers puros", () => {
     expect(stripScenarioMarker("Aluguel")).toBe("Aluguel");
   });
 
+  it("stripScenarioMarker preserva um '#loan:' literal no MEIO do texto (dado do usuário)", () => {
+    // Ancorado ao FIM, como o parser do backend: só o sufixo de sistema é removido.
+    expect(stripScenarioMarker("Pagamento #loan:xyz do consórcio")).toBe(
+      "Pagamento #loan:xyz do consórcio",
+    );
+    expect(stripScenarioMarker("Pagamento #loan:xyz do consórcio #loan:abc:250")).toBe(
+      "Pagamento #loan:xyz do consórcio",
+    );
+  });
+
   it("addMonthsISO soma meses preservando o dia (com saturação no fim do mês)", () => {
     expect(addMonthsISO("2026-06-15", 1)).toBe("2026-07-15");
     expect(addMonthsISO("2026-01-31", 1)).toBe("2026-02-28");
@@ -238,6 +248,72 @@ describe("HorizonteScreen — side-sheet 'Simular cenário'", () => {
       ),
     ).toBeInTheDocument();
   });
+
+  it("empréstimo com falha no meio: erro diz quantas parcelas entraram e a lista refetch mostra as órfãs", async () => {
+    let addCalls = 0;
+    let failed = false;
+    mockCommands({
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_scenarios_cmd: [{ id: "scn-1", name: "Cenário A", person_id: "p1" }],
+      get_scenario_forecast_cmd: baseCompare(),
+      list_obligations_cmd: [],
+      price_installment_cmd: 35000,
+      // Ordem sequencial: 1º call = principal (OK), 2º = parcela 1 (OK), 3º = parcela 2 REJEITA.
+      add_scenario_transaction_cmd: () => {
+        addCalls += 1;
+        if (addCalls === 3) {
+          failed = true;
+          return Promise.reject(new Error("database is locked"));
+        }
+        return `txn-${addCalls}`;
+      },
+      // Depois da falha, a lista reflete o grupo parcial persistido (principal + 1 parcela).
+      list_scenario_transactions_cmd: (): unknown[] =>
+        failed
+          ? [
+              {
+                id: "txn-1",
+                type: "income",
+                amount: 100000,
+                description: "Empréstimo #loan:g1:200",
+                date: "2026-07-08",
+              },
+              {
+                id: "txn-2",
+                type: "expense",
+                amount: 35000,
+                description: "Empréstimo parcela 1/3 #loan:g1:200",
+                date: "2026-08-08",
+              },
+            ]
+          : [],
+    });
+    render(<HorizonteScreen />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Simular cenário" }));
+    await user.click(await screen.findByRole("button", { name: "Cenário A" }));
+
+    const loanSection = screen.getByRole("region", {
+      name: "Dimensionar um empréstimo",
+    });
+    await user.type(within(loanSection).getByLabelText("Valor"), "1000,00");
+    const termInput = within(loanSection).getByLabelText("Nº parcelas");
+    await user.clear(termInput);
+    await user.type(termInput, "3");
+    await user.click(
+      await within(loanSection).findByRole("button", {
+        name: "Adicionar empréstimo ao cenário",
+      }),
+    );
+
+    // O erro nomeia exatamente o estado parcial: 1 de 3 parcelas criadas.
+    const alert = await within(loanSection).findByRole("alert");
+    expect(alert.textContent).toMatch(/1 de 3 parcelas criadas/);
+    // E o catch invalida: a lista refetch já mostra as linhas órfãs (com o marcador removido)
+    // para o usuário poder excluí-las antes de tentar de novo.
+    expect(await screen.findByText("Empréstimo parcela 1/3")).toBeInTheDocument();
+  });
 });
 
 describe("ScenarioCompare — superfície de comparação", () => {
@@ -332,5 +408,56 @@ describe("ScenarioCompare — superfície de comparação", () => {
     expect(
       await screen.findByText(/O menor saldo que sua projeção alcança/),
     ).toBeInTheDocument();
+  });
+
+  it("a região aria-live muda de texto a cada recomputo (não só na troca de cenário)", async () => {
+    const compare1 = baseCompare(); // saldo final delta = −R$ 1.500,00
+    const compare2 = baseCompare({
+      month_end: [
+        {
+          year: 2026,
+          month: 12,
+          real_balance_cents: 500_000,
+          scenario_balance_cents: 200_000,
+          delta_cents: -300_000, // recomputo após uma edição: delta diferente
+        },
+      ],
+    });
+    let forecastCalls = 0;
+    mockCommands({
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_scenarios_cmd: [{ id: "scn-1", name: "Cenário A", person_id: "p1" }],
+      get_scenario_forecast_cmd: () => {
+        forecastCalls += 1;
+        return forecastCalls === 1 ? compare1 : compare2;
+      },
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [],
+      add_scenario_transaction_cmd: "txn-novo",
+    });
+    render(<HorizonteScreen />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Simular cenário" }));
+    await user.click(await screen.findByRole("button", { name: "Cenário A" }));
+
+    const live = await screen.findByTestId("scn-live-region");
+    await waitFor(() => {
+      // \s cobre o espaço não separável que o formatador BRL usa após "R$".
+      expect(live.textContent).toMatch(/saldo final −R\$\s1\.500,00/);
+    });
+    const before = live.textContent;
+
+    // Uma edição qualquer (adicionar lançamento) invalida e refaz o compare → o texto anunciado
+    // TEM que mudar, senão o leitor de tela fica mudo (região live só fala em mutação de texto).
+    const addSection = screen.getByRole("region", { name: "Adicionar lançamento" });
+    await user.type(within(addSection).getByLabelText("Descrição"), "Streaming novo");
+    await user.type(within(addSection).getByLabelText("Valor/mês"), "50,00");
+    await user.click(within(addSection).getByRole("button", { name: "Adicionar" }));
+
+    await waitFor(() => {
+      expect(live.textContent).toMatch(/saldo final −R\$\s3\.000,00/);
+    });
+    expect(live.textContent).not.toBe(before);
   });
 });

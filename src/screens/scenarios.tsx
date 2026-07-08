@@ -34,7 +34,14 @@ import {
 } from "../lib/api";
 import { useCommand, invalidateCommands } from "../lib/useCommand";
 import { todayISO } from "../lib/format";
-import { fmtBRL, MES, MES_ABBR, TYPE_META, type MovementType } from "../lib/nkFormat";
+import {
+  fmtBRL,
+  fmtSigned,
+  MES,
+  MES_ABBR,
+  TYPE_META,
+  type MovementType,
+} from "../lib/nkFormat";
 import { kindToFields } from "../lib/movement";
 import { stripScenarioMarker, addMonthsISO } from "../lib/scenarioHelpers";
 import { Money } from "../design-system/components/Money";
@@ -204,8 +211,12 @@ function ScenarioPicker({
       invalidateCommands();
       setConfirmDeleteId(null);
       if (activeScenarioId === id) onSelectScenario(null);
-    } catch {
-      // Best-effort: o próximo refetch reflete o estado real.
+    } catch (err) {
+      // Refetch mesmo na falha (a lista volta a refletir o estado real) + erro visível —
+      // nunca um catch mudo que deixa o usuário sem saber que nada aconteceu.
+      invalidateCommands();
+      setConfirmDeleteId(null);
+      setError(scenarioErrorMessage(err));
     }
   }
 
@@ -408,13 +419,18 @@ function HypotheticalList({ scenarioId }: { scenarioId: string }) {
     listScenarioTransactions(scenarioId),
   );
   const rows = listQ.data ?? [];
+  const [error, setError] = useState<string | null>(null);
 
   async function remove(txnId: string) {
+    setError(null);
     try {
       await deleteScenarioTransaction(scenarioId, txnId);
       invalidateCommands();
-    } catch {
-      // Best-effort: o próximo refetch reflete o estado real.
+    } catch (err) {
+      // Refetch mesmo na falha (a lista volta a refletir o estado real) + erro visível —
+      // nunca um catch mudo que deixa o usuário sem saber que nada aconteceu.
+      invalidateCommands();
+      setError(scenarioErrorMessage(err));
     }
   }
 
@@ -424,6 +440,11 @@ function HypotheticalList({ scenarioId }: { scenarioId: string }) {
       <section>
         <p className="scn-section-title">Lançamentos hipotéticos</p>
         <p className="scn-empty">Nenhum lançamento hipotético ainda.</p>
+        {error && (
+          <p role="alert" className="scn-error">
+            {error}
+          </p>
+        )}
       </section>
     );
   }
@@ -431,6 +452,11 @@ function HypotheticalList({ scenarioId }: { scenarioId: string }) {
   return (
     <section>
       <p className="scn-section-title">Lançamentos hipotéticos</p>
+      {error && (
+        <p role="alert" className="scn-error">
+          {error}
+        </p>
+      )}
       <div className="scn-txn-list">
         {rows.map((r: ScenarioTransactionRow) => (
           <div className="scn-txn-row" key={r.id}>
@@ -610,13 +636,21 @@ function LoanSection({ scenarioId }: { scenarioId: string }) {
     if (!validInputs || busy) return;
     setBusy(true);
     setError(null);
+    const groupId =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const marker = ` #loan:${groupId}:${rateBps}`;
+    const disbursementDate = todayISO();
+    // As linhas do empréstimo são criadas em SEQUÊNCIA, parando na primeira falha (não em
+    // Promise.all): num lote paralelo, uma rejeição no meio deixaria as irmãs commitarem
+    // mesmo assim e o grupo ficaria pela metade sem controle de quantas entraram. Falha no
+    // meio ainda deixa um grupo parcial persistido — por isso o catch SEMPRE invalida (a
+    // lista de hipotéticos passa a mostrar as linhas órfãs, cada uma com o botão de excluir)
+    // e a mensagem diz exatamente quantas entraram.
+    let createdInstallments = 0;
+    let principalCreated = false;
     try {
-      const groupId =
-        typeof crypto !== "undefined" && "randomUUID" in crypto
-          ? crypto.randomUUID()
-          : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-      const marker = ` #loan:${groupId}:${rateBps}`;
-      const disbursementDate = todayISO();
       await addScenarioTransaction({
         scenarioId,
         txnType: "income",
@@ -624,32 +658,40 @@ function LoanSection({ scenarioId }: { scenarioId: string }) {
         description: `${description.trim() || "Empréstimo"}${marker}`,
         date: disbursementDate,
       });
-      // Cada parcela é uma linha independente (sem dependência entre si) — dispara todas em
-      // paralelo em vez de uma await por vez no loop.
-      await Promise.all(
-        Array.from({ length: term }, (_, i) =>
-          addScenarioTransaction({
-            scenarioId,
-            txnType: "expense",
-            amountCents: installmentCents,
-            description: `${description.trim() || "Empréstimo"} parcela ${i + 1}/${term}${marker}`,
-            date: addMonthsISO(firstDate, i),
-            isFixed: true,
-          }),
-        ),
-      );
+      principalCreated = true;
+      for (let i = 0; i < term; i++) {
+        // react-doctor-disable-next-line react-doctor/async-await-in-loop -- sequencial de propósito (ver banner acima): parar na 1ª falha e saber exatamente quantas parcelas entraram; Promise.all deixaria as irmãs commitarem após uma rejeição no meio (grupo parcial sem contagem)
+        await addScenarioTransaction({
+          scenarioId,
+          txnType: "expense",
+          amountCents: installmentCents,
+          description: `${description.trim() || "Empréstimo"} parcela ${i + 1}/${term}${marker}`,
+          date: addMonthsISO(firstDate, i),
+          isFixed: true,
+        });
+        createdInstallments += 1;
+      }
       invalidateCommands();
       setPrincipal("");
       setBusy(false);
     } catch (err) {
+      // Refetch SEMPRE: as linhas que já entraram precisam aparecer na lista de hipotéticos
+      // para o usuário poder excluí-las — sem isso o grupo parcial ficaria invisível e um
+      // retry criaria um SEGUNDO grupo sobreposto.
+      invalidateCommands();
       setBusy(false);
-      setError(scenarioErrorMessage(err));
+      const partial = principalCreated
+        ? ` O empréstimo ficou incompleto (${createdInstallments} de ${term} parcelas criadas) — exclua as linhas do empréstimo na lista acima e tente novamente.`
+        : "";
+      setError(`${scenarioErrorMessage(err)}${partial}`);
     }
   }
 
   return (
-    <section>
-      <p className="scn-section-title">Dimensionar um empréstimo</p>
+    <section aria-labelledby="scn-loan-title">
+      <p className="scn-section-title" id="scn-loan-title">
+        Dimensionar um empréstimo
+      </p>
       <div className="scn-field">
         <label htmlFor="scn-loan-desc">Descrição</label>
         <input
@@ -749,11 +791,9 @@ function deltaChip(deltaCents: number, sense: DeltaSense) {
       ? "scn-kpi__delta scn-kpi__delta--worse"
       : "scn-kpi__delta scn-kpi__delta--neutral";
   const arrow = deltaCents > 0 ? "▲" : deltaCents < 0 ? "▼" : "•";
-  const sign = deltaCents > 0 ? "+" : "";
   return (
     <span className={cls}>
-      {arrow} {sign}
-      {fmtBRL(deltaCents)}
+      {arrow} {fmtSigned(deltaCents)}
     </span>
   );
 }
@@ -813,12 +853,16 @@ export function ScenarioCompare({ compare }: { compare: ScenarioCompareDto }) {
 
   return (
     <section className="card" aria-label="Comparação real × cenário">
+      {/* Região live: só anuncia quando o TEXTO muda, então o anúncio precisa carregar um valor
+          que muda a cada recomputo (o delta do saldo final muda em qualquer edição — lançamento,
+          override, empréstimo), não apenas o nome do cenário selecionado. */}
       <div
         className="scn-compare-live"
         aria-live="polite"
         data-testid="scn-live-region"
       >
-        Comparação atualizada: {compare.scenario_name}
+        Comparação atualizada: {compare.scenario_name}, saldo final{" "}
+        {fmtSigned(endDeltaCents)} versus o real
       </div>
       <div className="card__head">
         <span className="card__title">
@@ -1101,6 +1145,14 @@ function DiffSparkline({ monthEnd }: { monthEnd: ScenarioCompareDto["month_end"]
   const worst = monthEnd[worstIdx];
   const gid = "scn-diff-grad";
 
+  // Alternativa textual do gráfico (mesmo padrão do ariaLabel do DualLineChart): sempre
+  // presente — inclusive quando o cenário é melhor em todos os meses e a nota visual de
+  // "Pior mês" não renderiza.
+  const ariaLabel =
+    worst && worst.delta_cents < 0
+      ? `Diferença mês a mês entre simulação e real. Pior mês: ${MES[worst.month - 1]} ${fmtBRL(worst.delta_cents)}.`
+      : "Diferença mês a mês entre simulação e real. A simulação fica igual ou melhor que o real em todos os meses.";
+
   return (
     <div>
       <p className="scn-section-title">Diferença mês a mês (simulação − real)</p>
@@ -1108,7 +1160,7 @@ function DiffSparkline({ monthEnd }: { monthEnd: ScenarioCompareDto["month_end"]
         className="scn-diffchart"
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-hidden="true"
+        aria-label={ariaLabel}
       >
         <defs>
           <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">

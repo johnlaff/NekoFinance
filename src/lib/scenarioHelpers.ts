@@ -3,10 +3,12 @@
  * `only-export-components`) e para ficarem testáveis isoladamente, no mesmo espírito de
  * `lib/nkFormat.ts`/`lib/movement.ts`. */
 
-/** Remove os sufixos de marca (`#loan:<...>`/`#repl:<...>`) do fim da descrição — a UI nunca
- * mostra o marcador cru (ver convenções em `src-tauri/src/scenarios.rs`). */
+/** Remove os sufixos de marca (`#loan:<...>`/`#repl:<...>`) do FIM da descrição — a UI nunca
+ * mostra o marcador cru (ver convenções em `src-tauri/src/scenarios.rs`). Ancorado ao fim,
+ * como o parser do backend (`parse_loan_marker`/`parse_repl_marker`): um "#loan:" literal
+ * digitado pelo usuário no MEIO do texto é dado dele e fica intacto. */
 export function stripScenarioMarker(description: string): string {
-  return description.replace(/\s*#(?:loan|repl):\S+/g, "").trim();
+  return description.replace(/(\s*#(?:loan|repl):\S+)+$/, "").trim();
 }
 
 /** Soma `n` meses a uma data ISO ("YYYY-MM-DD"), preservando o dia quando possível (satura no
