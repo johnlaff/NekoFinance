@@ -31,13 +31,11 @@
 }
 
 /* Com o sheet aberto, o conteúdo do Horizonte reflui para o espaço restante (side-by-side de
- * verdade: cards e gráfico nunca somem por baixo do painel). Em viewport estreita o sheet
- * cobre (92vw) e o reflow não faz sentido. */
+ * verdade: cards e gráfico nunca somem por baixo do painel). Reflow INSTANTÂNEO de propósito:
+ * animar margin é layout-thrash (ui:audit layout-transition) — o movimento fica por conta do
+ * slide-in do próprio sheet. Em viewport estreita o sheet cobre (92vw) e o reflow não se aplica. */
 .hz--sheet-open {
   margin-right: min(396px, 94vw);
-}
-:root:not([data-motion="off"]) .hz {
-  transition: margin-right var(--dur-fast, 0.18s) var(--ease-entrance, ease-out);
 }
 @media (max-width: 900px) {
   .hz--sheet-open {
