@@ -127,6 +127,11 @@
   --cat-teal: #5fc9c0;
   --cat-amber: #ddb061;
   --cat-coral: #e68a84;
+
+  /* Cenário "e se" (plano 072, fatia C) — linha tracejada de simulação no gráfico do Horizonte,
+     sempre distinta do jade real (`--primary`) por cor E traço, nunca só por cor. */
+  --sim-scenario: var(--cat-violet);
+  --sim-scenario-tint: color-mix(in srgb, var(--cat-violet) 16%, transparent);
 }
 
 /* ============================================================
@@ -207,4 +212,8 @@
   --cat-teal: #2e9488;
   --cat-amber: #b08433;
   --cat-coral: #c9605a;
+
+  /* Cenário "e se" (plano 072, fatia C). LIGHT. */
+  --sim-scenario: var(--cat-violet);
+  --sim-scenario-tint: color-mix(in srgb, var(--cat-violet) 16%, transparent);
 }

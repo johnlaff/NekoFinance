@@ -170,7 +170,7 @@ pub(crate) async fn recent_transactions(
                      WHERE s.transaction_id = t.id ORDER BY p.name COLLATE NOCASE)), '') AS owners, \
                 (t.source_amount IS NOT NULL) AS has_source, \
                 t.due_date, t.recurrence_id \
-         FROM \"transaction\" t ORDER BY t.date DESC LIMIT ?1",
+         FROM \"transaction\" t WHERE t.scenario_id IS NULL ORDER BY t.date DESC LIMIT ?1",
     )
     .bind(limit)
     .fetch_all(pool)
@@ -805,6 +805,7 @@ pub(crate) async fn upcoming_bills_inner(
                 due_date, is_projection \
          FROM \"transaction\" \
          WHERE due_date IS NOT NULL AND due_date >= ?1 AND due_date <= ?2 \
+               AND scenario_id IS NULL \
          ORDER BY due_date ASC LIMIT 100",
     )
     .bind(&today)
@@ -1698,6 +1699,50 @@ mod tests {
         assert_eq!(bills.len(), 1, "só a conta dentro da janela");
         assert_eq!(bills[0].id, "near");
         assert_eq!(bills[0].amount, 1000, "magnitude (ABS)");
+    }
+
+    // Plano 072 (fatia C): isolamento de cenário nas duas leituras do livro real. Uma linha
+    // hipotética (`scenario_id` setado) nunca deve aparecer em `recent_transactions` nem em
+    // `upcoming_bills_inner` — essas telas mostram só o livro-razão real; o cenário "e se" vive
+    // exclusivamente no side-sheet/compare do frontend.
+    #[tokio::test]
+    async fn scenario_rows_are_invisible_to_recent_transactions_and_upcoming_bills() {
+        let pool = test_pool().await;
+        sqlx::query("INSERT INTO person (id, name) VALUES ('p1', 'Eu')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO scenario (id, name, person_id) VALUES ('scn-1', 'Cenário teste', 'p1')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Linha real (sem scenario_id) + linha hipotética (com scenario_id), ambas com due_date
+        // dentro da janela de vencimentos.
+        insert_txn(&pool, "real-1", 1000).await;
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+                (id, type, amount, date, is_fixed, is_projection, due_date, scenario_id, created_at, updated_at) \
+             VALUES ('hypo-1', 'expense', 5000, '2026-03-15', 0, 0, '2026-03-20', 'scn-1', '2026-03-10T00:00:00Z', '2026-03-10T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let recent = recent_transactions(&pool, 50).await.unwrap();
+        assert!(
+            recent.iter().all(|r| r.id != "hypo-1"),
+            "linha hipotética vazou para recent_transactions"
+        );
+        assert!(recent.iter().any(|r| r.id == "real-1"), "linha real some");
+
+        let today = NaiveDate::from_ymd_opt(2026, 3, 10).unwrap();
+        let bills = upcoming_bills_inner(&pool, today, 30).await.unwrap();
+        assert!(
+            bills.iter().all(|b| b.id != "hypo-1"),
+            "linha hipotética vazou para upcoming_bills"
+        );
     }
 
     #[tokio::test]

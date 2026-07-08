@@ -1,0 +1,407 @@
+/* Cenários "e se" (plano 072, fatia C) — side-sheet + compare surface do Horizonte. */
+
+.scn-open-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* --- Side-sheet ---
+   `<dialog>` nativo: showModal() já dá foco preso + Escape-para-fechar + o ::backdrop abaixo —
+   nenhum scrim <div> nem role="dialog" manual. Reset das defaults do UA (margin/border/padding
+   /max-width centralizados) para virar o painel fixo do lado direito. */
+
+.scn-sheet {
+  position: fixed;
+  inset: 0 0 0 auto;
+  margin: 0;
+  border: none;
+  border-left: var(--bw-hair) solid var(--border);
+  padding: 0;
+  max-width: none;
+  max-height: none;
+  width: min(380px, 92vw);
+  height: 100%;
+  background: var(--surface);
+  box-shadow: var(--shadow-2, var(--shadow-1));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.scn-sheet::backdrop {
+  background: var(--bg-scrim);
+}
+:root:not([data-motion="off"]) .scn-sheet {
+  animation: scn-sheet-in var(--dur-fast, 0.18s) var(--ease-entrance, ease-out) both;
+}
+@keyframes scn-sheet-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.scn-sheet__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: var(--bw-hair) solid var(--border);
+  flex: none;
+}
+.scn-sheet__title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+.scn-sheet__close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  padding: 4px;
+  border-radius: var(--radius-xs);
+}
+.scn-sheet__close:hover {
+  color: var(--text);
+  background: var(--surface-2, var(--bg-subtle));
+}
+.scn-sheet__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 18px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.scn-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin: 0 0 8px;
+}
+
+.scn-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.scn-scenario-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: var(--bw-hair) solid var(--border);
+  background: var(--bg-subtle);
+}
+.scn-scenario-row--active {
+  border-color: var(--primary);
+  background: var(--primary-quiet);
+}
+.scn-scenario-row__btn {
+  flex: 1;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 4px 0;
+}
+.scn-scenario-row__delete {
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  display: inline-flex;
+  padding: 4px;
+  border-radius: var(--radius-xs);
+  flex: none;
+}
+.scn-scenario-row__delete:hover {
+  color: var(--danger-400);
+}
+
+.scn-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.scn-field input,
+.scn-field select {
+  height: var(--hit-min, 40px);
+  padding: 0 10px;
+  background: var(--bg-subtle);
+  border: var(--bw-hair) solid var(--border-input);
+  border-radius: var(--radius-xs);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
+.scn-row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.scn-row3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.scn-txn-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.scn-txn-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: var(--bw-hair) solid var(--border);
+  background: var(--bg-subtle);
+  font-size: 12.5px;
+}
+.scn-txn-row__desc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.scn-txn-row__del {
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  display: inline-flex;
+  flex: none;
+}
+.scn-txn-row__del:hover {
+  color: var(--danger-400);
+}
+
+.scn-error {
+  font-size: 12px;
+  color: var(--danger-400);
+  margin: 0;
+}
+.scn-hint {
+  font-size: 12px;
+  color: var(--text-faint);
+  margin: 0;
+}
+.scn-empty {
+  font-size: 12.5px;
+  color: var(--text-faint);
+  padding: 4px 0;
+}
+
+.scn-preview {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-subtle);
+  border: var(--bw-hair) dashed var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+
+.scn-loan-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  background: var(--bg-subtle);
+  border: var(--bw-hair) solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+.scn-loan-summary__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* --- Compare surface --- */
+
+.scn-compare-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.scn-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+}
+.scn-kpi {
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  border: var(--bw-hair) solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.scn-kpi__label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--text-faint);
+}
+.scn-kpi__transition {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--font-money);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.scn-kpi__arrow {
+  color: var(--text-faint);
+}
+.scn-kpi__scenario-val {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+.scn-kpi__delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  width: fit-content;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill, 999px);
+}
+.scn-kpi__delta--better {
+  color: var(--success-400);
+  background: var(--success-tint);
+}
+.scn-kpi__delta--worse {
+  color: var(--danger-400);
+  background: var(--danger-tint);
+}
+.scn-kpi__delta--neutral {
+  color: var(--text-muted);
+  background: var(--bg-subtle);
+}
+
+.scn-changes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.scn-change-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: var(--bw-hair) solid var(--border);
+  background: var(--bg-subtle);
+  font-size: 12.5px;
+  flex-wrap: wrap;
+}
+.scn-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill, 999px);
+  flex: none;
+}
+.scn-chip--add {
+  color: var(--success-400);
+  background: var(--success-tint);
+}
+.scn-chip--remove {
+  color: var(--danger-400);
+  background: var(--danger-tint);
+}
+.scn-chip--replace {
+  color: var(--sim-scenario);
+  background: var(--sim-scenario-tint);
+}
+.scn-change-row__desc {
+  flex: 1;
+  min-width: 140px;
+  color: var(--text);
+}
+.scn-change-row__amt {
+  font-family: var(--font-money);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  flex: none;
+}
+
+.scn-dualchart {
+  display: block;
+  width: 100%;
+}
+.scn-dualchart__real {
+  fill: none;
+  stroke: var(--primary);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.scn-dualchart__scenario {
+  fill: none;
+  stroke: var(--sim-scenario);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 6 5;
+}
+
+.scn-diffchart {
+  display: block;
+  width: 100%;
+}
+.scn-diffchart__line {
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-width: 1.5;
+}
+.scn-diffchart__zero {
+  stroke: var(--text-faint);
+  stroke-dasharray: 3 4;
+  stroke-width: 1;
+}
+.scn-diffchart__worst {
+  font-size: 11px;
+  font-weight: 700;
+  fill: var(--danger-400);
+}
+
+.scn-worst-note {
+  font-size: 12px;
+  color: var(--danger-400);
+  margin: 6px 0 0;
+}

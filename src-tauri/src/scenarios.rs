@@ -236,6 +236,36 @@ pub async fn delete_scenario_transaction(
     Ok(())
 }
 
+/// Uma linha hipotética crua do cenário, para a UI listar/apagar (fatia C). A descrição chega
+/// com os sufixos de marca (`#loan:`/`#repl:`) ainda anexados — a UI é quem os remove ao exibir
+/// (ver banner do módulo); mantê-los aqui preserva a identidade do grupo/par para quem precisar.
+#[derive(Debug, Serialize, sqlx::FromRow, Clone, PartialEq)]
+pub struct ScenarioTransactionRow {
+    pub id: String,
+    pub r#type: String,
+    pub amount: i64,
+    pub description: String,
+    pub date: String,
+}
+
+/// Lista as linhas hipotéticas (`transaction.scenario_id = ?`) de um cenário, mais recentes
+/// primeiro. Só leitura — não participa de nenhum cálculo, é a fonte da lista editável do
+/// side-sheet (a UI some sem isto: sem um id de volta, não dá pra oferecer apagar uma linha
+/// depois que a sessão perde o retorno de `add_scenario_transaction`).
+pub async fn list_scenario_transactions(
+    pool: &SqlitePool,
+    scenario_id: &str,
+) -> Result<Vec<ScenarioTransactionRow>, String> {
+    sqlx::query_as::<_, ScenarioTransactionRow>(
+        "SELECT id, type, amount, COALESCE(description,'') AS description, date \
+         FROM \"transaction\" WHERE scenario_id = ?1 ORDER BY date DESC, id DESC",
+    )
+    .bind(scenario_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("list_scenario_transactions: {e}"))
+}
+
 // --- CRUD: scenario_override ---
 
 #[derive(Debug, Serialize, sqlx::FromRow, Clone, PartialEq, Eq)]
@@ -1240,6 +1270,14 @@ pub async fn delete_scenario_transaction_cmd(
 }
 
 #[tauri::command]
+pub async fn list_scenario_transactions_cmd(
+    pool: State<'_, SqlitePool>,
+    scenario_id: String,
+) -> Result<Vec<ScenarioTransactionRow>, String> {
+    list_scenario_transactions(pool.inner(), &scenario_id).await
+}
+
+#[tauri::command]
 pub async fn set_scenario_override_cmd(
     pool: State<'_, SqlitePool>,
     scenario_id: String,
@@ -1488,6 +1526,45 @@ mod tests {
         )
         .await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn list_scenario_transactions_only_returns_own_scenario_rows() {
+        let p = pool().await;
+        let sc1 = create_scenario(&p, "Um").await.unwrap();
+        let sc2 = create_scenario(&p, "Dois").await.unwrap();
+        add_scenario_transaction(
+            &p,
+            &sc1.id,
+            "expense",
+            1000,
+            "Linha do cenário 1",
+            "2026-08-01",
+            None,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        add_scenario_transaction(
+            &p,
+            &sc2.id,
+            "expense",
+            2000,
+            "Linha do cenário 2",
+            "2026-08-01",
+            None,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let rows = list_scenario_transactions(&p, &sc1.id).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].description, "Linha do cenário 1");
     }
 
     #[tokio::test]

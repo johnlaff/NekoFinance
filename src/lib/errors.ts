@@ -18,7 +18,10 @@ export function safeErrorMessage(
   return fallback;
 }
 
-function errorText(error: unknown): string {
+/** Extrai a mensagem crua de um erro de comando Tauri. Exportado para telas que precisam
+ * mostrar um erro específico do backend verbatim (mensagens PT-BR já pensadas para o usuário,
+ * ex.: rejeições de validação do cenário "e se") em vez do fallback genérico. */
+export function errorText(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
   if (typeof error === "number" || typeof error === "boolean") return String(error);
