@@ -127,9 +127,13 @@ pub(crate) fn occurrence_index(transaction_id: &str) -> Option<i64> {
 }
 
 /// Apaga a ocorrência indicada e TODAS as posteriores da mesma série ("deste ponto em diante").
+///
+/// Toda mutação de série filtra `scenario_id IS NULL`: uma edição do livro-razão REAL nunca pode
+/// alcançar linhas hipotéticas de cenário, mesmo que uma slice futura reuse `recurrence_id` nelas.
 pub async fn delete_series_from(pool: &SqlitePool, transaction_id: &str) -> Result<u64, String> {
     let row: Option<(String,)> = sqlx::query_as(
-        "SELECT recurrence_id FROM \"transaction\" WHERE id = ?1 AND recurrence_id IS NOT NULL",
+        "SELECT recurrence_id FROM \"transaction\" \
+         WHERE id = ?1 AND recurrence_id IS NOT NULL AND scenario_id IS NULL",
     )
     .bind(transaction_id)
     .fetch_optional(pool)
@@ -140,7 +144,7 @@ pub async fn delete_series_from(pool: &SqlitePool, transaction_id: &str) -> Resu
     };
     // `substr(id, length(recurrence_id) + 2)` = parte após o ':' → o índice como inteiro.
     let res = sqlx::query(
-        "DELETE FROM \"transaction\" WHERE recurrence_id = ?1 \
+        "DELETE FROM \"transaction\" WHERE recurrence_id = ?1 AND scenario_id IS NULL \
          AND CAST(substr(id, length(recurrence_id) + 2) AS INTEGER) >= ?2",
     )
     .bind(&rec_id)
@@ -169,7 +173,8 @@ pub async fn update_series_from(
     edit: &SeriesEdit,
 ) -> Result<u64, String> {
     let row: Option<(String,)> = sqlx::query_as(
-        "SELECT recurrence_id FROM \"transaction\" WHERE id = ?1 AND recurrence_id IS NOT NULL",
+        "SELECT recurrence_id FROM \"transaction\" \
+         WHERE id = ?1 AND recurrence_id IS NOT NULL AND scenario_id IS NULL",
     )
     .bind(transaction_id)
     .fetch_optional(pool)
@@ -182,7 +187,7 @@ pub async fn update_series_from(
     // Corte por índice (ver `occurrence_index`), não por data.
     let res = sqlx::query(
         "UPDATE \"transaction\" SET amount = ?1, description = ?2, payment_method = ?3, \
-         is_fixed = ?4, updated_at = ?5 WHERE recurrence_id = ?6 \
+         is_fixed = ?4, updated_at = ?5 WHERE recurrence_id = ?6 AND scenario_id IS NULL \
          AND CAST(substr(id, length(recurrence_id) + 2) AS INTEGER) >= ?7",
     )
     .bind(edit.amount)
@@ -207,7 +212,7 @@ pub async fn update_series_all(
     let now = chrono::Utc::now().to_rfc3339();
     let res = sqlx::query(
         "UPDATE \"transaction\" SET amount = ?1, description = ?2, payment_method = ?3, \
-         is_fixed = ?4, updated_at = ?5 WHERE recurrence_id = ?6",
+         is_fixed = ?4, updated_at = ?5 WHERE recurrence_id = ?6 AND scenario_id IS NULL",
     )
     .bind(edit.amount)
     .bind(&edit.description)
@@ -225,11 +230,12 @@ pub async fn update_series_all(
 /// uma falha entre eles deixaria a linha `recurrence` órfã (sem ocorrências) ou vice-versa.
 pub async fn delete_series_all(pool: &SqlitePool, recurrence_id: &str) -> Result<u64, String> {
     let mut tx = pool.begin().await.map_err(|e| format!("begin: {e}"))?;
-    let res = sqlx::query("DELETE FROM \"transaction\" WHERE recurrence_id = ?1")
-        .bind(recurrence_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| format!("delete all: {e}"))?;
+    let res =
+        sqlx::query("DELETE FROM \"transaction\" WHERE recurrence_id = ?1 AND scenario_id IS NULL")
+            .bind(recurrence_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("delete all: {e}"))?;
     sqlx::query("DELETE FROM recurrence WHERE id = ?1")
         .bind(recurrence_id)
         .execute(&mut *tx)

@@ -148,6 +148,7 @@ pub async fn tag_totals_for_month(
          LEFT JOIN \"transaction\" tr ON tr.id = tt.transaction_id \
                 AND substr(tr.date, 1, 7) = ?1 \
                 AND tr.type IN ('expense', 'transfer') \
+                AND tr.scenario_id IS NULL \
          GROUP BY t.id \
          ORDER BY t.is_special DESC, total_cents DESC, t.name COLLATE NOCASE",
     )

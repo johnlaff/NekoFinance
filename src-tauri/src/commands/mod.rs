@@ -608,18 +608,71 @@ mod tests {
 
     // Plano 072 (slice A): fundação do isolamento de cenário — uma linha `"transaction"` marcada
     // com `scenario_id` é hipotética ("e se") e TEM QUE ser invisível a toda leitura do livro real.
-    // Regressão-âncora desta slice: tira um snapshot do forecast/métricas/write-back ANTES de o
-    // cenário existir, insere um cenário com uma saída hipotética GRANDE na MESMA janela de datas
-    // do livro real (a prova de fogo: se qualquer leitura vazar o filtro `scenario_id IS NULL`, o
-    // valor muda), e exige que os quatro resultados fiquem byte-a-byte idênticos depois.
+    // Regressão-âncora desta slice: tira um snapshot do forecast/métricas/write-back/totais por
+    // titular e por tag ANTES de o cenário existir, insere UMA linha hipotética por família de
+    // leitura filtrada (fixa março, income+transfer→reserva em meses completos p/ a janela anual,
+    // diário fev p/ o teto diário, compra de crédito p/ os lumps do write-back, saída itemizada) —
+    // cada uma na MESMA janela de datas do livro real, grande o bastante para mudar o resultado se
+    // o SEU filtro `scenario_id IS NULL` vazar — e exige tudo byte-a-byte idêntico depois.
     #[tokio::test]
     async fn scenario_transaction_is_invisible_to_real_forecast_and_write_back() {
         let pool = fixture_pool().await;
         insert_liquid_account(&pool, 100_000).await; // cria o person (FK de scenario) + a conta
+        let pid: (String,) = sqlx::query_as("SELECT id FROM person LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        // Conta RESERVA real: os transfers→reserva (Economia registrada) precisam de um destino
+        // com `liquidity='reserve'` para entrarem em `realized_annual_economia`.
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, balance, liquidity) \
+             VALUES ('acc-res', 'Reserva', 'savings', ?1, 0, 'reserve')",
+        )
+        .bind(&pid.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Cartão de crédito COM ciclo: liga o ramo "with-card" do lump de crédito do write-back —
+        // sem um cartão configurado esse ramo (e seu filtro de cenário) nunca roda.
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day) \
+             VALUES ('card-1', 'Cartão', 'credit_card', ?1, 25, 5)",
+        )
+        .bind(&pid.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Tag real preexistente: baseline dos totais por tag (total 0 antes do cenário).
+        let tag = crate::tags::create_tag(&pool, "Viagem", "var(--cat-sky)", None, false)
+            .await
+            .unwrap();
 
         // Saldo da planilha: exercita o ramo do "gap" query de `projection_seed` (não só o
         // fallback de bolsos líquidos).
         insert_sheet_balance(&pool, "Principal", "2026-03-01", 100_000).await;
+
+        // Meses COMPLETOS reais (jan/fev): sem eles a janela anual `[2026-01-01, 2026-03-01)` de
+        // `realized_annual_savings`/`realized_annual_economia` seria 0 com ou sem vazamento
+        // (tautologia) — renda realizada + Economia registrada dão um baseline anual ≠ 0.
+        insert_realized(&pool, "income", 400_000, "2026-01-08").await;
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) \
+             VALUES ('econ-jan', 'transfer', 50000, '2026-01-20', 'acc-res', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        insert_realized(&pool, "income", 400_000, "2026-02-08").await;
+        // Diário real de FEVEREIRO (variável, não-crédito, realizado): dá um teto diário ≠ 0 no
+        // fallback de média do mês anterior de `effective_daily_ceiling` (hoje = março).
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, payment_method, is_fixed, is_projection) \
+             VALUES ('daily-fev', 'expense', 56000, '2026-02-10', 'debit', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         // Livro-razão real: mês de referência realizado + futuro pré-lançado.
         insert_realized(&pool, "income", 500_000, "2026-03-05").await;
@@ -629,23 +682,23 @@ mod tests {
 
         let today = NaiveDate::from_ymd_opt(2026, 3, 15).unwrap();
 
-        // Snapshot ANTES do cenário existir.
+        // Snapshot ANTES do cenário existir — inclui as famílias de métrica por titular e por tag.
         let fc_before = serde_json::to_string(&forecast_dto(&pool, today).await.unwrap()).unwrap();
         let dash_before =
             serde_json::to_string(&dashboard_summary(&pool, today).await.unwrap()).unwrap();
         let grid_before =
             serde_json::to_string(&month_grid(&pool, 2026, 3).await.unwrap()).unwrap();
         let wb_before = format!("{:?}", load_write_back_txns(&pool, 2026).await.unwrap());
-
-        // Cenário "e se" com uma saída fixa hipotética GRANDE (R$ 50.000,00) em 22/mar — dentro do
-        // horizonte de projeção corrente e do ano do write-back. Se qualquer leitura vazar o
-        // filtro, esta única linha muda o saldo projetado, o dia 22 da grade, o mês de março em
-        // `fc.months` E aparece como uma célula extra no plano de write-back — qualquer uma dessas
-        // mudanças reprova o teste.
-        let pid: (String,) = sqlx::query_as("SELECT id FROM person LIMIT 1")
-            .fetch_one(&pool)
+        let owners_before = crate::splits::owner_totals_for_month(&pool, 2026, 3)
             .await
             .unwrap();
+        let tags_before = crate::tags::tag_totals_for_month(&pool, 2026, 3)
+            .await
+            .unwrap();
+
+        // Cenário "e se": uma linha hipotética por FAMÍLIA de leitura filtrada — cada uma grande o
+        // bastante para mudar o resultado se o SEU filtro vazar. Qualquer divergência de qualquer
+        // snapshot reprova o teste.
         let scenario_id = uuid::Uuid::new_v4().to_string();
         sqlx::query("INSERT INTO scenario (id, name, person_id) VALUES (?1, ?2, ?3)")
             .bind(&scenario_id)
@@ -654,43 +707,323 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        // `payment_method='debit'` explícito (não NULL): garante que, SEM o filtro de cenário, a
-        // linha passaria pelo `NOT (type='expense' AND payment_method='credit')` do write-back —
-        // uma linha `credit`/NULL não seria um teste de fogo válido para essa cláusula.
+        // (1) Saída fixa hipotética GRANDE (R$ 50.000,00) em 22/mar — dentro do horizonte de
+        // projeção e do ano do write-back. `payment_method='debit'` explícito (não NULL): garante
+        // que, SEM o filtro de cenário, a linha passaria pelo
+        // `NOT (type='expense' AND payment_method='credit')` do write-back — uma linha
+        // `credit`/NULL não seria um teste de fogo válido para essa cláusula.
+        let mar_expense_id = uuid::Uuid::new_v4().to_string();
         sqlx::query(
             "INSERT INTO \"transaction\" \
                 (id, type, amount, date, payment_method, is_fixed, is_projection, scenario_id) \
              VALUES (?1, 'expense', ?2, '2026-03-22', 'debit', 1, 1, ?3)",
         )
-        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&mar_expense_id)
         .bind(5_000_000i64)
         .bind(&scenario_id)
         .execute(&pool)
         .await
         .unwrap();
+        // …com uma parcela de titular e uma tag anexadas: se `owner_totals_for_month` ou
+        // `tag_totals_for_month` vazarem o filtro, os totais de março mudam.
+        sqlx::query(
+            "INSERT INTO split (id, transaction_id, amount, owner_person_id) VALUES (?1, ?2, ?3, ?4)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&mar_expense_id)
+        .bind(-5_000_000i64)
+        .bind(&pid.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO transaction_tag (transaction_id, tag_id) VALUES (?1, ?2)")
+            .bind(&mar_expense_id)
+            .bind(&tag)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // (2) Renda + transfer→reserva hipotéticos em JAN/FEV (meses COMPLETOS): se a janela anual
+        // de savings/economia vazar, `annual_savings` do forecast muda.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_projection, scenario_id) \
+             VALUES (?1, 'income', 1000000, '2026-01-10', 0, ?2)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&scenario_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+                (id, type, amount, date, to_account_id, is_projection, scenario_id) \
+             VALUES (?1, 'transfer', 500000, '2026-02-15', 'acc-res', 0, ?2)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&scenario_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // (3) Diário hipotético GRANDE em FEVEREIRO (variável, não-crédito, realizado): se
+        // `effective_daily_ceiling` vazar, a média do mês anterior — e com ela o teto diário do
+        // forecast/dashboard — muda (R$ 28.000 / 28 dias = +R$ 1.000/dia).
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+                (id, type, amount, date, payment_method, is_fixed, is_projection, scenario_id) \
+             VALUES (?1, 'expense', 2800000, '2026-02-11', 'debit', 0, 0, ?2)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&scenario_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // (4) Compra de CRÉDITO hipotética: com o cartão configurado, o ramo "with-card" do lump
+        // de crédito do write-back roda de verdade — se vazar, aparece um lump extra no plano.
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+                (id, type, amount, date, payment_method, is_fixed, is_projection, scenario_id) \
+             VALUES (?1, 'expense', 700000, '2026-03-02', 'credit', 0, 0, ?2)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&scenario_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // (5) Renda hipotética no mês corrente + saída hipotética ITEMIZADA (2 partes, uma
+        // ECONOMIA) em FEV: cobre o formato de linha income e o ramo itemizado de
+        // `load_metric_db_events`/`realized_annual_economia`.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_projection, scenario_id) \
+             VALUES (?1, 'income', 900000, '2026-03-18', 1, ?2)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&scenario_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let itemized_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+                (id, type, amount, date, payment_method, is_fixed, is_projection, scenario_id) \
+             VALUES (?1, 'expense', 300000, '2026-02-12', 'debit', 1, 0, ?2)",
+        )
+        .bind(&itemized_id)
+        .bind(&scenario_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        for (i, (cents, desc, section)) in [
+            (200_000i64, "Conta de luz", "CONTAS:"),
+            (100_000i64, "Guardado", "ECONOMIA:"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            sqlx::query(
+                "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, section) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            )
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&itemized_id)
+            .bind(cents)
+            .bind(desc)
+            .bind(i as i64)
+            .bind(section)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
 
         // Depois do cenário: todo resultado tem que bater byte-a-byte com o snapshot de antes.
-        let fc_after = serde_json::to_string(&forecast_dto(&pool, today).await.unwrap()).unwrap();
+        let fc_after_dto = forecast_dto(&pool, today).await.unwrap();
+        let fc_after = serde_json::to_string(&fc_after_dto).unwrap();
         let dash_after =
             serde_json::to_string(&dashboard_summary(&pool, today).await.unwrap()).unwrap();
         let grid_after = serde_json::to_string(&month_grid(&pool, 2026, 3).await.unwrap()).unwrap();
         let wb_after = format!("{:?}", load_write_back_txns(&pool, 2026).await.unwrap());
+        let owners_after = crate::splits::owner_totals_for_month(&pool, 2026, 3)
+            .await
+            .unwrap();
+        let tags_after = crate::tags::tag_totals_for_month(&pool, 2026, 3)
+            .await
+            .unwrap();
 
+        // Asserts pontuais primeiro (diagnóstico direto por família), depois o byte-a-byte global.
+        assert_eq!(
+            fc_after_dto.annual_savings.realized_income_cents, 800_000,
+            "renda anual realizada = só os income REAIS de jan+fev (nenhuma renda de cenário)"
+        );
+        assert_eq!(
+            fc_after_dto.annual_savings.registered_economia_cents, 50_000,
+            "Economia anual = só o transfer→reserva REAL de janeiro (nada do cenário)"
+        );
+        assert_eq!(
+            owners_before, owners_after,
+            "owner_totals_for_month não pode ver a parcela do cenário"
+        );
+        assert_eq!(
+            tags_before, tags_after,
+            "tag_totals_for_month não pode ver a tag do lançamento de cenário"
+        );
         assert_eq!(
             fc_before, fc_after,
-            "get_forecast não pode ver a linha do cenário"
+            "get_forecast não pode ver as linhas do cenário (savings anual, teto diário, meses)"
         );
         assert_eq!(
             dash_before, dash_after,
-            "dashboard_summary não pode ver a linha do cenário"
+            "dashboard_summary não pode ver as linhas do cenário"
         );
         assert_eq!(
             grid_before, grid_after,
-            "month_grid não pode ver a linha do cenário"
+            "month_grid não pode ver as linhas do cenário"
         );
         assert_eq!(
             wb_before, wb_after,
-            "o write-back não pode ver a linha do cenário (nunca pode alcançar a planilha)"
+            "o write-back não pode ver as linhas do cenário (nunca podem alcançar a planilha)"
+        );
+    }
+
+    // Endurecimento da migração 20260624000001: `scenario_override` exige EXATAMENTE UM alvo —
+    // o CHECK antigo (OR) aceitava obligation_id E recurrence_id setados juntos.
+    #[tokio::test]
+    async fn scenario_override_rejects_both_targets_set() {
+        let pool = fixture_pool().await;
+        insert_liquid_account(&pool, 0).await;
+        let pid: (String,) = sqlx::query_as("SELECT id FROM person LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO scenario (id, name, person_id) VALUES ('sc-1', 'E se', ?1)")
+            .bind(&pid.0)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO recurrence (id, frequency, infinite, repetitions, start_date) \
+             VALUES ('rec-1', 'mensal', 0, 3, '2026-01-01')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO obligation (id, person_id, name, match_desc, match_section, kind) \
+             VALUES ('ob-1', ?1, 'Aluguel', 'aluguel', 'CONTAS:', 'saida')",
+        )
+        .bind(&pid.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Um alvo só: recurrence_id OK…
+        sqlx::query(
+            "INSERT INTO scenario_override (id, scenario_id, op, from_date, recurrence_id) \
+             VALUES ('ov-1', 'sc-1', 'suppress', '2026-04-01', 'rec-1')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // …obligation_id OK…
+        sqlx::query(
+            "INSERT INTO scenario_override (id, scenario_id, op, from_date, obligation_id) \
+             VALUES ('ov-2', 'sc-1', 'replace', '2026-04-01', 'ob-1')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // …os DOIS juntos: o XOR do CHECK rejeita.
+        let both = sqlx::query(
+            "INSERT INTO scenario_override \
+                (id, scenario_id, op, from_date, obligation_id, recurrence_id) \
+             VALUES ('ov-3', 'sc-1', 'suppress', '2026-04-01', 'ob-1', 'rec-1')",
+        )
+        .execute(&pool)
+        .await;
+        assert!(
+            both.is_err(),
+            "override com os dois alvos setados tem que falhar no CHECK"
+        );
+        // …e NENHUM alvo continua rejeitado (como no CHECK antigo).
+        let neither = sqlx::query(
+            "INSERT INTO scenario_override (id, scenario_id, op, from_date) \
+             VALUES ('ov-4', 'sc-1', 'suppress', '2026-04-01')",
+        )
+        .execute(&pool)
+        .await;
+        assert!(
+            neither.is_err(),
+            "override sem alvo tem que falhar no CHECK"
+        );
+
+        // FK nova de recurrence_id é real: apagar a recorrência cascateia a override dela.
+        sqlx::query("DELETE FROM recurrence WHERE id = 'rec-1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (dangling,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM scenario_override WHERE id = 'ov-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(dangling, 0, "DELETE da recorrência cascateia a override");
+    }
+
+    // As FKs do modelo de cenário são reais: apagar o cenário CASCATEIA para as linhas hipotéticas
+    // (coluna adicionada via ALTER TABLE) e para as overrides — nada hipotético sobrevive órfão.
+    #[tokio::test]
+    async fn deleting_scenario_cascades_to_transactions_and_overrides() {
+        let pool = fixture_pool().await;
+        insert_liquid_account(&pool, 0).await;
+        let pid: (String,) = sqlx::query_as("SELECT id FROM person LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO scenario (id, name, person_id) VALUES ('sc-1', 'E se', ?1)")
+            .bind(&pid.0)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_projection, scenario_id) \
+             VALUES ('tx-sc', 'expense', 10000, '2026-03-22', 1, 'sc-1')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO recurrence (id, frequency, infinite, repetitions, start_date) \
+             VALUES ('rec-1', 'mensal', 0, 3, '2026-01-01')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO scenario_override (id, scenario_id, op, from_date, recurrence_id) \
+             VALUES ('ov-1', 'sc-1', 'suppress', '2026-04-01', 'rec-1')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query("DELETE FROM scenario WHERE id = 'sc-1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let (txns,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE scenario_id IS NOT NULL")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let (overrides,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM scenario_override")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            txns, 0,
+            "DELETE do cenário cascateia para as transações hipotéticas"
+        );
+        assert_eq!(
+            overrides, 0,
+            "DELETE do cenário cascateia para as overrides"
         );
     }
 
