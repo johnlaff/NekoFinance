@@ -51,8 +51,8 @@
     **Custo de vida** (162×) are taught verbatim. **Simulação por cópia da planilha** is taught
     ("cópia da planilha" 5×, "duplica" 8×) — the large-scenario form. **"Folga de caixa" = 0
     occurrences → NOT a method term**; the artifact's card was replaced with **Custo de vida**.
-  - **Performance formula confirmed by the source material itself**: *"Se eu não coloco a economia...
-    vou ver a performance um pouco positiva"* → economia (and the previsão de diário) count as **saída**.
+  - **Performance formula confirmed by the source material itself**: _"Se eu não coloco a economia...
+    vou ver a performance um pouco positiva"_ → economia (and the previsão de diário) count as **saída**.
     **Reserva = custo de vida × N meses** confirmed ("meses de custo de vida", "8/6/7 meses de custo").
   - **Spreadsheet grammar confirmed**: tabs `2025 / 2026 / Economia`; 548 cell notes, **315
     newline-separated** in the `R$ valor - descrição` pattern (385 matches); section headers
@@ -71,13 +71,13 @@ source of truth). Summary of what changed:
 
 1. **Override subtracts at the RAW ROW level, not on `CashflowEvent`.** `CashflowEvent`
    (mod.rs:34-40) has only `{date, kind, amount_cents, realized}` — no id/description/
-   recurrence_id. The scenario real-events query is a *superset-select* variant of
+   recurrence_id. The scenario real-events query is a _superset-select_ variant of
    `load_cashflow_events` that also SELECTs `t.id, t.description, t.recurrence_id`, applies
    the override there, then maps the remainder through `map_cashflow_row`.
 2. **Override is LINE-ITEM-scoped (the majority case), not whole-cell.** A matched
    obligation is one `line_item` inside a possibly-multi-item Saída cell. Do NOT drop the
    day's `CashflowEvent` — replace it with one whose `amount_cents = original −
-   matched_line_item.amount_cents` (drop only if it hits 0), leaving sibling items intact.
+matched_line_item.amount_cents` (drop only if it hits 0), leaving sibling items intact.
    Add a §4h test: "a replace override on one item in a multi-item cell leaves the other
    items' contribution to the projected balance unchanged."
 3. **The override target is plan 069's `obligation_id`, not a duplicated match rule.** Give
@@ -147,8 +147,8 @@ A persisted `scenario` entity (a `scenario` table + `transaction.scenario_id`,
 CRUD, an automated compare) is **not a literal method artifact** — the method
 has no named, saved scenario; it has an undo-able in-place edit and a manual
 whole-file copy. What this plan proposes is a faithful **productization** of
-that practice: `scenario_id` isolation *is* the "duplicate the file" safety
-wrapper, and additive hypothetical rows *are* the pre-launch primitive — unified
+that practice: `scenario_id` isolation _is_ the "duplicate the file" safety
+wrapper, and additive hypothetical rows _are_ the pre-launch primitive — unified
 into one on-demand branch instead of two manual rituals. (Neko already labels
 such beyond-the-sheet conveniences as surpassing, not contradicting, the method
 — e.g. liquidity pockets.) Frame it that way in the doc; do not sell it as a 1:1
@@ -326,23 +326,31 @@ The TS mirror of `ForecastDto` is `interface Forecast` (api.ts:209-231+), and
 ```ts
 // api.ts:161-182 — MonthMetric now has cartao_cents, daily_projected_cents, patrimonio_cents
 export interface MonthMetric {
-  year: number; month: number;
+  year: number;
+  month: number;
   income_cents: number;
   performance_cents: number;
   cost_of_living_cents: number;
   fixed_out_cents: number;
   daily_out_cents: number;
   daily_projected_cents: number;
-  cartao_cents: number;         // NEW since plan 020
+  cartao_cents: number; // NEW since plan 020
   real_daily_avg_cents: number;
   economia_cents: number;
-  patrimonio_cents: number;     // NEW since plan 020
+  patrimonio_cents: number; // NEW since plan 020
   savings_rate_bps: number;
 }
 
 // api.ts:149-158
-export interface DayPoint { date: string; balance_cents: number; }
-export interface MonthEnd { year: number; month: number; balance_cents: number; }
+export interface DayPoint {
+  date: string;
+  balance_cents: number;
+}
+export interface MonthEnd {
+  year: number;
+  month: number;
+  balance_cents: number;
+}
 ```
 
 The scenario compare output must be a **new** DTO, NOT a change to `Forecast`.
@@ -355,10 +363,10 @@ plan 020's stale 4-type formulas:
 - **cost_of_living** (`CONTEXT.md:70`) = `FixedOut + Daily(realized) + Cartao`
   — **excludes Economia and Patrimonio**.
 - **Performance** (`CONTEXT.md:70`) = `Income − (FixedOut + Daily(realized) +
-  Daily(projected/remaining forecast) + Cartao + Economia + Patrimonio)`.
+Daily(projected/remaining forecast) + Cartao + Economia + Patrimonio)`.
 - **buraco do futuro** = `deepest_deficit` (minimum projected balance in horizon).
 - **Economizado%** (`CONTEXT.md:94`) = `registered_economia_cents /
-  realized_income_cents` (target 20–30% as an ANNUAL average, never monthly
+realized_income_cents` (target 20–30% as an ANNUAL average, never monthly
   pass/fail).
 - **binding_guardrail** (`CONTEXT.md:98`) = which of the two limits (cash /
   savings) bit — `"cash" | "savings"`.
@@ -377,11 +385,11 @@ Still exists and is the natural visual anchor. It calls
 
 ## Commands you will need
 
-| Purpose           | Command                                                                                                                                                            | Expected on success          |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------- |
+| Purpose           | Command                                                                                                                                                                                | Expected on success          |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
 | Drift check       | `git diff --stat b65f0c6..HEAD -- src-tauri/src/forecast/mod.rs src-tauri/src/commands/forecast_cmds.rs src-tauri/src/commands/mod.rs src-tauri/migrations/ src/lib/api.ts CONTEXT.md` | shows changed files or empty |
-| Rust engine tests | `cargo test --manifest-path src-tauri/Cargo.toml --locked -- forecast`                                                                                             | all pass (~42 tests)         |
-| Type-check        | `npm run typecheck`                                                                                                                                                 | exit 0                       |
+| Rust engine tests | `cargo test --manifest-path src-tauri/Cargo.toml --locked -- forecast`                                                                                                                 | all pass (~42 tests)         |
+| Type-check        | `npm run typecheck`                                                                                                                                                                    | exit 0                       |
 
 This spike is read-only during authoring. The successor implementation plan
 runs the full gate (`npm run check`).
@@ -478,7 +486,7 @@ leave the original untouched. This plan **productizes both into one on-demand
 forecast branch**: hypothetical rows tagged with a `scenario_id` (the isolation
 that replaces both "undo" and "duplicate the file"), projected without polluting
 the real ledger or triggering write-back to Google Sheets. Say explicitly in the
-doc that a saved, named scenario entity is a Neko convenience *on top of* the
+doc that a saved, named scenario entity is a Neko convenience _on top of_ the
 method's manual practice, not a literal sheet feature. The forecast engine is a
 pure function and already supports the computation at zero cost; the gaps are
 (a) persisting hypothetical transactions in isolation and (b) a comparison DTO.
@@ -505,7 +513,7 @@ ALTER TABLE "transaction" ADD COLUMN scenario_id TEXT REFERENCES scenario(id) ON
 
 - Scenario transactions reuse the exact `"transaction"` shape
   (`type/amount/date/payment_method/is_fixed/from_account_id/to_account_id/
-  is_projection/due_date`). No separate table.
+is_projection/due_date`). No separate table.
 - Scenario transactions **never** write `account.balance`; the seed always comes
   from the real ledger via `projection_seed` (unchanged).
 - Deleting a scenario cascades to its transactions.
@@ -526,29 +534,29 @@ ALTER TABLE "transaction" ADD COLUMN scenario_id TEXT REFERENCES scenario(id) ON
   `scenario_id IS NULL` so a simulation can never reach the sheet. Call this out
   explicitly as a safety invariant (see open question 5).
 - The Economia-tab annotation (`load_economia_annotation`) and credit-cycle
-  behavior reflect **real** figures; the scenario projects hypotheticals *on top
-  of* real ongoing spend (see open question 6).
+  behavior reflect **real** figures; the scenario projects hypotheticals _on top
+  of_ real ongoing spend (see open question 6).
 
 **Modifying or removing an existing obligation — not just adding (the override
 model).** Additive-only hypotheticals cannot express the most common what-if:
-*changing* a recurring obligation ("rent goes from R$ 1.900 to R$ 2.800"). Adding
+_changing_ a recurring obligation ("rent goes from R$ 1.900 to R$ 2.800"). Adding
 a new R$ 2.800 rent on top of the real R$ 1.900 rent **double-counts** (you'd
 project R$ 4.700). The method's own practice handles this natively — in the
-duplicated sheet you *edit the rent cell*, you do not add a second rent row.
+duplicated sheet you _edit the rent cell_, you do not add a second rent row.
 
 **Identity caveat — read before implementing; it governs the whole feature.** Two
 transaction-identity models coexist, and they matter here:
 
-- *App-created recurrences* share one `transaction.recurrence_id` (spec 016,
+- _App-created recurrences_ share one `transaction.recurrence_id` (spec 016,
   migration `20240612000005_recurrence.sql`). Precise, stored, reliable.
-- *Imported spreadsheet rows carry `recurrence_id = NULL`* — the importer never sets
+- _Imported spreadsheet rows carry `recurrence_id = NULL`_ — the importer never sets
   it (verify: `grep -rn recurrence src-tauri/src/google_sheets/import.rs` is empty).
   Their identity is the deterministic `row_id = sha256("txn-v1|"+sheet+"|"+date+"|"
-  +kind+"|"+slot)` (spec 012, `google_sheets/import.rs`) — stable per (aba, dia,
++kind+"|"+slot)` (spec 012, `google_sheets/import.rs`) — stable per (aba, dia,
   coluna), surviving value/note edits and re-imports. **But the sheet has NO concept
   of a "series":** a monthly rent is just twelve independent Saída cells; nothing
   links them. So for imported obligations there is no `recurrence_id` to key on — and
-  the spreadsheet is the system-of-record (spec 012), so this is the *majority* case.
+  the spreadsheet is the system-of-record (spec 012), so this is the _majority_ case.
 
 The override targets an **obligation** (plan 069's user-confirmed identity) for
 imported rows, or a `recurrence_id` for app-created series — never a raw string match
@@ -578,9 +586,9 @@ user-confirmed identity. Creating an override always previews the resolved rows.
   (each shown row has a stable `row_id`); the app resolves the target (the obligation's
   resolver, or `recurrence_id`, over future occurrences) and **shows exactly which
   future rows will be affected, for confirmation, before saving.** No silent fuzzy
-  matching. The stored override records *what the user confirmed*.
+  matching. The stored override records _what the user confirmed_.
 - **Matching must tolerate the real note grammar** (plan 069's resolver): a real
-  recurring parcela embeds a mutable `N/36` counter *inside* its description, so the
+  recurring parcela embeds a mutable `N/36` counter _inside_ its description, so the
   resolver strips a trailing `\d+/\d+` token before comparing, and normalizes the
   section (punctuation drifts by year: `CONTAS` in 2025 vs `FATURAS:` in 2026).
 - **Granularity = the line item, not the whole cell.** A day's Saída cell often
@@ -618,7 +626,7 @@ A new Tauri command `get_scenario_forecast(scenario_id: String)` will:
 5. **Apply overrides at the RAW ROW level, before mapping to `CashflowEvent`.**
    `CashflowEvent` (mod.rs:34-40) carries only `{date, kind, amount_cents, realized}`
    — no id/description/recurrence_id — so an override cannot be applied to the mapped
-   slice. The scenario real-events loader is therefore a *superset-select* variant of
+   slice. The scenario real-events loader is therefore a _superset-select_ variant of
    `load_cashflow_events` that also selects `t.id, t.description, t.recurrence_id`. For
    each override (resolved via plan 069's obligation resolver → concrete `line_item`s,
    or via `recurrence_id`) with `date >= from_date`:
@@ -626,14 +634,14 @@ A new Tauri command `get_scenario_forecast(scenario_id: String)` will:
      `line_item.amount_cents` (drop the row if it hits 0), then add the hypothetical
      row at the new amount;
    - **`suppress` (whole series)**: drop the matched rows.
-   Only then map the remainder through `map_cashflow_row`. Same transform for the
-   metric slice. This prevents the "current rent + new rent" double-count **without**
-   zeroing out sibling line items in the same cell.
+     Only then map the remainder through `map_cashflow_row`. Same transform for the
+     metric slice. This prevents the "current rent + new rent" double-count **without**
+     zeroing out sibling line items in the same cell.
 6. `forecast::project_with_metrics(seed, today, &scenario_events,
-   &scenario_metric_events, horizon_end, &annotation)` — same `annotation`
+&scenario_metric_events, horizon_end, &annotation)` — same `annotation`
    HashMap as the real branch.
 7. `safe_to_spend_today(&scenario_fc, annual_income, annual_savings_amt,
-   SAVINGS_TARGET_BPS, reserve_floor_cents)` — same constants.
+SAVINGS_TARGET_BPS, reserve_floor_cents)` — same constants.
 8. Return `ScenarioCompareDto` (§4d).
 
 `forecast_dto` / `get_forecast` are unchanged. The scenario is computed on
@@ -656,7 +664,7 @@ Also include a **`changes: Vec<ScenarioChange>`** — the human-readable "what c
 list rendered beside the numeric deltas. Its `op` is UI-facing (`add | remove |
 replace`) and **maps from storage** as `suppress`→`remove`, `replace`→`replace`, and
 `add`→a plain hypothetical row (no `scenario_override` row at all). Numbers alone don't
-tell the user *what* they toggled; every researched peer that ships compare
+tell the user _what_ they toggled; every researched peer that ships compare
 (ProjectionLab, PocketSmith) pairs the deltas with a line-item change list. When a
 scenario carries a financing hypothetical, also expose its deterministic cost
 breakdown: `loan_principal_cents`, `loan_installment_cents`, `loan_term_months`,
@@ -674,9 +682,9 @@ tool (engineering rule: no LLM financial math).
   after each add — call `get_scenario_forecast` and render real-vs-scenario
   `month_end`, both buracos do futuro, and the `diff.*_delta_cents`.
 - **Changing or removing an existing obligation** (§4b override model): from a real
-  recurring row (in the ledger/forecast), offer "Simular alteração" → *alterar
-  valor* (creates a `replace` override + a new hypothetical row at the new amount)
-  or *remover deste cenário* (a `suppress` override). This is the "rent increase"
+  recurring row (in the ledger/forecast), offer "Simular alteração" → _alterar
+  valor_ (creates a `replace` override + a new hypothetical row at the new amount)
+  or _remover deste cenário_ (a `suppress` override). This is the "rent increase"
   path — without it, the only way to model a higher rent is adding one on top,
   which double-counts. Offer it on an app series (`recurrence_id`) or a named
   **obligation** (plan 069) for imported rows; always preview the affected occurrences.
@@ -690,9 +698,9 @@ tool (engineering rule: no LLM financial math).
   (CET spirit). The loan generates **two things**: (a) a single **Entrada (income) row
   for the principal** at the disbursement date — which RAISES the projected Saldo — and
   (b) the `n` installment **Saída/Cartão** rows at their due dates. Without (a) the loan
-  only adds outflows and would make the projection *worse* — the opposite of covering
+  only adds outflows and would make the projection _worse_ — the opposite of covering
   the hole. The scenario must make obvious that the loan has to cover the **buraco do
-  futuro** (`deepest_deficit`) *plus* the parcelas it adds (iterative: raise the amount,
+  futuro** (`deepest_deficit`) _plus_ the parcelas it adds (iterative: raise the amount,
   re-check the hole) — which is why the compare DTO leads with `deepest_deficit` deltas.
   Because this is a big-purchase decision, show **reserve-months-after-financing**
   against the method's stricter big-purchase reserve gate (§4g), not the 6-month floor.
@@ -717,10 +725,10 @@ survive restart — §4g.8); the **accessibility layer** (§4g.9: chart text/tab
 equivalent + ARIA live region on recompute); Rust tests (§4h). The real
 `get_forecast` and all existing screens stay unchanged.
 
-**OUT (deferred)**: cloning the *full* real month into an editable scenario copy
+**OUT (deferred)**: cloning the _full_ real month into an editable scenario copy
 (the override model covers change/remove without it); N-way comparison of ≥3 saved
 scenarios at once (Boldin-style — adds "which is baseline / how deltas combine"
-complexity the method doesn't need); editing a *hypothetical* scenario row
+complexity the method doesn't need); editing a _hypothetical_ scenario row
 (delete + re-add suffices); overriding one-off real rows without a `recurrence_id`;
 scenario-scoped credit-cycle suppression (§4g.6); scenario-aware write-back; a
 scenario badge on the Dashboard; **Monte-Carlo / probability-of-success framing**
@@ -738,7 +746,7 @@ scenario badge on the Dashboard; **Monte-Carlo / probability-of-success framing*
 2. **Recurring hypotheticals & date fidelity**: should `add_scenario_transaction`
    accept a recurrence rule (reuse `src-tauri/src/recurrence.rs`) for multi-month
    obligations, or a flat list of dates? Note the method treats dates as
-   *nominal* in a pure simulation (the point is the steady-state monthly impact,
+   _nominal_ in a pure simulation (the point is the steady-state monthly impact,
    not the exact day), but Neko's forecast is **date-driven** (the chained Saldo
    and the horizon depend on real dates) — so hypothetical rows still need
    concrete dates. Decide how the UI generates them from a "R$ X/mês for N
@@ -798,7 +806,7 @@ helpers at the bottom of `mod.rs` — the `d()`/`ev()` builders + direct
   check). A `suppress` override alone raises the balance by exactly the removed
   series. Clearing the override restores the real baseline exactly.
 - **Loan (PRICE)**: `parcela = round(PV·i / (1 − (1+i)^−n))`; `custo do crédito =
-  parcela·n − PV`. Assert a known case (e.g. PV 18.000, n 24, i 1,8% a.m. →
+parcela·n − PV`. Assert a known case (e.g. PV 18.000, n 24, i 1,8% a.m. →
   parcela ≈ R$ 930, custo ≈ R$ 4.326) so the CET figure is regression-locked.
 - **Line-item override (siblings unaffected)**: a `replace` override on ONE line item
   inside a multi-item Saída cell moves the projected balance by exactly `(new − old)`
@@ -900,9 +908,9 @@ For whoever picks this up after review:
   open question 7 (day-by-day delta) is answered YES.
 - The `scenario_id IS NULL` filter must be added to **every read over `"transaction"`**
   (the full §4b enumeration — not just the cash loader) **and every** write-back query
-  (`google_sheets/write_back.rs`, `commands/write_back_cmds.rs`). Missing a *read* filter
+  (`google_sheets/write_back.rs`, `commands/write_back_cmds.rs`). Missing a _read_ filter
   silently corrupts real Dashboard/Anual/Month-Grid figures with scenario rows; missing a
-  *write-back* filter leaks a simulation to the real spreadsheet (the highest-severity
+  _write-back_ filter leaks a simulation to the real spreadsheet (the highest-severity
   bug). Keep the real vs scenario loaders as separate functions (in the spirit of the
   functional-core / imperative-shell split in `AGENTS.md`).
 - Reuse `SAVINGS_TARGET_BPS` and `COVERAGE_COMPLETE_BPS` verbatim. **Exception:** the

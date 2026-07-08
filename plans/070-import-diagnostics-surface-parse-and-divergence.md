@@ -24,13 +24,13 @@
 ## Adversarial-review corrections (2026-07-04) — integrated below (changelog)
 
 1. **Diagnostics must survive a checksum-DEDUPED import.** They're collected inside
-   `import_rows_core`, reached only *after* the duplicate-checksum gate; on a no-op re-import
+   `import_rows_core`, reached only _after_ the duplicate-checksum gate; on a no-op re-import
    (`import_one_tab`/`import_rows_with_options` `return Ok(0)` early) the diagnostics vanish.
    Either derive them from a direct query over persisted `transaction`+`line_item` state
    (independent of whether this run ran the full pipeline), or have the checksum-skip path
    still recompute them.
 2. **Define `NoteNotItemized` on the RAW parser output, before the `has_breakdown` gate.** A
-   single-item note with no section header is *intentionally* not a breakdown (import.rs:586-587)
+   single-item note with no section header is _intentionally_ not a breakdown (import.rs:586-587)
    — that's not a diagnostic. Use strictly:
    `!raw_note.trim().is_empty() && parse_itemized_note(&raw_note).is_empty()`.
 3. **Keep a numeric field in the return type.** `import_sheet_data`/`import_one_tab` currently
@@ -41,7 +41,7 @@
 4. **Reuse the EXISTING signed-residual mechanism.** The codebase already reconciles the
    `cell − Σitems` residual with sign (import.rs ~534/581, forecast_cmds.rs ~819-831, with a
    regression test) as the "AJUSTES / Diferença" convention — the real spreadsheet uses that
-   header literally. The `ItemsDoNotSumToCell` diagnostic must *report* that residual, not
+   header literally. The `ItemsDoNotSumToCell` diagnostic must _report_ that residual, not
    change the (correct) data handling.
 5. **A third, SYSTEMATIC note shape exists** in real data: a tab-separated monthly budget-plan
    (`Mensal⇥R$…⇥categoria` ×5 + `Total = R$…` + `R$… / N Dias = R$…`) on recurring Diário cells.
@@ -63,8 +63,8 @@ Two precision-relevant conditions are currently handled **silently**: (1) a cell
 note that doesn't fit the `R$ <valor> - <descrição>` grammar produces no line
 items (the note grammar has drifted across years — spec 008), and (2) the parsed
 items' sum diverges from the cell total. Today the importer keeps the cell as the
-source of truth and moves on without telling the user. That is the right *data*
-decision (the cell owns the total), but the *silence* hides where the app's picture
+source of truth and moves on without telling the user. That is the right _data_
+decision (the cell owns the total), but the _silence_ hides where the app's picture
 of the sheet is incomplete. Surfacing these makes the app's precision **visible** —
 the user can go fix the note at the source, which is exactly how trust is earned in
 a tool that mirrors a hand-kept spreadsheet.
@@ -75,7 +75,7 @@ a tool that mirrors a hand-kept spreadsheet.
   persisted even when their sum diverges — "a célula continua dona do total"
   (`import.rs:973`, ~534, ~581). The residual `cell − Σitems` is already reconciled
   **with sign** as the spreadsheet's own "AJUSTES / Diferença" convention
-  (forecast_cmds.rs ~819-831, with a regression test). So the *data* handling is correct
+  (forecast_cmds.rs ~819-831, with a regression test). So the _data_ handling is correct
   and must not change — the new `ItemsDoNotSumToCell` diagnostic must **report** that
   existing residual, not re-handle it. (Do **not** cite `import.rs:318` — that is the
   3-way amount/description merge, a different mechanism.)
@@ -96,14 +96,15 @@ can show a small "N notas precisam de atenção" affordance. No data-handling ch
 ## Commands you will need
 
 | Purpose    | Command                                                              | Expected |
-|------------|---------------------------------------------------------------------|----------|
-| Rust tests | `cargo test --manifest-path src-tauri/Cargo.toml --locked -- import`| all pass |
+| ---------- | -------------------------------------------------------------------- | -------- |
+| Rust tests | `cargo test --manifest-path src-tauri/Cargo.toml --locked -- import` | all pass |
 | Typecheck  | `npm run typecheck`                                                  | exit 0   |
 | Full gate  | `npm run check`                                                      | exit 0   |
 
 ## Scope
 
 **In scope**:
+
 - `src-tauri/src/google_sheets/import.rs` — collect diagnostics during the per-cell
   itemization (the block around `import.rs:518–621`, "nota itemizada → line_item").
 - The import command(s) in `src-tauri/src/commands/sheets_import.rs` — thread the
@@ -116,9 +117,10 @@ can show a small "N notas precisam de atenção" affordance. No data-handling ch
   diagnostics through `import_local_xlsx` too.
 
 **Out of scope**:
-- The divergence *data* decision (cell owns the total) — unchanged.
+
+- The divergence _data_ decision (cell owns the total) — unchanged.
 - The note grammar / `parse_itemized_note` logic itself (a future parser-hardening plan;
-  here we only *report*, not re-parse). Not plan 071 — that is REJECTED and was only about
+  here we only _report_, not re-parse). Not plan 071 — that is REJECTED and was only about
   `line_item.id`.
 
 ## Steps
@@ -140,7 +142,7 @@ acceptable — it's a cosmetic identifier, not a key). Keep it serde-serializabl
 In the itemization block (`import.rs:518–621`): define `NoteNotItemized` strictly on the
 RAW parser output, **before** the `has_breakdown` gate (import.rs:586-587) — i.e.
 `!raw_note.trim().is_empty() && parse_itemized_note(&raw_note).is_empty()`. A single-item
-note with no section header is *intentionally* not a breakdown; that is NOT a diagnostic.
+note with no section header is _intentionally_ not a breakdown; that is NOT a diagnostic.
 For divergence, report the existing signed residual (`ItemsDoNotSumToCell`, both totals in
 `detail`) — **except** when `ItemsDoNotSumToCell` would fire AND the raw note matches the
 recurring tab-separated budget-plan shape (a `Mensal⇥…` line, a `Total = R$…` line, and a
@@ -150,7 +152,7 @@ through the import function(s) — this cascades to ~56 call sites of
 `import_rows_core`/`import_rows_with_options*` (mostly tests; a mechanical add).
 
 **Survive a checksum-deduped import.** Diagnostics collected inside `import_rows_core` are
-reached only *after* the duplicate-checksum gate — on a no-op re-import
+reached only _after_ the duplicate-checksum gate — on a no-op re-import
 (`import_one_tab`/`import_rows_with_options` `return Ok(0)` early) they would vanish. Either
 derive the diagnostics from a direct query over persisted `transaction`+`line_item` state
 (independent of whether this run ran the pipeline), or recompute them on the checksum-skip
@@ -193,7 +195,7 @@ and tokens; money via `<Money>`. This is informational, not blocking.
 
 - [ ] Non-itemizable notes and item↔cell divergences are reported (count + list),
       never silent.
-- [ ] The divergence *data* behavior is unchanged (cell still owns the total; items
+- [ ] The divergence _data_ behavior is unchanged (cell still owns the total; items
       still persisted) — verified by an assertion, not just prose.
 - [ ] `npm run check` exits 0.
 - [ ] `plans/README.md` row updated.
@@ -209,7 +211,7 @@ and tokens; money via `<Money>`. This is informational, not blocking.
 
 ## Maintenance notes
 
-- This is the reporting layer; a future parser-hardening plan can *reduce* the
+- This is the reporting layer; a future parser-hardening plan can _reduce_ the
   `NoteNotItemized` count by widening the grammar. Keep the diagnostic kinds stable
   so a trend ("notas com atenção" over time) is possible.
 - Pairs naturally with plan 069 (obligation concept): a recurring obligation whose

@@ -55,7 +55,7 @@ is a changelog, not a separate source of truth.
 7. **Label `obligation` explicitly as a Neko extension** in "Why this matters" (the sheet/method
    have no series concept), matching plan 067's framing convention.
 8. **Fixes:** correct the migration citation to `20260620000001 / 20260620000002 /
-   20260621000003` (the third is dated 2026-06-**21**); fix the itemization example to
+20260621000003` (the third is dated 2026-06-**21**); fix the itemization example to
    NEWLINE-separated items (not `/`); state whether `person_id` filters the resolver (via which
    join) or is authorship-only metadata excluded from the WHERE clause.
 
@@ -64,9 +64,9 @@ is a changelog, not a separate source of truth.
 The spreadsheet has **no concept of a recurring obligation as a first-class thing**.
 A monthly rent is just one item (`R$ x - Aluguel`) inside a Saída cell, repeated —
 with no id linking the twelve occurrences. `transaction.recurrence_id` only exists
-for series *created in the app*; everything imported from the sheet has it `NULL`.
+for series _created in the app_; everything imported from the sheet has it `NULL`.
 So today the app cannot answer "how has my rent changed over the year?", cannot
-budget per obligation, and cannot cleanly power scenario what-ifs that *change* an
+budget per obligation, and cannot cleanly power scenario what-ifs that _change_ an
 existing obligation (plan 067's override). This plan gives that missing identity the
 only honest way it can exist for imported data: a **user-confirmed match**. The user
 names a recurring item once ("Aluguel"); Neko tracks every matching line item and
@@ -74,13 +74,13 @@ shows exactly which ones — never guessing silently.
 
 **`obligation` is a Neko convenience, not a method artifact.** The spreadsheet and the
 method have no series/obligation concept (a monthly rent is twelve unlinked cells); this
-layer *surpasses* the sheet without contradicting it — the same framing plan 067 uses for
+layer _surpasses_ the sheet without contradicting it — the same framing plan 067 uses for
 its persisted scenarios and liquidity pockets. Label it that way in the doc.
 
 ## Current state
 
 - `line_item` (migrations `20260620000001` / `20260620000002` / `20260621000003`) — `id, transaction_id,
-  amount_cents, description, position, is_user_edited, section`. Items are re-derived
+amount_cents, description, position, is_user_edited, section`. Items are re-derived
   from the cell note each import (`import.rs:518–621`).
 - `classify_line_item(section, description) -> ItemKind` (`import.rs:936`) maps a
   section header (CONTAS/CARTÕES/DIÁRIO/…) to a money kind. Classification is by
@@ -93,7 +93,7 @@ its persisted scenarios and liquidity pockets. Label it that way in the doc.
 ## Design (first cut)
 
 A new **obligation** is a user-named match rule over line items — resolved at query
-time (line items are re-derived each import, so an `obligation_id` stored *on*
+time (line items are re-derived each import, so an `obligation_id` stored _on_
 line_item would be wiped; store the rule, resolve on read):
 
 ```sql
@@ -113,7 +113,7 @@ CREATE TABLE obligation (
   `normalize_desc(line_item.description) == O.match_desc` AND (O.match_section IS NULL OR
   `normalize_section(line_item.section) == O.match_section`). **`normalize_desc` must strip
   a trailing `\d+/\d+` installment counter** — a real recurring parcela embeds a mutable
-  `N/36` counter *inside* its description, so an exact match fails across months — and fold
+  `N/36` counter _inside_ its description, so an exact match fails across months — and fold
   case + accents. **`normalize_section` reuses the existing `normalize_item_section`**
   (import.rs:917 — strips a trailing `:`, casefolds, strips accents), because section
   punctuation drifts by year (`CONTAS` in 2025 vs `FATURAS:` in 2026). Define both helpers
@@ -129,20 +129,21 @@ CREATE TABLE obligation (
 - **User-confirmed, never silent:** creating an obligation always previews the set
   of currently-matching items ("isto vai agrupar N lançamentos — confira") before
   saving. The name and match are the user's, not inferred behind their back.
-- **Divergence-safe:** an obligation is a *view/index* over line items; it never
+- **Divergence-safe:** an obligation is a _view/index_ over line items; it never
   changes amounts or the cell-owns-total rule.
 
 ## Commands you will need
 
-| Purpose    | Command                                                              | Expected |
-|------------|---------------------------------------------------------------------|----------|
-| Rust tests | `cargo test --manifest-path src-tauri/Cargo.toml --locked`          | all pass |
-| Typecheck  | `npm run typecheck`                                                  | exit 0   |
-| Full gate  | `npm run check`                                                      | exit 0   |
+| Purpose    | Command                                                    | Expected |
+| ---------- | ---------------------------------------------------------- | -------- |
+| Rust tests | `cargo test --manifest-path src-tauri/Cargo.toml --locked` | all pass |
+| Typecheck  | `npm run typecheck`                                        | exit 0   |
+| Full gate  | `npm run check`                                            | exit 0   |
 
 ## Scope
 
 **In scope**:
+
 - Migration adding the `obligation` table.
 - Rust: CRUD commands (`create_obligation`, `list_obligations`, `delete_obligation`);
   a resolver `obligation_items(obligation_id) -> Vec<line_item>` +
@@ -156,6 +157,7 @@ CREATE TABLE obligation (
 - Tests (resolver correctness + the preview count).
 
 **Out of scope**:
+
 - Auto-detecting obligations without user confirmation (explicitly not silent).
 - Changing `classify_line_item` (section-based classification stays).
 - Per-obligation budgets and the scenario override wiring — those are follow-ups
@@ -202,7 +204,7 @@ history, average, and simple trend. Use design-system tokens; money via `<Money>
 
 - Resolver: seed line items across 3 months with description "aluguel" under section
   header "CONTAS:" plus unrelated items → an obligation `(match_desc="aluguel",
-  match_section="contas")` (note the stored value is `normalize_section`'d) resolves to
+match_section="contas")` (note the stored value is `normalize_section`'d) resolves to
   exactly those 3, and `obligation_history` returns the 3 monthly totals.
 - Normalize: "Aluguel ", "aluguel", "ALUGUEL" all match the same obligation.
 - **Counter-strip**: a line item whose description carries a trailing `N/36` counter that

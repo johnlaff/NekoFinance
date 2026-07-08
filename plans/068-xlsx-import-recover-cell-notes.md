@@ -69,7 +69,7 @@ and silently discarded.
 
 - `src-tauri/src/commands/sheets_import.rs:296` — `import_local_xlsx` opens the
   workbook with `calamine::open_workbook` and, per sheet, builds `rows:
-  Vec<Vec<String>>` from `worksheet_range`. At **line 372** it calls the parser
+Vec<Vec<String>>` from `worksheet_range`. At **line 372** it calls the parser
   with an **empty** notes slice, and the comment says why:
 
   ```rust
@@ -78,6 +78,7 @@ and silently discarded.
   // canônica de descrição.
   let imported_rows = import::parse_rows_with_layout(&rows, &layout, &mappings, &[])?;
   ```
+
   Just below, `ImportRowsOptions { descriptions_trusted: false }` (line ~377).
 
 - The **Google Sheets API path** does it right: `SheetsClient::get_sheet_notes`
@@ -97,16 +98,17 @@ true` when notes exist), instead of `&[]`.
 
 ## Commands you will need
 
-| Purpose   | Command                                                                 | Expected            |
-|-----------|-------------------------------------------------------------------------|---------------------|
-| Rust build| `cargo check --manifest-path src-tauri/Cargo.toml --locked`             | exit 0              |
-| Rust tests| `cargo test --manifest-path src-tauri/Cargo.toml --locked -- import`    | all pass            |
-| Clippy    | `npm run rust:clippy`                                                    | exit 0, no warnings |
-| Deps doc  | (if you add a crate) update `docs/version-matrix.md`                     | —                   |
+| Purpose    | Command                                                              | Expected            |
+| ---------- | -------------------------------------------------------------------- | ------------------- |
+| Rust build | `cargo check --manifest-path src-tauri/Cargo.toml --locked`          | exit 0              |
+| Rust tests | `cargo test --manifest-path src-tauri/Cargo.toml --locked -- import` | all pass            |
+| Clippy     | `npm run rust:clippy`                                                | exit 0, no warnings |
+| Deps doc   | (if you add a crate) update `docs/version-matrix.md`                 | —                   |
 
 ## Scope
 
 **In scope**:
+
 - `src-tauri/src/commands/sheets_import.rs` — read comments, pass the notes grid.
 - A new helper in `sheets_import.rs` (or under `commands/`) that parses `.xlsx` comment
   XML into a per-sheet `Vec<Vec<String>>`. Do NOT create `google_sheets/xlsx_notes.rs` —
@@ -115,6 +117,7 @@ true` when notes exist), instead of `&[]`.
 - Its unit tests + a fixture `.xlsx` with a known comment.
 
 **Out of scope**:
+
 - The Google Sheets API path (`get_sheet_notes`) — already correct.
 - `parse_rows_with_layout` / `parse_itemized_note` — unchanged; they already take
   and use the notes grid.
@@ -142,6 +145,7 @@ report** — use that API instead of hand-parsing XML (simpler and safer).
 Add `read_xlsx_comments(path: &Path) -> Result<HashMap<String, Vec<Vec<String>>>, String>`
 (sheet display name → notes grid indexed `[row][col]`, matching the API path's
 shape). A `.xlsx` is a zip; read, in order:
+
 - `xl/workbook.xml` → sheet **name** → `sheetId` + `r:id`.
 - `xl/_rels/workbook.xml.rels` → `r:id` → `xl/worksheets/sheetN.xml`.
 - `xl/worksheets/_rels/sheetN.xml.rels` → the `.../commentsM.xml` target (a sheet
@@ -159,7 +163,7 @@ shape). A `.xlsx` is a zip; read, in order:
 Cargo.toml). Add **`zip`** as a direct dep (pin to the resolved version). For the XML,
 either hand-parse the tiny comment files, or add **`quick-xml` at ≥0.41** as a direct
 dep — do NOT pin to the transitive `0.39.4`, which is under RUSTSEC-2026-0194/0195
-(ignored for the transitive path in `.cargo/audit.toml`, but a *direct* dep should be on
+(ignored for the transitive path in `.cargo/audit.toml`, but a _direct_ dep should be on
 the fixed line). Document any new dep in `docs/version-matrix.md`.
 
 **Verify**: `cargo check --manifest-path src-tauri/Cargo.toml --locked` → exit 0.
