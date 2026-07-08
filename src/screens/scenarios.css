@@ -7,13 +7,14 @@
 }
 
 /* --- Side-sheet ---
-   `<dialog>` nativo: showModal() já dá foco preso + Escape-para-fechar + o ::backdrop abaixo —
-   nenhum scrim <div> nem role="dialog" manual. Reset das defaults do UA (margin/border/padding
-   /max-width centralizados) para virar o painel fixo do lado direito. */
+   `<dialog>` nativo NÃO-modal (show()): painel fixo à direita, SEM ::backdrop — o compare fica
+   visível e operável ao lado (a razão de ser um side-sheet e não um modal). Reset das defaults
+   do UA (margin/border/padding/max-width centralizados). */
 
 .scn-sheet {
   position: fixed;
   inset: 0 0 0 auto;
+  z-index: var(--z-sheet, 40);
   margin: 0;
   border: none;
   border-left: var(--bw-hair) solid var(--border);
@@ -28,8 +29,29 @@
   flex-direction: column;
   overflow: hidden;
 }
-.scn-sheet::backdrop {
-  background: var(--bg-scrim);
+
+/* Com o sheet aberto, o conteúdo do Horizonte reflui para o espaço restante (side-by-side de
+ * verdade: cards e gráfico nunca somem por baixo do painel). Em viewport estreita o sheet
+ * cobre (92vw) e o reflow não faz sentido. */
+.hz--sheet-open {
+  margin-right: min(396px, 94vw);
+}
+:root:not([data-motion="off"]) .hz {
+  transition: margin-right var(--dur-fast, 0.18s) var(--ease-entrance, ease-out);
+}
+@media (max-width: 900px) {
+  .hz--sheet-open {
+    margin-right: 0;
+  }
+}
+
+/* Inputs/selects dentro dos grids do sheet: o min-width intrínseco de um <input> vence o 1fr
+ * e estoura a coluna (o campo "Juros a.m." saía pela borda). */
+.scn-row2 > *,
+.scn-row3 > *,
+.scn-field input,
+.scn-field select {
+  min-width: 0;
 }
 :root:not([data-motion="off"]) .scn-sheet {
   animation: scn-sheet-in var(--dur-fast, 0.18s) var(--ease-entrance, ease-out) both;
@@ -138,6 +160,12 @@
   gap: 4px;
   font-size: 12px;
   color: var(--text-muted);
+}
+/* Respiro entre o último campo e o CTA de cada form do sheet: sem isto o botão encosta na
+ * borda do input e o anel de foco fica por trás dele (overlap visível no WebView2). Os CTAs
+ * são os únicos <button> filhos DIRETOS de uma section — os demais botões vivem em wrappers. */
+.scn-sheet__body section > button {
+  margin-top: 12px;
 }
 .scn-field input,
 .scn-field select {
