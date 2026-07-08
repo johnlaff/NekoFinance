@@ -54,7 +54,7 @@ pub async fn owner_totals_for_month(
          FROM split s \
          JOIN person p ON p.id = s.owner_person_id \
          JOIN \"transaction\" t ON t.id = s.transaction_id \
-         WHERE substr(t.date, 1, 7) = ?1 \
+         WHERE substr(t.date, 1, 7) = ?1 AND t.scenario_id IS NULL \
          GROUP BY p.id \
          ORDER BY total_cents DESC, p.name COLLATE NOCASE",
     )
