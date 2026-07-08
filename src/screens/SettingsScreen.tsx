@@ -40,7 +40,7 @@ import {
   type DailyBudgetCategoryInput,
   type AuthStatus,
 } from "../lib/api";
-import { formatBRL, parseBRLToCents } from "../lib/format";
+import { parseBRLToCents } from "../lib/format";
 import {
   motionEnabled,
   setMotionPreference,
@@ -51,6 +51,7 @@ import { safeErrorMessage } from "../lib/errors";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { Button } from "../design-system/components/Button";
 import { SegmentedControl } from "../design-system/components/SegmentedControl";
+import { Money } from "../design-system/components/Money";
 
 // ---------------------------------------------------------------------------
 // Inline styles (hoisted — React Compiler: never inline in JSX)
@@ -887,12 +888,14 @@ function DiarioCategorySection() {
         </fieldset>
 
         <p style={CAT_SUMMARY_STYLE}>
-          Total {formatBRL(effectiveTotal)} — {formatBRL(dailyRate)}/dia ({daysInMonth}{" "}
-          dias no mês atual).
+          Total <Money cents={effectiveTotal} size="inherit" /> —{" "}
+          <Money cents={dailyRate} size="inherit" />
+          /dia ({daysInMonth} dias no mês atual).
           {mismatch ? (
             <strong role="status" style={CAT_WARN_STYLE}>
               {" "}
-              A soma das categorias ({formatBRL(catSumCents)}) difere do teto informado.
+              A soma das categorias (<Money cents={catSumCents} size="inherit" />)
+              difere do teto informado.
             </strong>
           ) : null}
           {s.saved ? <strong> Salvo.</strong> : null}

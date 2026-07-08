@@ -11,6 +11,7 @@ import {
 } from "../lib/api";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { EmptyState } from "../design-system/components/EmptyState";
+import { Money } from "../design-system/components/Money";
 import { parseBRLToCents } from "../lib/format";
 import { kindToFields } from "../lib/movement";
 import {
@@ -214,13 +215,16 @@ export function DashboardScreen() {
             {fmtBRL(safeToSpend)} <small>sem furar o teto</small>
           </p>
           <p className="hoje-hero__reason">
-            É o menor de dois limites: o teto diário de {fmtBRL(ceiling)} e o que o
-            caixa aguenta sem nenhum dia no vermelho até o fim do mês.
+            É o menor de dois limites: o teto diário de{" "}
+            <Money cents={ceiling} size="inherit" /> e o que o caixa aguenta sem nenhum
+            dia no vermelho até o fim do mês.
           </p>
           <dl className="hoje-hero__stats">
             <div>
               <dt>Saldo hoje</dt>
-              <dd>{fmtBRL(saldoHoje)}</dd>
+              <dd>
+                <Money cents={saldoHoje} size="inherit" />
+              </dd>
             </div>
             <div>
               <dt>Reserva</dt>
@@ -234,7 +238,9 @@ export function DashboardScreen() {
             </div>
             <div>
               <dt>Teto diário</dt>
-              <dd>{fmtBRL(ceiling)}</dd>
+              <dd>
+                <Money cents={ceiling} size="inherit" />
+              </dd>
             </div>
           </dl>
         </div>
@@ -262,13 +268,19 @@ export function DashboardScreen() {
             </span>
           </div>
           <div className="hoje-fc__val" style={{ color: endBand.text }}>
-            {fmtBRL(endBalance)}
+            <Money cents={endBalance} size="inherit" />
           </div>
           <MiniTrajectory daily={monthDaily} today={today} />
           <p className="hoje-fc__foot">
-            {minSaldo < 0
-              ? `Atenção: chega a ${fmtBRL(minSaldo)} no pior dia.`
-              : `Menor saldo previsto no mês: ${fmtBRL(minSaldo)}.`}
+            {minSaldo < 0 ? (
+              <>
+                Atenção: chega a <Money cents={minSaldo} size="inherit" /> no pior dia.
+              </>
+            ) : (
+              <>
+                Menor saldo previsto no mês: <Money cents={minSaldo} size="inherit" />.
+              </>
+            )}
           </p>
         </aside>
       </section>
@@ -357,14 +369,22 @@ function CheckinCard({
             color: over ? "var(--danger-400)" : "var(--text-muted)",
           }}
         >
-          {over ? `${fmtBRL(-remaining)} acima` : `${fmtBRL(remaining)} livre`}
+          {over ? (
+            <>
+              <Money cents={-remaining} size="inherit" /> acima
+            </>
+          ) : (
+            <>
+              <Money cents={remaining} size="inherit" /> livre
+            </>
+          )}
         </span>
       </div>
       <div className="card__body">
         <div className="ci-top">
           <span style={{ color: "var(--text-muted)" }}>Diário de hoje</span>
           <span className="ci-spent">
-            {fmtBRL(spent)}
+            <Money cents={spent} size="inherit" />
             <span style={{ color: "var(--text-faint)", fontWeight: 400 }}>
               {" "}
               / {fmtBRL(ceiling)}
@@ -481,7 +501,9 @@ function UpcomingCard({
                 <div className="up-desc">
                   <div className="up-desc__t">{e.description}</div>
                 </div>
-                <div className="up-amt">−{fmtBRL(e.amount)}</div>
+                <div className="up-amt">
+                  <Money cents={-e.amount} size="inherit" />
+                </div>
               </div>
             );
           })
