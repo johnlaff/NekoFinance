@@ -1,4 +1,5 @@
 import "./horizonte.css";
+import { useState } from "react";
 import {
   AlertTriangle,
   CalendarRange,
@@ -6,12 +7,18 @@ import {
   Calculator,
   CalendarClock,
 } from "lucide-react";
-import { getForecast, getUpcomingBills, isTauri } from "../lib/api";
+import {
+  getForecast,
+  getUpcomingBills,
+  getScenarioForecast,
+  isTauri,
+} from "../lib/api";
 import { fmtDate } from "../lib/format";
 import { useCommand } from "../lib/useCommand";
 import { fmtBRL, MES, saldoBand } from "../lib/nkFormat";
 import { BalanceTrajectory } from "../design-system/components/BalanceTrajectory";
 import { ProvBadge } from "../design-system/components/ProvBadge";
+import { SimulateScenarioButton, ScenarioSheet, ScenarioCompare } from "./scenarios";
 
 /** Janela do calendário de contas a vencer (dias a partir de hoje). */
 const BILLS_WINDOW_DAYS = 60;
@@ -29,6 +36,19 @@ function fmtDM(iso: string): string {
 export function HorizonteScreen() {
   const forecastQ = useCommand("get_forecast", getForecast);
   const billsQ = useCommand("get_upcoming_bills:60", fetchUpcomingBills);
+
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [activeScenarioId, setActiveScenarioId] = useState<string | null>(null);
+  const compareQ = useCommand(
+    activeScenarioId
+      ? `scenario_forecast:${activeScenarioId}`
+      : "scenario_forecast:none",
+    () =>
+      activeScenarioId
+        ? getScenarioForecast(activeScenarioId)
+        : Promise.reject(new Error("nenhum cenário selecionado")),
+  );
+  const compare = activeScenarioId ? (compareQ.data ?? null) : null;
 
   const forecast = forecastQ.data ?? null;
 
@@ -53,7 +73,26 @@ export function HorizonteScreen() {
 
   return (
     <div className="hz">
-      <div className="hz-title">Horizonte de saldos</div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+        }}
+      >
+        <div className="hz-title">Horizonte de saldos</div>
+        <SimulateScenarioButton onClick={() => setSheetOpen(true)} />
+      </div>
+
+      <ScenarioSheet
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        activeScenarioId={activeScenarioId}
+        onSelectScenario={setActiveScenarioId}
+      />
+
+      {compare && <ScenarioCompare compare={compare} />}
 
       {/* Status banner */}
       {daily.length > 0 && minDay != null ? (

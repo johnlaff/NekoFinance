@@ -1106,6 +1106,24 @@ export function deleteScenarioTransaction(
   return invoke("delete_scenario_transaction_cmd", { scenarioId, txnId });
 }
 
+/** Uma linha hipotética crua do cenário (fatia C): a descrição ainda carrega os sufixos de
+ * marca (`#loan:...`/`#repl:...`) — remova-os ao exibir (ver `stripScenarioMarker`). */
+export interface ScenarioTransactionRow {
+  id: string;
+  type: string;
+  amount: number;
+  description: string;
+  date: string;
+}
+
+/** Lista as linhas hipotéticas do cenário — a fonte da lista editável do side-sheet (permite
+ * apagar uma linha adicionada em uma sessão anterior). */
+export function listScenarioTransactions(
+  scenarioId: string,
+): Promise<ScenarioTransactionRow[]> {
+  return invoke("list_scenario_transactions_cmd", { scenarioId });
+}
+
 /** A linha hipotética de substituição de um override `replace` (opcional): o backend a cria
  * junto com o override e a marca com `#repl:<override_id>` no fim da descrição — é isso que
  * permite ao compare fundir velho→novo numa única entrada de `changes`. A UI deve REMOVER o

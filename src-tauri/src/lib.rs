@@ -93,6 +93,7 @@ pub fn run() {
             scenarios::delete_scenario_cmd,
             scenarios::add_scenario_transaction_cmd,
             scenarios::delete_scenario_transaction_cmd,
+            scenarios::list_scenario_transactions_cmd,
             scenarios::set_scenario_override_cmd,
             scenarios::delete_scenario_override_cmd,
             scenarios::list_scenario_overrides_cmd,
