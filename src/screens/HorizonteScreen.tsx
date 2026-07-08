@@ -15,8 +15,9 @@ import {
 } from "../lib/api";
 import { fmtDate } from "../lib/format";
 import { useCommand } from "../lib/useCommand";
-import { fmtBRL, MES, saldoBand } from "../lib/nkFormat";
+import { MES, saldoBand } from "../lib/nkFormat";
 import { BalanceTrajectory } from "../design-system/components/BalanceTrajectory";
+import { Money } from "../design-system/components/Money";
 import { ProvBadge } from "../design-system/components/ProvBadge";
 import { SimulateScenarioButton, ScenarioSheet, ScenarioCompare } from "./scenarios";
 
@@ -109,9 +110,17 @@ export function HorizonteScreen() {
           </span>
           <div>
             <div className="hz-alert__t">
-              {hasDeficit
-                ? `Seu saldo chega a ${fmtBRL(minVal)} em ${fmtDM(minDay.date)}.`
-                : `Saldo positivo o ano inteiro. O menor ponto foi ${fmtBRL(minVal)} em ${fmtDM(minDay.date)}.`}
+              {hasDeficit ? (
+                <>
+                  Seu saldo chega a <Money cents={minVal} size="sm" /> em{" "}
+                  {fmtDM(minDay.date)}.
+                </>
+              ) : (
+                <>
+                  Saldo positivo o ano inteiro. O menor ponto foi{" "}
+                  <Money cents={minVal} size="sm" /> em {fmtDM(minDay.date)}.
+                </>
+              )}
             </div>
             <div className="hz-alert__s">
               {hasDeficit
@@ -137,7 +146,7 @@ export function HorizonteScreen() {
                 color: endBand.text,
               }}
             >
-              fim do ano {fmtBRL(endVal)}
+              fim do ano <Money cents={endVal} size="sm" />
             </span>
           </div>
           <div className="card__body">
@@ -168,7 +177,7 @@ export function HorizonteScreen() {
                   >
                     <div className="hz-mcard__m">{MES[me.month - 1]}</div>
                     <div className="hz-mcard__v" style={{ color: band.text }}>
-                      {fmtBRL(me.balance_cents)}
+                      <Money cents={me.balance_cents} size="lg" />
                     </div>
                     <div className="hz-mcard__b" style={{ color: band.text }}>
                       <span
@@ -202,7 +211,9 @@ export function HorizonteScreen() {
                 </span>
                 <span className="hz-bill-desc">{b.description || "—"}</span>
                 {b.is_projection && <ProvBadge provenance="projetado" />}
-                <span className="hz-bill-amt">−{fmtBRL(Math.abs(b.amount))}</span>
+                <span className="hz-bill-amt">
+                  <Money cents={-Math.abs(b.amount)} size="sm" />
+                </span>
               </li>
             ))}
           </ul>

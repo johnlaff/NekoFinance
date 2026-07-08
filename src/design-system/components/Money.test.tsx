@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
-import { Money } from "./Money";
+import { Money, SignedMoney } from "./Money";
 import { formatBRL } from "../../lib/format";
 
 describe("formatBRL", () => {
@@ -51,5 +51,26 @@ describe("Money", () => {
     const el = container.firstElementChild as HTMLElement;
     expect(el.style.fontFamily).toBe("var(--font-money)");
     expect(el.style.fontVariantNumeric).toBe("tabular-nums");
+  });
+});
+
+describe("SignedMoney", () => {
+  it("força o + visível em positivos", () => {
+    render(<SignedMoney cents={2500} />);
+    expect(screen.getByText(/^\+R\$/)).toBeInTheDocument();
+  });
+  it("mantém o sinal de menos real em negativos (sem + duplicado)", () => {
+    render(<SignedMoney cents={-2500} />);
+    const el = screen.getByText(/R\$/);
+    expect(el.textContent?.startsWith("+")).toBe(false);
+    expect(el.textContent?.charCodeAt(0)).toBe(0x2212);
+  });
+  it("aria-label anuncia positivo/negativo por extenso", () => {
+    render(<SignedMoney cents={2500} />);
+    expect(screen.getByLabelText(/^positivo /)).toBeInTheDocument();
+  });
+  it("aria-label anuncia negativo por extenso", () => {
+    render(<SignedMoney cents={-2500} />);
+    expect(screen.getByLabelText(/^negativo /)).toBeInTheDocument();
   });
 });

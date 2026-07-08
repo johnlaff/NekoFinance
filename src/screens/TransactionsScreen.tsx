@@ -28,7 +28,6 @@ import {
 import { useCommand, invalidateCommands } from "../lib/useCommand";
 import {
   fmtBRL,
-  fmtSigned,
   MES,
   monthOf,
   saldoBand,
@@ -36,6 +35,7 @@ import {
   type MovementType,
 } from "../lib/nkFormat";
 import { todayISO, fmtDayMonth } from "../lib/format";
+import { Money, SignedMoney } from "../design-system/components/Money";
 import { useNekoApp } from "../shell/appContext";
 import { MarkObligationAction, ObligationsCard } from "./ObligationsPanel";
 
@@ -431,8 +431,7 @@ function Row({
                 : "var(--money-neg)",
           }}
         >
-          {isEntrada ? "+" : "−"}
-          {fmtBRL(totalCents)}
+          <SignedMoney cents={isEntrada ? totalCents : -totalCents} size="md" />
         </span>
       </button>
       {open && (
@@ -476,8 +475,14 @@ function Row({
                         color: isEntrada ? "var(--money-pos)" : "var(--money-neg)",
                       }}
                     >
-                      {isEntrada ? "+" : "−"}
-                      {fmtBRL(Math.abs(li.amount_cents))}
+                      <SignedMoney
+                        cents={
+                          isEntrada
+                            ? Math.abs(li.amount_cents)
+                            : -Math.abs(li.amount_cents)
+                        }
+                        size="sm"
+                      />
                     </span>
                   </div>
                 );
@@ -578,10 +583,12 @@ function GroupHeader({
           style={{ background: band.fill, color: band.text }}
           aria-label={`Saldo do dia ${fmtBRL(balance!)}`}
         >
-          {fmtBRL(balance!)}
+          <Money cents={balance!} size="sm" ariaLabel="" />
         </span>
       )}
-      <span className="lc-gh__sum">{fmtSigned(sum)}</span>
+      <span className="lc-gh__sum">
+        <SignedMoney cents={sum} size="sm" />
+      </span>
     </div>
   );
 }
@@ -780,7 +787,7 @@ function FutureBanner({
         </div>
       </div>
       <span className="lc-future__amt">
-        {fmtSigned(sum)}
+        <SignedMoney cents={sum} size="sm" />
         <br />
         <ChevronRight
           size={14}
@@ -937,9 +944,16 @@ function MonthView({
       <div className="lc-gh lc-gh--month">
         <span className="lc-gh__t">{monthLabel(targetKey)}</span>
         <span className="lc-gh__sum">
-          {endBalance != null
-            ? `Saldo fim · ${fmtBRL(endBalance)}`
-            : fmtSigned(inMonthRows.reduce((s, t) => s + signedCents(t), 0))}
+          {endBalance != null ? (
+            <>
+              Saldo fim · <Money cents={endBalance} size="sm" />
+            </>
+          ) : (
+            <SignedMoney
+              cents={inMonthRows.reduce((s, t) => s + signedCents(t), 0)}
+              size="sm"
+            />
+          )}
         </span>
       </div>
       {days.map(([iso, rows]) => (

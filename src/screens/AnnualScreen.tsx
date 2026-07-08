@@ -13,14 +13,8 @@ import {
 } from "../lib/api";
 import { useCommand } from "../lib/useCommand";
 import { todayISO } from "../lib/format";
-import {
-  fmtBRL,
-  fmtCompact,
-  fmtSigned,
-  MES,
-  MES_ABBR,
-  saldoBand,
-} from "../lib/nkFormat";
+import { fmtBRL, fmtCompact, MES, MES_ABBR, saldoBand } from "../lib/nkFormat";
+import { Money, SignedMoney } from "../design-system/components/Money";
 
 const TAB_OPTIONS = [
   { value: "ano", label: "Este ano" },
@@ -299,11 +293,17 @@ function AnoTable({
                     color: mIdx <= currentMonthIdx ? "var(--money-pos)" : undefined,
                   }}
                 >
-                  {fmtBRL(m.income_cents)}
+                  <Money cents={m.income_cents} size="sm" />
                 </td>
-                <td>{fmtBRL(m.cost_of_living_cents)}</td>
-                <td>{fmtBRL(m.daily_out_cents)}</td>
-                <td>{fmtBRL(m.economia_cents)}</td>
+                <td>
+                  <Money cents={m.cost_of_living_cents} size="sm" />
+                </td>
+                <td>
+                  <Money cents={m.daily_out_cents} size="sm" />
+                </td>
+                <td>
+                  <Money cents={m.economia_cents} size="sm" />
+                </td>
                 {/* Economizado% do mês (economia ÷ entradas), como na coluna % da aba
                     Economia da planilha; sem entradas não há taxa a mostrar. */}
                 <td style={{ color: "var(--text-muted)" }}>
@@ -319,7 +319,7 @@ function AnoTable({
                         : "var(--money-neg)",
                   }}
                 >
-                  {fmtSigned(m.performance_cents)}
+                  <SignedMoney cents={m.performance_cents} size="sm" />
                   {m.daily_projected_cents > 0 ? (
                     <span
                       title={`Inclui previsão de diário de ${fmtBRL(m.daily_projected_cents)}`}
@@ -330,7 +330,7 @@ function AnoTable({
                   ) : null}
                 </td>
                 <td style={{ color: showEndBal ? band.text : "var(--text-faint)" }}>
-                  {showEndBal ? fmtBRL(endBal) : "—"}
+                  {showEndBal ? <Money cents={endBal} size="sm" /> : "—"}
                 </td>
               </tr>
             );
@@ -343,10 +343,18 @@ function AnoTable({
             <td>
               Realizado{realized.some((m) => m.daily_projected_cents > 0) ? "†" : ""}
             </td>
-            <td>{fmtBRL(totals.income)}</td>
-            <td>{fmtBRL(totals.saidaTotal)}</td>
-            <td>{fmtBRL(totals.diario)}</td>
-            <td>{fmtBRL(totals.economia)}</td>
+            <td>
+              <Money cents={totals.income} size="sm" />
+            </td>
+            <td>
+              <Money cents={totals.saidaTotal} size="sm" />
+            </td>
+            <td>
+              <Money cents={totals.diario} size="sm" />
+            </td>
+            <td>
+              <Money cents={totals.economia} size="sm" />
+            </td>
             <td
               title={`Economizado acumulado: ${econPct.toFixed(0)}%`}
               style={{ color: "var(--text-muted)" }}
@@ -359,7 +367,7 @@ function AnoTable({
                   totals.performance >= 0 ? "var(--money-pos)" : "var(--money-neg)",
               }}
             >
-              {fmtSigned(totals.performance)}
+              <SignedMoney cents={totals.performance} size="sm" />
             </td>
             <td style={{ color: "var(--text-faint)" }}>—</td>
           </tr>
@@ -485,8 +493,12 @@ function AnoCmpSection({
             <span className="ano-cmp__sum-y" style={{ color }}>
               {y}
             </span>
-            <span>Entradas {fmtBRL(s.income)}</span>
-            <span>Economia {fmtBRL(s.economia)}</span>
+            <span>
+              Entradas <Money cents={s.income} size="sm" />
+            </span>
+            <span>
+              Economia <Money cents={s.economia} size="sm" />
+            </span>
             <span className="ano-cmp__sum-pct">Economizado {pctLabel(s.pct)}</span>
           </div>
         ))}

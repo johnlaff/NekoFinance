@@ -196,11 +196,13 @@ describe("TotaisScreen (render)", () => {
     await waitFor(() => expect(screen.getByText("Performance")).toBeInTheDocument());
 
     // Os três termos exibidos fecham com o valor da Performance mostrado acima.
+    // Os valores renderizam dentro de <Money> (a11y), então casamos pelo textContent
+    // completo do parágrafo em vez do texto direto de um único nó.
     expect(
       screen.getByText(
-        (content, el) =>
+        (_content, el) =>
           el?.classList.contains("mes-tile__sub") === true &&
-          content ===
+          (el.textContent ?? "").replace(/\s+/g, " ") ===
             "Entradas R$ 7.000,00 − Custo de vida R$ 2.500,00 − Economia R$ 1.000,00",
       ),
     ).toBeInTheDocument();
@@ -238,9 +240,9 @@ describe("TotaisScreen (render)", () => {
 
     expect(
       screen.getByText(
-        (content, el) =>
+        (_content, el) =>
           el?.classList.contains("mes-tile__sub") === true &&
-          content ===
+          (el.textContent ?? "").replace(/\s+/g, " ") ===
             "Entradas R$ 7.000,00 − Custo de vida R$ 2.500,00 − Economia R$ 1.000,00 − Patrimônio R$ 500,00",
       ),
     ).toBeInTheDocument();
@@ -279,9 +281,9 @@ describe("TotaisScreen (render)", () => {
 
     expect(
       screen.getByText(
-        (content, el) =>
+        (_content, el) =>
           el?.classList.contains("mes-tile__sub") === true &&
-          content ===
+          (el.textContent ?? "").replace(/\s+/g, " ") ===
             "Entradas R$ 7.000,00 − Custo de vida R$ 2.500,00 − Previsão de diário R$ 1.200,00",
       ),
     ).toBeInTheDocument();

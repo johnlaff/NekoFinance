@@ -9,10 +9,11 @@ import {
   isTauri,
 } from "../lib/api";
 import { useCommand, invalidateCommands } from "../lib/useCommand";
-import { fmtBRL, MES } from "../lib/nkFormat";
+import { MES } from "../lib/nkFormat";
 import { safeErrorMessage } from "../lib/errors";
 import { MonthNav } from "../design-system/components/MonthNav";
 import { Button } from "../design-system/components/Button";
+import { Money } from "../design-system/components/Money";
 
 /** Paleta de cores da tag (tokens do DS). O nome humano vira o aria-label do swatch. */
 const PALETTE: { value: string; name: string }[] = [
@@ -271,7 +272,7 @@ export function TagsScreen() {
               color: "var(--text-faint)",
             }}
           >
-            Total {fmtBRL(grand)}
+            Total <Money cents={grand} size="sm" />
           </span>
         </div>
 
@@ -309,7 +310,9 @@ export function TagsScreen() {
                       style={{ width: `${pct}%`, background: color }}
                     />
                   </span>
-                  <span className="tg-amt">{fmtBRL(tag.total_cents)}</span>
+                  <span className="tg-amt">
+                    <Money cents={tag.total_cents} size="sm" />
+                  </span>
                   <button
                     type="button"
                     aria-label={`Editar tag "${tag.name}"`}

@@ -34,17 +34,10 @@ import {
 } from "../lib/api";
 import { useCommand, invalidateCommands } from "../lib/useCommand";
 import { todayISO } from "../lib/format";
-import {
-  fmtBRL,
-  fmtSigned,
-  MES,
-  MES_ABBR,
-  TYPE_META,
-  type MovementType,
-} from "../lib/nkFormat";
+import { fmtBRL, MES, MES_ABBR, TYPE_META, type MovementType } from "../lib/nkFormat";
 import { kindToFields } from "../lib/movement";
 import { stripScenarioMarker, addMonthsISO } from "../lib/scenarioHelpers";
-import { Money } from "../design-system/components/Money";
+import { Money, SignedMoney } from "../design-system/components/Money";
 import { Button } from "../design-system/components/Button";
 import { InfoPopover } from "../design-system/components/InfoPopover";
 import { safeErrorMessage, errorText } from "../lib/errors";
@@ -793,7 +786,8 @@ function deltaChip(deltaCents: number, sense: DeltaSense) {
   const arrow = deltaCents > 0 ? "▲" : deltaCents < 0 ? "▼" : "•";
   return (
     <span className={cls}>
-      {arrow} {fmtSigned(deltaCents)}
+      <span aria-hidden="true">{arrow}</span>{" "}
+      <SignedMoney cents={deltaCents} size="sm" />
     </span>
   );
 }
@@ -821,14 +815,16 @@ function KpiCard({
         </InfoPopover>
       </span>
       <div className="scn-kpi__transition">
-        {fmtBRL(realCents)}
+        <Money cents={realCents} size="sm" />
         <ArrowRight
           size={12}
           strokeWidth={2}
           className="scn-kpi__arrow"
           aria-hidden="true"
         />
-        <span className="scn-kpi__scenario-val">{fmtBRL(scenarioCents)}</span>
+        <span className="scn-kpi__scenario-val">
+          <Money cents={scenarioCents} size="md" />
+        </span>
       </div>
       {deltaChip(deltaCents, sense)}
     </article>
@@ -862,7 +858,7 @@ export function ScenarioCompare({ compare }: { compare: ScenarioCompareDto }) {
         data-testid="scn-live-region"
       >
         Comparação atualizada: {compare.scenario_name}, saldo final{" "}
-        {fmtSigned(endDeltaCents)} versus o real
+        <SignedMoney cents={endDeltaCents} size="sm" /> versus o real
       </div>
       <div className="card__head">
         <span className="card__title">
@@ -988,12 +984,29 @@ function ChangesList({ changes }: { changes: ScenarioCompareDto["changes"] }) {
             </span>
             <span className="scn-change-row__desc">{changeLabel(c.description)}</span>
             <span className="scn-change-row__amt">
-              {c.op === "replace"
-                ? `${c.old_amount_cents != null ? fmtBRL(c.old_amount_cents) : "—"} → ${c.new_amount_cents != null ? fmtBRL(c.new_amount_cents) : "—"}`
-                : fmtBRL(
-                    (c.old_amount_cents ?? c.new_amount_cents ?? 0) *
-                      (c.op === "remove" ? -1 : 1),
+              {c.op === "replace" ? (
+                <>
+                  {c.old_amount_cents != null ? (
+                    <Money cents={c.old_amount_cents} size="sm" />
+                  ) : (
+                    "—"
+                  )}{" "}
+                  →{" "}
+                  {c.new_amount_cents != null ? (
+                    <Money cents={c.new_amount_cents} size="sm" />
+                  ) : (
+                    "—"
                   )}
+                </>
+              ) : (
+                <Money
+                  cents={
+                    (c.old_amount_cents ?? c.new_amount_cents ?? 0) *
+                    (c.op === "remove" ? -1 : 1)
+                  }
+                  size="sm"
+                />
+              )}
             </span>
           </div>
         ))}
@@ -1202,7 +1215,7 @@ function DiffSparkline({ monthEnd }: { monthEnd: ScenarioCompareDto["month_end"]
       </svg>
       {worst && worst.delta_cents < 0 && (
         <p className="scn-worst-note">
-          Pior mês: {MES[worst.month - 1]} {fmtBRL(worst.delta_cents)}
+          Pior mês: {MES[worst.month - 1]} <Money cents={worst.delta_cents} size="sm" />
         </p>
       )}
     </div>

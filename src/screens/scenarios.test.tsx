@@ -355,9 +355,13 @@ describe("ScenarioCompare — superfície de comparação", () => {
     ]) {
       expect(within(surface).getByText(label)).toBeInTheDocument();
     }
-    // Buraco do futuro: real R$1.000,00 → cenário −R$500,00.
-    expect(within(surface).getByText("R$ 1.000,00")).toBeInTheDocument();
-    expect(within(surface).getByText("−R$ 500,00")).toBeInTheDocument();
+    // Buraco do futuro: real R$1.000,00 → cenário −R$500,00 (escopado ao card: o valor
+    // do delta de Performance é coincidentemente igual, então uma busca solta ambiguaria).
+    const deficitCard = within(surface)
+      .getByRole("button", { name: "Buraco do futuro" })
+      .closest("article")!;
+    expect(within(deficitCard).getByText("R$ 1.000,00")).toBeInTheDocument();
+    expect(within(deficitCard).getByText("−R$ 500,00")).toBeInTheDocument();
   });
 
   it("funde replace numa única entrada 'o que mudou' (velho → novo)", async () => {
@@ -376,7 +380,12 @@ describe("ScenarioCompare — superfície de comparação", () => {
     );
 
     expect(await screen.findByText("↔ alterou")).toBeInTheDocument();
-    expect(screen.getByText("R$ 1.500,00 → R$ 1.200,00")).toBeInTheDocument();
+    // O valor antigo/novo agora renderiza em dois <Money> (a11y), então o texto fica
+    // partido em nós diferentes — comparamos o textContent normalizado da linha inteira.
+    const amt = document.querySelector(".scn-change-row__amt");
+    expect(amt?.textContent?.replace(/\s+/g, " ").trim()).toBe(
+      "R$ 1.500,00 → R$ 1.200,00",
+    );
   });
 
   it("remove os sufixos de marca (#loan/#repl) da lista de mudanças", async () => {

@@ -159,8 +159,15 @@ describe("SettingsScreen", () => {
     expect(
       await screen.findByRole("button", { name: "Adicionar categoria" }),
     ).toBeInTheDocument();
-    // Resumo derivado com 0 categorias: total R$ 0,00.
-    expect(screen.getByText(/Total R\$ 0,00/)).toBeInTheDocument();
+    // Resumo derivado com 0 categorias: total R$ 0,00 (dentro de um <Money>, então
+    // casamos pelo textContent do <p> em vez do texto de um único nó).
+    expect(
+      screen.getByText(
+        (_, el) =>
+          el?.tagName === "P" &&
+          (el.textContent ?? "").replace(/\s+/g, " ").includes("Total R$ 0,00"),
+      ),
+    ).toBeInTheDocument();
   });
 
   it("DiarioCategorySection: renderiza as categorias existentes (nome + valor)", async () => {
@@ -237,9 +244,18 @@ describe("SettingsScreen", () => {
     });
     render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
 
-    expect(
-      await screen.findByText(new RegExp(`R\\$ ${reais}/dia`)),
-    ).toBeInTheDocument();
+    // O valor renderiza dentro de um <Money> (a11y), então o texto some da leitura
+    // padrão de nó-a-nó do RTL — casamos pelo textContent completo do <p>.
+    const rateRe = new RegExp(`R\\$ ${reais}/dia`);
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          (_, el) =>
+            el?.tagName === "P" &&
+            rateRe.test((el.textContent ?? "").replace(/\s+/g, " ")),
+        ),
+      ).toBeInTheDocument();
+    });
     expect(
       screen.getByText(new RegExp(`${daysInMonth} dias no mês atual`)),
     ).toBeInTheDocument();
