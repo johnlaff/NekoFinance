@@ -32,7 +32,7 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 017  | Accessibility WCAG batch (contrast + landmarks)                                        | P1       | S      | —          | DONE                                                                                                         |
 | 018  | Motion 2026: stagger static screens + token-driven durations                           | P2       | S–M    | —          | DONE                                                                                                         |
 | 019  | SPIKE: first-class invoice (credit-bill) entity                                        | —        | spike  | 004        | TODO                                                                                                         |
-| 020  | SPIKE: what-if / scenario branching of the forecast                                    | —        | spike  | —          | TODO                                                                                                         |
+| 020  | SPIKE: what-if / scenario branching of the forecast                                    | —        | spike  | —          | SUPERSEDED by 067 (stale excerpts: pre-split `commands.rs`, 4-type engine)                                    |
 | 021  | SPIKE: real-time two-way Google Sheets sync                                            | —        | spike  | 001, 002   | SPIKE DONE — Phase 1 ready                                                                                   |
 | 022  | Remove the credit-accumulator fork residue (stay faithful: credit is a lump)           | P2       | M      | —          | DONE                                                                                                         |
 | 023  | Rewrite note-marker convention → method-faithful #dividir:/#reembolso: + net-zero      | P1       | M      | —          | DONE                                                                                                         |
@@ -79,8 +79,14 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 064  | Year comparison with Entradas + Economizado% (savings-tab parity)                      | P2       | S–M    | —          | DONE                                                                                                         |
 | 065  | Calendar day cells: movements in tooltip/aria + click-through to the ledger            | P2       | M      | —          | DONE                                                                                                         |
 | 066  | Sidebar shows real last-sync recency from sync_log                                     | P3       | S      | —          | DONE                                                                                                         |
+| 067  | SPIKE (refresh of 020): what-if / scenario branching — current 5/6-type engine surface | —        | spike  | —          | SPIKE DONE — design doc `plans/067-spike-design.md` (§4a–§4i, 10 Q resolved/deferred, 11 regression tests; reviewed, method-neutral). Visual artifact updated (override, Performance, safe-to-spend, "what changed", loan principal). Successor impl AWAITING approval |
+| 068  | Recover cell notes on the local `.xlsx` import (stop dropping itemization)              | P1       | M      | —          | DONE + MERGED to main @ `80710e3` (executor + 1 REVISE round; verified: 119 import tests, clippy 0, audit 0, scope clean; adversarial review caught+fixed a decode_a1_ref crash-on-malformed-xlsx) |
+| 069  | User-confirmed "obligation" identity (the series the spreadsheet doesn't store)         | P2       | L      | (068)      | DONE + MERGED via PR #114 @ `232a2eb` (executor + 1 REVISE via OpenCode Go review; verified: cargo 13/427, clippy 0, typecheck 0, test:run 318, doctor 0-a11y, `npm run check` green, CI green). Fixed: normalize_desc over-strip, preview error/loading, test hardening |
+| 070  | Surface note-parse failures + item↔cell divergences (make precision visible)            | P2       | M      | 068        | DONE + MERGED via PR #113 @ `381fb75` (executor, no REVISE needed; verified: cargo 128, clippy 0, typecheck 0, frontend 312, e2e 15/15; CI green). Deviation: `collect_import_diagnostics` pure fn (survives checksum-dedup for free) — approved on merit |
+| 071  | ~~Make `line_item` identity survive note reordering~~                                   | P3       | S–M    | —          | REJECTED — premise false: reorder changes the note → keep_local wipes+re-derives items; id scheme is moot   |
+| 072  | Implement what-if scenarios (successor to 067 spike) — sliced A/B/C                     | P1       | L+     | 067,068,069| IN PROGRESS — Slice A merged (PR #115); retro adversarial review (3 sonnet lenses) found 7 MAJOR → **Slice A.1 merged** (PR #116 @ `5642f51`: splits/tags filters, scenario_override rebuild via new migration [XOR CHECK, recurrence FK, indexes], isolation test de-tautologized [annual window, daily ceiling, credit branches] + cascade test + recurrence hardening; cargo 431, CI green). **COMPLETE — all slices merged**: A (#115) + A.1 hardening (#116) + B engine (#117) + C frontend (#118 @ `98309ca`). Full loop per slice: sonnet executor → 3-lens adversarial review (correctness + stack best-practices/SOTA) → REVISE → PR → CI green → merge. C's review caught 1 BLOCKER (partial loan on failure) + 2 a11y MAJORs + CodeQL ReDoS (fixed). Final: vitest 332, cargo 461, doctor 0-new, e2e 15/15 |
 
-Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale)
+Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale) | SUPERSEDED by NNN
 
 ## Dependency notes
 
@@ -162,7 +168,103 @@ verified). The 26 directly actionable findings were fixed in PR #106; these four
 are the surviving view-parity/trust features. Recommended order: 063 → 064 →
 065 → 066 (no hard dependencies; 063 has the highest user value).
 
+## Round 12 batch (2026-07-04, planned at `b65f0c6`)
+
+Full standard audit (correctness, security, perf, tests, tech-debt, deps, DX, docs,
+direction). **Verdict: the codebase is in excellent shape — zero new fix-worthy
+correctness or security findings.** What was checked and passed:
+
+- **Correctness**: backend has ~13 real (non-test) `unwrap`/`panic` across 21K LOC,
+  all in safe spots (pkce, startup); frontend has `0` `as any`, no swallowed catches,
+  no `dangerouslySetInnerHTML`; listeners have cleanup.
+- **Security**: `npm audit` clean; the two HIGH `quick-xml` advisories
+  (RUSTSEC-2026-0194/0195) are **already handled** — documented ignore in
+  `.cargo/audit.toml` (reachable only via the Tauri `plist` bundle-config path,
+  not third-party runtime XML). Not a finding.
+- **Tech debt**: suspected `commands/mod.rs` god-module (110KB) is a **false alarm** —
+  1 command, the rest is tests/helpers; plan 011's split held.
+- **Perf / tests / deps / DX / docs**: no findings. Deps current (React 19.2, Tauri
+  2.11, TS 6.0, Vite 8); CI has npm+cargo audit, CodeQL, Scorecard, e2e, react-doctor.
+
+The only value this round is **direction**. Owner selected the what-if/scenario spike
+→ **plan 067** (a refresh of the stale plan 020). Not audited line-by-line (disclosed):
+the 3868-line `import.rs`, `write_back.rs` internals, full sync/reconcile, Playwright
+screenshots — all densely tested; sampled, not exhaustively read.
+
+Other standing direction items (not planned this round; owner may pick later):
+- **Mia is a deterministic FAQ, not the promised AI copilot** (`PRODUCT.md:13/50` vs
+  `CopilotScreen.tsx` rule-based; no LLM backend). Needs a product decision on scope
+  (deterministic tool-calling copilot). Already noted as "rejected pending decision".
+- **Spike 019** (first-class invoice entity) — parked as an extension beyond the method.
+- **Auto-import** (spec 008, Open Finance/Pluggy) — researched, adjourned; attacks the
+  daily-check-in friction that is the product's core purpose.
+
+## Precision & reliability batch (2026-07-04, planned at `b65f0c6`)
+
+Came out of a deep re-read of the real spreadsheet while designing the scenario
+override (plan 067). Key finding — the **identity ladder**: a day×column *cell* has
+a stable deterministic id (spec 012); a *line item* inside the cell is
+`li:<txn_id>:<position>` (stable per position, positional); an *obligation/series*
+(the rent across 12 months) has **no native identity** — the sheet has no series
+concept and `recurrence_id` is `NULL` for everything imported. Obligation labels
+live in **cell notes** (`R$ x - desc / …` under section headers), not a column.
+
+- **068 (P1, do first)** — the `.xlsx` import silently drops all cell notes (they're
+  in `xl/comments*.xml`; calamine doesn't expose them), so `.xlsx` imports lose
+  itemization + descriptions. Highest-leverage, lowest-cost precision win; it also
+  unblocks 069 and 067 on the `.xlsx` path.
+- **069 (P2)** — user-confirmed "obligation" identity: name a recurring item once,
+  Neko tracks matching line items (never silent). The missing series identity that
+  plan 067's override, per-obligation budgets, and recurring analysis will consume.
+- **070 (P2)** — surface note-parse failures and item↔cell divergences instead of
+  handling them silently (the cell-owns-total decision is unchanged; only made
+  visible).
+- **071 — REJECTED** (adversarial review 2026-07-04): the premise is false. Reordering
+  items changes the note string → `keep_local=false` → the importer wipes and re-derives
+  all items, so a content-hash id preserves nothing; the position id is already stable on
+  an unchanged note. See the plan file for the full rationale.
+
+Recommended order: **068 → 070 → 069** (068 is cheap + foundational; 070 makes precision
+visible; 069 is the big identity feature).
+
+### Adversarial review (2026-07-04, against code + spreadsheet + method)
+
+Plans 067–071 were reviewed by two fresh-context adversarial passes — one against the
+**code** (per-plan + cross, Opus synthesis), one against the **real spreadsheet + the
+method** (Opus synthesis). Corrections were applied to 067/068/069/070; 071 was
+rejected. The highest-leverage findings the review caught:
+
+- **067**: the override must subtract at the **raw-row level** (`CashflowEvent` has no
+  id/description/recurrence_id); it must be **line-item-scoped** (adjust the event amount
+  by the matched item, don't drop the whole multi-item cell); the loan needs a **principal
+  Entrada** event, not only parcelas; the `scenario_id IS NULL` isolation must be audited
+  across **every** read over `"transaction"`, not just the cash loader; and the override
+  target should be **069's `obligation_id`**, not a duplicated match rule.
+- **Sheet-grammar reality (067/069)**: items are **newline-separated**, not `/`-separated;
+  a real recurring loan parcela embeds a mutable **`N/36` counter inside the description**,
+  so exact `match_desc` fails — matching must strip the counter and normalize the section
+  (punctuation drifts by year: `CONTAS` vs `FATURAS:`), always user-confirmed via preview.
+- **068**: align comment (row,col) via `range.start()` (calamine's used-range origin); the
+  note string it produces must be **byte-identical** to `get_sheet_notes` or it spuriously
+  trips `note_changed`/checksum; declare `zip`/`quick-xml` as direct deps.
+- **070**: diagnostics must survive a **checksum-deduped** import (derive from persisted
+  state); keep a numeric field in the return type (frontend does arithmetic on it).
+
 ## Findings considered and rejected (do not re-audit)
+
+- **`quick-xml` RUSTSEC-2026-0194/0195 (round 12)**: already ignored with a documented
+  rationale in `.cargo/audit.toml` — only reachable via Tauri's internal `plist`
+  bundle-config parsing (`plist 1.9.0 ← tauri-utils 2.9.x` pins quick-xml 0.39), never
+  third-party XML at runtime. Revisit on each Tauri bump (remove the ignore once
+  `cargo tree -i quick-xml` shows ≥0.41). Not a finding.
+- **`commands/mod.rs` size (round 12)**: 110KB but only 1 `#[tauri::command]`; the bulk
+  is `#[cfg(test)]` tests + shared helpers (`map_cashflow_row`, `quote_sheet`). Plan 011's
+  god-module split is intact. Not debt.
+- **SettingsScreen animation diagnostic stray timeout (round 12)**: the "Testar reveal"
+  diagnostic appends body nodes + a 6s guard with no unmount cleanup; on mid-diagnostic
+  navigation React 19 no-ops the stray `setState` and the dots self-remove. Diagnostic-only,
+  manually triggered. Too trivial to plan.
+
 
 - **`saldoHeatmap.ts` thresholds**: correct — absolute R$ bands match the spreadsheet's
   conditional formatting (critical −500, tight 1000, ok 2000). No change.
