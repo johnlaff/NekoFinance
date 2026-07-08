@@ -91,9 +91,11 @@ interface ScenarioSheetProps {
   onSelectScenario: (id: string | null) => void;
 }
 
-/** `<dialog>` nativo (não uma `role="dialog"` sobre uma `<div>`): dá foco preso, Escape-para-
- * fechar e o `::backdrop` de graça (ver `.scn-sheet::backdrop` em scenarios.css) — nenhuma dessas
- * três coisas precisa ser reimplementada à mão aqui. */
+/** `<dialog>` nativo NÃO-modal (`show()`, não `showModal()`): um side-sheet existe para a
+ * comparação ficar visível e OPERÁVEL ao lado — um modal poria um scrim sobre os cards e
+ * bloquearia rolar/interagir com o compare enquanto se edita o cenário. Sem modal não há
+ * `::backdrop` nem foco preso (correto para side-sheet); Escape-para-fechar e o foco inicial
+ * são repostos à mão abaixo. */
 export function ScenarioSheet({
   open,
   onClose,
@@ -105,22 +107,26 @@ export function ScenarioSheet({
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    if (open && !el.open) el.showModal();
-    else if (!open && el.open) el.close();
+    if (open && !el.open) {
+      el.show();
+      // show() não move o foco (showModal movia): leva ao primeiro campo do sheet.
+      el.querySelector<HTMLElement>(
+        "input, select, button:not(.scn-sheet__close)",
+      )?.focus();
+    } else if (!open && el.open) {
+      el.close();
+    }
   }, [open]);
 
-  // Light-dismiss no clique do ::backdrop: registrado via listener nativo (não `onClick` no JSX)
-  // porque um clique no backdrop cai no próprio elemento `<dialog>` — não é uma interação do
-  // CONTEÚDO do diálogo, é o gesto padrão de fechar um modal por fora, o mesmo que Escape já faz
-  // (evento `close` nativo, tratado no `onClose` abaixo).
+  // Escape-para-fechar: num dialog não-modal o UA não fecha sozinho — repõe o gesto padrão.
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const onBackdropClick = (e: MouseEvent) => {
-      if (e.target === el) onClose();
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
     };
-    el.addEventListener("click", onBackdropClick);
-    return () => el.removeEventListener("click", onBackdropClick);
+    el.addEventListener("keydown", onKeyDown);
+    return () => el.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
   if (!open) return null;

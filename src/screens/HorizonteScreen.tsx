@@ -73,7 +73,7 @@ export function HorizonteScreen() {
   const bills = billsQ.data ?? [];
 
   return (
-    <div className="hz">
+    <div className={"hz" + (sheetOpen ? " hz--sheet-open" : "")}>
       <div
         style={{
           display: "flex",
