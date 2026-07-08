@@ -431,7 +431,7 @@ function Row({
                 : "var(--money-neg)",
           }}
         >
-          <SignedMoney cents={isEntrada ? totalCents : -totalCents} size="md" />
+          <SignedMoney cents={isEntrada ? totalCents : -totalCents} size="inherit" />
         </span>
       </button>
       {open && (
@@ -481,7 +481,7 @@ function Row({
                             ? Math.abs(li.amount_cents)
                             : -Math.abs(li.amount_cents)
                         }
-                        size="sm"
+                        size="inherit"
                       />
                     </span>
                   </div>
@@ -583,11 +583,15 @@ function GroupHeader({
           style={{ background: band.fill, color: band.text }}
           aria-label={`Saldo do dia ${fmtBRL(balance!)}`}
         >
-          <Money cents={balance!} size="sm" ariaLabel="" />
+          {/* O rótulo do pill já anuncia "Saldo do dia R$ X"; o valor visível fica
+              aria-hidden para o leitor de tela não falar o número duas vezes. */}
+          <span aria-hidden="true">
+            <Money cents={balance!} size="inherit" />
+          </span>
         </span>
       )}
       <span className="lc-gh__sum">
-        <SignedMoney cents={sum} size="sm" />
+        <SignedMoney cents={sum} size="inherit" />
       </span>
     </div>
   );
@@ -787,7 +791,7 @@ function FutureBanner({
         </div>
       </div>
       <span className="lc-future__amt">
-        <SignedMoney cents={sum} size="sm" />
+        <SignedMoney cents={sum} size="inherit" />
         <br />
         <ChevronRight
           size={14}
@@ -946,12 +950,12 @@ function MonthView({
         <span className="lc-gh__sum">
           {endBalance != null ? (
             <>
-              Saldo fim · <Money cents={endBalance} size="sm" />
+              Saldo fim · <Money cents={endBalance} size="inherit" />
             </>
           ) : (
             <SignedMoney
               cents={inMonthRows.reduce((s, t) => s + signedCents(t), 0)}
-              size="sm"
+              size="inherit"
             />
           )}
         </span>

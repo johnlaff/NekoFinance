@@ -216,14 +216,14 @@ export function DashboardScreen() {
           </p>
           <p className="hoje-hero__reason">
             É o menor de dois limites: o teto diário de{" "}
-            <Money cents={ceiling} size="sm" /> e o que o caixa aguenta sem nenhum dia
-            no vermelho até o fim do mês.
+            <Money cents={ceiling} size="inherit" /> e o que o caixa aguenta sem nenhum
+            dia no vermelho até o fim do mês.
           </p>
           <dl className="hoje-hero__stats">
             <div>
               <dt>Saldo hoje</dt>
               <dd>
-                <Money cents={saldoHoje} size="md" />
+                <Money cents={saldoHoje} size="inherit" />
               </dd>
             </div>
             <div>
@@ -239,7 +239,7 @@ export function DashboardScreen() {
             <div>
               <dt>Teto diário</dt>
               <dd>
-                <Money cents={ceiling} size="md" />
+                <Money cents={ceiling} size="inherit" />
               </dd>
             </div>
           </dl>
@@ -268,17 +268,17 @@ export function DashboardScreen() {
             </span>
           </div>
           <div className="hoje-fc__val" style={{ color: endBand.text }}>
-            <Money cents={endBalance} size="lg" />
+            <Money cents={endBalance} size="inherit" />
           </div>
           <MiniTrajectory daily={monthDaily} today={today} />
           <p className="hoje-fc__foot">
             {minSaldo < 0 ? (
               <>
-                Atenção: chega a <Money cents={minSaldo} size="sm" /> no pior dia.
+                Atenção: chega a <Money cents={minSaldo} size="inherit" /> no pior dia.
               </>
             ) : (
               <>
-                Menor saldo previsto no mês: <Money cents={minSaldo} size="sm" />.
+                Menor saldo previsto no mês: <Money cents={minSaldo} size="inherit" />.
               </>
             )}
           </p>
@@ -371,11 +371,11 @@ function CheckinCard({
         >
           {over ? (
             <>
-              <Money cents={-remaining} size="sm" /> acima
+              <Money cents={-remaining} size="inherit" /> acima
             </>
           ) : (
             <>
-              <Money cents={remaining} size="sm" /> livre
+              <Money cents={remaining} size="inherit" /> livre
             </>
           )}
         </span>
@@ -384,7 +384,7 @@ function CheckinCard({
         <div className="ci-top">
           <span style={{ color: "var(--text-muted)" }}>Diário de hoje</span>
           <span className="ci-spent">
-            <Money cents={spent} size="md" />
+            <Money cents={spent} size="inherit" />
             <span style={{ color: "var(--text-faint)", fontWeight: 400 }}>
               {" "}
               / {fmtBRL(ceiling)}
@@ -502,7 +502,7 @@ function UpcomingCard({
                   <div className="up-desc__t">{e.description}</div>
                 </div>
                 <div className="up-amt">
-                  <Money cents={-e.amount} size="md" />
+                  <Money cents={-e.amount} size="inherit" />
                 </div>
               </div>
             );

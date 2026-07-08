@@ -272,7 +272,7 @@ export function TagsScreen() {
               color: "var(--text-faint)",
             }}
           >
-            Total <Money cents={grand} size="sm" />
+            Total <Money cents={grand} size="inherit" />
           </span>
         </div>
 
@@ -311,7 +311,7 @@ export function TagsScreen() {
                     />
                   </span>
                   <span className="tg-amt">
-                    <Money cents={tag.total_cents} size="sm" />
+                    <Money cents={tag.total_cents} size="inherit" />
                   </span>
                   <button
                     type="button"

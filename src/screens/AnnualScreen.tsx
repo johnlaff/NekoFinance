@@ -293,16 +293,16 @@ function AnoTable({
                     color: mIdx <= currentMonthIdx ? "var(--money-pos)" : undefined,
                   }}
                 >
-                  <Money cents={m.income_cents} size="sm" />
+                  <Money cents={m.income_cents} size="inherit" />
                 </td>
                 <td>
-                  <Money cents={m.cost_of_living_cents} size="sm" />
+                  <Money cents={m.cost_of_living_cents} size="inherit" />
                 </td>
                 <td>
-                  <Money cents={m.daily_out_cents} size="sm" />
+                  <Money cents={m.daily_out_cents} size="inherit" />
                 </td>
                 <td>
-                  <Money cents={m.economia_cents} size="sm" />
+                  <Money cents={m.economia_cents} size="inherit" />
                 </td>
                 {/* Economizado% do mês (economia ÷ entradas), como na coluna % da aba
                     Economia da planilha; sem entradas não há taxa a mostrar. */}
@@ -319,7 +319,7 @@ function AnoTable({
                         : "var(--money-neg)",
                   }}
                 >
-                  <SignedMoney cents={m.performance_cents} size="sm" />
+                  <SignedMoney cents={m.performance_cents} size="inherit" />
                   {m.daily_projected_cents > 0 ? (
                     <span
                       title={`Inclui previsão de diário de ${fmtBRL(m.daily_projected_cents)}`}
@@ -330,7 +330,7 @@ function AnoTable({
                   ) : null}
                 </td>
                 <td style={{ color: showEndBal ? band.text : "var(--text-faint)" }}>
-                  {showEndBal ? <Money cents={endBal} size="sm" /> : "—"}
+                  {showEndBal ? <Money cents={endBal} size="inherit" /> : "—"}
                 </td>
               </tr>
             );
@@ -344,16 +344,16 @@ function AnoTable({
               Realizado{realized.some((m) => m.daily_projected_cents > 0) ? "†" : ""}
             </td>
             <td>
-              <Money cents={totals.income} size="sm" />
+              <Money cents={totals.income} size="inherit" />
             </td>
             <td>
-              <Money cents={totals.saidaTotal} size="sm" />
+              <Money cents={totals.saidaTotal} size="inherit" />
             </td>
             <td>
-              <Money cents={totals.diario} size="sm" />
+              <Money cents={totals.diario} size="inherit" />
             </td>
             <td>
-              <Money cents={totals.economia} size="sm" />
+              <Money cents={totals.economia} size="inherit" />
             </td>
             <td
               title={`Economizado acumulado: ${econPct.toFixed(0)}%`}
@@ -367,7 +367,7 @@ function AnoTable({
                   totals.performance >= 0 ? "var(--money-pos)" : "var(--money-neg)",
               }}
             >
-              <SignedMoney cents={totals.performance} size="sm" />
+              <SignedMoney cents={totals.performance} size="inherit" />
             </td>
             <td style={{ color: "var(--text-faint)" }}>—</td>
           </tr>
@@ -494,10 +494,10 @@ function AnoCmpSection({
               {y}
             </span>
             <span>
-              Entradas <Money cents={s.income} size="sm" />
+              Entradas <Money cents={s.income} size="inherit" />
             </span>
             <span>
-              Economia <Money cents={s.economia} size="sm" />
+              Economia <Money cents={s.economia} size="inherit" />
             </span>
             <span className="ano-cmp__sum-pct">Economizado {pctLabel(s.pct)}</span>
           </div>

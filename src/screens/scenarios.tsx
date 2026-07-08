@@ -787,7 +787,7 @@ function deltaChip(deltaCents: number, sense: DeltaSense) {
   return (
     <span className={cls}>
       <span aria-hidden="true">{arrow}</span>{" "}
-      <SignedMoney cents={deltaCents} size="sm" />
+      <SignedMoney cents={deltaCents} size="inherit" />
     </span>
   );
 }
@@ -815,7 +815,7 @@ function KpiCard({
         </InfoPopover>
       </span>
       <div className="scn-kpi__transition">
-        <Money cents={realCents} size="sm" />
+        <Money cents={realCents} size="inherit" />
         <ArrowRight
           size={12}
           strokeWidth={2}
@@ -823,7 +823,7 @@ function KpiCard({
           aria-hidden="true"
         />
         <span className="scn-kpi__scenario-val">
-          <Money cents={scenarioCents} size="md" />
+          <Money cents={scenarioCents} size="inherit" />
         </span>
       </div>
       {deltaChip(deltaCents, sense)}
@@ -987,13 +987,13 @@ function ChangesList({ changes }: { changes: ScenarioCompareDto["changes"] }) {
               {c.op === "replace" ? (
                 <>
                   {c.old_amount_cents != null ? (
-                    <Money cents={c.old_amount_cents} size="sm" />
+                    <Money cents={c.old_amount_cents} size="inherit" />
                   ) : (
                     "—"
                   )}{" "}
                   →{" "}
                   {c.new_amount_cents != null ? (
-                    <Money cents={c.new_amount_cents} size="sm" />
+                    <Money cents={c.new_amount_cents} size="inherit" />
                   ) : (
                     "—"
                   )}
@@ -1004,7 +1004,7 @@ function ChangesList({ changes }: { changes: ScenarioCompareDto["changes"] }) {
                     (c.old_amount_cents ?? c.new_amount_cents ?? 0) *
                     (c.op === "remove" ? -1 : 1)
                   }
-                  size="sm"
+                  size="inherit"
                 />
               )}
             </span>
@@ -1215,7 +1215,8 @@ function DiffSparkline({ monthEnd }: { monthEnd: ScenarioCompareDto["month_end"]
       </svg>
       {worst && worst.delta_cents < 0 && (
         <p className="scn-worst-note">
-          Pior mês: {MES[worst.month - 1]} <Money cents={worst.delta_cents} size="sm" />
+          Pior mês: {MES[worst.month - 1]}{" "}
+          <Money cents={worst.delta_cents} size="inherit" />
         </p>
       )}
     </div>

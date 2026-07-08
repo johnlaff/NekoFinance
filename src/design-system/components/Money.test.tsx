@@ -52,6 +52,16 @@ describe("Money", () => {
     expect(el.style.fontFamily).toBe("var(--font-money)");
     expect(el.style.fontVariantNumeric).toBe("tabular-nums");
   });
+  it("size=inherit não impõe font-size/weight/tracking (a classe do wrapper vence)", () => {
+    const { container } = render(<Money cents={100} size="inherit" />);
+    const el = container.firstElementChild as HTMLElement;
+    expect(el.style.fontSize).toBe("");
+    expect(el.style.fontWeight).toBe("");
+    expect(el.style.letterSpacing).toBe("");
+    // Mantém o tratamento tipográfico não-métrico.
+    expect(el.style.fontVariantNumeric).toBe("tabular-nums");
+    expect(el.style.whiteSpace).toBe("nowrap");
+  });
 });
 
 describe("SignedMoney", () => {
@@ -72,5 +82,13 @@ describe("SignedMoney", () => {
   it("aria-label anuncia negativo por extenso", () => {
     render(<SignedMoney cents={-2500} />);
     expect(screen.getByLabelText(/^negativo /)).toBeInTheDocument();
+  });
+  it("size=inherit não impõe font-size/weight/tracking (a classe do wrapper vence)", () => {
+    const { container } = render(<SignedMoney cents={100} size="inherit" />);
+    const el = container.firstElementChild as HTMLElement;
+    expect(el.style.fontSize).toBe("");
+    expect(el.style.fontWeight).toBe("");
+    expect(el.style.letterSpacing).toBe("");
+    expect(el.style.fontVariantNumeric).toBe("tabular-nums");
   });
 });

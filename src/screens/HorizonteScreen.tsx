@@ -112,13 +112,13 @@ export function HorizonteScreen() {
             <div className="hz-alert__t">
               {hasDeficit ? (
                 <>
-                  Seu saldo chega a <Money cents={minVal} size="sm" /> em{" "}
+                  Seu saldo chega a <Money cents={minVal} size="inherit" /> em{" "}
                   {fmtDM(minDay.date)}.
                 </>
               ) : (
                 <>
                   Saldo positivo o ano inteiro. O menor ponto foi{" "}
-                  <Money cents={minVal} size="sm" /> em {fmtDM(minDay.date)}.
+                  <Money cents={minVal} size="inherit" /> em {fmtDM(minDay.date)}.
                 </>
               )}
             </div>
@@ -146,7 +146,7 @@ export function HorizonteScreen() {
                 color: endBand.text,
               }}
             >
-              fim do ano <Money cents={endVal} size="sm" />
+              fim do ano <Money cents={endVal} size="inherit" />
             </span>
           </div>
           <div className="card__body">
@@ -177,7 +177,7 @@ export function HorizonteScreen() {
                   >
                     <div className="hz-mcard__m">{MES[me.month - 1]}</div>
                     <div className="hz-mcard__v" style={{ color: band.text }}>
-                      <Money cents={me.balance_cents} size="lg" />
+                      <Money cents={me.balance_cents} size="inherit" />
                     </div>
                     <div className="hz-mcard__b" style={{ color: band.text }}>
                       <span
@@ -212,7 +212,7 @@ export function HorizonteScreen() {
                 <span className="hz-bill-desc">{b.description || "—"}</span>
                 {b.is_projection && <ProvBadge provenance="projetado" />}
                 <span className="hz-bill-amt">
-                  <Money cents={-Math.abs(b.amount)} size="sm" />
+                  <Money cents={-Math.abs(b.amount)} size="inherit" />
                 </span>
               </li>
             ))}

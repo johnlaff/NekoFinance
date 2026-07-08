@@ -147,30 +147,30 @@ function HeroTiles({
             color: performance >= 0 ? "var(--money-pos)" : "var(--money-neg)",
           }}
         >
-          <SignedMoney cents={performance} size="display" />
+          <SignedMoney cents={performance} size="inherit" />
         </div>
         {/* A conta exibida precisa fechar com a Performance do motor: Economia, Patrimônio e a
             previsão de diário restante são termos explícitos (Performance = Entradas − Custo de
             vida − Economia − Patrimônio − Previsão de diário). */}
         <p className="mes-tile__sub">
-          Entradas <Money cents={entradas} size="sm" /> − Custo de vida{" "}
-          <Money cents={saidaTotal} size="sm" />
+          Entradas <Money cents={entradas} size="inherit" /> − Custo de vida{" "}
+          <Money cents={saidaTotal} size="inherit" />
           {economia > 0 ? (
             <>
               {" "}
-              − Economia <Money cents={economia} size="sm" />
+              − Economia <Money cents={economia} size="inherit" />
             </>
           ) : null}
           {patrimonio > 0 ? (
             <>
               {" "}
-              − Patrimônio <Money cents={patrimonio} size="sm" />
+              − Patrimônio <Money cents={patrimonio} size="inherit" />
             </>
           ) : null}
           {previsaoDiario > 0 ? (
             <>
               {" "}
-              − Previsão de diário <Money cents={previsaoDiario} size="sm" />
+              − Previsão de diário <Money cents={previsaoDiario} size="inherit" />
             </>
           ) : null}
         </p>
@@ -186,7 +186,7 @@ function HeroTiles({
           Custo de vida
         </p>
         <div className="mes-tile__val" style={{ color: "var(--text-strong)" }}>
-          <Money cents={custoVida} size="display" />
+          <Money cents={custoVida} size="inherit" />
         </div>
         <p className="mes-tile__sub">= Saídas fixas + Diário + Cartão</p>
         <div style={{ marginTop: 10 }}>
@@ -209,7 +209,7 @@ function HeroTiles({
           {economizadoPct.toFixed(0)}%
         </div>
         <p className="mes-tile__sub">
-          <Money cents={economia} size="sm" /> guardados · meta de 20% a 30%
+          <Money cents={economia} size="inherit" /> guardados · meta de 20% a 30%
         </p>
         <p className="mes-tile__sub mes-tile__sub--ytd">{ytdPctLabel}</p>
         <div style={{ marginTop: 10 }}>
@@ -243,7 +243,7 @@ function OutPartsCard({
           Para onde foi o dinheiro
         </span>
         <span className="card__head-money">
-          <Money cents={saidaTotal + economia + patrimonio} size="sm" />
+          <Money cents={saidaTotal + economia + patrimonio} size="inherit" />
         </span>
       </div>
       <div className="card__body">
@@ -267,7 +267,7 @@ function OutPartsCard({
               <span className="mes-leg__dot" style={{ background: p.color }} />
               <span className="mes-leg__name">{p.name}</span>
               <span className="mes-leg__amt">
-                <Money cents={p.val} size="sm" />
+                <Money cents={p.val} size="inherit" />
               </span>
               <span className="mes-leg__pct">
                 {Math.round((p.val / outTotal) * 100)}%
@@ -315,7 +315,7 @@ function FlowRow({
         />
       </span>
       <span className="mes-flow__amt" style={{ color: amtColor }}>
-        <Money cents={value} size="sm" />
+        <Money cents={value} size="inherit" />
       </span>
     </div>
   );
@@ -393,7 +393,7 @@ function FlowCard({
               color: performance >= 0 ? "var(--money-pos)" : "var(--money-neg)",
             }}
           >
-            <SignedMoney cents={performance} size="lg" />
+            <SignedMoney cents={performance} size="inherit" />
           </span>
         </div>
       </div>

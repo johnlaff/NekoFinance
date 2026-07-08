@@ -888,14 +888,14 @@ function DiarioCategorySection() {
         </fieldset>
 
         <p style={CAT_SUMMARY_STYLE}>
-          Total <Money cents={effectiveTotal} size="sm" /> —{" "}
-          <Money cents={dailyRate} size="sm" />
+          Total <Money cents={effectiveTotal} size="inherit" /> —{" "}
+          <Money cents={dailyRate} size="inherit" />
           /dia ({daysInMonth} dias no mês atual).
           {mismatch ? (
             <strong role="status" style={CAT_WARN_STYLE}>
               {" "}
-              A soma das categorias (<Money cents={catSumCents} size="sm" />) difere do
-              teto informado.
+              A soma das categorias (<Money cents={catSumCents} size="inherit" />)
+              difere do teto informado.
             </strong>
           ) : null}
           {s.saved ? <strong> Salvo.</strong> : null}
