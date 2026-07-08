@@ -8,12 +8,24 @@
 //! PROJEÇÃO do cenário (`get_scenario_forecast`); o forecast real (`get_forecast`) continua
 //! cego à existência de qualquer cenário (slice A garantiu isso via `scenario_id IS NULL`).
 //!
-//! CONVENÇÃO DE EMPRÉSTIMO (documentada aqui porque não há coluna própria): a UI (slice C) marca
-//! as linhas hipotéticas de um empréstimo anexando `" #loan:<group_id>:<taxa_bps>"` ao final da
-//! `description` de CADA linha do grupo (a Entrada do principal + as N Saídas/Cartão das
-//! parcelas). `get_scenario_forecast` detecta o grupo por essa marca, usa a linha de tipo
-//! `income` como o principal e as `expense` como as parcelas (magnitude da primeira parcela = o
-//! valor da prestação, assumidas iguais — a UI usa `price_installment` para gerá-las).
+//! CONVENÇÕES DE MARCA NA DESCRIÇÃO (documentadas aqui porque não há coluna própria; a UI da
+//! slice C REMOVE os sufixos ao exibir):
+//!
+//! - EMPRÉSTIMO: a UI marca as linhas hipotéticas de um empréstimo anexando
+//!   `" #loan:<group_id>:<taxa_bps>"` ao FINAL da `description` de CADA linha do grupo (a
+//!   Entrada do principal + as N Saídas/Cartão das parcelas). `get_scenario_forecast` detecta o
+//!   grupo por essa marca (ancorada ao fim — um "#loan:" no meio do texto não conta), usa a
+//!   linha de tipo `income` como o principal e as `expense` como as parcelas (magnitude da
+//!   primeira parcela = o valor da prestação, assumidas iguais — a UI usa `price_installment`
+//!   para gerá-las). Só o PRIMEIRO grupo (ordem data,id) vira `loan`; os grupos seguintes
+//!   aparecem como entradas "add" comuns em `changes` (limitação aceita desta slice).
+//!
+//! - SUBSTITUIÇÃO (`replace`): quando `set_scenario_override` recebe `op = "replace"` com um
+//!   `replacement` preenchido, ele mesmo cria a linha hipotética de substituição, anexando
+//!   `" #repl:<override_id>"` ao final da descrição. É esse marcador que permite ao compare
+//!   FUNDIR o par velho→novo numa única entrada `{op:"replace", old, new}` de `changes` (e
+//!   excluir a linha da lista de "add"). `delete_scenario_override` apaga a(s) linha(s)
+//!   pareada(s) junto.
 
 use crate::commands::forecast_cmds::{
     self, forecast_horizon_end, load_economia_annotation, load_forecast_events, load_metric_events,
@@ -167,7 +179,16 @@ pub async fn add_scenario_transaction(
         other => return Err(format!("tipo inválido: {other}")),
     };
     let start = NaiveDate::parse_from_str(date, "%Y-%m-%d").map_err(|e| format!("data: {e}"))?;
-    let is_projection = start > chrono::Local::now().date_naive();
+    let today = chrono::Local::now().date_naive();
+    // A projeção do cenário só varre do mês corrente em diante (janela de métrica começa no dia
+    // 1º do mês de hoje): uma linha anterior a isso sumiria SILENCIOSAMENTE dos dois ramos.
+    // Rejeitar é o comportamento honesto mais simples.
+    let month_start =
+        NaiveDate::from_ymd_opt(today.year(), today.month(), 1).ok_or("data de hoje inválida")?;
+    if start < month_start {
+        return Err("data anterior ao mês corrente não entra na projeção do cenário".into());
+    }
+    let is_projection = start > today;
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(
@@ -227,9 +248,28 @@ pub struct ScenarioOverride {
     pub recurrence_id: Option<String>,
 }
 
+/// A linha hipotética de SUBSTITUIÇÃO que acompanha um override `replace` (opcional). Quando
+/// presente, `set_scenario_override` cria a linha ele mesmo e a marca com `#repl:<override_id>`
+/// no fim da descrição — o pareamento determinístico velho→novo do compare (ver banner do
+/// módulo). Defaults: `txn_type = "expense"`, `is_fixed = true` (uma obrigação substituída é
+/// tipicamente uma Saída fixa), `description = nome genérico`.
+#[derive(Debug, serde::Deserialize, Clone)]
+pub struct ReplacementInput {
+    pub amount_cents: i64,
+    pub date: String,
+    pub description: Option<String>,
+    pub txn_type: Option<String>,
+    pub payment_method: Option<String>,
+    pub is_fixed: Option<bool>,
+}
+
 /// Cria um override (`suppress`/`replace`) sobre uma obrigação OU uma recorrência (exatamente
 /// uma — o CHECK XOR do banco endurece isso; validamos antes para devolver um erro legível em
-/// vez do texto cru do driver SQLite).
+/// vez do texto cru do driver SQLite). Um SEGUNDO override para o mesmo alvo no mesmo cenário é
+/// rejeitado: dois overrides somariam a mesma supressão duas vezes e derrubariam irmãos de uma
+/// célula multi-item (ver `build_suppression_plan`, que ainda deduplica por defesa em
+/// profundidade). Para `op = "replace"`, um `replacement` opcional cria a linha hipotética de
+/// substituição pareada (marca `#repl:<override_id>`).
 pub async fn set_scenario_override(
     pool: &SqlitePool,
     scenario_id: &str,
@@ -237,6 +277,7 @@ pub async fn set_scenario_override(
     from_date: &str,
     obligation_id: Option<&str>,
     recurrence_id: Option<&str>,
+    replacement: Option<ReplacementInput>,
 ) -> Result<String, String> {
     if !scenario_exists(pool, scenario_id).await? {
         return Err(format!("scenario not found: {scenario_id}"));
@@ -245,6 +286,9 @@ pub async fn set_scenario_override(
         return Err(format!(
             "op inválido: {op} (esperado 'suppress' ou 'replace')"
         ));
+    }
+    if replacement.is_some() && op != "replace" {
+        return Err("replacement só se aplica a op = 'replace'".into());
     }
     NaiveDate::parse_from_str(from_date, "%Y-%m-%d").map_err(|e| format!("from_date: {e}"))?;
     let obligation_id = obligation_id.filter(|s| !s.is_empty());
@@ -260,6 +304,27 @@ pub async fn set_scenario_override(
         }
         _ => {}
     }
+
+    // Rejeita alvo duplicado no MESMO cenário (a comparação `col = NULL` é NULL→falsa em SQL,
+    // então cada bind só casa o braço do alvo realmente setado).
+    let (dup,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM scenario_override \
+         WHERE scenario_id = ?1 AND (obligation_id = ?2 OR recurrence_id = ?3)",
+    )
+    .bind(scenario_id)
+    .bind(obligation_id)
+    .bind(recurrence_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("set_scenario_override (dup check): {e}"))?;
+    if dup > 0 {
+        return Err(if obligation_id.is_some() {
+            "já existe uma alteração para esta obrigação neste cenário".into()
+        } else {
+            "já existe uma alteração para esta recorrência neste cenário".into()
+        });
+    }
+
     let id = uuid::Uuid::new_v4().to_string();
     sqlx::query(
         "INSERT INTO scenario_override (id, scenario_id, op, from_date, obligation_id, recurrence_id) \
@@ -274,9 +339,45 @@ pub async fn set_scenario_override(
     .execute(pool)
     .await
     .map_err(|e| format!("set_scenario_override: {e}"))?;
+
+    // Linha de substituição pareada (op=replace): criada AQUI para o pareamento ser
+    // determinístico via `#repl:<override_id>`. Falhou a linha → desfaz o override (sem par
+    // órfão) e propaga o erro.
+    if let Some(repl) = replacement {
+        let base = repl
+            .description
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("Substituição")
+            .to_string();
+        let tagged = format!("{base} #repl:{id}");
+        let created = add_scenario_transaction(
+            pool,
+            scenario_id,
+            repl.txn_type.as_deref().unwrap_or("expense"),
+            repl.amount_cents,
+            &tagged,
+            &repl.date,
+            repl.payment_method.as_deref(),
+            repl.is_fixed.unwrap_or(true),
+            None,
+            None,
+        )
+        .await;
+        if let Err(e) = created {
+            let _ = sqlx::query("DELETE FROM scenario_override WHERE id = ?1")
+                .bind(&id)
+                .execute(pool)
+                .await;
+            return Err(format!("linha de substituição inválida: {e}"));
+        }
+    }
     Ok(id)
 }
 
+/// Apaga o override e a(s) linha(s) hipotética(s) de substituição pareada(s) por
+/// `#repl:<override_id>` (senão a substituição viraria um "add" órfão no compare).
 pub async fn delete_scenario_override(
     pool: &SqlitePool,
     scenario_id: &str,
@@ -293,6 +394,14 @@ pub async fn delete_scenario_override(
             "override not found: {override_id} (scenario {scenario_id})"
         ));
     }
+    sqlx::query(
+        "DELETE FROM \"transaction\" WHERE scenario_id = ?1 AND description LIKE '%#repl:' || ?2",
+    )
+    .bind(scenario_id)
+    .bind(override_id)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("delete_scenario_override (replacement row): {e}"))?;
     Ok(())
 }
 
@@ -340,19 +449,40 @@ pub struct LoanBreakdown {
     pub reserve_months_after_financing: Option<f64>,
 }
 
-/// Extrai `(group_id, rate_bps)` da marca `" #loan:<group_id>:<rate_bps>"` ao final da descrição
-/// (convenção documentada no banner do módulo). `None` se a descrição não carrega a marca.
+/// Extrai `(group_id, rate_bps)` da marca `" #loan:<group_id>:<rate_bps>"` ao FINAL da descrição
+/// (convenção documentada no banner do módulo). Ancorada: a marca precisa estar no fim (o parse
+/// da taxa consome até o último caractere) e precedida de espaço/início — um "#loan:" solto no
+/// meio do texto não é varrido. `None` se a descrição não carrega a marca.
 fn parse_loan_marker(description: &str) -> Option<(String, i64)> {
-    let idx = description.find("#loan:")?;
+    let description = description.trim_end();
+    let idx = description.rfind("#loan:")?;
+    if idx > 0 && !description[..idx].ends_with(char::is_whitespace) {
+        return None; // colado em outra palavra: não é a marca da convenção.
+    }
     let rest = &description[idx + "#loan:".len()..];
-    let mut parts = rest.splitn(2, ':');
-    let group_id = parts.next()?.trim();
-    let rate_str = parts.next()?.trim();
-    if group_id.is_empty() {
+    let (group_id, rate_str) = rest.split_once(':')?;
+    let group_id = group_id.trim();
+    if group_id.is_empty() || group_id.contains(char::is_whitespace) {
         return None;
     }
-    let rate_bps: i64 = rate_str.parse().ok()?;
+    // `parse::<i64>` só aceita dígitos até o fim → âncora natural no final da descrição.
+    let rate_bps: i64 = rate_str.trim().parse().ok()?;
     Some((group_id.to_string(), rate_bps))
+}
+
+/// Extrai o `override_id` da marca `" #repl:<override_id>"` ao FINAL da descrição de uma linha
+/// de substituição criada por `set_scenario_override` (op=replace). Mesma âncora do `#loan:`.
+fn parse_repl_marker(description: &str) -> Option<String> {
+    let description = description.trim_end();
+    let idx = description.rfind("#repl:")?;
+    if idx > 0 && !description[..idx].ends_with(char::is_whitespace) {
+        return None;
+    }
+    let id = description[idx + "#repl:".len()..].trim();
+    if id.is_empty() || id.contains(char::is_whitespace) {
+        return None;
+    }
+    Some(id.to_string())
 }
 
 // --- Compare de forecast (real x cenário) ---
@@ -505,6 +635,28 @@ async fn load_hypothetical_rows(
         .map_err(|e| format!("load_hypothetical_rows: {e}"))
 }
 
+/// TODAS as linhas hipotéticas do cenário, SEM janela de data — a detecção de empréstimo e a
+/// lista de `changes` precisam ver o grupo inteiro (um principal desembolsado HOJE fica fora da
+/// janela do encadeamento `date > today` e sumiria da detecção, superestimando o custo total do
+/// financiamento pelo principal inteiro). `ORDER BY date, id` torna determinística a escolha do
+/// "primeiro" grupo `#loan` reportado.
+async fn load_all_hypothetical_rows(
+    pool: &SqlitePool,
+    scenario_id: &str,
+) -> Result<Vec<HypoTxnRow>, String> {
+    const SQL: &str = "SELECT t.id, t.type AS \"type\", t.amount, t.date, \
+         COALESCE(t.payment_method,'') AS payment_method, \
+         t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity, \
+         t.recurrence_id, t.description \
+         FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
+         WHERE t.scenario_id = ?1 ORDER BY t.date, t.id";
+    sqlx::query_as(SQL)
+        .bind(scenario_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("load_all_hypothetical_rows: {e}"))
+}
+
 /// Plano de supressão RESOLVIDO a partir dos overrides salvos: quanto suprimir por
 /// `transaction_id` (obrigação, escopo LINE-ITEM — nunca derruba a célula inteira, só o(s)
 /// item(ns) casado(s)) e quais `(recurrence_id, from_date)` suprimir POR INTEIRO (série
@@ -522,6 +674,11 @@ async fn build_suppression_plan(
     overrides: &[ScenarioOverride],
 ) -> Result<SuppressionPlan, String> {
     let mut plan = SuppressionPlan::default();
+    // Defesa em profundidade contra alvos duplicados (que `set_scenario_override` já rejeita,
+    // mas linhas pré-existentes/inseridas por fora não passam pelo guard): cada `line_item` só
+    // contribui UMA vez para a supressão, mesmo que dois overrides o casem — somar duas vezes
+    // zeraria a célula e derrubaria os irmãos não suprimidos.
+    let mut seen_line_items: std::collections::HashSet<String> = std::collections::HashSet::new();
     for ov in overrides {
         let from_date = NaiveDate::parse_from_str(&ov.from_date, "%Y-%m-%d")
             .map_err(|e| format!("override {} from_date inválida: {e}", ov.id))?;
@@ -532,7 +689,7 @@ async fn build_suppression_plan(
                 let Ok(d) = NaiveDate::parse_from_str(&item.date, "%Y-%m-%d") else {
                     continue;
                 };
-                if d >= from_date {
+                if d >= from_date && seen_line_items.insert(item.line_item_id.clone()) {
                     let magnitude = item.amount_cents.abs();
                     *plan
                         .line_item_suppressed_cents
@@ -546,6 +703,19 @@ async fn build_suppression_plan(
         } else if let Some(recurrence_id) = &ov.recurrence_id {
             plan.recurrence_suppressed
                 .push((recurrence_id.clone(), from_date));
+            // Magnitude suprimida da série (linhas reais ≥ from_date) — alimenta o
+            // `old_amount_cents` de `changes`, igual ao braço de obrigação.
+            let (suppressed_here,): (i64,) = sqlx::query_as(
+                "SELECT COALESCE(SUM(ABS(amount)), 0) FROM \"transaction\" \
+                 WHERE recurrence_id = ?1 AND date >= ?2 AND scenario_id IS NULL",
+            )
+            .bind(recurrence_id)
+            .bind(&ov.from_date)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("recurrence suppressed sum: {e}"))?;
+            plan.per_override_suppressed_cents
+                .insert(ov.id.clone(), suppressed_here);
         }
     }
     Ok(plan)
@@ -613,13 +783,16 @@ fn map_hypo_rows(rows: &[HypoTxnRow]) -> Vec<CashflowEvent> {
         .collect()
 }
 
-/// Detecta um grupo de empréstimo entre as linhas hipotéticas (convenção `#loan:<id>:<taxa>` no
-/// banner do módulo) e monta o `LoanBreakdown`. `None` se nenhuma linha carrega a marca.
+/// Detecta um grupo de empréstimo entre TODAS as linhas hipotéticas do cenário (convenção
+/// `#loan:<id>:<taxa>` no banner do módulo) e monta o `LoanBreakdown`. Só o PRIMEIRO grupo na
+/// ordem (data, id) é reportado — devolve também o `group_id` para o builder de `changes`
+/// excluir SÓ as linhas desse grupo (as de um segundo financiamento aparecem como "add" comuns,
+/// nunca somem do DTO). `None` se nenhuma linha carrega a marca.
 fn detect_loan(
     hypo_rows: &[HypoTxnRow],
     scenario_cost_of_living_cents: i64,
     scenario_reserve_after_cents: i64,
-) -> Option<LoanBreakdown> {
+) -> Option<(String, LoanBreakdown)> {
     let mut group_id: Option<String> = None;
     let mut rate_bps = 0i64;
     let mut principal_cents = 0i64;
@@ -635,7 +808,7 @@ fn detect_loan(
         };
         if let Some(existing) = &group_id {
             if existing != &gid {
-                continue; // só o primeiro grupo detectado é reportado.
+                continue; // só o primeiro grupo (ordem data,id) é reportado.
             }
         } else {
             group_id = Some(gid);
@@ -651,7 +824,7 @@ fn detect_loan(
         }
     }
 
-    group_id.as_ref()?;
+    let group_id = group_id?;
     if term_months == 0 {
         return None;
     }
@@ -664,15 +837,18 @@ fn detect_loan(
     let reserve_months_after_financing = (scenario_cost_of_living_cents > 0)
         .then(|| scenario_reserve_after_cents as f64 / scenario_cost_of_living_cents as f64);
 
-    Some(LoanBreakdown {
-        loan_principal_cents: principal_cents,
-        loan_installment_cents: installment_cents,
-        loan_term_months: term_months,
-        loan_monthly_rate_bps: rate_bps,
-        loan_total_paid_cents: total_paid_cents,
-        loan_total_cost_cents: total_cost_cents,
-        reserve_months_after_financing,
-    })
+    Some((
+        group_id,
+        LoanBreakdown {
+            loan_principal_cents: principal_cents,
+            loan_installment_cents: installment_cents,
+            loan_term_months: term_months,
+            loan_monthly_rate_bps: rate_bps,
+            loan_total_paid_cents: total_paid_cents,
+            loan_total_cost_cents: total_cost_cents,
+            reserve_months_after_financing,
+        },
+    ))
 }
 
 /// Custo de vida "do momento": o mês corrente do `Forecast` (mesma definição canônica do motor —
@@ -885,7 +1061,39 @@ pub(crate) async fn get_scenario_forecast_inner(
         _ => None,
     };
 
-    // --- Changes (para exibição — ver limitação documentada abaixo). ---
+    // --- Empréstimo + changes: usam TODAS as linhas hipotéticas do cenário (sem janela de
+    // data): um principal desembolsado HOJE fica fora do encadeamento (`date > today`), mas
+    // PRECISA aparecer na detecção — senão `loan_total_cost` superestima pelo principal inteiro.
+    let all_hypo_rows = load_all_hypothetical_rows(pool, scenario_id).await?;
+    let scenario_reserve_after_cents = scenario_fc
+        .deepest_deficit
+        .map(|p| p.balance_cents)
+        .unwrap_or(0)
+        - reserve_floor_cents;
+    let (loan_group_id, loan) = match detect_loan(
+        &all_hypo_rows,
+        scenario_cost_of_living_cents,
+        scenario_reserve_after_cents,
+    ) {
+        Some((gid, breakdown)) => (Some(gid), Some(breakdown)),
+        None => (None, None),
+    };
+
+    // Linhas de substituição pareadas por `#repl:<override_id>` (ver banner do módulo): fundem
+    // velho→novo numa única entrada `replace` de `changes`. Só marca com override EXISTENTE
+    // conta como par (um `#repl:` órfão apareceria como "add" normal, nunca some do DTO).
+    let mut replacement_by_override: HashMap<String, i64> = HashMap::new();
+    for row in &all_hypo_rows {
+        if let Some(desc) = &row.description
+            && let Some(ov_id) = parse_repl_marker(desc)
+            && overrides.iter().any(|o| o.id == ov_id)
+        {
+            replacement_by_override
+                .entry(ov_id)
+                .or_insert(row.amount.abs());
+        }
+    }
+
     let mut changes = Vec::new();
     for ov in &overrides {
         let (label, from_date_naive) = if let Some(obligation_id) = &ov.obligation_id {
@@ -915,19 +1123,22 @@ pub(crate) async fn get_scenario_forecast_inner(
             description: label,
             from_date: from_date_naive,
             old_amount_cents: plan.per_override_suppressed_cents.get(&ov.id).copied(),
-            // LIMITAÇÃO DOCUMENTADA: não há vínculo persistido entre um override `replace` e a
-            // linha hipotética de substituição (nenhum FK/convenção liga os dois); o novo valor
-            // aparece separadamente como uma entrada "add" (abaixo), em vez de fundido aqui.
-            new_amount_cents: None,
+            // Fundido via `#repl:<override_id>`; `None` se o replace foi criado sem a linha de
+            // substituição pareada (a UI então mostra só o "removido").
+            new_amount_cents: replacement_by_override.get(&ov.id).copied(),
         });
     }
-    for row in &hypo_chain_rows {
-        // Uma linha de empréstimo (marca `#loan:`) já é reportada via `loan`; não duplica em `changes`.
-        if row
-            .description
-            .as_deref()
-            .is_some_and(|d| parse_loan_marker(d).is_some())
+    for row in &all_hypo_rows {
+        let desc = row.description.as_deref().unwrap_or("");
+        // Linha do grupo de empréstimo REPORTADO via `loan` → não duplica. Um SEGUNDO grupo
+        // `#loan:` (não coberto pelo `loan` desta slice) entra como "add" normal.
+        if let Some((gid, _)) = parse_loan_marker(desc)
+            && loan_group_id.as_deref() == Some(gid.as_str())
         {
+            continue;
+        }
+        // Linha de substituição pareada → já fundida na entrada `replace` acima.
+        if parse_repl_marker(desc).is_some_and(|ov_id| overrides.iter().any(|o| o.id == ov_id)) {
             continue;
         }
         changes.push(ScenarioChange {
@@ -938,18 +1149,6 @@ pub(crate) async fn get_scenario_forecast_inner(
             new_amount_cents: Some(row.amount.abs()),
         });
     }
-
-    // --- Empréstimo (detecção best-effort via marca na descrição). ---
-    let scenario_reserve_after_cents = scenario_fc
-        .deepest_deficit
-        .map(|p| p.balance_cents)
-        .unwrap_or(0)
-        - reserve_floor_cents;
-    let loan = detect_loan(
-        &hypo_chain_rows,
-        scenario_cost_of_living_cents,
-        scenario_reserve_after_cents,
-    );
 
     Ok(ScenarioCompareDto {
         scenario_id: scenario.id,
@@ -1048,6 +1247,7 @@ pub async fn set_scenario_override_cmd(
     from_date: String,
     obligation_id: Option<String>,
     recurrence_id: Option<String>,
+    replacement: Option<ReplacementInput>,
 ) -> Result<String, String> {
     set_scenario_override(
         pool.inner(),
@@ -1056,6 +1256,7 @@ pub async fn set_scenario_override_cmd(
         &from_date,
         obligation_id.as_deref(),
         recurrence_id.as_deref(),
+        replacement,
     )
     .await
 }
@@ -1197,9 +1398,17 @@ mod tests {
         let ob_id = obligations::create_obligation(&p, "Aluguel", "Aluguel", None)
             .await
             .unwrap();
-        let ov_id = set_scenario_override(&p, &sc.id, "suppress", "2026-08-01", Some(&ob_id), None)
-            .await
-            .unwrap();
+        let ov_id = set_scenario_override(
+            &p,
+            &sc.id,
+            "suppress",
+            "2026-08-01",
+            Some(&ob_id),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         delete_scenario(&p, &sc.id).await.unwrap();
 
@@ -1324,6 +1533,7 @@ mod tests {
             "2026-08-01",
             Some(&ob_id),
             Some("rec-1"),
+            None,
         )
         .await;
         assert!(result.is_err());
@@ -1333,7 +1543,8 @@ mod tests {
     async fn set_scenario_override_rejects_no_target() {
         let p = pool().await;
         let sc = create_scenario(&p, "Cenário").await.unwrap();
-        let result = set_scenario_override(&p, &sc.id, "suppress", "2026-08-01", None, None).await;
+        let result =
+            set_scenario_override(&p, &sc.id, "suppress", "2026-08-01", None, None, None).await;
         assert!(result.is_err());
     }
 
@@ -1457,9 +1668,17 @@ mod tests {
             .unwrap();
 
         let sc = create_scenario(&p, "Cenário").await.unwrap();
-        set_scenario_override(&p, &sc.id, "replace", "2026-08-01", Some(&ob_id), None)
-            .await
-            .unwrap();
+        set_scenario_override(
+            &p,
+            &sc.id,
+            "replace",
+            "2026-08-01",
+            Some(&ob_id),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         add_scenario_transaction(
             &p,
             &sc.id,
@@ -1507,9 +1726,17 @@ mod tests {
             .unwrap();
 
         let sc = create_scenario(&p, "Cenário").await.unwrap();
-        set_scenario_override(&p, &sc.id, "suppress", "2026-08-01", Some(&ob_id), None)
-            .await
-            .unwrap();
+        set_scenario_override(
+            &p,
+            &sc.id,
+            "suppress",
+            "2026-08-01",
+            Some(&ob_id),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let today = d("2026-07-31");
         let compare = get_scenario_forecast_inner(&p, &sc.id, today)
@@ -1545,9 +1772,17 @@ mod tests {
             .unwrap();
 
         let sc = create_scenario(&p, "Cenário").await.unwrap();
-        set_scenario_override(&p, &sc.id, "suppress", "2026-08-01", Some(&ob_id), None)
-            .await
-            .unwrap();
+        set_scenario_override(
+            &p,
+            &sc.id,
+            "suppress",
+            "2026-08-01",
+            Some(&ob_id),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let today = d("2026-08-01");
         let compare = get_scenario_forecast_inner(&p, &sc.id, today)
@@ -1630,5 +1865,495 @@ mod tests {
         assert_eq!(loan.loan_monthly_rate_bps, 150);
         assert_eq!(loan.loan_total_paid_cents, 90_000);
         assert_eq!(loan.loan_total_cost_cents, 90_000 - 1_000_000);
+    }
+
+    // --- Revisão adversarial (rodada 1 da slice B) ---
+
+    // MAJOR 1: um principal desembolsado NO PRÓPRIO `today` fica fora da janela do encadeamento
+    // (`date > today`), mas NÃO pode sumir da detecção do empréstimo — senão o custo total é
+    // superestimado pelo principal inteiro, em silêncio.
+    #[tokio::test]
+    async fn loan_detects_principal_disbursed_today() {
+        let p = pool().await;
+        txn(&p, "inc-1", "income", 500_000, "2026-08-02").await;
+
+        let sc = create_scenario(&p, "Financiamento").await.unwrap();
+        add_scenario_transaction(
+            &p,
+            &sc.id,
+            "income",
+            1_000_000,
+            "Desembolso #loan:moto:100",
+            "2026-08-01", // == today injetado abaixo
+            None,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        add_scenario_transaction(
+            &p,
+            &sc.id,
+            "expense",
+            90_000,
+            "Parcela 1 #loan:moto:100",
+            "2026-08-10",
+            None,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let compare = get_scenario_forecast_inner(&p, &sc.id, d("2026-08-01"))
+            .await
+            .unwrap();
+        let loan = compare
+            .loan
+            .expect("principal de hoje ainda é detectado no grupo");
+        assert_eq!(
+            loan.loan_principal_cents, 1_000_000,
+            "principal desembolsado hoje não pode virar 0"
+        );
+        assert_eq!(
+            loan.loan_total_cost_cents,
+            90_000 - 1_000_000,
+            "custo total = pago − principal, não pago − 0"
+        );
+    }
+
+    // MAJOR 2: um SEGUNDO grupo `#loan:` não vira `loan` (só o primeiro, ordem data,id), mas as
+    // linhas dele PRECISAM aparecer em `changes` como "add" — nunca somem do DTO.
+    #[tokio::test]
+    async fn second_loan_group_rows_surface_in_changes() {
+        let p = pool().await;
+        txn(&p, "inc-1", "income", 500_000, "2026-08-01").await;
+
+        let sc = create_scenario(&p, "Dois financiamentos").await.unwrap();
+        // Grupo A (primeiro por data): reportado via `loan`.
+        for (ttype, amount, desc, date) in [
+            (
+                "income",
+                1_000_000,
+                "Desembolso #loan:carro:150",
+                "2026-08-05",
+            ),
+            ("expense", 90_000, "Parcela 1 #loan:carro:150", "2026-08-10"),
+        ] {
+            add_scenario_transaction(
+                &p, &sc.id, ttype, amount, desc, date, None, false, None, None,
+            )
+            .await
+            .unwrap();
+        }
+        // Grupo B (depois): deve aparecer em `changes`.
+        for (ttype, amount, desc, date) in [
+            ("income", 500_000, "Desembolso #loan:moto:200", "2026-09-05"),
+            ("expense", 55_000, "Parcela 1 #loan:moto:200", "2026-09-10"),
+        ] {
+            add_scenario_transaction(
+                &p, &sc.id, ttype, amount, desc, date, None, false, None, None,
+            )
+            .await
+            .unwrap();
+        }
+
+        let compare = get_scenario_forecast_inner(&p, &sc.id, d("2026-07-31"))
+            .await
+            .unwrap();
+
+        let loan = compare.loan.expect("primeiro grupo detectado");
+        assert_eq!(
+            loan.loan_monthly_rate_bps, 150,
+            "o loan reportado é o grupo A"
+        );
+
+        let group_b_changes: Vec<_> = compare
+            .changes
+            .iter()
+            .filter(|c| c.description.contains("#loan:moto:200"))
+            .collect();
+        assert_eq!(
+            group_b_changes.len(),
+            2,
+            "as 2 linhas do segundo financiamento aparecem em changes"
+        );
+        assert!(group_b_changes.iter().all(|c| c.op == "add"));
+        assert!(
+            !compare
+                .changes
+                .iter()
+                .any(|c| c.description.contains("#loan:carro:150")),
+            "as linhas do grupo reportado via `loan` não duplicam em changes"
+        );
+    }
+
+    // MAJOR 3 (guard): um segundo override para a MESMA obrigação no mesmo cenário é rejeitado.
+    #[tokio::test]
+    async fn duplicate_override_same_obligation_rejected() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        let ob_id = obligations::create_obligation(&p, "Aluguel", "Aluguel", None)
+            .await
+            .unwrap();
+        set_scenario_override(
+            &p,
+            &sc.id,
+            "suppress",
+            "2026-08-01",
+            Some(&ob_id),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let second = set_scenario_override(
+            &p,
+            &sc.id,
+            "replace",
+            "2026-09-01",
+            Some(&ob_id),
+            None,
+            None,
+        )
+        .await;
+        assert!(
+            second.is_err() && second.unwrap_err().contains("já existe"),
+            "segundo override para a mesma obrigação é rejeitado com erro limpo"
+        );
+    }
+
+    // MAJOR 3 (guard, braço recorrência): mesma regra para recurrence_id.
+    #[tokio::test]
+    async fn duplicate_override_same_recurrence_rejected() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        sqlx::query(
+            "INSERT INTO recurrence (id, frequency, infinite, repetitions, start_date) \
+             VALUES ('rec-1', 'mensal', 0, 2, '2026-08-05')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        set_scenario_override(
+            &p,
+            &sc.id,
+            "suppress",
+            "2026-08-01",
+            None,
+            Some("rec-1"),
+            None,
+        )
+        .await
+        .unwrap();
+        let second = set_scenario_override(
+            &p,
+            &sc.id,
+            "suppress",
+            "2026-09-01",
+            None,
+            Some("rec-1"),
+            None,
+        )
+        .await;
+        assert!(
+            second.is_err() && second.unwrap_err().contains("já existe"),
+            "segundo override para a mesma recorrência é rejeitado"
+        );
+    }
+
+    // MAJOR 3 (defesa em profundidade): mesmo com DUAS linhas de override duplicadas já no banco
+    // (por fora do guard), a supressão do item conta UMA vez — a célula multi-item não zera e o
+    // irmão continua contribuindo.
+    #[tokio::test]
+    async fn preexisting_duplicate_override_rows_do_not_double_suppress() {
+        let p = pool().await;
+        seed_baseline(&p).await;
+        txn(&p, "cell-1", "expense", 108_000, "2026-08-05").await;
+        line_item(&p, "li-aluguel", "cell-1", 100_000, "Aluguel", None).await;
+        line_item(&p, "li-internet", "cell-1", 8_000, "Internet", None).await;
+        let ob_id = obligations::create_obligation(&p, "Aluguel", "Aluguel", None)
+            .await
+            .unwrap();
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+
+        // Duas linhas duplicadas direto no banco (o CHECK XOR permite; não há UNIQUE).
+        for ov_id in ["ov-1", "ov-2"] {
+            sqlx::query(
+                "INSERT INTO scenario_override (id, scenario_id, op, from_date, obligation_id) \
+                 VALUES (?1, ?2, 'suppress', '2026-08-01', ?3)",
+            )
+            .bind(ov_id)
+            .bind(&sc.id)
+            .bind(&ob_id)
+            .execute(&p)
+            .await
+            .unwrap();
+        }
+
+        let compare = get_scenario_forecast_inner(&p, &sc.id, d("2026-07-31"))
+            .await
+            .unwrap();
+        let month = compare
+            .month_end
+            .iter()
+            .find(|m| m.year == 2026 && m.month == 8)
+            .unwrap();
+        // 500.000 − 8.000 (Internet intacta): o Aluguel é subtraído UMA vez (100.000), não duas
+        // (o que zeraria a célula e apagaria a Internet junto).
+        assert_eq!(
+            month.scenario_balance_cents, 492_000,
+            "supressão duplicada não subtrai duas vezes nem derruba o irmão"
+        );
+    }
+
+    // Pareamento replace: dois replaces CONCORRENTES viram duas entradas fundidas
+    // {op:"replace", old, new} corretamente pareadas via `#repl:<override_id>` — sem "add" avulso.
+    #[tokio::test]
+    async fn two_concurrent_replaces_pair_old_and_new() {
+        let p = pool().await;
+        seed_baseline(&p).await;
+        txn(&p, "t-aluguel", "expense", 150_000, "2026-08-05").await;
+        line_item(&p, "li-a", "t-aluguel", 150_000, "Aluguel", None).await;
+        txn(&p, "t-internet", "expense", 8_000, "2026-08-06").await;
+        line_item(&p, "li-i", "t-internet", 8_000, "Internet", None).await;
+        let ob_aluguel = obligations::create_obligation(&p, "Aluguel", "Aluguel", None)
+            .await
+            .unwrap();
+        let ob_internet = obligations::create_obligation(&p, "Internet", "Internet", None)
+            .await
+            .unwrap();
+
+        let sc = create_scenario(&p, "Mudança").await.unwrap();
+        let repl = |amount: i64, date: &str, label: &str| ReplacementInput {
+            amount_cents: amount,
+            date: date.to_string(),
+            description: Some(label.to_string()),
+            txn_type: None,
+            payment_method: None,
+            is_fixed: None,
+        };
+        set_scenario_override(
+            &p,
+            &sc.id,
+            "replace",
+            "2026-08-01",
+            Some(&ob_aluguel),
+            None,
+            Some(repl(200_000, "2026-08-05", "Aluguel novo")),
+        )
+        .await
+        .unwrap();
+        set_scenario_override(
+            &p,
+            &sc.id,
+            "replace",
+            "2026-08-01",
+            Some(&ob_internet),
+            None,
+            Some(repl(10_000, "2026-08-06", "Internet nova")),
+        )
+        .await
+        .unwrap();
+
+        let compare = get_scenario_forecast_inner(&p, &sc.id, d("2026-07-31"))
+            .await
+            .unwrap();
+
+        let replaces: Vec<_> = compare
+            .changes
+            .iter()
+            .filter(|c| c.op == "replace")
+            .collect();
+        assert_eq!(replaces.len(), 2, "duas entradas replace fundidas");
+        let aluguel = replaces
+            .iter()
+            .find(|c| c.description == "Aluguel")
+            .unwrap();
+        assert_eq!(aluguel.old_amount_cents, Some(150_000));
+        assert_eq!(
+            aluguel.new_amount_cents,
+            Some(200_000),
+            "par velho→novo do Aluguel"
+        );
+        let internet = replaces
+            .iter()
+            .find(|c| c.description == "Internet")
+            .unwrap();
+        assert_eq!(internet.old_amount_cents, Some(8_000));
+        assert_eq!(
+            internet.new_amount_cents,
+            Some(10_000),
+            "par velho→novo da Internet"
+        );
+        assert!(
+            !compare.changes.iter().any(|c| c.op == "add"),
+            "as linhas de substituição pareadas não aparecem como add avulso"
+        );
+
+        // E a matemática segue sem dupla contagem: 500.000 − 200.000 − 10.000 = 290.000.
+        let month = compare
+            .month_end
+            .iter()
+            .find(|m| m.year == 2026 && m.month == 8)
+            .unwrap();
+        assert_eq!(month.scenario_balance_cents, 290_000);
+    }
+
+    // Apagar o override apaga também a linha de substituição pareada (senão viraria "add" órfão).
+    #[tokio::test]
+    async fn delete_scenario_override_removes_paired_replacement_row() {
+        let p = pool().await;
+        txn(&p, "t-aluguel", "expense", 150_000, "2026-08-05").await;
+        line_item(&p, "li-a", "t-aluguel", 150_000, "Aluguel", None).await;
+        let ob_id = obligations::create_obligation(&p, "Aluguel", "Aluguel", None)
+            .await
+            .unwrap();
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        let ov_id = set_scenario_override(
+            &p,
+            &sc.id,
+            "replace",
+            "2026-08-01",
+            Some(&ob_id),
+            None,
+            Some(ReplacementInput {
+                amount_cents: 200_000,
+                date: "2026-08-05".to_string(),
+                description: Some("Aluguel novo".to_string()),
+                txn_type: None,
+                payment_method: None,
+                is_fixed: None,
+            }),
+        )
+        .await
+        .unwrap();
+
+        let (before,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE scenario_id = ?1")
+                .bind(&sc.id)
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(
+            before, 1,
+            "linha de substituição criada junto com o override"
+        );
+
+        delete_scenario_override(&p, &sc.id, &ov_id).await.unwrap();
+
+        let (after,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE scenario_id = ?1")
+                .bind(&sc.id)
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(after, 0, "a linha pareada morre junto com o override");
+    }
+
+    // MINOR: o braço de recorrência também preenche `old_amount_cents` em changes.
+    #[tokio::test]
+    async fn recurrence_override_reports_old_amount_in_changes() {
+        let p = pool().await;
+        seed_baseline(&p).await;
+        sqlx::query(
+            "INSERT INTO recurrence (id, frequency, infinite, repetitions, start_date) \
+             VALUES ('rec-1', 'mensal', 0, 2, '2026-08-05')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        for (id, date) in [("r-1", "2026-08-05"), ("r-2", "2026-09-05")] {
+            sqlx::query(
+                "INSERT INTO \"transaction\" (id, type, amount, date, is_projection, recurrence_id) \
+                 VALUES (?1, 'expense', 50000, ?2, 1, 'rec-1')",
+            )
+            .bind(id)
+            .bind(date)
+            .execute(&p)
+            .await
+            .unwrap();
+        }
+
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        set_scenario_override(
+            &p,
+            &sc.id,
+            "suppress",
+            "2026-08-01",
+            None,
+            Some("rec-1"),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let compare = get_scenario_forecast_inner(&p, &sc.id, d("2026-07-31"))
+            .await
+            .unwrap();
+        let change = compare
+            .changes
+            .iter()
+            .find(|c| c.op == "remove")
+            .expect("entrada remove da recorrência");
+        assert_eq!(
+            change.old_amount_cents,
+            Some(100_000),
+            "soma das 2 ocorrências suprimidas (2 × 50.000)"
+        );
+    }
+
+    // MINOR: âncora das marcas — `#loan:`/`#repl:` no meio do texto ou colados não são varridos.
+    #[test]
+    fn markers_are_anchored_to_the_end_of_the_description() {
+        assert_eq!(
+            parse_loan_marker("Parcela 1 #loan:carro:150"),
+            Some(("carro".to_string(), 150))
+        );
+        assert_eq!(
+            parse_loan_marker("Compra #loan:carro:150 sapatos"),
+            None,
+            "marca no meio do texto não conta"
+        );
+        assert_eq!(
+            parse_loan_marker("nota#loan:carro:150"),
+            None,
+            "marca colada em outra palavra não conta"
+        );
+        assert_eq!(parse_loan_marker("sem marca"), None);
+
+        assert_eq!(
+            parse_repl_marker("Aluguel novo #repl:ov-123"),
+            Some("ov-123".to_string())
+        );
+        assert_eq!(parse_repl_marker("nota #repl:ov-1 depois"), None);
+        assert_eq!(parse_repl_marker("colado#repl:ov-1"), None);
+        assert_eq!(parse_repl_marker("sem marca"), None);
+    }
+
+    // MINOR: data anterior ao mês corrente sumiria SILENCIOSAMENTE dos dois ramos → rejeitada.
+    #[tokio::test]
+    async fn add_scenario_transaction_rejects_date_before_current_month() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        let result = add_scenario_transaction(
+            &p,
+            &sc.id,
+            "expense",
+            1000,
+            "Antiga",
+            "2020-01-01",
+            None,
+            false,
+            None,
+            None,
+        )
+        .await;
+        assert!(
+            result.is_err() && result.unwrap_err().contains("mês corrente"),
+            "data no passado (antes do mês corrente) é rejeitada com erro limpo"
+        );
     }
 }

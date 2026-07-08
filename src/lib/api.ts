@@ -1073,7 +1073,8 @@ export function deleteScenario(id: string): Promise<void> {
 }
 
 /** Insere uma linha hipotética "e se". `description` é obrigatória (aparece no compare). Nunca
- * muta `account.balance` (mesma política do lançamento manual real). */
+ * muta `account.balance` (mesma política do lançamento manual real). `date` anterior ao mês
+ * corrente é rejeitada — cairia fora da janela da projeção e sumiria em silêncio. */
 export function addScenarioTransaction(input: {
   scenarioId: string;
   txnType: "income" | "expense" | "transfer";
@@ -1105,14 +1106,31 @@ export function deleteScenarioTransaction(
   return invoke("delete_scenario_transaction_cmd", { scenarioId, txnId });
 }
 
+/** A linha hipotética de substituição de um override `replace` (opcional): o backend a cria
+ * junto com o override e a marca com `#repl:<override_id>` no fim da descrição — é isso que
+ * permite ao compare fundir velho→novo numa única entrada de `changes`. A UI deve REMOVER o
+ * sufixo `#repl:...`/`#loan:...` ao exibir descrições. Defaults: `txn_type = "expense"`,
+ * `is_fixed = true`. */
+export interface ReplacementInput {
+  amount_cents: number;
+  date: string;
+  description?: string | null;
+  txn_type?: string | null;
+  payment_method?: string | null;
+  is_fixed?: boolean | null;
+}
+
 /** Cria um override (`suppress`/`replace`) escopado a uma obrigação OU a uma recorrência —
- * exatamente uma das duas (o banco endurece via CHECK XOR). */
+ * exatamente uma das duas (o banco endurece via CHECK XOR). Um segundo override para o mesmo
+ * alvo no mesmo cenário é rejeitado. Para `op = "replace"`, passe `replacement` para o backend
+ * criar a linha de substituição pareada (compare emite UMA entrada fundida old→new). */
 export function setScenarioOverride(input: {
   scenarioId: string;
   op: "suppress" | "replace";
   fromDate: string;
   obligationId?: string | null;
   recurrenceId?: string | null;
+  replacement?: ReplacementInput | null;
 }): Promise<string> {
   return invoke("set_scenario_override_cmd", {
     scenarioId: input.scenarioId,
@@ -1120,9 +1138,11 @@ export function setScenarioOverride(input: {
     fromDate: input.fromDate,
     obligationId: input.obligationId ?? null,
     recurrenceId: input.recurrenceId ?? null,
+    replacement: input.replacement ?? null,
   });
 }
 
+/** Apaga o override e a linha de substituição pareada (`#repl:<override_id>`), se houver. */
 export function deleteScenarioOverride(
   scenarioId: string,
   overrideId: string,
