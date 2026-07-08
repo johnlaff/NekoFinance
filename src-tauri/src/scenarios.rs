@@ -1,0 +1,1634 @@
+//! Plano 072 (slice B) — o motor do "what-if": CRUD de cenários hipotéticos + o compare de
+//! forecast (real × cenário) + a ferramenta determinística de empréstimo (tabela PRICE).
+//!
+//! Um `scenario` é só um rótulo (nome + autoria); as linhas hipotéticas em si são
+//! `"transaction"` rows com `scenario_id` setado (slice A). Um `scenario_override` é uma AÇÃO
+//! sobre o livro-razão REAL, escopada a uma obrigação (plano 069) ou a uma série recorrente —
+//! nunca sobre o cenário em si. Nada aqui muta o livro-razão real: os overrides só afetam a
+//! PROJEÇÃO do cenário (`get_scenario_forecast`); o forecast real (`get_forecast`) continua
+//! cego à existência de qualquer cenário (slice A garantiu isso via `scenario_id IS NULL`).
+//!
+//! CONVENÇÃO DE EMPRÉSTIMO (documentada aqui porque não há coluna própria): a UI (slice C) marca
+//! as linhas hipotéticas de um empréstimo anexando `" #loan:<group_id>:<taxa_bps>"` ao final da
+//! `description` de CADA linha do grupo (a Entrada do principal + as N Saídas/Cartão das
+//! parcelas). `get_scenario_forecast` detecta o grupo por essa marca, usa a linha de tipo
+//! `income` como o principal e as `expense` como as parcelas (magnitude da primeira parcela = o
+//! valor da prestação, assumidas iguais — a UI usa `price_installment` para gerá-las).
+
+use crate::commands::forecast_cmds::{
+    self, forecast_horizon_end, load_economia_annotation, load_forecast_events, load_metric_events,
+    projection_seed, reserve_floor,
+};
+use crate::commands::map_cashflow_row;
+use crate::forecast::{self, CashflowEvent};
+use crate::obligations;
+use chrono::{Datelike, NaiveDate};
+use serde::Serialize;
+use sqlx::SqlitePool;
+use std::collections::HashMap;
+use tauri::State;
+
+// --- CRUD: scenario ---
+
+#[derive(Debug, Serialize, sqlx::FromRow, Clone, PartialEq, Eq)]
+pub struct Scenario {
+    pub id: String,
+    pub name: String,
+    pub person_id: String,
+}
+
+/// Mesmo bootstrap de "Eu" usado em `obligations::create_obligation`/`create_account_inner`:
+/// `scenario.person_id` é só autoria (nunca entra em nenhuma regra de negócio).
+async fn bootstrap_person(pool: &SqlitePool) -> Result<String, String> {
+    sqlx::query(
+        "INSERT INTO person (id, name) SELECT ?1, 'Eu' WHERE NOT EXISTS (SELECT 1 FROM person)",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .execute(pool)
+    .await
+    .map_err(|e| format!("bootstrap person: {e}"))?;
+    let (owner_id,): (String,) =
+        sqlx::query_as("SELECT id FROM person ORDER BY created_at LIMIT 1")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("query person: {e}"))?;
+    Ok(owner_id)
+}
+
+pub async fn create_scenario(pool: &SqlitePool, name: &str) -> Result<Scenario, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("nome do cenário obrigatório".into());
+    }
+    let person_id = bootstrap_person(pool).await?;
+    let id = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO scenario (id, name, person_id) VALUES (?1, ?2, ?3)")
+        .bind(&id)
+        .bind(name)
+        .bind(&person_id)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("create_scenario: {e}"))?;
+    Ok(Scenario {
+        id,
+        name: name.to_string(),
+        person_id,
+    })
+}
+
+pub async fn list_scenarios(pool: &SqlitePool) -> Result<Vec<Scenario>, String> {
+    sqlx::query_as::<_, Scenario>("SELECT id, name, person_id FROM scenario ORDER BY created_at")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("list_scenarios: {e}"))
+}
+
+/// Apaga o cenário. `transaction.scenario_id` e `scenario_override.scenario_id` são
+/// `ON DELETE CASCADE` (slice A/A.1) — apagar aqui já limpa as linhas hipotéticas e os overrides.
+pub async fn delete_scenario(pool: &SqlitePool, id: &str) -> Result<(), String> {
+    let rows = sqlx::query("DELETE FROM scenario WHERE id = ?1")
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("delete_scenario: {e}"))?;
+    if rows.rows_affected() == 0 {
+        return Err(format!("scenario not found: {id}"));
+    }
+    Ok(())
+}
+
+// --- CRUD: transações hipotéticas do cenário ---
+
+async fn scenario_exists(pool: &SqlitePool, scenario_id: &str) -> Result<bool, String> {
+    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM scenario WHERE id = ?1")
+        .bind(scenario_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| format!("scenario_exists: {e}"))?;
+    Ok(n > 0)
+}
+
+/// Insere uma linha hipotética "e se" no cenário. Espelha `create_transaction_inner`
+/// (mesmas validações de tipo/conta-destino), MAS nunca toca `account.balance` — o caminho real
+/// já não muta saldo no lançamento manual, então basta reusar o mesmo INSERT com `scenario_id`
+/// setado. `description` é OBRIGATÓRIA aqui (diferente do caminho real): uma linha hipotética
+/// sem rótulo não tem como aparecer como "Adição" legível no compare (`ScenarioChange`).
+#[allow(clippy::too_many_arguments)]
+pub async fn add_scenario_transaction(
+    pool: &SqlitePool,
+    scenario_id: &str,
+    txn_type: &str,
+    amount_cents: i64,
+    description: &str,
+    date: &str,
+    payment_method: Option<&str>,
+    is_fixed: bool,
+    to_account_id: Option<&str>,
+    due_date: Option<&str>,
+) -> Result<String, String> {
+    if !scenario_exists(pool, scenario_id).await? {
+        return Err(format!("scenario not found: {scenario_id}"));
+    }
+    let description = description.trim();
+    if description.is_empty() {
+        return Err("descrição obrigatória para uma linha de cenário".into());
+    }
+    if amount_cents <= 0 {
+        return Err("valor deve ser positivo (magnitude)".into());
+    }
+    let dest = match txn_type {
+        "income" | "expense" => {
+            if to_account_id.is_some_and(|s| !s.is_empty()) {
+                return Err("conta-destino só se aplica a transfer (Economia)".into());
+            }
+            None
+        }
+        "transfer" => {
+            let dest_id = to_account_id
+                .filter(|s| !s.is_empty())
+                .ok_or("transfer requer conta-destino (to_account_id)")?;
+            let row: Option<(String,)> =
+                sqlx::query_as("SELECT COALESCE(liquidity,'') FROM account WHERE id = ?1")
+                    .bind(dest_id)
+                    .fetch_optional(pool)
+                    .await
+                    .map_err(|e| format!("query account: {e}"))?;
+            match row {
+                None => return Err("conta-destino não encontrada".into()),
+                Some((liq,)) if liq == "reserve" || liq == "illiquid" => {}
+                Some((liq,)) => {
+                    return Err(format!(
+                        "conta-destino deve ter liquidez 'reserve' ou 'illiquid', encontrado '{liq}'"
+                    ));
+                }
+            }
+            Some(dest_id)
+        }
+        other => return Err(format!("tipo inválido: {other}")),
+    };
+    let start = NaiveDate::parse_from_str(date, "%Y-%m-%d").map_err(|e| format!("data: {e}"))?;
+    let is_projection = start > chrono::Local::now().date_naive();
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO \"transaction\" \
+           (id, type, amount, description, date, payment_method, is_fixed, to_account_id, \
+            is_projection, due_date, scenario_id, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+    )
+    .bind(&id)
+    .bind(txn_type)
+    .bind(amount_cents)
+    .bind(description)
+    .bind(date)
+    .bind(payment_method)
+    .bind(is_fixed as i64)
+    .bind(dest)
+    .bind(is_projection as i64)
+    .bind(due_date)
+    .bind(scenario_id)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("add_scenario_transaction: {e}"))?;
+    Ok(id)
+}
+
+/// Apaga uma linha hipotética. Só apaga se `scenario_id` casar — impede apagar uma linha REAL ou
+/// de OUTRO cenário pelo id.
+pub async fn delete_scenario_transaction(
+    pool: &SqlitePool,
+    scenario_id: &str,
+    txn_id: &str,
+) -> Result<(), String> {
+    let rows = sqlx::query("DELETE FROM \"transaction\" WHERE id = ?1 AND scenario_id = ?2")
+        .bind(txn_id)
+        .bind(scenario_id)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("delete_scenario_transaction: {e}"))?;
+    if rows.rows_affected() == 0 {
+        return Err(format!(
+            "scenario transaction not found: {txn_id} (scenario {scenario_id})"
+        ));
+    }
+    Ok(())
+}
+
+// --- CRUD: scenario_override ---
+
+#[derive(Debug, Serialize, sqlx::FromRow, Clone, PartialEq, Eq)]
+pub struct ScenarioOverride {
+    pub id: String,
+    pub scenario_id: String,
+    pub op: String,
+    pub from_date: String,
+    pub obligation_id: Option<String>,
+    pub recurrence_id: Option<String>,
+}
+
+/// Cria um override (`suppress`/`replace`) sobre uma obrigação OU uma recorrência (exatamente
+/// uma — o CHECK XOR do banco endurece isso; validamos antes para devolver um erro legível em
+/// vez do texto cru do driver SQLite).
+pub async fn set_scenario_override(
+    pool: &SqlitePool,
+    scenario_id: &str,
+    op: &str,
+    from_date: &str,
+    obligation_id: Option<&str>,
+    recurrence_id: Option<&str>,
+) -> Result<String, String> {
+    if !scenario_exists(pool, scenario_id).await? {
+        return Err(format!("scenario not found: {scenario_id}"));
+    }
+    if op != "suppress" && op != "replace" {
+        return Err(format!(
+            "op inválido: {op} (esperado 'suppress' ou 'replace')"
+        ));
+    }
+    NaiveDate::parse_from_str(from_date, "%Y-%m-%d").map_err(|e| format!("from_date: {e}"))?;
+    let obligation_id = obligation_id.filter(|s| !s.is_empty());
+    let recurrence_id = recurrence_id.filter(|s| !s.is_empty());
+    match (obligation_id, recurrence_id) {
+        (Some(_), Some(_)) => {
+            return Err(
+                "informe exatamente um alvo: obligation_id OU recurrence_id, não os dois".into(),
+            );
+        }
+        (None, None) => {
+            return Err("informe um alvo: obligation_id ou recurrence_id".into());
+        }
+        _ => {}
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO scenario_override (id, scenario_id, op, from_date, obligation_id, recurrence_id) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    )
+    .bind(&id)
+    .bind(scenario_id)
+    .bind(op)
+    .bind(from_date)
+    .bind(obligation_id)
+    .bind(recurrence_id)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("set_scenario_override: {e}"))?;
+    Ok(id)
+}
+
+pub async fn delete_scenario_override(
+    pool: &SqlitePool,
+    scenario_id: &str,
+    override_id: &str,
+) -> Result<(), String> {
+    let rows = sqlx::query("DELETE FROM scenario_override WHERE id = ?1 AND scenario_id = ?2")
+        .bind(override_id)
+        .bind(scenario_id)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("delete_scenario_override: {e}"))?;
+    if rows.rows_affected() == 0 {
+        return Err(format!(
+            "override not found: {override_id} (scenario {scenario_id})"
+        ));
+    }
+    Ok(())
+}
+
+pub async fn list_scenario_overrides(
+    pool: &SqlitePool,
+    scenario_id: &str,
+) -> Result<Vec<ScenarioOverride>, String> {
+    sqlx::query_as::<_, ScenarioOverride>(
+        "SELECT id, scenario_id, op, from_date, obligation_id, recurrence_id \
+         FROM scenario_override WHERE scenario_id = ?1 ORDER BY from_date",
+    )
+    .bind(scenario_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("list_scenario_overrides: {e}"))
+}
+
+// --- Empréstimo (ferramenta determinística; sem matemática livre de LLM) ---
+
+/// Tabela PRICE (parcelas fixas, juros compostos): `PMT = PV · i / (1 − (1+i)^−n)`.
+/// `monthly_rate_bps` = taxa mensal em basis points (100 = 1%). `n = 0` devolve 0 (sem série).
+/// `monthly_rate_bps = 0` cai no caso degenerado (parcela = principal ÷ n), evitando divisão por
+/// zero na fórmula (o limite de PRICE quando i→0 é justamente PV/n).
+pub fn price_installment(principal_cents: i64, monthly_rate_bps: i64, n: u32) -> i64 {
+    if n == 0 {
+        return 0;
+    }
+    if monthly_rate_bps == 0 {
+        return (principal_cents as f64 / n as f64).round() as i64;
+    }
+    let i = monthly_rate_bps as f64 / 10_000.0;
+    let pv = principal_cents as f64;
+    let factor = 1.0 - (1.0 + i).powi(-(n as i32));
+    (pv * i / factor).round() as i64
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq)]
+pub struct LoanBreakdown {
+    pub loan_principal_cents: i64,
+    pub loan_installment_cents: i64,
+    pub loan_term_months: u32,
+    pub loan_monthly_rate_bps: i64,
+    pub loan_total_paid_cents: i64,
+    pub loan_total_cost_cents: i64,
+    pub reserve_months_after_financing: Option<f64>,
+}
+
+/// Extrai `(group_id, rate_bps)` da marca `" #loan:<group_id>:<rate_bps>"` ao final da descrição
+/// (convenção documentada no banner do módulo). `None` se a descrição não carrega a marca.
+fn parse_loan_marker(description: &str) -> Option<(String, i64)> {
+    let idx = description.find("#loan:")?;
+    let rest = &description[idx + "#loan:".len()..];
+    let mut parts = rest.splitn(2, ':');
+    let group_id = parts.next()?.trim();
+    let rate_str = parts.next()?.trim();
+    if group_id.is_empty() {
+        return None;
+    }
+    let rate_bps: i64 = rate_str.parse().ok()?;
+    Some((group_id.to_string(), rate_bps))
+}
+
+// --- Compare de forecast (real x cenário) ---
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct ScenarioChange {
+    pub op: String,
+    pub description: String,
+    pub from_date: String,
+    pub old_amount_cents: Option<i64>,
+    pub new_amount_cents: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+pub struct ScenarioMonthEnd {
+    pub year: i32,
+    pub month: u32,
+    pub real_balance_cents: i64,
+    pub scenario_balance_cents: i64,
+    pub delta_cents: i64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ScenarioCompareDto {
+    pub scenario_id: String,
+    pub scenario_name: String,
+
+    pub real_today: String,
+    pub real_horizon_end: String,
+    pub real_month_end: Vec<forecast_cmds::MonthEndDto>,
+    pub real_deepest_deficit: Option<forecast_cmds::DayPointDto>,
+    pub real_performance_cents: i64,
+    pub real_safe_to_spend_today_cents: i64,
+    pub real_binding_guardrail: String,
+    pub real_cost_of_living_cents: i64,
+
+    pub scenario_month_end: Vec<forecast_cmds::MonthEndDto>,
+    pub scenario_deepest_deficit: Option<forecast_cmds::DayPointDto>,
+    pub scenario_performance_cents: i64,
+    pub scenario_safe_to_spend_today_cents: i64,
+    pub scenario_binding_guardrail: String,
+    pub scenario_cost_of_living_cents: i64,
+
+    pub month_end: Vec<ScenarioMonthEnd>,
+    pub deepest_deficit_delta_cents: Option<i64>,
+    pub performance_delta_cents: i64,
+    pub safe_to_spend_delta_cents: i64,
+    pub cost_of_living_delta_cents: i64,
+
+    pub changes: Vec<ScenarioChange>,
+    pub loan: Option<LoanBreakdown>,
+}
+
+#[derive(Debug, sqlx::FromRow, Clone)]
+struct RawTxnRow {
+    id: String,
+    #[sqlx(rename = "type")]
+    ttype: String,
+    amount: i64,
+    date: String,
+    payment_method: String,
+    is_fixed: i64,
+    is_projection: i64,
+    to_liquidity: String,
+    recurrence_id: Option<String>,
+}
+
+#[derive(Debug, sqlx::FromRow, Clone)]
+struct HypoTxnRow {
+    #[allow(dead_code)]
+    id: String,
+    #[sqlx(rename = "type")]
+    ttype: String,
+    amount: i64,
+    date: String,
+    payment_method: String,
+    is_fixed: i64,
+    is_projection: i64,
+    to_liquidity: String,
+    #[allow(dead_code)]
+    recurrence_id: Option<String>,
+    description: Option<String>,
+}
+
+/// Linhas REAIS (`scenario_id IS NULL`) num intervalo `[start, end]`. `inclusive_start` decide
+/// `>=` (janela de métrica, cobre o mês corrente) vs `>` (janela de encadeamento, evita dobrar o
+/// que a semente já embute) — o mesmo corte que `load_forecast_events`/`load_metric_events` usam.
+/// SQL literal por `&'static str` (sqlx exige) — sem string dinâmica.
+async fn load_real_rows(
+    pool: &SqlitePool,
+    start: &str,
+    inclusive_start: bool,
+    end: &str,
+) -> Result<Vec<RawTxnRow>, String> {
+    const INCLUSIVE: &str = "SELECT t.id, t.type AS \"type\", t.amount, t.date, \
+         COALESCE(t.payment_method,'') AS payment_method, \
+         t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity, t.recurrence_id \
+         FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
+         WHERE t.date >= ?1 AND t.date <= ?2 AND t.scenario_id IS NULL";
+    const EXCLUSIVE: &str = "SELECT t.id, t.type AS \"type\", t.amount, t.date, \
+         COALESCE(t.payment_method,'') AS payment_method, \
+         t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity, t.recurrence_id \
+         FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
+         WHERE t.date > ?1 AND t.date <= ?2 AND t.scenario_id IS NULL";
+    let sql = if inclusive_start {
+        INCLUSIVE
+    } else {
+        EXCLUSIVE
+    };
+    sqlx::query_as(sql)
+        .bind(start)
+        .bind(end)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("load_real_rows: {e}"))
+}
+
+/// Superset-select das linhas HIPOTÉTICAS do cenário (`t.scenario_id = ?`), com `id`/`description`/
+/// `recurrence_id` a mais (o cenário nunca sofre override; a marca de empréstimo vive na descrição).
+async fn load_hypothetical_rows(
+    pool: &SqlitePool,
+    scenario_id: &str,
+    start: &str,
+    inclusive_start: bool,
+    end: &str,
+) -> Result<Vec<HypoTxnRow>, String> {
+    const INCLUSIVE: &str = "SELECT t.id, t.type AS \"type\", t.amount, t.date, \
+         COALESCE(t.payment_method,'') AS payment_method, \
+         t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity, \
+         t.recurrence_id, t.description \
+         FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
+         WHERE t.date >= ?2 AND t.date <= ?3 AND t.scenario_id = ?1";
+    const EXCLUSIVE: &str = "SELECT t.id, t.type AS \"type\", t.amount, t.date, \
+         COALESCE(t.payment_method,'') AS payment_method, \
+         t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity, \
+         t.recurrence_id, t.description \
+         FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
+         WHERE t.date > ?2 AND t.date <= ?3 AND t.scenario_id = ?1";
+    let sql = if inclusive_start {
+        INCLUSIVE
+    } else {
+        EXCLUSIVE
+    };
+    sqlx::query_as(sql)
+        .bind(scenario_id)
+        .bind(start)
+        .bind(end)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("load_hypothetical_rows: {e}"))
+}
+
+/// Plano de supressão RESOLVIDO a partir dos overrides salvos: quanto suprimir por
+/// `transaction_id` (obrigação, escopo LINE-ITEM — nunca derruba a célula inteira, só o(s)
+/// item(ns) casado(s)) e quais `(recurrence_id, from_date)` suprimir POR INTEIRO (série
+/// recorrente é de propósito único; não há item para preservar).
+#[derive(Default)]
+struct SuppressionPlan {
+    line_item_suppressed_cents: HashMap<String, i64>,
+    recurrence_suppressed: Vec<(String, NaiveDate)>,
+    /// Para `changes`: soma suprimida por override (na ordem em que foram lidos).
+    per_override_suppressed_cents: HashMap<String, i64>,
+}
+
+async fn build_suppression_plan(
+    pool: &SqlitePool,
+    overrides: &[ScenarioOverride],
+) -> Result<SuppressionPlan, String> {
+    let mut plan = SuppressionPlan::default();
+    for ov in overrides {
+        let from_date = NaiveDate::parse_from_str(&ov.from_date, "%Y-%m-%d")
+            .map_err(|e| format!("override {} from_date inválida: {e}", ov.id))?;
+        if let Some(obligation_id) = &ov.obligation_id {
+            let items = obligations::obligation_items(pool, obligation_id).await?;
+            let mut suppressed_here = 0i64;
+            for item in items {
+                let Ok(d) = NaiveDate::parse_from_str(&item.date, "%Y-%m-%d") else {
+                    continue;
+                };
+                if d >= from_date {
+                    let magnitude = item.amount_cents.abs();
+                    *plan
+                        .line_item_suppressed_cents
+                        .entry(item.transaction_id.clone())
+                        .or_insert(0) += magnitude;
+                    suppressed_here += magnitude;
+                }
+            }
+            plan.per_override_suppressed_cents
+                .insert(ov.id.clone(), suppressed_here);
+        } else if let Some(recurrence_id) = &ov.recurrence_id {
+            plan.recurrence_suppressed
+                .push((recurrence_id.clone(), from_date));
+        }
+    }
+    Ok(plan)
+}
+
+/// Aplica o plano de supressão a linhas REAIS cruas: recorrência casada (data ≥ from_date) derruba
+/// a linha INTEIRA (série de propósito único); supressão por obrigação subtrai a magnitude
+/// suprimida do total da célula e só derruba a linha se o resto chegar a 0 — os IRMÃOS de uma
+/// célula multi-item continuam intactos (a linha só carrega o total, não os itens individuais;
+/// subtrair preserva a contribuição dos itens não suprimidos).
+fn apply_suppression(rows: Vec<RawTxnRow>, plan: &SuppressionPlan) -> Vec<RawTxnRow> {
+    rows.into_iter()
+        .filter_map(|mut row| {
+            if let Some(recurrence_id) = &row.recurrence_id
+                && let Ok(d) = NaiveDate::parse_from_str(&row.date, "%Y-%m-%d")
+                && plan
+                    .recurrence_suppressed
+                    .iter()
+                    .any(|(id, from)| id == recurrence_id && d >= *from)
+            {
+                return None;
+            }
+            if let Some(&suppressed) = plan.line_item_suppressed_cents.get(&row.id) {
+                let new_amount = (row.amount.abs() - suppressed).max(0);
+                if new_amount == 0 {
+                    return None;
+                }
+                row.amount = new_amount;
+            }
+            Some(row)
+        })
+        .collect()
+}
+
+fn map_raw_rows(rows: Vec<RawTxnRow>) -> Vec<CashflowEvent> {
+    rows.into_iter()
+        .filter_map(|r| {
+            map_cashflow_row((
+                r.ttype,
+                r.amount,
+                r.date,
+                r.payment_method,
+                r.is_fixed,
+                r.is_projection,
+                r.to_liquidity,
+            ))
+        })
+        .collect()
+}
+
+fn map_hypo_rows(rows: &[HypoTxnRow]) -> Vec<CashflowEvent> {
+    rows.iter()
+        .cloned()
+        .filter_map(|r| {
+            map_cashflow_row((
+                r.ttype,
+                r.amount,
+                r.date,
+                r.payment_method,
+                r.is_fixed,
+                r.is_projection,
+                r.to_liquidity,
+            ))
+        })
+        .collect()
+}
+
+/// Detecta um grupo de empréstimo entre as linhas hipotéticas (convenção `#loan:<id>:<taxa>` no
+/// banner do módulo) e monta o `LoanBreakdown`. `None` se nenhuma linha carrega a marca.
+fn detect_loan(
+    hypo_rows: &[HypoTxnRow],
+    scenario_cost_of_living_cents: i64,
+    scenario_reserve_after_cents: i64,
+) -> Option<LoanBreakdown> {
+    let mut group_id: Option<String> = None;
+    let mut rate_bps = 0i64;
+    let mut principal_cents = 0i64;
+    let mut installment_cents = 0i64;
+    let mut term_months = 0u32;
+
+    for row in hypo_rows {
+        let Some(desc) = &row.description else {
+            continue;
+        };
+        let Some((gid, rate)) = parse_loan_marker(desc) else {
+            continue;
+        };
+        if let Some(existing) = &group_id {
+            if existing != &gid {
+                continue; // só o primeiro grupo detectado é reportado.
+            }
+        } else {
+            group_id = Some(gid);
+            rate_bps = rate;
+        }
+        if row.ttype == "income" {
+            principal_cents = row.amount.abs();
+        } else if row.ttype == "expense" {
+            if installment_cents == 0 {
+                installment_cents = row.amount.abs();
+            }
+            term_months += 1;
+        }
+    }
+
+    group_id.as_ref()?;
+    if term_months == 0 {
+        return None;
+    }
+
+    let total_paid_cents = installment_cents * term_months as i64;
+    let total_cost_cents = total_paid_cents - principal_cents;
+    // Reserva-em-meses após o financiamento: colchão restante (piso já respeitado pelo forecast) ÷
+    // custo de vida do cenário. Documentado como aproximação (não há helper de "meses de reserva"
+    // pronto no forecast core): usa o mesmo custo de vida do compare.
+    let reserve_months_after_financing = (scenario_cost_of_living_cents > 0)
+        .then(|| scenario_reserve_after_cents as f64 / scenario_cost_of_living_cents as f64);
+
+    Some(LoanBreakdown {
+        loan_principal_cents: principal_cents,
+        loan_installment_cents: installment_cents,
+        loan_term_months: term_months,
+        loan_monthly_rate_bps: rate_bps,
+        loan_total_paid_cents: total_paid_cents,
+        loan_total_cost_cents: total_cost_cents,
+        reserve_months_after_financing,
+    })
+}
+
+/// Custo de vida "do momento": o mês corrente do `Forecast` (mesma definição canônica do motor —
+/// fixas + diário realizado + cartão, plano 060), ou 0 se o mês corrente não aparece nos meses do
+/// horizonte (nunca deveria faltar, já que `today` sempre inicia o horizonte).
+fn current_month_cost_of_living(fc: &forecast::Forecast, today: NaiveDate) -> i64 {
+    fc.months
+        .iter()
+        .find(|m| m.year == today.year() && m.month == today.month())
+        .map(|m| m.cost_of_living_cents)
+        .unwrap_or(0)
+}
+
+fn current_month_performance(fc: &forecast::Forecast, today: NaiveDate) -> i64 {
+    fc.months
+        .iter()
+        .find(|m| m.year == today.year() && m.month == today.month())
+        .map(|m| m.performance_cents)
+        .unwrap_or(0)
+}
+
+pub(crate) async fn get_scenario_forecast_inner(
+    pool: &SqlitePool,
+    scenario_id: &str,
+    today: NaiveDate,
+) -> Result<ScenarioCompareDto, String> {
+    let scenario: Scenario =
+        sqlx::query_as("SELECT id, name, person_id FROM scenario WHERE id = ?1")
+            .bind(scenario_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("get_scenario_forecast: {e}"))?
+            .ok_or_else(|| format!("scenario not found: {scenario_id}"))?;
+
+    let real_horizon_end = forecast_horizon_end(pool, today).await?;
+    let scenario_max: (Option<String>,) =
+        sqlx::query_as("SELECT MAX(date) FROM \"transaction\" WHERE scenario_id = ?1")
+            .bind(scenario_id)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("scenario max date: {e}"))?;
+    let scenario_max_date = scenario_max
+        .0
+        .as_deref()
+        .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+    let horizon_end = match scenario_max_date {
+        Some(d) if d > real_horizon_end => d,
+        _ => real_horizon_end,
+    };
+
+    let seed = projection_seed(pool, today).await?;
+    let years: Vec<i32> = (today.year()..=horizon_end.year()).collect();
+    let annotation = load_economia_annotation(pool, &years).await?;
+
+    // --- Ramo REAL (baseline, intocado — os mesmos loaders do forecast de produção). ---
+    let real_chain_events = load_forecast_events(pool, today, horizon_end).await?;
+    let real_metric_events = load_metric_events(pool, today, horizon_end).await?;
+    let real_fc = forecast::project_with_metrics(
+        seed,
+        today,
+        &real_chain_events,
+        &real_metric_events,
+        horizon_end,
+        &annotation,
+    );
+
+    // --- Ramo CENÁRIO: linhas reais AJUSTADAS pelos overrides + linhas hipotéticas do cenário. ---
+    let overrides = list_scenario_overrides(pool, scenario_id).await?;
+    let plan = build_suppression_plan(pool, &overrides).await?;
+
+    let today_str = today.format("%Y-%m-%d").to_string();
+    let horizon_str = horizon_end.format("%Y-%m-%d").to_string();
+    let month_start_str = NaiveDate::from_ymd_opt(today.year(), today.month(), 1)
+        .ok_or("data de hoje inválida")?
+        .format("%Y-%m-%d")
+        .to_string();
+
+    let real_chain_raw = load_real_rows(pool, &today_str, false, &horizon_str).await?;
+    let real_metric_raw = load_real_rows(pool, &month_start_str, true, &horizon_str).await?;
+    let hypo_chain_rows =
+        load_hypothetical_rows(pool, scenario_id, &today_str, false, &horizon_str).await?;
+    let hypo_metric_rows =
+        load_hypothetical_rows(pool, scenario_id, &month_start_str, true, &horizon_str).await?;
+
+    let scenario_chain_adjusted = apply_suppression(real_chain_raw, &plan);
+    let scenario_metric_adjusted = apply_suppression(real_metric_raw, &plan);
+
+    let mut scenario_chain_events = map_raw_rows(scenario_chain_adjusted);
+    scenario_chain_events.extend(map_hypo_rows(&hypo_chain_rows));
+    let mut scenario_metric_events = map_raw_rows(scenario_metric_adjusted);
+    scenario_metric_events.extend(map_hypo_rows(&hypo_metric_rows));
+
+    // Previsão de diário reutiliza o MESMO teto/dia do ramo real — o orçamento de Diário não muda
+    // por cenário; só o encadeamento de caixa/hipotéticas mudam.
+    let daily_ceiling = forecast_cmds::effective_daily_ceiling(pool, today).await?;
+    let days_with_daily_chain: std::collections::HashSet<NaiveDate> = scenario_chain_events
+        .iter()
+        .filter(|e| e.kind == forecast::EventKind::Daily)
+        .map(|e| e.date)
+        .collect();
+    scenario_chain_events.extend(forecast::project_daily_ceiling(
+        daily_ceiling,
+        today,
+        horizon_end,
+        &days_with_daily_chain,
+    ));
+    let days_with_daily_metric: std::collections::HashSet<NaiveDate> = scenario_metric_events
+        .iter()
+        .filter(|e| e.kind == forecast::EventKind::Daily)
+        .map(|e| e.date)
+        .collect();
+    scenario_metric_events.extend(forecast::project_daily_ceiling(
+        daily_ceiling,
+        today,
+        horizon_end,
+        &days_with_daily_metric,
+    ));
+
+    let scenario_fc = forecast::project_with_metrics(
+        seed,
+        today,
+        &scenario_chain_events,
+        &scenario_metric_events,
+        horizon_end,
+        &annotation,
+    );
+
+    // --- Guardrails (mesma fórmula do forecast real, poupança anual REALIZADA — não muda por
+    // cenário; o "e se" só reprojeta o caixa/performance do mês, não reescreve o ano já realizado). ---
+    let reserve_floor_cents = reserve_floor(pool, today).await?;
+    let (annual_income, _) = forecast_cmds::realized_annual_savings(pool, today).await?;
+    let annual_economia = forecast_cmds::realized_annual_economia(pool, today).await?;
+
+    let real_sts = forecast::safe_to_spend_today(
+        &real_fc,
+        annual_income,
+        annual_economia,
+        forecast_cmds::SAVINGS_TARGET_BPS,
+        reserve_floor_cents,
+    );
+    let scenario_sts = forecast::safe_to_spend_today(
+        &scenario_fc,
+        annual_income,
+        annual_economia,
+        forecast_cmds::SAVINGS_TARGET_BPS,
+        reserve_floor_cents,
+    );
+    let guardrail_str = |g: forecast::Guardrail| {
+        match g {
+            forecast::Guardrail::Cash => "cash",
+            forecast::Guardrail::Savings => "savings",
+        }
+        .to_string()
+    };
+
+    let real_cost_of_living_cents = current_month_cost_of_living(&real_fc, today);
+    let scenario_cost_of_living_cents = current_month_cost_of_living(&scenario_fc, today);
+    let real_performance_cents = current_month_performance(&real_fc, today);
+    let scenario_performance_cents = current_month_performance(&scenario_fc, today);
+
+    let real_month_end: Vec<forecast_cmds::MonthEndDto> = real_fc
+        .month_end
+        .iter()
+        .map(|m| forecast_cmds::MonthEndDto {
+            year: m.year,
+            month: m.month,
+            balance_cents: m.balance_cents,
+        })
+        .collect();
+    let scenario_month_end: Vec<forecast_cmds::MonthEndDto> = scenario_fc
+        .month_end
+        .iter()
+        .map(|m| forecast_cmds::MonthEndDto {
+            year: m.year,
+            month: m.month,
+            balance_cents: m.balance_cents,
+        })
+        .collect();
+
+    let mut month_end = Vec::new();
+    for r in &real_month_end {
+        if let Some(s) = scenario_month_end
+            .iter()
+            .find(|s| s.year == r.year && s.month == r.month)
+        {
+            month_end.push(ScenarioMonthEnd {
+                year: r.year,
+                month: r.month,
+                real_balance_cents: r.balance_cents,
+                scenario_balance_cents: s.balance_cents,
+                delta_cents: s.balance_cents - r.balance_cents,
+            });
+        }
+    }
+
+    let real_deepest_deficit = real_fc.deepest_deficit.map(|p| forecast_cmds::DayPointDto {
+        date: p.date.format("%Y-%m-%d").to_string(),
+        balance_cents: p.balance_cents,
+    });
+    let scenario_deepest_deficit =
+        scenario_fc
+            .deepest_deficit
+            .map(|p| forecast_cmds::DayPointDto {
+                date: p.date.format("%Y-%m-%d").to_string(),
+                balance_cents: p.balance_cents,
+            });
+    let deepest_deficit_delta_cents = match (&real_fc.deepest_deficit, &scenario_fc.deepest_deficit)
+    {
+        (Some(r), Some(s)) => Some(s.balance_cents - r.balance_cents),
+        _ => None,
+    };
+
+    // --- Changes (para exibição — ver limitação documentada abaixo). ---
+    let mut changes = Vec::new();
+    for ov in &overrides {
+        let (label, from_date_naive) = if let Some(obligation_id) = &ov.obligation_id {
+            let name: Option<(String,)> =
+                sqlx::query_as("SELECT name FROM obligation WHERE id = ?1")
+                    .bind(obligation_id)
+                    .fetch_optional(pool)
+                    .await
+                    .map_err(|e| format!("obligation name: {e}"))?;
+            (
+                name.map(|(n,)| n).unwrap_or_else(|| obligation_id.clone()),
+                ov.from_date.clone(),
+            )
+        } else {
+            (
+                ov.recurrence_id.clone().unwrap_or_default(),
+                ov.from_date.clone(),
+            )
+        };
+        let op_label = if ov.op == "suppress" {
+            "remove"
+        } else {
+            "replace"
+        };
+        changes.push(ScenarioChange {
+            op: op_label.to_string(),
+            description: label,
+            from_date: from_date_naive,
+            old_amount_cents: plan.per_override_suppressed_cents.get(&ov.id).copied(),
+            // LIMITAÇÃO DOCUMENTADA: não há vínculo persistido entre um override `replace` e a
+            // linha hipotética de substituição (nenhum FK/convenção liga os dois); o novo valor
+            // aparece separadamente como uma entrada "add" (abaixo), em vez de fundido aqui.
+            new_amount_cents: None,
+        });
+    }
+    for row in &hypo_chain_rows {
+        // Uma linha de empréstimo (marca `#loan:`) já é reportada via `loan`; não duplica em `changes`.
+        if row
+            .description
+            .as_deref()
+            .is_some_and(|d| parse_loan_marker(d).is_some())
+        {
+            continue;
+        }
+        changes.push(ScenarioChange {
+            op: "add".to_string(),
+            description: row.description.clone().unwrap_or_default(),
+            from_date: row.date.clone(),
+            old_amount_cents: None,
+            new_amount_cents: Some(row.amount.abs()),
+        });
+    }
+
+    // --- Empréstimo (detecção best-effort via marca na descrição). ---
+    let scenario_reserve_after_cents = scenario_fc
+        .deepest_deficit
+        .map(|p| p.balance_cents)
+        .unwrap_or(0)
+        - reserve_floor_cents;
+    let loan = detect_loan(
+        &hypo_chain_rows,
+        scenario_cost_of_living_cents,
+        scenario_reserve_after_cents,
+    );
+
+    Ok(ScenarioCompareDto {
+        scenario_id: scenario.id,
+        scenario_name: scenario.name,
+
+        real_today: today_str,
+        real_horizon_end: real_horizon_end.format("%Y-%m-%d").to_string(),
+        real_month_end,
+        real_deepest_deficit,
+        real_performance_cents,
+        real_safe_to_spend_today_cents: real_sts.amount_cents,
+        real_binding_guardrail: guardrail_str(real_sts.binding),
+        real_cost_of_living_cents,
+
+        scenario_month_end,
+        scenario_deepest_deficit,
+        scenario_performance_cents,
+        scenario_safe_to_spend_today_cents: scenario_sts.amount_cents,
+        scenario_binding_guardrail: guardrail_str(scenario_sts.binding),
+        scenario_cost_of_living_cents,
+
+        month_end,
+        deepest_deficit_delta_cents,
+        performance_delta_cents: scenario_performance_cents - real_performance_cents,
+        safe_to_spend_delta_cents: scenario_sts.amount_cents - real_sts.amount_cents,
+        cost_of_living_delta_cents: scenario_cost_of_living_cents - real_cost_of_living_cents,
+
+        changes,
+        loan,
+    })
+}
+
+// --- Tauri command wrappers ---
+
+#[tauri::command]
+pub async fn create_scenario_cmd(
+    pool: State<'_, SqlitePool>,
+    name: String,
+) -> Result<Scenario, String> {
+    create_scenario(pool.inner(), &name).await
+}
+
+#[tauri::command]
+pub async fn list_scenarios_cmd(pool: State<'_, SqlitePool>) -> Result<Vec<Scenario>, String> {
+    list_scenarios(pool.inner()).await
+}
+
+#[tauri::command]
+pub async fn delete_scenario_cmd(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
+    delete_scenario(pool.inner(), &id).await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn add_scenario_transaction_cmd(
+    pool: State<'_, SqlitePool>,
+    scenario_id: String,
+    txn_type: String,
+    amount_cents: i64,
+    description: String,
+    date: String,
+    payment_method: Option<String>,
+    is_fixed: bool,
+    to_account_id: Option<String>,
+    due_date: Option<String>,
+) -> Result<String, String> {
+    add_scenario_transaction(
+        pool.inner(),
+        &scenario_id,
+        &txn_type,
+        amount_cents,
+        &description,
+        &date,
+        payment_method.as_deref(),
+        is_fixed,
+        to_account_id.as_deref(),
+        due_date.as_deref(),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn delete_scenario_transaction_cmd(
+    pool: State<'_, SqlitePool>,
+    scenario_id: String,
+    txn_id: String,
+) -> Result<(), String> {
+    delete_scenario_transaction(pool.inner(), &scenario_id, &txn_id).await
+}
+
+#[tauri::command]
+pub async fn set_scenario_override_cmd(
+    pool: State<'_, SqlitePool>,
+    scenario_id: String,
+    op: String,
+    from_date: String,
+    obligation_id: Option<String>,
+    recurrence_id: Option<String>,
+) -> Result<String, String> {
+    set_scenario_override(
+        pool.inner(),
+        &scenario_id,
+        &op,
+        &from_date,
+        obligation_id.as_deref(),
+        recurrence_id.as_deref(),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn delete_scenario_override_cmd(
+    pool: State<'_, SqlitePool>,
+    scenario_id: String,
+    override_id: String,
+) -> Result<(), String> {
+    delete_scenario_override(pool.inner(), &scenario_id, &override_id).await
+}
+
+#[tauri::command]
+pub async fn list_scenario_overrides_cmd(
+    pool: State<'_, SqlitePool>,
+    scenario_id: String,
+) -> Result<Vec<ScenarioOverride>, String> {
+    list_scenario_overrides(pool.inner(), &scenario_id).await
+}
+
+/// Ferramenta determinística exposta à UI (nunca matemática livre de LLM): calcula a parcela
+/// PRICE antes do usuário confirmar as linhas hipotéticas do empréstimo.
+#[tauri::command]
+pub fn price_installment_cmd(principal_cents: i64, monthly_rate_bps: i64, term_months: u32) -> i64 {
+    price_installment(principal_cents, monthly_rate_bps, term_months)
+}
+
+#[tauri::command]
+pub async fn get_scenario_forecast_cmd(
+    pool: State<'_, SqlitePool>,
+    scenario_id: String,
+) -> Result<ScenarioCompareDto, String> {
+    get_scenario_forecast_inner(
+        pool.inner(),
+        &scenario_id,
+        chrono::Local::now().date_naive(),
+    )
+    .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn pool() -> SqlitePool {
+        let p = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&p).await.unwrap();
+        p
+    }
+
+    async fn txn(pool: &SqlitePool, id: &str, ttype: &str, amount: i64, date: &str) {
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_projection) \
+             VALUES (?1,?2,?3,?4,0)",
+        )
+        .bind(id)
+        .bind(ttype)
+        .bind(amount)
+        .bind(date)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn line_item(
+        pool: &SqlitePool,
+        id: &str,
+        txn_id: &str,
+        amount_cents: i64,
+        description: &str,
+        section: Option<&str>,
+    ) {
+        sqlx::query(
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, section) \
+             VALUES (?1,?2,?3,?4,0,?5)",
+        )
+        .bind(id)
+        .bind(txn_id)
+        .bind(amount_cents)
+        .bind(description)
+        .bind(section)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    fn d(s: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    // --- CRUD básico ---
+
+    #[tokio::test]
+    async fn create_list_delete_scenario_roundtrip() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "E se eu comprar um carro")
+            .await
+            .unwrap();
+        assert_eq!(sc.name, "E se eu comprar um carro");
+
+        let all = list_scenarios(&p).await.unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, sc.id);
+
+        delete_scenario(&p, &sc.id).await.unwrap();
+        assert!(list_scenarios(&p).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_scenario_rejects_empty_name() {
+        let p = pool().await;
+        assert!(create_scenario(&p, "   ").await.is_err());
+    }
+
+    // Teste 9: apagar o cenário cascateia transações + overrides.
+    #[tokio::test]
+    async fn delete_scenario_cascades_transactions_and_overrides() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        let txn_id = add_scenario_transaction(
+            &p,
+            &sc.id,
+            "expense",
+            10000,
+            "Parcela",
+            "2026-08-01",
+            None,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let ob_id = obligations::create_obligation(&p, "Aluguel", "Aluguel", None)
+            .await
+            .unwrap();
+        let ov_id = set_scenario_override(&p, &sc.id, "suppress", "2026-08-01", Some(&ob_id), None)
+            .await
+            .unwrap();
+
+        delete_scenario(&p, &sc.id).await.unwrap();
+
+        let (txn_count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE id = ?1")
+                .bind(&txn_id)
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(txn_count, 0, "transação hipotética cascateia");
+
+        let (ov_count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM scenario_override WHERE id = ?1")
+                .bind(&ov_id)
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(ov_count, 0, "override cascateia");
+    }
+
+    // Teste 10: adicionar uma transação de cenário não muta account.balance.
+    #[tokio::test]
+    async fn add_scenario_transaction_does_not_change_account_balance() {
+        let p = pool().await;
+        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-1', 'Eu')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, balance) \
+             VALUES ('acc-1', 'Conta', 'bank', 'pe-1', 500000)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        add_scenario_transaction(
+            &p,
+            &sc.id,
+            "expense",
+            999900,
+            "Compra gigante",
+            "2026-08-01",
+            None,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let (balance,): (i64,) = sqlx::query_as("SELECT balance FROM account WHERE id = 'acc-1'")
+            .fetch_one(&p)
+            .await
+            .unwrap();
+        assert_eq!(
+            balance, 500000,
+            "add_scenario_transaction não muta account.balance"
+        );
+    }
+
+    #[tokio::test]
+    async fn add_scenario_transaction_rejects_empty_description() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        let result = add_scenario_transaction(
+            &p,
+            &sc.id,
+            "expense",
+            1000,
+            "  ",
+            "2026-08-01",
+            None,
+            false,
+            None,
+            None,
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn delete_scenario_transaction_rejects_wrong_scenario() {
+        let p = pool().await;
+        let sc1 = create_scenario(&p, "Um").await.unwrap();
+        let sc2 = create_scenario(&p, "Dois").await.unwrap();
+        let txn_id = add_scenario_transaction(
+            &p,
+            &sc1.id,
+            "expense",
+            1000,
+            "X",
+            "2026-08-01",
+            None,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            delete_scenario_transaction(&p, &sc2.id, &txn_id)
+                .await
+                .is_err()
+        );
+        delete_scenario_transaction(&p, &sc1.id, &txn_id)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn set_scenario_override_rejects_both_targets() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        let ob_id = obligations::create_obligation(&p, "Aluguel", "Aluguel", None)
+            .await
+            .unwrap();
+        let result = set_scenario_override(
+            &p,
+            &sc.id,
+            "suppress",
+            "2026-08-01",
+            Some(&ob_id),
+            Some("rec-1"),
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn set_scenario_override_rejects_no_target() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        let result = set_scenario_override(&p, &sc.id, "suppress", "2026-08-01", None, None).await;
+        assert!(result.is_err());
+    }
+
+    // --- price_installment / PRICE ---
+
+    // Teste 6a: taxa zero degenera para principal / n (parcela exata, sem juros).
+    #[test]
+    fn price_installment_zero_rate_is_principal_over_n() {
+        let pmt = price_installment(120_000, 0, 12);
+        assert_eq!(pmt, 10_000);
+        let total_paid = pmt * 12;
+        assert_eq!(total_paid, 120_000);
+        assert_eq!(total_paid - 120_000, 0, "sem juros a taxa zero");
+    }
+
+    // Teste 6b: valor conhecido com juros (verificado externamente: PV=1000,00, i=2%/mês, n=10 →
+    // parcela 111,33; total pago 1113,30; juros 113,30 — todos em centavos abaixo).
+    #[test]
+    fn price_installment_known_value_matches_hand_computed() {
+        let pmt = price_installment(100_000, 200, 10);
+        assert_eq!(pmt, 11_133);
+        let total_paid = pmt * 10;
+        assert_eq!(total_paid, 111_330);
+        assert_eq!(total_paid - 100_000, 11_330, "juros = total - principal");
+    }
+
+    #[test]
+    fn price_installment_zero_term_is_zero() {
+        assert_eq!(price_installment(100_000, 200, 0), 0);
+    }
+
+    // --- get_scenario_forecast: determinismo/idempotência ---
+
+    async fn seed_baseline(p: &SqlitePool) {
+        txn(p, "inc-1", "income", 500_000, "2026-08-01").await;
+    }
+
+    // Teste 1 + 2: determinismo e idempotência — mesmas entradas, mesma saída, recomputado 2x.
+    #[tokio::test]
+    async fn get_scenario_forecast_is_deterministic_and_idempotent() {
+        let p = pool().await;
+        seed_baseline(&p).await;
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        add_scenario_transaction(
+            &p,
+            &sc.id,
+            "expense",
+            20_000,
+            "Assinatura nova",
+            "2026-08-10",
+            None,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let today = d("2026-08-01");
+        let a = get_scenario_forecast_inner(&p, &sc.id, today)
+            .await
+            .unwrap();
+        let b = get_scenario_forecast_inner(&p, &sc.id, today)
+            .await
+            .unwrap();
+        assert_eq!(a.scenario_month_end, b.scenario_month_end);
+        assert_eq!(a.real_month_end, b.real_month_end);
+        assert_eq!(
+            a.scenario_cost_of_living_cents,
+            b.scenario_cost_of_living_cents
+        );
+
+        // Idempotência: recomputar sem mudar nada dá o MESMO resultado de novo.
+        let c = get_scenario_forecast_inner(&p, &sc.id, today)
+            .await
+            .unwrap();
+        assert_eq!(b.scenario_month_end, c.scenario_month_end);
+    }
+
+    // Teste 7: isolamento de cenário segue intocado — o forecast REAL não vê a linha hipotética.
+    #[tokio::test]
+    async fn scenario_isolation_still_holds() {
+        let p = pool().await;
+        seed_baseline(&p).await;
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        add_scenario_transaction(
+            &p,
+            &sc.id,
+            "expense",
+            400_000,
+            "Compra enorme",
+            "2026-08-10",
+            None,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let today = d("2026-08-01");
+        let horizon = d("2026-08-31");
+        let real_events = forecast_cmds::load_forecast_events(&p, today, horizon)
+            .await
+            .unwrap();
+        assert!(
+            real_events.iter().all(|e| e.amount_cents != 400_000),
+            "a linha hipotética não aparece no forecast real"
+        );
+    }
+
+    // Teste 3: replace (suprime + hipotética) não conta o valor antigo e o novo juntos.
+    #[tokio::test]
+    async fn replace_override_does_not_double_count() {
+        let p = pool().await;
+        seed_baseline(&p).await;
+        txn(&p, "aluguel-1", "expense", 150_000, "2026-08-05").await;
+        line_item(&p, "li-1", "aluguel-1", 150_000, "Aluguel", None).await;
+        let ob_id = obligations::create_obligation(&p, "Aluguel", "Aluguel", None)
+            .await
+            .unwrap();
+
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        set_scenario_override(&p, &sc.id, "replace", "2026-08-01", Some(&ob_id), None)
+            .await
+            .unwrap();
+        add_scenario_transaction(
+            &p,
+            &sc.id,
+            "expense",
+            200_000,
+            "Aluguel novo",
+            "2026-08-05",
+            None,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let today = d("2026-07-31");
+        let compare = get_scenario_forecast_inner(&p, &sc.id, today)
+            .await
+            .unwrap();
+        let month = compare
+            .month_end
+            .iter()
+            .find(|m| m.year == 2026 && m.month == 8)
+            .unwrap();
+        // Real: renda 500.000 − aluguel 150.000 = 350.000.
+        assert_eq!(month.real_balance_cents, 350_000);
+        // Cenário: renda 500.000 − aluguel NOVO 200.000 (velho suprimido, NÃO soma 150+200).
+        assert_eq!(
+            month.scenario_balance_cents, 300_000,
+            "replace não conta o valor antigo e o novo juntos"
+        );
+    }
+
+    // Teste 4: override sobre UM item de uma célula multi-item preserva a contribuição do irmão.
+    #[tokio::test]
+    async fn suppress_one_sibling_leaves_others_intact() {
+        let p = pool().await;
+        seed_baseline(&p).await;
+        // Célula única (mesma transação) com 2 itens: Aluguel 100.000 + Internet 8.000.
+        txn(&p, "cell-1", "expense", 108_000, "2026-08-05").await;
+        line_item(&p, "li-aluguel", "cell-1", 100_000, "Aluguel", None).await;
+        line_item(&p, "li-internet", "cell-1", 8_000, "Internet", None).await;
+        let ob_id = obligations::create_obligation(&p, "Aluguel", "Aluguel", None)
+            .await
+            .unwrap();
+
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        set_scenario_override(&p, &sc.id, "suppress", "2026-08-01", Some(&ob_id), None)
+            .await
+            .unwrap();
+
+        let today = d("2026-07-31");
+        let compare = get_scenario_forecast_inner(&p, &sc.id, today)
+            .await
+            .unwrap();
+        let month = compare
+            .month_end
+            .iter()
+            .find(|m| m.year == 2026 && m.month == 8)
+            .unwrap();
+        // Real: 500.000 − 108.000 = 392.000.
+        assert_eq!(month.real_balance_cents, 392_000);
+        // Cenário: só o Aluguel (100.000) suprimido; Internet (8.000) continua pesando.
+        // 500.000 − 8.000 = 492.000 (não 500.000, que apagaria o irmão também).
+        assert_eq!(
+            month.scenario_balance_cents, 492_000,
+            "Internet (irmão não suprimido) continua descontando o saldo"
+        );
+    }
+
+    // Teste 8: suprimir uma obrigação some as ocorrências (≥ from_date) do ramo cenário, mas
+    // permanece no ramo real.
+    #[tokio::test]
+    async fn suppress_removes_occurrences_from_scenario_branch_only() {
+        let p = pool().await;
+        txn(&p, "inc-1", "income", 1_000_000, "2026-08-01").await;
+        txn(&p, "aluguel-ago", "expense", 150_000, "2026-08-05").await;
+        line_item(&p, "li-ago", "aluguel-ago", 150_000, "Aluguel", None).await;
+        txn(&p, "aluguel-set", "expense", 150_000, "2026-09-05").await;
+        line_item(&p, "li-set", "aluguel-set", 150_000, "Aluguel", None).await;
+        let ob_id = obligations::create_obligation(&p, "Aluguel", "Aluguel", None)
+            .await
+            .unwrap();
+
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        set_scenario_override(&p, &sc.id, "suppress", "2026-08-01", Some(&ob_id), None)
+            .await
+            .unwrap();
+
+        let today = d("2026-08-01");
+        let compare = get_scenario_forecast_inner(&p, &sc.id, today)
+            .await
+            .unwrap();
+
+        let sep_real = compare
+            .real_month_end
+            .iter()
+            .find(|m| m.month == 9)
+            .unwrap();
+        let sep_scenario = compare
+            .scenario_month_end
+            .iter()
+            .find(|m| m.month == 9)
+            .unwrap();
+        assert!(
+            sep_scenario.balance_cents > sep_real.balance_cents,
+            "setembro no cenário fica mais alto (aluguel suprimido), real não muda"
+        );
+    }
+
+    // Teste 5: o principal do empréstimo ELEVA o saldo na data do desembolso antes das parcelas.
+    #[tokio::test]
+    async fn loan_principal_raises_balance_before_installments_pull_down() {
+        let p = pool().await;
+        txn(&p, "inc-1", "income", 500_000, "2026-08-01").await;
+
+        let sc = create_scenario(&p, "Financiamento").await.unwrap();
+        add_scenario_transaction(
+            &p,
+            &sc.id,
+            "income",
+            1_000_000,
+            "Empréstimo desembolso #loan:carro:150",
+            "2026-08-05",
+            None,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        add_scenario_transaction(
+            &p,
+            &sc.id,
+            "expense",
+            90_000,
+            "Parcela 1 #loan:carro:150",
+            "2026-08-10",
+            None,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let today = d("2026-07-31");
+        let compare = get_scenario_forecast_inner(&p, &sc.id, today)
+            .await
+            .unwrap();
+
+        let month = compare
+            .month_end
+            .iter()
+            .find(|m| m.year == 2026 && m.month == 8)
+            .unwrap();
+        // Real: 500.000. Cenário: 500.000 + 1.000.000 (principal) − 90.000 (parcela) = 1.410.000.
+        assert_eq!(month.real_balance_cents, 500_000);
+        assert_eq!(
+            month.scenario_balance_cents, 1_410_000,
+            "principal soma antes da parcela puxar pra baixo"
+        );
+
+        let loan = compare.loan.expect("grupo de empréstimo detectado");
+        assert_eq!(loan.loan_principal_cents, 1_000_000);
+        assert_eq!(loan.loan_installment_cents, 90_000);
+        assert_eq!(loan.loan_term_months, 1);
+        assert_eq!(loan.loan_monthly_rate_bps, 150);
+        assert_eq!(loan.loan_total_paid_cents, 90_000);
+        assert_eq!(loan.loan_total_cost_cents, 90_000 - 1_000_000);
+    }
+}

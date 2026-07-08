@@ -640,7 +640,8 @@ pub(crate) async fn record_write_back_audit(
                 // `source_amount` de linhas derivadas que não vêm 1:1 da planilha.
                 sqlx::query(
                     "UPDATE \"transaction\" SET source_amount = ?1, updated_at = ?2 \
-                     WHERE date = ?3 AND type = 'income' AND id NOT LIKE 'derived:%'",
+                     WHERE date = ?3 AND type = 'income' AND id NOT LIKE 'derived:%' \
+                       AND scenario_id IS NULL",
                 )
                 .bind(c.value_cents)
                 .bind(&now)
@@ -652,7 +653,8 @@ pub(crate) async fn record_write_back_audit(
                 sqlx::query(
                     "UPDATE \"transaction\" SET source_amount = ?1, updated_at = ?2 \
                      WHERE date = ?3 AND type = 'expense' AND is_fixed = 0 \
-                       AND (payment_method IS NULL OR payment_method <> 'credit')",
+                       AND (payment_method IS NULL OR payment_method <> 'credit') \
+                       AND scenario_id IS NULL",
                 )
                 .bind(c.value_cents)
                 .bind(&now)
@@ -748,12 +750,13 @@ async fn rekey_manual_row_to_deterministic(
     // (1) Alvo determinístico (slot 0). Se JÁ EXISTE uma linha com esse id, é uma linha importada
     //     daquela célula → NÃO re-chavear (sobrescreveria/colidiria). STOP silencioso e seguro.
     let target = import::row_id(sheet_name, &c.date, kind, 0);
-    let (target_exists,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE id = ?1")
-            .bind(&target)
-            .fetch_one(&mut **tx)
-            .await
-            .map_err(|e| format!("rekey target check: {e}"))?;
+    let (target_exists,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM \"transaction\" WHERE id = ?1 AND scenario_id IS NULL",
+    )
+    .bind(&target)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|e| format!("rekey target check: {e}"))?;
     if target_exists > 0 {
         return Ok(());
     }
@@ -766,17 +769,17 @@ async fn rekey_manual_row_to_deterministic(
     let select_sql: &'static str = match kind {
         import::RowKind::Entrada => concat!(
             "SELECT id FROM \"transaction\" WHERE date = ?1 AND type='income' \
-             AND id NOT LIKE 'derived:%' AND ",
+             AND id NOT LIKE 'derived:%' AND scenario_id IS NULL AND ",
             "id NOT IN (SELECT entity_id FROM sync_log WHERE entity_type='transaction') AND id <> ?2"
         ),
         import::RowKind::Diario => concat!(
             "SELECT id FROM \"transaction\" WHERE date = ?1 AND type='expense' AND is_fixed = 0 \
-             AND (payment_method IS NULL OR payment_method <> 'credit') AND ",
+             AND (payment_method IS NULL OR payment_method <> 'credit') AND scenario_id IS NULL AND ",
             "id NOT IN (SELECT entity_id FROM sync_log WHERE entity_type='transaction') AND id <> ?2"
         ),
         import::RowKind::Saida => concat!(
             "SELECT id FROM \"transaction\" WHERE date = ?1 AND type='expense' AND is_fixed = 1 \
-             AND (payment_method IS NULL OR payment_method <> 'credit') AND ",
+             AND (payment_method IS NULL OR payment_method <> 'credit') AND scenario_id IS NULL AND ",
             "id NOT IN (SELECT entity_id FROM sync_log WHERE entity_type='transaction') AND id <> ?2"
         ),
     };
@@ -868,7 +871,8 @@ async fn realign_saida_cell(
     let debit = sqlx::query(
         "UPDATE \"transaction\" SET source_amount = ?1, updated_at = ?2 \
          WHERE date = ?3 AND type = 'expense' AND is_fixed = 1 \
-           AND (payment_method IS NULL OR payment_method <> 'credit')",
+           AND (payment_method IS NULL OR payment_method <> 'credit') \
+           AND scenario_id IS NULL",
     )
     .bind(c.value_cents)
     .bind(now)
@@ -927,7 +931,7 @@ async fn realign_credit_lump(
     let candidates: Vec<(String, String)> = sqlx::query_as(
         "SELECT id, date FROM \"transaction\" \
          WHERE type='expense' AND payment_method='credit' \
-           AND date >= ?1",
+           AND date >= ?1 AND scenario_id IS NULL",
     )
     .bind(&cutoff)
     .fetch_all(&mut **tx)
@@ -2024,6 +2028,86 @@ mod tests {
             der,
             Some(1000),
             "a linha derivada não é realinhada pelo braço entrada"
+        );
+    }
+
+    // Plano 072 (slice B, parte 3): uma linha de CENÁRIO que compartilha (data, tipo) com uma
+    // célula recém-escrita NUNCA deve ser re-chaveada nem auditada pelo write-back real — ela é
+    // uma linha hipotética "e se", fora do livro-razão. Cobre os quatro pontos que liam
+    // `"transaction"` sem filtro de cenário: `record_write_back_audit` (entrada), `realign_saida_cell`
+    // (débito fixo) e `rekey_manual_row_to_deterministic` (candidata manual).
+    #[tokio::test]
+    async fn scenario_row_sharing_cell_is_not_rekeyed_or_audited() {
+        let p = pool().await;
+        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-1', 'Tester')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO scenario (id, name, person_id) VALUES ('sc-1', 'E se', 'pe-1')")
+            .execute(&p)
+            .await
+            .unwrap();
+
+        // Linha REAL na célula (entrada, 2026-06-05) que a auditoria deve realinhar.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_projection, source_amount) \
+             VALUES ('real-inc', 'income', 8000, '2026-06-05', 0, 8000)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        // Linha de CENÁRIO com a MESMA (data, tipo) — não é uma linha real, nunca deve ser tocada.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_projection, source_amount, scenario_id) \
+             VALUES ('scen-inc', 'income', 8000, '2026-06-05', 0, 8000, 'sc-1')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let cell = CellWrite {
+            a1: "F5".into(),
+            row: 4,
+            col: 5,
+            date: "2026-06-05".into(),
+            kind: "entrada".into(),
+            current: "80,00".into(),
+            proposed: "90,00".into(),
+            value_cents: 9000,
+            changed: true,
+            formula: None,
+            note_text: None,
+        };
+        record_write_back_audit(&p, "2026", &[&cell]).await.unwrap();
+
+        // A linha real pode ter sido RE-CHAVEADA para o id determinístico (comportamento normal
+        // do rekey de plano 055) — busca por conteúdo, não pelo id original.
+        let (real_amt,): (Option<i64>,) = sqlx::query_as(
+            "SELECT source_amount FROM \"transaction\" \
+             WHERE type='income' AND date='2026-06-05' AND scenario_id IS NULL",
+        )
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        assert_eq!(
+            real_amt,
+            Some(9000),
+            "a linha real é realinhada normalmente"
+        );
+
+        // A linha de cenário mantém id e source_amount intactos — não foi vista pela auditoria.
+        let scen_row: Option<(String, Option<i64>)> =
+            sqlx::query_as("SELECT id, source_amount FROM \"transaction\" WHERE id = 'scen-inc'")
+                .fetch_optional(&p)
+                .await
+                .unwrap();
+        let (scen_id, scen_amt) =
+            scen_row.expect("a linha de cenário continua existindo com o mesmo id");
+        assert_eq!(scen_id, "scen-inc");
+        assert_eq!(
+            scen_amt,
+            Some(8000),
+            "a linha de cenário não é auditada/realinhada pelo write-back real"
         );
     }
 }

@@ -974,13 +974,13 @@ pub struct ForecastDayDto {
     pub balance_cents: i64,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct DayPointDto {
     pub date: String,
     pub balance_cents: i64,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct MonthEndDto {
     pub year: i32,
     pub month: u32,
