@@ -978,3 +978,197 @@ export function obligationHistory(
 ): Promise<ObligationMonthTotal[]> {
   return invoke("obligation_history_cmd", { obligationId });
 }
+
+// --- Cenários "e se" (plano 072, slice B) ---
+//
+// Um `scenario` é um rótulo para um conjunto de linhas HIPOTÉTICAS (`transaction.scenario_id`),
+// invisíveis a todo o resto do app (forecast real, write-back, dashboard). Um `scenario_override`
+// é uma ação (`suppress`/`replace`) sobre uma obrigação (plano 069) ou uma série recorrente,
+// aplicada SÓ na projeção do cenário — nunca no livro-razão real.
+
+export interface Scenario {
+  id: string;
+  name: string;
+  person_id: string;
+}
+
+export interface ScenarioOverride {
+  id: string;
+  scenario_id: string;
+  op: "suppress" | "replace";
+  from_date: string;
+  obligation_id: string | null;
+  recurrence_id: string | null;
+}
+
+export interface ScenarioChange {
+  op: "add" | "remove" | "replace";
+  description: string;
+  from_date: string;
+  old_amount_cents: number | null;
+  new_amount_cents: number | null;
+}
+
+export interface LoanBreakdown {
+  loan_principal_cents: number;
+  loan_installment_cents: number;
+  loan_term_months: number;
+  loan_monthly_rate_bps: number;
+  loan_total_paid_cents: number;
+  loan_total_cost_cents: number;
+  /** Aproximação — "colchão restante após financiar" ÷ custo de vida do cenário. */
+  reserve_months_after_financing: number | null;
+}
+
+export interface ScenarioMonthEnd {
+  year: number;
+  month: number;
+  real_balance_cents: number;
+  scenario_balance_cents: number;
+  delta_cents: number;
+}
+
+/** Compare de forecast real × cenário (o núcleo do "e se"). Todo dinheiro em centavos. */
+export interface ScenarioCompareDto {
+  scenario_id: string;
+  scenario_name: string;
+
+  real_today: string;
+  real_horizon_end: string;
+  real_month_end: MonthEnd[];
+  real_deepest_deficit: DayPoint | null;
+  real_performance_cents: number;
+  real_safe_to_spend_today_cents: number;
+  real_binding_guardrail: "cash" | "savings";
+  real_cost_of_living_cents: number;
+
+  scenario_month_end: MonthEnd[];
+  scenario_deepest_deficit: DayPoint | null;
+  scenario_performance_cents: number;
+  scenario_safe_to_spend_today_cents: number;
+  scenario_binding_guardrail: "cash" | "savings";
+  scenario_cost_of_living_cents: number;
+
+  month_end: ScenarioMonthEnd[];
+  deepest_deficit_delta_cents: number | null;
+  performance_delta_cents: number;
+  safe_to_spend_delta_cents: number;
+  cost_of_living_delta_cents: number;
+
+  changes: ScenarioChange[];
+  loan: LoanBreakdown | null;
+}
+
+export function createScenario(name: string): Promise<Scenario> {
+  return invoke("create_scenario_cmd", { name });
+}
+
+export function listScenarios(): Promise<Scenario[]> {
+  return invoke("list_scenarios_cmd");
+}
+
+/** Apaga o cenário — cascateia as linhas hipotéticas e os overrides (FK ON DELETE CASCADE). */
+export function deleteScenario(id: string): Promise<void> {
+  return invoke("delete_scenario_cmd", { id });
+}
+
+/** Insere uma linha hipotética "e se". `description` é obrigatória (aparece no compare). Nunca
+ * muta `account.balance` (mesma política do lançamento manual real). `date` anterior ao mês
+ * corrente é rejeitada — cairia fora da janela da projeção e sumiria em silêncio. */
+export function addScenarioTransaction(input: {
+  scenarioId: string;
+  txnType: "income" | "expense" | "transfer";
+  amountCents: number;
+  description: string;
+  date: string;
+  paymentMethod?: string | null;
+  isFixed?: boolean;
+  toAccountId?: string | null;
+  dueDate?: string | null;
+}): Promise<string> {
+  return invoke("add_scenario_transaction_cmd", {
+    scenarioId: input.scenarioId,
+    txnType: input.txnType,
+    amountCents: input.amountCents,
+    description: input.description,
+    date: input.date,
+    paymentMethod: input.paymentMethod ?? null,
+    isFixed: input.isFixed ?? false,
+    toAccountId: input.toAccountId ?? null,
+    dueDate: input.dueDate ?? null,
+  });
+}
+
+export function deleteScenarioTransaction(
+  scenarioId: string,
+  txnId: string,
+): Promise<void> {
+  return invoke("delete_scenario_transaction_cmd", { scenarioId, txnId });
+}
+
+/** A linha hipotética de substituição de um override `replace` (opcional): o backend a cria
+ * junto com o override e a marca com `#repl:<override_id>` no fim da descrição — é isso que
+ * permite ao compare fundir velho→novo numa única entrada de `changes`. A UI deve REMOVER o
+ * sufixo `#repl:...`/`#loan:...` ao exibir descrições. Defaults: `txn_type = "expense"`,
+ * `is_fixed = true`. */
+export interface ReplacementInput {
+  amount_cents: number;
+  date: string;
+  description?: string | null;
+  txn_type?: string | null;
+  payment_method?: string | null;
+  is_fixed?: boolean | null;
+}
+
+/** Cria um override (`suppress`/`replace`) escopado a uma obrigação OU a uma recorrência —
+ * exatamente uma das duas (o banco endurece via CHECK XOR). Um segundo override para o mesmo
+ * alvo no mesmo cenário é rejeitado. Para `op = "replace"`, passe `replacement` para o backend
+ * criar a linha de substituição pareada (compare emite UMA entrada fundida old→new). */
+export function setScenarioOverride(input: {
+  scenarioId: string;
+  op: "suppress" | "replace";
+  fromDate: string;
+  obligationId?: string | null;
+  recurrenceId?: string | null;
+  replacement?: ReplacementInput | null;
+}): Promise<string> {
+  return invoke("set_scenario_override_cmd", {
+    scenarioId: input.scenarioId,
+    op: input.op,
+    fromDate: input.fromDate,
+    obligationId: input.obligationId ?? null,
+    recurrenceId: input.recurrenceId ?? null,
+    replacement: input.replacement ?? null,
+  });
+}
+
+/** Apaga o override e a linha de substituição pareada (`#repl:<override_id>`), se houver. */
+export function deleteScenarioOverride(
+  scenarioId: string,
+  overrideId: string,
+): Promise<void> {
+  return invoke("delete_scenario_override_cmd", { scenarioId, overrideId });
+}
+
+export function listScenarioOverrides(scenarioId: string): Promise<ScenarioOverride[]> {
+  return invoke("list_scenario_overrides_cmd", { scenarioId });
+}
+
+/** O compare de forecast real × cenário — o núcleo do "e se". */
+export function getScenarioForecast(scenarioId: string): Promise<ScenarioCompareDto> {
+  return invoke("get_scenario_forecast_cmd", { scenarioId });
+}
+
+/** Ferramenta determinística (tabela PRICE) para pré-visualizar a parcela de um empréstimo antes
+ * de confirmar as linhas hipotéticas — nunca matemática livre de LLM. */
+export function priceInstallment(
+  principalCents: number,
+  monthlyRateBps: number,
+  termMonths: number,
+): Promise<number> {
+  return invoke("price_installment_cmd", {
+    principalCents,
+    monthlyRateBps,
+    termMonths,
+  });
+}

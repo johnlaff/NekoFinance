@@ -10,6 +10,7 @@ mod obligations;
 mod os_scheduler;
 mod recurrence;
 mod reminder_task;
+mod scenarios;
 mod splits;
 mod sync_task;
 mod tags;
@@ -87,6 +88,16 @@ pub fn run() {
             obligations::delete_obligation_cmd,
             obligations::obligation_items_cmd,
             obligations::obligation_history_cmd,
+            scenarios::create_scenario_cmd,
+            scenarios::list_scenarios_cmd,
+            scenarios::delete_scenario_cmd,
+            scenarios::add_scenario_transaction_cmd,
+            scenarios::delete_scenario_transaction_cmd,
+            scenarios::set_scenario_override_cmd,
+            scenarios::delete_scenario_override_cmd,
+            scenarios::list_scenario_overrides_cmd,
+            scenarios::get_scenario_forecast_cmd,
+            scenarios::price_installment_cmd,
         ])
         .setup(|app| {
             use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
