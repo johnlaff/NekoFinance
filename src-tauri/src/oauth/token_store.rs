@@ -1,6 +1,6 @@
 use aes_gcm::{
-    Aes256Gcm, Key, Nonce,
-    aead::{Aead, KeyInit, OsRng},
+    Aes256Gcm, Nonce,
+    aead::{Aead, KeyInit},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -38,8 +38,7 @@ fn derive_key(app_dir: &std::path::Path) -> Result<[u8; 32], String> {
         std::fs::read(&salt_file).map_err(|e| format!("read salt: {e}"))?
     } else {
         let mut s = [0u8; 16];
-        use aes_gcm::aead::rand_core::RngCore;
-        OsRng.fill_bytes(&mut s);
+        getrandom::fill(&mut s).map_err(|e| format!("generate salt: {e}"))?;
         std::fs::write(&salt_file, s).map_err(|e| format!("write salt: {e}"))?;
         s.to_vec()
     };
@@ -99,16 +98,16 @@ fn get_machine_id() -> String {
 }
 
 fn encrypt_token(token: &StoredToken, key: &[u8; 32]) -> Result<Vec<u8>, String> {
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
+    let cipher =
+        Aes256Gcm::new_from_slice(key).map_err(|_| "cipher key length invalid".to_string())?;
     let json = serde_json::to_vec(token).map_err(|e| format!("serialize: {e}"))?;
 
     let mut nonce_bytes = [0u8; 12];
-    use aes_gcm::aead::rand_core::RngCore;
-    OsRng.fill_bytes(&mut nonce_bytes);
-    let nonce = Nonce::from_slice(&nonce_bytes);
+    getrandom::fill(&mut nonce_bytes).map_err(|e| format!("generate nonce: {e}"))?;
+    let nonce = Nonce::from(nonce_bytes);
 
     let ciphertext = cipher
-        .encrypt(nonce, json.as_slice())
+        .encrypt(&nonce, json.as_slice())
         .map_err(|e| format!("encrypt: {e}"))?;
 
     let mut result = nonce_bytes.to_vec();
@@ -121,12 +120,13 @@ fn decrypt_token(data: &[u8], key: &[u8; 32]) -> Result<StoredToken, String> {
         return Err("encrypted data too short".to_string());
     }
 
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
-    let nonce = Nonce::from_slice(&data[..12]);
+    let cipher =
+        Aes256Gcm::new_from_slice(key).map_err(|_| "cipher key length invalid".to_string())?;
+    let nonce = Nonce::try_from(&data[..12]).map_err(|_| "nonce length invalid".to_string())?;
     let ciphertext = &data[12..];
 
     let plaintext = cipher
-        .decrypt(nonce, ciphertext)
+        .decrypt(&nonce, ciphertext)
         .map_err(|e| format!("decrypt: {e}"))?;
 
     serde_json::from_slice(&plaintext).map_err(|e| format!("deserialize: {e}"))
