@@ -5,6 +5,7 @@ import { HorizonteScreen } from "./HorizonteScreen";
 import { stripScenarioMarker, addMonthsISO } from "../lib/scenarioHelpers";
 import { FORECAST, mockCommands, mockInvoke } from "../test/commands";
 import type { ScenarioCompareDto } from "../lib/api";
+import { fmtCompactBRL } from "../lib/nkFormat";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -357,11 +358,74 @@ describe("ScenarioCompare — superfície de comparação", () => {
     }
     // Buraco do futuro: real R$1.000,00 → cenário −R$500,00 (escopado ao card: o valor
     // do delta de Performance é coincidentemente igual, então uma busca solta ambiguaria).
+    // A linha de evidência mantém os DOIS lados em precisão cheia (nunca só o cenário).
     const deficitCard = within(surface)
       .getByRole("button", { name: "Buraco do futuro" })
       .closest("article")!;
     expect(within(deficitCard).getByText("R$ 1.000,00")).toBeInTheDocument();
     expect(within(deficitCard).getByText("−R$ 500,00")).toBeInTheDocument();
+    // A manchete (fatia A, anatomia nova) mostra só o valor do CENÁRIO, no formato compacto —
+    // nunca duas leituras de precisão cheia lado a lado em tamanho de destaque.
+    expect(deficitCard.querySelector(".scn-kpi__headline")?.textContent).toBe(
+      fmtCompactBRL(-50_000),
+    );
+  });
+
+  it("disciplina do delta: material usa ícone de melhor/pior (nunca o sinal cru); diferença ≤R$1 vira texto quieto sem pill", async () => {
+    await renderCompare(
+      baseCompare({
+        performance_delta_cents: 50_000, // higher-better, positivo → melhor
+        deepest_deficit_delta_cents: -50_000, // higher-better, negativo → pior
+        cost_of_living_delta_cents: -30_000, // lower-better: custo CAIU → melhor
+        safe_to_spend_delta_cents: 50, // ≤R$1 de diferença → ruído, não resultado
+        month_end: [
+          {
+            year: 2026,
+            month: 12,
+            real_balance_cents: 500_000,
+            scenario_balance_cents: 500_090,
+            delta_cents: 90, // ≤R$1 → texto quieto no "Saldo no fim do horizonte"
+          },
+        ],
+      }),
+    );
+
+    const surface = screen.getByLabelText("Comparação real × cenário");
+    // Nunca mais o glifo cru de seta/ponto — só ícone lucide (better/worse) ou texto quieto.
+    expect(surface.textContent).not.toMatch(/[▲▼•]/);
+
+    const perfCard = within(surface)
+      .getByRole("button", { name: "Performance · mês atual" })
+      .closest("article")!;
+    expect(perfCard.querySelector(".lucide-trending-up")).toBeInTheDocument();
+    expect(perfCard.querySelector(".lucide-trending-down")).not.toBeInTheDocument();
+
+    const deficitCard = within(surface)
+      .getByRole("button", { name: "Buraco do futuro" })
+      .closest("article")!;
+    expect(deficitCard.querySelector(".lucide-trending-down")).toBeInTheDocument();
+    expect(deficitCard.querySelector(".lucide-trending-up")).not.toBeInTheDocument();
+
+    // Custo de vida é "menor é melhor": o custo CAIU (delta negativo) mas o ícone tem que
+    // ser TrendingUp (melhor) — provando que o glifo vem do sentido, não do sinal cru.
+    const costCard = within(surface)
+      .getByRole("button", { name: "Custo de vida" })
+      .closest("article")!;
+    expect(costCard.querySelector(".lucide-trending-up")).toBeInTheDocument();
+    expect(costCard.querySelector(".lucide-trending-down")).not.toBeInTheDocument();
+
+    const spendCard = within(surface)
+      .getByRole("button", { name: "Pode gastar hoje" })
+      .closest("article")!;
+    expect(within(spendCard).getByText("≈ sem mudança")).toBeInTheDocument();
+    expect(
+      spendCard.querySelector(".lucide-trending-up, .lucide-trending-down"),
+    ).not.toBeInTheDocument();
+
+    const endCard = within(surface)
+      .getByRole("button", { name: "Saldo no fim do horizonte" })
+      .closest("article")!;
+    expect(within(endCard).getByText("≈ sem mudança")).toBeInTheDocument();
   });
 
   it("funde replace numa única entrada 'o que mudou' (velho → novo)", async () => {
