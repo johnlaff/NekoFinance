@@ -146,7 +146,7 @@ export function HorizonteScreen() {
                 color: endBand.text,
               }}
             >
-              fim do ano <Money cents={endVal} size="inherit" />
+              Fim do ano <Money cents={endVal} size="inherit" />
             </span>
           </div>
           <div className="card__body">

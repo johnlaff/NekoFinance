@@ -29,7 +29,7 @@ describe("TransactionRow", () => {
       />,
     );
     expect(screen.getByText("“ref. junho”")).toBeInTheDocument();
-    expect(screen.getByText("repasse")).toBeInTheDocument();
+    expect(screen.getByText("Repasse")).toBeInTheDocument();
   });
 
   it("sem lump não tem botão de expandir", () => {

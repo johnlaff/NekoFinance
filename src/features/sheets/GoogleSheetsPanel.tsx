@@ -742,7 +742,7 @@ function PickStep({
                 >
                   <FileSpreadsheet size={14} strokeWidth={1.75} />
                   {s.title}
-                  {metric && <span className="gs-sheet-btn__tag">métricas</span>}
+                  {metric && <span className="gs-sheet-btn__tag">Métricas</span>}
                 </button>
               );
             })}

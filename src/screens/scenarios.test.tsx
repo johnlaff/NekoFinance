@@ -626,7 +626,7 @@ describe("ScenarioCompare — superfície de comparação", () => {
     const spendCard = within(surface)
       .getByRole("button", { name: "Pode gastar hoje" })
       .closest("article")!;
-    expect(within(spendCard).getByText("≈ sem mudança")).toBeInTheDocument();
+    expect(within(spendCard).getByText("≈ Sem mudança")).toBeInTheDocument();
     expect(
       spendCard.querySelector(".lucide-trending-up, .lucide-trending-down"),
     ).not.toBeInTheDocument();
@@ -634,7 +634,7 @@ describe("ScenarioCompare — superfície de comparação", () => {
     const endCard = within(surface)
       .getByRole("button", { name: "Saldo no fim do horizonte" })
       .closest("article")!;
-    expect(within(endCard).getByText("≈ sem mudança")).toBeInTheDocument();
+    expect(within(endCard).getByText("≈ Sem mudança")).toBeInTheDocument();
   });
 
   it("funde replace numa única entrada 'o que mudou' (velho → novo)", async () => {
@@ -652,7 +652,7 @@ describe("ScenarioCompare — superfície de comparação", () => {
       }),
     );
 
-    expect(await screen.findByText("↔ alterou")).toBeInTheDocument();
+    expect(await screen.findByText("↔ Alterado")).toBeInTheDocument();
     // O valor antigo/novo agora renderiza em dois <Money> (a11y), então o texto fica
     // partido em nós diferentes — comparamos o textContent normalizado da linha inteira.
     const amt = document.querySelector(".scn-change-row__amt");

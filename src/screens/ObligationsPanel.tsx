@@ -332,7 +332,7 @@ function ObligationRow({
               Média <Money cents={avgCents} size="sm" />
             </span>
           ) : (
-            <span className="lc-obligation-row__avg">sem ocorrências ainda</span>
+            <span className="lc-obligation-row__avg">Sem ocorrências ainda</span>
           )}
           {hasHistory && history.length >= 2 && (
             <span

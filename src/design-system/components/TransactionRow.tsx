@@ -212,7 +212,7 @@ export function TransactionRow({
             >
               {desc}
             </span>
-            {passthrough ? <span style={PASSTHROUGH_BADGE_STYLE}>repasse</span> : null}
+            {passthrough ? <span style={PASSTHROUGH_BADGE_STYLE}>Repasse</span> : null}
           </div>
           {provenance || owner || note ? (
             <div
