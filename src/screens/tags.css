@@ -71,6 +71,7 @@
   overflow: hidden;
 }
 .tg-fill {
+  display: block; /* span inline ignora width/height — a barra nunca aparecia */
   height: 100%;
   border-radius: var(--radius-pill);
 }

@@ -210,6 +210,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
       annual_savings: {
         realized_income_cents: 5000000,
         realized_savings_cents: 300000,
+        registered_economia_cents: 250000,
         realized_rate_bps: 600,
         projected_income_cents: 6000000,
         projected_savings_cents: 1500000,

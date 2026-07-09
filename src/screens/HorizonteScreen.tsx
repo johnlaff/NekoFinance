@@ -93,10 +93,14 @@ export function HorizonteScreen() {
         onSelectScenario={setActiveScenarioId}
       />
 
-      {compare && <ScenarioCompare compare={compare} />}
+      {compare && (
+        <ScenarioCompare compare={compare} onClose={() => setActiveScenarioId(null)} />
+      )}
 
-      {/* Status banner */}
-      {daily.length > 0 && minDay != null ? (
+      {/* Status banner — só SEM comparação ativa: o veredito do cenário logo acima já diz o
+          estado do ano em quase as mesmas palavras (duas frases gêmeas na mesma tela era a
+          redundância apontada em dogfooding). */}
+      {!compare && daily.length > 0 && minDay != null ? (
         <div className={"hz-alert" + (hasDeficit ? "" : " hz-alert--ok")}>
           <span
             className="hz-alert__ic"

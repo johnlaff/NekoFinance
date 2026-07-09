@@ -9,6 +9,10 @@
    ============================================================ */
 
 :root {
+  /* Controles nativos (ícone do date picker, scrollbar, select) seguem o tema —
+     sem isto o WebView2 desenha o calendário PRETO sobre o input escuro (invisível). */
+  color-scheme: dark;
+
   /* ---- Base palette (dark) ---- */
   --ink-900: #0e1413; /* app background, deepest */
   --ink-850: #121a18;
@@ -139,6 +143,7 @@
    Cool calm paper, NOT warm cream. White surfaces, ink text.
    ============================================================ */
 [data-theme="light"] {
+  color-scheme: light;
   --bg: #eaeeec;
   --bg-subtle: #e2e7e5;
   --surface: #ffffff;

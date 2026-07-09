@@ -463,7 +463,7 @@ describe("HorizonteScreen — side-sheet 'Simular cenário'", () => {
     expect(alert.textContent).toMatch(/1 de 3 parcelas criadas/);
     // E o catch invalida: a lista refetch já mostra as linhas órfãs (com o marcador removido)
     // para o usuário poder excluí-las antes de tentar de novo.
-    expect(await screen.findByText("Empréstimo parcela 1/3")).toBeInTheDocument();
+    expect(await screen.findByText("Parcela 1/3")).toBeInTheDocument();
   });
 
   it("parseia valor do empréstimo com separador de milhar pt-BR (10.000,00 → 1000000 centavos)", async () => {

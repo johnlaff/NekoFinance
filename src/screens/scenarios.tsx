@@ -495,7 +495,11 @@ function HypotheticalList({ scenarioId }: { scenarioId: string }) {
   }
   const groups: LoanGroup[] = [...groupsById.entries()].map(([groupId, list]) => {
     const principal = list.find((r) => r.type === "income") ?? null;
-    const installments = list.filter((r) => r.type !== "income");
+    // Parcelas em ordem CRONOLÓGICA: o backend lista por data decrescente, e um empréstimo
+    // lido de trás pra frente ("parcela 12, 11, 10…") parece um bug de datas.
+    const installments = list
+      .filter((r) => r.type !== "income")
+      .toSorted((a, b) => a.date.localeCompare(b.date));
     // MAIOR N entre as parcelas restantes (não a primeira): robusto a descrição fora do
     // padrão no meio do grupo; com todas as parcelas excluídas, 0 — o summary trata.
     const ns = installments
@@ -520,9 +524,15 @@ function HypotheticalList({ scenarioId }: { scenarioId: string }) {
     );
   }
 
-  const txnRow = (r: ScenarioTransactionRow) => (
+  // `label` encurta o texto DENTRO do grupo de empréstimo: o título do Disclosure já diz
+  // "Empréstimo" — repetir o prefixo em cada linha só truncava ("Empréstimo parc…"). O
+  // aria-label de remover mantém a descrição completa (o contexto do grupo não viaja com
+  // o leitor de tela).
+  const txnRow = (r: ScenarioTransactionRow, label?: string) => (
     <div className="scn-txn-row" key={r.id}>
-      <span className="scn-txn-row__desc">{stripScenarioMarker(r.description)}</span>
+      <span className="scn-txn-row__desc">
+        {label ?? stripScenarioMarker(r.description)}
+      </span>
       <span className="scn-txn-row__date">{fmtDayMonth(r.date)}</span>
       <span className="scn-txn-row__amt">
         <Money
@@ -551,7 +561,7 @@ function HypotheticalList({ scenarioId }: { scenarioId: string }) {
         </p>
       )}
       <div className="scn-txn-list">
-        {singles.map(txnRow)}
+        {singles.map((r) => txnRow(r))}
         {groups.map((g) => {
           const anyRow = g.principal ?? g.installments[0];
           if (!anyRow) return null;
@@ -600,8 +610,13 @@ function HypotheticalList({ scenarioId }: { scenarioId: string }) {
               }
             >
               <div className="scn-txn-list scn-loan-group__rows">
-                {g.principal && txnRow(g.principal)}
-                {g.installments.map(txnRow)}
+                {g.principal && txnRow(g.principal, "Principal")}
+                {g.installments.map((r) => {
+                  const m = /parcela (\d+\/\d+)/.exec(
+                    stripScenarioMarker(r.description),
+                  );
+                  return txnRow(r, m ? `Parcela ${m[1]}` : undefined);
+                })}
               </div>
             </Disclosure>
           );
@@ -1285,7 +1300,15 @@ function ScenarioVerdictBanner({ compare }: { compare: ScenarioCompareDto }) {
   );
 }
 
-export function ScenarioCompare({ compare }: { compare: ScenarioCompareDto }) {
+export function ScenarioCompare({
+  compare,
+  onClose,
+}: {
+  compare: ScenarioCompareDto;
+  /** Sai do modo comparação (deseleciona o cenário) — sem isto o único caminho de volta ao
+   *  Horizonte normal era reabrir o sheet e des-clicar o cenário (ou trocar de tela). */
+  onClose?: () => void;
+}) {
   const lastMonthEnd = compare.month_end[compare.month_end.length - 1] ?? null;
   const endRealCents = lastMonthEnd?.real_balance_cents ?? 0;
   const endScenarioCents = lastMonthEnd?.scenario_balance_cents ?? 0;
@@ -1325,6 +1348,12 @@ export function ScenarioCompare({ compare }: { compare: ScenarioCompareDto }) {
           <CircleDollarSign size={16} strokeWidth={1.75} className="ic" />
           Cenário: {compare.scenario_name}
         </span>
+        {onClose && (
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <X size={14} strokeWidth={1.75} aria-hidden="true" />
+            Fechar comparação
+          </Button>
+        )}
       </div>
       <div
         className="card__body"
@@ -1845,8 +1874,10 @@ function DualLineChart({ compare }: { compare: ScenarioCompareDto }) {
 }
 
 function DiffSparkline({ monthEnd }: { monthEnd: ScenarioCompareDto["month_end"] }) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [hover, setHover] = useState<number | null>(null);
   const W = 720;
-  const H = 120;
+  const H = 150;
   // Gutter um pouco maior que o mínimo geométrico: com `textAnchor="middle"` nos rótulos do
   // meio, o mês nas duas pontas (jan/dez) ainda teria metade do texto pra fora do viewBox só
   // com 12px — o mesmo defeito de colisão de borda do DualLineChart, em miniatura.
@@ -1884,87 +1915,205 @@ function DiffSparkline({ monthEnd }: { monthEnd: ScenarioCompareDto["month_end"]
   // Nos extremos a fração satura em 0/1 e o lado ausente colapsa (sem faixa fantasma).
   const zeroFrac = Math.max(0, Math.min(1, (zeroY - padTop) / (innerH || 1)));
 
+  // Rótulos de ZONA dentro do plot — a resposta didática a "o que este gráfico quer dizer?":
+  // posição acima/abaixo do zero É a mensagem, então ela vira texto onde acontece. Cada
+  // rótulo só aparece quando a zona tem altura para ele (não espreme em cima da linha).
+  const aboveH = zeroY - padTop;
+  const belowH = padTop + innerH - zeroY;
+  const ZONE_LABEL_MIN_H = 26;
+
   // Alternativa textual do gráfico (mesmo padrão do ariaLabel do DualLineChart): sempre
   // presente — inclusive quando o cenário é melhor em todos os meses e a nota visual de
-  // "Pior mês" não renderiza.
+  // "Pior mês" não renderiza. A frase didática das zonas viaja junto.
   const ariaLabel =
-    worst && worst.delta_cents < 0
-      ? `Diferença mês a mês entre simulação e real. Pior mês: ${MES[worst.month - 1]} ${fmtBRL(worst.delta_cents)}.`
-      : "Diferença mês a mês entre simulação e real. A simulação fica igual ou melhor que o real em todos os meses.";
+    "Diferença mês a mês entre simulação e real — acima de zero a simulação deixa mais dinheiro; abaixo, menos. " +
+    (worst && worst.delta_cents < 0
+      ? `Pior mês: ${MES[worst.month - 1]} ${fmtBRL(worst.delta_cents)}.`
+      : "A simulação fica igual ou melhor que o real em todos os meses.");
+
+  const onMove = (e: React.MouseEvent) => {
+    const rect = wrapRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0 || monthEnd.length === 0) return;
+    const fx = ((e.clientX - rect.left) / rect.width) * W;
+    const i = Math.max(
+      0,
+      Math.min(
+        monthEnd.length - 1,
+        Math.round(((fx - padX) / innerW) * (monthEnd.length - 1)),
+      ),
+    );
+    setHover(i);
+  };
+  const hovered = hover != null ? monthEnd[hover] : null;
+  const hoverFrac = hover != null ? x(hover) / W : 0;
 
   return (
     <div>
       {/* Mesmo padrão de título do `DualLineChart` logo acima (`__head` com margem zerada) —
-          os dois gráficos empilhados na mesma superfície tinham ritmo vertical diferente
-          (8px do `.scn-section-title` cru vs 4px do `__head`), um polimento sem função nova:
-          este gráfico é de UMA série só (a diferença), então sem legenda de cor — o zero
-          tracejado já separa "melhor"/"pior" por POSIÇÃO, não só por cor. */}
+          gráfico de UMA série (a diferença): sem legenda de cor; o zero tracejado + rótulos
+          de zona contam a história por posição E por palavra. */}
       <div className="scn-diffchart__head">
         <p className="scn-section-title" style={{ margin: 0 }}>
-          Diferença mês a mês (simulação − real)
+          <InfoPopover
+            term={{
+              title: "Diferença mês a mês",
+              body: "Cada ponto é o saldo da simulação menos o saldo real no fim daquele mês. Acima da linha do zero, o cenário te deixa com mais dinheiro que hoje; abaixo, com menos. Quanto mais longe do zero, maior o impacto.",
+            }}
+            hideMarker
+          >
+            Diferença mês a mês (simulação − real)
+          </InfoPopover>
         </p>
       </div>
-      <svg
-        className="scn-diffchart"
-        viewBox={`0 0 ${W} ${H}`}
-        role="img"
-        aria-label={ariaLabel}
+      <div
+        ref={wrapRef}
+        className="scn-dualchart-wrap"
+        onMouseMove={onMove}
+        onMouseLeave={() => setHover(null)}
       >
-        <defs>
-          <linearGradient
-            id={gid}
-            gradientUnits="userSpaceOnUse"
-            x1="0"
-            y1={padTop}
-            x2="0"
-            y2={padTop + innerH}
-          >
-            <stop offset="0" stopColor="var(--success-400)" stopOpacity="0.32" />
-            <stop offset={zeroFrac} stopColor="var(--success-400)" stopOpacity="0.04" />
-            <stop offset={zeroFrac} stopColor="var(--danger-400)" stopOpacity="0.04" />
-            <stop offset="1" stopColor="var(--danger-400)" stopOpacity="0.32" />
-          </linearGradient>
-        </defs>
-        <line
-          className="scn-diffchart__zero"
-          x1={padX}
-          x2={W - padX}
-          y1={zeroY}
-          y2={zeroY}
-        />
-        <path d={areaPathTop} fill={`url(#${gid})`} />
-        <polyline className="scn-diffchart__line" points={linePts} />
-        {monthEnd.map((m, i) => {
-          // Ponta esquerda ancora à direita do próprio x (nunca vaza pra fora à esquerda);
-          // ponta direita ancora à esquerda (nunca vaza à direita) — só o meio centraliza.
-          // Mesma lógica do gutter do DualLineChart, resolvida por âncora em vez de espaço
-          // reservado (aqui o rótulo é curto — 3 letras — e já cabe dentro do padX).
-          const anchor =
-            i === 0 ? "start" : i === monthEnd.length - 1 ? "end" : "middle";
-          return (
-            <text
-              key={`${m.year}-${m.month}`}
-              x={x(i)}
-              y={H - 4}
-              textAnchor={anchor}
-              fontSize="11"
-              fill="var(--text-faint)"
+        <svg
+          className="scn-diffchart"
+          viewBox={`0 0 ${W} ${H}`}
+          role="img"
+          aria-label={ariaLabel}
+        >
+          <defs>
+            <linearGradient
+              id={gid}
+              gradientUnits="userSpaceOnUse"
+              x1="0"
+              y1={padTop}
+              x2="0"
+              y2={padTop + innerH}
             >
-              {MES_ABBR[m.month - 1]}
-            </text>
-          );
-        })}
-        {/* Marcador de PERIGO só quando o pior mês é de fato pior (delta negativo) — um ponto
-            vermelho sobre um delta positivo afirmaria risco onde só há folga. */}
-        {worst && worst.delta_cents < 0 && (
-          <circle
-            cx={x(worstIdx)}
-            cy={y(worst.delta_cents)}
-            r={3.5}
-            fill="var(--danger-400)"
+              <stop offset="0" stopColor="var(--success-400)" stopOpacity="0.32" />
+              <stop
+                offset={zeroFrac}
+                stopColor="var(--success-400)"
+                stopOpacity="0.04"
+              />
+              <stop
+                offset={zeroFrac}
+                stopColor="var(--danger-400)"
+                stopOpacity="0.04"
+              />
+              <stop offset="1" stopColor="var(--danger-400)" stopOpacity="0.32" />
+            </linearGradient>
+          </defs>
+          <line
+            className="scn-diffchart__zero"
+            x1={padX}
+            x2={W - padX}
+            y1={zeroY}
+            y2={zeroY}
           />
+          {/* O zero nomeado: a âncora de leitura do gráfico inteiro. */}
+          <text
+            className="scn-diffchart__zerolabel"
+            x={W - padX}
+            y={zeroY - 5}
+            textAnchor="end"
+          >
+            R$ 0
+          </text>
+          {aboveH >= ZONE_LABEL_MIN_H && (
+            <text
+              className="scn-diffchart__zone scn-diffchart__zone--better"
+              x={padX + 2}
+              y={padTop + 11}
+            >
+              Sobra mais que no real
+            </text>
+          )}
+          {belowH >= ZONE_LABEL_MIN_H && (
+            <text
+              className="scn-diffchart__zone scn-diffchart__zone--worse"
+              x={padX + 2}
+              y={padTop + innerH - 6}
+            >
+              Sobra menos que no real
+            </text>
+          )}
+          <path d={areaPathTop} fill={`url(#${gid})`} />
+          <polyline className="scn-diffchart__line" points={linePts} />
+          {monthEnd.map((m, i) => {
+            // Ponta esquerda ancora à direita do próprio x (nunca vaza pra fora à esquerda);
+            // ponta direita ancora à esquerda (nunca vaza à direita) — só o meio centraliza.
+            const anchor =
+              i === 0 ? "start" : i === monthEnd.length - 1 ? "end" : "middle";
+            return (
+              <text
+                key={`${m.year}-${m.month}`}
+                x={x(i)}
+                y={H - 4}
+                textAnchor={anchor}
+                fontSize="11"
+                fill="var(--text-faint)"
+              >
+                {MES_ABBR[m.month - 1]}
+              </text>
+            );
+          })}
+          {hovered && (
+            <g aria-hidden="true">
+              <line
+                className="scn-dualchart__crosshair"
+                x1={x(hover!)}
+                x2={x(hover!)}
+                y1={padTop}
+                y2={H - padBottom}
+              />
+              <circle
+                cx={x(hover!)}
+                cy={y(hovered.delta_cents)}
+                r={4}
+                fill={
+                  hovered.delta_cents < 0 ? "var(--danger-400)" : "var(--success-400)"
+                }
+                stroke="var(--surface)"
+                strokeWidth={2}
+              />
+            </g>
+          )}
+          {/* Marcador de PERIGO só quando o pior mês é de fato pior (delta negativo) — um
+              ponto vermelho sobre um delta positivo afirmaria risco onde só há folga. */}
+          {worst && worst.delta_cents < 0 && (
+            <circle
+              cx={x(worstIdx)}
+              cy={y(worst.delta_cents)}
+              r={3.5}
+              fill="var(--danger-400)"
+            />
+          )}
+        </svg>
+        {hovered && (
+          <div
+            className="nk-spark__tip"
+            aria-hidden="true"
+            style={{
+              left: `${hoverFrac * 100}%`,
+              transform: `translateX(${hoverFrac > 0.82 ? "-100%" : hoverFrac < 0.18 ? "0" : "-50%"})`,
+            }}
+          >
+            <span className="nk-spark__tip-day">
+              {MES[hovered.month - 1]} {hovered.year}
+            </span>
+            <span
+              className="nk-spark__tip-val"
+              style={{
+                color:
+                  hovered.delta_cents < 0
+                    ? "var(--money-neg)"
+                    : hovered.delta_cents > 0
+                      ? "var(--money-pos)"
+                      : undefined,
+              }}
+            >
+              {fmtSigned(hovered.delta_cents)}
+            </span>
+          </div>
         )}
-      </svg>
+      </div>
       {/* Compacto aqui (mesmo registro da manchete dos cards de KPI) — a precisão cheia já
           mora no `aria-label` do SVG acima (`fmtBRL`), nunca só aqui. */}
       {worst && worst.delta_cents < 0 && (

@@ -725,3 +725,23 @@
   color: var(--danger-400);
   margin: 6px 0 0;
 }
+
+/* Rótulos didáticos do gráfico de diferença: a POSIÇÃO (acima/abaixo do zero) é a mensagem,
+ * então ela vira palavra dentro da própria zona. O zero é nomeado — âncora de leitura. */
+.scn-diffchart__zerolabel {
+  font-family: var(--font-money);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  fill: var(--chart-axis);
+}
+.scn-diffchart__zone {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.scn-diffchart__zone--better {
+  fill: var(--success-400);
+}
+.scn-diffchart__zone--worse {
+  fill: var(--danger-400);
+}

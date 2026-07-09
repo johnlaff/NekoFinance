@@ -343,7 +343,7 @@ export function TagsScreen() {
                     }
                     onClick={() => toggleExclude(tag.id, tag.exclude_from_totals)}
                   >
-                    {tag.exclude_from_totals ? "ignorada" : "incluída"}
+                    {tag.exclude_from_totals ? "Ignorada" : "Incluída"}
                   </button>
                 </div>
               );
@@ -354,9 +354,13 @@ export function TagsScreen() {
 
       <p className="tg-hint">
         <Sparkles size={14} strokeWidth={1.75} />
-        Tags classificam um lançamento. Uma saída pode ter várias, e a Mia sugere tags
-        ao importar. Marcar uma tag como <em>ignorada</em> tira seus lançamentos dos
-        totais e projeções — o Saldo continua contando.
+        {/* Prosa num único filho: .tg-hint é flex (ícone + texto) e nós de texto soltos
+            viravam colunas separadas em volta do <em>. */}
+        <span>
+          Tags classificam um lançamento. Uma saída pode ter várias, e a Mia sugere tags
+          ao importar. Marcar uma tag como <em>ignorada</em> tira seus lançamentos dos
+          totais e projeções — o Saldo continua contando.
+        </span>
       </p>
     </div>
   );
