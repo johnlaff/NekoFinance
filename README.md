@@ -30,11 +30,11 @@ tokens, spreadsheet data, or personal finance caches are committed — see Priva
   O ano (Anual), Calendário (monthly day-by-day grid), Horizonte (multi-month), Tags, Mia (chat UI
   with one deterministic safe-to-spend answer today; free-form questions get a "still learning"
   reply), and Configurações (connections, local import, where-your-data-lives).
-- **Local SQLite store** (WAL) — 36 migrations: accounts/pockets + liquidity, transactions/splits,
+- **Local SQLite store** (WAL) — 41 migrations: accounts/pockets + liquidity, transactions/splits,
   tags, recurrence, reserve tracking + snapshots, sheet layouts + note line-item classification,
   three-way-merge reconciliation, sync log. FTS5 was added then removed (never populated; search is
-  client-side). During the import-only phase the spreadsheet is the system of record and SQLite is
-  the local mirror + enrichment layer (see `docs/adr/0003`).
+  client-side). SQLite is the system of record; the spreadsheet stays a human-friendly projection
+  kept in sync by import + approved write-back (see `docs/adr/0003`).
 
 ## Stack
 
@@ -70,8 +70,10 @@ sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev
   patchelf
 ```
 
-Optional: connect Google Sheets by setting `VITE_GOOGLE_CLIENT_ID` in `.env` (see
-`.env.example`). Without it, the local `.xlsx` import path works out of the box.
+Optional: connect Google Sheets by setting `VITE_GOOGLE_CLIENT_ID` **and**
+`VITE_GOOGLE_CLIENT_SECRET` in `.env` (see `.env.example`). The client secret is required for
+background token refresh — with only the client ID, the Google connection drops when the first
+access token expires (~1 hour). Without either, the local `.xlsx` import path works out of the box.
 
 ### Windows build
 
@@ -88,8 +90,9 @@ Details: `docs/building-windows.md`.
   (`src-tauri/src/forecast/`) with no IO; Tauri commands are thin, tested adapters.
 - **TDD is mandatory for finance math** — and no LLM ever does financial arithmetic; the copilot
   will explain numbers the deterministic engine computed.
-- **Human-approved writes**: any material write back to Google Sheets will require a structured
-  diff and explicit approval (upcoming slice).
+- **Human-approved writes**: every write back to Google Sheets requires a structured before→after
+  diff, explicit approval, and a second confirmation before sending; formula and anchor columns
+  are blocked by design.
 - Domain vocabulary: `CONTEXT.md`. Decisions: `docs/adr/`. Agent instructions: `AGENTS.md`.
 
 ## Privacy Rules
@@ -109,4 +112,4 @@ Details: `docs/building-windows.md`.
 - `docs/testing-strategy.md` — coverage, Playwright, React Doctor, eval policy
 - `docs/release-and-distribution.md` — release train and updater plan
 - `docs/methodology-pack.md` — private methodology pack contract
-- `specs/` — feature specs, plans, and task breakdowns (001–020)
+- `specs/` — feature specs, plans, and task breakdowns (001–021)

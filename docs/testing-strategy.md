@@ -9,7 +9,9 @@ Coverage thresholds (configured in `vite.config.ts`, enforced when you run `npm 
 - 90% lines, statements, branches, and functions for included source. This is a **manual/optional**
   signal — the blocking gate (`npm run check`, CI) runs `test:run` (no coverage threshold) plus lint,
   typecheck, Playwright typecheck (`e2e:typecheck`), build, Rust checks (clippy, rustfmt, Rust
-  tests), and the privacy scan. The Playwright browser smoke (`npm run e2e`) is a separate
+  tests), the privacy scan, and the UI anti-pattern audit (`npm run ui:audit`,
+  `scripts/impeccable-check.sh` — fails the gate when it finds UI anti-patterns; run it locally
+  for details when a UI change breaks `npm run check`). The Playwright browser smoke (`npm run e2e`) is a separate
   non-blocking command — run it manually or via the dedicated CI workflow; it is not part of
   `npm run check`. Multi-step interactive flows (OAuth connect, sheet picker/preview/mapping,
   import) are covered by the E2E smoke rather than line-by-line Vitest, so the global
