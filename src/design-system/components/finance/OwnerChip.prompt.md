@@ -4,7 +4,7 @@ Identifies the owner of a transaction or account — personal ("Eu"), partner ("
 <OwnerChip who="personal" />
 <OwnerChip who="partner" note="paga" />
 <OwnerChip who="shared" avatar />
-<OwnerChip who="personal" name="João" avatar note="responsável" />
+<OwnerChip who="personal" name="Ana" avatar note="responsável" />
 <OwnerChip who="partner" bare />
 ```
 

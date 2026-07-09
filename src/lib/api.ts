@@ -817,26 +817,11 @@ export function tagTotalsForMonth(year: number, month: number): Promise<TagTotal
 
 // --- Multi-titular / split (read-side, spec 017) ---
 
-export interface SplitRow {
-  id: string;
-  transaction_id: string;
-  amount: number;
-  owner_person_id: string;
-  owner_name: string;
-  note: string | null;
-}
-
 export interface OwnerTotal {
   owner_person_id: string;
   owner_name: string;
   /** Soma (centavos, valor absoluto) das parcelas do titular no mês. */
   total_cents: number;
-}
-
-/** @internal Tauri bridge — UI pending (spec 016/017). */
-// react-doctor-disable-next-line deslop/unused-export -- spec 017: ponte do frontend (comando Tauri pronto/testado), UI multi-titular pendente
-export function splitsForTransaction(transactionId: string): Promise<SplitRow[]> {
-  return invoke("splits_for_transaction_cmd", { transactionId });
 }
 
 export function ownerTotalsForMonth(
@@ -849,21 +834,6 @@ export function ownerTotalsForMonth(
 // --- Recorrências / séries (spec 016) ---
 
 export type Frequency = "diaria" | "semanal" | "mensal";
-
-/** @internal Tauri bridge — UI pending (spec 016/017). */
-// react-doctor-disable-next-line deslop/unused-export -- spec 016: ponte do frontend (comando Tauri pronto/testado), UI de recorrências pendente
-export function createRecurringSeries(input: {
-  txnType: string;
-  amount: number;
-  description: string | null;
-  start: string;
-  paymentMethod: string | null;
-  isFixed: boolean;
-  frequency: Frequency;
-  repetitions: number;
-}): Promise<string> {
-  return invoke("create_recurring_series_cmd", input);
-}
 
 export interface SeriesEdit {
   amount: number;
@@ -990,15 +960,6 @@ export interface Scenario {
   id: string;
   name: string;
   person_id: string;
-}
-
-export interface ScenarioOverride {
-  id: string;
-  scenario_id: string;
-  op: "suppress" | "replace";
-  from_date: string;
-  obligation_id: string | null;
-  recurrence_id: string | null;
 }
 
 export interface ScenarioChange {
@@ -1162,18 +1123,6 @@ export function setScenarioOverride(input: {
     recurrenceId: input.recurrenceId ?? null,
     replacement: input.replacement ?? null,
   });
-}
-
-/** Apaga o override e a linha de substituição pareada (`#repl:<override_id>`), se houver. */
-export function deleteScenarioOverride(
-  scenarioId: string,
-  overrideId: string,
-): Promise<void> {
-  return invoke("delete_scenario_override_cmd", { scenarioId, overrideId });
-}
-
-export function listScenarioOverrides(scenarioId: string): Promise<ScenarioOverride[]> {
-  return invoke("list_scenario_overrides_cmd", { scenarioId });
 }
 
 /** O compare de forecast real × cenário — o núcleo do "e se". */

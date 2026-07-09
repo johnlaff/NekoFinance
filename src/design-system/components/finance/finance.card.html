@@ -183,7 +183,7 @@
                 <OwnerChip who="personal" />
                 <OwnerChip who="partner" note="paga" />
                 <OwnerChip who="shared" />
-                <OwnerChip who="personal" name="João" avatar note="responsável" />
+                <OwnerChip who="personal" name="Ana" avatar note="responsável" />
                 <OwnerChip who="partner" name="Ana" avatar />
                 <OwnerChip who="shared" avatar />
                 <OwnerChip who="partner" bare />
@@ -216,16 +216,16 @@
               <div className="tbl">
                 <TransactionRow
                   date="21/06"
-                  desc="Fatura Nubank"
+                  desc="Fatura do cartão"
                   amount={-24750}
                   method="Crédito"
                   provenance="importado"
-                  note="Uber · Mercado Livre · Netflix"
-                  owner={<OwnerChip who="personal" name="João" bare />}
+                  note="Transporte · Marketplace · Streaming"
+                  owner={<OwnerChip who="personal" name="Ana" bare />}
                   lump={[
-                    { what: "Uber", amount: -3200 },
-                    { what: "Mercado Livre", amount: -18950 },
-                    { what: "Netflix", amount: -2600 },
+                    { what: "Transporte", amount: -3200 },
+                    { what: "Marketplace", amount: -18950 },
+                    { what: "Streaming", amount: -2600 },
                   ]}
                   defaultOpen
                 />
@@ -235,7 +235,7 @@
                   amount={820000}
                   method="Transferência"
                   provenance="manual"
-                  owner={<OwnerChip who="personal" name="João" bare />}
+                  owner={<OwnerChip who="personal" name="Ana" bare />}
                   selected
                 />
                 <TransactionRow

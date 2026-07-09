@@ -1,4 +1,4 @@
-/* @ds-bundle: {"format":3,"namespace":"NekoFinanceDesignSystem_9bd1cd","components":[{"name":"ChatBubble","sourcePath":"components/copilot/ChatBubble.jsx"},{"name":"Citation","sourcePath":"components/copilot/Citation.jsx"},{"name":"EmptyState","sourcePath":"components/copilot/EmptyState.jsx"},{"name":"MiaAvatar","sourcePath":"components/copilot/MiaAvatar.jsx"},{"name":"Badge","sourcePath":"components/core/Badge.jsx"},{"name":"Button","sourcePath":"components/core/Button.jsx"},{"name":"Disclosure","sourcePath":"components/core/Disclosure.jsx"},{"name":"InfoPopover","sourcePath":"components/core/InfoPopover.jsx"},{"name":"Input","sourcePath":"components/core/Input.jsx"},{"name":"MonthNav","sourcePath":"components/core/MonthNav.jsx"},{"name":"NekoMark","sourcePath":"components/core/NekoMark.jsx"},{"name":"SegmentedControl","sourcePath":"components/core/SegmentedControl.jsx"},{"name":"Switch","sourcePath":"components/core/Switch.jsx"},{"name":"ApprovalDiffCard","sourcePath":"components/finance/ApprovalDiffCard.jsx"},{"name":"BalanceTrajectory","sourcePath":"components/finance/BalanceTrajectory.jsx"},{"name":"HealthBadge","sourcePath":"components/finance/HealthBadge.jsx"},{"name":"LineItemEditor","sourcePath":"components/finance/LineItemEditor.jsx"},{"name":"MetricTile","sourcePath":"components/finance/MetricTile.jsx"},{"name":"Money","sourcePath":"components/finance/Money.jsx"},{"name":"MovBadge","sourcePath":"components/finance/MovBadge.jsx"},{"name":"OwnerChip","sourcePath":"components/finance/OwnerChip.jsx"},{"name":"PhaseBadge","sourcePath":"components/finance/PhaseBadge.jsx"},{"name":"ProvBadge","sourcePath":"components/finance/ProvBadge.jsx"},{"name":"TransactionRow","sourcePath":"components/finance/TransactionRow.jsx"}],"sourceHashes":{"components/copilot/ChatBubble.jsx":"167278e05c28","components/copilot/Citation.jsx":"3acb7522d21e","components/copilot/EmptyState.jsx":"c96fc443c82d","components/copilot/MiaAvatar.jsx":"2a33e3ee1d4f","components/core/Badge.jsx":"513efe284ad9","components/core/Button.jsx":"b2a4cc4d68dd","components/core/Disclosure.jsx":"26b539348e91","components/core/InfoPopover.jsx":"a9cd2a1b7494","components/core/Input.jsx":"fdae11d4cf42","components/core/MonthNav.jsx":"2801bfa6a15c","components/core/NekoMark.jsx":"ba4316e16fe2","components/core/SegmentedControl.jsx":"ff30d2741399","components/core/Switch.jsx":"4bc43188b5ff","components/finance/ApprovalDiffCard.jsx":"e8d57746a455","components/finance/BalanceTrajectory.jsx":"e50400f86b78","components/finance/HealthBadge.jsx":"0992a5b38f00","components/finance/LineItemEditor.jsx":"ee9bcf7e960f","components/finance/MetricTile.jsx":"78de6b02c8bb","components/finance/Money.jsx":"c7af88943030","components/finance/MovBadge.jsx":"82c42171008a","components/finance/OwnerChip.jsx":"d6891dfdfda9","components/finance/PhaseBadge.jsx":"b035d5f427f5","components/finance/ProvBadge.jsx":"0035a5740a63","components/finance/TransactionRow.jsx":"296e247841af","ui_kits/ano-inteiro/YearGridScreen.jsx":"02225ca5f063","ui_kits/anuais/AnnualScreen.jsx":"4acbc71f6d97","ui_kits/copilot/CopilotScreen.jsx":"93cc123d17e2","ui_kits/dashboard/AppShell.jsx":"ce55f7804039","ui_kits/dashboard/DashboardScreen.jsx":"0ba6b1e38331","ui_kits/economia-compare/EconomiaCompareScreen.jsx":"520881fdb17e","ui_kits/horizonte/HorizonteScreen.jsx":"321c7cf8415e","ui_kits/methodology/MethodologyScreen.jsx":"57e26b193b40","ui_kits/settings/SettingsScreen.jsx":"be6eb7987575","ui_kits/shared/icons.jsx":"521d5c4cdde0","ui_kits/tags/TagsScreen.jsx":"01bc44f579a1","ui_kits/totais/TotaisScreen.jsx":"b9472ce4d0c9","ui_kits/transactions/TransactionsScreen.jsx":"4ec68f6b7e6c"},"inlinedExternals":[],"unexposedExports":[]} */
+/* @ds-bundle: {"format":3,"namespace":"NekoFinanceDesignSystem_9bd1cd","components":[{"name":"ChatBubble","sourcePath":"components/copilot/ChatBubble.jsx"},{"name":"Citation","sourcePath":"components/copilot/Citation.jsx"},{"name":"EmptyState","sourcePath":"components/copilot/EmptyState.jsx"},{"name":"MiaAvatar","sourcePath":"components/copilot/MiaAvatar.jsx"},{"name":"Badge","sourcePath":"components/core/Badge.jsx"},{"name":"Button","sourcePath":"components/core/Button.jsx"},{"name":"Disclosure","sourcePath":"components/core/Disclosure.jsx"},{"name":"InfoPopover","sourcePath":"components/core/InfoPopover.jsx"},{"name":"Input","sourcePath":"components/core/Input.jsx"},{"name":"MonthNav","sourcePath":"components/core/MonthNav.jsx"},{"name":"NekoMark","sourcePath":"components/core/NekoMark.jsx"},{"name":"SegmentedControl","sourcePath":"components/core/SegmentedControl.jsx"},{"name":"Switch","sourcePath":"components/core/Switch.jsx"},{"name":"ApprovalDiffCard","sourcePath":"components/finance/ApprovalDiffCard.jsx"},{"name":"BalanceTrajectory","sourcePath":"components/finance/BalanceTrajectory.jsx"},{"name":"HealthBadge","sourcePath":"components/finance/HealthBadge.jsx"},{"name":"LineItemEditor","sourcePath":"components/finance/LineItemEditor.jsx"},{"name":"MetricTile","sourcePath":"components/finance/MetricTile.jsx"},{"name":"Money","sourcePath":"components/finance/Money.jsx"},{"name":"MovBadge","sourcePath":"components/finance/MovBadge.jsx"},{"name":"OwnerChip","sourcePath":"components/finance/OwnerChip.jsx"},{"name":"PhaseBadge","sourcePath":"components/finance/PhaseBadge.jsx"},{"name":"ProvBadge","sourcePath":"components/finance/ProvBadge.jsx"},{"name":"TransactionRow","sourcePath":"components/finance/TransactionRow.jsx"}],"sourceHashes":{"components/copilot/ChatBubble.jsx":"167278e05c28","components/copilot/Citation.jsx":"3acb7522d21e","components/copilot/EmptyState.jsx":"c96fc443c82d","components/copilot/MiaAvatar.jsx":"2a33e3ee1d4f","components/core/Badge.jsx":"513efe284ad9","components/core/Button.jsx":"b2a4cc4d68dd","components/core/Disclosure.jsx":"26b539348e91","components/core/InfoPopover.jsx":"a9cd2a1b7494","components/core/Input.jsx":"fdae11d4cf42","components/core/MonthNav.jsx":"2801bfa6a15c","components/core/NekoMark.jsx":"ba4316e16fe2","components/core/SegmentedControl.jsx":"ff30d2741399","components/core/Switch.jsx":"4bc43188b5ff","components/finance/ApprovalDiffCard.jsx":"e8d57746a455","components/finance/BalanceTrajectory.jsx":"e50400f86b78","components/finance/HealthBadge.jsx":"0992a5b38f00","components/finance/LineItemEditor.jsx":"ee9bcf7e960f","components/finance/MetricTile.jsx":"78de6b02c8bb","components/finance/Money.jsx":"c7af88943030","components/finance/MovBadge.jsx":"82c42171008a","components/finance/OwnerChip.jsx":"d6891dfdfda9","components/finance/PhaseBadge.jsx":"b035d5f427f5","components/finance/ProvBadge.jsx":"0035a5740a63","components/finance/TransactionRow.jsx":"f671a3981b45","ui_kits/ano-inteiro/YearGridScreen.jsx":"02225ca5f063","ui_kits/anuais/AnnualScreen.jsx":"4acbc71f6d97","ui_kits/copilot/CopilotScreen.jsx":"93cc123d17e2","ui_kits/dashboard/AppShell.jsx":"ce55f7804039","ui_kits/dashboard/DashboardScreen.jsx":"0ba6b1e38331","ui_kits/economia-compare/EconomiaCompareScreen.jsx":"520881fdb17e","ui_kits/horizonte/HorizonteScreen.jsx":"37be8563ecf1","ui_kits/methodology/MethodologyScreen.jsx":"57e26b193b40","ui_kits/settings/SettingsScreen.jsx":"f01798e6b3c3","ui_kits/shared/icons.jsx":"521d5c4cdde0","ui_kits/tags/TagsScreen.jsx":"01bc44f579a1","ui_kits/totais/TotaisScreen.jsx":"472375a5da79","ui_kits/transactions/TransactionsScreen.jsx":"0cdb4ffd302a"},"inlinedExternals":[],"unexposedExports":[]} */
 
 (() => {
   const __ds_ns = (window.NekoFinanceDesignSystem_9bd1cd =
@@ -3919,7 +3919,7 @@
 
       function TransactionRow({
         date = "21/06",
-        desc = "Supermercado Extra",
+        desc = "Supermercado Central",
         amount = -38500,
         method = "Débito",
         provenance = "importado",
@@ -9154,7 +9154,7 @@
           {
             id: 2,
             due_date: "2026-06-28",
-            description: "Fatura Nubank",
+            description: "Fatura do cartão",
             amount: 243700,
             is_projection: false,
           },
@@ -9901,7 +9901,7 @@
       const BOLSOS = [
         {
           nm: "Conta corrente",
-          sub: "Nubank ·· 4821",
+          sub: "Banco Aurora ·· 4821",
           amt: "R$ 12.408,52",
           ic: "wallet",
           liquid: true,
@@ -11949,8 +11949,8 @@
         // Por titular
         owners: [
           {
-            id: "joao",
-            name: "João",
+            id: "ana",
+            name: "Ana",
             who: "personal",
             total_cents: 432600,
           },
@@ -12363,7 +12363,7 @@
           is_fixed: false,
           payment_method: "credit",
           provenance: "manual",
-          description: "iFood — Jantar",
+          description: "Delivery — Jantar",
           amount: -4750,
           owners: [],
           tags: [
@@ -12421,7 +12421,7 @@
           is_fixed: false,
           payment_method: "pix",
           provenance: "manual",
-          description: "Mercado Livre — Fone de ouvido",
+          description: "Marketplace — Fone de ouvido",
           amount: -25990,
           owners: [],
           tags: [
@@ -12445,7 +12445,7 @@
           is_fixed: false,
           payment_method: "credit",
           provenance: "importado",
-          description: "Supermercado Extra",
+          description: "Supermercado Central",
           amount: -38400,
           owners: [],
           tags: [],
@@ -12495,7 +12495,7 @@
           is_fixed: true,
           payment_method: "debit",
           provenance: "importado",
-          description: "Netflix",
+          description: "Streaming",
           amount: -5490,
           owners: [],
           tags: [],

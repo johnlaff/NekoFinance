@@ -368,7 +368,7 @@ function UpcomingBills() {
     {
       id: 2,
       due_date: "2026-06-28",
-      description: "Fatura Nubank",
+      description: "Fatura do cartão",
       amount: 243700,
       is_projection: false,
     },

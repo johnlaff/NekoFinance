@@ -492,7 +492,9 @@ function main() {
   for (const chunk of allChunks) {
     for (const term of forbiddenTerms) {
       if (chunk.text.toLowerCase().includes(term.toLowerCase())) {
-        console.warn(`WARN: possible leak of "${term}" in chunk ${chunk.id}`);
+        console.warn(
+          `WARN: possible leak of denylist term #${forbiddenTerms.indexOf(term)} (${term.length} chars) in chunk ${chunk.id}`,
+        );
         leaks++;
       }
     }

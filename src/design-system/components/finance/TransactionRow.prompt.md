@@ -3,15 +3,15 @@ Linha de lançamento expandível para tabelas de extrato e tela de revisão de i
 ```jsx
 <TransactionRow
   date="21/06"
-  desc="Fatura Nubank"
+  desc="Fatura do cartão"
   amount={-24750}
   method="Crédito"
   provenance="importado"
-  note="Uber · Mercado Livre · Netflix"
+  note="Transporte · Marketplace · Streaming"
   lump={[
-    { what: "Uber", amount: -3200 },
-    { what: "Mercado Livre", amount: -18950 },
-    { what: "Netflix", amount: -2600 },
+    { what: "Transporte", amount: -3200 },
+    { what: "Marketplace", amount: -18950 },
+    { what: "Streaming", amount: -2600 },
   ]}
   defaultOpen
 />
