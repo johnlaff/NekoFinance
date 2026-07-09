@@ -1,7 +1,7 @@
 import { render } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
 import { BalanceTrajectory } from "./BalanceTrajectory";
-import { fmtCompactBRL } from "../../lib/format";
+import { fmtAxisBRL } from "../../lib/format";
 import type { ForecastDay } from "../../lib/api";
 
 const day = (date: string, balance: number): ForecastDay => ({
@@ -13,11 +13,27 @@ const day = (date: string, balance: number): ForecastDay => ({
   balance_cents: balance,
 });
 
-describe("fmtCompactBRL", () => {
-  it("formata milhares e usa minus tipográfico", () => {
-    expect(fmtCompactBRL(580000)).toBe("R$ 5.8k");
-    expect(fmtCompactBRL(1300000)).toBe("R$ 13k");
-    expect(fmtCompactBRL(-32000)).toBe("−R$ 320");
+describe("fmtAxisBRL — rótulo de ponto pt-BR (mil/mi, nunca k/M)", () => {
+  it("formata milhares e milhões por extenso, sem decimal, e usa minus tipográfico", () => {
+    expect(fmtAxisBRL(580000)).toBe("R$ 6 mil");
+    expect(fmtAxisBRL(1300000)).toBe("R$ 13 mil");
+    expect(fmtAxisBRL(-32000)).toBe("−R$ 320");
+    expect(fmtAxisBRL(125_000_000)).toBe("R$ 1 mi");
+  });
+
+  it("promoção pós-arredondamento nas fronteiras: nunca dois registros para a mesma magnitude", () => {
+    // mil→mi: R$ 999.500 arredonda a 1.000 mil → promove ("R$ 1.000 mil" seria absurdo).
+    expect(fmtAxisBRL(99_950_000)).toBe("R$ 1 mi");
+    // 1 centavo abaixo do ponto de promoção fica no registro "mil".
+    expect(fmtAxisBRL(99_949_999)).toBe("R$ 999 mil");
+    // reais→mil: R$ 999,50 arredonda a R$ 1.000 → promove (R$ 1.000,00 exato já é "R$ 1 mil").
+    expect(fmtAxisBRL(99_950)).toBe("R$ 1 mil");
+    expect(fmtAxisBRL(100_000)).toBe("R$ 1 mil");
+    // 1 centavo abaixo do ponto de promoção fica em reais.
+    expect(fmtAxisBRL(99_949)).toBe("R$ 999");
+    // Negativos promovem igual (o sinal não muda a faixa).
+    expect(fmtAxisBRL(-99_950_000)).toBe("−R$ 1 mi");
+    expect(fmtAxisBRL(-99_950)).toBe("−R$ 1 mil");
   });
 });
 
