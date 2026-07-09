@@ -78,4 +78,66 @@ describe("Compose", () => {
       );
     });
   });
+
+  it("falha ao salvar mostra erro e não fecha o drawer", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const onSaved = vi.fn();
+
+    mockCommands({
+      get_pockets: EMPTY_POCKETS,
+      create_transaction: () => Promise.reject(new Error("database is locked")),
+    });
+
+    render(
+      <Compose
+        open
+        options={{ mode: "new", type: "saida", date: "2026-06-23" }}
+        onClose={onClose}
+        onSaved={onSaved}
+      />,
+    );
+
+    await user.type(screen.getByLabelText("Valor único"), "10,00");
+    await user.click(screen.getByRole("button", { name: "Salvar lançamento" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/ocupado/i);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  it("retry após falha limpa o erro e salva", async () => {
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+    let calls = 0;
+
+    mockCommands({
+      get_pockets: EMPTY_POCKETS,
+      create_transaction: () => {
+        calls += 1;
+        return calls === 1
+          ? Promise.reject(new Error("database is locked"))
+          : Promise.resolve("txn-ok");
+      },
+    });
+
+    render(
+      <Compose
+        open
+        options={{ mode: "new", type: "saida", date: "2026-06-23" }}
+        onClose={vi.fn()}
+        onSaved={onSaved}
+      />,
+    );
+
+    await user.type(screen.getByLabelText("Valor único"), "10,00");
+    await user.click(screen.getByRole("button", { name: "Salvar lançamento" }));
+
+    await screen.findByRole("alert");
+    await user.click(screen.getByRole("button", { name: "Salvar lançamento" }));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
 });

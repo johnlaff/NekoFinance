@@ -238,6 +238,52 @@ describe("HorizonteScreen — side-sheet 'Simular cenário'", () => {
     expect(await screen.findByText("Reforma da cozinha")).toBeInTheDocument();
   });
 
+  it("parseia valor/mês com separador de milhar pt-BR (1.200,00 → 120000 centavos)", async () => {
+    let addArgs: unknown = null;
+    mockCommands({
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_scenarios_cmd: [{ id: "scn-1", name: "Cenário A", person_id: "p1" }],
+      get_scenario_forecast_cmd: baseCompare(),
+      list_scenario_transactions_cmd: (): unknown[] =>
+        addArgs
+          ? [
+              {
+                id: "hipo-1",
+                type: "expense",
+                amount: 120000,
+                description: "Novo carro",
+                date: "2026-08-01",
+              },
+            ]
+          : [],
+      list_obligations_cmd: [],
+      add_scenario_transaction_cmd: (args) => {
+        addArgs = args;
+        return "hipo-1";
+      },
+    });
+    render(<HorizonteScreen />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Simular cenário" }));
+    await user.click(await screen.findByRole("button", { name: "Cenário A" }));
+
+    const addSection = screen.getByRole("region", { name: "Adicionar lançamento" });
+    await user.type(within(addSection).getByLabelText("Descrição"), "Novo carro");
+    await user.type(within(addSection).getByLabelText("Valor/mês"), "1.200,00");
+    await user.click(within(addSection).getByRole("button", { name: "Adicionar" }));
+
+    await waitFor(() => {
+      expect(addArgs).toMatchObject({
+        scenarioId: "scn-1",
+        description: "Novo carro",
+        amountCents: 120000,
+      });
+    });
+
+    expect(await screen.findByText("Novo carro")).toBeInTheDocument();
+  });
+
   it("mostra a rejeição de data anterior ao mês corrente vinda do backend", async () => {
     mockCommands({
       get_forecast: FORECAST,
@@ -308,6 +354,52 @@ describe("HorizonteScreen — side-sheet 'Simular cenário'", () => {
     ).toBeInTheDocument();
   });
 
+  it("parseia novo valor/mês de override com separador de milhar pt-BR (1.234,56 → 123456 centavos)", async () => {
+    let overrideArgs: unknown = null;
+    mockCommands({
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_scenarios_cmd: [{ id: "scn-1", name: "Cenário A", person_id: "p1" }],
+      get_scenario_forecast_cmd: baseCompare(),
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [
+        {
+          id: "ob-1",
+          person_id: "p1",
+          name: "Aluguel",
+          match_desc: "aluguel",
+          match_section: null,
+          kind: "saida",
+        },
+      ],
+      obligation_items_cmd: [],
+      set_scenario_override_cmd: (args) => {
+        overrideArgs = args;
+        return "ov-1";
+      },
+    });
+    render(<HorizonteScreen />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Simular cenário" }));
+    await user.click(await screen.findByRole("button", { name: "Cenário A" }));
+
+    await user.selectOptions(screen.getByLabelText("Obrigação recorrente"), "ob-1");
+    await user.selectOptions(screen.getByLabelText("Ação"), "replace");
+    await user.type(screen.getByLabelText("Novo valor/mês"), "1.234,56");
+    await user.click(
+      await screen.findByRole("button", { name: "Confirmar alteração" }),
+    );
+
+    await waitFor(() => {
+      expect(overrideArgs).toMatchObject({
+        scenarioId: "scn-1",
+        op: "replace",
+        obligationId: "ob-1",
+        replacement: { amount_cents: 123456 },
+      });
+    });
+  });
+
   it("empréstimo com falha no meio: erro diz quantas parcelas entraram e a lista refetch mostra as órfãs", async () => {
     let addCalls = 0;
     let failed = false;
@@ -372,6 +464,48 @@ describe("HorizonteScreen — side-sheet 'Simular cenário'", () => {
     // E o catch invalida: a lista refetch já mostra as linhas órfãs (com o marcador removido)
     // para o usuário poder excluí-las antes de tentar de novo.
     expect(await screen.findByText("Empréstimo parcela 1/3")).toBeInTheDocument();
+  });
+
+  it("parseia valor do empréstimo com separador de milhar pt-BR (10.000,00 → 1000000 centavos)", async () => {
+    const calls: unknown[] = [];
+    mockCommands({
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_scenarios_cmd: [{ id: "scn-1", name: "Cenário A", person_id: "p1" }],
+      get_scenario_forecast_cmd: baseCompare(),
+      list_obligations_cmd: [],
+      price_installment_cmd: 35000,
+      add_scenario_transaction_cmd: (args) => {
+        calls.push(args);
+        return `txn-${calls.length}`;
+      },
+    });
+    render(<HorizonteScreen />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Simular cenário" }));
+    await user.click(await screen.findByRole("button", { name: "Cenário A" }));
+
+    const loanSection = screen.getByRole("region", {
+      name: "Dimensionar um empréstimo",
+    });
+    await user.type(within(loanSection).getByLabelText("Valor"), "10.000,00");
+    const termInput = within(loanSection).getByLabelText("Nº parcelas");
+    await user.clear(termInput);
+    await user.type(termInput, "3");
+    await user.click(
+      await within(loanSection).findByRole("button", {
+        name: "Adicionar empréstimo ao cenário",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(calls.length).toBeGreaterThanOrEqual(1);
+    });
+    expect(calls[0]).toMatchObject({
+      scenarioId: "scn-1",
+      txnType: "income",
+      amountCents: 1000000,
+    });
   });
 });
 

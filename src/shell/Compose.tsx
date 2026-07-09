@@ -12,6 +12,7 @@ import {
 } from "../lib/api";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { formatBRL, parseBRLToCents, todayISO } from "../lib/format";
+import { safeErrorMessage } from "../lib/errors";
 import { kindToFields } from "../lib/movement";
 import { fmtBRL, TYPE_META, type MovementType } from "../lib/nkFormat";
 import type { ComposeOptions } from "./appContext";
@@ -81,6 +82,7 @@ interface ComposeState {
   toAccountId: string;
   saving: boolean;
   loadingItems: boolean;
+  error: string | null;
 }
 
 type ComposeAction =
@@ -92,7 +94,9 @@ type ComposeAction =
   | { kind: "set_parts"; parts: Part[] }
   | { kind: "set_to_account"; value: string }
   | { kind: "set_saving"; value: boolean }
-  | { kind: "items_loaded"; parts: Part[]; composed: boolean };
+  | { kind: "items_loaded"; parts: Part[]; composed: boolean }
+  | { kind: "save_started" }
+  | { kind: "save_failed"; message: string };
 
 function composeReducer(state: ComposeState, action: ComposeAction): ComposeState {
   switch (action.kind) {
@@ -112,6 +116,10 @@ function composeReducer(state: ComposeState, action: ComposeAction): ComposeStat
       return { ...state, toAccountId: action.value };
     case "set_saving":
       return { ...state, saving: action.value };
+    case "save_started":
+      return { ...state, saving: true, error: null };
+    case "save_failed":
+      return { ...state, saving: false, error: action.message };
     case "items_loaded":
       // Combines loadingItems=false + composed + parts in one update (no-cascading-set-state).
       return {
@@ -139,6 +147,7 @@ function makeInitialState(options: ComposeOptions): ComposeState {
     toAccountId: "",
     saving: false,
     loadingItems: false,
+    error: null,
   };
 }
 
@@ -445,6 +454,11 @@ function ComposeDrawer({
         <ComposePrevPanel total={total} noteText={noteText} />
       </div>
 
+      {state.error && (
+        <p role="alert" className="cmp-error">
+          {state.error}
+        </p>
+      )}
       <div className="cmp-foot">
         <Button
           variant="primary"
@@ -598,7 +612,7 @@ export function Compose({
             position: i,
           }))
         : null;
-    dispatch({ kind: "set_saving", value: true });
+    dispatch({ kind: "save_started" });
     persistLancamento({
       transactionId:
         isEditMode && options.transactionId ? options.transactionId : undefined,
@@ -617,9 +631,17 @@ export function Compose({
         invalidateCommands();
         onSaved();
         onClose();
+        dispatch({ kind: "set_saving", value: false });
       })
-      .catch(() => undefined)
-      .finally(() => dispatch({ kind: "set_saving", value: false }));
+      .catch((e) =>
+        dispatch({
+          kind: "save_failed",
+          message: safeErrorMessage(
+            e,
+            "Não foi possível salvar o lançamento. Tente novamente.",
+          ),
+        }),
+      );
   }
 
   return (

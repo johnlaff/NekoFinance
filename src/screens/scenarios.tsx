@@ -38,7 +38,7 @@ import {
   type Obligation,
 } from "../lib/api";
 import { useCommand, invalidateCommands } from "../lib/useCommand";
-import { todayISO } from "../lib/format";
+import { todayISO, parseBRLToCents } from "../lib/format";
 import {
   fmtBRL,
   fmtCompactBRL,
@@ -338,8 +338,8 @@ function AddHypotheticalSection({ scenarioId }: { scenarioId: string }) {
 
   async function submit() {
     const trimmedDesc = description.trim();
-    const cents = Math.round(parseFloat(amount.replace(",", ".")) * 100);
-    if (!trimmedDesc || !Number.isFinite(cents) || cents <= 0 || busy) return;
+    const cents = parseBRLToCents(amount);
+    if (!trimmedDesc || cents === null || cents <= 0 || busy) return;
     setBusy(true);
     setError(null);
     // Sem try/finally (React Compiler não compila TryStatement com finalizer) — mesmo padrão de
@@ -520,14 +520,11 @@ function OverrideSection({ scenarioId }: { scenarioId: string }) {
 
   async function confirm() {
     if (!selectedId || busy) return;
-    if (action === "replace" && !newAmount.trim()) return;
+    const cents = action === "replace" ? (parseBRLToCents(newAmount) ?? 0) : 0;
+    if (action === "replace" && cents <= 0) return;
     setBusy(true);
     setError(null);
     try {
-      const cents =
-        action === "replace"
-          ? Math.round(parseFloat(newAmount.replace(",", ".")) * 100)
-          : 0;
       await setScenarioOverride({
         scenarioId,
         op: action,
@@ -635,7 +632,7 @@ function LoanSection({ scenarioId }: { scenarioId: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const principalCents = Math.round(parseFloat(principal.replace(",", ".")) * 100) || 0;
+  const principalCents = parseBRLToCents(principal) ?? 0;
   const term = Math.max(1, parseInt(termMonths, 10) || 0);
   const rateBps = Math.round((parseFloat(ratePct.replace(",", ".")) || 0) * 100);
   const validInputs = principalCents > 0 && term > 0;
