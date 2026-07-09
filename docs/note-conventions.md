@@ -1,7 +1,8 @@
 # Note Conventions
 
 These conventions describe new spreadsheet notes that the app can classify deterministically.
-Existing notes are never rewritten by the app.
+Import and reconciliation never rewrite existing notes; an approved write-back may update the
+notes of target cells when the itemized breakdown is valid (diff + confirmation first).
 
 ## Itemized Notes
 

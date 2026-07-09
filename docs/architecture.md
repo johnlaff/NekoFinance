@@ -54,12 +54,14 @@ Done (see `specs/` for the full spec/plan/tasks of each):
 9. ✅ Robust import + stable identity, three-way-merge reconciliation, conflict gate (specs 010/012/013); tags + categories→tags demotion, recurrence, multi-titular splits, write-back preview, month/annual views (specs 014, 015, 016, 017, 018, 019).
 10. ✅ Engine model reopened to make Cartão and Patrimônio explicit `EventKind` buckets (6 total) and classify note line items by spreadsheet section (spec 020).
 
+11. ✅ Gated bidirectional write-back ENABLED — checksummed, formula/anchor columns blocked, every send behind diff approval + second confirmation; system of record flipped to SQLite (ADR-0003).
+12. ✅ What-if scenarios (hypothetical entries, obligation overrides, loan simulation) surfaced in Horizonte with didactic compare.
+
 Next:
 
-11. First-class invoice entity with per-owner splits and net-zero reimbursement links.
-12. Copilot (Mia) with deterministic tools first (read-only), then human-approved sheet diffs.
-13. Gated bidirectional write-back (per-cell checksum) — flips the system of record to SQLite (ADR-0003).
-14. Evals for diagnoses and safe write behavior; what-if scenarios.
+13. First-class invoice entity with per-owner splits and net-zero reimbursement links.
+14. Copilot (Mia) with deterministic tools first (read-only), then human-approved sheet diffs.
+15. Evals for diagnoses and safe write behavior.
 
 ## Naming Note
 

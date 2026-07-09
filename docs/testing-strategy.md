@@ -18,7 +18,7 @@ Coverage thresholds (configured in `vite.config.ts`, enforced when you run `npm 
   `npm run coverage` number sits below 90% for those UI-shell modules by design; the
   design-system and domain modules stay high.
 - Excluded from coverage: app bootstrap, test setup, type-only files, generated files, future fixtures, and files without meaningful runtime behavior.
-- **Update (2026-06-14)**: the old monolithic `App.tsx` (~919 lines) was decomposed into `src/shell/`, `src/features/` and `src/screens/`; `App.tsx` is now ~84 lines of wiring. The complex interactive flows (OAuth connect, sheet picker, preview, mapping editor, import) moved into feature modules with their own component tests, and the remaining end-to-end paths are covered by the Playwright E2E smoke (`npm run e2e`). Design system components remain at ~98%. Continue to prefer Playwright smoke over line-by-line Vitest for multi-step interactive flows.
+- **Update (2026-06-14)**: the old monolithic `App.tsx` (~919 lines) was decomposed into `src/shell/`, `src/features/` and `src/screens/`; `App.tsx` is now ~130 lines of wiring. The complex interactive flows (OAuth connect, sheet picker, preview, mapping editor, import) moved into feature modules with their own component tests, and the remaining end-to-end paths are covered by the Playwright E2E smoke (`npm run e2e`). Design system components remain at ~98%. Continue to prefer Playwright smoke over line-by-line Vitest for multi-step interactive flows.
 
 Future domain threshold:
 
@@ -64,7 +64,7 @@ Tradeoff:
 
 - Value: catches broken layout, routing, accessibility locator regressions, responsive overflow, and interaction failures that unit tests miss.
 - Cost: browser downloads, slower CI, some flake risk, and screenshot churn if used for pixel snapshots too early.
-- Decision: include Playwright now as visual smoke; keep it out of `npm run check`; run manually/local or via the manual GitHub Actions workflow until the UI stabilizes.
+- Decision: include Playwright now as visual smoke; keep it out of `npm run check`. It runs in CI on pull requests that touch UI paths (see `.github/workflows/e2e.yml`) and can also be run manually/local.
 
 ## React Doctor
 

@@ -20,8 +20,8 @@ The physical machine running the Tauri app. Each device has one active Profile a
 ### Financial Instruments
 
 **Account**:
-A real financial instrument — bank account, credit card, wallet, or savings account. Not a logical grouping (see Sheet Mapping). Has `type` (bank, credit*card, wallet, savings, business) and optional fields per type (institution, closing_day, credit_limit, linked_account_id for additional cards).
-\_Avoid*: Sheet, category, group
+A real financial instrument — bank account, credit card, wallet, or savings account. Not a logical grouping (see Sheet Mapping). Has `type` (bank, credit_card, wallet, savings, business, meal_voucher, pension, fgts) and optional fields per type (institution, closing_day, credit_limit, linked_account_id for additional cards).
+_Avoid_: Sheet, category, group
 
 **Transaction**:
 A normalized financial movement. Has `type` (income, expense, transfer), `payment_method` (debit, credit, pix, cash), and optional `is_fixed` flag. For transfers, uses `from_account_id` and `to_account_id` on the same row. Ownership (who is responsible, who paid, who benefited) is expressed through Split and Account relationships, not stored on the transaction directly.
