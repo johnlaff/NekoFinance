@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import type { ForecastDay } from "../../lib/api";
-import { fmtDayMonth, formatBRL, fmtCompactBRL } from "../../lib/format";
+import { fmtDayMonth, formatBRL, fmtAxisBRL } from "../../lib/format";
 
 /**
  * BalanceTrajectory — gráfico de área da trajetória do saldo projetado (o Sparkline do design
@@ -203,7 +203,7 @@ export function BalanceTrajectory({
               fontWeight="600"
               fill={hasDeficit ? "var(--danger-400)" : "var(--text-muted)"}
             >
-              {fmtCompactBRL(vals[minIdx]!)}
+              {fmtAxisBRL(vals[minIdx]!)}
             </text>
           </g>
         )}
@@ -217,7 +217,7 @@ export function BalanceTrajectory({
             fontWeight="600"
             fill="var(--text-muted)"
           >
-            {fmtCompactBRL(max)}
+            {fmtAxisBRL(max)}
           </text>
         )}
       </svg>

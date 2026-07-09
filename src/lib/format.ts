@@ -66,11 +66,40 @@ export function formatBRL(cents: number, hideCents = false): string {
   return (neg ? "−R$ " : "R$ ") + s;
 }
 
-/** R$ compacto para rótulos de gráfico: "R$ 5.8k", "−R$ 320". Minus tipográfico (U+2212). */
-export function fmtCompactBRL(cents: number): string {
-  const v = cents / 100;
-  const abs = Math.abs(v);
-  const sign = v < 0 ? "−" : "";
-  if (abs >= 1000) return `${sign}R$ ${(abs / 1000).toFixed(abs >= 10000 ? 0 : 1)}k`;
-  return `${sign}R$ ${abs.toFixed(0)}`;
+/**
+ * R$ compacto SEM decimais para rótulos de PONTO num gráfico SVG apertado (mín/máx do
+ * `BalanceTrajectory`) — "R$ 31 mil", "R$ 1 mi", nunca "k"/"M" (essa era a violação: um
+ * rótulo em estilo inglês visível ao usuário, "R$ 5.8k"). Renomeado de `fmtCompactBRL`
+ * (plano 074, fatia C) — o nome colidia com o formatador de MANCHETE de `nkFormat.ts`, que
+ * tem 1 casa decimal (apropriado pra um card com mais respiro; longo demais pro rótulo que
+ * disputa espaço com a própria linha do gráfico aqui). Sem decimal de propósito: é só a
+ * leitura rápida ao lado do traço — a precisão cheia mora no tooltip de hover e no
+ * `aria-label` do próprio gráfico (`formatBRL`), nunca só aqui.
+ *
+ * A faixa é decidida DEPOIS do arredondamento na precisão da própria faixa (mesma regra do
+ * `fmtCompactBRL` de `nkFormat.ts`): arredondar pode cruzar o limiar da faixa seguinte, e sem
+ * a promoção o resultado sai no registro errado — R$ 999.500,00 arredondado a milhares vira
+ * "R$ 1.000 mil" (absurdo; o certo é "R$ 1 mi") e R$ 999,50 arredondado a reais inteiros vira
+ * "R$ 1.000" enquanto R$ 1.000,00 exato vira "R$ 1 mil" — mesma magnitude, dois registros.
+ */
+export function fmtAxisBRL(cents: number): string {
+  const neg = cents < 0;
+  const abs = Math.abs(cents);
+  const sign = neg ? "−" : "";
+  if (abs >= 100_000_000)
+    return `${sign}R$ ${Math.round(abs / 100_000_000).toLocaleString("pt-BR")} mi`;
+  if (abs >= 100_000) {
+    // Promoção pós-arredondamento: milhares que arredondam para 1.000 mil pertencem à
+    // faixa "mi" — nunca "R$ 1.000 mil".
+    const mil = Math.round(abs / 100_000);
+    if (mil >= 1_000)
+      return `${sign}R$ ${Math.round(abs / 100_000_000).toLocaleString("pt-BR")} mi`;
+    return `${sign}R$ ${mil.toLocaleString("pt-BR")} mil`;
+  }
+  // Promoção pós-arredondamento: reais que arredondam para R$ 1.000 rendem no registro
+  // "mil" — nunca dois registros para a mesma magnitude.
+  const reais = Math.round(abs / 100);
+  if (reais >= 1_000)
+    return `${sign}R$ ${Math.round(abs / 100_000).toLocaleString("pt-BR")} mil`;
+  return `${sign}R$ ${reais.toLocaleString("pt-BR")}`;
 }

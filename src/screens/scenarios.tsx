@@ -19,6 +19,7 @@ import {
   TrendingDown,
   AlertTriangle,
   CheckCircle2,
+  Minus,
 } from "lucide-react";
 import {
   createScenario,
@@ -882,6 +883,64 @@ function podeGastarState(cents: number, guardrail: "cash" | "savings"): MethodSt
   };
 }
 
+/**
+ * Semáforo de meses de reserva PÓS-financiamento (`LoanBreakdown.reserve_months_after_
+ * financing`) — a regra de reserva do método: mínimo 6 meses; 6–8 = zona amarela;
+ * 12+ = verde/"paz". A faixa 8–12 fecha a progressão entre o amarelo e a paz sem nome
+ * verbatim na fonte — "Confortável" é a leitura neutra do meio. Fronteiras com limite
+ * SUPERIOR inclusivo (mesma convenção do Termômetro em `saldoBand`): 6–8 cobre até 8,0 exato;
+ * 8–12 cobre de 8,0+ até 12,0 exato; abaixo de 6 é sempre abaixo do mínimo; acima de 12 é paz.
+ * `--jade-400` cru falha contraste no tema claro (comentário em colors.css) — `--primary-
+ * quiet-text` é o alias já testado pra texto jade legível nos dois temas (ver TotaisScreen).
+ */
+function reserveMonthsState(months: number): MethodState {
+  if (months < 6) {
+    return {
+      key: "below-min",
+      label: "Abaixo do mínimo",
+      color: "var(--danger-400)",
+      Icon: AlertTriangle,
+    };
+  }
+  if (months <= 8) {
+    return {
+      key: "amber",
+      label: "Zona amarela",
+      color: "var(--warning-400)",
+      Icon: AlertTriangle,
+    };
+  }
+  if (months <= 12) {
+    return {
+      key: "comfortable",
+      label: "Confortável",
+      color: "var(--success-400)",
+      Icon: CheckCircle2,
+    };
+  }
+  return {
+    key: "peace",
+    label: "Paz",
+    color: "var(--primary-quiet-text)",
+    Icon: CheckCircle2,
+  };
+}
+
+function ReserveMonthsBadge({ months }: { months: number }) {
+  const state = reserveMonthsState(months);
+  const { Icon } = state;
+  const monthsLabel = months.toLocaleString("pt-BR", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+  return (
+    <span className="scn-loan-summary__reserve" style={{ color: state.color }}>
+      <Icon size={13} strokeWidth={1.75} aria-hidden="true" />
+      {state.label} · {monthsLabel} meses
+    </span>
+  );
+}
+
 /** Abaixo de R$1 de diferença é ruído de arredondamento, não um resultado — um card mostrando
  * "−R$ 0,09" em vermelho alarma por nada. Este limiar é sobre MATERIALIDADE (existe mudança
  * que importa?), então usa o valor absoluto em centavos direto, sem depender do sentido
@@ -917,6 +976,7 @@ function KpiCard({
   sense,
   realState,
   scenarioState,
+  emptyScenario = false,
 }: {
   label: string;
   term: { title: string; body: string };
@@ -926,14 +986,21 @@ function KpiCard({
   sense: DeltaSense;
   realState: MethodState;
   scenarioState: MethodState;
+  /** Cenário sem NENHUM ponto de projeção (plano 074/fatia C — residual da fatia B): quando
+   * `true`, `scenarioCents`/`deltaCents` são ruído (`?? 0` do chamador) e nunca aparecem — o
+   * card renderiza um vazio neutro ("—", sem cor de estado) em vez de fingir "Apertado R$ 0".
+   * `scenarioState` ainda deve chegar neutra (ver `EMPTY_SCENARIO_STATE`); só ela controla a
+   * cor/ícone do Nível 2, mas o headline/evidência/delta são sempre suprimidos aqui. */
+  emptyScenario?: boolean;
 }) {
   // STATE TRANSITIONS (plano 074/fatia B): quando o estado do cenário DIFERE do estado real, a
   // hero vira o estado NOVO (cenário) com a origem numa linha discreta empilhada abaixo — nunca
   // inline (rótulos de estado são compridos; inline quebraria feio numa coluna estreita com o
   // ícone órfão — o inline "velho → novo" fica reservado à linha numérica de evidência). Compara
   // por `key` (categoria), não pelo `label` renderizado: "Pode gastar hoje" embute o valor no
-  // label ("Livre até R$X"), que muda toda hora sem ser uma mudança de ESTADO.
-  const isTransition = realState.key !== scenarioState.key;
+  // label ("Livre até R$X"), que muda toda hora sem ser uma mudança de ESTADO. Sem projeção
+  // nenhuma do cenário, "real vs vazio" não é uma transição de estado — é ausência de dado.
+  const isTransition = !emptyScenario && realState.key !== scenarioState.key;
   const { Icon } = scenarioState;
   const stateAnnouncement = isTransition
     ? `${scenarioState.label} (antes ${realState.label})`
@@ -948,7 +1015,11 @@ function KpiCard({
   return (
     <article
       className="scn-kpi"
-      aria-label={`${label}: ${stateWithReason}, real ${fmtBRL(realCents)}, cenário ${fmtBRL(scenarioCents)}`}
+      aria-label={
+        emptyScenario
+          ? `${label}: sem dados de projeção do cenário, real ${fmtBRL(realCents)}`
+          : `${label}: ${stateWithReason}, real ${fmtBRL(realCents)}, cenário ${fmtBRL(scenarioCents)}`
+      }
     >
       <span className="scn-kpi__label">
         <InfoPopover term={term} hideMarker>
@@ -979,7 +1050,7 @@ function KpiCard({
           cheia numa linha sem quebra (essa era a causa do estouro medido em dogfooding). Precisão
           cheia continua acessível: no aria-label do próprio article (acima). */}
       <span className="scn-kpi__headline" aria-hidden="true">
-        {fmtCompactBRL(scenarioCents)}
+        {emptyScenario ? "—" : fmtCompactBRL(scenarioCents)}
       </span>
       {/* Evidência visual-only: o aria-label do article já anuncia real e cenário em precisão
           cheia — sem o aria-hidden, os dois <Money> anunciariam os MESMOS valores de novo
@@ -987,12 +1058,24 @@ function KpiCard({
       <div className="scn-kpi__evidence" aria-hidden="true">
         <Money cents={realCents} size="inherit" />
         <ArrowRight size={12} strokeWidth={2} className="scn-kpi__arrow" />
-        <Money cents={scenarioCents} size="inherit" />
+        {emptyScenario ? "—" : <Money cents={scenarioCents} size="inherit" />}
       </div>
-      {deltaChip(deltaCents, sense)}
+      {!emptyScenario && deltaChip(deltaCents, sense)}
     </article>
   );
 }
+
+/** Estado neutro (plano 074/fatia C) para quando o cenário não tem NENHUM ponto de projeção —
+ * nem `deepest_deficit` diário, nem `month_end` mensal. Nunca reutilizar `saldoState(0)` aqui:
+ * 0 cai na banda "apertado" do Termômetro por coincidência aritmética do `?? 0`, não porque o
+ * cenário tenha de fato um menor saldo — mostraria "Apertado" colorido sobre um dado inexistente.
+ * `--text-faint` é a MESMA cor "sem valor" que `saldoBand(null)` já usa (nkFormat.ts). */
+const EMPTY_SCENARIO_STATE: MethodState = {
+  key: "none",
+  label: "—",
+  color: "var(--text-faint)",
+  Icon: Minus,
+};
 
 /** Remove marcas + limita a 60 chars para caber na linha do chip de mudança. */
 function changeLabel(desc: string): string {
@@ -1008,41 +1091,49 @@ interface ScenarioVerdict {
   subline: string;
 }
 
-/** Veredito (Nível 1, plano 074/fatia B): a resposta a "é seguro?" de relance, ANTES da grade de
- * KPIs — determinístico a partir do menor saldo do CENÁRIO, o mesmo dado que já alimenta o card
- * "Buraco do futuro" e o gráfico (nunca um número novo). O TOM vem do MESMO predicado do card
- * (`saldoBand`, o Termômetro canônico), em três níveis: banda negativa/crítica → risco (vermelho);
- * banda apertada → intermediário honesto (âmbar) — sem isto o banner diria "no azul o ano todo"
- * enquanto o card logo abaixo mostra "Apertado" em âmbar sobre o MESMO número; banda ok/folga →
- * azul (verde). Tom GPS-não-ameaça: cada ramo ruim sugere uma ação, não um alarme.
- *
- * Menor saldo: `deepest_deficit` (resolução diária) quando o motor o tem; quando null (horizonte
- * sem pontos diários), cai honestamente para o mínimo do `scenario_month_end` (resolução mensal —
- * o mesmo dado do gráfico). Sem nenhum dos dois não há projeção nenhuma: nível ok com a subline
- * dizendo isso, em vez de inventar um menor saldo. */
-function scenarioVerdict(compare: ScenarioCompareDto): ScenarioVerdict {
+/** Menor saldo do CENÁRIO + mês (0–11) na melhor resolução disponível: `deepest_deficit`
+ * (diária) quando o motor o tem; quando null, o mínimo do `scenario_month_end` (mensal — o
+ * mesmo dado do gráfico); `null` sem projeção nenhuma. FONTE ÚNICA do banner de veredito E do
+ * card "Buraco do futuro" (plano 074/fatia C): com derivações separadas, o card caía no `?? 0`
+ * e fabricava "cenário R$ 0,00" enquanto o banner logo acima mostrava o mínimo mensal — banner
+ * e card discordando sobre o MESMO dado, a mesma classe de contradição que a fatia B eliminou. */
+function scenarioDeepestPoint(
+  compare: ScenarioCompareDto,
+): { minCents: number; monthIdx: number } | null {
   const deficit = compare.scenario_deepest_deficit;
-  let minCents: number | null = null;
-  let monthIdx: number | null = null; // 0–11
   if (deficit) {
-    minCents = deficit.balance_cents;
-    monthIdx = monthOf(deficit.date);
-  } else if (compare.scenario_month_end.length > 0) {
+    return { minCents: deficit.balance_cents, monthIdx: monthOf(deficit.date) };
+  }
+  if (compare.scenario_month_end.length > 0) {
     const worst = compare.scenario_month_end.reduce((a, b) =>
       b.balance_cents < a.balance_cents ? b : a,
     );
-    minCents = worst.balance_cents;
-    monthIdx = worst.month - 1;
+    return { minCents: worst.balance_cents, monthIdx: worst.month - 1 };
   }
-  if (minCents == null) {
+  return null;
+}
+
+/** Veredito (Nível 1, plano 074/fatia B): a resposta a "é seguro?" de relance, ANTES da grade de
+ * KPIs — determinístico a partir do menor saldo do CENÁRIO (`scenarioDeepestPoint`, o mesmo dado
+ * que alimenta o card "Buraco do futuro" e o gráfico — nunca um número novo). O TOM vem do MESMO
+ * predicado do card (`saldoBand`, o Termômetro canônico), em três níveis: banda negativa/crítica
+ * → risco (vermelho); banda apertada → intermediário honesto (âmbar) — sem isto o banner diria
+ * "no azul o ano todo" enquanto o card logo abaixo mostra "Apertado" em âmbar sobre o MESMO
+ * número; banda ok/folga → azul (verde). Tom GPS-não-ameaça: cada ramo ruim sugere uma ação,
+ * não um alarme. Sem NENHUM ponto de projeção: nível ok com a subline dizendo isso, em vez de
+ * inventar um menor saldo. */
+function scenarioVerdict(compare: ScenarioCompareDto): ScenarioVerdict {
+  const point = scenarioDeepestPoint(compare);
+  if (point == null) {
     return {
       tier: "ok",
       headline: "Este cenário se mantém no azul o ano todo.",
       subline: "Sem pontos de projeção no horizonte para apontar um menor saldo.",
     };
   }
+  const { minCents, monthIdx } = point;
   const band = saldoBand(minCents);
-  const monthLabel = (MES[monthIdx ?? -1] ?? "").toLowerCase();
+  const monthLabel = (MES[monthIdx] ?? "").toLowerCase();
   if (band.key === "negative" || band.key === "critical") {
     return {
       tier: "risk",
@@ -1093,8 +1184,20 @@ export function ScenarioCompare({ compare }: { compare: ScenarioCompareDto }) {
   const endDeltaCents = lastMonthEnd?.delta_cents ?? 0;
 
   const realDeficit = compare.real_deepest_deficit?.balance_cents ?? 0;
-  const scenarioDeficit = compare.scenario_deepest_deficit?.balance_cents ?? 0;
-  const deficitDelta = compare.deepest_deficit_delta_cents ?? 0;
+  // Menor saldo do cenário pela MESMA derivação do banner (`scenarioDeepestPoint`) — nunca o
+  // `?? 0` cru sobre o deficit diário: com deficit nulo mas `scenario_month_end` presente, o
+  // card fabricava "cenário R$ 0,00" (+ delta fake) enquanto o banner logo acima caía
+  // honestamente no mínimo mensal — banner e card discordando sobre o MESMO dado. Só sem
+  // projeção NENHUMA (deficit E month_end vazios) o card rende o vazio neutro.
+  const scenarioPoint = scenarioDeepestPoint(compare);
+  const noScenarioProjection = scenarioPoint == null;
+  // O 0 do fallback nunca renderiza: `emptyScenario` suprime manchete/evidência/delta.
+  const scenarioDeficit = scenarioPoint?.minCents ?? 0;
+  // Delta do backend quando existe (deficit diário nos DOIS ramos); senão derivado dos mesmos
+  // números que a linha de evidência mostra — o chip nunca pode discordar da evidência.
+  const deficitDelta =
+    compare.deepest_deficit_delta_cents ??
+    (scenarioPoint != null ? scenarioPoint.minCents - realDeficit : 0);
 
   return (
     <section className="card" aria-label="Comparação real × cenário">
@@ -1135,7 +1238,10 @@ export function ScenarioCompare({ compare }: { compare: ScenarioCompareDto }) {
             deltaCents={deficitDelta}
             sense="higher-better"
             realState={saldoState(realDeficit)}
-            scenarioState={saldoState(scenarioDeficit)}
+            scenarioState={
+              noScenarioProjection ? EMPTY_SCENARIO_STATE : saldoState(scenarioDeficit)
+            }
+            emptyScenario={noScenarioProjection}
           />
           <KpiCard
             label="Saldo no fim do horizonte"
@@ -1221,6 +1327,14 @@ export function ScenarioCompare({ compare }: { compare: ScenarioCompareDto }) {
               <span>Total pago</span>
               <Money cents={compare.loan.loan_total_paid_cents} size="sm" />
             </div>
+            {compare.loan.reserve_months_after_financing != null && (
+              <div className="scn-loan-summary__row">
+                <span>Reserva após financiar</span>
+                <ReserveMonthsBadge
+                  months={compare.loan.reserve_months_after_financing}
+                />
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1228,6 +1342,21 @@ export function ScenarioCompare({ compare }: { compare: ScenarioCompareDto }) {
   );
 }
 
+/**
+ * SKIP (plano 074, fatia C, item 1): a intenção era colorir o valor de cada linha por TIPO de
+ * movimento via `TYPE_META` (`entrada`/`saida`/`diario`/`economia`/`cartao`). `ScenarioChange`
+ * (api.ts) só expõe `op`/`description`/`from_date`/`old_amount_cents`/`new_amount_cents` — sem
+ * `kind`. E não dá pra derivar no cliente com o que já existe: uma troca (`replace`/`remove`)
+ * nasce de um `scenario_override` sobre uma OBRIGAÇÃO ou uma RECORRÊNCIA (scenarios.rs, ~1145-
+ * 1177) — o backend só busca o NOME da obrigação para o rótulo, nunca o `kind`; para uma
+ * recorrência sem obrigação a "descrição" nem chega a ser legível (é o `recurrence_id` cru). As
+ * únicas linhas com tipo conhecido no backend são as hipotéticas "add" (`HypoTxnRow.ttype`), mas
+ * mesmo essas não serializam o tipo pro DTO. Um join no cliente (casar `changes` com
+ * `listScenarioTransactions`/`listObligations` por descrição+data+valor) seria frágil (chave
+ * sintética, sem `id`) e ainda deixaria as trocas de recorrência sem cor nenhuma — pior que não
+ * colorir. Regra do plano: não estender o DTO nesta fatia. Retomar quando `ScenarioChange`
+ * ganhar `kind` no backend (mesma origem que já preenche `HypoTxnRow.ttype`/`Obligation.kind`).
+ */
 function ChangesList({ changes }: { changes: ScenarioCompareDto["changes"] }) {
   if (changes.length === 0) {
     return <p className="scn-empty">Nenhuma mudança neste cenário ainda.</p>;
@@ -1498,7 +1627,16 @@ function DiffSparkline({ monthEnd }: { monthEnd: ScenarioCompareDto["month_end"]
 
   return (
     <div>
-      <p className="scn-section-title">Diferença mês a mês (simulação − real)</p>
+      {/* Mesmo padrão de título do `DualLineChart` logo acima (`__head` com margem zerada) —
+          os dois gráficos empilhados na mesma superfície tinham ritmo vertical diferente
+          (8px do `.scn-section-title` cru vs 4px do `__head`), um polimento sem função nova:
+          este gráfico é de UMA série só (a diferença), então sem legenda de cor — o zero
+          tracejado já separa "melhor"/"pior" por POSIÇÃO, não só por cor. */}
+      <div className="scn-diffchart__head">
+        <p className="scn-section-title" style={{ margin: 0 }}>
+          Diferença mês a mês (simulação − real)
+        </p>
+      </div>
       <svg
         className="scn-diffchart"
         viewBox={`0 0 ${W} ${H}`}
@@ -1551,10 +1689,11 @@ function DiffSparkline({ monthEnd }: { monthEnd: ScenarioCompareDto["month_end"]
           />
         )}
       </svg>
+      {/* Compacto aqui (mesmo registro da manchete dos cards de KPI) — a precisão cheia já
+          mora no `aria-label` do SVG acima (`fmtBRL`), nunca só aqui. */}
       {worst && worst.delta_cents < 0 && (
         <p className="scn-worst-note">
-          Pior mês: {MES[worst.month - 1]}{" "}
-          <Money cents={worst.delta_cents} size="inherit" />
+          Pior mês: {MES[worst.month - 1]} {fmtCompactBRL(worst.delta_cents)}
         </p>
       )}
     </div>

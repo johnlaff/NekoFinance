@@ -741,6 +741,32 @@ describe("ScenarioCompare — camada didática (plano 074, fatia B: veredito + e
     expect(banner!.textContent).toContain(
       `Fica apertado em agosto — menor saldo ${fmtCompactBRL(90_000)}.`,
     );
+
+    // O CARD "Buraco do futuro" cai no MESMO mínimo mensal (fatia C: `scenarioDeepestPoint`
+    // é a fonte única de banner e card) — nunca o "cenário R$ 0,00" do `?? 0` cru sobre o
+    // deficit diário nulo, que fazia banner e card discordarem sobre o mesmo dado.
+    const surface = screen.getByLabelText("Comparação real × cenário");
+    const deficitCard = within(surface)
+      .getByRole("button", { name: "Buraco do futuro" })
+      .closest("article")!;
+    // Estado do Termômetro sobre o mínimo mensal (90.000 → "Apertado"), igual ao banner.
+    expect(deficitCard.querySelector(".scn-kpi__state-word")?.textContent).toBe(
+      saldoBand(90_000).label,
+    );
+    // Manchete e evidência mostram o mínimo mensal, não um R$ 0 fabricado.
+    expect(deficitCard.querySelector(".scn-kpi__headline")?.textContent).toBe(
+      fmtCompactBRL(90_000),
+    );
+    expect(within(deficitCard).getByText("R$ 900,00")).toBeInTheDocument();
+    expect(within(deficitCard).queryByText("R$ 0,00")).not.toBeInTheDocument();
+    // Delta derivado dos mesmos números da evidência (90.000 − 100.000 = −R$ 100,00): o
+    // backend não manda delta quando o deficit diário falta num dos ramos.
+    expect(within(deficitCard).getByText("−R$ 100,00")).toBeInTheDocument();
+    expect(deficitCard.querySelector(".lucide-trending-down")).toBeInTheDocument();
+    expect(deficitCard).toHaveAttribute(
+      "aria-label",
+      `Buraco do futuro: Apertado, real ${fmtBRL(100_000)}, cenário ${fmtBRL(90_000)}`,
+    );
   });
 
   it("veredito sem projeção nenhuma (deficit nulo + month_end vazio) não inventa menor saldo", async () => {
@@ -950,5 +976,138 @@ describe("ScenarioCompare — camada didática (plano 074, fatia B: veredito + e
       "Performance · mês atual",
       "Custo de vida",
     ]);
+  });
+});
+
+describe("ScenarioCompare — polimento (plano 074, fatia C)", () => {
+  beforeEach(() => {
+    mockInvoke.mockReset();
+  });
+
+  async function renderCompare(compare: ScenarioCompareDto) {
+    mockCommands({
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_scenarios_cmd: [
+        { id: "scn-1", name: compare.scenario_name, person_id: "p1" },
+      ],
+      get_scenario_forecast_cmd: compare,
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [],
+    });
+    render(<HorizonteScreen />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Simular cenário" }));
+    await user.click(
+      await screen.findByRole("button", { name: compare.scenario_name }),
+    );
+    await screen.findByText(`Cenário: ${compare.scenario_name}`);
+    return user;
+  }
+
+  function loanFixture(reserveMonths: number | null) {
+    return {
+      loan_principal_cents: 1_000_000,
+      loan_installment_cents: 50_000,
+      loan_term_months: 24,
+      loan_monthly_rate_bps: 150,
+      loan_total_paid_cents: 1_200_000,
+      loan_total_cost_cents: 200_000,
+      reserve_months_after_financing: reserveMonths,
+    };
+  }
+
+  // --- Semáforo da reserva pós-financiamento (item 2) ---
+
+  it.each([
+    [5.9, "Abaixo do mínimo", "lucide-triangle-alert"],
+    [6, "Zona amarela", "lucide-triangle-alert"],
+    [8, "Zona amarela", "lucide-triangle-alert"],
+    [8.1, "Confortável", "lucide-circle-check"],
+    [12, "Confortável", "lucide-circle-check"],
+    [12.1, "Paz", "lucide-circle-check"],
+  ] as const)(
+    "%s meses de reserva pós-financiamento → '%s' (ícone %s)",
+    async (months, label, iconClass) => {
+      await renderCompare(baseCompare({ loan: loanFixture(months) }));
+      const badge = document.querySelector(".scn-loan-summary__reserve");
+      expect(badge).not.toBeNull();
+      expect(badge!.textContent).toContain(label);
+      expect(badge!.querySelector(`.${iconClass}`)).toBeInTheDocument();
+    },
+  );
+
+  it("reserve_months_after_financing nulo não renderiza nada novo", async () => {
+    await renderCompare(baseCompare({ loan: loanFixture(null) }));
+    expect(
+      document.querySelector(".scn-loan-summary__reserve"),
+    ).not.toBeInTheDocument();
+    // O resto do resumo do empréstimo continua normal.
+    expect(screen.getByText("Custo do crédito")).toBeInTheDocument();
+  });
+
+  // --- "Buraco do futuro" sem projeção nenhuma (item 5, residual da fatia B) ---
+
+  it("'Buraco do futuro' sem nenhum ponto de projeção do cenário mostra vazio neutro, nunca 'Apertado R$ 0' fake", async () => {
+    const compare = baseCompare({
+      scenario_deepest_deficit: null,
+      deepest_deficit_delta_cents: null,
+      scenario_month_end: [],
+      month_end: [],
+    });
+    await renderCompare(compare);
+
+    const surface = screen.getByLabelText("Comparação real × cenário");
+    const deficitCard = within(surface)
+      .getByRole("button", { name: "Buraco do futuro" })
+      .closest("article")!;
+
+    expect(within(deficitCard).queryByText(/Apertado/)).not.toBeInTheDocument();
+    expect(deficitCard.querySelector(".scn-kpi__state-word")?.textContent).toBe("—");
+    expect(deficitCard.querySelector(".scn-kpi__headline")?.textContent).toBe("—");
+    // Ícone neutro (nunca alerta/check fingindo um estado que não existe) + cor faint (nunca
+    // cor de estado).
+    expect(deficitCard.querySelector(".lucide-minus")).toBeInTheDocument();
+    expect(deficitCard.querySelector<HTMLElement>(".scn-kpi__state")!.style.color).toBe(
+      "var(--text-faint)",
+    );
+    // Sem chip de delta (nada pra comparar) nem linha "Antes:" (não é uma transição de estado).
+    expect(deficitCard.querySelector(".scn-kpi__delta")).not.toBeInTheDocument();
+    expect(deficitCard.querySelector(".scn-kpi__state-origin")).not.toBeInTheDocument();
+    expect(deficitCard).toHaveAttribute(
+      "aria-label",
+      `Buraco do futuro: sem dados de projeção do cenário, real ${fmtBRL(100_000)}`,
+    );
+  });
+
+  // --- Nota do pior mês em formato compacto (item 3) ---
+
+  it("nota do pior mês do DiffSparkline usa o formato compacto (nunca a precisão cheia)", async () => {
+    const compare = baseCompare({
+      month_end: [
+        {
+          year: 2026,
+          month: 6,
+          real_balance_cents: 500_000,
+          scenario_balance_cents: 480_000,
+          delta_cents: -20_000,
+        },
+        {
+          year: 2026,
+          month: 9,
+          real_balance_cents: 500_000,
+          scenario_balance_cents: -1_050_000,
+          delta_cents: -1_550_000,
+        },
+      ],
+    });
+    await renderCompare(compare);
+
+    // Mesmo padrão de título do DualLineChart logo acima (fatia C, item 3).
+    expect(document.querySelector(".scn-diffchart__head")).not.toBeNull();
+    const note = document.querySelector(".scn-worst-note");
+    expect(note?.textContent).toBe(`Pior mês: Setembro ${fmtCompactBRL(-1_550_000)}`);
+    // Nunca a precisão cheia sem quebra na nota visível (ela mora só no aria-label do SVG).
+    expect(note?.textContent).not.toMatch(/15\.500,00/);
   });
 });

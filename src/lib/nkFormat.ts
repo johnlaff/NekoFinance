@@ -66,9 +66,11 @@ export function fmtCompact(cents: number): string {
 /**
  * R$ compacto para a MANCHETE de um card de KPI (plano 074, fatia A) — palavras por extenso
  * ("mil"/"mi"), nunca abreviação em letra ("k"/"M"): esse é o registro BR correto para um
- * valor de destaque na UI. Não confundir com o `fmtCompactBRL` de `lib/format.ts` — aquele
- * é o rótulo de EIXO do `BalanceTrajectory` (estilo "k", ex.: "R$ 5.8k"), outro consumidor,
- * outro registro; nomes iguais em módulos diferentes, comportamento deliberadamente distinto.
+ * valor de destaque na UI. Não confundir com `fmtAxisBRL` de `lib/format.ts` (plano 074,
+ * fatia C — renomeado do antigo `fmtCompactBRL` daquele módulo, que violava o registro BR
+ * com estilo "k": "R$ 5.8k") — aquele é o rótulo de PONTO do `BalanceTrajectory`, sem casa
+ * decimal (o gráfico disputa espaço com a própria linha); este aqui tem 1 casa decimal,
+ * apropriado ao respiro de um card. Nomes diferentes agora, mas o mesmo cuidado: nunca "k"/"M".
  *
  * Faixas (arredondamento meio-para-cima, nunca bancário):
  * - ≥ R$ 1.000.000 → 1 casa decimal + "mi" ("R$ 1,2 mi")

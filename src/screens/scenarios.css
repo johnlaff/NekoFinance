@@ -263,6 +263,16 @@
   display: flex;
   justify-content: space-between;
   gap: 8px;
+  flex-wrap: wrap;
+}
+/* Semáforo da reserva pós-financiamento (plano 074/fatia C): ícone + palavra + cor, nunca só
+ * cor — mesma disciplina do resto da superfície. */
+.scn-loan-summary__reserve {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 /* --- Compare surface --- */
@@ -540,6 +550,18 @@
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-dasharray: 6 5;
+}
+
+/* Mesmo ritmo vertical do título do `DualLineChart` (`.scn-dualchart__head`) — os dois
+ * gráficos ficam empilhados na mesma superfície e tinham margens de título diferentes
+ * (8px do `.scn-section-title` cru vs 4px daqui). Sem legenda própria: gráfico de série
+ * única, o zero tracejado já separa melhor/pior por posição. */
+.scn-diffchart__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
 }
 
 .scn-diffchart {
