@@ -1579,7 +1579,7 @@ function DualLineChart({ compare }: { compare: ScenarioCompareDto }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<number | null>(null);
   const points = compare.month_end;
-  const W = 720;
+  const W = 1000;
   const H = 220;
   const padLeft = 72; // gutter dos ticks Y — "R$ 35 mil" em mono 10.5px ocupa ~56px + respiro
   const padRight = 12 + CHART_LABEL_GUTTER;
@@ -1786,9 +1786,13 @@ function DualLineChart({ compare }: { compare: ScenarioCompareDto }) {
               />
               <text
                 className="scn-dualchart__worst"
-                x={Math.max(padLeft + 20, Math.min(W - padRight - 20, x(worstIdx)))}
+                x={
+                  x(worstIdx) < padLeft + 60
+                    ? x(worstIdx) + 8
+                    : Math.min(W - padRight - 20, x(worstIdx))
+                }
                 y={Math.min(y(worst.scenario_balance_cents) + 18, H - padBottom - 4)}
-                textAnchor="middle"
+                textAnchor={x(worstIdx) < padLeft + 60 ? "start" : "middle"}
                 fill={
                   worst.scenario_balance_cents < 0
                     ? "var(--danger-400)"
@@ -1876,7 +1880,7 @@ function DualLineChart({ compare }: { compare: ScenarioCompareDto }) {
 function DiffSparkline({ monthEnd }: { monthEnd: ScenarioCompareDto["month_end"] }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<number | null>(null);
-  const W = 720;
+  const W = 1000;
   const H = 150;
   // Gutter um pouco maior que o mínimo geométrico: com `textAnchor="middle"` nos rótulos do
   // meio, o mês nas duas pontas (jan/dez) ainda teria metade do texto pra fora do viewBox só
