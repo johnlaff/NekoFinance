@@ -4,7 +4,7 @@ Use this directory for Spec-Driven Development artifacts.
 
 Implemented so far:
 
-- `001-sqlite-local-schema` — normalized local schema (36 migrations today). An FTS5 table was
+- `001-sqlite-local-schema` — normalized local schema (41 migrations today). An FTS5 table was
   added (migration 0015) then dropped (migration 0010-drop) once it turned out to be unpopulated;
   search is client-side.
 - `002-google-oauth-pkce` — OAuth desktop flow, Sheets/local-xlsx import, layout detection.
@@ -15,7 +15,8 @@ Implemented so far:
 - `010-import-manual-robusto`, `011-engine-five-types`, `012-stable-identity-reconciliation`.
 - `013-advanced-reconciliation` — three-way merge + conflict gate.
 - `014-tags`, `015-categories-to-tags`, `016-recurrence`.
-- `017-multi-titular` (splits read-side), `018-write-back-preview` (read-only, flag off).
+- `017-multi-titular` (splits read-side), `018-write-back-preview` (shipped preview-first; the
+  write gate has since been enabled — sends require diff approval + confirmation, see ADR-0003).
 - `019-month-views` — Totais, Horizonte multi-month, Anual.
 - `020-classificacao-notas-5-tipos` — reopens the engine model to make all 5 method buckets
   (entrada/saída/diário/cartão/economia) plus patrimônio explicit, and classifies note line items

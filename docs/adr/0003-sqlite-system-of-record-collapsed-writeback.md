@@ -10,14 +10,18 @@ and what-if scenarios. The two representations cannot be kept losslessly equal i
 
 The system of record is **phased**, matching what actually ships:
 
-- **Import-only phase (current).** The spreadsheet is the system of record — the owner hand-edits it
-  daily and re-imports. SQLite is the local mirror + enrichment layer (splits, tags, payment method,
-  reconciliation base). Three-way merge (spec 013) preserves local enrichment without letting the
-  sheet overwrite it blindly; write-back is preview-only behind a disabled flag (spec 018).
-- **Bidirectional phase (target).** Once gated, per-cell-checksum write-back is enabled and tested,
+- **Import-only phase (shipped first).** The spreadsheet is the system of record — the owner
+  hand-edits it daily and re-imports. SQLite is the local mirror + enrichment layer (splits, tags,
+  payment method, reconciliation base). Three-way merge (spec 013) preserves local enrichment
+  without letting the sheet overwrite it blindly; write-back started preview-only behind a
+  disabled flag (spec 018).
+- **Bidirectional phase (current).** The write-back gate (`WRITE_BACK_ENABLED` in
+  `src-tauri/src/google_sheets/write_back.rs`) is now on: approved diffs are actually sent to the
+  sheet. Every send still requires the two-step human path — approve the structured diff, then
+  confirm — plus freshness re-verification, formula/anchor column blocklist, and audit logging.
   SQLite becomes the system of record and the spreadsheet a human-friendly projection of it.
 
-The end-state design below describes the **bidirectional phase**:
+The design below describes the **bidirectional phase**:
 
 1. **Import** parses sheet rows into normalized transactions/splits (layout detection + mapping,
    spec 002). Imports are deduplicated by checksum; the sheet is never the loser of a sync.

@@ -39,6 +39,7 @@ Full Spec Kit CLI adoption is deferred until the first large feature where slash
 - Coverage target: 90% for included TypeScript source today, with explicit exclusions for bootstrap, generated, type-only, and no-runtime-behavior files. Critical finance/agent modules should target 95-100% meaningful branch coverage when created.
 - Evals are required before enabling agent actions that diagnose finances or propose sheet writes.
 - Playwright visual-smoke tests are available for agent UI validation but are not part of the default local gate until the UI stabilizes.
+- The UI anti-pattern audit (`npm run ui:audit`, `scripts/impeccable-check.sh`) **is part of the blocking gate** — `npm run check` fails when it finds UI anti-patterns.
 - React Doctor is advisory for React-specific code analysis and must run with telemetry disabled locally.
 
 ## Project-Specific Calisthenics
