@@ -1,5 +1,5 @@
 import "./mia.css";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Send, Sparkles } from "lucide-react";
 import { Button } from "../design-system/components/Button";
 import { MiaAvatar } from "../design-system/components/MiaAvatar";
@@ -114,13 +114,25 @@ function buildInitialMessages(ans: SpendAnswer | null): Message[] {
 
 function BubbleText({ text }: { text: string }) {
   const parts = text.split(/\*\*(.+?)\*\*/g);
-  return (
-    <>
-      {parts.map((part, i) =>
-        i % 2 === 1 ? <strong key={`b-${i}-${part}`}>{part}</strong> : part,
-      )}
-    </>
-  );
+  // Key = offset do segmento no texto original: estável e único entre os segmentos
+  // renderizados. Segmentos vazios (ex.: texto que COMEÇA com **bold**) são pulados —
+  // não renderizam nada e, como não avançam o offset, colidiriam com a key do vizinho.
+  const nodes: React.ReactNode[] = [];
+  let offset = 0;
+  parts.forEach((part, i) => {
+    const bold = i % 2 === 1;
+    if (part !== "") {
+      nodes.push(
+        bold ? (
+          <strong key={`seg-${offset}`}>{part}</strong>
+        ) : (
+          <Fragment key={`seg-${offset}`}>{part}</Fragment>
+        ),
+      );
+    }
+    offset += part.length + (bold ? 4 : 0);
+  });
+  return <>{nodes}</>;
 }
 
 /* ------------------------------------------------------------------ */

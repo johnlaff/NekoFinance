@@ -419,13 +419,13 @@ function TrendCard({ trend, maxAbs, activeYear, activeMonth }: TrendCardProps) {
       </div>
       <div className="card__body">
         <div className="mes-trend">
-          {trend.map((t, i) => {
+          {trend.map((t) => {
             const h = (Math.abs(t.performance_cents) / maxAbs) * 100;
             const pos = t.performance_cents >= 0;
             const isSel = t.year === activeYear && t.month === activeMonth;
             const abbr = MES_ABBR[t.month - 1] ?? "";
             return (
-              <div className="mes-trend__col" key={`${t.year}-${t.month}-${i}`}>
+              <div className="mes-trend__col" key={`${t.year}-${t.month}`}>
                 <span className="mes-trend__val-label">
                   {fmtCompact(t.performance_cents)}
                 </span>

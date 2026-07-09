@@ -230,12 +230,13 @@ function TagPicker({
   selectedTags: string[];
   dispatch: Dispatch<FormAction>;
 }) {
+  const selectedSet = new Set(selectedTags);
   return (
     <div>
       <span style={label}>Tags</span>
       <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
         {tags.map((t) => {
-          const on = selectedTags.includes(t.id);
+          const on = selectedSet.has(t.id);
           const tagBtnStyle: React.CSSProperties = {
             ...TAG_BTN_BASE,
             background: on ? "var(--surface-selected)" : "var(--surface-2)",
