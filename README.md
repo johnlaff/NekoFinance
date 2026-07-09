@@ -34,7 +34,7 @@ tokens, spreadsheet data, or personal finance caches are committed — see Priva
   tags, recurrence, reserve tracking + snapshots, sheet layouts + note line-item classification,
   three-way-merge reconciliation, sync log. FTS5 was added then removed (never populated; search is
   client-side). SQLite is the system of record; the spreadsheet stays a human-friendly projection
-  kept in sync by import + approved write-back (see `docs/adr/0003`).
+  kept in sync by import + approved write-back (see `docs/adr/0003-sqlite-system-of-record-collapsed-writeback.md`).
 
 ## Stack
 

@@ -43,13 +43,13 @@ The current design system is directionally right but too generic in examples and
 
 Problems to fix:
 - Generated DS examples use English/USD/generic merchants.
-- Live app/specs require PT-BR/BRL and domain-specific labels: saldo projetado, Diário hoje, Crédito no mês, Reserva, Régua 1, Régua 2, Fatura, Economia, Caixa de revisão.
+- Live app/specs require PT-BR/BRL and domain-specific labels: saldo projetado, Diário hoje, Crédito no mês, Reserva, Fatura, Economia, Caixa de revisão.
 - There are two component worlds: generated JSX/global bundle and smaller production TSX components.
 - Rich DS concepts exist but are underused or not production-ready: OwnerChip, TransactionRow, ApprovalDiffCard, ChatBubble, Citation, HealthBadge, chart language.
 - Some app surfaces reimplement cards, tables, filters, settings panels, import states, and pockets forms outside the DS.
 - The design system must become an implementation contract, not just a visual kit.
 - `src/design-system/readme.md` still reads like a greenfield proposal, but production already has TSX screens and tested components.
-- Production has honest current/future separation: Dashboard, Transações, Configurações/import, Metodologia, and a Mia placeholder exist; full chat, write-back approval flow, Crédito/Fatura, Caixa de revisão, and advanced reconciliation are future/partial.
+- Production has honest current/future separation: Dashboard, Transações, Configurações/import, Metodologia, and a Mia placeholder exist; full chat, a dedicated Crédito/Fatura module, and Caixa de revisão are future/partial; the write-back approval flow (diff + double confirmation) and advanced reconciliation shipped.
 - Current tokens cover brand, text, surfaces, money, owners, motion, spacing, elevation, and charts, but not enough semantic state tokens for review/confidence, source cells, checksum conflicts, rollback, privacy, connection lifecycle, liquidity, invoice pressure, or density.
 - Some production components still use inline styles or screen-local classes; the updated DS should define migration targets, not demand a big-bang rewrite.
 - Dashboard IA lesson (the central UX problem to solve): the Dashboard accreted feature cards one at a time (forecast hero, safe-to-spend, deficit notice, a predictability/coverage card, an adaptation/“colchão” card, a four-tile metric grid, a per-month performance strip, the daily projection table, a Mia placeholder, a pockets card). Each was correct in isolation; stacked, they degraded into an incoherent vertical pile with no information hierarchy. The redesign’s first job is a real Dashboard IA — decide what is the single hero, what is secondary, what collapses behind disclosure, what moves to a dedicated screen — not to style more cards. Card stacking is the failure mode here; reach for sectioning, progressive disclosure, and a deliberate reading order instead.
@@ -81,11 +81,9 @@ Important concepts:
 - Account, Transaction, Split, Payment Method, Category.
 - Daily Budget, Daily Check-in.
 - Régua 1 / Diário: debit, PIX, and cash daily spend against daily budget.
-- Régua 2 / Fatura: credit card spending and invoice pressure against income.
 - Reserve: first-class emergency fund metric with target months, current months, and trend.
 - Liquidity pockets: liquid, restricted, illiquid, reserve, and other account classes that change projection meaning.
-- Sheet Mapping and Sync Log.
-- System of record is phased: during the current import-only phase the spreadsheet is the system of record and SQLite is the local mirror + enrichment layer; SQLite becomes the system of record only in the future gated bidirectional write-back phase (see `docs/adr/0003`).
+- System of record is phased and the bidirectional phase is CURRENT: SQLite is the system of record and the spreadsheet is a human-friendly projection kept in sync by import + approved write-back (see `docs/adr/0003-sqlite-system-of-record-collapsed-writeback.md`).
 - All material Google Sheets writes require structured diff, validation, checksum verification, explicit human approval, and rollback visibility.
 </domain_model>
 
@@ -334,11 +332,11 @@ Design how to show:
 - shadowed/ignored import item
 - source cell that is intentionally untouchable
 - protected `Data`, `Saldo`, `Entradas`, `%`, and meaningful `Diário` notes
-- phased ownership without confusing the user: in the current import-only phase the spreadsheet is canonical and SQLite is the local mirror; SQLite becomes system-of-record only in the future gated bidirectional phase (see `docs/adr/0003`)
+- phased ownership without confusing the user: SQLite is the system of record today; every sheet write still passes diff approval + confirmation (see `docs/adr/0003-sqlite-system-of-record-collapsed-writeback.md`)
 
 6. Methodology-aware patterns
 Design how to show:
-- Régua 1 and Régua 2 side by side without merging their meanings.
+- Cartão/Fatura as a single outflow lump on the due date, without double-counting forecast impact.
 - Diário as a single forward-planning number.
 - Credit/fatura pressure without double-counting forecast impact.
 - Reserve months and trend.
