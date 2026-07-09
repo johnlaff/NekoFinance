@@ -276,16 +276,61 @@
   white-space: nowrap;
 }
 
+/* --- Veredito (Nível 1, plano 074/fatia B) ---
+ * Gêmeo VISÍVEL da região aria-live (que segue existindo e anunciando cada recomputo) — a
+ * resposta a "é seguro?" de relance, acima da grade de KPIs. Ícone + palavra + cor, nunca só
+ * cor; borda tintada reforça sem depender só do texto. */
+.scn-verdict {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  border: var(--bw-hair) solid var(--border);
+  background: var(--surface);
+}
+.scn-verdict--ok {
+  background: var(--success-tint);
+  border-color: color-mix(in srgb, var(--success-400) 30%, transparent);
+}
+.scn-verdict--risk {
+  background: var(--danger-tint);
+  border-color: color-mix(in srgb, var(--danger-400) 30%, transparent);
+}
+.scn-verdict__icon {
+  flex: none;
+  margin-top: 1px;
+}
+.scn-verdict--ok .scn-verdict__icon {
+  color: var(--success-400);
+}
+.scn-verdict--risk .scn-verdict__icon {
+  color: var(--danger-400);
+}
+.scn-verdict__headline {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--text-strong);
+}
+.scn-verdict__subline {
+  margin: 4px 0 0;
+  font-size: var(--fs-label);
+  color: var(--text-muted);
+}
+
 .scn-kpis {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: 12px;
 }
-/* Anatomia do card (plano 074, fatia A): rótulo → MANCHETE (só o valor do cenário, compacto,
- * uma linha) → linha de EVIDÊNCIA (real → cenário, precisão cheia, pode quebrar) → delta.
- * O bug medido em dogfooding era duas leituras de precisão cheia (13px + 17px) numa mesma
- * linha sem quebra — 240px de conteúdo espremidos num card de 190px. Nunca mais duas leituras
- * de precisão cheia em tamanho de manchete na mesma linha nowrap. */
+/* Anatomia do card (plano 074: fatia A + fatia B didática): rótulo → ESTADO do método (Nível 2:
+ * ícone + palavra + cor — a HERO) → linha de origem "Antes: …" quando o estado transiciona real→
+ * cenário → MANCHETE (Nível 3: só o valor do cenário, compacto, uma linha) → linha de EVIDÊNCIA
+ * (real → cenário, precisão cheia, pode quebrar) → delta. O bug medido em dogfooding era duas
+ * leituras de precisão cheia (13px + 17px) numa mesma linha sem quebra — 240px de conteúdo
+ * espremidos num card de 190px. Nunca mais duas leituras de precisão cheia em tamanho de
+ * manchete na mesma linha nowrap. */
 .scn-kpi {
   padding: 14px 16px;
   border-radius: var(--radius-md);
@@ -302,13 +347,39 @@
   letter-spacing: 0.03em;
   color: var(--text-faint);
 }
+/* Estado do método (Nível 2) — a nova HERO do card, maior/mais forte que a manchete numérica
+ * abaixo dela: dá ao valor compacto um rótulo qualitativo antes dele (resolve "de quem é esse
+ * número"). */
+.scn-kpi__state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-title);
+  font-weight: 700;
+}
+.scn-kpi__state-word {
+  line-height: 1.15;
+}
+.scn-kpi__state-origin {
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+  margin-top: -2px;
+}
+.scn-kpi__state-line {
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+  line-height: 1.3;
+}
+/* Manchete (Nível 3): demovida da fatia A — a HERO agora é `.scn-kpi__state` acima dela. Menor
+ * e mais leve (peso/cor) que o estado, mas ainda legível: continua sendo o valor do cenário. */
 .scn-kpi__headline {
   display: block;
   font-family: var(--font-money);
   font-variant-numeric: tabular-nums;
-  font-size: var(--fs-title);
-  font-weight: 700;
-  color: var(--text-strong);
+  font-size: var(--fs-money-md);
+  font-weight: 600;
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

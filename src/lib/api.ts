@@ -1041,6 +1041,9 @@ export interface ScenarioCompareDto {
   real_safe_to_spend_today_cents: number;
   real_binding_guardrail: "cash" | "savings";
   real_cost_of_living_cents: number;
+  /** Renda do mês corrente (Entradas) — plano 074 (fatia B): classifica Custo de vida
+   * ("Dentro da renda"/"Acima da renda") sem re-derivar a renda no frontend. */
+  real_income_cents: number;
 
   scenario_month_end: MonthEnd[];
   scenario_deepest_deficit: DayPoint | null;
@@ -1048,6 +1051,7 @@ export interface ScenarioCompareDto {
   scenario_safe_to_spend_today_cents: number;
   scenario_binding_guardrail: "cash" | "savings";
   scenario_cost_of_living_cents: number;
+  scenario_income_cents: number;
 
   month_end: ScenarioMonthEnd[];
   deepest_deficit_delta_cents: number | null;
