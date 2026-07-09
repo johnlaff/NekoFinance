@@ -293,6 +293,12 @@
   background: var(--success-tint);
   border-color: color-mix(in srgb, var(--success-400) 30%, transparent);
 }
+/* Nível intermediário honesto: menor saldo na banda "apertado" do Termômetro — âmbar, o MESMO
+ * tom que o card "Buraco do futuro" dá a essa banda (o banner nunca contradiz o card). */
+.scn-verdict--tight {
+  background: var(--warning-tint);
+  border-color: color-mix(in srgb, var(--warning-400) 30%, transparent);
+}
 .scn-verdict--risk {
   background: var(--danger-tint);
   border-color: color-mix(in srgb, var(--danger-400) 30%, transparent);
@@ -303,6 +309,9 @@
 }
 .scn-verdict--ok .scn-verdict__icon {
   color: var(--success-400);
+}
+.scn-verdict--tight .scn-verdict__icon {
+  color: var(--warning-400);
 }
 .scn-verdict--risk .scn-verdict__icon {
   color: var(--danger-400);

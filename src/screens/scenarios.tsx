@@ -938,11 +938,17 @@ function KpiCard({
   const stateAnnouncement = isTransition
     ? `${scenarioState.label} (antes ${realState.label})`
     : scenarioState.label;
+  // O PORQUÊ do estado ("Limitado pela régua de poupança…") entra no anúncio: a linha visual é
+  // aria-hidden (fonte única no aria-label), então sem isto o leitor de tela ouviria "Segure
+  // hoje" sem a razão que a tela mostra.
+  const stateWithReason = scenarioState.line
+    ? `${stateAnnouncement} — ${scenarioState.line}`
+    : stateAnnouncement;
 
   return (
     <article
       className="scn-kpi"
-      aria-label={`${label}: ${stateAnnouncement}, real ${fmtBRL(realCents)}, cenário ${fmtBRL(scenarioCents)}`}
+      aria-label={`${label}: ${stateWithReason}, real ${fmtBRL(realCents)}, cenário ${fmtBRL(scenarioCents)}`}
     >
       <span className="scn-kpi__label">
         <InfoPopover term={term} hideMarker>
@@ -994,33 +1000,68 @@ function changeLabel(desc: string): string {
   return clean.length > 60 ? `${clean.slice(0, 57)}…` : clean;
 }
 
+type VerdictTier = "risk" | "tight" | "ok";
+
 interface ScenarioVerdict {
-  risk: boolean;
+  tier: VerdictTier;
   headline: string;
   subline: string;
 }
 
 /** Veredito (Nível 1, plano 074/fatia B): a resposta a "é seguro?" de relance, ANTES da grade de
- * KPIs — determinístico a partir do `deepest_deficit` do CENÁRIO, o mesmo dado que já alimenta o
- * card "Buraco do futuro" e o gráfico (nunca um número novo). Tom GPS-não-ameaça: mesmo no ramo
- * de risco a subline sugere uma ação, não um alarme. */
+ * KPIs — determinístico a partir do menor saldo do CENÁRIO, o mesmo dado que já alimenta o card
+ * "Buraco do futuro" e o gráfico (nunca um número novo). O TOM vem do MESMO predicado do card
+ * (`saldoBand`, o Termômetro canônico), em três níveis: banda negativa/crítica → risco (vermelho);
+ * banda apertada → intermediário honesto (âmbar) — sem isto o banner diria "no azul o ano todo"
+ * enquanto o card logo abaixo mostra "Apertado" em âmbar sobre o MESMO número; banda ok/folga →
+ * azul (verde). Tom GPS-não-ameaça: cada ramo ruim sugere uma ação, não um alarme.
+ *
+ * Menor saldo: `deepest_deficit` (resolução diária) quando o motor o tem; quando null (horizonte
+ * sem pontos diários), cai honestamente para o mínimo do `scenario_month_end` (resolução mensal —
+ * o mesmo dado do gráfico). Sem nenhum dos dois não há projeção nenhuma: nível ok com a subline
+ * dizendo isso, em vez de inventar um menor saldo. */
 function scenarioVerdict(compare: ScenarioCompareDto): ScenarioVerdict {
   const deficit = compare.scenario_deepest_deficit;
-  const balance = deficit?.balance_cents ?? 0;
-  if (balance < 0) {
-    const monthLabel = deficit ? (MES[monthOf(deficit.date)] ?? "").toLowerCase() : "";
+  let minCents: number | null = null;
+  let monthIdx: number | null = null; // 0–11
+  if (deficit) {
+    minCents = deficit.balance_cents;
+    monthIdx = monthOf(deficit.date);
+  } else if (compare.scenario_month_end.length > 0) {
+    const worst = compare.scenario_month_end.reduce((a, b) =>
+      b.balance_cents < a.balance_cents ? b : a,
+    );
+    minCents = worst.balance_cents;
+    monthIdx = worst.month - 1;
+  }
+  if (minCents == null) {
     return {
-      risk: true,
-      headline: `Fura o caixa em ${monthLabel} — faltam ${fmtCompactBRL(Math.abs(balance))}.`,
+      tier: "ok",
+      headline: "Este cenário se mantém no azul o ano todo.",
+      subline: "Sem pontos de projeção no horizonte para apontar um menor saldo.",
+    };
+  }
+  const band = saldoBand(minCents);
+  const monthLabel = (MES[monthIdx ?? -1] ?? "").toLowerCase();
+  if (band.key === "negative" || band.key === "critical") {
+    return {
+      tier: "risk",
+      headline: `Fura o caixa em ${monthLabel} — faltam ${fmtCompactBRL(Math.abs(minCents))}.`,
       subline:
         "Antecipe uma entrada, reduza uma parcela ou cubra com um empréstimo antes desse mês.",
     };
   }
-  const band = saldoBand(balance);
+  if (band.key === "tight") {
+    return {
+      tier: "tight",
+      headline: `Fica apertado em ${monthLabel} — menor saldo ${fmtCompactBRL(minCents)}.`,
+      subline: "Segure gastos grandes perto dessa data ou reforce o colchão antes.",
+    };
+  }
   return {
-    risk: false,
+    tier: "ok",
     headline: "Este cenário se mantém no azul o ano todo.",
-    subline: `Menor saldo no período: ${fmtBRL(balance)} — ${band.label}.`,
+    subline: `Menor saldo no período: ${fmtBRL(minCents)} — ${band.label}.`,
   };
 }
 
@@ -1029,16 +1070,12 @@ function scenarioVerdict(compare: ScenarioCompareDto): ScenarioVerdict {
 function ScenarioVerdictBanner({ compare }: { compare: ScenarioCompareDto }) {
   const verdict = scenarioVerdict(compare);
   return (
-    <div
-      className={
-        "scn-verdict" + (verdict.risk ? " scn-verdict--risk" : " scn-verdict--ok")
-      }
-    >
+    <div className={`scn-verdict scn-verdict--${verdict.tier}`}>
       <span className="scn-verdict__icon" aria-hidden="true">
-        {verdict.risk ? (
-          <AlertTriangle size={20} strokeWidth={1.75} />
-        ) : (
+        {verdict.tier === "ok" ? (
           <CheckCircle2 size={20} strokeWidth={1.75} />
+        ) : (
+          <AlertTriangle size={20} strokeWidth={1.75} />
         )}
       </span>
       <div>
