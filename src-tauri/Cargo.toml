@@ -32,11 +32,11 @@ reqwest = { version = "0.13", features = ["json", "form"] }
 open = "5"
 rand = "0.10"
 chrono = "0.4"
-calamine = "=0.35.0"
+calamine = "=0.36.0"
 # `zip` is already in the tree transitively via `calamine` (resolves to 7.2.0); pinned as a
 # direct dep at that SAME resolved version so the `.xlsx` cell-comment reader (import_local_xlsx)
 # can open `xl/comments*.xml` without pulling a second `zip` major version into the graph.
-zip = "=7.2.0"
+zip = "=8.6.0"
 # Direct dep pinned at the fixed line (>=0.41) for parsing `xl/comments*.xml` — the transitive
 # `quick-xml 0.39.4` pulled in by `calamine`/`plist` is under RUSTSEC-2026-0194/0195 (ignored for
 # that path in `.cargo/audit.toml`, which parses only Tauri's own build-time plist, not
