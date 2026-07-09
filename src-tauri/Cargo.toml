@@ -44,7 +44,7 @@ zip = "=8.6.0"
 # the patched line even though this duplicates a second `quick-xml` version in the dep tree.
 quick-xml = "=0.41.0"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
-aes-gcm = "0.10"
+aes-gcm = "0.11"
 sha2 = "0.11"
 hex = "0.4"
 # Standalone notifier for the `--remind` CLI path (plan 039): the OS scheduler
