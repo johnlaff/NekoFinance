@@ -126,7 +126,9 @@ const CONSTANT_HALF_FLOOR = 100_000;
  * quando ele está perto/na série, escondê-lo mentiria por omissão.
  */
 export function niceChartScale(values: number[], targetTicks = 3): ChartScale {
-  if (values.length === 0) return { min: 0, max: 1, ticks: [0] };
+  // Série vazia rende o mesmo domínio da série constante em 0 — nunca um eixo
+  // degenerado (max sem tick correspondente).
+  if (values.length === 0) return niceChartScale([0], targetTicks);
   let dataMin = Math.min(...values);
   let dataMax = Math.max(...values);
 

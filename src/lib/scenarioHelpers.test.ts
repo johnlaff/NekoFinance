@@ -110,6 +110,17 @@ describe("niceChartScale", () => {
     expect(s.max).toBeGreaterThan(3_084_059);
   });
 
+  it("série vazia rende domínio coerente (todo tick dentro de [min, max])", () => {
+    const s = niceChartScale([]);
+    expect(s.min).toBeLessThan(s.max);
+    expect(s.ticks.length).toBeGreaterThanOrEqual(2);
+    for (const t of s.ticks) {
+      expect(t).toBeGreaterThanOrEqual(s.min);
+      expect(t).toBeLessThanOrEqual(s.max);
+    }
+    expect(s.ticks).toContain(0);
+  });
+
   it("o domínio sempre contém todos os dados (nunca clipa uma linha)", () => {
     const cases = [
       [-845_213, 3_084_059],

@@ -496,9 +496,12 @@ function HypotheticalList({ scenarioId }: { scenarioId: string }) {
   const groups: LoanGroup[] = [...groupsById.entries()].map(([groupId, list]) => {
     const principal = list.find((r) => r.type === "income") ?? null;
     const installments = list.filter((r) => r.type !== "income");
-    const expectedTotal =
-      installments.map((r) => expectedInstallments(r.description)).find((n) => n) ??
-      installments.length;
+    // MAIOR N entre as parcelas restantes (não a primeira): robusto a descrição fora do
+    // padrão no meio do grupo; com todas as parcelas excluídas, 0 — o summary trata.
+    const ns = installments
+      .map((r) => expectedInstallments(r.description))
+      .filter((n): n is number => n != null);
+    const expectedTotal = ns.length > 0 ? Math.max(...ns) : installments.length;
     return { groupId, principal, installments, expectedTotal };
   });
 
@@ -577,8 +580,16 @@ function HypotheticalList({ scenarioId }: { scenarioId: string }) {
                         {" · "}
                       </>
                     )}
-                    Paga {g.expectedTotal}× de{" "}
-                    <Money cents={installmentCents} size="inherit" />
+                    {/* Grupo sem parcela nenhuma (todas excluídas à mão): não inventa
+                        "Paga 0× de R$ 0,00" — diz o que restou. */}
+                    {g.installments.length > 0 ? (
+                      <>
+                        Paga {g.expectedTotal}× de{" "}
+                        <Money cents={installmentCents} size="inherit" />
+                      </>
+                    ) : (
+                      <>Sem parcelas restantes</>
+                    )}
                   </>
                 ) : (
                   <>
