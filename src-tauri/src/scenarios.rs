@@ -548,6 +548,9 @@ pub struct ScenarioCompareDto {
     pub real_safe_to_spend_today_cents: i64,
     pub real_binding_guardrail: String,
     pub real_cost_of_living_cents: i64,
+    /// Renda do mês corrente (Entradas) — plano 074 (fatia B): a UI classifica Custo de vida
+    /// ("Dentro da renda"/"Acima da renda") sem re-derivar a renda; o motor já a calcula.
+    pub real_income_cents: i64,
 
     pub scenario_month_end: Vec<forecast_cmds::MonthEndDto>,
     pub scenario_deepest_deficit: Option<forecast_cmds::DayPointDto>,
@@ -555,6 +558,7 @@ pub struct ScenarioCompareDto {
     pub scenario_safe_to_spend_today_cents: i64,
     pub scenario_binding_guardrail: String,
     pub scenario_cost_of_living_cents: i64,
+    pub scenario_income_cents: i64,
 
     pub month_end: Vec<ScenarioMonthEnd>,
     pub deepest_deficit_delta_cents: Option<i64>,
@@ -900,6 +904,17 @@ fn current_month_performance(fc: &forecast::Forecast, today: NaiveDate) -> i64 {
         .unwrap_or(0)
 }
 
+/// Renda do mês corrente (`MonthMetric.income_cents`) — plano 074 (fatia B): exposta para os
+/// cards do compare classificarem Custo de vida ("Dentro da renda"/"Acima da renda") na UI sem
+/// RE-DERIVAR a renda no comando (fonte única: o motor já soma as Entradas do mês).
+fn current_month_income(fc: &forecast::Forecast, today: NaiveDate) -> i64 {
+    fc.months
+        .iter()
+        .find(|m| m.year == today.year() && m.month == today.month())
+        .map(|m| m.income_cents)
+        .unwrap_or(0)
+}
+
 pub(crate) async fn get_scenario_forecast_inner(
     pool: &SqlitePool,
     scenario_id: &str,
@@ -1038,6 +1053,8 @@ pub(crate) async fn get_scenario_forecast_inner(
     let scenario_cost_of_living_cents = current_month_cost_of_living(&scenario_fc, today);
     let real_performance_cents = current_month_performance(&real_fc, today);
     let scenario_performance_cents = current_month_performance(&scenario_fc, today);
+    let real_income_cents = current_month_income(&real_fc, today);
+    let scenario_income_cents = current_month_income(&scenario_fc, today);
 
     let real_month_end: Vec<forecast_cmds::MonthEndDto> = real_fc
         .month_end
@@ -1192,6 +1209,7 @@ pub(crate) async fn get_scenario_forecast_inner(
         real_safe_to_spend_today_cents: real_sts.amount_cents,
         real_binding_guardrail: guardrail_str(real_sts.binding),
         real_cost_of_living_cents,
+        real_income_cents,
 
         scenario_month_end,
         scenario_deepest_deficit,
@@ -1199,6 +1217,7 @@ pub(crate) async fn get_scenario_forecast_inner(
         scenario_safe_to_spend_today_cents: scenario_sts.amount_cents,
         scenario_binding_guardrail: guardrail_str(scenario_sts.binding),
         scenario_cost_of_living_cents,
+        scenario_income_cents,
 
         month_end,
         deepest_deficit_delta_cents,
@@ -1699,6 +1718,41 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(b.scenario_month_end, c.scenario_month_end);
+    }
+
+    // Plano 074 (fatia B): a UI classifica Custo de vida ("Dentro da renda"/"Acima da renda")
+    // usando a renda do mês exposta no DTO — o comando expõe (não re-deriva) o que o motor já
+    // soma em `MonthMetric.income_cents`; a Entrada hipotética do cenário entra na renda do
+    // CENÁRIO, o real fica intocado.
+    #[tokio::test]
+    async fn compare_exposes_current_month_income_for_custo_de_vida_classification() {
+        let p = pool().await;
+        seed_baseline(&p).await; // Entrada real: 500.000 em 2026-08-01.
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        add_scenario_transaction(
+            &p,
+            &sc.id,
+            "income",
+            100_000,
+            "Bico extra",
+            "2026-08-05",
+            None,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let today = d("2026-08-01");
+        let compare = get_scenario_forecast_inner(&p, &sc.id, today)
+            .await
+            .unwrap();
+        assert_eq!(compare.real_income_cents, 500_000);
+        assert_eq!(
+            compare.scenario_income_cents, 600_000,
+            "a Entrada hipotética soma à renda do mês só no ramo cenário"
+        );
     }
 
     // Teste 7: isolamento de cenário segue intocado — o forecast REAL não vê a linha hipotética.

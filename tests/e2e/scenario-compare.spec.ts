@@ -22,12 +22,14 @@ const COMPARE = {
   real_safe_to_spend_today_cents: 456_789,
   real_binding_guardrail: "cash",
   real_cost_of_living_cents: 3_084_059,
+  real_income_cents: 4_000_000,
   scenario_month_end: [{ year: 2026, month: 12, balance_cents: 3_070_000 }],
   scenario_deepest_deficit: { date: "2026-08-01", balance_cents: -845_213 },
   scenario_performance_cents: 987_654,
   scenario_safe_to_spend_today_cents: 234_567,
   scenario_binding_guardrail: "cash",
   scenario_cost_of_living_cents: 2_845_213,
+  scenario_income_cents: 3_800_000,
   // Trajetória mensal: real e cenário DIVERGEM no meio do horizonte e CONVERGEM no fim — o
   // cenário exato que colidia os rótulos de fim de linha antes da fatia A.
   month_end: [
@@ -164,5 +166,24 @@ test.describe("Superfície de comparação (real × cenário)", () => {
     for (const labelX of labelXs) {
       expect(labelX).toBeGreaterThan(lastPointX);
     }
+  });
+
+  // Plano 074, fatia B: o veredito (Nível 1) precisa aparecer ACIMA da grade de KPI, no
+  // browser real, com ícone + palavra + cor — nunca só cor (o cenário mockado fura o caixa
+  // em agosto, então o veredito é o ramo de risco).
+  test("veredito (Nível 1) aparece acima da grade de KPI com ícone + palavra + cor", async ({
+    page,
+  }) => {
+    const banner = page.locator(".scn-verdict");
+    await expect(banner).toBeVisible();
+    await expect(banner).toHaveClass(/scn-verdict--risk/);
+    await expect(banner).toContainText("Fura o caixa");
+    // Nunca só cor: um ícone (svg) acompanha a palavra dentro do banner.
+    await expect(banner.locator("svg")).toBeVisible();
+
+    const kpis = page.locator(".scn-kpis");
+    const bannerBox = await banner.boundingBox();
+    const kpisBox = await kpis.boundingBox();
+    expect(bannerBox!.y).toBeLessThan(kpisBox!.y);
   });
 });

@@ -17,6 +17,8 @@ import {
   ArrowRight,
   TrendingUp,
   TrendingDown,
+  AlertTriangle,
+  CheckCircle2,
 } from "lucide-react";
 import {
   createScenario,
@@ -39,11 +41,14 @@ import { todayISO } from "../lib/format";
 import {
   fmtBRL,
   fmtCompactBRL,
+  saldoBand,
+  monthOf,
   MES,
   MES_ABBR,
   TYPE_META,
   type MovementType,
 } from "../lib/nkFormat";
+import { performanceStatus, custoVidaStatus } from "./totaisStatus";
 import { kindToFields } from "../lib/movement";
 import {
   stripScenarioMarker,
@@ -794,6 +799,89 @@ function LoanSection({ scenarioId }: { scenarioId: string }) {
 
 type DeltaSense = "higher-better" | "lower-better";
 
+// ---------------------------------------------------------------------------
+// Estados do método (Nível 2, plano 074/fatia B) — a HERO de cada card de KPI passa a ser o
+// ESTADO (ícone + palavra + cor), nunca só cor; o valor compacto desce a evidência. Os rótulos
+// vêm SEMPRE de um helper do método (`saldoBand`/`performanceStatus`/`custoVidaStatus`), nunca
+// de texto solto aqui — fidelidade verbatim é o requisito duro do plano.
+// ---------------------------------------------------------------------------
+
+/** `key` decide TRANSIÇÃO (comparar real × cenário) — pode divergir do `label` renderizado
+ * quando o rótulo embute um valor que muda toda hora sem ser uma mudança de ESTADO (ex.:
+ * "Pode gastar hoje": "Livre até R$X" tem `key = "livre"` fixo). `line` é uma frase adicional
+ * DATA-DERIVADA para a situação (nunca copy fixa de conceito — essa mora só no InfoPopover). */
+interface MethodState {
+  key: string;
+  label: string;
+  color: string;
+  Icon: typeof CheckCircle2;
+  line?: string;
+}
+
+/** Buraco do futuro & Saldo no fim: o Termômetro canônico (`saldoBand`, limiares ABSOLUTOS,
+ * nunca relativos ao baseline) — rótulos e cores usados verbatim. */
+function saldoState(cents: number): MethodState {
+  const band = saldoBand(cents);
+  const ok = band.key === "comfortable" || band.key === "ok";
+  return {
+    key: band.key,
+    label: band.label,
+    color: band.text,
+    Icon: ok ? CheckCircle2 : AlertTriangle,
+  };
+}
+
+/** Performance: `performanceStatus` verbatim ("Sobrou dinheiro"/"Faltou dinheiro" — ambos
+ * método). "Faltou dinheiro" é uma quebra real de limiar (disciplina do vermelho: cor cheia). */
+function performanceState(cents: number): MethodState {
+  const s = performanceStatus(cents);
+  const ok = s.level === "strong";
+  return {
+    key: s.label,
+    label: s.label,
+    color: ok ? "var(--success-400)" : "var(--danger-400)",
+    Icon: ok ? CheckCircle2 : AlertTriangle,
+  };
+}
+
+/** Custo de vida: `custoVidaStatus` verbatim ("Dentro da renda" é método; "Acima da renda" é
+ * copy do Neko para o estado ruim — ver totaisStatus.ts). Nesta superfície de decisão de alto
+ * risco, "Acima da renda" é tratada como quebra real de limiar (disciplina do vermelho: cor
+ * cheia) — mais rígida que o âmbar ambiente do card "Este mês" (TotaisScreen). */
+function custoVidaState(cost: number, income: number): MethodState {
+  const s = custoVidaStatus(cost, income);
+  const ok = s.label === "Dentro da renda";
+  return {
+    key: s.label,
+    label: s.label,
+    color: ok ? "var(--success-400)" : "var(--danger-400)",
+    Icon: ok ? CheckCircle2 : AlertTriangle,
+  };
+}
+
+/** Pode gastar hoje: sem helper de método pronto — estado por valor+régua. `cents` nunca é
+ * negativo (o motor já despeja no piso 0), então só há duas categorias. */
+function podeGastarState(cents: number, guardrail: "cash" | "savings"): MethodState {
+  if (cents > 0) {
+    return {
+      key: "livre",
+      label: `Livre até ${fmtCompactBRL(cents)}`,
+      color: "var(--success-400)",
+      Icon: CheckCircle2,
+    };
+  }
+  return {
+    key: "segure",
+    label: "Segure hoje",
+    color: "var(--warning-400)",
+    Icon: AlertTriangle,
+    line:
+      guardrail === "savings"
+        ? "Limitado pela régua de poupança (20–30% ao ano), não pelo caixa."
+        : "Limitado pelo caixa do mês, não pela régua de poupança.",
+  };
+}
+
 /** Abaixo de R$1 de diferença é ruído de arredondamento, não um resultado — um card mostrando
  * "−R$ 0,09" em vermelho alarma por nada. Este limiar é sobre MATERIALIDADE (existe mudança
  * que importa?), então usa o valor absoluto em centavos direto, sem depender do sentido
@@ -827,6 +915,8 @@ function KpiCard({
   scenarioCents,
   deltaCents,
   sense,
+  realState,
+  scenarioState,
 }: {
   label: string;
   term: { title: string; body: string };
@@ -834,19 +924,59 @@ function KpiCard({
   scenarioCents: number;
   deltaCents: number;
   sense: DeltaSense;
+  realState: MethodState;
+  scenarioState: MethodState;
 }) {
+  // STATE TRANSITIONS (plano 074/fatia B): quando o estado do cenário DIFERE do estado real, a
+  // hero vira o estado NOVO (cenário) com a origem numa linha discreta empilhada abaixo — nunca
+  // inline (rótulos de estado são compridos; inline quebraria feio numa coluna estreita com o
+  // ícone órfão — o inline "velho → novo" fica reservado à linha numérica de evidência). Compara
+  // por `key` (categoria), não pelo `label` renderizado: "Pode gastar hoje" embute o valor no
+  // label ("Livre até R$X"), que muda toda hora sem ser uma mudança de ESTADO.
+  const isTransition = realState.key !== scenarioState.key;
+  const { Icon } = scenarioState;
+  const stateAnnouncement = isTransition
+    ? `${scenarioState.label} (antes ${realState.label})`
+    : scenarioState.label;
+  // O PORQUÊ do estado ("Limitado pela régua de poupança…") entra no anúncio: a linha visual é
+  // aria-hidden (fonte única no aria-label), então sem isto o leitor de tela ouviria "Segure
+  // hoje" sem a razão que a tela mostra.
+  const stateWithReason = scenarioState.line
+    ? `${stateAnnouncement} — ${scenarioState.line}`
+    : stateAnnouncement;
+
   return (
     <article
       className="scn-kpi"
-      aria-label={`${label}: real ${fmtBRL(realCents)}, cenário ${fmtBRL(scenarioCents)}`}
+      aria-label={`${label}: ${stateWithReason}, real ${fmtBRL(realCents)}, cenário ${fmtBRL(scenarioCents)}`}
     >
       <span className="scn-kpi__label">
         <InfoPopover term={term} hideMarker>
           {label}
         </InfoPopover>
       </span>
-      {/* Manchete: só o valor do CENÁRIO, compacto — nunca dois valores de precisão cheia
-          numa linha sem quebra (essa era a causa do estouro medido em dogfooding). Precisão
+      {/* Estado (Nível 2): a HERO do card é o estado do método — ícone + palavra + cor, nunca só
+          cor. Visual-only: o aria-label do article (acima) já anuncia o estado por extenso. */}
+      <div
+        className="scn-kpi__state"
+        style={{ color: scenarioState.color }}
+        aria-hidden="true"
+      >
+        <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
+        <span className="scn-kpi__state-word">{scenarioState.label}</span>
+      </div>
+      {isTransition && (
+        <span className="scn-kpi__state-origin" aria-hidden="true">
+          Antes: {realState.label}
+        </span>
+      )}
+      {scenarioState.line && (
+        <p className="scn-kpi__state-line" aria-hidden="true">
+          {scenarioState.line}
+        </p>
+      )}
+      {/* Manchete (Nível 3): só o valor do CENÁRIO, compacto — nunca dois valores de precisão
+          cheia numa linha sem quebra (essa era a causa do estouro medido em dogfooding). Precisão
           cheia continua acessível: no aria-label do próprio article (acima). */}
       <span className="scn-kpi__headline" aria-hidden="true">
         {fmtCompactBRL(scenarioCents)}
@@ -868,6 +998,92 @@ function KpiCard({
 function changeLabel(desc: string): string {
   const clean = stripScenarioMarker(desc) || "Sem descrição";
   return clean.length > 60 ? `${clean.slice(0, 57)}…` : clean;
+}
+
+type VerdictTier = "risk" | "tight" | "ok";
+
+interface ScenarioVerdict {
+  tier: VerdictTier;
+  headline: string;
+  subline: string;
+}
+
+/** Veredito (Nível 1, plano 074/fatia B): a resposta a "é seguro?" de relance, ANTES da grade de
+ * KPIs — determinístico a partir do menor saldo do CENÁRIO, o mesmo dado que já alimenta o card
+ * "Buraco do futuro" e o gráfico (nunca um número novo). O TOM vem do MESMO predicado do card
+ * (`saldoBand`, o Termômetro canônico), em três níveis: banda negativa/crítica → risco (vermelho);
+ * banda apertada → intermediário honesto (âmbar) — sem isto o banner diria "no azul o ano todo"
+ * enquanto o card logo abaixo mostra "Apertado" em âmbar sobre o MESMO número; banda ok/folga →
+ * azul (verde). Tom GPS-não-ameaça: cada ramo ruim sugere uma ação, não um alarme.
+ *
+ * Menor saldo: `deepest_deficit` (resolução diária) quando o motor o tem; quando null (horizonte
+ * sem pontos diários), cai honestamente para o mínimo do `scenario_month_end` (resolução mensal —
+ * o mesmo dado do gráfico). Sem nenhum dos dois não há projeção nenhuma: nível ok com a subline
+ * dizendo isso, em vez de inventar um menor saldo. */
+function scenarioVerdict(compare: ScenarioCompareDto): ScenarioVerdict {
+  const deficit = compare.scenario_deepest_deficit;
+  let minCents: number | null = null;
+  let monthIdx: number | null = null; // 0–11
+  if (deficit) {
+    minCents = deficit.balance_cents;
+    monthIdx = monthOf(deficit.date);
+  } else if (compare.scenario_month_end.length > 0) {
+    const worst = compare.scenario_month_end.reduce((a, b) =>
+      b.balance_cents < a.balance_cents ? b : a,
+    );
+    minCents = worst.balance_cents;
+    monthIdx = worst.month - 1;
+  }
+  if (minCents == null) {
+    return {
+      tier: "ok",
+      headline: "Este cenário se mantém no azul o ano todo.",
+      subline: "Sem pontos de projeção no horizonte para apontar um menor saldo.",
+    };
+  }
+  const band = saldoBand(minCents);
+  const monthLabel = (MES[monthIdx ?? -1] ?? "").toLowerCase();
+  if (band.key === "negative" || band.key === "critical") {
+    return {
+      tier: "risk",
+      headline: `Fura o caixa em ${monthLabel} — faltam ${fmtCompactBRL(Math.abs(minCents))}.`,
+      subline:
+        "Antecipe uma entrada, reduza uma parcela ou cubra com um empréstimo antes desse mês.",
+    };
+  }
+  if (band.key === "tight") {
+    return {
+      tier: "tight",
+      headline: `Fica apertado em ${monthLabel} — menor saldo ${fmtCompactBRL(minCents)}.`,
+      subline: "Segure gastos grandes perto dessa data ou reforce o colchão antes.",
+    };
+  }
+  return {
+    tier: "ok",
+    headline: "Este cenário se mantém no azul o ano todo.",
+    subline: `Menor saldo no período: ${fmtBRL(minCents)} — ${band.label}.`,
+  };
+}
+
+/** Gêmeo VISÍVEL da região aria-live (que continua existindo e anunciando cada recomputo) —
+ * ícone + palavra + cor, nunca só cor; borda tintada reforça sem depender só do texto. */
+function ScenarioVerdictBanner({ compare }: { compare: ScenarioCompareDto }) {
+  const verdict = scenarioVerdict(compare);
+  return (
+    <div className={`scn-verdict scn-verdict--${verdict.tier}`}>
+      <span className="scn-verdict__icon" aria-hidden="true">
+        {verdict.tier === "ok" ? (
+          <CheckCircle2 size={20} strokeWidth={1.75} />
+        ) : (
+          <AlertTriangle size={20} strokeWidth={1.75} />
+        )}
+      </span>
+      <div>
+        <p className="scn-verdict__headline">{verdict.headline}</p>
+        <p className="scn-verdict__subline">{verdict.subline}</p>
+      </div>
+    </div>
+  );
 }
 
 export function ScenarioCompare({ compare }: { compare: ScenarioCompareDto }) {
@@ -903,6 +1119,10 @@ export function ScenarioCompare({ compare }: { compare: ScenarioCompareDto }) {
         className="card__body"
         style={{ display: "flex", flexDirection: "column", gap: 20 }}
       >
+        <ScenarioVerdictBanner compare={compare} />
+
+        {/* Ordem por prioridade de decisão (padrão-Z): Buraco do futuro, Saldo no fim, Pode
+            gastar hoje, Performance, Custo de vida. */}
         <div className="scn-kpis">
           <KpiCard
             label="Buraco do futuro"
@@ -914,6 +1134,8 @@ export function ScenarioCompare({ compare }: { compare: ScenarioCompareDto }) {
             scenarioCents={scenarioDeficit}
             deltaCents={deficitDelta}
             sense="higher-better"
+            realState={saldoState(realDeficit)}
+            scenarioState={saldoState(scenarioDeficit)}
           />
           <KpiCard
             label="Saldo no fim do horizonte"
@@ -925,28 +1147,8 @@ export function ScenarioCompare({ compare }: { compare: ScenarioCompareDto }) {
             scenarioCents={endScenarioCents}
             deltaCents={endDeltaCents}
             sense="higher-better"
-          />
-          <KpiCard
-            label="Custo de vida"
-            term={{
-              title: "Custo de vida",
-              body: "Quanto sai por mês pra manter sua vida — fixas + diário + cartão. Não inclui economia (poupança não é custo), e é sobre ele que a reserva se dimensiona.",
-            }}
-            realCents={compare.real_cost_of_living_cents}
-            scenarioCents={compare.scenario_cost_of_living_cents}
-            deltaCents={compare.cost_of_living_delta_cents}
-            sense="lower-better"
-          />
-          <KpiCard
-            label="Performance · mês atual"
-            term={{
-              title: "Performance",
-              body: "Entradas menos as saídas do mês — fixas, diário, economia, cartão e a previsão do diário que ainda falta. A economia e essa previsão contam como saída, então o mês nasce no vermelho e vai esverdeando conforme o diário real fica abaixo do teto.",
-            }}
-            realCents={compare.real_performance_cents}
-            scenarioCents={compare.scenario_performance_cents}
-            deltaCents={compare.performance_delta_cents}
-            sense="higher-better"
+            realState={saldoState(endRealCents)}
+            scenarioState={saldoState(endScenarioCents)}
           />
           <KpiCard
             label="Pode gastar hoje"
@@ -958,6 +1160,46 @@ export function ScenarioCompare({ compare }: { compare: ScenarioCompareDto }) {
             scenarioCents={compare.scenario_safe_to_spend_today_cents}
             deltaCents={compare.safe_to_spend_delta_cents}
             sense="higher-better"
+            realState={podeGastarState(
+              compare.real_safe_to_spend_today_cents,
+              compare.real_binding_guardrail,
+            )}
+            scenarioState={podeGastarState(
+              compare.scenario_safe_to_spend_today_cents,
+              compare.scenario_binding_guardrail,
+            )}
+          />
+          <KpiCard
+            label="Performance · mês atual"
+            term={{
+              title: "Performance",
+              body: "Entradas menos as saídas do mês — fixas, diário, economia, cartão e a previsão do diário que ainda falta. A economia e essa previsão contam como saída, então o mês nasce no vermelho e vai esverdeando conforme o diário real fica abaixo do teto.",
+            }}
+            realCents={compare.real_performance_cents}
+            scenarioCents={compare.scenario_performance_cents}
+            deltaCents={compare.performance_delta_cents}
+            sense="higher-better"
+            realState={performanceState(compare.real_performance_cents)}
+            scenarioState={performanceState(compare.scenario_performance_cents)}
+          />
+          <KpiCard
+            label="Custo de vida"
+            term={{
+              title: "Custo de vida",
+              body: "Quanto sai por mês pra manter sua vida — fixas + diário + cartão. Não inclui economia (poupança não é custo), e é sobre ele que a reserva se dimensiona.",
+            }}
+            realCents={compare.real_cost_of_living_cents}
+            scenarioCents={compare.scenario_cost_of_living_cents}
+            deltaCents={compare.cost_of_living_delta_cents}
+            sense="lower-better"
+            realState={custoVidaState(
+              compare.real_cost_of_living_cents,
+              compare.real_income_cents,
+            )}
+            scenarioState={custoVidaState(
+              compare.scenario_cost_of_living_cents,
+              compare.scenario_income_cents,
+            )}
           />
         </div>
 

@@ -10,7 +10,8 @@ import {
 } from "../lib/scenarioHelpers";
 import { FORECAST, mockCommands, mockInvoke } from "../test/commands";
 import type { ScenarioCompareDto } from "../lib/api";
-import { fmtBRL, fmtCompactBRL } from "../lib/nkFormat";
+import { fmtBRL, fmtCompactBRL, saldoBand } from "../lib/nkFormat";
+import { performanceStatus, custoVidaStatus } from "./totaisStatus";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -26,12 +27,14 @@ function baseCompare(overrides: Partial<ScenarioCompareDto> = {}): ScenarioCompa
     real_safe_to_spend_today_cents: 15_000,
     real_binding_guardrail: "cash",
     real_cost_of_living_cents: 300_000,
+    real_income_cents: 500_000,
     scenario_month_end: [{ year: 2026, month: 12, balance_cents: 350_000 }],
     scenario_deepest_deficit: { date: "2026-07-01", balance_cents: -50_000 },
     scenario_performance_cents: 150_000,
     scenario_safe_to_spend_today_cents: 8_000,
     scenario_binding_guardrail: "cash",
     scenario_cost_of_living_cents: 350_000,
+    scenario_income_cents: 450_000,
     month_end: [
       {
         year: 2026,
@@ -424,14 +427,16 @@ describe("ScenarioCompare — superfície de comparação", () => {
     expect(deficitCard.querySelector(".scn-kpi__headline")?.textContent).toBe(
       fmtCompactBRL(-50_000),
     );
-    // Fonte única para o leitor de tela: o aria-label do article carrega real e cenário em
-    // precisão cheia; manchete E linha de evidência são visual-only (aria-hidden) — sem isso
-    // os <Money> da evidência anunciariam os mesmos valores em dobro.
+    // Fonte única para o leitor de tela: o aria-label do article carrega o ESTADO do método
+    // (Nível 2, plano 074/fatia B) + real e cenário em precisão cheia; estado, manchete E linha
+    // de evidência são visual-only (aria-hidden) — sem isso o leitor ouviria tudo em dobro.
+    // Real R$1.000,00 cai na faixa "Apertado" do Termômetro; cenário −R$500,00 cai em
+    // "Negativo" — bandas DIFERENTES → transição anunciada como "novo (antes velho)".
     expect(deficitCard).toHaveAttribute(
       "aria-label",
       // fmtBRL usa NBSP após "R$" — montar a expectativa com o próprio formatador evita
       // acoplar o teste ao byte exato do espaço.
-      `Buraco do futuro: real ${fmtBRL(100_000)}, cenário ${fmtBRL(-50_000)}`,
+      `Buraco do futuro: Negativo (antes Apertado), real ${fmtBRL(100_000)}, cenário ${fmtBRL(-50_000)}`,
     );
     expect(
       deficitCard.querySelector(".scn-kpi__evidence")?.getAttribute("aria-hidden"),
@@ -602,5 +607,348 @@ describe("ScenarioCompare — superfície de comparação", () => {
       expect(live.textContent).toMatch(/saldo final −R\$\s3\.000,00/);
     });
     expect(live.textContent).not.toBe(before);
+  });
+});
+
+describe("ScenarioCompare — camada didática (plano 074, fatia B: veredito + estados do método)", () => {
+  beforeEach(() => {
+    mockInvoke.mockReset();
+  });
+
+  async function renderCompare(compare: ScenarioCompareDto) {
+    mockCommands({
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_scenarios_cmd: [
+        { id: "scn-1", name: compare.scenario_name, person_id: "p1" },
+      ],
+      get_scenario_forecast_cmd: compare,
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [],
+    });
+    render(<HorizonteScreen />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Simular cenário" }));
+    await user.click(
+      await screen.findByRole("button", { name: compare.scenario_name }),
+    );
+    await screen.findByText(`Cenário: ${compare.scenario_name}`);
+    return user;
+  }
+
+  // --- Veredito (Nível 1) ---
+
+  it("veredito de risco: cenário fura o caixa mostra mês + falta compacta, ícone+palavra+cor (nunca só cor)", async () => {
+    // Consistência com o card: banda negativa do Termômetro ⇒ nível de risco do banner.
+    expect(saldoBand(-50_000).key).toBe("negative");
+    const compare = baseCompare({
+      scenario_deepest_deficit: { date: "2026-07-01", balance_cents: -50_000 },
+    });
+    await renderCompare(compare);
+
+    const banner = document.querySelector(".scn-verdict");
+    expect(banner).not.toBeNull();
+    expect(banner).toHaveClass("scn-verdict--risk");
+    expect(banner!.textContent).toContain(
+      `Fura o caixa em julho — faltam ${fmtCompactBRL(50_000)}.`,
+    );
+    // GPS, não ameaça: a subline sugere uma ação.
+    expect(banner!.querySelector(".scn-verdict__subline")?.textContent).toMatch(
+      /antecipe|reduza|cubra/i,
+    );
+    // Nunca só cor: o ícone (lucide) acompanha a palavra/cor sempre.
+    expect(banner!.querySelector(".lucide-triangle-alert")).toBeInTheDocument();
+  });
+
+  it("veredito ok: cenário não fura o caixa mostra o menor saldo + a banda do Termômetro (saldoBand verbatim)", async () => {
+    // Consistência com o card: banda "ok" (>R$1.000) ⇒ nível verde do banner.
+    expect(saldoBand(150_000).key).toBe("ok");
+    const compare = baseCompare({
+      scenario_deepest_deficit: { date: "2026-07-01", balance_cents: 150_000 },
+    });
+    await renderCompare(compare);
+
+    const banner = document.querySelector(".scn-verdict");
+    expect(banner).toHaveClass("scn-verdict--ok");
+    expect(banner!.textContent).toContain("Este cenário se mantém no azul o ano todo.");
+    const band = saldoBand(150_000);
+    expect(banner!.querySelector(".scn-verdict__subline")?.textContent).toBe(
+      `Menor saldo no período: ${fmtBRL(150_000)} — ${band.label}.`,
+    );
+    expect(banner!.querySelector(".lucide-circle-check")).toBeInTheDocument();
+  });
+
+  it("veredito intermediário (âmbar) em R$0: banda 'apertado' nunca vira 'no azul' — banner e card concordam", async () => {
+    // R$0 exato cai na banda "apertado" do Termômetro (fronteira inferior). O veredito de dois
+    // níveis dizia "se mantém no azul o ano todo" (verde) enquanto o card "Buraco do futuro"
+    // mostrava "Apertado" (âmbar) sobre o MESMO número — o nível intermediário fecha isso.
+    expect(saldoBand(0).key).toBe("tight");
+    const compare = baseCompare({
+      scenario_deepest_deficit: { date: "2026-09-01", balance_cents: 0 },
+    });
+    await renderCompare(compare);
+
+    const banner = document.querySelector(".scn-verdict");
+    expect(banner).toHaveClass("scn-verdict--tight");
+    expect(banner!.textContent).not.toContain("no azul o ano todo");
+    expect(banner!.textContent).toContain(
+      `Fica apertado em setembro — menor saldo ${fmtCompactBRL(0)}.`,
+    );
+    // GPS, não ameaça: a subline sugere uma ação.
+    expect(banner!.querySelector(".scn-verdict__subline")?.textContent).toMatch(
+      /segure|reforce/i,
+    );
+    expect(banner!.querySelector(".lucide-triangle-alert")).toBeInTheDocument();
+    // O card logo abaixo classifica o MESMO número na MESMA banda (âmbar) — sem contradição.
+    const surface = screen.getByLabelText("Comparação real × cenário");
+    const card = within(surface)
+      .getByRole("button", { name: "Buraco do futuro" })
+      .closest("article")!;
+    expect(card.querySelector(".scn-kpi__state-word")?.textContent).toBe(
+      saldoBand(0).label,
+    );
+  });
+
+  it("veredito intermediário na fronteira superior (R$1.000 exato ainda é 'apertado')", async () => {
+    expect(saldoBand(100_000).key).toBe("tight");
+    const compare = baseCompare({
+      scenario_deepest_deficit: { date: "2026-08-01", balance_cents: 100_000 },
+    });
+    await renderCompare(compare);
+
+    const banner = document.querySelector(".scn-verdict");
+    expect(banner).toHaveClass("scn-verdict--tight");
+    expect(banner!.textContent).toContain(
+      `Fica apertado em agosto — menor saldo ${fmtCompactBRL(100_000)}.`,
+    );
+  });
+
+  it("veredito com deepest_deficit nulo cai no mínimo mensal do cenário (mesma resolução do gráfico)", async () => {
+    const compare = baseCompare({
+      scenario_deepest_deficit: null,
+      deepest_deficit_delta_cents: null,
+      scenario_month_end: [
+        { year: 2026, month: 8, balance_cents: 90_000 },
+        { year: 2026, month: 12, balance_cents: 350_000 },
+      ],
+    });
+    await renderCompare(compare);
+
+    // Mínimo mensal 90.000 → banda "apertado" → nível intermediário, com o mês do mínimo.
+    expect(saldoBand(90_000).key).toBe("tight");
+    const banner = document.querySelector(".scn-verdict");
+    expect(banner).toHaveClass("scn-verdict--tight");
+    expect(banner!.textContent).toContain(
+      `Fica apertado em agosto — menor saldo ${fmtCompactBRL(90_000)}.`,
+    );
+  });
+
+  it("veredito sem projeção nenhuma (deficit nulo + month_end vazio) não inventa menor saldo", async () => {
+    const compare = baseCompare({
+      scenario_deepest_deficit: null,
+      deepest_deficit_delta_cents: null,
+      scenario_month_end: [],
+    });
+    await renderCompare(compare);
+
+    const banner = document.querySelector(".scn-verdict");
+    expect(banner).toHaveClass("scn-verdict--ok");
+    expect(banner!.querySelector(".scn-verdict__subline")?.textContent).toBe(
+      "Sem pontos de projeção no horizonte para apontar um menor saldo.",
+    );
+  });
+
+  it("veredito e o primeiro card (Buraco do futuro) não repetem a mesma frase literal", async () => {
+    const compare = baseCompare({
+      scenario_deepest_deficit: { date: "2026-07-01", balance_cents: -50_000 },
+    });
+    await renderCompare(compare);
+
+    const headline = document.querySelector(".scn-verdict__headline")!.textContent;
+    const surface = screen.getByLabelText("Comparação real × cenário");
+    const firstCard = within(surface)
+      .getByRole("button", { name: "Buraco do futuro" })
+      .closest("article")!;
+    expect(firstCard.textContent).not.toContain(headline);
+  });
+
+  // --- Estados do método (Nível 2) ---
+
+  it("'Buraco do futuro' e 'Saldo no fim' usam saldoBand (Termômetro) verbatim — sem transição quando a banda é igual", async () => {
+    const compare = baseCompare({
+      real_deepest_deficit: { date: "2026-07-01", balance_cents: 300_000 },
+      scenario_deepest_deficit: { date: "2026-07-01", balance_cents: 250_000 },
+      deepest_deficit_delta_cents: -50_000,
+    });
+    await renderCompare(compare);
+
+    const surface = screen.getByLabelText("Comparação real × cenário");
+    const card = within(surface)
+      .getByRole("button", { name: "Buraco do futuro" })
+      .closest("article")!;
+    const realBand = saldoBand(300_000);
+    const scenarioBand = saldoBand(250_000);
+    expect(realBand.key).toBe(scenarioBand.key); // mesma banda ("Folga") — sem transição
+    expect(card.querySelector(".scn-kpi__state-word")?.textContent).toBe(
+      scenarioBand.label,
+    );
+    expect(card.querySelector(".scn-kpi__state-origin")).not.toBeInTheDocument();
+    // O bloco de estado é visual-only: a fonte única para o leitor de tela é o aria-label
+    // do article (já testado noutro describe) — nunca dobrar o anúncio.
+    expect(card.querySelector(".scn-kpi__state")?.getAttribute("aria-hidden")).toBe(
+      "true",
+    );
+  });
+
+  it("Performance sem transição: mesmo estado (performanceStatus verbatim) nos dois ramos não mostra 'Antes:'", async () => {
+    const compare = baseCompare({
+      real_performance_cents: 100_000,
+      scenario_performance_cents: 80_000,
+      performance_delta_cents: -20_000,
+    });
+    await renderCompare(compare);
+
+    const surface = screen.getByLabelText("Comparação real × cenário");
+    const card = within(surface)
+      .getByRole("button", { name: "Performance · mês atual" })
+      .closest("article")!;
+    expect(performanceStatus(100_000).label).toBe(performanceStatus(80_000).label);
+    expect(card.querySelector(".scn-kpi__state-word")?.textContent).toBe(
+      performanceStatus(80_000).label,
+    );
+    expect(card.querySelector(".scn-kpi__state-origin")).not.toBeInTheDocument();
+  });
+
+  it("Custo de vida: 'Faltou'/'Acima da renda' são quebras reais — estado em vermelho cheio (não âmbar)", async () => {
+    const compare = baseCompare({
+      real_performance_cents: -10_000,
+      real_cost_of_living_cents: 450_000,
+      real_income_cents: 400_000,
+      scenario_performance_cents: -10_000,
+      scenario_cost_of_living_cents: 450_000,
+      scenario_income_cents: 400_000,
+    });
+    await renderCompare(compare);
+
+    const surface = screen.getByLabelText("Comparação real × cenário");
+    expect(custoVidaStatus(450_000, 400_000).label).toBe("Acima da renda");
+    const custoCard = within(surface)
+      .getByRole("button", { name: "Custo de vida" })
+      .closest("article")!;
+    expect(custoCard.querySelector(".scn-kpi__state")).toHaveStyle({
+      color: "var(--danger-400)",
+    });
+
+    expect(performanceStatus(-10_000).label).toBe("Faltou dinheiro");
+    const perfCard = within(surface)
+      .getByRole("button", { name: "Performance · mês atual" })
+      .closest("article")!;
+    expect(perfCard.querySelector(".scn-kpi__state")).toHaveStyle({
+      color: "var(--danger-400)",
+    });
+  });
+
+  it("Custo de vida: transição real↔cenário renderiza a hero NOVA com 'Antes: …' empilhado (nunca inline)", async () => {
+    const compare = baseCompare({
+      real_cost_of_living_cents: 300_000,
+      real_income_cents: 400_000,
+      scenario_cost_of_living_cents: 450_000,
+      scenario_income_cents: 400_000,
+    });
+    await renderCompare(compare);
+
+    expect(custoVidaStatus(300_000, 400_000).label).toBe("Dentro da renda");
+    expect(custoVidaStatus(450_000, 400_000).label).toBe("Acima da renda");
+
+    const surface = screen.getByLabelText("Comparação real × cenário");
+    const card = within(surface)
+      .getByRole("button", { name: "Custo de vida" })
+      .closest("article")!;
+    expect(card.querySelector(".scn-kpi__state-word")?.textContent).toBe(
+      "Acima da renda",
+    );
+    const origin = card.querySelector(".scn-kpi__state-origin");
+    expect(origin?.textContent).toBe("Antes: Dentro da renda");
+    // Empilhado: dois elementos DOM distintos, nunca "Dentro da renda → Acima da renda" num só nó.
+    expect(card.querySelector(".scn-kpi__state-word")?.textContent).not.toContain("→");
+    expect(origin?.parentElement).toBe(
+      card.querySelector(".scn-kpi__state")!.parentElement,
+    );
+  });
+
+  it("'Pode gastar hoje' > 0 mostra 'Livre até {compacto}'", async () => {
+    const compare = baseCompare({
+      real_safe_to_spend_today_cents: 15_000,
+      scenario_safe_to_spend_today_cents: 42_000,
+    });
+    await renderCompare(compare);
+
+    const surface = screen.getByLabelText("Comparação real × cenário");
+    const card = within(surface)
+      .getByRole("button", { name: "Pode gastar hoje" })
+      .closest("article")!;
+    expect(card.querySelector(".scn-kpi__state-word")?.textContent).toBe(
+      `Livre até ${fmtCompactBRL(42_000)}`,
+    );
+    expect(card.querySelector(".scn-kpi__state-line")).not.toBeInTheDocument();
+  });
+
+  it("'Pode gastar hoje' == 0 e limitado pela poupança mostra 'Segure hoje' + linha derivada do guardrail", async () => {
+    const compare = baseCompare({
+      scenario_safe_to_spend_today_cents: 0,
+      scenario_binding_guardrail: "savings",
+    });
+    await renderCompare(compare);
+
+    const surface = screen.getByLabelText("Comparação real × cenário");
+    const card = within(surface)
+      .getByRole("button", { name: "Pode gastar hoje" })
+      .closest("article")!;
+    expect(card.querySelector(".scn-kpi__state-word")?.textContent).toBe("Segure hoje");
+    expect(card.querySelector(".scn-kpi__state-line")?.textContent).toBe(
+      "Limitado pela régua de poupança (20–30% ao ano), não pelo caixa.",
+    );
+    // O porquê chega ao leitor de tela: a linha visual é aria-hidden, então a razão do
+    // guardrail PRECISA estar no aria-label do card — "Segure hoje" sem o porquê é mudo.
+    expect(card.getAttribute("aria-label")).toContain(
+      "Limitado pela régua de poupança (20–30% ao ano), não pelo caixa.",
+    );
+  });
+
+  it("'Pode gastar hoje' == 0 e limitado pelo caixa mostra a linha derivada do caixa (não da poupança)", async () => {
+    const compare = baseCompare({
+      scenario_safe_to_spend_today_cents: 0,
+      scenario_binding_guardrail: "cash",
+    });
+    await renderCompare(compare);
+
+    const surface = screen.getByLabelText("Comparação real × cenário");
+    const card = within(surface)
+      .getByRole("button", { name: "Pode gastar hoje" })
+      .closest("article")!;
+    expect(card.querySelector(".scn-kpi__state-word")?.textContent).toBe("Segure hoje");
+    expect(card.querySelector(".scn-kpi__state-line")?.textContent).toBe(
+      "Limitado pelo caixa do mês, não pela régua de poupança.",
+    );
+    // Mesmo requisito de a11y do caso "savings": a razão viaja no aria-label.
+    expect(card.getAttribute("aria-label")).toContain(
+      "Limitado pelo caixa do mês, não pela régua de poupança.",
+    );
+  });
+
+  it("ordena os cards por prioridade de decisão: Buraco, Saldo no fim, Pode gastar, Performance, Custo de vida", async () => {
+    await renderCompare(baseCompare());
+
+    const surface = screen.getByLabelText("Comparação real × cenário");
+    const labels = Array.from(surface.querySelectorAll(".scn-kpi")).map((el) =>
+      el.querySelector(".scn-kpi__label")?.textContent?.trim(),
+    );
+    expect(labels).toEqual([
+      "Buraco do futuro",
+      "Saldo no fim do horizonte",
+      "Pode gastar hoje",
+      "Performance · mês atual",
+      "Custo de vida",
+    ]);
   });
 });
