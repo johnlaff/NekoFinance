@@ -73,7 +73,6 @@ pub fn run() {
             tags::tag_totals_for_month_cmd,
             tags::update_tag_cmd,
             tags::update_tag_exclude_cmd,
-            recurrence::create_recurring_series_cmd,
             recurrence::delete_series_from_cmd,
             recurrence::delete_series_all_cmd,
             recurrence::update_series_from_cmd,
@@ -95,8 +94,6 @@ pub fn run() {
             scenarios::delete_scenario_transaction_cmd,
             scenarios::list_scenario_transactions_cmd,
             scenarios::set_scenario_override_cmd,
-            scenarios::delete_scenario_override_cmd,
-            scenarios::list_scenario_overrides_cmd,
             scenarios::get_scenario_forecast_cmd,
             scenarios::price_installment_cmd,
         ])

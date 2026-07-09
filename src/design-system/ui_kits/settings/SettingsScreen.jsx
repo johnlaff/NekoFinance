@@ -243,7 +243,7 @@ function ImportacaoLocalSection() {
 const BOLSOS = [
   {
     nm: "Conta corrente",
-    sub: "Nubank ·· 4821",
+    sub: "Banco Aurora ·· 4821",
     amt: "R$ 12.408,52",
     ic: "wallet",
     liquid: true,

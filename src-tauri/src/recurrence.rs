@@ -69,6 +69,9 @@ pub async fn create_recurring_series(
     freq: Frequency,
     repetitions: usize,
 ) -> Result<String, String> {
+    if t.amount <= 0 {
+        return Err("valor deve ser positivo (magnitude)".into());
+    }
     // Limite superior além do `< 1`: um `repetitions` enorme inseriria N linhas e poderia estourar
     // a aritmética de datas (add_months) no caminho de escrita financeira. 600 = 50 anos mensais.
     if !(1..=600).contains(&repetitions) {
@@ -172,6 +175,9 @@ pub async fn update_series_from(
     transaction_id: &str,
     edit: &SeriesEdit,
 ) -> Result<u64, String> {
+    if edit.amount <= 0 {
+        return Err("valor deve ser positivo (magnitude)".into());
+    }
     let row: Option<(String,)> = sqlx::query_as(
         "SELECT recurrence_id FROM \"transaction\" \
          WHERE id = ?1 AND recurrence_id IS NOT NULL AND scenario_id IS NULL",
@@ -209,6 +215,9 @@ pub async fn update_series_all(
     recurrence_id: &str,
     edit: &SeriesEdit,
 ) -> Result<u64, String> {
+    if edit.amount <= 0 {
+        return Err("valor deve ser positivo (magnitude)".into());
+    }
     let now = chrono::Utc::now().to_rfc3339();
     let res = sqlx::query(
         "UPDATE \"transaction\" SET amount = ?1, description = ?2, payment_method = ?3, \
@@ -246,32 +255,6 @@ pub async fn delete_series_all(pool: &SqlitePool, recurrence_id: &str) -> Result
 }
 
 // --- Tauri command wrappers ---
-
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
-pub async fn create_recurring_series_cmd(
-    pool: State<'_, SqlitePool>,
-    txn_type: String,
-    amount: i64,
-    description: Option<String>,
-    start: String,
-    payment_method: Option<String>,
-    is_fixed: bool,
-    frequency: String,
-    repetitions: usize,
-) -> Result<String, String> {
-    let freq = Frequency::parse(&frequency).ok_or("frequência inválida")?;
-    let start = NaiveDate::parse_from_str(&start, "%Y-%m-%d").map_err(|e| format!("data: {e}"))?;
-    let t = RecurringTemplate {
-        txn_type,
-        amount,
-        description,
-        start,
-        payment_method,
-        is_fixed,
-    };
-    create_recurring_series(pool.inner(), &t, freq, repetitions).await
-}
 
 #[tauri::command]
 pub async fn delete_series_from_cmd(
@@ -506,6 +489,80 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    async fn count_all_transactions(pool: &SqlitePool) -> i64 {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM \"transaction\"")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+            .0
+    }
+
+    async fn count_all_recurrences(pool: &SqlitePool) -> i64 {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM recurrence")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+            .0
+    }
+
+    #[tokio::test]
+    async fn create_recurring_series_rejects_non_positive_amount_and_inserts_nothing() {
+        let p = pool().await;
+        let mut t = tmpl();
+        t.amount = 0;
+        assert!(
+            create_recurring_series(&p, &t, Frequency::Mensal, 3)
+                .await
+                .is_err()
+        );
+        assert_eq!(count_all_recurrences(&p).await, 0, "nenhuma série criada");
+        assert_eq!(
+            count_all_transactions(&p).await,
+            0,
+            "nenhuma ocorrência inserida"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_series_from_rejects_non_positive_amount_and_leaves_series_intact() {
+        let p = pool().await;
+        let rec = create_recurring_series(&p, &tmpl(), Frequency::Mensal, 3)
+            .await
+            .unwrap();
+        let bad_edit = SeriesEdit {
+            amount: -100,
+            description: Some("Inválido".into()),
+            payment_method: None,
+            is_fixed: false,
+        };
+        assert!(
+            update_series_from(&p, &format!("{rec}:0"), &bad_edit)
+                .await
+                .is_err()
+        );
+        for i in 0..3 {
+            assert_eq!(amount_at(&p, &format!("{rec}:{i}")).await, 500000);
+        }
+    }
+
+    #[tokio::test]
+    async fn update_series_all_rejects_non_positive_amount() {
+        let p = pool().await;
+        let rec = create_recurring_series(&p, &tmpl(), Frequency::Semanal, 3)
+            .await
+            .unwrap();
+        let bad_edit = SeriesEdit {
+            amount: 0,
+            description: Some("Inválido".into()),
+            payment_method: None,
+            is_fixed: false,
+        };
+        assert!(update_series_all(&p, &rec, &bad_edit).await.is_err());
+        for i in 0..3 {
+            assert_eq!(amount_at(&p, &format!("{rec}:{i}")).await, 500000);
+        }
     }
 
     #[tokio::test]

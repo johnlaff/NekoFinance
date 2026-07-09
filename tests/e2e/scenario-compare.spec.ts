@@ -91,7 +91,6 @@ test.describe("Superfície de comparação (real × cenário)", () => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await mockTauri(page, {
       list_scenarios_cmd: [{ id: "s1", name: COMPARE.scenario_name, person_id: "p1" }],
-      list_scenario_overrides_cmd: [],
       list_scenario_transactions_cmd: [],
       list_obligations_cmd: [],
       get_scenario_forecast_cmd: COMPARE,

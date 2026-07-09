@@ -24,8 +24,8 @@
 //!   `replacement` preenchido, ele mesmo cria a linha hipotética de substituição, anexando
 //!   `" #repl:<override_id>"` ao final da descrição. É esse marcador que permite ao compare
 //!   FUNDIR o par velho→novo numa única entrada `{op:"replace", old, new}` de `changes` (e
-//!   excluir a linha da lista de "add"). `delete_scenario_override` apaga a(s) linha(s)
-//!   pareada(s) junto.
+//!   excluir a linha da lista de "add"). Não há remoção individual de override: a limpeza das
+//!   linhas pareadas ocorre em cascata quando o cenário é apagado.
 
 use crate::commands::forecast_cmds::{
     self, forecast_horizon_end, load_economia_annotation, load_forecast_events, load_metric_events,
@@ -404,35 +404,6 @@ pub async fn set_scenario_override(
         }
     }
     Ok(id)
-}
-
-/// Apaga o override e a(s) linha(s) hipotética(s) de substituição pareada(s) por
-/// `#repl:<override_id>` (senão a substituição viraria um "add" órfão no compare).
-pub async fn delete_scenario_override(
-    pool: &SqlitePool,
-    scenario_id: &str,
-    override_id: &str,
-) -> Result<(), String> {
-    let rows = sqlx::query("DELETE FROM scenario_override WHERE id = ?1 AND scenario_id = ?2")
-        .bind(override_id)
-        .bind(scenario_id)
-        .execute(pool)
-        .await
-        .map_err(|e| format!("delete_scenario_override: {e}"))?;
-    if rows.rows_affected() == 0 {
-        return Err(format!(
-            "override not found: {override_id} (scenario {scenario_id})"
-        ));
-    }
-    sqlx::query(
-        "DELETE FROM \"transaction\" WHERE scenario_id = ?1 AND description LIKE '%#repl:' || ?2",
-    )
-    .bind(scenario_id)
-    .bind(override_id)
-    .execute(pool)
-    .await
-    .map_err(|e| format!("delete_scenario_override (replacement row): {e}"))?;
-    Ok(())
 }
 
 pub async fn list_scenario_overrides(
@@ -1316,23 +1287,6 @@ pub async fn set_scenario_override_cmd(
         replacement,
     )
     .await
-}
-
-#[tauri::command]
-pub async fn delete_scenario_override_cmd(
-    pool: State<'_, SqlitePool>,
-    scenario_id: String,
-    override_id: String,
-) -> Result<(), String> {
-    delete_scenario_override(pool.inner(), &scenario_id, &override_id).await
-}
-
-#[tauri::command]
-pub async fn list_scenario_overrides_cmd(
-    pool: State<'_, SqlitePool>,
-    scenario_id: String,
-) -> Result<Vec<ScenarioOverride>, String> {
-    list_scenario_overrides(pool.inner(), &scenario_id).await
 }
 
 /// Ferramenta determinística exposta à UI (nunca matemática livre de LLM): calcula a parcela
@@ -2331,57 +2285,6 @@ mod tests {
             .find(|m| m.year == 2026 && m.month == 8)
             .unwrap();
         assert_eq!(month.scenario_balance_cents, 290_000);
-    }
-
-    // Apagar o override apaga também a linha de substituição pareada (senão viraria "add" órfão).
-    #[tokio::test]
-    async fn delete_scenario_override_removes_paired_replacement_row() {
-        let p = pool().await;
-        txn(&p, "t-aluguel", "expense", 150_000, "2026-08-05").await;
-        line_item(&p, "li-a", "t-aluguel", 150_000, "Aluguel", None).await;
-        let ob_id = obligations::create_obligation(&p, "Aluguel", "Aluguel", None)
-            .await
-            .unwrap();
-        let sc = create_scenario(&p, "Cenário").await.unwrap();
-        let ov_id = set_scenario_override(
-            &p,
-            &sc.id,
-            "replace",
-            "2026-08-01",
-            Some(&ob_id),
-            None,
-            Some(ReplacementInput {
-                amount_cents: 200_000,
-                date: "2026-08-05".to_string(),
-                description: Some("Aluguel novo".to_string()),
-                txn_type: None,
-                payment_method: None,
-                is_fixed: None,
-            }),
-        )
-        .await
-        .unwrap();
-
-        let (before,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE scenario_id = ?1")
-                .bind(&sc.id)
-                .fetch_one(&p)
-                .await
-                .unwrap();
-        assert_eq!(
-            before, 1,
-            "linha de substituição criada junto com o override"
-        );
-
-        delete_scenario_override(&p, &sc.id, &ov_id).await.unwrap();
-
-        let (after,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE scenario_id = ?1")
-                .bind(&sc.id)
-                .fetch_one(&p)
-                .await
-                .unwrap();
-        assert_eq!(after, 0, "a linha pareada morre junto com o override");
     }
 
     // MINOR: o braço de recorrência também preenche `old_amount_cents` em changes.

@@ -12,7 +12,6 @@ test.describe("Side-sheet de cenários", () => {
       list_scenarios_cmd: [
         { id: "s1", name: "Mudança de cidade", created_at: "", updated_at: "" },
       ],
-      list_scenario_overrides_cmd: [],
       list_scenario_transactions_cmd: [],
       list_obligations_cmd: [],
       get_scenario_forecast_cmd: null,

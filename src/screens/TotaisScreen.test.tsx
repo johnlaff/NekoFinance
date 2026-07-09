@@ -33,7 +33,7 @@ describe("TotaisScreen — regras do método (puro)", () => {
     expect(economizadoStatus(1900).label).toBe("Abaixo do ideal");
   });
   it("SAVINGS_MIN_BPS é a constante canônica de 20% (compartilhada entre as telas)", () => {
-    // Guarda o piso canônico: AnnualScreen e colchaoPhase importam esta mesma constante,
+    // Guarda o piso canônico: outras telas importam esta mesma constante,
     // então um rename/mudança de valor falha aqui em vez de silenciosamente divergir.
     expect(SAVINGS_MIN_BPS).toBe(2000);
     // Confirma que o badge mensal usa exatamente este limiar.

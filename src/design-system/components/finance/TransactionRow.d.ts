@@ -28,7 +28,7 @@ export interface TransactionRowProps {
   desc: string;
   /** Amount in integer cents. Positive = entrada (green); negative = saída (neutral). */
   amount: number;
-  /** Payment method label, e.g. "Débito", "Nubank". Rendered as a pill. Omit to hide. */
+  /** Payment method label, e.g. "Débito", "Crédito". Rendered as a pill. Omit to hide. */
   method?: string;
   /**
    * Data provenance — determines the colored dot label.

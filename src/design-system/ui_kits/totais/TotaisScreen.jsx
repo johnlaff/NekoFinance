@@ -326,7 +326,7 @@ const DEMO = {
 
   // Por titular
   owners: [
-    { id: "joao", name: "João", who: "personal", total_cents: 432600 },
+    { id: "ana", name: "Ana", who: "personal", total_cents: 432600 },
     { id: "parceira", name: "Ana", who: "partner", total_cents: 261200 },
   ],
 };

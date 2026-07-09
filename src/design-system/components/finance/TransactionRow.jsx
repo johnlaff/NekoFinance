@@ -116,7 +116,7 @@ function lumpItemKey(it) {
 
 export function TransactionRow({
   date = "21/06",
-  desc = "Supermercado Extra",
+  desc = "Supermercado Central",
   amount = -38500,
   method = "Débito",
   provenance = "importado",

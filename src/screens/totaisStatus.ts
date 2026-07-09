@@ -7,8 +7,8 @@ export interface Status {
 }
 
 // Piso de 20% (2000 bps) do método — fonte única para os indicadores e visuais MENSAIS e ANUAIS:
-// badge "Dentro do ideal" (este arquivo), cor da visão anual (AnnualScreen) e gate da fase "operar"
-// (colchaoPhase). Um mês pode variar dentro da faixa 20–30%, então estes são lenientes.
+// badge "Dentro do ideal" (este arquivo) e cor da visão anual (AnnualScreen). Um mês pode variar
+// dentro da faixa 20–30%, então estes são lenientes.
 // O guardrail ANUAL "pode gastar hoje" usa uma barra mais alta — 25% (alvo médio da faixa) em
 // src-tauri/src/commands/forecast_cmds.rs (SAVINGS_TARGET_BPS = 2500). Divergência deliberada: o
 // gate que libera gasto mira no alvo médio; ambos ficam dentro da faixa canônica 20–30%.
