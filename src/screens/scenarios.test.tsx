@@ -2,10 +2,15 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { HorizonteScreen } from "./HorizonteScreen";
-import { stripScenarioMarker, addMonthsISO } from "../lib/scenarioHelpers";
+import {
+  stripScenarioMarker,
+  addMonthsISO,
+  placeChartEndLabels,
+  CHART_LABEL_MIN_GAP,
+} from "../lib/scenarioHelpers";
 import { FORECAST, mockCommands, mockInvoke } from "../test/commands";
 import type { ScenarioCompareDto } from "../lib/api";
-import { fmtCompactBRL } from "../lib/nkFormat";
+import { fmtBRL, fmtCompactBRL } from "../lib/nkFormat";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -73,6 +78,56 @@ describe("cenários 'e se' — helpers puros", () => {
   it("addMonthsISO soma meses preservando o dia (com saturação no fim do mês)", () => {
     expect(addMonthsISO("2026-06-15", 1)).toBe("2026-07-15");
     expect(addMonthsISO("2026-01-31", 1)).toBe("2026-02-28");
+  });
+
+  describe("placeChartEndLabels — rótulos de fim de linha nunca colidem (clamp do PAR)", () => {
+    // Limites reais do DualLineChart: minY = padTop+8 = 28, maxY = H−6 = 194.
+    const MIN_Y = 28;
+    const MAX_Y = 194;
+
+    function gap(p: { realLabelY: number; scenarioLabelY: number }): number {
+      return Math.abs(p.realLabelY - p.scenarioLabelY);
+    }
+
+    it("traços convergindo perto do TOPO: o clamp não come o vão (caso da revisão)", () => {
+      // realY=22, scenarioY=20 — no clamp por-rótulo o superior era empurrado a 28 e o
+      // inferior ficava em 36 (vão de 8px = colisão a fontSize 11 + halo 3px).
+      const p = placeChartEndLabels(22, 20, MIN_Y, MAX_Y);
+      expect(gap(p)).toBeGreaterThanOrEqual(CHART_LABEL_MIN_GAP);
+      // Cenário termina mais alto → é o rótulo de cima, clampado ao teto; o real deriva dele.
+      expect(p.scenarioLabelY).toBe(28);
+      expect(p.realLabelY).toBe(42);
+    });
+
+    it("espelho do caso da revisão com o REAL mais alto: mesmo vão, papéis trocados", () => {
+      const p = placeChartEndLabels(20, 22, MIN_Y, MAX_Y);
+      expect(gap(p)).toBeGreaterThanOrEqual(CHART_LABEL_MIN_GAP);
+      expect(p.realLabelY).toBe(28);
+      expect(p.scenarioLabelY).toBe(42);
+    });
+
+    it("traços convergindo perto do FUNDO: o par sobe junto, o vão não comprime", () => {
+      const p = placeChartEndLabels(190, 192, MIN_Y, MAX_Y);
+      expect(gap(p)).toBeGreaterThanOrEqual(CHART_LABEL_MIN_GAP);
+      expect(p.scenarioLabelY).toBeLessThanOrEqual(MAX_Y);
+      expect(p.realLabelY).toBeLessThanOrEqual(MAX_Y);
+      expect(p.realLabelY).toBeGreaterThanOrEqual(MIN_Y);
+    });
+
+    it("janela menor que o vão: os 14px vencem o limite de baixo (fundir é pior que vazar)", () => {
+      const p = placeChartEndLabels(30, 30, 28, 35);
+      expect(gap(p)).toBe(CHART_LABEL_MIN_GAP);
+      expect(Math.min(p.realLabelY, p.scenarioLabelY)).toBe(28);
+    });
+
+    it("traços bem separados: colocação natural intacta (acima do mais alto, abaixo do mais baixo)", () => {
+      const p = placeChartEndLabels(50, 120, MIN_Y, MAX_Y);
+      expect(p.realLabelY).toBe(42); // 50 − 8
+      expect(p.scenarioLabelY).toBe(134); // 120 + 14
+      const inverted = placeChartEndLabels(120, 50, MIN_Y, MAX_Y);
+      expect(inverted.scenarioLabelY).toBe(42);
+      expect(inverted.realLabelY).toBe(134);
+    });
   });
 });
 
@@ -369,6 +424,21 @@ describe("ScenarioCompare — superfície de comparação", () => {
     expect(deficitCard.querySelector(".scn-kpi__headline")?.textContent).toBe(
       fmtCompactBRL(-50_000),
     );
+    // Fonte única para o leitor de tela: o aria-label do article carrega real e cenário em
+    // precisão cheia; manchete E linha de evidência são visual-only (aria-hidden) — sem isso
+    // os <Money> da evidência anunciariam os mesmos valores em dobro.
+    expect(deficitCard).toHaveAttribute(
+      "aria-label",
+      // fmtBRL usa NBSP após "R$" — montar a expectativa com o próprio formatador evita
+      // acoplar o teste ao byte exato do espaço.
+      `Buraco do futuro: real ${fmtBRL(100_000)}, cenário ${fmtBRL(-50_000)}`,
+    );
+    expect(
+      deficitCard.querySelector(".scn-kpi__evidence")?.getAttribute("aria-hidden"),
+    ).toBe("true");
+    expect(
+      deficitCard.querySelector(".scn-kpi__headline")?.getAttribute("aria-hidden"),
+    ).toBe("true");
   });
 
   it("disciplina do delta: material usa ícone de melhor/pior (nunca o sinal cru); diferença ≤R$1 vira texto quieto sem pill", async () => {

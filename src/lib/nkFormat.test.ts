@@ -43,6 +43,34 @@ describe("fmtCompactBRL — manchete compacta pt-BR (mil/mi, nunca k/M)", () => 
     // 125_000_000 / 10_000_000 = 12,5 exato — meio-para-cima vai para 13 (1,3), não 12 (par).
     expect(fmtCompactBRL(125_000_000)).toBe("R$ 1,3 mi");
   });
+
+  // Promoção de faixa pós-arredondamento: arredondar na precisão da faixa pode cruzar o
+  // limiar da faixa seguinte — sem promover, sairia "R$ 1.000,0 mil" (absurdo) ou a mesma
+  // magnitude em dois registros ("R$ 10.000" vs "R$ 10,0 mil").
+  describe("promoção de faixa quando o arredondamento cruza o limiar", () => {
+    it.each([
+      // mil → mi: R$ 999.950,00 arredonda a décimos de mil para 1.000,0 → tem que ser mi.
+      [99_995_000, "R$ 1,0 mi"],
+      [-99_995_000, "−R$ 1,0 mi"],
+      // 1 centavo abaixo do meio: fica em mil (999,9), sem promoção.
+      [99_994_999, "R$ 999,9 mil"],
+      [-99_994_999, "−R$ 999,9 mil"],
+      // reais → mil: R$ 9.999,99 arredonda a reais inteiros para 10.000 → registro "mil",
+      // igual ao R$ 10.000,00 exato (nunca a mesma magnitude em dois registros).
+      [999_999, "R$ 10,0 mil"],
+      [-999_999, "−R$ 10,0 mil"],
+      // Meio exato da faixa de reais (R$ 9.999,50): meio-para-cima promove.
+      [999_950, "R$ 10,0 mil"],
+      // 1 centavo abaixo do meio: fica em reais inteiros.
+      [999_949, "R$ 9.999"],
+      [-999_949, "−R$ 9.999"],
+      // Fronteira abaixo→reais nunca arredonda (centavos exatos), então não tem promoção:
+      // R$ 999,99 fica no valor cheio, não vira "R$ 1.000".
+      [99_999, "R$ 999,99"],
+    ] as const)("%d centavos → %s", (cents, expected) => {
+      expect(fmtCompactBRL(cents)).toBe(expected);
+    });
+  });
 });
 
 describe("nkFormat.saldoBand — delega para o termômetro canônico (saldoHeatmap)", () => {

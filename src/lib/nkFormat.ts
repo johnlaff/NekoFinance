@@ -77,15 +77,33 @@ export function fmtCompact(cents: number): string {
  * - abaixo de R$ 1.000 → valor cheio, mas sem ",00" quando o centavo é zero ("R$ 180"
  *   em vez de "R$ 180,00"; "R$ 193,22" quando há centavo real)
  *
+ * A faixa é decidida DEPOIS do arredondamento na precisão da própria faixa: arredondar pode
+ * cruzar o limiar da faixa seguinte, e sem a promoção o resultado sai no registro errado —
+ * R$ 999.950,00 arredondado a décimos de mil vira "1.000,0 mil" (absurdo; o certo é
+ * "R$ 1,0 mi") e R$ 9.999,99 arredondado a reais inteiros vira "R$ 10.000" enquanto
+ * R$ 10.000,00 exato vira "R$ 10,0 mil" — mesma magnitude, dois registros. A faixa "abaixo de
+ * R$ 1.000" nunca arredonda (centavos exatos), então não tem promoção.
+ *
  * A precisão total nunca se perde: ela mora na linha de evidência (`real → cenário`, ambos em
- * `<Money>` de precisão cheia) e no `aria-label` da manchete — este formatador é só a leitura
- * visual rápida do card.
+ * `<Money>` de precisão cheia) e no `aria-label` do card — este formatador é só a leitura
+ * visual rápida.
  */
 export function fmtCompactBRL(cents: number): string {
   const abs = Math.abs(cents);
   if (abs >= 100_000_000) return `${fmtScaledUnit(cents, 10_000_000)} mi`;
-  if (abs >= 1_000_000) return `${fmtScaledUnit(cents, 10_000)} mil`;
-  if (abs >= 100_000) return formatBRL(cents, true);
+  if (abs >= 1_000_000) {
+    // Promoção pós-arredondamento: se o arredondamento a décimos de mil alcança 1.000,0 mil
+    // (mesma conta de `fmtScaledUnit(cents, 10_000)`), o valor pertence à faixa "mi".
+    if (Math.round(abs / 10_000) >= 10_000)
+      return `${fmtScaledUnit(cents, 10_000_000)} mi`;
+    return `${fmtScaledUnit(cents, 10_000)} mil`;
+  }
+  if (abs >= 100_000) {
+    // Promoção pós-arredondamento: reais inteiros que arredondam para R$ 10.000 rendem no
+    // registro "mil" — nunca dois registros para a mesma magnitude.
+    if (Math.round(abs / 100) >= 10_000) return `${fmtScaledUnit(cents, 10_000)} mil`;
+    return formatBRL(cents, true);
+  }
   // Abaixo de R$1.000: valor cheio, mas sem ",00" quando os centavos são zero.
   return formatBRL(cents, abs % 100 === 0);
 }

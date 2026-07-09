@@ -45,7 +45,11 @@ import {
   type MovementType,
 } from "../lib/nkFormat";
 import { kindToFields } from "../lib/movement";
-import { stripScenarioMarker, addMonthsISO } from "../lib/scenarioHelpers";
+import {
+  stripScenarioMarker,
+  addMonthsISO,
+  placeChartEndLabels,
+} from "../lib/scenarioHelpers";
 import { Money, SignedMoney } from "../design-system/components/Money";
 import { Button } from "../design-system/components/Button";
 import { InfoPopover } from "../design-system/components/InfoPopover";
@@ -843,18 +847,16 @@ function KpiCard({
       </span>
       {/* Manchete: só o valor do CENÁRIO, compacto — nunca dois valores de precisão cheia
           numa linha sem quebra (essa era a causa do estouro medido em dogfooding). Precisão
-          cheia continua acessível: no aria-label (acima) e na linha de evidência abaixo. */}
+          cheia continua acessível: no aria-label do próprio article (acima). */}
       <span className="scn-kpi__headline" aria-hidden="true">
         {fmtCompactBRL(scenarioCents)}
       </span>
-      <div className="scn-kpi__evidence">
+      {/* Evidência visual-only: o aria-label do article já anuncia real e cenário em precisão
+          cheia — sem o aria-hidden, os dois <Money> anunciariam os MESMOS valores de novo
+          (leitor de tela ouvindo tudo em dobro). */}
+      <div className="scn-kpi__evidence" aria-hidden="true">
         <Money cents={realCents} size="inherit" />
-        <ArrowRight
-          size={12}
-          strokeWidth={2}
-          className="scn-kpi__arrow"
-          aria-hidden="true"
-        />
+        <ArrowRight size={12} strokeWidth={2} className="scn-kpi__arrow" />
         <Money cents={scenarioCents} size="inherit" />
       </div>
       {deltaChip(deltaCents, sense)}
@@ -1058,12 +1060,10 @@ function monthFraction(
   return (year - startYear) * 12 + (month - startMonth);
 }
 
-/** Espaço mínimo (px, no espaço do viewBox) entre as linhas de base dos rótulos "Real" e
- *  "Simulação" — abaixo disso as duas legendas coladas ficam ilegíveis mesmo com o halo. */
-const CHART_LABEL_MIN_GAP = 14;
 /** Gutter reservado à direita do plot para os rótulos de fim de linha (~72px): sem ele "Real"/
  *  "Simulação" caem EM CIMA do traço quando as duas linhas convergem no fim do horizonte — o
- *  defeito medido em dogfooding. O plot termina antes do gutter; o texto começa dentro dele. */
+ *  defeito medido em dogfooding. O plot termina antes do gutter; o texto começa dentro dele.
+ *  (O vão vertical mínimo entre os rótulos vive em `scenarioHelpers.CHART_LABEL_MIN_GAP`.) */
 const CHART_LABEL_GUTTER = 72;
 
 function DualLineChart({ compare }: { compare: ScenarioCompareDto }) {
@@ -1124,23 +1124,16 @@ function DualLineChart({ compare }: { compare: ScenarioCompareDto }) {
   let scenarioLabelY = 0;
   if (last) {
     labelX = x(points.length - 1) + 12;
-    const realY = y(last.real_balance_cents);
-    const scenarioY = y(last.scenario_balance_cents);
-    // Direction-aware: a linha que termina visualmente mais alta (y menor) ganha o rótulo
-    // ACIMA do seu próprio traço; a outra fica abaixo — em vez de "Real sempre em cima", que
-    // colidia quando o cenário terminava mais alto que o real. O gap mínimo entre as DUAS
-    // legendas (não só contra a própria linha) é o que impede a colisão quando os traços
-    // convergem no fim do horizonte.
-    if (realY <= scenarioY) {
-      realLabelY = realY - 8;
-      scenarioLabelY = Math.max(scenarioY + 14, realLabelY + CHART_LABEL_MIN_GAP);
-    } else {
-      scenarioLabelY = scenarioY - 8;
-      realLabelY = Math.max(realY + 14, scenarioLabelY + CHART_LABEL_MIN_GAP);
-    }
-    // Trava aos limites verticais do viewBox — nunca deixa o rótulo vazar pra fora do SVG.
-    realLabelY = Math.min(Math.max(realLabelY, padTop + 8), H - 6);
-    scenarioLabelY = Math.min(Math.max(scenarioLabelY, padTop + 8), H - 6);
+    // Colocação direction-aware + clamp do PAR (nunca de cada rótulo isolado, que comprimia
+    // o vão de volta perto das bordas) — geometria pura e testada em `scenarioHelpers`.
+    const placed = placeChartEndLabels(
+      y(last.real_balance_cents),
+      y(last.scenario_balance_cents),
+      padTop + 8,
+      H - 6,
+    );
+    realLabelY = placed.realLabelY;
+    scenarioLabelY = placed.scenarioLabelY;
   }
 
   return (
@@ -1172,8 +1165,9 @@ function DualLineChart({ compare }: { compare: ScenarioCompareDto }) {
         <polyline className="scn-dualchart__scenario" points={scenarioPts} />
         {last && (
           <>
-            {/* Halo (paint-order: stroke) como segunda defesa: mesmo se a geometria falhar
-                num caso de borda, o rótulo nunca funde visualmente com o traço por baixo. */}
+            {/* Halo (paint-order: stroke) como segunda defesa, MELHOR-ESFORÇO: o suporte a
+                paint-order em <text> é irregular fora de Chromium/WebView2 (ex.: WebKitGTK) —
+                a defesa primária é o GUTTER à direita do plot, que vale em qualquer engine. */}
             <text
               className="scn-dualchart__label"
               x={labelX}
