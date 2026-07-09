@@ -697,6 +697,14 @@
   flex: none;
   background: var(--bg-subtle);
 }
+.cmp-error {
+  font-size: var(--fs-label);
+  color: var(--danger-400);
+  margin: 0;
+  padding: 12px 22px;
+  background: var(--danger-tint);
+  border-top: 1px solid color-mix(in srgb, var(--danger-400) 20%, transparent);
+}
 .cmp-label {
   display: block;
   font-size: 11px;
