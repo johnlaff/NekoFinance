@@ -15,6 +15,8 @@ import {
   Landmark,
   CircleDollarSign,
   ArrowRight,
+  TrendingUp,
+  TrendingDown,
 } from "lucide-react";
 import {
   createScenario,
@@ -34,9 +36,20 @@ import {
 } from "../lib/api";
 import { useCommand, invalidateCommands } from "../lib/useCommand";
 import { todayISO } from "../lib/format";
-import { fmtBRL, MES, MES_ABBR, TYPE_META, type MovementType } from "../lib/nkFormat";
+import {
+  fmtBRL,
+  fmtCompactBRL,
+  MES,
+  MES_ABBR,
+  TYPE_META,
+  type MovementType,
+} from "../lib/nkFormat";
 import { kindToFields } from "../lib/movement";
-import { stripScenarioMarker, addMonthsISO } from "../lib/scenarioHelpers";
+import {
+  stripScenarioMarker,
+  addMonthsISO,
+  placeChartEndLabels,
+} from "../lib/scenarioHelpers";
 import { Money, SignedMoney } from "../design-system/components/Money";
 import { Button } from "../design-system/components/Button";
 import { InfoPopover } from "../design-system/components/InfoPopover";
@@ -781,18 +794,27 @@ function LoanSection({ scenarioId }: { scenarioId: string }) {
 
 type DeltaSense = "higher-better" | "lower-better";
 
+/** Abaixo de R$1 de diferença é ruído de arredondamento, não um resultado — um card mostrando
+ * "−R$ 0,09" em vermelho alarma por nada. Este limiar é sobre MATERIALIDADE (existe mudança
+ * que importa?), então usa o valor absoluto em centavos direto, sem depender do sentido
+ * (`sense`) — que só decide se um delta material é bom ou ruim, não se ele é relevante. */
+const DELTA_MATERIALITY_CENTS = 100;
+
 function deltaChip(deltaCents: number, sense: DeltaSense) {
+  if (Math.abs(deltaCents) <= DELTA_MATERIALITY_CENTS) {
+    return <span className="scn-kpi__delta scn-kpi__delta--quiet">≈ sem mudança</span>;
+  }
+  // O glifo/ícone vem de better/worse (o que o `sense` deste KPI considera bom), NUNCA do
+  // sinal cru do delta — o mesmo ▲ não pode significar "melhorou" num card e "piorou" noutro
+  // só porque a métrica é "menor é melhor" (custo de vida). Cor+ícone+sinal sempre concordam.
   const better = sense === "higher-better" ? deltaCents > 0 : deltaCents < 0;
-  const worse = sense === "higher-better" ? deltaCents < 0 : deltaCents > 0;
   const cls = better
     ? "scn-kpi__delta scn-kpi__delta--better"
-    : worse
-      ? "scn-kpi__delta scn-kpi__delta--worse"
-      : "scn-kpi__delta scn-kpi__delta--neutral";
-  const arrow = deltaCents > 0 ? "▲" : deltaCents < 0 ? "▼" : "•";
+    : "scn-kpi__delta scn-kpi__delta--worse";
+  const Icon = better ? TrendingUp : TrendingDown;
   return (
     <span className={cls}>
-      <span aria-hidden="true">{arrow}</span>{" "}
+      <Icon size={12} strokeWidth={1.75} aria-hidden="true" />
       <SignedMoney cents={deltaCents} size="inherit" />
     </span>
   );
@@ -814,23 +836,28 @@ function KpiCard({
   sense: DeltaSense;
 }) {
   return (
-    <article className="scn-kpi">
+    <article
+      className="scn-kpi"
+      aria-label={`${label}: real ${fmtBRL(realCents)}, cenário ${fmtBRL(scenarioCents)}`}
+    >
       <span className="scn-kpi__label">
         <InfoPopover term={term} hideMarker>
           {label}
         </InfoPopover>
       </span>
-      <div className="scn-kpi__transition">
+      {/* Manchete: só o valor do CENÁRIO, compacto — nunca dois valores de precisão cheia
+          numa linha sem quebra (essa era a causa do estouro medido em dogfooding). Precisão
+          cheia continua acessível: no aria-label do próprio article (acima). */}
+      <span className="scn-kpi__headline" aria-hidden="true">
+        {fmtCompactBRL(scenarioCents)}
+      </span>
+      {/* Evidência visual-only: o aria-label do article já anuncia real e cenário em precisão
+          cheia — sem o aria-hidden, os dois <Money> anunciariam os MESMOS valores de novo
+          (leitor de tela ouvindo tudo em dobro). */}
+      <div className="scn-kpi__evidence" aria-hidden="true">
         <Money cents={realCents} size="inherit" />
-        <ArrowRight
-          size={12}
-          strokeWidth={2}
-          className="scn-kpi__arrow"
-          aria-hidden="true"
-        />
-        <span className="scn-kpi__scenario-val">
-          <Money cents={scenarioCents} size="inherit" />
-        </span>
+        <ArrowRight size={12} strokeWidth={2} className="scn-kpi__arrow" />
+        <Money cents={scenarioCents} size="inherit" />
       </div>
       {deltaChip(deltaCents, sense)}
     </article>
@@ -1033,14 +1060,21 @@ function monthFraction(
   return (year - startYear) * 12 + (month - startMonth);
 }
 
+/** Gutter reservado à direita do plot para os rótulos de fim de linha (~72px): sem ele "Real"/
+ *  "Simulação" caem EM CIMA do traço quando as duas linhas convergem no fim do horizonte — o
+ *  defeito medido em dogfooding. O plot termina antes do gutter; o texto começa dentro dele.
+ *  (O vão vertical mínimo entre os rótulos vive em `scenarioHelpers.CHART_LABEL_MIN_GAP`.) */
+const CHART_LABEL_GUTTER = 72;
+
 function DualLineChart({ compare }: { compare: ScenarioCompareDto }) {
   const points = compare.month_end;
   const W = 720;
   const H = 200;
-  const padX = 12;
+  const padLeft = 12;
+  const padRight = 12 + CHART_LABEL_GUTTER;
   const padTop = 20;
   const padBottom = 24;
-  const innerW = W - padX * 2;
+  const innerW = W - padLeft - padRight;
   const innerH = H - padTop - padBottom;
 
   const allVals = points.flatMap((p) => [
@@ -1051,7 +1085,7 @@ function DualLineChart({ compare }: { compare: ScenarioCompareDto }) {
   const min = Math.min(...allVals, 0);
   const range = max - min || 1;
   const x = (i: number) =>
-    padX + (points.length === 1 ? innerW / 2 : (i / (points.length - 1)) * innerW);
+    padLeft + (points.length === 1 ? innerW / 2 : (i / (points.length - 1)) * innerW);
   const y = (cents: number) => padTop + innerH - ((cents - min) / range) * innerH;
 
   const realPts = points.map((p, i) => `${x(i)},${y(p.real_balance_cents)}`).join(" ");
@@ -1084,9 +1118,43 @@ function DualLineChart({ compare }: { compare: ScenarioCompareDto }) {
     points[points.length - 1]?.scenario_balance_cents ?? 0,
   )}. Buraco do futuro real: ${fmtBRL(compare.real_deepest_deficit?.balance_cents ?? 0)}. Buraco do futuro na simulação: ${fmtBRL(compare.scenario_deepest_deficit?.balance_cents ?? 0)}.`;
 
+  const last = points[points.length - 1];
+  let labelX = 0;
+  let realLabelY = 0;
+  let scenarioLabelY = 0;
+  if (last) {
+    labelX = x(points.length - 1) + 12;
+    // Colocação direction-aware + clamp do PAR (nunca de cada rótulo isolado, que comprimia
+    // o vão de volta perto das bordas) — geometria pura e testada em `scenarioHelpers`.
+    const placed = placeChartEndLabels(
+      y(last.real_balance_cents),
+      y(last.scenario_balance_cents),
+      padTop + 8,
+      H - 6,
+    );
+    realLabelY = placed.realLabelY;
+    scenarioLabelY = placed.scenarioLabelY;
+  }
+
   return (
     <div>
-      <p className="scn-section-title">Trajetória: real × simulação</p>
+      <div className="scn-dualchart__head">
+        <p className="scn-section-title" style={{ margin: 0 }}>
+          Trajetória: real × simulação
+        </p>
+        {/* Redundância: a legenda repete cor+traço com texto — nunca só a cor conta a
+            história (regra do DS: status nunca é só cor). */}
+        <div className="scn-dualchart__legend">
+          <span className="scn-dualchart__legend-item">
+            <span className="scn-dualchart__legend-swatch scn-dualchart__legend-swatch--real" />
+            Real
+          </span>
+          <span className="scn-dualchart__legend-item">
+            <span className="scn-dualchart__legend-swatch scn-dualchart__legend-swatch--scenario" />
+            Simulação
+          </span>
+        </div>
+      </div>
       <svg
         className="scn-dualchart"
         viewBox={`0 0 ${W} ${H}`}
@@ -1095,25 +1163,36 @@ function DualLineChart({ compare }: { compare: ScenarioCompareDto }) {
       >
         <polyline className="scn-dualchart__real" points={realPts} />
         <polyline className="scn-dualchart__scenario" points={scenarioPts} />
-        {points.length > 0 && (
+        {last && (
           <>
+            {/* Halo (paint-order: stroke) como segunda defesa, MELHOR-ESFORÇO: o suporte a
+                paint-order em <text> é irregular fora de Chromium/WebView2 (ex.: WebKitGTK) —
+                a defesa primária é o GUTTER à direita do plot, que vale em qualquer engine. */}
             <text
-              x={x(points.length - 1) - 4}
-              y={y(points[points.length - 1]!.real_balance_cents) - 8}
-              textAnchor="end"
+              className="scn-dualchart__label"
+              x={labelX}
+              y={realLabelY}
+              textAnchor="start"
               fontSize="11"
               fontWeight="600"
               fill="var(--primary)"
+              stroke="var(--surface)"
+              strokeWidth={3}
+              paintOrder="stroke"
             >
               Real
             </text>
             <text
-              x={x(points.length - 1) - 4}
-              y={y(points[points.length - 1]!.scenario_balance_cents) + 14}
-              textAnchor="end"
+              className="scn-dualchart__label"
+              x={labelX}
+              y={scenarioLabelY}
+              textAnchor="start"
               fontSize="11"
               fontWeight="600"
               fill="var(--sim-scenario)"
+              stroke="var(--surface)"
+              strokeWidth={3}
+              paintOrder="stroke"
             >
               Simulação
             </text>
@@ -1137,7 +1216,10 @@ function DualLineChart({ compare }: { compare: ScenarioCompareDto }) {
 function DiffSparkline({ monthEnd }: { monthEnd: ScenarioCompareDto["month_end"] }) {
   const W = 720;
   const H = 120;
-  const padX = 12;
+  // Gutter um pouco maior que o mínimo geométrico: com `textAnchor="middle"` nos rótulos do
+  // meio, o mês nas duas pontas (jan/dez) ainda teria metade do texto pra fora do viewBox só
+  // com 12px — o mesmo defeito de colisão de borda do DualLineChart, em miniatura.
+  const padX = 18;
   const padTop = 16;
   const padBottom = 22;
   const innerW = W - padX * 2;
@@ -1198,18 +1280,26 @@ function DiffSparkline({ monthEnd }: { monthEnd: ScenarioCompareDto["month_end"]
         />
         <path d={areaPathTop} fill={`url(#${gid})`} />
         <polyline className="scn-diffchart__line" points={linePts} />
-        {monthEnd.map((m, i) => (
-          <text
-            key={`${m.year}-${m.month}`}
-            x={x(i)}
-            y={H - 4}
-            textAnchor="middle"
-            fontSize="10"
-            fill="var(--text-faint)"
-          >
-            {MES_ABBR[m.month - 1]}
-          </text>
-        ))}
+        {monthEnd.map((m, i) => {
+          // Ponta esquerda ancora à direita do próprio x (nunca vaza pra fora à esquerda);
+          // ponta direita ancora à esquerda (nunca vaza à direita) — só o meio centraliza.
+          // Mesma lógica do gutter do DualLineChart, resolvida por âncora em vez de espaço
+          // reservado (aqui o rótulo é curto — 3 letras — e já cabe dentro do padX).
+          const anchor =
+            i === 0 ? "start" : i === monthEnd.length - 1 ? "end" : "middle";
+          return (
+            <text
+              key={`${m.year}-${m.month}`}
+              x={x(i)}
+              y={H - 4}
+              textAnchor={anchor}
+              fontSize="11"
+              fill="var(--text-faint)"
+            >
+              {MES_ABBR[m.month - 1]}
+            </text>
+          );
+        })}
         {worst && (
           <circle
             cx={x(worstIdx)}

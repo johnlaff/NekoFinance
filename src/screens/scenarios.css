@@ -102,7 +102,7 @@
 }
 
 .scn-section-title {
-  font-size: 11px;
+  font-size: var(--fs-micro);
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -134,7 +134,7 @@
   background: transparent;
   border: none;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   cursor: pointer;
   padding: 4px 0;
 }
@@ -156,7 +156,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   color: var(--text-muted);
 }
 /* Respiro entre o último campo e o CTA de cada form do sheet: sem isto o botão encosta na
@@ -174,7 +174,7 @@
   border-radius: var(--radius-xs);
   color: var(--text);
   font-family: var(--font-sans);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .scn-row2 {
   display: grid;
@@ -201,7 +201,7 @@
   border-radius: var(--radius-sm);
   border: var(--bw-hair) solid var(--border);
   background: var(--bg-subtle);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 .scn-txn-row__desc {
   flex: 1;
@@ -224,23 +224,23 @@
 }
 
 .scn-error {
-  font-size: 12px;
+  font-size: var(--fs-label);
   color: var(--danger-400);
   margin: 0;
 }
 .scn-hint {
-  font-size: 12px;
+  font-size: var(--fs-label);
   color: var(--text-faint);
   margin: 0;
 }
 .scn-empty {
-  font-size: 12.5px;
+  font-size: var(--fs-label);
   color: var(--text-faint);
   padding: 4px 0;
 }
 
 .scn-preview {
-  font-size: 12px;
+  font-size: var(--fs-label);
   color: var(--text-muted);
   background: var(--bg-subtle);
   border: var(--bw-hair) dashed var(--border);
@@ -252,7 +252,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   background: var(--bg-subtle);
   border: var(--bw-hair) solid var(--border);
@@ -281,6 +281,11 @@
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: 12px;
 }
+/* Anatomia do card (plano 074, fatia A): rótulo → MANCHETE (só o valor do cenário, compacto,
+ * uma linha) → linha de EVIDÊNCIA (real → cenário, precisão cheia, pode quebrar) → delta.
+ * O bug medido em dogfooding era duas leituras de precisão cheia (13px + 17px) numa mesma
+ * linha sem quebra — 240px de conteúdo espremidos num card de 190px. Nunca mais duas leituras
+ * de precisão cheia em tamanho de manchete na mesma linha nowrap. */
 .scn-kpi {
   padding: 14px 16px;
   border-radius: var(--radius-md);
@@ -289,35 +294,46 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0; /* o grid auto-fill dá 190px por coluna; sem isto o conteúdo intrínseco vence */
 }
 .scn-kpi__label {
-  font-size: 11px;
+  font-size: var(--fs-micro);
   font-weight: 700;
   letter-spacing: 0.03em;
   color: var(--text-faint);
 }
-.scn-kpi__transition {
+.scn-kpi__headline {
+  display: block;
+  font-family: var(--font-money);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-title);
+  font-weight: 700;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.scn-kpi__evidence {
   display: flex;
   align-items: baseline;
+  flex-wrap: wrap; /* segurança: se a precisão cheia dos dois lados não couber numa linha,
+                       quebra em vez de estourar a borda do card */
+  min-width: 0;
   gap: 6px;
   font-family: var(--font-money);
   font-variant-numeric: tabular-nums;
-  font-size: 13px;
+  font-size: var(--fs-label);
   color: var(--text-muted);
 }
 .scn-kpi__arrow {
   color: var(--text-faint);
-}
-.scn-kpi__scenario-val {
-  font-size: 17px;
-  font-weight: 700;
-  color: var(--text-strong);
+  flex: none;
 }
 .scn-kpi__delta {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-weight: 600;
   width: fit-content;
   padding: 1px 7px;
@@ -331,9 +347,12 @@
   color: var(--danger-400);
   background: var(--danger-tint);
 }
-.scn-kpi__delta--neutral {
-  color: var(--text-muted);
-  background: var(--bg-subtle);
+/* Delta ≤ R$1 é ruído de arredondamento, não resultado — texto quieto, sem pill nem ícone
+ * (nada de "• R$ 0,00" competindo visualmente com deltas que importam). */
+.scn-kpi__delta--quiet {
+  color: var(--text-faint);
+  font-weight: 500;
+  padding: 1px 0;
 }
 
 .scn-changes {
@@ -349,14 +368,14 @@
   border-radius: var(--radius-sm);
   border: var(--bw-hair) solid var(--border);
   background: var(--bg-subtle);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   flex-wrap: wrap;
 }
 .scn-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--fs-micro);
   font-weight: 700;
   padding: 2px 8px;
   border-radius: var(--radius-pill, 999px);
@@ -384,6 +403,43 @@
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
   flex: none;
+}
+
+.scn-dualchart__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+/* Redundância da legenda (regra do DS: status nunca é só cor) — repete cor+traço com texto,
+ * segunda fonte de verdade além dos rótulos de fim de linha dentro do próprio SVG. */
+.scn-dualchart__legend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+}
+.scn-dualchart__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-micro);
+  color: var(--text-muted);
+}
+.scn-dualchart__legend-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 0;
+  border-top: 2px solid var(--primary);
+}
+.scn-dualchart__legend-swatch--real {
+  border-top-color: var(--primary);
+  border-top-style: solid;
+}
+.scn-dualchart__legend-swatch--scenario {
+  border-top-color: var(--sim-scenario);
+  border-top-style: dashed;
 }
 
 .scn-dualchart {
@@ -420,14 +476,9 @@
   stroke-dasharray: 3 4;
   stroke-width: 1;
 }
-.scn-diffchart__worst {
-  font-size: 11px;
-  font-weight: 700;
-  fill: var(--danger-400);
-}
 
 .scn-worst-note {
-  font-size: 12px;
+  font-size: var(--fs-label);
   color: var(--danger-400);
   margin: 6px 0 0;
 }
