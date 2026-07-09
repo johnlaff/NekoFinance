@@ -6,6 +6,24 @@ pub mod write_back;
 use crate::oauth::token_store::StoredToken;
 use serde::Deserialize;
 
+/// Reduz um corpo de erro HTTP do Google a uma linha segura: usa `error.message` do
+/// JSON padrão da API quando presente; senão trunca o corpo bruto. Evita despejar
+/// payloads upstream (IDs, ranges, metadados) em logs e na UI.
+fn google_error(context: &str, status: reqwest::StatusCode, body: &str) -> String {
+    let msg = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v["error"]["message"].as_str().map(str::to_owned))
+        .unwrap_or_else(|| {
+            let t: String = body.chars().take(180).collect();
+            if body.chars().count() > 180 {
+                format!("{t}…")
+            } else {
+                t
+            }
+        });
+    format!("{context} error {status}: {msg}")
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SheetValues {
     #[serde(default)]
@@ -64,7 +82,7 @@ impl SheetsClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(format!("Sheets API error {status}: {body}"));
+            return Err(google_error("Sheets API", status, &body));
         }
 
         let raw = resp
@@ -107,7 +125,7 @@ impl SheetsClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(format!("Sheets notes error {status}: {body}"));
+            return Err(google_error("Sheets notes", status, &body));
         }
 
         let json: serde_json::Value = resp.json().await.map_err(|e| format!("notes parse: {e}"))?;
@@ -153,7 +171,7 @@ impl SheetsClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(format!("Drive API error {status}: {body}"));
+            return Err(google_error("Drive API", status, &body));
         }
 
         let json: serde_json::Value = resp
@@ -184,7 +202,7 @@ impl SheetsClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(format!("Sheets API error {status}: {body}"));
+            return Err(google_error("Sheets API", status, &body));
         }
 
         resp.json::<serde_json::Value>()
@@ -252,7 +270,7 @@ impl SheetsClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(format!("Sheets batchUpdate error {status}: {body}"));
+            return Err(google_error("Sheets batchUpdate", status, &body));
         }
 
         let json: serde_json::Value = resp
@@ -297,9 +315,7 @@ impl SheetsClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(format!(
-                "Sheets formulas batchUpdate error {status}: {body}"
-            ));
+            return Err(google_error("Sheets formulas batchUpdate", status, &body));
         }
         let json: serde_json::Value = resp
             .json()
@@ -328,7 +344,7 @@ impl SheetsClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(format!("Sheets props error {status}: {body}"));
+            return Err(google_error("Sheets props", status, &body));
         }
         let json: serde_json::Value = resp.json().await.map_err(|e| format!("props parse: {e}"))?;
         parse_sheet_names(&json)
@@ -399,9 +415,12 @@ impl SheetsClient {
             let body = resp.text().await.unwrap_or_default();
             // 403 = token sem escopo de escrita (readonly). NÃO-FATAL para o write-back de valores.
             if status.as_u16() == 403 {
-                return Err(format!("NOTE_WRITE_PERMISSION: {status}: {body}"));
+                return Err(format!(
+                    "NOTE_WRITE_PERMISSION: {status}: {}",
+                    google_error("Sheets notes batchUpdate", status, &body)
+                ));
             }
-            return Err(format!("Sheets notes batchUpdate error {status}: {body}"));
+            return Err(google_error("Sheets notes batchUpdate", status, &body));
         }
         Ok(note_updates.len())
     }
@@ -584,5 +603,49 @@ mod tests {
         assert_eq!(json_cell_to_string(&json!(" JANEIRO ")), "JANEIRO");
         assert_eq!(json_cell_to_string(&json!("")), "");
         assert_eq!(json_cell_to_string(&serde_json::Value::Null), "");
+    }
+
+    // Corpos de erro da API Google são reduzidos a uma linha segura: prefere `error.message` do JSON
+    // padrão e nunca despeja o payload cru (ranges, IDs, metadados) em logs/UI.
+    #[test]
+    fn google_error_extracts_json_message_and_drops_payload() {
+        let err = google_error(
+            "Sheets API",
+            reqwest::StatusCode::FORBIDDEN,
+            r#"{"error":{"message":"The caller does not have permission","code":403}}"#,
+        );
+        assert!(
+            err.contains("does not have permission"),
+            "deve expor a mensagem da API: {err}"
+        );
+        assert!(
+            !err.contains("\"code\":403"),
+            "não deve despejar o payload cru: {err}"
+        );
+    }
+
+    #[test]
+    fn google_error_truncates_non_json_body() {
+        let body = "x".repeat(500);
+        let err = google_error("Drive API", reqwest::StatusCode::BAD_GATEWAY, &body);
+        assert!(err.ends_with('…'), "corpo longo deve ser truncado: {err}");
+        let prefix = "Drive API error 502 Bad Gateway: ";
+        assert!(err.starts_with(prefix));
+        let visible: String = err.chars().skip(prefix.len()).collect();
+        assert_eq!(
+            visible.chars().count(),
+            181,
+            "180 chars visíveis + ellipsis"
+        );
+    }
+
+    #[test]
+    fn google_error_keeps_short_non_json_body_intact() {
+        let err = google_error(
+            "Sheets API",
+            reqwest::StatusCode::BAD_GATEWAY,
+            "upstream timeout",
+        );
+        assert_eq!(err, "Sheets API error 502 Bad Gateway: upstream timeout");
     }
 }

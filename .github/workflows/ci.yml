@@ -22,6 +22,10 @@ jobs:
           persist-credentials: false
 
       - name: Restore private privacy denylist
+        # Só em push ou PR same-repo: forks não recebem secrets de todo modo, mas o guard torna
+        # explícito que a denylist privada nunca é materializada num workspace que rode código
+        # de terceiros.
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
         env:
           PRIVATE_FORBIDDEN_PATTERNS_B64: ${{ secrets.PRIVATE_FORBIDDEN_PATTERNS_B64 }}
         run: |

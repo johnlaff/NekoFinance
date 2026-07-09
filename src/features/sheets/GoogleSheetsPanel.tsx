@@ -591,8 +591,8 @@ export function ImportDiagnosticsNotice({
         {n} {n === 1 ? "nota precisa" : "notas precisam"} de atenção
       </summary>
       <ul className="gs-diagnostics__list">
-        {diagnostics.map((d, i) => (
-          <li key={`${d.sheet}-${d.cell}-${i}`} className="gs-diagnostics__item">
+        {diagnostics.map((d) => (
+          <li key={`${d.sheet}-${d.cell}-${d.detail}`} className="gs-diagnostics__item">
             <span className="gs-diagnostics__meta">
               {d.sheet} · {d.cell}
             </span>
@@ -1020,6 +1020,7 @@ export function GoogleSheetsPanel({
           className="gs-disconnect"
           onClick={() => void sheet.handleDisconnect()}
           title="Desconectar Google"
+          aria-label="Desconectar Google"
         >
           <Unlink size={14} strokeWidth={1.75} />
         </button>

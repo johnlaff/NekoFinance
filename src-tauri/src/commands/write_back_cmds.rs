@@ -416,6 +416,35 @@ pub(crate) async fn backup_db(
     }
     let dest_buf = PathBuf::from(dest);
 
+    // a) Extensão obrigatória .db (case-insensitive): o save dialog da UI já filtra, mas o backend
+    //    reforça a última linha de defesa contra destinos arbitrários vindos do renderer.
+    if dest_buf
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| !e.eq_ignore_ascii_case("db"))
+        .unwrap_or(true)
+    {
+        return Err("o backup deve ter extensão .db".into());
+    }
+
+    // b) Overwrite seguro: só permite substituir um arquivo pré-existente se ele for um banco SQLite
+    //    (mesmo magic header). Isso impede que um renderer comprometido use o backup para sobrescrever
+    //    um arquivo arbitrário do usuário; substituir um backup anterior continua permitido.
+    if dest_buf.exists() {
+        // read_exact de 16 bytes, não fs::read: o destino pode ser um backup de gigabytes e só o
+        // magic header interessa.
+        let mut header = [0u8; 16];
+        let is_sqlite = std::fs::File::open(&dest_buf)
+            .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut header))
+            .is_ok()
+            && &header == b"SQLite format 3\0";
+        if !is_sqlite {
+            return Err(
+                "o destino já existe e não é um backup SQLite — escolha outro nome.".into(),
+            );
+        }
+    }
+
     // NUNCA fazer backup SOBRE o banco em uso: apagá-lo/escrevê-lo desvincularia o arquivo aberto
     // (Unix) e perderia escritas futuras, ou falharia travado (Windows). Só rejeita quando o destino
     // já existe E é o mesmo arquivo (canonicalize); um destino novo nunca pode ser o banco ativo.
@@ -2109,5 +2138,108 @@ mod tests {
             Some(8000),
             "a linha de cenário não é auditada/realinhada pelo write-back real"
         );
+    }
+
+    // Hardening do backup: o renderer pode enviar qualquer destino; a validação do backend é a
+    // última linha de defesa contra sobrescrita de arquivos arbitrários.
+    async fn test_pool() -> (SqlitePool, std::path::PathBuf, std::path::PathBuf) {
+        use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+        use std::str::FromStr;
+
+        let dir = std::env::temp_dir().join(format!("neko-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("neko-src.db");
+        let src_str = src.to_str().unwrap().to_string();
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::from_str(&format!("sqlite:{src_str}"))
+                    .unwrap()
+                    .create_if_missing(true),
+            )
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        (pool, src, dir)
+    }
+
+    fn cleanup(dir: &std::path::Path) {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn backup_rejects_non_db_extension() {
+        let (pool, src, dir) = test_pool().await;
+        let dest = dir.join("neko-backup.txt");
+        let err = backup_db(&pool, &src, dest.to_str().unwrap())
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("extensão .db"),
+            "erro deve citar a extensão obrigatória: {err}"
+        );
+        drop(pool);
+        cleanup(&dir);
+    }
+
+    #[tokio::test]
+    async fn backup_rejects_overwriting_non_sqlite_file() {
+        let (pool, src, dir) = test_pool().await;
+        let dest = dir.join("neko-backup.db");
+        std::fs::write(&dest, "nao sou sqlite").unwrap();
+
+        let err = backup_db(&pool, &src, dest.to_str().unwrap())
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("não é um backup SQLite"),
+            "erro deve avisar que o destino não é SQLite: {err}"
+        );
+
+        drop(pool);
+        cleanup(&dir);
+    }
+
+    #[tokio::test]
+    async fn backup_overwrites_existing_sqlite_backup() {
+        use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+        use std::str::FromStr;
+
+        let (pool, src, dir) = test_pool().await;
+        let dest = dir.join("neko-backup.db");
+        let dest_str = dest.to_str().unwrap();
+
+        // Primeiro backup: cria o arquivo SQLite válido.
+        backup_db(&pool, &src, dest_str).await.unwrap();
+        let first = std::fs::read(&dest).unwrap();
+        assert!(first.starts_with(b"SQLite format 3\0"));
+
+        // Adiciona dados ao banco ativo para que o segundo backup seja diferente.
+        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-x', 'Tester')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Segundo backup: deve SUBSTITUIR o arquivo existente (também SQLite).
+        backup_db(&pool, &src, dest_str).await.unwrap();
+        let second = std::fs::read(&dest).unwrap();
+        assert!(second.starts_with(b"SQLite format 3\0"));
+
+        // Abre o backup e confere que a linha nova está lá (prova que foi substituído pelo estado
+        // atual do banco, não apenas renomeado sem conteúdo novo).
+        let backup_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(SqliteConnectOptions::from_str(&format!("sqlite:{dest_str}")).unwrap())
+            .await
+            .unwrap();
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM person WHERE id = 'pe-x'")
+            .fetch_one(&backup_pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 1, "o backup substituído contém o dado novo");
+
+        drop(backup_pool);
+        drop(pool);
+        cleanup(&dir);
     }
 }

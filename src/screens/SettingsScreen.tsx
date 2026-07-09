@@ -282,14 +282,14 @@ function MotionDiagnostics() {
         [{ transform: "translateX(0)" }, { transform: "translateX(220px)" }],
         { duration: 600, iterations: 3, direction: "alternate", easing: "ease-in-out" },
       );
-      anim.addEventListener("finish", () => {
+      anim.onfinish = () => {
         const dt = Math.round(performance.now() - t0);
         waapiDot.remove();
         results.push(
           dt < 900 ? `WAAPI anormal (${dt}ms; esperado ~1800ms)` : `WAAPI ok (${dt}ms)`,
         );
         finish();
-      });
+      };
     } else {
       waapiDot.remove();
       results.push("WAAPI indisponível");
@@ -298,14 +298,14 @@ function MotionDiagnostics() {
 
     // (b) Animação CSS com duração por TOKEN — tokens colapsados terminam cedo.
     const cssDot = mkDot(40, "nk-diag-dot");
-    cssDot.addEventListener("animationend", () => {
+    cssDot.onanimationend = () => {
       const dt = Math.round(performance.now() - t0);
       cssDot.remove();
       results.push(
         dt < 700 ? `CSS anormal (${dt}ms — tokens zerados?)` : `CSS ok (${dt}ms)`,
       );
       finish();
-    });
+    };
 
     // (c) clip-path animado via WAAPI — alguns compositors executam a animação
     // (finish no tempo certo) sem PINTAR a interpolação; aqui só medimos o tempo,
@@ -319,12 +319,12 @@ function MotionDiagnostics() {
         [{ clipPath: "inset(0 206px 0 0)" }, { clipPath: "inset(0 0 0 0)" }],
         { duration: 600, iterations: 3, direction: "alternate", easing: "ease-in-out" },
       );
-      clipAnim.addEventListener("finish", () => {
+      clipAnim.onfinish = () => {
         const dt = Math.round(performance.now() - t0);
         clipDot.remove();
         results.push(`clip-path terminou (${dt}ms) — viu a barra alargar?`);
         finish();
-      });
+      };
     } else {
       clipDot.remove();
       results.push("clip-path não testável");
