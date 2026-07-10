@@ -291,7 +291,7 @@ describe("Obrigações recorrentes (plano 069)", () => {
     renderLedger();
 
     expect(await screen.findByText("Internet")).toBeInTheDocument();
-    expect(screen.getByText("sem ocorrências ainda")).toBeInTheDocument();
+    expect(screen.getByText("Sem ocorrências ainda")).toBeInTheDocument();
 
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     await user.click(

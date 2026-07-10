@@ -334,8 +334,8 @@ function ComposeDrawer({
           </div>
           <div className="cmp-head__s">
             {isEditMode
-              ? "Atualiza o lançamento local · leve à planilha pelo write-back"
-              : "Salva no app · leve à planilha pelo write-back em Configurações"}
+              ? "Atualiza o lançamento local · Leve à planilha pelo write-back"
+              : "Salva no app · Leve à planilha pelo write-back em Configurações"}
           </div>
         </div>
         <button

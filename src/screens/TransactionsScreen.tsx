@@ -443,7 +443,7 @@ function Row({
                 {`${t.line_items.length} ${t.line_items.length === 1 ? "item" : "itens"}`}
                 {hasItems ? " · viram a nota da célula na planilha" : ""}
                 {lineItemsDiverge && (
-                  <span className="lc-parts__warn">itens não batem</span>
+                  <span className="lc-parts__warn">Itens não batem</span>
                 )}
               </p>
               {t.line_items.map((li, i) => {

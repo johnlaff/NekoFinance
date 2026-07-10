@@ -4,10 +4,10 @@ import { Money } from "../../design-system/components/Money";
 import { useCommand } from "../../lib/useCommand";
 
 const GROUPS = [
-  { key: "liquid_cents", label: "Caixa", hint: "entra no saldo projetado" },
-  { key: "reserve_cents", label: "Reserva", hint: "emergência, fora do caixa" },
-  { key: "restricted_cents", label: "Vale", hint: "uso restrito" },
-  { key: "illiquid_cents", label: "Ilíquido", hint: "previdência, FGTS" },
+  { key: "liquid_cents", label: "Caixa", hint: "Entra no saldo projetado" },
+  { key: "reserve_cents", label: "Reserva", hint: "Emergência, fora do caixa" },
+  { key: "restricted_cents", label: "Vale", hint: "Uso restrito" },
+  { key: "illiquid_cents", label: "Ilíquido", hint: "Previdência, FGTS" },
 ] as const;
 
 /** Dashboard card: liquidity-grouped pockets + net worth (spec 007 US3). */

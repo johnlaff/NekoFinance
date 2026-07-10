@@ -79,13 +79,17 @@
   font-weight: 700;
   color: var(--text-strong);
 }
+/* Alvo ≥36px (DS §10): o ícone é 18px; o box constrói o alvo. */
 .scn-sheet__close {
   background: transparent;
   border: none;
   color: var(--text-muted);
   cursor: pointer;
   display: inline-flex;
-  padding: 4px;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
   border-radius: var(--radius-xs);
 }
 .scn-sheet__close:hover {
@@ -119,7 +123,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
+  padding: 2px 2px 2px 10px; /* o alvo de 36px dos botões constrói a altura da linha */
   border-radius: var(--radius-sm);
   border: var(--bw-hair) solid var(--border);
   background: var(--bg-subtle);
@@ -138,13 +142,18 @@
   cursor: pointer;
   padding: 4px 0;
 }
+/* Alvo ≥36px também aqui (segura texto "Confirmar"/"Cancelar" e o ícone de lixeira). */
 .scn-scenario-row__delete {
   background: transparent;
   border: none;
   color: var(--text-faint);
   cursor: pointer;
   display: inline-flex;
-  padding: 4px;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0 6px;
   border-radius: var(--radius-xs);
   flex: none;
 }
@@ -193,34 +202,69 @@
   gap: 6px;
   margin-top: 8px;
 }
+/* Linha em GRID com coluna de valor consistente: valores mono tabulares só alinham entre
+ * linhas quando dividem a MESMA coluna right-aligned (regra do DS §7: money right-aligned
+ * in columns) — no flex antigo cada valor terminava onde o botão começava, sem coluna. */
 .scn-txn-row {
-  display: flex;
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1fr) max-content minmax(88px, max-content)
+    max-content;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
+  gap: 10px;
+  padding: 3px 3px 3px 10px;
   border-radius: var(--radius-sm);
   border: var(--bw-hair) solid var(--border);
   background: var(--bg-subtle);
   font-size: var(--fs-sm);
 }
 .scn-txn-row__desc {
-  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text);
 }
+.scn-txn-row__date {
+  font-family: var(--font-money);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+}
+.scn-txn-row__amt {
+  text-align: right;
+}
+/* Alvo ≥36px (DS §10) — o ícone é 14px; o padding constrói o alvo, não o ícone. */
 .scn-txn-row__del {
   background: transparent;
   border: none;
   color: var(--text-faint);
   cursor: pointer;
   display: inline-flex;
-  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
+  border-radius: var(--radius-xs);
 }
 .scn-txn-row__del:hover {
   color: var(--danger-400);
+  background: var(--danger-tint);
+}
+
+/* Grupo de empréstimo (lump-expand do DS dentro da lista): o chassi do pill é o mesmo das
+ * linhas soltas; as parcelas moram no corpo colapsável. */
+.scn-loan-group {
+  border-radius: var(--radius-sm);
+  border: var(--bw-hair) solid var(--border);
+  background: var(--bg-subtle);
+  padding: 4px 10px;
+}
+.scn-loan-group__rows {
+  margin: 2px 0 8px;
+}
+.scn-loan-group__rows .scn-txn-row {
+  background: var(--surface);
 }
 
 .scn-error {
@@ -338,10 +382,38 @@
   color: var(--text-muted);
 }
 
+/* Grade DECIDIDA para 5 cards (nunca o 3+2 acidental do auto-fill): o par de DECISÃO
+ * (Buraco do futuro, Saldo no fim) ganha a linha de cima em 2-up; os três de suporte fecham
+ * embaixo em 3-up. Container query, não media query: com o side-sheet aberto o container
+ * estreita sem o viewport mudar. */
 .scn-kpis {
+  container-type: inline-size;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  grid-template-columns: repeat(6, 1fr);
   gap: 12px;
+}
+.scn-kpi:nth-child(-n + 2) {
+  grid-column: span 3;
+}
+.scn-kpi:nth-child(n + 3) {
+  grid-column: span 2;
+}
+/* 3-up embaixo segura até ~600px de container (cards ≥ ~190px). Abaixo disso, 2-up com o
+ * 5º card em linha cheia — nunca um órfão de meia largura sobrando na grade. */
+@container (max-width: 599px) {
+  .scn-kpi:nth-child(n + 3) {
+    grid-column: span 3;
+  }
+  .scn-kpi:nth-child(5) {
+    grid-column: span 6;
+  }
+}
+@container (max-width: 419px) {
+  .scn-kpi:nth-child(-n + 2),
+  .scn-kpi:nth-child(n + 3),
+  .scn-kpi:nth-child(5) {
+    grid-column: span 6; /* 1-up */
+  }
 }
 /* Anatomia do card (plano 074: fatia A + fatia B didática): rótulo → ESTADO do método (Nível 2:
  * ícone + palavra + cor — a HERO) → linha de origem "Antes: …" quando o estado transiciona real→
@@ -532,6 +604,12 @@
   border-top-style: dashed;
 }
 
+/* Wrapper com posição própria: o tooltip HTML de hover ancora nele (mesmo padrão do
+ * .nk-spark do BalanceTrajectory — vocabulário único de gráfico no app). */
+.scn-dualchart-wrap {
+  position: relative;
+}
+
 .scn-dualchart {
   display: block;
   width: 100%;
@@ -552,6 +630,65 @@
   stroke-dasharray: 6 5;
 }
 
+/* Linguagem de eixo do DS (§8): só grade horizontal em --chart-grid; rótulos em mono micro
+ * na cor de eixo — Y implícito pela grade, nunca um eixo pesado. */
+.scn-dualchart__grid {
+  stroke: var(--chart-grid);
+  stroke-width: 1;
+}
+.scn-dualchart__tick {
+  font-family: var(--font-money);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  fill: var(--chart-axis);
+  text-anchor: end;
+}
+.scn-dualchart__xlabel {
+  font-size: 11px;
+  fill: var(--chart-axis);
+}
+/* Zero como LIMIAR de perigo (mesma assinatura do BalanceTrajectory): tracejado, nunca
+ * uma baseline cheia — só aparece quando algum mês fica negativo. */
+.scn-dualchart__zero {
+  stroke: var(--danger-400);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+  opacity: 0.7;
+}
+/* Pontos vazados (hollow dots do DS) — o miolo é a superfície, o anel é a cor da série. */
+.scn-dualchart__dot {
+  fill: var(--surface);
+  stroke-width: 1.75;
+}
+.scn-dualchart__dot--real {
+  stroke: var(--primary);
+}
+.scn-dualchart__dot--scenario {
+  stroke: var(--sim-scenario);
+}
+.scn-dualchart__crosshair {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+.scn-dualchart__worst {
+  font-family: var(--font-money);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+/* Linhas do tooltip de hover: swatch da série + valor (reusa o chassi .nk-spark__tip). */
+.scn-dualchart__tip-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.scn-dualchart__tip-delta {
+  font-family: var(--font-money);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-micro);
+  color: var(--text-muted);
+}
+
 /* Mesmo ritmo vertical do título do `DualLineChart` (`.scn-dualchart__head`) — os dois
  * gráficos ficam empilhados na mesma superfície e tinham margens de título diferentes
  * (8px do `.scn-section-title` cru vs 4px daqui). Sem legenda própria: gráfico de série
@@ -568,10 +705,14 @@
   display: block;
   width: 100%;
 }
+/* Traço em tinta forte: sobre as manchas verde/vermelha do gradiente, --text-muted sumia —
+ * a linha É o dado deste gráfico e não pode perder para o próprio fundo. */
 .scn-diffchart__line {
   fill: none;
-  stroke: var(--text-muted);
-  stroke-width: 1.5;
+  stroke: var(--text);
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .scn-diffchart__zero {
   stroke: var(--text-faint);
@@ -583,4 +724,24 @@
   font-size: var(--fs-label);
   color: var(--danger-400);
   margin: 6px 0 0;
+}
+
+/* Rótulos didáticos do gráfico de diferença: a POSIÇÃO (acima/abaixo do zero) é a mensagem,
+ * então ela vira palavra dentro da própria zona. O zero é nomeado — âncora de leitura. */
+.scn-diffchart__zerolabel {
+  font-family: var(--font-money);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  fill: var(--chart-axis);
+}
+.scn-diffchart__zone {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.scn-diffchart__zone--better {
+  fill: var(--success-400);
+}
+.scn-diffchart__zone--worse {
+  fill: var(--danger-400);
 }

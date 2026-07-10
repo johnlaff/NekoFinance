@@ -7,6 +7,19 @@ Object.defineProperty(window, "__TAURI_INTERNALS__", {
   configurable: true,
 });
 
+// jsdom doesn't implement ResizeObserver (the compare charts measure their container to
+// draw 1:1 pixels). No-op stub: components fall back to their default width in tests;
+// real measurement is covered by the Playwright visual specs.
+if (typeof globalThis.ResizeObserver === "undefined") {
+  const noop = () => undefined;
+  class ResizeObserverStub {
+    observe = noop;
+    unobserve = noop;
+    disconnect = noop;
+  }
+  globalThis.ResizeObserver = ResizeObserverStub;
+}
+
 // jsdom doesn't implement the native <dialog> API (showModal/show/close).
 // The Compose drawer uses a real <dialog>; polyfill the methods so component
 // tests can open/close it. Real browsers (and the Playwright e2e) use the

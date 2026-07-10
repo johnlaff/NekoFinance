@@ -181,7 +181,7 @@ export function BalanceTrajectory({
                 fontWeight="600"
                 fill="var(--text-muted)"
               >
-                hoje
+                Hoje
               </text>
             )}
           </g>

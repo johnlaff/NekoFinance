@@ -110,7 +110,7 @@ describe("TransactionsScreen (Lançamentos)", () => {
 
     expect(screen.getByLabelText("Item classificado como Cartão")).toBeInTheDocument();
     expect(screen.getByLabelText("Item classificado como Saída")).toBeInTheDocument();
-    expect(screen.getByText("itens não batem")).toBeInTheDocument();
+    expect(screen.getByText("Itens não batem")).toBeInTheDocument();
   });
 
   it("items of an income row carry the Entrada badge, never Saída", async () => {

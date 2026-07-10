@@ -596,7 +596,7 @@ function DailyTetoCeilingSection() {
             <input
               type="text"
               inputMode="decimal"
-              placeholder="ex.: 50,00"
+              placeholder="Ex.: 50,00"
               value={raw}
               onChange={(e) => {
                 setRaw(e.currentTarget.value);
@@ -818,7 +818,7 @@ function DiarioCategorySection() {
             <input
               type="text"
               inputMode="decimal"
-              placeholder="ex.: 1.250,00"
+              placeholder="Ex.: 1.250,00"
               value={s.total}
               onChange={(e) =>
                 dispatch({ type: "setTotal", value: e.currentTarget.value })
@@ -860,7 +860,7 @@ function DiarioCategorySection() {
                 <input
                   type="text"
                   inputMode="decimal"
-                  placeholder="ex.: 300,00"
+                  placeholder="Ex.: 300,00"
                   value={r.amount}
                   onChange={(e) =>
                     dispatch({
