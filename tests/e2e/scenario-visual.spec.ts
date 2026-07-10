@@ -144,3 +144,75 @@ for (const theme of ["dark", "light"] as const) {
     });
   });
 }
+
+// Estados restantes da superfície (dark, o tema primário): o hover do gráfico com
+// crosshair+tooltip, o sheet SEM cenário ativo (form inicial) e os outros dois níveis do
+// veredito (ok/tight) — o fixture principal acima já cobre o nível de risco.
+test("estados: hover do gráfico e sheet sem cenário — dark", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockTauri(page, {
+    list_scenarios_cmd: [{ id: "s1", name: COMPARE.scenario_name, person_id: "p1" }],
+    list_scenario_transactions_cmd: [],
+    list_obligations_cmd: [],
+    get_scenario_forecast_cmd: COMPARE,
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Horizonte" }).click();
+  await page.getByRole("button", { name: "Simular cenário" }).first().click();
+
+  // Sheet aberto, nenhum cenário selecionado: o form de criação é o estado inicial.
+  await expect(page.locator(".scn-sheet")).toHaveScreenshot("sheet-empty-dark.png", {
+    maxDiffPixelRatio: 0.02,
+  });
+
+  await page.getByRole("button", { name: COMPARE.scenario_name }).first().click();
+  await page.getByText(`Cenário: ${COMPARE.scenario_name}`).waitFor();
+
+  // Hover no meio do plot: crosshair + tooltip (mês · real · simulação · Δ).
+  const chart = page.locator("svg.scn-dualchart");
+  const box = await chart.boundingBox();
+  if (!box) throw new Error("gráfico sem bounding box");
+  await page.mouse.move(box.x + box.width * 0.45, box.y + box.height * 0.5);
+  await page.waitForTimeout(120);
+  await expect(page.locator(".scn-dualchart-wrap").first()).toHaveScreenshot(
+    "chart-hover-dark.png",
+    { maxDiffPixelRatio: 0.02 },
+  );
+});
+
+/** Variante do fixture com o menor saldo em outra banda do Termômetro (veredito ok/tight). */
+function compareWithDeficit(balanceCents: number) {
+  return {
+    ...COMPARE,
+    scenario_deepest_deficit: { date: "2026-08-01", balance_cents: balanceCents },
+    deepest_deficit_delta_cents: balanceCents - 1_845_213,
+  };
+}
+
+for (const [tier, cents] of [
+  ["ok", 750_000],
+  ["tight", 80_000],
+] as const) {
+  test(`veredito ${tier} — dark`, async ({ page }) => {
+    await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await mockTauri(page, {
+      list_scenarios_cmd: [{ id: "s1", name: COMPARE.scenario_name, person_id: "p1" }],
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [],
+      get_scenario_forecast_cmd: compareWithDeficit(cents),
+    });
+    await page.goto("/");
+    await page.getByRole("button", { name: "Horizonte" }).click();
+    await page.getByRole("button", { name: "Simular cenário" }).first().click();
+    await page.getByRole("button", { name: COMPARE.scenario_name }).first().click();
+    await page.getByText(`Cenário: ${COMPARE.scenario_name}`).waitFor();
+    await expect(page.locator(".scn-verdict")).toHaveScreenshot(
+      `verdict-${tier}-dark.png`,
+      { maxDiffPixelRatio: 0.02 },
+    );
+  });
+}
