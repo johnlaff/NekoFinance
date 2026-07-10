@@ -11,12 +11,13 @@ Object.defineProperty(window, "__TAURI_INTERNALS__", {
 // draw 1:1 pixels). No-op stub: components fall back to their default width in tests;
 // real measurement is covered by the Playwright visual specs.
 if (typeof globalThis.ResizeObserver === "undefined") {
+  const noop = () => undefined;
   class ResizeObserverStub {
-    observe() {}
-    unobserve() {}
-    disconnect() {}
+    observe = noop;
+    unobserve = noop;
+    disconnect = noop;
   }
-  globalThis.ResizeObserver = ResizeObserverStub as unknown as typeof ResizeObserver;
+  globalThis.ResizeObserver = ResizeObserverStub;
 }
 
 // jsdom doesn't implement the native <dialog> API (showModal/show/close).
