@@ -1562,6 +1562,28 @@ function ChangesList({ changes }: { changes: ScenarioCompareDto["changes"] }) {
  *  (O vão vertical mínimo entre os rótulos vive em `scenarioHelpers.CHART_LABEL_MIN_GAP`.) */
 const CHART_LABEL_GUTTER = 72;
 
+/** Largura REAL do container (ResizeObserver) para desenhar o SVG 1:1 em pixels. Um viewBox
+ *  fixo escala a tipografia interna junto com a largura — texto gigante em janela cheia OU
+ *  minúsculo com o side-sheet aberto, nunca os dois certos. Medindo, 11px são 11px sempre;
+ *  só o PLOT estica. Antes da primeira medição rende o fallback (evita flash de layout). */
+function useMeasuredWidth(
+  ref: React.RefObject<HTMLDivElement | null>,
+  fallback: number,
+) {
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width ?? 0;
+      if (w > 0) setWidth(Math.round(w));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref]);
+  return width || fallback;
+}
+
 /**
  * Trajetória mensal real × simulação. Três decisões estruturais:
  * - Domínio Y "nice" (`niceChartScale`) SÓ sobre os pontos mensais desenhados — nunca forçado
@@ -1579,7 +1601,7 @@ function DualLineChart({ compare }: { compare: ScenarioCompareDto }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<number | null>(null);
   const points = compare.month_end;
-  const W = 1000;
+  const W = useMeasuredWidth(wrapRef, 960);
   const H = 220;
   const padLeft = 72; // gutter dos ticks Y — "R$ 35 mil" em mono 10.5px ocupa ~56px + respiro
   const padRight = 12 + CHART_LABEL_GUTTER;
@@ -1880,7 +1902,7 @@ function DualLineChart({ compare }: { compare: ScenarioCompareDto }) {
 function DiffSparkline({ monthEnd }: { monthEnd: ScenarioCompareDto["month_end"] }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<number | null>(null);
-  const W = 1000;
+  const W = useMeasuredWidth(wrapRef, 960);
   const H = 150;
   // Gutter um pouco maior que o mínimo geométrico: com `textAnchor="middle"` nos rótulos do
   // meio, o mês nas duas pontas (jan/dez) ainda teria metade do texto pra fora do viewBox só
