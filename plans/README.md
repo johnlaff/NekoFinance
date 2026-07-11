@@ -88,7 +88,7 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 
 | 074 | Didactic scenario compare — verdict first, method states, numbers as evidence | P0 | M | 072 | COMPLETE — A (#123: overflow/labels/delta P0s + band-promotion no fmtCompactBRL), B (#124: veredito 3 níveis via saldoBand + cards estado-primeiro + transições empilhadas + income no DTO), C (#125 @ `65cf7e0`: semáforo da reserva, fmtAxisBRL BR, scenarioDeepestPoint unificado). Cada fatia: executor → lente adversarial (1 BLOCKER + 6 MAJOR pegos no total) → REVISE → CI verde |
 
-| 075 | Precisão e didática: docs drift (SESSION-CONTEXT/version-matrix) + popover "Reserva após financiar" | P2 | S | — | TODO — issue #151 |
+| 075 | Precisão e didática: docs drift (SESSION-CONTEXT/version-matrix) + popover "Reserva após financiar" | P2 | S | — | DONE — via PR #161 (issue #151); verificado: typecheck/lint 0, vitest 414, e2e 44/44 (snapshots inalterados), privacy ok. `SESSION-CONTEXT.md` (Step 1) é gitignored → corrigido localmente, fora do PR |
 | 076 | Comentários atemporais: remover meta-referências de processo (~290 "plano NNN" + spec/review) + guarda no gate | P2 | L | — | TODO — issue #152 |
 | 077 | Cenários: validar fronteira do empréstimo (taxa) + prévia falha bloqueia confirmação | P1 | S | — | TODO — issue #155 |
 | 078 | Cenários: eventos hipotéticos de HOJE entram no encadeamento de saldo (TDD) | P1 | M | — | DONE — via PR #159: ramo hipotético de encadeamento passa a incluir hoje (`load_hypothetical_rows` chain `date >= today`); ramo real e pipeline de métricas intocados. 3 testes de regressão (RED→GREEN: income/expense de hoje entram; amanhã conta uma vez); rust:check + test:run verdes. Issue #156 |
