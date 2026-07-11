@@ -641,10 +641,11 @@ async fn load_hypothetical_rows(
 }
 
 /// TODAS as linhas hipotéticas do cenário, SEM janela de data — a detecção de empréstimo e a
-/// lista de `changes` precisam ver o grupo inteiro (um principal desembolsado HOJE fica fora da
-/// janela do encadeamento `date > today` e sumiria da detecção, superestimando o custo total do
-/// financiamento pelo principal inteiro). `ORDER BY date, id` torna determinística a escolha do
-/// "primeiro" grupo `#loan` reportado.
+/// lista de `changes` precisam ver o grupo INTEIRO, independentemente das janelas de data do
+/// encadeamento (`date >= today`) e das métricas (`date >= month_start`), que existem só para o
+/// cálculo de saldo e recortariam linhas do grupo (uma parcela além do horizonte, uma linha antes
+/// da janela). `ORDER BY date, id` torna determinística a escolha do "primeiro" grupo `#loan`
+/// reportado.
 async fn load_all_hypothetical_rows(
     pool: &SqlitePool,
     scenario_id: &str,
@@ -942,10 +943,17 @@ pub(crate) async fn get_scenario_forecast_inner(
         .format("%Y-%m-%d")
         .to_string();
 
+    // Ramo REAL: `date > today` no encadeamento — o movimento real de hoje já está embutido no
+    // saldo-semente da conta; incluí-lo dobraria. As linhas HIPOTÉTICAS não tocam saldo nenhum
+    // (não há semente), então o encadeamento do CENÁRIO inclui HOJE (`date >= today`): um evento
+    // hipotético de hoje (ex.: o principal desembolsado hoje) tem de entrar na trajetória, senão
+    // ela não sobe com o dinheiro recebido e o guardrail de caixa fica apertado. As métricas
+    // cobrem o mês inteiro (`date >= month_start`) nos dois ramos — pipeline separada, sem
+    // double-count com o encadeamento.
     let real_chain_raw = load_real_rows(pool, &today_str, false, &horizon_str).await?;
     let real_metric_raw = load_real_rows(pool, &month_start_str, true, &horizon_str).await?;
     let hypo_chain_rows =
-        load_hypothetical_rows(pool, scenario_id, &today_str, false, &horizon_str).await?;
+        load_hypothetical_rows(pool, scenario_id, &today_str, true, &horizon_str).await?;
     let hypo_metric_rows =
         load_hypothetical_rows(pool, scenario_id, &month_start_str, true, &horizon_str).await?;
 
@@ -1079,9 +1087,10 @@ pub(crate) async fn get_scenario_forecast_inner(
         _ => None,
     };
 
-    // --- Empréstimo + changes: usam TODAS as linhas hipotéticas do cenário (sem janela de
-    // data): um principal desembolsado HOJE fica fora do encadeamento (`date > today`), mas
-    // PRECISA aparecer na detecção — senão `loan_total_cost` superestima pelo principal inteiro.
+    // --- Empréstimo + changes: usam TODAS as linhas hipotéticas do cenário (sem janela de data).
+    // As janelas de encadeamento/métrica existem só para o cálculo de saldo; a detecção e a lista
+    // de `changes` precisam do grupo inteiro — senão `loan_total_cost` poderia superestimar o
+    // custo por não ver todas as linhas do financiamento.
     let all_hypo_rows = load_all_hypothetical_rows(pool, scenario_id).await?;
     let scenario_reserve_after_cents = scenario_fc
         .deepest_deficit
@@ -1954,9 +1963,9 @@ mod tests {
 
     // --- Revisão adversarial (rodada 1 da slice B) ---
 
-    // MAJOR 1: um principal desembolsado NO PRÓPRIO `today` fica fora da janela do encadeamento
-    // (`date > today`), mas NÃO pode sumir da detecção do empréstimo — senão o custo total é
-    // superestimado pelo principal inteiro, em silêncio.
+    // Detecção robusta: a detecção do empréstimo usa TODAS as linhas hipotéticas (sem janela de
+    // data), então o principal desembolsado no próprio `today` nunca some do grupo — o custo total
+    // não pode ser superestimado pelo principal inteiro, em silêncio.
     #[tokio::test]
     async fn loan_detects_principal_disbursed_today() {
         let p = pool().await;
@@ -2006,6 +2015,140 @@ mod tests {
             loan.loan_total_cost_cents,
             90_000 - 1_000_000,
             "custo total = pago − principal, não pago − 0"
+        );
+    }
+
+    // Plano 078: um evento HIPOTÉTICO datado do próprio `today` (ex.: o principal do empréstimo,
+    // desembolsado hoje) precisa entrar no ENCADEAMENTO de saldo do cenário, não só nas métricas.
+    // Linhas reais de hoje já estão no saldo-semente (`date > today` é correto lá); linhas
+    // hipotéticas não têm semente, então o evento de hoje se perderia da trajetória — afundando o
+    // menor ponto e apertando o guardrail de caixa artificialmente.
+    #[tokio::test]
+    async fn hypothetical_income_today_enters_balance_chain() {
+        let p = pool().await;
+        txn(&p, "inc-1", "income", 500_000, "2026-08-02").await; // real, depois de hoje
+
+        let sc = create_scenario(&p, "Financiamento").await.unwrap();
+        add_scenario_transaction(
+            &p,
+            &sc.id,
+            "income",
+            1_000_000,
+            "Principal desembolsado hoje",
+            "2026-08-01", // == today
+            None,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let today = d("2026-08-01");
+        let compare = get_scenario_forecast_inner(&p, &sc.id, today)
+            .await
+            .unwrap();
+
+        let month = compare
+            .month_end
+            .iter()
+            .find(|m| m.year == 2026 && m.month == 8)
+            .unwrap();
+        // O principal de hoje eleva o saldo encadeado do cenário; o real fica intocado.
+        assert_eq!(
+            month.scenario_balance_cents,
+            month.real_balance_cents + 1_000_000,
+            "principal hipotético de hoje entra no encadeamento do cenário"
+        );
+        // A trajetória do cenário é paralela à real (o teto de Diário é o mesmo nos dois ramos),
+        // deslocada pelo principal a partir de hoje: o menor ponto do cenário fica MENOS fundo que
+        // o real pelo mesmo valor (delta = cenário − real = +principal ≥ 0).
+        assert_eq!(
+            compare.deepest_deficit_delta_cents,
+            Some(1_000_000),
+            "o principal de hoje levanta o menor ponto do cenário (não fica mais fundo que o real)"
+        );
+    }
+
+    // Plano 078 (simetria): a mesma fronteira vale para saída — uma despesa hipotética de hoje
+    // REDUZ o saldo encadeado do cenário (não some da trajetória).
+    #[tokio::test]
+    async fn hypothetical_expense_today_lowers_balance_chain() {
+        let p = pool().await;
+        txn(&p, "inc-1", "income", 500_000, "2026-08-02").await;
+
+        let sc = create_scenario(&p, "Gasto de hoje").await.unwrap();
+        add_scenario_transaction(
+            &p,
+            &sc.id,
+            "expense",
+            200_000,
+            "Compra hoje",
+            "2026-08-01", // == today
+            None,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let today = d("2026-08-01");
+        let compare = get_scenario_forecast_inner(&p, &sc.id, today)
+            .await
+            .unwrap();
+
+        let month = compare
+            .month_end
+            .iter()
+            .find(|m| m.year == 2026 && m.month == 8)
+            .unwrap();
+        assert_eq!(
+            month.scenario_balance_cents,
+            month.real_balance_cents - 200_000,
+            "despesa hipotética de hoje entra no encadeamento e reduz o saldo do cenário"
+        );
+    }
+
+    // Plano 078 (anti-double-count): o fix só move a fronteira de HOJE. Um hipotético datado de
+    // AMANHÃ (já dentro da janela antes e depois) precisa contribuir EXATAMENTE uma vez para o
+    // encadeamento — métricas e encadeamento são pipelines separadas; o de amanhã não pode passar
+    // a somar em dobro.
+    #[tokio::test]
+    async fn hypothetical_tomorrow_counts_once_in_chain() {
+        let p = pool().await;
+        txn(&p, "inc-1", "income", 500_000, "2026-08-10").await;
+
+        let sc = create_scenario(&p, "Amanhã").await.unwrap();
+        add_scenario_transaction(
+            &p,
+            &sc.id,
+            "income",
+            300_000,
+            "Entrada amanhã",
+            "2026-08-02", // > today (2026-08-01)
+            None,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let today = d("2026-08-01");
+        let compare = get_scenario_forecast_inner(&p, &sc.id, today)
+            .await
+            .unwrap();
+
+        let month = compare
+            .month_end
+            .iter()
+            .find(|m| m.year == 2026 && m.month == 8)
+            .unwrap();
+        assert_eq!(
+            month.scenario_balance_cents,
+            month.real_balance_cents + 300_000,
+            "hipotético de amanhã soma uma única vez ao encadeamento (sem double-count)"
         );
     }
 
