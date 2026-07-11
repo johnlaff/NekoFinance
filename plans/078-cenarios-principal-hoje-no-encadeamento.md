@@ -63,18 +63,20 @@ inconsistente (métricas veem o principal; a trajetória não).
 
 ## Commands you will need
 
-| Purpose    | Command                                    | Expected on success |
-|------------|--------------------------------------------|---------------------|
-| Rust tests | `cd src-tauri && cargo test scenarios`     | all pass            |
-| Rust gate  | `npm run rust:check`                       | exit 0 (fmt+clippy+test) |
-| Frontend   | `npm run test:run`                         | all pass            |
+| Purpose    | Command                                | Expected on success      |
+| ---------- | -------------------------------------- | ------------------------ |
+| Rust tests | `cd src-tauri && cargo test scenarios` | all pass                 |
+| Rust gate  | `npm run rust:check`                   | exit 0 (fmt+clippy+test) |
+| Frontend   | `npm run test:run`                     | all pass                 |
 
 ## Scope
 
 **In scope**:
+
 - `src-tauri/src/scenarios.rs` (fix + testes de regressão)
 
 **Out of scope** (do NOT touch):
+
 - `load_real_rows` e o seed real — o `date > today` das linhas REAIS está correto.
 - `src/screens/scenarios.tsx` — a data do desembolso continua hoje; o fix é no carregamento.
 - Semântica de override/substituição — issue #154.

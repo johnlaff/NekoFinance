@@ -65,22 +65,24 @@ planilha (ex.: `"2025"`, `"2026"` como nome de aba é vocabulário de domínio).
 
 ## Commands you will need
 
-| Purpose   | Command             | Expected on success |
-|-----------|---------------------|---------------------|
-| Typecheck | `npm run typecheck` | exit 0              |
-| Lint      | `npm run lint`      | exit 0              |
-| Tests     | `npm run test:run`  | all pass            |
-| Rust      | `npm run rust:check`| exit 0              |
-| Gate      | `npm run check`     | exit 0 (rodar 1× no final) |
+| Purpose   | Command              | Expected on success        |
+| --------- | -------------------- | -------------------------- |
+| Typecheck | `npm run typecheck`  | exit 0                     |
+| Lint      | `npm run lint`       | exit 0                     |
+| Tests     | `npm run test:run`   | all pass                   |
+| Rust      | `npm run rust:check` | exit 0                     |
+| Gate      | `npm run check`      | exit 0 (rodar 1× no final) |
 
 ## Scope
 
 **In scope**:
+
 - Comentários (`//`, `///`, `//!`, `/* */`, `{/* */}`) em `src/**` e `src-tauri/src/**`,
   incluindo os blocos `#[cfg(test)]` (comentários de teste também devem ser atemporais).
 - `scripts/` — apenas se o Step 4 (guarda de CI) for implementado como script.
 
 **Out of scope** (do NOT touch):
+
 - Qualquer CÓDIGO executável — este plano muda somente comentários. Nenhuma linha fora de
   comentário pode mudar (nem formatação).
 - `docs/`, `specs/`, `plans/`, `README*`, `CHANGELOG` — referências de processo em docs são
@@ -115,6 +117,7 @@ Se a soma for < 20, alguém já fez a limpeza — STOP e reporte.
 ### Step 2: Reescrita, arquivo a arquivo
 
 Para cada arquivo do inventário, aplicar os três casos do "Current state". Regras duras:
+
 - NUNCA find-and-replace cego; ler o comentário inteiro e preservar/extrair o racional.
 - Se remover o rótulo deixa o comentário vazio de porquê, buscar o porquê na spec/plan citado
   (estão em `specs/` e `plans/` no repo) e escrevê-lo em 1 frase.

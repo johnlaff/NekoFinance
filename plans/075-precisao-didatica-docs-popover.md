@@ -35,9 +35,11 @@ o usuário vê "Confortável · 9,4 meses" sem saber o que a régua significa.
 ## Current state
 
 - `SESSION-CONTEXT.md:33` — texto atual (errado nos dois números):
+
   ```
   - 36 migrações SQL em `src-tauri/migrations/`. 20 specs em `specs/001` a `specs/020`.
   ```
+
   Contagens reais: `ls src-tauri/migrations/*.sql | wc -l` → 41; specs vão até
   `specs/021-performance-previsao-diario/`. O arquivo não contém a palavra "cenário" em lugar
   nenhum (`grep -c "cenário\|scenario" SESSION-CONTEXT.md` → 0), embora existam
@@ -48,12 +50,15 @@ o usuário vê "Confortável · 9,4 meses" sem saber o que a régua significa.
   with didactic compare") — use-o como referência de fraseado.
 
 - `docs/version-matrix.md:66` — célula errada:
+
   ```
   | At-rest encryption      | `aes-gcm`     | `0.10`        | Encrypts cached OAuth tokens. ... |
   ```
+
   Real: `src-tauri/Cargo.toml:47` → `aes-gcm = "0.11"`.
 
 - `src/screens/scenarios.tsx` — o padrão didático dos KPIs do compare (linhas ~1147–1151):
+
   ```tsx
   <span className="scn-kpi__label">
     <InfoPopover term={term} hideMarker>
@@ -61,20 +66,22 @@ o usuário vê "Confortável · 9,4 meses" sem saber o que a régua significa.
     </InfoPopover>
   </span>
   ```
+
   `InfoPopover` já está importado no arquivo (linha 71,
   `import { InfoPopover } from "../design-system/components/InfoPopover";`) e recebe
   `term={{ title, body }}`.
 
 - `src/screens/scenarios.tsx` — o bloco do empréstimo SEM a camada didática (linhas ~1467–1474):
+
   ```tsx
-  {compare.loan.reserve_months_after_financing != null && (
-    <div className="scn-loan-summary__row">
-      <span>Reserva após financiar</span>
-      <ReserveMonthsBadge
-        months={compare.loan.reserve_months_after_financing}
-      />
-    </div>
-  )}
+  {
+    compare.loan.reserve_months_after_financing != null && (
+      <div className="scn-loan-summary__row">
+        <span>Reserva após financiar</span>
+        <ReserveMonthsBadge months={compare.loan.reserve_months_after_financing} />
+      </div>
+    );
+  }
   ```
 
 - A régua que o badge aplica (`reserveMonthsState`, linhas ~1019–1050): `< 6` → "Abaixo do
@@ -85,22 +92,24 @@ o usuário vê "Confortável · 9,4 meses" sem saber o que a régua significa.
 
 ## Commands you will need
 
-| Purpose   | Command             | Expected on success        |
-|-----------|---------------------|----------------------------|
-| Typecheck | `npm run typecheck` | exit 0                     |
-| Lint      | `npm run lint`      | exit 0                     |
-| Tests     | `npm run test:run`  | all pass                   |
-| E2E       | `npm run e2e`       | all pass (ver Step 3)      |
+| Purpose   | Command             | Expected on success   |
+| --------- | ------------------- | --------------------- |
+| Typecheck | `npm run typecheck` | exit 0                |
+| Lint      | `npm run lint`      | exit 0                |
+| Tests     | `npm run test:run`  | all pass              |
+| E2E       | `npm run e2e`       | all pass (ver Step 3) |
 
 ## Scope
 
 **In scope** (the only files you should modify):
+
 - `SESSION-CONTEXT.md`
 - `docs/version-matrix.md`
 - `src/screens/scenarios.tsx`
 - `tests/e2e/scenario-visual.spec.ts-snapshots/*` (somente se o Step 3 exigir regeneração)
 
 **Out of scope** (do NOT touch, even though they look related):
+
 - `src-tauri/src/scenarios.rs` — a SEMÂNTICA da régua (numerador/denominador) está em decisão
   no issue #150; este plano só adiciona a explicação do que a régua significa, não muda cálculo.
 - `README.md`, `docs/architecture.md` — já corretos.
@@ -118,11 +127,14 @@ o usuário vê "Confortável · 9,4 meses" sem saber o que a régua significa.
 ### Step 1: Corrigir SESSION-CONTEXT.md
 
 Na linha 33, trocar por:
+
 ```
 - 41 migrações SQL em `src-tauri/migrations/`. 21 specs em `specs/001` a `specs/021`.
 ```
+
 E adicionar ao bloco "O que o app é hoje" (logo após o bullet do motor de forecast) um bullet
 sobre cenários, no espírito de `docs/architecture.md` — por exemplo:
+
 ```
 - Cenários "e se" (what-if): lançamentos hipotéticos, override de obrigações e simulação de
   financiamento, isolados por `scenario_id` (`src-tauri/src/scenarios.rs`), com compare didático
@@ -147,8 +159,7 @@ Em `src/screens/scenarios.tsx`, envolver o rótulo no mesmo padrão dos KPIs:
     hideMarker
     term={{
       title: "Reserva após financiar",
-      body:
-        "Quantos meses de custo de vida a sua reserva cobriria depois de assumir o financiamento. A régua: abaixo de 6 meses é abaixo do mínimo; de 6 a 8, zona amarela; de 8 a 12, confortável; acima de 12, paz — folga de sobra para financiar sem ansiedade.",
+      body: "Quantos meses de custo de vida a sua reserva cobriria depois de assumir o financiamento. A régua: abaixo de 6 meses é abaixo do mínimo; de 6 a 8, zona amarela; de 8 a 12, confortável; acima de 12, paz — folga de sobra para financiar sem ansiedade.",
     }}
   >
     Reserva após financiar

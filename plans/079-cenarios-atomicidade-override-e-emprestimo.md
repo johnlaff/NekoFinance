@@ -65,16 +65,17 @@ financeiras multi-write são atômicas.
 
 ## Commands you will need
 
-| Purpose    | Command                                | Expected on success |
-|------------|----------------------------------------|---------------------|
-| Rust tests | `cd src-tauri && cargo test scenarios` | all pass            |
-| Rust gate  | `npm run rust:check`                   | exit 0              |
-| Frontend   | `npm run typecheck && npm run test:run`| exit 0 / all pass   |
-| Gate final | `npm run check`                        | exit 0              |
+| Purpose    | Command                                 | Expected on success |
+| ---------- | --------------------------------------- | ------------------- |
+| Rust tests | `cd src-tauri && cargo test scenarios`  | all pass            |
+| Rust gate  | `npm run rust:check`                    | exit 0              |
+| Frontend   | `npm run typecheck && npm run test:run` | exit 0 / all pass   |
+| Gate final | `npm run check`                         | exit 0              |
 
 ## Scope
 
 **In scope**:
+
 - `src-tauri/src/scenarios.rs`
 - `src-tauri/src/commands/` (registrar o comando novo `create_scenario_loan`)
 - `src-tauri/src/lib.rs` (handler list, se for onde os comandos são registrados)
@@ -84,6 +85,7 @@ financeiras multi-write são atômicas.
 - `src/screens/scenarios.test.tsx` (ajustar mocks)
 
 **Out of scope** (do NOT touch):
+
 - Semântica do override (substituição por ocorrência, células divergentes, FK do `#repl:`) —
   em decisão no issue #154. Este plano NÃO muda o formato do marcador `#repl:`/`#loan:` nem o
   significado de nada; só torna as escritas atômicas.

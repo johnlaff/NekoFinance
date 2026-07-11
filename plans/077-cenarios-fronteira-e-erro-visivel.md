@@ -64,7 +64,7 @@ erro visível, nunca silencioso.
 ## Commands you will need
 
 | Purpose   | Command             | Expected on success |
-|-----------|---------------------|---------------------|
+| --------- | ------------------- | ------------------- |
 | Typecheck | `npm run typecheck` | exit 0              |
 | Lint      | `npm run lint`      | exit 0              |
 | Tests     | `npm run test:run`  | all pass            |
@@ -73,10 +73,12 @@ erro visível, nunca silencioso.
 ## Scope
 
 **In scope**:
+
 - `src/screens/scenarios.tsx`
 - `src/screens/scenarios.test.tsx` (testes novos)
 
 **Out of scope** (do NOT touch):
+
 - `src-tauri/src/scenarios.rs` — validação backend do PRICE/payload entra no plano 079
   (comando atômico), não aqui.
 - `src/lib/scenarioHelpers.ts` — com a validação de fronteira, bps negativo não é mais
