@@ -91,7 +91,7 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 075 | Precisão e didática: docs drift (SESSION-CONTEXT/version-matrix) + popover "Reserva após financiar" | P2 | S | — | TODO — issue #151 |
 | 076 | Comentários atemporais: remover meta-referências de processo (~290 "plano NNN" + spec/review) + guarda no gate | P2 | L | — | TODO — issue #152 |
 | 077 | Cenários: validar fronteira do empréstimo (taxa) + prévia falha bloqueia confirmação | P1 | S | — | TODO — issue #155 |
-| 078 | Cenários: eventos hipotéticos de HOJE entram no encadeamento de saldo (TDD) | P1 | M | — | TODO — issue #156 |
+| 078 | Cenários: eventos hipotéticos de HOJE entram no encadeamento de saldo (TDD) | P1 | M | — | DONE — via PR #159: ramo hipotético de encadeamento passa a incluir hoje (`load_hypothetical_rows` chain `date >= today`); ramo real e pipeline de métricas intocados. 3 testes de regressão (RED→GREEN: income/expense de hoje entram; amanhã conta uma vez); rust:check + test:run verdes. Issue #156 |
 | 079 | Cenários: override e empréstimo atômicos (transação única + índices únicos parciais) | P2 | M | 078 (soft) | TODO — issue #157 |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale) | SUPERSEDED by NNN
