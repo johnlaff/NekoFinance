@@ -88,6 +88,12 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 
 | 074 | Didactic scenario compare — verdict first, method states, numbers as evidence | P0 | M | 072 | COMPLETE — A (#123: overflow/labels/delta P0s + band-promotion no fmtCompactBRL), B (#124: veredito 3 níveis via saldoBand + cards estado-primeiro + transições empilhadas + income no DTO), C (#125 @ `65cf7e0`: semáforo da reserva, fmtAxisBRL BR, scenarioDeepestPoint unificado). Cada fatia: executor → lente adversarial (1 BLOCKER + 6 MAJOR pegos no total) → REVISE → CI verde |
 
+| 075 | Precisão e didática: docs drift (SESSION-CONTEXT/version-matrix) + popover "Reserva após financiar" | P2 | S | — | TODO — issue #151 |
+| 076 | Comentários atemporais: remover meta-referências de processo (~290 "plano NNN" + spec/review) + guarda no gate | P2 | L | — | TODO — issue #152 |
+| 077 | Cenários: validar fronteira do empréstimo (taxa) + prévia falha bloqueia confirmação | P1 | S | — | TODO — issue #155 |
+| 078 | Cenários: eventos hipotéticos de HOJE entram no encadeamento de saldo (TDD) | P1 | M | — | TODO — issue #156 |
+| 079 | Cenários: override e empréstimo atômicos (transação única + índices únicos parciais) | P2 | M | 078 (soft) | TODO — issue #157 |
+
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale) | SUPERSEDED by NNN
 
 ## Dependency notes
@@ -252,6 +258,40 @@ rejected. The highest-leverage findings the review caught:
   trips `note_changed`/checksum; declare `zip`/`quick-xml` as direct deps.
 - **070**: diagnostics must survive a **checksum-deduped** import (derive from persisted
   state); keep a numeric field in the return type (frontend does arithmetic on it).
+
+## Round 13 batch (2026-07-10, planned at `5cb24d1`)
+
+Rodada wayfinder+improve pedida pelo dono: review completo com lentes novas (identidade/anti-
+AI-slop, atemporalidade de comentários, aderência do delta de cenários, direção). Cartografada
+como mapa no tracker — **issue #147** (tickets #148–#153). Achados vetados desta rodada:
+
+- **Régua "Reserva após financiar" dos cenários** usa colchão projetado ÷ custo de vida do mês
+  corrente (viés otimista no início do mês) em vez da régua canônica do dashboard (saldo de
+  reserva ÷ mediana de 6 meses). Semântica em decisão no **issue #150**; vira plano quando
+  resolvido.
+- **Docs drift**: SESSION-CONTEXT.md (36→41 migrações, 20→21 specs, zero menção a cenários) e
+  version-matrix (aes-gcm 0.10→0.11) → **plano 075**.
+- **Comentários com meta-referência de processo** (~290 `plano NNN`, 49 `spec NNN`, 24
+  `review adversarial/P0-P3`, TODOs `plan-039-phase2`) → **plano 076**.
+- **Identidade**: diagnóstico completo no issue #148 (a alma mora na copy/mascote/veredito-
+  primeiro; o shell visual é template — vazios, mesmice de cards, brass em só ~8 pontos).
+  Decisão refinar-vs-rebrand no ticket; execução gradua depois.
+- **Didática**: "Reserva após financiar" era o único termo de método do compare sem
+  InfoPopover → incluído no plano 075.
+- **Review externo do delta (10 achados, 9 confirmados por leitura direta)**: fronteira do
+  empréstimo + prévia falha (→ **plano 077**); principal-hoje fora do encadeamento
+  (→ **plano 078**); override/empréstimo não-atômicos (→ **plano 079**); as 4 decisões de
+  semântica do override (substituição por ocorrência, célula divergente, FK do `#repl:`,
+  recorrências na UI) → **issue #154** (viram plano quando decididas).
+
+### Rodada 13 — considered and rejected
+
+- **"Blocos imperativos em `plans/` são risco de injeção" (review externo)**: rejeitado — os
+  blocos de executor são o modelo de handoff deliberado deste diretório (skill `improve`); a
+  regra dos agentes do repo já trata conteúdo do repositório como dado, não instrução.
+- **Empréstimo não-atômico como "bug"**: reclassificado — a mitigação atual (grupo parcial
+  visível + mensagem com contagem + exclusão manual) é deliberada e documentada no código;
+  o plano 079 o trata como melhoria de arquitetura, não como defeito escondido.
 
 ## Findings considered and rejected (do not re-audit)
 
