@@ -723,11 +723,36 @@ function OverrideSection({ scenarioId }: { scenarioId: string }) {
               />
             </div>
           )}
-          <p className="scn-preview" aria-live="polite">
-            {previewQ.loading
-              ? "Calculando ocorrências afetadas…"
-              : `Isto afeta ${affectedCount} ${affectedCount === 1 ? "ocorrência" : "ocorrências"} a partir de ${fromDate}.`}
-          </p>
+          {previewQ.error !== null ? (
+            // Prévia ilegível ⇒ nunca mostrar "0 ocorrências" (leitura de erro parece "não
+            // afeta nada"): o usuário decide às cegas. Erro visível + retry, e o botão bloqueia.
+            <div
+              role="alert"
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+                alignItems: "flex-start",
+              }}
+            >
+              <p className="scn-error">
+                Não foi possível carregar as ocorrências afetadas.
+              </p>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => invalidateCommands()}
+              >
+                Tentar novamente
+              </Button>
+            </div>
+          ) : (
+            <p className="scn-preview" aria-live="polite">
+              {previewQ.loading
+                ? "Calculando ocorrências afetadas…"
+                : `Isto afeta ${affectedCount} ${affectedCount === 1 ? "ocorrência" : "ocorrências"} a partir de ${fromDate}.`}
+            </p>
+          )}
           {error && (
             <p role="alert" className="scn-error">
               {error}
@@ -738,7 +763,10 @@ function OverrideSection({ scenarioId }: { scenarioId: string }) {
             variant="primary"
             onClick={() => void confirm()}
             disabled={
-              busy || previewQ.loading || (action === "replace" && !newAmount.trim())
+              busy ||
+              previewQ.loading ||
+              previewQ.error !== null ||
+              (action === "replace" && !newAmount.trim())
             }
           >
             {busy ? "Aplicando…" : "Confirmar alteração"}
@@ -758,10 +786,26 @@ function LoanSection({ scenarioId }: { scenarioId: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Fronteira estrita: entrada não-numérica NÃO vira 0% silenciosamente e taxa negativa não
+  // passa. Cada campo tem validade explícita; o regex ancorado (sem sinal, sem hex/científico)
+  // é a barreira — só o que casa alcança o backend/marcador do agrupamento.
   const principalCents = parseBRLToCents(principal) ?? 0;
-  const term = Math.max(1, parseInt(termMonths, 10) || 0);
-  const rateBps = Math.round((parseFloat(ratePct.replace(",", ".")) || 0) * 100);
-  const validInputs = principalCents > 0 && term > 0;
+  const principalValid = principalCents > 0;
+
+  const termRaw = termMonths.trim();
+  const termValid =
+    /^\d+$/.test(termRaw) && Number(termRaw) >= 1 && Number(termRaw) <= 480;
+  const term = termValid ? Number(termRaw) : 0;
+
+  const rateRaw = ratePct.trim().replace(",", ".");
+  const rateValid = /^\d+(?:\.\d+)?$/.test(rateRaw);
+  const rateBps = rateValid ? Math.round(Number(rateRaw) * 100) : 0;
+
+  // Só sinaliza o erro quando o campo tem conteúdo inválido (campo vazio/pristino não grita).
+  const termShowError = termRaw !== "" && !termValid;
+  const rateShowError = rateRaw !== "" && !rateValid;
+
+  const validInputs = principalValid && termValid && rateValid;
 
   const previewKey = validInputs
     ? `price_installment:${principalCents}:${rateBps}:${term}`
@@ -858,10 +902,17 @@ function LoanSection({ scenarioId }: { scenarioId: string }) {
             id="scn-loan-term"
             type="number"
             min={1}
-            max={360}
+            max={480}
             value={termMonths}
             onChange={(e) => setTermMonths(e.target.value)}
+            aria-invalid={termShowError || undefined}
+            aria-describedby={termShowError ? "scn-loan-term-err" : undefined}
           />
+          {termShowError && (
+            <p id="scn-loan-term-err" className="scn-error">
+              Prazo inválido — use um número inteiro de 1 a 480.
+            </p>
+          )}
         </div>
         <div className="scn-field">
           <label htmlFor="scn-loan-rate">Juros a.m. (%)</label>
@@ -870,7 +921,14 @@ function LoanSection({ scenarioId }: { scenarioId: string }) {
             inputMode="decimal"
             value={ratePct}
             onChange={(e) => setRatePct(e.target.value)}
+            aria-invalid={rateShowError || undefined}
+            aria-describedby={rateShowError ? "scn-loan-rate-err" : undefined}
           />
+          {rateShowError && (
+            <p id="scn-loan-rate-err" className="scn-error">
+              Taxa inválida — use um número, ex.: 1,8.
+            </p>
+          )}
         </div>
       </div>
       <div className="scn-field" style={{ marginTop: 8 }}>
