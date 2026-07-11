@@ -1524,7 +1524,17 @@ export function ScenarioCompare({
             </div>
             {compare.loan.reserve_months_after_financing != null && (
               <div className="scn-loan-summary__row">
-                <span>Reserva após financiar</span>
+                <span>
+                  <InfoPopover
+                    hideMarker
+                    term={{
+                      title: "Reserva após financiar",
+                      body: "Quantos meses de custo de vida a sua reserva cobriria depois de assumir o financiamento. A régua: abaixo de 6 meses é abaixo do mínimo; de 6 a 8, zona amarela; de 8 a 12, confortável; acima de 12, paz — folga de sobra para financiar sem ansiedade.",
+                    }}
+                  >
+                    Reserva após financiar
+                  </InfoPopover>
+                </span>
                 <ReserveMonthsBadge
                   months={compare.loan.reserve_months_after_financing}
                 />
