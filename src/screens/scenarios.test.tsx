@@ -507,6 +507,110 @@ describe("HorizonteScreen — side-sheet 'Simular cenário'", () => {
       amountCents: 1000000,
     });
   });
+
+  async function openLoanSection() {
+    mockCommands({
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_scenarios_cmd: [{ id: "scn-1", name: "Cenário A", person_id: "p1" }],
+      get_scenario_forecast_cmd: baseCompare(),
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [],
+      price_installment_cmd: 35000,
+    });
+    render(<HorizonteScreen />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Simular cenário" }));
+    await user.click(await screen.findByRole("button", { name: "Cenário A" }));
+    const loanSection = await screen.findByRole("region", {
+      name: "Dimensionar um empréstimo",
+    });
+    // Principal e prazo válidos: isola a TAXA como única causa de (in)validez do formulário.
+    await user.type(within(loanSection).getByLabelText("Valor"), "1000,00");
+    return { user, loanSection };
+  }
+
+  it("taxa não-numérica ('abc') desabilita o botão e mostra 'Taxa inválida' (nunca vira 0%)", async () => {
+    const { user, loanSection } = await openLoanSection();
+    const rate = within(loanSection).getByLabelText("Juros a.m. (%)");
+    await user.clear(rate);
+    await user.type(rate, "abc");
+
+    expect(within(loanSection).getByText(/Taxa inválida/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        within(loanSection).getByRole("button", {
+          name: "Adicionar empréstimo ao cenário",
+        }),
+      ).toBeDisabled(),
+    );
+  });
+
+  it("taxa negativa ('-2') desabilita o botão (nunca cria empréstimo com bps negativo)", async () => {
+    const { user, loanSection } = await openLoanSection();
+    const rate = within(loanSection).getByLabelText("Juros a.m. (%)");
+    await user.clear(rate);
+    await user.type(rate, "-2");
+
+    await waitFor(() =>
+      expect(
+        within(loanSection).getByRole("button", {
+          name: "Adicionar empréstimo ao cenário",
+        }),
+      ).toBeDisabled(),
+    );
+  });
+
+  it("taxa com vírgula decimal ('1,8') habilita o botão (parse pt-BR funciona)", async () => {
+    const { user, loanSection } = await openLoanSection();
+    const rate = within(loanSection).getByLabelText("Juros a.m. (%)");
+    await user.clear(rate);
+    await user.type(rate, "1,8");
+
+    const btn = within(loanSection).getByRole("button", {
+      name: "Adicionar empréstimo ao cenário",
+    });
+    await waitFor(() => expect(btn).toBeEnabled());
+    expect(within(loanSection).queryByText(/Taxa inválida/)).not.toBeInTheDocument();
+  });
+
+  it("prévia do override falha: erro visível, Confirmar desabilitado e sem '0 ocorrências'", async () => {
+    mockCommands({
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_scenarios_cmd: [{ id: "scn-1", name: "Cenário A", person_id: "p1" }],
+      get_scenario_forecast_cmd: baseCompare(),
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [
+        {
+          id: "ob-1",
+          person_id: "p1",
+          name: "Aluguel",
+          match_desc: "aluguel",
+          match_section: null,
+          kind: "saida",
+        },
+      ],
+      obligation_items_cmd: () => Promise.reject(new Error("falha ao ler ocorrências")),
+    });
+    render(<HorizonteScreen />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Simular cenário" }));
+    await user.click(await screen.findByRole("button", { name: "Cenário A" }));
+
+    await user.selectOptions(screen.getByLabelText("Obrigação recorrente"), "ob-1");
+
+    // Erro de leitura vira alerta com retry — nunca "afeta 0 ocorrências" (isso pareceria
+    // "não muda nada" e o usuário salvaria às cegas).
+    expect(
+      await screen.findByText("Não foi possível carregar as ocorrências afetadas."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Tentar novamente" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirmar alteração" })).toBeDisabled();
+    expect(screen.queryByText(/Isto afeta/)).not.toBeInTheDocument();
+  });
 });
 
 describe("ScenarioCompare — superfície de comparação", () => {
