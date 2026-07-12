@@ -3,7 +3,7 @@ import type { LineItemDraft } from "../../lib/api";
 import { formatBRL, parseBRLToCents } from "../../lib/format";
 
 /**
- * Editor das PARTES de um lançamento itemizado (plano 036). Componente puro/controlado: o pai é
+ * Editor das PARTES de um lançamento itemizado. Componente puro/controlado: o pai é
  * dono da lista; toda adição/remoção/edição emite `onChange` com a nova lista (sem estado interno,
  * sem fetch, sem chamada Tauri). O TOTAL do lançamento é a SOMA das partes — quando há ≥1 parte, o
  * campo de Valor do form vira somente-leitura (auto-calculado); sem partes, o Valor é editável.

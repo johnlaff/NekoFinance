@@ -1,4 +1,4 @@
-//! Tags livres (spec 014): nome + cor, transversais a qualquer lançamento, somam por mês.
+//! Tags livres: nome + cor, transversais a qualquer lançamento, somam por mês.
 //! `emoji` e `is_special` (fixa a tag no topo) são afordâncias próprias do Neko, não do modelo de
 //! tags do método. Funções puras-de-IO no shell; determinísticas e testáveis com um pool injetado.
 
@@ -87,7 +87,7 @@ pub async fn set_transaction_tags(
     Ok(())
 }
 
-/// Liga/desliga a exclusão das métricas para uma tag (plan 034). Erro se a tag não existir.
+/// Liga/desliga a exclusão das métricas para uma tag. Erro se a tag não existir.
 pub async fn update_tag_exclude(
     pool: &SqlitePool,
     tag_id: &str,
@@ -107,7 +107,7 @@ pub async fn update_tag_exclude(
 
 /// Renomeia/recolore uma tag existente (nome, cor e emoji). `is_special` segue a convenção do
 /// nome (`!` no início fixa no topo), então é re-derivado aqui — igual ao caminho de criação.
-/// Erro se a tag não existir. Não toca em `exclude_from_totals` (toggle próprio, plan 034).
+/// Erro se a tag não existir. Não toca em `exclude_from_totals` (toggle próprio).
 pub async fn update_tag(
     pool: &SqlitePool,
     tag_id: &str,
@@ -289,7 +289,7 @@ mod tests {
     }
 
     // Renomear/recolorir tag existente: `is_special` re-deriva da convenção `!` do nome;
-    // `exclude_from_totals` não é tocado (toggle próprio, plan 034).
+    // `exclude_from_totals` não é tocado (toggle próprio).
     #[tokio::test]
     async fn update_tag_renames_recolors_and_rederives_special() {
         let p = pool().await;

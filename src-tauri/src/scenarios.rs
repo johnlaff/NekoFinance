@@ -1,25 +1,24 @@
-//! Plano 072 (slice B) — o motor do "what-if": CRUD de cenários hipotéticos + o compare de
-//! forecast (real × cenário) + a ferramenta determinística de empréstimo (tabela PRICE).
+//! Motor de "what-if": CRUD de cenários hipotéticos, comparação real × cenário e ferramenta
+//! determinística de empréstimo pela tabela PRICE.
 //!
 //! Um `scenario` é só um rótulo (nome + autoria); as linhas hipotéticas em si são
-//! `"transaction"` rows com `scenario_id` setado (slice A). Um `scenario_override` é uma AÇÃO
-//! sobre o livro-razão REAL, escopada a uma obrigação (plano 069) ou a uma série recorrente —
+//! `"transaction"` rows com `scenario_id` setado. Um `scenario_override` é uma AÇÃO
+//! sobre o livro-razão REAL, escopada a uma obrigação ou a uma série recorrente —
 //! nunca sobre o cenário em si. Nada aqui muta o livro-razão real: os overrides só afetam a
 //! PROJEÇÃO do cenário (`get_scenario_forecast`); o forecast real (`get_forecast`) continua
-//! cego à existência de qualquer cenário (slice A garantiu isso via `scenario_id IS NULL`).
+//! cego à existência de qualquer cenário por meio de `scenario_id IS NULL`.
 //!
-//! CONVENÇÕES DE MARCA NA DESCRIÇÃO (documentadas aqui porque não há coluna própria; a UI da
-//! slice C REMOVE os sufixos ao exibir):
+//! CONVENÇÕES DE MARCA NA DESCRIÇÃO (documentadas aqui porque não há coluna própria; a UI remove
+//! os sufixos ao exibir):
 //!
 //! - EMPRÉSTIMO: `create_scenario_loan` marca as linhas hipotéticas de um empréstimo anexando
 //!   `" #loan:<group_id>:<taxa_bps>"` ao FINAL da `description` de CADA linha do grupo (a
 //!   Entrada do principal + as N Saídas/Cartão das parcelas). `get_scenario_forecast` detecta o
 //!   grupo por essa marca (ancorada ao fim — um "#loan:" no meio do texto não conta), usa a
 //!   linha de tipo `income` como o principal e as `expense` como as parcelas (magnitude da
-//!   primeira parcela = o valor da prestação, assumidas iguais — o comando usa
+//!   primeira parcela = o valor da prestação, assumidas iguais — `create_scenario_loan` usa
 //!   `price_installment` para gerá-las). Só o PRIMEIRO grupo (ordem data,id) vira `loan`; os
-//!   grupos seguintes aparecem como entradas "add" comuns em `changes` (limitação aceita desta
-//!   slice).
+//!   grupos seguintes aparecem como entradas "add" comuns em `changes`.
 //!
 //! - SUBSTITUIÇÃO (`replace`): quando `set_scenario_override` recebe `op = "replace"` com um
 //!   `replacement` preenchido, ele mesmo cria a linha hipotética de substituição, anexando
@@ -97,7 +96,7 @@ pub async fn list_scenarios(pool: &SqlitePool) -> Result<Vec<Scenario>, String> 
 }
 
 /// Apaga o cenário. `transaction.scenario_id` e `scenario_override.scenario_id` são
-/// `ON DELETE CASCADE` (slice A/A.1) — apagar aqui já limpa as linhas hipotéticas e os overrides.
+/// `ON DELETE CASCADE`; apagar aqui já limpa as linhas hipotéticas e os overrides.
 pub async fn delete_scenario(pool: &SqlitePool, id: &str) -> Result<(), String> {
     let rows = sqlx::query("DELETE FROM scenario WHERE id = ?1")
         .bind(id)
@@ -266,7 +265,7 @@ pub async fn delete_scenario_transaction(
     Ok(())
 }
 
-/// Uma linha hipotética crua do cenário, para a UI listar/apagar (fatia C). A descrição chega
+/// Uma linha hipotética crua do cenário, para a UI listar/apagar. A descrição chega
 /// com os sufixos de marca (`#loan:`/`#repl:`) ainda anexados — a UI é quem os remove ao exibir
 /// (ver banner do módulo); mantê-los aqui preserva a identidade do grupo/par para quem precisar.
 #[derive(Debug, Serialize, sqlx::FromRow, Clone, PartialEq)]
@@ -724,7 +723,7 @@ pub struct ScenarioCompareDto {
     pub real_safe_to_spend_today_cents: i64,
     pub real_binding_guardrail: String,
     pub real_cost_of_living_cents: i64,
-    /// Renda do mês corrente (Entradas) — plano 074 (fatia B): a UI classifica Custo de vida
+    /// Renda do mês corrente (Entradas): a UI classifica Custo de vida
     /// ("Dentro da renda"/"Acima da renda") sem re-derivar a renda; o motor já a calcula.
     pub real_income_cents: i64,
 
@@ -1063,7 +1062,7 @@ fn detect_loan(
 }
 
 /// Custo de vida "do momento": o mês corrente do `Forecast` (mesma definição canônica do motor —
-/// fixas + diário realizado + cartão, plano 060), ou 0 se o mês corrente não aparece nos meses do
+/// fixas + diário realizado + cartão), ou 0 se o mês corrente não aparece nos meses do
 /// horizonte (nunca deveria faltar, já que `today` sempre inicia o horizonte).
 fn current_month_cost_of_living(fc: &forecast::Forecast, today: NaiveDate) -> i64 {
     fc.months
@@ -1081,7 +1080,7 @@ fn current_month_performance(fc: &forecast::Forecast, today: NaiveDate) -> i64 {
         .unwrap_or(0)
 }
 
-/// Renda do mês corrente (`MonthMetric.income_cents`) — plano 074 (fatia B): exposta para os
+/// Renda do mês corrente (`MonthMetric.income_cents`): exposta para os
 /// cards do compare classificarem Custo de vida ("Dentro da renda"/"Acima da renda") na UI sem
 /// RE-DERIVAR a renda no comando (fonte única: o motor já soma as Entradas do mês).
 fn current_month_income(fc: &forecast::Forecast, today: NaiveDate) -> i64 {
@@ -2089,7 +2088,7 @@ mod tests {
         assert_eq!(b.scenario_month_end, c.scenario_month_end);
     }
 
-    // Plano 074 (fatia B): a UI classifica Custo de vida ("Dentro da renda"/"Acima da renda")
+    // A UI classifica Custo de vida ("Dentro da renda"/"Acima da renda")
     // usando a renda do mês exposta no DTO — o comando expõe (não re-deriva) o que o motor já
     // soma em `MonthMetric.income_cents`; a Entrada hipotética do cenário entra na renda do
     // CENÁRIO, o real fica intocado.
@@ -2367,7 +2366,7 @@ mod tests {
         assert_eq!(loan.loan_total_cost_cents, 90_000 - 1_000_000);
     }
 
-    // --- Revisão adversarial (rodada 1 da slice B) ---
+    // --- Invariantes de detecção e comparação ---
 
     // Detecção robusta: a detecção do empréstimo usa TODAS as linhas hipotéticas (sem janela de
     // data), então o principal desembolsado no próprio `today` nunca some do grupo — o custo total
@@ -2424,7 +2423,7 @@ mod tests {
         );
     }
 
-    // Plano 078: um evento HIPOTÉTICO datado do próprio `today` (ex.: o principal do empréstimo,
+    // Um evento HIPOTÉTICO datado do próprio `today` (ex.: o principal do empréstimo,
     // desembolsado hoje) precisa entrar no ENCADEAMENTO de saldo do cenário, não só nas métricas.
     // Linhas reais de hoje já estão no saldo-semente (`date > today` é correto lá); linhas
     // hipotéticas não têm semente, então o evento de hoje se perderia da trajetória — afundando o
@@ -2476,7 +2475,7 @@ mod tests {
         );
     }
 
-    // Plano 078 (simetria): a mesma fronteira vale para saída — uma despesa hipotética de hoje
+    // A mesma fronteira vale para saída: uma despesa hipotética de hoje
     // REDUZ o saldo encadeado do cenário (não some da trajetória).
     #[tokio::test]
     async fn hypothetical_expense_today_lowers_balance_chain() {
@@ -2516,10 +2515,8 @@ mod tests {
         );
     }
 
-    // Plano 078 (anti-double-count): o fix só move a fronteira de HOJE. Um hipotético datado de
-    // AMANHÃ (já dentro da janela antes e depois) precisa contribuir EXATAMENTE uma vez para o
-    // encadeamento — métricas e encadeamento são pipelines separadas; o de amanhã não pode passar
-    // a somar em dobro.
+    // Um hipotético de AMANHÃ precisa contribuir exatamente uma vez para o encadeamento. Métricas e
+    // encadeamento são pipelines separados; o evento futuro não pode somar em dobro.
     #[tokio::test]
     async fn hypothetical_tomorrow_counts_once_in_chain() {
         let p = pool().await;

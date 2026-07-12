@@ -156,7 +156,8 @@ pub fn month_number_from_name(cell: &str) -> Option<u32> {
 /// Abas de métricas do método (`Economia`, `Totais`): layout `mês|Entradas|Economia|%`,
 /// não blocos mensais — nunca importar como transações. A detecção estrutural já as rejeita
 /// (exige ≥2 nomes de mês na MESMA linha; nelas os meses ficam um por linha), mas o skip
-/// por nome é a garantia explícita. Importador de métricas dedicado: spec 010.
+/// por nome é a garantia explícita. A aba `Economia` é processada pelo importador de métricas
+/// dedicado.
 pub fn is_metric_tab(sheet_name: &str) -> bool {
     matches!(
         sheet_name.trim().to_lowercase().as_str(),
@@ -429,9 +430,8 @@ mod tests {
         assert_eq!(saida.block_offset, 2);
         assert_eq!(saida.is_active, 1);
 
-        // Diário (a estrela do método) precisa sair do detector como `amount_daily` E ativo —
-        // é exatamente o target_field que o importador procura. Regressão da review adversarial:
-        // o detector emitia `daily_budget` inativo e o Diário nunca era importado.
+        // Diário precisa sair do detector como `amount_daily` e ativo, exatamente o `target_field`
+        // consumido pelo importador; `daily_budget` inativo impediria a importação da coluna.
         let diario = mappings
             .iter()
             .find(|m| m.target_field == "amount_daily")

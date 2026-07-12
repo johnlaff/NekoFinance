@@ -107,10 +107,9 @@ pub fn classify_row(date_str: &str, date_direction: &str) -> Result<bool, String
     }
 }
 
-// API pública retida (plan 002): o shell migrou para as variantes `*_in_tx` (transação externa
-// única), então estes wrappers de pool agora só têm chamadores nos testes. Mantidos de propósito
-// como API estável para os testes e chamadores futuros (o módulo `google_sheets` é privado no
-// crate, então o `dead_code` dispara sem o allow).
+// API pública mantida como wrapper de pool para testes. O shell usa as variantes `*_in_tx` com
+// transação externa única; como `google_sheets` é privado no crate, o wrapper exige
+// `allow(dead_code)`.
 #[allow(dead_code)]
 pub fn compute_checksum(rows: &[ImportedRow]) -> String {
     compute_checksum_with_options(rows, true)
@@ -189,8 +188,8 @@ pub async fn check_duplicate_import(
     Ok(count > 0)
 }
 
-// API pública retida (plan 002) — ver nota em `compute_checksum`. Wrapper de pool usado pelos
-// testes; o shell usa `import_rows_with_options_in_tx` na transação externa.
+// Wrapper de pool mantido para testes; o shell usa `import_rows_with_options_in_tx` na transação
+// externa.
 #[allow(dead_code)]
 pub async fn import_rows(
     pool: &SqlitePool,
@@ -231,8 +230,8 @@ pub(crate) fn compute_import_checksum(rows: &[ImportedRow], descriptions_trusted
     compute_checksum_with_options(rows, descriptions_trusted)
 }
 
-// API pública retida (plan 002) — ver nota em `compute_checksum`. Wrapper de pool (begin→core→
-// commit) usado pelos testes; o shell usa `import_rows_with_options_in_tx`.
+// Wrapper de pool (begin→core→commit) mantido para testes; o shell usa
+// `import_rows_with_options_in_tx`.
 #[allow(dead_code)]
 pub async fn import_rows_with_options(
     pool: &SqlitePool,
@@ -288,10 +287,9 @@ async fn import_rows_core(
 ) -> Result<usize, String> {
     let now = chrono::Utc::now().to_rfc3339();
 
-    // Reconciliação NÃO-destrutiva por aba (spec 012): identidade determinística + UPSERT preserva
-    // o id (e o enriquecimento — split/tags/payment_method ancorados nele) quando a célula é
-    // editada; diff-delete remove só as linhas que sumiram da planilha. Substitui o DELETE-all +
-    // uuid novo (que regenerava ids e matava o enriquecimento a cada re-import — P0-2).
+    // Reconciliação não destrutiva por aba: identidade determinística + UPSERT preservam o id e o
+    // enriquecimento ancorado nele quando a célula é editada; diff-delete remove apenas as linhas
+    // ausentes da planilha.
     let profile_id = resolve_profile_id(tx, profile_id).await?;
 
     let mut slot_counter: std::collections::HashMap<(String, &'static str), usize> =
@@ -313,7 +311,7 @@ async fn import_rows_core(
         let sheet_amount = row.amount.abs();
         let sheet_desc = row.description.clone();
 
-        // Merge de 3 vias (spec 013): a planilha não vence cego. Carrega o estado atual + o base
+        // Merge de 3 vias: a planilha não vence cego. Carrega o estado atual + o base
         // (source_*) e decide por campo — preservando edição local e abrindo conflito quando ambos
         // divergem, em vez de sobrescrever em silêncio. `is_fixed`/`is_projection`/`type` são
         // estruturais (seguem a planilha).
@@ -407,8 +405,8 @@ async fn import_rows_core(
             }
         }
 
-        // --- Plan 023: gramática das notas (#reembolso:/#dividir:) ---
-        // Opt-in e forward-only: nota sem marcador → no-op (idêntico ao comportamento de hoje).
+        // --- Gramática das notas (#reembolso:/#dividir:) ---
+        // Opt-in e forward-only: nota sem marcador → no-op.
         let markers = parse_note_markers(&row.raw_note);
 
         if !markers.tagged_lines.is_empty() {
@@ -513,21 +511,19 @@ async fn import_rows_core(
                 }
             }
         }
-        // --- fim Plan 023 ---
-
-        // --- Plan 035/036: nota itemizada → linhas em line_item ---
+        // --- Nota itemizada → linhas em line_item ---
         // O estilo de anotação do usuário é a célula itemizada: o TOTAL da célula é a
         // SOMA de partes, cada parte descrita em uma linha da nota. Aqui surfeamos essas
         // partes como filhos descritivos (passado E projetado), sem NUNCA mexer no total.
         //
-        // PRESERVAÇÃO DE EDIÇÃO LOCAL (plano 036): o app deixa o dono EDITAR as partes
+        // PRESERVAÇÃO DE EDIÇÃO LOCAL: o app deixa o dono EDITAR as partes
         // (`update_transaction_items_cmd` grava com `is_user_edited = 1`). Essas edições
         // locais são autoritativas até a NOTA da planilha mudar. Por isso só re-derivamos
         // da nota quando ela MUDOU desde o último import — comparando `row.raw_note` com o
         // `source_note` (base) guardado no pai. Espelha o merge de 3 vias do `source_amount`:
         // base = nota vista no último import; local = itens editados no app; entrante = nota
-        // atual. Nota inalterada + itens editados → mantém o local; nota mudou → a nota vence
-        // (re-deriva), consistente com o bloco 023.
+        // atual. Nota inalterada + itens editados → mantém o local; nota alterada → a nota vence e
+        // as partes são derivadas novamente.
         //
         // SEGURO POR PADRÃO: o total do pai jamais é alterado. Quando o somatório das
         // partes diverge da célula, o breakdown sobrevive (a classificação é preservada)
@@ -563,7 +559,7 @@ async fn import_rows_core(
             let keep_local = has_user_edited > 0 && !note_changed;
 
             // Sempre realinha a base da nota (igual ao realinho de `source_amount` do write-back):
-            // a nota atual da planilha passa a ser a base do próximo import.
+            // A nota atual da planilha torna-se a base do próximo import.
             sqlx::query(r#"UPDATE "transaction" SET source_note = ?2 WHERE id = ?1"#)
                 .bind(&txn_id)
                 .bind(&row.raw_note)
@@ -624,8 +620,6 @@ async fn import_rows_core(
             }
             // keep_local: itens editados no app sobrevivem (a nota não mudou) — nada a fazer.
         }
-        // --- fim Plan 035/036 ---
-
         // sync_log com id determinístico (1:1 com o txn) → UPSERT idempotente.
         let log_id = format!("log:{txn_id}");
         sqlx::query(
@@ -849,8 +843,7 @@ fn cell_raw_note(notes: &[Vec<String>], row: usize, col: usize) -> String {
 /// Marcadores OPT-IN extraídos de uma nota de célula (`parse_note_markers`).
 ///
 /// SEGURO POR PADRÃO: uma nota sem marcador devolve `NoteMarkers::default()`
-/// (sem entradas em `tagged_lines`), de modo que o import se comporta
-/// byte-a-byte como hoje.
+/// (sem entradas em `tagged_lines`), de modo que o parser não altera o lote importado.
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct NoteMarkers {
     /// Linhas da nota que carregam um marcador reconhecido, na ordem em que
@@ -888,7 +881,7 @@ pub(crate) enum NoteMarkerKind {
     },
 }
 
-/// Plan 035: uma parte itemizada extraída de uma linha da nota de célula.
+/// Uma parte itemizada extraída de uma linha da nota de célula.
 #[derive(Debug, PartialEq)]
 pub(crate) struct NoteLineItem {
     /// Magnitude em centavos (positiva). Mesma convenção de `transaction.amount`.
@@ -903,7 +896,7 @@ pub(crate) struct NoteLineItem {
     pub section: Option<String>,
 }
 
-/// Plano 059: bucket derivado de um item de nota. `Ajuste` é operacional
+/// Bucket derivado de um item de nota. `Ajuste` é operacional
 /// (reconciliação/diferença), não um bucket financeiro principal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ItemKind {
@@ -915,7 +908,7 @@ pub(crate) enum ItemKind {
     Ajuste,
 }
 
-/// Plano 069: também usada pelo resolver de `obligation` (identidade de série confirmada pelo
+/// Também usada pelo resolver de `obligation` (identidade de série confirmada pelo
 /// usuário) para casar `line_item.section` contra `obligation.match_section` sem duplicar a
 /// lógica de accent-fold/casefold.
 pub(crate) fn normalize_item_section(section: &str) -> String {
@@ -952,7 +945,7 @@ pub(crate) fn classify_line_item(section: Option<&str>, _description: &str) -> I
     }
 }
 
-/// Parseia as linhas itemizadas de uma nota de célula (Plan 035).
+/// Parseia as linhas itemizadas de uma nota de célula.
 ///
 /// O estilo de anotação do usuário é a célula itemizada: um TOTAL que é a SOMA de
 /// partes, cada parte descrita em uma linha da nota como `R$ <valor> - <descrição>`.
@@ -962,7 +955,7 @@ pub(crate) fn classify_line_item(section: Option<&str>, _description: &str) -> I
 /// descrição. Linhas que NÃO começam com `R$` (cabeçalhos, trailers `Total = …`,
 /// linhas de orçamento separadas por tab) NÃO viram itens, mas a última linha não-`R$`
 /// não-vazia vista é guardada como o `section` (cabeçalho) dos itens seguintes — ela é
-/// reproduzida no write-back (plano 048). Linhas em branco preservam o `section` atual.
+/// reproduzida no write-back. Linhas em branco preservam o `section` atual.
 ///
 /// Tolerâncias:
 /// - `R$<número>` e `R$ <número>` (espaço opcional após `R$`)
@@ -981,7 +974,7 @@ pub(crate) fn classify_line_item(section: Option<&str>, _description: &str) -> I
 /// PURA — sem I/O, sem DB, sem panics.
 pub(crate) fn parse_itemized_note(note: &str) -> Vec<NoteLineItem> {
     let mut items = Vec::new();
-    // Cabeçalho de seção mais recente (última linha não-`R$` não-vazia). Plano 048.
+    // Cabeçalho de seção mais recente (última linha não-`R$` não-vazia).
     let mut current_section: Option<String> = None;
     for (pos, line) in note.lines().enumerate() {
         let trimmed = line.trim();
@@ -1020,13 +1013,12 @@ pub(crate) fn parse_itemized_note(note: &str) -> Vec<NoteLineItem> {
     items
 }
 
-// --- Plano 070: diagnósticos de precisão do import (nota não itemizada / item↔célula divergente) ---
+// --- Diagnósticos de precisão do import (nota não itemizada / item↔célula divergente) ---
 //
-// Duas condições hoje são resolvidas em SILÊNCIO: (1) uma nota que não casa com a gramática de
-// `parse_itemized_note` não gera item nenhum; (2) a soma dos itens reconhecidos diverge do total
-// da célula (a célula continua dona do total — ver banner do Plan 035/036 acima). A DECISÃO de
-// dados está correta nos dois casos; o que faltava era tornar visível ONDE a itemização ficou
-// incompleta, sem re-decidir nada.
+// Dois casos exigem diagnóstico: (1) uma nota que não casa com a gramática de
+// `parse_itemized_note` não gera item; (2) a soma dos itens reconhecidos diverge do total da
+// célula, que permanece dona do total. O diagnóstico torna visível onde a itemização está
+// incompleta sem alterar a decisão de dados.
 
 /// Diagnóstico de precisão de um import — reporta, não decide. `sheet`/`cell`/`detail` são só
 /// apresentação; a persistência (célula dona do total, resíduo com sinal no loader de métricas)
@@ -1106,7 +1098,7 @@ fn is_monthly_budget_plan_note(note: &str) -> bool {
     has_mensal && has_total && has_dias
 }
 
-/// Coleta os diagnósticos de precisão de um LOTE já parseado (Plano 070). PURA: só lê
+/// Coleta os diagnósticos de precisão de um LOTE já parseado. PURA: só lê
 /// `row.raw_note`/`row.amount`, nunca toca o banco. Por isto sobrevive ao skip de checksum
 /// (dedup): o caller roda esta função sobre os MESMOS `rows` tanto quando o import escreve
 /// quanto quando o detecta como duplicata idêntica — o diagnóstico é função do LOTE parseado,
@@ -1519,8 +1511,7 @@ pub async fn get_balance_offset_for_sheet(
 
 /// Grava a série de Saldo diário, replace-all por aba (igual às transações): re-importar a
 /// planilha editada substitui atomicamente a série antiga desta aba.
-// API pública retida (plan 002) — ver nota em `compute_checksum`. Wrapper de pool usado pelos
-// testes; o shell usa `store_balance_series_in_tx`.
+// Wrapper de pool mantido para testes; o shell usa `store_balance_series_in_tx`.
 #[allow(dead_code)]
 pub async fn store_balance_series(
     pool: &SqlitePool,
@@ -1588,7 +1579,7 @@ async fn store_balance_series_core(
     Ok(series.len())
 }
 
-/// Converte texto monetário em centavos. Regra fechada de separadores (spec 010, slice 0):
+/// Converte texto monetário em centavos. Regra fechada de separadores:
 /// com `.` e `,` presentes, o que aparece POR ÚLTIMO é o decimal (cobre pt-BR `1.234,56` e
 /// en_US `1,234.56`); um separador sozinho é decimal, exceto padrão claro de agrupamento de
 /// milhar (`1.234`, `1.234.567`). Floats do xlsx chegam normalizados com 4 casas fixas
@@ -1800,7 +1791,7 @@ mod tests {
         assert_eq!(parse_number(""), 0);
     }
 
-    // Regressão spec 010 slice 0: valores representativos nos dois locales + xlsx.
+    // Valores representativos nos dois locales e no xlsx.
     #[test]
     fn test_parse_number_separator_rules() {
         // xlsx/calamine: ponto decimal puro — antes inflava 100× (12.34 → 123400).
@@ -2020,7 +2011,7 @@ mod tests {
         assert_ne!(checksum1, checksum3);
     }
 
-    // --- Spec 010 slice 0: geometria real (JANEIRO no offset 0, 12 blocos, célula espúria) ---
+    // --- Geometria real (JANEIRO no offset 0, 12 blocos, célula espúria) ---
 
     fn real_geometry_layout() -> SheetLayout {
         SheetLayout {
@@ -2112,8 +2103,8 @@ mod tests {
         assert!(balance_err.is_err());
     }
 
-    // Regressão (review adversarial): anotação com nome de mês depois do bloco real
-    // ("MAIO 2026" solto) não pode virar bloco-fantasma lendo colunas erradas.
+    // Uma anotação com nome de mês depois do bloco real ("MAIO 2026" solto) não pode criar bloco
+    // fantasma nem fazer o import ler colunas erradas.
     #[test]
     fn duplicate_month_annotation_does_not_create_ghost_block() {
         let mut rows = real_geometry_rows(false);
@@ -2188,8 +2179,7 @@ mod tests {
         );
     }
 
-    // Regressão (P1): a aba real coloca os anos LADO A LADO nas mesmas linhas. Antes, o parser pegava
-    // só o primeiro bloco e descartava silenciosamente o ano corrente (2026).
+    // A aba Economia aceita blocos anuais lado a lado e precisa importar todos.
     #[test]
     fn parse_economia_sheet_side_by_side_blocks() {
         // 2025 em B–E (idx 1–4), 2026 em G–J (idx 6–9); col F (idx 5) é o gap.
@@ -2255,10 +2245,8 @@ mod tests {
 
     #[test]
     fn parse_economia_sheet_asymmetric_blocks_no_premature_break() {
-        // Regressão (plano 050): bloco do ano anterior COMPLETO (12 meses) ao lado do bloco do ano
-        // corrente PARCIAL (8 meses com valor; 9–12 em branco, ainda não preenchidos). O bug antigo:
-        // ao ver o dezembro do ano anterior, um break encerrava o loop inteiro e truncava as linhas
-        // restantes do ano corrente. Correção: parar só no `!any` (linha sem nenhum mês válido).
+        // Um bloco anual completo pode ficar ao lado de outro parcial. Encontrar dezembro em um
+        // bloco não encerra os demais; somente `!any` (linha sem mês válido) encerra a leitura.
         //
         // Layout: ano anterior em col B (idx 1) / Economia col D (idx 3);
         //         ano corrente em col F (idx 5) / Economia col H (idx 7).
@@ -2350,7 +2338,7 @@ mod tests {
         );
     }
 
-    // --- Spec 010 slice 1: re-import idempotente (replace-all por aba, atômico) ---
+    // --- Reimport idempotente e atômico por aba ---
 
     async fn test_pool() -> SqlitePool {
         use sqlx::sqlite::SqlitePoolOptions;
@@ -2382,7 +2370,7 @@ mod tests {
         }
     }
 
-    // Plan 035: linha importada com nota de célula crua e flag de projeção (passado/futuro).
+    // Linha importada com nota de célula crua e flag de projeção (passado/futuro).
     fn imported_note(date: &str, amount: i64, raw_note: &str, is_projection: bool) -> ImportedRow {
         ImportedRow {
             raw_note: raw_note.into(),
@@ -2430,9 +2418,8 @@ mod tests {
             .0
     }
 
-    // Regressão: o frontend envia crypto.randomUUID() como profile_id; com a FK de
-    // sync_log.profile_id ligada (default do sqlx), o import inteiro falhava. O backend
-    // agora resolve/bootstrapa o profile em vez de confiar no id do frontend.
+    // O backend resolve ou cria o profile antes de gravar `sync_log`, pois o identificador recebido
+    // do frontend pode não satisfazer a chave estrangeira.
     #[tokio::test]
     async fn import_bootstraps_default_profile_when_id_is_unknown() {
         let pool = test_pool().await;
@@ -2468,7 +2455,7 @@ mod tests {
         assert_eq!(count_sync_log(&pool, "2026").await, 2);
     }
 
-    // --- Spec 013: merge de 3 vias (drift por célula + gate de conflito) ---
+    // --- Merge de 3 vias (drift por célula + gate de conflito) ---
 
     async fn amount_by_date(pool: &SqlitePool, date: &str) -> i64 {
         sqlx::query_as::<_, (i64,)>("SELECT amount FROM \"transaction\" WHERE date = ?1")
@@ -2630,8 +2617,8 @@ mod tests {
         );
     }
 
-    // Regressão do bloqueador nº 1 do dogfooding: re-importar a planilha com QUALQUER
-    // edição re-inseria todas as linhas (checksum era do batch inteiro, INSERT puro).
+    // Reimportar uma planilha editada substitui as linhas determinísticas afetadas sem duplicar as
+    // demais, mesmo que o checksum cubra o lote inteiro.
     #[tokio::test]
     async fn reimport_after_edit_replaces_instead_of_duplicating() {
         let pool = test_pool().await;
@@ -2653,9 +2640,8 @@ mod tests {
         assert_eq!(count_sync_log(&pool, "2026").await, 3);
     }
 
-    // P0-2: re-importar uma célula EDITADA preserva o id determinístico → o enriquecimento
-    // (aqui payment_method, mas idem split/tags ancorados no id) SOBREVIVE. Antes, o DELETE-all +
-    // uuid novo o destruía a cada re-import.
+    // Reimportar uma célula editada preserva o id determinístico e o enriquecimento ancorado nele
+    // (`payment_method`, splits e tags), enquanto atualiza os campos vindos da planilha.
     #[tokio::test]
     async fn reimport_preserves_transaction_identity_and_enrichment() {
         let pool = test_pool().await;
@@ -2871,7 +2857,7 @@ mod tests {
         assert_eq!(count_2025, 2);
     }
 
-    // Plan 002: o import é tudo-ou-nada numa única transação. Se algo falha entre a fase de
+    // O import é tudo-ou-nada numa única transação. Se algo falha entre a fase de
     // linhas e a de Saldo, o rollback desfaz TUDO — zero linhas, zero saldo — e o gate de
     // duplicata NÃO é envenenado (o sync_log da tentativa revertida some junto), para o retry
     // poder reimportar.
@@ -2925,7 +2911,7 @@ mod tests {
         );
     }
 
-    // Plan 002: um import bem-sucedido comita linhas E série de Saldo juntas na mesma transação;
+    // Um import bem-sucedido comita linhas E série de Saldo juntas na mesma transação;
     // ambas ficam legíveis após o commit.
     #[tokio::test]
     async fn atomic_import_commits_rows_and_balance_together() {
@@ -2965,7 +2951,7 @@ mod tests {
         );
     }
 
-    // Plan 009: o insert em lote grava o mesmo conjunto de linhas que o loop linha-a-linha e o
+    // O insert em lote grava o mesmo conjunto de linhas que o loop linha-a-linha e o
     // re-import (DELETE + lote) substitui atomicamente — inclusive com slice vazio (sem placeholders
     // = sem query, sem panic), preservando as linhas já gravadas pelo DELETE da chamada anterior.
     #[tokio::test]
@@ -3003,7 +2989,7 @@ mod tests {
     }
 
     // ===================================================================
-    // Plan 023: gramática das notas (parse puro, sem DB)
+    // Gramática das notas (parse puro, sem DB)
     // ===================================================================
 
     #[test]
@@ -3116,7 +3102,7 @@ mod tests {
     }
 
     // ===================================================================
-    // Plan 023: testes de integração (DB)
+    // Testes de integração da gramática das notas (DB)
     // ===================================================================
 
     #[tokio::test]
@@ -3334,9 +3320,8 @@ mod tests {
 
     #[tokio::test]
     async fn diff_delete_removes_orphan_import_conflict() {
-        // Regressão (plano 050, bug já fechado pelo 047): uma linha importada, com um conflito de
-        // import EM ABERTO registrado contra ela, e depois removida da planilha (re-import sem essa
-        // linha) → o conflito NÃO pode sobreviver (um conflito órfão bloquearia o write-back).
+        // Uma linha removida da planilha não pode deixar um conflito de import aberto órfão, pois
+        // esse conflito bloquearia o write-back.
         let pool = test_pool().await;
 
         // Importa duas linhas: a primeira recebe o conflito; a segunda é a âncora que mantém o
@@ -3488,7 +3473,7 @@ mod tests {
         assert_eq!(count, 1, "nenhuma pessoa duplicada criada");
     }
 
-    // --- Plan 035: parser puro parse_itemized_note (sem I/O) ---
+    // --- Parser puro parse_itemized_note (sem I/O) ---
 
     // Happy path: gramática padrão → duas partes com valor, descrição e posição.
     #[test]
@@ -3592,7 +3577,7 @@ mod tests {
         assert_eq!(items[0].amount_cents, 123_456);
     }
 
-    // Plano 048: parse_itemized_note captura o cabeçalho de seção das linhas não-`R$`.
+    // `parse_itemized_note` captura o cabeçalho de seção das linhas não-`R$`.
     #[test]
     fn itemized_captures_section_header() {
         let note = "CONTAS:\nR$ 100,00 - Item A\nR$ 50,00 - Item B";
@@ -3602,7 +3587,7 @@ mod tests {
         assert_eq!(items[1].section.as_deref(), Some("CONTAS:"));
     }
 
-    // Plano 048: duas seções separadas por linha em branco → cada item recebe seu cabeçalho.
+    // Duas seções separadas por linha em branco → cada item recebe seu cabeçalho.
     #[test]
     fn itemized_two_sections_assign_correct_header() {
         let note = "CONTAS:\nR$ 100,00 - Item A\n\nCARTÕES:\nR$ 200,00 - Item B";
@@ -3612,7 +3597,7 @@ mod tests {
         assert_eq!(items[1].section.as_deref(), Some("CARTÕES:"));
     }
 
-    // Plano 048: item sem cabeçalho anterior → section = None.
+    // Item sem cabeçalho anterior → section = None.
     #[test]
     fn itemized_no_header_yields_none_section() {
         let note = "R$ 150,00 - Item sem cabeçalho";
@@ -3621,7 +3606,7 @@ mod tests {
         assert!(items[0].section.is_none());
     }
 
-    // --- Plano 070: diagnósticos de precisão (collect_import_diagnostics), sem I/O ---
+    // --- Diagnósticos de precisão (collect_import_diagnostics), sem I/O ---
 
     #[test]
     fn format_cents_brl_formats_pt_br() {
@@ -3721,7 +3706,7 @@ mod tests {
         assert!(collect_import_diagnostics("2026", &rows, false).is_empty());
     }
 
-    // Plano 059: classificação pura de itens por seção, sem I/O.
+    // Classificação pura de itens por seção, sem I/O.
     #[test]
     fn classify_line_item_maps_known_sections_to_kinds() {
         assert_eq!(
@@ -3788,7 +3773,7 @@ mod tests {
         );
     }
 
-    // --- Plan 035: persistência de line_item no import (camada DB) ---
+    // --- Persistência de line_item no import (camada DB) ---
 
     // Happy path: nota com 2 linhas R$ cujo somatório bate com o total → itens gravados.
     #[tokio::test]
@@ -3843,9 +3828,8 @@ mod tests {
         assert_eq!(amount_by_date(&pool, "2026-02-11").await, 10_000);
     }
 
-    // Plano 070: o MESMO mismatch acima gera exatamente 1 diagnóstico ItemsDoNotSumToCell com
-    // os totais corretos — E os itens continuam persistidos (a célula segue dona do total). A
-    // claim "reportado, não redecidido" exige as duas asserções na mesma rodada.
+    // Uma divergência entre itens e célula gera exatamente um diagnóstico
+    // `ItemsDoNotSumToCell` sem impedir a persistência dos itens; a célula permanece dona do total.
     #[tokio::test]
     async fn diagnostics_report_sum_mismatch_while_items_still_persist() {
         let pool = test_pool().await;
@@ -3877,9 +3861,8 @@ mod tests {
         );
     }
 
-    // Plano 070: uma reimportação com o MESMO lote é deduplicada por checksum (não escreve
-    // nada), mas o diagnóstico não pode desaparecer — ele é função do lote parseado, não da
-    // escrita. Prova direta do requisito "sobrevive ao checksum-dedup".
+    // O diagnóstico é função do lote parseado, portanto permanece disponível mesmo quando um
+    // reimport idêntico é deduplicado por checksum e não grava nada.
     #[tokio::test]
     async fn diagnostics_survive_checksum_deduped_reimport() {
         let pool = test_pool().await;
@@ -4005,9 +3988,8 @@ mod tests {
         assert_eq!(is_proj, 1);
     }
 
-    // Uma única parte não é um breakdown → nenhum item (evita "item-fantasma").
-    // 1 item também é classificação — uma célula "ECONOMIA\nR$ 100,00"
-    // era descartada pelo gate de ≥2 partes e vazava para o custo de vida como Saída comum.
+    // Uma única parte sob cabeçalho de seção é um breakdown classificável; uma única parte sem
+    // seção não é persistida, evitando um item fantasma classificado como Saída.
     #[tokio::test]
     async fn line_items_single_part_stored_and_classified() {
         let pool = test_pool().await;
@@ -4092,7 +4074,7 @@ mod tests {
         );
     }
 
-    // Plano 036: edição LOCAL das partes sobrevive ao re-import enquanto a nota da planilha não
+    // Edição LOCAL das partes sobrevive ao re-import enquanto a nota da planilha não
     // muda. O importer só re-deriva da nota quando `source_note` (base) difere da nota atual.
     #[tokio::test]
     async fn user_edited_items_survive_reimport_when_note_unchanged() {
@@ -4145,7 +4127,7 @@ mod tests {
         assert_eq!(edited, 3, "a marca de edição local é preservada");
     }
 
-    // Plano 036: quando a NOTA da planilha muda, ela vence — re-deriva e descarta a edição local
+    // Quando a NOTA da planilha muda, ela vence — re-deriva e descarta a edição local
     // (a nota é autoritativa; o dono deve editar a planilha primeiro, depois refinar no app).
     #[tokio::test]
     async fn user_edited_items_overwritten_when_note_changes() {

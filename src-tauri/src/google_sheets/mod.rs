@@ -38,7 +38,7 @@ struct RawSheetValues {
 
 /// Números do Sheets chegam crus (UNFORMATTED_VALUE) e são normalizados com 4 casas fixas,
 /// exatamente como as células do xlsx (`xlsx_cell_to_string`) — o `parse_number` nunca vê
-/// string dependente do locale da planilha (spec 010, slice 0).
+/// string dependente do locale da planilha.
 fn json_cell_to_string(v: &serde_json::Value) -> String {
     match v {
         serde_json::Value::Number(n) => match n.as_f64() {
@@ -214,7 +214,7 @@ impl SheetsClient {
     /// ex.: `'2026'!E3`, valor numérico em reais). Escrevemos NÚMERO cru com `valueInputOption=RAW`
     /// — o Sheets armazena o número exato e o display pt-BR ("75,00") vem do formato da célula;
     /// assim a escrita é independente do locale (espelha o `UNFORMATTED_VALUE` da leitura). É a via
-    /// de escrita das células NÃO-itemizadas (as itemizadas usam `batch_update_formulas`, plano 036);
+    /// de escrita das células NÃO-itemizadas (as itemizadas usam `batch_update_formulas`);
     /// só roda atrás de `WRITE_BACK_ENABLED` + aprovação humana.
     pub async fn batch_update_values(
         &self,
@@ -243,7 +243,7 @@ impl SheetsClient {
 
     /// Envia UM pedaço (≤ limite) ao `values:batchUpdate` e CONFERE a resposta: o
     /// `totalUpdatedCells` precisa bater com o número de ranges pedidos, senão reportamos erro
-    /// (uma escrita silenciosamente parcial é tão perigosa quanto um 4xx). Plano 028 Step 6.
+    /// (uma escrita silenciosamente parcial é tão perigosa quanto um 4xx).
     async fn batch_update_chunk(
         &self,
         spreadsheet_id: &str,
@@ -280,10 +280,10 @@ impl SheetsClient {
         verify_batch_update_response(&json, chunk.len())
     }
 
-    /// Plano 036: escreve FÓRMULAS (`=SUM(...)`) via `values:batchUpdate` com
+    /// Escreve FÓRMULAS (`=SUM(...)`) via `values:batchUpdate` com
     /// `valueInputOption=USER_ENTERED` — assim o Sheets INTERPRETA a string como fórmula (com
     /// `RAW`, `=SUM(...)` viraria texto literal). É a contrapartida itemizada do
-    /// `batch_update_values` (que segue RAW numérico para as células NÃO-itemizadas, inalterado).
+    /// `batch_update_values` (que usa RAW numérico para as células NÃO-itemizadas).
     /// `updates` = lista de (range A1 COM nome de aba, string da fórmula). Confere a resposta
     /// (totalUpdatedCells) igual ao caminho RAW.
     pub async fn batch_update_formulas(
@@ -356,17 +356,16 @@ impl SheetsClient {
 
     /// Escreve NOTAS de célula via `spreadsheets.batchUpdate` (request `updateCells` com
     /// `fields="note"`). É SEPARADO de `values:batchUpdate` — notas são METADADO de célula, não
-    /// valor, e exigem o endpoint `spreadsheets` (não `spreadsheets/values`). Plano 036: a nota
+    /// valor, e exigem o endpoint `spreadsheets` (não `spreadsheets/values`). A nota
     /// carrega o detalhe por-parte (`R$ <valor> - <descrição>`) que acompanha a fórmula `=SUM(...)`.
     ///
     /// `note_updates`: lista de (A1 SEM nome de aba, ex.: `E3`, texto da nota). String vazia limpa a
     /// nota. Todas as notas vão para a aba `sheet_name`. Devolve a contagem de células atualizadas.
     ///
     /// ESCOPO OAuth: exige `spreadsheets` (leitura-e-escrita) — o mesmo que o write-back de valores já
-    /// pede (plano 028). Se o token só tiver `spreadsheets.readonly` (tokens pré-028), a API responde
-    /// 403 `insufficient permission`; aqui isso é NÃO-FATAL: devolvemos um erro prefixado com
-    /// `"NOTE_WRITE_PERMISSION:"` para o caller tratar como aviso (o valor já foi escrito com sucesso),
-    /// sem bloquear o write-back. Plano 036 Step 3.
+    /// pede. Tokens com apenas `spreadsheets.readonly` recebem 403 `insufficient permission`; esse
+    /// erro é não fatal e usa o prefixo `"NOTE_WRITE_PERMISSION:"` para o caller tratá-lo como aviso,
+    /// pois o valor já foi escrito.
     pub async fn batch_update_notes(
         &self,
         spreadsheet_id: &str,
@@ -471,7 +470,7 @@ pub(crate) fn chunk_update_ranges(
 
 /// Confere a resposta do `values:batchUpdate`: o `totalUpdatedCells` deve igualar `expected`
 /// (uma célula por range pedido). Diferente → erro nomeando a divergência, em vez de reportar
-/// sucesso sobre uma escrita parcial/silenciosa. Plano 028 Step 6.
+/// sucesso sobre uma escrita parcial/silenciosa.
 pub(crate) fn verify_batch_update_response(
     json: &serde_json::Value,
     expected: usize,
@@ -535,7 +534,7 @@ mod tests {
         assert!(sheets.is_empty());
     }
 
-    // Plano 028 Step 6: a fronteira de fragmentação respeita MAX_RANGES_PER_REQUEST. Um lote de
+    // A fronteira de fragmentação respeita MAX_RANGES_PER_REQUEST. Um lote de
     // exatamente o limite vira 1 pedaço; +1 vira 2 (o último com 1 range).
     #[test]
     fn batch_update_chunks_at_the_safe_boundary() {
@@ -560,7 +559,7 @@ mod tests {
         assert_eq!(lens, vec![500, 500, 250]);
     }
 
-    // Plano 028 Step 6: a conferência da resposta detecta escrita parcial (totalUpdatedCells != n).
+    // A conferência da resposta detecta escrita parcial (totalUpdatedCells != n).
     #[test]
     fn verify_batch_update_response_flags_partial_writes() {
         use serde_json::json;
@@ -577,7 +576,7 @@ mod tests {
         assert!(verify_batch_update_response(&json!({}), 1).is_err());
     }
 
-    // Plano 036: A1 (sem aba) → índices 0-based para o GridRange do updateCells (escrita de nota).
+    // A1 (sem aba) → índices 0-based para o GridRange do updateCells (escrita de nota).
     #[test]
     fn parse_a1_cell_maps_to_zero_based_grid_indices() {
         assert_eq!(parse_a1_cell("A1"), Ok((0, 0)));
@@ -592,7 +591,7 @@ mod tests {
         assert!(parse_a1_cell("").is_err());
     }
 
-    // Spec 010 slice 0: o path ao vivo normaliza números cru → 4 casas fixas, sem locale.
+    // O path ao vivo normaliza números crus → 4 casas fixas, sem locale.
     #[test]
     fn json_cells_normalize_numbers_to_fixed_decimals() {
         use serde_json::json;

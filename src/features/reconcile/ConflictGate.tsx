@@ -29,7 +29,7 @@ function fmtValue(field: string, value: string): string {
 }
 
 /**
- * Gate de conflito de import (spec 013): quando o re-import detecta que VOCÊ editou um valor E a
+ * Gate de conflito de import: quando o re-import detecta que VOCÊ editou um valor E a
  * planilha também mudou (de forma diferente), o app não escolhe sozinho. Aqui você decide, lançamento
  * a lançamento, qual versão vale. Some quando não há conflitos.
  */
@@ -49,7 +49,7 @@ export function ConflictGate({ onResolved }: { onResolved?: () => void }) {
     };
   }, []);
 
-  // Sync em segundo plano (plano 026): quando o backend conclui um import automático ele emite
+  // Sync em segundo plano: quando o backend conclui um import automático ele emite
   // `neko://sync-done`. Re-derruba o cache de finanças (dashboard/grade/totais) e re-busca os
   // conflitos para o badge aparecer sem ação do usuário. Cancela a assinatura no unmount (evita
   // vazar o listener no HMR).

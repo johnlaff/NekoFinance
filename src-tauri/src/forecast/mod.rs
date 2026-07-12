@@ -2,12 +2,8 @@
 //!
 //! Pure functional core: NO IO, NO ambient clock, NO DB. Every input (seed, events, horizon,
 //! "today") arrives as an argument, so the engine is deterministic and trivially testable. The
-//! imperative shell (`commands.rs`) loads/maps rows and supplies the seed. See
-//! `specs/003-forecast-core/`.
-//!
-//! The pure engine is complete (daily chain, month-end, deepest deficit, safe-to-spend, monthly
-//! Totais). Remaining slice work is in the shell: wire the row→event mapping + seed into
-//! `get_dashboard_summary` (Phase 7) and add a demo fixture (Phase 8).
+//! imperative shell (`commands.rs`) loads/maps rows and supplies the seed. The engine owns the
+//! daily chain, month-end balances, deepest deficit, safe-to-spend guardrails and monthly totals.
 
 use chrono::{Datelike, NaiveDate};
 
@@ -93,7 +89,7 @@ pub struct Forecast {
     pub deepest_deficit: Option<DayPoint>,
     /// SÓ o piso de caixa (menor saldo do horizonte, ≥ 0) — NÃO é o "pode gastar" exibido. O
     /// guardrail real (duplo: caixa × poupança) é [`safe_to_spend_today`]; o DTO expõe o dele.
-    /// Nome explícito para não ser confundido com o número do dashboard (review P2).
+    /// Nome explícito para não ser confundido com o número do dashboard.
     pub cash_floor_cents: i64,
     /// Per-month decision metrics (Totais).
     pub months: Vec<MonthMetric>,
@@ -118,8 +114,8 @@ pub struct SafeToSpend {
     pub cash_headroom_cents: i64,
     /// Folga de poupança do mês corrente: `performance − meta×renda`. Negativa = já abaixo da
     /// meta (gastar mais afunda a performance). `None` = régua de poupança INATIVA (mês sem
-    /// renda) → só o caixa decide. Tipado como Option para o compilador forçar o tratamento
-    /// (antes era um sentinela `i64::MAX` que vazava — review P1/P2).
+    /// renda) → só o caixa decide. `Option` obriga o tratamento explícito da régua inativa e
+    /// impede o vazamento de sentinelas numéricos.
     pub savings_headroom_cents: Option<i64>,
     /// Qual régua manda.
     pub binding: Guardrail,
@@ -199,7 +195,7 @@ pub fn month_coverage(
     complete_threshold_bps: i64,
 ) -> Vec<MonthCoverage> {
     // Sem baseline (nenhum mês realizado) não dá para julgar nada — devolve vazio para o caller
-    // sinalizar "sem histórico", em vez de marcar tudo como completo (review P1).
+    // sinalizar "sem histórico", em vez de marcar tudo como completo.
     if baseline_outflow_cents <= 0 {
         return Vec::new();
     }
@@ -389,10 +385,9 @@ fn month_metrics(
                     EventKind::Patrimonio => patrimonio += e.amount_cents,
                 }
             }
-            // Anotação da aba Economia para este mês (import via store_economia_entries, plano 052).
-            // Desde o pacote K a aba é DERIVADA dos itens ECONOMIA + transfers→reserva (write-back
-            // 062): após o round-trip, anotação e eventos representam o MESMO dinheiro — somar
-            // dobraria. Regra: o mês vale o MAIOR entre o derivado (eventos acima) e a anotação.
+            // Anotação da aba Economia para este mês (import via store_economia_entries). A
+            // anotação e os eventos podem representar o MESMO dinheiro após o round-trip; somar
+            // dobraria. O mês usa o MAIOR entre o derivado (eventos acima) e a anotação.
             // Mês só-planilha usa a anotação; excedente digitado à mão ainda conta. Trade-off
             // deliberado: dinheiro GENUINAMENTE disjunto (anotação só-planilha + transfer manual
             // ainda não escrito de volta) fica subcontado até o próximo write-back alinhar a aba —
@@ -537,8 +532,8 @@ pub fn project(
 /// O encadeamento diário parte da semente (que já embute todo o passado) e por isso só consome
 /// `chain_events` com `date > hoje` — somar o realizado de novo dobraria. Mas a performance do
 /// mês corrente PRECISA do realizado de hoje-pra-trás no mês (renda e saídas já lançadas), senão
-/// junho aparece com sinal trocado e o guardrail de poupança decide sobre o mês pela metade
-/// (P0 do review adversarial). Por isso `metric_events` cobre o mês inteiro (realizado + projetado).
+/// junho aparece com sinal trocado e o guardrail de poupança decide sobre o mês pela metade.
+/// Por isso `metric_events` cobre o mês inteiro (realizado + projetado).
 pub fn project_with_metrics(
     seed_cents: i64,
     today: NaiveDate,
@@ -805,7 +800,7 @@ mod tests {
         assert_eq!(cov[1].estimated_missing_cents, 620); // 1000 − 380
     }
 
-    // Sem baseline (nenhum mês realizado) → cobertura VAZIA, não "tudo completo" (review P1).
+    // Sem baseline (nenhum mês realizado) → cobertura VAZIA, não "tudo completo".
     #[test]
     fn month_coverage_empty_without_baseline() {
         let mm = |year, month, cost: i64| MonthMetric {
@@ -857,7 +852,7 @@ mod tests {
         assert_eq!(m.performance_cents, 400000); // 1000 - 600
     }
 
-    // Plano 060: modelo canônico de 5 tipos. Cartão entra no custo de vida como bucket próprio;
+    // Modelo canônico de 5 tipos. Cartão entra no custo de vida como bucket próprio;
     // Economia sai do custo de vida, mas continua reduzindo Performance porque o dinheiro saiu.
     #[test]
     fn five_type_worked_example_matches_target_table() {
@@ -892,9 +887,8 @@ mod tests {
         assert_eq!(m.performance_cents, 250_000); // idêntica: a previsão virou realizado
     }
 
-    // Regressão: desde que o write-back deriva a aba Economia dos itens ECONOMIA
-    // (plano 062), a anotação e os eventos representam o MESMO dinheiro após o round-trip.
-    // Somar os dois dobrava o Economizado% e derrubava a Performance duas vezes.
+    // Quando a anotação e os eventos representam o MESMO dinheiro após o round-trip, o mês usa o
+    // maior dos dois; somá-los duplicaria o Economizado% e a queda na Performance.
     #[test]
     fn annotation_equal_to_derived_economia_counts_once() {
         let events = [
@@ -940,7 +934,7 @@ mod tests {
         assert_eq!(m.performance_cents, 840_000);
     }
 
-    // Mês só-planilha (sem eventos derivados): a anotação continua valendo sozinha (plano 052).
+    // Mês só-planilha (sem eventos derivados): a anotação continua valendo sozinha.
     #[test]
     fn annotation_only_month_still_counts() {
         let events = [ev("2026-03-05", EventKind::Income, 1_000_000)];
@@ -1180,7 +1174,7 @@ mod tests {
         assert_eq!(due_early, d("2026-02-10"));
     }
 
-    // ---- Slice 011: Economia + previsão de diário como driver ----
+    // ---- Economia + previsão de diário como driver ----
 
     use std::collections::HashSet;
 
@@ -1282,7 +1276,7 @@ mod tests {
         assert_eq!(m.savings_rate_bps, 2_000); // 200/1000 = 20%
     }
 
-    // Plano 060: economia reduz Performance uma vez, mas fica fora de custo de vida.
+    // Economia reduz Performance uma vez, mas fica fora de custo de vida.
     #[test]
     fn performance_counts_economia_as_outflow_once() {
         // Arrange: renda 5_000_000, Saída fixa 1_000_000, Diário realizado 500_000.

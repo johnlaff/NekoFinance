@@ -154,8 +154,8 @@ pub fn run() {
                 }
             };
 
-            // Background read-side sync (plan 026, Phase 1: read-only — never touches
-            // write-back). Spawned after the pool + AppDataDir are managed. Clones happen
+            // Background read-side sync is read-only and never touches write-back. Spawned after
+            // the pool + AppDataDir are managed. Clones happen
             // before `app.manage(pool)` moves the pool into Tauri state. The shared SyncGuard
             // serializes ALL import paths (background loop, focus probe, `import_sheet_data`,
             // `import_local_xlsx`) against each other on the single-connection pool; the user
@@ -164,9 +164,9 @@ pub fn run() {
             let import_guard = Arc::new(sync_task::SyncGuard::new(()));
             app.manage(import_guard.clone());
 
-            // Focus-triggered probe: fires when the user switches back to the app
-            // (e.g. from the spreadsheet in the browser). Debounced inside run_probe
-            // (MIN_FOCUS_DEBOUNCE_SECS), shared with the interval loop so neither bursts.
+            // Focus-triggered probe: fires when the user switches back to the app (e.g. from the
+            // spreadsheet in the browser). Only focus probes use MIN_FOCUS_DEBOUNCE_SECS; the
+            // interval loop keeps its own sleep cadence.
             if let Some(window) = app.get_webview_window("main") {
                 let pool_focus = pool.clone();
                 let app_dir_focus = app_dir.clone();
@@ -202,7 +202,7 @@ pub fn run() {
                 import_guard,
             );
 
-            // Daily reminder loop (plan 030): fires an OS notification at the user's
+            // Daily reminder loop: fires an OS notification at the user's
             // configured time while the app is open. Clones the pool before `app.manage`
             // moves it, same as the sync task above.
             reminder_task::spawn_reminder_task(pool.clone(), app.handle().clone());
@@ -342,8 +342,8 @@ mod tests {
         .bind(&person_id).bind("Banco Exemplo").bind(1000000).bind(5).bind(15)
         .execute(&pool).await.unwrap();
 
-        // Spec 015 (WRONG #4): a árvore granular de categorias foi rebaixada para tags; só as
-        // macro-naturezas (fixo/variável) + "Sem categoria" permanecem.
+        // Categorias persistem somente as macro-naturezas (fixo/variável) e "Sem categoria";
+        // a classificação granular é representada por tags.
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM category")
             .fetch_one(&pool)
             .await

@@ -2,7 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 /// Fires a single native notification and returns. Used by the `--remind` CLI
-/// path (plan 039): the OS scheduler launches this binary with `--remind` at the
+/// path: the OS scheduler launches this binary with `--remind` at the
 /// user's reminder time, even when the app is closed. There is no Tauri
 /// `AppHandle` in this path, so we use a standalone cross-platform notifier.
 /// Errors are printed (no window is available) and never block — a missed

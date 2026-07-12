@@ -1,9 +1,9 @@
 /**
- * Cenários "e se" (plano 072, fatia C) — o FRONTEND do que-se-fosse: um side-sheet para
+ * Cenários "e se" — o FRONTEND do que-se-fosse: um side-sheet para
  * montar/gerenciar o cenário (lançamentos hipotéticos, alterações sobre obrigações reais,
  * dimensionamento de empréstimo) + a superfície de comparação (real × cenário) que aparece no
  * Horizonte quando um cenário está selecionado. Nada aqui grava no livro-razão real nem no
- * Sheets — todo write passa pelos comandos `scenario_*`/`add_scenario_transaction` (fatia B),
+ * Sheets — todo write passa pelos comandos `scenario_*`/`add_scenario_transaction`,
  * que já isolam a linha hipotética via `scenario_id`.
  */
 import { useEffect, useRef, useState } from "react";
@@ -479,9 +479,9 @@ function HypotheticalList({ scenarioId }: { scenarioId: string }) {
     }
   }
 
-  // Agrupamento por marcador `#loan`: 1 principal + N parcelas viravam N+1 pills idênticos
-  // (a monotonia medida em dogfooding — 13 linhas para UM empréstimo). O grupo colapsa no
-  // padrão lump-expand do DS; as demais linhas seguem soltas na ordem original.
+  // Um principal + N parcelas geram N+1 pills idênticos e tornam empréstimos longos monótonos.
+  // O grupo por marcador `#loan` colapsa no padrão lump-expand do DS; as demais linhas seguem
+  // soltas na ordem original.
   const singles: ScenarioTransactionRow[] = [];
   const groupsById = new Map<string, ScenarioTransactionRow[]>();
   for (const r of rows) {
@@ -992,10 +992,10 @@ function LoanSection({ scenarioId }: { scenarioId: string }) {
 type DeltaSense = "higher-better" | "lower-better";
 
 // ---------------------------------------------------------------------------
-// Estados do método (Nível 2, plano 074/fatia B) — a HERO de cada card de KPI passa a ser o
-// ESTADO (ícone + palavra + cor), nunca só cor; o valor compacto desce a evidência. Os rótulos
+// Estados do método (Nível 2) — a HERO de cada card de KPI é o ESTADO (ícone + palavra + cor),
+// nunca só cor; o valor compacto desce a evidência. Os rótulos
 // vêm SEMPRE de um helper do método (`saldoBand`/`performanceStatus`/`custoVidaStatus`), nunca
-// de texto solto aqui — fidelidade verbatim é o requisito duro do plano.
+// de texto solto aqui. A fidelidade literal preserva a linguagem canônica do método.
 // ---------------------------------------------------------------------------
 
 /** `key` decide TRANSIÇÃO (comparar real × cenário) — pode divergir do `label` renderizado
@@ -1177,15 +1177,15 @@ function KpiCard({
   sense: DeltaSense;
   realState: MethodState;
   scenarioState: MethodState;
-  /** Cenário sem NENHUM ponto de projeção (plano 074/fatia C — residual da fatia B): quando
+  /** Cenário sem NENHUM ponto de projeção: quando
    * `true`, `scenarioCents`/`deltaCents` são ruído (`?? 0` do chamador) e nunca aparecem — o
    * card renderiza um vazio neutro ("—", sem cor de estado) em vez de fingir "Apertado R$ 0".
    * `scenarioState` ainda deve chegar neutra (ver `EMPTY_SCENARIO_STATE`); só ela controla a
    * cor/ícone do Nível 2, mas o headline/evidência/delta são sempre suprimidos aqui. */
   emptyScenario?: boolean;
 }) {
-  // STATE TRANSITIONS (plano 074/fatia B): quando o estado do cenário DIFERE do estado real, a
-  // hero vira o estado NOVO (cenário) com a origem numa linha discreta empilhada abaixo — nunca
+  // STATE TRANSITIONS: quando o estado do cenário DIFERE do estado real, a
+  // hero usa o estado do cenário com a origem numa linha discreta empilhada abaixo — nunca
   // inline (rótulos de estado são compridos; inline quebraria feio numa coluna estreita com o
   // ícone órfão — o inline "velho → novo" fica reservado à linha numérica de evidência). Compara
   // por `key` (categoria), não pelo `label` renderizado: "Pode gastar hoje" embute o valor no
@@ -1238,7 +1238,7 @@ function KpiCard({
         </p>
       )}
       {/* Manchete (Nível 3): só o valor do CENÁRIO, compacto — nunca dois valores de precisão
-          cheia numa linha sem quebra (essa era a causa do estouro medido em dogfooding). Precisão
+          cheia numa linha sem quebra, pois eles não cabem em cards estreitos. Precisão
           cheia continua acessível: no aria-label do próprio article (acima). */}
       <span className="scn-kpi__headline" aria-hidden="true">
         {emptyScenario ? "—" : fmtCompactBRL(scenarioCents)}
@@ -1256,7 +1256,7 @@ function KpiCard({
   );
 }
 
-/** Estado neutro (plano 074/fatia C) para quando o cenário não tem NENHUM ponto de projeção —
+/** Estado neutro para quando o cenário não tem NENHUM ponto de projeção —
  * nem `deepest_deficit` diário, nem `month_end` mensal. Nunca reutilizar `saldoState(0)` aqui:
  * 0 cai na banda "apertado" do Termômetro por coincidência aritmética do `?? 0`, não porque o
  * cenário tenha de fato um menor saldo — mostraria "Apertado" colorido sobre um dado inexistente.
@@ -1285,9 +1285,8 @@ interface ScenarioVerdict {
 /** Menor saldo do CENÁRIO + mês (0–11) na melhor resolução disponível: `deepest_deficit`
  * (diária) quando o motor o tem; quando null, o mínimo do `scenario_month_end` (mensal — o
  * mesmo dado do gráfico); `null` sem projeção nenhuma. FONTE ÚNICA do banner de veredito E do
- * card "Buraco do futuro" (plano 074/fatia C): com derivações separadas, o card caía no `?? 0`
- * e fabricava "cenário R$ 0,00" enquanto o banner logo acima mostrava o mínimo mensal — banner
- * e card discordando sobre o MESMO dado, a mesma classe de contradição que a fatia B eliminou. */
+ * card "Buraco do futuro". Uma fonte única impede que o card use o fallback `?? 0` enquanto o
+ * banner usa o mínimo mensal, evitando que ambos discordem sobre o mesmo dado. */
 function scenarioDeepestPoint(
   compare: ScenarioCompareDto,
 ): { minCents: number; monthIdx: number } | null {
@@ -1304,7 +1303,7 @@ function scenarioDeepestPoint(
   return null;
 }
 
-/** Veredito (Nível 1, plano 074/fatia B): a resposta a "é seguro?" de relance, ANTES da grade de
+/** Veredito (Nível 1): a resposta a "é seguro?" de relance, ANTES da grade de
  * KPIs — determinístico a partir do menor saldo do CENÁRIO (`scenarioDeepestPoint`, o mesmo dado
  * que alimenta o card "Buraco do futuro" e o gráfico — nunca um número novo). O TOM vem do MESMO
  * predicado do card (`saldoBand`, o Termômetro canônico), em três níveis: banda negativa/crítica
@@ -1558,19 +1557,14 @@ export function ScenarioCompare({
 }
 
 /**
- * SKIP (plano 074, fatia C, item 1): a intenção era colorir o valor de cada linha por TIPO de
- * movimento via `TYPE_META` (`entrada`/`saida`/`diario`/`economia`/`cartao`). `ScenarioChange`
- * (api.ts) só expõe `op`/`description`/`from_date`/`old_amount_cents`/`new_amount_cents` — sem
- * `kind`. E não dá pra derivar no cliente com o que já existe: uma troca (`replace`/`remove`)
- * nasce de um `scenario_override` sobre uma OBRIGAÇÃO ou uma RECORRÊNCIA (scenarios.rs, ~1145-
- * 1177) — o backend só busca o NOME da obrigação para o rótulo, nunca o `kind`; para uma
- * recorrência sem obrigação a "descrição" nem chega a ser legível (é o `recurrence_id` cru). As
- * únicas linhas com tipo conhecido no backend são as hipotéticas "add" (`HypoTxnRow.ttype`), mas
- * mesmo essas não serializam o tipo pro DTO. Um join no cliente (casar `changes` com
- * `listScenarioTransactions`/`listObligations` por descrição+data+valor) seria frágil (chave
- * sintética, sem `id`) e ainda deixaria as trocas de recorrência sem cor nenhuma — pior que não
- * colorir. Regra do plano: não estender o DTO nesta fatia. Retomar quando `ScenarioChange`
- * ganhar `kind` no backend (mesma origem que já preenche `HypoTxnRow.ttype`/`Obligation.kind`).
+ * `ScenarioChange` não expõe `kind`, portanto os valores desta lista permanecem sem a cor de
+ * movimento de `TYPE_META`. O DTO contém apenas `op`, `description`, `from_date`,
+ * `old_amount_cents` e `new_amount_cents`.
+ *
+ * Derivar o tipo no cliente exigiria um join por descrição, data e valor, uma chave sintética sem
+ * identidade estável, e ainda deixaria trocas de recorrência sem classificação. Colorir com
+ * segurança exige que o backend inclua `kind` em `ScenarioChange`, a partir da mesma origem que
+ * preenche `HypoTxnRow.ttype` e `Obligation.kind`.
  */
 function ChangesList({ changes }: { changes: ScenarioCompareDto["changes"] }) {
   if (changes.length === 0) {
@@ -1635,8 +1629,8 @@ function ChangesList({ changes }: { changes: ScenarioCompareDto["changes"] }) {
 }
 
 /** Gutter reservado à direita do plot para os rótulos de fim de linha (~72px): sem ele "Real"/
- *  "Simulação" caem EM CIMA do traço quando as duas linhas convergem no fim do horizonte — o
- *  defeito medido em dogfooding. O plot termina antes do gutter; o texto começa dentro dele.
+ *  "Simulação" caem sobre o traço quando as linhas convergem no fim do horizonte. O plot termina
+ *  antes do gutter; o texto começa dentro dele.
  *  (O vão vertical mínimo entre os rótulos vive em `scenarioHelpers.CHART_LABEL_MIN_GAP`.) */
 const CHART_LABEL_GUTTER = 72;
 

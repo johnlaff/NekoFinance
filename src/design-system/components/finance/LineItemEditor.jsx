@@ -1,6 +1,6 @@
 import React from "react";
 
-// LineItemEditor — controlled editor for itemized transaction parts (plano 036).
+// LineItemEditor — controlled editor for itemized transaction parts.
 // Each item: R$ <magnitude> - <description>. Total shown when ≥2 items exist.
 // Self-contained: no external imports, no fetch, no Tauri. Inline-style convention.
 
