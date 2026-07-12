@@ -462,74 +462,177 @@ pub fn price_installment(principal_cents: i64, monthly_rate_bps: i64, n: u32) ->
     (pv * i / factor).round() as i64
 }
 
-#[allow(clippy::too_many_arguments)]
+#[derive(Debug, serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ScenarioLoanInput {
+    pub scenario_id: String,
+    pub principal_cents: i64,
+    pub term_months: u32,
+    pub rate_bps: i64,
+    pub first_installment_date: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScenarioId(String);
+
+impl ScenarioId {
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MoneyCents(i64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RateBps(i64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TermMonths(u32);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScenarioLoan {
+    scenario_id: ScenarioId,
+    principal: MoneyCents,
+    term: TermMonths,
+    rate: RateBps,
+    first_installment_date: NaiveDate,
+    description: String,
+}
+
+impl TryFrom<ScenarioLoanInput> for ScenarioLoan {
+    type Error = String;
+
+    fn try_from(input: ScenarioLoanInput) -> Result<Self, Self::Error> {
+        let scenario_id = input.scenario_id.trim();
+        if scenario_id.is_empty() {
+            return Err("scenario_id obrigatório".into());
+        }
+        if input.principal_cents <= 0 {
+            return Err("principal deve ser positivo".into());
+        }
+        if !(1..=480).contains(&input.term_months) {
+            return Err("prazo deve estar entre 1 e 480 meses".into());
+        }
+        if input.rate_bps < 0 {
+            return Err("taxa deve ser maior ou igual a zero".into());
+        }
+        let first_installment_date =
+            NaiveDate::parse_from_str(&input.first_installment_date, "%Y-%m-%d")
+                .map_err(|e| format!("data da primeira parcela: {e}"))?;
+        let description = input.description.trim();
+
+        Ok(Self {
+            scenario_id: ScenarioId(scenario_id.to_string()),
+            principal: MoneyCents(input.principal_cents),
+            term: TermMonths(input.term_months),
+            rate: RateBps(input.rate_bps),
+            first_installment_date,
+            description: if description.is_empty() {
+                "Empréstimo".into()
+            } else {
+                description.to_string()
+            },
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScenarioLoanLineKind {
+    Principal,
+    Installment,
+}
+
+impl ScenarioLoanLineKind {
+    fn transaction_type(self) -> &'static str {
+        match self {
+            Self::Principal => "income",
+            Self::Installment => "expense",
+        }
+    }
+
+    fn is_fixed(self) -> bool {
+        matches!(self, Self::Installment)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScenarioLoanLine {
+    kind: ScenarioLoanLineKind,
+    amount: MoneyCents,
+    description: String,
+    date: NaiveDate,
+}
+
+fn plan_scenario_loan(
+    loan: &ScenarioLoan,
+    group_id: &str,
+    disbursement_date: NaiveDate,
+) -> Result<Vec<ScenarioLoanLine>, String> {
+    let marker = format!(" #loan:{group_id}:{}", loan.rate.0);
+    let installment = MoneyCents(price_installment(
+        loan.principal.0,
+        loan.rate.0,
+        loan.term.0,
+    ));
+    let mut lines = Vec::with_capacity(loan.term.0 as usize + 1);
+    lines.push(ScenarioLoanLine {
+        kind: ScenarioLoanLineKind::Principal,
+        amount: loan.principal,
+        description: format!("{}{marker}", loan.description),
+        date: disbursement_date,
+    });
+
+    for index in 0..loan.term.0 {
+        let date = loan
+            .first_installment_date
+            .checked_add_months(Months::new(index))
+            .ok_or("data de parcela fora do intervalo suportado")?;
+        lines.push(ScenarioLoanLine {
+            kind: ScenarioLoanLineKind::Installment,
+            amount: installment,
+            description: format!(
+                "{} parcela {}/{}{marker}",
+                loan.description,
+                index + 1,
+                loan.term.0
+            ),
+            date,
+        });
+    }
+
+    Ok(lines)
+}
+
 pub async fn create_scenario_loan(
     pool: &SqlitePool,
-    scenario_id: &str,
-    principal_cents: i64,
-    term_months: u32,
-    rate_bps: i64,
-    first_installment_date: &str,
-    description: &str,
+    input: ScenarioLoanInput,
 ) -> Result<(), String> {
-    if !scenario_exists(pool, scenario_id).await? {
-        return Err(format!("scenario not found: {scenario_id}"));
+    let loan = ScenarioLoan::try_from(input)?;
+    if !scenario_exists(pool, loan.scenario_id.as_str()).await? {
+        return Err(format!("scenario not found: {}", loan.scenario_id.as_str()));
     }
-    if principal_cents <= 0 {
-        return Err("principal deve ser positivo".into());
-    }
-    if !(1..=480).contains(&term_months) {
-        return Err("prazo deve estar entre 1 e 480 meses".into());
-    }
-    if rate_bps < 0 {
-        return Err("taxa deve ser maior ou igual a zero".into());
-    }
-    let first_date = NaiveDate::parse_from_str(first_installment_date, "%Y-%m-%d")
-        .map_err(|e| format!("data da primeira parcela: {e}"))?;
-    let description = description.trim();
-    let description = if description.is_empty() {
-        "Empréstimo"
-    } else {
-        description
-    };
-    let group_id = uuid::Uuid::new_v4();
-    let marker = format!(" #loan:{group_id}:{rate_bps}");
-    let installment_cents = price_installment(principal_cents, rate_bps, term_months);
+    let lines = plan_scenario_loan(
+        &loan,
+        &uuid::Uuid::new_v4().to_string(),
+        chrono::Local::now().date_naive(),
+    )?;
     let mut tx = pool
         .begin()
         .await
         .map_err(|e| format!("create_scenario_loan (begin): {e}"))?;
 
-    insert_scenario_transaction(
-        &mut tx,
-        scenario_id,
-        "income",
-        principal_cents,
-        &format!("{description}{marker}"),
-        &chrono::Local::now()
-            .date_naive()
-            .format("%Y-%m-%d")
-            .to_string(),
-        None,
-        false,
-        None,
-        None,
-    )
-    .await?;
-
-    for index in 0..term_months {
-        let date = first_date
-            .checked_add_months(Months::new(index))
-            .ok_or("data de parcela fora do intervalo suportado")?;
+    for line in lines {
         insert_scenario_transaction(
             &mut tx,
-            scenario_id,
-            "expense",
-            installment_cents,
-            &format!("{description} parcela {}/{term_months}{marker}", index + 1),
-            &date.format("%Y-%m-%d").to_string(),
+            loan.scenario_id.as_str(),
+            line.kind.transaction_type(),
+            line.amount.0,
+            &line.description,
+            &line.date.format("%Y-%m-%d").to_string(),
             None,
-            true,
+            line.kind.is_fixed(),
             None,
             None,
         )
@@ -1408,29 +1511,6 @@ pub fn price_installment_cmd(principal_cents: i64, monthly_rate_bps: i64, term_m
 }
 
 #[tauri::command]
-#[allow(clippy::too_many_arguments)]
-pub async fn create_scenario_loan_cmd(
-    pool: State<'_, SqlitePool>,
-    scenario_id: String,
-    principal_cents: i64,
-    term_months: u32,
-    rate_bps: i64,
-    first_installment_date: String,
-    description: String,
-) -> Result<(), String> {
-    create_scenario_loan(
-        pool.inner(),
-        &scenario_id,
-        principal_cents,
-        term_months,
-        rate_bps,
-        &first_installment_date,
-        &description,
-    )
-    .await
-}
-
-#[tauri::command]
 pub async fn get_scenario_forecast_cmd(
     pool: State<'_, SqlitePool>,
     scenario_id: String,
@@ -1796,72 +1876,135 @@ mod tests {
         assert_eq!(price_installment(100_000, 200, 0), 0);
     }
 
+    #[test]
+    fn plan_scenario_loan_matches_the_existing_row_format_byte_for_byte() {
+        let loan = ScenarioLoan::try_from(ScenarioLoanInput {
+            scenario_id: "scenario-1".into(),
+            principal_cents: 100_000,
+            term_months: 3,
+            rate_bps: 200,
+            first_installment_date: "2030-02-15".into(),
+            description: "Empréstimo".into(),
+        })
+        .unwrap();
+
+        let lines = plan_scenario_loan(&loan, "group-1", d("2030-01-15")).unwrap();
+
+        assert_eq!(
+            lines,
+            vec![
+                ScenarioLoanLine {
+                    kind: ScenarioLoanLineKind::Principal,
+                    amount: MoneyCents(100_000),
+                    description: "Empréstimo #loan:group-1:200".into(),
+                    date: d("2030-01-15"),
+                },
+                ScenarioLoanLine {
+                    kind: ScenarioLoanLineKind::Installment,
+                    amount: MoneyCents(34_675),
+                    description: "Empréstimo parcela 1/3 #loan:group-1:200".into(),
+                    date: d("2030-02-15"),
+                },
+                ScenarioLoanLine {
+                    kind: ScenarioLoanLineKind::Installment,
+                    amount: MoneyCents(34_675),
+                    description: "Empréstimo parcela 2/3 #loan:group-1:200".into(),
+                    date: d("2030-03-15"),
+                },
+                ScenarioLoanLine {
+                    kind: ScenarioLoanLineKind::Installment,
+                    amount: MoneyCents(34_675),
+                    description: "Empréstimo parcela 3/3 #loan:group-1:200".into(),
+                    date: d("2030-04-15"),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn plan_scenario_loan_rejects_an_installment_date_overflow() {
+        let loan = ScenarioLoan {
+            scenario_id: ScenarioId("scenario-1".into()),
+            principal: MoneyCents(100_000),
+            term: TermMonths(3),
+            rate: RateBps(200),
+            first_installment_date: NaiveDate::MAX.checked_sub_months(Months::new(1)).unwrap(),
+            description: "Empréstimo".into(),
+        };
+
+        let result = plan_scenario_loan(&loan, "group-1", d("2030-01-15"));
+
+        assert_eq!(
+            result.unwrap_err(),
+            "data de parcela fora do intervalo suportado"
+        );
+    }
+
+    fn scenario_loan_input(scenario_id: &str, first_installment_date: String) -> ScenarioLoanInput {
+        ScenarioLoanInput {
+            scenario_id: scenario_id.into(),
+            principal_cents: 100_000,
+            term_months: 3,
+            rate_bps: 200,
+            first_installment_date,
+            description: "Empréstimo".into(),
+        }
+    }
+
     #[tokio::test]
-    async fn create_scenario_loan_preserves_the_existing_marker_and_row_format() {
+    async fn create_scenario_loan_persists_the_complete_plan() {
         let p = pool().await;
         let sc = create_scenario(&p, "Financiamento").await.unwrap();
         let first_date = chrono::Local::now()
             .date_naive()
             .checked_add_months(Months::new(1))
+            .unwrap()
+            .format("%Y-%m-%d")
+            .to_string();
+
+        create_scenario_loan(&p, scenario_loan_input(&sc.id, first_date))
+            .await
             .unwrap();
-        let first_date_string = first_date.format("%Y-%m-%d").to_string();
 
-        create_scenario_loan(
-            &p,
-            &sc.id,
-            100_000,
-            3,
-            200,
-            &first_date_string,
-            "Empréstimo",
-        )
-        .await
-        .unwrap();
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE scenario_id = ?1")
+                .bind(&sc.id)
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(count, 4);
+    }
 
-        let rows: Vec<(String, i64, String, String, i64)> = sqlx::query_as(
-            "SELECT type, amount, description, date, is_fixed FROM \"transaction\" \
-             WHERE scenario_id = ?1 ORDER BY date, type DESC",
-        )
-        .bind(&sc.id)
-        .fetch_all(&p)
-        .await
-        .unwrap();
+    #[tokio::test]
+    async fn create_scenario_loan_rejects_invalid_payloads_before_writing() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Financiamento").await.unwrap();
+        let mut invalid_inputs = Vec::new();
 
-        assert_eq!(rows.len(), 4);
-        let marker = rows[0].2.split(" #loan:").nth(1).unwrap();
-        assert!(marker.ends_with(":200"));
-        assert_eq!(
-            rows[0],
-            (
-                "income".into(),
-                100_000,
-                format!("Empréstimo #loan:{marker}"),
-                chrono::Local::now()
-                    .date_naive()
-                    .format("%Y-%m-%d")
-                    .to_string(),
-                0,
-            )
-        );
-        let expected_dates: Vec<String> = (0..3)
-            .map(|index| {
-                first_date
-                    .checked_add_months(Months::new(index))
-                    .unwrap()
-                    .format("%Y-%m-%d")
-                    .to_string()
-            })
-            .collect();
-        for (index, row) in rows[1..].iter().enumerate() {
-            assert_eq!(row.0, "expense");
-            assert_eq!(row.1, 34_675);
-            assert_eq!(
-                row.2,
-                format!("Empréstimo parcela {}/3 #loan:{marker}", index + 1)
-            );
-            assert_eq!(row.3, expected_dates[index]);
-            assert_eq!(row.4, 1);
+        let mut invalid_principal = scenario_loan_input(&sc.id, "2030-02-15".into());
+        invalid_principal.principal_cents = 0;
+        invalid_inputs.push(invalid_principal);
+
+        let mut invalid_term = scenario_loan_input(&sc.id, "2030-02-15".into());
+        invalid_term.term_months = 481;
+        invalid_inputs.push(invalid_term);
+
+        let mut invalid_rate = scenario_loan_input(&sc.id, "2030-02-15".into());
+        invalid_rate.rate_bps = -1;
+        invalid_inputs.push(invalid_rate);
+
+        invalid_inputs.push(scenario_loan_input(&sc.id, "data-inválida".into()));
+
+        for input in invalid_inputs {
+            assert!(create_scenario_loan(&p, input).await.is_err());
         }
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE scenario_id = ?1")
+                .bind(&sc.id)
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(count, 0);
     }
 
     #[tokio::test]
@@ -1883,8 +2026,7 @@ mod tests {
         .await
         .unwrap();
 
-        let result =
-            create_scenario_loan(&p, &sc.id, 100_000, 3, 200, &first_date, "Empréstimo").await;
+        let result = create_scenario_loan(&p, scenario_loan_input(&sc.id, first_date)).await;
 
         assert!(result.is_err());
         let (count,): (i64,) =

@@ -474,12 +474,14 @@ describe("HorizonteScreen — side-sheet 'Simular cenário'", () => {
       expect(calls).toHaveLength(1);
     });
     expect(calls[0]).toMatchObject({
-      scenarioId: "scn-1",
-      principalCents: 1000000,
-      termMonths: 3,
-      rateBps: 200,
-      firstInstallmentDate,
-      description: "Empréstimo",
+      input: {
+        scenarioId: "scn-1",
+        principalCents: 1000000,
+        termMonths: 3,
+        rateBps: 200,
+        firstInstallmentDate,
+        description: "Empréstimo",
+      },
     });
   });
 
