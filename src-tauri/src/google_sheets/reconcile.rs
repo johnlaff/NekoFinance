@@ -1,4 +1,4 @@
-//! Conciliação avançada (spec 013): merge de 3 vias por campo. Núcleo PURO, sem IO.
+//! Conciliação avançada: merge de 3 vias por campo. Núcleo PURO, sem IO.
 //!
 //! `base` = valor do campo como foi importado da planilha da última vez. `local` = valor atual no
 //! app (pode ter sido editado). `sheet` = valor agora na planilha. A decisão preserva a edição

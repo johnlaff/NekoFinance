@@ -1,6 +1,6 @@
-//! Write-back (spec 018): o caminho inverso do import — uma transação vira a célula da planilha
-//! que a originaria. Produz um DIFF estruturado para aprovação humana; o envio real ao Google
-//! Sheets fica atrás de `WRITE_BACK_ENABLED` (LIGADO, plano 028 Step 9). Núcleo puro + shell gated.
+//! Write-back: o caminho inverso do import — uma transação vira a célula da planilha que a
+//! originaria. Produz um DIFF estruturado para aprovação humana; o envio ao Google Sheets é
+//! condicionado por `WRITE_BACK_ENABLED`. Núcleo puro + shell gated.
 //!
 //! Invariável de segurança (AGENTS.md): toda escrita material no Sheets passa por diff + validação +
 //! aprovação humana. Aqui a aprovação é a `ApprovalDiffCard` + uma 2ª confirmação na UI; ligar a flag
@@ -10,11 +10,9 @@ use super::import::{RowKind, month_blocks_for, parse_number};
 use super::layout_detect::{SheetLayout, month_number_from_name};
 use serde::Serialize;
 
-/// Mestre da trava: o envio real ao Sheets só acontece com isto `true`. LIGADO (plano 028 Step 9)
-/// após as salvaguardas do PR-A: escopo de escrita + re-consentimento, blocklist de fórmulas, gate de
-/// conflito, re-verificação de frescura, inspeção do batchUpdate e auditoria. Ligar habilita o
-/// caminho aprovar-para-escrever — NÃO escreve sozinho: cada envio ainda exige aprovação + confirmação
-/// humana na UI (diff + 2ª confirmação). O diff/preview já funcionava desligado (read-only).
+/// Trava mestra do envio ao Sheets. O caminho habilitado aplica escopo de escrita e OAuth,
+/// blocklist de fórmulas, gate de conflito, revalidação de frescor, inspeção do `batchUpdate` e
+/// auditoria. A flag nunca dispensa diff, aprovação e segunda confirmação humanas na UI.
 pub const WRITE_BACK_ENABLED: bool = true;
 
 /// Colunas que são FÓRMULAS/estruturais na planilha e o write-back NUNCA pode tocar: `balance`
@@ -33,12 +31,12 @@ pub fn ensure_write_back_enabled() -> Result<(), String> {
     Ok(())
 }
 
-/// Uma parte itemizada de uma célula no caminho de escrita (plano 036). Magnitude positiva.
+/// Uma parte itemizada de uma célula no caminho de escrita. Magnitude positiva.
 #[derive(Debug, Clone)]
 pub struct TxnLineItem {
     pub amount_cents: i64,
     pub description: String,
-    /// Cabeçalho de seção original, se existir (ver `NoteLineItem::section`). Plano 048.
+    /// Cabeçalho de seção original, se existir (ver `NoteLineItem::section`).
     pub section: Option<String>,
 }
 
@@ -49,8 +47,8 @@ pub struct WriteBackTxn {
     pub kind: RowKind,
     /// Magnitude em centavos (sempre ≥ 0).
     pub amount_cents: i64,
-    /// Plano 036: quando `Some`, a célula é itemizada e deve ser escrita como `=SUM(a+b+c)` com uma
-    /// nota por-parte; quando `None`, escreve o total numérico simples (comportamento RAW de hoje).
+    /// Quando `Some`, a célula é itemizada e deve ser escrita como `=SUM(a+b+c)` com uma nota
+    /// por-parte; quando `None`, escreve o total numérico simples com RAW.
     pub items: Option<Vec<TxnLineItem>>,
 }
 
@@ -70,10 +68,10 @@ pub struct CellWrite {
     pub value_cents: i64,
     /// `true` quando o valor proposto difere do atual (por número, não por formatação).
     pub changed: bool,
-    /// Plano 036: fórmula `=SUM(...)` pré-montada quando a célula é itemizada (≥2 partes). `None`
-    /// ⇒ escrita RAW numérica (comportamento de hoje, inalterado para células não-itemizadas).
+    /// Fórmula `=SUM(...)` pré-montada quando a célula é itemizada (≥2 partes). `None`
+    /// ⇒ escrita RAW numérica para células não itemizadas.
     pub formula: Option<String>,
-    /// Plano 036: nota de célula por-parte pré-montada (escrita via `batchUpdate`/`updateCells`).
+    /// Nota de célula por-parte pré-montada (escrita via `batchUpdate`/`updateCells`).
     /// `None` quando a célula não é itemizada (nenhuma nota a escrever).
     pub note_text: Option<String>,
 }
@@ -99,7 +97,7 @@ fn cents_to_ptbr(cents: i64) -> String {
     format!("{},{:02}", c / 100, c % 100)
 }
 
-/// Plano 036: número para DENTRO da fórmula `=SUM(...)` — DECIMAL COM PONTO, não vírgula.
+/// Número para DENTRO da fórmula `=SUM(...)` — DECIMAL COM PONTO, não vírgula.
 /// As fórmulas reais da planilha do dono usam ponto (`SUM(18.33+2.32)`); escrever vírgula via
 /// `USER_ENTERED` num locale ponto-decimal seria interpretado como múltiplos argumentos
 /// (`50,00` → dois números) e gravaria um valor ERRADO. A nota da célula segue em vírgula
@@ -109,7 +107,7 @@ fn cents_to_formula(cents: i64) -> String {
     format!("{}.{:02}", c / 100, c % 100)
 }
 
-/// Plano 036: monta a fórmula `=SUM(a+b+c)` de uma célula itemizada, reconstruindo o estilo do dono
+/// Monta a fórmula `=SUM(a+b+c)` de uma célula itemizada, reconstruindo o estilo do dono
 /// (o total da célula é a SOMA das partes). Os addends são os VALORES das partes com PONTO decimal
 /// (locale-safe p/ `USER_ENTERED`, igual às fórmulas reais) — ex.: `[5000, 7500]` → `"=SUM(50.00+75.00)"`.
 ///
@@ -127,18 +125,18 @@ pub fn build_itemized_cell_value(items: &[TxnLineItem]) -> String {
     format!("=SUM({})", addends.join("+"))
 }
 
-/// Plano 036: monta a NOTA por-parte que acompanha a fórmula, no formato do dono — uma linha por
+/// Monta a NOTA por-parte que acompanha a fórmula, no formato do dono — uma linha por
 /// item `R$ <valor> - <descrição>` (vírgula decimal, 2 casas). É a INVERSA do parser de notas
-/// itemizadas do plano 035 (`parse_itemized_note`): o que esta função escreve, aquele parser relê.
+/// itemizadas de `parse_itemized_note`: o que esta função escreve, aquele parser relê.
 ///
 /// Descrição vazia vira `"<sem descrição>"` (placeholder método-neutro) para a linha continuar
 /// parseável. A descrição é TEXTO de nota — o Sheets não a interpreta como fórmula (sem risco de
 /// injeção), então é escrita como veio (sanitização de fórmula é só na célula, ver acima).
 ///
-/// Plano 048: quando os itens carregam um `section` (cabeçalho da nota original, ex.: "CONTAS:"),
+/// Quando os itens carregam um `section` (cabeçalho da nota original, ex.: "CONTAS:"),
 /// reemite o cabeçalho antes do primeiro item de cada seção, com uma linha em branco separando
 /// blocos consecutivos — fechando o round-trip import → editar → write-back fielmente. Itens com
-/// `section = None` produzem exatamente o formato plano de antes (sem regressão).
+/// `section = None` produzem o formato sem cabeçalho.
 pub fn build_itemized_note(items: &[TxnLineItem]) -> String {
     let mut lines: Vec<String> = Vec::new();
     let mut last_section: Option<&str> = None;
@@ -249,7 +247,7 @@ pub fn plan_write_back(
     // transações do mesmo dia/tipo SOMAM — senão emitiríamos dois CellWrites para a mesma célula,
     // um sobrescrevendo o outro silenciosamente. `amount_cents` vira magnitude (abs).
     //
-    // Plano 036: a célula só pode ter UMA fórmula `=SUM(...)`. Se DUAS+ transações caem na mesma
+    // A célula só pode ter UMA fórmula `=SUM(...)`. Se DUAS+ transações caem na mesma
     // célula e qualquer uma é itemizada, não dá para combinar breakdowns numa única fórmula
     // consistente — caímos para o total RAW (items = None) somando as magnitudes. Mantém a escrita
     // correta (o total bate) sem corromper a fórmula; o dono refina o breakdown caso a caso.
@@ -301,9 +299,9 @@ pub fn plan_write_back(
             .unwrap_or_default();
         let proposed = cents_to_ptbr(txn.amount_cents);
         let changed = parse_number(&current) != txn.amount_cents.abs();
-        // Plano 036: célula itemizada (≥2 partes) escreve a fórmula `=SUM(...)` (USER_ENTERED) +
-        // nota por-parte. 1 parte ou nenhuma → escrita RAW numérica (sem fórmula nem nota), igual
-        // a hoje. O `value_cents`/`proposed` do diff seguem sendo o TOTAL (a UI mostra o número).
+        // Célula itemizada (≥2 partes) escreve a fórmula `=SUM(...)` (USER_ENTERED) + nota
+        // por-parte. Uma parte ou nenhuma usa escrita RAW numérica, sem fórmula nem nota. O
+        // `value_cents`/`proposed` do diff seguem sendo o TOTAL exibido pela UI.
         //
         // GUARDA DE SOMA: itens com soma divergente da
         // célula são persistidos (a classificação sobrevive; o resíduo é reconciliado na
@@ -548,9 +546,9 @@ mod tests {
         assert!(plan[0].changed);
     }
 
-    // Plano 028 Step 2 (BLOQUEIO, STOP-condition): mesmo com `balance` (offset 4) e `date`
-    // (offset 0) presentes e marcados ATIVOS nos mappings, o planejador NUNCA emite um CellWrite
-    // para essas colunas-fórmula. Defesa-em-profundidade sobre o `is_active` do banco.
+    // Mesmo com `balance` (offset 4) e `date` (offset 0) presentes e ativos nos mappings, o
+    // planejador nunca emite `CellWrite` para essas colunas. É defesa em profundidade sobre
+    // `is_active` do banco.
     #[test]
     fn plan_write_back_never_targets_formula_columns_even_if_active() {
         // Mappings adversariais: inclui `date`@0 e `balance`@4 como se estivessem ativos, além das
@@ -603,7 +601,7 @@ mod tests {
         );
     }
 
-    // Plano 028 Step 2 (b): a Economia nunca escreve na coluna Entradas nem na coluna % (fórmulas).
+    // A Economia nunca escreve na coluna Entradas nem na coluna % (fórmulas).
     #[test]
     fn plan_economia_write_back_never_targets_entradas_or_percent_column() {
         let grid = vec![
@@ -688,8 +686,7 @@ mod tests {
         assert_eq!(plan26[0].date, "2026-01");
     }
 
-    // Regressão (P1): na aba real os anos ficam LADO A LADO. Escrever 2026 deve cair na coluna de
-    // Economia de 2026 ("I"), nunca na de 2025 ("D").
+    // Em blocos anuais lado a lado, a escrita precisa atingir a coluna de Economia do ano alvo.
     #[test]
     fn plans_economia_write_back_side_by_side_targets_correct_block() {
         // 2025 em B–E (Economia idx 3 = "D"), 2026 em G–J (Economia idx 8 = "I"); col F (idx 5) gap.
@@ -741,8 +738,8 @@ mod tests {
 
     #[test]
     fn economia_zeroed_locally_clears_stale_sheet_cell() {
-        // Regressão (review): a planilha tem 1000,00 em jan, mas a Economia local foi zerada (0).
-        // Antes, meses com 0 eram pulados → a célula obsoleta nunca era limpa. Agora gera 1 escrita.
+        // Economia local zerada deve gerar uma escrita que limpe a célula obsoleta da planilha;
+        // valores zero não podem ser omitidos do planejamento.
         let row = |name: &str, eco: &str| {
             vec![
                 "".into(),
@@ -810,8 +807,8 @@ mod tests {
 
     #[test]
     fn finds_day_row_when_cells_are_floats() {
-        // Regressão da review adversarial: planilhas reais dão o dia como float ("1.0000").
-        // O parse `u32` antigo falhava e NENHUMA célula era encontrada (write-back vazio).
+        // Células de dia podem chegar como float ("1.0000"); o parser deve normalizá-las para que
+        // o planejador encontre a linha correspondente.
         let mut g = grid();
         g[2][0] = "1.0000".into();
         g[3][0] = "2,0000".into(); // vírgula decimal também ocorre
@@ -857,9 +854,8 @@ mod tests {
 
     #[test]
     fn flag_gate_matches_master_switch() {
-        // O gate (`ensure_write_back_enabled`) reflete a trava-mestra: com a flag LIGADA (plano 028
-        // Step 9) passa; se algum dia for desligada de novo, volta a falhar cedo. O envio real segue
-        // exigindo aprovação + 2ª confirmação humana na UI — ligar a flag não escreve sozinho.
+        // O gate espelha a trava mestra: com a flag ligada passa; desligada, falha cedo. Mesmo
+        // habilitado, o envio exige aprovação e segunda confirmação humanas na UI.
         if WRITE_BACK_ENABLED {
             assert!(ensure_write_back_enabled().is_ok());
         } else {
@@ -867,7 +863,7 @@ mod tests {
         }
     }
 
-    // --- Plano 036: construtores puros da fórmula/nota itemizada + plano itemizado ---
+    // --- Construtores puros da fórmula/nota e planejamento de célula itemizada ---
 
     fn ti(amount_cents: i64, description: &str) -> TxnLineItem {
         TxnLineItem {
@@ -921,8 +917,8 @@ mod tests {
 
     #[test]
     fn build_itemized_note_round_trips_to_parse() {
-        // CONTRATO: a nota montada deve ser parseável pelo parser do plano 035 (mesma gramática
-        // `R$ <valor> - <descrição>`). `build_itemized_note` é a inversa de `parse_itemized_note`.
+        // CONTRATO: a nota montada deve ser parseável por `parse_itemized_note` com a mesma
+        // gramática `R$ <valor> - <descrição>`; `build_itemized_note` é sua inversa.
         use super::super::import::parse_itemized_note;
         let items = vec![ti(5000, "Conta A"), ti(120050, "Parcela carro")];
         let note = build_itemized_note(&items);
@@ -934,7 +930,7 @@ mod tests {
         assert_eq!(parsed[1].description, "Parcela carro");
     }
 
-    // Plano 048: build_itemized_note reemite os cabeçalhos de seção no round-trip.
+    // `build_itemized_note` reemite os cabeçalhos de seção no round-trip.
     fn ti_sec(amount_cents: i64, description: &str, section: Option<&str>) -> TxnLineItem {
         TxnLineItem {
             amount_cents,
