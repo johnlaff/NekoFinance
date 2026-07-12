@@ -2517,6 +2517,58 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn concurrent_overrides_for_the_same_target_leave_exactly_one_row() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        let obligation_id = obligations::create_obligation(&p, "Aluguel", "Aluguel", None)
+            .await
+            .unwrap();
+
+        let first = set_scenario_override(
+            &p,
+            &sc.id,
+            "suppress",
+            "2026-08-01",
+            Some(&obligation_id),
+            None,
+            None,
+        );
+        let second = set_scenario_override(
+            &p,
+            &sc.id,
+            "suppress",
+            "2026-09-01",
+            Some(&obligation_id),
+            None,
+            None,
+        );
+        let results = tokio::join!(first, second);
+
+        let successes = [results.0.as_ref(), results.1.as_ref()]
+            .into_iter()
+            .filter(|result| result.is_ok())
+            .count();
+        let errors: Vec<&str> = [results.0.as_ref(), results.1.as_ref()]
+            .into_iter()
+            .filter_map(|result| result.err().map(String::as_str))
+            .collect();
+        assert_eq!(successes, 1);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("já existe uma alteração para esta obrigação"));
+
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM scenario_override \
+             WHERE scenario_id = ?1 AND obligation_id = ?2",
+        )
+        .bind(&sc.id)
+        .bind(&obligation_id)
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        assert_eq!(count, 1);
+    }
+
     // MAJOR 3 (guard, braço recorrência): mesma regra para recurrence_id.
     #[tokio::test]
     async fn duplicate_override_same_recurrence_rejected() {
