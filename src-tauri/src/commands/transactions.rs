@@ -9,8 +9,8 @@ pub struct TagOnRow {
     pub emoji: Option<String>,
 }
 
-/// Plan 035: uma parte itemizada de um lançamento (breakdown da nota de célula).
-/// O total do lançamento pai é a SOMA destas partes; aqui só leitura (edição = plano 036).
+/// Uma parte itemizada de um lançamento (breakdown da nota de célula).
+/// O total do lançamento pai é a SOMA destas partes; aqui é somente leitura.
 #[derive(Debug, serde::Serialize, Clone)]
 pub struct LineItemOnRow {
     pub id: String,
@@ -22,7 +22,7 @@ pub struct LineItemOnRow {
     /// Pai `income` → "entrada" (os kinds de seção só fatiam saídas).
     pub kind: String,
     /// Cabeçalho de seção cru da nota (ex.: "CONTAS:"), sem normalização. `None` = sem seção.
-    /// Plano 069: a UI precisa disto para propor `match_section` ao marcar o item como
+    /// A UI precisa disto para propor `match_section` ao marcar o item como
     /// obrigação recorrente — sem ele não há como restringir o casamento à seção do item.
     pub section: Option<String>,
 }
@@ -116,14 +116,14 @@ pub struct TransactionRow {
     pub tags: Vec<TagOnRow>,
     /// Proveniência: "projetado" (previsto), "importado" (da planilha) ou "manual" (do app).
     pub provenance: String,
-    /// Partes itemizadas da nota (vazio = lançamento não itemizado). Plan 035 — só leitura.
+    /// Partes itemizadas da nota (vazio = lançamento não itemizado); somente leitura.
     pub line_items: Vec<LineItemOnRow>,
-    /// Plano 045: data de vencimento opcional ("YYYY-MM-DD"); None = sem lembrete de conta.
+    /// Data de vencimento opcional ("YYYY-MM-DD"); None = sem lembrete de conta.
     /// Metadado consultivo (calendário) — NÃO afeta o Saldo/forecast (que usa `date`).
     pub due_date: Option<String>,
-    /// Plano 045: posição 1-based na série de parcelas (1 = primeira). None fora de série recorrente.
+    /// Posição 1-based na série de parcelas (1 = primeira). None fora de série recorrente.
     pub installment_index: Option<i64>,
-    /// Plano 045: total de parcelas da série. None fora de série recorrente. Derivado de
+    /// Total de parcelas da série. None fora de série recorrente. Derivado de
     /// `recurrence.repetitions` + o índice embutido no id `{rec_id}:{i}` (não-armazenado).
     pub installment_total: Option<i64>,
 }
@@ -150,9 +150,9 @@ pub(crate) struct RecentRow {
     owners: String,
     /// `source_amount` é NULL quando nunca veio da planilha (lançamento manual no app).
     has_source: i64,
-    /// Plano 045: vencimento opcional ("YYYY-MM-DD"); NULL = sem lembrete de conta.
+    /// Vencimento opcional ("YYYY-MM-DD"); NULL = sem lembrete de conta.
     due_date: Option<String>,
-    /// Plano 045: série a que pertence (NULL = lançamento avulso). Usado para derivar "N/M parcelas".
+    /// Série a que pertence (NULL = lançamento avulso). Usado para derivar "N/M parcelas".
     recurrence_id: Option<String>,
 }
 
@@ -213,7 +213,7 @@ pub(crate) async fn recent_transactions(
         });
     }
 
-    // Plan 035: partes itemizadas das linhas EFETIVAMENTE retornadas (mesma janela de ids
+    // Partes itemizadas das linhas EFETIVAMENTE retornadas (mesma janela de ids
     // que as tags). Batch único por ids — sem N+1. O caso comum (lançamentos sem itens)
     // não paga nada quando line_item está vazio.
     let li_rows: Vec<LineItemOnRow> = if ids.is_empty() {
@@ -247,7 +247,7 @@ pub(crate) async fn recent_transactions(
             .push(li);
     }
 
-    // Plano 045: total de parcelas (`repetitions`) por série, em UM batch pelos `recurrence_id`
+    // Total de parcelas (`repetitions`) por série, em UM batch pelos `recurrence_id`
     // DISTINTOS das linhas retornadas — sem N+1 (mesmo padrão das tags/itens acima). O caso comum
     // (linhas sem série) não paga nada quando o conjunto de ids de recorrência é vazio.
     let rec_ids: Vec<String> = {
@@ -283,7 +283,7 @@ pub(crate) async fn recent_transactions(
         .map(|r| {
             let tags = tags_by_txn.get(&r.id).cloned().unwrap_or_default();
             let line_items = items_by_txn.get(&r.id).cloned().unwrap_or_default();
-            // Plano 045: "N/M parcelas" só quando a linha pertence a uma série COM repetições.
+            // "N/M parcelas" só quando a linha pertence a uma série COM repetições.
             // Índice 1-based vem do sufixo `:{i}` do id (0-based → +1); total vem de `repetitions`.
             let (installment_index, installment_total) = match &r.recurrence_id {
                 Some(rid) => match reps_by_rec.get(rid) {
@@ -490,7 +490,7 @@ pub(crate) async fn create_transaction_inner(
     Ok(id)
 }
 
-/// Plan 036: uma parte itemizada vinda do app (caminho de EDIÇÃO). `position` = ordem 0-based.
+/// Uma parte itemizada vinda do app (caminho de EDIÇÃO). `position` = ordem 0-based.
 /// `amount_cents` é magnitude positiva (a direção/coluna vem do tipo do lançamento pai).
 #[derive(serde::Deserialize)]
 pub struct LineItemInput {
@@ -499,14 +499,14 @@ pub struct LineItemInput {
     pub position: i64,
 }
 
-/// Plan 036: substitui TODAS as partes itemizadas de um lançamento e fixa o total do pai = Σ partes.
+/// Substitui TODAS as partes itemizadas de um lançamento e fixa o total do pai = Σ partes.
 ///
 /// Vale também para lançamentos IMPORTADOS: o dono precisa poder detalhar/editar a quebra de uma
-/// linha vinda da planilha (esse é o ponto da feature; o plano 043 alinhou os comandos escalares à
-/// mesma política). O `source_amount` (base do merge de 3 vias) não é tocado — o breakdown local é
+/// linha vinda da planilha. Os comandos escalares seguem a mesma política. O `source_amount` (base
+/// do merge de 3 vias) não é tocado — o breakdown local é
 /// uma representação mais rica da MESMA célula; um eventual conflito de total fica para o re-import
 /// resolver. As partes inseridas são marcadas `is_user_edited = 1` para SOBREVIVEREM ao próximo
-/// re-import enquanto a nota da planilha não mudar (ver o bloco do plano 035/036 no importer).
+/// re-import enquanto a nota da planilha não mudar (ver o bloco de itemização no importer).
 ///
 /// As três operações (DELETE itens antigos + INSERT novos + UPDATE total do pai) correm numa ÚNICA
 /// transação SQLite — uma falha no meio não deixa o total e as partes divergentes.
@@ -582,11 +582,11 @@ pub async fn update_transaction_items_cmd(
     Ok(())
 }
 
-/// Apaga um lançamento pelo id (plano 043/047): inclui linhas importadas. A planilha é a fonte da
+/// Apaga um lançamento pelo id: inclui linhas importadas. A planilha é a fonte da
 /// verdade — apagar aqui NÃO apaga da planilha. O painel de ações no Livro-razão avisa o usuário
 /// disso (notice de "Linha importada").
 ///
-/// Plano 047: o delete agora limpa, na MESMA transação, a metadata de sync que de outro modo deixaria
+/// O delete limpa, na MESMA transação, a metadata de sync que de outro modo deixaria
 /// órfãos e desfaria o delete: (1) as linhas DERIVADAS (Entradas compensatórias `derived:%:<id>:%`,
 /// sem FK para o pai); (2) o `sync_log` da linha (id determinístico `log:<id>`, sem FK) — sem isto o
 /// próximo import RECRIARIA a linha apagada via diff/upsert; (3) os `import_conflict` da linha (sem FK
@@ -643,7 +643,7 @@ pub async fn delete_transaction_cmd(pool: State<'_, SqlitePool>, id: String) -> 
     Ok(())
 }
 
-/// Edita um lançamento (valor, descrição, método, fixo, data) pelo id (plano 043): inclui linhas
+/// Edita um lançamento (valor, descrição, método, fixo, data) pelo id: inclui linhas
 /// importadas. A edição fica no app; um re-import pode sobrescrever o valor se a planilha mudou
 /// (o merge de 3 vias reconcilia). O painel de ações avisa o usuário disso.
 #[tauri::command]
@@ -703,21 +703,19 @@ pub(crate) async fn update_transaction_inner(
         NaiveDate::parse_from_str(date, "%Y-%m-%d").map_err(|e| format!("data inválida: {e}"))?;
     let is_projection = new_date > chrono::Local::now().date_naive();
 
-    // Plano 049: a limpeza dos `line_item` e o UPDATE do total do pai precisam ser ATÔMICOS. Antes
-    // rodavam como dois statements auto-commit separados; um crash entre eles deixava os itens
-    // apagados mas o total antigo no pai (ou o novo total sem itens). Espelha `delete_transaction_cmd`:
-    // tudo na mesma `sqlx::Transaction`, com commit só no fim. O early-return em `affected == 0`
-    // descarta `tx` sem commit → rollback automático (mesmo padrão do delete).
+    // A limpeza dos `line_item` e o UPDATE do total do pai precisam ser atômicos; uma falha entre
+    // ambos não pode deixar itens e total divergentes. Tudo roda na mesma `sqlx::Transaction`, e o
+    // retorno antecipado em `affected == 0` descarta a transação sem commit.
     let mut tx = pool
         .begin()
         .await
         .map_err(|e| format!("update (begin): {e}"))?;
 
-    // Plano 047: se a linha é ITEMIZADA (tem `line_item`) e o NOVO valor difere do total atual, a
+    // Se a linha é ITEMIZADA (tem `line_item`) e o NOVO valor difere do total atual, a
     // quebra não reflete mais o total → limpa os itens (a Σ ficaria divergente no write-back). O
     // usuário re-insere a quebra pelo editor de itens. Idempotente: sem itens ou valor inalterado, é
     // no-op. Consulta o valor + a contagem de itens numa só query (LEFT JOIN agregado).
-    // Plano 053: a troca de TIPO (entrada↔saída) também invalida a quebra mesmo com o mesmo valor —
+    // A troca de TIPO (entrada↔saída) também invalida a quebra mesmo com o mesmo valor —
     // itens de renda numa linha de despesa ficam semanticamente errados e confundem o write-back.
     // Por isso a query também carrega o `type` antigo e a limpeza dispara em mudança de tipo.
     let current: Option<(i64, i64, String)> = sqlx::query_as(
@@ -774,7 +772,7 @@ pub(crate) async fn update_transaction_inner(
     Ok(())
 }
 
-/// Plano 045: uma conta a vencer — um lançamento com `due_date` na janela [hoje, horizonte].
+/// Uma conta a vencer — um lançamento com `due_date` na janela [hoje, horizonte].
 #[derive(serde::Serialize, sqlx::FromRow)]
 pub struct UpcomingBill {
     pub id: String,
@@ -1076,10 +1074,8 @@ mod tests {
         assert!(err.contains("positivo"), "err: {err}");
     }
 
-    // Plano 049: o `update_transaction_cmd` limpava os `line_item` e atualizava o total do pai em
-    // dois statements auto-commit separados (não atômico). Este teste replica o caminho de troca de
-    // valor numa única `sqlx::Transaction` (igual ao comando corrigido) e verifica que, após o
-    // commit, OS DOIS lados ficam consistentes: itens removidos E total do pai = novo valor.
+    // O caminho de troca de valor usa uma única `sqlx::Transaction` e precisa manter os dois lados
+    // consistentes após o commit: itens removidos E total do pai = novo valor.
     #[tokio::test]
     async fn update_transaction_cmd_clears_items_and_updates_amount_atomically() {
         let pool = test_pool().await;
@@ -1147,7 +1143,7 @@ mod tests {
         );
     }
 
-    // Bug 2 (plano 053): `update_transaction_inner` precisa rejeitar `amount <= 0`, espelhando
+    // `update_transaction_inner` precisa rejeitar `amount <= 0`, espelhando
     // `create_transaction_inner`. `amount` é magnitude positiva; zero/negativo violaria o invariante
     // e quebraria as agregações que somam magnitudes. A linha no banco deve ficar INTOCADA.
     #[tokio::test]
@@ -1205,9 +1201,9 @@ mod tests {
         assert_eq!(amount, 1000, "amount inalterado após rejeição");
     }
 
-    // Bug 4 (plano 053): trocar o TIPO (entrada↔saída) de uma linha ITEMIZADA com o MESMO valor
+    // Trocar o TIPO (entrada↔saída) de uma linha ITEMIZADA com o MESMO valor
     // precisa limpar os `line_item` — itens de renda numa linha de despesa ficam semanticamente
-    // errados e confundem o write-back. O bug antigo só limpava quando o VALOR mudava.
+    // errados e confundem o write-back.
     #[tokio::test]
     async fn update_transaction_cmd_clears_items_on_type_change() {
         let pool = test_pool().await;
@@ -1329,8 +1325,8 @@ mod tests {
         );
     }
 
-    // Insere uma linha "importada" (com `source_amount` preenchido, como o import grava) para
-    // cobrir a remoção do guarda `source_amount IS NULL` do plano 043.
+    // Insere uma linha "importada", com `source_amount` preenchido como no import, para exercitar
+    // edição e remoção sem condicionar esses caminhos a `source_amount IS NULL`.
     async fn insert_imported_txn(pool: &SqlitePool, id: &str, amount: i64, source_amount: i64) {
         sqlx::query(
             "INSERT INTO \"transaction\" (id, type, amount, source_amount, date, is_fixed, is_projection, created_at, updated_at) \
@@ -1346,7 +1342,7 @@ mod tests {
 
     #[tokio::test]
     async fn delete_imported_row_succeeds() {
-        // Regressão plano 043: apagar não é mais bloqueado por `source_amount IS NOT NULL`.
+        // Apagar não é bloqueado por `source_amount IS NOT NULL`.
         let pool = test_pool().await;
         insert_imported_txn(&pool, "imp-del", 1000, 1000).await;
 
@@ -1368,7 +1364,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_imported_row_succeeds() {
-        // Regressão plano 043: editar não é mais bloqueado por `source_amount IS NOT NULL`.
+        // Editar não é bloqueado por `source_amount IS NOT NULL`.
         let pool = test_pool().await;
         insert_imported_txn(&pool, "imp-upd", 5000, 5000).await;
 
@@ -1402,7 +1398,7 @@ mod tests {
         assert_eq!(amount, 9900, "o novo valor foi gravado");
     }
 
-    // --- Plano 047: delete limpa órfãos + update limpa itens stale ---
+    // --- Delete limpa órfãos + update limpa itens stale ---
 
     // Núcleo do `delete_transaction_cmd` sem o wrapper `State` (mesmo padrão de `run_update_items`).
     // Replica 1:1 o caminho transacional: DELETE da linha + derivadas + sync_log + import_conflict.
@@ -1443,7 +1439,7 @@ mod tests {
 
     #[tokio::test]
     async fn delete_imported_row_cleans_sync_log_conflict_and_derived() {
-        // Plano 047 (P1): apagar uma linha importada precisa remover sua metadata de sync — senão o
+        // Apagar uma linha importada precisa remover sua metadata de sync; sem isso, o
         // próximo import recria a linha (sync_log) e um conflito órfão bloqueia o write-back.
         let pool = test_pool().await;
 
@@ -1516,7 +1512,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_amount_clears_stale_line_items() {
-        // Plano 047 (P2): editar o VALOR de uma linha itemizada limpa a quebra (Σ não bate mais).
+        // Editar o VALOR de uma linha itemizada limpa a quebra quando Σ deixa de bater.
         let pool = test_pool().await;
         insert_txn(&pool, "tx-2", 5000).await;
         // Dois itens somando o total atual (5000).
@@ -1624,7 +1620,7 @@ mod tests {
         Ok(())
     }
 
-    // --- Plano 045: due_date + contas a vencer + parcelas ---
+    // --- due_date + contas a vencer + parcelas ---
 
     #[tokio::test]
     async fn recent_transactions_carry_due_date() {
@@ -1701,7 +1697,7 @@ mod tests {
         assert_eq!(bills[0].amount, 1000, "magnitude (ABS)");
     }
 
-    // Plano 072 (fatia C): isolamento de cenário nas duas leituras do livro real. Uma linha
+    // Isolamento de cenário nas duas leituras do livro real: uma linha
     // hipotética (`scenario_id` setado) nunca deve aparecer em `recent_transactions` nem em
     // `upcoming_bills_inner` — essas telas mostram só o livro-razão real; o cenário "e se" vive
     // exclusivamente no side-sheet/compare do frontend.

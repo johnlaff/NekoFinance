@@ -1,11 +1,11 @@
-//! Background read-side sync (plan 026, Phase 1).
+//! Background read-side sync.
 //!
 //! The spreadsheet is the user's daily-edited source of record; a manual-only
 //! refresh leaves the local mirror stale. This task polls a cheap Drive
 //! `modifiedTime` sentinel and, only when it advances, runs the EXISTING import
 //! pipeline (fetch → parse → checksum-skip → atomic tx → 3-way merge →
 //! diff-delete) via [`crate::commands::import_one_tab`]. Nothing here writes
-//! back to the spreadsheet — Phase 1 is read-only; write-back stays gated.
+//! back to the spreadsheet; write-back stays gated.
 //!
 //! ## `app_setting` keys this module reads/writes (no schema migration needed)
 //!
@@ -23,7 +23,7 @@
 //! `ensure_valid_token` is not internally synchronized. If this task and a
 //! user-triggered import both refresh within the token's expiry window, they may
 //! both attempt a refresh. The import guard prevents a double-import but not a
-//! double token refresh. Acceptable for Phase 1 (single user, single machine).
+//! double token refresh. This is acceptable for a single user on a single machine.
 
 use crate::oauth;
 use serde::Deserialize;
@@ -42,11 +42,10 @@ const DEFAULT_POLL_INTERVAL_SECS: u64 = 30;
 /// `max_connections = 1`, so background + user-triggered imports must not overlap).
 pub type SyncGuard = tokio::sync::Mutex<()>;
 
-/// What triggered a probe. The focus-debounce key (`sheets_last_focus_probe_at`) is OWNED by the
-/// focus path: only a `Focus`-triggered probe reads/writes it. Plan 055 (P3): the interval-loop tick
-/// must NOT touch it — writing it on every tick made the 60 s focus-debounce suppress the NEXT
-/// interval tick, so a configured 30 s interval effectively polled ~60 s. The interval has its own
-/// cadence (the `read_interval_secs` sleep in `spawn_background_sync`); it doesn't need the debounce.
+/// What triggered a probe. The focus-debounce key (`sheets_last_focus_probe_at`) belongs
+/// exclusively to focus probes. Interval probes use the loop sleep as their cadence and must
+/// neither read nor write that key; otherwise a 30 s interval can be suppressed by the 60 s focus
+/// debounce.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProbeTrigger {
     /// Window regained focus (e.g. user switched back from the spreadsheet). Debounced.
@@ -171,10 +170,8 @@ pub async fn run_probe(
         return Ok(());
     }
 
-    // Focus debounce — OWNED by the focus path (plan 055). A FOCUS probe within
-    // MIN_FOCUS_DEBOUNCE_SECS of the last focus probe is skipped, then records `now`. The INTERVAL
-    // tick neither reads nor writes this key: its cadence is the loop's sleep, and writing it would
-    // suppress the next interval tick (the bug this fixes). So a 30 s interval keeps a 30 s cadence.
+    // Focus probes within MIN_FOCUS_DEBOUNCE_SECS of the last focus probe are skipped, then record
+    // `now`. Interval probes neither read nor write this key: the loop sleep controls their cadence.
     let now = now_unix();
     if trigger.uses_focus_debounce() {
         if let Some(raw) =
@@ -333,11 +330,9 @@ mod tests {
             .unwrap();
     }
 
-    // Plano 055 (P3): a chave de focus-debounce (`sheets_last_focus_probe_at`) é EXCLUSIVA do caminho
-    // de FOCO. Antes, `run_probe` a escrevia em TODO probe — inclusive no tick do intervalo — e o
-    // debounce de 60 s então suprimia o PRÓXIMO tick, fazendo um intervalo de 30 s polar a ~60 s. A
-    // decisão pura `uses_focus_debounce` deve ser `true` só para `Focus` (lê/escreve a chave) e
-    // `false` para `Interval` (cadência é o sleep do loop; não toca a chave).
+    // A chave de focus-debounce (`sheets_last_focus_probe_at`) é exclusiva do caminho de foco.
+    // `uses_focus_debounce` deve ser `true` somente para `Focus`, enquanto `Interval` usa a cadência
+    // do loop e não toca a chave.
     #[test]
     fn only_focus_probe_uses_focus_debounce() {
         assert!(

@@ -21,10 +21,10 @@ pub(crate) fn app_info_for_dir(app_dir: &std::path::Path) -> AppInfo {
     }
 }
 
-// --- Forecast projection (spec 005) ---
+// --- Forecast projection ---
 
-/// Sum of liquid cash accounts — the projection seed (spec 003 US2).
-/// Spec 007: only `liquidity = 'liquid'` pockets are cash; reserve/restricted/illiquid
+/// Sum of liquid cash accounts — the projection seed.
+/// Only `liquidity = 'liquid'` pockets are cash; reserve/restricted/illiquid
 /// money must not inflate the projected balance.
 pub(crate) async fn liquid_seed(pool: &SqlitePool) -> Result<i64, String> {
     let seed: (i64,) =
@@ -41,7 +41,7 @@ pub(crate) async fn liquid_seed(pool: &SqlitePool) -> Result<i64, String> {
 /// importada, a semente = `Saldo` do dia mais recente ≤ hoje; quaisquer lançamentos realizados
 /// ENTRE esse dia e hoje são somados (cobre o caso de a planilha ainda não ter hoje preenchido),
 /// de modo que o carregador de eventos pode seguir usando `date > today` sem perder o intervalo.
-/// Sem planilha importada, cai nos Bolsos líquidos (spec 007). Precedência: planilha > bolsos —
+/// Sem planilha importada, cai nos Bolsos líquidos. Precedência: planilha > bolsos —
 /// quem importa a planilha quer que a projeção continue a própria linha dela.
 pub(crate) async fn projection_seed(
     pool: &SqlitePool,
@@ -120,11 +120,10 @@ pub(crate) async fn realized_annual_savings(
     let cur_ym = today_naive.format("%Y-%m").to_string();
     let is_january = cur_ym == format!("{}-01", today_naive.year());
     // Janela = só meses COMPLETOS do ano corrente: `[ano-01-01, 1º dia do mês corrente)`.
-    // Em 1º de JANEIRO essa janela é `[YYYY-01-01, YYYY-01-01)` → VAZIA, o que zerava o guardrail
-    // justo na virada do ano (falso "sem restrição"). Nesse caso deslocamos a janela para DEZEMBRO
-    // do ano anterior — o último período COMPLETO de poupança realizada —, `[YYYY-1-12-01,
-    // YYYY-01-01)`, mantendo o guardrail ATIVO. Sem dado de dezembro a query devolve 0 (mesmo
-    // fallback seguro de antes, mas agora o chamador distingue "sem dado" de "janela vazia").
+    // Em 1º de JANEIRO essa janela é `[YYYY-01-01, YYYY-01-01)` e ficaria VAZIA, desativando o
+    // guardrail com um falso "sem restrição". Nesse caso usamos DEZEMBRO do ano anterior — o último
+    // período COMPLETO de poupança realizada —, `[YYYY-1-12-01, YYYY-01-01)`. Sem dado de dezembro,
+    // a query devolve 0 e o chamador ainda distingue "sem dado" de "janela vazia".
     let (lower, upper) = if is_january {
         (
             format!("{}-12-01", today_naive.year() - 1),
@@ -191,8 +190,8 @@ pub(crate) async fn realized_annual_economia(
         )
     };
 
-    // Derivado por mês ("YYYY-MM"): itens de nota ECONOMIA (pacote K) + transfers→reserva MANUAIS
-    // (plano 003). Espelha `load_metric_db_events` + `forecast::classify`: 'illiquid' é
+    // Derivado por mês ("YYYY-MM"): itens de nota ECONOMIA + transfers→reserva MANUAIS. Espelha
+    // `load_metric_db_events` + `forecast::classify`: 'illiquid' é
     // previdência/PATRIMÔNIO, não economia — fora do Economizado% (o anual
     // somava 'illiquid' indevidamente e ignorava os itens de nota).
     let mut derived: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
@@ -245,7 +244,7 @@ pub(crate) async fn realized_annual_economia(
         *derived.entry(ym).or_insert(0) += cents;
     }
 
-    // Anotação da aba Economia (`economia_annotation`, plano 052) por mês, na MESMA janela de meses
+    // Anotação da aba Economia (`economia_annotation`) por mês, na MESMA janela de meses
     // COMPLETOS (com o deslocamento de JANEIRO para DEZEMBRO, simétrico a `realized_annual_savings`).
     let annotation_rows: Vec<(i64, i64, i64)> = if is_january {
         sqlx::query_as(
@@ -274,7 +273,7 @@ pub(crate) async fn realized_annual_economia(
     }
 
     // Regra do MÁXIMO por mês (mesma de `month_metrics`): após o
-    // round-trip do write-back (plano 062) a anotação espelha o derivado — somar dobraria. O mês
+    // round-trip do write-back a anotação espelha o derivado — somar dobraria. O mês
     // vale o maior dos dois; mês só-planilha usa a anotação, excedente digitado à mão ainda conta.
     let mut months: std::collections::HashSet<&String> = derived.keys().collect();
     months.extend(annotation_by.keys());
@@ -289,9 +288,9 @@ pub(crate) async fn realized_annual_economia(
     Ok(total)
 }
 
-/// Anotação da aba Economia (`economia_annotation`, plano 052) para os ANOS informados, indexada por
-/// `(ano, mês)` em centavos. Alimenta `month_metrics_for`/`project_with_metrics` como parcela ADITIVA
-/// do Economizado% — disjunta dos transfers de reserva REAIS (que chegam via eventos de caixa).
+/// Anotação da aba Economia (`economia_annotation`) para os ANOS informados, indexada por
+/// `(ano, mês)` em centavos. Alimenta `month_metrics_for`/`project_with_metrics`, que reconcilia a
+/// anotação com a Economia derivada usando o maior valor do mês para evitar dupla contagem.
 pub(crate) async fn load_economia_annotation(
     pool: &SqlitePool,
     years: &[i32],
@@ -320,7 +319,7 @@ pub(crate) async fn projected_annual_savings(
     today_naive: NaiveDate,
 ) -> Result<(i64, i64), String> {
     // Range explícito (não `LIKE 'YYYY%'`) — consistente com o realizado e rejeita data
-    // malformada que começa com o ano mas não é ISO válida (review P2).
+    // malformada que começa com o ano mas não é ISO válida.
     let start = format!("{}-01-01", today_naive.year());
     let end = format!("{}-12-31", today_naive.year());
     // Mesmo filtro `exclude_from_totals` de `realized_annual_savings`/`load_year_events`: linhas
@@ -488,7 +487,7 @@ pub async fn upsert_daily_budget(
     upsert_daily_budget_inner(pool.inner(), amount_cents).await
 }
 
-// --- Plano 045: quebra por categoria do orçamento Diário ---
+// --- Quebra por categoria do orçamento Diário ---
 
 /// Uma categoria do orçamento mensal do Diário (leitura). `amount_cents` é o alvo mensal positivo.
 #[derive(serde::Serialize, sqlx::FromRow)]
@@ -525,11 +524,10 @@ pub(crate) fn monthly_to_daily_rate(amount_cents: i64, days_in_month: u32) -> i6
 
 /// Núcleo puro: grava o teto total do Diário + uma quebra opcional por categoria.
 ///
-/// Plano 047: TODOS os passos (deprecar antigos + inserir o novo total + limpar/inserir categorias)
-/// rodam numa ÚNICA `sqlx::Transaction` — atômico de ponta a ponta. Antes, o total ia pelo
-/// `upsert_daily_budget_inner` (commit imediato no pool) e as categorias iam numa transação SEPARADA;
-/// um crash entre os dois deixava um orçamento ativo SEM categorias, ou categorias velhas do
-/// orçamento anterior. O `upsert_daily_budget_inner` permanece intacto para o caminho simples.
+/// A substituição do orçamento ativo ocorre numa única `sqlx::Transaction`: desativa os registros
+/// ativos, insere o total sucessor e troca as categorias. Uma falha parcial não pode deixar um
+/// orçamento ativo sem categorias ou com categorias de outro total.
+/// `upsert_daily_budget_inner` atende o caminho simples.
 ///
 /// 1. Espelha o `upsert_daily_budget_inner`: depreca os ativos e insere o novo TOTAL (engine
 ///    inalterado — `effective_daily_ceiling` lê `daily_budget WHERE status='active' AND amount>0`).
@@ -919,7 +917,7 @@ pub(crate) async fn load_forecast_events(
 
 /// Eventos JÁ REALIZADOS do mês corrente (`month_start..=today`), classificados como os futuros.
 /// O encadeamento de caixa não os usa (a semente já os embute), mas a performance do mês precisa
-/// deles — senão o mês corrente aparece pela metade (review adversarial P0). Só transações; os
+/// deles — senão o mês corrente aparece pela metade. Só transações; os
 /// lumps de fatura realizados deste mês já estão na coluna Saída da planilha como transação.
 pub(crate) async fn load_realized_month_events(
     pool: &SqlitePool,
@@ -1002,7 +1000,7 @@ pub struct MonthMetricDto {
     pub daily_projected_cents: i64,
     /// Cartão realizado, bucket próprio dentro do custo de vida.
     pub cartao_cents: i64,
-    /// Diário médio do mês = Σ diário realizado ÷ dias decorridos (D/N). Antes morria no DTO.
+    /// Diário médio do mês = Σ diário realizado ÷ dias decorridos (D/N).
     pub real_daily_avg_cents: i64,
     /// Economia lançada no mês (numerador do Economizado%).
     pub economia_cents: i64,
@@ -1088,7 +1086,7 @@ pub(crate) async fn forecast_dto(
     let seed = projection_seed(pool, today_naive).await?;
     let events = load_forecast_events(pool, today_naive, horizon_end).await?;
     let metric_events = load_metric_events(pool, today_naive, horizon_end).await?;
-    // Anotação da aba Economia (plano 052) para os anos cobertos pelo horizonte — parcela aditiva do
+    // Anotação da aba Economia para os anos cobertos pelo horizonte — parcela aditiva do
     // Economizado% por mês, disjunta dos transfers de reserva reais (que já chegam nos eventos).
     let years: Vec<i32> = (today_naive.year()..=horizon_end.year()).collect();
     let annotation = load_economia_annotation(pool, &years).await?;
@@ -1123,7 +1121,7 @@ pub(crate) async fn forecast_dto(
     // Previsibilidade: poupança realizada vs projetada + cobertura dos meses futuros.
     let (proj_income, proj_savings) = projected_annual_savings(pool, today_naive).await?;
     // Taxa em bps para EXIBIÇÃO (round half-up, não trunca — senão 25,00% vira 2499/abaixo da
-    // meta; review P3). Nunca usada em decisão (o guardrail compara centavos diretos).
+    // meta). Nunca usada em decisão (o guardrail compara centavos diretos).
     let rate_bps = |save: i64, inc: i64| {
         if inc > 0 {
             (save * 10_000 + inc / 2) / inc
@@ -1262,7 +1260,7 @@ pub(crate) async fn forecast_dto(
     })
 }
 
-// --- Visão anual (spec 019 month-views) ---
+// --- Visão anual por mês ---
 
 /// Todos os eventos do ANO (realizado + projetado), classificados. O teto de diário do mês
 /// corrente é injetado pelo chamador (`annual_metrics`), espelhando o forecast — a Performance
@@ -1461,7 +1459,7 @@ pub(crate) async fn dashboard_summary(
     let horizon_end = forecast_horizon_end(pool, today_naive).await?;
     let all_events = load_forecast_events(pool, today_naive, horizon_end).await?;
 
-    // `balance` is the projected end-of-current-month figure (the method's hero, spec 003 US8),
+    // `balance` is the projected end-of-current-month figure (the method's hero),
     // not the raw current account sum.
     let fc = forecast::project(seed, today_naive, &all_events, horizon_end);
     let projected_balance = fc
@@ -1595,12 +1593,11 @@ mod tests {
         .unwrap();
     }
 
-    // Bug 1 (plano 037): uma despesa FUTURA marcada com tag "Ignorar" (exclude_from_totals)
+    // Uma despesa FUTURA marcada com tag "Ignorar" (`exclude_from_totals`)
     // continua pesando no Saldo PROJETADO — o dinheiro vai sair da conta de qualquer forma. A tag
-    // só suprime as MÉTRICAS (Performance/Custo de vida), nunca a visão de CAIXA. O bug do 034 era
-    // o filtro `NOT EXISTS` em `load_cashflow_events` (a fonte do encadeamento do Saldo), que sumia
-    // com o gasto futuro do Saldo projetado. Este teste guarda os DOIS lados: caixa inclui, métrica
-    // exclui.
+    // só suprime as MÉTRICAS (Performance/Custo de vida), nunca a visão de CAIXA. Por isso,
+    // `load_cashflow_events` não pode filtrar a linha por `exclude_from_totals`. Este teste guarda
+    // os DOIS lados: caixa inclui, métrica exclui.
     #[tokio::test]
     async fn excluded_tag_expense_still_lowers_projected_balance() {
         let p = pool().await;
@@ -1644,7 +1641,7 @@ mod tests {
         );
     }
 
-    // Bug 3 (plano 037): em 1º de JANEIRO `realized_annual_economia` precisa da MESMA janela
+    // Em 1º de JANEIRO, `realized_annual_economia` precisa da MESMA janela
     // deslocada para DEZEMBRO que `realized_annual_savings` usa — senão o guardrail compara renda de
     // dezembro contra Economia = 0 (janela vazia do ano novo). Mantém as duas funções SIMÉTRICAS.
     #[tokio::test]
@@ -1694,9 +1691,9 @@ mod tests {
         );
     }
 
-    // Bug 2 (plano 052): o Economizado% (savings_rate_bps) reflete a ANOTAÇÃO da aba Economia mesmo
-    // quando o dono poupa só via Saída no grid (sem transfer de reserva → nenhum EventKind::Economia).
-    // Antes, `economia = 0` → savings_rate_bps = 0, divergindo da planilha.
+    // O Economizado% (`savings_rate_bps`) reflete a ANOTAÇÃO da aba Economia mesmo
+    // quando o dono poupa só via Saída no grid (sem transfer de reserva → nenhum
+    // `EventKind::Economia`); ignorar a anotação deixaria `economia` e `savings_rate_bps` zerados.
     #[tokio::test]
     async fn savings_rate_reflects_annotation() {
         let income = forecast::CashflowEvent {
@@ -1725,7 +1722,7 @@ mod tests {
         assert_eq!(metrics[0].savings_rate_bps, 2500);
     }
 
-    // Plano 060: uma Saída itemizada é atribuída por seção, sem contar o pai de novo.
+    // Uma Saída itemizada é atribuída por seção, sem contar o pai de novo.
     #[tokio::test]
     async fn annual_metrics_attributes_line_items_by_section_without_double_counting_parent() {
         let p = pool().await;
@@ -1784,8 +1781,8 @@ mod tests {
         );
     }
 
-    // Bug 3 (plano 052): `realized_annual_economia` (numerador do guardrail safe_to_spend) soma a
-    // ANOTAÇÃO da aba Economia + os transfers de reserva REAIS (plano 003). Sem isso, quem poupa só
+    // `realized_annual_economia` (numerador do guardrail `safe_to_spend`) soma a
+    // ANOTAÇÃO da aba Economia + os transfers de reserva REAIS. Sem isso, quem poupa só
     // via Saída no grid via guardrail com numerador 0 e era restringido indevidamente.
     #[tokio::test]
     async fn realized_annual_economia_includes_annotation() {
@@ -1803,7 +1800,7 @@ mod tests {
             .unwrap();
         }
 
-        // Transfer de reserva MANUAL (plano 003) em março: conta reserva + transação transfer.
+        // Transfer de reserva MANUAL em março: conta reserva + transação transfer.
         sqlx::query("INSERT INTO person (id, name) VALUES ('pe-1', 'Tester')")
             .execute(&p)
             .await
@@ -1827,8 +1824,8 @@ mod tests {
         let economia = realized_annual_economia(&p, today).await.unwrap();
         // Regra do MÁXIMO por mês (espelha o mensal). Março vale
         // max(transfer 8.000, anotação 10.000) = 10.000 — a aba é o registro consolidado do mês,
-        // não uma parcela aditiva. Total: 5 × 10.000 = 50.000 (antes somava 58.000, dobrando o
-        // dinheiro que o write-back da aba deriva dos próprios lançamentos).
+        // não uma parcela aditiva. Total: 5 × 10.000 = 50.000; somar os dois sinais produziria
+        // 58.000 e contaria duas vezes o dinheiro que o write-back deriva dos lançamentos.
         assert_eq!(economia, 50_000);
     }
 
@@ -1958,7 +1955,7 @@ mod tests {
         );
     }
 
-    // Bugs 1+3 (plano 052): a anotação e os transfers reais são DISJUNTOS — `store_economia_entries`
+    // A anotação e os transfers reais são DISJUNTOS: `store_economia_entries`
     // grava só em `economia_annotation`, jamais um transfer fantasma em `transaction`. Logo
     // `realized_annual_economia` conta a anotação UMA vez (sem dupla contagem) e o lado-transfer fica 0.
     #[tokio::test]
@@ -1991,8 +1988,8 @@ mod tests {
 
     #[tokio::test]
     async fn month_grid_expense_total_is_magnitude_regardless_of_sign() {
-        // Bug 4: imported expenses are stored negative (-amount_out); manual are positive.
-        // month_grid must return the magnitude (ABS) so both sources add up correctly.
+        // Imported expenses are stored negative (`-amount_out`), while manual expenses are
+        // positive. `month_grid` must sum magnitudes so both sources add up correctly.
         let p = pool().await;
 
         // Simulate an imported expense (negative amount, is_fixed=1 = Saída).
@@ -2026,9 +2023,8 @@ mod tests {
         assert_eq!(day15.income_cents, 0);
     }
 
-    // Plano 049: mesma família de bug do `month_grid` acima, agora em `realized_monthly_baseline`.
-    // Despesas importadas são negativas, manuais positivas; um `SUM(amount)` de sinal misto se
-    // cancela e produz uma mediana errada (possivelmente negativa), corrompendo o reserve floor.
+    // `realized_monthly_baseline` precisa somar magnitudes: despesas importadas são negativas e
+    // manuais positivas; `SUM(amount)` mistura sinais, cancela valores e corrompe o reserve floor.
     #[tokio::test]
     async fn realized_monthly_baseline_sums_magnitudes_not_signed_amounts() {
         let p = pool().await;
@@ -2053,9 +2049,8 @@ mod tests {
         .await
         .unwrap();
 
-        // Só um mês na janela → mediana = total do mês.
-        // Correto: ABS(-90000) + 60000 = 150_000.
-        // Errado (antes do fix): -90000 + 60000 = -30_000.
+        // Só um mês na janela → mediana = total do mês. A soma das magnitudes é
+        // ABS(-90000) + 60000 = 150_000; a soma assinada seria -30_000.
         let baseline = realized_monthly_baseline(&p, today).await.unwrap();
         assert_eq!(
             baseline, 150_000,
@@ -2071,7 +2066,7 @@ mod tests {
         );
     }
 
-    // --- Plano 045: quebra por categoria do orçamento Diário ---
+    // --- Quebra por categoria do orçamento Diário ---
 
     /// Insere um perfil — pré-condição de `upsert_daily_budget_inner` (escreve por person_id).
     async fn seed_person(pool: &SqlitePool) {
@@ -2189,7 +2184,7 @@ mod tests {
 
     #[tokio::test]
     async fn upsert_daily_budget_with_categories_is_atomic() {
-        // Plano 047 (P2): total + categorias gravam numa ÚNICA transação. Caminho feliz: ambos
+        // Total + categorias gravam numa ÚNICA transação. No caminho feliz, ambos
         // confirmam juntos; nenhum orçamento ATIVO fica sem suas categorias.
         let p = pool().await;
         seed_person(&p).await;
@@ -2261,10 +2256,10 @@ mod tests {
         assert_eq!(monthly_to_daily_rate(100, 0), 0, "dias=0 não causa panic");
     }
 
-    // Bug 1 (plano 053): `daily_spend_today` precisa somar a MAGNITUDE de cada linha do dia
+    // `daily_spend_today` precisa somar a MAGNITUDE de cada linha do dia
     // (`SUM(ABS(amount))`), não o ABS da soma assinada. Despesas importadas chegam negativas e
     // lançamentos manuais positivos: num dia misto, `ABS(SUM(...))` cancelaria parcialmente antes
-    // do ABS, sub-reportando o "Diário de hoje". Guarda contra a regressão para o padrão antigo.
+    // do ABS e sub-reportaria o "Diário de hoje".
     #[tokio::test]
     async fn daily_spend_today_sums_magnitudes_not_signed_amounts() {
         let p = pool().await;
@@ -2305,7 +2300,7 @@ mod tests {
 
         let summary = dashboard_summary(&p, today).await.unwrap();
 
-        // Soma das magnitudes: 5000 + 3000 = 8000. O bug antigo (`ABS(SUM(amount))`) daria
+        // Soma das magnitudes: 5000 + 3000 = 8000. `ABS(SUM(amount))` daria
         // ABS(-5000 + 3000) = 2000.
         assert_eq!(
             summary.daily_spend_today, 8000,
@@ -2313,10 +2308,10 @@ mod tests {
         );
     }
 
-    // Plano 054: o fallback de média do mês anterior em `effective_daily_ceiling` precisa somar a
+    // O fallback de média do mês anterior em `effective_daily_ceiling` precisa somar a
     // MAGNITUDE de cada linha (`SUM(ABS(amount))`), não o ABS da soma assinada. Despesas importadas
     // chegam negativas e manuais positivas; num mês de sinal misto o ABS externo da soma cancelaria
-    // parcialmente, sub-reportando o teto diário. Último site que estava no padrão antigo.
+    // parcialmente e sub-reportaria o teto diário.
     #[tokio::test]
     async fn effective_daily_ceiling_sums_magnitudes_not_signed_amounts() {
         let p = pool().await;
@@ -2340,15 +2335,15 @@ mod tests {
         .unwrap();
 
         let ceiling = effective_daily_ceiling(&p, today).await.unwrap();
-        // Soma das magnitudes = 6200 + 3100 = 9300; ÷ 31 dias de maio = 300. O bug antigo
-        // (`ABS(SUM(amount))`) daria ABS(-6200 + 3100) = 3100 ÷ 31 = 100.
+        // Soma das magnitudes = 6200 + 3100 = 9300; ÷ 31 dias de maio = 300.
+        // `ABS(SUM(amount))` daria ABS(-6200 + 3100) = 3100 ÷ 31 = 100.
         assert_eq!(
             ceiling, 300,
             "o teto diário soma magnitudes (SUM(ABS)), não o ABS da soma assinada"
         );
     }
 
-    // Plano 054: `realized_annual_savings` precisa aplicar o MESMO filtro `exclude_from_totals`
+    // `realized_annual_savings` precisa aplicar o MESMO filtro `exclude_from_totals`
     // ("Ignorar") de `load_year_events`/`annual_metrics`. Uma linha marcada cai fora da métrica;
     // se entrasse no net de poupança realizada, o guardrail e o painel de métricas divergiriam.
     #[tokio::test]

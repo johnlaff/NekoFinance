@@ -1,4 +1,4 @@
-//! Multi-titular (read-side do split, spec 017): quem é responsável/pagou cada parte de um
+//! Multi-titular (read-side do split): quem é responsável/pagou cada parte de um
 //! lançamento. Surge na UI como OwnerChip — suporte a múltiplos titulares (vários pagadores
 //! por lançamento).
 

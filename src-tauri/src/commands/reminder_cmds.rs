@@ -1,4 +1,4 @@
-//! Tauri commands for the OS-level scheduled reminder (plan 039).
+//! Tauri commands for the OS-level scheduled reminder.
 //!
 //! Thin shell over `crate::os_scheduler` — the UI calls these after saving the
 //! reminder settings so the schedule lives at the OS level and fires even when

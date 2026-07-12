@@ -1,4 +1,4 @@
-//! Plan 069: user-confirmed "obligation" identity — the recurring series the spreadsheet
+//! User-confirmed "obligation" identity — the recurring series the spreadsheet
 //! doesn't store. `obligation` is a NEKO EXTENSION (not a method artifact): the method has no
 //! concept linking twelve monthly "Aluguel" line items into one series. The user names a
 //! recurring item ONCE ("Aluguel"); every line item whose (normalized) description — and,
@@ -82,8 +82,8 @@ fn strip_trailing_installment_counter(s: &str) -> &str {
     s[..j].trim_end()
 }
 
-/// Casefold + accent-fold, LOCAL a este módulo (deliberado — plano 069 rejeita compartilhar o
-/// helper do plano 071, que não fazia accent-fold e por isso quebrava "Aluguel" x "ALUGUÉL").
+/// Casefold + accent-fold local a este módulo: o normalizador de identidade de `line_item` não faz
+/// accent-fold, portanto compartilhá-lo faria "Aluguel" e "ALUGUÉL" divergirem.
 fn fold_case_accents(s: &str) -> String {
     let mut normalized = String::with_capacity(s.len());
     for ch in s.chars().flat_map(char::to_lowercase) {
@@ -189,7 +189,7 @@ fn to_obligation_line_item(row: CandidateRow) -> ObligationLineItem {
     }
 }
 
-/// Prévia do casamento ANTES de salvar (confirm-preview obrigatório, plano 069): mesma regra do
+/// Prévia do casamento ANTES de salvar (confirm-preview obrigatório): mesma regra do
 /// resolver, sem persistir nada. `match_desc_raw`/`match_section_raw` chegam em texto livre (o
 /// que o usuário digitou/a seção crua); normalizamos aqui do mesmo jeito que `create_obligation`
 /// normaliza antes de gravar, então "nº mostrado no preview" == "nº agrupado após salvar".
@@ -685,10 +685,9 @@ mod tests {
 
     #[tokio::test]
     async fn renaming_a_matched_item_description_drops_it_from_the_match() {
-        // Limitação aceita (plano 069): a identidade é a REGRA de descrição normalizada, não um
-        // vínculo persistido no line_item (ele é re-derivado a cada import). Se o usuário edita a
-        // descrição via `update_transaction_items_cmd`, o item deixa de casar — documentado, não
-        // corrigido aqui (corrigir exigiria uma FK em line_item que não sobrevive ao re-import).
+        // A identidade é a regra de descrição normalizada, não um vínculo persistido no
+        // `line_item`, que é rederivado a cada import. Renomear a descrição faz o item deixar de
+        // casar; uma FK no `line_item` não preservaria esse vínculo após o re-import.
         let p = pool().await;
         txn(&p, "t1", -150000, "2026-01-05").await;
         line_item(&p, "li1", "t1", 150000, "Aluguel", Some("CONTAS:")).await;

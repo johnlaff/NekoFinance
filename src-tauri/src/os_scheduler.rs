@@ -1,4 +1,4 @@
-//! OS-level scheduled reminder (plan 039).
+//! OS-level scheduled reminder.
 //!
 //! The in-app loop (`reminder_task`) only fires while the desktop process is
 //! running — if the app is closed at the configured time the nudge is lost.
@@ -15,7 +15,7 @@
 //!
 //! - **Windows (primary)**: Task Scheduler via `schtasks` — a user-level daily
 //!   trigger whose action is `"<exe>" --remind`. Implemented.
-//! - **macOS / Linux**: phased follow-up (see the `TODO plan-039-phase2:`
+//! - **macOS / Linux**: not implemented (see the `TODO(os_scheduler)`
 //!   markers below). `register`/`unregister` are no-ops that log what was
 //!   skipped; the in-app loop already covers these platforms.
 //!
@@ -114,8 +114,8 @@ pub fn register(time_hhmm: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// macOS — phased follow-up.
-// TODO plan-039-phase2: macOS launchd plist
+/// macOS scheduler is not implemented.
+// TODO(os_scheduler): macOS launchd plist
 // Write ~/Library/LaunchAgents/com.nekofinance.reminder.plist with a
 // StartCalendarInterval at the chosen time and an action of `<exe> --remind`,
 // then `launchctl load` it. Until then this is a no-op; the in-app loop covers
@@ -129,8 +129,8 @@ pub fn register(time_hhmm: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Linux — phased follow-up.
-// TODO plan-039-phase2: Linux systemd-timer / crontab
+/// Linux scheduler is not implemented.
+// TODO(os_scheduler): Linux systemd-timer / crontab
 // Write a `systemd --user` service+timer (or edit the user crontab) whose
 // action is `<exe> --remind` at the chosen time. Until then this is a no-op;
 // the in-app loop covers Linux while the app is open.
@@ -179,8 +179,8 @@ pub fn unregister() -> Result<(), String> {
     Ok(())
 }
 
-/// Unsupported / phased platforms: logged no-op.
-// TODO plan-039-phase2: macOS launchctl unload + plist removal; Linux timer/crontab removal.
+/// Unsupported platforms: logged no-op.
+// TODO(os_scheduler): macOS launchctl unload + plist removal; Linux timer/crontab removal.
 #[cfg(not(target_os = "windows"))]
 pub fn unregister() -> Result<(), String> {
     eprintln!("[os_scheduler] remoção OS-level adiada nesta plataforma (plan-039-phase2)");

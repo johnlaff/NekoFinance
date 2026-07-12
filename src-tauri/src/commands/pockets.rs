@@ -1,6 +1,6 @@
 use super::*;
 
-// --- Pockets & liquidity (spec 007) ---
+// --- Pockets & liquidity ---
 
 #[derive(serde::Serialize)]
 pub struct PocketAccount {
@@ -24,7 +24,7 @@ pub struct Pockets {
     pub accounts: Vec<PocketAccount>,
 }
 
-/// Deterministic liquidity class per account type (spec 007 contract).
+/// Deterministic liquidity class per account type.
 pub(crate) fn liquidity_for_type(account_type: &str) -> Option<&'static str> {
     match account_type {
         "bank" | "wallet" | "business" => Some("liquid"),

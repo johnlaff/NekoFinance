@@ -334,9 +334,9 @@ pub const NEEDS_WRITE_REAUTH: &str =
     "Re-autorize para habilitar a escrita: sua conexão atual é somente leitura.";
 
 /// O escopo concedido (gravado no token na troca, ver `oauth::mod`) inclui a escrita na planilha?
-/// O Google devolve os escopos concedidos separados por espaço. Um token emitido ANTES do plano 028
-/// só carrega `spreadsheets.readonly` → uma escrita daria 403; esta checagem permite à rota de apply
-/// FALHAR CEDO com um erro de re-consentimento em vez de propagar o 403 cru.
+/// O Google devolve os escopos concedidos separados por espaço. Um token sem o escopo
+/// `spreadsheets` só permite leitura; esta checagem faz a rota de apply falhar cedo com um erro de
+/// re-consentimento em vez de propagar o 403 cru.
 pub fn scope_grants_write(granted_scope: &str) -> bool {
     granted_scope
         .split_whitespace()

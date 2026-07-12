@@ -1,4 +1,4 @@
-//! Recorrências/séries (spec 016): gera N ocorrências (transações) compartilhando um
+//! Recorrências/séries: gera N ocorrências (transações) compartilhando um
 //! `recurrence_id`; permite apagar "deste ponto" ou "toda a série". Core de datas puro +
 //! shell determinístico.
 
@@ -132,7 +132,7 @@ pub(crate) fn occurrence_index(transaction_id: &str) -> Option<i64> {
 /// Apaga a ocorrência indicada e TODAS as posteriores da mesma série ("deste ponto em diante").
 ///
 /// Toda mutação de série filtra `scenario_id IS NULL`: uma edição do livro-razão REAL nunca pode
-/// alcançar linhas hipotéticas de cenário, mesmo que uma slice futura reuse `recurrence_id` nelas.
+/// alcançar linhas hipotéticas de cenário, mesmo que elas reutilizem `recurrence_id`.
 pub async fn delete_series_from(pool: &SqlitePool, transaction_id: &str) -> Result<u64, String> {
     let row: Option<(String,)> = sqlx::query_as(
         "SELECT recurrence_id FROM \"transaction\" \
@@ -425,7 +425,7 @@ mod tests {
         );
     }
 
-    // Regressão (review adversarial): o corte "deste ponto" é por ÍNDICE, não por data. Prova com
+    // O corte "deste ponto" é por ÍNDICE, não por data. Prova com
     // (a) uma data fora de ordem (índice 1 movido para o futuro) e (b) índice de 2 dígitos — onde
     // o corte por data ou por string quebraria.
     #[tokio::test]

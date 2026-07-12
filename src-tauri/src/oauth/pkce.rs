@@ -97,19 +97,18 @@ impl OAuthState {
             .set_token_uri(token_url)
             .set_redirect_uri(redirect_uri)
             .authorize_url(|| self.csrf_token.clone())
-            // Escopo de ESCRITA na planilha (supersedes o `spreadsheets.readonly`): o write-back
-            // aprovado precisa escrever células de volta. Um token emitido ANTES desta mudança só
-            // tem readonly → uma escrita daria 403; `token_store::has_write_scope` detecta isso e a
-            // rota de apply devolve um erro acionável ("re-autorize") em vez do 403 cru.
+            // O write-back exige o escopo de ESCRITA na planilha. Tokens limitados a
+            // `spreadsheets.readonly` não autorizam o apply; `token_store::has_write_scope` detecta
+            // essa condição e devolve um erro acionável ("re-autorize") em vez do 403 cru.
             .add_scope(Scope::new(SHEETS_WRITE_SCOPE.to_string()))
             // Listagem de planilhas (list_user_spreadsheets) usa o Drive v3 — sem este
-            // scope o picker devolve 403 (spec 010, slice 2).
+            // scope o picker devolve 403.
             .add_scope(Scope::new(
                 "https://www.googleapis.com/auth/drive.metadata.readonly".to_string(),
             ))
-            // `access_type=offline` + `prompt=consent` GARANTEM o refresh_token (Google só o
-            // devolve com offline, e `consent` força reemissão mesmo em reautorizações). Sem isso
-            // o token morria em ~1h e a conexão caía (sintoma confirmado no dogfooding).
+            // `access_type=offline` + `prompt=consent` garantem o refresh_token: Google só o
+            // devolve com offline, e `consent` força reemissão mesmo em reautorizações. Sem o
+            // refresh_token, a conexão expira junto com o access token.
             .add_extra_param("access_type", "offline")
             .add_extra_param("prompt", "consent")
             .set_pkce_challenge(compute_challenge(&self.verifier()))
@@ -164,10 +163,9 @@ mod tests {
         assert!(url.contains("127.0.0.1"));
         assert!(url.contains("code_challenge="));
         assert!(url.contains("code_challenge_method=S256"));
-        // Plano 028: o consentimento agora pede o escopo de ESCRITA na planilha (supersedes o
-        // readonly), exigido pelo write-back aprovado. A string é url-encoded no query (`%2F`) e o
-        // escopo de escrita aparece SOZINHO (separador `+` entre escopos, ou fim do parâmetro) —
-        // NÃO o `spreadsheets.readonly`. Verificamos a forma terminada para não casar o readonly.
+        // O consentimento inclui o escopo de ESCRITA exigido pelo write-back, sem pedir também o
+        // `spreadsheets.readonly`. A string é url-encoded no query (`%2F`), e a forma terminada
+        // evita que a asserção case por engano com o sufixo `.readonly`.
         assert!(
             url.contains("auth%2Fspreadsheets+") || url.contains("auth%2Fspreadsheets&"),
             "consentimento deve pedir o escopo de ESCRITA spreadsheets (não readonly)"
@@ -176,7 +174,7 @@ mod tests {
             !url.contains("spreadsheets.readonly"),
             "o escopo de escrita supersedes o readonly — não pedir os dois"
         );
-        // Spec 010 slice 2: scope do Drive para o picker de planilhas.
+        // O picker de planilhas depende do escopo de metadados do Drive.
         assert!(url.contains("drive.metadata.readonly"));
     }
 
