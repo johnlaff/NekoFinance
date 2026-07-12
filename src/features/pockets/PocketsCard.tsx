@@ -10,7 +10,7 @@ const GROUPS = [
   { key: "illiquid_cents", label: "Ilíquido", hint: "Previdência, FGTS" },
 ] as const;
 
-/** Dashboard card: liquidity-grouped pockets + net worth (spec 007 US3). */
+/** Dashboard card: liquidity-grouped pockets + net worth. */
 export function PocketsCard() {
   const pocketsQ = useCommand("get_pockets", getPockets);
   const pockets = pocketsQ.data ?? null;

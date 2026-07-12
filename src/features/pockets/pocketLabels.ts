@@ -1,6 +1,6 @@
 import type { PocketType } from "../../lib/api";
 
-/** PT-BR labels for the pocket types accepted by `create_account` (spec 007). */
+/** PT-BR labels for the pocket types accepted by `create_account`. */
 export const POCKET_TYPE_LABELS: Record<PocketType, string> = {
   bank: "Conta corrente",
   wallet: "Carteira",

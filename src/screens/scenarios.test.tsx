@@ -660,13 +660,13 @@ describe("ScenarioCompare — superfície de comparação", () => {
       .closest("article")!;
     expect(within(deficitCard).getByText("R$ 1.000,00")).toBeInTheDocument();
     expect(within(deficitCard).getByText("−R$ 500,00")).toBeInTheDocument();
-    // A manchete (fatia A, anatomia nova) mostra só o valor do CENÁRIO, no formato compacto —
+    // A manchete mostra só o valor do CENÁRIO, no formato compacto —
     // nunca duas leituras de precisão cheia lado a lado em tamanho de destaque.
     expect(deficitCard.querySelector(".scn-kpi__headline")?.textContent).toBe(
       fmtCompactBRL(-50_000),
     );
     // Fonte única para o leitor de tela: o aria-label do article carrega o ESTADO do método
-    // (Nível 2, plano 074/fatia B) + real e cenário em precisão cheia; estado, manchete E linha
+    // (Nível 2) + real e cenário em precisão cheia; estado, manchete E linha
     // de evidência são visual-only (aria-hidden) — sem isso o leitor ouviria tudo em dobro.
     // Real R$1.000,00 cai na faixa "Apertado" do Termômetro; cenário −R$500,00 cai em
     // "Negativo" — bandas DIFERENTES → transição anunciada como "novo (antes velho)".
@@ -980,7 +980,7 @@ describe("ScenarioCompare — camada didática (plano 074, fatia B: veredito + e
       `Fica apertado em agosto — menor saldo ${fmtCompactBRL(90_000)}.`,
     );
 
-    // O CARD "Buraco do futuro" cai no MESMO mínimo mensal (fatia C: `scenarioDeepestPoint`
+    // O CARD "Buraco do futuro" cai no MESMO mínimo mensal (`scenarioDeepestPoint`
     // é a fonte única de banner e card) — nunca o "cenário R$ 0,00" do `?? 0` cru sobre o
     // deficit diário nulo, que fazia banner e card discordarem sobre o mesmo dado.
     const surface = screen.getByLabelText("Comparação real × cenário");
@@ -1284,7 +1284,7 @@ describe("ScenarioCompare — polimento (plano 074, fatia C)", () => {
     expect(screen.getByText("Custo do crédito")).toBeInTheDocument();
   });
 
-  // --- "Buraco do futuro" sem projeção nenhuma (item 5, residual da fatia B) ---
+  // --- "Buraco do futuro" sem projeção nenhuma ---
 
   it("'Buraco do futuro' sem nenhum ponto de projeção do cenário mostra vazio neutro, nunca 'Apertado R$ 0' fake", async () => {
     const compare = baseCompare({
@@ -1341,7 +1341,7 @@ describe("ScenarioCompare — polimento (plano 074, fatia C)", () => {
     });
     await renderCompare(compare);
 
-    // Mesmo padrão de título do DualLineChart logo acima (fatia C, item 3).
+    // Mesmo padrão de título do DualLineChart logo acima.
     expect(document.querySelector(".scn-diffchart__head")).not.toBeNull();
     const note = document.querySelector(".scn-worst-note");
     expect(note?.textContent).toBe(`Pior mês: Setembro ${fmtCompactBRL(-1_550_000)}`);

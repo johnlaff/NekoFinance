@@ -214,7 +214,7 @@ describe("WriteBackPreview", () => {
   });
 });
 
-// Pré-condição do caminho rápido "Sincronizar" (plano 039): só colapsa os cliques quando o diff é
+// Pré-condição do caminho rápido "Sincronizar": só colapsa os cliques quando o diff é
 // de só-valor, sem conflito, sem multi-cartão e com um token de frescura presente. Qualquer falha
 // cai no fluxo completo — as salvaguardas do backend rodam de qualquer forma.
 describe("isSafeForFastPath", () => {

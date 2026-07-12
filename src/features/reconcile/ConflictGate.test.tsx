@@ -7,7 +7,7 @@ import { mockCommands, mockInvoke } from "../../test/commands";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
-// Captura o handler do `neko://sync-done` e devolve um `unlisten` espionável (plano 026). O
+// Captura o handler do `neko://sync-done` e devolve um `unlisten` espionável. O
 // `listenEvent` da api importa este módulo dinamicamente.
 const unlistenSpy = vi.fn();
 let syncDoneHandler: ((e: { payload: { conflict_count: number } }) => void) | undefined;
@@ -104,7 +104,7 @@ describe("ConflictGate", () => {
     expect(screen.getByText(/1 conflito de importação/)).toBeInTheDocument();
   });
 
-  // Plano 026: ao receber `neko://sync-done`, o gate re-busca os conflitos (badge sem ação do
+  // Ao receber `neko://sync-done`, o gate re-busca os conflitos (badge sem ação do
   // usuário). Aqui começa vazio e, após o evento, o backend passa a devolver um conflito.
   it("re-busca os conflitos quando chega o evento sync-done", async () => {
     mockCommands({ get_import_conflicts: [] });
@@ -128,7 +128,7 @@ describe("ConflictGate", () => {
     expect(after).toBeGreaterThan(before);
   });
 
-  // Plano 026: a assinatura do evento é cancelada no unmount (sem vazar listener no HMR).
+  // A assinatura do evento é cancelada no unmount (sem vazar listener no HMR).
   it("cancela a assinatura do evento ao desmontar", async () => {
     mockCommands({ get_import_conflicts: [] });
     const { unmount } = render(<ConflictGate />);

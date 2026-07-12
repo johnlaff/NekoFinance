@@ -21,7 +21,7 @@ import { KIND_LABEL } from "./writeBack";
 // Qual seção tem o diálogo de 2ª confirmação aberto (uma de cada vez). `null` = nenhum.
 type ConfirmTarget = null | "grid" | "econ";
 
-// O backend devolve o erro de re-revisão (Step 4) como uma string PT-BR. Casamos por trecho estável
+// O backend devolve o erro de re-revisão como uma string PT-BR. Casamos por trecho estável
 // ("planilha mudou") em vez do literal inteiro, para não acoplar à pontuação exata da mensagem.
 const SHEET_CHANGED_RE = /planilha mudou/i;
 const SHEET_CHANGED_MSG =
@@ -36,9 +36,9 @@ interface WBState {
   previewRevision: string | null;
   /** Carimbo de QUANDO a prévia foi gerada (mostrado ao usuário; reforça "isto pode envelhecer"). */
   previewedAt: number | null;
-  /** Há conflitos de import pendentes? Desabilita o envio (espelha o gate do backend, Step 3). */
+  /** Há conflitos de import pendentes? Desabilita o envio e espelha o gate do backend. */
   conflictsPending: boolean;
-  /** Mais de um cartão com ciclo (ou cartão sem ciclo): a data da fatura pode divergir (Step 8). */
+  /** Mais de um cartão com ciclo, ou cartão sem ciclo, sinaliza possível divergência na data da fatura. */
   multiCardWarning: boolean;
   /** Prévia em andamento (read-only). */
   loading: boolean;
@@ -373,7 +373,7 @@ function EconDiffSection({
 }
 
 /**
- * Write-back (spec 018) — pré-visualiza o caminho inverso (transação → célula da planilha) como um
+ * Write-back — pré-visualiza o caminho inverso (transação → célula da planilha) como um
  * diff para aprovação humana, e (com a flag ligada) envia após uma 2ª confirmação. Salvaguardas:
  * a aprovação fica BLOQUEADA enquanto há conflitos de import pendentes; o envio carrega o
  * `preview_revision` da prévia e o backend ABORTA se a planilha mudou (re-revisão); um diálogo de
@@ -429,8 +429,8 @@ export function WriteBackPreview({
     await withLoading(setLoading, async () => {
       try {
         const result = await previewWriteBackStatus(spreadsheetId, sheetName, clientId);
-        // Precondição de conflito (Step 5): a prévia já traz o flag do backend, mas re-checamos a
-        // fila ao vivo — um conflito pode ter surgido entre prévias. `||` é defensivo.
+        // A prévia traz o flag do backend, mas a fila é relida ao vivo porque um conflito pode
+        // surgir entre prévias. `||` é defensivo.
         let conflictsPending = result.conflicts_pending;
         if (!conflictsPending) {
           try {
@@ -469,8 +469,8 @@ export function WriteBackPreview({
     });
   }
 
-  // Trata o erro de re-revisão (Step 4): mensagem clara + re-prévia automática (a UI passa a refletir
-  // o novo estado da planilha). Retorna `true` se ERA esse erro (já tratado).
+  // Trata o erro de re-revisão: mostra uma mensagem clara e refaz a prévia para refletir o estado
+  // corrente da planilha. Retorna `true` quando o erro já foi tratado aqui.
   function handleSheetChanged(e: unknown): boolean {
     const raw = e instanceof Error ? e.message : typeof e === "string" ? e : "";
     if (SHEET_CHANGED_RE.test(raw)) {
@@ -491,7 +491,7 @@ export function WriteBackPreview({
           clientId,
           previewRevision,
         );
-        // Aviso não-bloqueante (plano 036): a nota de célula itemizada pode ter falhado mesmo com o
+        // Aviso não-bloqueante: a nota de célula itemizada pode ter falhado mesmo com o
         // valor/fórmula já gravado — anexamos à mensagem em vez de tratar como erro.
         const suffix = result.note_warning ? ` ${result.note_warning}` : "";
         dispatch({

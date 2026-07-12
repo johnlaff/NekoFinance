@@ -1,7 +1,7 @@
 import * as React from "react";
 
 /**
- * Controlled editor for the itemised parts of a transaction (plano 036).
+ * Controlled editor for the itemised parts of a transaction.
  * Each part has a positive-magnitude amount in cents and a free-text description.
  * The parent owns the list; every add / remove / edit fires `onChange` with the full
  * new array. When ≥1 item exists the parent form's Valor field should become read-only

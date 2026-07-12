@@ -1256,7 +1256,7 @@ h3,
   color: var(--text);
 }
 
-/* Toggle "Atualização automática" (plano 026): controle secundário, discreto, sob o re-sync. */
+/* Toggle "Atualização automática": controle secundário, discreto, sob o re-sync. */
 .gs-bgsync {
   display: flex;
   align-items: center;
@@ -1575,7 +1575,7 @@ h3,
   word-break: break-word;
 }
 
-/* Diagnósticos de precisão do import (plano 070): nota que não deu para itemizar ou item↔célula
+/* Diagnósticos de precisão do import: nota que não deu para itemizar ou item↔célula
    divergente — informativo, não bloqueante (a célula continua dona do total). */
 .gs-diagnostics {
   margin-top: var(--space-2);
@@ -2065,8 +2065,8 @@ h3,
 .dash-predict__fill {
   display: block;
   height: 100%;
-  /* Progresso de preenchimento (mais = mais completo) — tom de atenção quente, NÃO vermelho
-     (vermelho cresceria com o "bom", sinal invertido — review P2). */
+  /* Progresso de preenchimento usa atenção quente, não vermelho: o preenchimento cresceria com
+     uma cor de falha conforme a cobertura melhora, invertendo o significado. */
   background: var(--brass-400, var(--primary));
   border-radius: 999px;
 }
@@ -2283,7 +2283,7 @@ h3,
 }
 
 /* ============================================================
-   Motion layer (spec 006) — design-system tokens only.
+   Motion layer — design-system tokens only.
    Entrance-only, compositor-friendly (opacity/transform/clip-path);
    durations collapse to 0ms under prefers-reduced-motion via tokens.
    ============================================================ */
@@ -2472,7 +2472,7 @@ h3,
   align-items: center;
 }
 
-/* ---- Bolsos & patrimônio (spec 007) ---- */
+/* ---- Bolsos & patrimônio ---- */
 .pockets-networth {
   font-size: var(--fs-sm);
   color: var(--text-muted);

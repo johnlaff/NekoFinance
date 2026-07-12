@@ -97,9 +97,8 @@ export function HorizonteScreen() {
         <ScenarioCompare compare={compare} onClose={() => setActiveScenarioId(null)} />
       )}
 
-      {/* Status banner — só SEM comparação ativa: o veredito do cenário logo acima já diz o
-          estado do ano em quase as mesmas palavras (duas frases gêmeas na mesma tela era a
-          redundância apontada em dogfooding). */}
+      {/* Status banner só aparece sem comparação ativa, evitando duas frases quase idênticas sobre
+          o estado do ano na mesma tela. */}
       {!compare && daily.length > 0 && minDay != null ? (
         <div className={"hz-alert" + (hasDeficit ? "" : " hz-alert--ok")}>
           <span

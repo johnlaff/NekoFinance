@@ -73,7 +73,7 @@ function parseSpreadsheetId(raw: string | null): string | null {
 }
 
 /**
- * Busca o estado do write-back pendente a partir dos comandos JÁ existentes (planos 026/028):
+ * Busca o estado do write-back pendente a partir dos comandos existentes:
  * lê a última planilha/aba mapeada das preferências locais, mede o diff local → planilha via
  * `previewWriteBackStatus` e conta os conflitos de importação via `getImportConflicts`.
  *
@@ -157,7 +157,7 @@ export function useWriteBackPending(): WriteBackPendingState {
     };
   }, [tick]);
 
-  // Sync em segundo plano (plano 026): quando o backend conclui um import automático ele emite
+  // Sync em segundo plano: quando o backend conclui um import automático ele emite
   // `neko://sync-done`. Re-buscamos o estado (mesmo padrão do `ConflictGate`). Cancela a assinatura
   // no unmount (sem vazar o listener no HMR). Fora do Tauri, `listenEvent` devolve um no-op.
   useEffect(() => {
