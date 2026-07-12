@@ -532,7 +532,7 @@ pub fn project(
 /// O encadeamento diário parte da semente (que já embute todo o passado) e por isso só consome
 /// `chain_events` com `date > hoje` — somar o realizado de novo dobraria. Mas a performance do
 /// mês corrente PRECISA do realizado de hoje-pra-trás no mês (renda e saídas já lançadas), senão
-/// junho aparece com sinal trocado e o guardrail de poupança decide sobre o mês pela metade
+/// junho aparece com sinal trocado e o guardrail de poupança decide sobre o mês pela metade.
 /// Por isso `metric_events` cobre o mês inteiro (realizado + projetado).
 pub fn project_with_metrics(
     seed_cents: i64,

@@ -591,7 +591,7 @@ pub async fn update_transaction_items_cmd(
 /// sem FK para o pai); (2) o `sync_log` da linha (id determinístico `log:<id>`, sem FK) — sem isto o
 /// próximo import RECRIARIA a linha apagada via diff/upsert; (3) os `import_conflict` da linha (sem FK
 /// CASCADE) — conflitos órfãos bloqueariam o write-back para sempre. As `line_item` filhas somem via
-/// `ON DELETE CASCADE`. Após o fix o delete é "sticky": o próximo import NÃO recria a linha.
+/// `ON DELETE CASCADE`. O delete é "sticky": o próximo import NÃO recria a linha.
 #[tauri::command]
 pub async fn delete_transaction_cmd(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
     let mut tx = pool

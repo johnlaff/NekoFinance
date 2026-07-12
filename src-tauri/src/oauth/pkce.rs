@@ -98,7 +98,7 @@ impl OAuthState {
             .set_redirect_uri(redirect_uri)
             .authorize_url(|| self.csrf_token.clone())
             // O write-back exige o escopo de ESCRITA na planilha. Tokens limitados a
-            // `spreadsheets.readonly` não autorizam o apply; `token_store::has_write_scope` detecta
+            // `spreadsheets.readonly` não autorizam o apply; `token_store::scope_grants_write` detecta
             // essa condição e devolve um erro acionável ("re-autorize") em vez do 403 cru.
             .add_scope(Scope::new(SHEETS_WRITE_SCOPE.to_string()))
             // Listagem de planilhas (list_user_spreadsheets) usa o Drive v3 — sem este

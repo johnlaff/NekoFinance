@@ -82,8 +82,8 @@ fn strip_trailing_installment_counter(s: &str) -> &str {
     s[..j].trim_end()
 }
 
-/// Casefold + accent-fold local a este módulo: o normalizador de identidade de `line_item` não faz
-/// accent-fold, portanto compartilhá-lo faria "Aluguel" e "ALUGUÉL" divergirem.
+/// Casefold + accent-fold, local a este módulo: o casamento de nomes de obrigação precisa tratar
+/// "Aluguel" e "ALUGUÉL" como iguais, então um casefold genérico (sem dobrar acento) não serve.
 fn fold_case_accents(s: &str) -> String {
     let mut normalized = String::with_capacity(s.len());
     for ch in s.chars().flat_map(char::to_lowercase) {
