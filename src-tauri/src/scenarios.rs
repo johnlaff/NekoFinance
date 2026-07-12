@@ -11,14 +11,14 @@
 //! CONVENÇÕES DE MARCA NA DESCRIÇÃO (documentadas aqui porque não há coluna própria; a UI remove
 //! os sufixos ao exibir):
 //!
-//! - EMPRÉSTIMO: a UI marca as linhas hipotéticas de um empréstimo anexando
+//! - EMPRÉSTIMO: `create_scenario_loan` marca as linhas hipotéticas de um empréstimo anexando
 //!   `" #loan:<group_id>:<taxa_bps>"` ao FINAL da `description` de CADA linha do grupo (a
 //!   Entrada do principal + as N Saídas/Cartão das parcelas). `get_scenario_forecast` detecta o
 //!   grupo por essa marca (ancorada ao fim — um "#loan:" no meio do texto não conta), usa a
 //!   linha de tipo `income` como o principal e as `expense` como as parcelas (magnitude da
-//!   primeira parcela = o valor da prestação, assumidas iguais — a UI usa `price_installment`
-//!   para gerá-las). Só o PRIMEIRO grupo (ordem data,id) vira `loan`; os grupos seguintes
-//!   aparecem como entradas "add" comuns em `changes`.
+//!   primeira parcela = o valor da prestação, assumidas iguais — `create_scenario_loan` usa
+//!   `price_installment` para gerá-las). Só o PRIMEIRO grupo (ordem data,id) vira `loan`; os
+//!   grupos seguintes aparecem como entradas "add" comuns em `changes`.
 //!
 //! - SUBSTITUIÇÃO (`replace`): quando `set_scenario_override` recebe `op = "replace"` com um
 //!   `replacement` preenchido, ele mesmo cria a linha hipotética de substituição, anexando
@@ -34,9 +34,9 @@ use crate::commands::forecast_cmds::{
 use crate::commands::map_cashflow_row;
 use crate::forecast::{self, CashflowEvent};
 use crate::obligations;
-use chrono::{Datelike, NaiveDate};
+use chrono::{Datelike, Months, NaiveDate};
 use serde::Serialize;
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 use std::collections::HashMap;
 use tauri::State;
 
@@ -141,6 +141,38 @@ pub async fn add_scenario_transaction(
     if !scenario_exists(pool, scenario_id).await? {
         return Err(format!("scenario not found: {scenario_id}"));
     }
+    let mut connection = pool
+        .acquire()
+        .await
+        .map_err(|e| format!("add_scenario_transaction (acquire): {e}"))?;
+    insert_scenario_transaction(
+        &mut connection,
+        scenario_id,
+        txn_type,
+        amount_cents,
+        description,
+        date,
+        payment_method,
+        is_fixed,
+        to_account_id,
+        due_date,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn insert_scenario_transaction(
+    connection: &mut SqliteConnection,
+    scenario_id: &str,
+    txn_type: &str,
+    amount_cents: i64,
+    description: &str,
+    date: &str,
+    payment_method: Option<&str>,
+    is_fixed: bool,
+    to_account_id: Option<&str>,
+    due_date: Option<&str>,
+) -> Result<String, String> {
     let description = description.trim();
     if description.is_empty() {
         return Err("descrição obrigatória para uma linha de cenário".into());
@@ -148,47 +180,44 @@ pub async fn add_scenario_transaction(
     if amount_cents <= 0 {
         return Err("valor deve ser positivo (magnitude)".into());
     }
-    let dest = match txn_type {
+    let destination = match txn_type {
         "income" | "expense" => {
-            if to_account_id.is_some_and(|s| !s.is_empty()) {
+            if to_account_id.is_some_and(|id| !id.is_empty()) {
                 return Err("conta-destino só se aplica a transfer (Economia)".into());
             }
             None
         }
         "transfer" => {
-            let dest_id = to_account_id
-                .filter(|s| !s.is_empty())
+            let destination_id = to_account_id
+                .filter(|id| !id.is_empty())
                 .ok_or("transfer requer conta-destino (to_account_id)")?;
             let row: Option<(String,)> =
                 sqlx::query_as("SELECT COALESCE(liquidity,'') FROM account WHERE id = ?1")
-                    .bind(dest_id)
-                    .fetch_optional(pool)
+                    .bind(destination_id)
+                    .fetch_optional(&mut *connection)
                     .await
                     .map_err(|e| format!("query account: {e}"))?;
             match row {
                 None => return Err("conta-destino não encontrada".into()),
-                Some((liq,)) if liq == "reserve" || liq == "illiquid" => {}
-                Some((liq,)) => {
+                Some((liquidity,)) if liquidity == "reserve" || liquidity == "illiquid" => {}
+                Some((liquidity,)) => {
                     return Err(format!(
-                        "conta-destino deve ter liquidez 'reserve' ou 'illiquid', encontrado '{liq}'"
+                        "conta-destino deve ter liquidez 'reserve' ou 'illiquid', encontrado '{liquidity}'"
                     ));
                 }
             }
-            Some(dest_id)
+            Some(destination_id)
         }
         other => return Err(format!("tipo inválido: {other}")),
     };
     let start = NaiveDate::parse_from_str(date, "%Y-%m-%d").map_err(|e| format!("data: {e}"))?;
     let today = chrono::Local::now().date_naive();
-    // A projeção do cenário só varre do mês corrente em diante (janela de métrica começa no dia
-    // 1º do mês de hoje): uma linha anterior a isso sumiria SILENCIOSAMENTE dos dois ramos.
-    // Rejeitar é o comportamento honesto mais simples.
     let month_start =
         NaiveDate::from_ymd_opt(today.year(), today.month(), 1).ok_or("data de hoje inválida")?;
     if start < month_start {
         return Err("data anterior ao mês corrente não entra na projeção do cenário".into());
     }
-    let is_projection = start > today;
+
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(
@@ -204,12 +233,12 @@ pub async fn add_scenario_transaction(
     .bind(date)
     .bind(payment_method)
     .bind(is_fixed as i64)
-    .bind(dest)
-    .bind(is_projection as i64)
+    .bind(destination)
+    .bind((start > today) as i64)
     .bind(due_date)
     .bind(scenario_id)
     .bind(&now)
-    .execute(pool)
+    .execute(&mut *connection)
     .await
     .map_err(|e| format!("add_scenario_transaction: {e}"))?;
     Ok(id)
@@ -335,28 +364,12 @@ pub async fn set_scenario_override(
         _ => {}
     }
 
-    // Rejeita alvo duplicado no MESMO cenário (a comparação `col = NULL` é NULL→falsa em SQL,
-    // então cada bind só casa o braço do alvo realmente setado).
-    let (dup,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM scenario_override \
-         WHERE scenario_id = ?1 AND (obligation_id = ?2 OR recurrence_id = ?3)",
-    )
-    .bind(scenario_id)
-    .bind(obligation_id)
-    .bind(recurrence_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| format!("set_scenario_override (dup check): {e}"))?;
-    if dup > 0 {
-        return Err(if obligation_id.is_some() {
-            "já existe uma alteração para esta obrigação neste cenário".into()
-        } else {
-            "já existe uma alteração para esta recorrência neste cenário".into()
-        });
-    }
-
     let id = uuid::Uuid::new_v4().to_string();
-    sqlx::query(
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| format!("set_scenario_override (begin): {e}"))?;
+    let inserted = sqlx::query(
         "INSERT INTO scenario_override (id, scenario_id, op, from_date, obligation_id, recurrence_id) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
     )
@@ -366,9 +379,21 @@ pub async fn set_scenario_override(
     .bind(from_date)
     .bind(obligation_id)
     .bind(recurrence_id)
-    .execute(pool)
-    .await
-    .map_err(|e| format!("set_scenario_override: {e}"))?;
+    .execute(&mut *tx)
+    .await;
+    if let Err(error) = inserted {
+        if error
+            .as_database_error()
+            .is_some_and(sqlx::error::DatabaseError::is_unique_violation)
+        {
+            return Err(if obligation_id.is_some() {
+                "já existe uma alteração para esta obrigação neste cenário".into()
+            } else {
+                "já existe uma alteração para esta recorrência neste cenário".into()
+            });
+        }
+        return Err(format!("set_scenario_override: {error}"));
+    }
 
     // Linha de substituição pareada (op=replace): criada AQUI para o pareamento ser
     // determinístico via `#repl:<override_id>`. Falhou a linha → desfaz o override (sem par
@@ -382,8 +407,8 @@ pub async fn set_scenario_override(
             .unwrap_or("Substituição")
             .to_string();
         let tagged = format!("{base} #repl:{id}");
-        let created = add_scenario_transaction(
-            pool,
+        insert_scenario_transaction(
+            &mut tx,
             scenario_id,
             repl.txn_type.as_deref().unwrap_or("expense"),
             repl.amount_cents,
@@ -394,15 +419,12 @@ pub async fn set_scenario_override(
             None,
             None,
         )
-        .await;
-        if let Err(e) = created {
-            let _ = sqlx::query("DELETE FROM scenario_override WHERE id = ?1")
-                .bind(&id)
-                .execute(pool)
-                .await;
-            return Err(format!("linha de substituição inválida: {e}"));
-        }
+        .await
+        .map_err(|e| format!("linha de substituição inválida: {e}"))?;
     }
+    tx.commit()
+        .await
+        .map_err(|e| format!("set_scenario_override (commit): {e}"))?;
     Ok(id)
 }
 
@@ -437,6 +459,188 @@ pub fn price_installment(principal_cents: i64, monthly_rate_bps: i64, n: u32) ->
     let pv = principal_cents as f64;
     let factor = 1.0 - (1.0 + i).powi(-(n as i32));
     (pv * i / factor).round() as i64
+}
+
+#[derive(Debug, serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ScenarioLoanInput {
+    pub scenario_id: String,
+    pub principal_cents: i64,
+    pub term_months: u32,
+    pub rate_bps: i64,
+    pub first_installment_date: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScenarioId(String);
+
+impl ScenarioId {
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MoneyCents(i64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RateBps(i64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TermMonths(u32);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScenarioLoan {
+    scenario_id: ScenarioId,
+    principal: MoneyCents,
+    term: TermMonths,
+    rate: RateBps,
+    first_installment_date: NaiveDate,
+    description: String,
+}
+
+impl TryFrom<ScenarioLoanInput> for ScenarioLoan {
+    type Error = String;
+
+    fn try_from(input: ScenarioLoanInput) -> Result<Self, Self::Error> {
+        let scenario_id = input.scenario_id.trim();
+        if scenario_id.is_empty() {
+            return Err("scenario_id obrigatório".into());
+        }
+        if input.principal_cents <= 0 {
+            return Err("principal deve ser positivo".into());
+        }
+        if !(1..=480).contains(&input.term_months) {
+            return Err("prazo deve estar entre 1 e 480 meses".into());
+        }
+        if input.rate_bps < 0 {
+            return Err("taxa deve ser maior ou igual a zero".into());
+        }
+        let first_installment_date =
+            NaiveDate::parse_from_str(&input.first_installment_date, "%Y-%m-%d")
+                .map_err(|e| format!("data da primeira parcela: {e}"))?;
+        let description = input.description.trim();
+
+        Ok(Self {
+            scenario_id: ScenarioId(scenario_id.to_string()),
+            principal: MoneyCents(input.principal_cents),
+            term: TermMonths(input.term_months),
+            rate: RateBps(input.rate_bps),
+            first_installment_date,
+            description: if description.is_empty() {
+                "Empréstimo".into()
+            } else {
+                description.to_string()
+            },
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScenarioLoanLineKind {
+    Principal,
+    Installment,
+}
+
+impl ScenarioLoanLineKind {
+    fn transaction_type(self) -> &'static str {
+        match self {
+            Self::Principal => "income",
+            Self::Installment => "expense",
+        }
+    }
+
+    fn is_fixed(self) -> bool {
+        matches!(self, Self::Installment)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScenarioLoanLine {
+    kind: ScenarioLoanLineKind,
+    amount: MoneyCents,
+    description: String,
+    date: NaiveDate,
+}
+
+fn plan_scenario_loan(
+    loan: &ScenarioLoan,
+    group_id: &str,
+    disbursement_date: NaiveDate,
+) -> Result<Vec<ScenarioLoanLine>, String> {
+    let marker = format!(" #loan:{group_id}:{}", loan.rate.0);
+    let installment = MoneyCents(price_installment(
+        loan.principal.0,
+        loan.rate.0,
+        loan.term.0,
+    ));
+    let mut lines = Vec::with_capacity(loan.term.0 as usize + 1);
+    lines.push(ScenarioLoanLine {
+        kind: ScenarioLoanLineKind::Principal,
+        amount: loan.principal,
+        description: format!("{}{marker}", loan.description),
+        date: disbursement_date,
+    });
+
+    for index in 0..loan.term.0 {
+        let date = loan
+            .first_installment_date
+            .checked_add_months(Months::new(index))
+            .ok_or("data de parcela fora do intervalo suportado")?;
+        lines.push(ScenarioLoanLine {
+            kind: ScenarioLoanLineKind::Installment,
+            amount: installment,
+            description: format!(
+                "{} parcela {}/{}{marker}",
+                loan.description,
+                index + 1,
+                loan.term.0
+            ),
+            date,
+        });
+    }
+
+    Ok(lines)
+}
+
+pub async fn create_scenario_loan(
+    pool: &SqlitePool,
+    input: ScenarioLoanInput,
+) -> Result<(), String> {
+    let loan = ScenarioLoan::try_from(input)?;
+    if !scenario_exists(pool, loan.scenario_id.as_str()).await? {
+        return Err(format!("scenario not found: {}", loan.scenario_id.as_str()));
+    }
+    let lines = plan_scenario_loan(
+        &loan,
+        &uuid::Uuid::new_v4().to_string(),
+        chrono::Local::now().date_naive(),
+    )?;
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| format!("create_scenario_loan (begin): {e}"))?;
+
+    for line in lines {
+        insert_scenario_transaction(
+            &mut tx,
+            loan.scenario_id.as_str(),
+            line.kind.transaction_type(),
+            line.amount.0,
+            &line.description,
+            &line.date.format("%Y-%m-%d").to_string(),
+            None,
+            line.kind.is_fixed(),
+            None,
+            None,
+        )
+        .await?;
+    }
+
+    tx.commit()
+        .await
+        .map_err(|e| format!("create_scenario_loan (commit): {e}"))
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
@@ -1607,6 +1811,42 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[tokio::test]
+    async fn invalid_replacement_rolls_back_its_override() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        let ob_id = obligations::create_obligation(&p, "Aluguel", "Aluguel", None)
+            .await
+            .unwrap();
+
+        let result = set_scenario_override(
+            &p,
+            &sc.id,
+            "replace",
+            "2026-08-01",
+            Some(&ob_id),
+            None,
+            Some(ReplacementInput {
+                amount_cents: 100_000,
+                date: "data-inválida".into(),
+                description: Some("Aluguel novo".into()),
+                txn_type: None,
+                payment_method: None,
+                is_fixed: None,
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM scenario_override WHERE scenario_id = ?1")
+                .bind(&sc.id)
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(count, 0, "replacement inválido não deixa override órfão");
+    }
+
     // --- price_installment / PRICE ---
 
     // Teste 6a: taxa zero degenera para principal / n (parcela exata, sem juros).
@@ -1633,6 +1873,171 @@ mod tests {
     #[test]
     fn price_installment_zero_term_is_zero() {
         assert_eq!(price_installment(100_000, 200, 0), 0);
+    }
+
+    #[test]
+    fn plan_scenario_loan_matches_the_existing_row_format_byte_for_byte() {
+        let loan = ScenarioLoan::try_from(ScenarioLoanInput {
+            scenario_id: "scenario-1".into(),
+            principal_cents: 100_000,
+            term_months: 3,
+            rate_bps: 200,
+            first_installment_date: "2030-02-15".into(),
+            description: "Empréstimo".into(),
+        })
+        .unwrap();
+
+        let lines = plan_scenario_loan(&loan, "group-1", d("2030-01-15")).unwrap();
+
+        assert_eq!(
+            lines,
+            vec![
+                ScenarioLoanLine {
+                    kind: ScenarioLoanLineKind::Principal,
+                    amount: MoneyCents(100_000),
+                    description: "Empréstimo #loan:group-1:200".into(),
+                    date: d("2030-01-15"),
+                },
+                ScenarioLoanLine {
+                    kind: ScenarioLoanLineKind::Installment,
+                    amount: MoneyCents(34_675),
+                    description: "Empréstimo parcela 1/3 #loan:group-1:200".into(),
+                    date: d("2030-02-15"),
+                },
+                ScenarioLoanLine {
+                    kind: ScenarioLoanLineKind::Installment,
+                    amount: MoneyCents(34_675),
+                    description: "Empréstimo parcela 2/3 #loan:group-1:200".into(),
+                    date: d("2030-03-15"),
+                },
+                ScenarioLoanLine {
+                    kind: ScenarioLoanLineKind::Installment,
+                    amount: MoneyCents(34_675),
+                    description: "Empréstimo parcela 3/3 #loan:group-1:200".into(),
+                    date: d("2030-04-15"),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn plan_scenario_loan_rejects_an_installment_date_overflow() {
+        let loan = ScenarioLoan {
+            scenario_id: ScenarioId("scenario-1".into()),
+            principal: MoneyCents(100_000),
+            term: TermMonths(3),
+            rate: RateBps(200),
+            first_installment_date: NaiveDate::MAX.checked_sub_months(Months::new(1)).unwrap(),
+            description: "Empréstimo".into(),
+        };
+
+        let result = plan_scenario_loan(&loan, "group-1", d("2030-01-15"));
+
+        assert_eq!(
+            result.unwrap_err(),
+            "data de parcela fora do intervalo suportado"
+        );
+    }
+
+    fn scenario_loan_input(scenario_id: &str, first_installment_date: String) -> ScenarioLoanInput {
+        ScenarioLoanInput {
+            scenario_id: scenario_id.into(),
+            principal_cents: 100_000,
+            term_months: 3,
+            rate_bps: 200,
+            first_installment_date,
+            description: "Empréstimo".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_scenario_loan_persists_the_complete_plan() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Financiamento").await.unwrap();
+        let first_date = chrono::Local::now()
+            .date_naive()
+            .checked_add_months(Months::new(1))
+            .unwrap()
+            .format("%Y-%m-%d")
+            .to_string();
+
+        create_scenario_loan(&p, scenario_loan_input(&sc.id, first_date))
+            .await
+            .unwrap();
+
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE scenario_id = ?1")
+                .bind(&sc.id)
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(count, 4);
+    }
+
+    #[tokio::test]
+    async fn create_scenario_loan_rejects_invalid_payloads_before_writing() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Financiamento").await.unwrap();
+        let mut invalid_inputs = Vec::new();
+
+        let mut invalid_principal = scenario_loan_input(&sc.id, "2030-02-15".into());
+        invalid_principal.principal_cents = 0;
+        invalid_inputs.push(invalid_principal);
+
+        let mut invalid_term = scenario_loan_input(&sc.id, "2030-02-15".into());
+        invalid_term.term_months = 481;
+        invalid_inputs.push(invalid_term);
+
+        let mut invalid_rate = scenario_loan_input(&sc.id, "2030-02-15".into());
+        invalid_rate.rate_bps = -1;
+        invalid_inputs.push(invalid_rate);
+
+        invalid_inputs.push(scenario_loan_input(&sc.id, "data-inválida".into()));
+
+        for input in invalid_inputs {
+            assert!(create_scenario_loan(&p, input).await.is_err());
+        }
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE scenario_id = ?1")
+                .bind(&sc.id)
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn create_scenario_loan_rolls_back_every_row_when_a_later_insert_fails() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Financiamento").await.unwrap();
+        let first_date = chrono::Local::now()
+            .date_naive()
+            .checked_add_months(Months::new(1))
+            .unwrap()
+            .format("%Y-%m-%d")
+            .to_string();
+        sqlx::query(
+            "CREATE TRIGGER fail_second_installment BEFORE INSERT ON \"transaction\" \
+             WHEN NEW.description LIKE '%parcela 2/3%' \
+             BEGIN SELECT RAISE(ABORT, 'falha injetada'); END",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let result = create_scenario_loan(&p, scenario_loan_input(&sc.id, first_date)).await;
+
+        assert!(result.is_err());
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE scenario_id = ?1")
+                .bind(&sc.id)
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(
+            count, 0,
+            "uma falha intermediária desfaz principal e parcelas"
+        );
     }
 
     // --- get_scenario_forecast: determinismo/idempotência ---
@@ -2251,6 +2656,90 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn schema_rejects_duplicate_override_target() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        let obligation_id = obligations::create_obligation(&p, "Aluguel", "Aluguel", None)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO scenario_override \
+               (id, scenario_id, op, from_date, obligation_id) \
+             VALUES ('first', ?1, 'suppress', '2030-01-01', ?2)",
+        )
+        .bind(&sc.id)
+        .bind(&obligation_id)
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let error = sqlx::query(
+            "INSERT INTO scenario_override \
+               (id, scenario_id, op, from_date, obligation_id) \
+             VALUES ('second', ?1, 'suppress', '2030-02-01', ?2)",
+        )
+        .bind(&sc.id)
+        .bind(&obligation_id)
+        .execute(&p)
+        .await
+        .expect_err("o schema deve rejeitar um segundo override para o mesmo alvo");
+
+        assert!(error.as_database_error().unwrap().is_unique_violation());
+    }
+
+    #[tokio::test]
+    async fn concurrent_overrides_for_the_same_target_leave_exactly_one_row() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        let obligation_id = obligations::create_obligation(&p, "Aluguel", "Aluguel", None)
+            .await
+            .unwrap();
+
+        let first = set_scenario_override(
+            &p,
+            &sc.id,
+            "suppress",
+            "2026-08-01",
+            Some(&obligation_id),
+            None,
+            None,
+        );
+        let second = set_scenario_override(
+            &p,
+            &sc.id,
+            "suppress",
+            "2026-09-01",
+            Some(&obligation_id),
+            None,
+            None,
+        );
+        let results = tokio::join!(first, second);
+
+        let successes = [results.0.as_ref(), results.1.as_ref()]
+            .into_iter()
+            .filter(|result| result.is_ok())
+            .count();
+        let errors: Vec<&str> = [results.0.as_ref(), results.1.as_ref()]
+            .into_iter()
+            .filter_map(|result| result.err().map(String::as_str))
+            .collect();
+        assert_eq!(successes, 1);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("já existe uma alteração para esta obrigação"));
+
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM scenario_override \
+             WHERE scenario_id = ?1 AND obligation_id = ?2",
+        )
+        .bind(&sc.id)
+        .bind(&obligation_id)
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        assert_eq!(count, 1);
+    }
+
     // MAJOR 3 (guard, braço recorrência): mesma regra para recurrence_id.
     #[tokio::test]
     async fn duplicate_override_same_recurrence_rejected() {
@@ -2290,49 +2779,72 @@ mod tests {
         );
     }
 
-    // MAJOR 3 (defesa em profundidade): mesmo com DUAS linhas de override duplicadas já no banco
-    // (por fora do guard), a supressão do item conta UMA vez — a célula multi-item não zera e o
-    // irmão continua contribuindo.
     #[tokio::test]
-    async fn preexisting_duplicate_override_rows_do_not_double_suppress() {
+    async fn unique_target_migration_deduplicates_existing_overrides() {
         let p = pool().await;
-        seed_baseline(&p).await;
-        txn(&p, "cell-1", "expense", 108_000, "2026-08-05").await;
-        line_item(&p, "li-aluguel", "cell-1", 100_000, "Aluguel", None).await;
-        line_item(&p, "li-internet", "cell-1", 8_000, "Internet", None).await;
-        let ob_id = obligations::create_obligation(&p, "Aluguel", "Aluguel", None)
+        sqlx::query("DROP INDEX ux_scenario_override_scenario_obligation")
+            .execute(&p)
             .await
             .unwrap();
-        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        sqlx::query("DROP INDEX ux_scenario_override_scenario_recurrence")
+            .execute(&p)
+            .await
+            .unwrap();
 
-        // Duas linhas duplicadas direto no banco (o CHECK XOR permite; não há UNIQUE).
-        for ov_id in ["ov-1", "ov-2"] {
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        let obligation_id = obligations::create_obligation(&p, "Aluguel", "Aluguel", None)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO recurrence (id, frequency, infinite, repetitions, start_date) \
+             VALUES ('rec-1', 'mensal', 0, 2, '2026-08-05')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        for id in ["ob-oldest", "ob-newest"] {
             sqlx::query(
-                "INSERT INTO scenario_override (id, scenario_id, op, from_date, obligation_id) \
+                "INSERT INTO scenario_override \
+                   (id, scenario_id, op, from_date, obligation_id) \
                  VALUES (?1, ?2, 'suppress', '2026-08-01', ?3)",
             )
-            .bind(ov_id)
+            .bind(id)
             .bind(&sc.id)
-            .bind(&ob_id)
+            .bind(&obligation_id)
+            .execute(&p)
+            .await
+            .unwrap();
+        }
+        for id in ["rec-oldest", "rec-newest"] {
+            sqlx::query(
+                "INSERT INTO scenario_override \
+                   (id, scenario_id, op, from_date, recurrence_id) \
+                 VALUES (?1, ?2, 'suppress', '2026-08-01', 'rec-1')",
+            )
+            .bind(id)
+            .bind(&sc.id)
             .execute(&p)
             .await
             .unwrap();
         }
 
-        let compare = get_scenario_forecast_inner(&p, &sc.id, d("2026-07-31"))
-            .await
-            .unwrap();
-        let month = compare
-            .month_end
-            .iter()
-            .find(|m| m.year == 2026 && m.month == 8)
-            .unwrap();
-        // 500.000 − 8.000 (Internet intacta): o Aluguel é subtraído UMA vez (100.000), não duas
-        // (o que zeraria a célula e apagaria a Internet junto).
-        assert_eq!(
-            month.scenario_balance_cents, 492_000,
-            "supressão duplicada não subtrai duas vezes nem derruba o irmão"
-        );
+        sqlx::raw_sql(include_str!(
+            "../migrations/20260712000001_scenario_override_unique_targets.sql"
+        ))
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let ids: Vec<(String,)> =
+            sqlx::query_as("SELECT id FROM scenario_override WHERE scenario_id = ?1 ORDER BY id")
+                .bind(&sc.id)
+                .fetch_all(&p)
+                .await
+                .unwrap();
+        assert_eq!(ids, vec![("ob-oldest".into(),), ("rec-oldest".into(),)]);
+
+        sqlx::migrate!("./migrations").run(&p).await.unwrap();
     }
 
     // Pareamento replace: dois replaces CONCORRENTES viram duas entradas fundidas

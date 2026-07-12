@@ -26,6 +26,7 @@ import {
   deleteScenario,
   listScenarios,
   addScenarioTransaction,
+  createScenarioLoan,
   deleteScenarioTransaction,
   listScenarioTransactions,
   setScenarioOverride,
@@ -804,71 +805,50 @@ function LoanSection({ scenarioId }: { scenarioId: string }) {
   // Só sinaliza o erro quando o campo tem conteúdo inválido (campo vazio/pristino não grita).
   const termShowError = termRaw !== "" && !termValid;
   const rateShowError = rateRaw !== "" && !rateValid;
+  const firstDateValid = /^\d{4}-\d{2}-\d{2}$/.test(firstDate);
+  const firstDateShowError = !firstDateValid;
 
-  const validInputs = principalValid && termValid && rateValid;
+  const numericInputsValid = principalValid && termValid && rateValid;
+  const validInputs = numericInputsValid && firstDateValid;
 
-  const previewKey = validInputs
+  const previewKey = numericInputsValid
     ? `price_installment:${principalCents}:${rateBps}:${term}`
     : "price_installment:none";
   const previewQ = useCommand(previewKey, () =>
-    validInputs ? priceInstallment(principalCents, rateBps, term) : Promise.resolve(0),
+    numericInputsValid
+      ? priceInstallment(principalCents, rateBps, term)
+      : Promise.resolve(0),
   );
   const installmentCents = previewQ.data ?? 0;
   const totalPaidCents = installmentCents * term;
   const creditCostCents = totalPaidCents - principalCents;
 
   async function confirm() {
-    if (!validInputs || busy) return;
+    if (
+      !validInputs ||
+      busy ||
+      previewQ.loading ||
+      previewQ.error !== null ||
+      previewQ.data === undefined
+    )
+      return;
     setBusy(true);
     setError(null);
-    const groupId =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const marker = ` #loan:${groupId}:${rateBps}`;
-    const disbursementDate = todayISO();
-    // As linhas do empréstimo são criadas em SEQUÊNCIA, parando na primeira falha (não em
-    // Promise.all): num lote paralelo, uma rejeição no meio deixaria as irmãs commitarem
-    // mesmo assim e o grupo ficaria pela metade sem controle de quantas entraram. Falha no
-    // meio ainda deixa um grupo parcial persistido — por isso o catch SEMPRE invalida (a
-    // lista de hipotéticos passa a mostrar as linhas órfãs, cada uma com o botão de excluir)
-    // e a mensagem diz exatamente quantas entraram.
-    let createdInstallments = 0;
-    let principalCreated = false;
     try {
-      await addScenarioTransaction({
+      await createScenarioLoan({
         scenarioId,
-        txnType: "income",
-        amountCents: principalCents,
-        description: `${description.trim() || "Empréstimo"}${marker}`,
-        date: disbursementDate,
+        principalCents,
+        termMonths: term,
+        rateBps,
+        firstInstallmentDate: firstDate,
+        description: description.trim() || "Empréstimo",
       });
-      principalCreated = true;
-      for (let i = 0; i < term; i++) {
-        // react-doctor-disable-next-line react-doctor/async-await-in-loop -- sequencial de propósito (ver banner acima): parar na 1ª falha e saber exatamente quantas parcelas entraram; Promise.all deixaria as irmãs commitarem após uma rejeição no meio (grupo parcial sem contagem)
-        await addScenarioTransaction({
-          scenarioId,
-          txnType: "expense",
-          amountCents: installmentCents,
-          description: `${description.trim() || "Empréstimo"} parcela ${i + 1}/${term}${marker}`,
-          date: addMonthsISO(firstDate, i),
-          isFixed: true,
-        });
-        createdInstallments += 1;
-      }
       invalidateCommands();
       setPrincipal("");
       setBusy(false);
     } catch (err) {
-      // Refetch SEMPRE: as linhas que já entraram precisam aparecer na lista de hipotéticos
-      // para o usuário poder excluí-las — sem isso o grupo parcial ficaria invisível e um
-      // retry criaria um SEGUNDO grupo sobreposto.
-      invalidateCommands();
       setBusy(false);
-      const partial = principalCreated
-        ? ` O empréstimo ficou incompleto (${createdInstallments} de ${term} parcelas criadas) — exclua as linhas do empréstimo na lista acima e tente novamente.`
-        : "";
-      setError(`${scenarioErrorMessage(err)}${partial}`);
+      setError(scenarioErrorMessage(err));
     }
   }
 
@@ -938,24 +918,48 @@ function LoanSection({ scenarioId }: { scenarioId: string }) {
           type="date"
           value={firstDate}
           onChange={(e) => setFirstDate(e.target.value)}
+          required
+          aria-invalid={firstDateShowError || undefined}
+          aria-describedby={firstDateShowError ? "scn-loan-first-err" : undefined}
         />
+        {firstDateShowError && (
+          <p id="scn-loan-first-err" className="scn-error">
+            Informe a data da primeira parcela.
+          </p>
+        )}
       </div>
-      {validInputs && (
-        <div className="scn-loan-summary">
-          <div className="scn-loan-summary__row">
-            <span>Parcela</span>
-            <Money cents={installmentCents} size="sm" />
-          </div>
-          <div className="scn-loan-summary__row">
-            <span>Total pago</span>
-            <Money cents={totalPaidCents} size="sm" />
-          </div>
-          <div className="scn-loan-summary__row">
-            <span>Custo do crédito</span>
-            <Money cents={creditCostCents} size="sm" />
-          </div>
+      {numericInputsValid && previewQ.loading && (
+        <p className="scn-preview" aria-live="polite">
+          Calculando a prévia do empréstimo…
+        </p>
+      )}
+      {numericInputsValid && previewQ.error !== null && (
+        <div className="scn-preview-error" role="alert">
+          <p>Não foi possível calcular a prévia do empréstimo.</p>
+          <Button size="sm" variant="secondary" onClick={() => invalidateCommands()}>
+            Tentar novamente
+          </Button>
         </div>
       )}
+      {numericInputsValid &&
+        !previewQ.loading &&
+        previewQ.error === null &&
+        previewQ.data !== undefined && (
+          <div className="scn-loan-summary">
+            <div className="scn-loan-summary__row">
+              <span>Parcela</span>
+              <Money cents={installmentCents} size="sm" />
+            </div>
+            <div className="scn-loan-summary__row">
+              <span>Total pago</span>
+              <Money cents={totalPaidCents} size="sm" />
+            </div>
+            <div className="scn-loan-summary__row">
+              <span>Custo do crédito</span>
+              <Money cents={creditCostCents} size="sm" />
+            </div>
+          </div>
+        )}
       {error && (
         <p role="alert" className="scn-error">
           {error}
@@ -966,7 +970,13 @@ function LoanSection({ scenarioId }: { scenarioId: string }) {
         variant="primary"
         iconLeft={<Landmark size={14} strokeWidth={1.75} />}
         onClick={() => void confirm()}
-        disabled={busy || !validInputs || previewQ.loading}
+        disabled={
+          busy ||
+          !validInputs ||
+          previewQ.loading ||
+          previewQ.error !== null ||
+          previewQ.data === undefined
+        }
         className="scn-loan-confirm"
       >
         {busy ? "Criando…" : "Adicionar empréstimo ao cenário"}

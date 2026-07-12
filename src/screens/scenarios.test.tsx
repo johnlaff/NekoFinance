@@ -400,9 +400,7 @@ describe("HorizonteScreen — side-sheet 'Simular cenário'", () => {
     });
   });
 
-  it("empréstimo com falha no meio: erro diz quantas parcelas entraram e a lista refetch mostra as órfãs", async () => {
-    let addCalls = 0;
-    let failed = false;
+  it("falha no comando atômico do empréstimo mostra erro simples e nenhuma linha parcial", async () => {
     mockCommands({
       get_forecast: FORECAST,
       get_upcoming_bills_cmd: [],
@@ -410,35 +408,8 @@ describe("HorizonteScreen — side-sheet 'Simular cenário'", () => {
       get_scenario_forecast_cmd: baseCompare(),
       list_obligations_cmd: [],
       price_installment_cmd: 35000,
-      // Ordem sequencial: 1º call = principal (OK), 2º = parcela 1 (OK), 3º = parcela 2 REJEITA.
-      add_scenario_transaction_cmd: () => {
-        addCalls += 1;
-        if (addCalls === 3) {
-          failed = true;
-          return Promise.reject(new Error("database is locked"));
-        }
-        return `txn-${addCalls}`;
-      },
-      // Depois da falha, a lista reflete o grupo parcial persistido (principal + 1 parcela).
-      list_scenario_transactions_cmd: (): unknown[] =>
-        failed
-          ? [
-              {
-                id: "txn-1",
-                type: "income",
-                amount: 100000,
-                description: "Empréstimo #loan:g1:200",
-                date: "2026-07-08",
-              },
-              {
-                id: "txn-2",
-                type: "expense",
-                amount: 35000,
-                description: "Empréstimo parcela 1/3 #loan:g1:200",
-                date: "2026-08-08",
-              },
-            ]
-          : [],
+      create_scenario_loan_cmd: () => Promise.reject(new Error("database is locked")),
+      list_scenario_transactions_cmd: [],
     });
     render(<HorizonteScreen />);
     const user = userEvent.setup();
@@ -458,12 +429,12 @@ describe("HorizonteScreen — side-sheet 'Simular cenário'", () => {
       }),
     );
 
-    // O erro nomeia exatamente o estado parcial: 1 de 3 parcelas criadas.
     const alert = await within(loanSection).findByRole("alert");
-    expect(alert.textContent).toMatch(/1 de 3 parcelas criadas/);
-    // E o catch invalida: a lista refetch já mostra as linhas órfãs (com o marcador removido)
-    // para o usuário poder excluí-las antes de tentar de novo.
-    expect(await screen.findByText("Parcela 1/3")).toBeInTheDocument();
+    expect(alert).toHaveTextContent(
+      "O banco local está ocupado. Tente novamente em alguns segundos.",
+    );
+    expect(alert).not.toHaveTextContent(/ficou incompleto|parcelas criadas/);
+    expect(screen.queryByText("Parcela 1/3")).not.toBeInTheDocument();
   });
 
   it("parseia valor do empréstimo com separador de milhar pt-BR (10.000,00 → 1000000 centavos)", async () => {
@@ -475,9 +446,8 @@ describe("HorizonteScreen — side-sheet 'Simular cenário'", () => {
       get_scenario_forecast_cmd: baseCompare(),
       list_obligations_cmd: [],
       price_installment_cmd: 35000,
-      add_scenario_transaction_cmd: (args) => {
+      create_scenario_loan_cmd: (args) => {
         calls.push(args);
-        return `txn-${calls.length}`;
       },
     });
     render(<HorizonteScreen />);
@@ -492,6 +462,8 @@ describe("HorizonteScreen — side-sheet 'Simular cenário'", () => {
     const termInput = within(loanSection).getByLabelText("Nº parcelas");
     await user.clear(termInput);
     await user.type(termInput, "3");
+    const firstInstallmentDate =
+      within(loanSection).getByLabelText<HTMLInputElement>("Data da 1ª parcela").value;
     await user.click(
       await within(loanSection).findByRole("button", {
         name: "Adicionar empréstimo ao cenário",
@@ -499,12 +471,17 @@ describe("HorizonteScreen — side-sheet 'Simular cenário'", () => {
     );
 
     await waitFor(() => {
-      expect(calls.length).toBeGreaterThanOrEqual(1);
+      expect(calls).toHaveLength(1);
     });
     expect(calls[0]).toMatchObject({
-      scenarioId: "scn-1",
-      txnType: "income",
-      amountCents: 1000000,
+      input: {
+        scenarioId: "scn-1",
+        principalCents: 1000000,
+        termMonths: 3,
+        rateBps: 200,
+        firstInstallmentDate,
+        description: "Empréstimo",
+      },
     });
   });
 
@@ -572,6 +549,62 @@ describe("HorizonteScreen — side-sheet 'Simular cenário'", () => {
     });
     await waitFor(() => expect(btn).toBeEnabled());
     expect(within(loanSection).queryByText(/Taxa inválida/)).not.toBeInTheDocument();
+  });
+
+  it("prévia do empréstimo falha: erro visível, CTA bloqueado e nenhum valor financeiro falso", async () => {
+    mockCommands({
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_scenarios_cmd: [{ id: "scn-1", name: "Cenário A", person_id: "p1" }],
+      get_scenario_forecast_cmd: baseCompare(),
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [],
+      price_installment_cmd: () =>
+        Promise.reject(new Error("falha ao calcular parcela")),
+    });
+    render(<HorizonteScreen />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Simular cenário" }));
+    await user.click(await screen.findByRole("button", { name: "Cenário A" }));
+
+    const loanSection = screen.getByRole("region", {
+      name: "Dimensionar um empréstimo",
+    });
+    await user.type(within(loanSection).getByLabelText("Valor"), "1000,00");
+
+    expect(
+      await within(loanSection).findByText(
+        "Não foi possível calcular a prévia do empréstimo.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(loanSection).getByRole("button", { name: "Tentar novamente" }),
+    ).toBeInTheDocument();
+    expect(
+      within(loanSection).getByRole("button", {
+        name: "Adicionar empréstimo ao cenário",
+      }),
+    ).toBeDisabled();
+    expect(within(loanSection).queryByText("Parcela")).not.toBeInTheDocument();
+    expect(within(loanSection).queryByText("Total pago")).not.toBeInTheDocument();
+    expect(within(loanSection).queryByText("Custo do crédito")).not.toBeInTheDocument();
+  });
+
+  it("data da primeira parcela vazia mostra erro local e bloqueia a criação", async () => {
+    const { user, loanSection } = await openLoanSection();
+    const firstDate = within(loanSection).getByLabelText("Data da 1ª parcela");
+
+    await user.clear(firstDate);
+
+    expect(firstDate).toHaveAttribute("aria-invalid", "true");
+    expect(
+      within(loanSection).getByText("Informe a data da primeira parcela."),
+    ).toBeInTheDocument();
+    expect(
+      within(loanSection).getByRole("button", {
+        name: "Adicionar empréstimo ao cenário",
+      }),
+    ).toBeDisabled();
   });
 
   it("prévia do override falha: erro visível, Confirmar desabilitado e sem '0 ocorrências'", async () => {

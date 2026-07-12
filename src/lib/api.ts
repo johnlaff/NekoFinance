@@ -1064,6 +1064,20 @@ export function addScenarioTransaction(input: {
   });
 }
 
+/** Cria o principal e todas as parcelas do empréstimo hipotético em uma única transação. */
+export interface ScenarioLoanInput {
+  scenarioId: string;
+  principalCents: number;
+  termMonths: number;
+  rateBps: number;
+  firstInstallmentDate: string;
+  description: string;
+}
+
+export function createScenarioLoan(input: ScenarioLoanInput): Promise<void> {
+  return invoke("create_scenario_loan_cmd", { input });
+}
+
 export function deleteScenarioTransaction(
   scenarioId: string,
   txnId: string,
