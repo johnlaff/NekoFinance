@@ -122,6 +122,7 @@ for (const theme of ["dark", "light"] as const) {
       list_scenario_transactions_cmd: LOAN_TXNS,
       list_obligations_cmd: [],
       get_scenario_forecast_cmd: COMPARE,
+      price_installment_cmd: 94_560,
     });
     await page.goto("/");
     await page.getByRole("button", { name: "Horizonte" }).click();
@@ -140,6 +141,15 @@ for (const theme of ["dark", "light"] as const) {
       .first()
       .click();
     await expect(page.locator(".scn-sheet")).toHaveScreenshot(`sheet-${theme}.png`, {
+      maxDiffPixelRatio: 0.02,
+    });
+
+    const loanSection = page.getByRole("region", {
+      name: "Dimensionar um empréstimo",
+    });
+    await loanSection.getByLabel("Valor").fill("10.000,00");
+    await expect(loanSection.getByText("Total pago")).toBeVisible();
+    await expect(loanSection).toHaveScreenshot(`loan-preview-${theme}.png`, {
       maxDiffPixelRatio: 0.02,
     });
   });

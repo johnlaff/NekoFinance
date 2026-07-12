@@ -96,6 +96,7 @@ pub fn run() {
             scenarios::set_scenario_override_cmd,
             scenarios::get_scenario_forecast_cmd,
             scenarios::price_installment_cmd,
+            scenarios::create_scenario_loan_cmd,
         ])
         .setup(|app| {
             use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
