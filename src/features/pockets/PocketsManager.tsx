@@ -21,7 +21,7 @@ interface FormState {
 
 const EMPTY_FORM: FormState = { name: "", type: "bank", balance: "" };
 
-/** Settings panel: list pockets and register new ones (spec 007 US2). */
+/** Settings panel: list pockets and register new ones. */
 export function PocketsManager() {
   const [pockets, setPockets] = useState<Pockets | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);

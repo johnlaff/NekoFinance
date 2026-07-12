@@ -5,7 +5,7 @@ import { POCKETS, EMPTY_POCKETS, mockCommands, mockInvoke } from "../../test/com
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
-// Characterization tests (plan 010): PocketsManager calls get_pockets on mount
+// Characterization tests: PocketsManager calls get_pockets on mount
 // (isTauri is true in tests — setup.ts defines window.__TAURI_INTERNALS__). PIN the
 // list render, empty state, form presence, and the error-mapping behavior.
 

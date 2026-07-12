@@ -7,10 +7,9 @@ use std::sync::Mutex;
 pub struct OAuthStateStore(pub Mutex<Option<pkce::OAuthState>>);
 pub struct AppDataDir(pub std::path::PathBuf);
 
-/// Roda dentro do runtime do Tauri (`tokio::spawn` em commands.rs) — por isso é `async`
-/// de ponta a ponta. A versão anterior criava um runtime tokio aninhado e chamava
-/// `block_on` dentro do contexto async, o que PANICA ("cannot start a runtime from within
-/// a runtime") — o fluxo OAuth nunca completava (descoberto no 1º dogfooding, 2026-06-12).
+/// Roda dentro do runtime do Tauri (`tokio::spawn` em commands.rs), portanto precisa permanecer
+/// `async` de ponta a ponta. Criar um runtime Tokio aninhado e chamar `block_on` nesse contexto
+/// causa panic ("cannot start a runtime from within a runtime") e impede a conclusão do fluxo OAuth.
 pub async fn run_oauth_flow(
     config: pkce::OAuthConfig,
     state: pkce::OAuthState,

@@ -16,7 +16,7 @@ export const KIND_LABEL: Record<string, string> = {
 const SAFE_KINDS = new Set(["entrada", "saida", "diario"]);
 
 /**
- * Caminho rápido "Sincronizar" (plano 039): COLAPSA os cliques do fluxo (banner → expandir →
+ * Caminho rápido "Sincronizar": COLAPSA os cliques do fluxo (banner → expandir →
  * gerar prévia → aprovar → confirmar) num único botão + confirmação — NUNCA colapsa uma checagem
  * de segurança. Esta função decide se o diff pendente é seguro para o atalho. É verdadeira só quando
  * TODAS valem:

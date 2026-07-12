@@ -28,8 +28,8 @@ pub(crate) async fn load_write_back_txns(
     let mut out = Vec::new();
     for (id, t, date, amount, is_fixed) in rows {
         let mag = amount.abs();
-        // Plano 036: carrega as partes itemizadas desta linha (vazio = não itemizada → escrita RAW
-        // de hoje). N+1 aceitável: write-back é manual e infrequente. Lump de cartão (seção 2) não
+        // Carrega as partes itemizadas desta linha (vazio = não itemizada → escrita RAW). N+1 é
+        // aceitável: write-back é manual e infrequente. Lump de cartão (seção 2) não
         // tem linha 1:1 importável e segue sem breakdown (items = None).
         let kind = match t.as_str() {
             "income" => import::RowKind::Entrada,
@@ -125,9 +125,9 @@ pub(crate) async fn load_write_back_txns(
     Ok(out)
 }
 
-/// Plano 036: partes itemizadas de uma transação como `TxnLineItem` (valor + descrição), para o
+/// Partes itemizadas de uma transação como `TxnLineItem` (valor + descrição), para o
 /// write-back reconstruir `=SUM(...)` + nota. `None` quando há < 2 partes — uma única parte não é um
-/// breakdown (não há fórmula a montar), então cai na escrita RAW numérica de hoje. Ordenado por
+/// breakdown (não há fórmula a montar), então cai na escrita RAW numérica. Ordenado por
 /// `position` para a fórmula/nota saírem na ordem do dono.
 async fn load_txn_items(
     pool: &SqlitePool,
@@ -159,16 +159,16 @@ async fn load_txn_items(
 
 /// Mensagem (typed-error por string, como o resto deste módulo) quando há conflitos de import
 /// pendentes: o write-back é BLOQUEADO até a fila ser resolvida (ADR-0003), senão escreveríamos por
-/// cima de um valor que o dono ainda está conciliando. Plano 028 Step 3.
+/// cima de um valor que o dono ainda está conciliando.
 pub(crate) const CONFLICTS_PENDING_MSG: &str =
     "Resolva os conflitos de importação antes de enviar.";
 
 /// Erro quando a planilha mudou ENTRE o preview e o apply: a aprovação do dono vale para o que ele
-/// VIU; uma edição concorrente exige re-revisão (não sobrescrever às cegas). Plano 028 Step 4.
+/// VIU; uma edição concorrente exige re-revisão (não sobrescrever às cegas).
 pub(crate) const SHEET_CHANGED_MSG: &str =
     "A planilha mudou desde a prévia — gere o preview de novo e revise antes de enviar.";
 
-/// Conta de conflitos de import ainda não resolvidos. > 0 ⇒ o write-back deve abortar (Step 3).
+/// Conta conflitos de import ainda não resolvidos. > 0 ⇒ o write-back deve abortar.
 pub(crate) async fn unresolved_conflict_count(pool: &SqlitePool) -> Result<i64, String> {
     let (count,): (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM import_conflict WHERE resolved_at IS NULL")
@@ -187,7 +187,7 @@ pub(crate) async fn guard_no_pending_conflicts(pool: &SqlitePool) -> Result<(), 
     Ok(())
 }
 
-/// Decisão PURA da re-verificação de frescura (Step 4): a aprovação do dono vale para a revisão que
+/// Decisão PURA da revalidação de frescura: a aprovação do dono vale para a revisão que
 /// ele VIU (`seen`); se o `current` (modifiedTime relido no apply) for DIFERENTE, a planilha mudou
 /// → aborta. Comparação por igualdade exata da string RFC-3339 do Drive (qualquer edição a avança).
 pub(crate) fn staleness_check(seen: &str, current: &str) -> Result<(), String> {
@@ -201,7 +201,7 @@ pub(crate) fn staleness_check(seen: &str, current: &str) -> Result<(), String> {
 /// cartão (o primeiro com ciclo completo). Se houver MAIS DE UM cartão com `closing_day`+`due_day`,
 /// ou QUALQUER cartão SEM esses dias de ciclo, a data da fatura pode não bater com a intenção do
 /// dono — então sinalizamos para a UI pedir conferência. NÃO altera o plano (suporte multi-cartão
-/// está fora de escopo); apenas avisa. Plano 028 Step 8.
+/// está fora de escopo); apenas avisa.
 pub(crate) async fn multi_card_warning(pool: &SqlitePool) -> Result<bool, String> {
     // Cartões com ciclo COMPLETO (ambos os dias) e cartões com ciclo INCOMPLETO (algum dia ausente).
     let (with_cycle, without_cycle): (i64, i64) = sqlx::query_as(
@@ -288,10 +288,8 @@ pub async fn preview_write_back(
     Ok(plan)
 }
 
-/// Resultado RICO da prévia (plano 028): o diff + o `preview_revision` (modifiedTime do Drive no
-/// instante da prévia, que o apply re-verifica para forçar re-revisão em edição concorrente) + um
-/// aviso não-bloqueante de multi-cartão. Comando NOVO, aditivo: o `preview_write_back` legado segue
-/// devolvendo `Vec<CellWrite>` (a UI atual não muda); a UI passa a usar este no PR de hardening.
+/// Resultado da prévia: o diff, o `preview_revision` capturado no Drive para detectar edição
+/// concorrente no apply e o aviso não bloqueante de multi-cartão.
 #[derive(serde::Serialize)]
 pub struct WriteBackPreviewResult {
     pub cells: Vec<CellWrite>,
@@ -303,7 +301,7 @@ pub struct WriteBackPreviewResult {
     pub multi_card_warning: bool,
 }
 
-/// Prévia RICA (read-only) usada pela UI endurecida (PR-B): mesmo plano do `preview_write_back`, mais
+/// Prévia rica e read-only: mesmo plano do `preview_write_back`, mais
 /// o `preview_revision` (re-revisão por edição concorrente), o flag de conflitos pendentes e o aviso
 /// de multi-cartão. Read-only — seguro com a flag desligada.
 #[tauri::command]
@@ -475,7 +473,7 @@ pub(crate) async fn backup_db(
     Ok(dest.to_string())
 }
 
-/// Resultado do `apply_write_back` (plano 036): nº de células escritas + um aviso NÃO-bloqueante
+/// Resultado do `apply_write_back`: nº de células escritas + um aviso NÃO-bloqueante
 /// quando a escrita da NOTA de célula itemizada falhou (ex.: token sem escopo de escrita). O valor
 /// (total/fórmula) já foi escrito com sucesso — a nota é enriquecimento, então sua falha não aborta.
 #[derive(serde::Serialize)]
@@ -489,10 +487,10 @@ pub struct WriteBackResult {
 /// `preview_write_back` e o humano aprovou; aqui só replanejamos (a planilha pode ter mudado) e
 /// escrevemos as células que ainda diferem.
 ///
-/// Plano 036: células ITEMIZADAS (≥2 partes) escrevem a FÓRMULA `=SUM(...)` via USER_ENTERED + a
-/// NOTA por-parte; células normais seguem RAW numérico (inalterado). A nota é fase 2 best-effort:
+/// Células ITEMIZADAS (≥2 partes) escrevem a FÓRMULA `=SUM(...)` via USER_ENTERED + a
+/// NOTA por-parte; células normais seguem RAW numérico. A nota é best-effort:
 /// se falhar (ex.: 403 readonly), devolvemos um `note_warning` em vez de abortar — o valor já está
-/// gravado. TODOS os gates do plano 028 (flag, conflito, escopo, frescura, blocklist de fórmula via
+/// gravado. Todos os gates (flag, conflito, escopo, frescura e blocklist de fórmula via
 /// `plan_write_back`) permanecem intactos e ANTES de qualquer escrita.
 #[tauri::command]
 pub async fn apply_write_back(
@@ -502,21 +500,21 @@ pub async fn apply_write_back(
     sheet_name: String,
     client_id: String,
     client_secret: Option<String>,
-    // Token de frescura devolvido por `preview_write_back_status` (Step 4). `None` no caminho legado
+    // Token de frescura devolvido por `preview_write_back_status`. `None` no caminho sem token
     // da UI atual; quando presente, o apply ABORTA se a planilha mudou desde a prévia.
     preview_revision: Option<String>,
 ) -> Result<WriteBackResult, String> {
     write_back::ensure_write_back_enabled()?;
-    // Gate de conflito (Step 3): nunca escrever sob conflitos de import pendentes — ANTES de tocar
+    // Gate de conflito: nunca escrever sob conflitos de import pendentes — ANTES de tocar
     // o cliente do Sheets.
     guard_no_pending_conflicts(pool.inner()).await?;
 
     let resolved_secret = oauth::pkce::resolve_client_secret(client_secret.clone());
-    // Escopo de escrita (Step 1): falha cedo com erro de re-consentimento se o token for readonly.
+    // Escopo de escrita: falha cedo com erro de re-consentimento se o token for readonly.
     oauth::token_store::ensure_write_scope(&app_dir.0, &client_id, resolved_secret.as_deref())
         .await?;
 
-    // Plano 047: foto do `modifiedTime` ANTES de ler os VALORES da aba (mesmo padrão de
+    // Foto do `modifiedTime` ANTES de ler os VALORES da aba (mesmo padrão de
     // `preview_write_back_status`). No caminho LEGADO (sem `preview_revision`), esta foto é o "estado
     // que o apply assumiu como base": comparada com a foto pós-plano, fecha o TOCTOU mesmo sem o
     // token de prévia da UI rica. Uma edição concorrente entre as duas fotos AVANÇA o `modifiedTime`
@@ -535,9 +533,9 @@ pub async fn apply_write_back(
     )
     .await?;
 
-    // Re-verifica a frescura (Step 4) SEMPRE — nenhum caminho de apply escapa do gate. Foto pós-plano
-    // do `modifiedTime`; compara com o token da prévia rica (`preview_revision`) quando presente, ou
-    // com a foto inicial (`early_revision`) no caminho legado. Aborta sem escrever se DIVERGIR.
+    // Revalida a frescura SEMPRE; nenhum caminho de apply escapa do gate. A foto posterior do
+    // `modifiedTime` é comparada com `preview_revision`, quando presente, ou com `early_revision`
+    // no caminho sem token. Divergência aborta antes da escrita.
     let post_plan_revision = client.get_file_modified_time(&spreadsheet_id).await?;
     match preview_revision.as_deref().filter(|s| !s.trim().is_empty()) {
         Some(seen) => staleness_check(seen, &post_plan_revision)?,
@@ -547,8 +545,8 @@ pub async fn apply_write_back(
     // Só as células que MUDARAM; range com nome da aba ('2026'!E3).
     let changed: Vec<&CellWrite> = plan.iter().filter(|c| c.changed).collect();
 
-    // Plano 036: separa as células itemizadas (fórmula USER_ENTERED) das normais (RAW numérico).
-    // Não-itemizadas seguem EXATAMENTE como hoje — número cru, RAW, locale-independente.
+    // Separa as células itemizadas (fórmula USER_ENTERED) das normais (RAW numérico).
+    // Não itemizadas usam número cru, RAW e independente de locale.
     let raw_updates: Vec<(String, f64)> = changed
         .iter()
         .filter(|c| c.formula.is_none())
@@ -575,7 +573,7 @@ pub async fn apply_write_back(
         .batch_update_formulas(&spreadsheet_id, &formula_updates)
         .await?;
 
-    // Fase 2 (plano 036): notas de célula das itemizadas. Best-effort, NÃO-FATAL — o valor já foi
+    // Notas de célula das itemizadas são best-effort e não fatais: o valor já foi
     // escrito; a nota é enriquecimento. A1 SEM nome de aba (o `batch_update_notes` resolve a aba).
     let note_updates: Vec<(String, String)> = changed
         .iter()
@@ -597,7 +595,7 @@ pub async fn apply_write_back(
         }
     };
 
-    // Auditoria pós-escrita (Step 7): realinha o `source_*` das transações escritas + registra a
+    // Auditoria pós-escrita: realinha o `source_*` das transações escritas + registra a
     // escrita no `sync_log`, para que o próximo import reconheça os valores como a NOVA base (sem
     // conflito espúrio). Só roda em escrita bem-sucedida.
     if written > 0 {
@@ -610,7 +608,7 @@ pub async fn apply_write_back(
     })
 }
 
-/// Auditoria pós-escrita do write-back (plano 028 Step 7). Faz DUAS coisas, atômicas:
+/// Auditoria pós-escrita do write-back. Faz DUAS coisas, atômicas:
 ///
 /// 1) Realinha `source_amount` (a BASE do merge de 3 vias) das transações cujas células acabaram de
 ///    ser escritas ao valor que foi para a planilha. Sem isto, o próximo import veria `local ==
@@ -641,14 +639,10 @@ pub(crate) async fn record_write_back_audit(
         .map_err(|e| format!("begin audit: {e}"))?;
     let mut realigned = 0usize;
     for c in cells {
-        // Plano 055 (P2): RE-CHAVEAR uma linha MANUAL (id-UUID, fora do `sync_log`) que acabou de ser
-        // escrita numa célula da grade diária para o `row_id` DETERMINÍSTICO daquela (aba, data, kind,
-        // slot 0) e registrá-la no `sync_log`. Sem isto, o próximo import dessa célula computaria o id
-        // determinístico, NÃO acharia linha (a manual tem id UUID), INSERIRIA um gêmeo → duplicata
-        // (a manual + a importada) que conta DUAS vezes no Saldo/totais. Após o re-chaveamento, o
-        // import faz UPSERT na MESMA linha (idempotente). Roda ANTES do realinho de `source_amount`
-        // para que o realinho a seguir atinja a linha já re-chaveada. NUNCA sobrescreve uma linha
-        // importada existente (ver `rekey_manual_row_to_deterministic`).
+        // Re-chaveia uma linha MANUAL (id UUID, fora do `sync_log`) escrita numa célula da grade
+        // diária para o `row_id` determinístico de (aba, data, kind, slot 0) e registra o vínculo no
+        // `sync_log`. Isso impede que o import crie um gêmeo com dupla contagem. A operação precede
+        // o realinhamento de `source_amount` e nunca sobrescreve uma linha importada existente.
         rekey_manual_row_to_deterministic(&mut tx, sheet_name, c, profile_id.as_ref(), &now)
             .await?;
 
@@ -692,11 +686,10 @@ pub(crate) async fn record_write_back_audit(
                 .await
             }
             "economia" => {
-                // Economia é mensal e, desde o plano 052, é uma ANOTAÇÃO em `economia_annotation`
-                // (não mais uma transação `economia:YYYY-MM`). A célula carrega `date = "YYYY-MM"`.
-                // Após escrever na origem, alinhamos a anotação local ao valor escrito (upsert; ou
-                // delete se zerado) — assim o próximo import vê origem == anotação, sem conflito
-                // espúrio. É o análogo do realinho de `source_amount` dos demais kinds.
+                // Economia é mensal e vive como ANOTAÇÃO em `economia_annotation`, não como
+                // transação `economia:YYYY-MM`. Depois de escrever na origem, realinhamos a anotação
+                // local ao valor escrito para que o import seguinte veja origem == anotação, sem
+                // conflito espúrio.
                 let (yy, mm) = c
                     .date
                     .split_once('-')
@@ -738,7 +731,7 @@ pub(crate) async fn record_write_back_audit(
     Ok(realigned)
 }
 
-/// Plano 055 (P2): converte uma linha MANUAL recém-escrita numa célula da grade diária em uma linha
+/// Converte uma linha MANUAL escrita numa célula da grade diária em uma linha
 /// SHEET-BACKED de primeira classe, re-chaveando-a para o `row_id` DETERMINÍSTICO de `(aba, data,
 /// kind, slot 0)` e registrando-a no `sync_log`. Isto fecha a duplicata do round-trip
 /// manual→write-back→re-import: sem o re-chaveamento, o import recomputa o id determinístico daquela
@@ -749,7 +742,7 @@ pub(crate) async fn record_write_back_audit(
 /// `parse_rows_with_layout`) e `plan_write_back` agrega tudo da mesma `(data, kind)` numa única
 /// célula → o slot do import é sempre `0`. Por isso o alvo é `row_id(aba, data, kind, 0)`.
 ///
-/// GARANTIA DE NÃO-COLISÃO (condição de STOP do plano): só re-chaveia quando
+/// GARANTIA DE NÃO-COLISÃO: só re-chaveia quando
 /// (1) o alvo determinístico AINDA NÃO EXISTE como linha (senão sobrescreveria uma linha importada);
 /// (2) há EXATAMENTE UMA linha candidata manual em `(data, critério-do-kind)` que NÃO está no
 ///     `sync_log` (linha importada/derivada nunca conta como candidata) e cujo id DIFERE do alvo.
@@ -943,7 +936,7 @@ async fn realign_credit_lump(
         return Ok(0); // sem cartão com ciclo → crédito caiu na própria data; nada a colapsar.
     };
 
-    // Plano 047: limita o scan ao período relevante. Sem bound, uma compra de ANOS atrás com o mesmo
+    // Limita o scan ao período relevante. Sem bound, uma compra de ANOS atrás com o mesmo
     // dia-do-mês produziria o mesmo `cycle_due_date` calculado e seria realinhada por engano (base
     // zerada → no-conflito espúrio no próximo import). Um ciclo de fatura abrange ~2 meses, então
     // ir 2 anos para trás (1º de janeiro) é uma janela conservadora: larga o bastante para conter as
@@ -1063,7 +1056,7 @@ pub(crate) async fn load_economia_by_month(
         }
     }
 
-    // Transfers manuais → conta RESERVA (plano 003) também são economia do mês — MESMA definição
+    // Transfers manuais → conta RESERVA também são economia do mês — MESMA definição
     // do motor mensal/anual: a aba que o app escreve tem que casar com o
     // Economizado% que o app exibe. Ilíquido (previdência) é patrimônio: fica fora. O corte é por
     // DATA (`<= hoje`), não pelo flag is_projection (que fica congelado quando a data passa):
@@ -1186,19 +1179,19 @@ pub async fn apply_economia_write_back(
     year: i32,
     client_id: String,
     client_secret: Option<String>,
-    // Token de frescura (Step 4); `None` no caminho legado da UI.
+    // Token de frescura; `None` no caminho sem token da UI.
     preview_revision: Option<String>,
 ) -> Result<usize, String> {
     write_back::ensure_write_back_enabled()?;
-    // Gate de conflito (Step 3) antes de qualquer escrita / chamada ao cliente.
+    // Gate de conflito antes de qualquer escrita ou chamada ao cliente.
     guard_no_pending_conflicts(pool.inner()).await?;
 
     let resolved_secret = oauth::pkce::resolve_client_secret(client_secret.clone());
-    // Escopo de escrita (Step 1).
+    // Escopo de escrita: falha cedo com erro de re-consentimento se o token for readonly.
     oauth::token_store::ensure_write_scope(&app_dir.0, &client_id, resolved_secret.as_deref())
         .await?;
 
-    // Gate de frescura SEMPRE-LIGADO (espelha `apply_write_back` / padrão do plano 047). Foto do
+    // Gate de frescura sempre ligado, espelhando `apply_write_back`. A foto do
     // `modifiedTime` ANTES de ler os VALORES da aba para que o token corresponda a um estado NÃO mais
     // novo que o diff. No caminho LEGADO (sem `preview_revision`), `early_revision` é a base que o
     // apply assumiu; uma edição concorrente entre as duas fotos AVANÇA o `modifiedTime` → o gate
@@ -1217,9 +1210,9 @@ pub async fn apply_economia_write_back(
     )
     .await?;
 
-    // Re-verifica a frescura (Step 4) SEMPRE — nenhum caminho de apply escapa do gate. Foto pós-plano;
-    // compara com o token da prévia rica (`preview_revision`) quando presente, ou com a foto inicial
-    // (`early_revision`) no caminho legado. Aborta sem escrever se DIVERGIR.
+    // Revalida a frescura SEMPRE; nenhum caminho de apply escapa do gate. A foto posterior do
+    // `modifiedTime` é comparada com `preview_revision`, quando presente, ou com `early_revision`
+    // no caminho sem token. Divergência aborta antes da escrita.
     let post_plan_revision = client.get_file_modified_time(&spreadsheet_id).await?;
     match preview_revision.as_deref().filter(|s| !s.trim().is_empty()) {
         Some(seen) => staleness_check(seen, &post_plan_revision)?,
@@ -1244,12 +1237,12 @@ pub async fn apply_economia_write_back(
     Ok(n)
 }
 
-/// Persiste os valores da aba Economia como uma ANOTAÇÃO de métrica (decisão do dono, plano 052):
+/// Persiste os valores da aba Economia como uma ANOTAÇÃO de métrica:
 /// a poupança já é lançada como Saída no grid mensal (→ FixedOut/Daily → cost_of_living → Saldo UMA
 /// vez). A aba Economia é a anotação manual do Economizado% (= Economia/Entradas), NÃO um segundo
 /// movimento de caixa. Por isso gravamos em `economia_annotation` (fora do `transaction`), nunca como
 /// `type='transfer'` — assim o valor NÃO entra na cadeia do Saldo (sem dupla contagem). É distinto do
-/// transfer-de-reserva MANUAL (plano 003), que continua um movimento real e entra no Saldo via
+/// transfer-de-reserva MANUAL, que continua um movimento real e entra no Saldo via
 /// `EventKind::Economia`. Os upserts/deletes correm numa ÚNICA transação.
 pub(crate) async fn store_economia_entries(
     pool: &SqlitePool,
@@ -1358,7 +1351,7 @@ mod tests {
         p
     }
 
-    // Bug 2 (plano 037): a fatura de cartão é escrita como um LUMP em Saída no vencimento, agregado
+    // A fatura de cartão é escrita como um LUMP em Saída no vencimento, agregado
     // de compras de crédito individuais (is_fixed=0, payment_method='credit') agrupadas por
     // `cycle_due_date`. O braço `saida` da auditoria só realinhava linhas `is_fixed=1` não-crédito →
     // casava ZERO linhas para o lump → a base ficava STALE → conflito espúrio no próximo import.
@@ -1447,10 +1440,10 @@ mod tests {
         );
     }
 
-    // Bug 1 (plano 052) — a aba Economia é uma ANOTAÇÃO de métrica, não um movimento de caixa.
+    // A aba Economia é uma ANOTAÇÃO de métrica, não um movimento de caixa.
     // `store_economia_entries` grava em `economia_annotation` (fora do `transaction`) → nunca cria
     // uma linha `economia:YYYY-MM` nem entra na cadeia do Saldo. Sem isso, a mesma poupança (já
-    // lançada como Saída no grid) seria descontada do Saldo uma 2ª vez (dupla contagem do P0).
+    // lançada como Saída no grid) seria descontada do Saldo uma segunda vez.
     #[tokio::test]
     async fn annotation_does_not_create_transaction_row() {
         let p = pool().await;
@@ -1492,9 +1485,9 @@ mod tests {
         assert_eq!(amount, 50000);
     }
 
-    // Bug 1 (plano 052) — a anotação não é carregada como evento de caixa, então o Saldo projetado
+    // A anotação não é carregada como evento de caixa, então o Saldo projetado
     // não a desconta (sem dupla contagem). `signed()`/Performance ficam intactos: só transfers REAIS
-    // (plano 003) seguem como `EventKind::Economia` e tocam o Saldo.
+    // seguem como `EventKind::Economia` e tocam o Saldo.
     #[tokio::test]
     async fn annotation_not_loaded_as_cashflow_event() {
         let p = pool().await;
@@ -1515,10 +1508,9 @@ mod tests {
         );
     }
 
-    // Plano 047 (P2): `realign_credit_lump` antes scaneava TODAS as compras de crédito sem bound de
-    // data. Uma compra de ANOS atrás com o mesmo dia-do-mês produz o mesmo `cycle_due_date` calculado
-    // e era realinhada por engano (base zerada → no-conflito espúrio no próximo import). O fix limita
-    // o scan a `date >= 1º/jan do ano-2`, excluindo compras de anos anteriores.
+    // `realign_credit_lump` limita o scan a `date >= 1º/jan do ano-2`; sem esse bound, uma compra de
+    // anos atrás com o mesmo dia do mês produziria o mesmo `cycle_due_date` e seria realinhada por
+    // engano.
     #[tokio::test]
     async fn realign_credit_lump_ignores_purchases_from_prior_years() {
         let p = pool().await;
@@ -1588,9 +1580,9 @@ mod tests {
         );
     }
 
-    // Plano 047 (P2): o gate de frescura (Step 4 do plano 028) agora roda SEMPRE no apply, inclusive
-    // no caminho legado (sem `preview_revision`). `apply_write_back` depende de IO de rede, então
-    // testamos a decisão PURA (`staleness_check`): revisão igual passa, revisão diferente aborta.
+    // O gate de frescura roda em todo apply, inclusive sem `preview_revision`. Como
+    // `apply_write_back` depende de IO de rede, o teste cobre a decisão pura em `staleness_check`:
+    // revisão igual passa; revisão diferente aborta.
     #[tokio::test]
     async fn staleness_check_rejects_different_revision() {
         // Mesma revisão → OK (a planilha não mudou desde a foto).
@@ -1601,7 +1593,7 @@ mod tests {
         assert_eq!(err, SHEET_CHANGED_MSG, "diff stale é rejeitado");
     }
 
-    // Plano 062: o write-back da aba Economia vem dos itens `ECONOMIA:`. O filtro "Ignorar" continua
+    // O write-back da aba Economia vem dos itens `ECONOMIA:`. O filtro "Ignorar" continua
     // valendo no pai: se a transação foi marcada fora dos totais, nenhum item dela pode ir para a
     // coluna Economia da planilha.
     #[tokio::test]
@@ -1651,7 +1643,7 @@ mod tests {
         assert_eq!(by_month.iter().sum::<i64>(), 30_000);
     }
 
-    // Plano 062: a coluna Economia da aba homônima passa a ser proposta a partir da Economia
+    // A coluna Economia da aba homônima é proposta a partir da Economia
     // AUTO-derivada dos itens de nota. A fonte é seção `ECONOMIA:`; anotação importada antiga,
     // transfers manuais e `INVESTIMENTO:`/Patrimônio NÃO entram, e descrição/banco sem seção não
     // serve como fallback.
@@ -1672,7 +1664,7 @@ mod tests {
         .await
         .unwrap();
 
-        // Fontes antigas/stale do write-back: não devem alimentar a proposta do plano 062.
+        // Fontes stale não devem alimentar a proposta de write-back.
         sqlx::query(
             "INSERT INTO economia_annotation (profile_id, year, month, amount_cents, updated_at) \
              VALUES ('', 2026, 3, 999_000, '2026-03-31T00:00:00Z')",
@@ -1731,7 +1723,7 @@ mod tests {
         );
     }
 
-    // Plano 062: round-trip limpo. O apply realinha `economia_annotation` para que o import da aba
+    // No round-trip, o apply realinha `economia_annotation` para que o import da aba
     // veja origem == app, mas a próxima proposta NÃO pode somar a anotação em cima dos itens
     // auto-derivados — senão cada write-back duplicaria a Economia local.
     #[tokio::test]
@@ -1805,7 +1797,7 @@ mod tests {
         assert_eq!(after.iter().sum::<i64>(), 40_000);
     }
 
-    // Plano 055 (P2): uma transação MANUAL (id-UUID, fora do `sync_log`) escrita de volta numa célula
+    // Uma transação MANUAL (id UUID, fora do `sync_log`) escrita de volta numa célula
     // antes VAZIA é re-chaveada para o `row_id` determinístico de `(aba, data, kind, 0)` e registrada
     // no `sync_log`. Sem isto, o re-import da planilha computaria o id determinístico, não acharia a
     // linha (id-UUID) e INSERIRIA um gêmeo → duplicata (dupla contagem). Com o re-chaveamento, o
@@ -1900,7 +1892,7 @@ mod tests {
         );
     }
 
-    // Plano 055 (P2): a GARANTIA de não-colisão. Se a célula JÁ tem uma linha importada (id
+    // Garantia de não colisão: se a célula já tem uma linha importada (id
     // determinístico no `sync_log`), o re-chaveamento NÃO roda — nunca sobrescreve/colide com ela.
     // A linha manual separada permanece intacta (caso degenerado: 2 linhas na mesma célula).
     #[tokio::test]
@@ -1982,17 +1974,16 @@ mod tests {
         );
     }
 
-    // Bug 3 (plano 053): o braço `entrada` da auditoria realinhava o `source_amount` de TODAS as
-    // rendas da data, inclusive linhas `derived:%` (sintetizadas, ex.: reembolso) que não vêm 1:1 da
-    // planilha. `load_write_back_txns` já as exclui; a auditoria precisa do mesmo filtro, senão a base
-    // de uma linha derivada é sobrescrita e o próximo import vê conflito espúrio.
+    // O braço `entrada` da auditoria precisa excluir linhas `derived:%`, que são sintetizadas e não
+    // vêm 1:1 da planilha. `load_write_back_txns` aplica o mesmo filtro; sem ele, a base da linha
+    // derivada seria sobrescrita e o import seguinte abriria conflito espúrio.
     #[tokio::test]
     async fn audit_entrada_skips_derived_rows() {
         use crate::google_sheets::import::{self, RowKind};
         let p = pool().await;
 
-        // Renda IMPORTADA 1:1 (id determinístico + linha em sync_log → sheet-backed, realinhável e NÃO
-        // re-chaveada pelo plano 055) + linha derivada (NÃO realinhável), mesma data.
+        // Renda IMPORTADA 1:1 (id determinístico + `sync_log`, realinhável e não re-chaveada) e linha
+        // derivada não realinhável na mesma data.
         sqlx::query("INSERT INTO person (id, name) VALUES ('pe-1', 'Tester')")
             .execute(&p)
             .await
@@ -2011,7 +2002,7 @@ mod tests {
         .execute(&p)
         .await
         .unwrap();
-        // sync_log marca a renda 1:1 como importada (impede o re-chaveamento do plano 055).
+        // `sync_log` marca a renda 1:1 como importada e impede seu re-chaveamento.
         sqlx::query(
             "INSERT INTO sync_log (id, event_type, entity_type, entity_id, profile_id, source_sheet) \
              VALUES (?1, 'import', 'transaction', ?2, 'pf-1', '2026')",
@@ -2060,7 +2051,7 @@ mod tests {
         );
     }
 
-    // Plano 072 (slice B, parte 3): uma linha de CENÁRIO que compartilha (data, tipo) com uma
+    // Uma linha de CENÁRIO que compartilha (data, tipo) com uma
     // célula recém-escrita NUNCA deve ser re-chaveada nem auditada pelo write-back real — ela é
     // uma linha hipotética "e se", fora do livro-razão. Cobre os quatro pontos que liam
     // `"transaction"` sem filtro de cenário: `record_write_back_audit` (entrada), `realign_saida_cell`
@@ -2109,8 +2100,8 @@ mod tests {
         };
         record_write_back_audit(&p, "2026", &[&cell]).await.unwrap();
 
-        // A linha real pode ter sido RE-CHAVEADA para o id determinístico (comportamento normal
-        // do rekey de plano 055) — busca por conteúdo, não pelo id original.
+        // A linha real pode ter sido re-chaveada para o id determinístico; busca por conteúdo, não
+        // pelo id original.
         let (real_amt,): (Option<i64>,) = sqlx::query_as(
             "SELECT source_amount FROM \"transaction\" \
              WHERE type='income' AND date='2026-06-05' AND scenario_id IS NULL",

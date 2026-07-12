@@ -27,7 +27,7 @@ const clientSecretOrNull =
 export type AuthStatus = "connected" | "expired" | "disconnected" | "loading";
 
 export interface DashboardSummary {
-  /** Projected end-of-current-month balance, in cents (forecast engine, spec 003). */
+  /** Projected end-of-current-month balance, in cents, from the forecast engine. */
   balance: number;
   daily_budget: number;
   daily_spend_today: number;
@@ -46,7 +46,7 @@ export interface TagRef {
   emoji: string | null;
 }
 
-/** Uma parte de um lançamento itemizado (breakdown da nota de célula, plano 035). */
+/** Uma parte de um lançamento itemizado (breakdown da nota de célula). */
 export type LineItemKind =
   "entrada" | "saida" | "cartao" | "diario" | "economia" | "patrimonio" | "ajuste";
 
@@ -62,7 +62,7 @@ export interface LineItem {
    */
   kind: LineItemKind;
   /** Cabeçalho de seção cru da nota (ex.: "CONTAS:"); null = sem seção. Usado ao propor
-   * `match_section` para marcar o item como obrigação recorrente (plano 069). */
+   * `match_section` para marcar o item como obrigação recorrente. */
   section: string | null;
 }
 
@@ -82,13 +82,13 @@ export interface TransactionRow {
   tags: TagRef[];
   /** Proveniência: "projetado" | "importado" | "manual" | "conciliado". */
   provenance: string;
-  /** Partes itemizadas da nota (vazio = lançamento não itemizado). Plano 035 — só leitura. */
+  /** Partes itemizadas da nota (vazio = lançamento não itemizado); somente leitura. */
   line_items: LineItem[];
-  /** Vencimento opcional ("YYYY-MM-DD"); null = sem lembrete de conta (plano 045). Consultivo. */
+  /** Vencimento opcional ("YYYY-MM-DD"); null = sem lembrete de conta. Consultivo. */
   due_date: string | null;
-  /** Posição 1-based na série de parcelas; null = não é lançamento de série (plano 045). */
+  /** Posição 1-based na série de parcelas; null = não é lançamento de série. */
   installment_index: number | null;
-  /** Total de parcelas da série; null = não é lançamento de série (plano 045). */
+  /** Total de parcelas da série; null = não é lançamento de série. */
   installment_total: number | null;
 }
 
@@ -97,7 +97,7 @@ export interface SheetInfo {
   sheet_id: number;
 }
 
-/** Plano 070: torna visível uma nota que não deu para itemizar, ou itens cujo somatório diverge
+/** Torna visível uma nota que não deu para itemizar, ou itens cujo somatório diverge
  * do total da célula (a célula continua dona do total — isto só reporta). */
 export type DiagKind =
   "NoteNotItemized" | "ItemsDoNotSumToCell" | "MonthlyBudgetPlanNote";
@@ -230,7 +230,7 @@ export interface MonthCoverage {
   estimated_missing_cents: number;
 }
 
-/** Projection DTO from the deterministic engine (spec 005). All money in cents. */
+/** Projection DTO from the deterministic engine. All money in cents. */
 export interface Forecast {
   today: string;
   horizon_end: string;
@@ -270,7 +270,7 @@ export interface PocketAccount {
   institution: string | null;
 }
 
-/** Liquidity-grouped balances (spec 007). All money in cents. */
+/** Liquidity-grouped balances. All money in cents. */
 export interface Pockets {
   liquid_cents: number;
   reserve_cents: number;
@@ -306,7 +306,7 @@ export function getRecentTransactions(limit: number): Promise<TransactionRow[]> 
   return invoke("get_recent_transactions", { limit });
 }
 
-/** Uma conta a vencer (plano 045): um lançamento com `due_date` na janela consultada. */
+/** Uma conta a vencer: um lançamento com `due_date` na janela consultada. */
 export interface UpcomingBill {
   id: string;
   description: string;
@@ -320,13 +320,13 @@ export function getUpcomingBills(days: number): Promise<UpcomingBill[]> {
   return invoke("get_upcoming_bills_cmd", { days });
 }
 
-/** Partes itemizadas de um lançamento (breakdown da nota de célula, plano 035). */
-// react-doctor-disable-next-line deslop/unused-export -- plano 035: ponte do frontend (comando Tauri pronto/testado); o Livro-razão usa o batch line_items, este getter sob demanda atende o plano 036
+/** Partes itemizadas de um lançamento (breakdown da nota de célula). */
+// react-doctor-disable-next-line deslop/unused-export -- ponte para leitura unitária de itens; o Livro-razão usa o batch line_items, enquanto este getter expõe o comando Tauri por lançamento
 export function getLineItems(transactionId: string): Promise<LineItem[]> {
   return invoke<LineItem[]>("get_line_items_cmd", { transactionId });
 }
 
-/** Uma parte itemizada EDITÁVEL no form (plano 036). Sem `id`/`transaction_id`: o backend
+/** Uma parte itemizada EDITÁVEL no form. Sem `id`/`transaction_id`: o backend
  * recria as linhas (clear + reinsert) a cada edição. `position` é a ordem 0-based. */
 export interface LineItemDraft {
   amount_cents: number; // magnitude positiva, centavos inteiros
@@ -334,7 +334,7 @@ export interface LineItemDraft {
   position: number;
 }
 
-/** Substitui TODAS as partes de um lançamento e fixa o total do pai = Σ partes (plano 036). As
+/** Substitui TODAS as partes de um lançamento e fixa o total do pai = Σ partes. As
  * partes ficam marcadas como editadas localmente — sobrevivem ao próximo re-import enquanto a nota
  * da planilha não mudar. Lista vazia é rejeitada pelo backend (use o valor simples nesse caso). */
 export function updateTransactionItems(
@@ -357,7 +357,7 @@ export function createTransaction(input: {
   recurrence: { frequency: Frequency; repetitions: number } | null;
   /** Obrigatório (não-nulo) quando `txnType = "transfer"`. Ausente/nulo nos demais (income/expense). */
   toAccountId?: string | null;
-  /** Vencimento opcional ("YYYY-MM-DD") p/ o calendário de contas (plano 045). Não afeta o Saldo. */
+  /** Vencimento opcional ("YYYY-MM-DD") p/ o calendário de contas. Não afeta o Saldo. */
   dueDate?: string | null;
 }): Promise<string> {
   return invoke("create_transaction", input);
@@ -466,7 +466,7 @@ export function saveSheetMapping(
   return invoke("save_sheet_mapping", { mappingId, blockOffset, isActive });
 }
 
-// --- Write-back (spec 018, atrás de flag desligada) ---
+// --- Write-back (protegido por flag e aprovação humana) ---
 
 /** Uma célula que o write-back tocaria: A1, valor atual, valor proposto, se mudou. */
 export interface CellWrite {
@@ -483,7 +483,7 @@ export interface CellWrite {
 }
 
 /**
- * Resultado RICO da prévia (plano 028): o diff + um token de frescura + flags de pré-condição.
+ * Resultado RICO da prévia: o diff + um token de frescura + flags de pré-condição.
  * `preview_revision` é o `modifiedTime` do Drive no instante da prévia; o apply o re-verifica e
  * ABORTA se a planilha tiver mudado (edição concorrente → re-revisão). `conflicts_pending` espelha
  * o gate de conflito do backend (a UI desabilita o envio). `multi_card_warning` é não-bloqueante.
@@ -500,7 +500,7 @@ export function writeBackEnabled(): Promise<boolean> {
   return invoke("write_back_enabled");
 }
 
-/** Prévia RICA READ-ONLY (plano 028): diff + `preview_revision` (frescura) + conflitos pendentes +
+/** Prévia RICA READ-ONLY: diff + `preview_revision` (frescura) + conflitos pendentes +
  * aviso de multi-cartão. A UI endurecida usa isto para amarrar a aprovação ao que foi visto. */
 export function previewWriteBackStatus(
   spreadsheetId: string,
@@ -515,7 +515,7 @@ export function previewWriteBackStatus(
   });
 }
 
-/** Resultado do write-back (plano 036): nº de células escritas + um aviso não-bloqueante quando a
+/** Resultado do write-back: nº de células escritas + um aviso não-bloqueante quando a
  * NOTA de célula itemizada não pôde ser gravada (o valor/fórmula já foi escrito com sucesso). */
 export interface WriteBackResult {
   written: number;
@@ -525,7 +525,7 @@ export interface WriteBackResult {
 /** Aplica o write-back (escreve as células divergentes). Atrás da flag: rejeita enquanto
  * desligado (nunca escreve). `previewRevision` (do `previewWriteBackStatus`) amarra a aprovação à
  * revisão vista: se a planilha mudou, o backend aborta com erro de re-revisão. Células itemizadas
- * (≥2 partes) escrevem `=SUM(...)` + nota por-parte; as normais seguem número cru (plano 036). */
+ * (≥2 partes) escrevem `=SUM(...)` + nota por-parte; as normais seguem número cru. */
 export function applyWriteBack(
   spreadsheetId: string,
   sheetName: string,
@@ -541,7 +541,7 @@ export function applyWriteBack(
   });
 }
 
-/** Prévia RICA READ-ONLY da Economia (plano 028): diff + `preview_revision` + conflitos pendentes. */
+/** Prévia RICA READ-ONLY da Economia: diff + `preview_revision` + conflitos pendentes. */
 export function previewEconomiaWriteBackStatus(
   spreadsheetId: string,
   year: number,
@@ -572,7 +572,7 @@ export function applyEconomiaWriteBack(
   });
 }
 
-// --- Conciliação avançada: gate de conflito (spec 013) ---
+// --- Conciliação avançada: gate de conflito ---
 
 /** Um conflito de import: um campo onde local e planilha divergiram do base (merge de 3 vias). */
 export interface ImportConflict {
@@ -617,7 +617,7 @@ export function upsertDailyBudget(amountCents: number): Promise<void> {
   return invoke("upsert_daily_budget", { amountCents });
 }
 
-// --- Quebra por categoria do orçamento Diário (plano 045) ---
+// --- Quebra por categoria do orçamento Diário ---
 
 /** Uma categoria do orçamento mensal do Diário (leitura). `amount_cents` é o alvo mensal positivo. */
 export interface DailyBudgetCategory {
@@ -651,7 +651,7 @@ export function upsertDailyBudgetWithCategories(
   return invoke("upsert_daily_budget_with_categories_cmd", { amountCents, categories });
 }
 
-// --- Lembrete agendado no nível do sistema (plano 039) ---
+// --- Lembrete agendado no nível do sistema ---
 
 /**
  * Registra (ou atualiza) o lembrete agendado no nível do SISTEMA no horário `HH:MM`
@@ -667,7 +667,7 @@ export function unregisterOsReminder(): Promise<void> {
   return invoke("unregister_os_reminder");
 }
 
-// --- Eventos do backend (sync em segundo plano, plano 026) ---
+// --- Eventos do backend (sync em segundo plano) ---
 
 /** Carga útil do evento `neko://sync-done` emitido pela tarefa de sync de leitura. */
 export interface SyncDonePayload {
@@ -729,7 +729,7 @@ export function importLocalXlsx(
   return invoke("import_local_xlsx", { filePath, profileId });
 }
 
-// --- Tags (spec 014) ---
+// --- Tags ---
 
 export interface Tag {
   id: string;
@@ -806,7 +806,7 @@ export function updateTag(
   return invoke("update_tag_cmd", { tagId, name, color, emoji });
 }
 
-/** Liga/desliga "Ignorar nos cálculos" para uma tag (sai das métricas, não do Saldo). Plano 034. */
+/** Liga/desliga "Ignorar nos cálculos" para uma tag (sai das métricas, não do Saldo). */
 export function updateTagExclude(tagId: string, exclude: boolean): Promise<void> {
   return invoke("update_tag_exclude_cmd", { tagId, exclude });
 }
@@ -815,7 +815,7 @@ export function tagTotalsForMonth(year: number, month: number): Promise<TagTotal
   return invoke("tag_totals_for_month_cmd", { year, month });
 }
 
-// --- Multi-titular / split (read-side, spec 017) ---
+// --- Multi-titular / split (read-side) ---
 
 export interface OwnerTotal {
   owner_person_id: string;
@@ -831,7 +831,7 @@ export function ownerTotalsForMonth(
   return invoke("owner_totals_for_month_cmd", { year, month });
 }
 
-// --- Recorrências / séries (spec 016) ---
+// --- Recorrências / séries ---
 
 export type Frequency = "diaria" | "semanal" | "mensal";
 
@@ -870,7 +870,7 @@ export function deleteSeriesAll(recurrenceId: string): Promise<number> {
   return invoke("delete_series_all_cmd", { recurrenceId });
 }
 
-// --- Obrigações recorrentes (plano 069) ---
+// --- Obrigações recorrentes ---
 //
 // `obligation` é uma EXTENSÃO do Neko, não um conceito do método/planilha: a planilha não
 // guarda nenhum vínculo entre as 12 ocorrências mensais de um item recorrente ("Aluguel" é só
@@ -937,7 +937,7 @@ export function deleteObligation(id: string): Promise<void> {
 }
 
 /** Todas as ocorrências atualmente casadas por uma obrigação salva. */
-// react-doctor-disable-next-line deslop/unused-export -- plano 069: ponte do frontend (comando Tauri pronto/testado); a UI hoje mostra o agregado mensal via obligationHistory, esta lista crua por-ocorrência atende uma visão futura sem precisar de outro comando
+// react-doctor-disable-next-line deslop/unused-export -- ponte para ocorrências cruas de uma obrigação; a UI consome o agregado mensal via obligationHistory, enquanto este getter preserva o detalhe por ocorrência
 export function obligationItems(obligationId: string): Promise<ObligationLineItem[]> {
   return invoke("obligation_items_cmd", { obligationId });
 }
@@ -949,11 +949,11 @@ export function obligationHistory(
   return invoke("obligation_history_cmd", { obligationId });
 }
 
-// --- Cenários "e se" (plano 072, slice B) ---
+// --- Cenários "e se" ---
 //
 // Um `scenario` é um rótulo para um conjunto de linhas HIPOTÉTICAS (`transaction.scenario_id`),
 // invisíveis a todo o resto do app (forecast real, write-back, dashboard). Um `scenario_override`
-// é uma ação (`suppress`/`replace`) sobre uma obrigação (plano 069) ou uma série recorrente,
+// é uma ação (`suppress`/`replace`) sobre uma obrigação ou uma série recorrente,
 // aplicada SÓ na projeção do cenário — nunca no livro-razão real.
 
 export interface Scenario {
@@ -1002,7 +1002,7 @@ export interface ScenarioCompareDto {
   real_safe_to_spend_today_cents: number;
   real_binding_guardrail: "cash" | "savings";
   real_cost_of_living_cents: number;
-  /** Renda do mês corrente (Entradas) — plano 074 (fatia B): classifica Custo de vida
+  /** Renda do mês corrente (Entradas): classifica Custo de vida
    * ("Dentro da renda"/"Acima da renda") sem re-derivar a renda no frontend. */
   real_income_cents: number;
 
@@ -1071,7 +1071,7 @@ export function deleteScenarioTransaction(
   return invoke("delete_scenario_transaction_cmd", { scenarioId, txnId });
 }
 
-/** Uma linha hipotética crua do cenário (fatia C): a descrição ainda carrega os sufixos de
+/** Uma linha hipotética crua do cenário: a descrição ainda carrega os sufixos de
  * marca (`#loan:...`/`#repl:...`) — remova-os ao exibir (ver `stripScenarioMarker`). */
 export interface ScenarioTransactionRow {
   id: string;

@@ -1,4 +1,4 @@
-//! Gate de conflito de import (spec 013): lista os conflitos pendentes e aplica a resolução
+//! Gate de conflito de import: lista os conflitos pendentes e aplica a resolução
 //! humana (planilha vs local). A detecção mora em `google_sheets::import`; aqui é o gate.
 
 use serde::Serialize;
@@ -34,9 +34,8 @@ pub async fn resolve(pool: &SqlitePool, id: &str, choice: &str) -> Result<(), St
     if choice != "sheet" && choice != "local" {
         return Err(format!("escolha inválida: {choice}"));
     }
-    // Não selecionamos `local_value`: em "local" mantemos o valor ATUAL da linha (que pode ter sido
-    // editado depois da detecção), nunca o snapshot do conflito. Gravar o snapshot descartaria
-    // edições mais novas — o bug que a review adversarial pegou.
+    // Em "local", preservamos o valor ATUAL da linha, que pode ter sido editado depois da detecção,
+    // em vez do snapshot `local_value`; restaurar o snapshot descartaria edições mais recentes.
     let row: Option<(String, String, String)> = sqlx::query_as(
         "SELECT transaction_id, field, sheet_value FROM import_conflict WHERE id = ?1 AND resolved_at IS NULL",
     )
@@ -217,9 +216,9 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_local_preserves_newer_edit_not_the_snapshot() {
-        // Regressão da review adversarial: o usuário editou a linha (18000) DEPOIS de o conflito
-        // ser detectado (snapshot local_value=15000). "Manter local" deve preservar 18000, não
-        // ressuscitar o snapshot velho de 15000. O base realinha para a planilha (20000).
+        // O usuário editou a linha para 18000 depois da detecção do conflito, cujo snapshot local é
+        // 15000. "Manter local" deve preservar 18000, enquanto a base realinha para a planilha em
+        // 20000.
         let p = pool().await;
         seed_txn(&p, "t1", 18000, "x").await;
         seed_conflict(&p, "c1", "t1", "amount", "10000", "15000", "20000").await;

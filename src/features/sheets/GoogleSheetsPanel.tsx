@@ -63,9 +63,9 @@ interface LastImport {
 }
 
 const LAST_IMPORT_KEY = "sheets_last_import";
-/** Última ABA-ano importada — o dashboard (plano 031) a usa p/ medir o diff local → planilha. */
+/** Última ABA-ano importada — o dashboard a usa p/ medir o diff local → planilha. */
 const LAST_SHEET_KEY = "sheets_last_sheet";
-/** Sync em segundo plano (plano 026): ligado por padrão, separado do "Re-sincronizar" manual. */
+/** Sync em segundo plano: ligado por padrão, separado do "Re-sincronizar" manual. */
 const BG_SYNC_KEY = "sheets_bg_sync_enabled";
 /** Client id do OAuth persistido para a tarefa de sync poder renovar o token sem o estado da UI. */
 const CLIENT_ID_KEY = "sheets_client_id";
@@ -83,7 +83,7 @@ interface SheetState {
   loading: boolean;
   importing: boolean;
   importResult: string | null;
-  /** Plano 070: nota que não deu para itemizar ou item↔célula divergente — informativo. */
+  /** Nota que não deu para itemizar ou item↔célula divergente — informativo. */
   importDiagnostics: ImportDiagnostic[];
   error: string | null;
   /** Erro técnico cru (do backend) — mostrado em "Detalhes técnicos" para suporte/diagnóstico. */
@@ -91,7 +91,7 @@ interface SheetState {
   step: Step;
   /** Carregado de app_setting no mount; alimenta o atalho "Re-sincronizar". */
   lastImport: LastImport | null;
-  /** Atualização automática em segundo plano (plano 026). Padrão ligado; separado do re-sync manual. */
+  /** Atualização automática em segundo plano. Padrão ligado; separado do re-sync manual. */
   bgSyncEnabled: boolean;
 }
 
@@ -170,9 +170,8 @@ function useSheetImport(
   const fail = (e: unknown, fallback: string) =>
     set({ error: safeErrorMessage(e, fallback), errorDetail: detailOf(e) });
 
-  // App aberto já conectado (token persistido): o passo efetivo é a escolha de planilha — sem isso o
-  // painel fica preso em "Conectar Google" para sempre, porque o step só avançava dentro do
-  // handleConnect (achado do dogfooding).
+  // Quando o app abre já conectado, o passo efetivo é a escolha de planilha; `step` só muda dentro
+  // de `handleConnect`, que não roda nesse caminho.
   const effectiveStep: Step =
     authStatus === "connected" && state.step === "connect" ? "pick" : state.step;
 
@@ -321,7 +320,7 @@ function useSheetImport(
     set({ lastImport: last });
     try {
       await setAppSetting(LAST_IMPORT_KEY, JSON.stringify(last));
-      // Aba-ano importada → o indicador de write-back pendente do dashboard (plano 031) a lê
+      // Aba-ano importada → o indicador de write-back pendente do dashboard a lê
       // direto desta preferência para medir o diff local → planilha da aba mapeada.
       if (state.selectedSheet) await setAppSetting(LAST_SHEET_KEY, state.selectedSheet);
       // O client id vive no build do frontend; a tarefa de sync em segundo plano (sem estado da UI)
@@ -332,7 +331,7 @@ function useSheetImport(
     }
   };
 
-  // Liga/desliga a atualização automática em segundo plano (plano 026). Persistido em app_setting;
+  // Liga/desliga a atualização automática em segundo plano. Persistido em app_setting;
   // independente do "Re-sincronizar" manual, que continua sempre disponível.
   const handleToggleBgSync = async (enabled: boolean) => {
     set({ bgSyncEnabled: enabled });
@@ -513,7 +512,7 @@ function useSheetImport(
         }
       })
       .catch(() => undefined);
-    // Estado da atualização automática (plano 026). Chave ausente = ligado por padrão.
+    // Estado da atualização automática. Chave ausente = ligado por padrão.
     getAppSetting(BG_SYNC_KEY)
       .then((raw) => {
         if (!alive) return;
@@ -572,7 +571,7 @@ function NotesDegradedNotice() {
 }
 
 /**
- * Plano 070: torna visível quando uma nota não deu para itemizar OU os itens divergem do total
+ * Torna visível quando uma nota não deu para itemizar OU os itens divergem do total
  * da célula — a célula continua dona do total, isto só reporta (não recalcula nada). Só um
  * componente (reusado nos passos do import do Sheets e no import de .xlsx local); informativo,
  * nunca bloqueante — some quando `diagnostics` está vazio.
@@ -652,7 +651,7 @@ function PickStep({
             )}
             {importing ? "Sincronizando…" : "Re-sincronizar"}
           </Button>
-          {/* Atualização automática em segundo plano (plano 026): controle secundário,
+          {/* Atualização automática em segundo plano: controle secundário,
               separado do botão manual acima. Checkbox nativo = acessível sem componente custom. */}
           <label className="gs-bgsync">
             <input

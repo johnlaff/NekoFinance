@@ -92,8 +92,8 @@ mod tests {
         assert!(!checksum.is_empty());
     }
 
-    // Spec 010 slice 0: floats do calamine chegam ao parse_number sem ambiguidade de
-    // separador — regressão do bug de 100× (12.34 → R$ 1.234,00).
+    // Floats do calamine chegam ao `parse_number` sem ambiguidade de separador; `12.34` deve
+    // representar R$ 12,34, nunca R$ 1.234,00.
     #[test]
     fn xlsx_float_cells_parse_to_correct_cents() {
         assert_eq!(
@@ -214,7 +214,7 @@ mod tests {
         );
     }
 
-    // Defesa-em-profundidade (review adversarial): `amount` é magnitude positiva por convenção, mas
+    // Defesa em profundidade: `amount` é magnitude positiva por convenção, mas
     // `daily_spend_today` usa ABS espelhando o forecast — então um amount negativo (não-canônico)
     // ainda rende magnitude positiva, jamais um "gasto negativo" que quebraria `teto - gasto`.
     #[tokio::test]
@@ -229,7 +229,7 @@ mod tests {
         );
     }
 
-    // Regressão (review adversarial): o gasto realizado de HOJE não pode contar ocorrências
+    // O gasto realizado de HOJE não pode contar ocorrências
     // PROJETADAS (is_projection=1) — ex.: uma recorrência futura cuja ocorrência cai hoje.
     #[tokio::test]
     async fn dashboard_daily_spend_excludes_projected() {
@@ -311,7 +311,7 @@ mod tests {
         .unwrap();
     }
 
-    // Plano 052: a aba Economia é uma ANOTAÇÃO em `economia_annotation` (não uma transação). Um
+    // A aba Economia é uma ANOTAÇÃO em `economia_annotation` (não uma transação). Um
     // valor zerado/em branco remove a anotação do mês. Nada toca o `transaction`/o Saldo.
     #[tokio::test]
     async fn economia_import_zero_removes_stale_month() {
@@ -353,8 +353,8 @@ mod tests {
         assert_eq!(txns, 0);
     }
 
-    // Regressão (review + plano 052): store_economia_entries grava upsert+delete numa única
-    // transação na tabela `economia_annotation`. Uma chamada com meses mistos (>0 e =0) deve aplicar
+    // `store_economia_entries` grava upsert+delete numa única transação na tabela
+    // `economia_annotation`. Uma chamada com meses mistos (>0 e =0) deve aplicar
     // TODOS atomicamente; nenhuma conta de reserva é criada (a anotação não é movimento de caixa).
     #[tokio::test]
     async fn economia_mixed_entries_commit_in_one_transaction() {
@@ -376,7 +376,7 @@ mod tests {
                 .unwrap();
         assert_eq!(count, 2, "jan e mar gravados; fev (0) não cria linha");
 
-        // A anotação NÃO cria conta de reserva nem transação (decisão do dono, plano 052).
+        // A anotação NÃO cria conta de reserva nem transação (decisão do dono).
         let (reserves,): (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM account WHERE liquidity='reserve'")
                 .fetch_one(&pool)
@@ -523,7 +523,7 @@ mod tests {
         assert_eq!(fc.safe_to_spend_today_cents, 0);
     }
 
-    // Spec 011: um `transfer` (magnitude positiva) para um bolso de POUPANÇA (reserve) vira
+    // Um `transfer` (magnitude positiva) para um bolso de POUPANÇA (reserve) vira
     // Economia — sai do saldo de gasto E conta no Economizado. Vale-refeição (restricted) NÃO.
     #[tokio::test]
     async fn forecast_dto_transfer_to_reserve_is_economia_and_leaves_balance() {
@@ -567,9 +567,8 @@ mod tests {
         assert_eq!(d20.balance_cents, 70_000);
     }
 
-    // Regressão (review adversarial): a Economia REGISTRADA anual (transfer→reserva) é distinta do
-    // net superávit. O ColchaoCard mostrava "R$ 0" fixo; agora vem do DTO. Só transfer→reserva conta
-    // — income/expense e transfer→líquido (net-zero entre contas) não.
+    // A Economia REGISTRADA anual (transfer→reserva) é distinta do superávit líquido e vem do DTO.
+    // Só transfer→reserva conta; income/expense e transfer→líquido (net-zero entre contas) não.
     #[tokio::test]
     async fn annual_registered_economia_counts_only_reserve_transfers() {
         let pool = fixture_pool().await;
@@ -606,10 +605,9 @@ mod tests {
         );
     }
 
-    // Plano 072 (slice A): fundação do isolamento de cenário — uma linha `"transaction"` marcada
-    // com `scenario_id` é hipotética ("e se") e TEM QUE ser invisível a toda leitura do livro real.
-    // Regressão-âncora desta slice: tira um snapshot do forecast/métricas/write-back/totais por
-    // titular e por tag ANTES de o cenário existir, insere UMA linha hipotética por família de
+    // Uma linha `"transaction"` marcada com `scenario_id` é hipotética e precisa ser invisível a
+    // toda leitura do livro real. O teste tira um snapshot do forecast, métricas, write-back e
+    // totais por titular/tag, insere uma linha hipotética por família de
     // leitura filtrada (fixa março, income+transfer→reserva em meses completos p/ a janela anual,
     // diário fev p/ o teto diário, compra de crédito p/ os lumps do write-back, saída itemizada) —
     // cada uma na MESMA janela de datas do livro real, grande o bastante para mudar o resultado se
@@ -1451,7 +1449,7 @@ mod tests {
         assert_eq!(projection_seed(&pool, today).await.unwrap(), 500_000);
     }
 
-    // Sem planilha importada, a semente continua sendo os Bolsos líquidos (spec 007).
+    // Sem planilha importada, a semente continua sendo os Bolsos líquidos.
     #[tokio::test]
     async fn projection_seed_falls_back_to_pockets_without_sheet() {
         let pool = fixture_pool().await;
@@ -1514,7 +1512,7 @@ mod tests {
 
     // Guardrail duplo end-to-end: caixa cheio (semente alta), mas o mês corrente com performance
     // negativa → "pode gastar" honesto = 0, limitado pela poupança ANUAL. O horizonte varre até o
-    // fim dos dados pré-lançados (dez). Crava o P0 do review: a performance do mês corrente inclui o
+    // fim dos dados pré-lançados (dez). A performance do mês corrente inclui o
     // REALIZADO antes de hoje (não só os eventos futuros), senão o mês aparece com sinal trocado e o
     // guardrail decide errado.
     #[tokio::test]
@@ -1527,7 +1525,7 @@ mod tests {
         // Meses COMPLETOS (jan–mai) abaixo da meta → a poupança ANUAL morde. Sem isto, o mês
         // corrente (junho, em andamento) NÃO conta — evita o falso pânico de meio de mês. Estes
         // mesmos meses definem o custo de vida (mediana = 220.000), logo o piso de reserva do
-        // método = 220.000 × 6 = 1.320.000 (plano 033).
+        // método = 220.000 × 6 = 1.320.000.
         for m in [1, 2, 3, 4, 5] {
             insert_realized(&pool, "income", 200_000, &format!("2026-{m:02}-05")).await;
             insert_realized(&pool, "expense", 220_000, &format!("2026-{m:02}-10")).await;
@@ -1536,7 +1534,7 @@ mod tests {
         // acima dele, então a régua de caixa NÃO morde e a poupança anual é a que decide.
         insert_reserve_account(&pool, 1_320_000).await;
         // Junho (corrente) — metade realizada antes de hoje, metade projetada: testa que a
-        // PERFORMANCE do mês inclui o realizado (o P0), mesmo o mês não contando na poupança anual.
+        // PERFORMANCE do mês inclui o realizado, mesmo o mês não contando na poupança anual.
         insert_realized(&pool, "income", 400_000, "2026-06-05").await;
         insert_realized(&pool, "expense", 700_000, "2026-06-10").await;
         insert_realized(&pool, "income", 600_000, "2026-06-29").await;
@@ -1619,7 +1617,7 @@ mod tests {
         .unwrap();
     }
 
-    // P1.1 (review): reserve_months derivado ao vivo = saldo das contas de reserva ÷ custo de vida
+    // `reserve_months` derivado ao vivo = saldo das contas de reserva ÷ custo de vida
     // mensal (baseline), em vez do `reserve.current_months` que nunca tem writer de produção.
     #[tokio::test]
     async fn dashboard_reserve_months_derived_from_balance_and_baseline() {
@@ -1644,7 +1642,7 @@ mod tests {
         assert_eq!(s.reserve_months, 0.0);
     }
 
-    // --- reserve_floor tests (plano 033) -------------------------------------------------
+    // --- reserve_floor tests -------------------------------------------------
     // O piso de reserva = max(saldo dos Bolsos de reserva, custo de vida mensal × meses do método).
 
     // Sem Bolso de reserva E sem histórico de custo de vida, o piso é 0 (não bloqueia usuário novo).
@@ -1701,9 +1699,8 @@ mod tests {
         assert_eq!(floor, 600_000);
     }
 
-    // End-to-end (plano 033): SEM Bolso de reserva, o guardrail "pode gastar" deixa de ficar
-    // desmontado — o piso calculado (custo de vida × meses) já protege o caixa via forecast_dto.
-    // Antes do plano 033, reserve_floor = 0 aqui e cash_headroom = saldo cheio inteiro.
+    // Sem Bolso de reserva, o piso calculado (custo de vida × meses) protege o caixa via
+    // `forecast_dto`; `cash_headroom` deve descontar esse piso.
     #[tokio::test]
     async fn forecast_cash_guardrail_gated_by_computed_reserve_floor() {
         let pool = fixture_pool().await;
@@ -1729,8 +1726,8 @@ mod tests {
         assert_eq!(fc.cash_headroom_cents, trough - 600_000);
     }
 
-    // P1.3 (review): teto do diário cai para o Diário médio do mês anterior quando não há orçamento
-    // explícito (antes era 0 fixo → tile "de R$0" e forecast otimista).
+    // O teto do Diário usa a média do mês anterior quando não há orçamento explícito, evitando um
+    // teto artificial de zero e um forecast otimista.
     #[tokio::test]
     async fn dashboard_daily_budget_falls_back_to_prior_month_avg() {
         let pool = fixture_pool().await;
@@ -1931,7 +1928,7 @@ mod tests {
         assert_eq!(liq.as_deref(), Some("liquid"));
     }
 
-    // Plan 009: o filtro de ano virou range `date >= 'YYYY-01-01' AND date < '(YYYY+1)-01-01'`.
+    // O filtro de ano usa `date >= 'YYYY-01-01' AND date < '(YYYY+1)-01-01'`.
     // O limite superior EXCLUSIVO `< '2027-01-01'` mantém o contrato: 2027-01-01 cai em 2027, não
     // em 2026 — byte-idêntico ao antigo `substr(date,1,4) = '2026'`.
     #[tokio::test]
@@ -1964,10 +1961,8 @@ mod tests {
     }
 
     // ===================================================================================
-    // Plan 010: characterization tests for money/forecast SQL helpers. These PIN the
-    // current behavior of helpers that are otherwise only exercised through the
-    // higher-level DTOs, so the commands.rs split (plan 011) has a safety net. They
-    // assert what the code does TODAY; if a value looks surprising, it is pinned as-is.
+    // Characterization tests for money/forecast SQL helpers. They specify the helpers' behavior
+    // directly and provide a safety net independent of the higher-level DTOs.
     // ===================================================================================
 
     // Insere um transfer (Economia) com destino explícito e is_projection controlável. Não há helper
@@ -2426,7 +2421,7 @@ mod tests {
         assert!(out.is_empty(), "transação de 2025 não entra no ano 2026");
     }
 
-    // --- Plano 028: gates de segurança do write-back -----------------------------------------
+    // --- Gates de segurança do write-back -----------------------------------------
 
     async fn seed_unresolved_conflict(pool: &sqlx::SqlitePool) {
         sqlx::query(
@@ -2438,7 +2433,7 @@ mod tests {
         .unwrap();
     }
 
-    // Step 3: com um conflito de import PENDENTE, o gate bloqueia o write-back ANTES de tocar o
+    // Com um conflito de import PENDENTE, o gate bloqueia o write-back ANTES de tocar o
     // cliente do Sheets (o teste exercita o guard que o apply chama primeiro).
     #[tokio::test]
     async fn write_back_blocked_when_import_conflicts_pending() {
@@ -2453,7 +2448,7 @@ mod tests {
         assert_eq!(err, CONFLICTS_PENDING_MSG);
     }
 
-    // Step 3: um conflito já RESOLVIDO não bloqueia (só os com resolved_at NULL contam).
+    // Um conflito RESOLVIDO não bloqueia; só `resolved_at IS NULL` conta.
     #[tokio::test]
     async fn write_back_not_blocked_by_resolved_conflict() {
         let pool = fixture_pool().await;
@@ -2468,7 +2463,7 @@ mod tests {
         assert!(guard_no_pending_conflicts(&pool).await.is_ok());
     }
 
-    // Step 4: se o modifiedTime AVANÇOU entre a prévia e o apply, a re-verificação aborta (e o apply
+    // Se o `modifiedTime` avançou entre a prévia e o apply, a revalidação aborta (e o apply
     // não escreve nada). Sem revisão (None) ou revisão idêntica → segue.
     #[test]
     fn staleness_aborts_when_sheet_modified_since_preview() {
@@ -2479,7 +2474,7 @@ mod tests {
         assert_eq!(err, SHEET_CHANGED_MSG);
     }
 
-    // Step 8: dois cartões com ciclo completo (closing+due) → aviso não-bloqueante ligado.
+    // Dois cartões com ciclo completo (closing+due) → aviso não bloqueante ligado.
     #[tokio::test]
     async fn multi_card_warning_set_with_two_cycle_cards() {
         let pool = fixture_pool().await;
@@ -2517,7 +2512,7 @@ mod tests {
         assert!(multi_card_warning(&pool).await.unwrap());
     }
 
-    // Step 8: um cartão SEM dias de ciclo também liga o aviso (a data da fatura é ambígua).
+    // Um cartão SEM dias de ciclo também liga o aviso porque a data da fatura é ambígua.
     #[tokio::test]
     async fn multi_card_warning_set_with_card_missing_cycle() {
         let pool = fixture_pool().await;
@@ -2539,7 +2534,7 @@ mod tests {
         assert!(multi_card_warning(&pool).await.unwrap());
     }
 
-    // Step 7: round-trip. O write-back grava o valor LOCAL na planilha; a auditoria realinha a BASE
+    // No round-trip, o write-back grava o valor LOCAL na planilha; a auditoria realinha a BASE
     // (source_amount) a esse valor. Assim, uma edição local POSTERIOR não vira conflito espúrio: a
     // planilha guarda um valor que o PRÓPRIO app pôs lá (não uma edição independente do dono).
     //
@@ -2616,7 +2611,7 @@ mod tests {
         assert_eq!(audit, 1, "uma linha de auditoria por célula escrita");
     }
 
-    // Step 7 (controle): SEM a auditoria que realinha a base, o MESMO cenário produz o conflito
+    // Sem a auditoria que realinha a base, o MESMO cenário produz o conflito
     // espúrio — prova de que o realinho é o que o evita.
     #[tokio::test]
     async fn reimport_without_audit_would_conflict() {
@@ -2652,12 +2647,11 @@ mod tests {
         assert_eq!(conflicts, 1, "sem realinhar a base, o re-import conflita");
     }
 
-    // --- Plan 032 regression tests --------------------------------------------------------
+    // --- Write-back audit invariants --------------------------------------------------------
 
-    // Bug A: linhas Saída/Diário com payment_method NULL (o caso manual normal) DEVEM ser
-    // realinhadas pela auditoria de write-back. Antes: `NOT (payment_method = 'credit')` virava
-    // NULL em SQLite (NULL = 'credit' → NULL → NOT NULL → NULL), então a linha era EXCLUÍDA e a
-    // base nunca era atualizada → conflito espúrio a cada write-back. Agora: NULL passa.
+    // Linhas Saída/Diário com `payment_method = NULL` precisam ser realinhadas. Em SQLite,
+    // `NOT (payment_method = 'credit')` também resulta em NULL e exclui a linha; o predicado deve
+    // aceitar NULL para atualizar a base e evitar conflito espúrio no write-back seguinte.
     #[tokio::test]
     async fn write_back_audit_realigns_null_payment_method() {
         let pool = fixture_pool().await;
@@ -2774,10 +2768,9 @@ mod tests {
         );
     }
 
-    // P2a + plano 052: a auditoria de write-back trata o kind `economia` — alinha a ANOTAÇÃO local
-    // (`economia_annotation`) ao valor escrito na origem E grava a trilha no sync_log. Antes realinhava
-    // a base de uma transação `economia:YYYY-MM`; agora a aba Economia é uma anotação (sem transação).
-    // O alinhamento garante que o próximo import veja origem == anotação (sem conflito espúrio).
+    // A auditoria de write-back trata o kind `economia`: alinha `economia_annotation` ao valor
+    // escrito na origem e grava a trilha no `sync_log`. O alinhamento garante que o import seguinte
+    // veja origem == anotação, sem conflito espúrio.
     #[tokio::test]
     async fn write_back_audit_handles_economia_kind() {
         let pool = fixture_pool().await;
@@ -2841,7 +2834,7 @@ mod tests {
         assert_eq!(audit, 1, "trilha de auditoria gravada para a Economia");
     }
 
-    // --- Plan 034: tag "Ignorar nos cálculos" ---
+    // --- Tag "Ignorar nos cálculos" ---
 
     /// Insere um lançamento com id conhecido (para anexar tag depois).
     async fn insert_realized_id(

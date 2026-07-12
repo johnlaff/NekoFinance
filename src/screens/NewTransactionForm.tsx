@@ -32,9 +32,9 @@ export interface TransactionEditValues {
   is_fixed: boolean;
   /** Prefixo uuid da série (derivado do id "uuid:index"); null = lançamento único. */
   recurrence_id: string | null;
-  /** Partes itemizadas já persistidas (plano 036). Ausente/vazio = lançamento sem partes. */
+  /** Partes itemizadas já persistidas. Ausente/vazio = lançamento sem partes. */
   items?: LineItem[];
-  /** Vencimento opcional ("YYYY-MM-DD"); null = sem lembrete de conta (plano 045). */
+  /** Vencimento opcional ("YYYY-MM-DD"); null = sem lembrete de conta. */
   due_date?: string | null;
 }
 
@@ -130,12 +130,12 @@ interface FormState {
   selectedTags: string[];
   /** Conta-destino da Economia (transfer): id de uma conta reserve/illiquid. Vazio fora do kind. */
   toAccountId: string;
-  /** Vencimento opcional ("YYYY-MM-DD"); só Saída/Cartão. Vazio = sem lembrete (plano 045). */
+  /** Vencimento opcional ("YYYY-MM-DD"); só Saída/Cartão. Vazio = sem lembrete. */
   dueDate: string;
   repeat: boolean;
   frequency: Frequency;
   repetitions: number;
-  /** Partes itemizadas (plano 036). Com ≥1 parte, o Valor vira somente-leitura (= Σ partes). */
+  /** Partes itemizadas. Com ≥1 parte, o Valor vira somente-leitura (= Σ partes). */
   items: LineItemDraft[];
   busy: boolean;
   error: string | null;
@@ -569,7 +569,7 @@ export function NewTransactionForm({
         if (recId) {
           // Série recorrente: a escolha "toda a série" vs "deste ponto em diante" (o passado
           // fica intacto em updateSeriesFrom). Os campos escalares aplicam à série; as partes
-          // detalhadas (plano 043) são por-instância → persistidas só nesta ocorrência.
+          // detalhadas são por-instância → persistidas só nesta ocorrência.
           const all = window.confirm(
             "Aplicar a alteração em toda a série?\n\nOK = toda a série\nCancela = este e os futuros",
           );
@@ -584,7 +584,7 @@ export function NewTransactionForm({
           } else {
             await updateSeriesFrom(initialValues.id, edit);
           }
-          // Plano 043: itens são por-ocorrência → usa o id desta instância (não o recId da série).
+          // Itens são por ocorrência, portanto usam o id desta instância, não o `recId` da série.
           if (itemsActive) {
             await updateTransactionItems(initialValues.id, items);
           }
@@ -597,7 +597,7 @@ export function NewTransactionForm({
             isFixed: fields.isFixed,
             date,
           });
-          // Plano 036: persiste as partes editadas (ou as limpa quando o dono removeu todas). Dois
+          // Persiste as partes editadas ou as limpa quando o dono removeu todas. Dois
           // round-trips (não-atômicos): o pai já foi salvo; o update de itens reaplica o total.
           if (itemsActive) {
             await updateTransactionItems(initialValues.id, items);
@@ -623,9 +623,9 @@ export function NewTransactionForm({
             ? dueDate.trim()
             : null,
       });
-      // Plano 036: itens só em lançamento ÚNICO (não-recorrente; a série é por-instância). Segundo
-      // round-trip após o create — STOP documentado: um crash entre os dois deixaria a transação
-      // sem partes (recuperável: o dono re-detalha; o total do pai já está correto).
+      // Itens pertencem somente a lançamentos únicos; séries são modeladas por ocorrência. O create
+      // e a persistência das partes usam chamadas separadas, portanto uma falha entre elas deixa a
+      // transação sem partes, mas com o total do pai íntegro e passível de novo detalhamento.
       if (itemsActive && !repeat) {
         await updateTransactionItems(newId, items);
       }
@@ -720,7 +720,7 @@ export function NewTransactionForm({
         <DueDateField dueDate={dueDate} dispatch={dispatch} />
       )}
 
-      {/* Detalhamento em partes (planos 036/043): fora da Economia, vale para novo, passado e
+      {/* Detalhamento em partes: fora da Economia, vale para novo, passado e
           previsto — inclusive numa ocorrência de série recorrente. Como itens são por-instância,
           a edição numa série atinge só esta ocorrência (nota explicativa abaixo). */}
       {itemsEnabled && (

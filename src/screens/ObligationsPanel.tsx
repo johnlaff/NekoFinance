@@ -1,5 +1,5 @@
 /**
- * Obrigações recorrentes (plano 069) — EXTENSÃO do Neko, não do método/planilha: a planilha
+ * Obrigações recorrentes — EXTENSÃO do Neko, não do método/planilha: a planilha
  * não guarda nenhum vínculo entre as ocorrências mensais de um item recorrente ("Aluguel" é só
  * uma linha repetida dentro da célula Saída, mês a mês, sem id nenhum ligando as doze). Aqui o
  * usuário nomeia o item recorrente UMA vez e o Neko resolve quais itens casam — sempre via uma
@@ -105,7 +105,7 @@ function MarkObligationPanel({ item, onDone }: { item: LineItem; onDone: () => v
 
   const section = restrictSection ? item.section : null;
 
-  // Prévia OBRIGATÓRIA (plano 069: nunca silencioso) — a chave inclui todo input que muda o
+  // A prévia é obrigatória e nunca silenciosa: a chave inclui todo input que muda o
   // casamento, então cada edição refaz a busca e mostra exatamente o que será agrupado.
   const previewKey = `preview_obligation:${matchDesc}|${section ?? ""}`;
   const previewQ = useCommand(previewKey, () =>

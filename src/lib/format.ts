@@ -68,13 +68,9 @@ export function formatBRL(cents: number, hideCents = false): string {
 
 /**
  * R$ compacto SEM decimais para rótulos de PONTO num gráfico SVG apertado (mín/máx do
- * `BalanceTrajectory`) — "R$ 31 mil", "R$ 1 mi", nunca "k"/"M" (essa era a violação: um
- * rótulo em estilo inglês visível ao usuário, "R$ 5.8k"). Renomeado de `fmtCompactBRL`
- * (plano 074, fatia C) — o nome colidia com o formatador de MANCHETE de `nkFormat.ts`, que
- * tem 1 casa decimal (apropriado pra um card com mais respiro; longo demais pro rótulo que
- * disputa espaço com a própria linha do gráfico aqui). Sem decimal de propósito: é só a
- * leitura rápida ao lado do traço — a precisão cheia mora no tooltip de hover e no
- * `aria-label` do próprio gráfico (`formatBRL`), nunca só aqui.
+ * `BalanceTrajectory`) — "R$ 31 mil", "R$ 1 mi", nunca "k"/"M". `fmtCompactBRL` de
+ * `nkFormat.ts` formata manchetes com uma casa decimal; `fmtAxisBRL` mantém rótulos de gráfico
+ * sem decimal, com a precisão cheia no tooltip e no `aria-label` do próprio gráfico.
  *
  * A faixa é decidida DEPOIS do arredondamento na precisão da própria faixa (mesma regra do
  * `fmtCompactBRL` de `nkFormat.ts`): arredondar pode cruzar o limiar da faixa seguinte, e sem

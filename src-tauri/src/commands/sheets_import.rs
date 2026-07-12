@@ -10,7 +10,7 @@ pub struct SheetInfo {
     pub sheet_id: i64,
 }
 
-/// Plano 070: retorno estruturado do import — mantém `count` NUMÉRICO (consumido
+/// Retorno estruturado do import: mantém `count` NUMÉRICO (consumido
 /// aritmeticamente pelo frontend, ex. `importAllTabs`/`Acc`) e acrescenta os diagnósticos de
 /// precisão (nota não itemizada / item↔célula divergente) sem substituir nada que já existia.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -147,7 +147,7 @@ pub(crate) async fn import_one_tab(
     }
 
     // Grade usada inteira: a planilha real tem 12 blocos mensais até a coluna BO (~71
-    // colunas) — um range A:Z cortaria JUNHO–DEZEMBRO em silêncio (spec 010, slice 0).
+    // colunas) — um range A:Z cortaria JUNHO–DEZEMBRO em silêncio.
     let range = quote_sheet(sheet_name);
     let values = client.get_sheet_values(spreadsheet_id, &range).await?;
     let rows = values.values;
@@ -216,7 +216,7 @@ pub(crate) async fn import_one_tab(
         descriptions_trusted,
     };
 
-    // Plano 070: diagnósticos de precisão são função do LOTE já parseado (nota crua + total da
+    // Diagnósticos de precisão são função do LOTE já parseado (nota crua + total da
     // célula), não da escrita — coletados ANTES do skip de checksum para que uma reimportação
     // idêntica (dedup) continue reportando as mesmas notas que precisam de atenção.
     let diagnostics =
@@ -295,8 +295,8 @@ pub(crate) async fn import_one_tab(
 }
 
 /// Células numéricas do calamine viram string decimal-com-ponto de 4 casas fixas: `123.456`
-/// vira `123.4560`, que o `parse_number` nunca confunde com agrupamento de milhar
-/// (spec 010, slice 0 — antes, `12.34` perdia o ponto e inflava 100×).
+/// vira `123.4560`, que o `parse_number` não confunde com agrupamento de milhar; `12.34` deve
+/// representar R$ 12,34, nunca R$ 1.234,00.
 pub(crate) fn xlsx_cell_to_string(cell: &calamine::Data) -> String {
     match cell {
         calamine::Data::Float(f) => format!("{f:.4}"),
@@ -328,12 +328,11 @@ pub(crate) fn validate_local_xlsx_path(file_path: &str) -> Result<std::path::Pat
     Ok(canonical)
 }
 
-// --- Plano 068: recuperação de notas de célula no import local de .xlsx ---
+// --- Recuperação de notas de célula no import local de .xlsx ---
 //
-// calamine expõe VALORES mas nunca notas de célula (comments/annotations) — não há accessor para
-// isso na 0.35 (o único hit de "comment" no seu código é `check_comments`, uma flag de validação
-// de `<!-- comentário XML -->` do parser interno, sem relação com anotações de planilha). As notas
-// existem de fato no arquivo: um `.xlsx` é um zip, e comentários de célula LEGADOS — exatamente o
+// calamine 0.36.0 expõe valores, mas não notas de célula; `check_comments` apenas controla
+// comentários XML do parser interno, sem relação com anotações de planilha (verificado 2026-07).
+// As notas existem no arquivo: um `.xlsx` é um zip, e comentários de célula LEGADOS — exatamente o
 // que a API do Sheets chama de "nota" (sem autor, sem thread) — vivem em `xl/comments<N>.xml`,
 // referenciados pelo `.rels` da aba (`xl/worksheets/_rels/sheet<M>.xml.rels`). As funções abaixo
 // leem esse zip em paralelo ao calamine para reconstruir a MESMA grade `Vec<Vec<String>>` que
@@ -713,7 +712,7 @@ pub async fn import_local_xlsx(
     // Sinaliza o aviso de degradação só quando FOR verdade: pelo menos uma aba importada ficou
     // sem notas legíveis. Um import onde toda aba trouxe notas não deve carregar aviso nenhum.
     let mut any_sheet_without_notes = false;
-    // Plano 070: diagnósticos de precisão acumulados por aba (nota não itemizada / item↔célula
+    // Diagnósticos de precisão acumulados por aba (nota não itemizada / item↔célula
     // divergente) — surgem mesmo quando o import não escreve nada (aba deduplicada por checksum).
     let mut all_diagnostics: Vec<import::ImportDiagnostic> = Vec::new();
 
@@ -792,7 +791,7 @@ pub async fn import_local_xlsx(
                 continue;
             }
 
-            // Plano 070: coletado sobre o lote já parseado, ANTES do skip de checksum — sobrevive
+            // Coletado sobre o lote já parseado, ANTES do skip de checksum — sobrevive
             // ao dedup (uma reimportação idêntica desta aba continua reportando as mesmas notas).
             all_diagnostics.extend(import::collect_import_diagnostics(
                 sheet_name,
@@ -863,7 +862,7 @@ pub async fn import_local_xlsx(
         }
     }
 
-    // Aviso de degradação CONDICIONAL (plano 068): só aparece quando alguma aba importada de
+    // Aviso de degradação CONDICIONAL: só aparece quando alguma aba importada de
     // fato ficou sem notas de célula legíveis — sem elas o classificador de 5 tipos não roda
     // nessa aba (Cartão/Economia/Patrimônio caem em Saída sem itemização). Um import onde toda
     // aba trouxe notas não carrega aviso nenhum; a classificação de imports anteriores é
@@ -903,7 +902,7 @@ pub async fn detect_sheet_layout(
             .await?;
     let client = SheetsClient::new(token);
 
-    // Grade inteira — A1:Z10 podia cortar a linha de dados/cabeçalhos da detecção (P1).
+    // Grade inteira: A1:Z10 pode cortar a linha de dados/cabeçalhos da detecção.
     let range = quote_sheet(&sheet_name);
     let values = client.get_sheet_values(&spreadsheet_id, &range).await?;
     let rows = values.values;
@@ -936,7 +935,7 @@ pub async fn detect_sheet_layout(
     Ok(layout)
 }
 
-/// Importa a aba `Economia` da planilha → ANOTAÇÃO de métrica em `economia_annotation` (plano 052):
+/// Importa a aba `Economia` da planilha → ANOTAÇÃO de métrica em `economia_annotation`:
 /// o Economizado% (= Economia/Entradas) é uma anotação manual, NÃO um movimento de caixa. A poupança
 /// já é lançada como Saída no grid (→ cost_of_living → Saldo uma vez); gravar a aba como transação
 /// duplicaria o desconto no Saldo. Chave `(perfil, ano, mês)` ⇒ re-import ATUALIZA, não duplica.
@@ -1114,7 +1113,7 @@ mod xlsx_comment_notes_tests {
 </Relationships>"#;
 
     // Malformada de propósito: `<t>` fechado por `</text>` (mismatch) — `check_end_names` (default
-    // do quick-xml) deve rejeitar isto com erro, exercitando o fallback do Step 4.
+    // do quick-xml) deve rejeitar isto com erro, exercitando o fallback sem falhar o import.
     const MALFORMED_COMMENTS_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <commentList>
@@ -1146,7 +1145,7 @@ mod xlsx_comment_notes_tests {
         Notes(&'a str),
         /// Nota numa célula ARBITRÁRIA (para `ref` fora dos limites da grade, etc.).
         NoteAtRef { cell: &'a str, note: &'a str },
-        /// `xl/comments1.xml` deliberadamente malformado (Step 4: fallback sem falhar o import).
+        /// `xl/comments1.xml` deliberadamente malformado para exercitar o fallback não fatal.
         Malformed,
     }
 
@@ -1364,7 +1363,7 @@ mod xlsx_comment_notes_tests {
             .to_string()
     }
 
-    // O ponto TODO do plano 068: para a MESMA nota, a string do caminho `.xlsx` tem que ser
+    // Para a MESMA nota, a string do caminho `.xlsx` precisa ser
     // byte-a-byte igual à do caminho da API — senão um reimport cruzado dispara `note_changed`
     // (import.rs:561)/checksum espúrio. Este teste prova a igualdade diretamente.
     #[test]
@@ -1547,8 +1546,7 @@ mod xlsx_comment_notes_tests {
             .iter()
             .find(|r| r.kind == import::RowKind::Saida)
             .expect("linha de Saída não encontrada");
-        // Regressão: sem notas, a descrição cai no fallback estrutural de sempre (comportamento
-        // idêntico ao pré-plano-068).
+        // Sem notas, a descrição usa o fallback estrutural determinístico.
         assert_eq!(saida.description, "Saída 2026-01-01");
         assert_eq!(saida.raw_note, "");
 

@@ -29,7 +29,7 @@ const WB_PENDING_DISABLED: CSSProperties = {
 const WB_ICON: CSSProperties = { flexShrink: 0 };
 const WB_HINT: CSSProperties = { color: "var(--text-muted)", marginLeft: "auto" };
 
-// Bloco do caminho rápido "Sincronizar" (plano 039): selo de pendência + ações lado a lado.
+// Bloco do caminho rápido "Sincronizar": selo de pendência + ações lado a lado.
 const WB_FAST_WRAP: CSSProperties = {
   display: "grid",
   gap: "var(--space-2)",
@@ -70,10 +70,10 @@ function summarizeChanged(changed: CellWrite[]): string {
 }
 
 /**
- * Selo do write-back pendente (planos 031/039) + os dois caminhos para o MESMO apply do painel de
- * Configurações (plano 028), sem reimplementar o diff/apply.
+ * Selo do write-back pendente + os dois caminhos para o MESMO apply do painel de
+ * Configurações, sem reimplementar o diff/apply.
  *
- * - "Sincronizar" (caminho rápido, plano 039): para mudanças de só-valor sem conflito/risco de
+ * - "Sincronizar" (caminho rápido): para mudanças de só-valor sem conflito/risco de
  *   fórmula/corrida de frescura, colapsa os cliques (prévia silenciosa → resumo inline → 1 confirmação).
  *   As salvaguardas do backend (frescura por modifiedTime, gate de conflito, blocklist de fórmula)
  *   seguem rodando — só os cliques manuais somem. Quando o diff NÃO é seguro, cai no fluxo completo.
@@ -126,13 +126,13 @@ function WriteBackStatusBanner({
 }
 
 /**
- * Painel de write-back pendente do dashboard: o selo + o caminho rápido "Sincronizar" (plano 039) +
- * o fallback para o painel multi-etapas completo (plano 028). Some quando não há nada a enviar /
+ * Painel de write-back pendente do dashboard: o selo + o caminho rápido "Sincronizar" +
+ * o fallback para o painel multi-etapas completo. Some quando não há nada a enviar /
  * fora de um sheet mapeado / durante o carregamento. Owna todo o estado do envio rápido para não
  * inflar o `DashboardScreen`.
  */
 export function WriteBackPending({ writeBack }: { writeBack: WriteBackPendingState }) {
-  // `showWriteBack` revela o painel multi-etapas (plano 028). `syncing` cobre a prévia silenciosa
+  // `showWriteBack` revela o painel multi-etapas. `syncing` cobre a prévia silenciosa
   // (anti-duplo-clique). `fastPath` guarda o diff seguro + o token de frescura DAQUELA prévia (nunca
   // um `previewRevision` velho do hook). `fastErr` surfa falhas. `applyingFastRef` é guarda
   // anti-duplo-clique do envio (só lido/escrito em handler → ref, não re-renderiza).
@@ -232,7 +232,7 @@ export function WriteBackPending({ writeBack }: { writeBack: WriteBackPendingSta
         </output>
       )}
 
-      {/* Resumo inline do diff seguro + 1 confirmação (caminho rápido, plano 039). O resumo de uma
+      {/* Resumo inline do diff seguro + 1 confirmação (caminho rápido). O resumo de uma
           linha cobre os casos rotineiros (≤ 5 células); acima disso mostramos só a contagem e o
           diálogo (que repete a contagem) para não estourar o banner. */}
       {fastPath && (

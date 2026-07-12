@@ -1,10 +1,9 @@
 /**
  * Classificação de abas da planilha do método.
  *
- * Abas-ano (2025, 2026, …) têm o layout de blocos mensais Data|Entrada|Saída|Diário|Saldo
- * e são as únicas importáveis como transações. Abas de métricas (Economia, Totais) têm
- * layout próprio (mês|Entradas|Economia|%) — importá-las como transações produziria lixo;
- * elas terão um importador de métricas dedicado (spec 010, "Aba Economia como métricas").
+ * Abas-ano (2025, 2026, …) têm o layout de blocos mensais Data|Entrada|Saída|Diário|Saldo e são
+ * as únicas importáveis como transações. Abas de métricas não são importadas como transações:
+ * `Economia` tem importador dedicado; `Totais` e as demais permanecem excluídas.
  */
 
 const METRIC_TAB_NAMES = new Set(["economia", "totais", "total", "metricas"]);

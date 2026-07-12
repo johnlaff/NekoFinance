@@ -80,7 +80,7 @@ describe("GoogleSheetsPanel — atualização automática (plano 026)", () => {
   });
 });
 
-// Plano 070: nota que não deu para itemizar ou item↔célula divergente — a mesma superfície é
+// Nota que não deu para itemizar ou item↔célula divergente — a mesma superfície é
 // reusada pelo import do Sheets e pelo import de .xlsx local (LocalXlsxImport), por isso é
 // testada como componente independente aqui.
 describe("ImportDiagnosticsNotice (plano 070)", () => {

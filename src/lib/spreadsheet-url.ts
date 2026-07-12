@@ -1,6 +1,6 @@
 /**
  * Extrai o spreadsheet ID de uma URL do Google Sheets colada pelo usuário —
- * fallback do picker via Drive (spec 010, slice 2): conectar à planilha real
+ * fallback do picker via Drive: conectar à planilha real
  * sem depender do scope/listagem do Drive.
  *
  * Aceita a URL completa (`https://docs.google.com/spreadsheets/d/<ID>/edit#gid=0`)

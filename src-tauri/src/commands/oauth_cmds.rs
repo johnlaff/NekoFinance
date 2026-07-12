@@ -47,7 +47,7 @@ pub async fn check_auth_status(app_dir: tauri::State<'_, AppDataDir>) -> Result<
     match crate::oauth::token_store::load_token(&app_dir.0) {
         Ok(Some(token)) => {
             // Access token expirado mas com refresh_token disponível segue "connected":
-            // ensure_valid_token renova sob demanda no próximo uso (spec 010, slice 2).
+            // `ensure_valid_token` renova sob demanda no próximo uso.
             if crate::oauth::token_store::is_token_expired(&token) && token.refresh_token.is_empty()
             {
                 Ok("expired".to_string())

@@ -1,4 +1,4 @@
-/** Helpers puros do cenário "e se" (plano 072, fatia C) — separados de `screens/scenarios.tsx`
+/** Helpers puros do cenário "e se" — separados de `screens/scenarios.tsx`
  * (arquivo de componentes) para o Fast Refresh preservar estado (react-doctor
  * `only-export-components`) e para ficarem testáveis isoladamente, no mesmo espírito de
  * `lib/nkFormat.ts`/`lib/movement.ts`. */
