@@ -2660,6 +2660,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn schema_rejects_duplicate_override_target() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        let obligation_id = obligations::create_obligation(&p, "Aluguel", "Aluguel", None)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO scenario_override \
+               (id, scenario_id, op, from_date, obligation_id) \
+             VALUES ('first', ?1, 'suppress', '2030-01-01', ?2)",
+        )
+        .bind(&sc.id)
+        .bind(&obligation_id)
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let error = sqlx::query(
+            "INSERT INTO scenario_override \
+               (id, scenario_id, op, from_date, obligation_id) \
+             VALUES ('second', ?1, 'suppress', '2030-02-01', ?2)",
+        )
+        .bind(&sc.id)
+        .bind(&obligation_id)
+        .execute(&p)
+        .await
+        .expect_err("o schema deve rejeitar um segundo override para o mesmo alvo");
+
+        assert!(error.as_database_error().unwrap().is_unique_violation());
+    }
+
+    #[tokio::test]
     async fn concurrent_overrides_for_the_same_target_leave_exactly_one_row() {
         let p = pool().await;
         let sc = create_scenario(&p, "Cenário").await.unwrap();
