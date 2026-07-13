@@ -137,6 +137,7 @@ for (const theme of ["dark", "light"] as const) {
       list_scenario_transactions_cmd: LOAN_TXNS,
       list_scenario_loans_cmd: [LOAN_ENTITY],
       list_obligations_cmd: [],
+      list_recurrence_targets_cmd: [],
       get_scenario_forecast_cmd: COMPARE,
       price_installment_cmd: 94_560,
     });
@@ -183,6 +184,7 @@ test("estados: hover do gráfico e sheet sem cenário — dark", async ({ page }
     list_scenario_transactions_cmd: [],
     list_scenario_loans_cmd: [],
     list_obligations_cmd: [],
+    list_recurrence_targets_cmd: [],
     get_scenario_forecast_cmd: COMPARE,
   });
   await page.goto("/");
@@ -230,6 +232,7 @@ for (const [tier, cents] of [
       list_scenarios_cmd: [{ id: "s1", name: COMPARE.scenario_name, person_id: "p1" }],
       list_scenario_transactions_cmd: [],
       list_obligations_cmd: [],
+      list_recurrence_targets_cmd: [],
       get_scenario_forecast_cmd: compareWithDeficit(cents),
     });
     await page.goto("/");

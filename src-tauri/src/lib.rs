@@ -94,6 +94,8 @@ pub fn run() {
             scenarios::delete_scenario_transaction_cmd,
             scenarios::list_scenario_transactions_cmd,
             scenarios::set_scenario_override_cmd,
+            scenarios::list_recurrence_targets_cmd,
+            scenarios::recurrence_occurrences_cmd,
             scenarios::get_scenario_forecast_cmd,
             scenarios::price_installment_cmd,
             commands::create_scenario_loan_cmd,
@@ -143,6 +145,13 @@ pub fn run() {
                 scenarios::backfill_scenario_loans(&pool)
                     .await
                     .map_err(|e| format!("backfill de empréstimos de cenário: {e}"))?;
+
+                // Backfill das substituições legadas marcadas por sufixo `#repl:` na descrição →
+                // identidade por FK (`transaction.override_id`). Idempotente (a marca some ao
+                // processar); parse ancorado + lookup do override não cabem numa migração SQL.
+                scenarios::backfill_scenario_override_replacements(&pool)
+                    .await
+                    .map_err(|e| format!("backfill de substituições de cenário: {e}"))?;
 
                 Ok::<_, String>(pool)
             });

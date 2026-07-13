@@ -36,12 +36,15 @@ import {
   setScenarioOverride,
   listObligations,
   obligationItems,
+  listRecurrenceTargets,
+  recurrenceOccurrences,
   priceInstallment,
   type Scenario,
   type ScenarioCompareDto,
   type ScenarioLoanRow,
   type ScenarioTransactionRow,
   type Obligation,
+  type RecurrenceTarget,
 } from "../lib/api";
 import { useCommand, invalidateCommands } from "../lib/useCommand";
 import {
@@ -49,6 +52,7 @@ import {
   parseBRLToCents,
   formatBRL,
   fmtAxisBRL,
+  fmtDate,
   fmtDayMonth,
 } from "../lib/format";
 import {
@@ -89,6 +93,7 @@ function scenarioErrorMessage(err: unknown): string {
   if (
     /data anterior ao mês corrente/i.test(raw) ||
     /já existe uma alteração/i.test(raw) ||
+    /zeraria a célula/i.test(raw) ||
     /informe exatamente um alvo/i.test(raw) ||
     /informe um alvo/i.test(raw)
   ) {
@@ -571,21 +576,27 @@ function HypotheticalList({
     }
   }
 
-  // Um principal + N parcelas geram N+1 pills idênticos e tornam empréstimos longos monótonos.
-  // O grupo por `loan_id` colapsa no padrão lump-expand do DS; as demais linhas seguem
-  // soltas na ordem original.
+  // Um principal + N parcelas (empréstimo) e a série de substituição (N linhas iguais, uma por
+  // ocorrência) geram pills repetidos e tornam a lista monótona. Cada um colapsa num Disclosure
+  // (lump-expand do DS): empréstimo por `loan_id`, substituição por `override_id`. As demais
+  // linhas seguem soltas na ordem original.
   const singles: ScenarioTransactionRow[] = [];
-  const groupsById = new Map<string, ScenarioTransactionRow[]>();
+  const loanGroupsById = new Map<string, ScenarioTransactionRow[]>();
+  const replacementGroupsById = new Map<string, ScenarioTransactionRow[]>();
   for (const r of rows) {
     if (r.loan_id) {
-      const list = groupsById.get(r.loan_id) ?? [];
+      const list = loanGroupsById.get(r.loan_id) ?? [];
       list.push(r);
-      groupsById.set(r.loan_id, list);
+      loanGroupsById.set(r.loan_id, list);
+    } else if (r.override_id) {
+      const list = replacementGroupsById.get(r.override_id) ?? [];
+      list.push(r);
+      replacementGroupsById.set(r.override_id, list);
     } else {
       singles.push(r);
     }
   }
-  const groups: LoanGroup[] = [...groupsById.entries()].map(([loanId, list]) => {
+  const groups: LoanGroup[] = [...loanGroupsById.entries()].map(([loanId, list]) => {
     const principal = list.find((r) => r.type === "income") ?? null;
     // Parcelas em ordem CRONOLÓGICA: o backend lista por data decrescente, e um empréstimo
     // lido de trás pra frente ("parcela 12, 11, 10…") parece um bug de datas.
@@ -595,6 +606,12 @@ function HypotheticalList({
     const loan = loans.find((l) => l.id === loanId) ?? null;
     return { loanId, loan, principal, installments };
   });
+  const replacementGroups: ReplacementGroup[] = [
+    ...replacementGroupsById.entries(),
+  ].map(([overrideId, list]) => ({
+    overrideId,
+    lines: list.toSorted((a, b) => a.date.localeCompare(b.date)),
+  }));
 
   if (listQ.loading) return null;
   if (rows.length === 0) {
@@ -631,7 +648,9 @@ function HypotheticalList({
       <button
         type="button"
         className="scn-txn-row__del"
-        aria-label={`Remover "${stripScenarioMarker(r.description)}" do cenário`}
+        // A data entra no nome acessível: as N linhas de uma série de substituição têm a MESMA
+        // descrição, e sem a data o leitor de tela não distingue qual ocorrência cada lixeira apaga.
+        aria-label={`Remover "${stripScenarioMarker(r.description)}" de ${fmtDayMonth(r.date)} do cenário`}
         onClick={() => void removeRow(r.id)}
       >
         <Trash2 size={14} strokeWidth={1.75} />
@@ -661,8 +680,48 @@ function HypotheticalList({
             renderRow={txnRow}
           />
         ))}
+        {replacementGroups.map((rg) => (
+          <ReplacementGroupItem key={rg.overrideId} group={rg} renderRow={txnRow} />
+        ))}
       </div>
     </section>
+  );
+}
+
+/** Série de substituição de um override `replace`: N linhas iguais (uma por ocorrência),
+ * colapsadas num Disclosure como o empréstimo. O cabeçalho resume "N× de R$ X". Sem ação de
+ * remover o GRUPO: não há remoção individual de override — a série morre em cascata quando o
+ * alvo/cenário é apagado; a lixeira por linha segue como ajuste fino. */
+interface ReplacementGroup {
+  overrideId: string;
+  lines: ScenarioTransactionRow[];
+}
+
+function ReplacementGroupItem({
+  group,
+  renderRow,
+}: {
+  group: ReplacementGroup;
+  renderRow: (r: ScenarioTransactionRow, label?: string) => ReactNode;
+}) {
+  const first = group.lines[0];
+  if (!first) return null;
+  const label = stripScenarioMarker(first.description) || "Substituição";
+  const perOccurrence = Math.abs(first.amount);
+  return (
+    <Disclosure
+      className="scn-loan-group"
+      title={label}
+      summary={
+        <>
+          {group.lines.length}× de <Money cents={perOccurrence} size="inherit" />
+        </>
+      }
+    >
+      <div className="scn-txn-list scn-loan-group__rows">
+        {group.lines.map((r) => renderRow(r))}
+      </div>
+    </Disclosure>
   );
 }
 
@@ -848,27 +907,75 @@ function LoanGroupItem({
   );
 }
 
+/** Alvo do override: uma obrigação (escopo line-item) OU uma recorrência nativa (série inteira).
+ * O valor do `<select>` codifica o tipo (`obl:<id>` / `rec:<id>`) porque a prévia e o alvo do
+ * backend divergem por tipo; os ids são UUID (sem `:`), então o split no primeiro `:` é seguro. */
+type OverrideTargetKind = "obligation" | "recurrence";
+function parseOverrideTarget(
+  value: string,
+): { kind: OverrideTargetKind; id: string } | null {
+  const sep = value.indexOf(":");
+  if (sep < 0) return null;
+  const id = value.slice(sep + 1);
+  if (!id) return null;
+  const prefix = value.slice(0, sep);
+  if (prefix === "obl") return { kind: "obligation", id };
+  if (prefix === "rec") return { kind: "recurrence", id };
+  return null;
+}
+
+const RECURRENCE_FREQUENCY_LABEL: Record<string, string> = {
+  diaria: "diária",
+  semanal: "semanal",
+  mensal: "mensal",
+};
+
+function recurrenceTargetLabel(r: RecurrenceTarget): string {
+  const freq = RECURRENCE_FREQUENCY_LABEL[r.frequency] ?? r.frequency;
+  const desc = r.description.trim() || "Recorrência";
+  return `${desc} · ${freq}`;
+}
+
 function OverrideSection({ scenarioId }: { scenarioId: string }) {
   const obligationsQ = useCommand("obligations", listObligations);
   const obligations = obligationsQ.data ?? [];
-  const [selectedId, setSelectedId] = useState("");
+  const recurrencesQ = useCommand("recurrence_targets", listRecurrenceTargets);
+  const recurrences = recurrencesQ.data ?? [];
+  const [selected, setSelected] = useState("");
   const [action, setAction] = useState<"replace" | "suppress">("suppress");
   const [newAmount, setNewAmount] = useState("");
   const [fromDate, setFromDate] = useState(() => todayISO());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const target = parseOverrideTarget(selected);
+  // Prévia unificada: obrigação → itens casados; recorrência → ocorrências reais. Ambos expõem
+  // `{ date, amount_cents }`, então a contagem "afeta N a partir de {data}" é a mesma.
   const previewQ = useCommand(
-    selectedId ? `obligation_items:${selectedId}` : "obligation_items:none",
-    () => (selectedId ? obligationItems(selectedId) : Promise.resolve([])),
+    target ? `override_target:${selected}` : "override_target:none",
+    () => {
+      if (!target)
+        return Promise.resolve([] as { date: string; amount_cents: number }[]);
+      return target.kind === "obligation"
+        ? obligationItems(target.id).then((items) =>
+            items.map((it) => ({ date: it.date, amount_cents: it.amount_cents })),
+          )
+        : recurrenceOccurrences(target.id);
+    },
   );
+  // Mesmo piso do backend (`replacement_occurrence_dates`): a série/supressão só afeta a projeção
+  // a partir do mês corrente, então a contagem exibida ignora ocorrências históricas (inertes)
+  // quando o usuário escolhe um from_date de um mês passado.
+  const currentMonthStart = todayISO().slice(0, 7) + "-01";
+  const previewFloor = fromDate > currentMonthStart ? fromDate : currentMonthStart;
   const affectedCount = (previewQ.data ?? []).filter(
-    (it) => it.date >= fromDate,
+    (o) => o.date >= previewFloor,
   ).length;
+  const newCents = parseBRLToCents(newAmount) ?? 0;
 
   async function confirm() {
-    if (!selectedId || busy) return;
-    const cents = action === "replace" ? (parseBRLToCents(newAmount) ?? 0) : 0;
+    if (!target || busy) return;
+    const cents = action === "replace" ? newCents : 0;
     if (action === "replace" && cents <= 0) return;
     setBusy(true);
     setError(null);
@@ -877,12 +984,12 @@ function OverrideSection({ scenarioId }: { scenarioId: string }) {
         scenarioId,
         op: action,
         fromDate,
-        obligationId: selectedId,
-        replacement:
-          action === "replace" ? { amount_cents: cents, date: fromDate } : null,
+        obligationId: target.kind === "obligation" ? target.id : null,
+        recurrenceId: target.kind === "recurrence" ? target.id : null,
+        replacement: action === "replace" ? { amount_cents: cents } : null,
       });
       invalidateCommands();
-      setSelectedId("");
+      setSelected("");
       setNewAmount("");
       setBusy(false);
     } catch (err) {
@@ -895,21 +1002,34 @@ function OverrideSection({ scenarioId }: { scenarioId: string }) {
     <section>
       <p className="scn-section-title">Simular alteração</p>
       <div className="scn-field">
-        <label htmlFor="scn-ov-obligation">Obrigação recorrente</label>
+        <label htmlFor="scn-ov-target">Alvo</label>
         <select
-          id="scn-ov-obligation"
-          value={selectedId}
-          onChange={(e) => setSelectedId(e.target.value)}
+          id="scn-ov-target"
+          value={selected}
+          onChange={(e) => setSelected(e.target.value)}
         >
           <option value="">Selecione…</option>
-          {obligations.map((ob: Obligation) => (
-            <option key={ob.id} value={ob.id}>
-              {ob.name}
-            </option>
-          ))}
+          {obligations.length > 0 && (
+            <optgroup label="Obrigações">
+              {obligations.map((ob: Obligation) => (
+                <option key={ob.id} value={`obl:${ob.id}`}>
+                  {ob.name}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          {recurrences.length > 0 && (
+            <optgroup label="Recorrências">
+              {recurrences.map((r: RecurrenceTarget) => (
+                <option key={r.id} value={`rec:${r.id}`}>
+                  {recurrenceTargetLabel(r)}
+                </option>
+              ))}
+            </optgroup>
+          )}
         </select>
       </div>
-      {selectedId && (
+      {target && (
         <>
           <div className="scn-row2" style={{ marginTop: 8 }}>
             <div className="scn-field">
@@ -969,10 +1089,23 @@ function OverrideSection({ scenarioId }: { scenarioId: string }) {
               </Button>
             </div>
           ) : (
+            // Uma caixa só: a contagem afetada e — para substituição — a prévia da SÉRIE (uma
+            // linha por ocorrência, não "suprime N, repõe 1") na mesma frase.
             <p className="scn-preview" aria-live="polite">
-              {previewQ.loading
-                ? "Calculando ocorrências afetadas…"
-                : `Isto afeta ${affectedCount} ${affectedCount === 1 ? "ocorrência" : "ocorrências"} a partir de ${fromDate}.`}
+              {previewQ.loading ? (
+                "Calculando ocorrências afetadas…"
+              ) : (
+                <>
+                  {`Isto afeta ${affectedCount} ${affectedCount === 1 ? "ocorrência" : "ocorrências"} a partir de ${fmtDate(fromDate)}.`}
+                  {action === "replace" && affectedCount > 0 && newCents > 0 && (
+                    <>
+                      {` Serão criadas ${affectedCount} ${affectedCount === 1 ? "linha" : "linhas"} de `}
+                      <Money cents={newCents} size="inherit" />
+                      {" (uma por ocorrência)."}
+                    </>
+                  )}
+                </>
+              )}
             </p>
           )}
           {error && (
@@ -988,7 +1121,8 @@ function OverrideSection({ scenarioId }: { scenarioId: string }) {
               busy ||
               previewQ.loading ||
               previewQ.error !== null ||
-              (action === "replace" && !newAmount.trim())
+              affectedCount === 0 ||
+              (action === "replace" && newCents <= 0)
             }
           >
             {busy ? "Aplicando…" : "Confirmar alteração"}
