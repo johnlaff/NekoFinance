@@ -331,7 +331,15 @@ describe("HorizonteScreen — side-sheet 'Simular cenário'", () => {
           kind: "saida",
         },
       ],
-      obligation_items_cmd: [],
+      obligation_items_cmd: [
+        {
+          line_item_id: "li-1",
+          transaction_id: "t-1",
+          amount_cents: 100000,
+          description: "Aluguel",
+          date: "2099-08-05",
+        },
+      ],
       set_scenario_override_cmd: () =>
         Promise.reject(
           new Error("já existe uma alteração para esta obrigação neste cenário"),
@@ -342,7 +350,7 @@ describe("HorizonteScreen — side-sheet 'Simular cenário'", () => {
     await user.click(await screen.findByRole("button", { name: "Simular cenário" }));
     await user.click(await screen.findByRole("button", { name: "Cenário A" }));
 
-    await user.selectOptions(screen.getByLabelText("Obrigação recorrente"), "ob-1");
+    await user.selectOptions(screen.getByLabelText("Alvo"), "obl:ob-1");
     await user.click(
       await screen.findByRole("button", { name: "Confirmar alteração" }),
     );
@@ -372,7 +380,15 @@ describe("HorizonteScreen — side-sheet 'Simular cenário'", () => {
           kind: "saida",
         },
       ],
-      obligation_items_cmd: [],
+      obligation_items_cmd: [
+        {
+          line_item_id: "li-1",
+          transaction_id: "t-1",
+          amount_cents: 100000,
+          description: "Aluguel",
+          date: "2099-08-05",
+        },
+      ],
       set_scenario_override_cmd: (args) => {
         overrideArgs = args;
         return "ov-1";
@@ -383,7 +399,7 @@ describe("HorizonteScreen — side-sheet 'Simular cenário'", () => {
     await user.click(await screen.findByRole("button", { name: "Simular cenário" }));
     await user.click(await screen.findByRole("button", { name: "Cenário A" }));
 
-    await user.selectOptions(screen.getByLabelText("Obrigação recorrente"), "ob-1");
+    await user.selectOptions(screen.getByLabelText("Alvo"), "obl:ob-1");
     await user.selectOptions(screen.getByLabelText("Ação"), "replace");
     await user.type(screen.getByLabelText("Novo valor/mês"), "1.234,56");
     await user.click(
@@ -631,7 +647,7 @@ describe("HorizonteScreen — side-sheet 'Simular cenário'", () => {
     await user.click(await screen.findByRole("button", { name: "Simular cenário" }));
     await user.click(await screen.findByRole("button", { name: "Cenário A" }));
 
-    await user.selectOptions(screen.getByLabelText("Obrigação recorrente"), "ob-1");
+    await user.selectOptions(screen.getByLabelText("Alvo"), "obl:ob-1");
 
     // Erro de leitura vira alerta com retry — nunca "afeta 0 ocorrências" (isso pareceria
     // "não muda nada" e o usuário salvaria às cegas).
@@ -643,6 +659,230 @@ describe("HorizonteScreen — side-sheet 'Simular cenário'", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Confirmar alteração" })).toBeDisabled();
     expect(screen.queryByText(/Isto afeta/)).not.toBeInTheDocument();
+  });
+
+  it("seletor de alvo oferece recorrências nativas e envia recurrenceId no override", async () => {
+    let overrideArgs: unknown = null;
+    mockCommands({
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_scenarios_cmd: [{ id: "scn-1", name: "Cenário A", person_id: "p1" }],
+      get_scenario_forecast_cmd: baseCompare(),
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [],
+      list_recurrence_targets_cmd: [
+        {
+          id: "rec-1",
+          description: "Academia",
+          frequency: "mensal",
+          first_date: "2099-08-10",
+        },
+      ],
+      recurrence_occurrences_cmd: [
+        { date: "2099-08-10", amount_cents: 30000 },
+        { date: "2099-09-10", amount_cents: 30000 },
+      ],
+      set_scenario_override_cmd: (args) => {
+        overrideArgs = args;
+        return "ov-1";
+      },
+    });
+    render(<HorizonteScreen />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Simular cenário" }));
+    await user.click(await screen.findByRole("button", { name: "Cenário A" }));
+
+    await user.selectOptions(screen.getByLabelText("Alvo"), "rec:rec-1");
+    expect(await screen.findByText(/Isto afeta 2 ocorrências/)).toBeInTheDocument();
+    await user.click(
+      await screen.findByRole("button", { name: "Confirmar alteração" }),
+    );
+
+    await waitFor(() => {
+      expect(overrideArgs).toMatchObject({
+        scenarioId: "scn-1",
+        op: "suppress",
+        recurrenceId: "rec-1",
+        obligationId: null,
+      });
+    });
+  });
+
+  it("substituição mostra a prévia da série — uma linha por ocorrência", async () => {
+    mockCommands({
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_scenarios_cmd: [{ id: "scn-1", name: "Cenário A", person_id: "p1" }],
+      get_scenario_forecast_cmd: baseCompare(),
+      list_scenario_transactions_cmd: [],
+      list_recurrence_targets_cmd: [],
+      list_obligations_cmd: [
+        {
+          id: "ob-1",
+          person_id: "p1",
+          name: "Aluguel",
+          match_desc: "aluguel",
+          match_section: null,
+          kind: "saida",
+        },
+      ],
+      // Datas 2099 → sempre no futuro, a série cobre as 2 ocorrências independe do relógio.
+      obligation_items_cmd: [
+        {
+          line_item_id: "li-1",
+          transaction_id: "t-1",
+          amount_cents: 150000,
+          description: "Aluguel",
+          date: "2099-08-05",
+        },
+        {
+          line_item_id: "li-2",
+          transaction_id: "t-2",
+          amount_cents: 150000,
+          description: "Aluguel",
+          date: "2099-09-05",
+        },
+      ],
+      set_scenario_override_cmd: () => "ov-1",
+    });
+    render(<HorizonteScreen />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Simular cenário" }));
+    await user.click(await screen.findByRole("button", { name: "Cenário A" }));
+
+    await user.selectOptions(screen.getByLabelText("Alvo"), "obl:ob-1");
+    await user.selectOptions(screen.getByLabelText("Ação"), "replace");
+    await user.type(screen.getByLabelText("Novo valor/mês"), "1.800,00");
+
+    expect(await screen.findByText(/Serão criadas 2 linhas de/)).toBeInTheDocument();
+  });
+
+  it("agrupa a série de substituição num Disclosure (N× de R$ X), não N linhas soltas", async () => {
+    mockCommands({
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_scenarios_cmd: [{ id: "scn-1", name: "Cenário A", person_id: "p1" }],
+      get_scenario_forecast_cmd: baseCompare(),
+      list_obligations_cmd: [],
+      list_recurrence_targets_cmd: [],
+      list_scenario_transactions_cmd: [
+        {
+          id: "s1",
+          type: "expense",
+          amount: 180000,
+          description: "Aluguel novo",
+          date: "2026-09-05",
+          loan_id: null,
+          override_id: "ov-1",
+        },
+        {
+          id: "s2",
+          type: "expense",
+          amount: 180000,
+          description: "Aluguel novo",
+          date: "2026-08-05",
+          loan_id: null,
+          override_id: "ov-1",
+        },
+      ],
+    });
+    render(<HorizonteScreen />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Simular cenário" }));
+    await user.click(await screen.findByRole("button", { name: "Cenário A" }));
+
+    // Cabeçalho do Disclosure resume a série "2× de R$ …" (uma linha por ocorrência), em vez de
+    // duas linhas soltas repetidas.
+    expect(await screen.findByText(/2× de/)).toBeInTheDocument();
+    expect(screen.getAllByText("Aluguel novo").length).toBeGreaterThan(0);
+  });
+
+  it("mostra a mensagem didática da fronteira verbatim, não o fallback genérico", async () => {
+    mockCommands({
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_scenarios_cmd: [{ id: "scn-1", name: "Cenário A", person_id: "p1" }],
+      get_scenario_forecast_cmd: baseCompare(),
+      list_scenario_transactions_cmd: [],
+      list_recurrence_targets_cmd: [],
+      list_obligations_cmd: [
+        {
+          id: "ob-1",
+          person_id: "p1",
+          name: "Aluguel",
+          match_desc: "aluguel",
+          match_section: null,
+          kind: "saida",
+        },
+      ],
+      obligation_items_cmd: [
+        {
+          line_item_id: "li-1",
+          transaction_id: "t-1",
+          amount_cents: 100000,
+          description: "Aluguel",
+          date: "2099-08-05",
+        },
+      ],
+      set_scenario_override_cmd: () =>
+        Promise.reject(
+          new Error(
+            "esta alteração zeraria a célula de 2099-08-05, que ainda tem itens que você não está alterando — a soma dos itens da nota passa do total, então suprimir este apagaria os irmãos junto. Ajuste o total da nota na origem antes de simular.",
+          ),
+        ),
+    });
+    render(<HorizonteScreen />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Simular cenário" }));
+    await user.click(await screen.findByRole("button", { name: "Cenário A" }));
+    await user.selectOptions(screen.getByLabelText("Alvo"), "obl:ob-1");
+    await user.click(
+      await screen.findByRole("button", { name: "Confirmar alteração" }),
+    );
+
+    // A orientação didática da fronteira (qual célula, por quê, o que fazer) chega ao usuário —
+    // sem ela cairia no fallback "Não foi possível concluir a ação".
+    expect(await screen.findByText(/zeraria a célula/)).toBeInTheDocument();
+  });
+
+  it("Confirmar fica desabilitado quando a prévia reporta 0 ocorrências afetadas", async () => {
+    mockCommands({
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_scenarios_cmd: [{ id: "scn-1", name: "Cenário A", person_id: "p1" }],
+      get_scenario_forecast_cmd: baseCompare(),
+      list_scenario_transactions_cmd: [],
+      list_recurrence_targets_cmd: [],
+      list_obligations_cmd: [
+        {
+          id: "ob-1",
+          person_id: "p1",
+          name: "Aluguel",
+          match_desc: "aluguel",
+          match_section: null,
+          kind: "saida",
+        },
+      ],
+      // Única ocorrência é histórica (antes do mês corrente) → 0 afetadas na projeção.
+      obligation_items_cmd: [
+        {
+          line_item_id: "li-old",
+          transaction_id: "t-old",
+          amount_cents: 100000,
+          description: "Aluguel",
+          date: "2000-01-05",
+        },
+      ],
+    });
+    render(<HorizonteScreen />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Simular cenário" }));
+    await user.click(await screen.findByRole("button", { name: "Cenário A" }));
+    await user.selectOptions(screen.getByLabelText("Alvo"), "obl:ob-1");
+
+    expect(await screen.findByText(/Isto afeta 0 ocorrências/)).toBeInTheDocument();
+    // Não deixa criar um override morto que ocuparia o slot único do alvo sem efeito.
+    expect(screen.getByRole("button", { name: "Confirmar alteração" })).toBeDisabled();
   });
 
   // -------------------------------------------------------------------------

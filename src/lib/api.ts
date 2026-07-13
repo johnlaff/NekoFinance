@@ -1123,8 +1123,8 @@ export function deleteScenarioTransaction(
 }
 
 /** Uma linha hipotética crua do cenário. `loan_id` presente = linha de um empréstimo (agrupe
- * por ele). A descrição pode carregar o sufixo `#repl:...` de uma substituição — remova-o ao
- * exibir (ver `stripScenarioMarker`). */
+ * por ele); `override_id` presente = linha de uma série de substituição (some com o override em
+ * cascata). */
 export interface ScenarioTransactionRow {
   id: string;
   type: string;
@@ -1132,6 +1132,7 @@ export interface ScenarioTransactionRow {
   description: string;
   date: string;
   loan_id: string | null;
+  override_id: string | null;
 }
 
 /** Lista as linhas hipotéticas do cenário — a fonte da lista editável do side-sheet (permite
@@ -1142,14 +1143,13 @@ export function listScenarioTransactions(
   return invoke("list_scenario_transactions_cmd", { scenarioId });
 }
 
-/** A linha hipotética de substituição de um override `replace` (opcional): o backend a cria
- * junto com o override e a marca com `#repl:<override_id>` no fim da descrição — é isso que
- * permite ao compare fundir velho→novo numa única entrada de `changes`. A UI deve REMOVER o
- * sufixo `#repl:...`/`#loan:...` ao exibir descrições. Defaults: `txn_type = "expense"`,
- * `is_fixed = true`. */
+/** A SÉRIE de substituição de um override `replace` (opcional): o backend gera UMA linha por
+ * ocorrência suprimida (datas derivadas do alvo, `>= from_date`), todas donas do `override_id`
+ * via FK — é isso que permite ao compare fundir velho→novo e faz a série morrer em cascata com o
+ * alvo. Sem campo de data (as datas vêm do alvo). `amount_cents` é o novo valor de CADA
+ * ocorrência. Defaults: `txn_type = "expense"`, `is_fixed = true`. */
 export interface ReplacementInput {
   amount_cents: number;
-  date: string;
   description?: string | null;
   txn_type?: string | null;
   payment_method?: string | null;
@@ -1176,6 +1176,33 @@ export function setScenarioOverride(input: {
     recurrenceId: input.recurrenceId ?? null,
     replacement: input.replacement ?? null,
   });
+}
+
+/** Uma recorrência REAL do livro-razão, oferecível como alvo de override. A tabela `recurrence`
+ * não guarda rótulo — ele vem da descrição da ocorrência mais antiga. */
+export interface RecurrenceTarget {
+  id: string;
+  description: string;
+  frequency: string;
+  first_date: string;
+}
+
+/** Recorrências com ≥ 1 ocorrência real, para o grupo "Recorrências" do seletor de alvo. */
+export function listRecurrenceTargets(): Promise<RecurrenceTarget[]> {
+  return invoke("list_recurrence_targets_cmd");
+}
+
+/** Uma ocorrência real de uma recorrência (data + magnitude) — o análogo de `obligationItems`
+ * para recorrências: alimenta a prévia "afeta N ocorrências". */
+export interface RecurrenceOccurrence {
+  date: string;
+  amount_cents: number;
+}
+
+export function recurrenceOccurrences(
+  recurrenceId: string,
+): Promise<RecurrenceOccurrence[]> {
+  return invoke("recurrence_occurrences_cmd", { recurrenceId });
 }
 
 /** O compare de forecast real × cenário — o núcleo do "e se". */
