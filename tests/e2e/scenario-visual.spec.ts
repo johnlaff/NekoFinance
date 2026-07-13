@@ -92,20 +92,35 @@ const COMPARE = {
   },
 };
 
+// Empréstimo como entidade: as linhas apontam para `loan_id` e os parâmetros vivem em
+// `list_scenario_loans_cmd` (fonte do cabeçalho do grupo e do formulário de edição).
+const LOAN_ENTITY = {
+  id: "loan-abc",
+  scenario_id: "s1",
+  principal_cents: 40_000,
+  rate_bps: 200,
+  term_months: 12,
+  disbursement_date: "2026-06-10",
+  first_installment_date: "2026-07-09",
+  description: "Empréstimo",
+};
+
 const LOAN_TXNS = [
   {
     id: "l0",
     type: "income",
     amount: 40_000,
-    description: "Empréstimo #loan:abc:200",
+    description: "Empréstimo",
     date: "2026-06-10",
+    loan_id: "loan-abc",
   },
   ...Array.from({ length: 12 }, (_, i) => ({
     id: `p${i + 1}`,
     type: "expense" as const,
     amount: 3_782,
-    description: `Empréstimo parcela ${i + 1}/12 #loan:abc:200`,
+    description: `Empréstimo parcela ${i + 1}/12`,
     date: `${2026 + Math.floor((6 + i) / 12)}-${String(((6 + i) % 12) + 1).padStart(2, "0")}-09`,
+    loan_id: "loan-abc",
   })),
 ];
 
@@ -120,6 +135,7 @@ for (const theme of ["dark", "light"] as const) {
     await mockTauri(page, {
       list_scenarios_cmd: [{ id: "s1", name: COMPARE.scenario_name, person_id: "p1" }],
       list_scenario_transactions_cmd: LOAN_TXNS,
+      list_scenario_loans_cmd: [LOAN_ENTITY],
       list_obligations_cmd: [],
       get_scenario_forecast_cmd: COMPARE,
       price_installment_cmd: 94_560,
@@ -165,6 +181,7 @@ test("estados: hover do gráfico e sheet sem cenário — dark", async ({ page }
   await mockTauri(page, {
     list_scenarios_cmd: [{ id: "s1", name: COMPARE.scenario_name, person_id: "p1" }],
     list_scenario_transactions_cmd: [],
+    list_scenario_loans_cmd: [],
     list_obligations_cmd: [],
     get_scenario_forecast_cmd: COMPARE,
   });

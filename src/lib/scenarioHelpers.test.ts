@@ -1,36 +1,37 @@
 import { describe, expect, it } from "vitest";
 import {
   CHART_LABEL_MIN_GAP,
+  bpsToRateInput,
+  centsToAmountInput,
   niceChartScale,
-  parseLoanMarker,
   placeChartEndLabels,
 } from "./scenarioHelpers";
 
 // ---------------------------------------------------------------------------
-// parseLoanMarker — o inverso do stripScenarioMarker para o marcador #loan: em
-// vez de APAGAR o sufixo, INTERPRETA (groupId + taxa) para a UI agrupar as
-// linhas de um mesmo empréstimo. Mesma âncora de fim do parser do backend.
+// Prefill do formulário de edição do empréstimo — os inversos dos parses do
+// formulário: os valores persistidos precisam voltar EXATAMENTE no formato que
+// `parseBRLToCents`/`Math.round(Number(raw) * 100)` aceitam de volta.
 // ---------------------------------------------------------------------------
 
-describe("parseLoanMarker", () => {
-  it("extrai groupId e rateBps do sufixo #loan", () => {
-    expect(parseLoanMarker("Empréstimo #loan:abc-123:250")).toEqual({
-      groupId: "abc-123",
-      rateBps: 250,
-    });
-    expect(parseLoanMarker("Empréstimo parcela 3/12 #loan:g1:200")).toEqual({
-      groupId: "g1",
-      rateBps: 200,
-    });
+describe("centsToAmountInput", () => {
+  it("formata centavos como valor de input pt-BR com milhar", () => {
+    expect(centsToAmountInput(120000)).toBe("1.200,00");
+    expect(centsToAmountInput(1000000)).toBe("10.000,00");
+    expect(centsToAmountInput(123456)).toBe("1.234,56");
   });
 
-  it("'#loan:' no MEIO do texto é dado do usuário — não é marcador", () => {
-    expect(parseLoanMarker("Pagamento #loan:xyz do consórcio")).toBeNull();
+  it("valores pequenos não ganham separador de milhar", () => {
+    expect(centsToAmountInput(9950)).toBe("99,50");
+    expect(centsToAmountInput(5)).toBe("0,05");
   });
+});
 
-  it("descrição sem marcador (ou com #repl) rende null", () => {
-    expect(parseLoanMarker("Aluguel")).toBeNull();
-    expect(parseLoanMarker("Netflix #repl:ob1:2026-07-01")).toBeNull();
+describe("bpsToRateInput", () => {
+  it("converte bps em taxa percentual sem zeros à direita", () => {
+    expect(bpsToRateInput(200)).toBe("2");
+    expect(bpsToRateInput(185)).toBe("1,85");
+    expect(bpsToRateInput(50)).toBe("0,5");
+    expect(bpsToRateInput(0)).toBe("0");
   });
 });
 

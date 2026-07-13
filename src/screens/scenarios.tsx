@@ -6,13 +6,14 @@
  * Sheets — todo write passa pelos comandos `scenario_*`/`add_scenario_transaction`,
  * que já isolam a linha hipotética via `scenario_id`.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   X,
   Plus,
   Trash2,
   Repeat,
   Landmark,
+  Pencil,
   CircleDollarSign,
   ArrowRight,
   TrendingUp,
@@ -27,6 +28,9 @@ import {
   listScenarios,
   addScenarioTransaction,
   createScenarioLoan,
+  updateScenarioLoan,
+  deleteScenarioLoan,
+  listScenarioLoans,
   deleteScenarioTransaction,
   listScenarioTransactions,
   setScenarioOverride,
@@ -35,6 +39,7 @@ import {
   priceInstallment,
   type Scenario,
   type ScenarioCompareDto,
+  type ScenarioLoanRow,
   type ScenarioTransactionRow,
   type Obligation,
 } from "../lib/api";
@@ -59,13 +64,16 @@ import {
 } from "../lib/nkFormat";
 import { performanceStatus, custoVidaStatus } from "./totaisStatus";
 import { kindToFields } from "../lib/movement";
+import { motionEnabled } from "../lib/motion";
 import {
   stripScenarioMarker,
   addMonthsISO,
   placeChartEndLabels,
   niceChartScale,
-  parseLoanMarker,
+  centsToAmountInput,
+  bpsToRateInput,
 } from "../lib/scenarioHelpers";
+import { SR_ONLY } from "../design-system/srOnly";
 import { Money, SignedMoney } from "../design-system/components/Money";
 import { Button } from "../design-system/components/Button";
 import { Disclosure } from "../design-system/components/Disclosure";
@@ -187,12 +195,7 @@ export function ScenarioSheet({
           onSelectScenario={onSelectScenario}
         />
         {activeScenarioId && (
-          <>
-            <AddHypotheticalSection scenarioId={activeScenarioId} />
-            <HypotheticalList scenarioId={activeScenarioId} />
-            <OverrideSection scenarioId={activeScenarioId} />
-            <LoanSection scenarioId={activeScenarioId} />
-          </>
+          <ScenarioWorkbench key={activeScenarioId} scenarioId={activeScenarioId} />
         )}
       </div>
     </dialog>
@@ -339,6 +342,70 @@ function ScenarioPicker({
   );
 }
 
+/** Pedido de edição de um empréstimo: além da entidade, carrega quantas linhas o grupo perdeu
+ * por ajuste fino (lixeira por linha) — salvar a edição regenera a série e as restaura, e o
+ * formulário precisa avisar antes. */
+interface LoanEditRequest {
+  loan: ScenarioLoanRow;
+  missingRows: number;
+}
+
+type LoanSaved =
+  { kind: "created"; loanId: string } | { kind: "updated"; loanId: string };
+
+/** Estado partilhado do ciclo de vida do empréstimo entre a lista (grupos com Editar/Remover)
+ * e o formulário (criação/edição): montado com `key={scenarioId}` no sheet, então trocar de
+ * cenário zera edição, realce e anúncio. A região live é o canal de sucesso para leitores de
+ * tela; o foco/realce visual acontece no grupo da lista. */
+/** Último empréstimo salvo (criado ou editado). `tick` é monotônico e cumpre dois papéis:
+ * refazer o foco/flash quando o MESMO empréstimo é salvo de novo, e forçar uma mutação de DOM
+ * na região aria-live (o <span> remonta via key) quando duas ações seguidas produzem o mesmo
+ * texto — sem isso a região não reanuncia a segunda. */
+interface SavedLoanReceipt {
+  loanId: string;
+  text: string;
+  tick: number;
+}
+
+function ScenarioWorkbench({ scenarioId }: { scenarioId: string }) {
+  const [editing, setEditing] = useState<LoanEditRequest | null>(null);
+  const [receipt, setReceipt] = useState<SavedLoanReceipt | null>(null);
+
+  return (
+    <>
+      <AddHypotheticalSection scenarioId={scenarioId} />
+      <HypotheticalList
+        scenarioId={scenarioId}
+        createdLoanId={receipt?.loanId ?? null}
+        createdTick={receipt?.tick ?? 0}
+        editingLoanId={editing?.loan.id ?? null}
+        onEditLoan={setEditing}
+      />
+      <OverrideSection scenarioId={scenarioId} />
+      <LoanSection
+        key={editing?.loan.id ?? "new"}
+        scenarioId={scenarioId}
+        editing={editing}
+        onCancelEdit={() => setEditing(null)}
+        onSaved={(saved: LoanSaved) => {
+          if (saved.kind === "updated") setEditing(null);
+          setReceipt((r) => ({
+            loanId: saved.loanId,
+            text:
+              saved.kind === "created"
+                ? "Empréstimo adicionado ao cenário."
+                : "Empréstimo atualizado — parcelas regeradas.",
+            tick: (r?.tick ?? 0) + 1,
+          }));
+        }}
+      />
+      <p aria-live="polite" style={SR_ONLY}>
+        {receipt && <span key={receipt.tick}>{receipt.text}</span>}
+      </p>
+    </>
+  );
+}
+
 function AddHypotheticalSection({ scenarioId }: { scenarioId: string }) {
   const [kind, setKind] = useState<MovementType>("saida");
   const [description, setDescription] = useState("");
@@ -443,30 +510,44 @@ function AddHypotheticalSection({ scenarioId }: { scenarioId: string }) {
   );
 }
 
-/** Linhas de um mesmo empréstimo simulado, reconhecidas pelo marcador `#loan:<groupId>`. */
+/** Linhas de um mesmo empréstimo simulado, reconhecidas por `loan_id`; `loan` traz os
+ * parâmetros persistidos (cabeçalho do grupo + formulário de edição). */
 interface LoanGroup {
-  groupId: string;
+  loanId: string;
+  loan: ScenarioLoanRow | null;
   principal: ScenarioTransactionRow | null;
   installments: ScenarioTransactionRow[];
-  /** Total ESPERADO de parcelas (do rótulo "parcela i/N"); difere de `installments.length`
-   *  num grupo parcial (falha no meio da criação) — que precisa ficar visível e deletável. */
-  expectedTotal: number;
 }
 
-/** "Empréstimo parcela 3/12" → 12; sem rótulo de parcela rende null. */
-function expectedInstallments(description: string): number | null {
-  const m = /parcela \d+\/(\d+)\s*$/.exec(stripScenarioMarker(description));
-  return m ? parseInt(m[1]!, 10) : null;
+interface HypotheticalListProps {
+  scenarioId: string;
+  /** Empréstimo recém-criado/atualizado: o grupo recebe foco + realce breve. */
+  createdLoanId: string | null;
+  /** Muda a cada salvamento — refaz o foco mesmo quando o alvo é o mesmo empréstimo. */
+  createdTick: number;
+  /** Empréstimo aberto no formulário de edição: o grupo fica marcado. */
+  editingLoanId: string | null;
+  onEditLoan: (request: LoanEditRequest) => void;
 }
 
-function HypotheticalList({ scenarioId }: { scenarioId: string }) {
+function HypotheticalList({
+  scenarioId,
+  createdLoanId,
+  createdTick,
+  editingLoanId,
+  onEditLoan,
+}: HypotheticalListProps) {
   const listQ = useCommand(`scenario_transactions:${scenarioId}`, () =>
     listScenarioTransactions(scenarioId),
   );
+  const loansQ = useCommand(`scenario_loans:${scenarioId}`, () =>
+    listScenarioLoans(scenarioId),
+  );
   const rows = listQ.data ?? [];
+  const loans = loansQ.data ?? [];
   const [error, setError] = useState<string | null>(null);
 
-  async function remove(txnId: string) {
+  async function removeRow(txnId: string) {
     setError(null);
     try {
       await deleteScenarioTransaction(scenarioId, txnId);
@@ -479,35 +560,40 @@ function HypotheticalList({ scenarioId }: { scenarioId: string }) {
     }
   }
 
+  async function removeLoan(loanId: string) {
+    setError(null);
+    try {
+      await deleteScenarioLoan(scenarioId, loanId);
+      invalidateCommands();
+    } catch (err) {
+      invalidateCommands();
+      setError(scenarioErrorMessage(err));
+    }
+  }
+
   // Um principal + N parcelas geram N+1 pills idênticos e tornam empréstimos longos monótonos.
-  // O grupo por marcador `#loan` colapsa no padrão lump-expand do DS; as demais linhas seguem
+  // O grupo por `loan_id` colapsa no padrão lump-expand do DS; as demais linhas seguem
   // soltas na ordem original.
   const singles: ScenarioTransactionRow[] = [];
   const groupsById = new Map<string, ScenarioTransactionRow[]>();
   for (const r of rows) {
-    const marker = parseLoanMarker(r.description);
-    if (marker) {
-      const list = groupsById.get(marker.groupId) ?? [];
+    if (r.loan_id) {
+      const list = groupsById.get(r.loan_id) ?? [];
       list.push(r);
-      groupsById.set(marker.groupId, list);
+      groupsById.set(r.loan_id, list);
     } else {
       singles.push(r);
     }
   }
-  const groups: LoanGroup[] = [...groupsById.entries()].map(([groupId, list]) => {
+  const groups: LoanGroup[] = [...groupsById.entries()].map(([loanId, list]) => {
     const principal = list.find((r) => r.type === "income") ?? null;
     // Parcelas em ordem CRONOLÓGICA: o backend lista por data decrescente, e um empréstimo
     // lido de trás pra frente ("parcela 12, 11, 10…") parece um bug de datas.
     const installments = list
       .filter((r) => r.type !== "income")
       .toSorted((a, b) => a.date.localeCompare(b.date));
-    // MAIOR N entre as parcelas restantes (não a primeira): robusto a descrição fora do
-    // padrão no meio do grupo; com todas as parcelas excluídas, 0 — o summary trata.
-    const ns = installments
-      .map((r) => expectedInstallments(r.description))
-      .filter((n): n is number => n != null);
-    const expectedTotal = ns.length > 0 ? Math.max(...ns) : installments.length;
-    return { groupId, principal, installments, expectedTotal };
+    const loan = loans.find((l) => l.id === loanId) ?? null;
+    return { loanId, loan, principal, installments };
   });
 
   if (listQ.loading) return null;
@@ -546,7 +632,7 @@ function HypotheticalList({ scenarioId }: { scenarioId: string }) {
         type="button"
         className="scn-txn-row__del"
         aria-label={`Remover "${stripScenarioMarker(r.description)}" do cenário`}
-        onClick={() => void remove(r.id)}
+        onClick={() => void removeRow(r.id)}
       >
         <Trash2 size={14} strokeWidth={1.75} />
       </button>
@@ -563,67 +649,202 @@ function HypotheticalList({ scenarioId }: { scenarioId: string }) {
       )}
       <div className="scn-txn-list">
         {singles.map((r) => txnRow(r))}
-        {groups.map((g) => {
-          const anyRow = g.principal ?? g.installments[0];
-          if (!anyRow) return null;
-          const label = stripScenarioMarker(anyRow.description).replace(
-            / parcela \d+\/\d+$/,
-            "",
-          );
-          const complete = g.installments.length === g.expectedTotal;
-          const installmentCents = Math.abs(g.installments[0]?.amount ?? 0);
-          return (
-            <Disclosure
-              key={g.groupId}
-              className="scn-loan-group"
-              title={label}
-              {...(complete ? {} : { accent: "warn" as const })}
-              // Grupo PARCIAL nasce aberto: as linhas órfãs precisam estar visíveis e
-              // deletáveis de cara (o fluxo de recuperação da falha no meio da criação).
-              defaultOpen={!complete}
-              summary={
-                complete ? (
-                  <>
-                    {g.principal && (
-                      <>
-                        Recebe{" "}
-                        <Money cents={Math.abs(g.principal.amount)} size="inherit" />
-                        {" · "}
-                      </>
-                    )}
-                    {/* Grupo sem parcela nenhuma (todas excluídas à mão): não inventa
-                        "Paga 0× de R$ 0,00" — diz o que restou. */}
-                    {g.installments.length > 0 ? (
-                      <>
-                        Paga {g.expectedTotal}× de{" "}
-                        <Money cents={installmentCents} size="inherit" />
-                      </>
-                    ) : (
-                      <>Sem parcelas restantes</>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    Incompleto — {g.installments.length} de {g.expectedTotal} parcelas
-                    criadas
-                  </>
-                )
-              }
-            >
-              <div className="scn-txn-list scn-loan-group__rows">
-                {g.principal && txnRow(g.principal, "Principal")}
-                {g.installments.map((r) => {
-                  const m = /parcela (\d+\/\d+)/.exec(
-                    stripScenarioMarker(r.description),
-                  );
-                  return txnRow(r, m ? `Parcela ${m[1]}` : undefined);
-                })}
-              </div>
-            </Disclosure>
-          );
-        })}
+        {groups.map((g) => (
+          <LoanGroupItem
+            key={g.loanId}
+            group={g}
+            isNew={g.loanId === createdLoanId}
+            focusTick={createdTick}
+            isEditing={g.loanId === editingLoanId}
+            onEdit={onEditLoan}
+            onRemove={removeLoan}
+            renderRow={txnRow}
+          />
+        ))}
       </div>
     </section>
+  );
+}
+
+/** "O principal + 12 parcelas saem do cenário." — a confirmação de remover o grupo nomeia o
+ * que morre, com o plural certo para cada combinação de linhas presentes. */
+function loanDeathNote(hasPrincipal: boolean, installmentCount: number): string {
+  if (hasPrincipal && installmentCount > 0) {
+    const s = installmentCount === 1 ? "parcela" : "parcelas";
+    return `O principal + ${installmentCount} ${s} saem do cenário.`;
+  }
+  if (hasPrincipal) return "O principal sai do cenário.";
+  return installmentCount === 1
+    ? "A parcela restante sai do cenário."
+    : `As ${installmentCount} parcelas saem do cenário.`;
+}
+
+interface LoanGroupItemProps {
+  group: LoanGroup;
+  isNew: boolean;
+  /** Muda a cada salvamento — refaz o recibo (scroll/foco) mesmo re-salvando o mesmo alvo. */
+  focusTick: number;
+  isEditing: boolean;
+  onEdit: (request: LoanEditRequest) => void;
+  onRemove: (loanId: string) => Promise<void>;
+  renderRow: (r: ScenarioTransactionRow, label?: string) => ReactNode;
+}
+
+function LoanGroupItem({
+  group: g,
+  isNew,
+  focusTick,
+  isEditing,
+  onEdit,
+  onRemove,
+  renderRow,
+}: LoanGroupItemProps) {
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const confirmRef = useRef<HTMLDivElement>(null);
+  const wasConfirming = useRef(false);
+
+  // Recibo da criação/edição: rola até o grupo e move o foco para o cabeçalho do Disclosure —
+  // o realce visual fica no CSS (`.scn-loan-flash`, que colapsa sob reduced-motion).
+  useEffect(() => {
+    if (!isNew) return;
+    const el = rootRef.current;
+    if (!el) return;
+    el.scrollIntoView?.({
+      behavior: motionEnabled() ? "smooth" : "auto",
+      block: "nearest",
+    });
+    el.querySelector<HTMLElement>(".nk-disc__head")?.focus({ preventScroll: true });
+  }, [isNew, focusTick]);
+
+  // A troca botões→confirmação desmonta o botão "Remover" que tinha o foco; sem gestão o foco
+  // cai no <body> bem no momento da ação destrutiva. Foca o bloco do aviso (não o botão
+  // destrutivo — Enter repetido não pode confirmar sem querer); cancelar devolve ao "Remover".
+  useEffect(() => {
+    if (confirmRemove) {
+      confirmRef.current?.focus({ preventScroll: true });
+    } else if (wasConfirming.current) {
+      rootRef.current
+        ?.querySelector<HTMLElement>(".scn-loan-group__actions button:last-of-type")
+        ?.focus({ preventScroll: true });
+    }
+    wasConfirming.current = confirmRemove;
+  }, [confirmRemove]);
+
+  const anyRow = g.principal ?? g.installments[0];
+  if (!anyRow) return null;
+  const label =
+    g.loan?.description ??
+    stripScenarioMarker(anyRow.description).replace(/ parcela \d+\/\d+$/, "");
+  const installmentCents = Math.abs(g.installments[0]?.amount ?? 0);
+  // Linhas que a lixeira removeu deste grupo: a edição regenera a série e as restaura — o
+  // formulário avisa antes de salvar.
+  const presentRows = g.installments.length + (g.principal ? 1 : 0);
+  const missingRows = g.loan ? Math.max(0, g.loan.term_months + 1 - presentRows) : 0;
+
+  async function confirmRemoval() {
+    if (busy) return;
+    setBusy(true);
+    await onRemove(g.loanId);
+    setBusy(false);
+    setConfirmRemove(false);
+  }
+
+  return (
+    <div ref={rootRef} className={isNew ? "scn-loan-flash" : undefined}>
+      <Disclosure
+        className={"scn-loan-group" + (isEditing ? " scn-loan-group--editing" : "")}
+        title={label}
+        {...(isEditing
+          ? {
+              accent: "brass" as const,
+              icon: <Pencil size={14} strokeWidth={1.75} />,
+            }
+          : {})}
+        defaultOpen={isNew || isEditing}
+        summary={
+          <>
+            {g.principal && (
+              <>
+                Recebe <Money cents={Math.abs(g.principal.amount)} size="inherit" />
+                {" · "}
+              </>
+            )}
+            {/* Grupo só com o principal (parcelas excluídas à mão): não inventa
+                "Paga 0× de R$ 0,00". */}
+            {g.installments.length > 0 && (
+              <>
+                Paga {g.installments.length}× de{" "}
+                <Money cents={installmentCents} size="inherit" />
+              </>
+            )}
+          </>
+        }
+      >
+        {g.loan &&
+          (confirmRemove ? (
+            <div
+              role="alert"
+              className="scn-loan-group__confirm"
+              ref={confirmRef}
+              tabIndex={-1}
+            >
+              <p className="scn-hint">
+                {loanDeathNote(g.principal != null, g.installments.length)}
+              </p>
+              <div className="scn-loan-group__actions">
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={() => void confirmRemoval()}
+                  disabled={busy}
+                >
+                  {busy ? "Removendo…" : "Remover empréstimo"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setConfirmRemove(false)}
+                  disabled={busy}
+                >
+                  Cancelar
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="scn-loan-group__actions">
+              <Button
+                size="sm"
+                variant="secondary"
+                iconLeft={<Pencil size={13} strokeWidth={1.75} />}
+                onClick={() => onEdit({ loan: g.loan!, missingRows })}
+                disabled={isEditing}
+              >
+                {isEditing ? "Em edição…" : "Editar"}
+              </Button>
+              {/* Remover também trava durante a edição: apagar o alvo do formulário aberto
+                  deixaria a edição órfã (salvar iria falhar contra um id que não existe). */}
+              <Button
+                size="sm"
+                variant="ghost"
+                iconLeft={<Trash2 size={13} strokeWidth={1.75} />}
+                onClick={() => setConfirmRemove(true)}
+                disabled={isEditing}
+              >
+                Remover
+              </Button>
+            </div>
+          ))}
+        <div className="scn-txn-list scn-loan-group__rows">
+          {g.principal && renderRow(g.principal, "Principal")}
+          {g.installments.map((r) => {
+            const m = /parcela (\d+\/\d+)/.exec(stripScenarioMarker(r.description));
+            return renderRow(r, m ? `Parcela ${m[1]}` : undefined);
+          })}
+        </div>
+      </Disclosure>
+    </div>
   );
 }
 
@@ -778,14 +999,53 @@ function OverrideSection({ scenarioId }: { scenarioId: string }) {
   );
 }
 
-function LoanSection({ scenarioId }: { scenarioId: string }) {
-  const [principal, setPrincipal] = useState("");
-  const [termMonths, setTermMonths] = useState("12");
-  const [ratePct, setRatePct] = useState("2");
-  const [firstDate, setFirstDate] = useState(() => addMonthsISO(todayISO(), 1));
-  const [description, setDescription] = useState("Empréstimo");
+interface LoanSectionProps {
+  scenarioId: string;
+  /** Modo edição: formulário pré-preenchido com os parâmetros persistidos; salvar regenera a
+   * série sob a mesma identidade. Montado com `key={loan.id}` — trocar o alvo zera o estado. */
+  editing: LoanEditRequest | null;
+  onCancelEdit: () => void;
+  onSaved: (saved: LoanSaved) => void;
+}
+
+function LoanSection({ scenarioId, editing, onCancelEdit, onSaved }: LoanSectionProps) {
+  const [principal, setPrincipal] = useState(() =>
+    editing ? centsToAmountInput(editing.loan.principal_cents) : "",
+  );
+  const [termMonths, setTermMonths] = useState(() =>
+    editing ? String(editing.loan.term_months) : "12",
+  );
+  const [ratePct, setRatePct] = useState(() =>
+    editing ? bpsToRateInput(editing.loan.rate_bps) : "2",
+  );
+  const [disbursementDate, setDisbursementDate] = useState(
+    () => editing?.loan.disbursement_date ?? todayISO(),
+  );
+  const [firstDate, setFirstDate] = useState(
+    () => editing?.loan.first_installment_date ?? addMonthsISO(todayISO(), 1),
+  );
+  const [description, setDescription] = useState(
+    () => editing?.loan.description ?? "Empréstimo",
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Passo extra do modo edição quando há parcelas removidas à mão: o primeiro "Salvar" só
+   * arma o aviso de restauração; o clique seguinte confirma. */
+  const [confirmRestore, setConfirmRestore] = useState(false);
+  const sectionRef = useRef<HTMLElement>(null);
+
+  // Entrar em edição traz o formulário à vista com o foco no primeiro campo — ele fica no fim
+  // do sheet e a ação partiu do grupo, lá em cima na lista.
+  useEffect(() => {
+    if (!editing) return;
+    const el = sectionRef.current;
+    if (!el) return;
+    el.scrollIntoView?.({
+      behavior: motionEnabled() ? "smooth" : "auto",
+      block: "start",
+    });
+    el.querySelector<HTMLElement>("input")?.focus({ preventScroll: true });
+  }, [editing]);
 
   // Fronteira estrita: entrada não-numérica NÃO vira 0% silenciosamente e taxa negativa não
   // passa. Cada campo tem validade explícita; o regex ancorado (sem sinal, sem hex/científico)
@@ -805,11 +1065,13 @@ function LoanSection({ scenarioId }: { scenarioId: string }) {
   // Só sinaliza o erro quando o campo tem conteúdo inválido (campo vazio/pristino não grita).
   const termShowError = termRaw !== "" && !termValid;
   const rateShowError = rateRaw !== "" && !rateValid;
+  const disbursementDateValid = /^\d{4}-\d{2}-\d{2}$/.test(disbursementDate);
+  const disbursementDateShowError = !disbursementDateValid;
   const firstDateValid = /^\d{4}-\d{2}-\d{2}$/.test(firstDate);
   const firstDateShowError = !firstDateValid;
 
   const numericInputsValid = principalValid && termValid && rateValid;
-  const validInputs = numericInputsValid && firstDateValid;
+  const validInputs = numericInputsValid && disbursementDateValid && firstDateValid;
 
   const previewKey = numericInputsValid
     ? `price_installment:${principalCents}:${rateBps}:${term}`
@@ -832,19 +1094,34 @@ function LoanSection({ scenarioId }: { scenarioId: string }) {
       previewQ.data === undefined
     )
       return;
+    // Salvar uma edição restaura o que a lixeira removeu: o primeiro clique arma o aviso; só
+    // o clique com o aviso à vista aplica.
+    if (editing && editing.missingRows > 0 && !confirmRestore) {
+      setConfirmRestore(true);
+      return;
+    }
     setBusy(true);
     setError(null);
+    const input = {
+      scenarioId,
+      principalCents,
+      termMonths: term,
+      rateBps,
+      disbursementDate,
+      firstInstallmentDate: firstDate,
+      description: description.trim() || "Empréstimo",
+    };
     try {
-      await createScenarioLoan({
-        scenarioId,
-        principalCents,
-        termMonths: term,
-        rateBps,
-        firstInstallmentDate: firstDate,
-        description: description.trim() || "Empréstimo",
-      });
-      invalidateCommands();
-      setPrincipal("");
+      if (editing) {
+        await updateScenarioLoan(editing.loan.id, input);
+        invalidateCommands();
+        onSaved({ kind: "updated", loanId: editing.loan.id });
+      } else {
+        const loanId = await createScenarioLoan(input);
+        invalidateCommands();
+        setPrincipal("");
+        onSaved({ kind: "created", loanId });
+      }
       setBusy(false);
     } catch (err) {
       setBusy(false);
@@ -853,9 +1130,9 @@ function LoanSection({ scenarioId }: { scenarioId: string }) {
   }
 
   return (
-    <section aria-labelledby="scn-loan-title">
+    <section aria-labelledby="scn-loan-title" ref={sectionRef}>
       <p className="scn-section-title" id="scn-loan-title">
-        Dimensionar um empréstimo
+        {editing ? "Editar empréstimo" : "Dimensionar um empréstimo"}
       </p>
       <div className="scn-field">
         <label htmlFor="scn-loan-desc">Descrição</label>
@@ -911,22 +1188,56 @@ function LoanSection({ scenarioId }: { scenarioId: string }) {
           )}
         </div>
       </div>
-      <div className="scn-field" style={{ marginTop: 8 }}>
-        <label htmlFor="scn-loan-first">Data da 1ª parcela</label>
-        <input
-          id="scn-loan-first"
-          type="date"
-          value={firstDate}
-          onChange={(e) => setFirstDate(e.target.value)}
-          required
-          aria-invalid={firstDateShowError || undefined}
-          aria-describedby={firstDateShowError ? "scn-loan-first-err" : undefined}
-        />
-        {firstDateShowError && (
-          <p id="scn-loan-first-err" className="scn-error">
-            Informe a data da primeira parcela.
-          </p>
-        )}
+      <div className="scn-row2" style={{ marginTop: 8 }}>
+        <div className="scn-field">
+          {/* O trigger do popover é um <button> nativo — vive AO LADO do label, nunca dentro
+              (label com controle aninhado disputa o clique com o foco do input). O texto do
+              trigger é só para leitor de tela; visualmente fica o marcador "i". */}
+          <span className="scn-label-row">
+            <label htmlFor="scn-loan-disb">Data do desembolso</label>
+            <InfoPopover
+              term={{
+                title: "Desembolso",
+                body: "O dia em que o dinheiro do empréstimo entra na sua conta. A partir dessa data o valor recebido soma na trajetória do cenário — as parcelas seguem o próprio calendário.",
+              }}
+            >
+              <span style={SR_ONLY}>O que é a data do desembolso</span>
+            </InfoPopover>
+          </span>
+          <input
+            id="scn-loan-disb"
+            type="date"
+            value={disbursementDate}
+            onChange={(e) => setDisbursementDate(e.target.value)}
+            required
+            aria-invalid={disbursementDateShowError || undefined}
+            aria-describedby={
+              disbursementDateShowError ? "scn-loan-disb-err" : undefined
+            }
+          />
+          {disbursementDateShowError && (
+            <p id="scn-loan-disb-err" className="scn-error">
+              Informe a data em que o dinheiro entra.
+            </p>
+          )}
+        </div>
+        <div className="scn-field">
+          <label htmlFor="scn-loan-first">Data da 1ª parcela</label>
+          <input
+            id="scn-loan-first"
+            type="date"
+            value={firstDate}
+            onChange={(e) => setFirstDate(e.target.value)}
+            required
+            aria-invalid={firstDateShowError || undefined}
+            aria-describedby={firstDateShowError ? "scn-loan-first-err" : undefined}
+          />
+          {firstDateShowError && (
+            <p id="scn-loan-first-err" className="scn-error">
+              Informe a data da primeira parcela.
+            </p>
+          )}
+        </div>
       </div>
       {numericInputsValid && previewQ.loading && (
         <p className="scn-preview" aria-live="polite">
@@ -965,22 +1276,44 @@ function LoanSection({ scenarioId }: { scenarioId: string }) {
           {error}
         </p>
       )}
-      <Button
-        size="sm"
-        variant="primary"
-        iconLeft={<Landmark size={14} strokeWidth={1.75} />}
-        onClick={() => void confirm()}
-        disabled={
-          busy ||
-          !validInputs ||
-          previewQ.loading ||
-          previewQ.error !== null ||
-          previewQ.data === undefined
-        }
-        className="scn-loan-confirm"
-      >
-        {busy ? "Criando…" : "Adicionar empréstimo ao cenário"}
-      </Button>
+      {confirmRestore && editing && (
+        <p role="alert" className="scn-hint scn-loan-restore-note">
+          Este empréstimo tem {editing.missingRows}{" "}
+          {editing.missingRows === 1 ? "linha removida" : "linhas removidas"} à mão —
+          salvar regenera a série completa e as restaura.
+        </p>
+      )}
+      <div className="scn-loan-form-actions">
+        <Button
+          size="sm"
+          variant="primary"
+          iconLeft={<Landmark size={14} strokeWidth={1.75} />}
+          onClick={() => void confirm()}
+          disabled={
+            busy ||
+            !validInputs ||
+            previewQ.loading ||
+            previewQ.error !== null ||
+            previewQ.data === undefined
+          }
+          className="scn-loan-confirm"
+        >
+          {busy
+            ? editing
+              ? "Salvando…"
+              : "Criando…"
+            : editing
+              ? confirmRestore
+                ? "Restaurar e salvar"
+                : "Salvar alterações"
+              : "Adicionar empréstimo ao cenário"}
+        </Button>
+        {editing && (
+          <Button size="sm" variant="ghost" onClick={onCancelEdit} disabled={busy}>
+            Cancelar edição
+          </Button>
+        )}
+      </div>
     </section>
   );
 }
