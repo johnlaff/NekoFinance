@@ -1064,20 +1064,57 @@ export function addScenarioTransaction(input: {
   });
 }
 
-/** Cria o principal e todas as parcelas do empréstimo hipotético em uma única transação. */
+/** Parâmetros de um empréstimo hipotético — a série (principal + parcelas) é sempre derivada
+ * deles pela tabela PRICE no backend, nunca editada linha a linha. */
 export interface ScenarioLoanInput {
   scenarioId: string;
   principalCents: number;
   termMonths: number;
   rateBps: number;
+  disbursementDate: string;
   firstInstallmentDate: string;
   description: string;
 }
 
-export function createScenarioLoan(input: ScenarioLoanInput): Promise<void> {
+/** A entidade `scenario_loan` persistida: fonte do cabeçalho do grupo e do formulário de
+ * edição pré-preenchido. */
+export interface ScenarioLoanRow {
+  id: string;
+  scenario_id: string;
+  principal_cents: number;
+  rate_bps: number;
+  term_months: number;
+  disbursement_date: string;
+  first_installment_date: string;
+  description: string;
+}
+
+/** Cria a entidade + principal + todas as parcelas em uma única transação. Devolve o id do
+ * empréstimo — a UI foca/realça o grupo recém-criado por ele. */
+export function createScenarioLoan(input: ScenarioLoanInput): Promise<string> {
   return invoke("create_scenario_loan_cmd", { input });
 }
 
+/** Atualiza os parâmetros e REGENERA a série inteira sob a mesma identidade, em uma única
+ * transação — parcelas removidas à mão são restauradas (a UI avisa antes). */
+export function updateScenarioLoan(
+  loanId: string,
+  input: ScenarioLoanInput,
+): Promise<void> {
+  return invoke("update_scenario_loan_cmd", { loanId, input });
+}
+
+/** Remove o empréstimo inteiro (entidade + principal + parcelas), atomicamente. */
+export function deleteScenarioLoan(scenarioId: string, loanId: string): Promise<void> {
+  return invoke("delete_scenario_loan_cmd", { scenarioId, loanId });
+}
+
+export function listScenarioLoans(scenarioId: string): Promise<ScenarioLoanRow[]> {
+  return invoke("list_scenario_loans_cmd", { scenarioId });
+}
+
+/** Apagar a última linha restante de um empréstimo apaga também o registro do empréstimo, na
+ * mesma transação (um empréstimo existe enquanto tiver ao menos uma linha). */
 export function deleteScenarioTransaction(
   scenarioId: string,
   txnId: string,
@@ -1085,14 +1122,16 @@ export function deleteScenarioTransaction(
   return invoke("delete_scenario_transaction_cmd", { scenarioId, txnId });
 }
 
-/** Uma linha hipotética crua do cenário: a descrição ainda carrega os sufixos de
- * marca (`#loan:...`/`#repl:...`) — remova-os ao exibir (ver `stripScenarioMarker`). */
+/** Uma linha hipotética crua do cenário. `loan_id` presente = linha de um empréstimo (agrupe
+ * por ele). A descrição pode carregar o sufixo `#repl:...` de uma substituição — remova-o ao
+ * exibir (ver `stripScenarioMarker`). */
 export interface ScenarioTransactionRow {
   id: string;
   type: string;
   amount: number;
   description: string;
   date: string;
+  loan_id: string | null;
 }
 
 /** Lista as linhas hipotéticas do cenário — a fonte da lista editável do side-sheet (permite

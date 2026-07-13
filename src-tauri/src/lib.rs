@@ -97,6 +97,9 @@ pub fn run() {
             scenarios::get_scenario_forecast_cmd,
             scenarios::price_installment_cmd,
             commands::create_scenario_loan_cmd,
+            commands::update_scenario_loan_cmd,
+            commands::delete_scenario_loan_cmd,
+            commands::list_scenario_loans_cmd,
         ])
         .setup(|app| {
             use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
@@ -133,6 +136,13 @@ pub fn run() {
                     .run(&pool)
                     .await
                     .map_err(|e| format!("migrações do banco: {e}"))?;
+
+                // Backfill dos empréstimos legados marcados por sufixo `#loan:` na descrição →
+                // entidades `scenario_loan`. Idempotente (a marca some ao processar); precisa de
+                // lógica de parse/derivação, por isso vive em Rust e não numa migração SQL.
+                scenarios::backfill_scenario_loans(&pool)
+                    .await
+                    .map_err(|e| format!("backfill de empréstimos de cenário: {e}"))?;
 
                 Ok::<_, String>(pool)
             });

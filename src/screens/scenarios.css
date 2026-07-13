@@ -168,6 +168,13 @@
   font-size: var(--fs-label);
   color: var(--text-muted);
 }
+/* Rótulo + marcador "i" de popover didático lado a lado (o trigger é um <button> nativo e não
+ * pode viver dentro do <label>). */
+.scn-label-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
 /* Respiro entre o último campo e o CTA de cada form do sheet: sem isto o botão encosta na
  * borda do input e o anel de foco fica por trás dele (overlap visível no WebView2). Os CTAs
  * são os únicos <button> filhos DIRETOS de uma section — os demais botões vivem em wrappers. */
@@ -265,6 +272,62 @@
 }
 .scn-loan-group__rows .scn-txn-row {
   background: var(--surface);
+}
+.scn-loan-group__actions {
+  display: flex;
+  gap: 8px;
+  margin: 2px 0 10px;
+}
+/* Sem chassi próprio (borda+fundo dentro do pill do grupo seria card-dentro-de-card): o aviso
+ * é texto com a cor de perigo + as ações. O foco programático pousa aqui ao abrir — o anel
+ * vem da regra global de :focus-visible; o radius só molda esse anel. */
+.scn-loan-group__confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 2px 0 10px;
+  border-radius: var(--radius-xs);
+}
+.scn-loan-group__confirm .scn-hint {
+  color: var(--danger-400);
+}
+
+/* Grupo cujo formulário de edição está aberto: borda brass espelha o aviso de restauração e o
+ * título do form — o accent do Disclosure sozinho só colore o ícone. */
+.scn-loan-group--editing {
+  border-color: var(--brass-500);
+}
+
+/* Recibo visual da criação/edição: um flash de fundo jade que decai — animation (roda uma vez
+ * e morre sozinha), nunca transition. O foco no cabeçalho do grupo é o recibo não-visual.
+ * Duração via token `--dur-*` (colapsa para 0ms sob reduced-motion/toggle "off" — ver
+ * tokens/motion.css), no mesmo padrão do `scn-sheet-in`. */
+:root:not([data-motion="off"]) .scn-loan-flash .scn-loan-group {
+  animation: scn-loan-flash-bg calc(var(--dur-deliberate) * 3) var(--ease-standard) 1;
+}
+@keyframes scn-loan-flash-bg {
+  0% {
+    background: var(--jade-tint);
+    border-color: var(--jade-400);
+  }
+  100% {
+    background: var(--bg-subtle);
+    border-color: var(--border);
+  }
+}
+
+.scn-loan-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.scn-loan-restore-note {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: var(--bw-hair) solid var(--brass-500);
+  background: var(--brass-tint);
+  color: var(--text);
 }
 
 .scn-error {

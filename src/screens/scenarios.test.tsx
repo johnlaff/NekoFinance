@@ -644,6 +644,215 @@ describe("HorizonteScreen — side-sheet 'Simular cenário'", () => {
     expect(screen.getByRole("button", { name: "Confirmar alteração" })).toBeDisabled();
     expect(screen.queryByText(/Isto afeta/)).not.toBeInTheDocument();
   });
+
+  // -------------------------------------------------------------------------
+  // Ciclo de vida do empréstimo (entidade scenario_loan): agrupamento por
+  // loan_id, remover em grupo com confirmação nomeando o que morre, editar
+  // regenerando a série (com aviso de restauração) e desembolso explícito.
+  // -------------------------------------------------------------------------
+
+  const LOAN_ENTITY = {
+    id: "loan-1",
+    scenario_id: "scn-1",
+    principal_cents: 1_000_000,
+    rate_bps: 185,
+    term_months: 2,
+    disbursement_date: "2026-08-05",
+    first_installment_date: "2026-09-05",
+    description: "Empréstimo do carro",
+  };
+  const LOAN_ROWS = [
+    {
+      id: "r-p",
+      type: "income",
+      amount: 1_000_000,
+      description: "Empréstimo do carro",
+      date: "2026-08-05",
+      loan_id: "loan-1",
+    },
+    {
+      id: "r-1",
+      type: "expense",
+      amount: 515_000,
+      description: "Empréstimo do carro parcela 1/2",
+      date: "2026-09-05",
+      loan_id: "loan-1",
+    },
+    {
+      id: "r-2",
+      type: "expense",
+      amount: 515_000,
+      description: "Empréstimo do carro parcela 2/2",
+      date: "2026-10-05",
+      loan_id: "loan-1",
+    },
+  ];
+
+  async function openScenarioWithLoan(
+    extraCommands: Record<string, unknown> = {},
+    rows: unknown[] = LOAN_ROWS,
+  ) {
+    mockCommands({
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_scenarios_cmd: [{ id: "scn-1", name: "Cenário A", person_id: "p1" }],
+      get_scenario_forecast_cmd: baseCompare(),
+      list_scenario_transactions_cmd: rows,
+      list_scenario_loans_cmd: [LOAN_ENTITY],
+      list_obligations_cmd: [],
+      price_installment_cmd: 515_000,
+      ...extraCommands,
+    });
+    render(<HorizonteScreen />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Simular cenário" }));
+    await user.click(await screen.findByRole("button", { name: "Cenário A" }));
+    return user;
+  }
+
+  it("agrupa as linhas do empréstimo por loan_id com o recibo 'Recebe X · Paga N× de Y'", async () => {
+    const user = await openScenarioWithLoan();
+
+    const groupHead = await screen.findByRole("button", { name: /Recebe/ });
+    expect(groupHead).toHaveTextContent("Recebe");
+    expect(groupHead).toHaveTextContent("Paga 2× de");
+
+    await user.click(groupHead);
+    expect(await screen.findByText("Principal")).toBeInTheDocument();
+    expect(screen.getByText("Parcela 1/2")).toBeInTheDocument();
+    expect(screen.getByText("Parcela 2/2")).toBeInTheDocument();
+  });
+
+  it("remover o empréstimo pede confirmação nomeando o que morre e chama o comando atômico", async () => {
+    const calls: unknown[] = [];
+    const user = await openScenarioWithLoan({
+      delete_scenario_loan_cmd: (args: unknown) => {
+        calls.push(args);
+      },
+    });
+
+    await user.click(await screen.findByRole("button", { name: /Recebe/ }));
+    await user.click(screen.getByRole("button", { name: "Remover" }));
+
+    // A confirmação nomeia exatamente o que sai do cenário — nunca um "tem certeza?" vago.
+    const note = await screen.findByText("O principal + 2 parcelas saem do cenário.");
+    expect(note).toBeInTheDocument();
+    expect(calls).toHaveLength(0);
+    // O botão "Remover" clicado desmontou: o foco pousa no bloco do aviso (nunca no botão
+    // destrutivo — Enter repetido não pode confirmar sem querer, nem cair no <body>).
+    expect(document.activeElement).toBe(note.closest('[role="alert"]'));
+
+    await user.click(screen.getByRole("button", { name: "Remover empréstimo" }));
+    await waitFor(() => {
+      expect(calls).toHaveLength(1);
+    });
+    expect(calls[0]).toMatchObject({ scenarioId: "scn-1", loanId: "loan-1" });
+  });
+
+  it("editar reabre o formulário pré-preenchido e salvar regenera a série pela mesma identidade", async () => {
+    const calls: unknown[] = [];
+    const user = await openScenarioWithLoan({
+      update_scenario_loan_cmd: (args: unknown) => {
+        calls.push(args);
+      },
+    });
+
+    await user.click(await screen.findByRole("button", { name: /Recebe/ }));
+    await user.click(screen.getByRole("button", { name: "Editar" }));
+
+    const form = await screen.findByRole("region", { name: "Editar empréstimo" });
+    // Com a edição aberta, remover o alvo travaria o formulário órfão — ambos desabilitam.
+    expect(screen.getByRole("button", { name: "Em edição…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remover" })).toBeDisabled();
+    expect(within(form).getByLabelText("Valor")).toHaveValue("10.000,00");
+    expect(within(form).getByLabelText("Nº parcelas")).toHaveValue(2);
+    expect(within(form).getByLabelText("Juros a.m. (%)")).toHaveValue("1,85");
+    expect(within(form).getByLabelText("Data do desembolso")).toHaveValue("2026-08-05");
+    expect(within(form).getByLabelText("Data da 1ª parcela")).toHaveValue("2026-09-05");
+    expect(within(form).getByLabelText("Descrição")).toHaveValue("Empréstimo do carro");
+
+    await user.click(within(form).getByRole("button", { name: "Salvar alterações" }));
+    await waitFor(() => {
+      expect(calls).toHaveLength(1);
+    });
+    expect(calls[0]).toMatchObject({
+      loanId: "loan-1",
+      input: {
+        scenarioId: "scn-1",
+        principalCents: 1_000_000,
+        termMonths: 2,
+        rateBps: 185,
+        disbursementDate: "2026-08-05",
+        firstInstallmentDate: "2026-09-05",
+        description: "Empréstimo do carro",
+      },
+    });
+  });
+
+  it("editar um grupo com linha removida à mão avisa a restauração antes de salvar", async () => {
+    const calls: unknown[] = [];
+    // Parcela 2/2 removida pela lixeira: o grupo tem 2 de 3 linhas esperadas.
+    const user = await openScenarioWithLoan(
+      {
+        update_scenario_loan_cmd: (args: unknown) => {
+          calls.push(args);
+        },
+      },
+      LOAN_ROWS.slice(0, 2),
+    );
+
+    await user.click(await screen.findByRole("button", { name: /Recebe/ }));
+    await user.click(screen.getByRole("button", { name: "Editar" }));
+    const form = await screen.findByRole("region", { name: "Editar empréstimo" });
+
+    // Primeiro clique só ARMA o aviso — nada é salvo às cegas.
+    await user.click(within(form).getByRole("button", { name: "Salvar alterações" }));
+    expect(
+      await screen.findByText(/salvar regenera a série completa e as restaura/),
+    ).toBeInTheDocument();
+    expect(calls).toHaveLength(0);
+
+    await user.click(within(form).getByRole("button", { name: "Restaurar e salvar" }));
+    await waitFor(() => {
+      expect(calls).toHaveLength(1);
+    });
+  });
+
+  it("criar envia a data do desembolso (default hoje) e anuncia o sucesso em região live", async () => {
+    const calls: unknown[] = [];
+    const user = await openScenarioWithLoan(
+      {
+        create_scenario_loan_cmd: (args: unknown) => {
+          calls.push(args);
+          return "loan-novo";
+        },
+      },
+      [],
+    );
+
+    const form = await screen.findByRole("region", {
+      name: "Dimensionar um empréstimo",
+    });
+    const disbInput =
+      within(form).getByLabelText<HTMLInputElement>("Data do desembolso");
+    expect(disbInput.value).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    await user.type(within(form).getByLabelText("Valor"), "10.000,00");
+    await user.click(
+      await within(form).findByRole("button", {
+        name: "Adicionar empréstimo ao cenário",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(calls).toHaveLength(1);
+    });
+    expect(calls[0]).toMatchObject({
+      input: { disbursementDate: disbInput.value },
+    });
+    expect(
+      await screen.findByText("Empréstimo adicionado ao cenário."),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("ScenarioCompare — superfície de comparação", () => {

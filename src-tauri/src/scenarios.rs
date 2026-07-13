@@ -8,17 +8,19 @@
 //! PROJEÇÃO do cenário (`get_scenario_forecast`); o forecast real (`get_forecast`) continua
 //! cego à existência de qualquer cenário por meio de `scenario_id IS NULL`.
 //!
-//! CONVENÇÕES DE MARCA NA DESCRIÇÃO (documentadas aqui porque não há coluna própria; a UI remove
-//! os sufixos ao exibir):
+//! EMPRÉSTIMO: uma entidade `scenario_loan` guarda os PARÂMETROS (principal, taxa, prazo, datas
+//! do desembolso e da 1ª parcela); as linhas hipotéticas do grupo (Entrada do principal + N
+//! Saídas das parcelas, geradas por `price_installment`) apontam para ela via
+//! `transaction.loan_id` (FK, `ON DELETE CASCADE`). Criar, editar e remover são cada um uma
+//! única transação SQL; editar REGENERA a série inteira a partir dos parâmetros novos. Apagar a
+//! última linha de um empréstimo apaga o registro na mesma transação — um empréstimo existe
+//! enquanto tiver ao menos uma linha ("sem fantasma"). `get_scenario_forecast` reporta só o
+//! PRIMEIRO grupo (ordem data,id) como `loan`; linhas de grupos seguintes aparecem como
+//! entradas "add" comuns em `changes`. Bancos legados marcavam o grupo com o sufixo
+//! `" #loan:<group_id>:<taxa_bps>"` na descrição — `backfill_scenario_loans` (startup) converte
+//! esses grupos em entidades e remove os sufixos.
 //!
-//! - EMPRÉSTIMO: `create_scenario_loan` marca as linhas hipotéticas de um empréstimo anexando
-//!   `" #loan:<group_id>:<taxa_bps>"` ao FINAL da `description` de CADA linha do grupo (a
-//!   Entrada do principal + as N Saídas/Cartão das parcelas). `get_scenario_forecast` detecta o
-//!   grupo por essa marca (ancorada ao fim — um "#loan:" no meio do texto não conta), usa a
-//!   linha de tipo `income` como o principal e as `expense` como as parcelas (magnitude da
-//!   primeira parcela = o valor da prestação, assumidas iguais — `create_scenario_loan` usa
-//!   `price_installment` para gerá-las). Só o PRIMEIRO grupo (ordem data,id) vira `loan`; os
-//!   grupos seguintes aparecem como entradas "add" comuns em `changes`.
+//! CONVENÇÃO DE MARCA NA DESCRIÇÃO (a UI remove o sufixo ao exibir):
 //!
 //! - SUBSTITUIÇÃO (`replace`): quando `set_scenario_override` recebe `op = "replace"` com um
 //!   `replacement` preenchido, ele mesmo cria a linha hipotética de substituição, anexando
@@ -156,6 +158,7 @@ pub async fn add_scenario_transaction(
         is_fixed,
         to_account_id,
         due_date,
+        None,
     )
     .await
 }
@@ -172,6 +175,7 @@ async fn insert_scenario_transaction(
     is_fixed: bool,
     to_account_id: Option<&str>,
     due_date: Option<&str>,
+    loan_id: Option<&str>,
 ) -> Result<String, String> {
     let description = description.trim();
     if description.is_empty() {
@@ -223,8 +227,8 @@ async fn insert_scenario_transaction(
     sqlx::query(
         "INSERT INTO \"transaction\" \
            (id, type, amount, description, date, payment_method, is_fixed, to_account_id, \
-            is_projection, due_date, scenario_id, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+            is_projection, due_date, scenario_id, loan_id, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)",
     )
     .bind(&id)
     .bind(txn_type)
@@ -237,6 +241,7 @@ async fn insert_scenario_transaction(
     .bind((start > today) as i64)
     .bind(due_date)
     .bind(scenario_id)
+    .bind(loan_id)
     .bind(&now)
     .execute(&mut *connection)
     .await
@@ -245,29 +250,55 @@ async fn insert_scenario_transaction(
 }
 
 /// Apaga uma linha hipotética. Só apaga se `scenario_id` casar — impede apagar uma linha REAL ou
-/// de OUTRO cenário pelo id.
+/// de OUTRO cenário pelo id. Se a linha era a ÚLTIMA de um empréstimo, o registro `scenario_loan`
+/// morre na mesma transação — um empréstimo existe enquanto tiver ao menos uma linha (invariante
+/// "sem fantasma"; o estado "sem parcelas restantes" não existe).
 pub async fn delete_scenario_transaction(
     pool: &SqlitePool,
     scenario_id: &str,
     txn_id: &str,
 ) -> Result<(), String> {
-    let rows = sqlx::query("DELETE FROM \"transaction\" WHERE id = ?1 AND scenario_id = ?2")
-        .bind(txn_id)
-        .bind(scenario_id)
-        .execute(pool)
+    let mut tx = pool
+        .begin()
         .await
-        .map_err(|e| format!("delete_scenario_transaction: {e}"))?;
-    if rows.rows_affected() == 0 {
+        .map_err(|e| format!("delete_scenario_transaction (begin): {e}"))?;
+    let row: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT loan_id FROM \"transaction\" WHERE id = ?1 AND scenario_id = ?2")
+            .bind(txn_id)
+            .bind(scenario_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| format!("delete_scenario_transaction: {e}"))?;
+    let Some((loan_id,)) = row else {
         return Err(format!(
             "scenario transaction not found: {txn_id} (scenario {scenario_id})"
         ));
+    };
+    sqlx::query("DELETE FROM \"transaction\" WHERE id = ?1 AND scenario_id = ?2")
+        .bind(txn_id)
+        .bind(scenario_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("delete_scenario_transaction: {e}"))?;
+    if let Some(loan_id) = loan_id {
+        sqlx::query(
+            "DELETE FROM scenario_loan WHERE id = ?1 \
+             AND NOT EXISTS (SELECT 1 FROM \"transaction\" WHERE loan_id = ?1)",
+        )
+        .bind(&loan_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("delete_scenario_transaction (loan cleanup): {e}"))?;
     }
-    Ok(())
+    tx.commit()
+        .await
+        .map_err(|e| format!("delete_scenario_transaction (commit): {e}"))
 }
 
-/// Uma linha hipotética crua do cenário, para a UI listar/apagar. A descrição chega
-/// com os sufixos de marca (`#loan:`/`#repl:`) ainda anexados — a UI é quem os remove ao exibir
-/// (ver banner do módulo); mantê-los aqui preserva a identidade do grupo/par para quem precisar.
+/// Uma linha hipotética crua do cenário, para a UI listar/apagar. `loan_id` presente = linha de
+/// um empréstimo (a UI agrupa por ele e busca os parâmetros em `list_scenario_loans`). A
+/// descrição pode ainda carregar o sufixo `#repl:` de uma linha de substituição — a UI o remove
+/// ao exibir (ver banner do módulo).
 #[derive(Debug, Serialize, sqlx::FromRow, Clone, PartialEq)]
 pub struct ScenarioTransactionRow {
     pub id: String,
@@ -275,6 +306,7 @@ pub struct ScenarioTransactionRow {
     pub amount: i64,
     pub description: String,
     pub date: String,
+    pub loan_id: Option<String>,
 }
 
 /// Lista as linhas hipotéticas (`transaction.scenario_id = ?`) de um cenário, mais recentes
@@ -286,7 +318,7 @@ pub async fn list_scenario_transactions(
     scenario_id: &str,
 ) -> Result<Vec<ScenarioTransactionRow>, String> {
     sqlx::query_as::<_, ScenarioTransactionRow>(
-        "SELECT id, type, amount, COALESCE(description,'') AS description, date \
+        "SELECT id, type, amount, COALESCE(description,'') AS description, date, loan_id \
          FROM \"transaction\" WHERE scenario_id = ?1 ORDER BY date DESC, id DESC",
     )
     .bind(scenario_id)
@@ -418,6 +450,7 @@ pub async fn set_scenario_override(
             repl.is_fixed.unwrap_or(true),
             None,
             None,
+            None,
         )
         .await
         .map_err(|e| format!("linha de substituição inválida: {e}"))?;
@@ -468,6 +501,7 @@ pub struct ScenarioLoanInput {
     pub principal_cents: i64,
     pub term_months: u32,
     pub rate_bps: i64,
+    pub disbursement_date: String,
     pub first_installment_date: String,
     pub description: String,
 }
@@ -496,6 +530,7 @@ struct ScenarioLoan {
     principal: MoneyCents,
     term: TermMonths,
     rate: RateBps,
+    disbursement_date: NaiveDate,
     first_installment_date: NaiveDate,
     description: String,
 }
@@ -517,6 +552,8 @@ impl TryFrom<ScenarioLoanInput> for ScenarioLoan {
         if input.rate_bps < 0 {
             return Err("taxa deve ser maior ou igual a zero".into());
         }
+        let disbursement_date = NaiveDate::parse_from_str(&input.disbursement_date, "%Y-%m-%d")
+            .map_err(|e| format!("data do desembolso: {e}"))?;
         let first_installment_date =
             NaiveDate::parse_from_str(&input.first_installment_date, "%Y-%m-%d")
                 .map_err(|e| format!("data da primeira parcela: {e}"))?;
@@ -527,6 +564,7 @@ impl TryFrom<ScenarioLoanInput> for ScenarioLoan {
             principal: MoneyCents(input.principal_cents),
             term: TermMonths(input.term_months),
             rate: RateBps(input.rate_bps),
+            disbursement_date,
             first_installment_date,
             description: if description.is_empty() {
                 "Empréstimo".into()
@@ -564,12 +602,7 @@ struct ScenarioLoanLine {
     date: NaiveDate,
 }
 
-fn plan_scenario_loan(
-    loan: &ScenarioLoan,
-    group_id: &str,
-    disbursement_date: NaiveDate,
-) -> Result<Vec<ScenarioLoanLine>, String> {
-    let marker = format!(" #loan:{group_id}:{}", loan.rate.0);
+fn plan_scenario_loan(loan: &ScenarioLoan) -> Result<Vec<ScenarioLoanLine>, String> {
     let installment = MoneyCents(price_installment(
         loan.principal.0,
         loan.rate.0,
@@ -579,8 +612,8 @@ fn plan_scenario_loan(
     lines.push(ScenarioLoanLine {
         kind: ScenarioLoanLineKind::Principal,
         amount: loan.principal,
-        description: format!("{}{marker}", loan.description),
-        date: disbursement_date,
+        description: loan.description.clone(),
+        date: loan.disbursement_date,
     });
 
     for index in 0..loan.term.0 {
@@ -591,12 +624,7 @@ fn plan_scenario_loan(
         lines.push(ScenarioLoanLine {
             kind: ScenarioLoanLineKind::Installment,
             amount: installment,
-            description: format!(
-                "{} parcela {}/{}{marker}",
-                loan.description,
-                index + 1,
-                loan.term.0
-            ),
+            description: format!("{} parcela {}/{}", loan.description, index + 1, loan.term.0),
             date,
         });
     }
@@ -604,28 +632,18 @@ fn plan_scenario_loan(
     Ok(lines)
 }
 
-pub async fn create_scenario_loan(
-    pool: &SqlitePool,
-    input: ScenarioLoanInput,
+/// Insere as linhas planejadas de um empréstimo dentro da transação corrente, todas apontando
+/// para `loan_id`. Compartilhado entre criar e editar (que regenera a série inteira).
+async fn insert_scenario_loan_lines(
+    tx: &mut SqliteConnection,
+    scenario_id: &str,
+    loan_id: &str,
+    lines: Vec<ScenarioLoanLine>,
 ) -> Result<(), String> {
-    let loan = ScenarioLoan::try_from(input)?;
-    if !scenario_exists(pool, loan.scenario_id.as_str()).await? {
-        return Err(format!("scenario not found: {}", loan.scenario_id.as_str()));
-    }
-    let lines = plan_scenario_loan(
-        &loan,
-        &uuid::Uuid::new_v4().to_string(),
-        chrono::Local::now().date_naive(),
-    )?;
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| format!("create_scenario_loan (begin): {e}"))?;
-
     for line in lines {
         insert_scenario_transaction(
-            &mut tx,
-            loan.scenario_id.as_str(),
+            tx,
+            scenario_id,
             line.kind.transaction_type(),
             line.amount.0,
             &line.description,
@@ -634,13 +652,172 @@ pub async fn create_scenario_loan(
             line.kind.is_fixed(),
             None,
             None,
+            Some(loan_id),
         )
         .await?;
     }
+    Ok(())
+}
+
+/// Cria o empréstimo hipotético: entidade `scenario_loan` + principal + N parcelas, numa única
+/// transação. Devolve o id da entidade — a UI foca/realça o grupo recém-criado por ele.
+pub async fn create_scenario_loan(
+    pool: &SqlitePool,
+    input: ScenarioLoanInput,
+) -> Result<String, String> {
+    let loan = ScenarioLoan::try_from(input)?;
+    if !scenario_exists(pool, loan.scenario_id.as_str()).await? {
+        return Err(format!("scenario not found: {}", loan.scenario_id.as_str()));
+    }
+    let lines = plan_scenario_loan(&loan)?;
+    let loan_id = uuid::Uuid::new_v4().to_string();
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| format!("create_scenario_loan (begin): {e}"))?;
+
+    insert_scenario_loan_row(&mut tx, &loan_id, &loan).await?;
+    insert_scenario_loan_lines(&mut tx, loan.scenario_id.as_str(), &loan_id, lines).await?;
 
     tx.commit()
         .await
-        .map_err(|e| format!("create_scenario_loan (commit): {e}"))
+        .map_err(|e| format!("create_scenario_loan (commit): {e}"))?;
+    Ok(loan_id)
+}
+
+async fn insert_scenario_loan_row(
+    tx: &mut SqliteConnection,
+    loan_id: &str,
+    loan: &ScenarioLoan,
+) -> Result<(), String> {
+    sqlx::query(
+        "INSERT INTO scenario_loan \
+           (id, scenario_id, principal_cents, rate_bps, term_months, disbursement_date, \
+            first_installment_date, description) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    )
+    .bind(loan_id)
+    .bind(loan.scenario_id.as_str())
+    .bind(loan.principal.0)
+    .bind(loan.rate.0)
+    .bind(loan.term.0)
+    .bind(loan.disbursement_date.format("%Y-%m-%d").to_string())
+    .bind(loan.first_installment_date.format("%Y-%m-%d").to_string())
+    .bind(&loan.description)
+    .execute(tx)
+    .await
+    .map_err(|e| format!("insert scenario_loan: {e}"))?;
+    Ok(())
+}
+
+/// Edita o empréstimo: valida a posse (`loan_id` pertence ao cenário do input), atualiza os
+/// parâmetros e REGENERA a série inteira (DELETE + re-INSERT) na mesma transação — parcelas
+/// removidas à mão não sobrevivem à re-parametrização (a série é sempre função determinística
+/// dos parâmetros via PRICE; a UI avisa antes de restaurar).
+pub async fn update_scenario_loan(
+    pool: &SqlitePool,
+    loan_id: &str,
+    input: ScenarioLoanInput,
+) -> Result<(), String> {
+    let loan = ScenarioLoan::try_from(input)?;
+    let owner: Option<(String,)> =
+        sqlx::query_as("SELECT scenario_id FROM scenario_loan WHERE id = ?1")
+            .bind(loan_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("update_scenario_loan: {e}"))?;
+    match owner {
+        None => return Err(format!("scenario loan not found: {loan_id}")),
+        Some((scenario_id,)) if scenario_id != loan.scenario_id.as_str() => {
+            return Err(format!(
+                "scenario loan not found: {loan_id} (scenario {})",
+                loan.scenario_id.as_str()
+            ));
+        }
+        Some(_) => {}
+    }
+    let lines = plan_scenario_loan(&loan)?;
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| format!("update_scenario_loan (begin): {e}"))?;
+
+    sqlx::query(
+        "UPDATE scenario_loan SET principal_cents = ?2, rate_bps = ?3, term_months = ?4, \
+         disbursement_date = ?5, first_installment_date = ?6, description = ?7 WHERE id = ?1",
+    )
+    .bind(loan_id)
+    .bind(loan.principal.0)
+    .bind(loan.rate.0)
+    .bind(loan.term.0)
+    .bind(loan.disbursement_date.format("%Y-%m-%d").to_string())
+    .bind(loan.first_installment_date.format("%Y-%m-%d").to_string())
+    .bind(&loan.description)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| format!("update_scenario_loan (update): {e}"))?;
+
+    sqlx::query("DELETE FROM \"transaction\" WHERE loan_id = ?1")
+        .bind(loan_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("update_scenario_loan (delete lines): {e}"))?;
+
+    insert_scenario_loan_lines(&mut tx, loan.scenario_id.as_str(), loan_id, lines).await?;
+
+    tx.commit()
+        .await
+        .map_err(|e| format!("update_scenario_loan (commit): {e}"))
+}
+
+/// Remove o empréstimo inteiro (entidade + principal + parcelas via `ON DELETE CASCADE`) — um
+/// único DELETE, atômico por natureza. Só remove se o empréstimo pertencer ao cenário.
+pub async fn delete_scenario_loan(
+    pool: &SqlitePool,
+    scenario_id: &str,
+    loan_id: &str,
+) -> Result<(), String> {
+    let rows = sqlx::query("DELETE FROM scenario_loan WHERE id = ?1 AND scenario_id = ?2")
+        .bind(loan_id)
+        .bind(scenario_id)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("delete_scenario_loan: {e}"))?;
+    if rows.rows_affected() == 0 {
+        return Err(format!(
+            "scenario loan not found: {loan_id} (scenario {scenario_id})"
+        ));
+    }
+    Ok(())
+}
+
+/// Parâmetros de um empréstimo do cenário, para a UI montar o cabeçalho do grupo e pré-preencher
+/// o formulário de edição.
+#[derive(Debug, Serialize, sqlx::FromRow, Clone, PartialEq, Eq)]
+pub struct ScenarioLoanRow {
+    pub id: String,
+    pub scenario_id: String,
+    pub principal_cents: i64,
+    pub rate_bps: i64,
+    pub term_months: u32,
+    pub disbursement_date: String,
+    pub first_installment_date: String,
+    pub description: String,
+}
+
+pub async fn list_scenario_loans(
+    pool: &SqlitePool,
+    scenario_id: &str,
+) -> Result<Vec<ScenarioLoanRow>, String> {
+    sqlx::query_as::<_, ScenarioLoanRow>(
+        "SELECT id, scenario_id, principal_cents, rate_bps, term_months, disbursement_date, \
+         first_installment_date, description \
+         FROM scenario_loan WHERE scenario_id = ?1 ORDER BY created_at, id",
+    )
+    .bind(scenario_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("list_scenario_loans: {e}"))
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
@@ -654,10 +831,11 @@ pub struct LoanBreakdown {
     pub reserve_months_after_financing: Option<f64>,
 }
 
-/// Extrai `(group_id, rate_bps)` da marca `" #loan:<group_id>:<rate_bps>"` ao FINAL da descrição
-/// (convenção documentada no banner do módulo). Ancorada: a marca precisa estar no fim (o parse
-/// da taxa consome até o último caractere) e precedida de espaço/início — um "#loan:" solto no
-/// meio do texto não é varrido. `None` se a descrição não carrega a marca.
+/// Extrai `(group_id, rate_bps)` da marca LEGADA `" #loan:<group_id>:<rate_bps>"` ao FINAL da
+/// descrição (só `backfill_scenario_loans` ainda a encontra — nenhum caminho novo a escreve).
+/// Ancorada: a marca precisa estar no fim (o parse da taxa consome até o último caractere) e
+/// precedida de espaço/início — um "#loan:" solto no meio do texto não é varrido. `None` se a
+/// descrição não carrega a marca.
 fn parse_loan_marker(description: &str) -> Option<(String, i64)> {
     let description = description.trim_end();
     let idx = description.rfind("#loan:")?;
@@ -673,6 +851,177 @@ fn parse_loan_marker(description: &str) -> Option<(String, i64)> {
     // `parse::<i64>` só aceita dígitos até o fim → âncora natural no final da descrição.
     let rate_bps: i64 = rate_str.trim().parse().ok()?;
     Some((group_id.to_string(), rate_bps))
+}
+
+/// Remove a marca legada `#loan:` do fim da descrição (chamado só quando `parse_loan_marker`
+/// casou — a âncora já foi validada).
+fn strip_loan_marker(description: &str) -> String {
+    let trimmed = description.trim_end();
+    match trimmed.rfind("#loan:") {
+        Some(idx) => trimmed[..idx].trim_end().to_string(),
+        None => trimmed.to_string(),
+    }
+}
+
+/// Rótulo `"… parcela <i>/<N>"` no FIM da descrição (já sem marcador) → `(i, N)`.
+fn parse_installment_label(description: &str) -> Option<(u32, u32)> {
+    let rest = description.trim_end().rsplit_once(" parcela ")?.1;
+    let (i_str, n_str) = rest.split_once('/')?;
+    let i: u32 = i_str.trim().parse().ok()?;
+    let n: u32 = n_str.trim().parse().ok()?;
+    Some((i, n))
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct LegacyLoanRow {
+    id: String,
+    #[sqlx(rename = "type")]
+    ttype: String,
+    amount: i64,
+    date: String,
+    description: String,
+    scenario_id: String,
+}
+
+/// Parâmetros derivados de um grupo legado — só quando a derivação é LIMPA (ver
+/// `derive_legacy_loan`).
+struct DerivedLoan {
+    principal_cents: i64,
+    rate_bps: i64,
+    term_months: u32,
+    disbursement_date: NaiveDate,
+    first_installment_date: NaiveDate,
+    description: String,
+}
+
+/// Deriva os parâmetros do empréstimo de um grupo legado marcado com `#loan:`. Derivação limpa
+/// exige: taxa idêntica em todas as linhas; exatamente UMA linha `income` (principal + data do
+/// desembolso); ≥1 parcelas `expense`, todas com rótulo `"parcela i/N"` de mesmo `N` (1–480),
+/// `i` distintos e valor idêntico. Parcelas removidas à mão não impedem a derivação: o prazo vem
+/// do rótulo e a data da 1ª parcela é recuada `i−1` meses a partir da parcela de menor `i`.
+/// `None` = grupo vira linhas soltas (só perde o sufixo, nada é apagado).
+fn derive_legacy_loan(rows: &[(&LegacyLoanRow, i64)]) -> Option<DerivedLoan> {
+    let rate_bps = rows.first()?.1;
+    if rows.iter().any(|(_, rate)| *rate != rate_bps) {
+        return None;
+    }
+
+    let mut principal: Option<(&LegacyLoanRow, NaiveDate)> = None;
+    let mut installments: Vec<(u32, u32, i64, NaiveDate)> = Vec::new();
+    for (row, _) in rows {
+        let date = NaiveDate::parse_from_str(&row.date, "%Y-%m-%d").ok()?;
+        match row.ttype.as_str() {
+            "income" => {
+                if principal.is_some() {
+                    return None; // dois principais: não há derivação única.
+                }
+                principal = Some((row, date));
+            }
+            "expense" => {
+                let (i, n) = parse_installment_label(&strip_loan_marker(&row.description))?;
+                installments.push((i, n, row.amount.abs(), date));
+            }
+            _ => return None,
+        }
+    }
+
+    let (principal_row, disbursement_date) = principal?;
+    let (_, term_months, first_amount, _) = *installments.first()?;
+    if !(1..=480).contains(&term_months) {
+        return None;
+    }
+    let mut seen = std::collections::HashSet::new();
+    for &(i, n, amount, _) in &installments {
+        if n != term_months || amount != first_amount || i < 1 || i > n || !seen.insert(i) {
+            return None;
+        }
+    }
+    let &(min_i, _, _, min_date) = installments.iter().min_by_key(|(i, ..)| *i)?;
+    let first_installment_date = min_date.checked_sub_months(Months::new(min_i - 1))?;
+
+    Some(DerivedLoan {
+        principal_cents: principal_row.amount.abs(),
+        rate_bps,
+        term_months,
+        disbursement_date,
+        first_installment_date,
+        description: strip_loan_marker(&principal_row.description),
+    })
+}
+
+/// Converte grupos legados marcados com `" #loan:<group_id>:<rate_bps>"` em entidades
+/// `scenario_loan`, apontando as linhas via `loan_id` e removendo o sufixo das descrições; grupo
+/// sem derivação limpa só perde o sufixo (vira linhas soltas comuns — nada é apagado). Cada
+/// grupo é processado numa transação própria. Roda no startup logo após as migrações e é
+/// idempotente: depois de processada, nenhuma descrição termina com o marcador.
+pub async fn backfill_scenario_loans(pool: &SqlitePool) -> Result<(), String> {
+    let rows: Vec<LegacyLoanRow> = sqlx::query_as(
+        "SELECT id, type, amount, date, COALESCE(description,'') AS description, scenario_id \
+         FROM \"transaction\" WHERE scenario_id IS NOT NULL AND loan_id IS NULL \
+         ORDER BY date, id",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("backfill_scenario_loans: {e}"))?;
+
+    let mut order: Vec<(String, String)> = Vec::new();
+    let mut groups: HashMap<(String, String), Vec<(&LegacyLoanRow, i64)>> = HashMap::new();
+    for row in &rows {
+        let Some((group_id, rate_bps)) = parse_loan_marker(&row.description) else {
+            continue;
+        };
+        let key = (row.scenario_id.clone(), group_id);
+        if !groups.contains_key(&key) {
+            order.push(key.clone());
+        }
+        groups.entry(key).or_default().push((row, rate_bps));
+    }
+
+    for key in order {
+        let group = &groups[&key];
+        let derived = derive_legacy_loan(group);
+        let mut tx = pool
+            .begin()
+            .await
+            .map_err(|e| format!("backfill_scenario_loans (begin): {e}"))?;
+        let loan_id = match derived {
+            Some(loan) => {
+                let id = uuid::Uuid::new_v4().to_string();
+                sqlx::query(
+                    "INSERT INTO scenario_loan \
+                       (id, scenario_id, principal_cents, rate_bps, term_months, \
+                        disbursement_date, first_installment_date, description) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                )
+                .bind(&id)
+                .bind(&key.0)
+                .bind(loan.principal_cents)
+                .bind(loan.rate_bps)
+                .bind(loan.term_months)
+                .bind(loan.disbursement_date.format("%Y-%m-%d").to_string())
+                .bind(loan.first_installment_date.format("%Y-%m-%d").to_string())
+                .bind(&loan.description)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("backfill_scenario_loans (insert): {e}"))?;
+                Some(id)
+            }
+            None => None,
+        };
+        for (row, _) in group {
+            sqlx::query("UPDATE \"transaction\" SET description = ?2, loan_id = ?3 WHERE id = ?1")
+                .bind(&row.id)
+                .bind(strip_loan_marker(&row.description))
+                .bind(&loan_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("backfill_scenario_loans (update): {e}"))?;
+        }
+        tx.commit()
+            .await
+            .map_err(|e| format!("backfill_scenario_loans (commit): {e}"))?;
+    }
+    Ok(())
 }
 
 /// Extrai o `override_id` da marca `" #repl:<override_id>"` ao FINAL da descrição de uma linha
@@ -774,6 +1123,7 @@ struct HypoTxnRow {
     #[allow(dead_code)]
     recurrence_id: Option<String>,
     description: Option<String>,
+    loan_id: Option<String>,
 }
 
 /// Linhas REAIS (`scenario_id IS NULL`) num intervalo `[start, end]`. `inclusive_start` decide
@@ -810,7 +1160,8 @@ async fn load_real_rows(
 }
 
 /// Superset-select das linhas HIPOTÉTICAS do cenário (`t.scenario_id = ?`), com `id`/`description`/
-/// `recurrence_id` a mais (o cenário nunca sofre override; a marca de empréstimo vive na descrição).
+/// `recurrence_id`/`loan_id` a mais (o cenário nunca sofre override; `loan_id` identifica o grupo
+/// de empréstimo).
 async fn load_hypothetical_rows(
     pool: &SqlitePool,
     scenario_id: &str,
@@ -821,13 +1172,13 @@ async fn load_hypothetical_rows(
     const INCLUSIVE: &str = "SELECT t.id, t.type AS \"type\", t.amount, t.date, \
          COALESCE(t.payment_method,'') AS payment_method, \
          t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity, \
-         t.recurrence_id, t.description \
+         t.recurrence_id, t.description, t.loan_id \
          FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
          WHERE t.date >= ?2 AND t.date <= ?3 AND t.scenario_id = ?1";
     const EXCLUSIVE: &str = "SELECT t.id, t.type AS \"type\", t.amount, t.date, \
          COALESCE(t.payment_method,'') AS payment_method, \
          t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity, \
-         t.recurrence_id, t.description \
+         t.recurrence_id, t.description, t.loan_id \
          FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
          WHERE t.date > ?2 AND t.date <= ?3 AND t.scenario_id = ?1";
     let sql = if inclusive_start {
@@ -848,8 +1199,8 @@ async fn load_hypothetical_rows(
 /// lista de `changes` precisam ver o grupo INTEIRO, independentemente das janelas de data do
 /// encadeamento (`date >= today`) e das métricas (`date >= month_start`), que existem só para o
 /// cálculo de saldo e recortariam linhas do grupo (uma parcela além do horizonte, uma linha antes
-/// da janela). `ORDER BY date, id` torna determinística a escolha do "primeiro" grupo `#loan`
-/// reportado.
+/// da janela). `ORDER BY date, id` torna determinística a escolha do "primeiro" grupo de
+/// empréstimo reportado.
 async fn load_all_hypothetical_rows(
     pool: &SqlitePool,
     scenario_id: &str,
@@ -857,7 +1208,7 @@ async fn load_all_hypothetical_rows(
     const SQL: &str = "SELECT t.id, t.type AS \"type\", t.amount, t.date, \
          COALESCE(t.payment_method,'') AS payment_method, \
          t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity, \
-         t.recurrence_id, t.description \
+         t.recurrence_id, t.description, t.loan_id \
          FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
          WHERE t.scenario_id = ?1 ORDER BY t.date, t.id";
     sqlx::query_as(SQL)
@@ -993,36 +1344,34 @@ fn map_hypo_rows(rows: &[HypoTxnRow]) -> Vec<CashflowEvent> {
         .collect()
 }
 
-/// Detecta um grupo de empréstimo entre TODAS as linhas hipotéticas do cenário (convenção
-/// `#loan:<id>:<taxa>` no banner do módulo) e monta o `LoanBreakdown`. Só o PRIMEIRO grupo na
-/// ordem (data, id) é reportado — devolve também o `group_id` para o builder de `changes`
-/// excluir SÓ as linhas desse grupo (as de um segundo financiamento aparecem como "add" comuns,
-/// nunca somem do DTO). `None` se nenhuma linha carrega a marca.
+/// Detecta um grupo de empréstimo entre TODAS as linhas hipotéticas do cenário (linhas com
+/// `loan_id`) e monta o `LoanBreakdown`. Só o PRIMEIRO grupo na ordem (data, id) é reportado —
+/// devolve também o `loan_id` para o builder de `changes` excluir SÓ as linhas desse grupo (as
+/// de um segundo financiamento aparecem como "add" comuns, nunca somem do DTO). A taxa vem da
+/// entidade (`rate_by_loan`); principal/parcela/prazo derivam das LINHAS PRESENTES — apagar
+/// parcelas finais (quitação antecipada simulada) reduz o total pago reportado. `None` se
+/// nenhuma linha pertence a um empréstimo.
 fn detect_loan(
     hypo_rows: &[HypoTxnRow],
+    rate_by_loan: &HashMap<String, i64>,
     scenario_cost_of_living_cents: i64,
     scenario_reserve_after_cents: i64,
 ) -> Option<(String, LoanBreakdown)> {
     let mut group_id: Option<String> = None;
-    let mut rate_bps = 0i64;
     let mut principal_cents = 0i64;
     let mut installment_cents = 0i64;
     let mut term_months = 0u32;
 
     for row in hypo_rows {
-        let Some(desc) = &row.description else {
-            continue;
-        };
-        let Some((gid, rate)) = parse_loan_marker(desc) else {
+        let Some(lid) = &row.loan_id else {
             continue;
         };
         if let Some(existing) = &group_id {
-            if existing != &gid {
+            if existing != lid {
                 continue; // só o primeiro grupo (ordem data,id) é reportado.
             }
         } else {
-            group_id = Some(gid);
-            rate_bps = rate;
+            group_id = Some(lid.clone());
         }
         if row.ttype == "income" {
             principal_cents = row.amount.abs();
@@ -1035,6 +1384,7 @@ fn detect_loan(
     }
 
     let group_id = group_id?;
+    let rate_bps = rate_by_loan.get(&group_id).copied().unwrap_or(0);
     if term_months == 0 {
         return None;
     }
@@ -1301,8 +1651,14 @@ pub(crate) async fn get_scenario_forecast_inner(
         .map(|p| p.balance_cents)
         .unwrap_or(0)
         - reserve_floor_cents;
+    let rate_by_loan: HashMap<String, i64> = list_scenario_loans(pool, scenario_id)
+        .await?
+        .into_iter()
+        .map(|l| (l.id, l.rate_bps))
+        .collect();
     let (loan_group_id, loan) = match detect_loan(
         &all_hypo_rows,
+        &rate_by_loan,
         scenario_cost_of_living_cents,
         scenario_reserve_after_cents,
     ) {
@@ -1361,11 +1717,9 @@ pub(crate) async fn get_scenario_forecast_inner(
     }
     for row in &all_hypo_rows {
         let desc = row.description.as_deref().unwrap_or("");
-        // Linha do grupo de empréstimo REPORTADO via `loan` → não duplica. Um SEGUNDO grupo
-        // `#loan:` (não coberto pelo `loan` desta slice) entra como "add" normal.
-        if let Some((gid, _)) = parse_loan_marker(desc)
-            && loan_group_id.as_deref() == Some(gid.as_str())
-        {
+        // Linha do grupo de empréstimo REPORTADO via `loan` → não duplica. Um SEGUNDO
+        // empréstimo (não coberto pelo `loan` desta slice) entra como "add" normal.
+        if row.loan_id.is_some() && row.loan_id == loan_group_id {
             continue;
         }
         // Linha de substituição pareada → já fundida na entrada `replace` acima.
@@ -1574,6 +1928,53 @@ mod tests {
 
     fn d(s: &str) -> NaiveDate {
         NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    /// Semeia um empréstimo direto no banco (entidade + linhas com `loan_id`), sem passar pela
+    /// validação de datas do caminho de criação — os testes de compare usam datas fixas para
+    /// serem determinísticos sob qualquer relógio.
+    #[allow(clippy::too_many_arguments)]
+    async fn seed_loan(
+        p: &SqlitePool,
+        scenario_id: &str,
+        loan_id: &str,
+        rate_bps: i64,
+        principal_cents: i64,
+        term_months: u32,
+        disbursement_date: &str,
+        rows: &[(&str, i64, &str, &str)],
+    ) {
+        sqlx::query(
+            "INSERT INTO scenario_loan (id, scenario_id, principal_cents, rate_bps, \
+             term_months, disbursement_date, first_installment_date, description) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, 'Empréstimo')",
+        )
+        .bind(loan_id)
+        .bind(scenario_id)
+        .bind(principal_cents)
+        .bind(rate_bps)
+        .bind(term_months)
+        .bind(disbursement_date)
+        .execute(p)
+        .await
+        .unwrap();
+        for (index, (ttype, amount, desc, date)) in rows.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO \"transaction\" \
+                 (id, type, amount, description, date, is_projection, scenario_id, loan_id) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7)",
+            )
+            .bind(format!("{loan_id}-row-{index}"))
+            .bind(ttype)
+            .bind(amount)
+            .bind(desc)
+            .bind(date)
+            .bind(scenario_id)
+            .bind(loan_id)
+            .execute(p)
+            .await
+            .unwrap();
+        }
     }
 
     // --- CRUD básico ---
@@ -1876,18 +2277,19 @@ mod tests {
     }
 
     #[test]
-    fn plan_scenario_loan_matches_the_existing_row_format_byte_for_byte() {
+    fn plan_scenario_loan_generates_principal_and_labeled_installments() {
         let loan = ScenarioLoan::try_from(ScenarioLoanInput {
             scenario_id: "scenario-1".into(),
             principal_cents: 100_000,
             term_months: 3,
             rate_bps: 200,
+            disbursement_date: "2030-01-15".into(),
             first_installment_date: "2030-02-15".into(),
             description: "Empréstimo".into(),
         })
         .unwrap();
 
-        let lines = plan_scenario_loan(&loan, "group-1", d("2030-01-15")).unwrap();
+        let lines = plan_scenario_loan(&loan).unwrap();
 
         assert_eq!(
             lines,
@@ -1895,25 +2297,25 @@ mod tests {
                 ScenarioLoanLine {
                     kind: ScenarioLoanLineKind::Principal,
                     amount: MoneyCents(100_000),
-                    description: "Empréstimo #loan:group-1:200".into(),
+                    description: "Empréstimo".into(),
                     date: d("2030-01-15"),
                 },
                 ScenarioLoanLine {
                     kind: ScenarioLoanLineKind::Installment,
                     amount: MoneyCents(34_675),
-                    description: "Empréstimo parcela 1/3 #loan:group-1:200".into(),
+                    description: "Empréstimo parcela 1/3".into(),
                     date: d("2030-02-15"),
                 },
                 ScenarioLoanLine {
                     kind: ScenarioLoanLineKind::Installment,
                     amount: MoneyCents(34_675),
-                    description: "Empréstimo parcela 2/3 #loan:group-1:200".into(),
+                    description: "Empréstimo parcela 2/3".into(),
                     date: d("2030-03-15"),
                 },
                 ScenarioLoanLine {
                     kind: ScenarioLoanLineKind::Installment,
                     amount: MoneyCents(34_675),
-                    description: "Empréstimo parcela 3/3 #loan:group-1:200".into(),
+                    description: "Empréstimo parcela 3/3".into(),
                     date: d("2030-04-15"),
                 },
             ]
@@ -1927,11 +2329,12 @@ mod tests {
             principal: MoneyCents(100_000),
             term: TermMonths(3),
             rate: RateBps(200),
+            disbursement_date: d("2030-01-15"),
             first_installment_date: NaiveDate::MAX.checked_sub_months(Months::new(1)).unwrap(),
             description: "Empréstimo".into(),
         };
 
-        let result = plan_scenario_loan(&loan, "group-1", d("2030-01-15"));
+        let result = plan_scenario_loan(&loan);
 
         assert_eq!(
             result.unwrap_err(),
@@ -1945,6 +2348,10 @@ mod tests {
             principal_cents: 100_000,
             term_months: 3,
             rate_bps: 200,
+            disbursement_date: chrono::Local::now()
+                .date_naive()
+                .format("%Y-%m-%d")
+                .to_string(),
             first_installment_date,
             description: "Empréstimo".into(),
         }
@@ -2038,6 +2445,367 @@ mod tests {
             count, 0,
             "uma falha intermediária desfaz principal e parcelas"
         );
+        let (loan_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM scenario_loan")
+            .fetch_one(&p)
+            .await
+            .unwrap();
+        assert_eq!(loan_count, 0, "a entidade também é desfeita no rollback");
+    }
+
+    // --- Ciclo de vida da entidade scenario_loan ---
+
+    fn future_date(months_ahead: u32) -> String {
+        chrono::Local::now()
+            .date_naive()
+            .checked_add_months(Months::new(months_ahead))
+            .unwrap()
+            .format("%Y-%m-%d")
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn create_scenario_loan_persists_entity_and_linked_rows() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Financiamento").await.unwrap();
+
+        let loan_id = create_scenario_loan(&p, scenario_loan_input(&sc.id, future_date(1)))
+            .await
+            .unwrap();
+
+        let loans = list_scenario_loans(&p, &sc.id).await.unwrap();
+        assert_eq!(loans.len(), 1);
+        let loan = &loans[0];
+        assert_eq!(loan.id, loan_id);
+        assert_eq!(loan.principal_cents, 100_000);
+        assert_eq!(loan.rate_bps, 200);
+        assert_eq!(loan.term_months, 3);
+        assert_eq!(loan.description, "Empréstimo");
+
+        let rows = list_scenario_transactions(&p, &sc.id).await.unwrap();
+        assert_eq!(rows.len(), 4);
+        assert!(
+            rows.iter().all(|r| r.loan_id.as_deref() == Some(&*loan_id)),
+            "todas as linhas apontam para a entidade"
+        );
+        assert!(
+            rows.iter().all(|r| !r.description.contains("#loan:")),
+            "nenhuma descrição carrega o marcador legado"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_scenario_loan_regenerates_the_series_under_the_same_identity() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Financiamento").await.unwrap();
+        let loan_id = create_scenario_loan(&p, scenario_loan_input(&sc.id, future_date(1)))
+            .await
+            .unwrap();
+        // Ajuste fino à mão: remove uma parcela antes de editar.
+        let rows = list_scenario_transactions(&p, &sc.id).await.unwrap();
+        let removed = rows.iter().find(|r| r.r#type == "expense").unwrap();
+        delete_scenario_transaction(&p, &sc.id, &removed.id)
+            .await
+            .unwrap();
+
+        let mut input = scenario_loan_input(&sc.id, future_date(2));
+        input.principal_cents = 200_000;
+        input.term_months = 2;
+        update_scenario_loan(&p, &loan_id, input).await.unwrap();
+
+        let loans = list_scenario_loans(&p, &sc.id).await.unwrap();
+        assert_eq!(loans.len(), 1, "mesma identidade, nenhum grupo novo");
+        assert_eq!(loans[0].id, loan_id);
+        assert_eq!(loans[0].principal_cents, 200_000);
+        assert_eq!(loans[0].term_months, 2);
+
+        let rows = list_scenario_transactions(&p, &sc.id).await.unwrap();
+        assert_eq!(
+            rows.len(),
+            3,
+            "série regenerada por completo (principal + 2 parcelas) — o ajuste fino não sobrevive"
+        );
+        assert!(rows.iter().all(|r| r.loan_id.as_deref() == Some(&*loan_id)));
+        assert!(
+            rows.iter()
+                .any(|r| r.r#type == "income" && r.amount == 200_000),
+            "o principal novo entrou"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_scenario_loan_rejects_a_loan_from_another_scenario() {
+        let p = pool().await;
+        let sc_a = create_scenario(&p, "A").await.unwrap();
+        let sc_b = create_scenario(&p, "B").await.unwrap();
+        let loan_id = create_scenario_loan(&p, scenario_loan_input(&sc_a.id, future_date(1)))
+            .await
+            .unwrap();
+
+        let result =
+            update_scenario_loan(&p, &loan_id, scenario_loan_input(&sc_b.id, future_date(1))).await;
+
+        assert!(
+            result.is_err(),
+            "empréstimo de outro cenário não é editável"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_scenario_loan_rolls_back_entity_and_rows_on_failure() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Financiamento").await.unwrap();
+        let loan_id = create_scenario_loan(&p, scenario_loan_input(&sc.id, future_date(1)))
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TRIGGER fail_edit BEFORE INSERT ON \"transaction\" \
+             WHEN NEW.description LIKE '%parcela 2/2%' \
+             BEGIN SELECT RAISE(ABORT, 'falha injetada'); END",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let mut input = scenario_loan_input(&sc.id, future_date(2));
+        input.term_months = 2;
+        let result = update_scenario_loan(&p, &loan_id, input).await;
+
+        assert!(result.is_err());
+        let loans = list_scenario_loans(&p, &sc.id).await.unwrap();
+        assert_eq!(
+            loans[0].term_months, 3,
+            "os parâmetros antigos sobrevivem ao rollback"
+        );
+        let rows = list_scenario_transactions(&p, &sc.id).await.unwrap();
+        assert_eq!(
+            rows.len(),
+            4,
+            "a série antiga sobrevive intacta — nenhum estado intermediário"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_scenario_loan_removes_entity_and_every_row() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Financiamento").await.unwrap();
+        let loan_id = create_scenario_loan(&p, scenario_loan_input(&sc.id, future_date(1)))
+            .await
+            .unwrap();
+
+        delete_scenario_loan(&p, &sc.id, &loan_id).await.unwrap();
+
+        assert!(list_scenario_loans(&p, &sc.id).await.unwrap().is_empty());
+        assert!(
+            list_scenario_transactions(&p, &sc.id)
+                .await
+                .unwrap()
+                .is_empty(),
+            "o CASCADE leva principal + parcelas junto"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_scenario_loan_rejects_another_scenarios_loan() {
+        let p = pool().await;
+        let sc_a = create_scenario(&p, "A").await.unwrap();
+        let sc_b = create_scenario(&p, "B").await.unwrap();
+        let loan_id = create_scenario_loan(&p, scenario_loan_input(&sc_a.id, future_date(1)))
+            .await
+            .unwrap();
+
+        assert!(delete_scenario_loan(&p, &sc_b.id, &loan_id).await.is_err());
+        assert_eq!(list_scenario_loans(&p, &sc_a.id).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn deleting_the_last_loan_row_removes_the_loan_record() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Financiamento").await.unwrap();
+        let mut input = scenario_loan_input(&sc.id, future_date(1));
+        input.term_months = 1;
+        let _loan_id = create_scenario_loan(&p, input).await.unwrap();
+
+        let rows = list_scenario_transactions(&p, &sc.id).await.unwrap();
+        assert_eq!(rows.len(), 2);
+        delete_scenario_transaction(&p, &sc.id, &rows[0].id)
+            .await
+            .unwrap();
+        assert_eq!(
+            list_scenario_loans(&p, &sc.id).await.unwrap().len(),
+            1,
+            "com uma linha restante o empréstimo ainda existe"
+        );
+
+        delete_scenario_transaction(&p, &sc.id, &rows[1].id)
+            .await
+            .unwrap();
+        assert!(
+            list_scenario_loans(&p, &sc.id).await.unwrap().is_empty(),
+            "apagar a última linha apaga o registro — sem fantasma"
+        );
+    }
+
+    // --- Backfill do legado `#loan:` ---
+
+    /// Linha legada crua: marcador na descrição, `loan_id` NULL.
+    async fn legacy_row(
+        p: &SqlitePool,
+        id: &str,
+        scenario_id: &str,
+        ttype: &str,
+        amount: i64,
+        description: &str,
+        date: &str,
+    ) {
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+             (id, type, amount, description, date, is_projection, scenario_id) \
+             VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6)",
+        )
+        .bind(id)
+        .bind(ttype)
+        .bind(amount)
+        .bind(description)
+        .bind(date)
+        .bind(scenario_id)
+        .execute(p)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn backfill_converts_a_clean_legacy_group_into_an_entity() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Legado").await.unwrap();
+        legacy_row(
+            &p,
+            "l-0",
+            &sc.id,
+            "income",
+            100_000,
+            "Empréstimo #loan:g1:200",
+            "2026-08-05",
+        )
+        .await;
+        for (id, i, date) in [
+            ("l-1", 1, "2026-09-05"),
+            ("l-2", 2, "2026-10-05"),
+            ("l-3", 3, "2026-11-05"),
+        ] {
+            legacy_row(
+                &p,
+                id,
+                &sc.id,
+                "expense",
+                34_675,
+                &format!("Empréstimo parcela {i}/3 #loan:g1:200"),
+                date,
+            )
+            .await;
+        }
+
+        backfill_scenario_loans(&p).await.unwrap();
+
+        let loans = list_scenario_loans(&p, &sc.id).await.unwrap();
+        assert_eq!(loans.len(), 1);
+        let loan = &loans[0];
+        assert_eq!(loan.principal_cents, 100_000);
+        assert_eq!(loan.rate_bps, 200);
+        assert_eq!(loan.term_months, 3);
+        assert_eq!(loan.disbursement_date, "2026-08-05");
+        assert_eq!(loan.first_installment_date, "2026-09-05");
+        assert_eq!(loan.description, "Empréstimo");
+
+        let rows = list_scenario_transactions(&p, &sc.id).await.unwrap();
+        assert!(
+            rows.iter().all(|r| r.loan_id.as_deref() == Some(&*loan.id)),
+            "todas as linhas do grupo apontam para a entidade"
+        );
+        assert!(
+            rows.iter().all(|r| !r.description.contains("#loan:")),
+            "os sufixos foram removidos"
+        );
+
+        // Idempotência: re-rodar não cria nada novo.
+        backfill_scenario_loans(&p).await.unwrap();
+        assert_eq!(list_scenario_loans(&p, &sc.id).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn backfill_recovers_first_installment_date_from_a_partial_group() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Legado").await.unwrap();
+        legacy_row(
+            &p,
+            "l-0",
+            &sc.id,
+            "income",
+            100_000,
+            "Empréstimo #loan:g1:200",
+            "2026-08-05",
+        )
+        .await;
+        // Parcela 1 removida à mão no legado: a 1ª data deriva da parcela 2, recuada 1 mês.
+        for (id, i, date) in [("l-2", 2, "2026-10-05"), ("l-3", 3, "2026-11-05")] {
+            legacy_row(
+                &p,
+                id,
+                &sc.id,
+                "expense",
+                34_675,
+                &format!("Empréstimo parcela {i}/3 #loan:g1:200"),
+                date,
+            )
+            .await;
+        }
+
+        backfill_scenario_loans(&p).await.unwrap();
+
+        let loans = list_scenario_loans(&p, &sc.id).await.unwrap();
+        assert_eq!(loans.len(), 1);
+        assert_eq!(loans[0].term_months, 3, "prazo vem do rótulo i/N");
+        assert_eq!(
+            loans[0].first_installment_date, "2026-09-05",
+            "data da 1ª parcela recuada i−1 meses a partir da parcela de menor i"
+        );
+        let rows = list_scenario_transactions(&p, &sc.id).await.unwrap();
+        assert_eq!(rows.len(), 3, "as linhas removidas à mão não renascem");
+    }
+
+    #[tokio::test]
+    async fn backfill_turns_an_underivable_group_into_loose_rows() {
+        let p = pool().await;
+        let sc = create_scenario(&p, "Legado").await.unwrap();
+        // Sem linha de principal (income): não há derivação limpa.
+        legacy_row(
+            &p,
+            "l-1",
+            &sc.id,
+            "expense",
+            34_675,
+            "Empréstimo parcela 1/3 #loan:g1:200",
+            "2026-09-05",
+        )
+        .await;
+        // Fora do grupo: linha solta sem marcador fica intacta.
+        legacy_row(&p, "l-x", &sc.id, "expense", 5_000, "Cinema", "2026-09-06").await;
+
+        backfill_scenario_loans(&p).await.unwrap();
+
+        assert!(
+            list_scenario_loans(&p, &sc.id).await.unwrap().is_empty(),
+            "grupo sem derivação limpa não vira entidade"
+        );
+        let rows = list_scenario_transactions(&p, &sc.id).await.unwrap();
+        assert_eq!(rows.len(), 2, "nada é apagado");
+        let orphan = rows.iter().find(|r| r.id == "l-1").unwrap();
+        assert_eq!(
+            orphan.description, "Empréstimo parcela 1/3",
+            "o sufixo sai mesmo sem entidade — vira linha solta comum"
+        );
+        assert!(orphan.loan_id.is_none());
+        let untouched = rows.iter().find(|r| r.id == "l-x").unwrap();
+        assert_eq!(untouched.description, "Cinema");
     }
 
     // --- get_scenario_forecast: determinismo/idempotência ---
@@ -2311,34 +3079,20 @@ mod tests {
         txn(&p, "inc-1", "income", 500_000, "2026-08-01").await;
 
         let sc = create_scenario(&p, "Financiamento").await.unwrap();
-        add_scenario_transaction(
+        seed_loan(
             &p,
             &sc.id,
-            "income",
+            "loan-carro",
+            150,
             1_000_000,
-            "Empréstimo desembolso #loan:carro:150",
+            1,
             "2026-08-05",
-            None,
-            false,
-            None,
-            None,
+            &[
+                ("income", 1_000_000, "Empréstimo desembolso", "2026-08-05"),
+                ("expense", 90_000, "Empréstimo parcela 1/1", "2026-08-10"),
+            ],
         )
-        .await
-        .unwrap();
-        add_scenario_transaction(
-            &p,
-            &sc.id,
-            "expense",
-            90_000,
-            "Parcela 1 #loan:carro:150",
-            "2026-08-10",
-            None,
-            false,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+        .await;
 
         let today = d("2026-07-31");
         let compare = get_scenario_forecast_inner(&p, &sc.id, today)
@@ -2377,34 +3131,20 @@ mod tests {
         txn(&p, "inc-1", "income", 500_000, "2026-08-02").await;
 
         let sc = create_scenario(&p, "Financiamento").await.unwrap();
-        add_scenario_transaction(
+        seed_loan(
             &p,
             &sc.id,
-            "income",
+            "loan-moto",
+            100,
             1_000_000,
-            "Desembolso #loan:moto:100",
-            "2026-08-01", // == today injetado abaixo
-            None,
-            false,
-            None,
-            None,
+            1,
+            "2026-08-01", // desembolso == today injetado abaixo
+            &[
+                ("income", 1_000_000, "Desembolso", "2026-08-01"),
+                ("expense", 90_000, "Desembolso parcela 1/1", "2026-08-10"),
+            ],
         )
-        .await
-        .unwrap();
-        add_scenario_transaction(
-            &p,
-            &sc.id,
-            "expense",
-            90_000,
-            "Parcela 1 #loan:moto:100",
-            "2026-08-10",
-            None,
-            false,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+        .await;
 
         let compare = get_scenario_forecast_inner(&p, &sc.id, d("2026-08-01"))
             .await
@@ -2555,7 +3295,7 @@ mod tests {
         );
     }
 
-    // MAJOR 2: um SEGUNDO grupo `#loan:` não vira `loan` (só o primeiro, ordem data,id), mas as
+    // MAJOR 2: um SEGUNDO empréstimo não vira `loan` (só o primeiro, ordem data,id), mas as
     // linhas dele PRECISAM aparecer em `changes` como "add" — nunca somem do DTO.
     #[tokio::test]
     async fn second_loan_group_rows_surface_in_changes() {
@@ -2564,32 +3304,35 @@ mod tests {
 
         let sc = create_scenario(&p, "Dois financiamentos").await.unwrap();
         // Grupo A (primeiro por data): reportado via `loan`.
-        for (ttype, amount, desc, date) in [
-            (
-                "income",
-                1_000_000,
-                "Desembolso #loan:carro:150",
-                "2026-08-05",
-            ),
-            ("expense", 90_000, "Parcela 1 #loan:carro:150", "2026-08-10"),
-        ] {
-            add_scenario_transaction(
-                &p, &sc.id, ttype, amount, desc, date, None, false, None, None,
-            )
-            .await
-            .unwrap();
-        }
+        seed_loan(
+            &p,
+            &sc.id,
+            "loan-carro",
+            150,
+            1_000_000,
+            1,
+            "2026-08-05",
+            &[
+                ("income", 1_000_000, "Desembolso carro", "2026-08-05"),
+                ("expense", 90_000, "Carro parcela 1/1", "2026-08-10"),
+            ],
+        )
+        .await;
         // Grupo B (depois): deve aparecer em `changes`.
-        for (ttype, amount, desc, date) in [
-            ("income", 500_000, "Desembolso #loan:moto:200", "2026-09-05"),
-            ("expense", 55_000, "Parcela 1 #loan:moto:200", "2026-09-10"),
-        ] {
-            add_scenario_transaction(
-                &p, &sc.id, ttype, amount, desc, date, None, false, None, None,
-            )
-            .await
-            .unwrap();
-        }
+        seed_loan(
+            &p,
+            &sc.id,
+            "loan-moto",
+            200,
+            500_000,
+            1,
+            "2026-09-05",
+            &[
+                ("income", 500_000, "Desembolso moto", "2026-09-05"),
+                ("expense", 55_000, "Moto parcela 1/1", "2026-09-10"),
+            ],
+        )
+        .await;
 
         let compare = get_scenario_forecast_inner(&p, &sc.id, d("2026-07-31"))
             .await
@@ -2604,7 +3347,7 @@ mod tests {
         let group_b_changes: Vec<_> = compare
             .changes
             .iter()
-            .filter(|c| c.description.contains("#loan:moto:200"))
+            .filter(|c| c.description.contains("moto") || c.description.contains("Moto"))
             .collect();
         assert_eq!(
             group_b_changes.len(),
@@ -2616,7 +3359,7 @@ mod tests {
             !compare
                 .changes
                 .iter()
-                .any(|c| c.description.contains("#loan:carro:150")),
+                .any(|c| c.description.contains("carro") || c.description.contains("Carro")),
             "as linhas do grupo reportado via `loan` não duplicam em changes"
         );
     }

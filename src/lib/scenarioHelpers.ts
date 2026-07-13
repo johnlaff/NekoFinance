@@ -3,12 +3,12 @@
  * `only-export-components`) e para ficarem testáveis isoladamente, no mesmo espírito de
  * `lib/nkFormat.ts`/`lib/movement.ts`. */
 
-/** Remove os sufixos de marca (`#loan:<...>`/`#repl:<...>`) do FIM da descrição — a UI nunca
- * mostra o marcador cru (ver convenções em `src-tauri/src/scenarios.rs`). Ancorado ao fim,
- * como o parser do backend (`parse_loan_marker`/`parse_repl_marker`): um "#loan:" literal
- * digitado pelo usuário no MEIO do texto é dado dele e fica intacto. Vários marcadores no
- * fim são removidos um a um — regex sem quantificador aninhado (linear, sem backtracking
- * exponencial em entrada adversarial). */
+/** Remove os sufixos de marca (`#repl:<...>` da linha de substituição; `#loan:<...>` só em
+ * banco legado ainda não processado pelo backfill) do FIM da descrição — a UI nunca mostra o
+ * marcador cru (ver convenções em `src-tauri/src/scenarios.rs`). Ancorado ao fim, como o
+ * parser do backend (`parse_repl_marker`): um "#loan:" literal digitado pelo usuário no MEIO
+ * do texto é dado dele e fica intacto. Vários marcadores no fim são removidos um a um — regex
+ * sem quantificador aninhado (linear, sem backtracking exponencial em entrada adversarial). */
 const TRAILING_MARKER = /\s*#(?:loan|repl):\S+$/;
 export function stripScenarioMarker(description: string): string {
   let out = description;
@@ -18,20 +18,20 @@ export function stripScenarioMarker(description: string): string {
   return out.trim();
 }
 
-export interface LoanMarker {
-  groupId: string;
-  rateBps: number;
+/** Centavos → valor de INPUT pt-BR ("120000" → "1.200,00"): pré-preenche o formulário de
+ * edição do empréstimo com o mesmo formato que `parseBRLToCents` aceita de volta. */
+export function centsToAmountInput(cents: number): string {
+  const abs = Math.abs(cents);
+  const reais = Math.floor(abs / 100)
+    .toString()
+    .replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return `${reais},${String(abs % 100).padStart(2, "0")}`;
 }
 
-/** O inverso de `stripScenarioMarker` para o marcador `#loan`: INTERPRETA o sufixo
- * (` #loan:<groupId>:<rateBps>`) em vez de apagá-lo, para a UI reconhecer as linhas irmãs de
- * um mesmo empréstimo e agrupá-las. Ancorado ao FIM como o parser do backend — um "#loan:"
- * no meio do texto é dado do usuário, não marcador. */
-const LOAN_MARKER = /\s#loan:([^\s:]+):(\d+)$/;
-export function parseLoanMarker(description: string): LoanMarker | null {
-  const m = LOAN_MARKER.exec(description);
-  if (!m) return null;
-  return { groupId: m[1]!, rateBps: parseInt(m[2]!, 10) };
+/** Basis points → taxa percentual de INPUT pt-BR (185 → "1,85"; 200 → "2"): o inverso do
+ * parse do formulário (`Math.round(Number(raw) * 100)`), sem zeros à direita. */
+export function bpsToRateInput(bps: number): string {
+  return (bps / 100).toString().replace(".", ",");
 }
 
 /** Espaço mínimo (px, no espaço do viewBox) entre as linhas de base dos rótulos "Real" e
