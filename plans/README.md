@@ -94,6 +94,7 @@ method-neutral language (this repo is public); the spreadsheet/method are the so
 | 078 | Cenários: eventos hipotéticos de HOJE entram no encadeamento de saldo (TDD) | P1 | M | — | DONE — via PR #159: ramo hipotético de encadeamento passa a incluir hoje (`load_hypothetical_rows` chain `date >= today`); ramo real e pipeline de métricas intocados. 3 testes de regressão (RED→GREEN: income/expense de hoje entram; amanhã conta uma vez); rust:check + test:run verdes. Issue #156 |
 | 079 | Cenários: override e empréstimo atômicos (transação única + índices únicos parciais) | P2 | M | 078 (soft) | DONE — via PR #163: unicidade por alvo garantida no schema; override, substituição, principal e parcelas persistidos em transações únicas; core determinístico preserva os marcadores; rollback e concorrência cobertos por testes. Issue #157 |
 | 080 | Cenários: régua "Reserva após financiar" canônica (reserva ÷ (baseline + parcela), antes → depois, escada <6/6–12/12+) | P1 | M | — | TODO — semântica fixada na issue #150 |
+| 081 | Cenários: régua "Economia após parcela" — 2ª perna do gate (piso 20% + regra da metade, escada composta) | P1 | M | 080 | TODO — modelagem fixada na issue #170 |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale) | SUPERSEDED by NNN
 
