@@ -93,14 +93,14 @@ Nenhuma sozinha cobre os dois perfis; a régua nova combina as duas numa escada 
 **Backend** (`forecast_cmds.rs` + `scenarios.rs`):
 
 1. Nova função `pub(crate) async fn realized_savings_baseline(pool, today_naive)
-   -> Result<(i64, i64), String>` em `forecast_cmds.rs`, ao lado de
+-> Result<(i64, i64), String>` em `forecast_cmds.rs`, ao lado de
    `realized_monthly_baseline` e no mesmo molde: janela `[1º do mês − 6, 1º do mês)`,
    `load_metric_db_events` uma vez, e:
    - universo de meses = meses com **ao menos um evento de qualquer tipo** na janela
      (mês ativo sem economia registrada conta como economia 0 — é sinal real, não
      ausência de dado; excluir esses meses inflaria a mediana);
    - `income[mês]` = Σ eventos `Income`; `economia[mês]` = `max(Σ eventos Economia,
-     anotação do mês via load_economia_annotation)` — mesma regra do motor;
+anotação do mês via load_economia_annotation)` — mesma regra do motor;
    - retorno `(mediana(income), mediana(economia))`; janela sem meses ativos ⇒ `(0, 0)`.
 2. `LoanBreakdown` ganha:
    ```rust
