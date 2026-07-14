@@ -1542,12 +1542,12 @@ function podeGastarState(cents: number, guardrail: "cash" | "savings"): MethodSt
 }
 
 /**
- * Semáforo de meses de reserva PÓS-financiamento (`LoanBreakdown.reserve_months_after_
- * financing`) — a regra de reserva do método: mínimo 6 meses; 6–8 = zona amarela;
- * 12+ = verde/"paz". A faixa 8–12 fecha a progressão entre o amarelo e a paz sem nome
- * verbatim na fonte — "Confortável" é a leitura neutra do meio. Fronteiras com limite
- * SUPERIOR inclusivo (mesma convenção do Termômetro em `saldoBand`): 6–8 cobre até 8,0 exato;
- * 8–12 cobre de 8,0+ até 12,0 exato; abaixo de 6 é sempre abaixo do mínimo; acima de 12 é paz.
+ * Semáforo de meses de reserva pós-financiamento (`LoanBreakdown.reserve_months_after_
+ * financing`) — a escada do gate de financiamento do método, em 3 faixas: abaixo de 6 meses
+ * é abaixo do mínimo; 6–12 é zona amarela; 12+ é paz (assumir compromisso novo sobe o alvo
+ * de reserva para 12 meses). **12,0 exato = Paz**: a fonte define a faixa como "12+", então
+ * a fronteira inferior é INCLUSIVA — divergência deliberada da convenção
+ * limite-superior-inclusivo do Termômetro (`saldoBand`).
  * `--jade-400` cru falha contraste no tema claro (comentário em colors.css) — `--primary-
  * quiet-text` é o alias já testado pra texto jade legível nos dois temas (ver TotaisScreen).
  */
@@ -1560,20 +1560,12 @@ function reserveMonthsState(months: number): MethodState {
       Icon: AlertTriangle,
     };
   }
-  if (months <= 8) {
+  if (months < 12) {
     return {
       key: "amber",
       label: "Zona amarela",
       color: "var(--warning-400)",
       Icon: AlertTriangle,
-    };
-  }
-  if (months <= 12) {
-    return {
-      key: "comfortable",
-      label: "Confortável",
-      color: "var(--success-400)",
-      Icon: CheckCircle2,
     };
   }
   return {
@@ -1584,17 +1576,35 @@ function reserveMonthsState(months: number): MethodState {
   };
 }
 
-function ReserveMonthsBadge({ months }: { months: number }) {
-  const state = reserveMonthsState(months);
+/**
+ * Antes → depois da régua de reserva; cor e rótulo derivam do DEPOIS (é ele que o gate julga).
+ * O "antes" fica em cor neutra, fora da cor de estado — mesma disciplina do
+ * `scn-kpi__state-origin`: num cruzamento de faixa, pintar o valor antigo com a cor do estado
+ * novo faria os dois parecerem da mesma faixa. `before` nulo é defensivo: o backend deriva os
+ * dois do mesmo denominador, então vêm juntos.
+ */
+function ReserveMonthsBadge({
+  before,
+  after,
+}: {
+  before: number | null;
+  after: number;
+}) {
+  const state = reserveMonthsState(after);
   const { Icon } = state;
-  const monthsLabel = months.toLocaleString("pt-BR", {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-  });
+  const fmt = (months: number) =>
+    months.toLocaleString("pt-BR", {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+    });
   return (
     <span className="scn-loan-summary__reserve" style={{ color: state.color }}>
       <Icon size={13} strokeWidth={1.75} aria-hidden="true" />
-      {state.label} · {monthsLabel} meses
+      {state.label} ·{" "}
+      {before != null && (
+        <span className="scn-loan-summary__reserve-before">{fmt(before)} → </span>
+      )}
+      {fmt(after)} meses
     </span>
   );
 }
@@ -2005,14 +2015,15 @@ export function ScenarioCompare({
                     hideMarker
                     term={{
                       title: "Reserva após financiar",
-                      body: "Quantos meses de custo de vida a sua reserva cobriria depois de assumir o financiamento. A régua: abaixo de 6 meses é abaixo do mínimo; de 6 a 8, zona amarela; de 8 a 12, confortável; acima de 12, paz — folga de sobra para financiar sem ansiedade.",
+                      body: "Saldo das contas de reserva dividido pelo custo de vida típico (mediana dos últimos 6 meses completos), somando a parcela nova ao custo. Abaixo de 6 meses: abaixo do mínimo; de 6 a 12: zona amarela; 12 ou mais: paz — assumir um financiamento sobe o alvo para 12 meses.",
                     }}
                   >
                     Reserva após financiar
                   </InfoPopover>
                 </span>
                 <ReserveMonthsBadge
-                  months={compare.loan.reserve_months_after_financing}
+                  before={compare.loan.reserve_months_before_financing}
+                  after={compare.loan.reserve_months_after_financing}
                 />
               </div>
             )}

@@ -1050,6 +1050,13 @@ pub struct LoanBreakdown {
     pub loan_monthly_rate_bps: i64,
     pub loan_total_paid_cents: i64,
     pub loan_total_cost_cents: i64,
+    /// Régua canônica de reserva ANTES do financiamento: saldo das contas de reserva ÷ custo de
+    /// vida típico (mediana dos meses realizados completos) — a mesma conta do dashboard, para a
+    /// comparação antes → depois ser legítima. `None` quando não há mês completo (sem típico).
+    pub reserve_months_before_financing: Option<f64>,
+    /// A mesma régua com a parcela somada ao denominador (reserva ÷ (mediana + parcela)): quantos
+    /// meses a reserva cobre DEPOIS de assumir o compromisso novo. Só a parcela entra — as demais
+    /// mudanças hipotéticas do cenário já têm leitura própria na trajetória e no guardrail.
     pub reserve_months_after_financing: Option<f64>,
 }
 
@@ -1670,8 +1677,8 @@ fn map_hypo_rows(rows: &[HypoTxnRow]) -> Vec<CashflowEvent> {
 fn detect_loan(
     hypo_rows: &[HypoTxnRow],
     rate_by_loan: &HashMap<String, i64>,
-    scenario_cost_of_living_cents: i64,
-    scenario_reserve_after_cents: i64,
+    reserve_balance_cents: i64,
+    baseline_cents: i64,
 ) -> Option<(String, LoanBreakdown)> {
     let mut group_id: Option<String> = None;
     let mut principal_cents = 0i64;
@@ -1707,11 +1714,14 @@ fn detect_loan(
 
     let total_paid_cents = installment_cents * term_months as i64;
     let total_cost_cents = total_paid_cents - principal_cents;
-    // Reserva-em-meses após o financiamento: colchão restante (piso já respeitado pelo forecast) ÷
-    // custo de vida do cenário. Documentado como aproximação (não há helper de "meses de reserva"
-    // pronto no forecast core): usa o mesmo custo de vida do compare.
-    let reserve_months_after_financing = (scenario_cost_of_living_cents > 0)
-        .then(|| scenario_reserve_after_cents as f64 / scenario_cost_of_living_cents as f64);
+    // Régua de reserva do método (a mesma do dashboard): reserva ÷ custo de vida típico, e no
+    // "depois" a parcela soma ao denominador como o único compromisso novo. `baseline == 0`
+    // (nenhum mês completo) oculta a régua (`None`); reserva zerada é `Some(0.0)` — reserva
+    // vazia é informação, o gate reprova.
+    let reserve_months_before_financing =
+        (baseline_cents > 0).then(|| reserve_balance_cents as f64 / baseline_cents as f64);
+    let reserve_months_after_financing = (baseline_cents > 0)
+        .then(|| reserve_balance_cents as f64 / (baseline_cents + installment_cents) as f64);
 
     Some((
         group_id,
@@ -1722,6 +1732,7 @@ fn detect_loan(
             loan_monthly_rate_bps: rate_bps,
             loan_total_paid_cents: total_paid_cents,
             loan_total_cost_cents: total_cost_cents,
+            reserve_months_before_financing,
             reserve_months_after_financing,
         },
     ))
@@ -1962,11 +1973,15 @@ pub(crate) async fn get_scenario_forecast_inner(
     // de `changes` precisam do grupo inteiro — senão `loan_total_cost` poderia superestimar o
     // custo por não ver todas as linhas do financiamento.
     let all_hypo_rows = load_all_hypothetical_rows(pool, scenario_id).await?;
-    let scenario_reserve_after_cents = scenario_fc
-        .deepest_deficit
-        .map(|p| p.balance_cents)
-        .unwrap_or(0)
-        - reserve_floor_cents;
+    // Insumos da régua de reserva — os MESMOS do `reserve_months` do dashboard (numerador =
+    // contas de reserva; denominador = mediana dos meses completos), para "antes" coincidir com
+    // o dashboard. O compare é somente-leitura: queries direto no pool, sem transação aberta.
+    let reserve_balance: (i64,) =
+        sqlx::query_as("SELECT COALESCE(SUM(balance), 0) FROM account WHERE liquidity = 'reserve'")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("query reserve balance: {e}"))?;
+    let baseline_cents = forecast_cmds::realized_monthly_baseline(pool, today).await?;
     let rate_by_loan: HashMap<String, i64> = list_scenario_loans(pool, scenario_id)
         .await?
         .into_iter()
@@ -1975,8 +1990,8 @@ pub(crate) async fn get_scenario_forecast_inner(
     let (loan_group_id, loan) = match detect_loan(
         &all_hypo_rows,
         &rate_by_loan,
-        scenario_cost_of_living_cents,
-        scenario_reserve_after_cents,
+        reserve_balance.0,
+        baseline_cents,
     ) {
         Some((gid, breakdown)) => (Some(gid), Some(breakdown)),
         None => (None, None),
@@ -4818,5 +4833,159 @@ mod tests {
         .unwrap();
         assert_eq!(desc2, "Aluguel novo");
         assert_eq!(oid2.as_deref(), Some(ov_id.as_str()));
+    }
+
+    // --- Régua "Reserva após financiar" (canônica: reserva ÷ (mediana + parcela)) ---
+
+    /// Conta com liquidez explícita, para os testes da régua de reserva.
+    async fn account_with_liquidity(p: &SqlitePool, id: &str, balance_cents: i64, liquidity: &str) {
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, balance, liquidity) \
+             VALUES (?1, ?1, 'bank', 'pe-res', ?2, ?3)",
+        )
+        .bind(id)
+        .bind(balance_cents)
+        .bind(liquidity)
+        .execute(p)
+        .await
+        .unwrap();
+    }
+
+    /// Fixture da régua: perfil + dois meses completos de custo de vida (mediana 200_000) +
+    /// cenário com um empréstimo de parcela 50_000. Reserva fica a cargo de cada teste.
+    async fn seed_reserve_ruler_fixture(p: &SqlitePool) -> String {
+        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-res', 'Eu')")
+            .execute(p)
+            .await
+            .unwrap();
+        // Meses COMPLETOS na janela de 6 meses de um `today` em 2026-05: mediana = 200_000.
+        txn(p, "res-cost-mar", "expense", 200_000, "2026-03-10").await;
+        txn(p, "res-cost-apr", "expense", 200_000, "2026-04-10").await;
+        let sc = create_scenario(p, "E se eu financiar").await.unwrap();
+        seed_loan(
+            p,
+            &sc.id,
+            "loan-res",
+            250,
+            1_000_000,
+            2,
+            "2026-05-10",
+            &[
+                ("income", 1_000_000, "Empréstimo", "2026-05-10"),
+                ("expense", 50_000, "Empréstimo parcela 1/2", "2026-06-10"),
+                ("expense", 50_000, "Empréstimo parcela 2/2", "2026-07-10"),
+            ],
+        )
+        .await;
+        sc.id
+    }
+
+    fn assert_close(actual: Option<f64>, expected: f64, label: &str) {
+        let v = actual.unwrap_or_else(|| panic!("{label}: esperado Some({expected}), veio None"));
+        assert!(
+            (v - expected).abs() < 1e-9,
+            "{label}: esperado {expected}, veio {v}"
+        );
+    }
+
+    /// A régua é a canônica do método (reserva ÷ mediana de meses completos), então NÃO pode
+    /// variar com o dia do mês — a antiga (custo de vida realizado do mês corrente) inflava no
+    /// início do mês, exatamente no gate "posso assumir esta parcela?".
+    #[tokio::test]
+    async fn reserve_ruler_is_canonical_and_day_independent() {
+        let p = pool().await;
+        let sc_id = seed_reserve_ruler_fixture(&p).await;
+        account_with_liquidity(&p, "acc-reserva", 1_200_000, "reserve").await;
+
+        let early = get_scenario_forecast_inner(&p, &sc_id, d("2026-05-02"))
+            .await
+            .unwrap();
+        let late = get_scenario_forecast_inner(&p, &sc_id, d("2026-05-28"))
+            .await
+            .unwrap();
+
+        for (day, compare) in [("dia 2", &early), ("dia 28", &late)] {
+            let loan = compare.loan.as_ref().expect("empréstimo detectado");
+            // Antes: 1_200_000 ÷ 200_000 = 6 meses — idêntico ao `reserve_months` do dashboard.
+            assert_close(
+                loan.reserve_months_before_financing,
+                6.0,
+                &format!("before ({day})"),
+            );
+            // Depois: 1_200_000 ÷ (200_000 + 50_000) = 4,8 — só a parcela entra como
+            // compromisso novo, então after < before sempre que installment > 0.
+            assert_close(
+                loan.reserve_months_after_financing,
+                4.8,
+                &format!("after ({day})"),
+            );
+        }
+    }
+
+    /// Sem mês completo realizado não há custo de vida típico: a régua fica oculta (None),
+    /// nunca um número inventado.
+    #[tokio::test]
+    async fn reserve_ruler_hidden_when_baseline_is_zero() {
+        let p = pool().await;
+        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-res', 'Eu')")
+            .execute(&p)
+            .await
+            .unwrap();
+        account_with_liquidity(&p, "acc-reserva", 1_200_000, "reserve").await;
+        let sc = create_scenario(&p, "E se eu financiar").await.unwrap();
+        seed_loan(
+            &p,
+            &sc.id,
+            "loan-res",
+            250,
+            1_000_000,
+            1,
+            "2026-05-10",
+            &[
+                ("income", 1_000_000, "Empréstimo", "2026-05-10"),
+                ("expense", 50_000, "Empréstimo parcela 1/1", "2026-06-10"),
+            ],
+        )
+        .await;
+
+        let compare = get_scenario_forecast_inner(&p, &sc.id, d("2026-05-02"))
+            .await
+            .unwrap();
+        let loan = compare.loan.as_ref().expect("empréstimo detectado");
+        assert_eq!(loan.reserve_months_before_financing, None);
+        assert_eq!(loan.reserve_months_after_financing, None);
+    }
+
+    /// Reserva zerada é informação (o gate reprova com 0,0 meses) — não se esconde a linha.
+    #[tokio::test]
+    async fn reserve_ruler_zero_reserve_is_zero_not_hidden() {
+        let p = pool().await;
+        let sc_id = seed_reserve_ruler_fixture(&p).await;
+        // Nenhuma conta de reserva: numerador = 0.
+
+        let compare = get_scenario_forecast_inner(&p, &sc_id, d("2026-05-02"))
+            .await
+            .unwrap();
+        let loan = compare.loan.as_ref().expect("empréstimo detectado");
+        assert_close(loan.reserve_months_before_financing, 0.0, "before");
+        assert_close(loan.reserve_months_after_financing, 0.0, "after");
+    }
+
+    /// O numerador é o saldo das contas `liquidity='reserve'` — conta corrente não conta,
+    /// espelhando a régua do dashboard.
+    #[tokio::test]
+    async fn reserve_ruler_numerator_counts_only_reserve_accounts() {
+        let p = pool().await;
+        let sc_id = seed_reserve_ruler_fixture(&p).await;
+        account_with_liquidity(&p, "acc-reserva", 600_000, "reserve").await;
+        account_with_liquidity(&p, "acc-corrente", 9_999_999, "liquid").await;
+
+        let compare = get_scenario_forecast_inner(&p, &sc_id, d("2026-05-02"))
+            .await
+            .unwrap();
+        let loan = compare.loan.as_ref().expect("empréstimo detectado");
+        // 600_000 ÷ 200_000 = 3 · 600_000 ÷ 250_000 = 2,4 — o saldo líquido fica de fora.
+        assert_close(loan.reserve_months_before_financing, 3.0, "before");
+        assert_close(loan.reserve_months_after_financing, 2.4, "after");
     }
 }

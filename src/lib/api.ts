@@ -977,7 +977,13 @@ export interface LoanBreakdown {
   loan_monthly_rate_bps: number;
   loan_total_paid_cents: number;
   loan_total_cost_cents: number;
-  /** Aproximação — "colchão restante após financiar" ÷ custo de vida do cenário. */
+  /**
+   * Régua canônica de reserva ANTES do financiamento: saldo das contas de reserva ÷ custo de
+   * vida típico (mediana dos meses completos) — a mesma conta do dashboard. `null` quando não
+   * há mês completo realizado.
+   */
+  reserve_months_before_financing: number | null;
+  /** A mesma régua com a parcela somada ao denominador: reserva ÷ (típico + parcela). */
   reserve_months_after_financing: number | null;
 }
 

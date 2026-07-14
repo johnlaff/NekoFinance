@@ -1725,7 +1725,7 @@ describe("ScenarioCompare — polimento (plano 074, fatia C)", () => {
     return user;
   }
 
-  function loanFixture(reserveMonths: number | null) {
+  function loanFixture(reserve: { before: number | null; after: number | null }) {
     return {
       loan_principal_cents: 1_000_000,
       loan_installment_cents: 50_000,
@@ -1733,23 +1733,26 @@ describe("ScenarioCompare — polimento (plano 074, fatia C)", () => {
       loan_monthly_rate_bps: 150,
       loan_total_paid_cents: 1_200_000,
       loan_total_cost_cents: 200_000,
-      reserve_months_after_financing: reserveMonths,
+      reserve_months_before_financing: reserve.before,
+      reserve_months_after_financing: reserve.after,
     };
   }
 
-  // --- Semáforo da reserva pós-financiamento (item 2) ---
+  // --- Semáforo da reserva pós-financiamento: escada canônica de 3 faixas ---
+  // 12,0 exato = Paz (a fonte define "12+" — fronteira inferior INCLUSIVA, ao contrário
+  // da convenção limite-superior-inclusivo do Termômetro).
 
   it.each([
     [5.9, "Abaixo do mínimo", "lucide-triangle-alert"],
     [6, "Zona amarela", "lucide-triangle-alert"],
-    [8, "Zona amarela", "lucide-triangle-alert"],
-    [8.1, "Confortável", "lucide-circle-check"],
-    [12, "Confortável", "lucide-circle-check"],
-    [12.1, "Paz", "lucide-circle-check"],
+    [11.9, "Zona amarela", "lucide-triangle-alert"],
+    [12, "Paz", "lucide-circle-check"],
   ] as const)(
-    "%s meses de reserva pós-financiamento → '%s' (ícone %s)",
+    "%s meses de reserva pós-financiamento → '%s' (ícone %s); cor e rótulo derivam do DEPOIS",
     async (months, label, iconClass) => {
-      await renderCompare(baseCompare({ loan: loanFixture(months) }));
+      await renderCompare(
+        baseCompare({ loan: loanFixture({ before: 14, after: months }) }),
+      );
       const badge = document.querySelector(".scn-loan-summary__reserve");
       expect(badge).not.toBeNull();
       expect(badge!.textContent).toContain(label);
@@ -1757,8 +1760,34 @@ describe("ScenarioCompare — polimento (plano 074, fatia C)", () => {
     },
   );
 
+  it("exibe antes → depois com uma casa decimal; o antes fica neutro, fora da cor do estado", async () => {
+    await renderCompare(
+      baseCompare({ loan: loanFixture({ before: 8.1, after: 5.2 }) }),
+    );
+    const badge = document.querySelector(".scn-loan-summary__reserve");
+    expect(badge!.textContent).toContain("8,1 → 5,2 meses");
+    expect(badge!.textContent).toContain("Abaixo do mínimo");
+    // O "antes" vive num span próprio de cor neutra — herdar a cor do estado do "depois"
+    // faria o valor antigo parecer da mesma faixa do novo num cruzamento de faixa.
+    const before = badge!.querySelector(".scn-loan-summary__reserve-before");
+    expect(before).not.toBeNull();
+    expect(before!.textContent).toContain("8,1");
+    expect(before!.textContent).not.toContain("5,2");
+  });
+
+  it("before nulo (defensivo) exibe só o depois, sem seta", async () => {
+    await renderCompare(
+      baseCompare({ loan: loanFixture({ before: null, after: 5.2 }) }),
+    );
+    const badge = document.querySelector(".scn-loan-summary__reserve");
+    expect(badge!.textContent).toContain("5,2 meses");
+    expect(badge!.textContent).not.toContain("→");
+  });
+
   it("reserve_months_after_financing nulo não renderiza nada novo", async () => {
-    await renderCompare(baseCompare({ loan: loanFixture(null) }));
+    await renderCompare(
+      baseCompare({ loan: loanFixture({ before: null, after: null }) }),
+    );
     expect(
       document.querySelector(".scn-loan-summary__reserve"),
     ).not.toBeInTheDocument();
