@@ -88,7 +88,14 @@ const COMPARE = {
   loan: {
     loan_total_cost_cents: 45_384,
     loan_total_paid_cents: 445_384,
+    loan_installment_cents: 60_000,
+    reserve_months_before_financing: 9.6,
     reserve_months_after_financing: 7.4,
+    // Parcela (60_000) consome mais da metade da economia típica (100_000): a 2ª perna
+    // sai amarela ("Mais da metade da sobra") mesmo com o pós-parcela acima do piso.
+    savings_rate_before_bps: 3000,
+    savings_rate_after_bps: 2400,
+    economia_median_cents: 100_000,
   },
 };
 
@@ -151,6 +158,13 @@ for (const theme of ["dark", "light"] as const) {
     await expect(compare).toHaveScreenshot(`compare-${theme}.png`, {
       maxDiffPixelRatio: 0.02,
     });
+
+    // O card inteiro é mais alto que o viewport (o element-screenshot acima não alcança o
+    // resumo do empréstimo); este recorte cobre as duas réguas do gate de financiamento.
+    await expect(page.locator(".scn-loan-summary")).toHaveScreenshot(
+      `loan-summary-${theme}.png`,
+      { maxDiffPixelRatio: 0.02 },
+    );
 
     // Sheet com o grupo do empréstimo expandido (rótulos de parcela + coluna de valores).
     await page
