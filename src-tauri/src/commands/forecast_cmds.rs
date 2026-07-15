@@ -373,18 +373,77 @@ pub(crate) async fn realized_monthly_baseline(
             _ => {}
         }
     }
-    let mut vals: Vec<i64> = by_month.into_values().collect();
+    let vals: Vec<i64> = by_month.into_values().collect();
     if vals.is_empty() {
         return Ok(0);
     }
+    Ok(median_cents(vals))
+}
+
+/// Mediana em centavos (par ⇒ média dos dois centrais, truncada). Estimador comum das réguas
+/// de "mês típico" — robusto a um mês atípico, ao contrário da média.
+fn median_cents(mut vals: Vec<i64>) -> i64 {
     vals.sort_unstable();
     let mid = vals.len() / 2;
-    let median = if vals.len() % 2 == 1 {
+    if vals.len() % 2 == 1 {
         vals[mid]
     } else {
         (vals[mid - 1] + vals[mid]) / 2
-    };
-    Ok(median)
+    }
+}
+
+/// Rendas e economia de um mês típico: `(mediana(renda), mediana(economia))` sobre os últimos
+/// 6 meses de calendário COMPLETOS — mesma janela e estimador do `realized_monthly_baseline`,
+/// para as duas pernas do gate de financiamento descreverem o MESMO "mês típico".
+///
+/// O universo são os meses ATIVOS (ao menos um evento de qualquer tipo na janela): um mês ativo
+/// sem economia registrada entra como economia 0 — é sinal real de "não poupou", não ausência
+/// de dado; descartá-lo inflaria a mediana. A economia mensal reconcilia derivado × anotação da
+/// aba Economia com `max` por mês, a mesma regra do motor mensal (evita dupla contagem após o
+/// round-trip da planilha). Janela sem mês ativo ⇒ `(0, 0)`.
+pub(crate) async fn realized_savings_baseline(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+) -> Result<(i64, i64), String> {
+    let month_start = NaiveDate::from_ymd_opt(today_naive.year(), today_naive.month(), 1).unwrap();
+    let window_start = month_start - chrono::Months::new(6);
+    let events = load_metric_db_events(pool, window_start, month_start).await?;
+
+    let mut income_by: std::collections::HashMap<(i32, u32), i64> =
+        std::collections::HashMap::new();
+    let mut economia_by: std::collections::HashMap<(i32, u32), i64> =
+        std::collections::HashMap::new();
+    let mut active: std::collections::BTreeSet<(i32, u32)> = std::collections::BTreeSet::new();
+    for e in events {
+        let key = (e.date.year(), e.date.month());
+        active.insert(key);
+        match e.kind {
+            forecast::EventKind::Income => *income_by.entry(key).or_insert(0) += e.amount_cents,
+            forecast::EventKind::Economia => *economia_by.entry(key).or_insert(0) += e.amount_cents,
+            _ => {}
+        }
+    }
+    if active.is_empty() {
+        return Ok((0, 0));
+    }
+
+    let years: Vec<i32> = active
+        .iter()
+        .map(|(y, _)| *y)
+        .collect::<std::collections::BTreeSet<i32>>()
+        .into_iter()
+        .collect();
+    let annotation = load_economia_annotation(pool, &years).await?;
+
+    let mut incomes = Vec::with_capacity(active.len());
+    let mut economias = Vec::with_capacity(active.len());
+    for key in &active {
+        incomes.push(income_by.get(key).copied().unwrap_or(0));
+        let derived = economia_by.get(key).copied().unwrap_or(0);
+        let annotated = annotation.get(key).copied().unwrap_or(0);
+        economias.push(derived.max(annotated));
+    }
+    Ok((median_cents(incomes), median_cents(economias)))
 }
 
 /// Teto de diário "típico" por dia. Fonte única para (a) projetar o gasto diário nos dias futuros do
@@ -2401,5 +2460,128 @@ mod tests {
             (100000, 60000),
             "linhas 'Ignorar' não entram na poupança realizada (paridade com load_year_events)"
         );
+    }
+
+    // --- realized_savings_baseline: medianas de renda e economia dos meses ativos ---
+
+    async fn insert_income(pool: &SqlitePool, id: &str, amount: i64, date: &str) {
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_projection) \
+             VALUES (?1, 'income', ?2, ?3, 0)",
+        )
+        .bind(id)
+        .bind(amount)
+        .bind(date)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Transfer para a conta de reserva `acc-res` (classificada como `EventKind::Economia`);
+    /// cria pessoa + conta na primeira chamada.
+    async fn insert_economia_transfer(pool: &SqlitePool, id: &str, amount: i64, date: &str) {
+        sqlx::query("INSERT OR IGNORE INTO person (id, name) VALUES ('pe-1', 'Tester')")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT OR IGNORE INTO account (id, name, type, owner_person_id, balance, liquidity) \
+             VALUES ('acc-res', 'Reserva', 'savings', 'pe-1', 0, 'reserve')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) \
+             VALUES (?1, 'transfer', ?2, ?3, 'acc-res', 0)",
+        )
+        .bind(id)
+        .bind(amount)
+        .bind(date)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn annotate_economia(pool: &SqlitePool, year: i32, month: u32, cents: i64) {
+        sqlx::query(
+            "INSERT INTO economia_annotation (profile_id, year, month, amount_cents, updated_at) \
+             VALUES ('', ?1, ?2, ?3, '2026-01-01T00:00:00Z')",
+        )
+        .bind(year as i64)
+        .bind(month as i64)
+        .bind(cents)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    // A economia mensal usa `max(derivado, anotação)` por mês — a mesma regra do motor mensal.
+    // Um mês cuja anotação da aba supera os transfers não pode subcontar na mediana.
+    #[tokio::test]
+    async fn savings_baseline_economia_uses_max_of_derived_and_annotation() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 5, 15).unwrap();
+
+        // Março: transfer 30_000, anotação 50_000 → mês vale 50_000 (max).
+        insert_economia_transfer(&p, "eco-mar", 30_000, "2026-03-10").await;
+        annotate_economia(&p, 2026, 3, 50_000).await;
+        // Abril: transfer 20_000 sem anotação → mês vale 20_000.
+        insert_economia_transfer(&p, "eco-apr", 20_000, "2026-04-10").await;
+        insert_income(&p, "inc-mar", 100_000, "2026-03-05").await;
+        insert_income(&p, "inc-apr", 100_000, "2026-04-05").await;
+
+        let (income_median, economia_median) = realized_savings_baseline(&p, today).await.unwrap();
+        assert_eq!(income_median, 100_000);
+        // Mediana de {50_000, 20_000} = 35_000 — se o max não fosse aplicado seria 25_000.
+        assert_eq!(economia_median, 35_000);
+    }
+
+    // Mês ATIVO (tem eventos) sem economia registrada conta como economia 0 — é sinal real de
+    // "não poupou", não ausência de dado; descartá-lo inflaria a mediana.
+    #[tokio::test]
+    async fn savings_baseline_active_month_without_economia_counts_as_zero() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 5, 15).unwrap();
+
+        insert_income(&p, "inc-feb", 100_000, "2026-02-05").await;
+        insert_income(&p, "inc-mar", 100_000, "2026-03-05").await;
+        insert_income(&p, "inc-apr", 100_000, "2026-04-05").await;
+        // Só março poupou.
+        insert_economia_transfer(&p, "eco-mar", 60_000, "2026-03-10").await;
+
+        let (income_median, economia_median) = realized_savings_baseline(&p, today).await.unwrap();
+        assert_eq!(income_median, 100_000);
+        // Mediana de {0, 60_000, 0} = 0 — fevereiro e abril entram como 0, não somem.
+        assert_eq!(economia_median, 0);
+    }
+
+    // A janela são os últimos 6 meses de calendário COMPLETOS: o mês corrente e meses além de
+    // 6 meses atrás ficam fora (mesma janela do `realized_monthly_baseline` — perna 1).
+    #[tokio::test]
+    async fn savings_baseline_window_excludes_current_and_older_months() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 5, 15).unwrap();
+
+        // Fora da janela [2025-11-01, 2026-05-01): mês corrente e outubro/2025.
+        insert_income(&p, "inc-may", 999_999, "2026-05-02").await;
+        insert_income(&p, "inc-oct", 999_999, "2025-10-20").await;
+        // Dentro: novembro/2025 (fronteira inferior inclusiva) e abril/2026.
+        insert_income(&p, "inc-nov", 80_000, "2025-11-05").await;
+        insert_income(&p, "inc-apr", 120_000, "2026-04-05").await;
+
+        let (income_median, economia_median) = realized_savings_baseline(&p, today).await.unwrap();
+        // Mediana de {80_000, 120_000} = 100_000 — os meses fora da janela não contaminam.
+        assert_eq!(income_median, 100_000);
+        assert_eq!(economia_median, 0);
+    }
+
+    // Janela sem nenhum mês ativo ⇒ (0, 0) — o chamador oculta a régua, nunca inventa número.
+    #[tokio::test]
+    async fn savings_baseline_empty_window_returns_zeros() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 5, 15).unwrap();
+        let (income_median, economia_median) = realized_savings_baseline(&p, today).await.unwrap();
+        assert_eq!((income_median, economia_median), (0, 0));
     }
 }

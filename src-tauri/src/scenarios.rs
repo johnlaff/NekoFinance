@@ -1058,6 +1058,18 @@ pub struct LoanBreakdown {
     /// meses a reserva cobre DEPOIS de assumir o compromisso novo. Só a parcela entra — as demais
     /// mudanças hipotéticas do cenário já têm leitura própria na trajetória e no guardrail.
     pub reserve_months_after_financing: Option<f64>,
+    /// Segunda perna do gate: percentual poupado típico ANTES da parcela, em bps
+    /// (mediana da economia registrada ÷ mediana das entradas, últimos 6 meses completos —
+    /// mesma janela e estimador da régua de reserva). `None` quando a mediana de entradas é 0
+    /// (sem % possível; a linha some).
+    pub savings_rate_before_bps: Option<i64>,
+    /// O mesmo percentual com a parcela descontada da economia típica, BRUTO — pode ser
+    /// negativo quando a parcela excede a economia típica; o clamp em 0% é só de exibição.
+    /// Só a parcela desconta (simétrico à régua de reserva).
+    pub savings_rate_after_bps: Option<i64>,
+    /// Mediana mensal da economia registrada (centavos): alimenta a regra da metade
+    /// (parcela > ½ × economia típica ⇒ zona amarela) e a frase em R$ do popover.
+    pub economia_median_cents: i64,
 }
 
 /// Extrai `(group_id, rate_bps)` da marca LEGADA `" #loan:<group_id>:<rate_bps>"` ao FINAL da
@@ -1679,6 +1691,8 @@ fn detect_loan(
     rate_by_loan: &HashMap<String, i64>,
     reserve_balance_cents: i64,
     baseline_cents: i64,
+    income_median_cents: i64,
+    economia_median_cents: i64,
 ) -> Option<(String, LoanBreakdown)> {
     let mut group_id: Option<String> = None;
     let mut principal_cents = 0i64;
@@ -1722,6 +1736,13 @@ fn detect_loan(
         (baseline_cents > 0).then(|| reserve_balance_cents as f64 / baseline_cents as f64);
     let reserve_months_after_financing = (baseline_cents > 0)
         .then(|| reserve_balance_cents as f64 / (baseline_cents + installment_cents) as f64);
+    // Segunda perna do gate (percentual poupado, mesma convenção bps do motor mensal:
+    // valor * 10_000 / renda). O "depois" desconta SÓ a parcela e fica BRUTO — negativo quando
+    // ela excede a economia típica; o frontend julga a escada no bruto e clampa só a exibição.
+    let savings_rate_before_bps =
+        (income_median_cents > 0).then(|| economia_median_cents * 10_000 / income_median_cents);
+    let savings_rate_after_bps = (income_median_cents > 0)
+        .then(|| (economia_median_cents - installment_cents) * 10_000 / income_median_cents);
 
     Some((
         group_id,
@@ -1734,6 +1755,9 @@ fn detect_loan(
             loan_total_cost_cents: total_cost_cents,
             reserve_months_before_financing,
             reserve_months_after_financing,
+            savings_rate_before_bps,
+            savings_rate_after_bps,
+            economia_median_cents,
         },
     ))
 }
@@ -1982,6 +2006,10 @@ pub(crate) async fn get_scenario_forecast_inner(
             .await
             .map_err(|e| format!("query reserve balance: {e}"))?;
     let baseline_cents = forecast_cmds::realized_monthly_baseline(pool, today).await?;
+    // Segunda perna do gate: medianas de renda e economia do MESMO "mês típico" da régua de
+    // reserva (mesma janela de 6 meses completos, mesmo estimador).
+    let (income_median_cents, economia_median_cents) =
+        forecast_cmds::realized_savings_baseline(pool, today).await?;
     let rate_by_loan: HashMap<String, i64> = list_scenario_loans(pool, scenario_id)
         .await?
         .into_iter()
@@ -1992,6 +2020,8 @@ pub(crate) async fn get_scenario_forecast_inner(
         &rate_by_loan,
         reserve_balance.0,
         baseline_cents,
+        income_median_cents,
+        economia_median_cents,
     ) {
         Some((gid, breakdown)) => (Some(gid), Some(breakdown)),
         None => (None, None),
@@ -4987,5 +5017,106 @@ mod tests {
         // 600_000 ÷ 200_000 = 3 · 600_000 ÷ 250_000 = 2,4 — o saldo líquido fica de fora.
         assert_close(loan.reserve_months_before_financing, 3.0, "before");
         assert_close(loan.reserve_months_after_financing, 2.4, "after");
+    }
+
+    // --- Régua "Economia após parcela" (2ª perna do gate: piso 20% + regra da metade) ---
+
+    /// Transfer para uma conta de reserva já criada — classificado como Economia pela
+    /// liquidez do destino, igual ao lançamento real de "guardar dinheiro".
+    async fn economia_transfer(p: &SqlitePool, id: &str, amount: i64, date: &str) {
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) \
+             VALUES (?1, 'transfer', ?2, ?3, 'acc-reserva', 0)",
+        )
+        .bind(id)
+        .bind(amount)
+        .bind(date)
+        .execute(p)
+        .await
+        .unwrap();
+    }
+
+    /// before/after/mediana derivam das medianas de renda e economia dos meses ativos: a régua
+    /// gêmea da reserva descreve o MESMO "mês típico" (mesma janela, mesmo estimador).
+    #[tokio::test]
+    async fn savings_ruler_derives_from_medians_and_subtracts_installment() {
+        let p = pool().await;
+        let sc_id = seed_reserve_ruler_fixture(&p).await;
+        account_with_liquidity(&p, "acc-reserva", 1_200_000, "reserve").await;
+        txn(&p, "inc-mar", "income", 300_000, "2026-03-05").await;
+        txn(&p, "inc-apr", "income", 300_000, "2026-04-05").await;
+        economia_transfer(&p, "eco-mar", 90_000, "2026-03-12").await;
+        economia_transfer(&p, "eco-apr", 90_000, "2026-04-12").await;
+
+        let compare = get_scenario_forecast_inner(&p, &sc_id, d("2026-05-02"))
+            .await
+            .unwrap();
+        let loan = compare.loan.as_ref().expect("empréstimo detectado");
+        // Antes: 90_000 ÷ 300_000 = 30% = 3000 bps.
+        assert_eq!(loan.savings_rate_before_bps, Some(3000));
+        // Depois: (90_000 − 50_000) ÷ 300_000 = 13,33% = 1333 bps — a parcela desconta, então
+        // after < before sempre que installment > 0.
+        assert_eq!(loan.savings_rate_after_bps, Some(1333));
+        // A mediana da economia alimenta a regra da metade e a frase em R$ do popover.
+        assert_eq!(loan.economia_median_cents, 90_000);
+    }
+
+    /// Sem renda na janela não há percentual possível: os dois campos ficam None e a linha
+    /// some — nunca uma divisão por zero disfarçada.
+    #[tokio::test]
+    async fn savings_ruler_hidden_when_income_median_is_zero() {
+        let p = pool().await;
+        let sc_id = seed_reserve_ruler_fixture(&p).await;
+        account_with_liquidity(&p, "acc-reserva", 1_200_000, "reserve").await;
+        // Meses ativos existem (custo de vida da fixture), mas nenhum tem renda.
+
+        let compare = get_scenario_forecast_inner(&p, &sc_id, d("2026-05-02"))
+            .await
+            .unwrap();
+        let loan = compare.loan.as_ref().expect("empréstimo detectado");
+        assert_eq!(loan.savings_rate_before_bps, None);
+        assert_eq!(loan.savings_rate_after_bps, None);
+    }
+
+    /// Parcela maior que a economia típica ⇒ `after` NEGATIVO, preservado bruto — o clamp em 0%
+    /// é só de exibição (frontend); o estado da escada julga o valor real.
+    #[tokio::test]
+    async fn savings_ruler_preserves_negative_after_raw() {
+        let p = pool().await;
+        let sc_id = seed_reserve_ruler_fixture(&p).await;
+        account_with_liquidity(&p, "acc-reserva", 1_200_000, "reserve").await;
+        txn(&p, "inc-mar", "income", 200_000, "2026-03-05").await;
+        txn(&p, "inc-apr", "income", 200_000, "2026-04-05").await;
+        economia_transfer(&p, "eco-mar", 30_000, "2026-03-12").await;
+        economia_transfer(&p, "eco-apr", 30_000, "2026-04-12").await;
+
+        let compare = get_scenario_forecast_inner(&p, &sc_id, d("2026-05-02"))
+            .await
+            .unwrap();
+        let loan = compare.loan.as_ref().expect("empréstimo detectado");
+        // Antes: 30_000 ÷ 200_000 = 15% = 1500 bps.
+        assert_eq!(loan.savings_rate_before_bps, Some(1500));
+        // Depois: (30_000 − 50_000) ÷ 200_000 = −10% = −1000 bps, bruto.
+        assert_eq!(loan.savings_rate_after_bps, Some(-1000));
+    }
+
+    /// O backend expõe o bruto sem arredondar por cima: 20,00% exato chega como 2000 bps e o
+    /// piso (julgado no frontend) considera 2000 como "passa" — fronteira inclusiva.
+    #[tokio::test]
+    async fn savings_ruler_exposes_exact_floor_boundary() {
+        let p = pool().await;
+        let sc_id = seed_reserve_ruler_fixture(&p).await;
+        account_with_liquidity(&p, "acc-reserva", 1_200_000, "reserve").await;
+        txn(&p, "inc-mar", "income", 300_000, "2026-03-05").await;
+        txn(&p, "inc-apr", "income", 300_000, "2026-04-05").await;
+        // (110_000 − 50_000) ÷ 300_000 = 20,00% exato.
+        economia_transfer(&p, "eco-mar", 110_000, "2026-03-12").await;
+        economia_transfer(&p, "eco-apr", 110_000, "2026-04-12").await;
+
+        let compare = get_scenario_forecast_inner(&p, &sc_id, d("2026-05-02"))
+            .await
+            .unwrap();
+        let loan = compare.loan.as_ref().expect("empréstimo detectado");
+        assert_eq!(loan.savings_rate_after_bps, Some(2000));
     }
 }

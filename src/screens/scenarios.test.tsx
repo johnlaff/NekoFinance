@@ -1735,6 +1735,25 @@ describe("ScenarioCompare — polimento (plano 074, fatia C)", () => {
       loan_total_cost_cents: 200_000,
       reserve_months_before_financing: reserve.before,
       reserve_months_after_financing: reserve.after,
+      savings_rate_before_bps: null,
+      savings_rate_after_bps: null,
+      economia_median_cents: 0,
+    };
+  }
+
+  /** Fixture da 2ª perna: parcela 50_000 (do loanFixture); economia típica default 200_000
+   * deixa a regra da metade folgada (100_000 ≤ 200_000) para os testes do piso isolarem só
+   * o limiar de 20%. */
+  function savingsLoanFixture(savings: {
+    before: number | null;
+    after: number | null;
+    economiaMedian?: number;
+  }) {
+    return {
+      ...loanFixture({ before: 14, after: 12 }),
+      savings_rate_before_bps: savings.before,
+      savings_rate_after_bps: savings.after,
+      economia_median_cents: savings.economiaMedian ?? 200_000,
     };
   }
 
@@ -1793,6 +1812,93 @@ describe("ScenarioCompare — polimento (plano 074, fatia C)", () => {
     ).not.toBeInTheDocument();
     // O resto do resumo do empréstimo continua normal.
     expect(screen.getByText("Custo do crédito")).toBeInTheDocument();
+  });
+
+  // --- Régua "Economia após parcela": escada composta (piso 20% + regra da metade) ---
+  // O estado julga sempre o valor BRUTO; 2000 bps exatos passam o piso (20,00% = passa) e
+  // parcela exatamente igual à metade da economia típica é paz (a regra é "MAIS da metade").
+
+  it.each([
+    [1999, 200_000, "Abaixo do piso", "lucide-triangle-alert"],
+    [2000, 200_000, "Paz", "lucide-circle-check"],
+    // Parcela 50_000: um centavo abaixo do dobro (99_999) fere a metade; exato (100_000) é paz.
+    [2500, 99_999, "Mais da metade da economia", "lucide-triangle-alert"],
+    [2500, 100_000, "Paz", "lucide-circle-check"],
+  ] as const)(
+    "%s bps pós-parcela com economia típica %s → '%s' (ícone %s)",
+    async (afterBps, economiaMedian, label, iconClass) => {
+      await renderCompare(
+        baseCompare({
+          loan: savingsLoanFixture({ before: 3000, after: afterBps, economiaMedian }),
+        }),
+      );
+      const badge = document.querySelector(".scn-loan-summary__savings");
+      expect(badge).not.toBeNull();
+      expect(badge!.textContent).toContain(label);
+      expect(badge!.querySelector(`.${iconClass}`)).toBeInTheDocument();
+    },
+  );
+
+  it("exibe antes → depois em percentuais inteiros; o antes fica neutro, fora da cor do estado", async () => {
+    await renderCompare(
+      baseCompare({ loan: savingsLoanFixture({ before: 2700, after: 1900 }) }),
+    );
+    const badge = document.querySelector(".scn-loan-summary__savings");
+    expect(badge!.textContent).toContain("27% → 19%");
+    expect(badge!.textContent).toContain("Abaixo do piso");
+    const before = badge!.querySelector(".scn-loan-summary__savings-before");
+    expect(before).not.toBeNull();
+    expect(before!.textContent).toContain("27%");
+    expect(before!.textContent).not.toContain("19%");
+  });
+
+  it("pós-parcela negativo exibe clampado em 0% mas o estado continua vindo do bruto (vermelho)", async () => {
+    await renderCompare(
+      baseCompare({ loan: savingsLoanFixture({ before: 1500, after: -1000 }) }),
+    );
+    const badge = document.querySelector(".scn-loan-summary__savings");
+    expect(badge!.textContent).toContain("15% → 0%");
+    expect(badge!.textContent).toContain("Abaixo do piso");
+    expect(badge!.querySelector(".lucide-triangle-alert")).toBeInTheDocument();
+  });
+
+  it("na fronteira do piso a exibição TRUNCA: 1999 bps mostra 19%, nunca um 20% contraditório", async () => {
+    await renderCompare(
+      baseCompare({ loan: savingsLoanFixture({ before: 3000, after: 1999 }) }),
+    );
+    const badge = document.querySelector(".scn-loan-summary__savings");
+    // Math.round mostraria "30% → 20%" ao lado de "Abaixo do piso" — número e veredito
+    // se contradiriam exatamente onde o gate decide.
+    expect(badge!.textContent).toContain("30% → 19%");
+    expect(badge!.textContent).toContain("Abaixo do piso");
+  });
+
+  it("popover do amarelo traz a evidência em R$ da regra da metade", async () => {
+    // Parcela 50_000 consome mais da metade da economia típica de 80_000 (mas não a excede).
+    const user = await renderCompare(
+      baseCompare({
+        loan: savingsLoanFixture({ before: 2500, after: 2100, economiaMedian: 80_000 }),
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Economia após parcela" }));
+    const tip = await screen.findByRole("tooltip");
+    // fmtBRL separa "R$" do número com espaço NÃO-QUEBRÁVEL (U+00A0, Intl pt-BR).
+    expect(tip.textContent).toContain(
+      "a parcela (R$ 500,00) consome mais da metade da sua economia típica (R$ 800,00)",
+    );
+  });
+
+  it("savings_rate_before_bps nulo (sem renda na janela) oculta só a linha da economia", async () => {
+    await renderCompare(
+      baseCompare({
+        loan: savingsLoanFixture({ before: null, after: null }),
+      }),
+    );
+    expect(
+      document.querySelector(".scn-loan-summary__savings"),
+    ).not.toBeInTheDocument();
+    // A linha da reserva (perna 1) continua viva.
+    expect(document.querySelector(".scn-loan-summary__reserve")).toBeInTheDocument();
   });
 
   // --- "Buraco do futuro" sem projeção nenhuma ---

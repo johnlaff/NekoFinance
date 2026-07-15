@@ -1609,6 +1609,97 @@ function ReserveMonthsBadge({
   );
 }
 
+/**
+ * Escada composta da régua "Economia após parcela" (2ª perna do gate de financiamento),
+ * julgada sempre sobre o `afterBps` BRUTO (pode ser negativo; o clamp em 0% é só de exibição):
+ * abaixo de 2000 bps a parcela fura o piso de 20% de poupança; passando o piso, uma parcela
+ * que consome MAIS da metade da economia típica ainda trava o ritmo de patrimônio (regra da
+ * metade — parcela exatamente igual à metade é paz). Fronteiras: 20,00% exato passa o piso.
+ * Nenhuma das duas regras sozinha cobre os dois perfis: quem poupa pouco fura primeiro no
+ * piso; quem poupa muito fura primeiro na metade.
+ */
+function savingsAfterState(
+  afterBps: number,
+  installmentCents: number,
+  economiaMedianCents: number,
+): MethodState {
+  if (afterBps < 2000) {
+    return {
+      key: "below-floor",
+      label: "Abaixo do piso",
+      color: "var(--danger-400)",
+      Icon: AlertTriangle,
+    };
+  }
+  if (installmentCents * 2 > economiaMedianCents) {
+    return {
+      key: "half-rule",
+      label: "Mais da metade da economia",
+      color: "var(--warning-400)",
+      Icon: AlertTriangle,
+    };
+  }
+  return {
+    key: "peace",
+    label: "Paz",
+    color: "var(--primary-quiet-text)",
+    Icon: CheckCircle2,
+  };
+}
+
+/**
+ * Copy didática do popover da 2ª perna. A frase final é DATA-DERIVADA: aparece quando a regra
+ * da metade (ou a exaustão da economia) se materializa NESTA simulação — o estado amarelo e o
+ * vermelho por excesso precisam da evidência em R$ que os disparou, nunca só do julgamento.
+ */
+function savingsPopoverBody(
+  installmentCents: number,
+  economiaMedianCents: number,
+): string {
+  const base =
+    "Mediana da economia registrada menos a parcela nova, dividida pela mediana das entradas — últimos 6 meses completos, a mesma janela da reserva. Abaixo de 20% a parcela fura o piso de poupança do método (a meta de 20–30% se julga na média do ano). E mesmo acima do piso, uma parcela que consome mais da metade da sua economia típica trava o ritmo do patrimônio — pelo menos metade dela precisa continuar sobrando.";
+  if (installmentCents > economiaMedianCents) {
+    return `${base} A parcela (${fmtBRL(installmentCents)}) excede sua economia típica (${fmtBRL(economiaMedianCents)}).`;
+  }
+  if (installmentCents * 2 > economiaMedianCents) {
+    return `${base} Nesta simulação, a parcela (${fmtBRL(installmentCents)}) consome mais da metade da sua economia típica (${fmtBRL(economiaMedianCents)}).`;
+  }
+  return base;
+}
+
+/**
+ * Antes → depois do percentual poupado; linha gêmea do `ReserveMonthsBadge` (mesma anatomia,
+ * mesma disciplina do "antes" neutro). Percentuais em inteiros (bps ÷ 100); o "depois"
+ * negativo EXIBE 0% — o estado, porém, já foi julgado no bruto, então a cor/rótulo continuam
+ * denunciando que a parcela excede a economia típica.
+ */
+function SavingsRateBadge({
+  before,
+  after,
+  installmentCents,
+  economiaMedianCents,
+}: {
+  before: number;
+  after: number;
+  installmentCents: number;
+  economiaMedianCents: number;
+}) {
+  const state = savingsAfterState(after, installmentCents, economiaMedianCents);
+  const { Icon } = state;
+  // TRUNCA (floor), nunca arredonda: 1999 bps arredondado viraria "20%" ao lado do rótulo
+  // "Abaixo do piso" — número e veredito se contradiriam na fronteira exata que o gate julga.
+  // Truncar nunca superestima a poupança, o viés conservador certo para um gate financeiro.
+  const pct = (bps: number) => `${Math.floor(bps / 100)}%`;
+  return (
+    <span className="scn-loan-summary__savings" style={{ color: state.color }}>
+      <Icon size={13} strokeWidth={1.75} aria-hidden="true" />
+      {state.label} ·{" "}
+      <span className="scn-loan-summary__savings-before">{pct(before)} → </span>
+      {pct(Math.max(0, after))}
+    </span>
+  );
+}
+
 /** Abaixo de R$1 de diferença é ruído de arredondamento, não um resultado — um card mostrando
  * "−R$ 0,09" em vermelho alarma por nada. Este limiar é sobre MATERIALIDADE (existe mudança
  * que importa?), então usa o valor absoluto em centavos direto, sem depender do sentido
@@ -2027,6 +2118,31 @@ export function ScenarioCompare({
                 />
               </div>
             )}
+            {compare.loan.savings_rate_before_bps != null &&
+              compare.loan.savings_rate_after_bps != null && (
+                <div className="scn-loan-summary__row">
+                  <span>
+                    <InfoPopover
+                      hideMarker
+                      term={{
+                        title: "Economia após parcela",
+                        body: savingsPopoverBody(
+                          compare.loan.loan_installment_cents,
+                          compare.loan.economia_median_cents,
+                        ),
+                      }}
+                    >
+                      Economia após parcela
+                    </InfoPopover>
+                  </span>
+                  <SavingsRateBadge
+                    before={compare.loan.savings_rate_before_bps}
+                    after={compare.loan.savings_rate_after_bps}
+                    installmentCents={compare.loan.loan_installment_cents}
+                    economiaMedianCents={compare.loan.economia_median_cents}
+                  />
+                </div>
+              )}
           </div>
         )}
       </div>

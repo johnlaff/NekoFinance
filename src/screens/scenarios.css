@@ -372,9 +372,10 @@
   gap: 8px;
   flex-wrap: wrap;
 }
-/* Semáforo da reserva pós-financiamento: ícone + palavra + cor, nunca só
- * cor — mesma disciplina do resto da superfície. */
-.scn-loan-summary__reserve {
+/* Semáforos das duas pernas do gate (reserva e economia pós-parcela): ícone + palavra +
+ * cor, nunca só cor — mesma disciplina do resto da superfície. */
+.scn-loan-summary__reserve,
+.scn-loan-summary__savings {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -383,7 +384,8 @@
 }
 /* O valor "antes" fica neutro (fora da cor de estado do "depois") — num cruzamento de
  * faixa, herdar a cor faria o valor antigo parecer da mesma faixa do novo. */
-.scn-loan-summary__reserve-before {
+.scn-loan-summary__reserve-before,
+.scn-loan-summary__savings-before {
   color: var(--text-faint);
 }
 

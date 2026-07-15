@@ -985,6 +985,20 @@ export interface LoanBreakdown {
   reserve_months_before_financing: number | null;
   /** A mesma régua com a parcela somada ao denominador: reserva ÷ (típico + parcela). */
   reserve_months_after_financing: number | null;
+  /**
+   * Segunda perna do gate: percentual poupado típico ANTES da parcela, em bps (mediana da
+   * economia registrada ÷ mediana das entradas, últimos 6 meses completos — mesma janela da
+   * régua de reserva). `null` quando a mediana de entradas é 0 — a linha some.
+   */
+  savings_rate_before_bps: number | null;
+  /**
+   * O mesmo percentual com a parcela descontada da economia típica, BRUTO (sem clamp) —
+   * negativo quando a parcela excede a economia típica; o clamp em 0% é só de exibição e a
+   * escada julga sempre este valor.
+   */
+  savings_rate_after_bps: number | null;
+  /** Mediana mensal da economia registrada (centavos): insumo da regra da metade e do popover. */
+  economia_median_cents: number;
 }
 
 export interface ScenarioMonthEnd {
