@@ -33,7 +33,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: millionco/react-doctor@e877ca7cbaa197e441ebd0a0e7fbc3901972f915 # react-doctor@0.7.6
+      - uses: millionco/react-doctor@1a30f2caac12f1678243cb8733dd7bc1b598a9da # react-doctor@0.7.6
         with:
           blocking: none
           scope: changed
