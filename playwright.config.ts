@@ -36,6 +36,10 @@ export default defineConfig({
   },
   webServer: {
     command: "npm run dev -- --host 127.0.0.1",
+    // Credenciais Google zeradas: o smoke visual precisa renderizar IGUAL com e
+    // sem `.env` local (a CI não tem client id; um baseline gerado com ele
+    // esconderia a linha "Conexão Google indisponível" e quebraria lá).
+    env: { VITE_GOOGLE_CLIENT_ID: "", VITE_GOOGLE_CLIENT_SECRET: "" },
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
     url: baseURL,
