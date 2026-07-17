@@ -88,7 +88,7 @@
   height: 32px;
   border-radius: 9px;
   flex: none;
-  background: var(--ink-700, #1a2220);
+  background: var(--surface-elevated);
   display: flex;
   align-items: center;
   justify-content: center;

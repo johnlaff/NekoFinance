@@ -1,19 +1,20 @@
 /* ============================================================
    Neko Finance — Typography Tokens
-   Sans  : Hanken Grotesk  — UI, body, headings, display
-   Mono  : Geist Mono      — money, tabular figures, citations
-   Serif : Newsreader      — editorial / methodology long-form
+   Sans  : Geist       — UI, body, headings, display, money
+   Mono  : Geist Mono  — parcels ("2/10"), citations, code
+   Serif : Newsreader  — editorial / methodology long-form
    ============================================================ */
 
 :root {
   /* ---- Families ---- */
-  --font-sans:
-    "Hanken Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", "Cascadia Code", monospace;
   --font-serif: "Newsreader", ui-serif, Georgia, "Times New Roman", serif;
 
-  /* Money / tabular figures — always mono with tabular-nums */
-  --font-money: var(--font-mono);
+  /* Money — Geist com algarismos tabulares (a propriedade de alinhamento é
+     inegociável; a família acompanha a UI). Todo valor passa pelo átomo Money
+     ou pela classe .t-money, que aplicam `font-variant-numeric: tabular-nums`. */
+  --font-money: var(--font-sans);
 
   /* ---- Weights ---- */
   --fw-regular: 400; /* @kind font */
@@ -97,8 +98,9 @@
 }
 .t-money {
   font-family: var(--font-money);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0;
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: -0.01em;
+  white-space: nowrap; /* "R$" órfão no fim da linha é ruído de leitura */
 }
 .t-serif {
   font-family: var(--font-serif);

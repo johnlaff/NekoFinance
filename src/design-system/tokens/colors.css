@@ -1,11 +1,18 @@
 /* ============================================================
    Neko Finance — Color Tokens
-   Direction: "Midnight Ledger" — deep graphite-ink cockpit,
-   calm jade primary (money/growth without cliché), brass-amber
-   warmth (the subtle feline cue), restrained semantic statuses.
+   Direction: "Midnight Purr" — zinc dark-first shell, one
+   configurable accent (brand) hard-separated from method-status
+   colors (paz/atenção never follow the accent), Geist type.
+
+   Two layers:
+   1. Literal values live ONLY in this file.
+   2. Components consume the semantic aliases (--bg, --surface,
+      --text, --primary, …) — never literals, never primitives.
 
    :root = DARK theme (the primary, presented-first theme).
-   [data-theme="light"] = light "vellum-cool" theme.
+   [data-theme="light"]  = light theme (zero-chroma neutrals).
+   [data-accent="…"]     = accent palette (jade | lima | violeta |
+                           âmbar | céu | rosa). Default: jade.
    ============================================================ */
 
 :root {
@@ -13,212 +20,228 @@
      sem isto o WebView2 desenha o calendário PRETO sobre o input escuro (invisível). */
   color-scheme: dark;
 
-  /* ---- Base palette (dark) ---- */
-  --ink-900: #0e1413; /* app background, deepest */
-  --ink-850: #121a18;
-  --ink-800: #161d1c; /* surface / card */
-  --ink-750: #1b2322;
-  --ink-700: #1f2827; /* elevated surface */
-  --ink-650: #28332f;
-  --ink-600: #2a3433; /* border */
-  --ink-500: #3a4644; /* border-strong */
-  --ink-400: #566461;
-  --ink-300: #8e9692; /* faint text — WCAG AA (>=4.5:1) nas superfícies escuras usadas */
-  --ink-200: #9aa5a2; /* muted text */
-  --ink-100: #c9d2cf;
-  --ink-050: #e8edeb; /* primary text */
-  --ink-000: #f4f7f5; /* high-emphasis text / pure */
+  /* ---- Accent (brand) — jade default; pair --accent/--accent-ink is atomic:
+     --accent-ink is THE text color over an accent fill, per palette. ---- */
+  --accent: #3fbf8f;
+  --accent-ink: #06231a;
+  --accent-tint: color-mix(in oklch, var(--accent) 13%, transparent);
 
-  /* ---- Brand: Jade (primary) ---- */
-  --jade-700: #1c5c45;
-  --jade-600: #237a57;
-  --jade-500: #2e9b6f; /* primary base */
-  --jade-400: #3fbf8f; /* primary on-dark, interactive */
-  --jade-300: #6cd8ac;
-  --jade-200: #a7e9cd;
-  --jade-tint: rgba(63, 191, 143, 0.12); /* wash / selected bg */
+  /* ---- Semantic aliases (the app-wide interface) ---- */
+  --bg: #09090b;
+  --bg-subtle: #131316;
+  --surface: #18181b;
+  --surface-2: #1f1f23;
+  --surface-elevated: #27272a;
+  --surface-hover: #232327;
+  --surface-selected: var(--accent-tint);
 
-  /* ---- Brand: Brass (secondary / feline warmth) ---- */
-  --brass-700: #8a5e1c;
-  --brass-600: #b07e28;
-  --brass-500: #d29b3a;
-  --brass-400: #e0a33e; /* secondary base */
-  --brass-300: #ecc57e;
-  --brass-tint: rgba(224, 163, 62, 0.13);
+  /* Borda estrutural = mesma cor da superfície-2: divisória sutil, não contorno. */
+  --border: #27272a;
+  --border-strong: #3f3f46;
+  --border-focus: var(--accent);
+  /* Borda de CONTROLES de formulário (inputs/selects): >=3:1 p/ delinear o campo
+     (WCAG 1.4.11) sobre --bg e --surface. `--border` é fraco demais para isso. */
+  --border-input: #71717a;
 
-  /* ---- Semantic statuses ---- */
-  --success-500: #34b981;
-  --success-400: #4fd39a;
-  --success-tint: rgba(52, 185, 129, 0.14);
+  --text: #fafafa;
+  --text-strong: #ffffff;
+  --text-muted: #a1a1aa;
+  --text-faint: #8f8f99; /* WCAG AA (>=4.5:1) sobre bg/surface/surface-elevated */
+  --text-on-primary: var(--accent-ink);
 
-  --warning-500: #e0a33e;
-  --warning-400: #efbe63;
-  --warning-tint: rgba(224, 163, 62, 0.15);
+  --primary: var(--accent);
+  --primary-hover: color-mix(in oklch, var(--accent) 84%, white);
+  --primary-press: color-mix(in oklch, var(--accent) 84%, black);
+  --primary-quiet: var(--accent-tint);
+  --primary-quiet-text: var(--accent);
 
-  --danger-500: #e0625b;
-  --danger-400: #ed7e78;
-  --danger-tint: rgba(224, 98, 91, 0.14);
+  /* Papéis de "atenção" herdados da antiga secundária (pendente, projetado):
+     status, não marca — apontam para o warn e nunca seguem a paleta. */
+  --secondary: var(--warning-400);
+  --secondary-quiet: var(--warning-tint);
+  --text-on-brass: #2b1503;
 
-  --info-500: #4fa6ce;
-  --info-400: #74c0e2;
-  --info-tint: rgba(79, 166, 206, 0.14);
+  /* ---- Semantic statuses (método) — FIXOS por tema; nunca seguem o acento ---- */
+  --success-500: #22c55e;
+  --success-400: #4ade80;
+  --success-tint: rgba(74, 222, 128, 0.14);
 
-  /* ---- Chart series (6, harmonized, color-blind aware ordering) ---- */
-  --chart-1: #3fbf8f; /* jade */
-  --chart-2: #e0a33e; /* brass */
-  --chart-3: #5fa8dc; /* sky */
-  --chart-4: #c98bd4; /* orchid */
-  --chart-5: #e0625b; /* coral */
-  --chart-6: #6fc7b8; /* teal */
-  --chart-grid: rgba(154, 165, 162, 0.16);
-  --chart-axis: var(--ink-300);
+  --warning-500: #f97316;
+  --warning-400: #fb923c;
+  --warning-tint: rgba(251, 146, 60, 0.14);
 
-  /* ---- Money-specific (positive / negative cashflow) ---- */
-  --money-pos: #4fd39a;
-  --money-neg: #ed7e78;
-  --money-neutral: var(--ink-100);
+  --danger-500: #ef4444;
+  --danger-400: #f87171;
+  --danger-tint: rgba(248, 113, 113, 0.14);
 
-  /* ---- Semantic aliases (use these in components) ---- */
-  --bg: var(--ink-900);
-  --bg-subtle: var(--ink-850);
-  --surface: var(--ink-800);
-  --surface-2: var(--ink-750);
-  --surface-elevated: var(--ink-700);
-  --surface-hover: var(--ink-750);
-  --surface-selected: var(--jade-tint);
+  --info-500: #0ea5e9;
+  --info-400: #38bdf8;
+  --info-tint: rgba(56, 189, 248, 0.14);
 
-  --border: var(--ink-600);
-  --border-strong: var(--ink-500);
-  --border-focus: var(--jade-400);
-  /* Borda de CONTROLES de formulário (inputs/selects): >=3:1 p/ delinear o campo (WCAG 1.4.11).
-     `--border` (divisores estruturais) é fraco demais para identificar um controle no escuro. */
-  --border-input: var(--ink-300);
+  /* ---- Money (positive / negative cashflow) — status, não marca ---- */
+  --money-pos: #4ade80;
+  --money-neg: #f87171;
+  --money-neutral: var(--text);
 
-  --text: var(--ink-050);
-  --text-strong: var(--ink-000);
-  --text-muted: var(--ink-200);
-  --text-faint: var(--ink-300);
-  --text-on-primary: #06140e;
-  --text-on-brass: #1f1505;
+  /* ---- Chart series (dado, não marca — não seguem o acento) ---- */
+  --chart-1: #34d399;
+  --chart-2: #fbbf24;
+  --chart-3: #38bdf8;
+  --chart-4: #c084fc;
+  --chart-5: #fb7185;
+  --chart-6: #2dd4bf;
+  --chart-grid: rgba(161, 161, 170, 0.16);
+  --chart-axis: var(--text-faint);
 
-  --primary: var(--jade-400);
-  --primary-hover: var(--jade-300);
-  --primary-press: var(--jade-500);
-  --primary-quiet: var(--jade-tint);
-  /* Texto sobre o fundo `--primary-quiet` (pílula/chip discreto) com contraste AA por tema:
-     no escuro o jade-400 já passa (6:1); no claro precisa de um verde mais escuro (ver light). */
-  --primary-quiet-text: var(--jade-400);
-
-  --secondary: var(--brass-400);
-  --secondary-quiet: var(--brass-tint);
-
-  --focus-ring: rgba(63, 191, 143, 0.55);
-  --scrollbar-thumb: #677870; /* WCAG 1.4.11: >=3:1 vs --surface (#161d1c) e --bg (#0e1413) */
+  --focus-ring: color-mix(in srgb, var(--accent) 55%, transparent);
+  --scrollbar-thumb: #71717a; /* WCAG 1.4.11: >=3:1 vs --surface e --bg */
 
   /* Scrim atrás de modais/overlays (escurece o conteúdo de fundo) */
-  --bg-scrim: rgba(6, 10, 9, 0.66);
+  --bg-scrim: rgba(0, 0, 0, 0.62);
 
   /* Owner-type accents (personal / partner / shared) */
-  --owner-personal: #3fbf8f;
-  --owner-partner: #c98bd4;
-  --owner-shared: #5fa8dc;
+  --owner-personal: #34d399;
+  --owner-partner: #c084fc;
+  --owner-shared: #38bdf8;
 
   /* Família categórica unificada (bolsos / séries / tags). DARK. */
-  --cat-jade: #3fbf8f;
-  --cat-sky: #5fa8dc;
-  --cat-orchid: #c98bd4;
-  --cat-violet: #8c8ae6;
-  --cat-teal: #5fc9c0;
-  --cat-amber: #ddb061;
-  --cat-coral: #e68a84;
+  --cat-jade: #34d399;
+  --cat-sky: #38bdf8;
+  --cat-orchid: #e879f9;
+  --cat-violet: #a78bfa;
+  --cat-teal: #2dd4bf;
+  --cat-amber: #fbbf24;
+  --cat-coral: #fb7185;
 
   /* Cenário "e se" — linha tracejada de simulação no gráfico do Horizonte,
-     sempre distinta do jade real (`--primary`) por cor E traço, nunca só por cor. */
+     sempre distinta da série real por cor E traço, nunca só por cor. */
   --sim-scenario: var(--cat-violet);
   --sim-scenario-tint: color-mix(in srgb, var(--cat-violet) 16%, transparent);
 }
 
+/* ---- Accent palettes (dark values) — só o par --accent/--accent-ink muda ---- */
+:root[data-accent="lima"] {
+  --accent: #95ff48;
+  --accent-ink: #10240a;
+}
+:root[data-accent="violeta"] {
+  --accent: #c084fc;
+  --accent-ink: #26113f;
+}
+:root[data-accent="ambar"] {
+  --accent: #fbbf24;
+  --accent-ink: #2b1e03;
+}
+:root[data-accent="ceu"] {
+  --accent: #38bdf8;
+  --accent-ink: #062434;
+}
+:root[data-accent="rosa"] {
+  --accent: #fb7185;
+  --accent-ink: #340f16;
+}
+
 /* ============================================================
-   LIGHT THEME — "Vellum Cool"
-   Cool calm paper, NOT warm cream. White surfaces, ink text.
+   LIGHT THEME — mesma malha semântica, primitivos trocados.
+   Neutro em croma zero (nada de creme); acento escuro o
+   bastante para AA como texto (>=4.5:1 sobre --bg e --surface).
    ============================================================ */
 [data-theme="light"] {
   color-scheme: light;
-  --bg: #eaeeec;
-  --bg-subtle: #e2e7e5;
+
+  --accent: #065f46;
+  --accent-ink: #eafff6;
+
+  --bg: #fafafa;
+  --bg-subtle: #f4f4f5;
   --surface: #ffffff;
-  --surface-2: #f4f7f5;
+  --surface-2: #f4f4f5;
   --surface-elevated: #ffffff;
-  --surface-hover: #f1f4f2;
-  --surface-selected: rgba(46, 155, 111, 0.1);
+  --surface-hover: #f0f0f2;
 
-  --border: #d7dedb;
-  --border-strong: #c2cbc7;
-  --border-focus: #2e9b6f;
-  /* Borda de controles de formulário no claro (>=3:1 sobre as superfícies claras). */
-  --border-input: #6f7a74;
+  --border: #e4e4e7;
+  --border-strong: #d4d4d8;
+  --border-input: #71717a;
 
-  --text: #142019;
-  --text-strong: #0a100d;
-  --text-muted: #56635e;
-  --text-faint: #5a655f; /* WCAG AA (>=4.5:1) sobre as superfícies claras, incl. --bg-subtle */
-  --text-on-primary: #ffffff;
-  --text-on-brass: #2a1c05;
+  --text: #18181b;
+  --text-strong: #09090b;
+  --text-muted: #52525b;
+  --text-faint: #6b6b76; /* WCAG AA (>=4.5:1) sobre bg/surface/surface-2 */
 
-  --primary: #1e7a59; /* WCAG AA (>=4.5:1) p/ texto branco no botão primário (o #228764 dava 4.45) */
-  --primary-hover: #1c6f52;
-  --primary-press: #15543e;
-  --primary-quiet: rgba(34, 135, 100, 0.1);
-  --primary-quiet-text: #15543e; /* 7.8:1 sobre a pílula clara (--primary a 3.9 falhava AA) */
+  --primary-hover: color-mix(in oklch, var(--accent) 84%, black);
+  --primary-press: color-mix(in oklch, var(--accent) 70%, black);
 
-  --secondary: #b07e28;
-  --secondary-quiet: rgba(176, 126, 40, 0.12);
+  --text-on-brass: #fff7e8;
 
-  --success-500: #1e9466;
-  --warning-500: #b8801f;
-  --danger-500: #cb463e;
-  --info-500: #2e83ac;
-  /* *-400 are the on-tint TEXT colors. On light tints they must be dark. */
-  --success-400: #157a52;
-  --warning-400: #875812;
-  --danger-400: #b23a32;
-  --info-400: #1e6b91;
-  --success-tint: rgba(30, 148, 102, 0.12);
-  --warning-tint: rgba(184, 128, 31, 0.13);
-  --danger-tint: rgba(203, 70, 62, 0.1);
-  --info-tint: rgba(46, 131, 172, 0.11);
+  /* -500 = base de preenchimento; -400 = TEXTO sobre tint (escuro no claro). */
+  --success-500: #16a34a;
+  --success-400: #166534;
+  --success-tint: rgba(22, 163, 74, 0.12);
 
-  --money-pos: #147049; /* WCAG AA (>=4.5:1) p/ valores 13–15px sobre surface/bg/bg-subtle (claro) */
-  --money-neg: #cb463e;
+  --warning-500: #ea580c;
+  --warning-400: #9a3412;
+  --warning-tint: rgba(234, 88, 12, 0.12);
+
+  --danger-500: #dc2626;
+  --danger-400: #b91c1c;
+  --danger-tint: rgba(220, 38, 38, 0.1);
+
+  --info-500: #0284c7;
+  --info-400: #075985;
+  --info-tint: rgba(2, 132, 199, 0.11);
+
+  --money-pos: #166534;
+  --money-neg: #b91c1c;
   --money-neutral: var(--text);
 
-  --chart-1: #228764;
-  --chart-2: #b8801f;
-  --chart-3: #2e83ac;
-  --chart-4: #9a55a8;
-  --chart-5: #cb463e;
-  --chart-6: #2e9488;
-  --chart-grid: rgba(20, 32, 25, 0.1);
-  --chart-axis: #5a655f; /* AA (>=4.5:1) p/ rótulos de eixo 10.5px sobre surface E bg-subtle (claro) */
+  --chart-1: #059669;
+  --chart-2: #b45309;
+  --chart-3: #0369a1;
+  --chart-4: #7c3aed;
+  --chart-5: #be123c;
+  --chart-6: #0d9488;
+  --chart-grid: rgba(24, 24, 27, 0.1);
+  --chart-axis: #6b6b76;
 
-  --focus-ring: rgba(34, 135, 100, 0.85); /* WCAG 1.4.11: 3.07:1 vs --bg (#eaeeec) */
-  --scrollbar-thumb: #6f7a74; /* WCAG 1.4.11: >=3:1 vs --bg (#eaeeec) e superfície branca */
-  --bg-scrim: rgba(20, 32, 25, 0.4);
+  --focus-ring: color-mix(in srgb, var(--accent) 85%, transparent);
+  --scrollbar-thumb: #71717a; /* WCAG 1.4.11: >=3:1 vs --bg e superfície branca */
+  --bg-scrim: rgba(24, 24, 27, 0.4);
 
-  --owner-personal: #228764;
-  --owner-partner: #9a55a8;
-  --owner-shared: #2e83ac;
+  --owner-personal: #059669;
+  --owner-partner: #7c3aed;
+  --owner-shared: #0369a1;
 
   /* Família categórica unificada (bolsos / séries / tags). LIGHT. */
-  --cat-jade: #1e9466;
-  --cat-sky: #2e83ac;
-  --cat-orchid: #9a55a8;
-  --cat-violet: #5a57c2;
-  --cat-teal: #2e9488;
-  --cat-amber: #b08433;
-  --cat-coral: #c9605a;
+  --cat-jade: #059669;
+  --cat-sky: #0369a1;
+  --cat-orchid: #a21caf;
+  --cat-violet: #6d28d9;
+  --cat-teal: #0d9488;
+  --cat-amber: #b45309;
+  --cat-coral: #be123c;
 
-  /* Cenário "e se". LIGHT. */
   --sim-scenario: var(--cat-violet);
   --sim-scenario-tint: color-mix(in srgb, var(--cat-violet) 16%, transparent);
+}
+
+/* ---- Accent palettes (light values) ---- */
+:root[data-theme="light"][data-accent="lima"] {
+  --accent: #3f6212;
+  --accent-ink: #f4ffe5;
+}
+:root[data-theme="light"][data-accent="violeta"] {
+  --accent: #6d28d9;
+  --accent-ink: #f6f2ff;
+}
+:root[data-theme="light"][data-accent="ambar"] {
+  --accent: #92400e;
+  --accent-ink: #fff7e8;
+}
+:root[data-theme="light"][data-accent="ceu"] {
+  --accent: #075985;
+  --accent-ink: #ecf8ff;
+}
+:root[data-theme="light"][data-accent="rosa"] {
+  --accent: #9f1239;
+  --accent-ink: #fff0f3;
 }

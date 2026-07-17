@@ -40,7 +40,7 @@ tokens, spreadsheet data, or personal finance caches are committed — see Priva
 
 - Tauri 2 desktop shell, Rust 1.96 (edition 2024), sqlx/SQLite
 - React 19 + TypeScript (strict) + Vite 8
-- "Midnight Ledger" design system (dark-first, WCAG AA) — `src/design-system/`
+- "Midnight Purr" design system (dark-first, WCAG AA, configurable brand accent) — `src/design-system/`
 - Quality: ESLint, Prettier, vitest (90% coverage thresholds), Playwright smoke, clippy
   `-D warnings`, rustfmt, gitleaks privacy scan, React Doctor
 

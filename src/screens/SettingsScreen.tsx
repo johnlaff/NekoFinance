@@ -8,6 +8,7 @@ import {
   Landmark,
   Link,
   Lock,
+  Palette,
   Plus,
   RefreshCw,
   Settings,
@@ -23,6 +24,7 @@ import { GoogleSheetsPanel } from "../features/sheets/GoogleSheetsPanel";
 import { LocalXlsxImport } from "../features/sheets/LocalXlsxImport";
 import { WriteBackPending } from "./dashboard/WriteBackPending";
 import { useWriteBackPending } from "../hooks/useWriteBackPending";
+import { ACCENTS, applyAccent, getStoredAccent, type Accent } from "../lib/accent";
 import {
   backupDatabase,
   checkAuthStatus,
@@ -124,7 +126,7 @@ const CAT_SUMMARY_STYLE: React.CSSProperties = {
 };
 
 const CAT_WARN_STYLE: React.CSSProperties = {
-  color: "var(--brass-400)",
+  color: "var(--warning-400)",
 };
 
 const CAT_REMOVE_BTN_STYLE: React.CSSProperties = {
@@ -471,7 +473,7 @@ function DailyReminderSection() {
               Notificação nativa no horário escolhido — no Windows, dispara mesmo com o
               app fechado.
               {osWarn ? (
-                <strong role="alert" style={{ color: "var(--brass-400)" }}>
+                <strong role="alert" style={{ color: "var(--warning-400)" }}>
                   {" "}
                   {osWarn}
                 </strong>
@@ -1024,6 +1026,7 @@ export function SettingsScreen({
   // Persistido em localStorage e refletido em <html data-motion> (src/lib/motion.ts).
   // Ligar FORÇA animações mesmo com o SO em movimento reduzido (escolha explícita).
   const [animacoes, setAnimacoes] = useState(() => motionEnabled());
+  const [accent, setAccent] = useState<Accent>(() => getStoredAccent());
   const [reconnecting, setReconnecting] = useState(false);
 
   const isConnected = authStatus === "connected";
@@ -1230,6 +1233,35 @@ export function SettingsScreen({
             }
           />
           <MotionDiagnostics />
+          <div className="cfg-item">
+            <span className="cfg-item__ic">
+              <Palette size={17} strokeWidth={1.75} />
+            </span>
+            <div className="cfg-item__grow">
+              <div className="cfg-item__t">Cor de destaque</div>
+              <div className="cfg-item__s">
+                Pinta o chrome, os botões e a seleção. As cores de status do método —
+                paz, atenção, dinheiro — não mudam com a paleta.
+              </div>
+              <div className="cfg-accents" role="group" aria-label="Cor de destaque">
+                {ACCENTS.map((a) => (
+                  <button
+                    key={a.key}
+                    type="button"
+                    className={`cfg-accent ${accent === a.key ? "cfg-accent--on" : ""}`}
+                    aria-pressed={accent === a.key}
+                    onClick={() => {
+                      setAccent(a.key);
+                      applyAccent(a.key);
+                    }}
+                  >
+                    <i style={{ background: a.swatch }} aria-hidden="true" />
+                    <span>{a.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 

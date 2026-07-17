@@ -29,16 +29,17 @@ The app is a capable financial assistant that never shows off. It speaks with qu
 
 ## Design System
 
-The visual design system is authored by Claude Design as **"Midnight Ledger"** (dark-first) with a light "Vellum Cool" theme. Key tokens:
+The visual design system is **"Midnight Purr"** (dark-first), the systematization of the
+"Conversa com a Mia" direction. Key tokens:
 
-- **Primary**: Jade `#3FBF8F` (growth, money) — calm, premium, never neon
-- **Secondary**: Brass `#E0A33E` (feline warmth) — restrained accent
-- **Background**: Deep graphite `#0E1413` (dark) / Cool grey-green `#EAEEEC` (light)
-- **Surface**: `#161D1C` (dark) / `#FFFFFF` (light)
-- **Typography**: Hanken Grotesk (UI), Geist Mono (money/figures), Newsreader (editorial)
-- **Corners**: 4-6-10-14px progressive scale, pills for chips
-- **Shadows**: Low-spread cool shadows, never glowy
-- **Motion**: 130-480ms, `cubic-bezier(0.2, 0, 0, 1)`, reduced-motion respected
+- **Neutrals**: zinc, zero-chroma — `#09090B` bg / `#18181B` surface / `#27272A` border (dark); `#FAFAFA` / `#FFFFFF` (light)
+- **Accent (brand)**: user-configurable palette — jade (default) `#3FBF8F`, lima, violeta, âmbar, céu, rosa — each with an atomic `--accent`/`--accent-ink` pair; set via `data-accent` on `<html>`
+- **Status (method)**: fixed per theme, never follow the accent — paz/entrada green, atenção orange, dinheiro pos/neg. Brand color and method-status color are hard-separated.
+- **Typography**: Geist (UI and money, `tabular-nums`), Geist Mono (parcels/citations/code), Newsreader (editorial)
+- **Corners**: pill-dominant — 6-10-14-18-22px scale, pills for chips/tabs
+- **Shadows**: discreet; dark leans on borders + `--lift`, light on soft ambient shadows
+- **Motion**: 130-480ms, `cubic-bezier(0.2, 0, 0, 1)`, reduced-motion respected; money values never animate
+- **Shell**: per-viewport chrome — fixed sidebar with the primary CTA on desktop, icon rail on tablet, blurred appbar + floating tab bar with embedded FAB on mobile
 
 Full design system at `src/design-system/`. Agent skill at `.agents/skills/neko-finance-design/SKILL.md`.
 

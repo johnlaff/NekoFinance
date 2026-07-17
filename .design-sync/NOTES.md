@@ -78,6 +78,11 @@ Current app navigation (NOT the readme's stale "9 telas"):
 - Every component card + screen + guideline rendered with 0 bundle errors + 0 console errors before upload.
 - No `_ds_sync.json` (off-script) → next sync re-verifies everything (correct/honest).
 
+## Uploaded state (2026-07-17 — Midnight Purr foundation)
+
+- Foundation swap synced: new zinc/accent tokens (7 files), regenerated `_ds_bundle.js` (babel 7 — the `.ds-sync` deps must be `@babel/core@^7 @babel/preset-react@^7`; v8 breaks preset resolution; run `node build-bundle.mjs` FROM `.ds-sync/`) + `_ds_manifest.json` (tokens[] regenerated from tokens/*.css), readme.md, brand/neutrals/type guideline cards, Switch + TransactionRow (jsx + prompt), dashboard ui_kit, `Geist-Variable.ttf` added, `HankenGrotesk-Variable.ttf` deleted (20 writes + 1 delete).
+- Known drift AFTER this sync: ui_kits still recreate the pre-Purr shell/screens (they render on the new tokens but their layouts predate the per-viewport AppShell); reconcile during the per-screen redesign waves.
+
 ## Re-sync (how to redo)
 
 1. Edit sources under `src/design-system/` (components/<group>/\*.jsx + .d.ts + .prompt.md, ui_kits/\*\*, cards).

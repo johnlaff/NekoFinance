@@ -1548,8 +1548,8 @@ function podeGastarState(cents: number, guardrail: "cash" | "savings"): MethodSt
  * de reserva para 12 meses). **12,0 exato = Paz**: a fonte define a faixa como "12+", então
  * a fronteira inferior é INCLUSIVA — divergência deliberada da convenção
  * limite-superior-inclusivo do Termômetro (`saldoBand`).
- * `--jade-400` cru falha contraste no tema claro (comentário em colors.css) — `--primary-
- * quiet-text` é o alias já testado pra texto jade legível nos dois temas (ver TotaisScreen).
+ * O acento cru pode falhar contraste conforme o tema — `--primary-quiet-text` é o alias
+ * garantido pra texto de marca legível nos dois temas (ver TotaisScreen).
  */
 function reserveMonthsState(months: number): MethodState {
   if (months < 6) {
