@@ -1,20 +1,14 @@
 /* ============================================================
-   Neko Finance — Redesign (2026) CSS.
-   Ported verbatim from the Claude Design prototype (redesign/*.jsx) so the app
-   renders identically. Scoped by unique prefixes (.sh-, .hoje-, .card, .ci-, …).
-   Tokens are the existing Design System tokens (tokens/*.css) — unchanged.
+   Neko Finance — Redesign CSS.
+   Telas portadas do protótipo Claude Design (redesign/*.jsx), escopadas por
+   prefixo (.hoje-, .card, .ci-, …) sobre os tokens do DS "Midnight Purr".
    ============================================================ */
 
-/* ---- Polimento 2026: cantos mais arredondados + campos preenchidos (escopo do app) ---- */
-.neko-app {
-  --radius-xs: 6px;
-  --radius-sm: 9px;
-  --radius-md: 14px;
-  --radius-lg: 18px;
-}
-
 /* ============================================================
-   App shell (sidebar + topbar) — de Shell.jsx
+   App shell — sidebar no desktop, trilho no tablet, appbar + dock
+   flutuante no mobile. Cada viewport com o chrome nativo dele.
+   O chrome carrega view-transition-name próprio: em navegação, a
+   tela anima e o chrome fica parado.
    ============================================================ */
 .sh {
   display: grid;
@@ -25,66 +19,82 @@
   font-family: var(--font-sans);
 }
 .sh-side {
+  view-transition-name: sh-side;
   display: flex;
   flex-direction: column;
+  gap: 2px;
+  padding: 20px 14px 16px;
   border-right: 1px solid var(--border);
-  background: var(--bg-subtle);
+  background: var(--surface);
   min-height: 0;
 }
 .sh-brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 18px 18px 16px;
+  padding: 2px 10px 16px;
+  font-size: 17px;
 }
-.sh-brand__mark {
+.sh-brand__cat {
   width: 30px;
   height: 30px;
-  color: var(--primary);
+  border-radius: var(--radius-circle);
+  background: var(--primary);
+  color: var(--text-on-primary);
+  display: grid;
+  place-items: center;
   flex: none;
 }
 .sh-brand__name {
-  font-size: 19px;
-  font-weight: 800;
+  font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--text-strong);
 }
-.sh-brand__tag {
-  margin-left: auto;
-  display: inline-flex;
+.sh-new {
+  display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--success-400);
-  background: var(--success-tint);
-  padding: 3px 7px;
-  border-radius: var(--radius-pill);
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 11px 14px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--primary);
+  color: var(--text-on-primary);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--t-hover);
+}
+.sh-new:hover {
+  background: var(--primary-hover);
+}
+.sh-new__lbl {
+  white-space: nowrap;
+}
+.sh-new kbd {
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-on-primary) 14%, transparent);
 }
 .sh-nav {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  padding: 6px 10px;
   flex: 1;
   overflow: auto;
-}
-.sh-navh {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-  padding: 16px 10px 6px;
+  min-height: 0;
 }
 .sh-item {
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 9px 11px;
-  border-radius: var(--radius-sm);
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
   font-size: 14px;
   font-weight: 500;
   color: var(--text-muted);
@@ -94,30 +104,20 @@
   text-align: left;
   width: 100%;
   transition: var(--t-hover);
-  position: relative;
 }
 .sh-item:hover {
-  background: var(--surface-hover);
+  background: var(--surface-elevated);
   color: var(--text);
 }
 .sh-item--active {
   background: var(--surface-selected);
-  color: var(--text-strong);
+  color: var(--primary);
   font-weight: 600;
 }
-.sh-item--active::before {
-  content: "";
-  position: absolute;
-  left: -10px;
-  top: 8px;
-  bottom: 8px;
-  width: 3px;
-  border-radius: 0 3px 3px 0;
-  background: var(--primary);
-}
 .sh-item__ic {
+  display: grid;
+  place-items: center;
   color: inherit;
-  opacity: 0.9;
   flex: none;
 }
 .sh-item__hint {
@@ -131,29 +131,47 @@
   color: var(--primary);
 }
 .sh-foot {
-  padding: 12px;
+  margin-top: auto;
+  padding: 12px 12px 0;
   border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
 }
-.sh-conn {
+.sh-theme {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 10px 11px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  gap: 10px;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 0 10px;
+  margin-bottom: 10px;
   width: 100%;
   text-align: left;
   cursor: pointer;
   transition: var(--t-hover);
 }
-.sh-conn:hover {
-  background: var(--surface-hover);
+.sh-theme:hover {
+  color: var(--text);
+}
+.sh-conn {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 2px 0 4px;
+  background: none;
+  border: 0;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
 }
 .sh-conn__ic {
   width: 28px;
   height: 28px;
-  border-radius: 8px;
+  border-radius: 9px;
   background: var(--success-tint);
   color: var(--success-400);
   display: flex;
@@ -165,13 +183,22 @@
   background: var(--surface-2);
   color: var(--text-faint);
 }
+.sh-conn__txt {
+  min-width: 0;
+}
 .sh-conn__t {
+  display: block;
   font-size: 12px;
   font-weight: 600;
-  color: var(--text);
+  color: var(--text-muted);
   white-space: nowrap;
+  transition: var(--t-hover);
+}
+.sh-conn:hover .sh-conn__t {
+  color: var(--text);
 }
 .sh-conn__s {
+  display: block;
   font-size: 10.5px;
   color: var(--text-faint);
 }
@@ -186,7 +213,7 @@
   align-items: center;
   gap: 14px;
   height: var(--topbar-h);
-  padding: 0 26px;
+  padding: 0 44px;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg) 82%, transparent);
   backdrop-filter: blur(8px);
@@ -195,7 +222,7 @@
 }
 .sh-top__title {
   font-size: 16px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-strong);
   letter-spacing: -0.01em;
   white-space: nowrap;
@@ -207,51 +234,287 @@
   white-space: nowrap;
   line-height: 1.2;
 }
-.sh-spacer {
-  flex: 1;
-}
-.sh-iconbtn {
-  width: 34px;
-  height: 34px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text-muted);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: var(--t-hover);
-}
-.sh-iconbtn:hover {
-  background: var(--surface-hover);
-  color: var(--text);
-}
 .sh-body {
   flex: 1;
   overflow: auto;
   min-height: 0;
 }
 .sh-bodyinner {
-  padding: 26px 26px 64px;
-  max-width: 1180px;
+  padding: 26px 44px 64px;
+  max-width: 1160px;
   margin: 0 auto;
 }
-@media (max-width: 1100px) {
+
+/* Chrome mobile só existe no viewport dele. */
+.sh-appbar,
+.sh-dock {
+  display: none;
+}
+
+/* ---- Tablet: trilho de ícones — nenhum destino some ---- */
+@media (max-width: 900px) {
   .sh {
-    grid-template-columns: 64px 1fr;
+    grid-template-columns: var(--sidebar-w-collapsed) 1fr;
+  }
+  .sh-side {
+    padding: 16px 10px 14px;
+    align-items: stretch;
+  }
+  .sh-brand {
+    justify-content: center;
+    padding: 2px 0 14px;
   }
   .sh-brand__name,
-  .sh-brand__tag,
-  .sh-item span:not(.sh-item__ic),
+  .sh-item__lbl,
   .sh-item__hint,
-  .sh-navh,
-  .sh-conn__t,
-  .sh-conn__s {
+  .sh-new__lbl,
+  .sh-new kbd,
+  .sh-theme span,
+  .sh-conn__txt {
     display: none;
+  }
+  .sh-new {
+    justify-content: center;
+    padding: 0;
+    min-height: var(--hit-touch);
+  }
+  .sh-new::after {
+    content: "+";
+    font-size: 18px;
+    font-weight: 500;
+    line-height: 1;
   }
   .sh-item {
     justify-content: center;
+    padding: 0;
+    min-height: var(--hit-touch);
+  }
+  .sh-theme,
+  .sh-conn {
+    justify-content: center;
+    min-height: var(--hit-touch);
+  }
+  .sh-foot {
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .sh-top {
+    padding: 0 26px;
+  }
+  .sh-bodyinner {
+    padding: 22px 26px 56px;
+  }
+}
+
+/* ---- Mobile: appbar + tab bar flutuante com a ação primária embutida ---- */
+@media (max-width: 700px) {
+  .sh {
+    display: block;
+  }
+  .sh-side,
+  .sh-top {
+    display: none;
+  }
+  .sh-main {
+    height: 100%;
+  }
+  .sh-appbar {
+    view-transition-name: sh-appbar;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 60;
+    padding: calc(env(safe-area-inset-top, 0px) + 8px) 14px 8px;
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    backdrop-filter: blur(18px) saturate(1.4);
+    border-bottom: 1px solid var(--border);
+  }
+  .sh-appbar__cat {
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-circle);
+    background: var(--primary);
+    color: var(--text-on-primary);
+    display: grid;
+    place-items: center;
+    flex: none;
+  }
+  .sh-appbar__title {
+    line-height: 1.2;
+    min-width: 0;
+  }
+  .sh-appbar__t {
+    display: block;
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--text-strong);
+    transition:
+      opacity var(--dur-base) var(--ease-standard),
+      transform var(--dur-base) var(--ease-standard);
+  }
+  .sh-appbar--quiet .sh-appbar__t {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  .sh-appbar__title small {
+    display: block;
+    font-size: 11.5px;
+    color: var(--text-faint);
+  }
+  .sh-appbar__trail {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .sh-appbar .ak-iconbtn,
+  .sh-more__btn {
+    width: 44px;
+    height: 44px;
+    border: 0;
+    background: none;
+    border-radius: var(--radius-circle);
+    color: var(--text-muted);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+  }
+  .sh-more {
+    position: relative;
+  }
+  .sh-more__menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 70;
+    min-width: 210px;
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    box-shadow: var(--elev-overlay);
+  }
+  .sh-more__item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 12px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 14px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .sh-more__item:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+  }
+  .sh-more__item--active {
+    background: var(--surface-selected);
+    color: var(--primary);
+    font-weight: 600;
+  }
+  .sh-body {
+    padding-top: calc(env(safe-area-inset-top, 0px) + 62px);
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 96px);
+  }
+  .sh-bodyinner {
+    padding: 10px 16px 24px;
+    max-width: none;
+  }
+  .sh-dock {
+    view-transition-name: sh-dock;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    position: fixed;
+    z-index: 70;
+    left: 12px;
+    right: 12px;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+    padding: 5px;
+    border-radius: 26px;
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    backdrop-filter: blur(24px) saturate(1.5);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-dock);
+    transition:
+      transform var(--dur-slow) var(--ease-standard),
+      opacity var(--dur-slow) var(--ease-standard);
+  }
+  .sh-dock--min {
+    transform: translateY(140%);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .sh-dock__tabs {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    justify-content: space-between;
+    flex-wrap: nowrap;
+  }
+  .sh-tab {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    flex: 1 1 0;
+    /* Nenhuma aba encolhe abaixo do próprio rótulo; a ativa só cresce o padding dela. */
+    min-width: max-content;
+    min-height: 44px;
+    padding: 4px 2px;
+    border: 0;
+    background: none;
+    border-radius: 18px;
+    font-family: inherit;
+    font-size: 11px;
+    letter-spacing: -0.1px;
+    white-space: nowrap;
+    color: var(--text-faint);
+    cursor: pointer;
+  }
+  .sh-tab--on {
+    color: var(--primary);
+    background: var(--accent-tint);
+    border-radius: var(--radius-pill);
+    padding-inline: 12px;
+  }
+  /* Cinto de segurança da fundação: nenhuma tela pode arrastar o viewport na
+     horizontal — o ajuste fino tela a tela (tipografia fluida, grids) vem nas
+     ondas do redesign. */
+  .sh-body {
+    overflow-x: clip;
+  }
+  .hoje-hero__kpi {
+    font-size: clamp(34px, 11vw, 54px);
+    white-space: normal;
+    flex-wrap: wrap;
+  }
+  .sh-dock__fab {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    border-radius: 15px;
+    border: none;
+    display: grid;
+    place-items: center;
+    flex: none;
+    background: var(--primary);
+    color: var(--text-on-primary);
+    cursor: pointer;
+    box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 30%, transparent);
   }
 }
 
@@ -953,7 +1216,7 @@
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: var(--brass-400);
+  color: var(--warning-400);
   margin-bottom: 6px;
   white-space: nowrap;
 }

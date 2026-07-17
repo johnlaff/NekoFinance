@@ -50,7 +50,9 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     // Value input + Registrar button. exact:true so it matches the check-in's
     // "Valor" and not the always-mounted Compose dialog's "Valor único".
     await expect(page.getByLabel("Valor", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Registrar" })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Registrar", exact: true }),
+    ).toBeVisible();
 
     // UpcomingCard: "A pagar em breve" (from mock UPCOMING_BILLS)
     await expect(page.getByText("A pagar em breve")).toBeVisible();
@@ -66,12 +68,12 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
   // (2) Sidebar nav — switches screens + aria-current
   // -------------------------------------------------------------------------
 
-  test("sidebar nav groups Finanças / Sistema and switches screens with aria-current", async ({
+  test("sidebar nav is flat (no group headings) and switches screens with aria-current", async ({
     page,
   }, testInfo) => {
-    // Check sidebar group headings
-    await expect(page.getByText("Finanças", { exact: true })).toBeVisible();
-    await expect(page.getByText("Sistema", { exact: true })).toBeVisible();
+    // Nav plana: sem headers de grupo de admin
+    await expect(page.getByText("Finanças", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Sistema", { exact: true })).toHaveCount(0);
 
     // Default: Hoje is active
     await expect(page.getByRole("button", { name: "Hoje" })).toHaveAttribute(
@@ -110,14 +112,14 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // (3) Lançar button opens the Compose drawer
+  // (3) CTA "Registrar lançamento" opens the Compose drawer
   // -------------------------------------------------------------------------
 
-  test("Lançar button opens Compose dialog; Cancelar closes it", async ({
+  test("Registrar lançamento opens Compose dialog; Cancelar closes it", async ({
     page,
   }, testInfo) => {
-    // Topbar "Lançar" button
-    await page.getByRole("button", { name: "Lançar" }).click();
+    // CTA primário da sidebar
+    await page.getByRole("button", { name: /Registrar lançamento/ }).click();
 
     // Dialog opens with correct role + label
     const dialog = page.getByRole("dialog", { name: "Novo lançamento" });
@@ -277,10 +279,10 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
   // -------------------------------------------------------------------------
 
   test("theme toggle switches between dark and light", async ({ page }) => {
-    await page.getByRole("button", { name: "Alternar para tema claro" }).click();
+    await page.getByRole("button", { name: "Tema claro" }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 
-    await page.getByRole("button", { name: "Alternar para tema escuro" }).click();
+    await page.getByRole("button", { name: "Tema escuro" }).click();
     await expect(page.locator("html")).not.toHaveAttribute("data-theme", "light");
   });
 
@@ -341,10 +343,10 @@ test.describe("theme switch (View Transitions path, motion enabled)", () => {
     await mockTauri(page);
     await page.goto("/");
 
-    await page.getByRole("button", { name: "Alternar para tema claro" }).click();
+    await page.getByRole("button", { name: "Tema claro" }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 
-    await page.getByRole("button", { name: "Alternar para tema escuro" }).click();
+    await page.getByRole("button", { name: "Tema escuro" }).click();
     await expect(page.locator("html")).not.toHaveAttribute("data-theme", "light");
   });
 });

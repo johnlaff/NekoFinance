@@ -72,3 +72,4 @@ src/design-system/uploads/
 .ds-sync/
 ds-bundle/
 .design-sync/.cache/
+.playwright-mcp/

@@ -21,7 +21,7 @@ function applyTheme(theme: Theme) {
   localStorage.setItem(THEME_KEY, theme);
 }
 
-export function ThemeToggle() {
+export function ThemeToggle({ variant = "icon" }: { variant?: "icon" | "row" }) {
   const [theme, setTheme] = useState<Theme>(getStoredTheme);
 
   useEffect(() => {
@@ -58,21 +58,45 @@ export function ThemeToggle() {
     });
   };
 
+  // O ícone mostra para ONDE o toque leva (sol no escuro, lua no claro).
+  const icon =
+    theme === "dark" ? (
+      <Sun size={17} strokeWidth={1.75} />
+    ) : (
+      <Moon size={17} strokeWidth={1.75} />
+    );
+  const target = theme === "dark" ? "Tema claro" : "Tema escuro";
+
+  if (variant === "row") {
+    return (
+      // aria-label mantém o nome acessível no trilho tablet (rótulo oculto);
+      // contém o texto visível ("Tema claro") para não quebrar voice control.
+      <button
+        type="button"
+        onClick={toggle}
+        className="sh-theme"
+        aria-label={
+          theme === "dark" ? "Alternar para tema claro" : "Alternar para tema escuro"
+        }
+        title={target}
+      >
+        {icon}
+        <span>{target}</span>
+      </button>
+    );
+  }
+
   return (
     <button
       type="button"
       aria-label={
         theme === "dark" ? "Alternar para tema claro" : "Alternar para tema escuro"
       }
-      title={theme === "dark" ? "Tema claro" : "Tema escuro"}
+      title={target}
       onClick={toggle}
       className="ak-iconbtn"
     >
-      {theme === "dark" ? (
-        <Sun size={17} strokeWidth={1.75} />
-      ) : (
-        <Moon size={17} strokeWidth={1.75} />
-      )}
+      {icon}
     </button>
   );
 }

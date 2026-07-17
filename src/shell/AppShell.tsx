@@ -1,22 +1,19 @@
-import { useEffect, useEffectEvent } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import {
-  Bell,
-  Calculator,
+  CalendarDays,
   CalendarRange,
-  LayoutDashboard,
-  LayoutList,
-  Lock,
+  ChartColumn,
+  Ellipsis,
+  House,
+  List,
   Plus,
-  Receipt,
   Settings,
-  Sparkles,
   Table2,
   Tags as TagsIcon,
   TrendingUp,
   Unlink,
 } from "lucide-react";
 import { NekoMark } from "../design-system/components/NekoMark";
-import { Button } from "../design-system/components/Button";
 import { ThemeToggle } from "./ThemeToggle";
 import { lastSyncAt, type AuthStatus } from "../lib/api";
 import { useCommand } from "../lib/useCommand";
@@ -37,7 +34,6 @@ function syncRecencyLabel(ts: string | null | undefined): string | null {
   return `há ${d} ${d === 1 ? "dia" : "dias"}`;
 }
 
-/** Nova IA (redesign 2026): cada item = uma pergunta/objetivo único. */
 export type Screen =
   | "hoje"
   | "lancamentos"
@@ -64,23 +60,31 @@ const SCREEN_META: Record<Screen, { title: string; crumb: string }> = {
 interface NavItem {
   key: Screen;
   label: string;
-  icon: typeof LayoutDashboard;
+  icon: typeof House | "cat";
 }
 
-const NAV_FINANCAS: NavItem[] = [
-  { key: "hoje", label: "Hoje", icon: LayoutDashboard },
-  { key: "lancamentos", label: "Lançamentos", icon: Receipt },
-  { key: "mes", label: "Este mês", icon: Calculator },
+/** Nav plana — cada destino no mesmo nível; a Mia leva o gato (o mesmo avatar do chat). */
+const NAV_ITEMS: NavItem[] = [
+  { key: "hoje", label: "Hoje", icon: House },
+  { key: "lancamentos", label: "Lançamentos", icon: List },
+  { key: "mes", label: "Este mês", icon: ChartColumn },
   { key: "ano", label: "O ano", icon: TrendingUp },
-  { key: "calendario", label: "Calendário", icon: LayoutList },
+  { key: "calendario", label: "Calendário", icon: CalendarDays },
   { key: "horizonte", label: "Horizonte", icon: CalendarRange },
   { key: "tags", label: "Tags", icon: TagsIcon },
-];
-
-const NAV_SISTEMA: NavItem[] = [
-  { key: "mia", label: "Mia", icon: Sparkles },
+  { key: "mia", label: "Mia", icon: "cat" },
   { key: "config", label: "Configurações", icon: Settings },
 ];
+
+/** Dock mobile: os 5 destinos do dia a dia; o resto vive no menu "mais" da appbar. */
+const DOCK_KEYS: Screen[] = ["hoje", "lancamentos", "mes", "calendario", "mia"];
+const MORE_KEYS: Screen[] = ["ano", "horizonte", "tags", "config"];
+
+function NavIcon({ icon, size }: { icon: NavItem["icon"]; size: number }) {
+  if (icon === "cat") return <NekoMark width={size} height={size} />;
+  const Icon = icon;
+  return <Icon size={size} strokeWidth={1.75} />;
+}
 
 /** Item da barra lateral. Dica numérica opcional (saldo de hoje, performance do mês). */
 function NavButton({
@@ -94,18 +98,98 @@ function NavButton({
   onNavigate: (screen: Screen) => void;
   hint?: string | undefined;
 }) {
-  const Icon = item.icon;
   return (
     <button
       type="button"
       className={`sh-item ${active === item.key ? "sh-item--active" : ""}`}
       aria-current={active === item.key ? "page" : undefined}
+      // aria-label garante o nome no trilho tablet (rótulo display:none sai da
+      // árvore de acessibilidade; sem isto o item da Mia herdaria o nome do SVG).
+      aria-label={item.label}
+      title={item.label}
       onClick={() => onNavigate(item.key)}
     >
-      <Icon size={18} strokeWidth={1.75} className="sh-item__ic" />
-      <span>{item.label}</span>
+      <span className="sh-item__ic" aria-hidden="true">
+        <NavIcon icon={item.icon} size={19} />
+      </span>
+      <span className="sh-item__lbl">{item.label}</span>
       {hint ? <span className="sh-item__hint">{hint}</span> : null}
     </button>
+  );
+}
+
+/** Menu "mais" da appbar mobile — destinos fora do dock. */
+function MoreMenu({
+  active,
+  onNavigate,
+}: {
+  active: Screen;
+  onNavigate: (screen: Screen) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const firstItemRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    firstItemRef.current?.focus();
+    const onPointerDown = (e: PointerEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node))
+        setOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className="sh-more" ref={rootRef}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="sh-more__btn"
+        aria-label="Mais telas"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Ellipsis size={19} strokeWidth={1.75} />
+      </button>
+      {open && (
+        <div className="sh-more__menu" role="menu" aria-label="Mais telas">
+          {MORE_KEYS.map((key, i) => {
+            const item = NAV_ITEMS.find((n) => n.key === key);
+            if (!item) return null;
+            return (
+              <button
+                key={key}
+                ref={i === 0 ? firstItemRef : undefined}
+                type="button"
+                role="menuitem"
+                className={`sh-more__item ${active === key ? "sh-more__item--active" : ""}`}
+                onClick={() => {
+                  setOpen(false);
+                  onNavigate(key);
+                }}
+              >
+                <NavIcon icon={item.icon} size={17} />
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -121,13 +205,19 @@ export function AppShell({
   onNavigate: (screen: Screen) => void;
   authStatus: AuthStatus;
   children: React.ReactNode;
-  /** Abre o compositor de lançamento (botão "Lançar" e atalho "N"). */
+  /** Abre o compositor de lançamento (CTA "Registrar lançamento" e atalho "N"). */
   onCompose?: () => void;
   /** Dicas numéricas da nav: { hoje: "R$ 27,17", mes: "R$ 1,2 mil" }. */
   hints?: Partial<Record<Screen, string>>;
 }) {
   const meta = SCREEN_META[active];
   const connected = authStatus === "connected";
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // Dock encolhe ao rolar para baixo e volta ao subir (padrão de tab bar de app).
+  const [dockMin, setDockMin] = useState(false);
+  // Coordenação large-title: com [data-large-title] na tela, o título da appbar
+  // só assume quando o título grande sai de vista.
+  const [titleAssumed, setTitleAssumed] = useState(true);
 
   // Recência real da sincronização com a planilha (sync_log). Fica em silêncio
   // (fallback "Conta Google ativa") enquanto não há histórico ou dado carregado.
@@ -155,23 +245,63 @@ export function AppShell({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    let last = body.scrollTop;
+    const onScroll = () => {
+      const y = body.scrollTop;
+      // Histerese de 8px: micro-rolagens (bounce, ajuste de layout) não piscam o dock.
+      if (y > last + 8 && y > 64) setDockMin(true);
+      else if (y < last - 8 || y <= 64) setDockMin(false);
+      last = y;
+    };
+    body.addEventListener("scroll", onScroll, { passive: true });
+    return () => body.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    const large = body.querySelector("[data-large-title]");
+    if (!large) {
+      setTitleAssumed(true);
+      return;
+    }
+    setTitleAssumed(false);
+    const obs = new IntersectionObserver(
+      ([entry]) => setTitleAssumed(!(entry?.isIntersecting ?? false)),
+      { root: body },
+    );
+    obs.observe(large);
+    return () => obs.disconnect();
+  }, [active]);
+
   return (
     <div className="sh">
       <aside className="sh-side">
         <div className="sh-brand">
-          <span className="sh-brand__mark">
-            <NekoMark width={30} height={30} />
+          {/* Decorativo: o texto irmão "Neko" é o nome; sem isto o leitor anuncia 2×. */}
+          <span className="sh-brand__cat" aria-hidden="true">
+            <NekoMark width={19} height={19} />
           </span>
           <span className="sh-brand__name">Neko</span>
-          <span className="sh-brand__tag">
-            <Lock size={10} strokeWidth={2} />
-            Local
-          </span>
         </div>
 
+        {/* aria-label fixa o nome acessível mesmo no trilho tablet, onde o rótulo some. */}
+        <button
+          type="button"
+          className="sh-new"
+          aria-label="Registrar lançamento (N)"
+          title="Registrar lançamento (N)"
+          onClick={() => onCompose?.()}
+        >
+          <span className="sh-new__lbl">Registrar lançamento</span>
+          <kbd aria-hidden="true">N</kbd>
+        </button>
+
         <nav className="sh-nav" aria-label="Navegação principal">
-          <div className="sh-navh">Finanças</div>
-          {NAV_FINANCAS.map((n) => (
+          {NAV_ITEMS.map((n) => (
             <NavButton
               key={n.key}
               item={n}
@@ -180,13 +310,10 @@ export function AppShell({
               hint={hints?.[n.key]}
             />
           ))}
-          <div className="sh-navh">Sistema</div>
-          {NAV_SISTEMA.map((n) => (
-            <NavButton key={n.key} item={n} active={active} onNavigate={onNavigate} />
-          ))}
         </nav>
 
         <div className="sh-foot">
+          <ThemeToggle variant="row" />
           <button
             type="button"
             className="sh-conn"
@@ -200,8 +327,8 @@ export function AppShell({
                 <Unlink size={15} strokeWidth={1.75} />
               )}
             </span>
-            <span>
-              <span className="sh-conn__t" style={{ display: "block" }}>
+            <span className="sh-conn__txt">
+              <span className="sh-conn__t">
                 {connected ? "Planilha conectada" : "Planilha"}
               </span>
               <span className="sh-conn__s">
@@ -220,30 +347,66 @@ export function AppShell({
         </div>
       </aside>
 
+      <header className={`sh-appbar ${titleAssumed ? "" : "sh-appbar--quiet"}`}>
+        <span className="sh-appbar__cat" aria-hidden="true">
+          <NekoMark width={20} height={20} />
+        </span>
+        <div className="sh-appbar__title">
+          <span className="sh-appbar__t">{meta.title}</span>
+          <small>{meta.crumb}</small>
+        </div>
+        <div className="sh-appbar__trail">
+          <ThemeToggle />
+          <MoreMenu active={active} onNavigate={onNavigate} />
+        </div>
+      </header>
+
       <main className="sh-main">
         <header className="sh-top">
           <div>
             <div className="sh-top__title">{meta.title}</div>
             <div className="sh-top__crumb">{meta.crumb}</div>
           </div>
-          <div className="sh-spacer" />
-          <Button
-            size="sm"
-            variant="primary"
-            iconLeft={<Plus size={15} strokeWidth={2} />}
-            onClick={() => onCompose?.()}
-          >
-            Lançar
-          </Button>
-          <ThemeToggle />
-          <button type="button" className="sh-iconbtn" aria-label="Notificações">
-            <Bell size={17} strokeWidth={1.75} />
-          </button>
         </header>
-        <div className="sh-body">
+        <div className="sh-body" ref={bodyRef}>
           <div className="sh-bodyinner">{children}</div>
         </div>
       </main>
+
+      <nav
+        className={`sh-dock ${dockMin ? "sh-dock--min" : ""}`}
+        aria-label="Navegação do app"
+      >
+        <span className="sh-dock__tabs">
+          {DOCK_KEYS.map((key) => {
+            const item = NAV_ITEMS.find((n) => n.key === key);
+            if (!item) return null;
+            return (
+              <button
+                key={key}
+                type="button"
+                className={`sh-tab ${active === key ? "sh-tab--on" : ""}`}
+                aria-current={active === key ? "page" : undefined}
+                aria-label={item.label}
+                onClick={() => onNavigate(key)}
+              >
+                <span aria-hidden="true">
+                  <NavIcon icon={item.icon} size={21} />
+                </span>
+                <span aria-hidden="true">{item.label}</span>
+              </button>
+            );
+          })}
+        </span>
+        <button
+          type="button"
+          className="sh-dock__fab"
+          aria-label="Registrar lançamento"
+          onClick={() => onCompose?.()}
+        >
+          <Plus size={22} strokeWidth={2} />
+        </button>
+      </nav>
     </div>
   );
 }

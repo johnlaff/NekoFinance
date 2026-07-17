@@ -1,13 +1,18 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { AppShell } from "./AppShell";
+import { AppShell, type Screen } from "./AppShell";
 import { mockCommands, mockInvoke } from "../test/commands";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
-function renderShell() {
+function renderShell(overrides: { onNavigate?: (s: Screen) => void } = {}) {
   render(
-    <AppShell active="lancamentos" onNavigate={vi.fn()} authStatus="connected">
+    <AppShell
+      active="lancamentos"
+      onNavigate={overrides.onNavigate ?? vi.fn()}
+      authStatus="connected"
+    >
       <div />
     </AppShell>,
   );
@@ -39,5 +44,94 @@ describe("AppShell — recência real de sync", () => {
 
     expect(await screen.findByText("Conta Google ativa")).toBeInTheDocument();
     expect(screen.queryByText(/Sincronizada/)).not.toBeInTheDocument();
+  });
+});
+
+describe("AppShell — shell por viewport (todos os destinos alcançáveis)", () => {
+  beforeEach(() => {
+    mockInvoke.mockReset();
+    mockCommands({ last_sync_at: null });
+  });
+
+  it("sidebar tem nav plana com os 9 destinos, sem headers de grupo", () => {
+    renderShell();
+    const nav = screen.getByRole("navigation", { name: "Navegação principal" });
+    const labels = within(nav)
+      .getAllByRole("button")
+      .map((b) => b.textContent);
+    expect(labels).toEqual([
+      "Hoje",
+      "Lançamentos",
+      "Este mês",
+      "O ano",
+      "Calendário",
+      "Horizonte",
+      "Tags",
+      "Mia",
+      "Configurações",
+    ]);
+    expect(screen.queryByText("Finanças")).not.toBeInTheDocument();
+    expect(screen.queryByText("Sistema")).not.toBeInTheDocument();
+  });
+
+  it("dock mobile tem os 5 destinos do dia a dia + FAB de registrar", () => {
+    const onCompose = vi.fn();
+    render(
+      <AppShell
+        active="hoje"
+        onNavigate={vi.fn()}
+        authStatus="connected"
+        onCompose={onCompose}
+      >
+        <div />
+      </AppShell>,
+    );
+    const dock = screen.getByRole("navigation", { name: "Navegação do app" });
+    const tabs = within(dock)
+      .getAllByRole("button")
+      .map((b) => b.textContent || b.getAttribute("aria-label"));
+    expect(tabs).toEqual([
+      "Hoje",
+      "Lançamentos",
+      "Este mês",
+      "Calendário",
+      "Mia",
+      "Registrar lançamento",
+    ]);
+    within(dock).getByRole("button", { name: "Registrar lançamento" }).click();
+    expect(onCompose).toHaveBeenCalledTimes(1);
+  });
+
+  it("menu “mais” da appbar navega para os destinos fora do dock", async () => {
+    const user = userEvent.setup();
+    const onNavigate = vi.fn();
+    renderShell({ onNavigate });
+
+    await user.click(screen.getByRole("button", { name: "Mais telas" }));
+    const menu = screen.getByRole("menu", { name: "Mais telas" });
+    const items = within(menu)
+      .getAllByRole("menuitem")
+      .map((b) => b.textContent);
+    expect(items).toEqual(["O ano", "Horizonte", "Tags", "Configurações"]);
+
+    await user.click(within(menu).getByRole("menuitem", { name: "Horizonte" }));
+    expect(onNavigate).toHaveBeenCalledWith("horizonte");
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("CTA da sidebar dispara o compositor", () => {
+    const onCompose = vi.fn();
+    render(
+      <AppShell
+        active="hoje"
+        onNavigate={vi.fn()}
+        authStatus="connected"
+        onCompose={onCompose}
+      >
+        <div />
+      </AppShell>,
+    );
+    screen.getByRole("button", { name: "Registrar lançamento (N)" }).click();
+    expect(onCompose).toHaveBeenCalledTimes(1);
   });
 });

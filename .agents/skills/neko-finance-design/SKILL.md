@@ -15,11 +15,11 @@ Read `readme.md` in this skill first — it covers brand principles, voice, visu
 - `ui_kits/` — full-screen recreations: Dashboard, Transactions/import review, Copilot approval flow. See `ui_kits/README.md`.
 
 **Working rules (lift these from the system)**
-- Money & all figures: tabular mono (`--font-money`), right-aligned in columns, currency + 2 decimals.
+- Money & all figures: Geist with `tabular-nums` (`--font-money`), right-aligned in columns, currency + 2 decimals; a money value never animates.
 - Status, owner, and confidence are *never* color-only — always pair with a word/icon/shape.
 - Writes to a user's data are a first-class approval surface — show a before→after diff, never auto-apply.
 - Voice: calm, plain, sentence-case, "you" for the user, no emoji, no cat puns.
-- Color: jade primary + brass warmth on graphite ink; status colors desaturated; charts use `--chart-1..6`.
+- Color: zinc neutrals + ONE configurable brand accent (`--accent`/`--accent-ink`; jade default via `data-accent` on `<html>`); method-status colors are fixed and never follow the accent; charts use the fixed `--chart-1..6` data palette.
 
 **If creating visual artifacts** (slides, mocks, throwaway prototypes): copy the assets and tokens you need into your output folder and build static/standalone HTML. For component-driven mocks, you can reuse the patterns in `ui_kits/` (read components from the compiled bundle, or copy a component's JSX and inline it).
 

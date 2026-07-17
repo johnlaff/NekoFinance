@@ -13,3 +13,4 @@ package-lock.json
 .lancedb/
 .agents/
 SESSION-CONTEXT.md
+.playwright-mcp/
