@@ -21,18 +21,18 @@
   --space-14: 80px;
   --space-16: 96px;
 
-  /* ---- Radii ---- */
-  --radius-xs: 4px; /* chips, inline tags */
-  --radius-sm: 6px; /* inputs, buttons, rows */
-  --radius-md: 10px; /* cards, metric tiles */
-  --radius-lg: 14px; /* panels, dialogs */
-  --radius-xl: 20px; /* large surfaces */
-  --radius-pill: 999px; /* owner chips, switches */
+  /* ---- Radii — a pílula domina; superfícies grandes em 18–22px ---- */
+  --radius-xs: 6px; /* chips, inline tags */
+  --radius-sm: 10px; /* inputs, buttons, rows */
+  --radius-md: 14px; /* cards, metric tiles */
+  --radius-lg: 18px; /* panels, dialogs */
+  --radius-xl: 22px; /* large surfaces, sheets */
+  --radius-pill: 999px; /* owner chips, switches, tab ativa */
   --radius-circle: 50%;
 
   /* ---- Layout constants ---- */
-  --sidebar-w: 248px;
-  --sidebar-w-collapsed: 64px;
+  --sidebar-w: 236px;
+  --sidebar-w-collapsed: 68px;
   --topbar-h: 56px;
   --copilot-w: 400px;
   --content-max: 1440px;

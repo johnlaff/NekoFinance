@@ -140,7 +140,7 @@ const WARN_BANNER: CSSProperties = {
   display: "flex",
   alignItems: "flex-start",
   gap: 7,
-  color: "var(--brass-400)",
+  color: "var(--warning-400)",
   background: "var(--bg-subtle)",
   border: "var(--bw-hair) solid var(--border)",
   borderRadius: "var(--radius-sm)",

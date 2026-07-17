@@ -42,7 +42,7 @@ const WB_FAST_HEAD: CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: "var(--space-2)",
-  color: "var(--brass-400)",
+  color: "var(--warning-400)",
   fontSize: "var(--fs-sm)",
 };
 const WB_FAST_ACTIONS: CSSProperties = {

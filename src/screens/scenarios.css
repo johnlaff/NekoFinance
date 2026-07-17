@@ -295,7 +295,7 @@
 /* Grupo cujo formulário de edição está aberto: borda brass espelha o aviso de restauração e o
  * título do form — o accent do Disclosure sozinho só colore o ícone. */
 .scn-loan-group--editing {
-  border-color: var(--brass-500);
+  border-color: var(--warning-500);
 }
 
 /* Recibo visual da criação/edição: um flash de fundo jade que decai — animation (roda uma vez
@@ -307,8 +307,8 @@
 }
 @keyframes scn-loan-flash-bg {
   0% {
-    background: var(--jade-tint);
-    border-color: var(--jade-400);
+    background: var(--primary-quiet);
+    border-color: var(--primary);
   }
   100% {
     background: var(--bg-subtle);
@@ -325,8 +325,8 @@
   margin: 0 0 8px;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
-  border: var(--bw-hair) solid var(--brass-500);
-  background: var(--brass-tint);
+  border: var(--bw-hair) solid var(--warning-500);
+  background: var(--warning-tint);
   color: var(--text);
 }
 

@@ -137,7 +137,7 @@ const Icon = window.Icon;
 }
 .dash-wb__head {
   display: flex; align-items: center; gap: var(--space-3);
-  color: var(--brass-400); font-size: var(--fs-sm);
+  color: var(--warning-400); font-size: var(--fs-sm);
 }
 .dash-wb__actions { display:flex; gap: var(--space-3); flex-wrap: wrap; }
 

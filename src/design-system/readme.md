@@ -2,9 +2,9 @@
 
 A design system for **Neko Finance**: a local-first, private personal-finance desktop app (Tauri 2 + React 19 + TypeScript, SQLite + Google Sheets import) with an AI copilot named **Mia** who reads your sheets, explains your finances, separates ownership/responsibility, and proposes _human-approved_ sheet edits only.
 
-This system is authored from scratch — no external codebase or Figma was provided. All visual decisions, tokens, and components are original to this proposal. Fonts (Hanken Grotesk, Newsreader, Geist Mono) are self-hosted; lucide-react is the production icon set (`strokeWidth={1.75}`).
+The system is **"Midnight Purr"** — the systematization of the "Conversa com a Mia" direction. Fonts (Geist, Geist Mono, Newsreader) are self-hosted; lucide-react is the production icon set (`strokeWidth={1.75}`).
 
-> **Primary theme:** Dark ("Midnight Ledger") is the default and presented-first theme. A cool light theme ("Vellum") ships as `[data-theme="light"]` and is tuned to full parity — status, diff, and badge text use dedicated dark on-tint colors in light mode (not just inverted tokens). The app shell exposes a light/dark toggle that persists to `localStorage` (`neko-theme`).
+> **Primary theme:** Dark is the default and presented-first theme (zinc, zero-chroma). A light theme ships as `[data-theme="light"]` with full parity — status, diff, and badge text use dedicated dark on-tint colors in light mode (not just inverted tokens). The shell exposes a light/dark toggle persisted to `localStorage` (`neko-theme`) and a 6-palette brand-accent selector persisted as `neko-accent` (`data-accent` on `<html>`; jade default = no attribute).
 
 ---
 
@@ -18,23 +18,22 @@ This system is authored from scratch — no external codebase or Figma was provi
 4. **Quiet warmth.** Mia's feline calm shows in a few restrained cues — never childish, never a mascot.
 5. **Ownership is explicit.** Personal / partner / shared, payer vs. beneficiary vs. responsible owner — always legible.
 
-### The four visual directions explored (and the choice)
+### The visual identity
 
-| Direction                  | Rationale                                                  | BG        | Surface   | Primary        | Risk/Status                       | Type pairing                | Feline cue                          |
-| -------------------------- | ---------------------------------------------------------- | --------- | --------- | -------------- | --------------------------------- | --------------------------- | ----------------------------------- |
-| **A · Midnight Ledger** ✅ | Deep graphite cockpit, calm jade money-green, brass warmth | `#0E1413` | `#161D1C` | `#3FBF8F` jade | `#E0625B` / `#E0A33E` / `#4FA6CE` | Hanken Grotesk + Geist Mono | Slit-pupil indicator, aperture mark |
-| B · Slate Cockpit          | Cool graphite + single teal accent, very neutral           | `#10151A` | `#19212A` | `#2FA4A0` teal | coral / amber / sky               | IBM Plex Sans + Plex Mono   | pupil-slit dividers                 |
-| C · Warm Vellum            | Light warm paper, sage primary                             | `#F4F1EA` | `#FFFFFF` | `#3F7D5C` sage | rust / ochre / slate              | Newsreader + Söhne          | ear-notch section heads             |
-| D · Tactile Carbon         | Near-black carbon, phosphor accent                         | `#0B0C0C` | `#141616` | `#56C273`      | red / amber / cyan                | Geist + Geist Mono          | terminal pupil cursor               |
+**Midnight Purr** is a zinc-neutral night cockpit with one configurable brand accent:
 
-**Chosen: A · Midnight Ledger.** It reads as a private financial cockpit — premium and focused — while jade (growth/money) plus brass (warmth) avoids the purple-SaaS, neobank, crypto, and cream/terracotta traps. C risked looking like a generic warm AI app; B was credible but a little anonymous; D leaned terminal/crypto. A carries the most distinctive, trustworthy personality with the lightest feline touch.
+- **Neutrals (zinc, zero-chroma):** `#09090B` bg · `#18181B` surface · `#27272A` border/elevated · `#FAFAFA` ink (dark); `#FAFAFA` bg · `#FFFFFF` surface · `#18181B` ink (light). No warm tint, no green cast — the color belongs to the data and the accent.
+- **Accent = brand, one at a time:** the pair `--accent`/`--accent-ink` is atomic and user-selectable — jade (default) `#3FBF8F`, lima `#95FF48`, violeta `#C084FC`, âmbar `#FBBF24`, céu `#38BDF8`, rosa `#FB7185` — with darker AA-as-text values in light mode. The accent paints chrome, CTAs and selection. Nothing else.
+- **Status = method, fixed:** paz/entrada green, atenção orange, dinheiro pos/neg, info sky are fixed per theme and NEVER follow the accent. A user switching palettes must never see "paz" change color.
+- **Type:** Geist everywhere, including money (bold + `tabular-nums`); Geist Mono for parcels ("2/10"), citations and code; Newsreader strictly editorial.
+- **Geometry:** pill-dominant — radii 6/10/14/18/22, pills for chips and the active mobile tab.
 
 ---
 
 ## 2 · Sources & provenance
 
 - **Implemented in the live app.** This system shipped into the Tauri + React 19 codebase; the production tokens/components live under `src/design-system/` and the screens under `src/screens/`. Reconcile changes against the running app, not a standalone proposal.
-- Product surface (9 telas): Dashboard, Totais, Anual, Horizonte, Lançamentos, Tags, Mia, Metodologia, Configurações e privacidade.
+- Product surface (9 telas): Hoje, Lançamentos, Este mês, O ano, Calendário, Horizonte, Tags, Mia, Configurações.
 - All logos and the Mia avatar are original SVGs authored here (`assets/`).
 
 ---
@@ -106,12 +105,12 @@ Neko's voice is **calm, plain, and exact** — a competent partner, not a cheerl
 
 **Overall feel:** a private financial cockpit — dark, quiet, tactile, dense but never cramped.
 
-- **Color usage:** Deep graphite ink ground (`--bg #0E1413`), one calm jade primary for action/growth, brass-amber as the single warm accent (and the feline cue). Status colors are desaturated, never neon. Color is _always_ paired with a label or icon — never the only signal.
+- **Color usage:** Zinc ink ground (`--bg #09090B`), one brand accent for action/selection (user-picked palette, jade default), fixed method-status colors for meaning. Color is _always_ paired with a label or icon — never the only signal.
 - **Backgrounds:** Flat solids. No photographic imagery, no decorative gradients. The only gradients are functional: a faint jade area-fill under the cashflow line, and an 80%-opacity blurred topbar (`backdrop-filter: blur(8px)`) for a subtle glass edge while scrolling.
-- **Cards:** `--surface #161D1C`, 1px `--border`, `--radius-md (10px)`, `--shadow-1` (a low 1px ambient). Quiet, not floaty. Elevated/overlay surfaces step up to `--surface-elevated` + larger shadows. No colored left-border accent cards.
-- **Corners:** 4 (chips) → 6 (inputs/buttons/rows) → 10 (cards) → 14 (panels/dialogs). Pills for owner chips & switches. Nothing fully rounded except avatars and toggles.
-- **Borders & dividers:** 1px "whisker" hairlines (`--border`) separate rows and sections. Dashed hairlines inside diff cards. A 2px jade rail marks the active nav item and selected rows; a 2px warning rail marks rows needing an owner.
-- **Typography motifs:** Humanist grotesque (Hanken) for everything UI; tabular mono (Geist Mono) for every number, code, citation and sheet reference; serif (Newsreader) reserved strictly for the methodology/insights editorial voice.
+- **Cards:** `--surface #18181B`, 1px `--border`, `--radius-md (14px)`, `--shadow-1` (a low 1px ambient). Quiet, not floaty. Inside a card, separation is `--lift`, not shadow. Elevated/overlay surfaces step up to `--surface-elevated` + larger shadows. No colored left-border accent cards.
+- **Corners:** 6 (chips) → 10 (inputs/buttons/rows) → 14 (cards) → 18 (panels/dialogs) → 22 (sheets/large surfaces). Pills for owner chips, switches and the active mobile tab. Fully rounded only for avatars, toggles and pills.
+- **Borders & dividers:** 1px "whisker" hairlines (`--border`) separate rows and sections. Dashed hairlines inside diff cards. Active nav/selection is an accent-tint pill (`--surface-selected`), not a side rail.
+- **Typography motifs:** Geist for everything UI **and money** (`--font-money` = Geist + `tabular-nums`; a money value never wraps and never animates); Geist Mono for parcels, code, citations and sheet references; serif (Newsreader) reserved strictly for the methodology/insights editorial voice.
 - **Shadows:** Cool and low-spread (dark theme leans on borders, not glow). Light theme uses soft ambient shadows + a white inset top-highlight.
 - **Motion:** Composed, never bouncy. 130ms hovers, 200ms most transitions, 320–480ms for panels/approvals. Easing `cubic-bezier(0.2,0,0,1)`. The only ambient motion is Mia's slow reading-dot blink and the three-dot "reading" indicator — both gated on `prefers-reduced-motion`.
 - **Hover / press:** Hover lightens surface (`--surface-hover`) and lifts text from muted→full; primary buttons go a step lighter. Press nudges `translateY(0.5px) scale(0.992)` — a tiny tactile dip, no color flip beyond `--primary-press`.
@@ -148,13 +147,13 @@ Neko's voice is **calm, plain, and exact** — a competent partner, not a cheerl
 | `--fs-micro`             | 11          | 400/600 | 1.2         | annotations, axis ticks, eyebrows              |
 | `--fs-money-xl/lg/md/sm` | 34/22/15/13 | 600/500 | 1.05        | money — always `--font-money` + `tabular-nums` |
 
-Rules: money & all figures → **mono, tabular, right-aligned in columns**; headings → sans, tight tracking; methodology long-form → serif; uppercase only at `--fs-micro` with `--ls-caps`.
+Rules: money & all figures → **Geist, `tabular-nums`, right-aligned in columns**; headings → sans, tight tracking; methodology long-form → serif. Micro-uppercase eyebrows are not shell vocabulary — prefer plain sentences for labels.
 
 ---
 
 ## 8 · Chart language
 
-- **Series colors:** `--chart-1..6` (jade, brass, sky, orchid, coral, teal), assigned in that order; categories keep a stable color across the app. Money sign uses `--money-pos/--money-neg`, never a chart color.
+- **Series colors:** `--chart-1..6` (fixed data palette — emerald, amber, sky, violet, rose, teal), assigned in that order; categories keep a stable color across the app and do NOT follow the brand accent. Money sign uses `--money-pos/--money-neg`, never a chart color.
 - **Line/area:** 2.5px line, round joins; area fill is a single-hue vertical gradient from 22%→0% alpha. Data points are 3px hollow dots (bg-filled, colored stroke).
 - **Bars:** rounded-top (3px radius), 14px wide, 55% opacity when paired behind a line (spending behind income).
 - **Donut:** 16px ring, no gaps between segments, center holds the total in mono. Legend lists name · amount · %.
@@ -196,19 +195,19 @@ Each lives in `components/<group>/<Name>.{jsx,d.ts,prompt.md}` with a directory 
 
 ## 12 · Implementation handoff & first-build checklist
 
-**CSS custom properties** are the contract — link `styles.css` and use the semantic aliases (`--bg`, `--surface`, `--surface-elevated`, `--border`, `--text`, `--text-muted`, `--primary`, `--secondary`, `--success/warning/danger/info`, `--money-pos/neg`, `--owner-personal/partner/shared`, `--chart-1..6`, `--radius-*`, `--space-*`, `--shadow-*`, `--dur-*`, `--ease-*`). Theme by toggling `data-theme="light"` on `<html>`.
+**CSS custom properties** are the contract — link `styles.css` and use the semantic aliases (`--bg`, `--surface`, `--surface-elevated`, `--border`, `--text`, `--text-muted`, `--primary`, `--secondary`, `--success/warning/danger/info`, `--money-pos/neg`, `--owner-personal/partner/shared`, `--chart-1..6`, `--radius-*`, `--space-*`, `--shadow-*`, `--dur-*`, `--ease-*`). Theme by toggling `data-theme="light"` on `<html>`; brand accent by `data-accent="lima|violeta|ambar|ceu|rosa"` (absent = jade).
 
 **Engineer, build in this order:**
 
 1. **Tokens + theme switch** — ship `styles.css`, wire `data-theme`, confirm dark↔light swap.
-2. **Fonts** — already self-hosted via `@font-face` (variable TTFs in `assets/fonts`). Optionally subset to WOFF2 for production.
+2. **Fonts** — self-hosted via `@font-face` (variable TTFs in `assets/fonts`: Geist, Geist Mono, Newsreader). Optionally subset to WOFF2 for production.
 3. **Core primitives** — `Button`, `Input`, `SegmentedControl`, `Badge`, `Switch` (+ focus rings, disabled, reduced-motion).
 4. **Money & finance primitives** — `MetricTile`, `OwnerChip`, `TransactionRow`, `HealthBadge` with real tabular-nums formatting.
-5. **AppShell** — sidebar + topbar + dock + connection/local-status footer.
+5. **AppShell** — per-viewport chrome: fixed sidebar with the primary CTA (desktop), icon rail (tablet 701–900px), blurred appbar + floating tab bar with embedded FAB (mobile ≤700px); connection/theme footer.
 6. **Dashboard** — KPI grid + cashflow/donut charts (start with the SVG approach here, or a charting lib themed to `--chart-*`).
 7. **Transactions/import** — master table + detail panel + Sheets column-mapping with confidence states.
 8. **Copilot + ApprovalDiffCard** — chat, deterministic tool-result blocks, and the human-approval write gate (the diff must be the _only_ path to a sheet write).
 9. **States** — wire `EmptyState` variants for every async surface.
 10. **A11y pass** — contrast, keyboard, focus, reduced-motion, status-with-label audit.
 
-> **Open items to confirm with the team:** (a) ~~official Lucide vs. the bundled normalized icon set~~ — resolved: production uses `lucide-react`; (b) final brand mark — the included friendly-cat mark is a proposal. Fonts are self-hosted (Hanken Grotesk, Geist Mono, Newsreader as variable TTFs); consider subsetting to WOFF2 for production weight.
+> **Open items to confirm with the team:** final brand mark — the included friendly-cat mark is a proposal. Fonts are self-hosted (Geist, Geist Mono, Newsreader as variable TTFs); consider subsetting to WOFF2 for production weight.

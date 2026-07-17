@@ -153,7 +153,7 @@ export function TransactionRow({
     : {};
 
   const futureBackground = future
-    ? "repeating-linear-gradient(135deg, transparent, transparent 9px, color-mix(in srgb, var(--brass-500) 4%, transparent) 9px, color-mix(in srgb, var(--brass-500) 4%, transparent) 18px)"
+    ? "repeating-linear-gradient(135deg, transparent, transparent 9px, color-mix(in srgb, var(--warning-500) 5%, transparent) 9px, color-mix(in srgb, var(--warning-500) 5%, transparent) 18px)"
     : "transparent";
 
   const showMeta = provenance || owner || note;

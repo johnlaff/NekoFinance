@@ -158,7 +158,7 @@ export function TransactionRow({
         background: selected
           ? "var(--surface-selected)"
           : future
-            ? "repeating-linear-gradient(135deg, transparent, transparent 9px, color-mix(in srgb, var(--brass-500) 4%, transparent) 9px, color-mix(in srgb, var(--brass-500) 4%, transparent) 18px)"
+            ? "repeating-linear-gradient(135deg, transparent, transparent 9px, color-mix(in srgb, var(--warning-500) 5%, transparent) 9px, color-mix(in srgb, var(--warning-500) 5%, transparent) 18px)"
             : "transparent",
         boxShadow: selected ? "inset 2px 0 0 var(--primary)" : "none",
       }}

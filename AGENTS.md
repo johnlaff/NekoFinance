@@ -89,4 +89,4 @@ See `PRODUCT.md` for the full design strategy.
 - **References**: YNAB (discipline), Notion (clean minimal), Stripe Dashboard (clear data)
 - **Anti-references**: traditional banks, gamified apps, corporate ERPs, neon neobanks, SaaS cream
 - **Design principles**: night-first, precision without noise, discreet confidence, friendly guidance, data-first / chrome-second
-- **Design system**: "Midnight Ledger" by Claude Design — jade primary, brass warmth, dark-first. Tokens in `src/design-system/`. Skill at `.agents/skills/neko-finance-design/SKILL.md`.
+- **Design system**: "Midnight Purr" — zinc neutrals, configurable brand accent (jade default) hard-separated from method-status colors, Geist type, dark-first. Tokens in `src/design-system/`. Skill at `.agents/skills/neko-finance-design/SKILL.md`.

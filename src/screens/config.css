@@ -115,7 +115,7 @@
   transform: translateX(18px);
 }
 .sw.off {
-  background: var(--ink-600);
+  background: var(--border-input);
 }
 
 /* "Dados" expandable detail area */
@@ -158,4 +158,52 @@
 }
 .cfg-badge--local {
   color: var(--success-400);
+}
+
+/* ---- Seletor de paleta de acento (Aparência) ---- */
+.cfg-item__grow {
+  flex: 1;
+  min-width: 0;
+}
+.cfg-accents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.cfg-accent {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 6px 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: var(--t-hover);
+}
+.cfg-accent:hover {
+  color: var(--text);
+  border-color: var(--border-input);
+}
+.cfg-accent--on {
+  border-color: var(--primary);
+  background: var(--primary-quiet);
+  color: var(--text);
+  font-weight: 600;
+}
+.cfg-accent i {
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-circle);
+  flex: none;
+}
+@media (max-width: 700px) {
+  .cfg-accent {
+    min-height: 44px;
+  }
 }

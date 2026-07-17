@@ -12,18 +12,18 @@
 
 :root {
   /* ---- Procedência do dado (de onde veio / nível de confiança) ---- */
-  --prov-imported: var(--ink-300); /* veio da planilha, ainda não conferido */
+  --prov-imported: var(--text-faint); /* veio da planilha, ainda não conferido */
   --prov-app: var(--info-400); /* lançado no Neko (gravado 1:1 na planilha) */
-  --prov-projected: var(--brass-400); /* previsão gerada, ainda não realizada */
+  --prov-projected: var(--warning-400); /* previsão gerada, ainda não realizada */
   --prov-reconciled: var(--success-500); /* cruzado com o banco, bate */
   --prov-passthrough: var(--info-400); /* repasse: entra e sai, neutro */
 
   /* ---- Confiança de import / review ---- */
   --confidence-high: var(--success-500);
-  --confidence-mid: var(--brass-400);
+  --confidence-mid: var(--warning-400);
   --confidence-low: var(--danger-500);
-  --review-pending: var(--brass-400);
-  --review-pending-bg: var(--brass-tint);
+  --review-pending: var(--warning-400);
+  --review-pending-bg: var(--warning-tint);
 
   /* ---- Diff / write-back (fluxo de aprovação da Mia) ---- */
   --diff-add: var(--success-500);
@@ -31,15 +31,15 @@
   --diff-remove: var(--danger-500);
   --diff-remove-bg: var(--danger-tint);
   --diff-protected: var(
-    --brass-300
+    --warning-400
   ); /* colunas intocáveis: Data, Saldo, fórmulas, edição manual */
 
   /* ---- Privacidade / ciclo de conexão ---- */
   --conn-online: var(--success-500);
   --conn-syncing: var(--info-400);
-  --conn-offline: var(--ink-400);
+  --conn-offline: var(--text-faint);
   --privacy-local: var(--success-500); /* "neste dispositivo" */
-  --privacy-leaving: var(--brass-400); /* "os dados saem do dispositivo" */
+  --privacy-leaving: var(--warning-400); /* "os dados saem do dispositivo" */
 
   /* ---- Bolsos por liquidez ---- */
   --pocket-liquid: var(--cat-jade); /* conta, PIX — dia a dia */
@@ -52,7 +52,7 @@
 
   /* ---- Pressão de fatura / crédito ---- */
   --pressure-low: var(--success-500);
-  --pressure-mid: var(--brass-400);
+  --pressure-mid: var(--warning-400);
   --pressure-high: var(--danger-500);
 
   /* ---- Leitura de forecast / liquidez ---- */
@@ -61,17 +61,16 @@
   --forecast-transit: var(--text-faint); /* saldo é camada de passagem */
 
   /* ---- Fases do período de adaptação (Mapear / Calibrar / Operar) ---- */
-  --phase-map: var(--ink-300);
-  --phase-calibrate: var(--brass-400);
+  --phase-map: var(--text-faint);
+  --phase-calibrate: var(--warning-400);
   --phase-operate: var(--success-500);
 
   /* ---- TIPOS DE MOVIMENTO (os 5 pilares do método) ----
-     Cores fixas por tipo (glifos próprios, reimplementados — não de terceiros) na paleta
-     Midnight Ledger. E=verde, S=âmbar, D=rosa, Economia=verde-escuro, Cartão=roxo. */
+     Cores fixas por tipo (glifos próprios, reimplementados — não de terceiros) na malha do DS. E=verde, S=âmbar, D=rosa, Economia=verde-escuro, Cartão=roxo. */
   --type-entrada: var(--cat-jade); /* Entrada — renda */
-  --type-saida: var(--brass-400); /* Saída — estilo de vida fixo */
+  --type-saida: var(--warning-400); /* Saída — estilo de vida fixo */
   --type-diario: #d96ba6; /* Diário — variável (rosa-magenta) */
-  --type-economia: var(--jade-600); /* Economia — poupança (verde-escuro) */
+  --type-economia: #0f8a5f; /* Economia — poupança (verde-escuro) */
   --type-cartao: var(--cat-violet); /* Cartão — gasto com cartão (roxo) */
 
   /* ---- Termômetro de saldo (Dashboard / Horizonte) ----
@@ -84,9 +83,9 @@
   --saldo-band-tight: var(--warning-500);
   --saldo-band-ok: var(--success-500);
   --saldo-band-comfortable: var(--success-500);
-  --saldo-band-critical-fill: rgba(224, 98, 91, 0.32);
-  --saldo-band-negative-fill: rgba(224, 98, 91, 0.15);
-  --saldo-band-tight-fill: rgba(224, 163, 62, 0.16);
-  --saldo-band-ok-fill: rgba(52, 185, 129, 0.15);
-  --saldo-band-comfortable-fill: rgba(52, 185, 129, 0.3);
+  --saldo-band-critical-fill: rgba(248, 113, 113, 0.32);
+  --saldo-band-negative-fill: rgba(248, 113, 113, 0.15);
+  --saldo-band-tight-fill: rgba(251, 146, 60, 0.16);
+  --saldo-band-ok-fill: rgba(74, 222, 128, 0.15);
+  --saldo-band-comfortable-fill: rgba(74, 222, 128, 0.3);
 }

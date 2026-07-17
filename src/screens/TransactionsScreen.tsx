@@ -415,7 +415,7 @@ function Row({
           {isFuture && (
             <span
               className="lc-pill"
-              style={{ background: "var(--brass-tint)", color: "var(--brass-400)" }}
+              style={{ background: "var(--warning-tint)", color: "var(--warning-400)" }}
             >
               Previsto
             </span>
@@ -496,7 +496,7 @@ function Row({
           )}
 
           {isImported && (
-            <p className="lc-parts__note" style={{ color: "var(--brass-400)" }}>
+            <p className="lc-parts__note" style={{ color: "var(--warning-400)" }}>
               Lançamento importado · edição e exclusão via planilha
             </p>
           )}

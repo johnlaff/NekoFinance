@@ -99,8 +99,8 @@
   width: 30px;
   height: 30px;
   border-radius: 8px;
-  background: var(--brass-tint);
-  color: var(--brass-400);
+  background: var(--warning-tint);
+  color: var(--warning-400);
   display: flex;
   align-items: center;
   justify-content: center;

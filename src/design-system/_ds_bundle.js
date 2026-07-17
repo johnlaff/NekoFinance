@@ -1,4 +1,4 @@
-/* @ds-bundle: {"format":3,"namespace":"NekoFinanceDesignSystem_9bd1cd","components":[{"name":"ChatBubble","sourcePath":"components/copilot/ChatBubble.jsx"},{"name":"Citation","sourcePath":"components/copilot/Citation.jsx"},{"name":"EmptyState","sourcePath":"components/copilot/EmptyState.jsx"},{"name":"MiaAvatar","sourcePath":"components/copilot/MiaAvatar.jsx"},{"name":"Badge","sourcePath":"components/core/Badge.jsx"},{"name":"Button","sourcePath":"components/core/Button.jsx"},{"name":"Disclosure","sourcePath":"components/core/Disclosure.jsx"},{"name":"InfoPopover","sourcePath":"components/core/InfoPopover.jsx"},{"name":"Input","sourcePath":"components/core/Input.jsx"},{"name":"MonthNav","sourcePath":"components/core/MonthNav.jsx"},{"name":"NekoMark","sourcePath":"components/core/NekoMark.jsx"},{"name":"SegmentedControl","sourcePath":"components/core/SegmentedControl.jsx"},{"name":"Switch","sourcePath":"components/core/Switch.jsx"},{"name":"ApprovalDiffCard","sourcePath":"components/finance/ApprovalDiffCard.jsx"},{"name":"BalanceTrajectory","sourcePath":"components/finance/BalanceTrajectory.jsx"},{"name":"HealthBadge","sourcePath":"components/finance/HealthBadge.jsx"},{"name":"LineItemEditor","sourcePath":"components/finance/LineItemEditor.jsx"},{"name":"MetricTile","sourcePath":"components/finance/MetricTile.jsx"},{"name":"Money","sourcePath":"components/finance/Money.jsx"},{"name":"MovBadge","sourcePath":"components/finance/MovBadge.jsx"},{"name":"OwnerChip","sourcePath":"components/finance/OwnerChip.jsx"},{"name":"PhaseBadge","sourcePath":"components/finance/PhaseBadge.jsx"},{"name":"ProvBadge","sourcePath":"components/finance/ProvBadge.jsx"},{"name":"TransactionRow","sourcePath":"components/finance/TransactionRow.jsx"}],"sourceHashes":{"components/copilot/ChatBubble.jsx":"167278e05c28","components/copilot/Citation.jsx":"3acb7522d21e","components/copilot/EmptyState.jsx":"c96fc443c82d","components/copilot/MiaAvatar.jsx":"2a33e3ee1d4f","components/core/Badge.jsx":"513efe284ad9","components/core/Button.jsx":"b2a4cc4d68dd","components/core/Disclosure.jsx":"26b539348e91","components/core/InfoPopover.jsx":"a9cd2a1b7494","components/core/Input.jsx":"fdae11d4cf42","components/core/MonthNav.jsx":"2801bfa6a15c","components/core/NekoMark.jsx":"ba4316e16fe2","components/core/SegmentedControl.jsx":"ff30d2741399","components/core/Switch.jsx":"4bc43188b5ff","components/finance/ApprovalDiffCard.jsx":"e8d57746a455","components/finance/BalanceTrajectory.jsx":"e50400f86b78","components/finance/HealthBadge.jsx":"0992a5b38f00","components/finance/LineItemEditor.jsx":"ee9bcf7e960f","components/finance/MetricTile.jsx":"78de6b02c8bb","components/finance/Money.jsx":"c7af88943030","components/finance/MovBadge.jsx":"82c42171008a","components/finance/OwnerChip.jsx":"d6891dfdfda9","components/finance/PhaseBadge.jsx":"b035d5f427f5","components/finance/ProvBadge.jsx":"0035a5740a63","components/finance/TransactionRow.jsx":"f671a3981b45","ui_kits/ano-inteiro/YearGridScreen.jsx":"02225ca5f063","ui_kits/anuais/AnnualScreen.jsx":"4acbc71f6d97","ui_kits/copilot/CopilotScreen.jsx":"93cc123d17e2","ui_kits/dashboard/AppShell.jsx":"ce55f7804039","ui_kits/dashboard/DashboardScreen.jsx":"0ba6b1e38331","ui_kits/economia-compare/EconomiaCompareScreen.jsx":"520881fdb17e","ui_kits/horizonte/HorizonteScreen.jsx":"37be8563ecf1","ui_kits/methodology/MethodologyScreen.jsx":"57e26b193b40","ui_kits/settings/SettingsScreen.jsx":"f01798e6b3c3","ui_kits/shared/icons.jsx":"521d5c4cdde0","ui_kits/tags/TagsScreen.jsx":"01bc44f579a1","ui_kits/totais/TotaisScreen.jsx":"472375a5da79","ui_kits/transactions/TransactionsScreen.jsx":"0cdb4ffd302a"},"inlinedExternals":[],"unexposedExports":[]} */
+/* @ds-bundle: {"format":3,"namespace":"NekoFinanceDesignSystem_9bd1cd","components":[{"name":"ChatBubble","sourcePath":"components/copilot/ChatBubble.jsx"},{"name":"Citation","sourcePath":"components/copilot/Citation.jsx"},{"name":"EmptyState","sourcePath":"components/copilot/EmptyState.jsx"},{"name":"MiaAvatar","sourcePath":"components/copilot/MiaAvatar.jsx"},{"name":"Badge","sourcePath":"components/core/Badge.jsx"},{"name":"Button","sourcePath":"components/core/Button.jsx"},{"name":"Disclosure","sourcePath":"components/core/Disclosure.jsx"},{"name":"InfoPopover","sourcePath":"components/core/InfoPopover.jsx"},{"name":"Input","sourcePath":"components/core/Input.jsx"},{"name":"MonthNav","sourcePath":"components/core/MonthNav.jsx"},{"name":"NekoMark","sourcePath":"components/core/NekoMark.jsx"},{"name":"SegmentedControl","sourcePath":"components/core/SegmentedControl.jsx"},{"name":"Switch","sourcePath":"components/core/Switch.jsx"},{"name":"ApprovalDiffCard","sourcePath":"components/finance/ApprovalDiffCard.jsx"},{"name":"BalanceTrajectory","sourcePath":"components/finance/BalanceTrajectory.jsx"},{"name":"HealthBadge","sourcePath":"components/finance/HealthBadge.jsx"},{"name":"LineItemEditor","sourcePath":"components/finance/LineItemEditor.jsx"},{"name":"MetricTile","sourcePath":"components/finance/MetricTile.jsx"},{"name":"Money","sourcePath":"components/finance/Money.jsx"},{"name":"MovBadge","sourcePath":"components/finance/MovBadge.jsx"},{"name":"OwnerChip","sourcePath":"components/finance/OwnerChip.jsx"},{"name":"PhaseBadge","sourcePath":"components/finance/PhaseBadge.jsx"},{"name":"ProvBadge","sourcePath":"components/finance/ProvBadge.jsx"},{"name":"TransactionRow","sourcePath":"components/finance/TransactionRow.jsx"}],"sourceHashes":{"components/copilot/ChatBubble.jsx":"167278e05c28","components/copilot/Citation.jsx":"3acb7522d21e","components/copilot/EmptyState.jsx":"c96fc443c82d","components/copilot/MiaAvatar.jsx":"2a33e3ee1d4f","components/core/Badge.jsx":"513efe284ad9","components/core/Button.jsx":"b2a4cc4d68dd","components/core/Disclosure.jsx":"26b539348e91","components/core/InfoPopover.jsx":"a9cd2a1b7494","components/core/Input.jsx":"fdae11d4cf42","components/core/MonthNav.jsx":"2801bfa6a15c","components/core/NekoMark.jsx":"ba4316e16fe2","components/core/SegmentedControl.jsx":"ff30d2741399","components/core/Switch.jsx":"741ae8f79d75","components/finance/ApprovalDiffCard.jsx":"e8d57746a455","components/finance/BalanceTrajectory.jsx":"e50400f86b78","components/finance/HealthBadge.jsx":"0992a5b38f00","components/finance/LineItemEditor.jsx":"e456bc27f716","components/finance/MetricTile.jsx":"78de6b02c8bb","components/finance/Money.jsx":"c7af88943030","components/finance/MovBadge.jsx":"82c42171008a","components/finance/OwnerChip.jsx":"d6891dfdfda9","components/finance/PhaseBadge.jsx":"b035d5f427f5","components/finance/ProvBadge.jsx":"0035a5740a63","components/finance/TransactionRow.jsx":"a456036a52ba","ui_kits/ano-inteiro/YearGridScreen.jsx":"02225ca5f063","ui_kits/anuais/AnnualScreen.jsx":"4acbc71f6d97","ui_kits/copilot/CopilotScreen.jsx":"93cc123d17e2","ui_kits/dashboard/AppShell.jsx":"ce55f7804039","ui_kits/dashboard/DashboardScreen.jsx":"d6dcfd6fe057","ui_kits/economia-compare/EconomiaCompareScreen.jsx":"520881fdb17e","ui_kits/horizonte/HorizonteScreen.jsx":"37be8563ecf1","ui_kits/methodology/MethodologyScreen.jsx":"57e26b193b40","ui_kits/settings/SettingsScreen.jsx":"f01798e6b3c3","ui_kits/shared/icons.jsx":"521d5c4cdde0","ui_kits/tags/TagsScreen.jsx":"01bc44f579a1","ui_kits/totais/TotaisScreen.jsx":"472375a5da79","ui_kits/transactions/TransactionsScreen.jsx":"0cdb4ffd302a"},"inlinedExternals":[],"unexposedExports":[]} */
 
 (() => {
   const __ds_ns = (window.NekoFinanceDesignSystem_9bd1cd =
@@ -142,6 +142,20 @@
   // components/copilot/Citation.jsx
   try {
     (() => {
+      function _extends() {
+        return (
+          (_extends = Object.assign
+            ? Object.assign.bind()
+            : function (n) {
+                for (var e = 1; e < arguments.length; e++) {
+                  var t = arguments[e];
+                  for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]);
+                }
+                return n;
+              }),
+          _extends.apply(null, arguments)
+        );
+      }
       const CSS = `
       .nk-cite{display:inline-flex;align-items:center;gap:5px;height:18px;padding:0 6px 0 5px;border-radius:var(--radius-xs);
         background:var(--surface-elevated);border:1px solid var(--border);font-family:var(--font-money);
@@ -188,10 +202,12 @@
         if (variant === "tool") {
           return /*#__PURE__*/ React.createElement(
             "div",
-            {
-              className: ["nk-tool", className].filter(Boolean).join(" "),
-              ...rest,
-            },
+            _extends(
+              {
+                className: ["nk-tool", className].filter(Boolean).join(" "),
+              },
+              rest,
+            ),
             /*#__PURE__*/ React.createElement(
               "div",
               {
@@ -273,10 +289,12 @@
         }
         return /*#__PURE__*/ React.createElement(
           "span",
-          {
-            className: ["nk-cite", className].filter(Boolean).join(" "),
-            ...rest,
-          },
+          _extends(
+            {
+              className: ["nk-cite", className].filter(Boolean).join(" "),
+            },
+            rest,
+          ),
           index != null
             ? /*#__PURE__*/ React.createElement(
                 "span",
@@ -501,6 +519,20 @@
   // components/core/Badge.jsx
   try {
     (() => {
+      function _extends() {
+        return (
+          (_extends = Object.assign
+            ? Object.assign.bind()
+            : function (n) {
+                for (var e = 1; e < arguments.length; e++) {
+                  var t = arguments[e];
+                  for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]);
+                }
+                return n;
+              }),
+          _extends.apply(null, arguments)
+        );
+      }
       // Inline-style pattern — matches production Badge.tsx which uses no CSS classes.
 
       const TONE_STYLES = {
@@ -565,11 +597,13 @@
         };
         return /*#__PURE__*/ React.createElement(
           "span",
-          {
-            className: className,
-            style: style,
-            ...rest,
-          },
+          _extends(
+            {
+              className: className,
+              style: style,
+            },
+            rest,
+          ),
           dot &&
             /*#__PURE__*/ React.createElement("span", {
               style: DOT_BASE,
@@ -589,6 +623,20 @@
   // components/core/Button.jsx
   try {
     (() => {
+      function _extends() {
+        return (
+          (_extends = Object.assign
+            ? Object.assign.bind()
+            : function (n) {
+                for (var e = 1; e < arguments.length; e++) {
+                  var t = arguments[e];
+                  for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]);
+                }
+                return n;
+              }),
+          _extends.apply(null, arguments)
+        );
+      }
       const CSS = `
       .nk-btn{--_h:var(--hit-min);--_px:14px;--_fs:var(--fs-sm);display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);
         height:var(--_h);padding:0 var(--_px);font-family:var(--font-sans);font-size:var(--_fs);font-weight:var(--fw-semibold);
@@ -642,12 +690,14 @@
           .join(" ");
         return /*#__PURE__*/ React.createElement(
           "button",
-          {
-            type: type,
-            className: cls,
-            disabled: disabled,
-            ...rest,
-          },
+          _extends(
+            {
+              type: type,
+              className: cls,
+              disabled: disabled,
+            },
+            rest,
+          ),
           iconLeft
             ? /*#__PURE__*/ React.createElement(
                 "span",
@@ -681,6 +731,20 @@
   // components/core/Disclosure.jsx
   try {
     (() => {
+      function _extends() {
+        return (
+          (_extends = Object.assign
+            ? Object.assign.bind()
+            : function (n) {
+                for (var e = 1; e < arguments.length; e++) {
+                  var t = arguments[e];
+                  for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]);
+                }
+                return n;
+              }),
+          _extends.apply(null, arguments)
+        );
+      }
       const CSS = `
       .nk-disc{font-family:var(--font-sans);width:100%;}
 
@@ -918,17 +982,19 @@
           ),
           /*#__PURE__*/ React.createElement(
             "section",
-            {
-              className: "nk-disc__bodywrap",
-              id: `${id}-b`,
-              "aria-labelledby": `${id}-t`,
-              role: "region",
-              ...(!open
+            _extends(
+              {
+                className: "nk-disc__bodywrap",
+                id: `${id}-b`,
+                "aria-labelledby": `${id}-t`,
+                role: "region",
+              },
+              !open
                 ? {
                     inert: "",
                   }
-                : {}),
-            },
+                : {},
+            ),
             /*#__PURE__*/ React.createElement(
               "div",
               {
@@ -944,7 +1010,7 @@
                       fontSize: "var(--fs-sm)",
                     },
                   },
-                  "Nenhum detalhe disponível.",
+                  "Nenhum detalhe dispon\xEDvel.",
                 ),
             ),
           ),
@@ -1339,6 +1405,20 @@
   // components/core/Input.jsx
   try {
     (() => {
+      function _extends() {
+        return (
+          (_extends = Object.assign
+            ? Object.assign.bind()
+            : function (n) {
+                for (var e = 1; e < arguments.length; e++) {
+                  var t = arguments[e];
+                  for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]);
+                }
+                return n;
+              }),
+          _extends.apply(null, arguments)
+        );
+      }
       // Tokens used:
       //   --font-sans, --font-money
       //   --fs-label, --fs-body, --fs-sm, --fs-micro
@@ -1461,12 +1541,17 @@
                   prefix,
                 )
               : null,
-            /*#__PURE__*/ React.createElement("input", {
-              id: fid,
-              disabled: disabled,
-              readOnly: readOnly,
-              ...rest,
-            }),
+            /*#__PURE__*/ React.createElement(
+              "input",
+              _extends(
+                {
+                  id: fid,
+                  disabled: disabled,
+                  readOnly: readOnly,
+                },
+                rest,
+              ),
+            ),
             suffix
               ? /*#__PURE__*/ React.createElement(
                   "span",
@@ -1832,17 +1917,31 @@
   // components/core/Switch.jsx
   try {
     (() => {
+      function _extends() {
+        return (
+          (_extends = Object.assign
+            ? Object.assign.bind()
+            : function (n) {
+                for (var e = 1; e < arguments.length; e++) {
+                  var t = arguments[e];
+                  for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]);
+                }
+                return n;
+              }),
+          _extends.apply(null, arguments)
+        );
+      }
       const CSS = `
       .nk-switch{display:inline-flex;align-items:center;gap:10px;cursor:pointer;font-family:var(--font-sans);
         font-size:var(--fs-body);color:var(--text);user-select:none;}
       .nk-switch input{position:absolute;opacity:0;width:0;height:0;}
       .nk-switch__track{position:relative;width:36px;height:20px;border-radius:10px;
-        background:var(--ink-300);transition:var(--t-hover);flex:none;}
+        background:var(--border-input);transition:var(--t-hover);flex:none;}
       [data-theme="light"] .nk-switch__track{background:#727c77;}
       .nk-switch__thumb{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
-        background:var(--ink-000);transition:var(--t-hover);box-shadow:var(--shadow-1);}
+        background:#fff;transition:var(--t-hover);box-shadow:var(--shadow-1);}
       .nk-switch input:checked + .nk-switch__track{background:var(--primary);}
-      .nk-switch input:checked + .nk-switch__track .nk-switch__thumb{left:18px;background:var(--ink-000);}
+      .nk-switch input:checked + .nk-switch__track .nk-switch__thumb{left:18px;background:#fff;}
       .nk-switch input:focus-visible + .nk-switch__track{box-shadow:var(--shadow-focus);}
       .nk-switch--disabled{opacity:.45;pointer-events:none;}
       `;
@@ -1871,13 +1970,18 @@
               .filter(Boolean)
               .join(" "),
           },
-          /*#__PURE__*/ React.createElement("input", {
-            type: "checkbox",
-            checked: checked,
-            disabled: disabled,
-            onChange: (e) => onChange(e.target.checked),
-            ...rest,
-          }),
+          /*#__PURE__*/ React.createElement(
+            "input",
+            _extends(
+              {
+                type: "checkbox",
+                checked: checked,
+                disabled: disabled,
+                onChange: (e) => onChange(e.target.checked),
+              },
+              rest,
+            ),
+          ),
           /*#__PURE__*/ React.createElement(
             "span",
             {
@@ -2033,7 +2137,7 @@
                 },
                 /*#__PURE__*/ React.createElement("b", null, sheet),
                 range
-                  ? /*#__PURE__*/ React.createElement("span", null, "· ", range)
+                  ? /*#__PURE__*/ React.createElement("span", null, "\xB7 ", range)
                   : null,
               ),
             ),
@@ -2083,7 +2187,7 @@
                     {
                       className: "nk-diff__arrow",
                     },
-                    "→",
+                    "\u2192",
                   ),
                   /*#__PURE__*/ React.createElement(
                     "span",
@@ -2677,7 +2781,7 @@
   // components/finance/LineItemEditor.jsx
   try {
     (() => {
-      // LineItemEditor — controlled editor for itemized transaction parts (plano 036).
+      // LineItemEditor — controlled editor for itemized transaction parts.
       // Each item: R$ <magnitude> - <description>. Total shown when ≥2 items exist.
       // Self-contained: no external imports, no fetch, no Tauri. Inline-style convention.
 
@@ -2925,7 +3029,7 @@
                   }),
                   /*#__PURE__*/ React.createElement("input", {
                     "aria-label": `Descrição do item ${i + 1}`,
-                    placeholder: "Descrição da parte…",
+                    placeholder: "Descri\xE7\xE3o da parte\u2026",
                     value: it.description,
                     onChange: (e) => setDescription(i, e.target.value),
                     disabled: disabled,
@@ -2946,7 +3050,7 @@
                           }
                         : REMOVE_BTN,
                     },
-                    "×",
+                    "\xD7",
                   ),
                 ),
               ),
@@ -3795,6 +3899,20 @@
   // components/finance/TransactionRow.jsx
   try {
     (() => {
+      function _extends() {
+        return (
+          (_extends = Object.assign
+            ? Object.assign.bind()
+            : function (n) {
+                for (var e = 1; e < arguments.length; e++) {
+                  var t = arguments[e];
+                  for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]);
+                }
+                return n;
+              }),
+          _extends.apply(null, arguments)
+        );
+      }
       /**
        * TransactionRow — linha de lançamento fiel ao método: data, descrição, método, valor, procedência,
        * titular e nota. Quando o lançamento é um lump de fatura (Saída agregada), expande os itens da
@@ -3953,7 +4071,7 @@
             }
           : {};
         const futureBackground = future
-          ? "repeating-linear-gradient(135deg, transparent, transparent 9px, color-mix(in srgb, var(--brass-500) 4%, transparent) 9px, color-mix(in srgb, var(--brass-500) 4%, transparent) 18px)"
+          ? "repeating-linear-gradient(135deg, transparent, transparent 9px, color-mix(in srgb, var(--warning-500) 5%, transparent) 9px, color-mix(in srgb, var(--warning-500) 5%, transparent) 18px)"
           : "transparent";
         const showMeta = provenance || owner || note;
         return /*#__PURE__*/ React.createElement(
@@ -3969,8 +4087,7 @@
           },
           /*#__PURE__*/ React.createElement(
             "div",
-            {
-              ...rowInteractionProps,
+            _extends({}, rowInteractionProps, {
               style: {
                 display: "grid",
                 gridTemplateColumns: "58px 1fr auto auto",
@@ -3978,7 +4095,7 @@
                 gap: "14px",
                 padding: "12px 18px",
               },
-            },
+            }),
             /*#__PURE__*/ React.createElement(
               "span",
               {
@@ -4023,7 +4140,7 @@
                         },
                         style: toggleStyle,
                       },
-                      "›",
+                      "\u203A",
                     )
                   : /*#__PURE__*/ React.createElement("span", {
                       style: {
@@ -4143,7 +4260,7 @@
                           fontFamily: "var(--font-money)",
                         },
                       },
-                      "↳",
+                      "\u21B3",
                     ),
                     /*#__PURE__*/ React.createElement(
                       "span",
@@ -4178,7 +4295,7 @@
                       color: "var(--text-faint)",
                     },
                   },
-                  'Esse detalhe vem das notas da célula da planilha. Cada item é preservado; nunca vira um "Saída" genérico.',
+                  'Esse detalhe vem das notas da c\xE9lula da planilha. Cada item \xE9 preservado; nunca vira um "Sa\xEDda" gen\xE9rico.',
                 ),
               )
             : null,
@@ -4597,14 +4714,14 @@
                   {
                     scope: "col",
                   },
-                  "Saída",
+                  "Sa\xEDda",
                 ),
                 /*#__PURE__*/ React.createElement(
                   "th",
                   {
                     scope: "col",
                   },
-                  "Diário",
+                  "Di\xE1rio",
                 ),
                 /*#__PURE__*/ React.createElement(
                   "th",
@@ -4645,7 +4762,7 @@
                           {
                             className: "yr-td-dash",
                           },
-                          "—",
+                          "\u2014",
                         ),
                   ),
                   /*#__PURE__*/ React.createElement(
@@ -4658,7 +4775,7 @@
                           {
                             className: "yr-td-dash",
                           },
-                          "—",
+                          "\u2014",
                         ),
                   ),
                   /*#__PURE__*/ React.createElement(
@@ -4671,7 +4788,7 @@
                           {
                             className: "yr-td-dash",
                           },
-                          "—",
+                          "\u2014",
                         ),
                   ),
                   d.balance_cents == null
@@ -4680,7 +4797,7 @@
                         {
                           className: "yr-td-saldo-empty",
                         },
-                        "—",
+                        "\u2014",
                       )
                     : /*#__PURE__*/ React.createElement(
                         "td",
@@ -4729,8 +4846,8 @@
               !hasData
                 ? /*#__PURE__*/ React.createElement(EmptyState, {
                     variant: "empty",
-                    title: "Sem lançamentos",
-                    description: "Nenhum dado importado para este mês.",
+                    title: "Sem lan\xE7amentos",
+                    description: "Nenhum dado importado para este m\xEAs.",
                   })
                 : /*#__PURE__*/ React.createElement(MonthTable, {
                     grid: grid,
@@ -4782,7 +4899,7 @@
                 {
                   className: "yr-subtitle",
                 },
-                "Grade Data · Entrada · Saída · Diário · Saldo para cada mês de ",
+                "Grade Data \xB7 Entrada \xB7 Sa\xEDda \xB7 Di\xE1rio \xB7 Saldo para cada m\xEAs de ",
                 year,
                 ".",
               ),
@@ -4794,7 +4911,7 @@
               onToday: () => setYear(THIS_YEAR),
               atToday: year === THIS_YEAR,
               prevLabel: "Ano anterior",
-              nextLabel: "Próximo ano",
+              nextLabel: "Pr\xF3ximo ano",
             }),
           ),
           /*#__PURE__*/ React.createElement(
@@ -5174,7 +5291,7 @@
             {
               role: "img",
               "aria-label":
-                "Tendência de Economizado% por mês. Faixa-meta de 20 a 30% sombreada.",
+                "Tend\xEAncia de Economizado% por m\xEAs. Faixa-meta de 20 a 30% sombreada.",
               className: "an-spark__bars",
             },
             /*#__PURE__*/ React.createElement("span", {
@@ -5210,10 +5327,10 @@
             {
               className: "an-spark__legend",
             },
-            /*#__PURE__*/ React.createElement("span", null, "Economizado% por mês:"),
+            /*#__PURE__*/ React.createElement("span", null, "Economizado% por m\xEAs:"),
             /*#__PURE__*/ React.createElement(LegendDot, {
               color: "var(--success-tint)",
-              label: "meta 20–30%",
+              label: "meta 20\u201330%",
             }),
             /*#__PURE__*/ React.createElement(LegendDot, {
               color: "var(--success-400)",
@@ -5286,14 +5403,14 @@
                 {
                   className: "an-title",
                 },
-                "Visão anual",
+                "Vis\xE3o anual",
               ),
               /*#__PURE__*/ React.createElement(
                 "p",
                 {
                   className: "an-subtitle",
                 },
-                "Entradas, economia e as métricas do mês, o ano inteiro de uma vez.",
+                "Entradas, economia e as m\xE9tricas do m\xEAs, o ano inteiro de uma vez.",
               ),
             ),
             /*#__PURE__*/ React.createElement(MonthNav, {
@@ -5303,7 +5420,7 @@
               onToday: () => setYear(thisYear),
               atToday: year === thisYear,
               prevLabel: "Ano anterior",
-              nextLabel: "Próximo ano",
+              nextLabel: "Pr\xF3ximo ano",
             }),
           ),
           /*#__PURE__*/ React.createElement(
@@ -5328,10 +5445,10 @@
                       },
                       "Sem Economia registrada em ",
                       year,
-                      " — importe a aba",
+                      " \u2014 importe a aba",
                       " ",
                       /*#__PURE__*/ React.createElement("strong", null, "Economia"),
-                      " em Configurações › Google Sheets para ver a tendência de quanto você guardou (meta 20–30%).",
+                      " em Configura\xE7\xF5es \u203A Google Sheets para ver a tend\xEAncia de quanto voc\xEA guardou (meta 20\u201330%).",
                     )),
               /*#__PURE__*/ React.createElement(
                 "div",
@@ -5357,7 +5474,7 @@
                           scope: "col",
                           className: "col-mes",
                         },
-                        "Mês",
+                        "M\xEAs",
                       ),
                       /*#__PURE__*/ React.createElement(
                         "th",
@@ -5405,7 +5522,7 @@
                         {
                           scope: "col",
                         },
-                        "Diário médio",
+                        "Di\xE1rio m\xE9dio",
                       ),
                     ),
                   ),
@@ -5484,7 +5601,7 @@
                                     color: "var(--text-faint)",
                                   },
                                 },
-                                "—",
+                                "\u2014",
                               )
                             : /*#__PURE__*/ React.createElement(Money, {
                                 cents: m.real_daily_avg_cents,
@@ -5532,7 +5649,7 @@
                           {
                             className: "an-pct",
                             title:
-                              "Economizado no ano = total economizado ÷ total de entradas (meta 20–30%)",
+                              "Economizado no ano = total economizado \xF7 total de entradas (meta 20\u201330%)",
                             style: {
                               color: savingsColor,
                             },
@@ -5564,9 +5681,9 @@
                               color: "var(--text-faint)",
                             },
                             title:
-                              "Diário médio não tem total anual — médias não se somam",
+                              "Di\xE1rio m\xE9dio n\xE3o tem total anual \u2014 m\xE9dias n\xE3o se somam",
                           },
-                          "—",
+                          "\u2014",
                         ),
                       ),
                     ),
@@ -5659,12 +5776,12 @@
             },
             "7,3",
           ),
-          " meses de custo de vida (a meta mínima é 6).",
+          " meses de custo de vida (a meta m\xEDnima \xE9 6).",
         ),
         /*#__PURE__*/ React.createElement(
           React.Fragment,
           null,
-          "No ano, você economizou ",
+          "No ano, voc\xEA economizou ",
           /*#__PURE__*/ React.createElement(
             "span",
             {
@@ -5672,12 +5789,12 @@
             },
             "24%",
           ),
-          " (referência 20–30%).",
+          " (refer\xEAncia 20\u201330%).",
         ),
         /*#__PURE__*/ React.createElement(
           React.Fragment,
           null,
-          "Você pode gastar até ",
+          "Voc\xEA pode gastar at\xE9 ",
           /*#__PURE__*/ React.createElement(
             "span",
             {
@@ -5747,7 +5864,7 @@
               {
                 className: "cop-desc",
               },
-              "O chat da Mia ainda não está disponível nesta versão. Tudo o que você vê no app hoje é calculado pelo motor determinístico — nada é gerado por IA.",
+              "O chat da Mia ainda n\xE3o est\xE1 dispon\xEDvel nesta vers\xE3o. Tudo o que voc\xEA v\xEA no app hoje \xE9 calculado pelo motor determin\xEDstico \u2014 nada \xE9 gerado por IA.",
             ),
           ),
           /*#__PURE__*/ React.createElement(
@@ -5762,7 +5879,7 @@
                 id: "cop-knows-title",
                 className: "cop-facts__head",
               },
-              "O que a Mia já sabe · números do método, sem IA",
+              "O que a Mia j\xE1 sabe \xB7 n\xFAmeros do m\xE9todo, sem IA",
             ),
             /*#__PURE__*/ React.createElement(
               "ul",
@@ -5782,7 +5899,7 @@
                       className: "cop-fact__arrow",
                       "aria-hidden": "true",
                     },
-                    "↳",
+                    "\u21B3",
                   ),
                   /*#__PURE__*/ React.createElement("span", null, fact),
                 ),
@@ -6405,7 +6522,7 @@
       }
       .dash-wb__head {
         display: flex; align-items: center; gap: var(--space-3);
-        color: var(--brass-400); font-size: var(--fs-sm);
+        color: var(--warning-400); font-size: var(--fs-sm);
       }
       .dash-wb__actions { display:flex; gap: var(--space-3); flex-wrap: wrap; }
 
@@ -6620,7 +6737,7 @@
               {
                 className: "dash-hero__label",
               },
-              "Pode gastar até",
+              "Pode gastar at\xE9",
             ),
             /*#__PURE__*/ React.createElement(
               "p",
@@ -6669,7 +6786,7 @@
                 /*#__PURE__*/ React.createElement(
                   "div",
                   null,
-                  /*#__PURE__*/ React.createElement("dt", null, "Lançamentos"),
+                  /*#__PURE__*/ React.createElement("dt", null, "Lan\xE7amentos"),
                   /*#__PURE__*/ React.createElement("dd", null, txnCount),
                 ),
               ),
@@ -6691,7 +6808,7 @@
             "aside",
             {
               className: "dash-hero__forecast",
-              "aria-label": "Saldo projetado do mês",
+              "aria-label": "Saldo projetado do m\xEAs",
             },
             /*#__PURE__*/ React.createElement(
               "div",
@@ -6723,7 +6840,7 @@
               {
                 className: "dash-hero__forecast-foot",
               },
-              "Como seu saldo deve evoluir até o fim do mês.",
+              "Como seu saldo deve evoluir at\xE9 o fim do m\xEAs.",
             ),
           ),
         );
@@ -6748,7 +6865,7 @@
           /*#__PURE__*/ React.createElement(
             "span",
             null,
-            "Você lançou pela última vez há 2 dias.",
+            "Voc\xEA lan\xE7ou pela \xFAltima vez h\xE1 2 dias.",
           ),
         );
       }
@@ -6794,7 +6911,7 @@
                   className: "dash-card__ic",
                   "aria-hidden": "true",
                 }),
-                "Diário de hoje",
+                "Di\xE1rio de hoje",
               ),
               /*#__PURE__*/ React.createElement(
                 "span",
@@ -6804,7 +6921,7 @@
                     color: "var(--text-faint)",
                   },
                 },
-                "Diário, cartão ou saída — registre o que aconteceu hoje",
+                "Di\xE1rio, cart\xE3o ou sa\xEDda \u2014 registre o que aconteceu hoje",
               ),
             ),
             /*#__PURE__*/ React.createElement(
@@ -6838,7 +6955,7 @@
                     color: "var(--text-muted)",
                   },
                 },
-                "Diário registrado hoje",
+                "Di\xE1rio registrado hoje",
               ),
               /*#__PURE__*/ React.createElement(
                 "span",
@@ -6900,7 +7017,7 @@
               {
                 className: "dash-checkin__avg",
               },
-              "Média do mês: R$\xA0145,00/dia",
+              "M\xE9dia do m\xEAs: R$\xA0145,00/dia",
             ),
             /*#__PURE__*/ React.createElement(
               "div",
@@ -6937,8 +7054,9 @@
               ),
             ),
             /*#__PURE__*/ React.createElement("input", {
-              "aria-label": "Descrição (opcional)",
-              placeholder: "Descrição (opcional) — ex.: mercado, aluguel…",
+              "aria-label": "Descri\xE7\xE3o (opcional)",
+              placeholder:
+                "Descri\xE7\xE3o (opcional) \u2014 ex.: mercado, aluguel\u2026",
               className: "dash-checkin__input dash-checkin__desc",
               defaultValue: "",
             }),
@@ -6948,7 +7066,7 @@
                 className: "dash-checkin__inputs",
               },
               /*#__PURE__*/ React.createElement("input", {
-                "aria-label": "Valor do lançamento (R$)",
+                "aria-label": "Valor do lan\xE7amento (R$)",
                 inputMode: "decimal",
                 placeholder: "Valor de hoje (R$)",
                 className: "dash-checkin__input",
@@ -6967,7 +7085,7 @@
                 {
                   className: "dash-checkin__hint",
                 },
-                "Saída = despesa fixa do mês — contas, fatura no vencimento.",
+                "Sa\xEDda = despesa fixa do m\xEAs \u2014 contas, fatura no vencimento.",
               ),
             kind === "cartao" &&
               /*#__PURE__*/ React.createElement(
@@ -6975,7 +7093,7 @@
                 {
                   className: "dash-checkin__hint",
                 },
-                "Cartão = compra no crédito (entra na fatura).",
+                "Cart\xE3o = compra no cr\xE9dito (entra na fatura).",
               ),
             kind === "entrada" &&
               /*#__PURE__*/ React.createElement(
@@ -6983,7 +7101,7 @@
                 {
                   className: "dash-checkin__hint",
                 },
-                "Entrada = renda recebida no mês.",
+                "Entrada = renda recebida no m\xEAs.",
               ),
           ),
         );
@@ -7033,7 +7151,7 @@
               {
                 className: "dash-predict__head-trusted",
               },
-              "confiável até ",
+              "confi\xE1vel at\xE9 ",
               /*#__PURE__*/ React.createElement("strong", null, "junho"),
             ),
           ),
@@ -7062,7 +7180,7 @@
                 "R$\xA04.564,00",
               ),
               " ",
-              "de gastos não lançados. A projeção está otimista até você pré-lançar.",
+              "de gastos n\xE3o lan\xE7ados. A proje\xE7\xE3o est\xE1 otimista at\xE9 voc\xEA pr\xE9-lan\xE7ar.",
             ),
             /*#__PURE__*/ React.createElement(
               "div",
@@ -7103,7 +7221,7 @@
                       className: "dash-predict__pct",
                     },
                     m.pct,
-                    "% · falta ",
+                    "% \xB7 falta ",
                     fmtBRL(m.falta),
                   ),
                 ),
@@ -7112,7 +7230,7 @@
             /*#__PURE__*/ React.createElement(
               Disclosure,
               {
-                title: "Como pré-lançar o ano",
+                title: "Como pr\xE9-lan\xE7ar o ano",
               },
               /*#__PURE__*/ React.createElement(
                 "p",
@@ -7124,18 +7242,22 @@
                     lineHeight: "var(--lh-normal)",
                   },
                 },
-                "Em cada mês à frente, lance o ",
+                "Em cada m\xEAs \xE0 frente, lance o ",
                 /*#__PURE__*/ React.createElement("strong", null, "saldo de hoje"),
-                " (só conta-corrente), o ",
-                /*#__PURE__*/ React.createElement("strong", null, "salário"),
+                " (s\xF3 conta-corrente), o ",
+                /*#__PURE__*/ React.createElement("strong", null, "sal\xE1rio"),
                 " conservador, as",
                 " ",
                 /*#__PURE__*/ React.createElement("strong", null, "contas fixas"),
                 ", a ",
-                /*#__PURE__*/ React.createElement("strong", null, "fatura do cartão"),
+                /*#__PURE__*/ React.createElement(
+                  "strong",
+                  null,
+                  "fatura do cart\xE3o",
+                ),
                 " no vencimento e o ",
-                /*#__PURE__*/ React.createElement("strong", null, "diário estimado"),
-                " em todos os dias. Futuro vazio engana a previsão.",
+                /*#__PURE__*/ React.createElement("strong", null, "di\xE1rio estimado"),
+                " em todos os dias. Futuro vazio engana a previs\xE3o.",
               ),
             ),
             /*#__PURE__*/ React.createElement(
@@ -7145,7 +7267,7 @@
               },
               "Economizado no ano: ",
               /*#__PURE__*/ React.createElement("strong", null, "8%"),
-              " realizado, referência 20 a 30%",
+              " realizado, refer\xEAncia 20 a 30%",
             ),
           ),
         );
@@ -7179,7 +7301,7 @@
                 className: "dash-card__ic",
                 "aria-hidden": "true",
               }),
-              "Seu colchão",
+              "Seu colch\xE3o",
             ),
             /*#__PURE__*/ React.createElement(PhaseBadge, {
               phase: "calibrate",
@@ -7231,7 +7353,7 @@
                   {
                     className: "dash-colchao__label",
                   },
-                  "Colchão este ano (sobra até hoje)",
+                  "Colch\xE3o este ano (sobra at\xE9 hoje)",
                 ),
                 /*#__PURE__*/ React.createElement(
                   "span",
@@ -7242,7 +7364,7 @@
                     },
                   },
                   fmtBRL(colchaoCents),
-                  " · ",
+                  " \xB7 ",
                   realizedRatePct,
                   "%",
                 ),
@@ -7253,12 +7375,12 @@
               {
                 className: "dash-colchao__text",
               },
-              "Você guarda o que sobra como colchão para cobrir os meses negativos sem sacar investimento. Adaptação válida do método.",
+              "Voc\xEA guarda o que sobra como colch\xE3o para cobrir os meses negativos sem sacar investimento. Adapta\xE7\xE3o v\xE1lida do m\xE9todo.",
             ),
             /*#__PURE__*/ React.createElement(
               Disclosure,
               {
-                title: "Próximo nível, quando quiser",
+                title: "Pr\xF3ximo n\xEDvel, quando quiser",
               },
               /*#__PURE__*/ React.createElement(
                 "p",
@@ -7270,7 +7392,7 @@
                     lineHeight: "var(--lh-normal)",
                   },
                 },
-                "Registrar a Economia (meta 20 a 30% da renda) como uma saída mensal e separar a reserva. Isso vira hábito e protege de sacar investimento na hora errada.",
+                "Registrar a Economia (meta 20 a 30% da renda) como uma sa\xEDda mensal e separar a reserva. Isso vira h\xE1bito e protege de sacar investimento na hora errada.",
               ),
             ),
           ),
@@ -7322,7 +7444,7 @@
                 className: "dash-card__title",
                 id: "dash-perf-title",
                 title:
-                  "Caixa não é poupança: um mês pode ter saldo positivo e ainda assim performance baixa.",
+                  "Caixa n\xE3o \xE9 poupan\xE7a: um m\xEAs pode ter saldo positivo e ainda assim performance baixa.",
               },
               /*#__PURE__*/ React.createElement(Icon, {
                 name: "trendingUp",
@@ -7330,14 +7452,14 @@
                 className: "dash-card__ic",
                 "aria-hidden": "true",
               }),
-              "Performance por mês",
+              "Performance por m\xEAs",
             ),
             /*#__PURE__*/ React.createElement(
               "span",
               {
                 className: "dash-perf__hint",
               },
-              "referência anual 20–30%",
+              "refer\xEAncia anual 20\u201330%",
             ),
           ),
           /*#__PURE__*/ React.createElement(
@@ -7538,8 +7660,8 @@
               onNext: () => {},
               onToday: () => {},
               atToday: true,
-              prevLabel: "Mês anterior",
-              nextLabel: "Próximo mês",
+              prevLabel: "M\xEAs anterior",
+              nextLabel: "Pr\xF3ximo m\xEAs",
             }),
           ),
           /*#__PURE__*/ React.createElement(
@@ -7587,16 +7709,16 @@
                       "th",
                       {
                         scope: "col",
-                        title: "Saídas fixas e a fatura do cartão no vencimento",
+                        title: "Sa\xEDdas fixas e a fatura do cart\xE3o no vencimento",
                       },
-                      "Saída",
+                      "Sa\xEDda",
                     ),
                     /*#__PURE__*/ React.createElement(
                       "th",
                       {
                         scope: "col",
                       },
-                      "Diário",
+                      "Di\xE1rio",
                     ),
                     /*#__PURE__*/ React.createElement(
                       "th",
@@ -7738,7 +7860,7 @@
                           color: "var(--text-faint)",
                         },
                       },
-                      "—",
+                      "\u2014",
                     ),
                   ),
                   /*#__PURE__*/ React.createElement(
@@ -7749,7 +7871,7 @@
                       {
                         scope: "row",
                       },
-                      "Saída Total",
+                      "Sa\xEDda Total",
                     ),
                     /*#__PURE__*/ React.createElement(
                       "td",
@@ -7761,7 +7883,7 @@
                           fontSize: "var(--fs-micro)",
                         },
                       },
-                      "saídas + diário",
+                      "sa\xEDdas + di\xE1rio",
                     ),
                     /*#__PURE__*/ React.createElement(
                       "td",
@@ -7780,9 +7902,10 @@
                       "th",
                       {
                         scope: "row",
-                        title: "Resultado contábil do mês: entradas menos saída total.",
+                        title:
+                          "Resultado cont\xE1bil do m\xEAs: entradas menos sa\xEDda total.",
                       },
-                      "Resultado do mês",
+                      "Resultado do m\xEAs",
                     ),
                     /*#__PURE__*/ React.createElement(
                       "td",
@@ -7794,7 +7917,7 @@
                           fontSize: "var(--fs-micro)",
                         },
                       },
-                      "entradas − saída total",
+                      "entradas \u2212 sa\xEDda total",
                     ),
                     /*#__PURE__*/ React.createElement(
                       "td",
@@ -7840,7 +7963,7 @@
               {
                 "aria-live": "polite",
               },
-              "1 célula local → planilha pendente",
+              "1 c\xE9lula local \u2192 planilha pendente",
             ),
           ),
           /*#__PURE__*/ React.createElement(
@@ -8256,7 +8379,7 @@
                       color: "var(--text-faint)",
                     },
                   },
-                  "—",
+                  "\u2014",
                 ),
           ),
           /*#__PURE__*/ React.createElement(
@@ -8279,7 +8402,7 @@
                       color: "var(--text-faint)",
                     },
                   },
-                  "—",
+                  "\u2014",
                 ),
           ),
           /*#__PURE__*/ React.createElement(
@@ -8296,7 +8419,7 @@
                   {
                     className: "ec-rate ec-rate--faint",
                   },
-                  "—",
+                  "\u2014",
                 )
               : /*#__PURE__*/ React.createElement(
                   "span",
@@ -8346,7 +8469,8 @@
             "td",
             {
               className: pctTdClass,
-              title: "Economizado anual = ΣEconomia ÷ ΣEntradas (meta 20–30%)",
+              title:
+                "Economizado anual = \u03A3Economia \xF7 \u03A3Entradas (meta 20\u201330%)",
             },
             /*#__PURE__*/ React.createElement(
               "span",
@@ -8402,7 +8526,7 @@
                 {
                   className: "ec-subtitle",
                 },
-                "Entradas, Economia e Economizado% mês a mês — dois anos lado a lado.",
+                "Entradas, Economia e Economizado% m\xEAs a m\xEAs \u2014 dois anos lado a lado.",
               ),
             ),
             /*#__PURE__*/ React.createElement(MonthNav, {
@@ -8412,14 +8536,15 @@
               onToday: () => setBaseYear(2025),
               atToday: baseYear === 2025,
               prevLabel: "Par de anos anterior",
-              nextLabel: "Próximo par de anos",
+              nextLabel: "Pr\xF3ximo par de anos",
             }),
           ),
           !hasAnyData
             ? /*#__PURE__*/ React.createElement(EmptyState, {
                 variant: "empty",
                 title: "Sem dados de Economia",
-                description: "Importe a aba Economia em Configurações › Google Sheets.",
+                description:
+                  "Importe a aba Economia em Configura\xE7\xF5es \u203A Google Sheets.",
               })
             : /*#__PURE__*/ React.createElement(
                 "div",
@@ -8463,7 +8588,7 @@
                                   "var(--space-3) var(--space-4) var(--space-3) var(--space-6)",
                               },
                             },
-                            "Mês",
+                            "M\xEAs",
                           ),
                           /*#__PURE__*/ React.createElement(
                             "th",
@@ -8672,7 +8797,7 @@
                           color: "var(--text-faint)",
                         },
                       },
-                      "Economizado% = Economia ÷ Entradas (meta 20–30%)",
+                      "Economizado% = Economia \xF7 Entradas (meta 20\u201330%)",
                     ),
                   ),
                 ),
@@ -9026,7 +9151,7 @@
           "section",
           {
             className: "hor-chart-card",
-            "aria-label": "Trajetória do saldo projetado",
+            "aria-label": "Trajet\xF3ria do saldo projetado",
           },
           /*#__PURE__*/ React.createElement(BalanceTrajectory, {
             daily: DEMO_DAILY,
@@ -9064,14 +9189,14 @@
         return /*#__PURE__*/ React.createElement(
           "section",
           {
-            "aria-label": "Saldo projetado por dia, agrupado por mês",
+            "aria-label": "Saldo projetado por dia, agrupado por m\xEAs",
           },
           /*#__PURE__*/ React.createElement(
             "h2",
             {
               className: "hor-section-label",
             },
-            "Detalhe diário",
+            "Detalhe di\xE1rio",
           ),
           /*#__PURE__*/ React.createElement(
             "div",
@@ -9184,7 +9309,7 @@
               id: "hor-bills-title",
               className: "hor-bills-title",
             },
-            "Vencimentos próximos",
+            "Vencimentos pr\xF3ximos",
           ),
           /*#__PURE__*/ React.createElement(
             "ul",
@@ -9255,7 +9380,7 @@
               {
                 className: "hor-head__desc",
               },
-              "Saldo projetado dia a dia, no mesmo termômetro da planilha: quanto mais verde, mais folga; quanto mais vermelho, mais aperto.",
+              "Saldo projetado dia a dia, no mesmo term\xF4metro da planilha: quanto mais verde, mais folga; quanto mais vermelho, mais aperto.",
             ),
           ),
           /*#__PURE__*/ React.createElement(ChartSection, null),
@@ -9317,14 +9442,14 @@
           body: /*#__PURE__*/ React.createElement(
             React.Fragment,
             null,
-            "A pergunta que importa não é ",
+            "A pergunta que importa n\xE3o \xE9 ",
             /*#__PURE__*/ React.createElement("em", null, '"quanto eu tenho?"'),
             ", e sim",
             " ",
             /*#__PURE__*/ React.createElement("em", null, '"quanto vai sobrar?"'),
-            ". O Neko encadeia dia a dia as entradas e saídas futuras e mostra o ",
+            ". O Neko encadeia dia a dia as entradas e sa\xEDdas futuras e mostra o ",
             /*#__PURE__*/ React.createElement("b", null, "saldo projetado"),
-            " para o fim do mês: esse é o número herói do dashboard.",
+            " para o fim do m\xEAs: esse \xE9 o n\xFAmero her\xF3i do dashboard.",
           ),
         },
         {
@@ -9333,9 +9458,9 @@
           body: /*#__PURE__*/ React.createElement(
             React.Fragment,
             null,
-            "Performance = Entradas − (Saídas + Diário + Economia + previsão do diário que ainda falta). As Saídas já incluem as contas fixas e a ",
-            /*#__PURE__*/ React.createElement("b", null, "fatura do cartão"),
-            " — que entra como saída no vencimento, sem coluna própria. Por isso o mês nasce no vermelho e vai esverdeando conforme o diário real fica abaixo do teto.",
+            "Performance = Entradas \u2212 (Sa\xEDdas + Di\xE1rio + Economia + previs\xE3o do di\xE1rio que ainda falta). As Sa\xEDdas j\xE1 incluem as contas fixas e a ",
+            /*#__PURE__*/ React.createElement("b", null, "fatura do cart\xE3o"),
+            " \u2014 que entra como sa\xEDda no vencimento, sem coluna pr\xF3pria. Por isso o m\xEAs nasce no vermelho e vai esverdeando conforme o di\xE1rio real fica abaixo do teto.",
           ),
         },
         {
@@ -9345,10 +9470,10 @@
             React.Fragment,
             null,
             "Custo de vida = ",
-            /*#__PURE__*/ React.createElement("b", null, "Saídas"),
-            " (contas fixas previsíveis + fatura do cartão no vencimento) + ",
-            /*#__PURE__*/ React.createElement("b", null, "Diário"),
-            " (o resto). O diário é um número único por dia, não um orçamento por categoria: categorias servem para diagnóstico,",
+            /*#__PURE__*/ React.createElement("b", null, "Sa\xEDdas"),
+            " (contas fixas previs\xEDveis + fatura do cart\xE3o no vencimento) + ",
+            /*#__PURE__*/ React.createElement("b", null, "Di\xE1rio"),
+            " (o resto). O di\xE1rio \xE9 um n\xFAmero \xFAnico por dia, n\xE3o um or\xE7amento por categoria: categorias servem para diagn\xF3stico,",
             " ",
             /*#__PURE__*/ React.createElement("em", null, "nunca para planejamento"),
             ".",
@@ -9360,12 +9485,12 @@
           body: /*#__PURE__*/ React.createElement(
             React.Fragment,
             null,
-            "Economizado = o quanto você transfere para a reserva ÷ entradas. A meta é",
+            "Economizado = o quanto voc\xEA transfere para a reserva \xF7 entradas. A meta \xE9",
             " ",
             /*#__PURE__*/ React.createElement("b", null, "20 a 30%"),
-            " — mas como ",
-            /*#__PURE__*/ React.createElement("em", null, "média do ano"),
-            ", não de cada mês (uns meses mais, outros menos). É diferente do colchão: a Economia é o que você separa de propósito.",
+            " \u2014 mas como ",
+            /*#__PURE__*/ React.createElement("em", null, "m\xE9dia do ano"),
+            ", n\xE3o de cada m\xEAs (uns meses mais, outros menos). \xC9 diferente do colch\xE3o: a Economia \xE9 o que voc\xEA separa de prop\xF3sito.",
           ),
         },
         {
@@ -9374,10 +9499,14 @@
           body: /*#__PURE__*/ React.createElement(
             React.Fragment,
             null,
-            "Débito, PIX e dinheiro afetam o caixa no mesmo dia. O crédito é diferente: cada compra vai para a fatura e o Neko lança esse total como uma",
+            "D\xE9bito, PIX e dinheiro afetam o caixa no mesmo dia. O cr\xE9dito \xE9 diferente: cada compra vai para a fatura e o Neko lan\xE7a esse total como uma",
             " ",
-            /*#__PURE__*/ React.createElement("b", null, "Saída única no vencimento"),
-            " — o cartão sequestra o salário futuro. Por isso a fatura aparece nas Saídas, não no Diário.",
+            /*#__PURE__*/ React.createElement(
+              "b",
+              null,
+              "Sa\xEDda \xFAnica no vencimento",
+            ),
+            " \u2014 o cart\xE3o sequestra o sal\xE1rio futuro. Por isso a fatura aparece nas Sa\xEDdas, n\xE3o no Di\xE1rio.",
           ),
         },
         {
@@ -9386,11 +9515,11 @@
           body: /*#__PURE__*/ React.createElement(
             React.Fragment,
             null,
-            "A reserva de emergência é medida em ",
+            "A reserva de emerg\xEAncia \xE9 medida em ",
             /*#__PURE__*/ React.createElement("b", null, "meses de custo de vida"),
-            " (reserva ÷ custo mensal), não em valor absoluto. A meta mínima é ",
+            " (reserva \xF7 custo mensal), n\xE3o em valor absoluto. A meta m\xEDnima \xE9 ",
             /*#__PURE__*/ React.createElement("b", null, "6 meses"),
-            "; a partir de 12 é a paz financeira, e o excedente pode trabalhar em outro lugar.",
+            "; a partir de 12 \xE9 a paz financeira, e o excedente pode trabalhar em outro lugar.",
           ),
         },
         {
@@ -9399,15 +9528,19 @@
           body: /*#__PURE__*/ React.createElement(
             React.Fragment,
             null,
-            "Todos os números vêm de um ",
+            "Todos os n\xFAmeros v\xEAm de um ",
             /*#__PURE__*/ React.createElement(
               "b",
               null,
-              "motor de cálculo determinístico",
+              "motor de c\xE1lculo determin\xEDstico",
             ),
-            " e testado. A Mia (em desenvolvimento) vai explicar e contextualizar esses números sem nunca inventar contas; e nenhuma escrita na sua planilha acontece sem a sua",
+            " e testado. A Mia (em desenvolvimento) vai explicar e contextualizar esses n\xFAmeros sem nunca inventar contas; e nenhuma escrita na sua planilha acontece sem a sua",
             " ",
-            /*#__PURE__*/ React.createElement("em", null, "aprovação explícita"),
+            /*#__PURE__*/ React.createElement(
+              "em",
+              null,
+              "aprova\xE7\xE3o expl\xEDcita",
+            ),
             ".",
           ),
         },
@@ -9437,7 +9570,7 @@
                 className: "met-hero__line",
               },
               /*#__PURE__*/ React.createElement("b", null, "Previsibilidade primeiro."),
-              " O Neko organiza suas finanças em torno de uma única disciplina: saber hoje como o mês termina. Os sete princípios abaixo explicam como cada número é calculado.",
+              " O Neko organiza suas finan\xE7as em torno de uma \xFAnica disciplina: saber hoje como o m\xEAs termina. Os sete princ\xEDpios abaixo explicam como cada n\xFAmero \xE9 calculado.",
             ),
           ),
           /*#__PURE__*/ React.createElement(
@@ -9635,8 +9768,8 @@
           Section,
           {
             icon: "link",
-            title: "Conexão Google Sheets",
-            sub: "O Neko lê sua planilha. Nada é escrito sem a sua aprovação.",
+            title: "Conex\xE3o Google Sheets",
+            sub: "O Neko l\xEA sua planilha. Nada \xE9 escrito sem a sua aprova\xE7\xE3o.",
           },
           /*#__PURE__*/ React.createElement(
             "div",
@@ -9749,9 +9882,9 @@
                         /*#__PURE__*/ React.createElement(
                           "code",
                           null,
-                          "Finanças 2025",
+                          "Finan\xE7as 2025",
                         ),
-                        " · 226 lançamentos · sincronizada há 3 min",
+                        " \xB7 226 lan\xE7amentos \xB7 sincronizada h\xE1 3 min",
                       ),
                     ),
                     /*#__PURE__*/ React.createElement(
@@ -9803,7 +9936,7 @@
                         {
                           className: "set-row__d",
                         },
-                        "O Neko propõe edições como um diff. Nada é gravado até você aprovar.",
+                        "O Neko prop\xF5e edi\xE7\xF5es como um diff. Nada \xE9 gravado at\xE9 voc\xEA aprovar.",
                       ),
                     ),
                     /*#__PURE__*/ React.createElement(
@@ -9816,7 +9949,7 @@
                         {
                           tone: "primary",
                         },
-                        "Aprovação obrigatória",
+                        "Aprova\xE7\xE3o obrigat\xF3ria",
                       ),
                     ),
                   ),
@@ -9834,7 +9967,7 @@
           {
             icon: "download",
             title: "Importar arquivo local",
-            sub: "Use uma cópia .xlsx da planilha quando não quiser conectar a conta Google.",
+            sub: "Use uma c\xF3pia .xlsx da planilha quando n\xE3o quiser conectar a conta Google.",
           },
           /*#__PURE__*/ React.createElement(
             "div",
@@ -9863,7 +9996,7 @@
                   {
                     className: "set-row__d",
                   },
-                  "Importa todas as abas, detectando o layout de blocos mensais automaticamente. Linhas já importadas antes são ignoradas.",
+                  "Importa todas as abas, detectando o layout de blocos mensais automaticamente. Linhas j\xE1 importadas antes s\xE3o ignoradas.",
                   imported
                     ? /*#__PURE__*/ React.createElement(
                         "strong",
@@ -9889,7 +10022,7 @@
                     }),
                     onClick: () => setImported(true),
                   },
-                  "Escolher arquivo…",
+                  "Escolher arquivo\u2026",
                 ),
               ),
             ),
@@ -9941,7 +10074,7 @@
           {
             icon: "wallet",
             title: "Bolsos",
-            sub: "Conta, poupança, vale, previdência e FGTS: só dinheiro líquido entra no saldo projetado.",
+            sub: "Conta, poupan\xE7a, vale, previd\xEAncia e FGTS: s\xF3 dinheiro l\xEDquido entra no saldo projetado.",
           },
           /*#__PURE__*/ React.createElement(
             "div",
@@ -10033,14 +10166,14 @@
                   {
                     className: "set-row__t",
                   },
-                  "Saldo líquido projetado",
+                  "Saldo l\xEDquido projetado",
                 ),
                 /*#__PURE__*/ React.createElement(
                   "div",
                   {
                     className: "set-row__d",
                   },
-                  "Soma apenas os bolsos líquidos (conta, poupança, VA). FGTS e previdência ficam de fora.",
+                  "Soma apenas os bolsos l\xEDquidos (conta, poupan\xE7a, VA). FGTS e previd\xEAncia ficam de fora.",
                 ),
               ),
               /*#__PURE__*/ React.createElement(
@@ -10074,8 +10207,8 @@
           Section,
           {
             icon: "bell",
-            title: "Lembrete diário",
-            sub: "Notificação nativa no horário escolhido — dispara mesmo com o app fechado.",
+            title: "Lembrete di\xE1rio",
+            sub: "Notifica\xE7\xE3o nativa no hor\xE1rio escolhido \u2014 dispara mesmo com o app fechado.",
           },
           /*#__PURE__*/ React.createElement(
             "div",
@@ -10104,7 +10237,7 @@
                   {
                     className: "set-row__d",
                   },
-                  "Envia uma notificação nativa no horário escolhido — agendada no sistema para disparar mesmo com o Neko fechado.",
+                  "Envia uma notifica\xE7\xE3o nativa no hor\xE1rio escolhido \u2014 agendada no sistema para disparar mesmo com o Neko fechado.",
                 ),
               ),
               /*#__PURE__*/ React.createElement(
@@ -10126,7 +10259,7 @@
                   value: enabled ? "on" : "off",
                   onChange: (val) => setEnabled(val === "on"),
                   size: "sm",
-                  ariaLabel: "Ativar ou desativar lembrete diário",
+                  ariaLabel: "Ativar ou desativar lembrete di\xE1rio",
                 }),
               ),
             ),
@@ -10146,7 +10279,7 @@
                       {
                         className: "set-row__t",
                       },
-                      "Horário",
+                      "Hor\xE1rio",
                     ),
                     /*#__PURE__*/ React.createElement(
                       "div",
@@ -10166,7 +10299,7 @@
                       value: time,
                       onChange: (e) => setTime(e.currentTarget.value),
                       className: "set-time-input",
-                      "aria-label": "Horário do lembrete diário",
+                      "aria-label": "Hor\xE1rio do lembrete di\xE1rio",
                     }),
                   ),
                 )
@@ -10187,8 +10320,8 @@
           Section,
           {
             icon: "sliders",
-            title: "Teto do Diário",
-            sub: "Defina quanto pretende gastar por dia no variável. Deixe em branco para usar a média do mês anterior.",
+            title: "Teto do Di\xE1rio",
+            sub: "Defina quanto pretende gastar por dia no vari\xE1vel. Deixe em branco para usar a m\xE9dia do m\xEAs anterior.",
           },
           /*#__PURE__*/ React.createElement(
             "div",
@@ -10210,14 +10343,14 @@
                   {
                     className: "set-row__t",
                   },
-                  "Teto diário (R$)",
+                  "Teto di\xE1rio (R$)",
                 ),
                 /*#__PURE__*/ React.createElement(
                   "div",
                   {
                     className: "set-row__d",
                   },
-                  "Orienta a barra de progresso do check-in e o forecast dos dias futuros do mês. Em branco = usar a média do mês anterior automaticamente.",
+                  "Orienta a barra de progresso do check-in e o forecast dos dias futuros do m\xEAs. Em branco = usar a m\xE9dia do m\xEAs anterior automaticamente.",
                   saved
                     ? /*#__PURE__*/ React.createElement("strong", null, " Salvo.")
                     : null,
@@ -10237,7 +10370,7 @@
                     setRaw(e.currentTarget.value);
                     setSaved(false);
                   },
-                  "aria-label": "Teto diário em reais",
+                  "aria-label": "Teto di\xE1rio em reais",
                   style: {
                     fontFamily: "var(--font-money)",
                     fontSize: "var(--fs-body)",
@@ -10298,8 +10431,8 @@
           Section,
           {
             icon: "layoutList",
-            title: "Categorias do Diário",
-            sub: "Distribua o teto mensal do Diário entre categorias (ex.: Alimentação, Transporte). O teto por dia é a soma ÷ dias do mês.",
+            title: "Categorias do Di\xE1rio",
+            sub: "Distribua o teto mensal do Di\xE1rio entre categorias (ex.: Alimenta\xE7\xE3o, Transporte). O teto por dia \xE9 a soma \xF7 dias do m\xEAs.",
           },
           /*#__PURE__*/ React.createElement(
             "div",
@@ -10324,7 +10457,7 @@
                   {
                     className: "set-row__t",
                   },
-                  "Teto mensal do Diário (R$)",
+                  "Teto mensal do Di\xE1rio (R$)",
                 ),
                 /*#__PURE__*/ React.createElement(
                   "div",
@@ -10344,7 +10477,7 @@
                   inputMode: "decimal",
                   placeholder: "ex.: 1.250,00",
                   defaultValue: "1.000,00",
-                  "aria-label": "Teto mensal do Diário em reais",
+                  "aria-label": "Teto mensal do Di\xE1rio em reais",
                   style: {
                     fontFamily: "var(--font-money)",
                     fontSize: "var(--fs-body)",
@@ -10426,14 +10559,14 @@
                 /*#__PURE__*/ React.createElement(
                   "span",
                   null,
-                  "Total mensal · 30 dias no mês",
+                  "Total mensal \xB7 30 dias no m\xEAs",
                 ),
                 /*#__PURE__*/ React.createElement(
                   "span",
                   {
                     className: "set-cats__total-amt",
                   },
-                  "R$\xA01.000,00 \xA0·\xA0 R$\xA033,33/dia",
+                  "R$\xA01.000,00 \xA0\xB7\xA0 R$\xA033,33/dia",
                 ),
               ),
             ),
@@ -10491,7 +10624,7 @@
           {
             icon: "shield",
             title: "Seus dados",
-            sub: "O Neko é local-first: não existe conta Neko nem backend.",
+            sub: "O Neko \xE9 local-first: n\xE3o existe conta Neko nem backend.",
           },
           /*#__PURE__*/ React.createElement(
             "div",
@@ -10552,7 +10685,7 @@
                   {
                     className: "set-row__d",
                   },
-                  "Salva uma cópia íntegra (.db) onde você escolher — leve para outro disco ou dispositivo.",
+                  "Salva uma c\xF3pia \xEDntegra (.db) onde voc\xEA escolher \u2014 leve para outro disco ou dispositivo.",
                   backupMsg
                     ? /*#__PURE__*/ React.createElement("strong", null, " ", backupMsg)
                     : null,
@@ -10600,7 +10733,7 @@
                   {
                     className: "set-row__d",
                   },
-                  "O Neko não envia nenhum dado de uso. Suas finanças não saem da sua máquina.",
+                  "O Neko n\xE3o envia nenhum dado de uso. Suas finan\xE7as n\xE3o saem da sua m\xE1quina.",
                 ),
               ),
               /*#__PURE__*/ React.createElement(
@@ -10632,7 +10765,7 @@
                   {
                     className: "set-row__t",
                   },
-                  "Versão",
+                  "Vers\xE3o",
                 ),
                 /*#__PURE__*/ React.createElement(
                   "div",
@@ -10651,7 +10784,7 @@
                         color: "var(--success-500)",
                       },
                     }),
-                    "Neko Finance v0.1.0 · Tauri desktop",
+                    "Neko Finance v0.1.0 \xB7 Tauri desktop",
                   ),
                 ),
               ),
@@ -10666,7 +10799,7 @@
                     variant: "ghost",
                     size: "sm",
                   },
-                  "Verificar atualizações",
+                  "Verificar atualiza\xE7\xF5es",
                 ),
               ),
             ),
@@ -11293,7 +11426,7 @@
             {
               className: "tags-form__hint",
             },
-            'Tags que começam com "!" ficam no topo e são marcadas como especiais. Use a tag "Reembolso empresa" como ignorada nos cálculos.',
+            'Tags que come\xE7am com "!" ficam no topo e s\xE3o marcadas como especiais. Use a tag "Reembolso empresa" como ignorada nos c\xE1lculos.',
           ),
           /*#__PURE__*/ React.createElement(
             "div",
@@ -11429,7 +11562,7 @@
                 },
                 "Totais de ",
                 monthLabel(ym),
-                '. Tags são diagnóstico — para onde foi o dinheiro, não orçamento; "! Pagar" e similares ficam no topo.',
+                '. Tags s\xE3o diagn\xF3stico \u2014 para onde foi o dinheiro, n\xE3o or\xE7amento; "! Pagar" e similares ficam no topo.',
               ),
             ),
             /*#__PURE__*/ React.createElement(
@@ -11443,8 +11576,8 @@
                 onNext: () => setYm((v) => shiftYm(v, 1)),
                 onToday: () => setYm(todayYm),
                 atToday: ym === todayYm,
-                prevLabel: "Mês anterior",
-                nextLabel: "Próximo mês",
+                prevLabel: "M\xEAs anterior",
+                nextLabel: "Pr\xF3ximo m\xEAs",
               }),
               /*#__PURE__*/ React.createElement(
                 Button,
@@ -11465,7 +11598,7 @@
             "ul",
             {
               className: "tags-list",
-              "aria-label": "Tags do mês",
+              "aria-label": "Tags do m\xEAs",
             },
             DEMO_TAGS.map((tag) =>
               /*#__PURE__*/ React.createElement(TagItem, {
@@ -11487,7 +11620,7 @@
                 {
                   className: "tags-summary__label",
                 },
-                "Total incluído nos cálculos",
+                "Total inclu\xEDdo nos c\xE1lculos",
               ),
               excludedCount > 0
                 ? /*#__PURE__*/ React.createElement(
@@ -11499,7 +11632,7 @@
                     " ",
                     excludedCount === 1 ? "tag ignorada" : "tags ignoradas",
                     " ",
-                    "não entram neste total.",
+                    "n\xE3o entram neste total.",
                   )
                 : null,
             ),
@@ -12049,13 +12182,13 @@
               {
                 className: "tot-header__desc",
               },
-              "Cálculos do mês: performance, custo de vida, economizado e diário médio.",
+              "C\xE1lculos do m\xEAs: performance, custo de vida, economizado e di\xE1rio m\xE9dio.",
             ),
           ),
           /*#__PURE__*/ React.createElement(
             "section",
             {
-              "aria-label": "Cálculos do mês",
+              "aria-label": "C\xE1lculos do m\xEAs",
               className: "tot-metrics",
             },
             /*#__PURE__*/ React.createElement(
@@ -12095,7 +12228,7 @@
                 label: "Custo de vida",
                 term: "custo_de_vida",
                 status: custoVidaStatus(m.cost_of_living_cents, m.income_cents),
-                sublabel: "= Saída Total (saídas incl. cartão + diário)",
+                sublabel: "= Sa\xEDda Total (sa\xEDdas incl. cart\xE3o + di\xE1rio)",
               },
               /*#__PURE__*/ React.createElement(Money, {
                 cents: m.cost_of_living_cents,
@@ -12105,9 +12238,9 @@
             /*#__PURE__*/ React.createElement(
               MetricCard,
               {
-                label: "Diário médio",
+                label: "Di\xE1rio m\xE9dio",
                 term: "diario_medio",
-                sublabel: "média realizada por dia até hoje",
+                sublabel: "m\xE9dia realizada por dia at\xE9 hoje",
               },
               /*#__PURE__*/ React.createElement(Money, {
                 cents: m.real_daily_avg_cents,
@@ -12118,7 +12251,7 @@
           /*#__PURE__*/ React.createElement(
             "section",
             {
-              "aria-label": "Movimentações do mês",
+              "aria-label": "Movimenta\xE7\xF5es do m\xEAs",
               className: "tot-movs",
             },
             /*#__PURE__*/ React.createElement(
@@ -12126,7 +12259,7 @@
               {
                 className: "tot-section-head",
               },
-              "Movimentações do mês",
+              "Movimenta\xE7\xF5es do m\xEAs",
             ),
             /*#__PURE__*/ React.createElement(
               "div",
@@ -12139,24 +12272,24 @@
                 sign: "auto",
               }),
               /*#__PURE__*/ React.createElement(MovTotal, {
-                label: "Saídas",
+                label: "Sa\xEDdas",
                 cents: m.fixed_out_cents,
-                hint: "fixas (cartão entra aqui)",
+                hint: "fixas (cart\xE3o entra aqui)",
               }),
               /*#__PURE__*/ React.createElement(MovTotal, {
-                label: "Diário",
+                label: "Di\xE1rio",
                 cents: m.daily_out_cents,
-                hint: "gasto variável",
+                hint: "gasto vari\xE1vel",
               }),
               /*#__PURE__*/ React.createElement(MovTotal, {
                 label: "Economia",
                 cents: m.economia_cents,
-                hint: "guardado no mês",
+                hint: "guardado no m\xEAs",
               }),
               /*#__PURE__*/ React.createElement(MovTotal, {
-                label: "Saída Total",
+                label: "Sa\xEDda Total",
                 cents: m.cost_of_living_cents,
-                hint: "saídas (incl. cartão) + diário = custo de vida",
+                hint: "sa\xEDdas (incl. cart\xE3o) + di\xE1rio = custo de vida",
                 accent: true,
               }),
             ),
@@ -12221,14 +12354,14 @@
                   },
                 },
                 /*#__PURE__*/ React.createElement("strong", null, "Performance"),
-                " = Entradas − Saída Total. Positivo significa que o mês ficou dentro da renda. ",
+                " = Entradas \u2212 Sa\xEDda Total. Positivo significa que o m\xEAs ficou dentro da renda. ",
                 /*#__PURE__*/ React.createElement("strong", null, "Economizado%"),
-                " = o que foi registrado como Economia ÷ Entradas (meta 20–30% em média anual).",
+                " = o que foi registrado como Economia \xF7 Entradas (meta 20\u201330% em m\xE9dia anual).",
                 " ",
                 /*#__PURE__*/ React.createElement("strong", null, "Custo de vida"),
-                " = Saídas fixas + Diário — inclui cartão de crédito no vencimento. O ",
-                /*#__PURE__*/ React.createElement("strong", null, "Diário médio"),
-                " é a média realizada por dia até hoje, não uma meta. Estes cálculos espelham diretamente as colunas da planilha do método.",
+                " = Sa\xEDdas fixas + Di\xE1rio \u2014 inclui cart\xE3o de cr\xE9dito no vencimento. O ",
+                /*#__PURE__*/ React.createElement("strong", null, "Di\xE1rio m\xE9dio"),
+                " \xE9 a m\xE9dia realizada por dia at\xE9 hoje, n\xE3o uma meta. Estes c\xE1lculos espelham diretamente as colunas da planilha do m\xE9todo.",
               ),
             ),
           ),
@@ -12714,7 +12847,7 @@
                 {
                   className: "txn-imported-notice",
                 },
-                "Linha importada da planilha — edições ficam no app; um re-import pode sobrescrever o valor se a planilha mudou. Apagar aqui não apaga da planilha; o próximo import restaura a linha.",
+                "Linha importada da planilha \u2014 edi\xE7\xF5es ficam no app; um re-import pode sobrescrever o valor se a planilha mudou. Apagar aqui n\xE3o apaga da planilha; o pr\xF3ximo import restaura a linha.",
               ),
             /*#__PURE__*/ React.createElement(
               "div",
@@ -12743,7 +12876,7 @@
                       variant: "ghost",
                       onClick: onClose,
                     },
-                    "Apagar da série",
+                    "Apagar da s\xE9rie",
                   )
                 : /*#__PURE__*/ React.createElement(
                     Button,
@@ -13091,14 +13224,14 @@
                 {
                   scope: "col",
                 },
-                "Descrição",
+                "Descri\xE7\xE3o",
               ),
               /*#__PURE__*/ React.createElement(
                 "th",
                 {
                   scope: "col",
                 },
-                "Método",
+                "M\xE9todo",
               ),
               /*#__PURE__*/ React.createElement(
                 "th",
@@ -13109,7 +13242,7 @@
               ),
               /*#__PURE__*/ React.createElement("th", {
                 scope: "col",
-                "aria-label": "Ações",
+                "aria-label": "A\xE7\xF5es",
               }),
             ),
           ),
@@ -13193,7 +13326,7 @@
                 color: "var(--text-strong)",
               },
             },
-            "Novo lançamento",
+            "Novo lan\xE7amento",
           ),
           /*#__PURE__*/ React.createElement(
             "div",
@@ -13317,7 +13450,7 @@
             },
             /*#__PURE__*/ React.createElement(SegmentedControl, {
               size: "sm",
-              ariaLabel: "Filtrar lançamentos por escopo",
+              ariaLabel: "Filtrar lan\xE7amentos por escopo",
               value: scope,
               onChange: setScope,
               options: [
@@ -13381,7 +13514,7 @@
               filtered.length === 0
                 ? /*#__PURE__*/ React.createElement(EmptyState, {
                     variant: "empty",
-                    title: "Nenhum lançamento encontrado",
+                    title: "Nenhum lan\xE7amento encontrado",
                     description: "Nenhum resultado para o filtro atual.",
                   })
                 : /*#__PURE__*/ React.createElement(LedgerTable, {
