@@ -160,7 +160,7 @@ export function TransactionRow({
           : future
             ? "repeating-linear-gradient(135deg, transparent, transparent 9px, color-mix(in srgb, var(--warning-500) 5%, transparent) 9px, color-mix(in srgb, var(--warning-500) 5%, transparent) 18px)"
             : "transparent",
-        boxShadow: selected ? "inset 2px 0 0 var(--primary)" : "none",
+        boxShadow: "none",
       }}
     >
       <div

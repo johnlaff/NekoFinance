@@ -108,15 +108,15 @@ describe("AppShell — shell por viewport (todos os destinos alcançáveis)", ()
     renderShell({ onNavigate });
 
     await user.click(screen.getByRole("button", { name: "Mais telas" }));
-    const menu = screen.getByRole("menu", { name: "Mais telas" });
+    const menu = screen.getByRole("group", { name: "Mais telas" });
     const items = within(menu)
-      .getAllByRole("menuitem")
+      .getAllByRole("button")
       .map((b) => b.textContent);
     expect(items).toEqual(["O ano", "Horizonte", "Tags", "Configurações"]);
 
-    await user.click(within(menu).getByRole("menuitem", { name: "Horizonte" }));
+    await user.click(within(menu).getByRole("button", { name: "Horizonte" }));
     expect(onNavigate).toHaveBeenCalledWith("horizonte");
-    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Mais telas" })).not.toBeInTheDocument();
   });
 
   it("CTA da sidebar dispara o compositor", () => {

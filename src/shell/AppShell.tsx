@@ -154,19 +154,20 @@ function MoreMenu({
 
   return (
     <div className="sh-more" ref={rootRef}>
+      {/* Popup simples de botões, não um role="menu": o padrão ARIA de menu
+          exigiria setas + roving tabindex; Tab entre 4 botões é o contrato real. */}
       <button
         ref={triggerRef}
         type="button"
         className="sh-more__btn"
         aria-label="Mais telas"
-        aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
         <Ellipsis size={19} strokeWidth={1.75} />
       </button>
       {open && (
-        <div className="sh-more__menu" role="menu" aria-label="Mais telas">
+        <div className="sh-more__menu" role="group" aria-label="Mais telas">
           {MORE_KEYS.map((key, i) => {
             const item = NAV_ITEMS.find((n) => n.key === key);
             if (!item) return null;
@@ -175,11 +176,12 @@ function MoreMenu({
                 key={key}
                 ref={i === 0 ? firstItemRef : undefined}
                 type="button"
-                role="menuitem"
                 className={`sh-more__item ${active === key ? "sh-more__item--active" : ""}`}
                 onClick={() => {
                   setOpen(false);
                   onNavigate(key);
+                  // A tela troca sob o foco; devolve-o ao gatilho para não cair no <body>.
+                  triggerRef.current?.focus();
                 }}
               >
                 <NavIcon icon={item.icon} size={17} />
@@ -263,6 +265,10 @@ export function AppShell({
   useEffect(() => {
     const body = bodyRef.current;
     if (!body) return;
+    // O .sh-body é o MESMO nó entre telas: sem reset, a tela nova herdaria o
+    // scrollTop da anterior e o dock ficaria preso encolhido.
+    body.scrollTop = 0;
+    setDockMin(false);
     const large = body.querySelector("[data-large-title]");
     if (!large) {
       setTitleAssumed(true);
@@ -376,6 +382,8 @@ export function AppShell({
       <nav
         className={`sh-dock ${dockMin ? "sh-dock--min" : ""}`}
         aria-label="Navegação do app"
+        // Encolhido = invisível: sai do tab order inteiro, não só da vista.
+        inert={dockMin || undefined}
       >
         <span className="sh-dock__tabs">
           {DOCK_KEYS.map((key) => {

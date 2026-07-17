@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SettingsScreen } from "./SettingsScreen";
@@ -20,6 +20,29 @@ describe("SettingsScreen", () => {
   beforeEach(() => {
     mockInvoke.mockReset();
     mockOpen.mockReset();
+  });
+
+  it("troca a paleta de acento pelo seletor e persiste no :root", async () => {
+    const user = userEvent.setup();
+    mockCommands({ get_app_info: APP_INFO });
+    localStorage.removeItem("neko-accent");
+    document.documentElement.removeAttribute("data-accent");
+    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
+
+    const group = screen.getByRole("group", { name: "Cor de destaque" });
+    const jade = within(group).getByRole("button", { name: /Jade/ });
+    const lima = within(group).getByRole("button", { name: /Lima/ });
+    expect(jade).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(lima);
+    expect(document.documentElement.getAttribute("data-accent")).toBe("lima");
+    expect(localStorage.getItem("neko-accent")).toBe("lima");
+    expect(lima).toHaveAttribute("aria-pressed", "true");
+    expect(jade).toHaveAttribute("aria-pressed", "false");
+
+    await user.click(jade);
+    expect(document.documentElement.hasAttribute("data-accent")).toBe(false);
+    expect(localStorage.getItem("neko-accent")).toBe("jade");
   });
 
   it("shows the local data location and version", async () => {

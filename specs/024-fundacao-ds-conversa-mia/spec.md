@@ -27,10 +27,11 @@ posteriores.
 
 **Camada 1 — primitivos** (só `tokens/colors.css` os conhece):
 
-- Neutros zinc (croma zero). Dark: `#09090b` fundo · `#18181b` superfície · `#27272a`
-  superfície-2/borda · `#52525b` borda de controle · `#fafafa` texto · `#a1a1aa` muted ·
-  faint ajustado para AA. Light: `#fafafa` fundo · `#ffffff` superfície · `#f0f0f2`
-  superfície-2 · `#e4e4e7` borda · `#d4d4d8` controle · `#18181b` texto · `#52525b` muted.
+- Neutros zinc (croma zero). Dark: `#09090b` fundo · `#18181b` superfície · `#1f1f23`
+  superfície-2 · `#27272a` borda/superfície-elevada · `#71717a` borda de controle (≥3:1) ·
+  `#fafafa` texto · `#a1a1aa` muted · `#8f8f99` faint (AA). Light: `#fafafa` fundo ·
+  `#ffffff` superfície · `#f4f4f5` superfície-2 · `#e4e4e7` borda · `#71717a` controle ·
+  `#18181b` texto · `#52525b` muted.
 - **6 paletas de acento** via `[data-accent]` no `:root`, cada uma com par `--accent` +
   `--accent-ink` (tinta sobre o acento) por tema:
   jade (default) · lima · violeta · âmbar · céu · rosa. No claro, o acento escurece o

@@ -59,9 +59,9 @@ test.describe("fundação — chrome mobile", () => {
 
   test("menu “mais” abre com os destinos fora do dock", async ({ page }) => {
     await page.getByRole("button", { name: "Mais telas" }).click();
-    const menu = page.getByRole("menu", { name: "Mais telas" });
-    await expect(menu.getByRole("menuitem", { name: "O ano" })).toBeVisible();
-    await expect(menu.getByRole("menuitem", { name: "Configurações" })).toBeVisible();
+    const menu = page.getByRole("group", { name: "Mais telas" });
+    await expect(menu.getByRole("button", { name: "O ano" })).toBeVisible();
+    await expect(menu.getByRole("button", { name: "Configurações" })).toBeVisible();
     await page.waitForTimeout(200);
     await expect(page).toHaveScreenshot("mobile-menu-mais-dark.png", {
       maxDiffPixelRatio: 0.02,

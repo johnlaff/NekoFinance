@@ -497,7 +497,7 @@
       "path": "guidelines/spacing-radii.card.html",
       "group": "Spacing",
       "viewport": "700x150",
-      "subtitle": "xs 4 · sm 6 · md 10 · lg 14 · xl 20 · pill",
+      "subtitle": "xs 6 · sm 10 · md 14 · lg 18 · xl 22 · pill — a pílula domina",
       "name": "Radii"
     },
     {
@@ -532,8 +532,8 @@
       "path": "guidelines/type-money.card.html",
       "group": "Type",
       "viewport": "700x210",
-      "subtitle": "Geist Mono, tabular-nums. Always right-aligned, sign-colored",
-      "name": "Money — tabular mono"
+      "subtitle": "Geist, tabular-nums. Always right-aligned, sign-colored",
+      "name": "Money — tabular Geist"
     },
     {
       "path": "ui_kits/ano-inteiro/index.html",

@@ -165,7 +165,7 @@ export function TransactionRow({
         borderBottom: "var(--bw-hair) solid var(--border)",
         fontFamily: "var(--font-sans)",
         background: selected ? "var(--surface-selected)" : futureBackground,
-        boxShadow: selected ? "inset 2px 0 0 var(--primary)" : "none",
+        boxShadow: "none",
       }}
     >
       {/* Main row */}
