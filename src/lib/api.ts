@@ -30,9 +30,26 @@ export interface DashboardSummary {
   /** Projected end-of-current-month balance, in cents, from the forecast engine. */
   balance: number;
   daily_budget: number;
+  /** Procedência do teto exibido: veredito escolhido, estimativa da média, ou sem registro. */
+  daily_ceiling_source: "chosen" | "estimate" | "none";
+  /** Overlay: existe proposta da cerimônia do teto aguardando confirmação. */
+  ceiling_proposal_pending: boolean;
   daily_spend_today: number;
   reserve_months: number;
+  /** Estado epistêmico da reserva (veredito · retrato vivo · zerada · sem registro). */
+  reserve_state: "verdict" | "estimate" | "zero" | "no_record";
+  /** Meses completos que sustentam o custo de vida da régua. */
+  reserve_basis_months: number;
   reserve_trend: string;
+  /** Modo de gasto detectado dos próprios dados. */
+  spending_mode: "debit" | "card";
+  /** Gate de legitimidade do modo cartão (economia 20–30% viva). */
+  card_gate: "alive" | "below" | "unknown";
+  /** Cartão do mês corrente (realizado + projetado), magnitude em centavos. */
+  cartao_month_cents: number;
+  /** Próximo dia de fatura a partir de hoje, quando existe. */
+  next_fatura_date: string | null;
+  next_fatura_amount_cents: number;
   transaction_count: number;
   /** ISO date (YYYY-MM-DD) of the most recent non-projection transaction, or null if none. */
   last_real_tx_date: string | null;
@@ -213,6 +230,14 @@ export interface AnnualSavings {
   realized_rate_bps: number;
   /** Economia REGISTRADA do ano (transfers→reserva) — numerador do Economizado% do método. */
   registered_economia_cents: number;
+  /** Patrimônio realizado do ano (previdência/ilíquido) — a outra leitura do popover. */
+  patrimonio_cents: number;
+  /** A régua que julga: registrada + patrimônio quando a reserva líquida ≥ 6 meses. */
+  economia_ruler_cents: number;
+  economia_ruler_rate_bps: number;
+  includes_previdencia: boolean;
+  /** Estado da régua de economia: sem registro ⇒ a UI exibe a sobra como estimativa marcada. */
+  economia_state: "verdict" | "no_record";
   projected_income_cents: number;
   projected_savings_cents: number;
   projected_rate_bps: number;
@@ -643,12 +668,52 @@ export function getDailyBudgetCategories(): Promise<DailyBudgetCategory[]> {
  * Grava o teto total do Diário + uma quebra opcional por categoria.
  * `categories` pode ser vazio (mantém o total-only e limpa qualquer quebra anterior).
  * `amountCents = 0` desativa o teto explícito (o engine cai no fallback de média).
+ * `divisorDays` persiste o divisor da cerimônia (total mensal ÷ dias = teto/dia).
  */
 export function upsertDailyBudgetWithCategories(
   amountCents: number,
   categories: DailyBudgetCategoryInput[],
+  divisorDays?: number | null,
 ): Promise<void> {
-  return invoke("upsert_daily_budget_with_categories_cmd", { amountCents, categories });
+  return invoke("upsert_daily_budget_with_categories_cmd", {
+    amountCents,
+    categories,
+    divisorDays: divisorDays ?? null,
+  });
+}
+
+/** Orçamento Diário ativo por inteiro. `per_day_cents = 0` ⇒ sem teto estipulado. */
+export interface DailyBudget {
+  per_day_cents: number;
+  divisor_days: number | null;
+  categories: DailyBudgetCategory[];
+}
+
+export function getDailyBudget(): Promise<DailyBudget> {
+  return invoke("get_daily_budget_cmd");
+}
+
+/** Proposta de teto lida da cerimônia documentada na planilha (uma pendente por vez). */
+export interface CeilingProposal {
+  id: string;
+  per_day_cents: number;
+  divisor_days: number;
+  source_month: string;
+  items: { name: string; amount_cents: number }[];
+}
+
+export function getCeilingProposal(): Promise<CeilingProposal | null> {
+  return invoke("get_ceiling_proposal_cmd");
+}
+
+/** Aceite explícito: grava o orçamento (valor/dia + itens + divisor) e resolve a proposta. */
+export function acceptCeilingProposal(proposalId: string): Promise<void> {
+  return invoke("accept_ceiling_proposal_cmd", { proposalId });
+}
+
+/** Dispensa a proposta — a mesma nota da planilha não volta a propor. */
+export function dismissCeilingProposal(proposalId: string): Promise<void> {
+  return invoke("dismiss_ceiling_proposal_cmd", { proposalId });
 }
 
 // --- Lembrete agendado no nível do sistema ---

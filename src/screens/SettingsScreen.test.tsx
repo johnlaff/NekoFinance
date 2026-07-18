@@ -242,6 +242,7 @@ describe("SettingsScreen", () => {
         {
           amountCents: 125000,
           categories: [{ name: "Alimentação", amount_cents: 30000, position: 0 }],
+          divisorDays: null,
         },
       );
     });
