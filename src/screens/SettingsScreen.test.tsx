@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SettingsScreen } from "./SettingsScreen";
+import { NekoAppProvider } from "../shell/appContext";
 import { APP_INFO, POCKETS, mockCommands, mockInvoke } from "../test/commands";
 import { invalidateCommands } from "../lib/useCommand";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -16,6 +17,16 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 
 const mockOpen = open as ReturnType<typeof vi.fn>;
 
+
+const appCtx = { navigate: vi.fn(), openCompose: vi.fn() };
+function renderSettings() {
+  return render(
+    <NekoAppProvider value={appCtx}>
+      <SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />
+    </NekoAppProvider>,
+  );
+}
+
 describe("SettingsScreen", () => {
   beforeEach(() => {
     mockInvoke.mockReset();
@@ -27,7 +38,7 @@ describe("SettingsScreen", () => {
     mockCommands({ get_app_info: APP_INFO });
     localStorage.removeItem("neko-accent");
     document.documentElement.removeAttribute("data-accent");
-    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
+    renderSettings();
 
     const group = screen.getByRole("group", { name: "Cor de destaque" });
     const jade = within(group).getByRole("button", { name: /Jade/ });
@@ -47,7 +58,7 @@ describe("SettingsScreen", () => {
 
   it("shows the local data location and version", async () => {
     mockCommands({ get_app_info: APP_INFO });
-    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
+    renderSettings();
 
     await waitFor(() => {
       expect(screen.getByText(APP_INFO.db_path)).toBeInTheDocument();
@@ -68,7 +79,7 @@ describe("SettingsScreen", () => {
     });
     mockOpen.mockResolvedValue("/home/user/financas.xlsx");
 
-    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
+    renderSettings();
 
     await user.click(screen.getByRole("button", { name: /Escolher arquivo/ }));
 
@@ -87,7 +98,7 @@ describe("SettingsScreen", () => {
     mockCommands({ get_app_info: APP_INFO });
     mockOpen.mockResolvedValue(null);
 
-    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
+    renderSettings();
     await user.click(screen.getByRole("button", { name: /Escolher arquivo/ }));
 
     expect(screen.queryByText(/Imported/)).not.toBeInTheDocument();
@@ -101,7 +112,7 @@ describe("SettingsScreen", () => {
     });
     mockOpen.mockResolvedValue("/home/user/financas.xlsx");
 
-    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
+    renderSettings();
     await user.click(screen.getByRole("button", { name: /Escolher arquivo/ }));
 
     await waitFor(() => {
@@ -113,7 +124,7 @@ describe("SettingsScreen", () => {
 
   it("lists pockets with PT-BR type labels (spec 007)", async () => {
     mockCommands({ get_app_info: APP_INFO, get_pockets: POCKETS });
-    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
+    renderSettings();
 
     await waitFor(() => {
       expect(screen.getByText("Vale refeição")).toBeInTheDocument();
@@ -131,7 +142,7 @@ describe("SettingsScreen", () => {
       get_pockets: POCKETS,
       create_account: "new-id",
     });
-    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
+    renderSettings();
 
     await user.type(screen.getByLabelText("Nome"), "Vale alimentação");
     await user.selectOptions(screen.getByLabelText("Tipo"), "meal_voucher");
@@ -151,7 +162,7 @@ describe("SettingsScreen", () => {
   it("rejects an unparseable balance before calling the backend (spec 007)", async () => {
     const user = userEvent.setup();
     mockCommands({ get_app_info: APP_INFO, get_pockets: POCKETS });
-    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
+    renderSettings();
 
     await user.type(screen.getByLabelText("Nome"), "Conta");
     await user.type(screen.getByLabelText("Saldo (R$)"), "abc");
@@ -163,151 +174,40 @@ describe("SettingsScreen", () => {
 
   it("offers the Google connect flow when disconnected", async () => {
     mockCommands({ get_app_info: APP_INFO });
-    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
+    renderSettings();
     expect(
       await screen.findByRole("button", { name: /Conectar Google/ }),
     ).toBeInTheDocument();
   });
 
-  it("DiarioCategorySection: estado vazio mostra o botão de adicionar categoria", async () => {
-    mockCommands({
-      get_app_info: APP_INFO,
-      get_app_setting: null,
-      set_app_setting: undefined,
-      get_daily_budget_categories_cmd: [],
-      upsert_daily_budget_with_categories_cmd: undefined,
-    });
-    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
-
-    expect(
-      await screen.findByRole("button", { name: "Adicionar categoria" }),
-    ).toBeInTheDocument();
-    // Resumo derivado com 0 categorias: total R$ 0,00 (dentro de um <Money>, então
-    // casamos pelo textContent do <p> em vez do texto de um único nó).
-    expect(
-      screen.getByText(
-        (_, el) =>
-          el?.tagName === "P" &&
-          (el.textContent ?? "").replace(/\s+/g, " ").includes("Total R$ 0,00"),
-      ),
-    ).toBeInTheDocument();
-  });
-
-  it("DiarioCategorySection: renderiza as categorias existentes (nome + valor)", async () => {
-    mockCommands({
-      get_app_info: APP_INFO,
-      get_app_setting: "1.250,00",
-      set_app_setting: undefined,
-      get_daily_budget_categories_cmd: [
-        { id: "c1", name: "Alimentação", amount_cents: 30000, position: 0 },
-        { id: "c2", name: "Transporte", amount_cents: 20000, position: 1 },
-      ],
-      upsert_daily_budget_with_categories_cmd: undefined,
-    });
-    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
-
-    expect(await screen.findByDisplayValue("Alimentação")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Transporte")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("300,00")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("200,00")).toBeInTheDocument();
-  });
-
-  it("DiarioCategorySection: Salvar chama upsert_daily_budget_with_categories_cmd com os args", async () => {
+  it("TetoLinkSection: sem teto estipulado, resume e leva à tela do teto", async () => {
     const user = userEvent.setup();
     mockCommands({
       get_app_info: APP_INFO,
-      get_app_setting: null,
-      set_app_setting: undefined,
-      get_daily_budget_categories_cmd: [],
-      upsert_daily_budget_with_categories_cmd: undefined,
+      get_daily_budget_cmd: { per_day_cents: 0, divisor_days: null, categories: [] },
     });
-    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
+    renderSettings();
 
-    // Define o teto total e adiciona uma categoria.
-    await user.type(
-      await screen.findByLabelText("Teto mensal do Diário em reais"),
-      "1.250,00",
-    );
-    await user.click(screen.getByRole("button", { name: "Adicionar categoria" }));
-    await user.type(screen.getByLabelText("Nome da categoria 1"), "Alimentação");
-    await user.type(
-      screen.getByLabelText("Valor mensal da categoria 1 em reais"),
-      "300,00",
-    );
-    await user.click(screen.getByRole("button", { name: "Salvar categorias" }));
-
-    await waitFor(() => {
-      expect(mockInvoke).toHaveBeenCalledWith(
-        "upsert_daily_budget_with_categories_cmd",
-        {
-          amountCents: 125000,
-          categories: [{ name: "Alimentação", amount_cents: 30000, position: 0 }],
-          divisorDays: null,
-        },
-      );
-    });
+    expect(await screen.findByText("Sem teto estipulado")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Abrir teto do diário" }));
+    expect(appCtx.navigate).toHaveBeenCalledWith("teto");
   });
-
-  it("DiarioCategorySection: mostra o teto/dia derivado (total ÷ dias do mês)", async () => {
-    // Total = soma das categorias quando o teto fica em branco (60000 cents). O teto/dia depende
-    // dos dias do mês ATUAL; calculamos o esperado pela mesma fórmula para não depender de relógio
-    // fixo (que quebra `findBy*` sob fake timers).
-    const now = new Date();
-    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    const expectedRate = Math.floor(60000 / daysInMonth); // cents/dia
-    const reais = (expectedRate / 100).toFixed(2).replace(".", ",");
-
+  it("TetoLinkSection: com teto ativo, mostra o valor por dia", async () => {
     mockCommands({
       get_app_info: APP_INFO,
-      get_app_setting: null,
-      set_app_setting: undefined,
-      get_daily_budget_categories_cmd: [
-        { id: "c1", name: "Alimentação", amount_cents: 60000, position: 0 },
-      ],
-      upsert_daily_budget_with_categories_cmd: undefined,
+      get_daily_budget_cmd: { per_day_cents: 4033, divisor_days: 31, categories: [] },
     });
-    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
+    renderSettings();
 
-    // O valor renderiza dentro de um <Money> (a11y), então o texto some da leitura
-    // padrão de nó-a-nó do RTL — casamos pelo textContent completo do <p>.
-    const rateRe = new RegExp(`R\\$ ${reais}/dia`);
-    await waitFor(() => {
-      expect(
-        screen.getByText(
-          (_, el) =>
-            el?.tagName === "P" &&
-            rateRe.test((el.textContent ?? "").replace(/\s+/g, " ")),
-        ),
-      ).toBeInTheDocument();
-    });
     expect(
-      screen.getByText(new RegExp(`${daysInMonth} dias no mês atual`)),
+      await screen.findByText(/Teto estipulado: R\$\s?40,33 por dia/),
     ).toBeInTheDocument();
   });
 
-  it("DailyTetoCeilingSection: mostra o campo de teto e chama upsert_daily_budget ao salvar", async () => {
-    const user = userEvent.setup();
-    // isTauri é true no ambiente de teste (setup.ts define window.__TAURI_INTERNALS__),
-    // então a seção renderiza. get_app_setting=null deixa o campo vazio na montagem.
-    mockCommands({
-      get_app_info: APP_INFO,
-      get_app_setting: null,
-      set_app_setting: undefined,
-      upsert_daily_budget: undefined,
-    });
-    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
 
-    const input = await screen.findByLabelText("Teto diário em reais");
-    await user.type(input, "50,00");
-    await user.click(screen.getByRole("button", { name: "Salvar" }));
 
-    await waitFor(() => {
-      expect(mockInvoke).toHaveBeenCalledWith(
-        "upsert_daily_budget",
-        expect.objectContaining({ amountCents: 5000 }),
-      );
-    });
-  });
+
+
 });
 
 describe("DailyReminderSection", () => {
@@ -336,7 +236,7 @@ describe("DailyReminderSection", () => {
 
   it("shows the reminder toggle in the default ON state when the key is absent", async () => {
     mockSettings({}); // chaves ausentes → ligado por padrão
-    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
+    renderSettings();
 
     await waitFor(() => {
       expect(
@@ -350,7 +250,7 @@ describe("DailyReminderSection", () => {
   it("persists the toggle off", async () => {
     const user = userEvent.setup();
     mockSettings({});
-    render(<SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />);
+    renderSettings();
 
     await waitFor(() =>
       expect(
@@ -367,4 +267,5 @@ describe("DailyReminderSection", () => {
       }),
     );
   });
+
 });

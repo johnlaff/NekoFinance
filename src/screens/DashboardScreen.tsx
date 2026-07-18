@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { Calendar, CalendarRange, CheckCircle2, SlidersHorizontal } from "lucide-react";
 import { Button } from "../design-system/components/Button";
 import {
@@ -11,7 +12,10 @@ import {
 } from "../lib/api";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { EmptyState } from "../design-system/components/EmptyState";
+import { EstimateMark } from "../design-system/components/EstimateMark";
+import { ModeChip } from "../design-system/components/ModeChip";
 import { Money } from "../design-system/components/Money";
+import { NoRecordDash } from "../design-system/components/NoRecordDash";
 import { parseBRLToCents } from "../lib/format";
 import { kindToFields } from "../lib/movement";
 import {
@@ -40,6 +44,12 @@ function eyebrowDate(iso: string): string {
   if (!y || !m || !d) return "";
   const wd = new Date(y, m - 1, d).getDay();
   return `${WEEKDAYS[wd] ?? ""}, ${d} de ${(MES[m - 1] ?? "").toLowerCase()}`;
+}
+
+function faturaDayLabel(iso: string): string {
+  const [, m, d] = iso.split("-").map(Number);
+  if (!m || !d) return iso;
+  return `${d} de ${(MES[m - 1] ?? "").toLowerCase()}`;
 }
 
 /** Mini-gráfico de área do saldo do mês (porte do protótipo). */
@@ -142,6 +152,46 @@ function MiniTrajectory({ daily, today }: { daily: ForecastDay[]; today: string 
 
 const CHECKIN_TYPES: MovementType[] = ["diario", "cartao", "saida"];
 
+// Didáticas dos estados epistêmicos das réguas do herói (copy conceitual fixa vive só aqui,
+// no padrão InfoPopover; o resto da UI mostra dado derivado).
+const TETO_ESTIMATE_TERM = {
+  title: "Teto estimado",
+  body: "Você ainda não estipulou um teto: este é o Diário médio do mês anterior, exibido como estimativa. Estipule o seu na cerimônia do teto para virar veredito.",
+};
+const TETO_NONE_TERM = {
+  title: "Sem teto estipulado",
+  body: "Não há teto escolhido nem histórico de Diário para estimar um. A cerimônia do teto lista o mês variável por categoria e divide pelos dias.",
+};
+const RESERVE_ESTIMATE_TERM = {
+  title: "Retrato vivo",
+  body: "Ainda há poucos meses completos de custo de vida: a régua usa o retrato do que existe, como estimativa. Com 6 meses completos ela vira veredito.",
+};
+const RESERVE_NONE_TERM = {
+  title: "Reserva sem registro",
+  body: "Nenhuma conta de reserva mapeada (ou nenhum mês de custo de vida ainda). Marque nos bolsos qual conta é a sua reserva para a régua existir.",
+};
+const RESERVE_ZERO_TERM = {
+  title: "Sem reserva",
+  body: "Suas contas de reserva estão zeradas. A reserva é a fundação do método: o próximo passo é o ritual de guardar antes de gastar.",
+};
+
+const STAT_LINK_STYLE: CSSProperties = {
+  background: "none",
+  border: "none",
+  color: "var(--primary-quiet-text)",
+  cursor: "pointer",
+  font: "inherit",
+  fontSize: 12,
+  padding: 0,
+  textDecoration: "underline dotted",
+};
+
+const HERO_CHIP_ROW_STYLE: CSSProperties = {
+  display: "flex",
+  gap: 8,
+  margin: "0 0 6px",
+};
+
 export function DashboardScreen() {
   const { openCompose, navigate } = useNekoApp();
   const summaryQ = useCommand("get_dashboard_summary", getDashboardSummary);
@@ -190,6 +240,12 @@ export function DashboardScreen() {
     : (forecast?.deepest_deficit?.balance_cents ?? endBalance);
   const endBand = saldoBand(endBalance);
 
+  // Estados epistêmicos + modo de gasto (o julgamento vem pronto do domínio; aqui só apresenta).
+  const ceilingSource = summary?.daily_ceiling_source ?? "none";
+  const reserveState = summary?.reserve_state ?? "no_record";
+  const cardMode = summary?.spending_mode === "card";
+  const hasCeiling = ceiling > 0;
+
   return (
     <div className="hoje neko-app">
       {fetchError ? (
@@ -210,14 +266,31 @@ export function DashboardScreen() {
       <section className="hoje-hero">
         <div>
           <p className="hoje-hero__eyebrow">{eyebrowDate(today)}</p>
+          {summary && (
+            <div style={HERO_CHIP_ROW_STYLE}>
+              <ModeChip
+                mode={summary.spending_mode}
+                gate={summary.card_gate}
+              />
+            </div>
+          )}
           <p className="hoje-hero__label">Pode gastar hoje</p>
           <p className="hoje-hero__kpi">
             {fmtBRL(safeToSpend)} <small>sem furar o teto</small>
           </p>
           <p className="hoje-hero__reason">
-            É o menor de dois limites: o teto diário de{" "}
-            <Money cents={ceiling} size="inherit" /> e o que o caixa aguenta sem nenhum
-            dia no vermelho até o fim do mês.
+            {hasCeiling ? (
+              <>
+                É o menor de dois limites: o teto diário de{" "}
+                <Money cents={ceiling} size="inherit" /> e o que o caixa aguenta sem
+                nenhum dia no vermelho até o fim do mês.
+              </>
+            ) : (
+              <>
+                É o que o caixa aguenta sem nenhum dia no vermelho até o fim do mês —
+                ainda sem teto diário estipulado.
+              </>
+            )}
           </p>
           <dl className="hoje-hero__stats">
             <div>
@@ -229,17 +302,70 @@ export function DashboardScreen() {
             <div>
               <dt>Reserva</dt>
               <dd>
-                {reserve.toLocaleString("pt-BR", {
-                  minimumFractionDigits: 1,
-                  maximumFractionDigits: 1,
-                })}{" "}
-                meses
+                {reserveState === "no_record" ? (
+                  <NoRecordDash
+                    term={RESERVE_NONE_TERM}
+                    cta={
+                      <button
+                        type="button"
+                        style={STAT_LINK_STYLE}
+                        onClick={() => navigate("config")}
+                      >
+                        Mapear
+                      </button>
+                    }
+                  />
+                ) : reserveState === "zero" ? (
+                  <NoRecordDash term={RESERVE_ZERO_TERM} label="Sem reserva" />
+                ) : (
+                  <>
+                    {reserve.toLocaleString("pt-BR", {
+                      minimumFractionDigits: 1,
+                      maximumFractionDigits: 1,
+                    })}{" "}
+                    meses{" "}
+                    {reserveState === "estimate" && (
+                      <EstimateMark term={RESERVE_ESTIMATE_TERM} />
+                    )}
+                  </>
+                )}
               </dd>
             </div>
             <div>
               <dt>Teto diário</dt>
               <dd>
-                <Money cents={ceiling} size="inherit" />
+                {ceilingSource === "none" ? (
+                  <NoRecordDash
+                    term={TETO_NONE_TERM}
+                    cta={
+                      <button
+                        type="button"
+                        style={STAT_LINK_STYLE}
+                        onClick={() => navigate("teto")}
+                      >
+                        Estipular
+                      </button>
+                    }
+                  />
+                ) : (
+                  <>
+                    <Money cents={ceiling} size="inherit" />{" "}
+                    {ceilingSource === "estimate" && (
+                      <EstimateMark term={TETO_ESTIMATE_TERM} />
+                    )}
+                  </>
+                )}
+                {summary?.ceiling_proposal_pending && (
+                  <div>
+                    <button
+                      type="button"
+                      style={STAT_LINK_STYLE}
+                      onClick={() => navigate("teto")}
+                    >
+                      Proposta da planilha aguardando
+                    </button>
+                  </div>
+                )}
               </dd>
             </div>
           </dl>
@@ -287,12 +413,19 @@ export function DashboardScreen() {
 
       <div className="hoje-grid">
         <CheckinCard
+          key={cardMode ? "card" : "debit"}
           ceiling={ceiling}
+          ceilingSource={ceilingSource}
           spent={spent}
           remaining={ceiling - spent}
           today={today}
           lastReal={summary?.last_real_tx_date ?? null}
+          cardMode={cardMode}
+          cartaoMonthCents={summary?.cartao_month_cents ?? 0}
+          nextFaturaDate={summary?.next_fatura_date ?? null}
+          nextFaturaAmountCents={summary?.next_fatura_amount_cents ?? 0}
           onCompose={openCompose}
+          onEditCeiling={() => navigate("teto")}
         />
         <UpcomingCard
           onSeeAll={() => navigate("lancamentos")}
@@ -311,20 +444,33 @@ export function DashboardScreen() {
 
 function CheckinCard({
   ceiling,
+  ceilingSource,
   spent,
   remaining,
   today,
   lastReal,
+  cardMode,
+  cartaoMonthCents,
+  nextFaturaDate,
+  nextFaturaAmountCents,
   onCompose,
+  onEditCeiling,
 }: {
   ceiling: number;
+  ceilingSource: "chosen" | "estimate" | "none";
   spent: number;
   remaining: number;
   today: string;
   lastReal: string | null;
+  cardMode: boolean;
+  cartaoMonthCents: number;
+  nextFaturaDate: string | null;
+  nextFaturaAmountCents: number;
   onCompose: (opts?: { mode?: "new"; type?: MovementType; date?: string }) => void;
+  onEditCeiling: () => void;
 }) {
-  const [kind, setKind] = useState<MovementType>("diario");
+  // No modo cartão o gesto-base é somar na fatura: o registro rápido nasce em "cartao".
+  const [kind, setKind] = useState<MovementType>(cardMode ? "cartao" : "diario");
   const [amount, setAmount] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -362,44 +508,91 @@ function CheckinCard({
           <Calendar size={16} strokeWidth={1.75} className="ic" />
           Check-in de hoje
         </span>
-        <span
-          style={{
-            fontSize: 12.5,
-            fontWeight: 600,
-            color: over ? "var(--danger-400)" : "var(--text-muted)",
-          }}
-        >
-          {over ? (
-            <>
-              <Money cents={-remaining} size="inherit" /> acima
-            </>
-          ) : (
-            <>
-              <Money cents={remaining} size="inherit" /> livre
-            </>
-          )}
-        </span>
+        {!cardMode && ceiling > 0 && (
+          <span
+            style={{
+              fontSize: 12.5,
+              fontWeight: 600,
+              color: over ? "var(--danger-400)" : "var(--text-muted)",
+            }}
+          >
+            {over ? (
+              <>
+                <Money cents={-remaining} size="inherit" /> acima
+              </>
+            ) : (
+              <>
+                <Money cents={remaining} size="inherit" /> livre
+              </>
+            )}
+          </span>
+        )}
       </div>
       <div className="card__body">
-        <div className="ci-top">
-          <span style={{ color: "var(--text-muted)" }}>Diário de hoje</span>
-          <span className="ci-spent">
-            <Money cents={spent} size="inherit" />
-            <span style={{ color: "var(--text-faint)", fontWeight: 400 }}>
-              {" "}
-              / {fmtBRL(ceiling)}
-            </span>
-          </span>
-        </div>
-        <div className="ci-track">
-          <div
-            className="ci-fill"
-            style={{
-              width: `${pct}%`,
-              background: over ? "var(--danger-500)" : "var(--type-diario)",
-            }}
-          />
-        </div>
+        {cardMode ? (
+          // Re-roteamento do modo cartão: o Diário zerado é legítimo por design — o dia lê as
+          // faturas. O teto estipulado permanece visível como referência, nunca como régua.
+          <>
+            <div className="ci-top">
+              <span style={{ color: "var(--text-muted)" }}>Cartão do mês</span>
+              <span className="ci-spent">
+                <Money cents={cartaoMonthCents} size="inherit" />
+              </span>
+            </div>
+            <p style={{ margin: "0 0 10px", color: "var(--text-faint)", fontSize: 12.5 }}>
+              {nextFaturaDate ? (
+                <>
+                  Próxima fatura:{" "}
+                  <Money cents={nextFaturaAmountCents} size="inherit" /> em{" "}
+                  {faturaDayLabel(nextFaturaDate)}.
+                </>
+              ) : (
+                <>Nenhuma fatura à vista no horizonte.</>
+              )}{" "}
+              {ceilingSource !== "none" && (
+                <>
+                  Teto estipulado de <Money cents={ceiling} size="inherit" /> como
+                  referência.
+                </>
+              )}
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="ci-top">
+              <span style={{ color: "var(--text-muted)" }}>Diário de hoje</span>
+              <span className="ci-spent">
+                <Money cents={spent} size="inherit" />
+                {ceilingSource === "none" ? (
+                  <span style={{ color: "var(--text-faint)", fontWeight: 400 }}>
+                    {" "}
+                    /{" "}
+                    <button type="button" style={STAT_LINK_STYLE} onClick={onEditCeiling}>
+                      sem teto — estipular
+                    </button>
+                  </span>
+                ) : (
+                  <span style={{ color: "var(--text-faint)", fontWeight: 400 }}>
+                    {" "}
+                    / {fmtBRL(ceiling)}{" "}
+                    {ceilingSource === "estimate" && (
+                      <EstimateMark term={TETO_ESTIMATE_TERM} />
+                    )}
+                  </span>
+                )}
+              </span>
+            </div>
+            <div className="ci-track">
+              <div
+                className="ci-fill"
+                style={{
+                  width: `${pct}%`,
+                  background: over ? "var(--danger-500)" : "var(--type-diario)",
+                }}
+              />
+            </div>
+          </>
+        )}
 
         <div className="ci-types" role="radiogroup" aria-label="Tipo de movimento">
           {CHECKIN_TYPES.map((k) => {
@@ -459,7 +652,9 @@ function CheckinCard({
           <CheckCircle2 size={14} strokeWidth={1.75} />
           {lastReal === today
             ? "Em dia. Você já lançou hoje."
-            : "Lance o gasto de hoje para manter o saldo fiel."}
+            : cardMode
+              ? "Comprou no cartão? Some na fatura em aberto para ela seguir fiel."
+              : "Lance o gasto de hoje para manter o saldo fiel."}
         </div>
       </div>
     </section>

@@ -11,6 +11,7 @@ import { AnnualScreen } from "./screens/AnnualScreen";
 import { YearGridScreen } from "./screens/YearGridScreen";
 import { HorizonteScreen } from "./screens/HorizonteScreen";
 import { TagsScreen } from "./screens/TagsScreen";
+import { TetoScreen } from "./screens/TetoScreen";
 import { CopilotScreen } from "./screens/CopilotScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { OnboardingFlow, ONBOARDING_KEY } from "./features/onboarding/OnboardingFlow";
@@ -111,6 +112,7 @@ function App() {
             {screen === "horizonte" && <HorizonteScreen />}
             {screen === "tags" && <TagsScreen />}
             {screen === "mia" && <CopilotScreen />}
+            {screen === "teto" && <TetoScreen />}
             {screen === "config" && (
               <SettingsScreen authStatus={authStatus} onAuthChange={setAuthStatus} />
             )}
