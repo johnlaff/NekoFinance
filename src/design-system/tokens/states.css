@@ -88,4 +88,14 @@
   --saldo-band-tight-fill: rgba(251, 146, 60, 0.16);
   --saldo-band-ok-fill: rgba(74, 222, 128, 0.15);
   --saldo-band-comfortable-fill: rgba(74, 222, 128, 0.3);
+
+  /* ---- Estados epistêmicos (dado ausente / estimado / zerado) ----
+     Toda régua julga em três estados: veredito (dado registrado), zero-diagnóstico (insumo
+     presente e valor zero — palavra dedicada, nunca alarme fabricado) e sem registro (lacuna —
+     travessão + didática, nunca número). Estimativa é o terceiro tipo de número: derivado com
+     selo explícito. Informa sem alarmar: estimativa usa info (não o warn do método), lacuna e
+     zero usam neutros apagados. Sempre pareados com palavra/ícone (status nunca é só cor). */
+  --state-estimate: var(--info-400); /* selo "Estimativa" junto ao número derivado */
+  --state-no-record: var(--text-faint); /* travessão + rótulo "Sem registro" */
+  --state-zero: var(--text-muted); /* palavra dedicada de zero-diagnóstico */
 }

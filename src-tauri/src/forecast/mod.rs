@@ -575,6 +575,58 @@ pub fn project_with_metrics(
     }
 }
 
+/// Modo de gasto global: por onde vive o gasto variável do dia a dia. Re-roteia quais insumos
+/// alimentam as réguas do dia ANTES do julgamento — no modo cartão, o Diário zerado é
+/// zero-legítimo por design e o velocímetro lê as faturas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpendingMode {
+    /// Gasto variável em débito/PIX/dinheiro — o gesto-base do método (registrar no Diário).
+    Debit,
+    /// Gasto variável dentro das faturas de cartão — protocolo reconhecido pelo método
+    /// (cada compra soma na fatura em aberto; a fatura crescendo é o instrumento de consciência).
+    Card,
+}
+
+/// Um mês avulso de Diário (1 dia, ou total dentro do ruído) não flipa o modo.
+pub const DAILY_NOISE_CENTS: i64 = 5_000;
+/// Constância mínima do gesto diário: dias distintos com Diário realizado no mês.
+pub const DAILY_ACTIVE_MIN_DAYS: u32 = 4;
+
+/// Sinais de um mês para a detecção de modo de gasto.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MonthSpendSample {
+    /// Dias distintos com Diário realizado (> 0) no mês.
+    pub daily_days: u32,
+    /// Total de Diário realizado no mês (magnitude, cents).
+    pub daily_total_cents: i64,
+    /// Existe evento Cartão (realizado ou projetado) no mês.
+    pub cartao_present: bool,
+}
+
+/// Constância do gesto diário: dias suficientes E volume acima do ruído.
+fn diario_ativo(m: &MonthSpendSample) -> bool {
+    m.daily_days >= DAILY_ACTIVE_MIN_DAYS && m.daily_total_cents > DAILY_NOISE_CENTS
+}
+
+/// Detecção automática pura do modo de gasto sobre a janela móvel (2 últimos meses de calendário
+/// completos + mês corrente, ordem cronológica). Sem configuração e sem estado persistido.
+///
+/// A histerese é assimétrica por construção: entrar no modo cartão exige a janela INTEIRA sem
+/// constância de débito (um mês avulso não entra); voltar ao débito exige apenas UM mês com
+/// constância — a migração cartão→débito flipa sozinha assim que o débito ganha regularidade,
+/// enquanto um lançamento avulso não tira ninguém do modo cartão.
+pub fn detect_spending_mode(samples: &[MonthSpendSample]) -> SpendingMode {
+    if samples.iter().any(diario_ativo) {
+        return SpendingMode::Debit;
+    }
+    if samples.iter().any(|m| m.cartao_present) {
+        return SpendingMode::Card;
+    }
+    // Sem constância de débito e sem fatura viva: usuário novo / dado insuficiente — o
+    // gesto-base do método é o default.
+    SpendingMode::Debit
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1300,5 +1352,96 @@ mod tests {
         assert_eq!(m.performance_cents, 2_700_000);
         // savings_rate_bps = 800_000 / 5_000_000 = 1600 bps (16%) — unaffected
         assert_eq!(m.savings_rate_bps, 1_600);
+    }
+
+    // --- detect_spending_mode -------------------------------------------------------------
+
+    fn sample(daily_days: u32, daily_total_cents: i64, cartao_present: bool) -> MonthSpendSample {
+        MonthSpendSample {
+            daily_days,
+            daily_total_cents,
+            cartao_present,
+        }
+    }
+
+    // Sem dado nenhum na janela, o modo é o gesto-base do método.
+    #[test]
+    fn spending_mode_defaults_to_debit_without_data() {
+        assert_eq!(detect_spending_mode(&[]), SpendingMode::Debit);
+        let window = [
+            sample(0, 0, false),
+            sample(0, 0, false),
+            sample(0, 0, false),
+        ];
+        assert_eq!(detect_spending_mode(&window), SpendingMode::Debit);
+    }
+
+    // Diário morto na janela inteira + fatura viva = o perfil que o método reconhece como
+    // modo cartão (o gasto variável vive nas faturas).
+    #[test]
+    fn spending_mode_card_when_daily_dead_and_fatura_alive() {
+        let window = [sample(0, 0, true), sample(0, 0, true), sample(0, 0, false)];
+        assert_eq!(detect_spending_mode(&window), SpendingMode::Card);
+    }
+
+    // Um lançamento avulso não flipa o modo: 1 dia (mesmo acima do ruído), ou vários dias
+    // dentro do ruído, não contam como constância de débito.
+    #[test]
+    fn spending_mode_stray_daily_purchase_does_not_flip_card_mode() {
+        // Um único dia com R$ 130,60 (acima do ruído, mas sem constância).
+        let one_day = [
+            sample(0, 0, true),
+            sample(1, 13_060, true),
+            sample(0, 0, true),
+        ];
+        assert_eq!(detect_spending_mode(&one_day), SpendingMode::Card);
+        // Cinco dias que somam R$ 40,00 (constância de dias, volume dentro do ruído).
+        let low_volume = [
+            sample(0, 0, true),
+            sample(5, 4_000, true),
+            sample(0, 0, false),
+        ];
+        assert_eq!(detect_spending_mode(&low_volume), SpendingMode::Card);
+    }
+
+    // Fronteira exata da constância: 4 dias e um centavo acima do ruído já é débito;
+    // 4 dias com total exatamente no ruído ainda não é.
+    #[test]
+    fn spending_mode_constancy_boundary() {
+        let at_noise = [
+            sample(0, 0, true),
+            sample(4, 5_000, true),
+            sample(0, 0, false),
+        ];
+        assert_eq!(detect_spending_mode(&at_noise), SpendingMode::Card);
+        let above_noise = [
+            sample(0, 0, true),
+            sample(4, 5_001, true),
+            sample(0, 0, false),
+        ];
+        assert_eq!(detect_spending_mode(&above_noise), SpendingMode::Debit);
+    }
+
+    // Migração cartão→débito: assim que UM mês ganha constância (mesmo o corrente, mesmo com
+    // faturas ainda vivas), o modo volta ao débito — a transição acontece sozinha.
+    #[test]
+    fn spending_mode_debit_constancy_wins_even_with_faturas_alive() {
+        let window = [
+            sample(0, 0, true),
+            sample(0, 0, true),
+            sample(8, 60_000, true),
+        ];
+        assert_eq!(detect_spending_mode(&window), SpendingMode::Debit);
+    }
+
+    // Diário morto SEM fatura viva não é modo cartão — é só ausência de dado (default débito).
+    #[test]
+    fn spending_mode_debit_when_no_fatura_in_window() {
+        let window = [
+            sample(0, 0, false),
+            sample(1, 2_000, false),
+            sample(0, 0, false),
+        ];
+        assert_eq!(detect_spending_mode(&window), SpendingMode::Debit);
     }
 }

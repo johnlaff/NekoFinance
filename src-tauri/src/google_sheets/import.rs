@@ -568,7 +568,8 @@ async fn import_rows_core(
                 .map_err(|e| format!("set source_note for {txn_id}: {e}"))?;
 
             if !keep_local {
-                let items = parse_itemized_note(&row.raw_note);
+                // Linhas projetadas preservam itens R$ 0,00 como placeholders ("a preencher").
+                let items = parse_itemized_note_opts(&row.raw_note, row.is_projection);
                 // Persistir itens é seguro quando eles CARREGAM classificação: ≥2 partes
                 // (breakdown de verdade) OU 1 parte SOB cabeçalho de seção — o gate antigo de
                 // ≥2 jogava Economia/Cartão de item único no custo de vida. Memo de linha única
@@ -973,6 +974,19 @@ pub(crate) fn classify_line_item(section: Option<&str>, _description: &str) -> I
 ///
 /// PURA — sem I/O, sem DB, sem panics.
 pub(crate) fn parse_itemized_note(note: &str) -> Vec<NoteLineItem> {
+    parse_itemized_note_opts(note, false)
+}
+
+/// Como [`parse_itemized_note`], mas com a semântica de PLACEHOLDER: em linhas projetadas
+/// (meses futuros pré-lançados), um item `R$ 0,00 - <descrição>` é estrutura documentada do
+/// futuro ("a preencher"), não ruído — persiste com `amount_cents = 0` para a UI mostrar o
+/// esqueleto sem inventar valor. Só um zero GENUÍNO (o valor tem dígitos) conta; linha cujo
+/// valor não parseia continua descartada. Em linhas realizadas o zero segue descartado
+/// (ajuste/ruído de digitação).
+pub(crate) fn parse_itemized_note_opts(
+    note: &str,
+    keep_zero_placeholders: bool,
+) -> Vec<NoteLineItem> {
     let mut items = Vec::new();
     // Cabeçalho de seção mais recente (última linha não-`R$` não-vazia).
     let mut current_section: Option<String> = None;
@@ -998,8 +1012,12 @@ pub(crate) fn parse_itemized_note(note: &str) -> Vec<NoteLineItem> {
             (rest, "")
         };
         let amount_cents = parse_number(value_part.trim());
-        if amount_cents <= 0 {
-            continue; // valor inválido, zero ou negativo → pula
+        // Zero genuíno = o valor tem dígitos e parseia 0 (ex.: "R$ 0,00"); distinto de lixo não
+        // parseável, que também retorna 0 mas nunca vira placeholder.
+        let genuine_zero = amount_cents == 0 && value_part.chars().any(|c| c.is_ascii_digit());
+        let keep_as_placeholder = keep_zero_placeholders && genuine_zero;
+        if amount_cents < 0 || (amount_cents == 0 && !keep_as_placeholder) {
+            continue; // valor inválido, negativo, ou zero fora do caso placeholder → pula
         }
         let section = current_section.clone();
         items.push(NoteLineItem {
@@ -1577,6 +1595,192 @@ async fn store_balance_series_core(
     }
 
     Ok(series.len())
+}
+
+/// Corta a PRÉ-HISTÓRIA da série de Saldo: dias de saldo 0 anteriores à adoção da planilha.
+/// Um template anual avalia a fórmula de Saldo como `0` em meses que nunca foram usados — um
+/// leitor ingênuo veria "saldo zero por meses", não "antes da adoção". A fronteira de adoção é
+/// o que vier PRIMEIRO entre o primeiro saldo ≠ 0 e a primeira transação importada da aba;
+/// zeros de saldo a partir daí são dado real (dia zerado legítimo) e ficam. Aba-template só
+/// com zeros e sem transação perde a série inteira (nada ali é dado).
+pub(crate) fn trim_pre_history_balances(
+    series: Vec<DailyBalance>,
+    first_txn_date: Option<&str>,
+) -> Vec<DailyBalance> {
+    let first_nonzero = series
+        .iter()
+        .filter(|b| b.balance_cents != 0)
+        .map(|b| b.date.as_str())
+        .min();
+    // Fronteira de adoção: o menor entre primeiro saldo ≠ 0 e primeira transação (ISO compara
+    // lexicograficamente). Sem nenhum dos dois, não há adoção — tudo é pré-história.
+    let adoption = match (first_nonzero, first_txn_date) {
+        (Some(a), Some(b)) => Some(if a <= b { a } else { b }),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    };
+    let Some(adoption) = adoption.map(str::to_owned) else {
+        return Vec::new();
+    };
+    series
+        .into_iter()
+        .filter(|b| b.balance_cents != 0 || b.date.as_str() >= adoption.as_str())
+        .collect()
+}
+
+/// Varre a grade de notas da coluna Diário atrás da cerimônia do teto documentada. A nota vive
+/// tipicamente numa célula SEM valor (que nunca vira transação), por isso a varredura é direta
+/// na grade, fora do fluxo de `ImportedRow`. Retorna `(YYYY-MM, nota crua)` da ocorrência mais
+/// recente da aba; o caller decide entre abas.
+pub(crate) fn scan_ceiling_ceremony_note(
+    rows: &[Vec<String>],
+    notes: &[Vec<String>],
+    layout: &SheetLayout,
+    daily_offset: usize,
+) -> Option<(String, String)> {
+    let year = layout.year?;
+    let data_start = layout.data_start_row as usize;
+    let day_col = layout.day_column as usize;
+    let block_size = layout.block_size as usize;
+    let month_row = layout.month_names_row as usize;
+    if month_row >= rows.len() {
+        return None;
+    }
+    let month_blocks = month_blocks_for(&rows[month_row], block_size);
+
+    let mut best: Option<(String, String)> = None;
+    for (row_idx, row) in rows.iter().enumerate().skip(data_start) {
+        let day_str = row.get(day_col).map_or("", |c| c.trim());
+        let day: f64 = day_str.parse().unwrap_or(0.0);
+        if !(1.0..=31.0).contains(&day) {
+            continue;
+        }
+        for &(offset, month) in &month_blocks {
+            let Some(note) = notes
+                .get(row_idx)
+                .and_then(|r| r.get(offset + daily_offset))
+            else {
+                continue;
+            };
+            if note.trim().is_empty() || super::ceiling_note::parse_ceiling_ceremony(note).is_none()
+            {
+                continue;
+            }
+            let ym = format!("{year:04}-{month:02}");
+            if best.as_ref().is_none_or(|(b, _)| ym > *b) {
+                best = Some((ym, note.clone()));
+            }
+        }
+    }
+    best
+}
+
+/// Upsert da proposta em transação PRÓPRIA — para os retornos antecipados do import (dedup de
+/// checksum, aba sem linhas materializadas): a cerimônia vive em nota de célula sem valor, fora
+/// do checksum de transações, então uma edição só na nota precisa ser vista mesmo quando o
+/// dataset de linhas não mudou.
+pub(crate) async fn upsert_ceiling_proposal_standalone(
+    pool: &SqlitePool,
+    source_month: &str,
+    raw_note: &str,
+) -> Result<(), String> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| format!("ceiling proposal (begin): {e}"))?;
+    upsert_ceiling_proposal_in_tx(&mut tx, source_month, raw_note).await?;
+    tx.commit()
+        .await
+        .map_err(|e| format!("ceiling proposal (commit): {e}"))?;
+    Ok(())
+}
+
+/// Registra a proposta de teto lida da cerimônia, com identidade pelo hash da nota
+/// normalizada: a MESMA nota nunca re-propõe (pendente, aceita ou dispensada), e uma nota nova
+/// supersede a pendente anterior (só existe uma proposta pendente por vez). Nunca escreve
+/// `daily_budget` — aceitar é gesto explícito do dono, fora do import.
+pub(crate) async fn upsert_ceiling_proposal_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    source_month: &str,
+    raw_note: &str,
+) -> Result<bool, String> {
+    let Some(ceremony) = super::ceiling_note::parse_ceiling_ceremony(raw_note) else {
+        return Ok(false);
+    };
+    // Hash da nota NORMALIZADA (linhas aparadas, espaços colapsados): reformatação cosmética da
+    // mesma cerimônia não vira proposta nova.
+    let normalized: String = raw_note
+        .lines()
+        .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut h = Sha256::new();
+    h.update(normalized.as_bytes());
+    let note_hash = hex::encode(h.finalize());
+
+    let existing: Option<(String, String)> =
+        sqlx::query_as("SELECT status, source_month FROM ceiling_proposal WHERE note_hash = ?1")
+            .bind(&note_hash)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(|e| format!("ceiling proposal (lookup): {e}"))?;
+    if let Some((status, stored_month)) = existing {
+        // Mesma nota re-vista num mês mais recente: a procedência PENDENTE acompanha a
+        // ocorrência mais nova (aceita/dispensada ficam congeladas como histórico).
+        if status == "pending" && source_month > stored_month.as_str() {
+            sqlx::query("UPDATE ceiling_proposal SET source_month = ?1 WHERE note_hash = ?2")
+                .bind(source_month)
+                .bind(&note_hash)
+                .execute(&mut **tx)
+                .await
+                .map_err(|e| format!("ceiling proposal (refresh month): {e}"))?;
+        }
+        return Ok(false);
+    }
+
+    // Supersede só avança no tempo: uma aba antiga processada depois (ordem de abas do arquivo)
+    // não pode apagar a proposta pendente de um mês mais recente.
+    let pending_month: Option<(String,)> = sqlx::query_as(
+        "SELECT source_month FROM ceiling_proposal WHERE status = 'pending' LIMIT 1",
+    )
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|e| format!("ceiling proposal (pending month): {e}"))?;
+    if let Some((month,)) = pending_month
+        && month.as_str() > source_month
+    {
+        return Ok(false);
+    }
+
+    let items: Vec<serde_json::Value> = ceremony
+        .items
+        .iter()
+        .map(|i| serde_json::json!({ "name": i.name, "amount_cents": i.amount_cents }))
+        .collect();
+    let items_json = serde_json::Value::Array(items).to_string();
+
+    // Nota nova supersede a pendente anterior — o dono só vê uma proposta por vez.
+    sqlx::query("DELETE FROM ceiling_proposal WHERE status = 'pending'")
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| format!("ceiling proposal (supersede): {e}"))?;
+    sqlx::query(
+        "INSERT INTO ceiling_proposal \
+         (id, note_hash, per_day_cents, divisor_days, items_json, source_month, status) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending')",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(&note_hash)
+    .bind(ceremony.per_day_cents)
+    .bind(i64::from(ceremony.divisor_days))
+    .bind(&items_json)
+    .bind(source_month)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| format!("ceiling proposal (insert): {e}"))?;
+    Ok(true)
 }
 
 /// Converte texto monetário em centavos. Regra fechada de separadores:
@@ -4177,5 +4381,286 @@ mod tests {
             edited, 0,
             "nota nova é autoritativa: itens re-derivados (não-editados)"
         );
+    }
+
+    // --- Pré-história: zeros de template anteriores à adoção da planilha ---
+
+    fn bal(date: &str, cents: i64) -> DailyBalance {
+        DailyBalance {
+            date: date.into(),
+            balance_cents: cents,
+            is_projection: false,
+        }
+    }
+
+    // Meses "mortos" do template (saldo 0 avaliado pela fórmula) antes da adoção caem; o
+    // primeiro saldo real e tudo dali em diante fica — inclusive um zero legítimo posterior.
+    #[test]
+    fn trim_pre_history_drops_leading_template_zeros() {
+        let series = vec![
+            bal("2025-01-15", 0),
+            bal("2025-03-10", 0),
+            bal("2025-07-06", 364_064),
+            bal("2025-08-01", 0), // dia zerado APÓS a adoção: dado real, fica
+        ];
+        let out = trim_pre_history_balances(series, Some("2025-07-06"));
+        let dates: Vec<&str> = out.iter().map(|b| b.date.as_str()).collect();
+        assert_eq!(dates, vec!["2025-07-06", "2025-08-01"]);
+    }
+
+    // Aba-template pura (só zeros, nenhuma transação): nada ali é dado.
+    #[test]
+    fn trim_pre_history_template_only_drops_everything() {
+        let series = vec![bal("2027-01-01", 0), bal("2027-06-30", 0)];
+        assert!(trim_pre_history_balances(series, None).is_empty());
+    }
+
+    // A primeira TRANSAÇÃO também abre a adoção: um zero de saldo no dia de movimento real
+    // (entrou e saiu o mesmo valor) fica, mesmo antes do primeiro saldo ≠ 0.
+    #[test]
+    fn trim_pre_history_transaction_opens_adoption_before_first_nonzero_balance() {
+        let series = vec![
+            bal("2025-05-01", 0), // template, antes de tudo
+            bal("2025-06-10", 0), // dia com movimento real que zera o saldo
+            bal("2025-07-01", 100_000),
+        ];
+        let out = trim_pre_history_balances(series, Some("2025-06-10"));
+        let dates: Vec<&str> = out.iter().map(|b| b.date.as_str()).collect();
+        assert_eq!(dates, vec!["2025-06-10", "2025-07-01"]);
+    }
+
+    // --- Placeholder: item R$ 0,00 em nota de linha projetada ---
+
+    // Zero genuíno vira placeholder SÓ quando pedido (linha projetada); lixo não parseável
+    // nunca vira item, em nenhum modo.
+    #[test]
+    fn parse_itemized_note_zero_placeholder_only_on_request_and_genuine() {
+        let note = "CARTÕES:\nR$ 0,00 - Banco A\nR$ 150,00 - Banco B\nR$ abc - lixo";
+        let strict = parse_itemized_note(note);
+        assert_eq!(strict.len(), 1);
+        assert_eq!(strict[0].amount_cents, 15_000);
+
+        let with_placeholders = parse_itemized_note_opts(note, true);
+        assert_eq!(with_placeholders.len(), 2);
+        assert_eq!(with_placeholders[0].amount_cents, 0);
+        assert_eq!(with_placeholders[0].description, "Banco A");
+        assert_eq!(with_placeholders[1].amount_cents, 15_000);
+    }
+
+    // Ponta a ponta: linha projetada persiste o placeholder; linha realizada com a MESMA nota
+    // não persiste o zero.
+    #[tokio::test]
+    async fn zero_note_items_persist_as_placeholders_only_on_projected_rows() {
+        let pool = test_pool().await;
+        let note = "CARTÕES:\nR$ 0,00 - Banco A\nR$ 150,00 - Banco B";
+        let rows = vec![
+            imported_note("2099-12-01", -15_000, note, true),
+            imported_note("2026-02-10", -15_000, note, false),
+        ];
+        import_rows(&pool, "2026", &rows, "p1").await.unwrap();
+
+        let projected_id = row_id("2026", "2099-12-01", RowKind::Saida, 0);
+        let realized_id = row_id("2026", "2026-02-10", RowKind::Saida, 0);
+        assert_eq!(count_line_items(&pool, &projected_id).await, 2);
+        assert_eq!(count_line_items(&pool, &realized_id).await, 1);
+
+        let (zero_count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM line_item WHERE transaction_id = ?1 AND amount_cents = 0",
+        )
+        .bind(&projected_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(zero_count, 1);
+    }
+
+    // --- Varredura da cerimônia do teto na grade de notas ---
+
+    // A nota da cerimônia vive numa célula do Diário SEM valor (que nunca vira ImportedRow);
+    // a varredura acha a nota mesmo assim, e entre dois meses anotados o mais recente vence.
+    #[test]
+    fn scan_ceiling_ceremony_finds_valueless_cell_and_prefers_recent_month() {
+        let ceremony_old = "R$ 900,00 / 30 Dias = R$ 30,00";
+        let ceremony_new = "R$ 1250,00 / 31 Dias = R$ 40,33";
+        // Blocos JANEIRO (offset 0) e FEVEREIRO (offset 6); Diário = offset 3 do bloco.
+        let rows: Vec<Vec<String>> = vec![
+            vec![
+                "JANEIRO".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "FEVEREIRO".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+            ],
+            vec![
+                "Data".into(),
+                "Entrada".into(),
+                "Saída".into(),
+                "Diário".into(),
+                "Saldo".into(),
+                "".into(),
+                "Data".into(),
+                "Entrada".into(),
+                "Saída".into(),
+                "Diário".into(),
+                "Saldo".into(),
+                "".into(),
+            ],
+            vec![
+                "1".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+            ],
+        ];
+        let mut notes: Vec<Vec<String>> = vec![vec!["".into(); 12]; 3];
+        notes[2][3] = ceremony_old.into(); // JANEIRO, Diário do dia 1 (célula sem valor)
+        notes[2][9] = ceremony_new.into(); // FEVEREIRO, Diário do dia 1
+        let layout = SheetLayout {
+            id: "t".into(),
+            sheet_name: "2026".into(),
+            year: Some(2026),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 6,
+            date_direction: "both".into(),
+        };
+        let found = scan_ceiling_ceremony_note(&rows, &notes, &layout, 3).unwrap();
+        assert_eq!(found.0, "2026-02");
+        assert_eq!(found.1, ceremony_new);
+
+        // Nota que não é cerimônia (itemização comum) não conta.
+        let mut only_noise = vec![vec!["".into(); 12]; 3];
+        only_noise[2][3] = "CONTAS:\nR$ 100,00 - Energia".into();
+        assert!(scan_ceiling_ceremony_note(&rows, &only_noise, &layout, 3).is_none());
+    }
+
+    // --- Proposta de teto: identidade por hash, supersede de pendente ---
+
+    #[tokio::test]
+    async fn ceiling_proposal_upsert_is_idempotent_and_supersedes_pending() {
+        let pool = test_pool().await;
+        let note_a = "R$ 900,00 / 30 Dias = R$ 30,00";
+        let note_b =
+            "Mensal R$ 1.250,00 Mercado\nTotal = R$ 1.250,00\nR$ 1.250,00 / 31 Dias = R$ 40,33";
+
+        let mut tx = pool.begin().await.unwrap();
+        assert!(
+            upsert_ceiling_proposal_in_tx(&mut tx, "2026-01", note_a)
+                .await
+                .unwrap()
+        );
+        // Mesma nota (com espaçamento diferente) → mesma identidade, não re-propõe.
+        assert!(
+            !upsert_ceiling_proposal_in_tx(&mut tx, "2026-02", "R$  900,00 / 30 Dias =  R$ 30,00")
+                .await
+                .unwrap()
+        );
+        tx.commit().await.unwrap();
+
+        let (count, status): (i64, String) =
+            sqlx::query_as("SELECT COUNT(*), MAX(status) FROM ceiling_proposal")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!((count, status.as_str()), (1, "pending"));
+
+        // Dispensar e reimportar a MESMA nota: não volta a propor.
+        sqlx::query("UPDATE ceiling_proposal SET status='dismissed'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        assert!(
+            !upsert_ceiling_proposal_in_tx(&mut tx, "2026-03", note_a)
+                .await
+                .unwrap()
+        );
+        // Nota NOVA propõe de novo (e itens/divisor persistem).
+        assert!(
+            upsert_ceiling_proposal_in_tx(&mut tx, "2026-03", note_b)
+                .await
+                .unwrap()
+        );
+        tx.commit().await.unwrap();
+
+        let (per_day, divisor, items_json, month): (i64, i64, String, String) = sqlx::query_as(
+            "SELECT per_day_cents, divisor_days, items_json, source_month FROM ceiling_proposal WHERE status='pending'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(per_day, 4_033);
+        assert_eq!(divisor, 31);
+        assert_eq!(month, "2026-03");
+        assert!(items_json.contains("Mercado"));
+
+        // A dispensada segue registrada (histórico de identidade), sem virar pendente.
+        let (total,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM ceiling_proposal")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(total, 2);
+    }
+
+    // Supersede só avança no tempo: aba antiga processada depois não apaga a proposta pendente
+    // de um mês mais recente; a MESMA nota re-vista num mês mais novo só atualiza a procedência.
+    #[tokio::test]
+    async fn ceiling_proposal_older_month_never_supersedes_newer_pending() {
+        let pool = test_pool().await;
+        let newer = "R$ 1250,00 / 31 Dias = R$ 40,33";
+        let older = "R$ 900,00 / 30 Dias = R$ 30,00";
+
+        let mut tx = pool.begin().await.unwrap();
+        assert!(
+            upsert_ceiling_proposal_in_tx(&mut tx, "2026-05", newer)
+                .await
+                .unwrap()
+        );
+        // Aba de um ano anterior chega depois: não supersede.
+        assert!(
+            !upsert_ceiling_proposal_in_tx(&mut tx, "2025-09", older)
+                .await
+                .unwrap()
+        );
+        tx.commit().await.unwrap();
+        let (month, per_day): (String, i64) = sqlx::query_as(
+            "SELECT source_month, per_day_cents FROM ceiling_proposal WHERE status='pending'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((month.as_str(), per_day), ("2026-05", 4_033));
+
+        // A mesma nota pendente re-vista num mês mais novo atualiza só a procedência.
+        let mut tx = pool.begin().await.unwrap();
+        assert!(
+            !upsert_ceiling_proposal_in_tx(&mut tx, "2026-07", newer)
+                .await
+                .unwrap()
+        );
+        tx.commit().await.unwrap();
+        let (month,): (String,) =
+            sqlx::query_as("SELECT source_month FROM ceiling_proposal WHERE status='pending'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(month, "2026-07");
     }
 }

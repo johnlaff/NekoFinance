@@ -2245,7 +2245,8 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        // Projeção → excluída (is_projection=1).
+        // Projeção com data no mês anterior → CONTA: o mês fechou pela data, e o flag
+        // `is_projection` congelado (sem re-import) não pode zerar o Diário médio.
         sqlx::query(
             "INSERT INTO \"transaction\" (id, type, amount, date, payment_method, is_fixed, is_projection) \
              VALUES (?1,'expense',777_000,'2026-05-16','debit',0,1)",
@@ -2259,8 +2260,8 @@ mod tests {
         let ceiling = effective_daily_ceiling(&pool, today).await.unwrap();
         assert_eq!(
             ceiling,
-            62_000 / 31,
-            "só os 62.000 variáveis em débito contam"
+            (62_000 + 777_000) / 31,
+            "variáveis em débito contam pela DATA (inclusive projeção que virou passado); fixas e crédito ficam fora"
         );
     }
 

@@ -10,11 +10,20 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
     const SUMMARY = {
       balance: 842000,
       daily_budget: 4300,
+      daily_ceiling_source: "chosen",
+      ceiling_proposal_pending: false,
       daily_spend_today: 3800,
       credit_spend_month: 120000,
       has_credit: true,
       reserve_months: 4.5,
+      reserve_state: "verdict",
+      reserve_basis_months: 6,
       reserve_trend: "down",
+      spending_mode: "debit",
+      card_gate: "unknown",
+      cartao_month_cents: 0,
+      next_fatura_date: null,
+      next_fatura_amount_cents: 0,
       transaction_count: 42,
     };
 
@@ -211,6 +220,11 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         realized_income_cents: 5000000,
         realized_savings_cents: 300000,
         registered_economia_cents: 250000,
+        patrimonio_cents: 0,
+        economia_ruler_cents: 250000,
+        economia_ruler_rate_bps: 500,
+        includes_previdencia: false,
+        economia_state: "verdict",
         realized_rate_bps: 600,
         projected_income_cents: 6000000,
         projected_savings_cents: 1500000,
@@ -444,6 +458,15 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
       check_auth_status: "disconnected",
       get_dashboard_summary: SUMMARY,
       get_forecast: FORECAST,
+      get_daily_budget_cmd: {
+        per_day_cents: 4300,
+        divisor_days: 30,
+        categories: [
+          { id: "cat-1", name: "Alimentação", amount_cents: 90000, position: 0 },
+          { id: "cat-2", name: "Transporte", amount_cents: 39000, position: 1 },
+        ],
+      },
+      get_ceiling_proposal_cmd: null,
       get_month_grid: FORECAST.daily.map((d) => ({
         date: d.date,
         day: Number(d.date.slice(8, 10)),

@@ -136,4 +136,89 @@ describe("DashboardScreen (Hoje)", () => {
     expect(screen.queryByText("Pode gastar hoje")).not.toBeInTheDocument();
     expect(screen.queryByText(/R\$\s?0,00/)).not.toBeInTheDocument();
   });
+
+  it("modo cartão: o check-in re-roteia para as faturas e o Diário zerado não finge régua", async () => {
+    mockCommands({
+      get_dashboard_summary: {
+        ...SUMMARY,
+        daily_budget: 4033,
+        daily_ceiling_source: "chosen",
+        daily_spend_today: 0,
+        spending_mode: "card",
+        card_gate: "below",
+        cartao_month_cents: 260000,
+        next_fatura_date: "2026-06-20",
+        next_fatura_amount_cents: 140000,
+      },
+      get_forecast: FORECAST,
+      get_upcoming_bills: [],
+    });
+    renderHoje();
+
+    expect(await screen.findByText("Cartão do mês")).toBeInTheDocument();
+    expect(screen.getByText("Modo cartão")).toBeInTheDocument();
+    // Gate do método: a economia abaixo do piso aparece com palavra, não só cor.
+    expect(screen.getByText("Economia abaixo do piso")).toBeInTheDocument();
+    // A régua de Diário (progresso gasto/teto) sai de cena no modo cartão.
+    expect(screen.queryByText("Diário de hoje")).not.toBeInTheDocument();
+    // Próxima fatura com data + teto estipulado como referência.
+    expect(screen.getByText(/Próxima fatura:/)).toBeInTheDocument();
+    expect(screen.getByText(/Teto estipulado de/)).toBeInTheDocument();
+  });
+
+  it("teto estimado: número com selo de estimativa, nunca veredito silencioso", async () => {
+    mockCommands({
+      get_dashboard_summary: {
+        ...SUMMARY,
+        daily_budget: 10000,
+        daily_ceiling_source: "estimate",
+      },
+      get_forecast: FORECAST,
+      get_upcoming_bills: [],
+    });
+    renderHoje();
+
+    expect(await screen.findByText("Pode gastar hoje")).toBeInTheDocument();
+    // Selo no herói e no check-in (2 ocorrências).
+    expect(screen.getAllByText("Estimativa").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("sem teto: travessão + CTA que leva à cerimônia (nunca R$ 0,00 fabricado)", async () => {
+    const user = userEvent.setup();
+    mockCommands({
+      get_dashboard_summary: {
+        ...SUMMARY,
+        daily_budget: 0,
+        daily_ceiling_source: "none",
+        ceiling_proposal_pending: true,
+      },
+      get_forecast: FORECAST,
+      get_upcoming_bills: [],
+    });
+    renderHoje();
+
+    expect(await screen.findByText("Sem registro")).toBeInTheDocument();
+    // Com proposta pendente o convite é ÚNICO (revisar a proposta) — sem "Estipular" duplicado.
+    expect(screen.queryByRole("button", { name: "Estipular" })).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Proposta da planilha aguardando — revisar" }),
+    );
+    expect(app.navigate).toHaveBeenCalledWith("teto");
+  });
+
+  it("reserva zerada: palavra dedicada em vez de alarme numérico", async () => {
+    mockCommands({
+      get_dashboard_summary: {
+        ...SUMMARY,
+        reserve_months: 0,
+        reserve_state: "zero",
+      },
+      get_forecast: FORECAST,
+      get_upcoming_bills: [],
+    });
+    renderHoje();
+
+    expect(await screen.findByText("Sem reserva")).toBeInTheDocument();
+    expect(screen.queryByText(/0,0 meses/)).not.toBeInTheDocument();
+  });
 });

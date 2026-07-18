@@ -43,6 +43,7 @@ export type Screen =
   | "horizonte"
   | "tags"
   | "mia"
+  | "teto"
   | "config";
 
 const SCREEN_META: Record<Screen, { title: string; crumb: string }> = {
@@ -54,6 +55,8 @@ const SCREEN_META: Record<Screen, { title: string; crumb: string }> = {
   horizonte: { title: "Horizonte", crumb: "Para onde o saldo vai" },
   tags: { title: "Tags", crumb: "Gasto por tag" },
   mia: { title: "Mia", crumb: "Sua copilota financeira" },
+  // Fora da nav (destino de CTA a partir da Hoje e de Configurações), mas com meta própria.
+  teto: { title: "Teto do diário", crumb: "A cerimônia do gasto variável" },
   config: { title: "Configurações", crumb: "Conexão e privacidade" },
 };
 

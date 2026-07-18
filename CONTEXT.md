@@ -44,15 +44,24 @@ The granular per-category tree was the "budget-by-category" anti-pattern the met
 ### Budgeting & Discipline
 
 **Daily Budget** (daily*budget):
-A single daily spending limit per Person, calculated as (free income ÷ 30). Does not subdivide by category — categories are for backward-looking diagnosis, not forward-looking allocation. Has `status` (active, under_review, deprecated) and `amount`. Recalculated on: 3-month review, income change, or when Mia detects >15% deviation for 2+ weeks.
+A single daily spending limit per Person. Stipulated by the ceiling ceremony (monthly items in `daily_budget_category` ÷ `divisor_days`) or set as a direct per-day value (`divisor_days` NULL). Has `status` (active, under_review, deprecated), `amount` (per-day cents) and `divisor_days`. The displayed ceiling carries an explicit provenance: `chosen` (active budget — the only verdict), `estimate` (previous complete month's Diário average, always shown with the estimate mark) or `none` (no record — dash + CTA, never a fabricated zero).
 \_Avoid*: Daily allowance, per-diem
+
+**Ceiling Proposal** (ceiling_proposal):
+A ceiling ceremony documented in a Diário cell note of the spreadsheet (items + `Total = R$X` + `R$X / N Dias = R$Y`), detected at import and stored as a proposal keyed by the normalized note's hash. The import only proposes — accepting (which writes `daily_budget` + categories + divisor atomically) or dismissing is an explicit user gesture; the same note never re-proposes, and a new note supersedes the pending one.
 
 **Daily ritual** (the day's Diário spend):
 The day's actual spending is the sum of that day's debit/PIX/cash variable (`is_fixed=0`, non-credit) `transaction` rows, compared against the daily*budget. There is **no dedicated check-in table**: the daily ritual is recorded as ordinary Diário `transaction` rows. (A `daily_checkin` table once existed for this but had no production writer and was dropped — ADR-0001 / plan 027.)
 \_Avoid*: Daily log, spending log
 
 **Débito/Diário track** (internal name "Régua 1" — Neko's term, not the method's):
-The method's core metric: the day's Diário spend compared against daily_budget. Green/amber/red based on budget compliance. Goes silent (always green) when the user pays exclusively with credit.
+The method's core metric: the day's Diário spend compared against daily_budget. Green/amber/red based on budget compliance. In card mode (see Spending Mode) this track steps aside by design instead of showing a fake green: the day reads the faturas, and the stipulated ceiling remains visible as a reference.
+
+**Spending Mode** (débito × cartão, derived — never configured):
+A global mode detected purely from the data over a moving window (2 complete months + current): daily constancy (≥ 4 distinct days AND > R$ 50 in a month) ⇒ debit; window without constancy AND a live Cartão event ⇒ card; default debit. Hysteresis is asymmetric by construction — a stray purchase never flips into card mode, one month of constancy flips back to debit. In card mode the day's surface reroutes to the faturas (month's Cartão total + next due date) and a zeroed Diário is legitimate-by-design, not a gap. Card-mode legitimacy carries the method's canonical gate (`card_gate`): the 20–30% savings must be alive (annual economia ruler ≥ 20% floor).
+
+**Epistemic states** (per ruler):
+Every method ruler exposed to the UI judges in explicit states, never numeric sentinels: `verdict` (registered/chosen data), `estimate` (derived number, always displayed with the "Estimativa" mark + the ritual's didactics), `zero` (input present and legitimately zero — dedicated word, e.g. "Sem reserva") and `no_record` (gap — dash + didactic popover with CTA, never a number). DS primitives: `EstimateMark`, `NoRecordDash`, `ModeChip` + the `--state-*` tokens.
 
 **Crédito/Fatura** (the bill is a single due-date lump):
 A credit bill is **one outflow on the due date** (Saída lump), not a per-day accrual. During a cycle you increment a running total, but the recorded output is one lump at the vencimento — `classify()` + write-back already do this. The earlier "credit accumulates daily" track ("Régua 2") was retired (ADR-0001 / plans 022, 027); credit is never compared against income.
@@ -87,11 +96,14 @@ _Avoid_: Import config, column mapping
 **Sync Log**:
 Append-only table for sync events. Records what was imported/modified, when, and by which profile. Enables conflict resolution in future multi-device scenarios.
 
+**Zero semantics at import**:
+Two spreadsheet zeros are resolved at import so they never masquerade as data: **pre-history** (template-evaluated zero balances in months before the sheet's adoption — before its first transaction or first non-zero balance — are trimmed from the Saldo series; those months honestly have no record) and **placeholders** (`R$ 0,00` note items on projected rows persist as zero-amount `line_item`s — the pre-launched structure of the future stays visible without inventing value; realized rows still discard zeros as noise).
+
 ### Savings & Forecast (derived metrics)
 
 These live in the forecast DTO (`get_forecast`), computed in the Rust core — not persisted tables.
 
-**AnnualSavings**: year-to-date figures from complete months. `registered_economia_cents / realized_income_cents` is the method's **Economizado%** (Economia transferred to reserve ÷ income — the spreadsheet's `%` column; target 20–30% as an ANNUAL average, never a monthly pass/fail). Distinct from `realized_savings_cents` (net surplus = income − outflow = the **Colchão**), which is the buffer, not Economizado.
+**AnnualSavings**: year-to-date figures from complete months. `registered_economia_cents / realized_income_cents` is the method's **Economizado%** (Economia transferred to reserve ÷ income — the spreadsheet's `%` column; target 20–30% as an ANNUAL average, never a monthly pass/fail). Distinct from `realized_savings_cents` (net surplus = income − outflow = the **Colchão**), which is the buffer, not Economizado. The judging ruler is `economia_ruler_cents`: registered Economia plus, **only when the liquid reserve covers ≥ 6 months of cost of living**, realized Patrimônio (pension/illiquid) — the method builds liquidity first, then long-term saving counts. The ruler feeds both the savings guardrail and `card_gate`; `economia_state` is `verdict` or `no_record` (the UI then shows the Colchão as a marked estimate — economia has no zero-diagnostic branch, since the real spreadsheet uses typed zero and blank interchangeably).
 
 **MonthCoverage**: per future month, how much of the typical baseline outflow has been pre-launched. Drives the Previsibilidade card — an empty future month makes the projection optimistic until salary/fixed/fatura/diário are entered.
 
@@ -101,7 +113,7 @@ These live in the forecast DTO (`get_forecast`), computed in the Rust core — n
 
 **Phase** (adaptação): `map` (mapping — few lançamentos / no realized month) → `calibrate` (tuning the diário) → `operate` (Economizado% ≥ 20% and reserve ≥ 6 months). Derived from summary + forecast (`colchaoPhase`), not stored.
 
-**Reserve months** (dashboard): derived live as reserve-account balance ÷ monthly cost of living (`realized_monthly_baseline`); the `reserve.current_months` column has no production writer.
+**Reserve months** (dashboard): derived live as reserve-account balance ÷ monthly cost of living (`realized_monthly_baseline`); the `reserve.current_months` column has no production writer. Carries an epistemic state: `verdict` with the full 6-complete-month window, `estimate` ("living portrait") with 1–5 months, `zero` (mapped reserve accounts at zero — "Sem reserva"), `no_record` (no mapped accounts or no baseline).
 
 ## Rules
 

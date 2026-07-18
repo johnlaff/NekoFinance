@@ -1872,7 +1872,7 @@ pub(crate) async fn get_scenario_forecast_inner(
 
     // Previsão de diário reutiliza o MESMO teto/dia do ramo real — o orçamento de Diário não muda
     // por cenário; só o encadeamento de caixa/hipotéticas mudam.
-    let daily_ceiling = forecast_cmds::effective_daily_ceiling(pool, today).await?;
+    let daily_ceiling = forecast_cmds::projection_daily_ceiling(pool, today).await?;
     let days_with_daily_chain: std::collections::HashSet<NaiveDate> = scenario_chain_events
         .iter()
         .filter(|e| e.kind == forecast::EventKind::Daily)

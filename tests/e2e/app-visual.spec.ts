@@ -47,3 +47,108 @@ for (const theme of ["dark", "light"] as const) {
     }
   });
 }
+
+// Estados epistêmicos + modo de gasto: as variantes da Hoje que os fixtures default não
+// exercitam, e a tela do teto (fora da nav — alcançada pelo link de Configurações).
+test.describe("teto do diário + estados de dado", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  });
+
+  test("tela Teto do diário (editor da cerimônia)", async ({ page }) => {
+    await mockTauri(page, {
+      list_scenarios_cmd: [],
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [],
+    });
+    await page.goto("/");
+    await page
+      .getByRole("button", { name: "Configurações", exact: false })
+      .first()
+      .click();
+    await page.getByRole("button", { name: "Abrir teto do diário" }).click();
+    await page.waitForTimeout(350);
+    await expect(page).toHaveScreenshot("Teto-dark.png", {
+      fullPage: true,
+      maxDiffPixelRatio: 0.02,
+    });
+  });
+
+  test("Hoje no modo cartão: check-in lê as faturas", async ({ page }) => {
+    await mockTauri(page, {
+      list_scenarios_cmd: [],
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [],
+      get_dashboard_summary: {
+        balance: 842000,
+        daily_budget: 4033,
+        daily_ceiling_source: "chosen",
+        ceiling_proposal_pending: false,
+        daily_spend_today: 0,
+        reserve_months: 4.5,
+        reserve_state: "estimate",
+        reserve_basis_months: 4,
+        reserve_trend: "flat",
+        spending_mode: "card",
+        card_gate: "below",
+        cartao_month_cents: 260000,
+        next_fatura_date: "2026-06-20",
+        next_fatura_amount_cents: 140000,
+        transaction_count: 42,
+        last_real_tx_date: "2026-06-09",
+      },
+    });
+    await page.goto("/");
+    await page.waitForTimeout(350);
+    await expect(page).toHaveScreenshot("Hoje-modo-cartao-dark.png", {
+      fullPage: true,
+      maxDiffPixelRatio: 0.02,
+    });
+  });
+
+  test("Hoje sem teto: travessão + proposta pendente (nunca R$ 0,00 fabricado)", async ({
+    page,
+  }) => {
+    await mockTauri(page, {
+      list_scenarios_cmd: [],
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [],
+      get_dashboard_summary: {
+        balance: 842000,
+        daily_budget: 0,
+        daily_ceiling_source: "none",
+        ceiling_proposal_pending: true,
+        daily_spend_today: 0,
+        reserve_months: 0,
+        reserve_state: "no_record",
+        reserve_basis_months: 0,
+        reserve_trend: "flat",
+        spending_mode: "debit",
+        card_gate: "unknown",
+        cartao_month_cents: 0,
+        next_fatura_date: null,
+        next_fatura_amount_cents: 0,
+        transaction_count: 2,
+        last_real_tx_date: "2026-06-09",
+      },
+      get_ceiling_proposal_cmd: {
+        id: "cp-1",
+        per_day_cents: 4033,
+        divisor_days: 31,
+        source_month: "2026-05",
+        items: [
+          { name: "Alimentação", amount_cents: 100000 },
+          { name: "Transporte", amount_cents: 25000 },
+        ],
+      },
+    });
+    await page.goto("/");
+    await page.waitForTimeout(350);
+    await expect(page).toHaveScreenshot("Hoje-sem-teto-dark.png", {
+      fullPage: true,
+      maxDiffPixelRatio: 0.02,
+    });
+  });
+});
