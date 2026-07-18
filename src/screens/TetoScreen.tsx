@@ -123,6 +123,14 @@ function nextDraftKey(): string {
   return `draft-${draftRowSeq}`;
 }
 
+function budgetIdentity(budget: DailyBudget): string {
+  return [
+    budget.per_day_cents,
+    budget.divisor_days ?? "",
+    ...budget.categories.map((c) => c.id),
+  ].join("|");
+}
+
 function draftFromBudget(budget: DailyBudget): DraftItem[] {
   return budget.categories.map((c) => ({
     key: c.id,
@@ -148,7 +156,9 @@ export function TetoScreen() {
         />
       ) : null}
       {budget ? (
-        <TetoEditor initial={budget} />
+        // A identidade do orçamento salvo remonta o editor: aceitar a proposta (ou salvar)
+        // rehidrata o draft com o que foi gravado, em vez de conservar campos obsoletos.
+        <TetoEditor key={budgetIdentity(budget)} initial={budget} />
       ) : (
         <EmptyState variant="skeleton" skeletonRows={5} />
       )}
@@ -193,12 +203,20 @@ function ProposalBanner({
           <strong>
             <Money cents={proposal.per_day_cents} size="inherit" /> por dia
           </strong>{" "}
-          (
-          <Money
-            cents={proposal.items.reduce((s, i) => s + i.amount_cents, 0)}
-            size="inherit"
-          />{" "}
-          ÷ {proposal.divisor_days} dias, anotada em {proposal.source_month}).
+          {proposal.items.length > 0 ? (
+            <>
+              (
+              <Money
+                cents={proposal.items.reduce((s, i) => s + i.amount_cents, 0)}
+                size="inherit"
+              />{" "}
+              ÷ {proposal.divisor_days} dias, anotada em {proposal.source_month}).
+            </>
+          ) : (
+            <>
+              (÷ {proposal.divisor_days} dias, anotada em {proposal.source_month}).
+            </>
+          )}
         </p>
         {proposal.items.length > 0 && (
           <ul style={PROPOSAL_ITEMS}>
@@ -260,8 +278,10 @@ function TetoEditor({ initial }: { initial: DailyBudget }) {
     (sum, it) => sum + (parseBRLToCents(it.amountText) ?? 0),
     0,
   );
+  // Resto arredonda PARA CIMA (teto é teto) — mesma regra do núcleo Rust e da cerimônia real
+  // (1.250,00 ÷ 31 = 40,33), para o aceite da proposta e o editor nunca divergirem num centavo.
   const perDayFromItems =
-    Number.isFinite(divisor) && divisor > 0 ? Math.floor(monthlyTotal / divisor) : 0;
+    Number.isFinite(divisor) && divisor > 0 ? Math.ceil(monthlyTotal / divisor) : 0;
 
   function save() {
     if (!isTauri) return;

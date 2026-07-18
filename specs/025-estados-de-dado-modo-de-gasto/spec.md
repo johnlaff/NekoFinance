@@ -217,9 +217,11 @@ teto na Hoje e por link em Configurações):
   meses, ficam fora (comportamento atual). O popover expõe as duas leituras
   (com e sem previdência). A inclusão vale para a régua E para o guardrail de
   poupança do "pode gastar hoje" (uma régua só, sem bifurcar semântica).
-- **Estados**: veredito quando há economia registrada > 0 na janela; senão
-  **sem registro** — o app exibe a **sobra derivada (Colchão)** como
-  estimativa marcada + CTA didático do ritual de transferir para a reserva.
+- **Estados**: veredito quando a régua (economia registrada + previdência
+  condicional) > 0 — previdência contando é dado registrado, só vive noutro
+  balde; senão **sem registro** — o app exibe a **sobra derivada (Colchão)**
+  como estimativa marcada + CTA didático do ritual de transferir para a
+  reserva.
   A economia NÃO tem ramo de zero-diagnóstico: a planilha real demonstra que
   zero explícito e célula vazia são intercambiáveis na prática do dono (e o
   import da aba Economia já normaliza ambos), então distinguir "guardei 0" de
@@ -293,6 +295,9 @@ palavra/ícone):
 - Ondas Lançamentos–Mia (#188–#191) — consomem as primitivas do D7.
 - Write-back do teto para a planilha (o teto estipulado vive no app).
 - Backfill/import de histórico do teto além da proposta mais recente.
+- Placeholder em célula projetada de valor TOTAL zero: sem valor, a célula não
+  materializa linha e a nota não é lida — limitação conhecida; a estrutura de
+  fatura por célula é do domínio do cartão (#179).
 
 ## Aceitação (critérios do ticket #192 + gates)
 

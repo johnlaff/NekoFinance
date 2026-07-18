@@ -655,9 +655,12 @@ async fn prev_month_daily_avg(pool: &SqlitePool, today_naive: NaiveDate) -> Resu
     // (`-amount_out`) e manuais positivas; num mês de sinal misto o ABS externo da soma assinada
     // cancelaria parcialmente, sub-reportando o Diário médio. Invariante de agregação de despesa em
     // TODOS os sites de query (month_grid / realized_monthly_baseline / daily_spend_today).
+    // Sem filtro `is_projection` (congelado/stale): o mês anterior já FECHOU pela data — uma
+    // projeção importada que virou passado é gasto do mês, mesmo sem re-import (mesma regra de
+    // staleness da detecção de modo e do baseline).
     let sum: (i64,) = sqlx::query_as(
         "SELECT COALESCE(SUM(ABS(amount)), 0) FROM \"transaction\" \
-         WHERE type='expense' AND is_fixed=0 AND is_projection=0 \
+         WHERE type='expense' AND is_fixed=0 \
            AND (payment_method IS NULL OR payment_method <> 'credit') \
            AND substr(date,1,7) = ?1 AND scenario_id IS NULL",
     )
@@ -717,6 +720,21 @@ pub(crate) async fn daily_ceiling_reading(
         per_day_cents: 0,
         source: CeilingSource::None,
     })
+}
+
+/// Teto/dia usado como DRIVER de projeção (re-roteado pelo modo de gasto). No modo cartão o
+/// gasto variável vive nas faturas — que já entram como eventos Cartão (realizados ou
+/// pré-lançados) — então injetar também o Diário típico dobraria a saída projetada. O teto
+/// estipulado segue existindo como referência de exibição; só o driver desliga.
+pub(crate) async fn projection_daily_ceiling(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+) -> Result<i64, String> {
+    let mode = spending_mode_summary(pool, today_naive).await?.mode;
+    if matches!(mode, forecast::SpendingMode::Card) {
+        return Ok(0);
+    }
+    effective_daily_ceiling(pool, today_naive).await
 }
 
 /// Existe proposta de cerimônia aguardando o dono?
@@ -800,20 +818,17 @@ pub struct CategoryInput {
     pub position: i64,
 }
 
-/// Puro: valor MENSAL → teto por DIA do mês informado. O teto diário do método é o orçamento
-/// mensal dividido pelos dias do mês (ex.: 3100 ÷ 31 = 100/dia). `days_in_month = 0` → 0 (sem panic).
-/// Espelha a mesma intenção do `effective_daily_ceiling` (a tela computa a exibição; o engine
-/// continua lendo o `daily_budget.amount` como o teto/dia escrito pelo dono).
-///
-/// A derivação do teto/dia exibido vive HOJE na UI (`DiarioCategorySection`, em TypeScript) para não
-/// pagar um round-trip; este núcleo puro existe como fonte-da-verdade testável da fórmula, pronto
-/// para um futuro caller backend (ex.: auto-parse de notas) — daí `allow(dead_code)` deliberado.
+/// Puro: valor MENSAL → teto por DIA. O teto diário do método é o orçamento mensal dividido
+/// pelo divisor da cerimônia, arredondando o resto PARA CIMA (teto é teto: a cerimônia real
+/// declara 40,33 para 1250 ÷ 31 = 40,3225…). `days_in_month = 0` → 0 (sem panic). Fonte da
+/// verdade da fórmula — a derivação da tela do teto (TypeScript) espelha esta regra 1:1.
 #[allow(dead_code)]
 pub(crate) fn monthly_to_daily_rate(amount_cents: i64, days_in_month: u32) -> i64 {
     if days_in_month == 0 {
         return 0;
     }
-    amount_cents / days_in_month as i64
+    let days = i64::from(days_in_month);
+    (amount_cents + days - 1) / days
 }
 
 /// Núcleo puro: grava o teto total do Diário + uma quebra opcional por categoria.
@@ -1369,7 +1384,7 @@ pub(crate) async fn load_forecast_events(
     let mut events = load_cashflow_events(pool, today_naive, horizon_end).await?;
     // Previsão de diário como DRIVER: injeta o teto/dia nos dias futuros do mês corrente, para o
     // saldo projetado e a Performance não nascerem otimistas (assumem o gasto típico até o fim do mês).
-    let daily_ceiling = effective_daily_ceiling(pool, today_naive).await?;
+    let daily_ceiling = projection_daily_ceiling(pool, today_naive).await?;
     let days_with_daily: std::collections::HashSet<NaiveDate> = events
         .iter()
         .filter(|e| e.kind == forecast::EventKind::Daily)
@@ -1416,7 +1431,7 @@ pub(crate) async fn load_metric_events(
         .succ_opt()
         .ok_or("data de hoje inválida para intervalo futuro de métricas")?;
     metric.extend(load_metric_db_events(pool, future_start, end_exclusive).await?);
-    let daily_ceiling = effective_daily_ceiling(pool, today_naive).await?;
+    let daily_ceiling = projection_daily_ceiling(pool, today_naive).await?;
     let days_with_daily: std::collections::HashSet<NaiveDate> = metric
         .iter()
         .filter(|e| e.kind == forecast::EventKind::Daily)
@@ -1796,7 +1811,7 @@ pub(crate) async fn annual_metrics(
     // divergia entre a visão anual e o Totais (o teto só existe no caminho do forecast). O
     // project_daily_ceiling já se limita ao fim do mês corrente.
     if year == today.year() {
-        let daily_ceiling = effective_daily_ceiling(pool, today).await?;
+        let daily_ceiling = projection_daily_ceiling(pool, today).await?;
         let days_with_daily: std::collections::HashSet<NaiveDate> = events
             .iter()
             .filter(|e| e.kind == forecast::EventKind::Daily)
@@ -2830,8 +2845,9 @@ mod tests {
 
     #[test]
     fn monthly_to_daily_rate_divides_correctly() {
-        assert_eq!(monthly_to_daily_rate(3100, 31), 100);
-        assert_eq!(monthly_to_daily_rate(125000, 31), 4032); // 4032,25 truncado
+        assert_eq!(monthly_to_daily_rate(3100, 31), 100); // divisão exata
+        // Resto arredonda PARA CIMA (teto é teto): 4032,25… → 40,33, como a cerimônia real.
+        assert_eq!(monthly_to_daily_rate(125000, 31), 4033);
         assert_eq!(monthly_to_daily_rate(100, 0), 0, "dias=0 não causa panic");
     }
 
@@ -3360,5 +3376,46 @@ mod tests {
         assert_eq!(s.daily_ceiling_source, "none");
         assert_eq!(s.daily_budget, 0);
         assert!(s.ceiling_proposal_pending);
+    }
+
+    // --- Fixes da revisão adversarial: driver por modo, staleness da média, supersede ---
+
+    // No modo cartão o driver de projeção desliga (as faturas já são eventos Cartão; injetar o
+    // Diário típico dobraria a saída), mas o teto de exibição segue existindo.
+    #[tokio::test]
+    async fn projection_daily_ceiling_is_zero_in_card_mode() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        seed_person(&p).await;
+        upsert_daily_budget_inner(&p, 4_000).await.unwrap();
+        insert_credit(&p, "c1", 250_000, "2026-04-12").await;
+        insert_credit(&p, "c2", 260_000, "2026-05-12").await;
+
+        assert_eq!(effective_daily_ceiling(&p, today).await.unwrap(), 4_000);
+        assert_eq!(projection_daily_ceiling(&p, today).await.unwrap(), 0);
+
+        // Com constância de débito o driver volta a ser o teto.
+        for (i, day) in [1, 3, 5, 8, 10].iter().enumerate() {
+            insert_daily(&p, &format!("pd{i}"), 3_000, &format!("2026-06-{day:02}")).await;
+        }
+        assert_eq!(projection_daily_ceiling(&p, today).await.unwrap(), 4_000);
+    }
+
+    // A média do mês anterior decide pela DATA: uma projeção importada que virou passado conta,
+    // mesmo com o `is_projection` congelado em 1 (staleness sem re-import).
+    #[tokio::test]
+    async fn ceiling_estimate_counts_stale_projections_by_date() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, payment_method) \
+             VALUES ('sp1', 'expense', 310000, '2026-05-10', 0, 1, 'debit')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        let reading = daily_ceiling_reading(&p, today).await.unwrap();
+        assert_eq!(reading.source.as_str(), "estimate");
+        assert_eq!(reading.per_day_cents, 10_000); // 3.100,00 ÷ 31 dias
     }
 }

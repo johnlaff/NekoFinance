@@ -224,6 +224,16 @@ export function DashboardScreen() {
     );
   }
 
+  // Primeira carga sem cache: esqueleto em vez de estados fabricados (R$ 0,00, "Sem registro"
+  // e modo débito nasceriam do `undefined` antes do DTO chegar).
+  if (!summary || !forecast) {
+    return (
+      <div className="hoje neko-app">
+        <EmptyState variant="skeleton" skeletonRows={6} />
+      </div>
+    );
+  }
+
   const today = forecast?.today ?? "";
   const month = today ? monthOf(today) : new Date().getMonth();
 
@@ -424,7 +434,6 @@ export function DashboardScreen() {
 
       <div className="hoje-grid">
         <CheckinCard
-          key={cardMode ? "card" : "debit"}
           ceiling={ceiling}
           ceilingSource={ceilingSource}
           spent={spent}

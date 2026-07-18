@@ -1676,6 +1676,26 @@ pub(crate) fn scan_ceiling_ceremony_note(
     best
 }
 
+/// Upsert da proposta em transação PRÓPRIA — para os retornos antecipados do import (dedup de
+/// checksum, aba sem linhas materializadas): a cerimônia vive em nota de célula sem valor, fora
+/// do checksum de transações, então uma edição só na nota precisa ser vista mesmo quando o
+/// dataset de linhas não mudou.
+pub(crate) async fn upsert_ceiling_proposal_standalone(
+    pool: &SqlitePool,
+    source_month: &str,
+    raw_note: &str,
+) -> Result<(), String> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| format!("ceiling proposal (begin): {e}"))?;
+    upsert_ceiling_proposal_in_tx(&mut tx, source_month, raw_note).await?;
+    tx.commit()
+        .await
+        .map_err(|e| format!("ceiling proposal (commit): {e}"))?;
+    Ok(())
+}
+
 /// Registra a proposta de teto lida da cerimônia, com identidade pelo hash da nota
 /// normalizada: a MESMA nota nunca re-propõe (pendente, aceita ou dispensada), e uma nota nova
 /// supersede a pendente anterior (só existe uma proposta pendente por vez). Nunca escreve
@@ -1700,13 +1720,37 @@ pub(crate) async fn upsert_ceiling_proposal_in_tx(
     h.update(normalized.as_bytes());
     let note_hash = hex::encode(h.finalize());
 
-    let existing: Option<(String,)> =
-        sqlx::query_as("SELECT status FROM ceiling_proposal WHERE note_hash = ?1")
+    let existing: Option<(String, String)> =
+        sqlx::query_as("SELECT status, source_month FROM ceiling_proposal WHERE note_hash = ?1")
             .bind(&note_hash)
             .fetch_optional(&mut **tx)
             .await
             .map_err(|e| format!("ceiling proposal (lookup): {e}"))?;
-    if existing.is_some() {
+    if let Some((status, stored_month)) = existing {
+        // Mesma nota re-vista num mês mais recente: a procedência PENDENTE acompanha a
+        // ocorrência mais nova (aceita/dispensada ficam congeladas como histórico).
+        if status == "pending" && source_month > stored_month.as_str() {
+            sqlx::query("UPDATE ceiling_proposal SET source_month = ?1 WHERE note_hash = ?2")
+                .bind(source_month)
+                .bind(&note_hash)
+                .execute(&mut **tx)
+                .await
+                .map_err(|e| format!("ceiling proposal (refresh month): {e}"))?;
+        }
+        return Ok(false);
+    }
+
+    // Supersede só avança no tempo: uma aba antiga processada depois (ordem de abas do arquivo)
+    // não pode apagar a proposta pendente de um mês mais recente.
+    let pending_month: Option<(String,)> = sqlx::query_as(
+        "SELECT source_month FROM ceiling_proposal WHERE status = 'pending' LIMIT 1",
+    )
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|e| format!("ceiling proposal (pending month): {e}"))?;
+    if let Some((month,)) = pending_month
+        && month.as_str() > source_month
+    {
         return Ok(false);
     }
 
@@ -4573,5 +4617,50 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(total, 2);
+    }
+
+    // Supersede só avança no tempo: aba antiga processada depois não apaga a proposta pendente
+    // de um mês mais recente; a MESMA nota re-vista num mês mais novo só atualiza a procedência.
+    #[tokio::test]
+    async fn ceiling_proposal_older_month_never_supersedes_newer_pending() {
+        let pool = test_pool().await;
+        let newer = "R$ 1250,00 / 31 Dias = R$ 40,33";
+        let older = "R$ 900,00 / 30 Dias = R$ 30,00";
+
+        let mut tx = pool.begin().await.unwrap();
+        assert!(
+            upsert_ceiling_proposal_in_tx(&mut tx, "2026-05", newer)
+                .await
+                .unwrap()
+        );
+        // Aba de um ano anterior chega depois: não supersede.
+        assert!(
+            !upsert_ceiling_proposal_in_tx(&mut tx, "2025-09", older)
+                .await
+                .unwrap()
+        );
+        tx.commit().await.unwrap();
+        let (month, per_day): (String, i64) = sqlx::query_as(
+            "SELECT source_month, per_day_cents FROM ceiling_proposal WHERE status='pending'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((month.as_str(), per_day), ("2026-05", 4_033));
+
+        // A mesma nota pendente re-vista num mês mais novo atualiza só a procedência.
+        let mut tx = pool.begin().await.unwrap();
+        assert!(
+            !upsert_ceiling_proposal_in_tx(&mut tx, "2026-07", newer)
+                .await
+                .unwrap()
+        );
+        tx.commit().await.unwrap();
+        let (month,): (String,) =
+            sqlx::query_as("SELECT source_month FROM ceiling_proposal WHERE status='pending'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(month, "2026-07");
     }
 }

@@ -64,7 +64,10 @@ test.describe("teto do diário + estados de dado", () => {
       list_obligations_cmd: [],
     });
     await page.goto("/");
-    await page.getByRole("button", { name: "Configurações", exact: false }).first().click();
+    await page
+      .getByRole("button", { name: "Configurações", exact: false })
+      .first()
+      .click();
     await page.getByRole("button", { name: "Abrir teto do diário" }).click();
     await page.waitForTimeout(350);
     await expect(page).toHaveScreenshot("Teto-dark.png", {

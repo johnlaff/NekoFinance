@@ -222,12 +222,30 @@ pub(crate) async fn import_one_tab(
     let diagnostics =
         import::collect_import_diagnostics(sheet_name, &imported_rows, descriptions_trusted);
 
+    // Cerimônia do teto em nota da coluna Diário → proposta (confirmação na UI). Computada
+    // ANTES do dedup de checksum: a nota vive em célula sem valor (fora do checksum de
+    // transações), então uma edição só na cerimônia não altera o dataset de linhas. Só com
+    // notas confiáveis: um ciclo degradado não pode propor de dado ausente.
+    let daily_offset = mappings
+        .iter()
+        .find(|(field, _)| field == "amount_daily")
+        .map(|(_, off)| *off as usize)
+        .unwrap_or(3);
+    let ceremony_note = if descriptions_trusted {
+        import::scan_ceiling_ceremony_note(&rows, &notes, &layout, daily_offset)
+    } else {
+        None
+    };
+
     // Checksum + checagem de duplicata ANTES de abrir a transação (leitura no pool; dentro da tx
     // daria read-your-writes falso-negativo). Dataset idêntico ao último import → idempotente.
     let checksum = import::compute_import_checksum(&imported_rows, descriptions_trusted);
     if !imported_rows.is_empty()
         && import::check_duplicate_import(pool, sheet_name, &checksum).await?
     {
+        if let Some((source_month, raw_note)) = &ceremony_note {
+            import::upsert_ceiling_proposal_standalone(pool, source_month, raw_note).await?;
+        }
         return Ok(ImportOutcome {
             count: 0,
             summary: String::new(),
@@ -243,19 +261,6 @@ pub(crate) async fn import_one_tab(
     // Zeros de template anteriores à adoção da planilha não são dado — caem antes do store.
     let first_txn_date = imported_rows.iter().map(|r| r.date.as_str()).min();
     let balances = import::trim_pre_history_balances(balances, first_txn_date);
-
-    // Cerimônia do teto documentada em nota da coluna Diário → proposta (confirmação na UI).
-    // Só com notas confiáveis: um ciclo degradado não pode propor de dado ausente.
-    let daily_offset = mappings
-        .iter()
-        .find(|(field, _)| field == "amount_daily")
-        .map(|(_, off)| *off as usize)
-        .unwrap_or(3);
-    let ceremony_note = if descriptions_trusted {
-        import::scan_ceiling_ceremony_note(&rows, &notes, &layout, daily_offset)
-    } else {
-        None
-    };
 
     // Transação externa única: layout + mappings + linhas + série de Saldo gravam tudo-ou-nada.
     let mut tx = pool
@@ -807,7 +812,25 @@ pub async fn import_local_xlsx(
 
             let imported_rows =
                 import::parse_rows_with_layout(&rows, &layout, &mappings, &sheet_notes)?;
+
+            // Cerimônia do teto: vista ANTES dos retornos antecipados (aba sem linhas
+            // materializadas / dedup de checksum) — a nota vive em célula sem valor.
+            let daily_offset = mappings
+                .iter()
+                .find(|(field, _)| field == "amount_daily")
+                .map(|(_, off)| *off as usize)
+                .unwrap_or(3);
+            let ceremony_note = if notes_found {
+                import::scan_ceiling_ceremony_note(&rows, &sheet_notes, &layout, daily_offset)
+            } else {
+                None
+            };
+
             if imported_rows.is_empty() {
+                if let Some((source_month, raw_note)) = &ceremony_note {
+                    import::upsert_ceiling_proposal_standalone(&pool, source_month, raw_note)
+                        .await?;
+                }
                 continue;
             }
 
@@ -824,6 +847,10 @@ pub async fn import_local_xlsx(
             };
             let checksum = import::compute_import_checksum(&imported_rows, notes_found);
             if import::check_duplicate_import(&pool, sheet_name, &checksum).await? {
+                if let Some((source_month, raw_note)) = &ceremony_note {
+                    import::upsert_ceiling_proposal_standalone(&pool, source_month, raw_note)
+                        .await?;
+                }
                 continue;
             }
 
@@ -833,18 +860,6 @@ pub async fn import_local_xlsx(
             // Zeros de template anteriores à adoção da planilha não são dado — caem antes do store.
             let first_txn_date = imported_rows.iter().map(|r| r.date.as_str()).min();
             let balances = import::trim_pre_history_balances(balances, first_txn_date);
-
-            // Cerimônia do teto em nota da coluna Diário → proposta (confirmação na UI).
-            let daily_offset = mappings
-                .iter()
-                .find(|(field, _)| field == "amount_daily")
-                .map(|(_, off)| *off as usize)
-                .unwrap_or(3);
-            let ceremony_note = if notes_found {
-                import::scan_ceiling_ceremony_note(&rows, &sheet_notes, &layout, daily_offset)
-            } else {
-                None
-            };
 
             // Transação externa única por aba: layout + mappings + linhas + Saldo, tudo-ou-nada.
             let mut tx = pool
