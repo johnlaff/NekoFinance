@@ -20,12 +20,12 @@ semânticas de zero que se resolvem no import.
 Toda régua do método é julgada em um de três estados, com um quarto tipo de
 número transversal:
 
-| Estado | Significado | Apresentação |
-| --- | --- | --- |
-| **Veredito** | Dado registrado/escolhido presente | Número pleno, cor de status do método |
-| **Zero-diagnóstico** | Insumo presente e valor legitimamente zero | Ramo próprio com palavra dedicada — nunca escondido, nunca alarme fabricado |
-| **Sem registro** | Lacuna — o insumo não existe | Nunca vira número: travessão + rótulo + popover didático com CTA |
-| **Estimativa** (tipo de número) | Derivado de dado indireto | Número com selo explícito "Estimativa" + popover do ritual que o tornaria veredito |
+| Estado                          | Significado                                | Apresentação                                                                       |
+| ------------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------- |
+| **Veredito**                    | Dado registrado/escolhido presente         | Número pleno, cor de status do método                                              |
+| **Zero-diagnóstico**            | Insumo presente e valor legitimamente zero | Ramo próprio com palavra dedicada — nunca escondido, nunca alarme fabricado        |
+| **Sem registro**                | Lacuna — o insumo não existe               | Nunca vira número: travessão + rótulo + popover didático com CTA                   |
+| **Estimativa** (tipo de número) | Derivado de dado indireto                  | Número com selo explícito "Estimativa" + popover do ritual que o tornaria veredito |
 
 Regra dura: **nenhum número derivado de campo vazio aparece sem marcação**.
 Veredito só nasce de dado registrado ou escolhido pelo dono.
@@ -92,7 +92,7 @@ legítimo com a economia viva.
 ### Efeitos nesta entrega
 
 - `DashboardSummary` ganha `spending_mode: SpendingModeDto { mode, card_gate,
-  window_months }`.
+window_months }`.
 - No modo cartão, a tela Hoje deixa de fingir régua verde de Diário: o
   check-in/velocímetro re-roteia para as faturas — exibe o Cartão do mês
   (realizado + projetado) e o próximo vencimento em vez de `R$ 0 de R$ X`;
@@ -261,9 +261,9 @@ Grupo novo em `tokens/states.css` (aliases theme-aware, padrão do arquivo):
 
 ```css
 /* ---- Estados epistêmicos (dado ausente / estimado / zerado) ---- */
---state-estimate: var(--info-400);      /* selo "Estimativa" — informa, não alarma */
---state-no-record: var(--text-faint);   /* travessão + rótulo "Sem registro" */
---state-zero: var(--text-muted);        /* palavra dedicada de zero-diagnóstico */
+--state-estimate: var(--info-400); /* selo "Estimativa" — informa, não alarma */
+--state-no-record: var(--text-faint); /* travessão + rótulo "Sem registro" */
+--state-zero: var(--text-muted); /* palavra dedicada de zero-diagnóstico */
 ```
 
 Componentes novos em `src/design-system/components/` (padrão da casa: export

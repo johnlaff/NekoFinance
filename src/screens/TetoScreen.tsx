@@ -111,12 +111,21 @@ const CEREMONY_TERM = {
 };
 
 interface DraftItem {
+  /** Identidade estável da linha do draft (id da categoria ou sequencial local). */
+  key: string;
   name: string;
   amountText: string;
 }
 
+let draftRowSeq = 0;
+function nextDraftKey(): string {
+  draftRowSeq += 1;
+  return `draft-${draftRowSeq}`;
+}
+
 function draftFromBudget(budget: DailyBudget): DraftItem[] {
   return budget.categories.map((c) => ({
+    key: c.id,
     name: c.name,
     amountText: (c.amount_cents / 100).toLocaleString("pt-BR", {
       minimumFractionDigits: 2,
@@ -194,7 +203,8 @@ function ProposalBanner({ proposal }: { proposal: CeilingProposal }) {
           </Button>
         </div>
         <p style={HINT}>
-          Nada é gravado sem a sua confirmação — o teto só vira veredito quando você escolhe.
+          Nada é gravado sem a sua confirmação — o teto só vira veredito quando você
+          escolhe.
         </p>
       </div>
     </section>
@@ -260,7 +270,9 @@ function TetoEditor({ initial }: { initial: DailyBudget }) {
       return;
     }
     if (perDayFromItems <= 0) {
-      setError("A soma mensal dividida pelos dias precisa resultar em um teto maior que zero.");
+      setError(
+        "A soma mensal dividida pelos dias precisa resultar em um teto maior que zero.",
+      );
       return;
     }
     persist(perDayFromItems, categories, divisor);
@@ -310,8 +322,8 @@ function TetoEditor({ initial }: { initial: DailyBudget }) {
         {guided && (
           <p style={{ margin: "0 0 12px", color: "var(--text-muted)" }}>
             Você ainda não estipulou um teto. A cerimônia é simples: liste o que o mês
-            variável comporta por categoria, some e divida pelos dias — ou informe um valor
-            direto por dia.
+            variável comporta por categoria, some e divida pelos dias — ou informe um
+            valor direto por dia.
           </p>
         )}
 
@@ -340,8 +352,7 @@ function TetoEditor({ initial }: { initial: DailyBudget }) {
           <>
             <ul style={LIST}>
               {items.map((it, i) => (
-                // Índice como chave: a lista é um draft posicional (sem identidade própria).
-                <li key={i} style={ITEM_ROW}>
+                <li key={it.key} style={ITEM_ROW}>
                   <input
                     style={FIELD}
                     aria-label={`Nome da categoria ${i + 1}`}
@@ -349,7 +360,9 @@ function TetoEditor({ initial }: { initial: DailyBudget }) {
                     value={it.name}
                     onChange={(e) =>
                       setItems((prev) =>
-                        prev.map((p, j) => (j === i ? { ...p, name: e.target.value } : p)),
+                        prev.map((p, j) =>
+                          j === i ? { ...p, name: e.target.value } : p,
+                        ),
                       )
                     }
                   />
@@ -381,7 +394,12 @@ function TetoEditor({ initial }: { initial: DailyBudget }) {
             <div style={ACTIONS_ROW}>
               <Button
                 variant="ghost"
-                onClick={() => setItems((prev) => [...prev, { name: "", amountText: "" }])}
+                onClick={() =>
+                  setItems((prev) => [
+                    ...prev,
+                    { key: nextDraftKey(), name: "", amountText: "" },
+                  ])
+                }
               >
                 <Plus size={14} strokeWidth={1.75} />
                 Adicionar categoria
@@ -436,8 +454,8 @@ function TetoEditor({ initial }: { initial: DailyBudget }) {
           )}
         </div>
         <p style={HINT}>
-          O teto orienta o velocímetro do dia e o forecast dos dias futuros. No modo cartão
-          ele permanece visível como referência.
+          O teto orienta o velocímetro do dia e o forecast dos dias futuros. No modo
+          cartão ele permanece visível como referência.
         </p>
       </div>
     </section>

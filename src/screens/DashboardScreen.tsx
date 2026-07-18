@@ -268,10 +268,7 @@ export function DashboardScreen() {
           <p className="hoje-hero__eyebrow">{eyebrowDate(today)}</p>
           {summary && (
             <div style={HERO_CHIP_ROW_STYLE}>
-              <ModeChip
-                mode={summary.spending_mode}
-                gate={summary.card_gate}
-              />
+              <ModeChip mode={summary.spending_mode} gate={summary.card_gate} />
             </div>
           )}
           <p className="hoje-hero__label">Pode gastar hoje</p>
@@ -539,12 +536,13 @@ function CheckinCard({
                 <Money cents={cartaoMonthCents} size="inherit" />
               </span>
             </div>
-            <p style={{ margin: "0 0 10px", color: "var(--text-faint)", fontSize: 12.5 }}>
+            <p
+              style={{ margin: "0 0 10px", color: "var(--text-faint)", fontSize: 12.5 }}
+            >
               {nextFaturaDate ? (
                 <>
-                  Próxima fatura:{" "}
-                  <Money cents={nextFaturaAmountCents} size="inherit" /> em{" "}
-                  {faturaDayLabel(nextFaturaDate)}.
+                  Próxima fatura: <Money cents={nextFaturaAmountCents} size="inherit" />{" "}
+                  em {faturaDayLabel(nextFaturaDate)}.
                 </>
               ) : (
                 <>Nenhuma fatura à vista no horizonte.</>
@@ -567,7 +565,11 @@ function CheckinCard({
                   <span style={{ color: "var(--text-faint)", fontWeight: 400 }}>
                     {" "}
                     /{" "}
-                    <button type="button" style={STAT_LINK_STYLE} onClick={onEditCeiling}>
+                    <button
+                      type="button"
+                      style={STAT_LINK_STYLE}
+                      onClick={onEditCeiling}
+                    >
                       sem teto — estipular
                     </button>
                   </span>

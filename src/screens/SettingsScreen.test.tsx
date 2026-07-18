@@ -17,7 +17,6 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 
 const mockOpen = open as ReturnType<typeof vi.fn>;
 
-
 const appCtx = { navigate: vi.fn(), openCompose: vi.fn() };
 function renderSettings() {
   return render(
@@ -203,11 +202,6 @@ describe("SettingsScreen", () => {
       await screen.findByText(/Teto estipulado: R\$\s?40,33 por dia/),
     ).toBeInTheDocument();
   });
-
-
-
-
-
 });
 
 describe("DailyReminderSection", () => {
@@ -267,5 +261,4 @@ describe("DailyReminderSection", () => {
       }),
     );
   });
-
 });

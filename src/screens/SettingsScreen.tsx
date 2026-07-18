@@ -440,7 +440,11 @@ function TetoLinkSection() {
       <div className="cfg-sec">
         <CfgItem
           icon={CircleGauge}
-          title={perDay > 0 ? `Teto estipulado: ${fmtBRL(perDay)} por dia` : "Sem teto estipulado"}
+          title={
+            perDay > 0
+              ? `Teto estipulado: ${fmtBRL(perDay)} por dia`
+              : "Sem teto estipulado"
+          }
           sub="A cerimônia (itens mensais ÷ dias) e a edição vivem na tela do teto."
           right={
             <Button variant="secondary" onClick={() => navigate("teto")}>
@@ -452,7 +456,6 @@ function TetoLinkSection() {
     </section>
   );
 }
-
 
 // DataBackupRow — backup button row inside Seus dados card
 // ---------------------------------------------------------------------------

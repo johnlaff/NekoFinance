@@ -16,11 +16,18 @@ describe("NoRecordDash", () => {
     const trigger = screen.getByRole("button", { name: "Sem registro" });
     expect(screen.getByRole("button", { name: "Estipular" })).toBeInTheDocument();
     await user.click(trigger);
-    expect(screen.getByRole("tooltip")).toHaveTextContent("Estipule o teto na cerimônia.");
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "Estipule o teto na cerimônia.",
+    );
   });
 
   it("aceita rótulo dedicado de zero-diagnóstico", () => {
-    render(<NoRecordDash term={{ body: "Contas de reserva zeradas." }} label="Sem reserva" />);
+    render(
+      <NoRecordDash
+        term={{ body: "Contas de reserva zeradas." }}
+        label="Sem reserva"
+      />,
+    );
     expect(screen.getByRole("button", { name: "Sem reserva" })).toBeInTheDocument();
   });
 });

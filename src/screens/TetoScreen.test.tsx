@@ -40,7 +40,9 @@ describe("TetoScreen", () => {
     });
     render(<TetoScreen />);
 
-    expect(await screen.findByText(/Você ainda não estipulou um teto/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Você ainda não estipulou um teto/),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Adicionar categoria" }));
     await user.type(screen.getByLabelText("Nome da categoria 1"), "Alimentação");
@@ -50,11 +52,14 @@ describe("TetoScreen", () => {
     await user.click(screen.getByRole("button", { name: "Salvar teto" }));
 
     await waitFor(() => {
-      expect(mockInvoke).toHaveBeenCalledWith("upsert_daily_budget_with_categories_cmd", {
-        amountCents: 4032, // piso de 125000 ÷ 31
-        categories: [{ name: "Alimentação", amount_cents: 125000, position: 0 }],
-        divisorDays: 31,
-      });
+      expect(mockInvoke).toHaveBeenCalledWith(
+        "upsert_daily_budget_with_categories_cmd",
+        {
+          amountCents: 4032, // piso de 125000 ÷ 31
+          categories: [{ name: "Alimentação", amount_cents: 125000, position: 0 }],
+          divisorDays: 31,
+        },
+      );
     });
   });
 
@@ -73,7 +78,9 @@ describe("TetoScreen", () => {
       screen.getByText(
         (_, el) =>
           el?.tagName === "SPAN" &&
-          /Teto:\s*R\$\s?40,32 por dia/.test((el.textContent ?? "").replace(/\s+/g, " ")),
+          /Teto:\s*R\$\s?40,32 por dia/.test(
+            (el.textContent ?? "").replace(/\s+/g, " "),
+          ),
       ),
     ).toBeInTheDocument();
   });
@@ -92,11 +99,14 @@ describe("TetoScreen", () => {
     await user.click(screen.getByRole("button", { name: "Salvar teto" }));
 
     await waitFor(() => {
-      expect(mockInvoke).toHaveBeenCalledWith("upsert_daily_budget_with_categories_cmd", {
-        amountCents: 5000,
-        categories: [],
-        divisorDays: null,
-      });
+      expect(mockInvoke).toHaveBeenCalledWith(
+        "upsert_daily_budget_with_categories_cmd",
+        {
+          amountCents: 5000,
+          categories: [],
+          divisorDays: null,
+        },
+      );
     });
   });
 
@@ -109,7 +119,9 @@ describe("TetoScreen", () => {
     render(<TetoScreen />);
 
     await user.click(await screen.findByRole("button", { name: "Salvar teto" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/ao menos uma categoria/i);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /ao menos uma categoria/i,
+    );
     expect(mockInvoke).not.toHaveBeenCalledWith(
       "upsert_daily_budget_with_categories_cmd",
       expect.anything(),

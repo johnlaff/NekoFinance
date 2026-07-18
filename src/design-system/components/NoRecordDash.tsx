@@ -31,7 +31,12 @@ export interface NoRecordDashProps {
   className?: string;
 }
 
-export function NoRecordDash({ term, label = "Sem registro", cta, className }: NoRecordDashProps) {
+export function NoRecordDash({
+  term,
+  label = "Sem registro",
+  cta,
+  className,
+}: NoRecordDashProps) {
   return (
     <span style={WRAP_STYLE} className={className}>
       <span style={DASH_STYLE} aria-hidden="true">
