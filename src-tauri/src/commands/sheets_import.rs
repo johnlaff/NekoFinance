@@ -240,6 +240,22 @@ pub(crate) async fn import_one_tab(
     // leitura no pool; pode rodar antes de abrir a tx.
     let balance_offset = import::get_balance_offset_for_sheet(pool, sheet_name).await?;
     let balances = import::parse_balance_series(&rows, &layout, balance_offset)?;
+    // Zeros de template anteriores à adoção da planilha não são dado — caem antes do store.
+    let first_txn_date = imported_rows.iter().map(|r| r.date.as_str()).min();
+    let balances = import::trim_pre_history_balances(balances, first_txn_date);
+
+    // Cerimônia do teto documentada em nota da coluna Diário → proposta (confirmação na UI).
+    // Só com notas confiáveis: um ciclo degradado não pode propor de dado ausente.
+    let daily_offset = mappings
+        .iter()
+        .find(|(field, _)| field == "amount_daily")
+        .map(|(_, off)| *off as usize)
+        .unwrap_or(3);
+    let ceremony_note = if descriptions_trusted {
+        import::scan_ceiling_ceremony_note(&rows, &notes, &layout, daily_offset)
+    } else {
+        None
+    };
 
     // Transação externa única: layout + mappings + linhas + série de Saldo gravam tudo-ou-nada.
     let mut tx = pool
@@ -282,6 +298,10 @@ pub(crate) async fn import_one_tab(
     .await?;
 
     import::store_balance_series_in_tx(&mut tx, sheet_name, &balances).await?;
+
+    if let Some((source_month, raw_note)) = &ceremony_note {
+        import::upsert_ceiling_proposal_in_tx(&mut tx, source_month, raw_note).await?;
+    }
 
     tx.commit()
         .await
@@ -810,6 +830,21 @@ pub async fn import_local_xlsx(
             // Série de Saldo da aba (semente da projeção + visão histórica do livro-razão).
             let balance_offset = import::get_balance_offset_for_sheet(&pool, sheet_name).await?;
             let balances = import::parse_balance_series(&rows, &layout, balance_offset)?;
+            // Zeros de template anteriores à adoção da planilha não são dado — caem antes do store.
+            let first_txn_date = imported_rows.iter().map(|r| r.date.as_str()).min();
+            let balances = import::trim_pre_history_balances(balances, first_txn_date);
+
+            // Cerimônia do teto em nota da coluna Diário → proposta (confirmação na UI).
+            let daily_offset = mappings
+                .iter()
+                .find(|(field, _)| field == "amount_daily")
+                .map(|(_, off)| *off as usize)
+                .unwrap_or(3);
+            let ceremony_note = if notes_found {
+                import::scan_ceiling_ceremony_note(&rows, &sheet_notes, &layout, daily_offset)
+            } else {
+                None
+            };
 
             // Transação externa única por aba: layout + mappings + linhas + Saldo, tudo-ou-nada.
             let mut tx = pool
@@ -852,6 +887,10 @@ pub async fn import_local_xlsx(
             .await?;
 
             import::store_balance_series_in_tx(&mut tx, sheet_name, &balances).await?;
+
+            if let Some((source_month, raw_note)) = &ceremony_note {
+                import::upsert_ceiling_proposal_in_tx(&mut tx, source_month, raw_note).await?;
+            }
 
             tx.commit()
                 .await
