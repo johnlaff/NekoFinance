@@ -24,7 +24,6 @@ import { LocalXlsxImport } from "../features/sheets/LocalXlsxImport";
 import { WriteBackPending } from "./dashboard/WriteBackPending";
 import { useWriteBackPending } from "../hooks/useWriteBackPending";
 import { ACCENTS, applyAccent, getStoredAccent, type Accent } from "../lib/accent";
-import { fmtBRL } from "../lib/nkFormat";
 import { useNekoApp } from "../shell/appContext";
 import {
   backupDatabase,
@@ -50,6 +49,7 @@ import { safeErrorMessage } from "../lib/errors";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { Button } from "../design-system/components/Button";
 import { SegmentedControl } from "../design-system/components/SegmentedControl";
+import { Money } from "../design-system/components/Money";
 
 // ---------------------------------------------------------------------------
 // Inline styles (hoisted — React Compiler: never inline in JSX)
@@ -104,7 +104,7 @@ function CfgItem({
   right,
 }: {
   icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
-  title: string;
+  title: React.ReactNode;
   sub: string;
   right?: React.ReactNode;
 }) {
@@ -428,7 +428,7 @@ function DailyReminderSection() {
 function TetoLinkSection() {
   const { navigate } = useNekoApp();
   const budgetQ = useCommand("get_daily_budget", getDailyBudget);
-  const perDay = budgetQ.data?.per_day_cents ?? 0;
+  const budget = budgetQ.data;
   return (
     <section className="card">
       <div className="card__head">
@@ -441,9 +441,17 @@ function TetoLinkSection() {
         <CfgItem
           icon={CircleGauge}
           title={
-            perDay > 0
-              ? `Teto estipulado: ${fmtBRL(perDay)} por dia`
-              : "Sem teto estipulado"
+            budget == null ? (
+              // Fetch ainda no ar: sem negativo fabricado ("sem teto") antes do dado chegar.
+              "Teto do Diário"
+            ) : budget.per_day_cents > 0 ? (
+              <>
+                Teto estipulado: <Money cents={budget.per_day_cents} size="inherit" />{" "}
+                por dia
+              </>
+            ) : (
+              "Sem teto estipulado"
+            )
           }
           sub="A cerimônia (itens mensais ÷ dias) e a edição vivem na tela do teto."
           right={

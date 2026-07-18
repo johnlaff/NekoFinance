@@ -198,12 +198,11 @@ describe("DashboardScreen (Hoje)", () => {
     renderHoje();
 
     expect(await screen.findByText("Sem registro")).toBeInTheDocument();
-    // A proposta pendente é um overlay com caminho para a tela do teto.
+    // Com proposta pendente o convite é ÚNICO (revisar a proposta) — sem "Estipular" duplicado.
+    expect(screen.queryByRole("button", { name: "Estipular" })).not.toBeInTheDocument();
     await user.click(
-      screen.getByRole("button", { name: "Proposta da planilha aguardando" }),
+      screen.getByRole("button", { name: "Proposta da planilha aguardando — revisar" }),
     );
-    expect(app.navigate).toHaveBeenCalledWith("teto");
-    await user.click(screen.getByRole("button", { name: "Estipular" }));
     expect(app.navigate).toHaveBeenCalledWith("teto");
   });
 

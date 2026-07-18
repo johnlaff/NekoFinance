@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { CSSProperties } from "react";
 import { CircleGauge, ListChecks, Plus, Trash2 } from "lucide-react";
 import { Button } from "../design-system/components/Button";
+import { SegmentedControl } from "../design-system/components/SegmentedControl";
 import { EmptyState } from "../design-system/components/EmptyState";
 import { InfoPopover } from "../design-system/components/InfoPopover";
 import { Money } from "../design-system/components/Money";
@@ -15,7 +16,6 @@ import {
   type CeilingProposal,
   type DailyBudget,
 } from "../lib/api";
-import { fmtBRL } from "../lib/nkFormat";
 import { parseBRLToCents } from "../lib/format";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 
@@ -25,8 +25,8 @@ import { invalidateCommands, useCommand } from "../lib/useCommand";
 // JSX para não recriar objetos por render).
 const FIELD: CSSProperties = {
   background: "var(--surface-2)",
-  border: "1px solid var(--border)",
-  borderRadius: "var(--radius-md)",
+  border: "1px solid var(--border-input)",
+  borderRadius: "var(--radius-xs)",
   color: "var(--text)",
   font: "inherit",
   padding: "8px 10px",
@@ -89,7 +89,7 @@ const ACTIONS_ROW: CSSProperties = {
 const REMOVE_BTN: CSSProperties = {
   alignItems: "center",
   background: "none",
-  border: "1px solid var(--border)",
+  border: "1px solid var(--border-input)",
   borderRadius: "var(--radius-md)",
   color: "var(--text-muted)",
   cursor: "pointer",
@@ -141,7 +141,12 @@ export function TetoScreen() {
 
   return (
     <div className="teto neko-app">
-      {proposalQ.data ? <ProposalBanner proposal={proposalQ.data} /> : null}
+      {proposalQ.data ? (
+        <ProposalBanner
+          proposal={proposalQ.data}
+          currentPerDayCents={budget?.per_day_cents ?? 0}
+        />
+      ) : null}
       {budget ? (
         <TetoEditor initial={budget} />
       ) : (
@@ -151,7 +156,13 @@ export function TetoScreen() {
   );
 }
 
-function ProposalBanner({ proposal }: { proposal: CeilingProposal }) {
+function ProposalBanner({
+  proposal,
+  currentPerDayCents,
+}: {
+  proposal: CeilingProposal;
+  currentPerDayCents: number;
+}) {
   const [busy, setBusy] = useState(false);
 
   function resolve(action: "accept" | "dismiss") {
@@ -182,8 +193,12 @@ function ProposalBanner({ proposal }: { proposal: CeilingProposal }) {
           <strong>
             <Money cents={proposal.per_day_cents} size="inherit" /> por dia
           </strong>{" "}
-          ({fmtBRL(proposal.items.reduce((s, i) => s + i.amount_cents, 0))} ÷{" "}
-          {proposal.divisor_days} dias, anotada em {proposal.source_month}).
+          (
+          <Money
+            cents={proposal.items.reduce((s, i) => s + i.amount_cents, 0)}
+            size="inherit"
+          />{" "}
+          ÷ {proposal.divisor_days} dias, anotada em {proposal.source_month}).
         </p>
         {proposal.items.length > 0 && (
           <ul style={PROPOSAL_ITEMS}>
@@ -203,8 +218,18 @@ function ProposalBanner({ proposal }: { proposal: CeilingProposal }) {
           </Button>
         </div>
         <p style={HINT}>
-          Nada é gravado sem a sua confirmação — o teto só vira veredito quando você
-          escolhe.
+          {currentPerDayCents > 0 ? (
+            <>
+              Usar este teto substitui o atual de{" "}
+              <Money cents={currentPerDayCents} size="inherit" /> por dia. Nada é
+              gravado sem a sua confirmação.
+            </>
+          ) : (
+            <>
+              Nada é gravado sem a sua confirmação — o teto só vira veredito quando você
+              escolhe.
+            </>
+          )}
         </p>
       </div>
     </section>
@@ -327,26 +352,15 @@ function TetoEditor({ initial }: { initial: DailyBudget }) {
           </p>
         )}
 
-        <div className="ci-types" role="radiogroup" aria-label="Como estipular o teto">
-          <button
-            type="button"
-            role="radio"
-            aria-checked={mode === "items"}
-            className="ci-type"
-            onClick={() => setMode("items")}
-          >
-            Por itens (cerimônia)
-          </button>
-          <button
-            type="button"
-            role="radio"
-            aria-checked={mode === "direct"}
-            className="ci-type"
-            onClick={() => setMode("direct")}
-          >
-            Valor direto
-          </button>
-        </div>
+        <SegmentedControl
+          ariaLabel="Como estipular o teto"
+          options={[
+            { value: "items", label: "Por itens (cerimônia)" },
+            { value: "direct", label: "Valor direto" },
+          ]}
+          value={mode}
+          onChange={(v) => setMode(v as "items" | "direct")}
+        />
 
         {mode === "items" ? (
           <>
@@ -421,6 +435,10 @@ function TetoEditor({ initial }: { initial: DailyBudget }) {
                 Teto: <Money cents={perDayFromItems} size="inherit" /> por dia
               </span>
             </div>
+            <p style={HINT}>
+              O divisor são os dias do mês da cerimônia — a planilha costuma fixar um
+              (ex.: 31) e mantê-lo o ano todo; ajuste se quiser precisão mês a mês.
+            </p>
           </>
         ) : (
           <div style={ITEM_ROW}>

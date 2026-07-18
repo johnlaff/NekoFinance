@@ -13,10 +13,14 @@ const MARK_STYLE: CSSProperties = {
   borderRadius: 999,
   border: "1px solid color-mix(in srgb, var(--state-estimate) 45%, transparent)",
   color: "var(--state-estimate)",
-  fontSize: "var(--fs-caption, 11px)",
+  fontSize: "var(--fs-micro)",
   fontWeight: 500,
   lineHeight: 1.6,
   whiteSpace: "nowrap",
+  // Sinal de interatividade: a didática mora no popover; sem o marcador "i", o pontilhado
+  // é o convite (mesma linguagem dos termos explicáveis das réguas).
+  textDecoration: "underline dotted",
+  textUnderlineOffset: 3,
 };
 
 export interface EstimateMarkProps {

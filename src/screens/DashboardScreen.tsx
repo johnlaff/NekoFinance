@@ -273,12 +273,22 @@ export function DashboardScreen() {
           )}
           <p className="hoje-hero__label">Pode gastar hoje</p>
           <p className="hoje-hero__kpi">
-            {fmtBRL(safeToSpend)} <small>sem furar o teto</small>
+            {fmtBRL(safeToSpend)}{" "}
+            <small>{cardMode ? "sem faltar caixa" : "sem furar o teto"}</small>
           </p>
           <p className="hoje-hero__reason">
-            {hasCeiling ? (
+            {cardMode ? (
+              // No modo cartão o teto não governa o dia (é referência): a frase cita só os
+              // limites que de fato mordem — caixa e poupança — para não contradizer o check-in.
               <>
-                É o menor de dois limites: o teto diário de{" "}
+                É o que o caixa aguenta sem nenhum dia no vermelho até o fim do mês,
+                mantendo a economia do ano viva — no modo cartão, o dia acompanha as
+                faturas.
+              </>
+            ) : hasCeiling ? (
+              <>
+                É o menor de dois limites: o teto diário
+                {ceilingSource === "estimate" ? " estimado" : ""} de{" "}
                 <Money cents={ceiling} size="inherit" /> e o que o caixa aguenta sem
                 nenhum dia no vermelho até o fim do mês.
               </>
@@ -334,14 +344,18 @@ export function DashboardScreen() {
                 {ceilingSource === "none" ? (
                   <NoRecordDash
                     term={TETO_NONE_TERM}
+                    // Com proposta pendente o convite único é revisá-la (ela já resolve o
+                    // "estipular"); dois CTAs para o mesmo destino seriam ruído.
                     cta={
-                      <button
-                        type="button"
-                        style={STAT_LINK_STYLE}
-                        onClick={() => navigate("teto")}
-                      >
-                        Estipular
-                      </button>
+                      summary?.ceiling_proposal_pending ? undefined : (
+                        <button
+                          type="button"
+                          style={STAT_LINK_STYLE}
+                          onClick={() => navigate("teto")}
+                        >
+                          Estipular
+                        </button>
+                      )
                     }
                   />
                 ) : (
@@ -359,7 +373,7 @@ export function DashboardScreen() {
                       style={STAT_LINK_STYLE}
                       onClick={() => navigate("teto")}
                     >
-                      Proposta da planilha aguardando
+                      Proposta da planilha aguardando — revisar
                     </button>
                   </div>
                 )}
@@ -547,10 +561,16 @@ function CheckinCard({
               ) : (
                 <>Nenhuma fatura à vista no horizonte.</>
               )}{" "}
-              {ceilingSource !== "none" && (
+              {ceilingSource === "chosen" && (
                 <>
                   Teto estipulado de <Money cents={ceiling} size="inherit" /> como
                   referência.
+                </>
+              )}
+              {ceilingSource === "estimate" && (
+                <>
+                  Teto de referência: <Money cents={ceiling} size="inherit" />{" "}
+                  <EstimateMark term={TETO_ESTIMATE_TERM} />
                 </>
               )}
             </p>
@@ -570,7 +590,7 @@ function CheckinCard({
                       style={STAT_LINK_STYLE}
                       onClick={onEditCeiling}
                     >
-                      sem teto — estipular
+                      Sem teto — estipular
                     </button>
                   </span>
                 ) : (

@@ -198,9 +198,18 @@ describe("SettingsScreen", () => {
     });
     renderSettings();
 
-    expect(
-      await screen.findByText(/Teto estipulado: R\$\s?40,33 por dia/),
-    ).toBeInTheDocument();
+    // O valor vive num <Money> (nós separados): casamos pelo textContent da linha.
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          (_, el) =>
+            el?.className === "cfg-item__t" &&
+            /Teto estipulado: R\$\s?40,33 por dia/.test(
+              (el.textContent ?? "").replace(/\s+/g, " "),
+            ),
+        ),
+      ).toBeInTheDocument();
+    });
   });
 });
 

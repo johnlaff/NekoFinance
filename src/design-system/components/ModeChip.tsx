@@ -14,10 +14,16 @@ const CHIP_STYLE: CSSProperties = {
   borderRadius: 999,
   border: "1px solid var(--border)",
   color: "var(--text-muted)",
-  fontSize: "var(--fs-caption, 11px)",
+  fontSize: "var(--fs-micro)",
   fontWeight: 500,
   lineHeight: 1.7,
   whiteSpace: "nowrap",
+};
+
+const MODE_WORD_STYLE: CSSProperties = {
+  // A didática da detecção mora no popover; o pontilhado é o convite para abri-la.
+  textDecoration: "underline dotted",
+  textUnderlineOffset: 3,
 };
 
 const GATE_STYLE: CSSProperties = {
@@ -42,7 +48,7 @@ const MODE_BODY: Record<SpendingModeKind, string> = {
 };
 
 const GATE_BODY =
-  " O método só considera o cartão legítimo com a economia de 20–30% viva; a sua está abaixo do piso de 20%.";
+  " O método só considera o cartão legítimo com a economia de 20–30% viva; a sua está abaixo do piso de 20%. O caminho de volta: registrar economia todo mês — acompanhe o Economizado% na tela O ano.";
 
 export interface ModeChipProps {
   mode: SpendingModeKind;
@@ -63,7 +69,7 @@ export function ModeChip({ mode, gate = "unknown", className }: ModeChipProps) {
     >
       <span style={CHIP_STYLE}>
         <Icon size={12} strokeWidth={1.75} aria-hidden="true" />
-        {MODE_LABEL[mode]}
+        <span style={MODE_WORD_STYLE}>{MODE_LABEL[mode]}</span>
         {gateBelow && (
           <span style={GATE_STYLE}>
             <TriangleAlert size={12} strokeWidth={1.75} aria-hidden="true" />

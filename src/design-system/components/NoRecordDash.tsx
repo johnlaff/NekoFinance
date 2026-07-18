@@ -17,8 +17,11 @@ const DASH_STYLE: CSSProperties = {
 };
 
 const LABEL_STYLE: CSSProperties = {
-  fontSize: "var(--fs-caption, 11px)",
+  fontSize: "var(--fs-micro)",
   fontWeight: 500,
+  // A didática mora no popover; o pontilhado é o convite para abri-la.
+  textDecoration: "underline dotted",
+  textUnderlineOffset: 3,
 };
 
 export interface NoRecordDashProps {
