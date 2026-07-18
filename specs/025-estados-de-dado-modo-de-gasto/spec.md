@@ -117,16 +117,18 @@ pub struct DailyCeiling {
 
 - **`chosen`** — orçamento explícito ativo (`daily_budget.amount > 0`). Único
   caso que é Veredito.
-- **`proposed`** — não há orçamento ativo, mas existe uma proposta de cerimônia
-  pendente (ver leitor abaixo). `per_day_cents` = valor proposto; a UI oferece
-  confirmação explícita.
-- **`estimate`** — sem orçamento e sem proposta: a média do Diário do mês
-  anterior continua exibida, mas **como estimativa marcada** (selo + popover
-  com CTA para estipular). O motor de projeção continua usando o valor (a
-  projeção assume o gasto típico); o que morre é a exibição sem marca.
-- **`none`** — nada: sem orçamento, sem proposta, sem mês anterior com Diário.
-  Sem registro (travessão + CTA da cerimônia guiada). A projeção não injeta
-  diário (comportamento atual de teto 0 preservado).
+- **`estimate`** — sem orçamento: a média do Diário do mês anterior continua
+  exibida, mas **como estimativa marcada** (selo + popover com CTA para
+  estipular). O motor de projeção continua usando o valor (a projeção assume o
+  gasto típico); o que morre é a exibição sem marca.
+- **`none`** — sem orçamento e sem mês anterior com Diário. Sem registro
+  (travessão + CTA da cerimônia guiada). A projeção não injeta diário
+  (comportamento atual de teto 0 preservado).
+
+A proposta pendente da cerimônia é um **overlay**, não uma procedência do
+número exibido: `ceiling_proposal_pending` acompanha a leitura e a UI mostra o
+banner de confirmação por cima de qualquer estado sem-veredito — o valor
+proposto nunca entra no progresso/projeção antes do aceite explícito.
 
 ### Leitor da cerimônia documentada (import)
 
@@ -215,12 +217,13 @@ teto na Hoje e por link em Configurações):
   meses, ficam fora (comportamento atual). O popover expõe as duas leituras
   (com e sem previdência). A inclusão vale para a régua E para o guardrail de
   poupança do "pode gastar hoje" (uma régua só, sem bifurcar semântica).
-- **Estados**: veredito quando há economia registrada > 0 na janela;
-  zero-diagnóstico quando a aba Economia registra explicitamente 0 com
-  entradas vivas (anotação presente e zerada — "este balde não é usado");
-  sem registro quando não há anotação nem evento. No estado sem-veredito, o
-  app exibe a **sobra derivada (Colchão)** como estimativa marcada + CTA
-  didático do ritual de transferir para a reserva.
+- **Estados**: veredito quando há economia registrada > 0 na janela; senão
+  **sem registro** — o app exibe a **sobra derivada (Colchão)** como
+  estimativa marcada + CTA didático do ritual de transferir para a reserva.
+  A economia NÃO tem ramo de zero-diagnóstico: a planilha real demonstra que
+  zero explícito e célula vazia são intercambiáveis na prática do dono (e o
+  import da aba Economia já normaliza ambos), então distinguir "guardei 0" de
+  "não uso este balde" pela tipografia da célula seria uma mentira.
 
 ## D5 — Reserva: retrato vivo com poucos meses
 

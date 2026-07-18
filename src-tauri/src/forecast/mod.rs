@@ -1368,7 +1368,11 @@ mod tests {
     #[test]
     fn spending_mode_defaults_to_debit_without_data() {
         assert_eq!(detect_spending_mode(&[]), SpendingMode::Debit);
-        let window = [sample(0, 0, false), sample(0, 0, false), sample(0, 0, false)];
+        let window = [
+            sample(0, 0, false),
+            sample(0, 0, false),
+            sample(0, 0, false),
+        ];
         assert_eq!(detect_spending_mode(&window), SpendingMode::Debit);
     }
 
@@ -1385,10 +1389,18 @@ mod tests {
     #[test]
     fn spending_mode_stray_daily_purchase_does_not_flip_card_mode() {
         // Um único dia com R$ 130,60 (acima do ruído, mas sem constância).
-        let one_day = [sample(0, 0, true), sample(1, 13_060, true), sample(0, 0, true)];
+        let one_day = [
+            sample(0, 0, true),
+            sample(1, 13_060, true),
+            sample(0, 0, true),
+        ];
         assert_eq!(detect_spending_mode(&one_day), SpendingMode::Card);
         // Cinco dias que somam R$ 40,00 (constância de dias, volume dentro do ruído).
-        let low_volume = [sample(0, 0, true), sample(5, 4_000, true), sample(0, 0, false)];
+        let low_volume = [
+            sample(0, 0, true),
+            sample(5, 4_000, true),
+            sample(0, 0, false),
+        ];
         assert_eq!(detect_spending_mode(&low_volume), SpendingMode::Card);
     }
 
@@ -1396,9 +1408,17 @@ mod tests {
     // 4 dias com total exatamente no ruído ainda não é.
     #[test]
     fn spending_mode_constancy_boundary() {
-        let at_noise = [sample(0, 0, true), sample(4, 5_000, true), sample(0, 0, false)];
+        let at_noise = [
+            sample(0, 0, true),
+            sample(4, 5_000, true),
+            sample(0, 0, false),
+        ];
         assert_eq!(detect_spending_mode(&at_noise), SpendingMode::Card);
-        let above_noise = [sample(0, 0, true), sample(4, 5_001, true), sample(0, 0, false)];
+        let above_noise = [
+            sample(0, 0, true),
+            sample(4, 5_001, true),
+            sample(0, 0, false),
+        ];
         assert_eq!(detect_spending_mode(&above_noise), SpendingMode::Debit);
     }
 
@@ -1406,14 +1426,22 @@ mod tests {
     // faturas ainda vivas), o modo volta ao débito — a transição acontece sozinha.
     #[test]
     fn spending_mode_debit_constancy_wins_even_with_faturas_alive() {
-        let window = [sample(0, 0, true), sample(0, 0, true), sample(8, 60_000, true)];
+        let window = [
+            sample(0, 0, true),
+            sample(0, 0, true),
+            sample(8, 60_000, true),
+        ];
         assert_eq!(detect_spending_mode(&window), SpendingMode::Debit);
     }
 
     // Diário morto SEM fatura viva não é modo cartão — é só ausência de dado (default débito).
     #[test]
     fn spending_mode_debit_when_no_fatura_in_window() {
-        let window = [sample(0, 0, false), sample(1, 2_000, false), sample(0, 0, false)];
+        let window = [
+            sample(0, 0, false),
+            sample(1, 2_000, false),
+            sample(0, 0, false),
+        ];
         assert_eq!(detect_spending_mode(&window), SpendingMode::Debit);
     }
 }

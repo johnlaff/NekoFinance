@@ -1014,8 +1014,7 @@ pub(crate) fn parse_itemized_note_opts(
         let amount_cents = parse_number(value_part.trim());
         // Zero genuíno = o valor tem dígitos e parseia 0 (ex.: "R$ 0,00"); distinto de lixo não
         // parseável, que também retorna 0 mas nunca vira placeholder.
-        let genuine_zero =
-            amount_cents == 0 && value_part.chars().any(|c| c.is_ascii_digit());
+        let genuine_zero = amount_cents == 0 && value_part.chars().any(|c| c.is_ascii_digit());
         let keep_as_placeholder = keep_zero_placeholders && genuine_zero;
         if amount_cents < 0 || (amount_cents == 0 && !keep_as_placeholder) {
             continue; // valor inválido, negativo, ou zero fora do caso placeholder → pula
@@ -1664,8 +1663,7 @@ pub(crate) fn scan_ceiling_ceremony_note(
             else {
                 continue;
             };
-            if note.trim().is_empty()
-                || super::ceiling_note::parse_ceiling_ceremony(note).is_none()
+            if note.trim().is_empty() || super::ceiling_note::parse_ceiling_ceremony(note).is_none()
             {
                 continue;
             }
@@ -4443,16 +4441,46 @@ mod tests {
         // Blocos JANEIRO (offset 0) e FEVEREIRO (offset 6); Diário = offset 3 do bloco.
         let rows: Vec<Vec<String>> = vec![
             vec![
-                "JANEIRO".into(), "".into(), "".into(), "".into(), "".into(), "".into(),
-                "FEVEREIRO".into(), "".into(), "".into(), "".into(), "".into(), "".into(),
+                "JANEIRO".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "FEVEREIRO".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
             ],
             vec![
-                "Data".into(), "Entrada".into(), "Saída".into(), "Diário".into(), "Saldo".into(), "".into(),
-                "Data".into(), "Entrada".into(), "Saída".into(), "Diário".into(), "Saldo".into(), "".into(),
+                "Data".into(),
+                "Entrada".into(),
+                "Saída".into(),
+                "Diário".into(),
+                "Saldo".into(),
+                "".into(),
+                "Data".into(),
+                "Entrada".into(),
+                "Saída".into(),
+                "Diário".into(),
+                "Saldo".into(),
+                "".into(),
             ],
             vec![
-                "1".into(), "".into(), "".into(), "".into(), "".into(), "".into(),
-                "".into(), "".into(), "".into(), "".into(), "".into(), "".into(),
+                "1".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                "".into(),
             ],
         ];
         let mut notes: Vec<Vec<String>> = vec![vec!["".into(); 12]; 3];
@@ -4485,20 +4513,28 @@ mod tests {
     async fn ceiling_proposal_upsert_is_idempotent_and_supersedes_pending() {
         let pool = test_pool().await;
         let note_a = "R$ 900,00 / 30 Dias = R$ 30,00";
-        let note_b = "Mensal R$ 1.250,00 Mercado\nTotal = R$ 1.250,00\nR$ 1.250,00 / 31 Dias = R$ 40,33";
+        let note_b =
+            "Mensal R$ 1.250,00 Mercado\nTotal = R$ 1.250,00\nR$ 1.250,00 / 31 Dias = R$ 40,33";
 
         let mut tx = pool.begin().await.unwrap();
-        assert!(upsert_ceiling_proposal_in_tx(&mut tx, "2026-01", note_a).await.unwrap());
+        assert!(
+            upsert_ceiling_proposal_in_tx(&mut tx, "2026-01", note_a)
+                .await
+                .unwrap()
+        );
         // Mesma nota (com espaçamento diferente) → mesma identidade, não re-propõe.
-        assert!(!upsert_ceiling_proposal_in_tx(&mut tx, "2026-02", "R$  900,00 / 30 Dias =  R$ 30,00").await.unwrap());
+        assert!(
+            !upsert_ceiling_proposal_in_tx(&mut tx, "2026-02", "R$  900,00 / 30 Dias =  R$ 30,00")
+                .await
+                .unwrap()
+        );
         tx.commit().await.unwrap();
 
-        let (count, status): (i64, String) = sqlx::query_as(
-            "SELECT COUNT(*), MAX(status) FROM ceiling_proposal",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let (count, status): (i64, String) =
+            sqlx::query_as("SELECT COUNT(*), MAX(status) FROM ceiling_proposal")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!((count, status.as_str()), (1, "pending"));
 
         // Dispensar e reimportar a MESMA nota: não volta a propor.
@@ -4507,9 +4543,17 @@ mod tests {
             .await
             .unwrap();
         let mut tx = pool.begin().await.unwrap();
-        assert!(!upsert_ceiling_proposal_in_tx(&mut tx, "2026-03", note_a).await.unwrap());
+        assert!(
+            !upsert_ceiling_proposal_in_tx(&mut tx, "2026-03", note_a)
+                .await
+                .unwrap()
+        );
         // Nota NOVA propõe de novo (e itens/divisor persistem).
-        assert!(upsert_ceiling_proposal_in_tx(&mut tx, "2026-03", note_b).await.unwrap());
+        assert!(
+            upsert_ceiling_proposal_in_tx(&mut tx, "2026-03", note_b)
+                .await
+                .unwrap()
+        );
         tx.commit().await.unwrap();
 
         let (per_day, divisor, items_json, month): (i64, i64, String, String) = sqlx::query_as(

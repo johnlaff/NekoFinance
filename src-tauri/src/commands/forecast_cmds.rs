@@ -91,6 +91,11 @@ pub(crate) async fn projection_seed(
 /// da faixa canônica 20–30%; não os unifique sem decisão de método (unificar afrouxaria o gate anual).
 pub(crate) const SAVINGS_TARGET_BPS: i64 = 2500;
 
+/// Piso da faixa de economia do método (20%): abaixo dele a economia não está "viva" — é o
+/// vermelho da escada das réguas e o gate de legitimidade do modo cartão. Distinto da META
+/// (`SAVINGS_TARGET_BPS`, centro da faixa) que o guardrail de poupança usa.
+pub(crate) const SAVINGS_FLOOR_BPS: i64 = 2_000;
+
 /// Limiar de cobertura: um mês futuro com menos de 60% do gasto típico já lançado é tratado como
 /// INCOMPLETO (projeção otimista demais — o "chá revelação" do método). Margem ampla porque o
 /// método aceita variação mês a mês; abaixo disso é quase certo que falta fatura/variável.
@@ -288,6 +293,153 @@ pub(crate) async fn realized_annual_economia(
     Ok(total)
 }
 
+/// Patrimônio REALIZADO do ano (previdência/ilíquido), na MESMA janela de meses completos de
+/// `realized_annual_economia`: itens de nota INVESTIMENTO + transfers → conta ILÍQUIDA. Entra na
+/// régua de economia SÓ quando a reserva líquida ≥ 6 meses (o método constrói liquidez primeiro;
+/// depois disso, patrimônio conta como poupança) — a condição é do caller.
+pub(crate) async fn realized_annual_patrimonio(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+) -> Result<i64, String> {
+    let cur_ym = today_naive.format("%Y-%m").to_string();
+    // Mesmo deslocamento de JANEIRO→DEZEMBRO das figuras anuais irmãs (janela nunca vazia).
+    let is_january = cur_ym == format!("{}-01", today_naive.year());
+    let (lower, upper) = if is_january {
+        (
+            format!("{}-12-01", today_naive.year() - 1),
+            format!("{}-01-01", today_naive.year()),
+        )
+    } else {
+        (
+            format!("{}-01-01", today_naive.year()),
+            format!("{cur_ym}-01"),
+        )
+    };
+
+    let item_rows: Vec<(i64, String, Option<String>)> = sqlx::query_as(
+        "SELECT li.amount_cents, li.description, li.section \
+         FROM line_item li \
+         JOIN \"transaction\" t ON t.id = li.transaction_id \
+         WHERE t.date >= ?1 AND t.date < ?2 AND t.type = 'expense' AND t.scenario_id IS NULL \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM transaction_tag tt2 \
+               JOIN tag tg ON tg.id = tt2.tag_id \
+               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
+           )",
+    )
+    .bind(&lower)
+    .bind(&upper)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("annual patrimonio line items: {e}"))?;
+    let mut total: i64 = item_rows
+        .into_iter()
+        .filter(|(_, description, section)| {
+            import::classify_line_item(section.as_deref(), description)
+                == import::ItemKind::Patrimonio
+        })
+        .map(|(cents, _, _)| cents.abs())
+        .sum();
+
+    let transfers: (i64,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(ABS(t.amount)), 0) FROM \"transaction\" t \
+         LEFT JOIN account a ON a.id = t.to_account_id \
+         WHERE t.date >= ?1 AND t.date < ?2 \
+           AND t.type='transfer' AND a.liquidity = 'illiquid' AND t.scenario_id IS NULL \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM transaction_tag tt2 \
+               JOIN tag tg ON tg.id = tt2.tag_id \
+               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
+           )",
+    )
+    .bind(&lower)
+    .bind(&upper)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("annual patrimonio transfers: {e}"))?;
+    total += transfers.0;
+    Ok(total)
+}
+
+/// Sinais do modo de gasto + insumos do re-roteamento do dia no modo cartão. A janela é a da
+/// detecção (2 meses completos + corrente); os campos de fatura olham do mês corrente ao fim do
+/// mês SEGUINTE (o próximo vencimento pode cair na virada).
+pub(crate) struct SpendingModeSummary {
+    pub mode: forecast::SpendingMode,
+    /// Cartão do mês corrente (realizado + projetado), magnitude.
+    pub cartao_month_cents: i64,
+    /// Próximo dia de fatura (evento Cartão) a partir de hoje: (data ISO, total do dia).
+    pub next_fatura: Option<(String, i64)>,
+}
+
+pub(crate) async fn spending_mode_summary(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+) -> Result<SpendingModeSummary, String> {
+    let month_start = NaiveDate::from_ymd_opt(today_naive.year(), today_naive.month(), 1).unwrap();
+    let window_start = month_start - chrono::Months::new(2);
+    let next_month_end = month_start + chrono::Months::new(2);
+    let events = load_metric_db_events(pool, window_start, next_month_end).await?;
+
+    let window_keys = [
+        window_start.format("%Y-%m").to_string(),
+        (month_start - chrono::Months::new(1))
+            .format("%Y-%m")
+            .to_string(),
+        month_start.format("%Y-%m").to_string(),
+    ];
+    let cur_ym = window_keys[2].clone();
+
+    let mut samples = [forecast::MonthSpendSample {
+        daily_days: 0,
+        daily_total_cents: 0,
+        cartao_present: false,
+    }; 3];
+    let mut daily_dates: [std::collections::HashSet<NaiveDate>; 3] = Default::default();
+    let mut cartao_month_cents = 0i64;
+    let mut next_fatura_by_date: std::collections::BTreeMap<String, i64> =
+        std::collections::BTreeMap::new();
+
+    for e in &events {
+        let ym = e.date.format("%Y-%m").to_string();
+        let slot = window_keys.iter().position(|k| *k == ym);
+        match e.kind {
+            forecast::EventKind::Daily => {
+                // Realização decidida pela DATA (≤ hoje), não pelo `is_projection` congelado.
+                if let Some(i) = slot
+                    && e.date <= today_naive
+                {
+                    samples[i].daily_total_cents += e.amount_cents.abs();
+                    daily_dates[i].insert(e.date);
+                }
+            }
+            forecast::EventKind::Cartao => {
+                if let Some(i) = slot {
+                    samples[i].cartao_present = true;
+                }
+                if ym == cur_ym {
+                    cartao_month_cents += e.amount_cents.abs();
+                }
+                if e.date >= today_naive {
+                    *next_fatura_by_date
+                        .entry(e.date.format("%Y-%m-%d").to_string())
+                        .or_insert(0) += e.amount_cents.abs();
+                }
+            }
+            _ => {}
+        }
+    }
+    for (i, dates) in daily_dates.iter().enumerate() {
+        samples[i].daily_days = dates.len() as u32;
+    }
+
+    Ok(SpendingModeSummary {
+        mode: forecast::detect_spending_mode(&samples),
+        cartao_month_cents,
+        next_fatura: next_fatura_by_date.into_iter().next(),
+    })
+}
+
 /// Anotação da aba Economia (`economia_annotation`) para os ANOS informados, indexada por
 /// `(ano, mês)` em centavos. Alimenta `month_metrics_for`/`project_with_metrics`, que reconcilia a
 /// anotação com a Economia derivada usando o maior valor do mês para evitar dupla contagem.
@@ -354,6 +506,16 @@ pub(crate) async fn realized_monthly_baseline(
     pool: &SqlitePool,
     today_naive: NaiveDate,
 ) -> Result<i64, String> {
+    Ok(realized_monthly_baseline_detail(pool, today_naive).await?.0)
+}
+
+/// Como [`realized_monthly_baseline`], mas devolve também QUANTOS meses sustentam a mediana —
+/// o que separa o veredito (janela cheia de 6) do "retrato vivo" (1–5 meses, estimativa
+/// marcada) e do sem-registro (0).
+pub(crate) async fn realized_monthly_baseline_detail(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+) -> Result<(i64, i64), String> {
     // Sem filtro `is_projection` (congelado/stale): meses completos já passaram, a data decide.
     // O loader compartilhado já aplica ABS por item/transação e o filtro de tags excluídas.
     let month_start = NaiveDate::from_ymd_opt(today_naive.year(), today_naive.month(), 1).unwrap();
@@ -373,11 +535,12 @@ pub(crate) async fn realized_monthly_baseline(
             _ => {}
         }
     }
+    let months = by_month.len() as i64;
     let vals: Vec<i64> = by_month.into_values().collect();
     if vals.is_empty() {
-        return Ok(0);
+        return Ok((0, 0));
     }
-    Ok(median_cents(vals))
+    Ok((median_cents(vals), months))
 }
 
 /// Mediana em centavos (par ⇒ média dos dois centrais, truncada). Estimador comum das réguas
@@ -458,6 +621,14 @@ pub(crate) async fn effective_daily_ceiling(
     pool: &SqlitePool,
     today_naive: NaiveDate,
 ) -> Result<i64, String> {
+    if let Some(amount) = active_daily_budget(pool).await? {
+        return Ok(amount);
+    }
+    prev_month_daily_avg(pool, today_naive).await
+}
+
+/// Orçamento diário explícito ativo (> 0), se houver — o único teto que é VEREDITO (escolhido).
+pub(crate) async fn active_daily_budget(pool: &SqlitePool) -> Result<Option<i64>, String> {
     let active: Option<(i64,)> = sqlx::query_as(
         "SELECT amount FROM daily_budget WHERE status='active' AND amount > 0 \
          ORDER BY start_date DESC LIMIT 1",
@@ -465,9 +636,12 @@ pub(crate) async fn effective_daily_ceiling(
     .fetch_optional(pool)
     .await
     .map_err(|e| format!("daily ceiling (budget): {e}"))?;
-    if let Some((amount,)) = active {
-        return Ok(amount);
-    }
+    Ok(active.map(|(amount,)| amount))
+}
+
+/// Diário médio do último mês COMPLETO (Σ diário realizado ÷ dias do mês) — a base do teto
+/// ESTIMADO quando o dono não estipulou nada.
+async fn prev_month_daily_avg(pool: &SqlitePool, today_naive: NaiveDate) -> Result<i64, String> {
     // Mês anterior completo: primeiro dia do mês corrente − 1 dia.
     let first_this = NaiveDate::from_ymd_opt(today_naive.year(), today_naive.month(), 1)
         .ok_or("data inválida")?;
@@ -492,6 +666,67 @@ pub(crate) async fn effective_daily_ceiling(
     .await
     .map_err(|e| format!("daily ceiling (avg): {e}"))?;
     Ok(if days_prev > 0 { sum.0 / days_prev } else { 0 })
+}
+
+/// Procedência do teto exibido. `chosen` é o único veredito; `estimate` é a média do mês
+/// anterior COM selo (o fallback silencioso morre na exibição — o motor de projeção continua
+/// usando `effective_daily_ceiling`); `none` = travessão + CTA da cerimônia. A proposta pendente
+/// da cerimônia é um OVERLAY (banner de confirmação), nunca a procedência do número exibido — o
+/// valor proposto não entra em progresso/projeção antes do aceite explícito.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CeilingSource {
+    Chosen,
+    Estimate,
+    None,
+}
+
+impl CeilingSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CeilingSource::Chosen => "chosen",
+            CeilingSource::Estimate => "estimate",
+            CeilingSource::None => "none",
+        }
+    }
+}
+
+/// Leitura do teto para exibição: valor + procedência explícita.
+pub(crate) struct CeilingReading {
+    pub per_day_cents: i64,
+    pub source: CeilingSource,
+}
+
+pub(crate) async fn daily_ceiling_reading(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+) -> Result<CeilingReading, String> {
+    if let Some(amount) = active_daily_budget(pool).await? {
+        return Ok(CeilingReading {
+            per_day_cents: amount,
+            source: CeilingSource::Chosen,
+        });
+    }
+    let avg = prev_month_daily_avg(pool, today_naive).await?;
+    if avg > 0 {
+        return Ok(CeilingReading {
+            per_day_cents: avg,
+            source: CeilingSource::Estimate,
+        });
+    }
+    Ok(CeilingReading {
+        per_day_cents: 0,
+        source: CeilingSource::None,
+    })
+}
+
+/// Existe proposta de cerimônia aguardando o dono?
+pub(crate) async fn has_pending_ceiling_proposal(pool: &SqlitePool) -> Result<bool, String> {
+    let row: Option<(i64,)> =
+        sqlx::query_as("SELECT 1 FROM ceiling_proposal WHERE status = 'pending' LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("ceiling proposal (pending): {e}"))?;
+    Ok(row.is_some())
 }
 
 /// Núcleo puro do upsert do teto diário (testável sem o `State` do Tauri).
@@ -599,18 +834,43 @@ pub(crate) async fn upsert_daily_budget_with_categories_inner(
     pool: &SqlitePool,
     amount_cents: i64,
     categories: &[CategoryInput],
+    divisor_days: Option<i64>,
 ) -> Result<(), String> {
-    // Valida ANTES de abrir a transação (atomicidade lógica: ou tudo válido, ou nada muda).
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| format!("upsert daily budget (begin): {e}"))?;
+    upsert_daily_budget_with_categories_tx(&mut tx, amount_cents, categories, divisor_days).await?;
+    tx.commit()
+        .await
+        .map_err(|e| format!("upsert daily budget (commit): {e}"))?;
+    Ok(())
+}
+
+/// Núcleo em transação JÁ ABERTA — o caller é dono do commit (o aceite de proposta compõe este
+/// upsert com a marcação da proposta no mesmo tudo-ou-nada).
+pub(crate) async fn upsert_daily_budget_with_categories_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    amount_cents: i64,
+    categories: &[CategoryInput],
+    divisor_days: Option<i64>,
+) -> Result<(), String> {
+    // Valida ANTES de escrever (atomicidade lógica: ou tudo válido, ou nada muda).
     for c in categories {
         if c.amount_cents <= 0 {
             return Err("cada categoria deve ter valor positivo (magnitude)".into());
         }
     }
+    if let Some(d) = divisor_days
+        && d <= 0
+    {
+        return Err("o divisor de dias deve ser positivo".into());
+    }
 
     // Obtém o person_id do primeiro perfil (padrão single-user) — igual ao `upsert_daily_budget_inner`.
     let person: Option<(String,)> =
         sqlx::query_as("SELECT id FROM person ORDER BY created_at LIMIT 1")
-            .fetch_optional(pool)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(|e| format!("upsert_daily_budget (person): {e}"))?;
     let Some((person_id,)) = person else {
@@ -618,14 +878,9 @@ pub(crate) async fn upsert_daily_budget_with_categories_inner(
         return Ok(());
     };
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| format!("upsert daily budget (begin): {e}"))?;
-
     // Depreca os registros ativos anteriores (todos, não só o primeiro).
     sqlx::query("UPDATE daily_budget SET status='deprecated' WHERE status='active'")
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(|e| format!("upsert_daily_budget (deprecate): {e}"))?;
 
@@ -633,14 +888,15 @@ pub(crate) async fn upsert_daily_budget_with_categories_inner(
         let budget_id = uuid::Uuid::new_v4().to_string();
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
         sqlx::query(
-            "INSERT INTO daily_budget (id, person_id, amount, start_date, status) \
-             VALUES (?1, ?2, ?3, ?4, 'active')",
+            "INSERT INTO daily_budget (id, person_id, amount, start_date, status, divisor_days) \
+             VALUES (?1, ?2, ?3, ?4, 'active', ?5)",
         )
         .bind(&budget_id)
         .bind(&person_id)
         .bind(amount_cents)
         .bind(&today)
-        .execute(&mut *tx)
+        .bind(divisor_days)
+        .execute(&mut **tx)
         .await
         .map_err(|e| format!("upsert_daily_budget (insert): {e}"))?;
 
@@ -649,7 +905,7 @@ pub(crate) async fn upsert_daily_budget_with_categories_inner(
         if !categories.is_empty() {
             sqlx::query("DELETE FROM daily_budget_category WHERE budget_id = ?1")
                 .bind(&budget_id)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await
                 .map_err(|e| format!("upsert categories (clear): {e}"))?;
             for c in categories {
@@ -662,16 +918,12 @@ pub(crate) async fn upsert_daily_budget_with_categories_inner(
                 .bind(&c.name)
                 .bind(c.amount_cents)
                 .bind(c.position)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await
                 .map_err(|e| format!("upsert categories (insert): {e}"))?;
             }
         }
     }
-
-    tx.commit()
-        .await
-        .map_err(|e| format!("upsert daily budget (commit): {e}"))?;
     Ok(())
 }
 
@@ -696,8 +948,10 @@ pub async fn upsert_daily_budget_with_categories_cmd(
     pool: State<'_, SqlitePool>,
     amount_cents: i64,
     categories: Vec<CategoryInput>,
+    divisor_days: Option<i64>,
 ) -> Result<(), String> {
-    upsert_daily_budget_with_categories_inner(pool.inner(), amount_cents, &categories).await
+    upsert_daily_budget_with_categories_inner(pool.inner(), amount_cents, &categories, divisor_days)
+        .await
 }
 
 /// Lê as categorias do orçamento Diário ativo (vazio = sem quebra). Adapter fino.
@@ -706,6 +960,162 @@ pub async fn get_daily_budget_categories_cmd(
     pool: State<'_, SqlitePool>,
 ) -> Result<Vec<DailyBudgetCategoryRow>, String> {
     get_daily_budget_categories_inner(pool.inner()).await
+}
+
+/// Orçamento Diário ativo por inteiro (valor/dia + divisor da cerimônia + itens mensais) — a
+/// leitura da tela do teto. `per_day_cents = 0` ⇒ sem teto estipulado.
+#[derive(serde::Serialize)]
+pub struct DailyBudgetDto {
+    pub per_day_cents: i64,
+    pub divisor_days: Option<i64>,
+    pub categories: Vec<DailyBudgetCategoryRow>,
+}
+
+pub(crate) async fn get_daily_budget_inner(pool: &SqlitePool) -> Result<DailyBudgetDto, String> {
+    let active: Option<(i64, Option<i64>)> = sqlx::query_as(
+        "SELECT amount, divisor_days FROM daily_budget WHERE status='active' AND amount > 0 \
+         ORDER BY start_date DESC LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("get_daily_budget: {e}"))?;
+    let (per_day_cents, divisor_days) = active.unwrap_or((0, None));
+    Ok(DailyBudgetDto {
+        per_day_cents,
+        divisor_days,
+        categories: get_daily_budget_categories_inner(pool).await?,
+    })
+}
+
+#[tauri::command]
+pub async fn get_daily_budget_cmd(pool: State<'_, SqlitePool>) -> Result<DailyBudgetDto, String> {
+    get_daily_budget_inner(pool.inner()).await
+}
+
+/// Proposta de teto pendente lida da cerimônia da planilha (uma por vez, por construção).
+#[derive(serde::Serialize)]
+pub struct CeilingProposalDto {
+    pub id: String,
+    pub per_day_cents: i64,
+    pub divisor_days: i64,
+    pub source_month: String,
+    pub items: Vec<CeilingProposalItemDto>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct CeilingProposalItemDto {
+    pub name: String,
+    pub amount_cents: i64,
+}
+
+pub(crate) async fn get_ceiling_proposal_inner(
+    pool: &SqlitePool,
+) -> Result<Option<CeilingProposalDto>, String> {
+    let row: Option<(String, i64, i64, String, String)> = sqlx::query_as(
+        "SELECT id, per_day_cents, divisor_days, source_month, items_json \
+         FROM ceiling_proposal WHERE status='pending' LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("get_ceiling_proposal: {e}"))?;
+    let Some((id, per_day_cents, divisor_days, source_month, items_json)) = row else {
+        return Ok(None);
+    };
+    // Fronteira interna, mas ainda parse-validado: um items_json corrompido não pode derrubar a
+    // tela — degrada para proposta sem itens.
+    let items: Vec<CeilingProposalItemDto> = serde_json::from_str(&items_json).unwrap_or_default();
+    Ok(Some(CeilingProposalDto {
+        id,
+        per_day_cents,
+        divisor_days,
+        source_month,
+        items,
+    }))
+}
+
+#[tauri::command]
+pub async fn get_ceiling_proposal_cmd(
+    pool: State<'_, SqlitePool>,
+) -> Result<Option<CeilingProposalDto>, String> {
+    get_ceiling_proposal_inner(pool.inner()).await
+}
+
+/// Aceite EXPLÍCITO da proposta: grava o orçamento (valor/dia + itens + divisor) e marca a
+/// proposta como aceita, no mesmo tudo-ou-nada.
+pub(crate) async fn accept_ceiling_proposal_inner(
+    pool: &SqlitePool,
+    proposal_id: &str,
+) -> Result<(), String> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| format!("accept proposal (begin): {e}"))?;
+    let row: Option<(i64, i64, String)> = sqlx::query_as(
+        "SELECT per_day_cents, divisor_days, items_json FROM ceiling_proposal \
+         WHERE id = ?1 AND status = 'pending'",
+    )
+    .bind(proposal_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| format!("accept proposal (lookup): {e}"))?;
+    let Some((per_day_cents, divisor_days, items_json)) = row else {
+        return Err("proposta de teto não encontrada ou já resolvida".into());
+    };
+    let items: Vec<CeilingProposalItemDto> = serde_json::from_str(&items_json).unwrap_or_default();
+    let categories: Vec<CategoryInput> = items
+        .into_iter()
+        .enumerate()
+        .map(|(i, it)| CategoryInput {
+            name: it.name,
+            amount_cents: it.amount_cents,
+            position: i as i64,
+        })
+        .collect();
+    upsert_daily_budget_with_categories_tx(&mut tx, per_day_cents, &categories, Some(divisor_days))
+        .await?;
+    sqlx::query(
+        "UPDATE ceiling_proposal SET status='accepted', resolved_at=datetime('now') WHERE id=?1",
+    )
+    .bind(proposal_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| format!("accept proposal (mark): {e}"))?;
+    tx.commit()
+        .await
+        .map_err(|e| format!("accept proposal (commit): {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn accept_ceiling_proposal_cmd(
+    pool: State<'_, SqlitePool>,
+    proposal_id: String,
+) -> Result<(), String> {
+    accept_ceiling_proposal_inner(pool.inner(), &proposal_id).await
+}
+
+/// Dispensa a proposta: some da UI e a MESMA nota nunca re-propõe (identidade por hash).
+pub(crate) async fn dismiss_ceiling_proposal_inner(
+    pool: &SqlitePool,
+    proposal_id: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE ceiling_proposal SET status='dismissed', resolved_at=datetime('now') \
+         WHERE id = ?1 AND status = 'pending'",
+    )
+    .bind(proposal_id)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("dismiss proposal: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn dismiss_ceiling_proposal_cmd(
+    pool: State<'_, SqlitePool>,
+    proposal_id: String,
+) -> Result<(), String> {
+    dismiss_ceiling_proposal_inner(pool.inner(), &proposal_id).await
 }
 
 /// Piso de reserva = colchão intocável que a folga de caixa não pode comer.
@@ -1080,6 +1490,16 @@ pub struct AnnualSavingsDto {
     pub realized_rate_bps: i64,
     /// Economia REGISTRADA do ano (transfers→reserva/ilíquido), meses completos. Distinta do net.
     pub registered_economia_cents: i64,
+    /// Patrimônio realizado do ano (previdência/ilíquido) — a outra leitura do popover.
+    pub patrimonio_cents: i64,
+    /// A régua de economia que julga (e alimenta o guardrail): registrada + patrimônio quando a
+    /// reserva líquida ≥ 6 meses (condição do método: liquidez primeiro).
+    pub economia_ruler_cents: i64,
+    pub economia_ruler_rate_bps: i64,
+    pub includes_previdencia: bool,
+    /// Estado epistêmico da régua de economia: `verdict` (economia registrada viva) ·
+    /// `no_record` (nada registrado — a UI exibe a sobra derivada como estimativa marcada).
+    pub economia_state: String,
     pub projected_income_cents: i64,
     pub projected_savings_cents: i64,
     pub projected_rate_bps: i64,
@@ -1161,13 +1581,30 @@ pub(crate) async fn forecast_dto(
     let reserve_floor_cents = reserve_floor(pool, today_naive).await?;
     // Poupança ANUAL realizada (não o mês isolado, não o ano projetado-incompleto).
     let (annual_income, annual_savings_amt) = realized_annual_savings(pool, today_naive).await?;
-    // Economia REGISTRADA do ano (transfers→reserva): numerador do Economizado% e entrada do
-    // guardrail de poupança. O net `annual_savings_amt` é só exibição do colchão (não decide).
+    // Economia REGISTRADA do ano (transfers→reserva): numerador do Economizado%. O net
+    // `annual_savings_amt` é só exibição do colchão (não decide).
     let annual_economia = realized_annual_economia(pool, today_naive).await?;
+    // Previdência condicional à reserva líquida: com ≥ 6 meses de reserva, o patrimônio conta na
+    // régua de economia (e no guardrail — uma régua só, sem bifurcar semântica).
+    let annual_patrimonio = realized_annual_patrimonio(pool, today_naive).await?;
+    let reserve_balance: (i64,) =
+        sqlx::query_as("SELECT COALESCE(SUM(balance), 0) FROM account WHERE liquidity = 'reserve'")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("query reserve balance: {e}"))?;
+    let baseline_for_reserve = realized_monthly_baseline(pool, today_naive).await?;
+    let includes_previdencia =
+        baseline_for_reserve > 0 && reserve_balance.0 >= baseline_for_reserve * RESERVE_MIN_MONTHS;
+    let economia_ruler = annual_economia
+        + if includes_previdencia {
+            annual_patrimonio
+        } else {
+            0
+        };
     let sts = forecast::safe_to_spend_today(
         &fc,
         annual_income,
-        annual_economia,
+        economia_ruler,
         SAVINGS_TARGET_BPS,
         reserve_floor_cents,
     );
@@ -1193,6 +1630,16 @@ pub(crate) async fn forecast_dto(
         realized_savings_cents: annual_savings_amt,
         realized_rate_bps: rate_bps(annual_savings_amt, annual_income),
         registered_economia_cents: annual_economia,
+        patrimonio_cents: annual_patrimonio,
+        economia_ruler_cents: economia_ruler,
+        economia_ruler_rate_bps: rate_bps(economia_ruler, annual_income),
+        includes_previdencia,
+        economia_state: if economia_ruler > 0 {
+            "verdict"
+        } else {
+            "no_record"
+        }
+        .to_string(),
         projected_income_cents: proj_income,
         projected_savings_cents: proj_savings,
         projected_rate_bps: rate_bps(proj_savings, proj_income),
@@ -1489,9 +1936,29 @@ pub async fn get_annual_metrics(
 pub struct DashboardSummary {
     pub balance: i64,
     pub daily_budget: i64,
+    /// Procedência do teto exibido: `chosen` (veredito) · `estimate` (média do mês anterior,
+    /// com selo) · `none` (sem registro).
+    pub daily_ceiling_source: String,
+    /// Overlay: existe proposta da cerimônia do teto aguardando confirmação do dono.
+    pub ceiling_proposal_pending: bool,
     pub daily_spend_today: i64,
     pub reserve_months: f64,
+    /// Estado epistêmico da reserva: `verdict` (mediana de 6 meses completos) · `estimate`
+    /// ("retrato vivo", 1–5 meses) · `zero` (contas de reserva zeradas) · `no_record`.
+    pub reserve_state: String,
+    /// Meses completos que sustentam o custo de vida da régua (base do retrato vivo).
+    pub reserve_basis_months: i64,
     pub reserve_trend: String,
+    /// Modo de gasto detectado: `debit` · `card`.
+    pub spending_mode: String,
+    /// Gate de legitimidade do modo cartão (economia 20–30% viva): `alive` · `below` ·
+    /// `unknown` (sem renda no ano).
+    pub card_gate: String,
+    /// Cartão do mês corrente (realizado + projetado), magnitude — o que o dia lê no modo cartão.
+    pub cartao_month_cents: i64,
+    /// Próximo dia de fatura a partir de hoje (`YYYY-MM-DD`), quando existe.
+    pub next_fatura_date: Option<String>,
+    pub next_fatura_amount_cents: i64,
     pub transaction_count: i64,
     /// Most recent date (`YYYY-MM-DD`) of a non-projection transaction the user logged.
     /// `None` when no real transactions exist yet.
@@ -1529,9 +1996,14 @@ pub(crate) async fn dashboard_summary(
         .or_else(|| fc.daily.last().map(|p| p.balance_cents))
         .unwrap_or(seed);
 
-    // Teto do diário exibido no tile "Diário de hoje" (`de R$X`): orçamento explícito ativo, senão
-    // o Diário médio do mês anterior — mesma fonte do driver de projeção do forecast (consistência).
-    let daily_budget = effective_daily_ceiling(pool, today_naive).await?;
+    // Teto do diário exibido no tile "Diário de hoje" (`de R$X`), com PROCEDÊNCIA explícita:
+    // escolhido · estimado pela média do mês anterior · sem registro. Mesma fonte do driver de
+    // projeção (`effective_daily_ceiling` = escolhido → média). A proposta da cerimônia é um
+    // overlay de confirmação — nunca o número.
+    let ceiling = daily_ceiling_reading(pool, today_naive).await?;
+    let daily_budget = ceiling.per_day_cents;
+    let ceiling_proposal_pending = has_pending_ceiling_proposal(pool).await?;
+    let mode = spending_mode_summary(pool, today_naive).await?;
 
     // Diário de HOJE como MAGNITUDE positiva (o card faz `teto - gasto` e `gasto/teto`).
     // - Sinal: por convenção, `amount` é gravado como magnitude positiva (import faz `.abs()`,
@@ -1562,11 +2034,30 @@ pub(crate) async fn dashboard_summary(
             .fetch_one(pool)
             .await
             .map_err(|e| format!("query reserve balance: {e}"))?;
-    let reserve_baseline = realized_monthly_baseline(pool, today_naive).await?;
+    let has_reserve_accounts: (i64,) =
+        sqlx::query_as("SELECT EXISTS(SELECT 1 FROM account WHERE liquidity = 'reserve')")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("query reserve accounts: {e}"))?;
+    let (reserve_baseline, reserve_basis_months) =
+        realized_monthly_baseline_detail(pool, today_naive).await?;
     let reserve_months = if reserve_baseline > 0 {
         reserve_balance.0 as f64 / reserve_baseline as f64
     } else {
         0.0
+    };
+    // Estado epistêmico da reserva: o método não exige histórico mínimo — com 1–5 meses o custo
+    // de vida vale como "retrato vivo" (estimativa marcada); 6 meses completos é o veredito.
+    // Sem contas de reserva mapeadas ou sem baseline nenhum, não há número honesto (sem
+    // registro); contas mapeadas zeradas são o alerta legítimo (zero-diagnóstico).
+    let reserve_state = if has_reserve_accounts.0 == 0 || reserve_baseline <= 0 {
+        "no_record"
+    } else if reserve_balance.0 == 0 {
+        "zero"
+    } else if reserve_basis_months >= 6 {
+        "verdict"
+    } else {
+        "estimate"
     };
     let reserve_trend: (String,) = sqlx::query_as(
         "SELECT COALESCE(trend, 'flat') FROM reserve ORDER BY last_calculated_at DESC LIMIT 1",
@@ -1597,12 +2088,40 @@ pub(crate) async fn dashboard_summary(
     .map_err(|e| format!("query last_real_tx_date: {e}"))?;
     let last_real_tx_date = last_real.and_then(|(d,)| d);
 
+    // Gate de legitimidade do modo cartão: a economia 20–30% precisa estar VIVA (piso de 20%
+    // sobre a régua anual de economia, com a previdência condicional à reserva ≥ 6 meses).
+    let (annual_income, _) = realized_annual_savings(pool, today_naive).await?;
+    let mut economia_ruler = realized_annual_economia(pool, today_naive).await?;
+    if reserve_months >= RESERVE_MIN_MONTHS as f64 {
+        economia_ruler += realized_annual_patrimonio(pool, today_naive).await?;
+    }
+    let card_gate = if annual_income <= 0 {
+        "unknown"
+    } else if economia_ruler * 10_000 >= SAVINGS_FLOOR_BPS * annual_income {
+        "alive"
+    } else {
+        "below"
+    };
+
     Ok(DashboardSummary {
         balance: projected_balance,
         daily_budget,
+        daily_ceiling_source: ceiling.source.as_str().to_string(),
+        ceiling_proposal_pending,
         daily_spend_today: daily_spend.0,
         reserve_months,
+        reserve_state: reserve_state.to_string(),
+        reserve_basis_months,
         reserve_trend: reserve_trend.0,
+        spending_mode: match mode.mode {
+            forecast::SpendingMode::Debit => "debit",
+            forecast::SpendingMode::Card => "card",
+        }
+        .to_string(),
+        card_gate: card_gate.to_string(),
+        cartao_month_cents: mode.cartao_month_cents,
+        next_fatura_date: mode.next_fatura.as_ref().map(|(d, _)| d.clone()),
+        next_fatura_amount_cents: mode.next_fatura.map(|(_, v)| v).unwrap_or(0),
         transaction_count: count.0,
         last_real_tx_date,
     })
@@ -2153,7 +2672,7 @@ mod tests {
             cat("Groceries", 50000, 1),
             cat("Leisure", 45000, 2),
         ];
-        upsert_daily_budget_with_categories_inner(&p, 125000, &cats)
+        upsert_daily_budget_with_categories_inner(&p, 125000, &cats, None)
             .await
             .unwrap();
 
@@ -2172,7 +2691,7 @@ mod tests {
         assert_eq!(total, 125000, "o teto total ativo é o escrito");
 
         // Reescrever substitui (clear + reinsert), não acumula.
-        upsert_daily_budget_with_categories_inner(&p, 125000, &[cat("Shopping", 125000, 0)])
+        upsert_daily_budget_with_categories_inner(&p, 125000, &[cat("Shopping", 125000, 0)], None)
             .await
             .unwrap();
         let rows2 = get_daily_budget_categories_inner(&p).await.unwrap();
@@ -2185,7 +2704,7 @@ mod tests {
         let p = pool().await;
         seed_person(&p).await;
         // Sem quebra: grava só o total; nenhuma categoria inserida.
-        upsert_daily_budget_with_categories_inner(&p, 60000, &[])
+        upsert_daily_budget_with_categories_inner(&p, 60000, &[], None)
             .await
             .unwrap();
         let rows = get_daily_budget_categories_inner(&p).await.unwrap();
@@ -2200,11 +2719,11 @@ mod tests {
     async fn upsert_daily_budget_with_categories_deprecates_old() {
         let p = pool().await;
         seed_person(&p).await;
-        upsert_daily_budget_with_categories_inner(&p, 100000, &[cat("Groceries", 100000, 0)])
+        upsert_daily_budget_with_categories_inner(&p, 100000, &[cat("Groceries", 100000, 0)], None)
             .await
             .unwrap();
         // Segunda chamada depreca o orçamento anterior e cria nova quebra no novo orçamento ativo.
-        upsert_daily_budget_with_categories_inner(&p, 80000, &[cat("Transport", 80000, 0)])
+        upsert_daily_budget_with_categories_inner(&p, 80000, &[cat("Transport", 80000, 0)], None)
             .await
             .unwrap();
 
@@ -2229,7 +2748,7 @@ mod tests {
     async fn upsert_daily_budget_with_categories_rejects_zero_category() {
         let p = pool().await;
         seed_person(&p).await;
-        let err = upsert_daily_budget_with_categories_inner(&p, 50000, &[cat("Bad", 0, 0)])
+        let err = upsert_daily_budget_with_categories_inner(&p, 50000, &[cat("Bad", 0, 0)], None)
             .await
             .unwrap_err();
         assert!(err.contains("positivo"), "err: {err}");
@@ -2252,6 +2771,7 @@ mod tests {
             &p,
             10000,
             &[cat("Alpha", 6000, 0), cat("Beta", 4000, 1)],
+            None,
         )
         .await
         .unwrap();
@@ -2284,7 +2804,7 @@ mod tests {
         assert_eq!(orphan.0, 0, "nenhuma categoria sob orçamento deprecado");
 
         // Desativar (amount_cents = 0): nenhum orçamento ativo; a leitura do ATIVO não traz categorias.
-        upsert_daily_budget_with_categories_inner(&p, 0, &[])
+        upsert_daily_budget_with_categories_inner(&p, 0, &[], None)
             .await
             .unwrap();
         let active_after: (i64,) =
@@ -2583,5 +3103,262 @@ mod tests {
         let today = NaiveDate::from_ymd_opt(2026, 5, 15).unwrap();
         let (income_median, economia_median) = realized_savings_baseline(&p, today).await.unwrap();
         assert_eq!((income_median, economia_median), (0, 0));
+    }
+
+    // --- Estados epistêmicos: procedência do teto, reserva, modo de gasto, previdência ---
+
+    /// Transfer para conta ILÍQUIDA `acc-prev` (previdência → `EventKind::Patrimonio`).
+    async fn insert_patrimonio_transfer(pool: &SqlitePool, id: &str, amount: i64, date: &str) {
+        sqlx::query("INSERT OR IGNORE INTO person (id, name) VALUES ('pe-1', 'Tester')")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT OR IGNORE INTO account (id, name, type, owner_person_id, balance, liquidity) \
+             VALUES ('acc-prev', 'Previdência', 'pension', 'pe-1', 0, 'illiquid')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) \
+             VALUES (?1, 'transfer', ?2, ?3, 'acc-prev', 0)",
+        )
+        .bind(id)
+        .bind(amount)
+        .bind(date)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn insert_reserve_account(pool: &SqlitePool, balance: i64) {
+        sqlx::query("INSERT OR IGNORE INTO person (id, name) VALUES ('pe-1', 'Tester')")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT OR IGNORE INTO account (id, name, type, owner_person_id, balance, liquidity) \
+             VALUES ('acc-res', 'Reserva', 'savings', 'pe-1', ?1, 'reserve')",
+        )
+        .bind(balance)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Diário realizado (despesa variável não-crédito) em uma data.
+    async fn insert_daily(pool: &SqlitePool, id: &str, amount: i64, date: &str) {
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, payment_method) \
+             VALUES (?1, 'expense', ?2, ?3, 0, 0, 'debit')",
+        )
+        .bind(id)
+        .bind(amount)
+        .bind(date)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Despesa de cartão (crédito) — vira `EventKind::Cartao`.
+    async fn insert_credit(pool: &SqlitePool, id: &str, amount: i64, date: &str) {
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, payment_method) \
+             VALUES (?1, 'expense', ?2, ?3, 1, 0, 'credit')",
+        )
+        .bind(id)
+        .bind(amount)
+        .bind(date)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    // Procedência do teto: escolhido vence; sem escolhido a média vira ESTIMATIVA; sem nada,
+    // sem registro — o número nunca chega sem marca.
+    #[tokio::test]
+    async fn daily_ceiling_reading_reports_chosen_estimate_and_none() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+
+        let none = daily_ceiling_reading(&p, today).await.unwrap();
+        assert_eq!(none.source.as_str(), "none");
+        assert_eq!(none.per_day_cents, 0);
+
+        // Diário de maio (31 dias): 3.100,00 → média 100,00/dia = estimativa.
+        insert_daily(&p, "d1", 310_000, "2026-05-10").await;
+        let est = daily_ceiling_reading(&p, today).await.unwrap();
+        assert_eq!(est.source.as_str(), "estimate");
+        assert_eq!(est.per_day_cents, 10_000);
+
+        // Orçamento explícito ativo vence com procedência de veredito.
+        seed_person(&p).await;
+        upsert_daily_budget_inner(&p, 15_000).await.unwrap();
+        let chosen = daily_ceiling_reading(&p, today).await.unwrap();
+        assert_eq!(chosen.source.as_str(), "chosen");
+        assert_eq!(chosen.per_day_cents, 15_000);
+    }
+
+    // Perfil cartão (Diário morto + faturas vivas): modo cartão, Cartão do mês somado e próximo
+    // vencimento a partir de hoje — os insumos do re-roteamento do dia.
+    #[tokio::test]
+    async fn spending_mode_summary_detects_card_profile_and_faturas() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        insert_credit(&p, "c1", 250_000, "2026-04-12").await;
+        insert_credit(&p, "c2", 260_000, "2026-05-12").await;
+        insert_credit(&p, "c3", 120_000, "2026-06-05").await; // mês corrente, passado
+        insert_credit(&p, "c4", 140_000, "2026-06-20").await; // mês corrente, futuro
+        let s = spending_mode_summary(&p, today).await.unwrap();
+        assert!(matches!(s.mode, forecast::SpendingMode::Card));
+        assert_eq!(s.cartao_month_cents, 260_000); // 120k + 140k do mês corrente
+        assert_eq!(s.next_fatura, Some(("2026-06-20".to_string(), 140_000)));
+    }
+
+    // Constância de débito no mês corrente devolve o modo débito mesmo com faturas vivas.
+    #[tokio::test]
+    async fn spending_mode_summary_debit_when_daily_constant() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        insert_credit(&p, "c1", 250_000, "2026-05-12").await;
+        for (i, day) in [1, 3, 5, 8, 10].iter().enumerate() {
+            insert_daily(&p, &format!("d{i}"), 3_000, &format!("2026-06-{day:02}")).await;
+        }
+        let s = spending_mode_summary(&p, today).await.unwrap();
+        assert!(matches!(s.mode, forecast::SpendingMode::Debit));
+    }
+
+    // Escada de estados da reserva: sem conta mapeada → sem registro; poucos meses → retrato
+    // vivo (estimativa); janela cheia → veredito; conta zerada → zero-diagnóstico.
+    #[tokio::test]
+    async fn dashboard_summary_reserve_state_ladder() {
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+
+        let p = pool().await;
+        insert_daily(&p, "d1", 100_000, "2026-05-10").await;
+        let s = dashboard_summary(&p, today).await.unwrap();
+        assert_eq!(s.reserve_state, "no_record"); // sem conta de reserva mapeada
+
+        let p = pool().await;
+        insert_daily(&p, "d1", 100_000, "2026-05-10").await;
+        insert_daily(&p, "d2", 100_000, "2026-04-10").await;
+        insert_reserve_account(&p, 600_000).await;
+        let s = dashboard_summary(&p, today).await.unwrap();
+        assert_eq!(s.reserve_state, "estimate"); // 2 meses = retrato vivo
+        assert_eq!(s.reserve_basis_months, 2);
+
+        let p = pool().await;
+        for m in 1..=6 {
+            insert_daily(&p, &format!("d{m}"), 100_000, &format!("2026-{m:02}-10")).await;
+        }
+        insert_reserve_account(&p, 600_000).await;
+        let s = dashboard_summary(&p, NaiveDate::from_ymd_opt(2026, 7, 15).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(s.reserve_state, "verdict");
+        assert_eq!(s.reserve_basis_months, 6);
+
+        let p = pool().await;
+        insert_daily(&p, "d1", 100_000, "2026-05-10").await;
+        insert_reserve_account(&p, 0).await;
+        let s = dashboard_summary(&p, today).await.unwrap();
+        assert_eq!(s.reserve_state, "zero"); // conta mapeada zerada é alerta legítimo
+    }
+
+    // Previdência condicional: patrimônio entra na régua de economia (e no guardrail) apenas
+    // com a reserva líquida ≥ 6 meses de custo de vida.
+    #[tokio::test]
+    async fn forecast_dto_includes_previdencia_only_with_reserve_coverage() {
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+
+        // Reserva folgada (6 × custo de vida de 1.000,00): previdência conta.
+        let p = pool().await;
+        insert_income(&p, "i1", 500_000, "2026-03-05").await;
+        insert_daily(&p, "d1", 100_000, "2026-05-10").await;
+        insert_patrimonio_transfer(&p, "pv1", 30_000, "2026-04-08").await;
+        insert_reserve_account(&p, 600_000).await;
+        let f = forecast_dto(&p, today).await.unwrap();
+        assert!(f.annual_savings.includes_previdencia);
+        assert_eq!(f.annual_savings.patrimonio_cents, 30_000);
+        assert_eq!(f.annual_savings.economia_ruler_cents, 30_000);
+        assert_eq!(f.annual_savings.economia_state, "verdict");
+
+        // Reserva curta (< 6 meses): previdência fica fora e a régua não tem registro.
+        let p = pool().await;
+        insert_income(&p, "i1", 500_000, "2026-03-05").await;
+        insert_daily(&p, "d1", 100_000, "2026-05-10").await;
+        insert_patrimonio_transfer(&p, "pv1", 30_000, "2026-04-08").await;
+        insert_reserve_account(&p, 500_000).await;
+        let f = forecast_dto(&p, today).await.unwrap();
+        assert!(!f.annual_savings.includes_previdencia);
+        assert_eq!(f.annual_savings.patrimonio_cents, 30_000);
+        assert_eq!(f.annual_savings.economia_ruler_cents, 0);
+        assert_eq!(f.annual_savings.economia_state, "no_record");
+    }
+
+    // Aceite explícito da proposta: orçamento (valor/dia + divisor + itens) e status no mesmo
+    // tudo-ou-nada; dispensa marca sem escrever orçamento.
+    #[tokio::test]
+    async fn accept_and_dismiss_ceiling_proposal() {
+        let p = pool().await;
+        seed_person(&p).await;
+        sqlx::query(
+            "INSERT INTO ceiling_proposal (id, note_hash, per_day_cents, divisor_days, items_json, source_month, status) \
+             VALUES ('cp-1', 'h1', 4033, 31, '[{\"name\":\"Mercado\",\"amount_cents\":125000}]', '2026-05', 'pending')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        accept_ceiling_proposal_inner(&p, "cp-1").await.unwrap();
+        let budget = get_daily_budget_inner(&p).await.unwrap();
+        assert_eq!(budget.per_day_cents, 4_033);
+        assert_eq!(budget.divisor_days, Some(31));
+        assert_eq!(budget.categories.len(), 1);
+        assert_eq!(budget.categories[0].name, "Mercado");
+        let (status,): (String,) =
+            sqlx::query_as("SELECT status FROM ceiling_proposal WHERE id='cp-1'")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(status, "accepted");
+        // Aceite repetido de proposta já resolvida é erro honesto, não regrava.
+        assert!(accept_ceiling_proposal_inner(&p, "cp-1").await.is_err());
+
+        sqlx::query(
+            "INSERT INTO ceiling_proposal (id, note_hash, per_day_cents, divisor_days, items_json, source_month, status) \
+             VALUES ('cp-2', 'h2', 2000, 30, '[]', '2026-06', 'pending')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        dismiss_ceiling_proposal_inner(&p, "cp-2").await.unwrap();
+        let (status,): (String,) =
+            sqlx::query_as("SELECT status FROM ceiling_proposal WHERE id='cp-2'")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(status, "dismissed");
+        assert!(get_ceiling_proposal_inner(&p).await.unwrap().is_none());
+    }
+
+    // O resumo do dashboard expõe a procedência do teto e o overlay de proposta pendente.
+    #[tokio::test]
+    async fn dashboard_summary_reports_ceiling_source_and_proposal_overlay() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        sqlx::query(
+            "INSERT INTO ceiling_proposal (id, note_hash, per_day_cents, divisor_days, items_json, source_month, status) \
+             VALUES ('cp-1', 'h1', 4033, 31, '[]', '2026-05', 'pending')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        let s = dashboard_summary(&p, today).await.unwrap();
+        // A proposta é overlay: a procedência segue "none" e o número não é fabricado.
+        assert_eq!(s.daily_ceiling_source, "none");
+        assert_eq!(s.daily_budget, 0);
+        assert!(s.ceiling_proposal_pending);
     }
 }

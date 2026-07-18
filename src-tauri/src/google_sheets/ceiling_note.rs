@@ -164,10 +164,10 @@ pub fn parse_ceiling_ceremony(note: &str) -> Option<CeilingCeremony> {
     }
 
     let (monthly_total_cents, divisor_days, per_day_cents) = divisor_line?;
-    if let Some(total) = total_line {
-        if total != monthly_total_cents {
-            return None;
-        }
+    if let Some(total) = total_line
+        && total != monthly_total_cents
+    {
+        return None;
     }
     if !items.is_empty() {
         let sum: i64 = items.iter().map(|i| i.amount_cents).sum();
