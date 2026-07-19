@@ -4,7 +4,6 @@ import { Badge } from "../design-system/components/Badge";
 import { Button } from "../design-system/components/Button";
 import { Disclosure } from "../design-system/components/Disclosure";
 import { EmptyState } from "../design-system/components/EmptyState";
-import { EstimateMark } from "../design-system/components/EstimateMark";
 import { InfoPopover } from "../design-system/components/InfoPopover";
 import { Money } from "../design-system/components/Money";
 import { NoRecordDash } from "../design-system/components/NoRecordDash";
@@ -194,9 +193,11 @@ function statusTone(
 }
 
 function monthLabel(value: string) {
-  return new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" }).format(
-    new Date(`${value}-01T12:00:00`),
-  );
+  const label = new Intl.DateTimeFormat("pt-BR", {
+    month: "long",
+    year: "numeric",
+  }).format(new Date(`${value}-01T12:00:00`));
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 function dateLabel(value: string) {
@@ -495,7 +496,11 @@ function CardPanel({
         <Disclosure
           title="Faturas"
           summary={
-            invoices.length ? `${invoices.length} ciclos` : "Sem ciclos registrados"
+            invoices.length === 1
+              ? "1 ciclo"
+              : invoices.length
+                ? `${invoices.length} ciclos`
+                : "Sem ciclos registrados"
           }
           icon={<CreditCard size={16} />}
         >
@@ -668,15 +673,17 @@ function InvoiceDrill({
               <div className="cartoes__actions">
                 <Button
                   variant="ghost"
+                  size="sm"
                   onClick={() => movePurchase(purchase.txn_id, -1)}
                 >
-                  Mover p/ ciclo anterior
+                  Ciclo anterior
                 </Button>
                 <Button
                   variant="ghost"
+                  size="sm"
                   onClick={() => movePurchase(purchase.txn_id, 1)}
                 >
-                  Mover p/ ciclo seguinte
+                  Ciclo seguinte
                 </Button>
               </div>
             )}
@@ -796,11 +803,14 @@ function InvoiceDrill({
       ) : null}
       <p className="cartoes__net">
         Líquido de reembolsos: <Money cents={net} size="inherit" />
-        <EstimateMark
+        <InfoPopover
           term={{
-            body: "As réguas do método julgam o valor bruto; esta é uma leitura de conferência.",
+            title: "Leitura de conferência",
+            body: "As réguas do método julgam o valor bruto; o líquido de reembolsos existe só para conferir a divisão.",
           }}
-        />
+        >
+          <Badge tone="secondary">Conferência</Badge>
+        </InfoPopover>
       </p>
     </div>
   );

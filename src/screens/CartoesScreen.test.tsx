@@ -22,7 +22,7 @@ describe("Cartões", () => {
     await user.click(screen.getByRole("button", { name: /Faturas/ }));
     expect(screen.getByText(/Não itemizado/)).toBeInTheDocument();
     expect(screen.getByText(/Líquido de reembolsos/)).toBeInTheDocument();
-    expect(screen.getByText("Estimativa")).toBeInTheDocument();
+    expect(screen.getByText("Conferência")).toBeInTheDocument();
   });
 
   it("agrupa séries e oferece seus gestos no drill", async () => {
