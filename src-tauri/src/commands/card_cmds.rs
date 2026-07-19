@@ -1241,8 +1241,8 @@ pub(crate) async fn list_card_proposals_inner(
 pub async fn accept_card_proposal(
     pool: State<'_, SqlitePool>,
     proposal_id: String,
-    closing_day: i64,
-    due_day: i64,
+    closing_day: Option<i64>,
+    due_day: Option<i64>,
     owner_person_name: Option<String>,
     linked_account_id: Option<String>,
 ) -> Result<String, String> {
@@ -1259,8 +1259,8 @@ pub async fn accept_card_proposal(
 pub(crate) async fn accept_card_proposal_inner(
     pool: &SqlitePool,
     proposal_id: &str,
-    closing_day: i64,
-    due_day: i64,
+    closing_day: Option<i64>,
+    due_day: Option<i64>,
     owner_person_name: Option<&str>,
     linked_account_id: Option<&str>,
 ) -> Result<String, String> {
@@ -1280,8 +1280,8 @@ pub(crate) async fn accept_card_proposal_inner(
         &mut tx,
         &name,
         None,
-        Some(closing_day),
-        Some(due_day),
+        closing_day,
+        due_day,
         None,
         owner_person_name,
         linked_account_id,
@@ -1677,7 +1677,7 @@ mod tests {
         let pool = pool().await;
         sqlx::query("INSERT INTO card_proposal (id,alias,display_name,source_month,status) VALUES ('p1','nubank','Nubank','2026-01','pending'),('p2','old','Old','2026-01','pending')").execute(&pool).await.unwrap();
         assert!(
-            accept_card_proposal_inner(&pool, "p1", 0, 10, None, None)
+            accept_card_proposal_inner(&pool, "p1", Some(0), Some(10), None, None)
                 .await
                 .is_err()
         );
@@ -1686,11 +1686,37 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(state, "pending");
-        let id = accept_card_proposal_inner(&pool, "p1", 20, 10, None, None)
+        let id = accept_card_proposal_inner(&pool, "p1", Some(20), Some(10), None, None)
             .await
             .unwrap();
         assert!(!id.is_empty());
         dismiss_card_proposal_inner(&pool, "p2").await.unwrap();
         assert!(list_card_proposals_inner(&pool).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn proposal_acceptance_as_additional_inherits_cycle_and_rejects_days() {
+        let pool = pool().await;
+        let holder = card(&pool, "Titular", 20, 10).await;
+        sqlx::query(
+            "INSERT INTO card_proposal (id,alias,display_name,source_month,status) \
+             VALUES ('p1','adicional','Cartão adicional','2026-01','pending'), \
+                    ('p2','com-dias','Com dias','2026-01','pending')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let additional =
+            accept_card_proposal_inner(&pool, "p1", None, None, Some("Bia"), Some(&holder))
+                .await
+                .unwrap();
+        assert_eq!(effective_cycle(&pool, &additional).await.unwrap(), (20, 10));
+
+        let error =
+            accept_card_proposal_inner(&pool, "p2", Some(20), Some(10), Some("Bia"), Some(&holder))
+                .await
+                .unwrap_err();
+        assert!(error.contains("herda"));
     }
 }

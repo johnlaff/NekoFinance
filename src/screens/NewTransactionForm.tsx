@@ -3,13 +3,19 @@ import { Button } from "../design-system/components/Button";
 import { MovBadge, type MovKind } from "../design-system/components/MovBadge";
 import {
   createTransaction,
+  createCardSeries,
+  createRefundExpectation,
   getPockets,
+  listCards,
+  listInvoices,
+  registerCardPurchase,
   listTags,
   updateSeriesAll,
   updateSeriesFrom,
   updateTransaction,
   updateTransactionItems,
   type Frequency,
+  type Card,
   type LineItem,
   type LineItemDraft,
   type PocketAccount,
@@ -135,6 +141,10 @@ interface FormState {
   repeat: boolean;
   frequency: Frequency;
   repetitions: number;
+  cardId: string;
+  cardRepeat: "never" | "subscription" | "installments";
+  installments: number;
+  refundAmount: string;
   /** Partes itemizadas. Com ≥1 parte, o Valor vira somente-leitura (= Σ partes). */
   items: LineItemDraft[];
   busy: boolean;
@@ -154,6 +164,10 @@ function makeInitialForm(initial?: TransactionEditValues): FormState {
       repeat: false,
       frequency: "mensal",
       repetitions: 12,
+      cardId: "",
+      cardRepeat: "never",
+      installments: 2,
+      refundAmount: "",
       items: toDrafts(initial.items),
       busy: false,
       error: null,
@@ -170,6 +184,10 @@ function makeInitialForm(initial?: TransactionEditValues): FormState {
     repeat: false,
     frequency: "mensal",
     repetitions: 12,
+    cardId: "",
+    cardRepeat: "never",
+    installments: 2,
+    refundAmount: "",
     items: [],
     busy: false,
     error: null,
@@ -212,6 +230,8 @@ function formReducer(s: FormState, a: FormAction): FormState {
         selectedTags: [],
         dueDate: "",
         repeat: false,
+        cardRepeat: "never",
+        refundAmount: "",
         items: [],
         busy: false,
       };
@@ -483,6 +503,21 @@ function DueDateField({
   );
 }
 
+function CardPurchaseControls({
+  cards, cardId, cardRepeat, installments, refundAmount, dispatch,
+}: {
+  cards: Card[]; cardId: string; cardRepeat: FormState["cardRepeat"]; installments: number;
+  refundAmount: string; dispatch: Dispatch<FormAction>;
+}) {
+  if (cards.length === 0) return <p style={HINT_TEXT}>Cadastre um cartão em Cartões para acompanhar a fatura.</p>;
+  return <div style={{ display: "grid", gap: "var(--space-3)" }}>
+    <div><label htmlFor="ntf-card" style={label}>Cartão</label><select id="ntf-card" value={cardId} onChange={(event) => dispatch({ type: "set", patch: { cardId: event.target.value } })} style={field}><option value="">Selecione o cartão</option>{cards.map((card) => <option key={card.id} value={card.id}>{card.name}</option>)}</select></div>
+    <fieldset style={{ border: 0, padding: 0, margin: 0 }}><legend style={label}>Repetir</legend><div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>{([ ["never", "Nunca"], ["subscription", "Assinatura"], ["installments", "Parcelado em N"] ] as const).map(([value, text]) => <button key={value} type="button" aria-pressed={cardRepeat === value} onClick={() => dispatch({ type: "set", patch: { cardRepeat: value } })} style={{ ...KIND_BTN_BASE, border: `var(--bw-hair) solid ${cardRepeat === value ? "var(--primary)" : "var(--border)"}`, background: cardRepeat === value ? "var(--surface-selected)" : "transparent" }}>{text}</button>)}</div></fieldset>
+    {cardRepeat === "installments" ? <div><label htmlFor="ntf-installments" style={label}>Número de parcelas</label><input id="ntf-installments" type="number" min="2" max="120" value={installments} onChange={(event) => dispatch({ type: "set", patch: { installments: Math.min(120, Math.max(2, Number(event.target.value))) } })} style={field} /></div> : null}
+    <div><label htmlFor="ntf-refund" style={label}>Reembolso esperado</label><input id="ntf-refund" inputMode="decimal" value={refundAmount} onChange={(event) => dispatch({ type: "set", patch: { refundAmount: event.target.value } })} placeholder="R$ 0,00" style={field} /><p style={HINT_TEXT}>Entra como Entrada vinculada no vencimento — as réguas seguem julgando o valor cheio.</p></div>
+  </div>;
+}
+
 export function NewTransactionForm({
   onCreated,
   initialValues,
@@ -505,12 +540,17 @@ export function NewTransactionForm({
     repeat,
     frequency,
     repetitions,
+    cardId,
+    cardRepeat,
+    installments,
+    refundAmount,
     items,
     busy,
     error,
   } = form;
   const [tags, setTags] = useState<Tag[]>([]);
   const [reserveAccounts, setReserveAccounts] = useState<PocketAccount[]>([]);
+  const [cards, setCards] = useState<Card[]>([]);
 
   useEffect(() => {
     let alive = true;
@@ -520,6 +560,25 @@ export function NewTransactionForm({
     return () => {
       alive = false;
     };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    listCards()
+      .then((items) => {
+        if (!alive) return;
+        setCards(items);
+        if (items.length === 1) {
+          dispatch({ type: "set", patch: { cardId: items[0]?.id ?? "" } });
+          return;
+        }
+        const last = window.localStorage.getItem("neko:lastCardId");
+        if (last && items.some((card) => card.id === last)) {
+          dispatch({ type: "set", patch: { cardId: last } });
+        }
+      })
+      .catch(() => alive && setCards([]));
+    return () => { alive = false; };
   }, []);
 
   // Contas-destino possíveis da Economia (reserve/illiquid). Só usado no kind "economia".
@@ -552,7 +611,8 @@ export function NewTransactionForm({
     effectiveAmount != null &&
     effectiveAmount > 0 &&
     !busy &&
-    (kind !== "economia" || toAccountId !== "");
+    (kind !== "economia" || toAccountId !== "") &&
+    (kind !== "cartao" || cards.length === 0 || cardId !== "");
 
   async function submit() {
     if (effectiveAmount == null || effectiveAmount <= 0) {
@@ -605,6 +665,39 @@ export function NewTransactionForm({
         }
         dispatch({ type: "submitSuccess" });
         onSaved?.();
+        return;
+      }
+      if (kind === "cartao" && cards.length > 0) {
+        if (!cardId) {
+          dispatch({ type: "fail", error: "Escolha o cartão para esta compra." });
+          return;
+        }
+        window.localStorage.setItem("neko:lastCardId", cardId);
+        if (cardRepeat === "never") {
+          await registerCardPurchase({
+            cardAccountId: cardId,
+            amountCents,
+            description: description.trim() || null,
+            date,
+            tagIds: selectedTags,
+          });
+        } else {
+          await createCardSeries({
+            cardAccountId: cardId,
+            description: description.trim(),
+            amountCents,
+            count: cardRepeat === "subscription" ? null : installments,
+            startDate: date,
+          });
+        }
+        const refundCents = parseBRLToCents(refundAmount);
+        if (refundCents && refundCents > 0) {
+          const invoices = await listInvoices(cardId);
+          const invoice = invoices.find((item) => item.status === "aberta") ?? invoices[0];
+          if (invoice) await createRefundExpectation(invoice.id, refundCents, null);
+        }
+        dispatch({ type: "submitSuccess" });
+        onCreated?.();
         return;
       }
       const newId = await createTransaction({
@@ -720,6 +813,8 @@ export function NewTransactionForm({
         <DueDateField dueDate={dueDate} dispatch={dispatch} />
       )}
 
+      {!editing && kind === "cartao" ? <CardPurchaseControls cards={cards} cardId={cardId} cardRepeat={cardRepeat} installments={installments} refundAmount={refundAmount} dispatch={dispatch} /> : null}
+
       {/* Detalhamento em partes: fora da Economia, vale para novo, passado e
           previsto — inclusive numa ocorrência de série recorrente. Como itens são por-instância,
           a edição numa série atinge só esta ocorrência (nota explicativa abaixo). */}
@@ -751,7 +846,7 @@ export function NewTransactionForm({
       )}
 
       {/* Economia é um lançamento único — a recorrência (transfer) é rejeitada pelo backend. */}
-      {!editing && kind !== "economia" && (
+      {!editing && kind !== "economia" && !(kind === "cartao" && cards.length > 0) && (
         <RepeatControls
           repeat={repeat}
           repetitions={repetitions}

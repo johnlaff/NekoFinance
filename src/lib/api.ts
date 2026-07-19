@@ -1306,6 +1306,221 @@ export function getScenarioForecast(scenarioId: string): Promise<ScenarioCompare
   return invoke("get_scenario_forecast_cmd", { scenarioId });
 }
 
+// --- Cartões e faturas ---
+
+/** Resumo derivado de uma fatura; o total declarado, quando existe, é a autoridade. */
+export interface InvoiceSummary {
+  id: string;
+  cycle_month: string;
+  closing_date: string;
+  due_date: string;
+  status: "prevista" | "aberta" | "fechada" | "paga";
+  stated_total_cents: number | null;
+  purchases_sum_cents: number;
+  effective_total_cents: number;
+  reconciliation_delta_cents: number | null;
+}
+
+export interface Card {
+  id: string;
+  name: string;
+  institution: string | null;
+  owner_name: string;
+  linked_account_id: string | null;
+  closing_day: number;
+  due_day: number;
+  credit_limit_cents: number | null;
+  aliases: string[];
+  open_invoice: InvoiceSummary | null;
+  next_due: InvoiceSummary | null;
+}
+
+export interface CardPurchase {
+  txn_id: string;
+  date: string;
+  description: string;
+  amount_cents: number;
+  owner_name: string;
+  series_id: string | null;
+  installment_label: string | null;
+  is_projection: boolean;
+}
+
+export interface Refund {
+  txn_id: string;
+  date: string;
+  amount_cents: number;
+  description: string;
+  is_projection: boolean;
+}
+
+export interface SubInvoice {
+  account_id: string;
+  card_name: string;
+  owner_name: string;
+  effective_total_cents: number;
+}
+
+/** `InvoiceSummary` é achatado pelo `#[serde(flatten)]` do DTO Rust. */
+export interface InvoiceDetail extends InvoiceSummary {
+  purchases: CardPurchase[];
+  refunds: Refund[];
+  sub_invoices: SubInvoice[];
+  emitter_total_cents: number;
+}
+
+export interface CardProposal {
+  id: string;
+  alias: string;
+  display_name: string;
+  source_month: string;
+  status: string;
+}
+
+export function listCards(): Promise<Card[]> {
+  return invoke("list_cards");
+}
+export function listInvoices(accountId: string): Promise<InvoiceSummary[]> {
+  return invoke("list_invoices", { accountId });
+}
+export function getInvoice(invoiceId: string): Promise<InvoiceDetail> {
+  return invoke("get_invoice", { invoiceId });
+}
+export function registerCardPurchase(input: {
+  cardAccountId: string;
+  amountCents: number;
+  description?: string | null;
+  date: string;
+  tagIds: string[];
+}): Promise<string> {
+  return invoke("register_card_purchase", {
+    ...input,
+    description: input.description ?? null,
+  });
+}
+export function moveCardPurchase(
+  txnId: string,
+  targetCycleMonth: string,
+): Promise<void> {
+  return invoke("move_card_purchase", { txnId, targetCycleMonth });
+}
+export function setInvoiceStatedTotal(
+  invoiceId: string,
+  statedTotalCents: number | null,
+): Promise<void> {
+  return invoke("set_invoice_stated_total", { invoiceId, statedTotalCents });
+}
+export function createCardSeries(input: {
+  cardAccountId: string;
+  description: string;
+  amountCents: number;
+  count: number | null;
+  startDate: string;
+}): Promise<string> {
+  return invoke("create_card_series", input);
+}
+export function updateCardSeries(
+  seriesId: string,
+  description: string,
+  amountCents: number,
+): Promise<void> {
+  return invoke("update_card_series", { seriesId, description, amountCents });
+}
+export function cancelCardSeries(
+  seriesId: string,
+  fromCycleMonth: string,
+): Promise<void> {
+  return invoke("cancel_card_series", { seriesId, fromCycleMonth });
+}
+export function deleteCardSeries(seriesId: string): Promise<void> {
+  return invoke("delete_card_series", { seriesId });
+}
+export function createRefundExpectation(
+  invoiceId: string,
+  amountCents: number,
+  description?: string | null,
+): Promise<string> {
+  return invoke("create_refund_expectation", {
+    invoiceId,
+    amountCents,
+    description: description ?? null,
+  });
+}
+export function linkRefund(input: {
+  txnId: string;
+  refundInvoiceId?: string | null;
+  refundTxnId?: string | null;
+  refundSeriesId?: string | null;
+}): Promise<void> {
+  return invoke("link_refund", {
+    txnId: input.txnId,
+    refundInvoiceId: input.refundInvoiceId ?? null,
+    refundTxnId: input.refundTxnId ?? null,
+    refundSeriesId: input.refundSeriesId ?? null,
+  });
+}
+export function unlinkRefund(txnId: string): Promise<void> {
+  return invoke("unlink_refund", { txnId });
+}
+export function listCardProposals(): Promise<CardProposal[]> {
+  return invoke("list_card_proposals");
+}
+export function acceptCardProposal(input: {
+  proposalId: string;
+  closingDay?: number | null;
+  dueDay?: number | null;
+  ownerPersonName?: string | null;
+  linkedAccountId?: string | null;
+}): Promise<string> {
+  return invoke("accept_card_proposal", {
+    ...input,
+    closingDay: input.closingDay ?? null,
+    dueDay: input.dueDay ?? null,
+    ownerPersonName: input.ownerPersonName ?? null,
+    linkedAccountId: input.linkedAccountId ?? null,
+  });
+}
+export function dismissCardProposal(proposalId: string): Promise<void> {
+  return invoke("dismiss_card_proposal", { proposalId });
+}
+export function createCardAccount(input: {
+  name: string;
+  institution?: string | null;
+  closingDay?: number | null;
+  dueDay?: number | null;
+  creditLimitCents?: number | null;
+  ownerPersonName?: string | null;
+  linkedAccountId?: string | null;
+  aliases: string[];
+}): Promise<string> {
+  return invoke("create_card_account", {
+    ...input,
+    institution: input.institution ?? null,
+    closingDay: input.closingDay ?? null,
+    dueDay: input.dueDay ?? null,
+    creditLimitCents: input.creditLimitCents ?? null,
+    ownerPersonName: input.ownerPersonName ?? null,
+    linkedAccountId: input.linkedAccountId ?? null,
+  });
+}
+export function updateCardAccount(input: {
+  accountId: string;
+  name: string;
+  institution?: string | null;
+  closingDay?: number | null;
+  dueDay?: number | null;
+  creditLimitCents?: number | null;
+  aliases: string[];
+}): Promise<void> {
+  return invoke("update_card_account", {
+    ...input,
+    institution: input.institution ?? null,
+    closingDay: input.closingDay ?? null,
+    dueDay: input.dueDay ?? null,
+    creditLimitCents: input.creditLimitCents ?? null,
+  });
+}
+
 /** Ferramenta determinística (tabela PRICE) para pré-visualizar a parcela de um empréstimo antes
  * de confirmar as linhas hipotéticas — nunca matemática livre de LLM. */
 export function priceInstallment(

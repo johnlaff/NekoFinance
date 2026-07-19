@@ -63,6 +63,7 @@ describe("AppShell — shell por viewport (todos os destinos alcançáveis)", ()
       "Hoje",
       "Lançamentos",
       "Este mês",
+      "Cartões",
       "O ano",
       "Calendário",
       "Horizonte",
@@ -112,7 +113,7 @@ describe("AppShell — shell por viewport (todos os destinos alcançáveis)", ()
     const items = within(menu)
       .getAllByRole("button")
       .map((b) => b.textContent);
-    expect(items).toEqual(["O ano", "Horizonte", "Tags", "Configurações"]);
+    expect(items).toEqual(["Cartões", "O ano", "Horizonte", "Tags", "Configurações"]);
 
     await user.click(within(menu).getByRole("button", { name: "Horizonte" }));
     expect(onNavigate).toHaveBeenCalledWith("horizonte");
