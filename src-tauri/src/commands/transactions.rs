@@ -499,7 +499,14 @@ pub struct LineItemInput {
     pub position: i64,
 }
 
-type TransactionUpdateCurrent = (i64, i64, String, Option<String>, Option<String>);
+type TransactionUpdateCurrent = (
+    i64,
+    i64,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
 
 /// Substitui TODAS as partes itemizadas de um lançamento e fixa o total do pai = Σ partes.
 ///
@@ -795,17 +802,19 @@ pub(crate) async fn update_transaction_inner(
     // itens de renda numa linha de despesa ficam semanticamente errados e confundem o write-back.
     // Por isso a query também carrega o `type` antigo e a limpeza dispara em mudança de tipo.
     let current: Option<TransactionUpdateCurrent> = sqlx::query_as(
-        r#"SELECT t.amount, COUNT(li.id), t.type, t.card_series_id, t.invoice_id
+        r#"SELECT t.amount, COUNT(li.id), t.type, t.payment_method, t.card_series_id, t.invoice_id
            FROM "transaction" t
            LEFT JOIN line_item li ON li.transaction_id = t.id
            WHERE t.id = ?1 AND t.scenario_id IS NULL
-           GROUP BY t.amount, t.type, t.card_series_id, t.invoice_id"#,
+           GROUP BY t.amount, t.type, t.payment_method, t.card_series_id, t.invoice_id"#,
     )
     .bind(id)
     .fetch_optional(&mut *tx)
     .await
     .map_err(|e| format!("update (load items): {e}"))?;
-    let Some((old_amount, item_count, old_type, card_series_id, invoice_id)) = current else {
+    let Some((old_amount, item_count, old_type, old_payment_method, card_series_id, invoice_id)) =
+        current
+    else {
         return Err("lançamento não encontrado".into());
     };
     if card_series_id.is_some() {
@@ -845,9 +854,19 @@ pub(crate) async fn update_transaction_inner(
         return Err("lançamento não encontrado".into());
     }
 
-    // Uma renda não compõe a fatura: depois de devolver a contribuição declarada, desvincula a
-    // linha ainda nesta transação para que uma exclusão posterior não a desconte uma segunda vez.
-    if old_type == "expense" && txn_type != "expense" {
+    let remains_credit_purchase = txn_type == "expense"
+        && payment_method
+            .as_deref()
+            .is_some_and(|method| method == "credit");
+    let was_credit_purchase = old_type == "expense"
+        && old_payment_method
+            .as_deref()
+            .is_some_and(|method| method == "credit");
+
+    // Só compras de crédito pertencem à fatura. Ao trocar para qualquer outra perna, devolve a
+    // contribuição declarada e desvincula na mesma transação para que uma exclusão posterior não
+    // a desconte outra vez.
+    if !remains_credit_purchase {
         sqlx::query(
             "UPDATE \"transaction\" SET invoice_id = NULL, card_series_id = NULL WHERE id = ?1",
         )
@@ -858,8 +877,8 @@ pub(crate) async fn update_transaction_inner(
     }
 
     if let Some(invoice_id) = invoice_id {
-        let old_contribution = if old_type == "expense" { old_amount } else { 0 };
-        let new_contribution = if txn_type == "expense" {
+        let old_contribution = if was_credit_purchase { old_amount } else { 0 };
+        let new_contribution = if remains_credit_purchase {
             amount_cents
         } else {
             0
@@ -1113,6 +1132,44 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(stated_after_delete, Some(8_000));
+    }
+
+    #[tokio::test]
+    async fn changing_card_purchase_to_debit_unlinks_it_and_returns_its_stated_total() {
+        let pool = test_pool().await;
+        insert_invoice_purchase(
+            &pool,
+            "purchase-debit",
+            "invoice-debit",
+            10_000,
+            Some(10_000),
+            None,
+        )
+        .await;
+
+        update_transaction_inner(
+            &pool,
+            "purchase-debit",
+            "expense",
+            10_000,
+            None,
+            Some("debit".into()),
+            false,
+            "2026-03-10",
+        )
+        .await
+        .unwrap();
+
+        let (stated, invoice_id): (Option<i64>, Option<String>) = sqlx::query_as(
+            "SELECT i.stated_total_cents, t.invoice_id FROM invoice i \
+             JOIN \"transaction\" t ON t.id = 'purchase-debit' \
+             WHERE i.id = 'invoice-debit'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(stated, Some(0));
+        assert_eq!(invoice_id, None, "débito não pertence à fatura");
     }
 
     #[tokio::test]

@@ -742,6 +742,13 @@ fn grid_has_any_note(grid: &[Vec<String>]) -> bool {
         .any(|row| row.iter().any(|cell| !cell.trim().is_empty()))
 }
 
+fn empty_notes_grid(values: &[Vec<String>]) -> Vec<Vec<String>> {
+    values
+        .iter()
+        .map(|row| vec![String::new(); row.len()])
+        .collect()
+}
+
 #[tauri::command]
 pub async fn import_local_xlsx(
     pool: State<'_, SqlitePool>,
@@ -749,9 +756,18 @@ pub async fn import_local_xlsx(
     file_path: String,
     profile_id: String,
 ) -> Result<ImportOutcome, String> {
+    import_local_xlsx_inner(pool.inner(), guard.inner(), &file_path, &profile_id).await
+}
+
+async fn import_local_xlsx_inner(
+    pool: &SqlitePool,
+    guard: &crate::sync_task::SyncGuard,
+    file_path: &str,
+    profile_id: &str,
+) -> Result<ImportOutcome, String> {
     use calamine::{Reader, Xlsx, open_workbook};
 
-    let workbook_path = validate_local_xlsx_path(&file_path)?;
+    let workbook_path = validate_local_xlsx_path(file_path)?;
     let mut workbook: Xlsx<_> =
         open_workbook(&workbook_path).map_err(|e| format!("open error: {e}"))?;
 
@@ -776,7 +792,7 @@ pub async fn import_local_xlsx(
 
     // Serializa contra o sync de fundo e o probe de foco no pool de 1 conexão (mesmo SyncGuard).
     // Segurado por TODO o loop de abas (cada aba é uma transação atômica própria).
-    let _lock = guard.inner().lock().await;
+    let _lock = guard.lock().await;
     for sheet_name in &sheet_names {
         if layout_detect::is_metric_tab(sheet_name) {
             if sheet_name.trim().eq_ignore_ascii_case("economia")
@@ -788,7 +804,7 @@ pub async fn import_local_xlsx(
                     .collect();
                 let entries = import::parse_economia_sheet(&rows);
                 if !entries.is_empty() {
-                    let count = store_economia_entries(pool.inner(), &entries).await?;
+                    let count = store_economia_entries(pool, &entries).await?;
                     total += count;
                     sheets_imported.push(format!("{sheet_name} ({count} months)"));
                 }
@@ -809,7 +825,7 @@ pub async fn import_local_xlsx(
             // layout/mappings é adiado para DENTRO da transação externa; guardamos os mappings
             // gerados para o parse, já que ainda não estarão visíveis por uma leitura no pool.
             let (layout, new_mappings) =
-                match import::get_layout_for_sheet(&pool, sheet_name).await? {
+                match import::get_layout_for_sheet(pool, sheet_name).await? {
                     Some(l) => (l, None),
                     None => match layout_detect::detect_layout(&rows, sheet_name) {
                         Ok(detected) => {
@@ -828,7 +844,7 @@ pub async fn import_local_xlsx(
                     .filter(|m| m.is_active != 0)
                     .map(|m| (m.target_field.clone(), m.block_offset))
                     .collect(),
-                None => import::get_active_mappings_for_sheet(&pool, sheet_name).await?,
+                None => import::get_active_mappings_for_sheet(pool, sheet_name).await?,
             };
 
             // Notas de célula desta aba, realinhadas para a MESMA origem da grade de valores
@@ -842,6 +858,8 @@ pub async fn import_local_xlsx(
             if !notes_found {
                 any_sheet_without_notes = true;
             }
+            let empty_notes = (!notes_found).then(|| empty_notes_grid(&rows));
+            let card_scan_notes = empty_notes.as_deref().unwrap_or(&sheet_notes);
 
             let imported_rows =
                 import::parse_rows_with_layout(&rows, &layout, &mappings, &sheet_notes)?;
@@ -863,24 +881,22 @@ pub async fn import_local_xlsx(
                 .find(|(field, _)| field == "amount_out")
                 .map(|(_, off)| *off as usize)
                 .unwrap_or(2);
-            let card_ctx = import::load_card_scan_ctx(&pool).await?;
+            let card_ctx = import::load_card_scan_ctx(pool).await?;
 
             if imported_rows.is_empty() {
                 if let Some((source_month, raw_note)) = &ceremony_note {
-                    import::upsert_ceiling_proposal_standalone(&pool, source_month, raw_note)
+                    import::upsert_ceiling_proposal_standalone(pool, source_month, raw_note)
                         .await?;
                 }
-                if notes_found {
-                    import::scan_card_invoices_standalone(
-                        &pool,
-                        &rows,
-                        &sheet_notes,
-                        &layout,
-                        amount_out_offset,
-                        &card_ctx,
-                    )
-                    .await?;
-                }
+                import::scan_card_invoices_standalone(
+                    pool,
+                    &rows,
+                    card_scan_notes,
+                    &layout,
+                    amount_out_offset,
+                    &card_ctx,
+                )
+                .await?;
                 continue;
             }
 
@@ -896,27 +912,25 @@ pub async fn import_local_xlsx(
                 descriptions_trusted: notes_found,
             };
             let checksum = import::compute_import_checksum(&imported_rows, notes_found);
-            if import::check_duplicate_import(&pool, sheet_name, &checksum).await? {
+            if import::check_duplicate_import(pool, sheet_name, &checksum).await? {
                 if let Some((source_month, raw_note)) = &ceremony_note {
-                    import::upsert_ceiling_proposal_standalone(&pool, source_month, raw_note)
+                    import::upsert_ceiling_proposal_standalone(pool, source_month, raw_note)
                         .await?;
                 }
-                if notes_found {
-                    import::scan_card_invoices_standalone(
-                        &pool,
-                        &rows,
-                        &sheet_notes,
-                        &layout,
-                        amount_out_offset,
-                        &card_ctx,
-                    )
-                    .await?;
-                }
+                import::scan_card_invoices_standalone(
+                    pool,
+                    &rows,
+                    card_scan_notes,
+                    &layout,
+                    amount_out_offset,
+                    &card_ctx,
+                )
+                .await?;
                 continue;
             }
 
             // Série de Saldo da aba (semente da projeção + visão histórica do livro-razão).
-            let balance_offset = import::get_balance_offset_for_sheet(&pool, sheet_name).await?;
+            let balance_offset = import::get_balance_offset_for_sheet(pool, sheet_name).await?;
             let balances = import::parse_balance_series(&rows, &layout, balance_offset)?;
             // Zeros de template anteriores à adoção da planilha não são dado — caem antes do store.
             let first_txn_date = imported_rows.iter().map(|r| r.date.as_str()).min();
@@ -952,23 +966,21 @@ pub async fn import_local_xlsx(
                 }
             }
 
-            if notes_found {
-                import::scan_card_invoices(
-                    &mut tx,
-                    &rows,
-                    &sheet_notes,
-                    &layout,
-                    amount_out_offset,
-                    &card_ctx,
-                )
-                .await?;
-            }
+            import::scan_card_invoices(
+                &mut tx,
+                &rows,
+                card_scan_notes,
+                &layout,
+                amount_out_offset,
+                &card_ctx,
+            )
+            .await?;
 
             let count = import::import_rows_with_options_in_tx(
                 &mut tx,
                 sheet_name,
                 &imported_rows,
-                &profile_id,
+                profile_id,
                 options,
                 &checksum,
             )
@@ -1741,6 +1753,52 @@ mod xlsx_comment_notes_tests {
             count_line_items(&pool, &txn_id).await,
             2,
             "itens da nota seguem 2 (sem duplicar)"
+        );
+    }
+
+    #[tokio::test]
+    async fn xlsx_reimport_without_notes_reconciles_removed_card_invoice() {
+        let with_card_note =
+            write_fixture_to_temp(FixtureComments::Notes("CARTÕES:\nR$ 150,00 - Visa"));
+        let without_notes = write_fixture_to_temp(FixtureComments::None);
+        let pool = test_pool().await;
+        let guard = crate::sync_task::SyncGuard::new(());
+        crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Visa",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+
+        import_local_xlsx_inner(&pool, &guard, with_card_note.to_str().unwrap(), "profile-1")
+            .await
+            .unwrap();
+        let after_first_import: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invoice")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(after_first_import, 1, "a nota cria a fatura import-origin");
+
+        import_local_xlsx_inner(&pool, &guard, without_notes.to_str().unwrap(), "profile-1")
+            .await
+            .unwrap();
+        std::fs::remove_file(with_card_note).unwrap();
+        std::fs::remove_file(without_notes).unwrap();
+
+        let after_note_removal: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invoice")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            after_note_removal, 0,
+            "uma fatura import-origin sem compras nem ajuste é reconciliada"
         );
     }
 }

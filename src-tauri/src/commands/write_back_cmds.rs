@@ -10,7 +10,7 @@ pub(crate) async fn load_write_back_txns(
     pool: &SqlitePool,
     year: i32,
 ) -> Result<Vec<WriteBackTxn>, String> {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashSet};
 
     let today = chrono::Local::now().date_naive();
     let (has_card,): (i64,) =
@@ -18,6 +18,25 @@ pub(crate) async fn load_write_back_txns(
             .fetch_one(pool)
             .await
             .map_err(|e| format!("query card accounts: {e}"))?;
+    let known_card_aliases: HashSet<String> = if has_card > 0 {
+        let aliases: Vec<(String,)> = sqlx::query_as(
+            "SELECT name FROM account WHERE type = 'credit_card' \
+             UNION \
+             SELECT ca.alias FROM card_alias ca \
+             JOIN account a ON a.id = ca.account_id \
+             WHERE a.type = 'credit_card'",
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("query card aliases for write-back: {e}"))?;
+        aliases
+            .into_iter()
+            .map(|(alias,)| crate::cards::normalize_alias(&alias))
+            .filter(|alias| !alias.is_empty())
+            .collect()
+    } else {
+        HashSet::new()
+    };
 
     // Faturas do ano são agrupadas primeiro por vencimento. A ordem das linhas dentro da nota é
     // estável por `created_at, id` da conta, para que um preview repetido não mude sem dado novo.
@@ -138,18 +157,23 @@ pub(crate) async fn load_write_back_txns(
                     .filter(|item| {
                         import::classify_line_item(item.section.as_deref(), &item.description)
                             == import::ItemKind::Cartao
+                            && known_card_aliases
+                                .contains(&crate::cards::normalize_alias(&item.description))
                     })
                     .map(|item| item.amount_cents.abs())
                     .sum();
                 non_card_total += amount_cents - replaced_total;
                 for item in parent_items {
-                    if import::classify_line_item(item.section.as_deref(), &item.description)
-                        == import::ItemKind::Cartao
-                    {
-                        if card_section.is_none() {
-                            card_section = item.section;
-                        }
-                    } else {
+                    let is_card =
+                        import::classify_line_item(item.section.as_deref(), &item.description)
+                            == import::ItemKind::Cartao;
+                    if is_card && card_section.is_none() {
+                        card_section = item.section.clone();
+                    }
+                    let is_known_card = is_card
+                        && known_card_aliases
+                            .contains(&crate::cards::normalize_alias(&item.description));
+                    if !is_known_card {
                         composed.push(item);
                     }
                 }
@@ -1596,7 +1620,7 @@ mod tests {
             "INSERT INTO line_item \
                (id, transaction_id, amount_cents, description, position, is_user_edited, section) \
              VALUES ('conta', 'parent', 30_000, 'Condomínio', 0, 0, 'CONTAS:'), \
-                    ('card-old', 'parent', 20_000, 'Fatura importada', 1, 0, 'CARTOES:')",
+                    ('card-old', 'parent', 20_000, 'Cartão Principal', 1, 0, 'CARTOES:')",
         )
         .execute(&p)
         .await
@@ -1626,6 +1650,68 @@ mod tests {
             ],
             "itens fora de cartões, ordem e grafia do cabeçalho sobrevivem"
         );
+    }
+
+    #[tokio::test]
+    async fn write_back_preserves_unknown_card_alias_while_replacing_known_invoice_line() {
+        let p = pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let due = format!("{year}-03-10");
+
+        sqlx::query("INSERT INTO person (id, name) VALUES ('person-1', 'Pessoa')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day) VALUES ('visa', 'Visa', 'credit_card', 'person-1', 20, 10)")
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO invoice (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) VALUES ('visa-invoice', 'visa', ?1, ?2, ?3, 10_000)")
+        .bind(format!("{year}-03"))
+        .bind(format!("{year}-02-20"))
+        .bind(&due)
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) VALUES ('parent', 'expense', 30_000, ?1, 1, 0)")
+        .bind(&due)
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO line_item (id, transaction_id, amount_cents, description, position, is_user_edited, section) VALUES ('visa-old', 'parent', 10_000, 'Visa', 0, 0, 'CARTÕES:'), ('nubank', 'parent', 20_000, 'Nubank', 1, 0, 'CARTÕES:')")
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let txns = load_write_back_txns(&p, year).await.unwrap();
+        let grid = vec![
+            vec!["".into(), "MARÇO".into(), "".into(), "".into()],
+            vec![
+                "Dia".into(),
+                "Saldo".into(),
+                "Entrada".into(),
+                "Saída".into(),
+            ],
+            vec!["10".into(), "".into(), "".into(), "".into()],
+        ];
+        let layout = crate::google_sheets::layout_detect::SheetLayout {
+            id: "layout".into(),
+            sheet_name: year.to_string(),
+            year: Some(year),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 6,
+            date_direction: "both".into(),
+        };
+        let plan = write_back::plan_write_back(&grid, &layout, &[("amount_out".into(), 2)], &txns);
+
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].value_cents, 30_000);
+        let note = plan[0].note_text.as_deref().expect("nota itemizada");
+        assert!(note.contains("R$ 200,00 - Nubank"));
+        assert!(note.contains("R$ 100,00 - Visa"));
     }
 
     #[tokio::test]

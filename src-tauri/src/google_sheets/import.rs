@@ -336,8 +336,9 @@ pub(crate) async fn scan_card_invoices(
         "SELECT id, account_id, due_date FROM invoice \
          WHERE source_stated_total_cents IS NOT NULL \
            AND NOT EXISTS (SELECT 1 FROM \"transaction\" t \
-                           WHERE t.invoice_id = invoice.id \
-                             AND t.type = 'expense' AND t.is_projection = 0)",
+                           WHERE t.invoice_id = invoice.id) \
+           AND (stated_total_cents IS NULL \
+                OR stated_total_cents = source_stated_total_cents)",
     )
     .fetch_all(&mut *tx)
     .await
@@ -5373,6 +5374,161 @@ mod tests {
             visa_still_present, 1,
             "uma compra real impede apagar a fatura"
         );
+    }
+
+    #[tokio::test]
+    async fn card_scan_keeps_a_removed_imported_card_invoice_with_projected_series_purchase() {
+        let pool = test_pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let visa = crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Visa",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let values = vec![
+            vec!["AGOSTO".into(), "".into(), "".into()],
+            vec![],
+            vec!["10".into(), "".into(), "100,00".into()],
+        ];
+        let layout = SheetLayout {
+            id: "layout".into(),
+            sheet_name: year.to_string(),
+            year: Some(year),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 3,
+            date_direction: "both".into(),
+        };
+        let cards_note = vec![
+            vec!["".into(); 3],
+            vec![],
+            vec!["".into(), "".into(), "CARTÕES:\nR$ 100,00 - Visa".into()],
+        ];
+        let no_cards_note = vec![
+            vec!["".into(); 3],
+            vec![],
+            vec!["".into(), "".into(), "CONTAS:\nR$ 100,00 - Aluguel".into()],
+        ];
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &cards_note, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let invoice: String = sqlx::query_scalar("SELECT id FROM invoice WHERE account_id = ?1")
+            .bind(&visa)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+             (id, type, amount, date, payment_method, is_fixed, is_projection, invoice_id) \
+             VALUES ('projected-series-occurrence', 'expense', 2_000, ?1, 'credit', 0, 1, ?2)",
+        )
+        .bind(format!("{year}-07-20"))
+        .bind(&invoice)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &no_cards_note, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let retained: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invoice WHERE id = ?1")
+            .bind(invoice)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            retained, 1,
+            "uma ocorrência projetada também preserva a fatura"
+        );
+    }
+
+    #[tokio::test]
+    async fn card_scan_keeps_a_removed_imported_card_invoice_with_local_total_adjustment() {
+        let pool = test_pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let visa = crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Visa",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let values = vec![
+            vec!["AGOSTO".into(), "".into(), "".into()],
+            vec![],
+            vec!["10".into(), "".into(), "100,00".into()],
+        ];
+        let layout = SheetLayout {
+            id: "layout".into(),
+            sheet_name: year.to_string(),
+            year: Some(year),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 3,
+            date_direction: "both".into(),
+        };
+        let cards_note = vec![
+            vec!["".into(); 3],
+            vec![],
+            vec!["".into(), "".into(), "CARTÕES:\nR$ 100,00 - Visa".into()],
+        ];
+        let no_cards_note = vec![
+            vec!["".into(); 3],
+            vec![],
+            vec!["".into(), "".into(), "CONTAS:\nR$ 100,00 - Aluguel".into()],
+        ];
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &cards_note, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        sqlx::query("UPDATE invoice SET stated_total_cents = 15_000 WHERE account_id = ?1")
+            .bind(&visa)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &no_cards_note, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let preserved: (Option<i64>, Option<i64>) = sqlx::query_as(
+            "SELECT stated_total_cents, source_stated_total_cents FROM invoice WHERE account_id = ?1",
+        )
+        .bind(visa)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(preserved, (Some(15_000), Some(10_000)));
     }
 
     #[tokio::test]

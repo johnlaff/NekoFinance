@@ -213,14 +213,22 @@ pub(crate) fn normalize_alias(s: &str) -> String {
     crate::google_sheets::import::normalize_item_section(s)
 }
 
-/// Vincula compras de crédito legadas à fatura do ciclo correto quando existe um cartão titular
+/// Vincula compras de crédito legadas à fatura do ciclo correto quando há exatamente um cartão
 /// configurado. A fatura é a identidade persistida do vencimento; o backfill só estabelece a FK e
 /// preserva o total declarado, que pode já refletir a planilha importada.
 pub async fn backfill_legacy_credit_purchases(pool: &SqlitePool) -> Result<(), String> {
+    let (card_count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM account WHERE type = 'credit_card'")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("contar cartões para backfill: {e}"))?;
+    if card_count != 1 {
+        return Ok(());
+    }
+
     let card: Option<(String, i64, i64)> = sqlx::query_as(
         "SELECT id, closing_day, due_day FROM account \
-         WHERE type = 'credit_card' AND closing_day IS NOT NULL AND due_day IS NOT NULL \
-         ORDER BY created_at, id LIMIT 1",
+         WHERE type = 'credit_card' AND closing_day IS NOT NULL AND due_day IS NOT NULL",
     )
     .fetch_optional(pool)
     .await
@@ -560,6 +568,61 @@ mod tests {
         assert_eq!(
             linked_count, 1,
             "reexecutar não altera a compra já vinculada"
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_credit_purchase_backfill_leaves_purchase_unlinked_with_multiple_cards() {
+        let pool = pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let purchase = NaiveDate::from_ymd_opt(year, 1, 25).unwrap();
+        let closing = cycle_close_for_purchase(purchase, 20);
+        let due = due_date_for_close(closing, 10);
+
+        sqlx::query("INSERT INTO person (id, name) VALUES ('person-1', 'Pessoa')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account \
+             (id, name, type, owner_person_id, closing_day, due_day, created_at) \
+             VALUES ('visa', 'Visa', 'credit_card', 'person-1', 20, 10, '2026-01-01T00:00:00Z'), \
+                    ('mastercard', 'Mastercard', 'credit_card', 'person-1', 20, 10, '2026-01-02T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO invoice \
+             (id, account_id, cycle_month, closing_date, due_date) \
+             VALUES ('visa-invoice', 'visa', ?1, ?2, ?3)",
+        )
+        .bind(cycle_month_of(due))
+        .bind(closing.to_string())
+        .bind(due.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+             (id, type, amount, date, payment_method, is_fixed, is_projection) \
+             VALUES ('orphan-credit', 'expense', 1_234, ?1, 'credit', 0, 0)",
+        )
+        .bind(purchase.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        backfill_legacy_credit_purchases(&pool).await.unwrap();
+
+        let invoice_id: Option<String> =
+            sqlx::query_scalar("SELECT invoice_id FROM \"transaction\" WHERE id = 'orphan-credit'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            invoice_id, None,
+            "sem evidência, compra não escolhe um cartão"
         );
     }
 

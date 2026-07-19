@@ -630,9 +630,31 @@ pub(crate) async fn get_invoice_inner(
             },
         )
         .collect();
-    let refunds: Vec<RefundDto> = sqlx::query_as::<_,(String,String,i64,String,i64)>(
-        "SELECT id,date,amount,COALESCE(description,''),is_projection FROM \"transaction\" WHERE refund_invoice_id=?1 AND type='income' ORDER BY date,id",
-    ).bind(invoice_id).fetch_all(pool).await.map_err(|e| format!("reembolsos: {e}"))?.into_iter().map(|(txn_id,date,amount_cents,description,is_projection)|RefundDto{txn_id,date,amount_cents,description,is_projection:is_projection!=0}).collect();
+    let refunds: Vec<RefundDto> = sqlx::query_as::<_, (String, String, i64, String, i64)>(
+        "SELECT DISTINCT r.id,r.date,r.amount,COALESCE(r.description,''),r.is_projection \
+         FROM \"transaction\" r \
+         LEFT JOIN card_series s ON s.id = r.refund_series_id \
+         LEFT JOIN \"transaction\" occurrence \
+           ON occurrence.card_series_id = s.id AND occurrence.invoice_id = ?1 \
+         WHERE r.type = 'income' \
+           AND (r.refund_invoice_id = ?1 OR occurrence.id IS NOT NULL) \
+         ORDER BY r.date,r.id",
+    )
+    .bind(invoice_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("reembolsos: {e}"))?
+    .into_iter()
+    .map(
+        |(txn_id, date, amount_cents, description, is_projection)| RefundDto {
+            txn_id,
+            date,
+            amount_cents,
+            description,
+            is_projection: is_projection != 0,
+        },
+    )
+    .collect();
     let holder_id = linked_account_id.as_deref().unwrap_or(&account_id);
     let sub_rows: Vec<(String,String,String,String,Option<i64>)> = sqlx::query_as(
         "SELECT i.account_id,a.name,p.name,i.id,i.stated_total_cents FROM invoice i JOIN account a ON a.id=i.account_id JOIN person p ON p.id=a.owner_person_id WHERE a.linked_account_id=?1 AND i.cycle_month=?2",
@@ -1959,6 +1981,37 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(refunds, vec![(Some(series), None)]);
+    }
+
+    #[tokio::test]
+    async fn invoice_detail_lists_refund_linked_to_its_card_series() {
+        let pool = pool().await;
+        let card_id = card(&pool, "Neko", 20, 10).await;
+        let start = chrono::Local::now().date_naive().to_string();
+        let series = create_card_series_with_refund_inner(
+            &pool,
+            &card_id,
+            "Assinatura compartilhada",
+            1_500,
+            Some(1),
+            &start,
+            Some(500),
+            &[],
+        )
+        .await
+        .unwrap();
+        let invoice_id: String =
+            sqlx::query_scalar("SELECT invoice_id FROM \"transaction\" WHERE card_series_id = ?1")
+                .bind(&series)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let detail = get_invoice_inner(&pool, &invoice_id).await.unwrap();
+
+        assert_eq!(detail.refunds.len(), 1);
+        assert_eq!(detail.refunds[0].amount_cents, 500);
+        assert_eq!(detail.refunds[0].description, "");
     }
 
     #[tokio::test]

@@ -1538,7 +1538,7 @@ async fn load_db_events(
             if event.kind == forecast::EventKind::Cartao
                 && row.invoice_id.is_none()
                 && has_card
-                && orphan_credit_from.is_some_and(|today| event.date > today)
+                && orphan_credit_from.is_some_and(|today| event.date >= today)
             {
                 event.kind = forecast::EventKind::FixedOut;
             }
@@ -1555,7 +1555,8 @@ async fn load_metric_db_events(
     start_inclusive: NaiveDate,
     end_exclusive: NaiveDate,
 ) -> Result<Vec<CashflowEvent>, String> {
-    let raw_events = load_db_events(pool, start_inclusive, end_exclusive, true, None).await?;
+    let raw_events =
+        load_db_events(pool, start_inclusive, end_exclusive, true, Some(today)).await?;
     finalize_card_events(pool, today, start_inclusive, end_exclusive, raw_events).await
 }
 
@@ -3995,6 +3996,49 @@ mod tests {
             events.iter().map(|event| event.amount_cents).sum::<i64>(),
             20_000
         );
+    }
+
+    #[tokio::test]
+    async fn metric_events_keep_today_and_future_orphan_credit_as_fixed_outflows() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "visa-account",
+                card_name: "Visa",
+                owner_name: "Pessoa",
+                invoice_id: "visa-invoice",
+                closing_date: "2026-06-10",
+                due_date: "2026-06-25",
+                stated_total_cents: Some(10_000),
+            },
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+             (id, type, amount, date, payment_method, is_fixed, is_projection, invoice_id) \
+             VALUES ('linked-credit', 'expense', 10_000, '2026-06-20', 'credit', 1, 1, 'visa-invoice'), \
+                    ('orphan-today', 'expense', 2_000, '2026-06-15', 'credit', 1, 0, NULL), \
+                    ('orphan-tomorrow', 'expense', 3_000, '2026-06-16', 'credit', 1, 1, NULL)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let annual = annual_metrics(&p, 2026, today).await.unwrap();
+        let june = annual
+            .months
+            .iter()
+            .find(|month| month.month == 6)
+            .expect("métricas de junho");
+
+        assert_eq!(june.fixed_out_cents, 5_000);
+        assert_eq!(
+            june.cartao_cents, 10_000,
+            "a compra vinculada entra só pela fatura"
+        );
+        assert_eq!(june.cost_of_living_cents, 15_000);
     }
 
     #[tokio::test]
