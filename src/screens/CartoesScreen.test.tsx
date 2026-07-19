@@ -6,7 +6,8 @@ vi.mock("../lib/api", async (importOriginal) => ({
   ...(await importOriginal()),
   isTauri: false,
 }));
-import { CartoesScreen, shiftCycleMonth, validateCardCycle } from "./CartoesScreen";
+import { CartoesScreen } from "./CartoesScreen";
+import { shiftCycleMonth, validateCardCycle } from "../lib/cardCycle";
 
 describe("Cartões", () => {
   it("mostra proposta, gate e a lista no fallback web", () => {

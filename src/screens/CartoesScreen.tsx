@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { AlertTriangle, Check, CreditCard, Pencil } from "lucide-react";
 import { Badge } from "../design-system/components/Badge";
 import { Button } from "../design-system/components/Button";
@@ -30,6 +30,7 @@ import {
   type InvoiceDetail,
   type InvoiceSummary,
 } from "../lib/api";
+import { shiftCycleMonth, validateCardCycle } from "../lib/cardCycle";
 import { safeErrorMessage } from "../lib/errors";
 import { centsToBRLInput, parseBRLToCents } from "../lib/format";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
@@ -192,18 +193,22 @@ function statusTone(
         : "info";
 }
 
+const MONTH_FORMAT = new Intl.DateTimeFormat("pt-BR", {
+  month: "long",
+  year: "numeric",
+});
+const DATE_FORMAT = new Intl.DateTimeFormat("pt-BR", {
+  day: "2-digit",
+  month: "short",
+});
+
 function monthLabel(value: string) {
-  const label = new Intl.DateTimeFormat("pt-BR", {
-    month: "long",
-    year: "numeric",
-  }).format(new Date(`${value}-01T12:00:00`));
+  const label = MONTH_FORMAT.format(new Date(`${value}-01T12:00:00`));
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 function dateLabel(value: string) {
-  return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short" }).format(
-    new Date(`${value}T12:00:00`),
-  );
+  return DATE_FORMAT.format(new Date(`${value}T12:00:00`));
 }
 
 function ownerKind(name: string): "personal" | "partner" | "shared" {
@@ -222,29 +227,6 @@ function groupSeries(purchases: CardPurchase[]): CardSeries[] {
     }
   });
   return Array.from(series, ([id, occurrence]) => ({ id, occurrence }));
-}
-
-export function shiftCycleMonth(cycle: string, delta: number): string {
-  const match = /^(\d{4})-(\d{2})$/.exec(cycle);
-  if (!match) return cycle;
-
-  const year = Number(match[1]);
-  const monthIndex = Number(match[2]) - 1 + delta;
-  const shiftedYear = year + Math.floor(monthIndex / 12);
-  const shiftedMonth = (((monthIndex % 12) + 12) % 12) + 1;
-  return `${shiftedYear}-${String(shiftedMonth).padStart(2, "0")}`;
-}
-
-export function validateCardCycle(closing: string, due: string): string | null {
-  const closingDay = Number(closing);
-  const dueDay = Number(due);
-  if (!Number.isInteger(closingDay) || closingDay < 1 || closingDay > 28) {
-    return "Fechamento deve ser entre 1 e 28.";
-  }
-  if (!Number.isInteger(dueDay) || dueDay < 1 || dueDay > 31) {
-    return "Vencimento deve ser entre 1 e 31.";
-  }
-  return null;
 }
 
 export function CartoesScreen() {
@@ -410,22 +392,28 @@ function CardPanel({
   const [detail, setDetail] = useState<InvoiceDetail | null>(() =>
     !isTauri && card.id === "demo-holder" ? DEMO_DETAIL : null,
   );
-  const load = useCallback(() => {
+  // O recarregamento é dirigido por dado (identidade do cartão + tick), não por
+  // identidade de função — o efeito enxerga só valores estáveis.
+  const [reloadTick, setReloadTick] = useState(0);
+  const load = () => setReloadTick((tick) => tick + 1);
+
+  useEffect(() => {
     if (!isTauri) return;
+    let alive = true;
     listInvoices(card.id)
       .then((items) => {
+        if (!alive) return;
         setInvoices(items);
         const id = selectedInvoice.current ?? items[0]?.id ?? null;
         selectedInvoice.current = id;
         setSelected(id);
-        if (id) void getInvoice(id).then(setDetail);
+        if (id) void getInvoice(id).then((data) => alive && setDetail(data));
       })
-      .catch(() => setInvoices([]));
-  }, [card.id]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+      .catch(() => alive && setInvoices([]));
+    return () => {
+      alive = false;
+    };
+  }, [card.id, reloadTick]);
 
   useEffect(() => {
     if (!selected || !isTauri) return;
@@ -827,17 +815,17 @@ function CardForm({
   holders: Card[];
   onClose: () => void;
 }) {
-  const [name, setName] = useState(initial?.name ?? proposal?.display_name ?? "");
-  const [institution, setInstitution] = useState(initial?.institution ?? "");
-  const [closing, setClosing] = useState(initial?.closing_day?.toString() ?? "");
-  const [due, setDue] = useState(initial?.due_day?.toString() ?? "");
-  const [limit, setLimit] = useState(
+  const [name, setName] = useState(() => initial?.name ?? proposal?.display_name ?? "");
+  const [institution, setInstitution] = useState(() => initial?.institution ?? "");
+  const [closing, setClosing] = useState(() => initial?.closing_day?.toString() ?? "");
+  const [due, setDue] = useState(() => initial?.due_day?.toString() ?? "");
+  const [limit, setLimit] = useState(() =>
     initial?.credit_limit_cents
       ? (initial.credit_limit_cents / 100).toString().replace(".", ",")
       : "",
   );
   const [owner, setOwner] = useState(initial?.owner_name ?? "Eu");
-  const [aliases, setAliases] = useState(initial?.aliases.join(", ") ?? "");
+  const [aliases, setAliases] = useState(() => initial?.aliases.join(", ") ?? "");
   const [linked, setLinked] = useState(initial?.linked_account_id ?? "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -929,13 +917,15 @@ function CardForm({
               style={FORM_FIELD}
             >
               <option value="">Nenhum — titular</option>
-              {holders
-                .filter((holder) => holder.id !== initial?.id)
-                .map((holder) => (
+              {holders.flatMap((holder) =>
+                holder.id === initial?.id ? (
+                  []
+                ) : (
                   <option key={holder.id} value={holder.id}>
                     {holder.name}
                   </option>
-                ))}
+                ),
+              )}
             </select>
           </label>
           {additional ? (
