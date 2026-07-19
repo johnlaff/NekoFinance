@@ -17,10 +17,7 @@ test.describe("Cartões — fallback web", () => {
       if (viewport.name === "mobile") {
         await page.getByRole("button", { name: "Mais telas" }).click();
       }
-      await page
-        .getByRole("button", { name: "Cartões", exact: false })
-        .first()
-        .click();
+      await page.getByRole("button", { name: "Cartões", exact: false }).first().click();
       await expect(page).toHaveScreenshot(`cartoes-${viewport.name}.png`, {
         fullPage: true,
         maxDiffPixelRatio: 0.02,

@@ -1,7 +1,7 @@
 # ADR-0004: Persisted Invoices as the Credit-Card Substrate
 
 Before this decision, credit was a projection-time artifact: any expense with
-`payment_method='credit'` was folded into a single due-date lump derived from the *first*
+`payment_method='credit'` was folded into a single due-date lump derived from the _first_
 configured card's cycle, and the forecast aggregated credit events by date with no card identity.
 Multiple cards, shared statements with per-person sub-totals, subscriptions/installments that
 pre-launch into future statements, and reimbursements tied to a statement could not be expressed.

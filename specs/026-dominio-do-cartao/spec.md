@@ -43,7 +43,7 @@ contrato célula×nota do #176, forecast por fatura e `card_gate` de 2 pernas
 - Forecast: evento `Cartao` nasce de `payment_method='credit'`
   (`forecast/mod.rs:243`) ou da decomposição por item de nota
   (`forecast_cmds.rs:1217`); `cost_of_living = fixed_out + daily_realized +
-  cartao` (`forecast/mod.rs:399`). `card_gate` atual tem 1 perna (economia
+cartao` (`forecast/mod.rs:399`). `card_gate` atual tem 1 perna (economia
   anual ≥ 2000 bps, `forecast_cmds.rs:2106`); `reserve_months` e
   `reserve_state` já existem (`forecast_cmds.rs:2042-2064`).
 - `cycle_due_date` (`forecast/mod.rs:286`) mapeia compra APÓS o fechamento
@@ -141,7 +141,7 @@ CREATE TABLE invoice (
   faturas existentes. Import fixa `due_date` = data da célula (autoridade da
   planilha); criação pelo app deriva do ciclo efetivo.
 - Compras → fatura por FK: `ALTER TABLE "transaction" ADD COLUMN invoice_id
-  TEXT REFERENCES invoice(id)`. Default = fatura do ciclo derivado da data da
+TEXT REFERENCES invoice(id)`. Default = fatura do ciclo derivado da data da
   compra (D5); **remanejo manual permitido** (mover compra para fatura
   adjacente do mesmo cartão).
 - Realização: a fatura `paga` corresponde à Saída realizada da célula do
@@ -154,7 +154,7 @@ CREATE TABLE invoice (
 Duas funções puras em `forecast/mod.rs` (TDD primeiro):
 
 - `cycle_close_for_purchase(purchase: NaiveDate, closing_day: u32) ->
-  NaiveDate` — dia da compra ≤ `closing_day` (clamp 1..=28) → fecha no
+NaiveDate` — dia da compra ≤ `closing_day` (clamp 1..=28) → fecha no
   próprio mês; senão → fecha no mês SEGUINTE. (Corrige a inversão atual: a
   compra de 25/jan com fechamento 20 entra no ciclo que fecha 20/fev.)
 - `due_date_for_close(close: NaiveDate, due_day: u32) -> NaiveDate` — primeira
@@ -189,7 +189,7 @@ ALTER TABLE "transaction" ADD COLUMN card_series_id
   fatura, **uma por fatura consecutiva** (meses consecutivos de
   `cycle_month` a partir de `start_cycle_month`) — nunca por data solta.
 - `n/N` **derivado do índice**: `n = meses(start_cycle_month → cycle_month) +
-  1`; nunca persistido.
+1`; nunca persistido.
 - Materialização em janela rolante: parcelamento materializa as N; assinatura
   materializa até o fim do ano-planilha corrente, no mínimo (re-materializada
   quando a janela avança). Materializar cria a fatura `prevista` que faltar.
@@ -214,8 +214,8 @@ Para cada célula da coluna Saída com nota contendo seção de cartões
 1. Cada linha `R$ <valor> - <descrição>` da seção casa a descrição normalizada
    contra `card_alias` (e nome normalizado da conta).
 2. **Alias conhecido** → upsert de `invoice` por `(account_id, cycle_month da
-   data da célula)` com `stated_total = valor da linha` e `due_date = data da
-   célula`. Linha `R$ 0,00` em célula futura materializa a fatura `prevista`
+data da célula)` com `stated_total = valor da linha` e `due_date = data da
+célula`. Linha `R$ 0,00` em célula futura materializa a fatura `prevista`
    com `stated_total = 0`.
 3. **Alias desconhecido** → `card_proposal` (padrão `ceiling_proposal`):
 
@@ -232,18 +232,16 @@ CREATE TABLE card_proposal (
 );
 ```
 
-   Aceite (UI, D10) pede fechamento/vencimento/dono e cria a conta + alias;
-   dispensada nunca re-propõe. **Nenhuma conta nasce em silêncio.**
-4. Ano anterior best-effort: linha sem valor parseável não vira fatura;
-   célula realizada alimenta fatura `paga` (histórico).
-5. O upsert respeita `stated_total` de ajuste local mais novo que o import
-   (mesma régua de 3 vias do reconcile, com base própria:
-   `invoice.source_stated_total_cents`, migração desta fatia): planilha mudou
-   e local não → aplica planilha (total e base); só local mudou → preserva o
-   local e avança a base; ambos mudaram e divergem → conflito na fila
-   `import_conflict` (`transaction_id = "invoice:<id>"`, campo
-   `stated_total`), resolvido pela UI existente de conflitos — e o write-back
-   segue bloqueado até resolver (guarda existente).
+Aceite (UI, D10) pede fechamento/vencimento/dono e cria a conta + alias;
+dispensada nunca re-propõe. **Nenhuma conta nasce em silêncio.** 4. Ano anterior best-effort: linha sem valor parseável não vira fatura;
+célula realizada alimenta fatura `paga` (histórico). 5. O upsert respeita `stated_total` de ajuste local mais novo que o import
+(mesma régua de 3 vias do reconcile, com base própria:
+`invoice.source_stated_total_cents`, migração desta fatia): planilha mudou
+e local não → aplica planilha (total e base); só local mudou → preserva o
+local e avança a base; ambos mudaram e divergem → conflito na fila
+`import_conflict` (`transaction_id = "invoice:<id>"`, campo
+`stated_total`), resolvido pela UI existente de conflitos — e o write-back
+segue bloqueado até resolver (guarda existente).
 
 O marcador `#reembolso:` continua criando a Entrada derivada; quando a linha
 etiquetada casa um alias de cartão, a Entrada derivada ganha
@@ -376,7 +374,7 @@ posição definitiva decide na onda de identidade — provisória: sidebar após
 
 - **A — Migrações + núcleo puro**: tabelas `invoice`/`card_series`/
   `card_alias`/`card_proposal`, colunas de `transaction`; `cycle_close_for_
-  purchase`/`due_date_for_close`; status derivado; total efetivo;
+purchase`/`due_date_for_close`; status derivado; total efetivo;
   reconciliação. `cycle_due_date` morre.
 - **B — Commands**: `create_card_account`/`update_card_account` (+ aliases,
   adicional), `list_cards`, registrar compra na fatura (default + remanejo),
