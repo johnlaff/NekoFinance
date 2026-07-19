@@ -39,7 +39,6 @@ function previewResult(
     cells: SAFE_CELLS,
     preview_revision: "2026-06-15T00:00:00.000Z",
     conflicts_pending: false,
-    multi_card_warning: false,
     ...over,
   };
 }

@@ -24,6 +24,11 @@ export function parseBRLToCents(input: string): number | null {
   return Math.round(Number(cleaned) * 100);
 }
 
+/** Centavos → valor editável pt-BR, aceito por `parseBRLToCents`. */
+export function centsToBRLInput(cents: number): string {
+  return (cents / 100).toFixed(2).replace(".", ",");
+}
+
 /** Formats an ISO 8601 date (YYYY-MM-DD) as DD/MM/YYYY. Malformed input is returned as-is (não
  * monta "undefined/...": melhor expor o valor inesperado do que mascará-lo). */
 export function fmtDate(iso: string): string {

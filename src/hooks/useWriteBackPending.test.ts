@@ -49,14 +49,12 @@ const PREVIEW_3_PENDING = {
   ],
   preview_revision: "rev-abc",
   conflicts_pending: false,
-  multi_card_warning: false,
 };
 
 const PREVIEW_NONE = {
   cells: [],
   preview_revision: "rev-empty",
   conflicts_pending: false,
-  multi_card_warning: false,
 };
 
 const CONFLICTS_2 = [

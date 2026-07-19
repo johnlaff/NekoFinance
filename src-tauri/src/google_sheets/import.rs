@@ -1,7 +1,10 @@
 use super::layout_detect::{SheetLayout, month_number_from_name};
 use super::reconcile;
+use crate::{cards, commands::card_cmds};
+use chrono::Datelike;
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
+use std::collections::{HashMap, HashSet};
 
 type ExistingTransactionRow = (i64, Option<String>, Option<i64>, Option<String>);
 
@@ -92,6 +95,356 @@ pub struct ImportedRow {
     pub raw_note: String,
 }
 
+/// Contexto de cartões lido antes da transação de importação. Manter essas leituras fora da
+/// transação evita disputar a única conexão do pool enquanto a planilha é persistida.
+#[derive(Debug, Default)]
+pub(crate) struct CardScanCtx {
+    pub aliases: HashMap<String, String>,
+    pub cycles: HashMap<String, (u32, u32)>,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct CardScanOutcome {
+    pub invoices_created: usize,
+    pub invoices_updated: usize,
+    pub conflicts: usize,
+    pub proposals: usize,
+    pub ignored_items: usize,
+}
+
+/// Carrega identidades e ciclos antes do `begin`. Alias explícito vence o nome implícito caso
+/// uma base legada contenha a colisão que as fronteiras atuais já impedem.
+pub(crate) async fn load_card_scan_ctx(pool: &SqlitePool) -> Result<CardScanCtx, String> {
+    let accounts: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, name FROM account WHERE type = 'credit_card'")
+            .fetch_all(pool)
+            .await
+            .map_err(|e| format!("load card accounts: {e}"))?;
+
+    let mut ctx = CardScanCtx::default();
+    for (id, name) in &accounts {
+        let alias = cards::normalize_alias(name);
+        if !alias.is_empty() {
+            ctx.aliases.insert(alias, id.clone());
+        }
+        if let Ok(cycle) = card_cmds::effective_cycle(pool, id).await {
+            ctx.cycles.insert(id.clone(), cycle);
+        }
+    }
+    let aliases: Vec<(String, String)> = sqlx::query_as("SELECT alias, account_id FROM card_alias")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("load card aliases: {e}"))?;
+    for (alias, account_id) in aliases {
+        ctx.aliases.insert(alias, account_id);
+    }
+    Ok(ctx)
+}
+
+/// Varre diretamente as notas da coluna Saída. Faturas são estrutura da grade, portanto a
+/// varredura não depende de a célula ter materializado uma `ImportedRow` nem do checksum.
+pub(crate) async fn scan_card_invoices(
+    tx: &mut sqlx::SqliteConnection,
+    values: &[Vec<String>],
+    notes: &[Vec<String>],
+    layout: &SheetLayout,
+    amount_out_offset: usize,
+    ctx: &CardScanCtx,
+) -> Result<CardScanOutcome, String> {
+    let Some(year) = layout.year else {
+        return Ok(CardScanOutcome::default());
+    };
+    let month_row = layout.month_names_row as usize;
+    if month_row >= values.len() {
+        return Ok(CardScanOutcome::default());
+    }
+    let blocks = month_blocks_for(&values[month_row], layout.block_size as usize);
+    let mut outcome = CardScanOutcome::default();
+    let mut present: HashMap<String, HashSet<String>> = HashMap::new();
+
+    for (row_idx, row) in values
+        .iter()
+        .enumerate()
+        .skip(layout.data_start_row as usize)
+    {
+        let day: u32 = row
+            .get(layout.day_column as usize)
+            .map_or("", |v| v.trim())
+            .parse::<f64>()
+            .ok()
+            .filter(|day| (1.0..=31.0).contains(day))
+            .map(|day| day as u32)
+            .unwrap_or(0);
+        if day == 0 {
+            continue;
+        }
+        for &(offset, month) in &blocks {
+            let Some(due_date_value) = chrono::NaiveDate::from_ymd_opt(year, month, day) else {
+                continue;
+            };
+            let due_date = due_date_value.to_string();
+            // A célula foi visitada dentro da geometria da Saída, mesmo sem nota: ela participa
+            // da reconciliação global das faturas que aquele vencimento pode declarar.
+            present.entry(due_date.clone()).or_default();
+            let note = notes
+                .get(row_idx)
+                .and_then(|note_row| note_row.get(offset + amount_out_offset))
+                .map(String::as_str)
+                .unwrap_or("");
+            let cycle_month = cards::cycle_month_of(due_date_value);
+            let card_items: Vec<_> = parse_itemized_note_opts(note, true)
+                .into_iter()
+                .filter(|item| item.kind == ItemKind::Cartao)
+                .collect();
+            if card_items.is_empty() {
+                continue;
+            }
+            for item in card_items {
+                let display_name = item.description.trim();
+                let alias_source = display_name.split('#').next().unwrap_or("").trim();
+                let alias = cards::normalize_alias(alias_source);
+                let Some(account_id) = ctx.aliases.get(&alias) else {
+                    if alias.is_empty() {
+                        outcome.ignored_items += 1;
+                        continue;
+                    }
+                    let changed = sqlx::query(
+                        "INSERT INTO card_proposal (id, alias, display_name, source_month, status) \
+                         VALUES (?1, ?2, ?3, ?4, 'pending') ON CONFLICT(alias) DO NOTHING",
+                    )
+                    .bind(uuid::Uuid::new_v4().to_string())
+                    .bind(&alias)
+                    .bind(display_name)
+                    .bind(&cycle_month)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| format!("insert card proposal: {e}"))?
+                    .rows_affected();
+                    outcome.proposals += changed as usize;
+                    continue;
+                };
+                let Some(&(closing_day, _due_day)) = ctx.cycles.get(account_id) else {
+                    outcome.ignored_items += 1;
+                    continue;
+                };
+                present
+                    .entry(due_date.clone())
+                    .or_default()
+                    .insert(account_id.clone());
+                let (closing_year, closing_month) = if closing_day < due_date_value.day() {
+                    (due_date_value.year(), due_date_value.month())
+                } else if due_date_value.month() == 1 {
+                    (due_date_value.year() - 1, 12)
+                } else {
+                    (due_date_value.year(), due_date_value.month() - 1)
+                };
+                let closing_date = chrono::NaiveDate::from_ymd_opt(
+                    closing_year,
+                    closing_month,
+                    closing_day.clamp(1, 28),
+                )
+                .ok_or("closing date inválida")?;
+                let existing: Option<(String, Option<i64>, Option<i64>)> = sqlx::query_as(
+                    "SELECT id, stated_total_cents, source_stated_total_cents FROM invoice \
+                     WHERE account_id = ?1 AND cycle_month = ?2",
+                )
+                .bind(account_id)
+                .bind(&cycle_month)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| format!("load invoice: {e}"))?;
+                let (invoice_id, local, base, created) = if let Some((id, local, base)) = existing {
+                    sqlx::query("UPDATE invoice SET due_date = ?1 WHERE id = ?2")
+                        .bind(&due_date)
+                        .bind(&id)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(|e| format!("update invoice due date: {e}"))?;
+                    (id, local, base, false)
+                } else {
+                    let id = uuid::Uuid::new_v4().to_string();
+                    sqlx::query(
+                        "INSERT INTO invoice (id, account_id, cycle_month, closing_date, due_date, stated_total_cents, source_stated_total_cents) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                    )
+                    .bind(&id)
+                    .bind(account_id)
+                    .bind(&cycle_month)
+                    .bind(closing_date.to_string())
+                    .bind(&due_date)
+                    .bind(item.amount_cents)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| format!("create invoice: {e}"))?;
+                    (id, Some(item.amount_cents), Some(item.amount_cents), true)
+                };
+                if created {
+                    outcome.invoices_created += 1;
+                    continue;
+                }
+                outcome.invoices_updated += 1;
+                let sheet = item.amount_cents;
+                let conflict_id = format!("invoice:{invoice_id}");
+                if base == Some(sheet) {
+                    sqlx::query("DELETE FROM import_conflict WHERE transaction_id = ?1 AND field = 'stated_total'")
+                        .bind(&conflict_id).execute(&mut *tx).await
+                        .map_err(|e| format!("clear invoice conflict: {e}"))?;
+                } else if local == base || (local.is_none() && base.is_none()) {
+                    sqlx::query("UPDATE invoice SET stated_total_cents = ?1, source_stated_total_cents = ?1 WHERE id = ?2")
+                        .bind(sheet).bind(&invoice_id).execute(&mut *tx).await
+                        .map_err(|e| format!("apply invoice total: {e}"))?;
+                    sqlx::query("DELETE FROM import_conflict WHERE transaction_id = ?1 AND field = 'stated_total'")
+                        .bind(&conflict_id).execute(&mut *tx).await
+                        .map_err(|e| format!("clear invoice conflict: {e}"))?;
+                } else if local == Some(sheet) {
+                    sqlx::query("UPDATE invoice SET source_stated_total_cents = ?1 WHERE id = ?2")
+                        .bind(sheet)
+                        .bind(&invoice_id)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(|e| format!("align invoice total base: {e}"))?;
+                    sqlx::query("DELETE FROM import_conflict WHERE transaction_id = ?1 AND field = 'stated_total'")
+                        .bind(&conflict_id).execute(&mut *tx).await
+                        .map_err(|e| format!("clear invoice conflict: {e}"))?;
+                } else {
+                    let now = chrono::Utc::now().to_rfc3339();
+                    sqlx::query(
+                        "INSERT INTO import_conflict (id, transaction_id, field, base_value, local_value, sheet_value, created_at) \
+                         VALUES (?1, ?2, 'stated_total', ?3, ?4, ?5, ?6) \
+                         ON CONFLICT(transaction_id, field) DO UPDATE SET base_value=excluded.base_value, \
+                         local_value=excluded.local_value, sheet_value=excluded.sheet_value, created_at=excluded.created_at, \
+                         resolved_at=NULL, resolution=NULL",
+                    )
+                    .bind(format!("conf:{conflict_id}:stated_total"))
+                    .bind(&conflict_id)
+                    .bind(base.map(|v| v.to_string()))
+                    .bind(local.unwrap_or_default().to_string())
+                    .bind(sheet.to_string())
+                    .bind(&now)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| format!("record invoice conflict: {e}"))?;
+                    outcome.conflicts += 1;
+                }
+            }
+        }
+    }
+
+    // Reconcilia depois de observar TODAS as células Saída. Assim, esvaziar a seção de cartões
+    // ainda remove a fatura importada, enquanto uma compra realizada — ou um reembolso vinculado
+    // manualmente pelo dono (`refund_invoice_id`, nunca derivado do import) — preserva seu
+    // histórico.
+    let stale: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT id, account_id, due_date FROM invoice \
+         WHERE source_stated_total_cents IS NOT NULL \
+           AND NOT EXISTS (SELECT 1 FROM \"transaction\" t \
+                           WHERE t.invoice_id = invoice.id) \
+           AND NOT EXISTS (SELECT 1 FROM \"transaction\" r \
+                           WHERE r.refund_invoice_id = invoice.id) \
+           AND (stated_total_cents IS NULL \
+                OR stated_total_cents = source_stated_total_cents)",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|e| format!("load removed card invoices: {e}"))?;
+    for (invoice_id, account_id, due_date) in stale {
+        if present
+            .get(&due_date)
+            .is_some_and(|accounts| !accounts.contains(&account_id))
+        {
+            sqlx::query("DELETE FROM invoice WHERE id = ?1")
+                .bind(&invoice_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("reconcile removed card invoices: {e}"))?;
+            // Sem isto, um `import_conflict` de rodadas anteriores (`invoice:<id>/stated_total`)
+            // sobrevive à fatura que ele descreve: órfão, sem alvo resolvível na UI, e trava
+            // `unresolved_conflict_count` acima de zero para sempre.
+            sqlx::query("DELETE FROM import_conflict WHERE transaction_id = ?1")
+                .bind(format!("invoice:{invoice_id}"))
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("reconcile removed card invoice conflict: {e}"))?;
+        }
+    }
+    Ok(outcome)
+}
+
+/// Variante para os retornos antecipados por checksum: a nota pode ter mudado sem alterar o lote
+/// materializado, mas a estrutura de faturas ainda precisa ser observada.
+pub(crate) async fn scan_card_invoices_standalone(
+    pool: &SqlitePool,
+    values: &[Vec<String>],
+    notes: &[Vec<String>],
+    layout: &SheetLayout,
+    amount_out_offset: usize,
+    ctx: &CardScanCtx,
+) -> Result<CardScanOutcome, String> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| format!("begin card scan: {e}"))?;
+    let outcome =
+        scan_card_invoices(&mut tx, values, notes, layout, amount_out_offset, ctx).await?;
+    tx.commit()
+        .await
+        .map_err(|e| format!("commit card scan: {e}"))?;
+    Ok(outcome)
+}
+
+/// Liga a Entrada compensatória já derivada pela gramática de notas à sub-fatura correspondente.
+/// A identificação do pai reutiliza `imported_row_ids`, a mesma origem dos IDs do import.
+pub(crate) async fn link_card_refunds(
+    tx: &mut sqlx::SqliteConnection,
+    sheet_name: &str,
+    rows: &[ImportedRow],
+    ctx: &CardScanCtx,
+) -> Result<usize, String> {
+    let mut linked = 0;
+    for (row, parent_id) in rows.iter().zip(imported_row_ids(sheet_name, rows)) {
+        if row.raw_note.trim().is_empty() {
+            continue;
+        }
+        let cycle_month = row.date.get(..7).ok_or("data de import inválida")?;
+        let items = parse_itemized_note_opts(&row.raw_note, true);
+        for tagged in parse_note_markers(&row.raw_note).tagged_lines {
+            if !matches!(tagged.kind, NoteMarkerKind::Reembolso) {
+                continue;
+            }
+            let Some(item) = items
+                .iter()
+                .find(|item| item.position == tagged.line_index && item.kind == ItemKind::Cartao)
+            else {
+                continue;
+            };
+            let alias =
+                cards::normalize_alias(item.description.split('#').next().unwrap_or("").trim());
+            let Some(account_id) = ctx.aliases.get(&alias) else {
+                continue;
+            };
+            let invoice_id: Option<(String,)> =
+                sqlx::query_as("SELECT id FROM invoice WHERE account_id = ?1 AND cycle_month = ?2")
+                    .bind(account_id)
+                    .bind(cycle_month)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(|e| format!("load refund invoice: {e}"))?;
+            let Some((invoice_id,)) = invoice_id else {
+                continue;
+            };
+            let derived_id = format!("derived:reembolso:{parent_id}:{}", tagged.line_index);
+            linked += sqlx::query("UPDATE \"transaction\" SET refund_invoice_id = ?1 WHERE id = ?2")
+                .bind(&invoice_id)
+                .bind(&derived_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("link refund: {e}"))?
+                .rows_affected() as usize;
+        }
+    }
+    Ok(linked)
+}
+
 pub fn classify_row(date_str: &str, date_direction: &str) -> Result<bool, String> {
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     // Hoje é REALIZADO (não projeção): `<=` inclui a data de hoje em `is_past`,
@@ -170,6 +523,21 @@ pub fn row_id(sheet: &str, date: &str, kind: RowKind, slot: usize) -> String {
     h.update(b"|");
     h.update(slot.to_le_bytes());
     hex::encode(h.finalize())
+}
+
+/// IDs dos pais na mesma ordem e com os mesmos slots de `import_rows_core`. As linhas derivadas
+/// precisam repetir essa identidade sem duplicar a fórmula de hash.
+fn imported_row_ids(sheet_name: &str, rows: &[ImportedRow]) -> Vec<String> {
+    let mut slots: HashMap<(String, &'static str), usize> = HashMap::new();
+    rows.iter()
+        .map(|row| {
+            let slot = slots
+                .entry((row.date.clone(), row.kind.as_str()))
+                .and_modify(|slot| *slot += 1)
+                .or_insert(0);
+            row_id(sheet_name, &row.date, row.kind, *slot)
+        })
+        .collect()
 }
 
 pub async fn check_duplicate_import(
@@ -292,20 +660,9 @@ async fn import_rows_core(
     // ausentes da planilha.
     let profile_id = resolve_profile_id(tx, profile_id).await?;
 
-    let mut slot_counter: std::collections::HashMap<(String, &'static str), usize> =
-        std::collections::HashMap::new();
     let mut current_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    for row in rows {
-        let slot = {
-            let c = slot_counter
-                .entry((row.date.clone(), row.kind.as_str()))
-                .or_insert(0);
-            let s = *c;
-            *c += 1;
-            s
-        };
-        let txn_id = row_id(sheet_name, &row.date, row.kind, slot);
+    for (row, txn_id) in rows.iter().zip(imported_row_ids(sheet_name, rows)) {
         current_ids.insert(txn_id.clone());
 
         let sheet_amount = row.amount.abs();
@@ -4662,5 +5019,965 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(month, "2026-07");
+    }
+
+    #[tokio::test]
+    async fn card_scan_creates_invoice_from_card_note() {
+        let pool = test_pool().await;
+        let account_id = crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Visa principal",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &["visa".into()],
+        )
+        .await
+        .unwrap();
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let rows = vec![
+            vec!["JANEIRO".into(), "".into(), "".into()],
+            vec![],
+            vec!["1".into(), "".into(), "850,00".into()],
+        ];
+        let notes = vec![
+            vec!["".into(); 3],
+            vec![],
+            vec!["".into(), "".into(), "CARTÕES:\nR$ 850,00 - Visa".into()],
+        ];
+        let layout = SheetLayout {
+            id: "layout".into(),
+            sheet_name: "2026".into(),
+            year: Some(2026),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 3,
+            date_direction: "both".into(),
+        };
+
+        let mut tx = pool.begin().await.unwrap();
+        let outcome = scan_card_invoices(&mut tx, &rows, &notes, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(outcome.invoices_created, 1);
+        let invoice: (String, String, Option<i64>, Option<i64>) = sqlx::query_as(
+            "SELECT account_id, due_date, stated_total_cents, source_stated_total_cents FROM invoice",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            invoice,
+            (account_id, "2026-01-01".into(), Some(85_000), Some(85_000))
+        );
+    }
+
+    #[tokio::test]
+    async fn card_scan_reconciles_an_imported_card_line_removed_from_the_same_due_cell() {
+        let pool = test_pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let visa = crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Visa",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Mastercard",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let values = vec![
+            vec!["AGOSTO".into(), "".into(), "".into()],
+            vec![],
+            vec!["10".into(), "".into(), "100,00".into()],
+        ];
+        let layout = SheetLayout {
+            id: "layout".into(),
+            sheet_name: year.to_string(),
+            year: Some(year),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 3,
+            date_direction: "both".into(),
+        };
+        let notes = |card: &str| {
+            vec![
+                vec!["".into(); 3],
+                vec![],
+                vec![
+                    "".into(),
+                    "".into(),
+                    format!("CARTÕES:\nR$ 100,00 - {card}"),
+                ],
+            ]
+        };
+
+        let mut tx = pool.begin().await.unwrap();
+        let first = scan_card_invoices(&mut tx, &values, &notes("Visa"), &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(first.invoices_created, 1);
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &notes("Mastercard"), &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let invoices: Vec<(String, Option<i64>)> = sqlx::query_as(
+            "SELECT a.name, i.stated_total_cents FROM invoice i \
+             JOIN account a ON a.id = i.account_id ORDER BY a.name",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(invoices, vec![("Mastercard".into(), Some(10_000))]);
+
+        let due = format!("{year}-08-10");
+        let txns = crate::commands::write_back_cmds::load_write_back_txns(&pool, year)
+            .await
+            .unwrap();
+        let candidates: Vec<_> = txns
+            .iter()
+            .filter(|txn| txn.date == due && txn.kind == RowKind::Saida)
+            .collect();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0].amount_cents, 10_000,
+            "Visa não ressuscita no write-back"
+        );
+
+        let (visa_still_present,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM invoice WHERE account_id = ?1")
+                .bind(visa)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(visa_still_present, 0);
+    }
+
+    #[tokio::test]
+    async fn card_scan_removes_invoice_when_its_last_card_line_is_removed_but_keeps_real_purchase()
+    {
+        let pool = test_pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let visa = crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Visa",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let values = vec![
+            vec!["AGOSTO".into(), "".into(), "".into()],
+            vec![],
+            vec!["10".into(), "".into(), "100,00".into()],
+        ];
+        let layout = SheetLayout {
+            id: "layout".into(),
+            sheet_name: year.to_string(),
+            year: Some(year),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 3,
+            date_direction: "both".into(),
+        };
+        let cards_note = vec![
+            vec!["".into(); 3],
+            vec![],
+            vec!["".into(), "".into(), "CARTÕES:\nR$ 100,00 - Visa".into()],
+        ];
+        let no_cards_note = vec![
+            vec!["".into(); 3],
+            vec![],
+            vec!["".into(), "".into(), "CONTAS:\nR$ 100,00 - Aluguel".into()],
+        ];
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &cards_note, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let first_invoice: String =
+            sqlx::query_scalar("SELECT id FROM invoice WHERE account_id = ?1")
+                .bind(&visa)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &no_cards_note, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let removed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invoice WHERE id = ?1")
+            .bind(&first_invoice)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            removed, 0,
+            "sem seção de cartões, a fatura importada é removida"
+        );
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &cards_note, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let retained_invoice: String =
+            sqlx::query_scalar("SELECT id FROM invoice WHERE account_id = ?1")
+                .bind(&visa)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+             (id, type, amount, date, payment_method, is_fixed, is_projection, invoice_id) \
+             VALUES ('visa-real-purchase', 'expense', 2_000, ?1, 'credit', 0, 0, ?2)",
+        )
+        .bind(format!("{year}-07-20"))
+        .bind(&retained_invoice)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &no_cards_note, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invoice WHERE id = ?1")
+            .bind(&retained_invoice)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(kept, 1, "compra realizada vinculada preserva a fatura");
+    }
+
+    /// A reconciliação apaga a fatura import-origin órfã, mas até aqui não limpava o
+    /// `import_conflict` associado (`invoice:<id>/stated_total`). O conflito sobrevivendo à fatura
+    /// travava `unresolved_conflict_count` acima de zero sem nenhum alvo resolvível na UI.
+    #[tokio::test]
+    async fn card_scan_reconciliation_clears_the_orphan_import_conflict_of_a_deleted_invoice() {
+        let pool = test_pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let visa = crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Visa",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let values = vec![
+            vec!["AGOSTO".into(), "".into(), "".into()],
+            vec![],
+            vec!["10".into(), "".into(), "100,00".into()],
+        ];
+        let layout = SheetLayout {
+            id: "layout".into(),
+            sheet_name: year.to_string(),
+            year: Some(year),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 3,
+            date_direction: "both".into(),
+        };
+        let cards_note = vec![
+            vec!["".into(); 3],
+            vec![],
+            vec!["".into(), "".into(), "CARTÕES:\nR$ 100,00 - Visa".into()],
+        ];
+        let no_cards_note = vec![
+            vec!["".into(); 3],
+            vec![],
+            vec!["".into(), "".into(), "CONTAS:\nR$ 100,00 - Aluguel".into()],
+        ];
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &cards_note, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let invoice_id: String = sqlx::query_scalar("SELECT id FROM invoice WHERE account_id = ?1")
+            .bind(&visa)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        // Conflito órfão: sobrevive de uma rodada de import anterior à que vai apagar a fatura.
+        sqlx::query(
+            "INSERT INTO import_conflict \
+             (id, transaction_id, field, base_value, local_value, sheet_value, created_at) \
+             VALUES ('conf:orphan', ?1, 'stated_total', '10000', '10000', '20000', datetime('now'))",
+        )
+        .bind(format!("invoice:{invoice_id}"))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &no_cards_note, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let invoice_gone: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invoice WHERE id = ?1")
+            .bind(&invoice_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(invoice_gone, 0, "sem seção de cartões, a fatura é removida");
+        assert_eq!(
+            crate::commands::write_back_cmds::unresolved_conflict_count(&pool)
+                .await
+                .unwrap(),
+            0,
+            "o conflito órfão da fatura apagada não pode travar o gate do write-back para sempre"
+        );
+    }
+
+    #[tokio::test]
+    async fn card_scan_keeps_a_removed_imported_card_invoice_that_has_a_real_purchase() {
+        let pool = test_pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let visa = crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Visa",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Mastercard",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let values = vec![
+            vec!["AGOSTO".into(), "".into(), "".into()],
+            vec![],
+            vec!["10".into(), "".into(), "100,00".into()],
+        ];
+        let layout = SheetLayout {
+            id: "layout".into(),
+            sheet_name: year.to_string(),
+            year: Some(year),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 3,
+            date_direction: "both".into(),
+        };
+        let notes = |card: &str| {
+            vec![
+                vec!["".into(); 3],
+                vec![],
+                vec![
+                    "".into(),
+                    "".into(),
+                    format!("CARTÕES:\nR$ 100,00 - {card}"),
+                ],
+            ]
+        };
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &notes("Visa"), &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let visa_invoice: String =
+            sqlx::query_scalar("SELECT id FROM invoice WHERE account_id = ?1")
+                .bind(&visa)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+             (id, type, amount, date, payment_method, is_fixed, is_projection, invoice_id) \
+             VALUES ('visa-purchase', 'expense', 2_000, ?1, 'credit', 0, 0, ?2)",
+        )
+        .bind(format!("{year}-07-20"))
+        .bind(visa_invoice)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &notes("Mastercard"), &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let (visa_still_present,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM invoice WHERE account_id = ?1")
+                .bind(visa)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            visa_still_present, 1,
+            "uma compra real impede apagar a fatura"
+        );
+    }
+
+    /// "Sem transação vinculada" tinha só a metade da checagem — só `invoice_id` (compras). Uma
+    /// sub-fatura importada sem compras mas com uma expectativa MANUAL de reembolso
+    /// (`refund_invoice_id`) tem que sobreviver: a Entrada não é derivada do import, é um vínculo
+    /// do app; apagar a fatura anularia essa FK sem o dono pedir.
+    #[tokio::test]
+    async fn card_scan_keeps_a_removed_imported_card_invoice_that_has_a_linked_refund() {
+        let pool = test_pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let visa = crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Visa",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Mastercard",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let values = vec![
+            vec!["AGOSTO".into(), "".into(), "".into()],
+            vec![],
+            vec!["10".into(), "".into(), "100,00".into()],
+        ];
+        let layout = SheetLayout {
+            id: "layout".into(),
+            sheet_name: year.to_string(),
+            year: Some(year),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 3,
+            date_direction: "both".into(),
+        };
+        let notes = |card: &str| {
+            vec![
+                vec!["".into(); 3],
+                vec![],
+                vec![
+                    "".into(),
+                    "".into(),
+                    format!("CARTÕES:\nR$ 100,00 - {card}"),
+                ],
+            ]
+        };
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &notes("Visa"), &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let visa_invoice: String =
+            sqlx::query_scalar("SELECT id FROM invoice WHERE account_id = ?1")
+                .bind(&visa)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+             (id, type, amount, date, is_fixed, is_projection, refund_invoice_id) \
+             VALUES ('visa-refund', 'income', 5_000, ?1, 0, 1, ?2)",
+        )
+        .bind(format!("{year}-07-25"))
+        .bind(&visa_invoice)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &notes("Mastercard"), &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let (visa_still_present,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM invoice WHERE account_id = ?1")
+                .bind(visa)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            visa_still_present, 1,
+            "um reembolso vinculado impede apagar a fatura"
+        );
+    }
+
+    #[tokio::test]
+    async fn card_scan_keeps_a_removed_imported_card_invoice_with_projected_series_purchase() {
+        let pool = test_pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let visa = crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Visa",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let values = vec![
+            vec!["AGOSTO".into(), "".into(), "".into()],
+            vec![],
+            vec!["10".into(), "".into(), "100,00".into()],
+        ];
+        let layout = SheetLayout {
+            id: "layout".into(),
+            sheet_name: year.to_string(),
+            year: Some(year),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 3,
+            date_direction: "both".into(),
+        };
+        let cards_note = vec![
+            vec!["".into(); 3],
+            vec![],
+            vec!["".into(), "".into(), "CARTÕES:\nR$ 100,00 - Visa".into()],
+        ];
+        let no_cards_note = vec![
+            vec!["".into(); 3],
+            vec![],
+            vec!["".into(), "".into(), "CONTAS:\nR$ 100,00 - Aluguel".into()],
+        ];
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &cards_note, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let invoice: String = sqlx::query_scalar("SELECT id FROM invoice WHERE account_id = ?1")
+            .bind(&visa)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+             (id, type, amount, date, payment_method, is_fixed, is_projection, invoice_id) \
+             VALUES ('projected-series-occurrence', 'expense', 2_000, ?1, 'credit', 0, 1, ?2)",
+        )
+        .bind(format!("{year}-07-20"))
+        .bind(&invoice)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &no_cards_note, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let retained: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invoice WHERE id = ?1")
+            .bind(invoice)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            retained, 1,
+            "uma ocorrência projetada também preserva a fatura"
+        );
+    }
+
+    #[tokio::test]
+    async fn card_scan_keeps_a_removed_imported_card_invoice_with_local_total_adjustment() {
+        let pool = test_pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let visa = crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Visa",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let values = vec![
+            vec!["AGOSTO".into(), "".into(), "".into()],
+            vec![],
+            vec!["10".into(), "".into(), "100,00".into()],
+        ];
+        let layout = SheetLayout {
+            id: "layout".into(),
+            sheet_name: year.to_string(),
+            year: Some(year),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 3,
+            date_direction: "both".into(),
+        };
+        let cards_note = vec![
+            vec!["".into(); 3],
+            vec![],
+            vec!["".into(), "".into(), "CARTÕES:\nR$ 100,00 - Visa".into()],
+        ];
+        let no_cards_note = vec![
+            vec!["".into(); 3],
+            vec![],
+            vec!["".into(), "".into(), "CONTAS:\nR$ 100,00 - Aluguel".into()],
+        ];
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &cards_note, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        sqlx::query("UPDATE invoice SET stated_total_cents = 15_000 WHERE account_id = ?1")
+            .bind(&visa)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &no_cards_note, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let preserved: (Option<i64>, Option<i64>) = sqlx::query_as(
+            "SELECT stated_total_cents, source_stated_total_cents FROM invoice WHERE account_id = ?1",
+        )
+        .bind(visa)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(preserved, (Some(15_000), Some(10_000)));
+    }
+
+    #[tokio::test]
+    async fn card_scan_keeps_zero_structure_and_proposes_unknown_alias_once() {
+        let pool = test_pool().await;
+        crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Visa Infinite",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &["visa infinite".into()],
+        )
+        .await
+        .unwrap();
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let rows = vec![
+            vec!["JANEIRO".into(), "".into(), "".into()],
+            vec![],
+            vec!["1".into(), "".into(), "".into()],
+        ];
+        let notes = vec![
+            vec!["".into(); 3],
+            vec![],
+            vec![
+                "".into(),
+                "".into(),
+                "FATURAS:\nR$ 0,00 - VISA Infinite\nR$ 100,00 - Nubank".into(),
+            ],
+        ];
+        let layout = SheetLayout {
+            id: "layout".into(),
+            sheet_name: "2026".into(),
+            year: Some(2026),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 3,
+            date_direction: "both".into(),
+        };
+        for expected_proposals in [1, 0] {
+            let mut tx = pool.begin().await.unwrap();
+            let outcome = scan_card_invoices(&mut tx, &rows, &notes, &layout, 2, &ctx)
+                .await
+                .unwrap();
+            tx.commit().await.unwrap();
+            assert_eq!(outcome.proposals, expected_proposals);
+        }
+        let stated: (Option<i64>, Option<i64>) =
+            sqlx::query_as("SELECT stated_total_cents, source_stated_total_cents FROM invoice")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(stated, (Some(0), Some(0)));
+        let proposal: (String, String, String) =
+            sqlx::query_as("SELECT display_name, source_month, status FROM card_proposal")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            proposal,
+            ("Nubank".into(), "2026-01".into(), "pending".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn card_scan_preserves_local_total_and_records_three_way_conflict() {
+        let pool = test_pool().await;
+        let account_id = crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Visa",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let rows = vec![
+            vec!["JANEIRO".into(), "".into(), "".into()],
+            vec![],
+            vec!["15".into(), "".into(), "100,00".into()],
+        ];
+        let layout = SheetLayout {
+            id: "layout".into(),
+            sheet_name: "2026".into(),
+            year: Some(2026),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 3,
+            date_direction: "both".into(),
+        };
+        let notes = |amount: &str| {
+            vec![
+                vec!["".into(); 3],
+                vec![],
+                vec![
+                    "".into(),
+                    "".into(),
+                    format!("CARTÕES:\nR$ {amount} - Visa"),
+                ],
+            ]
+        };
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &rows, &notes("100,00"), &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        sqlx::query("UPDATE invoice SET stated_total_cents = 15000 WHERE account_id = ?1")
+            .bind(&account_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let outcome = scan_card_invoices(&mut tx, &rows, &notes("200,00"), &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(outcome.conflicts, 1);
+        let invoice: (String, Option<i64>, Option<i64>) =
+            sqlx::query_as("SELECT id, stated_total_cents, source_stated_total_cents FROM invoice")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!((invoice.1, invoice.2), (Some(15_000), Some(10_000)));
+        assert_eq!(
+            crate::commands::write_back_cmds::unresolved_conflict_count(&pool)
+                .await
+                .unwrap(),
+            1
+        );
+        let conflict: (String, String, String) =
+            sqlx::query_as("SELECT transaction_id, field, sheet_value FROM import_conflict")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            conflict,
+            (
+                format!("invoice:{}", invoice.0),
+                "stated_total".into(),
+                "20000".into()
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn link_card_refunds_targets_the_invoice_for_the_tagged_card_line() {
+        let pool = test_pool().await;
+        let holder = crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Visa",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Visa Bia",
+            None,
+            None,
+            None,
+            None,
+            Some("Bia"),
+            Some(&holder),
+            &["visa bia".into()],
+        )
+        .await
+        .unwrap();
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let raw_note = "CARTÕES:\nR$ 530,00 - Visa Bia #reembolso:Bia";
+        let values = vec![
+            vec!["JANEIRO".into(), "".into(), "".into()],
+            vec![],
+            vec!["10".into(), "".into(), "530,00".into()],
+        ];
+        let notes = vec![
+            vec!["".into(); 3],
+            vec![],
+            vec!["".into(), "".into(), raw_note.into()],
+        ];
+        let layout = SheetLayout {
+            id: "layout".into(),
+            sheet_name: "2026".into(),
+            year: Some(2026),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 3,
+            date_direction: "both".into(),
+        };
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &notes, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let rows = vec![ImportedRow {
+            date: "2026-01-10".into(),
+            amount: -53_000,
+            description: "fatura".into(),
+            is_projection: false,
+            kind: RowKind::Saida,
+            raw_note: raw_note.into(),
+        }];
+        import_rows_with_options(
+            &pool,
+            "2026",
+            &rows,
+            "profile",
+            ImportRowsOptions::default(),
+        )
+        .await
+        .unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        assert_eq!(
+            link_card_refunds(&mut tx, "2026", &rows, &ctx)
+                .await
+                .unwrap(),
+            1
+        );
+        tx.commit().await.unwrap();
+        let linked: Option<String> = sqlx::query_scalar(
+            "SELECT refund_invoice_id FROM \"transaction\" WHERE id LIKE 'derived:reembolso:%'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(linked.is_some());
     }
 }

@@ -38,8 +38,6 @@ interface WBState {
   previewedAt: number | null;
   /** Há conflitos de import pendentes? Desabilita o envio e espelha o gate do backend. */
   conflictsPending: boolean;
-  /** Mais de um cartão com ciclo, ou cartão sem ciclo, sinaliza possível divergência na data da fatura. */
-  multiCardWarning: boolean;
   /** Prévia em andamento (read-only). */
   loading: boolean;
   /** Envio em andamento (guard anti-duplo-clique no Aprovar). */
@@ -58,7 +56,6 @@ const initialWB: WBState = {
   previewRevision: null,
   previewedAt: null,
   conflictsPending: false,
-  multiCardWarning: false,
   loading: false,
   applying: false,
   confirm: null,
@@ -77,7 +74,6 @@ type WBAction =
       cells: CellWrite[];
       previewRevision: string;
       conflictsPending: boolean;
-      multiCardWarning: boolean;
     }
   | { type: "econCells"; value: CellWrite[] | null }
   | { type: "confirm"; value: ConfirmTarget }
@@ -102,7 +98,6 @@ function wbReducer(s: WBState, a: WBAction): WBState {
         previewRevision: a.previewRevision,
         previewedAt: Date.now(),
         conflictsPending: a.conflictsPending,
-        multiCardWarning: a.multiCardWarning,
       };
     case "econCells":
       return { ...s, econCells: a.value };
@@ -243,7 +238,6 @@ function GridDiffSection({
   changed,
   sheetName,
   conflictsPending,
-  multiCardWarning,
   previewedAt,
   applyMsg,
   sendBlocked,
@@ -254,7 +248,6 @@ function GridDiffSection({
   changed: CellWrite[];
   sheetName: string;
   conflictsPending: boolean;
-  multiCardWarning: boolean;
   previewedAt: number | null;
   applyMsg: string | null;
   sendBlocked: boolean;
@@ -271,15 +264,6 @@ function GridDiffSection({
             enviar — o app não escreve por cima de um valor em conferência.
           </span>
         </div>
-      )}
-      {multiCardWarning && (
-        <output style={WARN_BANNER}>
-          <AlertTriangle size={14} strokeWidth={2} aria-hidden="true" />
-          <span>
-            Mais de um cartão com ciclo (ou cartão sem ciclo): confira a data da fatura
-            antes de enviar.
-          </span>
-        </output>
       )}
       {changed.length === 0 ? (
         <p style={MUTED_SM}>
@@ -397,7 +381,6 @@ export function WriteBackPreview({
     previewRevision,
     previewedAt,
     conflictsPending,
-    multiCardWarning,
     loading,
     applying,
     confirm,
@@ -444,7 +427,6 @@ export function WriteBackPreview({
           cells: result.cells,
           previewRevision: result.preview_revision,
           conflictsPending,
-          multiCardWarning: result.multi_card_warning,
         });
         // Aba-ano também tem Economia (aba à parte): pré-visualiza o bloco do ano. É OPCIONAL —
         // se não houver aba Economia/dados, não falha a prévia principal da grade diária.
@@ -635,7 +617,6 @@ export function WriteBackPreview({
           changed={changed}
           sheetName={sheetName}
           conflictsPending={conflictsPending}
-          multiCardWarning={multiCardWarning}
           previewedAt={previewedAt}
           applyMsg={applyMsg}
           sendBlocked={sendBlocked}

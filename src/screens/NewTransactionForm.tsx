@@ -1,15 +1,14 @@
-import { useEffect, useReducer, useState, type Dispatch } from "react";
+import { useReducer, type Dispatch } from "react";
 import { Button } from "../design-system/components/Button";
 import { MovBadge, type MovKind } from "../design-system/components/MovBadge";
 import {
   createTransaction,
-  getPockets,
-  listTags,
   updateSeriesAll,
   updateSeriesFrom,
   updateTransaction,
   updateTransactionItems,
   type Frequency,
+  type Card,
   type LineItem,
   type LineItemDraft,
   type PocketAccount,
@@ -20,6 +19,8 @@ import { LineItemEditor } from "../design-system/components/LineItemEditor";
 import { safeErrorMessage } from "../lib/errors";
 import { parseBRLToCents, todayISO } from "../lib/format";
 import { FORM_KINDS, fieldsToKind, kindToFields } from "../lib/movement";
+import { submitCardPurchase, useCardOptions } from "./newTransactionCard";
+import { useFormOptions } from "./newTransactionOptions";
 
 /** Valores de um lançamento existente para pré-preencher o form no modo edição. */
 export interface TransactionEditValues {
@@ -135,6 +136,10 @@ interface FormState {
   repeat: boolean;
   frequency: Frequency;
   repetitions: number;
+  cardId: string;
+  cardRepeat: "never" | "subscription" | "installments";
+  installments: number;
+  refundAmount: string;
   /** Partes itemizadas. Com ≥1 parte, o Valor vira somente-leitura (= Σ partes). */
   items: LineItemDraft[];
   busy: boolean;
@@ -154,6 +159,10 @@ function makeInitialForm(initial?: TransactionEditValues): FormState {
       repeat: false,
       frequency: "mensal",
       repetitions: 12,
+      cardId: "",
+      cardRepeat: "never",
+      installments: 2,
+      refundAmount: "",
       items: toDrafts(initial.items),
       busy: false,
       error: null,
@@ -170,6 +179,10 @@ function makeInitialForm(initial?: TransactionEditValues): FormState {
     repeat: false,
     frequency: "mensal",
     repetitions: 12,
+    cardId: "",
+    cardRepeat: "never",
+    installments: 2,
+    refundAmount: "",
     items: [],
     busy: false,
     error: null,
@@ -212,6 +225,8 @@ function formReducer(s: FormState, a: FormAction): FormState {
         selectedTags: [],
         dueDate: "",
         repeat: false,
+        cardRepeat: "never",
+        refundAmount: "",
         items: [],
         busy: false,
       };
@@ -483,6 +498,120 @@ function DueDateField({
   );
 }
 
+function CardPurchaseControls({
+  cards,
+  cardId,
+  cardRepeat,
+  installments,
+  refundAmount,
+  dispatch,
+}: {
+  cards: Card[];
+  cardId: string;
+  cardRepeat: FormState["cardRepeat"];
+  installments: number;
+  refundAmount: string;
+  dispatch: Dispatch<FormAction>;
+}) {
+  if (cards.length === 0)
+    return (
+      <p style={HINT_TEXT}>Cadastre um cartão em Cartões para acompanhar a fatura.</p>
+    );
+  return (
+    <div style={{ display: "grid", gap: "var(--space-3)" }}>
+      <div>
+        <label htmlFor="ntf-card" style={label}>
+          Cartão
+        </label>
+        <select
+          id="ntf-card"
+          value={cardId}
+          onChange={(event) =>
+            dispatch({ type: "set", patch: { cardId: event.target.value } })
+          }
+          style={field}
+        >
+          <option value="">Selecione o cartão</option>
+          {cards.map((card) => (
+            <option key={card.id} value={card.id}>
+              {card.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
+        <legend style={label}>Repetir</legend>
+        <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
+          {(
+            [
+              ["never", "Nunca"],
+              ["subscription", "Assinatura"],
+              ["installments", "Parcelado em N"],
+            ] as const
+          ).map(([value, text]) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={cardRepeat === value}
+              onClick={() => dispatch({ type: "set", patch: { cardRepeat: value } })}
+              style={{
+                ...KIND_BTN_BASE,
+                border: `var(--bw-hair) solid ${cardRepeat === value ? "var(--primary)" : "var(--border)"}`,
+                background:
+                  cardRepeat === value ? "var(--surface-selected)" : "transparent",
+              }}
+            >
+              {text}
+            </button>
+          ))}
+        </div>
+      </fieldset>
+      {cardRepeat === "installments" ? (
+        <div>
+          <label htmlFor="ntf-installments" style={label}>
+            Número de parcelas
+          </label>
+          <input
+            id="ntf-installments"
+            type="number"
+            min="2"
+            max="120"
+            value={installments}
+            onChange={(event) =>
+              dispatch({
+                type: "set",
+                patch: {
+                  installments: Math.min(120, Math.max(2, Number(event.target.value))),
+                },
+              })
+            }
+            style={field}
+          />
+        </div>
+      ) : null}
+      <div>
+        <label htmlFor="ntf-refund" style={label}>
+          Reembolso esperado
+        </label>
+        <input
+          id="ntf-refund"
+          inputMode="decimal"
+          value={refundAmount}
+          onChange={(event) =>
+            dispatch({ type: "set", patch: { refundAmount: event.target.value } })
+          }
+          placeholder="R$ 0,00"
+          style={field}
+        />
+        <p style={HINT_TEXT}>
+          Entra como Entrada vinculada no vencimento — as réguas seguem julgando o valor
+          cheio.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export function NewTransactionForm({
   onCreated,
   initialValues,
@@ -505,40 +634,18 @@ export function NewTransactionForm({
     repeat,
     frequency,
     repetitions,
+    cardId,
+    cardRepeat,
+    installments,
+    refundAmount,
     items,
     busy,
     error,
   } = form;
-  const [tags, setTags] = useState<Tag[]>([]);
-  const [reserveAccounts, setReserveAccounts] = useState<PocketAccount[]>([]);
-
-  useEffect(() => {
-    let alive = true;
-    listTags()
-      .then((t) => alive && setTags(t))
-      .catch(() => alive && setTags([]));
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  // Contas-destino possíveis da Economia (reserve/illiquid). Só usado no kind "economia".
-  useEffect(() => {
-    let alive = true;
-    getPockets()
-      .then((p) => {
-        if (!alive) return;
-        setReserveAccounts(
-          p.accounts.filter(
-            (a) => a.liquidity === "reserve" || a.liquidity === "illiquid",
-          ),
-        );
-      })
-      .catch(() => alive && setReserveAccounts([]));
-    return () => {
-      alive = false;
-    };
-  }, []);
+  const { tags, reserveAccounts } = useFormOptions();
+  const cards = useCardOptions((cardId) =>
+    dispatch({ type: "set", patch: { cardId } }),
+  );
 
   // Itemização só faz sentido fora da Economia (a aba Economia não tem nota por-célula).
   const itemsEnabled = kind !== "economia";
@@ -552,7 +659,8 @@ export function NewTransactionForm({
     effectiveAmount != null &&
     effectiveAmount > 0 &&
     !busy &&
-    (kind !== "economia" || toAccountId !== "");
+    (kind !== "economia" || toAccountId !== "") &&
+    (kind !== "cartao" || cards.length === 0 || cardId !== "");
 
   async function submit() {
     if (effectiveAmount == null || effectiveAmount <= 0) {
@@ -605,6 +713,25 @@ export function NewTransactionForm({
         }
         dispatch({ type: "submitSuccess" });
         onSaved?.();
+        return;
+      }
+      if (kind === "cartao" && cards.length > 0) {
+        if (!cardId) {
+          dispatch({ type: "fail", error: "Escolha o cartão para esta compra." });
+          return;
+        }
+        await submitCardPurchase({
+          cardId,
+          cardRepeat,
+          installments,
+          refundAmount,
+          amountCents,
+          description,
+          date,
+          tagIds: selectedTags,
+        });
+        dispatch({ type: "submitSuccess" });
+        onCreated?.();
         return;
       }
       const newId = await createTransaction({
@@ -720,6 +847,17 @@ export function NewTransactionForm({
         <DueDateField dueDate={dueDate} dispatch={dispatch} />
       )}
 
+      {!editing && kind === "cartao" ? (
+        <CardPurchaseControls
+          cards={cards}
+          cardId={cardId}
+          cardRepeat={cardRepeat}
+          installments={installments}
+          refundAmount={refundAmount}
+          dispatch={dispatch}
+        />
+      ) : null}
+
       {/* Detalhamento em partes: fora da Economia, vale para novo, passado e
           previsto — inclusive numa ocorrência de série recorrente. Como itens são por-instância,
           a edição numa série atinge só esta ocorrência (nota explicativa abaixo). */}
@@ -751,7 +889,7 @@ export function NewTransactionForm({
       )}
 
       {/* Economia é um lançamento único — a recorrência (transfer) é rejeitada pelo backend. */}
-      {!editing && kind !== "economia" && (
+      {!editing && kind !== "economia" && !(kind === "cartao" && cards.length > 0) && (
         <RepeatControls
           repeat={repeat}
           repetitions={repetitions}
@@ -760,6 +898,24 @@ export function NewTransactionForm({
         />
       )}
 
+      <FormFooter error={error} busy={busy} editing={editing} canSubmit={canSubmit} />
+    </form>
+  );
+}
+
+function FormFooter({
+  error,
+  busy,
+  editing,
+  canSubmit,
+}: {
+  error: string | null;
+  busy: boolean;
+  editing: boolean;
+  canSubmit: boolean;
+}) {
+  return (
+    <>
       {error && (
         <p
           role="alert"
@@ -768,12 +924,11 @@ export function NewTransactionForm({
           {error}
         </p>
       )}
-
       <div style={{ display: "flex", justifyContent: "flex-end" }}>
         <Button type="submit" variant="primary" disabled={!canSubmit}>
           {busy ? "Salvando…" : editing ? "Salvar" : "Lançar"}
         </Button>
       </div>
-    </form>
+    </>
   );
 }

@@ -3,6 +3,7 @@ import {
   CalendarDays,
   CalendarRange,
   ChartColumn,
+  CreditCard,
   Ellipsis,
   House,
   List,
@@ -38,6 +39,7 @@ export type Screen =
   | "hoje"
   | "lancamentos"
   | "mes"
+  | "cartoes"
   | "ano"
   | "calendario"
   | "horizonte"
@@ -50,6 +52,7 @@ const SCREEN_META: Record<Screen, { title: string; crumb: string }> = {
   hoje: { title: "Hoje", crumb: "Quanto posso gastar hoje" },
   lancamentos: { title: "Lançamentos", crumb: "Seu livro-razão" },
   mes: { title: "Este mês", crumb: "Como o mês está indo" },
+  cartoes: { title: "Cartões", crumb: "Faturas, séries e reembolsos" },
   ano: { title: "O ano", crumb: "O ano num olhar" },
   calendario: { title: "Calendário", crumb: "Saúde do saldo dia a dia" },
   horizonte: { title: "Horizonte", crumb: "Para onde o saldo vai" },
@@ -71,6 +74,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "hoje", label: "Hoje", icon: House },
   { key: "lancamentos", label: "Lançamentos", icon: List },
   { key: "mes", label: "Este mês", icon: ChartColumn },
+  { key: "cartoes", label: "Cartões", icon: CreditCard },
   { key: "ano", label: "O ano", icon: TrendingUp },
   { key: "calendario", label: "Calendário", icon: CalendarDays },
   { key: "horizonte", label: "Horizonte", icon: CalendarRange },
@@ -81,7 +85,7 @@ const NAV_ITEMS: NavItem[] = [
 
 /** Dock mobile: os 5 destinos do dia a dia; o resto vive no menu "mais" da appbar. */
 const DOCK_KEYS: Screen[] = ["hoje", "lancamentos", "mes", "calendario", "mia"];
-const MORE_KEYS: Screen[] = ["ano", "horizonte", "tags", "config"];
+const MORE_KEYS: Screen[] = ["cartoes", "ano", "horizonte", "tags", "config"];
 
 function NavIcon({ icon, size }: { icon: NavItem["icon"]; size: number }) {
   if (icon === "cat") return <NekoMark width={size} height={size} />;

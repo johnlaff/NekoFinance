@@ -3,7 +3,7 @@
 //! tags do método. Funções puras-de-IO no shell; determinísticas e testáveis com um pool injetado.
 
 use serde::Serialize;
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 use tauri::State;
 
 #[derive(Debug, Serialize, sqlx::FromRow, PartialEq, Eq)]
@@ -68,9 +68,21 @@ pub async fn set_transaction_tags(
     tag_ids: &[String],
 ) -> Result<(), String> {
     let mut tx = pool.begin().await.map_err(|e| format!("begin: {e}"))?;
+    set_transaction_tags_on_conn(&mut tx, transaction_id, tag_ids).await?;
+    tx.commit().await.map_err(|e| format!("commit: {e}"))?;
+    Ok(())
+}
+
+/// Substitui as tags usando a transação do chamador para que um gesto composto persista tudo ou
+/// nada. A validação de chave estrangeira dos IDs mantém a fronteira de tags explícita.
+pub(crate) async fn set_transaction_tags_on_conn(
+    conn: &mut SqliteConnection,
+    transaction_id: &str,
+    tag_ids: &[String],
+) -> Result<(), String> {
     sqlx::query("DELETE FROM transaction_tag WHERE transaction_id = ?1")
         .bind(transaction_id)
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await
         .map_err(|e| format!("clear tags: {e}"))?;
     for tag_id in tag_ids {
@@ -79,11 +91,10 @@ pub async fn set_transaction_tags(
         )
         .bind(transaction_id)
         .bind(tag_id)
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await
         .map_err(|e| format!("attach tag: {e}"))?;
     }
-    tx.commit().await.map_err(|e| format!("commit: {e}"))?;
     Ok(())
 }
 

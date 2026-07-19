@@ -1,0 +1,230 @@
+.cartoes {
+  --ok: var(--success-400);
+  --warn: var(--warning-400);
+
+  display: grid;
+  gap: var(--space-4);
+  max-width: 980px;
+}
+
+.cartoes__proposal {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
+  background: var(--surface);
+}
+
+.cartoes__card,
+.cartoes__form {
+  min-width: 0;
+}
+
+.cartoes__proposal-copy {
+  margin: 0 0 var(--space-3);
+  color: var(--text);
+}
+
+.cartoes__gate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: var(--bw-hair) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.cartoes__gate-leg,
+.cartoes__gate-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+}
+
+.cartoes__gate-leg.is-ok {
+  color: var(--ok);
+}
+
+.cartoes__gate-leg.is-warn {
+  color: var(--warn);
+}
+
+.cartoes__gate-loading,
+.cartoes__gate-help,
+.cartoes__open,
+.cartoes__limit,
+.cartoes__muted,
+.cartoes__inherit {
+  color: var(--text-muted);
+}
+
+.cartoes__gate-help {
+  font-size: var(--fs-sm);
+  text-decoration: underline dotted;
+  text-underline-offset: var(--space-1);
+}
+
+.cartoes__card-head,
+.cartoes__invoice-summary,
+.cartoes__totals,
+.cartoes__actions,
+.cartoes__net {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.cartoes__card-head {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.cartoes__card h2,
+.cartoes__card h3,
+.cartoes__form h2,
+.cartoes__series h3 {
+  margin: 0;
+  font-size: var(--fs-title);
+}
+
+.cartoes__card-head p,
+.cartoes__open,
+.cartoes__limit {
+  margin: var(--space-1) 0 0;
+  font-size: var(--fs-sm);
+}
+
+.cartoes__invoice-summary {
+  margin: var(--space-4) 0;
+}
+
+.cartoes__invoice-money {
+  margin-inline-start: auto;
+}
+
+.cartoes__limit {
+  margin-top: var(--space-4);
+  font-size: var(--fs-label);
+}
+
+.cartoes__additional {
+  margin: var(--space-3) 0 0 var(--space-5);
+  padding-inline-start: var(--space-3);
+  border-inline-start: var(--bw-hair) solid var(--border);
+  color: var(--text-muted);
+}
+
+.cartoes__drill,
+.cartoes__purchases,
+.cartoes__series {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.cartoes__drill {
+  padding-top: var(--space-3);
+}
+
+.cartoes__totals > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.cartoes__reconciliation {
+  padding: var(--space-2) var(--space-3);
+  border: var(--bw-hair) dashed var(--border);
+  border-radius: var(--radius-xs);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.cartoes__purchases {
+  gap: 0;
+}
+
+.cartoes__purchase {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-block-end: var(--bw-hair) solid var(--border);
+  font-size: var(--fs-sm);
+}
+
+.cartoes__purchase-money {
+  text-align: end;
+}
+
+.cartoes__purchase .cartoes__actions,
+.cartoes__series-row > .cartoes__actions {
+  grid-column: 1 / -1;
+}
+
+.cartoes__series {
+  gap: var(--space-3);
+}
+
+.cartoes__series-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding-block: var(--space-3);
+  border-block-end: var(--bw-hair) solid var(--border);
+  font-size: var(--fs-sm);
+}
+
+.cartoes__net {
+  margin: 0;
+  padding-top: var(--space-3);
+  border-top: var(--bw-hair) solid var(--border);
+}
+
+.cartoes__muted,
+.cartoes__inherit {
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+
+.cartoes__form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+}
+
+.cartoes__actions {
+  gap: var(--space-2);
+}
+
+.cartoes__error {
+  color: var(--danger-400);
+}
+
+@media (max-width: 640px) {
+  .cartoes__gate,
+  .cartoes__card-head {
+    align-items: stretch;
+  }
+
+  .cartoes__purchase,
+  .cartoes__series-row,
+  .cartoes__form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cartoes__purchase-money {
+    text-align: start;
+  }
+
+  .cartoes__purchase .cartoes__actions,
+  .cartoes__series-row > .cartoes__actions {
+    grid-column: 1;
+  }
+}

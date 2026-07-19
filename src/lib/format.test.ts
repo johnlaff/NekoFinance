@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  centsToBRLInput,
   fmtDate,
   fmtDayMonth,
   formatBRL,
@@ -7,6 +8,16 @@ import {
   parseBRLToCents,
   todayISO,
 } from "./format";
+
+describe("centsToBRLInput", () => {
+  it("mantém os centavos em valores menores que um real", () => {
+    expect(centsToBRLInput(50)).toBe("0,50");
+  });
+
+  it("formata valores inteiros em reais sem separador de milhar", () => {
+    expect(centsToBRLInput(428_900)).toBe("4289,00");
+  });
+});
 
 describe("todayISO", () => {
   it("uses the LOCAL wall-clock date, not UTC", () => {

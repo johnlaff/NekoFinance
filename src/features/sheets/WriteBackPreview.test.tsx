@@ -40,7 +40,6 @@ function previewResult(
     cells: CELLS,
     preview_revision: "2026-01-01T00:00:00.000Z",
     conflicts_pending: false,
-    multi_card_warning: false,
     ...over,
   };
 }
@@ -233,7 +232,7 @@ describe("isSafeForFastPath", () => {
   ];
 
   it("returns true for a clean amount-only diff", () => {
-    expect(isSafeForFastPath(true, 0, false, SAFE_CHANGED, "rev-1")).toBe(true);
+    expect(isSafeForFastPath(true, 0, SAFE_CHANGED, "rev-1")).toBe(true);
   });
 
   it("returns true for entrada/saida/diario kinds", () => {
@@ -242,28 +241,24 @@ describe("isSafeForFastPath", () => {
       { ...SAFE_CHANGED[0]!, kind: "saida", a1: "D3" },
       { ...SAFE_CHANGED[0]!, kind: "diario", a1: "E3" },
     ];
-    expect(isSafeForFastPath(true, 0, false, kinds, "rev-1")).toBe(true);
+    expect(isSafeForFastPath(true, 0, kinds, "rev-1")).toBe(true);
   });
 
   it("returns false when disabled", () => {
-    expect(isSafeForFastPath(false, 0, false, SAFE_CHANGED, "rev-1")).toBe(false);
+    expect(isSafeForFastPath(false, 0, SAFE_CHANGED, "rev-1")).toBe(false);
   });
 
   it("returns false when conflict count > 0", () => {
-    expect(isSafeForFastPath(true, 1, false, SAFE_CHANGED, "rev-1")).toBe(false);
-  });
-
-  it("returns false when multiCardWarning is true", () => {
-    expect(isSafeForFastPath(true, 0, true, SAFE_CHANGED, "rev-1")).toBe(false);
+    expect(isSafeForFastPath(true, 1, SAFE_CHANGED, "rev-1")).toBe(false);
   });
 
   it("returns false when changed list is empty", () => {
-    expect(isSafeForFastPath(true, 0, false, [], "rev-1")).toBe(false);
+    expect(isSafeForFastPath(true, 0, [], "rev-1")).toBe(false);
   });
 
   it("returns false when previewRevision is null or empty", () => {
-    expect(isSafeForFastPath(true, 0, false, SAFE_CHANGED, null)).toBe(false);
-    expect(isSafeForFastPath(true, 0, false, SAFE_CHANGED, "")).toBe(false);
+    expect(isSafeForFastPath(true, 0, SAFE_CHANGED, null)).toBe(false);
+    expect(isSafeForFastPath(true, 0, SAFE_CHANGED, "")).toBe(false);
   });
 
   it("returns false when any changed cell has a formula-column kind (balance/date)", () => {
@@ -271,12 +266,12 @@ describe("isSafeForFastPath", () => {
       ...SAFE_CHANGED,
       { ...SAFE_CHANGED[0]!, kind: "balance", a1: "F3", col: 5 },
     ];
-    expect(isSafeForFastPath(true, 0, false, withBalance, "rev-1")).toBe(false);
+    expect(isSafeForFastPath(true, 0, withBalance, "rev-1")).toBe(false);
 
     const withDate: CellWrite[] = [
       ...SAFE_CHANGED,
       { ...SAFE_CHANGED[0]!, kind: "date", a1: "A3", col: 0 },
     ];
-    expect(isSafeForFastPath(true, 0, false, withDate, "rev-1")).toBe(false);
+    expect(isSafeForFastPath(true, 0, withDate, "rev-1")).toBe(false);
   });
 });

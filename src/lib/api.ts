@@ -26,6 +26,15 @@ const clientSecretOrNull =
 
 export type AuthStatus = "connected" | "expired" | "disconnected" | "loading";
 
+export interface UpcomingInvoice {
+  account_id: string;
+  card_name: string;
+  due_date: string;
+  amount_cents: number;
+  status: "prevista" | "aberta" | "fechada" | "paga";
+  owner_name: string;
+}
+
 export interface DashboardSummary {
   /** Projected end-of-current-month balance, in cents, from the forecast engine. */
   balance: number;
@@ -43,13 +52,19 @@ export interface DashboardSummary {
   reserve_trend: string;
   /** Modo de gasto detectado dos próprios dados. */
   spending_mode: "debit" | "card";
-  /** Gate de legitimidade do modo cartão (economia 20–30% viva). */
+  /** Gate composto de legitimidade do modo cartão. */
   card_gate: "alive" | "below" | "unknown";
+  card_gate_economy: "alive" | "below" | "unknown";
+  /** Percentual bruto (bps) por trás da perna de economia — a matemática que o gate mostra
+   * ("14%, falta 6 p/ 20%"); `null` só quando a perna é `unknown` (sem renda anual). */
+  card_gate_economy_bps: number | null;
+  card_gate_reserve: "alive" | "below" | "unknown";
   /** Cartão do mês corrente (realizado + projetado), magnitude em centavos. */
   cartao_month_cents: number;
   /** Próximo dia de fatura a partir de hoje, quando existe. */
   next_fatura_date: string | null;
   next_fatura_amount_cents: number;
+  upcoming_invoices: UpcomingInvoice[];
   transaction_count: number;
   /** ISO date (YYYY-MM-DD) of the most recent non-projection transaction, or null if none. */
   last_real_tx_date: string | null;
@@ -511,13 +526,12 @@ export interface CellWrite {
  * Resultado RICO da prévia: o diff + um token de frescura + flags de pré-condição.
  * `preview_revision` é o `modifiedTime` do Drive no instante da prévia; o apply o re-verifica e
  * ABORTA se a planilha tiver mudado (edição concorrente → re-revisão). `conflicts_pending` espelha
- * o gate de conflito do backend (a UI desabilita o envio). `multi_card_warning` é não-bloqueante.
+ * o gate de conflito do backend (a UI desabilita o envio).
  */
 export interface WriteBackPreviewResult {
   cells: CellWrite[];
   preview_revision: string;
   conflicts_pending: boolean;
-  multi_card_warning: boolean;
 }
 
 /** Estado da flag de write-back. `false` → envio ao Sheets desabilitado (só preview). */
@@ -525,8 +539,8 @@ export function writeBackEnabled(): Promise<boolean> {
   return invoke("write_back_enabled");
 }
 
-/** Prévia RICA READ-ONLY: diff + `preview_revision` (frescura) + conflitos pendentes +
- * aviso de multi-cartão. A UI endurecida usa isto para amarrar a aprovação ao que foi visto. */
+/** Prévia RICA READ-ONLY: diff + `preview_revision` (frescura) + conflitos pendentes.
+ * A UI endurecida usa isto para amarrar a aprovação ao que foi visto. */
 export function previewWriteBackStatus(
   spreadsheetId: string,
   sheetName: string,
@@ -1293,6 +1307,228 @@ export function recurrenceOccurrences(
 /** O compare de forecast real × cenário — o núcleo do "e se". */
 export function getScenarioForecast(scenarioId: string): Promise<ScenarioCompareDto> {
   return invoke("get_scenario_forecast_cmd", { scenarioId });
+}
+
+// --- Cartões e faturas ---
+
+/** Resumo derivado de uma fatura; o total declarado, quando existe, é a autoridade. */
+export interface InvoiceSummary {
+  id: string;
+  cycle_month: string;
+  closing_date: string;
+  due_date: string;
+  status: "prevista" | "aberta" | "fechada" | "paga";
+  stated_total_cents: number | null;
+  purchases_sum_cents: number;
+  effective_total_cents: number;
+  reconciliation_delta_cents: number | null;
+}
+
+export interface Card {
+  id: string;
+  name: string;
+  institution: string | null;
+  owner_name: string;
+  linked_account_id: string | null;
+  closing_day: number;
+  due_day: number;
+  credit_limit_cents: number | null;
+  aliases: string[];
+  open_invoice: InvoiceSummary | null;
+  next_due: InvoiceSummary | null;
+}
+
+export interface CardPurchase {
+  txn_id: string;
+  date: string;
+  description: string;
+  amount_cents: number;
+  owner_name: string;
+  series_id: string | null;
+  installment_label: string | null;
+  is_projection: boolean;
+}
+
+export interface Refund {
+  txn_id: string;
+  date: string;
+  amount_cents: number;
+  description: string;
+  is_projection: boolean;
+}
+
+export interface SubInvoice {
+  account_id: string;
+  card_name: string;
+  owner_name: string;
+  effective_total_cents: number;
+}
+
+/** `InvoiceSummary` é achatado pelo `#[serde(flatten)]` do DTO Rust. */
+export interface InvoiceDetail extends InvoiceSummary {
+  purchases: CardPurchase[];
+  refunds: Refund[];
+  sub_invoices: SubInvoice[];
+  emitter_total_cents: number;
+}
+
+export interface CardProposal {
+  id: string;
+  alias: string;
+  display_name: string;
+  source_month: string;
+  status: string;
+}
+
+export function listCards(): Promise<Card[]> {
+  return invoke("list_cards");
+}
+export function listInvoices(accountId: string): Promise<InvoiceSummary[]> {
+  return invoke("list_invoices", { accountId });
+}
+export function getInvoice(invoiceId: string): Promise<InvoiceDetail> {
+  return invoke("get_invoice", { invoiceId });
+}
+export function registerCardPurchase(input: {
+  cardAccountId: string;
+  amountCents: number;
+  description?: string | null;
+  date: string;
+  refundCents?: number | null;
+  tagIds: string[];
+}): Promise<string> {
+  return invoke("register_card_purchase", {
+    ...input,
+    description: input.description ?? null,
+    refundCents: input.refundCents ?? null,
+  });
+}
+export function moveCardPurchase(
+  txnId: string,
+  targetCycleMonth: string,
+): Promise<void> {
+  return invoke("move_card_purchase", { txnId, targetCycleMonth });
+}
+export function setInvoiceStatedTotal(
+  invoiceId: string,
+  statedTotalCents: number | null,
+): Promise<void> {
+  return invoke("set_invoice_stated_total", { invoiceId, statedTotalCents });
+}
+export function createCardSeries(input: {
+  cardAccountId: string;
+  description: string;
+  amountCents: number;
+  count: number | null;
+  startDate: string;
+  refundCents?: number | null;
+  tagIds: string[];
+}): Promise<string> {
+  return invoke("create_card_series", {
+    ...input,
+    refundCents: input.refundCents ?? null,
+  });
+}
+export function updateCardSeries(
+  seriesId: string,
+  description: string,
+  amountCents: number,
+): Promise<void> {
+  return invoke("update_card_series", { seriesId, description, amountCents });
+}
+export function cancelCardSeries(
+  seriesId: string,
+  fromCycleMonth: string,
+): Promise<void> {
+  return invoke("cancel_card_series", { seriesId, fromCycleMonth });
+}
+export function deleteCardSeries(seriesId: string): Promise<void> {
+  return invoke("delete_card_series", { seriesId });
+}
+export function createRefundExpectation(
+  invoiceId: string,
+  amountCents: number,
+  description?: string | null,
+): Promise<string> {
+  return invoke("create_refund_expectation", {
+    invoiceId,
+    amountCents,
+    description: description ?? null,
+  });
+}
+export function linkRefund(input: {
+  txnId: string;
+  refundInvoiceId?: string | null;
+  refundTxnId?: string | null;
+  refundSeriesId?: string | null;
+}): Promise<void> {
+  return invoke("link_refund", {
+    txnId: input.txnId,
+    refundInvoiceId: input.refundInvoiceId ?? null,
+    refundTxnId: input.refundTxnId ?? null,
+    refundSeriesId: input.refundSeriesId ?? null,
+  });
+}
+export function unlinkRefund(txnId: string): Promise<void> {
+  return invoke("unlink_refund", { txnId });
+}
+export function listCardProposals(): Promise<CardProposal[]> {
+  return invoke("list_card_proposals");
+}
+export function acceptCardProposal(input: {
+  proposalId: string;
+  closingDay?: number | null;
+  dueDay?: number | null;
+  ownerPersonName?: string | null;
+  linkedAccountId?: string | null;
+}): Promise<string> {
+  return invoke("accept_card_proposal", {
+    ...input,
+    closingDay: input.closingDay ?? null,
+    dueDay: input.dueDay ?? null,
+    ownerPersonName: input.ownerPersonName ?? null,
+    linkedAccountId: input.linkedAccountId ?? null,
+  });
+}
+export function dismissCardProposal(proposalId: string): Promise<void> {
+  return invoke("dismiss_card_proposal", { proposalId });
+}
+export function createCardAccount(input: {
+  name: string;
+  institution?: string | null;
+  closingDay?: number | null;
+  dueDay?: number | null;
+  creditLimitCents?: number | null;
+  ownerPersonName?: string | null;
+  linkedAccountId?: string | null;
+  aliases: string[];
+}): Promise<string> {
+  return invoke("create_card_account", {
+    ...input,
+    institution: input.institution ?? null,
+    closingDay: input.closingDay ?? null,
+    dueDay: input.dueDay ?? null,
+    creditLimitCents: input.creditLimitCents ?? null,
+    ownerPersonName: input.ownerPersonName ?? null,
+    linkedAccountId: input.linkedAccountId ?? null,
+  });
+}
+export function updateCardAccount(input: {
+  accountId: string;
+  name: string;
+  institution?: string | null;
+  closingDay?: number | null;
+  dueDay?: number | null;
+  creditLimitCents?: number | null;
+  aliases: string[];
+}): Promise<void> {
+  return invoke("update_card_account", {
+    ...input,
+    institution: input.institution ?? null,
+    closingDay: input.closingDay ?? null,
+    dueDay: input.dueDay ?? null,
+    creditLimitCents: input.creditLimitCents ?? null,
+  });
 }
 
 /** Ferramenta determinística (tabela PRICE) para pré-visualizar a parcela de um empréstimo antes
