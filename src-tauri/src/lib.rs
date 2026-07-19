@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[expect(dead_code)]
+mod cards;
 mod commands;
 mod conflicts;
 mod forecast;
