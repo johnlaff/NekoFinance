@@ -33,8 +33,8 @@
 //! `backfill_scenario_override_replacements` (startup) converte esses marcadores em FK e os remove.
 
 use crate::commands::forecast_cmds::{
-    self, forecast_horizon_end, load_economia_annotation, load_forecast_events, load_metric_events,
-    projection_seed, reserve_floor,
+    self, finalize_card_events, forecast_horizon_end, load_economia_annotation,
+    load_forecast_events, load_metric_events, projection_seed, reserve_floor,
 };
 use crate::commands::map_cashflow_row;
 use crate::forecast::{self, CashflowEvent};
@@ -1865,10 +1865,30 @@ pub(crate) async fn get_scenario_forecast_inner(
     let scenario_chain_adjusted = apply_suppression(real_chain_raw, &plan);
     let scenario_metric_adjusted = apply_suppression(real_metric_raw, &plan);
 
+    let scenario_end_exclusive = horizon_end
+        .succ_opt()
+        .ok_or("horizonte inválido para faturas do cenário")?;
     let mut scenario_chain_events = map_raw_rows(scenario_chain_adjusted);
     scenario_chain_events.extend(map_hypo_rows(&hypo_chain_rows));
+    scenario_chain_events = finalize_card_events(
+        pool,
+        today,
+        today,
+        scenario_end_exclusive,
+        scenario_chain_events,
+    )
+    .await?;
     let mut scenario_metric_events = map_raw_rows(scenario_metric_adjusted);
     scenario_metric_events.extend(map_hypo_rows(&hypo_metric_rows));
+    scenario_metric_events = finalize_card_events(
+        pool,
+        today,
+        NaiveDate::from_ymd_opt(today.year(), today.month(), 1)
+            .ok_or("data de hoje inválida para faturas do cenário")?,
+        scenario_end_exclusive,
+        scenario_metric_events,
+    )
+    .await?;
 
     // Previsão de diário reutiliza o MESMO teto/dia do ramo real — o orçamento de Diário não muda
     // por cenário; só o encadeamento de caixa/hipotéticas mudam.
@@ -5118,5 +5138,50 @@ mod tests {
             .unwrap();
         let loan = compare.loan.as_ref().expect("empréstimo detectado");
         assert_eq!(loan.savings_rate_after_bps, Some(2000));
+    }
+
+    #[tokio::test]
+    async fn scenario_forecast_keeps_baseline_invoices_with_a_loan() {
+        let p = pool().await;
+        sqlx::query("INSERT INTO person (id, name) VALUES ('person-card', 'Pessoa')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id) \
+             VALUES ('card', 'Cartão', 'credit_card', 'person-card')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO invoice (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) \
+             VALUES ('invoice', 'card', '2026-08', '2026-07-20', '2026-08-10', 85000)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        let scenario = create_scenario(&p, "Empréstimo").await.unwrap();
+        seed_loan(
+            &p,
+            &scenario.id,
+            "loan",
+            150,
+            100_000,
+            1,
+            "2026-09-05",
+            &[
+                ("income", 100_000, "Desembolso", "2026-09-05"),
+                ("expense", 55_000, "Parcela 1/1", "2026-09-10"),
+            ],
+        )
+        .await;
+
+        let compare = get_scenario_forecast_inner(&p, &scenario.id, d("2026-08-01"))
+            .await
+            .unwrap();
+        assert_eq!(compare.real_cost_of_living_cents, 85_000);
+        assert_eq!(compare.scenario_cost_of_living_cents, 85_000);
+        assert!(compare.loan.is_some());
     }
 }

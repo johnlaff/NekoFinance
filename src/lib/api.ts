@@ -26,6 +26,15 @@ const clientSecretOrNull =
 
 export type AuthStatus = "connected" | "expired" | "disconnected" | "loading";
 
+export interface UpcomingInvoice {
+  account_id: string;
+  card_name: string;
+  due_date: string;
+  amount_cents: number;
+  status: "prevista" | "aberta" | "fechada" | "paga";
+  owner_name: string;
+}
+
 export interface DashboardSummary {
   /** Projected end-of-current-month balance, in cents, from the forecast engine. */
   balance: number;
@@ -43,13 +52,16 @@ export interface DashboardSummary {
   reserve_trend: string;
   /** Modo de gasto detectado dos próprios dados. */
   spending_mode: "debit" | "card";
-  /** Gate de legitimidade do modo cartão (economia 20–30% viva). */
+  /** Gate composto de legitimidade do modo cartão. */
   card_gate: "alive" | "below" | "unknown";
+  card_gate_economy: "alive" | "below" | "unknown";
+  card_gate_reserve: "alive" | "below" | "unknown";
   /** Cartão do mês corrente (realizado + projetado), magnitude em centavos. */
   cartao_month_cents: number;
   /** Próximo dia de fatura a partir de hoje, quando existe. */
   next_fatura_date: string | null;
   next_fatura_amount_cents: number;
+  upcoming_invoices: UpcomingInvoice[];
   transaction_count: number;
   /** ISO date (YYYY-MM-DD) of the most recent non-projection transaction, or null if none. */
   last_real_tx_date: string | null;

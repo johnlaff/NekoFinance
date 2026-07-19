@@ -379,7 +379,7 @@ pub(crate) async fn spending_mode_summary(
     let month_start = NaiveDate::from_ymd_opt(today_naive.year(), today_naive.month(), 1).unwrap();
     let window_start = month_start - chrono::Months::new(2);
     let next_month_end = month_start + chrono::Months::new(2);
-    let events = load_metric_db_events(pool, window_start, next_month_end).await?;
+    let events = load_metric_db_events(pool, today_naive, window_start, next_month_end).await?;
 
     let window_keys = [
         window_start.format("%Y-%m").to_string(),
@@ -520,7 +520,7 @@ pub(crate) async fn realized_monthly_baseline_detail(
     // O loader compartilhado já aplica ABS por item/transação e o filtro de tags excluídas.
     let month_start = NaiveDate::from_ymd_opt(today_naive.year(), today_naive.month(), 1).unwrap();
     let window_start = month_start - chrono::Months::new(6);
-    let events = load_metric_db_events(pool, window_start, month_start).await?;
+    let events = load_metric_db_events(pool, today_naive, window_start, month_start).await?;
 
     let mut by_month: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
     for e in events {
@@ -570,7 +570,7 @@ pub(crate) async fn realized_savings_baseline(
 ) -> Result<(i64, i64), String> {
     let month_start = NaiveDate::from_ymd_opt(today_naive.year(), today_naive.month(), 1).unwrap();
     let window_start = month_start - chrono::Months::new(6);
-    let events = load_metric_db_events(pool, window_start, month_start).await?;
+    let events = load_metric_db_events(pool, today_naive, window_start, month_start).await?;
 
     let mut income_by: std::collections::HashMap<(i32, u32), i64> =
         std::collections::HashMap::new();
@@ -1183,9 +1183,18 @@ pub(crate) async fn forecast_horizon_end(
             .fetch_one(pool)
             .await
             .map_err(|e| format!("horizon bal: {e}"))?;
+    let max_invoice: (Option<String>,) = sqlx::query_as(
+        "SELECT MAX(i.due_date) FROM invoice i \
+         JOIN account a ON a.id = i.account_id \
+         WHERE a.type = 'credit_card' AND i.due_date >= ?1",
+    )
+    .bind(&today)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("horizon invoice: {e}"))?;
 
     let mut horizon = forecast::last_day_of_month(today_naive.year(), today_naive.month());
-    for (candidate,) in [max_txn, max_bal] {
+    for (candidate,) in [max_txn, max_bal, max_invoice] {
         if let Some(date_str) = candidate
             && let Ok(d) = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d")
             && d > horizon
@@ -1214,6 +1223,128 @@ struct MetricLineItemRow {
     section: Option<String>,
 }
 
+type CardInvoiceRow = (String, String, String, String, String, Option<i64>, i64);
+
+#[derive(Debug, Clone)]
+pub(crate) struct CardInvoiceEvent {
+    pub account_id: String,
+    pub card_name: String,
+    pub owner_name: String,
+    pub closing_date: NaiveDate,
+    pub due_date: NaiveDate,
+    pub amount_cents: i64,
+}
+
+async fn load_card_invoice_events(
+    pool: &SqlitePool,
+    today: NaiveDate,
+    start_inclusive: NaiveDate,
+    end_exclusive: Option<NaiveDate>,
+) -> Result<(bool, Vec<CardInvoiceEvent>), String> {
+    let has_card: (i64,) =
+        sqlx::query_as("SELECT EXISTS(SELECT 1 FROM account WHERE type = 'credit_card')")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("cartões: {e}"))?;
+    if has_card.0 == 0 {
+        return Ok((false, Vec::new()));
+    }
+
+    let lower = today.max(start_inclusive).format("%Y-%m-%d").to_string();
+    let upper = end_exclusive.map(|end| end.format("%Y-%m-%d").to_string());
+    let rows: Vec<CardInvoiceRow> = sqlx::query_as(
+        "SELECT i.account_id, a.name, COALESCE(p.name, ''), i.closing_date, i.due_date, \
+                i.stated_total_cents, COALESCE(SUM(ABS(t.amount)), 0) \
+         FROM invoice i \
+         JOIN account a ON a.id = i.account_id \
+         LEFT JOIN person p ON p.id = a.owner_person_id \
+         LEFT JOIN \"transaction\" t ON t.invoice_id = i.id AND t.type = 'expense' \
+             AND t.scenario_id IS NULL \
+         WHERE a.type = 'credit_card' AND i.due_date >= ?1 \
+           AND (?2 IS NULL OR i.due_date < ?2) \
+         GROUP BY i.id, i.account_id, a.name, p.name, i.closing_date, i.due_date, \
+                  i.stated_total_cents \
+         ORDER BY i.due_date, a.name, i.id",
+    )
+    .bind(&lower)
+    .bind(upper)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("faturas: {e}"))?;
+
+    let invoices = rows
+        .into_iter()
+        .map(
+            |(
+                account_id,
+                card_name,
+                owner_name,
+                closing_date,
+                due_date,
+                stated_total_cents,
+                purchases_sum_cents,
+            )| {
+                Ok(CardInvoiceEvent {
+                    account_id,
+                    card_name,
+                    owner_name,
+                    closing_date: NaiveDate::parse_from_str(&closing_date, "%Y-%m-%d")
+                        .map_err(|_| format!("data de fechamento inválida: {closing_date}"))?,
+                    due_date: NaiveDate::parse_from_str(&due_date, "%Y-%m-%d")
+                        .map_err(|_| format!("data de vencimento inválida: {due_date}"))?,
+                    amount_cents: crate::cards::effective_total_cents(
+                        stated_total_cents,
+                        purchases_sum_cents,
+                    ),
+                })
+            },
+        )
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok((true, invoices))
+}
+
+pub(crate) fn apply_card_invoice_precedence(
+    today: NaiveDate,
+    has_card: bool,
+    raw_events: Vec<CashflowEvent>,
+    invoices: &[CardInvoiceEvent],
+) -> Vec<CashflowEvent> {
+    if !has_card {
+        return raw_events;
+    }
+
+    let mut events: Vec<CashflowEvent> = raw_events
+        .into_iter()
+        .filter(|event| !(event.kind == forecast::EventKind::Cartao && event.date >= today))
+        .collect();
+    events.extend(
+        invoices
+            .iter()
+            .filter(|invoice| invoice.due_date >= today)
+            .map(|invoice| CashflowEvent {
+                date: invoice.due_date,
+                kind: forecast::EventKind::Cartao,
+                amount_cents: invoice.amount_cents,
+                realized: false,
+            }),
+    );
+    events
+}
+
+pub(crate) async fn finalize_card_events(
+    pool: &SqlitePool,
+    today: NaiveDate,
+    start_inclusive: NaiveDate,
+    end_exclusive: NaiveDate,
+    raw_events: Vec<CashflowEvent>,
+) -> Result<Vec<CashflowEvent>, String> {
+    let (has_card, invoices) =
+        load_card_invoice_events(pool, today, start_inclusive, Some(end_exclusive)).await?;
+    Ok(apply_card_invoice_precedence(
+        today, has_card, raw_events, &invoices,
+    ))
+}
+
 fn event_kind_for_item_kind(kind: import::ItemKind) -> forecast::EventKind {
     match kind {
         import::ItemKind::Saida | import::ItemKind::Ajuste => forecast::EventKind::FixedOut,
@@ -1224,16 +1355,16 @@ fn event_kind_for_item_kind(kind: import::ItemKind) -> forecast::EventKind {
     }
 }
 
-async fn load_metric_db_events(
+async fn load_db_events(
     pool: &SqlitePool,
     start_inclusive: NaiveDate,
     end_exclusive: NaiveDate,
+    exclude_from_totals: bool,
 ) -> Result<Vec<CashflowEvent>, String> {
     let start = start_inclusive.format("%Y-%m-%d").to_string();
     let end = end_exclusive.format("%Y-%m-%d").to_string();
 
-    let txn_rows: Vec<MetricTxnRow> = sqlx::query_as(
-        "SELECT t.id, t.type AS ttype, t.amount, t.date, \
+    const TRANSACTIONS_WITHOUT_EXCLUDED: &str = "SELECT t.id, t.type AS ttype, t.amount, t.date, \
                 COALESCE(t.payment_method,'') AS payment_method, \
                 t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity \
          FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
@@ -1242,16 +1373,25 @@ async fn load_metric_db_events(
                SELECT 1 FROM transaction_tag tt2 \
                JOIN tag tg ON tg.id = tt2.tag_id \
                WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
-           )",
-    )
-    .bind(&start)
-    .bind(&end)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| format!("query metric transactions: {e}"))?;
+           )";
+    const TRANSACTIONS_ALL: &str = "SELECT t.id, t.type AS ttype, t.amount, t.date, \
+                COALESCE(t.payment_method,'') AS payment_method, \
+                t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity \
+         FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
+         WHERE t.date >= ?1 AND t.date < ?2 AND t.scenario_id IS NULL";
+    let transaction_query = if exclude_from_totals {
+        TRANSACTIONS_WITHOUT_EXCLUDED
+    } else {
+        TRANSACTIONS_ALL
+    };
+    let txn_rows: Vec<MetricTxnRow> = sqlx::query_as(transaction_query)
+        .bind(&start)
+        .bind(&end)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("query metric transactions: {e}"))?;
 
-    let item_rows: Vec<(String, i64, String, Option<String>)> = sqlx::query_as(
-        "SELECT li.transaction_id, li.amount_cents, li.description, li.section \
+    const ITEMS_WITHOUT_EXCLUDED: &str = "SELECT li.transaction_id, li.amount_cents, li.description, li.section \
          FROM line_item li \
          JOIN \"transaction\" t ON t.id = li.transaction_id \
          WHERE t.date >= ?1 AND t.date < ?2 AND t.scenario_id IS NULL \
@@ -1260,13 +1400,23 @@ async fn load_metric_db_events(
                JOIN tag tg ON tg.id = tt2.tag_id \
                WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
            ) \
-         ORDER BY li.transaction_id, li.position",
-    )
-    .bind(&start)
-    .bind(&end)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| format!("query metric line items: {e}"))?;
+         ORDER BY li.transaction_id, li.position";
+    const ITEMS_ALL: &str = "SELECT li.transaction_id, li.amount_cents, li.description, li.section \
+         FROM line_item li \
+         JOIN \"transaction\" t ON t.id = li.transaction_id \
+         WHERE t.date >= ?1 AND t.date < ?2 AND t.scenario_id IS NULL \
+         ORDER BY li.transaction_id, li.position";
+    let item_query = if exclude_from_totals {
+        ITEMS_WITHOUT_EXCLUDED
+    } else {
+        ITEMS_ALL
+    };
+    let item_rows: Vec<(String, i64, String, Option<String>)> = sqlx::query_as(item_query)
+        .bind(&start)
+        .bind(&end)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("query metric line items: {e}"))?;
 
     let mut items_by_txn: std::collections::HashMap<String, Vec<MetricLineItemRow>> =
         std::collections::HashMap::new();
@@ -1305,7 +1455,8 @@ async fn load_metric_db_events(
             // "Diferença" da planilha aplicada na leitura, sem item sintético persistido.
             // Um resíduo negativo (partes > célula) REDUZ fixed_out para os baldes fecharem
             // com o total; por isso este evento é a exceção documentada à convenção
-            // "amount_cents sempre positivo" do CashflowEvent (só métrica, nunca na cadeia).
+            // "amount_cents sempre positivo" do CashflowEvent. O mesmo resíduo precisa atravessar
+            // caixa e métricas: os dois caminhos devem conservar o total da célula.
             let parts_sum: i64 = items.iter().map(|i| i.amount_cents.abs()).sum();
             let residual = row.amount.abs() - parts_sum;
             if residual != 0 {
@@ -1335,42 +1486,35 @@ async fn load_metric_db_events(
     Ok(events)
 }
 
+async fn load_metric_db_events(
+    pool: &SqlitePool,
+    today: NaiveDate,
+    start_inclusive: NaiveDate,
+    end_exclusive: NaiveDate,
+) -> Result<Vec<CashflowEvent>, String> {
+    let raw_events = load_db_events(pool, start_inclusive, end_exclusive, true).await?;
+    finalize_card_events(pool, today, start_inclusive, end_exclusive, raw_events).await
+}
+
 /// Loads forward cashflow events for the projection window: future transactions (date > today,
-/// avoiding double-counting today's already-realized spending baked into the balance snapshot).
-/// Credit bills are already carried as a single outflow on the due date by these transaction rows.
-/// Single source of row→event mapping, shared by `dashboard_summary` and `forecast_dto`.
+/// avoiding double-counting today's already-realized spending baked into the balance snapshot)
+/// plus faturas on their due dates. Single source of row→event mapping, shared by
+/// `dashboard_summary` and `forecast_dto`.
 pub(crate) async fn load_cashflow_events(
     pool: &SqlitePool,
     today_naive: NaiveDate,
     horizon_end: NaiveDate,
 ) -> Result<Vec<CashflowEvent>, String> {
-    let today = today_naive.format("%Y-%m-%d").to_string();
-    let horizon = horizon_end.format("%Y-%m-%d").to_string();
-
-    // Liquidez da conta-destino entra no SELECT para classificar `transfer` → Economia (guardar
-    // num bolso não-líquido) vs net-zero (entre contas líquidas).
-    //
-    // SEM filtro por tag-excluída: esta é a visão de CAIXA (encadeamento do Saldo projetado,
-    // déficit mais profundo, Horizonte). Tags "Ignorar" suprimem só as MÉTRICAS (Performance/Custo
-    // de vida) — o dinheiro de um gasto futuro marcado "Ignorar" AINDA sai da conta, então tem que
-    // continuar pesando no Saldo. O filtro `exclude_from_totals` vive nas funções de MÉTRICA
-    // (`load_realized_month_events`, `load_year_events`, `realized_annual_economia`), não aqui.
-    let txn_rows: Vec<(String, i64, String, String, i64, i64, String)> = sqlx::query_as(
-        "SELECT t.type, t.amount, t.date, COALESCE(t.payment_method,''), t.is_fixed, t.is_projection, \
-                COALESCE(a.liquidity,'') \
-         FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
-         WHERE t.date > ?1 AND t.date <= ?2 AND t.scenario_id IS NULL",
-    )
-    .bind(&today)
-    .bind(&horizon)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| format!("query: {e}"))?;
-
-    let all_events: Vec<CashflowEvent> =
-        txn_rows.into_iter().filter_map(map_cashflow_row).collect();
-
-    Ok(all_events)
+    let raw_start = today_naive
+        .succ_opt()
+        .ok_or("data de hoje inválida para intervalo de caixa")?;
+    let end_exclusive = horizon_end
+        .succ_opt()
+        .ok_or("horizonte inválido para intervalo de caixa")?;
+    // Sem o filtro `exclude_from_totals`: a visão de caixa continua contabilizando todo dinheiro
+    // que sai, mesmo que um lançamento esteja excluído das métricas de método.
+    let raw_events = load_db_events(pool, raw_start, end_exclusive, false).await?;
+    finalize_card_events(pool, today_naive, today_naive, end_exclusive, raw_events).await
 }
 
 /// Eventos que alimentam projeções de caixa: lançamentos reais/futuros + Diário típico futuro do
@@ -1411,7 +1555,7 @@ pub(crate) async fn load_realized_month_events(
     let end_exclusive = today_naive
         .succ_opt()
         .ok_or("data de hoje inválida para intervalo de métricas")?;
-    load_metric_db_events(pool, month_start, end_exclusive).await
+    load_metric_db_events(pool, today_naive, month_start, end_exclusive).await
 }
 
 /// Eventos para as MÉTRICAS por mês = futuros (encadeamento) + realizados do mês corrente.
@@ -1430,7 +1574,7 @@ pub(crate) async fn load_metric_events(
     let future_start = today_naive
         .succ_opt()
         .ok_or("data de hoje inválida para intervalo futuro de métricas")?;
-    metric.extend(load_metric_db_events(pool, future_start, end_exclusive).await?);
+    metric.extend(load_metric_db_events(pool, today_naive, future_start, end_exclusive).await?);
     let daily_ceiling = projection_daily_ceiling(pool, today_naive).await?;
     let days_with_daily: std::collections::HashSet<NaiveDate> = metric
         .iter()
@@ -1789,10 +1933,11 @@ pub(crate) async fn forecast_dto(
 pub(crate) async fn load_year_events(
     pool: &SqlitePool,
     year: i32,
+    today: NaiveDate,
 ) -> Result<Vec<CashflowEvent>, String> {
     let start = NaiveDate::from_ymd_opt(year, 1, 1).ok_or("ano inválido")?;
     let end = NaiveDate::from_ymd_opt(year + 1, 1, 1).ok_or("ano inválido")?;
-    load_metric_db_events(pool, start, end).await
+    load_metric_db_events(pool, today, start, end).await
 }
 
 #[derive(serde::Serialize)]
@@ -1806,7 +1951,7 @@ pub(crate) async fn annual_metrics(
     year: i32,
     today: NaiveDate,
 ) -> Result<AnnualMetricsDto, String> {
-    let mut events = load_year_events(pool, year).await?;
+    let mut events = load_year_events(pool, year, today).await?;
     // Mesmo teto de diário do forecast para o MÊS CORRENTE: sem ele, a Performance do mesmo mês
     // divergia entre a visão anual e o Totais (o teto só existe no caminho do forecast). O
     // project_daily_ceiling já se limita ao fim do mês corrente.
@@ -1872,29 +2017,42 @@ pub(crate) async fn month_grid(
     year: i32,
     month: u32,
 ) -> Result<Vec<MonthGridDayDto>, String> {
+    month_grid_at(pool, year, month, chrono::Local::now().date_naive()).await
+}
+
+pub(crate) async fn month_grid_at(
+    pool: &SqlitePool,
+    year: i32,
+    month: u32,
+    today: NaiveDate,
+) -> Result<Vec<MonthGridDayDto>, String> {
     let first = NaiveDate::from_ymd_opt(year, month, 1).ok_or("mês inválido")?;
     let last = forecast::last_day_of_month(year, month);
     let first_s = first.format("%Y-%m-%d").to_string();
     let last_s = last.format("%Y-%m-%d").to_string();
+    let end_exclusive = last
+        .succ_opt()
+        .ok_or("mês inválido para intervalo da grade")?;
 
-    // Fluxos por dia, separados por tipo (Entrada / Saída fixa / Diário variável).
-    let flows: Vec<(String, i64, i64, i64)> = sqlx::query_as(
-        // Crédito entra em Saída como a fatura (lump no vencimento), não em Diário — espelha forecast::classify.
-        // ABS() POR LINHA nas saídas: importadas são gravadas negativas (`-amount_out`), manuais
-        // são positivas — ambas type='expense'. Somar cru dá total de sinal misto; `SUM(ABS(..))`
-        // soma as MAGNITUDES, então as duas fontes no mesmo dia se acumulam corretamente (não se
-        // cancelam). Entradas ficam fora (sempre positivas). Espelha o `amount.abs()` do forecast.
-        "SELECT date, \
-                COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END), 0), \
-                COALESCE(SUM(CASE WHEN type='expense' AND (COALESCE(is_fixed,0)=1 OR payment_method='credit') THEN ABS(amount) ELSE 0 END), 0), \
-                COALESCE(SUM(CASE WHEN type='expense' AND COALESCE(is_fixed,0)=0 AND COALESCE(payment_method,'')<>'credit' THEN ABS(amount) ELSE 0 END), 0) \
-         FROM \"transaction\" WHERE date BETWEEN ?1 AND ?2 AND scenario_id IS NULL GROUP BY date",
-    )
-    .bind(&first_s)
-    .bind(&last_s)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| format!("month flows: {e}"))?;
+    // A grade reaproveita a mesma construção final de eventos do forecast: uma nota itemizada
+    // entra pelos seus itens, e a fatura substitui qualquer Cartão cru futuro no vencimento.
+    let raw_events = load_db_events(pool, first, end_exclusive, false).await?;
+    let events = finalize_card_events(pool, today, first, end_exclusive, raw_events).await?;
+    let mut flows_by_date: std::collections::HashMap<String, (i64, i64, i64)> =
+        std::collections::HashMap::new();
+    for event in events {
+        let entry = flows_by_date
+            .entry(event.date.format("%Y-%m-%d").to_string())
+            .or_default();
+        match event.kind {
+            forecast::EventKind::Income => entry.0 += event.amount_cents,
+            forecast::EventKind::FixedOut | forecast::EventKind::Cartao => {
+                entry.1 += event.amount_cents
+            }
+            forecast::EventKind::Daily => entry.2 += event.amount_cents,
+            forecast::EventKind::Economia | forecast::EventKind::Patrimonio => {}
+        }
+    }
 
     // Saldo da planilha por dia.
     let balances: Vec<(String, i64)> = sqlx::query_as(
@@ -1906,7 +2064,6 @@ pub(crate) async fn month_grid(
     .await
     .map_err(|e| format!("month balances: {e}"))?;
 
-    let flow_of = |d: &str| flows.iter().find(|f| f.0 == d).map(|f| (f.1, f.2, f.3));
     let balance_of = |d: &str| balances.iter().find(|b| b.0 == d).map(|b| b.1);
 
     let n_days = (last - first).num_days() + 1;
@@ -1914,7 +2071,8 @@ pub(crate) async fn month_grid(
     for offset in 0..n_days {
         let date = first + chrono::Duration::days(offset);
         let date_s = date.format("%Y-%m-%d").to_string();
-        let (income, fixed_out, daily_out) = flow_of(&date_s).unwrap_or((0, 0, 0));
+        let (income, fixed_out, daily_out) =
+            flows_by_date.get(&date_s).copied().unwrap_or_default();
         grid.push(MonthGridDayDto {
             day: date.day(),
             income_cents: income,
@@ -1948,6 +2106,16 @@ pub async fn get_annual_metrics(
 // --- Dashboard query commands ---
 
 #[derive(serde::Serialize)]
+pub struct UpcomingInvoiceDto {
+    pub account_id: String,
+    pub card_name: String,
+    pub due_date: String,
+    pub amount_cents: i64,
+    pub status: String,
+    pub owner_name: String,
+}
+
+#[derive(serde::Serialize)]
 pub struct DashboardSummary {
     pub balance: i64,
     pub daily_budget: i64,
@@ -1966,14 +2134,19 @@ pub struct DashboardSummary {
     pub reserve_trend: String,
     /// Modo de gasto detectado: `debit` · `card`.
     pub spending_mode: String,
-    /// Gate de legitimidade do modo cartão (economia 20–30% viva): `alive` · `below` ·
-    /// `unknown` (sem renda no ano).
+    /// Gate composto de legitimidade do modo cartão: economia anual e reserva precisam estar vivas.
     pub card_gate: String,
+    /// Perna de economia do gate de legitimidade do modo cartão.
+    pub card_gate_economy: String,
+    /// Perna de reserva do gate de legitimidade do modo cartão.
+    pub card_gate_reserve: String,
     /// Cartão do mês corrente (realizado + projetado), magnitude — o que o dia lê no modo cartão.
     pub cartao_month_cents: i64,
     /// Próximo dia de fatura a partir de hoje (`YYYY-MM-DD`), quando existe.
     pub next_fatura_date: Option<String>,
     pub next_fatura_amount_cents: i64,
+    /// Próxima fatura de cada cartão, ordenada por vencimento e nome do cartão.
+    pub upcoming_invoices: Vec<UpcomingInvoiceDto>,
     pub transaction_count: i64,
     /// Most recent date (`YYYY-MM-DD`) of a non-projection transaction the user logged.
     /// `None` when no real transactions exist yet.
@@ -2019,6 +2192,8 @@ pub(crate) async fn dashboard_summary(
     let daily_budget = ceiling.per_day_cents;
     let ceiling_proposal_pending = has_pending_ceiling_proposal(pool).await?;
     let mode = spending_mode_summary(pool, today_naive).await?;
+    let (has_card, active_invoices) =
+        load_card_invoice_events(pool, today_naive, today_naive, None).await?;
 
     // Diário de HOJE como MAGNITUDE positiva (o card faz `teto - gasto` e `gasto/teto`).
     // - Sinal: por convenção, `amount` é gravado como magnitude positiva (import faz `.abs()`,
@@ -2110,12 +2285,56 @@ pub(crate) async fn dashboard_summary(
     if reserve_months >= RESERVE_MIN_MONTHS as f64 {
         economia_ruler += realized_annual_patrimonio(pool, today_naive).await?;
     }
-    let card_gate = if annual_income <= 0 {
-        "unknown"
+    let card_gate_economy = if annual_income <= 0 {
+        crate::cards::GateLeg::Unknown
     } else if economia_ruler * 10_000 >= SAVINGS_FLOOR_BPS * annual_income {
-        "alive"
+        crate::cards::GateLeg::Alive
     } else {
-        "below"
+        crate::cards::GateLeg::Below
+    };
+    let card_gate_reserve = if reserve_state == "no_record" {
+        crate::cards::GateLeg::Unknown
+    } else if reserve_months >= RESERVE_MIN_MONTHS as f64 {
+        crate::cards::GateLeg::Alive
+    } else {
+        crate::cards::GateLeg::Below
+    };
+    let card_gate = crate::cards::compose_card_gate(card_gate_economy, card_gate_reserve);
+
+    let mut seen_accounts = std::collections::HashSet::new();
+    let upcoming_invoices: Vec<UpcomingInvoiceDto> = active_invoices
+        .iter()
+        .filter(|invoice| seen_accounts.insert(invoice.account_id.clone()))
+        .map(|invoice| UpcomingInvoiceDto {
+            account_id: invoice.account_id.clone(),
+            card_name: invoice.card_name.clone(),
+            due_date: invoice.due_date.format("%Y-%m-%d").to_string(),
+            amount_cents: invoice.amount_cents,
+            status: crate::cards::invoice_status(
+                today_naive,
+                invoice.closing_date,
+                invoice.due_date,
+            )
+            .as_str()
+            .to_string(),
+            owner_name: invoice.owner_name.clone(),
+        })
+        .collect();
+    let next_fatura = if has_card {
+        active_invoices.first().map(|first| {
+            let amount_cents = active_invoices
+                .iter()
+                .filter(|invoice| invoice.due_date == first.due_date)
+                .map(|invoice| invoice.amount_cents)
+                .sum();
+            (first.due_date, amount_cents)
+        })
+    } else {
+        mode.next_fatura.as_ref().and_then(|(date, amount_cents)| {
+            NaiveDate::parse_from_str(date, "%Y-%m-%d")
+                .ok()
+                .map(|date| (date, *amount_cents))
+        })
     };
 
     Ok(DashboardSummary {
@@ -2133,10 +2352,17 @@ pub(crate) async fn dashboard_summary(
             forecast::SpendingMode::Card => "card",
         }
         .to_string(),
-        card_gate: card_gate.to_string(),
+        card_gate: card_gate.as_str().to_string(),
+        card_gate_economy: card_gate_economy.as_str().to_string(),
+        card_gate_reserve: card_gate_reserve.as_str().to_string(),
         cartao_month_cents: mode.cartao_month_cents,
-        next_fatura_date: mode.next_fatura.as_ref().map(|(d, _)| d.clone()),
-        next_fatura_amount_cents: mode.next_fatura.map(|(_, v)| v).unwrap_or(0),
+        next_fatura_date: next_fatura
+            .as_ref()
+            .map(|(date, _)| date.format("%Y-%m-%d").to_string()),
+        next_fatura_amount_cents: next_fatura
+            .map(|(_, amount_cents)| amount_cents)
+            .unwrap_or(0),
+        upcoming_invoices,
         transaction_count: count.0,
         last_real_tx_date,
     })
@@ -2527,7 +2753,8 @@ mod tests {
 
         let start = NaiveDate::from_ymd_opt(2026, 3, 1).unwrap();
         let end = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
-        let events = load_metric_db_events(&p, start, end).await.unwrap();
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        let events = load_metric_db_events(&p, today, start, end).await.unwrap();
 
         let cartao: i64 = events
             .iter()
@@ -3191,6 +3418,48 @@ mod tests {
         .unwrap();
     }
 
+    struct CardInvoiceFixture<'a> {
+        account_id: &'a str,
+        card_name: &'a str,
+        owner_name: &'a str,
+        invoice_id: &'a str,
+        closing_date: &'a str,
+        due_date: &'a str,
+        stated_total_cents: Option<i64>,
+    }
+
+    async fn insert_card_invoice(pool: &SqlitePool, fixture: CardInvoiceFixture<'_>) {
+        let owner_id = format!("owner-{}", fixture.account_id);
+        sqlx::query("INSERT INTO person (id, name) VALUES (?1, ?2)")
+            .bind(&owner_id)
+            .bind(fixture.owner_name)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id) \
+             VALUES (?1, ?2, 'credit_card', ?3)",
+        )
+        .bind(fixture.account_id)
+        .bind(fixture.card_name)
+        .bind(&owner_id)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO invoice (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) \
+             VALUES (?1, ?2, substr(?3, 1, 7), ?4, ?3, ?5)",
+        )
+        .bind(fixture.invoice_id)
+        .bind(fixture.account_id)
+        .bind(fixture.due_date)
+        .bind(fixture.closing_date)
+        .bind(fixture.stated_total_cents)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
     // Procedência do teto: escolhido vence; sem escolhido a média vira ESTIMATIVA; sem nada,
     // sem registro — o número nunca chega sem marca.
     #[tokio::test]
@@ -3417,5 +3686,357 @@ mod tests {
         let reading = daily_ceiling_reading(&p, today).await.unwrap();
         assert_eq!(reading.source.as_str(), "estimate");
         assert_eq!(reading.per_day_cents, 10_000); // 3.100,00 ÷ 31 dias
+    }
+
+    #[tokio::test]
+    async fn future_invoice_is_the_projected_card_outflow_on_its_due_date() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "card-1",
+                card_name: "Cartão principal",
+                owner_name: "Pessoa",
+                invoice_id: "invoice-1",
+                closing_date: "2026-06-20",
+                due_date: "2026-07-10",
+                stated_total_cents: Some(85_000),
+            },
+        )
+        .await;
+
+        let forecast = forecast_dto(&p, today).await.unwrap();
+        let due_day = forecast
+            .daily
+            .iter()
+            .find(|day| day.date == "2026-07-10")
+            .expect("a fatura futura entra na série diária");
+        assert_eq!(due_day.fixed_out_cents, 85_000);
+        assert_eq!(due_day.balance_cents, -85_000);
+        let july = forecast
+            .months
+            .iter()
+            .find(|month| (month.year, month.month) == (2026, 7))
+            .expect("métrica de julho");
+        assert_eq!(july.cartao_cents, 85_000);
+    }
+
+    #[tokio::test]
+    async fn future_card_line_item_and_its_invoice_count_once_in_month_metrics() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "card-1",
+                card_name: "Cartão",
+                owner_name: "Pessoa",
+                invoice_id: "invoice-1",
+                closing_date: "2026-06-10",
+                due_date: "2026-06-20",
+                stated_total_cents: Some(85_000),
+            },
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('sheet-card', 'expense', 85000, '2026-06-20', 1, 1)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, section) \
+             VALUES ('sheet-card-item', 'sheet-card', 85000, 'Cartão', 0, 'CARTÕES:')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let events = load_metric_events(&p, today, NaiveDate::from_ymd_opt(2026, 6, 30).unwrap())
+            .await
+            .unwrap();
+        let card_events: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind == forecast::EventKind::Cartao)
+            .collect();
+        assert_eq!(card_events.len(), 1);
+        assert_eq!(
+            card_events[0].date,
+            NaiveDate::from_ymd_opt(2026, 6, 20).unwrap()
+        );
+        assert_eq!(card_events[0].amount_cents, 85_000);
+    }
+
+    #[tokio::test]
+    async fn materialized_card_series_raises_the_future_invoice_effective_total() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 7, 15).unwrap();
+        let card_id = crate::commands::card_cmds::create_card_account_inner(
+            &p,
+            "Cartão",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            Some("Pessoa"),
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO invoice (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) \
+             VALUES ('invoice-series', ?1, '2026-09', '2026-08-20', '2026-09-10', 85000)",
+        )
+        .bind(&card_id)
+        .execute(&p)
+        .await
+        .unwrap();
+        crate::commands::card_cmds::create_card_series_inner(
+            &p,
+            &card_id,
+            "Parcela",
+            20_000,
+            Some(1),
+            "2026-08-01",
+        )
+        .await
+        .unwrap();
+
+        let forecast = forecast_dto(&p, today).await.unwrap();
+        let september = forecast
+            .months
+            .iter()
+            .find(|month| (month.year, month.month) == (2026, 9))
+            .expect("métrica de setembro");
+        assert_eq!(september.cartao_cents, 105_000);
+    }
+
+    #[tokio::test]
+    async fn past_card_events_stay_authoritative_when_an_invoice_exists() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        insert_credit(&p, "card-past", 85_000, "2026-03-10").await;
+        let before = annual_metrics(&p, 2026, today).await.unwrap();
+        let before_march = before.months.iter().find(|month| month.month == 3).unwrap();
+        assert_eq!(before_march.cartao_cents, 85_000);
+
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "card-1",
+                card_name: "Cartão",
+                owner_name: "Pessoa",
+                invoice_id: "invoice-1",
+                closing_date: "2026-02-20",
+                due_date: "2026-03-10",
+                stated_total_cents: Some(85_000),
+            },
+        )
+        .await;
+        let after = annual_metrics(&p, 2026, today).await.unwrap();
+        let after_march = after.months.iter().find(|month| month.month == 3).unwrap();
+        assert_eq!(after_march.cartao_cents, 85_000);
+    }
+
+    #[tokio::test]
+    async fn forecast_keeps_the_existing_credit_behavior_without_card_accounts() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        insert_credit(&p, "legacy-credit", 42_000, "2026-06-20").await;
+
+        let events = load_forecast_events(&p, today, NaiveDate::from_ymd_opt(2026, 6, 30).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, forecast::EventKind::Cartao);
+        assert_eq!(events[0].amount_cents, 42_000);
+    }
+
+    #[tokio::test]
+    async fn dashboard_lists_each_card_next_invoice_in_due_date_order() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "holder",
+                card_name: "Azul",
+                owner_name: "Ana",
+                invoice_id: "invoice-holder",
+                closing_date: "2026-06-10",
+                due_date: "2026-07-05",
+                stated_total_cents: Some(90_000),
+            },
+        )
+        .await;
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "additional",
+                card_name: "Verde",
+                owner_name: "Bia",
+                invoice_id: "invoice-additional",
+                closing_date: "2026-06-10",
+                due_date: "2026-06-20",
+                stated_total_cents: Some(85_000),
+            },
+        )
+        .await;
+        sqlx::query("UPDATE account SET linked_account_id = 'holder' WHERE id = 'additional'")
+            .execute(&p)
+            .await
+            .unwrap();
+
+        let summary = dashboard_summary(&p, today).await.unwrap();
+        assert_eq!(summary.upcoming_invoices.len(), 2);
+        assert_eq!(summary.upcoming_invoices[0].account_id, "additional");
+        assert_eq!(summary.upcoming_invoices[0].card_name, "Verde");
+        assert_eq!(summary.upcoming_invoices[0].owner_name, "Bia");
+        assert_eq!(summary.upcoming_invoices[0].status, "fechada");
+        assert_eq!(summary.upcoming_invoices[1].account_id, "holder");
+        assert_eq!(summary.upcoming_invoices[1].owner_name, "Ana");
+    }
+
+    #[tokio::test]
+    async fn dashboard_card_month_and_next_due_come_from_invoices_without_sheet_rows() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "card-1",
+                card_name: "Cartão",
+                owner_name: "Pessoa",
+                invoice_id: "invoice-1",
+                closing_date: "2026-06-10",
+                due_date: "2026-06-20",
+                stated_total_cents: Some(85_000),
+            },
+        )
+        .await;
+
+        let summary = dashboard_summary(&p, today).await.unwrap();
+        assert_eq!(summary.cartao_month_cents, 85_000);
+        assert_eq!(summary.next_fatura_date.as_deref(), Some("2026-06-20"));
+        assert_eq!(summary.next_fatura_amount_cents, 85_000);
+        assert_eq!(summary.spending_mode, "card");
+    }
+
+    #[tokio::test]
+    async fn dashboard_card_month_combines_realized_card_events_and_current_invoices_once() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "card-1",
+                card_name: "Cartão",
+                owner_name: "Pessoa",
+                invoice_id: "invoice-1",
+                closing_date: "2026-06-10",
+                due_date: "2026-06-20",
+                stated_total_cents: Some(85_000),
+            },
+        )
+        .await;
+        insert_credit(&p, "realized-card", 15_000, "2026-06-05").await;
+
+        let summary = dashboard_summary(&p, today).await.unwrap();
+        assert_eq!(summary.cartao_month_cents, 100_000);
+    }
+
+    #[tokio::test]
+    async fn dashboard_aggregates_cards_with_the_same_next_due_date() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        for (account_id, card_name, invoice_id, amount_cents) in [
+            ("card-1", "Azul", "invoice-1", 85_000),
+            ("card-2", "Verde", "invoice-2", 15_000),
+        ] {
+            insert_card_invoice(
+                &p,
+                CardInvoiceFixture {
+                    account_id,
+                    card_name,
+                    owner_name: "Pessoa",
+                    invoice_id,
+                    closing_date: "2026-06-10",
+                    due_date: "2026-06-20",
+                    stated_total_cents: Some(amount_cents),
+                },
+            )
+            .await;
+        }
+
+        let summary = dashboard_summary(&p, today).await.unwrap();
+        assert_eq!(summary.next_fatura_date.as_deref(), Some("2026-06-20"));
+        assert_eq!(summary.next_fatura_amount_cents, 100_000);
+    }
+
+    #[tokio::test]
+    async fn dashboard_card_gate_composes_reserve_evidence_without_recomputing_it() {
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+
+        let no_record = pool().await;
+        insert_income(&no_record, "income", 100_000, "2026-05-05").await;
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('economia', 'expense', 20000, '2026-05-10', 1, 0)",
+        )
+        .execute(&no_record)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, section) \
+             VALUES ('economia-item', 'economia', 20000, 'Reserva', 0, 'ECONOMIA:')",
+        )
+        .execute(&no_record)
+        .await
+        .unwrap();
+        let summary = dashboard_summary(&no_record, today).await.unwrap();
+        assert_eq!(summary.card_gate_economy, "alive");
+        assert_eq!(summary.card_gate_reserve, "unknown");
+        assert_eq!(summary.card_gate, "unknown");
+
+        let exact_six = pool().await;
+        insert_income(&exact_six, "income", 100_000, "2026-05-05").await;
+        insert_daily(&exact_six, "daily", 100_000, "2026-05-10").await;
+        insert_reserve_account(&exact_six, 600_000).await;
+        insert_economia_transfer(&exact_six, "economia", 20_000, "2026-05-12").await;
+        let summary = dashboard_summary(&exact_six, today).await.unwrap();
+        assert_eq!(summary.reserve_months, 6.0);
+        assert_eq!(summary.card_gate_economy, "alive");
+        assert_eq!(summary.card_gate_reserve, "alive");
+        assert_eq!(summary.card_gate, "alive");
+    }
+
+    #[tokio::test]
+    async fn annual_metrics_and_month_grid_use_the_same_future_invoice_event() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "card-1",
+                card_name: "Cartão",
+                owner_name: "Pessoa",
+                invoice_id: "invoice-1",
+                closing_date: "2026-06-10",
+                due_date: "2026-06-20",
+                stated_total_cents: Some(85_000),
+            },
+        )
+        .await;
+
+        let annual = annual_metrics(&p, 2026, today).await.unwrap();
+        let june = annual.months.iter().find(|month| month.month == 6).unwrap();
+        assert_eq!(june.cartao_cents, 85_000);
+
+        let grid = month_grid_at(&p, 2026, 6, today).await.unwrap();
+        let due = grid.iter().find(|day| day.day == 20).unwrap();
+        assert_eq!(due.fixed_out_cents, 85_000);
     }
 }

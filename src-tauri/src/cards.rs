@@ -23,6 +23,36 @@ impl InvoiceStatus {
     }
 }
 
+/// Estado de uma perna determinística da legitimidade do modo cartão.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GateLeg {
+    Alive,
+    Below,
+    Unknown,
+}
+
+impl GateLeg {
+    /// Valor estável exposto nos DTOs de resumo do dashboard.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Alive => "alive",
+            Self::Below => "below",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// Combina as pernas de economia e reserva sem transformar ausência de dado em aprovação.
+pub fn compose_card_gate(economy: GateLeg, reserve: GateLeg) -> GateLeg {
+    if matches!(economy, GateLeg::Below) || matches!(reserve, GateLeg::Below) {
+        GateLeg::Below
+    } else if matches!((economy, reserve), (GateLeg::Alive, GateLeg::Alive)) {
+        GateLeg::Alive
+    } else {
+        GateLeg::Unknown
+    }
+}
+
 /// Retorna o ano e mês deslocados sem depender de uma data intermediária, que poderia não
 /// existir em meses mais curtos.
 fn shift_month(year: i32, month: u32, delta: i32) -> Option<(i32, u32)> {
@@ -365,6 +395,25 @@ mod tests {
         assert_eq!(reconciliation_delta_cents(Some(1_000), 1_000), None);
         assert_eq!(reconciliation_delta_cents(Some(1_200), 1_000), Some(200));
         assert_eq!(reconciliation_delta_cents(None, 1_000), None);
+    }
+
+    #[test]
+    fn card_gate_composition_follows_the_full_three_state_matrix() {
+        use GateLeg::{Alive, Below, Unknown};
+
+        for (economy, reserve, expected) in [
+            (Alive, Alive, Alive),
+            (Alive, Below, Below),
+            (Alive, Unknown, Unknown),
+            (Below, Alive, Below),
+            (Below, Below, Below),
+            (Below, Unknown, Below),
+            (Unknown, Alive, Unknown),
+            (Unknown, Below, Below),
+            (Unknown, Unknown, Unknown),
+        ] {
+            assert_eq!(compose_card_gate(economy, reserve), expected);
+        }
     }
 
     async fn pool() -> SqlitePool {
