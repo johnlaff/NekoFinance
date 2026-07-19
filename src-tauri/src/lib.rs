@@ -1,6 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-#[expect(dead_code)]
 mod cards;
 mod commands;
 mod conflicts;
@@ -108,6 +107,24 @@ pub fn run() {
             commands::update_scenario_loan_cmd,
             commands::delete_scenario_loan_cmd,
             commands::list_scenario_loans_cmd,
+            commands::create_card_account,
+            commands::update_card_account,
+            commands::list_cards,
+            commands::list_invoices,
+            commands::get_invoice,
+            commands::register_card_purchase,
+            commands::move_card_purchase,
+            commands::set_invoice_stated_total,
+            commands::create_card_series,
+            commands::update_card_series,
+            commands::cancel_card_series,
+            commands::delete_card_series,
+            commands::create_refund_expectation,
+            commands::link_refund,
+            commands::unlink_refund,
+            commands::list_card_proposals,
+            commands::accept_card_proposal,
+            commands::dismiss_card_proposal,
         ])
         .setup(|app| {
             use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};

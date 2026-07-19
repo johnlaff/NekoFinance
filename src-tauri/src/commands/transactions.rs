@@ -594,17 +594,36 @@ pub async fn update_transaction_items_cmd(
 /// `ON DELETE CASCADE`. O delete é "sticky": o próximo import NÃO recria a linha.
 #[tauri::command]
 pub async fn delete_transaction_cmd(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
+    delete_transaction_inner(pool.inner(), &id).await
+}
+
+pub(crate) async fn delete_transaction_inner(pool: &SqlitePool, id: &str) -> Result<(), String> {
     let mut tx = pool
-        .inner()
         .begin()
         .await
         .map_err(|e| format!("delete (begin): {e}"))?;
+
+    // Séries são donas de suas ocorrências: apagar uma linha isolada quebraria a sequência e a
+    // contabilidade da fatura. A alteração precisa passar pelos gestos da série.
+    let card_link: Option<(Option<String>, Option<String>, i64)> = sqlx::query_as(
+        "SELECT card_series_id, invoice_id, amount FROM \"transaction\" WHERE id = ?1 AND scenario_id IS NULL",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| format!("delete (load card): {e}"))?;
+    let Some((card_series_id, invoice_id, amount)) = card_link else {
+        return Err("lançamento não encontrado".into());
+    };
+    if card_series_id.is_some() {
+        return Err("ocorrência de série: use os gestos da série".into());
+    }
 
     // `scenario_id IS NULL`: uma linha hipotética nunca é apagada pelos comandos do livro real —
     // se o id apontar para um cenário, `affected == 0` e cai no mesmo erro de "não encontrado".
     let affected =
         sqlx::query(r#"DELETE FROM "transaction" WHERE id = ?1 AND scenario_id IS NULL"#)
-            .bind(&id)
+            .bind(id)
             .execute(&mut *tx)
             .await
             .map_err(|e| format!("delete: {e}"))?
@@ -614,10 +633,21 @@ pub async fn delete_transaction_cmd(pool: State<'_, SqlitePool>, id: String) -> 
         return Err("lançamento não encontrado".into());
     }
 
+    // A autoridade declarada acompanha cada alteração de compras. `MAX` mantém o piso em zero
+    // quando um dado importado incompleto é removido.
+    if let Some(invoice_id) = invoice_id {
+        sqlx::query("UPDATE invoice SET stated_total_cents = MAX(0, stated_total_cents - ?2) WHERE id = ?1 AND stated_total_cents IS NOT NULL")
+            .bind(invoice_id)
+            .bind(amount)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("delete (adjust invoice): {e}"))?;
+    }
+
     // Linhas derivadas (Entradas compensatórias `derived:<kind>:<id>:<i>`): sem FK para o pai, são
     // limpas só no import; aqui replicamos o diff-delete de `import.rs`.
     sqlx::query(r#"DELETE FROM "transaction" WHERE id LIKE 'derived:%:' || ?1 || ':%'"#)
-        .bind(&id)
+        .bind(id)
         .execute(&mut *tx)
         .await
         .map_err(|e| format!("delete derived rows: {e}"))?;
@@ -625,14 +655,14 @@ pub async fn delete_transaction_cmd(pool: State<'_, SqlitePool>, id: String) -> 
     // `sync_log` da linha (sem FK ao `transaction`): sem remover, o próximo import recria a linha.
     // Delete manual remove o registro de import em TODAS as abas (sem filtro de `source_sheet`).
     sqlx::query("DELETE FROM sync_log WHERE entity_id = ?1 AND entity_type = 'transaction'")
-        .bind(&id)
+        .bind(id)
         .execute(&mut *tx)
         .await
         .map_err(|e| format!("delete sync_log: {e}"))?;
 
     // Conflitos de import órfãos (sem FK CASCADE) bloqueariam o write-back; somem com a linha.
     sqlx::query("DELETE FROM import_conflict WHERE transaction_id = ?1")
-        .bind(&id)
+        .bind(id)
         .execute(&mut *tx)
         .await
         .map_err(|e| format!("delete import_conflict: {e}"))?;
@@ -1401,40 +1431,8 @@ mod tests {
     // --- Delete limpa órfãos + update limpa itens stale ---
 
     // Núcleo do `delete_transaction_cmd` sem o wrapper `State` (mesmo padrão de `run_update_items`).
-    // Replica 1:1 o caminho transacional: DELETE da linha + derivadas + sync_log + import_conflict.
     async fn run_delete_txn(pool: &SqlitePool, id: &str) -> Result<(), String> {
-        let mut tx = pool
-            .begin()
-            .await
-            .map_err(|e| format!("delete (begin): {e}"))?;
-        let affected = sqlx::query(r#"DELETE FROM "transaction" WHERE id = ?1"#)
-            .bind(id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| format!("delete: {e}"))?
-            .rows_affected();
-        if affected == 0 {
-            return Err("lançamento não encontrado".into());
-        }
-        sqlx::query(r#"DELETE FROM "transaction" WHERE id LIKE 'derived:%:' || ?1 || ':%'"#)
-            .bind(id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| format!("delete derived rows: {e}"))?;
-        sqlx::query("DELETE FROM sync_log WHERE entity_id = ?1 AND entity_type = 'transaction'")
-            .bind(id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| format!("delete sync_log: {e}"))?;
-        sqlx::query("DELETE FROM import_conflict WHERE transaction_id = ?1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| format!("delete import_conflict: {e}"))?;
-        tx.commit()
-            .await
-            .map_err(|e| format!("delete (commit): {e}"))?;
-        Ok(())
+        delete_transaction_inner(pool, id).await
     }
 
     #[tokio::test]

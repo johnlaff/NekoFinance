@@ -92,6 +92,29 @@ pub fn add_cycle_months(cycle_month: &str, delta: i32) -> Option<String> {
         .then(|| format!("{year:04}-{month:02}"))
 }
 
+/// Reconstrói as datas explícitas de uma fatura a partir da sua identidade mensal de vencimento.
+/// Isso preserva a chave cartão×mês quando uma fatura ainda não existe, sem depender de compras.
+pub fn dates_for_cycle_month(
+    cycle_month: &str,
+    closing_day: u32,
+    due_day: u32,
+) -> Option<(NaiveDate, NaiveDate)> {
+    let (due_year, due_month) = parse_cycle_month(cycle_month)?;
+    let due_day = due_day.clamp(
+        1,
+        crate::forecast::last_day_of_month(due_year, due_month).day(),
+    );
+    let due_date = NaiveDate::from_ymd_opt(due_year, due_month, due_day)?;
+    let closing_day = closing_day.clamp(1, 28);
+    let (closing_year, closing_month) = if closing_day < due_day {
+        (due_year, due_month)
+    } else {
+        shift_month(due_year, due_month, -1)?
+    };
+    let closing_date = NaiveDate::from_ymd_opt(closing_year, closing_month, closing_day)?;
+    (closing_date < due_date).then_some((closing_date, due_date))
+}
+
 /// Posição 1-based de uma ocorrência em sua série, usada para derivar `n/N` sem persistir
 /// informação que pode divergir da ancoragem da série.
 pub fn cycle_index(start_cycle_month: &str, cycle_month: &str) -> Option<i64> {
@@ -243,6 +266,17 @@ mod tests {
         assert_eq!(parse_cycle_month("2026-13"), None);
         assert_eq!(parse_cycle_month("2026-1"), None);
         assert_eq!(parse_cycle_month("lixo"), None);
+    }
+
+    #[test]
+    fn dates_for_cycle_month_round_trips_the_purchase_cycle() {
+        let purchase = d("2026-01-25");
+        let closing = cycle_close_for_purchase(purchase, 20);
+        let due = due_date_for_close(closing, 10);
+        assert_eq!(
+            dates_for_cycle_month(&cycle_month_of(due), 20, 10),
+            Some((closing, due))
+        );
     }
 
     #[test]

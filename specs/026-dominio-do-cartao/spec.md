@@ -326,9 +326,10 @@ os eventos.
 - Perna economia (existente): economia 20–30% viva (`>= 2000` bps).
 - Perna reserva (nova): `reserve_months >= 6`, com `reserve_state` do #192 —
   `no_record` → perna `unknown` (nunca vira `below` fabricado).
-- DTO: `card_gate` (veredito composto: `alive` só com as duas pernas vivas;
-  `below` se qualquer perna computável falha; `unknown` se nenhuma perna é
-  computável) + `card_gate_economy` e `card_gate_reserve` (por perna, mesmos
+- DTO: `card_gate` (veredito composto, escada exata: `below` se QUALQUER
+  perna é `below`; senão `alive` se AMBAS são `alive`; senão `unknown` —
+  perna viva + perna incomputável é honestamente incerto, nunca `alive`
+  fabricado) + `card_gate_economy` e `card_gate_reserve` (por perna, mesmos
   três valores). A 3ª perna canônica ("sem pressa para o próximo objetivo
   patrimonial") é **didática**: copy no popover do gate, sem computo.
 
