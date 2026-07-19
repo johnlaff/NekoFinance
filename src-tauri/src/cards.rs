@@ -213,6 +213,16 @@ pub(crate) fn normalize_alias(s: &str) -> String {
     crate::google_sheets::import::normalize_item_section(s)
 }
 
+/// `true` quando ao menos um cartão está configurado — insumo da relabelagem de crédito órfão
+/// (compra crua sem fatura vinculada vira Saída fixa só quando há cartão no domínio).
+pub(crate) async fn has_any_card_account(pool: &SqlitePool) -> Result<bool, String> {
+    sqlx::query_scalar::<_, i64>("SELECT EXISTS(SELECT 1 FROM account WHERE type = 'credit_card')")
+        .fetch_one(pool)
+        .await
+        .map(|n| n != 0)
+        .map_err(|e| format!("cartões: {e}"))
+}
+
 /// Vincula compras de crédito legadas à fatura do ciclo correto quando há exatamente um cartão
 /// configurado. A fatura é a identidade persistida do vencimento; o backfill só estabelece a FK e
 /// preserva o total declarado, que pode já refletir a planilha importada.

@@ -1395,6 +1395,7 @@ struct RawTxnRow {
     is_projection: i64,
     to_liquidity: String,
     recurrence_id: Option<String>,
+    invoice_id: Option<String>,
 }
 
 #[derive(Debug, sqlx::FromRow, Clone)]
@@ -1414,6 +1415,7 @@ struct HypoTxnRow {
     description: Option<String>,
     loan_id: Option<String>,
     override_id: Option<String>,
+    invoice_id: Option<String>,
 }
 
 /// Linhas REAIS (`scenario_id IS NULL`) num intervalo `[start, end]`. `inclusive_start` decide
@@ -1428,12 +1430,14 @@ async fn load_real_rows(
 ) -> Result<Vec<RawTxnRow>, String> {
     const INCLUSIVE: &str = "SELECT t.id, t.type AS \"type\", t.amount, t.date, \
          COALESCE(t.payment_method,'') AS payment_method, \
-         t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity, t.recurrence_id \
+         t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity, t.recurrence_id, \
+         t.invoice_id \
          FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
          WHERE t.date >= ?1 AND t.date <= ?2 AND t.scenario_id IS NULL";
     const EXCLUSIVE: &str = "SELECT t.id, t.type AS \"type\", t.amount, t.date, \
          COALESCE(t.payment_method,'') AS payment_method, \
-         t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity, t.recurrence_id \
+         t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity, t.recurrence_id, \
+         t.invoice_id \
          FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
          WHERE t.date > ?1 AND t.date <= ?2 AND t.scenario_id IS NULL";
     let sql = if inclusive_start {
@@ -1462,13 +1466,13 @@ async fn load_hypothetical_rows(
     const INCLUSIVE: &str = "SELECT t.id, t.type AS \"type\", t.amount, t.date, \
          COALESCE(t.payment_method,'') AS payment_method, \
          t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity, \
-         t.recurrence_id, t.description, t.loan_id, t.override_id \
+         t.recurrence_id, t.description, t.loan_id, t.override_id, t.invoice_id \
          FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
          WHERE t.date >= ?2 AND t.date <= ?3 AND t.scenario_id = ?1";
     const EXCLUSIVE: &str = "SELECT t.id, t.type AS \"type\", t.amount, t.date, \
          COALESCE(t.payment_method,'') AS payment_method, \
          t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity, \
-         t.recurrence_id, t.description, t.loan_id, t.override_id \
+         t.recurrence_id, t.description, t.loan_id, t.override_id, t.invoice_id \
          FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
          WHERE t.date > ?2 AND t.date <= ?3 AND t.scenario_id = ?1";
     let sql = if inclusive_start {
@@ -1498,7 +1502,7 @@ async fn load_all_hypothetical_rows(
     const SQL: &str = "SELECT t.id, t.type AS \"type\", t.amount, t.date, \
          COALESCE(t.payment_method,'') AS payment_method, \
          t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity, \
-         t.recurrence_id, t.description, t.loan_id, t.override_id \
+         t.recurrence_id, t.description, t.loan_id, t.override_id, t.invoice_id \
          FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
          WHERE t.scenario_id = ?1 ORDER BY t.date, t.id";
     sqlx::query_as(SQL)
@@ -1646,37 +1650,153 @@ fn apply_suppression(rows: Vec<RawTxnRow>, plan: &SuppressionPlan) -> Vec<RawTxn
         .collect()
 }
 
-fn map_raw_rows(rows: Vec<RawTxnRow>) -> Vec<CashflowEvent> {
-    rows.into_iter()
-        .filter_map(|r| {
-            map_cashflow_row((
-                r.ttype,
-                r.amount,
-                r.date,
-                r.payment_method,
-                r.is_fixed,
-                r.is_projection,
-                r.to_liquidity,
-            ))
-        })
-        .collect()
+/// Linha (real ajustada por supressão OU hipotética do cenário) genérica o bastante para o
+/// classificador de cartão espelhar o caminho real — ver `build_card_aware_events`.
+struct CardAwareRow {
+    id: String,
+    ttype: String,
+    amount: i64,
+    date: String,
+    payment_method: String,
+    is_fixed: i64,
+    is_projection: i64,
+    to_liquidity: String,
+    invoice_id: Option<String>,
 }
 
-fn map_hypo_rows(rows: &[HypoTxnRow]) -> Vec<CashflowEvent> {
-    rows.iter()
-        .cloned()
-        .filter_map(|r| {
-            map_cashflow_row((
-                r.ttype,
-                r.amount,
-                r.date,
-                r.payment_method,
-                r.is_fixed,
-                r.is_projection,
-                r.to_liquidity,
-            ))
-        })
-        .collect()
+impl From<RawTxnRow> for CardAwareRow {
+    fn from(r: RawTxnRow) -> Self {
+        CardAwareRow {
+            id: r.id,
+            ttype: r.ttype,
+            amount: r.amount,
+            date: r.date,
+            payment_method: r.payment_method,
+            is_fixed: r.is_fixed,
+            is_projection: r.is_projection,
+            to_liquidity: r.to_liquidity,
+            invoice_id: r.invoice_id,
+        }
+    }
+}
+
+impl From<&HypoTxnRow> for CardAwareRow {
+    fn from(r: &HypoTxnRow) -> Self {
+        CardAwareRow {
+            id: r.id.clone(),
+            ttype: r.ttype.clone(),
+            amount: r.amount,
+            date: r.date.clone(),
+            payment_method: r.payment_method.clone(),
+            is_fixed: r.is_fixed,
+            is_projection: r.is_projection,
+            to_liquidity: r.to_liquidity.clone(),
+            invoice_id: r.invoice_id.clone(),
+        }
+    }
+}
+
+/// Espelha `load_db_events` (motor principal) no ramo de cenário: decompõe `line_item` de itens
+/// `Cartao` contra fatura existente pelos MESMOS primitivos de classificação
+/// (`forecast_cmds::event_kind_for_item_kind`) e relabela crédito cru órfão
+/// (`forecast_cmds::relabel_orphan_credit_event`) — nenhuma lógica de "fatura existe" duplicada.
+/// Sem isto o cenário passava pais crus por `finalize_card_events`: uma célula futura itemizada
+/// virava Saída fixa pelo valor CHEIO e ainda recebia a fatura injetada por cima (dobra); uma
+/// compra hipotética de cartão sem fatura vinculada era suprimida sem substituta (some).
+async fn build_card_aware_events(
+    pool: &SqlitePool,
+    rows: Vec<CardAwareRow>,
+    today: NaiveDate,
+) -> Result<Vec<CashflowEvent>, String> {
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    let alias_to_account = forecast_cmds::load_card_alias_index(pool).await?;
+    let invoiced_cycles = forecast_cmds::load_invoiced_cycles(pool).await?;
+    let has_card = crate::cards::has_any_card_account(pool).await?;
+
+    // Placeholders posicionais (só `?`, sem dado interpolado) + binds — seguro com AssertSqlSafe.
+    let placeholders = vec!["?"; rows.len()].join(",");
+    let sql = format!(
+        "SELECT transaction_id, amount_cents, description, section FROM line_item \
+         WHERE transaction_id IN ({placeholders}) ORDER BY transaction_id, position"
+    );
+    let mut query =
+        sqlx::query_as::<_, (String, i64, String, Option<String>)>(sqlx::AssertSqlSafe(sql));
+    for row in &rows {
+        query = query.bind(&row.id);
+    }
+    let item_rows = query
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("scenario card line items: {e}"))?;
+    let mut items_by_txn: HashMap<String, Vec<(i64, String, Option<String>)>> = HashMap::new();
+    for (transaction_id, amount_cents, description, section) in item_rows {
+        items_by_txn
+            .entry(transaction_id)
+            .or_default()
+            .push((amount_cents, description, section));
+    }
+
+    let mut events = Vec::new();
+    for row in rows {
+        let Ok(date) = NaiveDate::parse_from_str(&row.date, "%Y-%m-%d") else {
+            continue;
+        };
+        if row.ttype == "expense"
+            && let Some(items) = items_by_txn.get(&row.id)
+            && !items.is_empty()
+        {
+            for (amount_cents, description, section) in items {
+                let kind = crate::google_sheets::import::classify_line_item(
+                    section.as_deref(),
+                    description,
+                );
+                events.push(CashflowEvent {
+                    date,
+                    kind: forecast_cmds::event_kind_for_item_kind(
+                        kind,
+                        description,
+                        date,
+                        &alias_to_account,
+                        &invoiced_cycles,
+                    ),
+                    amount_cents: amount_cents.abs(),
+                    realized: row.is_projection == 0,
+                });
+            }
+            // Mesma convenção de resíduo com sinal de `load_db_events` — a célula é a dona do
+            // total; a soma dos itens pode divergir dela (ver comentário lá).
+            let parts_sum: i64 = items.iter().map(|(amount, _, _)| amount.abs()).sum();
+            let residual = row.amount.abs() - parts_sum;
+            if residual != 0 {
+                events.push(CashflowEvent {
+                    date,
+                    kind: forecast::EventKind::FixedOut,
+                    amount_cents: residual,
+                    realized: row.is_projection == 0,
+                });
+            }
+            continue;
+        }
+        if let Some(event) = map_cashflow_row((
+            row.ttype,
+            row.amount,
+            row.date,
+            row.payment_method,
+            row.is_fixed,
+            row.is_projection,
+            row.to_liquidity,
+        )) {
+            events.push(forecast_cmds::relabel_orphan_credit_event(
+                event,
+                row.invoice_id.as_deref(),
+                has_card,
+                Some(today),
+            ));
+        }
+    }
+    Ok(events)
 }
 
 /// Detecta um grupo de empréstimo entre TODAS as linhas hipotéticas do cenário (linhas com
@@ -1868,8 +1988,12 @@ pub(crate) async fn get_scenario_forecast_inner(
     let scenario_end_exclusive = horizon_end
         .succ_opt()
         .ok_or("horizonte inválido para faturas do cenário")?;
-    let mut scenario_chain_events = map_raw_rows(scenario_chain_adjusted);
-    scenario_chain_events.extend(map_hypo_rows(&hypo_chain_rows));
+    let mut chain_rows: Vec<CardAwareRow> = scenario_chain_adjusted
+        .into_iter()
+        .map(CardAwareRow::from)
+        .collect();
+    chain_rows.extend(hypo_chain_rows.iter().map(CardAwareRow::from));
+    let mut scenario_chain_events = build_card_aware_events(pool, chain_rows, today).await?;
     scenario_chain_events = finalize_card_events(
         pool,
         today,
@@ -1878,8 +2002,12 @@ pub(crate) async fn get_scenario_forecast_inner(
         scenario_chain_events,
     )
     .await?;
-    let mut scenario_metric_events = map_raw_rows(scenario_metric_adjusted);
-    scenario_metric_events.extend(map_hypo_rows(&hypo_metric_rows));
+    let mut metric_rows: Vec<CardAwareRow> = scenario_metric_adjusted
+        .into_iter()
+        .map(CardAwareRow::from)
+        .collect();
+    metric_rows.extend(hypo_metric_rows.iter().map(CardAwareRow::from));
+    let mut scenario_metric_events = build_card_aware_events(pool, metric_rows, today).await?;
     scenario_metric_events = finalize_card_events(
         pool,
         today,
@@ -5183,5 +5311,101 @@ mod tests {
         assert_eq!(compare.real_cost_of_living_cents, 85_000);
         assert_eq!(compare.scenario_cost_of_living_cents, 85_000);
         assert!(compare.loan.is_some());
+    }
+
+    /// O ramo de cenário precisa espelhar o caminho real: decompor `line_item` e checar fatura
+    /// existente (mesma régua do FIX de "fatura existe" em `event_kind_for_item_kind`) ANTES de
+    /// `finalize_card_events`. Sem isso, a célula itemizada crua vira Saída fixa pelo valor
+    /// cheio E a fatura é injetada por cima — dobra a Saída de cartão no cenário.
+    #[tokio::test]
+    async fn scenario_forecast_counts_a_future_itemized_card_line_once_when_its_invoice_exists() {
+        let p = pool().await;
+        sqlx::query("INSERT INTO person (id, name) VALUES ('person-card', 'Pessoa')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id) \
+             VALUES ('visa', 'Visa', 'credit_card', 'person-card')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO invoice (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) \
+             VALUES ('invoice-visa', 'visa', '2026-08', '2026-07-20', '2026-08-10', 85_000)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        // Célula futura itemizada da grade de notas: mesma forma que o import materializa (pai
+        // Saída fixa + `line_item` sob CARTÕES:), não uma compra crua `payment_method='credit'`.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('parent-visa', 'expense', 85_000, '2026-08-10', 1, 1)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, section) \
+             VALUES ('li-visa', 'parent-visa', 85_000, 'Visa', 0, 'CARTÕES:')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let scenario = create_scenario(&p, "Sem mudanças").await.unwrap();
+        let compare = get_scenario_forecast_inner(&p, &scenario.id, d("2026-08-01"))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            compare.scenario_cost_of_living_cents, 85_000,
+            "a linha itemizada não pode contar a fatura duas vezes no cenário"
+        );
+    }
+
+    /// Uma compra hipotética de cartão do cenário ("e se") não tem `invoice_id` nem fatura
+    /// vinculada — o caminho real já trata isso como órfã (Saída fixa, comportamento atual);
+    /// suprimi-la sem substituta faz o dinheiro sumir do forecast do cenário.
+    #[tokio::test]
+    async fn scenario_forecast_keeps_a_hypothetical_orphan_credit_purchase_as_an_outflow() {
+        let p = pool().await;
+        sqlx::query("INSERT INTO person (id, name) VALUES ('person-card', 'Pessoa')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id) \
+             VALUES ('card', 'Cartão', 'credit_card', 'person-card')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        let scenario = create_scenario(&p, "Compra hipotética").await.unwrap();
+        add_scenario_transaction(
+            &p,
+            &scenario.id,
+            "expense",
+            20_000,
+            "Compra hipotética no cartão",
+            "2026-08-12",
+            Some("credit"),
+            true,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let compare = get_scenario_forecast_inner(&p, &scenario.id, d("2026-08-01"))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            compare.scenario_cost_of_living_cents, 20_000,
+            "a compra hipotética de cartão sem fatura não pode sumir do cenário"
+        );
     }
 }

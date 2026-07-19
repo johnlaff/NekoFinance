@@ -168,14 +168,21 @@ const DEMO_PROPOSALS: CardProposal[] = [
 
 const DEMO_CARD_GATE = {
   card_gate_economy: "alive" as const,
+  card_gate_economy_bps: 2_400,
   card_gate_reserve: "below" as const,
+  reserve_months: 4.2,
 };
 
 type GateState = "alive" | "below" | "unknown";
 type CardGateSummary = Pick<
   Awaited<ReturnType<typeof getDashboardSummary>>,
-  "card_gate_economy" | "card_gate_reserve"
+  "card_gate_economy" | "card_gate_economy_bps" | "card_gate_reserve" | "reserve_months"
 >;
+
+/** Piso do método: economia ≥ 20% da renda anual (`SAVINGS_FLOOR_BPS` no motor). */
+const ECONOMY_GATE_TARGET_PCT = 20;
+/** Piso do método: reserva ≥ 6 meses de custo de vida (`RESERVE_MIN_MONTHS` no motor). */
+const RESERVE_GATE_TARGET_MONTHS = 6;
 interface CardSeries {
   id: string;
   occurrence: CardPurchase;
@@ -328,10 +335,26 @@ function ProposalBanner({
 }
 
 function CardGate({ summary }: { summary: CardGateSummary | undefined }) {
+  const economyPct =
+    summary?.card_gate_economy_bps != null ? summary.card_gate_economy_bps / 100 : null;
   return (
     <section className="cartoes__gate" aria-label="Gate do modo cartão">
-      <GateLeg label="Economia viva" state={summary?.card_gate_economy} />
-      <GateLeg label="Reserva de 6 meses" state={summary?.card_gate_reserve} />
+      <GateLeg
+        label="Economia viva"
+        state={summary?.card_gate_economy}
+        current={economyPct}
+        target={ECONOMY_GATE_TARGET_PCT}
+        decimals={0}
+        unit="%"
+      />
+      <GateLeg
+        label="Reserva de 6 meses"
+        state={summary?.card_gate_reserve}
+        current={summary?.reserve_months ?? null}
+        target={RESERVE_GATE_TARGET_MONTHS}
+        decimals={1}
+        unit=" meses"
+      />
       <InfoPopover
         term={{
           title: "Modo cartão",
@@ -344,11 +367,26 @@ function CardGate({ summary }: { summary: CardGateSummary | undefined }) {
   );
 }
 
-function GateLeg({ label, state }: { label: string; state: GateState | undefined }) {
+function GateLeg({
+  label,
+  state,
+  current,
+  target,
+  decimals,
+  unit,
+}: {
+  label: string;
+  state: GateState | undefined;
+  /** Número atual já na unidade de exibição (percentual ou meses). */
+  current: number | null;
+  target: number;
+  decimals: number;
+  unit: string;
+}) {
   if (state === undefined) {
     return <span className="cartoes__gate-loading">Carregando…</span>;
   }
-  if (state === "unknown") {
+  if (state === "unknown" || current == null) {
     return (
       <span className="cartoes__gate-leg">
         <NoRecordDash
@@ -359,7 +397,15 @@ function GateLeg({ label, state }: { label: string; state: GateState | undefined
     );
   }
 
+  const format = (value: number, fractionDigits: number) =>
+    `${value.toLocaleString("pt-BR", {
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits,
+    })}${unit}`;
   const alive = state === "alive";
+  // O alvo (20%, 6 meses) é sempre um número redondo por desenho do método — mostrado sem casas
+  // decimais mesmo quando a leitura atual usa precisão fina (ex.: "4,2 meses ... p/ 6").
+  const missing = Math.max(0, target - current);
   return (
     <span className={`cartoes__gate-leg ${alive ? "is-ok" : "is-warn"}`}>
       {alive ? (
@@ -367,8 +413,8 @@ function GateLeg({ label, state }: { label: string; state: GateState | undefined
       ) : (
         <AlertTriangle size={16} aria-hidden="true" />
       )}
-      {label}
-      {!alive ? " — falta" : ""}
+      {label} — {format(current, decimals)}
+      {!alive ? ` (falta ${format(missing, decimals)} p/ ${format(target, 0)})` : ""}
     </span>
   );
 }

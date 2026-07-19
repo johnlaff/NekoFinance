@@ -1304,6 +1304,11 @@ async fn load_card_invoice_events(
     Ok((true, invoices))
 }
 
+/// A semente da projeção (`projection_seed`) já embute tudo até HOJE inclusive (Saldo mais
+/// recente ≤ hoje + gap de transações reais até hoje). Por isso a injeção da fatura — e a
+/// supressão do evento cru que ela substitui — usam o MESMO limite estritamente futuro
+/// (`> today`, nunca `>= today`): uma fatura vencendo hoje já está contada pela semente, e
+/// reinjetá-la aqui abateria o mesmo dinheiro duas vezes.
 pub(crate) fn apply_card_invoice_precedence(
     today: NaiveDate,
     has_card: bool,
@@ -1316,12 +1321,12 @@ pub(crate) fn apply_card_invoice_precedence(
 
     let mut events: Vec<CashflowEvent> = raw_events
         .into_iter()
-        .filter(|event| !(event.kind == forecast::EventKind::Cartao && event.date >= today))
+        .filter(|event| !(event.kind == forecast::EventKind::Cartao && event.date > today))
         .collect();
     events.extend(
         invoices
             .iter()
-            .filter(|invoice| invoice.due_date >= today)
+            .filter(|invoice| invoice.due_date > today)
             .map(|invoice| CashflowEvent {
                 date: invoice.due_date,
                 kind: forecast::EventKind::Cartao,
@@ -1346,10 +1351,18 @@ pub(crate) async fn finalize_card_events(
     ))
 }
 
-fn event_kind_for_item_kind(
+/// Classifica um item de nota `Cartao`: a CHAVE é "existe fatura para (conta, ciclo) da linha",
+/// nunca "o alias é conhecido" sozinho. Uma proposta recém-aceita cria conta+alias mas não
+/// materializa a fatura observada até o próximo import — nessa janela o item precisa continuar
+/// Saída fixa (visível no forecast), porque a fatura da precedência (`apply_card_invoice_
+/// precedence`) não existe para repor o valor suprimido. Regra compartilhada por caixa, métricas
+/// (via `load_db_events`) e cenário (`scenarios.rs`) — nenhum dos três reclassifica sozinho.
+pub(crate) fn event_kind_for_item_kind(
     kind: import::ItemKind,
     description: &str,
-    known_card_aliases: &std::collections::HashSet<String>,
+    date: NaiveDate,
+    alias_to_account: &std::collections::HashMap<String, String>,
+    invoiced_cycles: &std::collections::HashSet<(String, String)>,
 ) -> forecast::EventKind {
     match kind {
         import::ItemKind::Saida | import::ItemKind::Ajuste => forecast::EventKind::FixedOut,
@@ -1357,7 +1370,10 @@ fn event_kind_for_item_kind(
         import::ItemKind::Cartao => {
             let alias =
                 crate::cards::normalize_alias(description.split('#').next().unwrap_or("").trim());
-            if known_card_aliases.contains(&alias) {
+            let covered = alias_to_account.get(&alias).is_some_and(|account_id| {
+                invoiced_cycles.contains(&(account_id.clone(), crate::cards::cycle_month_of(date)))
+            });
+            if covered {
                 forecast::EventKind::Cartao
             } else {
                 forecast::EventKind::FixedOut
@@ -1368,31 +1384,44 @@ fn event_kind_for_item_kind(
     }
 }
 
-/// Carrega as identidades humanas que legitimam uma linha de nota como cartão. Uma seção
-/// `CARTÕES:` com alias ainda desconhecido continua sendo Saída até o dono aceitar a proposta;
-/// sem essa distinção, a precedência das faturas suprimiria dinheiro que não tem fatura para repor.
-async fn load_known_card_aliases(
+/// Alias normalizado (nome da conta ou `card_alias`) → `account_id`. Resolver a CONTA (não só
+/// "o alias existe") é o que permite checar depois se ELA tem fatura para o ciclo da linha —
+/// ver `event_kind_for_item_kind`.
+pub(crate) async fn load_card_alias_index(
     pool: &SqlitePool,
-) -> Result<std::collections::HashSet<String>, String> {
-    let names: Vec<(String,)> =
-        sqlx::query_as("SELECT name FROM account WHERE type = 'credit_card'")
-            .fetch_all(pool)
-            .await
-            .map_err(|e| format!("load card names for forecast: {e}"))?;
-    let aliases: Vec<(String,)> = sqlx::query_as(
-        "SELECT ca.alias FROM card_alias ca \
-         JOIN account a ON a.id = ca.account_id WHERE a.type = 'credit_card'",
+) -> Result<std::collections::HashMap<String, String>, String> {
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT a.id, a.name FROM account a WHERE a.type = 'credit_card' \
+         UNION ALL \
+         SELECT a.id, ca.alias FROM card_alias ca \
+         JOIN account a ON a.id = ca.account_id \
+         WHERE a.type = 'credit_card'",
     )
     .fetch_all(pool)
     .await
     .map_err(|e| format!("load card aliases for forecast: {e}"))?;
 
-    Ok(names
-        .into_iter()
-        .chain(aliases)
-        .map(|(alias,)| crate::cards::normalize_alias(&alias))
-        .filter(|alias| !alias.is_empty())
-        .collect())
+    let mut map = std::collections::HashMap::new();
+    for (account_id, alias) in rows {
+        let normalized = crate::cards::normalize_alias(&alias);
+        if !normalized.is_empty() {
+            map.entry(normalized).or_insert(account_id);
+        }
+    }
+    Ok(map)
+}
+
+/// Conjunto de (`account_id`, `cycle_month`) que TÊM fatura persistida — carregado em UMA query
+/// antes do loop de classificação, para que cada item de nota apenas consulte o conjunto em vez
+/// de bater no banco por linha.
+pub(crate) async fn load_invoiced_cycles(
+    pool: &SqlitePool,
+) -> Result<std::collections::HashSet<(String, String)>, String> {
+    let rows: Vec<(String, String)> = sqlx::query_as("SELECT account_id, cycle_month FROM invoice")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("load invoiced cycles for forecast: {e}"))?;
+    Ok(rows.into_iter().collect())
 }
 
 async fn load_db_events(
@@ -1404,7 +1433,8 @@ async fn load_db_events(
 ) -> Result<Vec<CashflowEvent>, String> {
     let start = start_inclusive.format("%Y-%m-%d").to_string();
     let end = end_exclusive.format("%Y-%m-%d").to_string();
-    let known_card_aliases = load_known_card_aliases(pool).await?;
+    let alias_to_account = load_card_alias_index(pool).await?;
+    let invoiced_cycles = load_invoiced_cycles(pool).await?;
     let has_card = if orphan_credit_from.is_some() {
         sqlx::query_scalar::<_, i64>(
             "SELECT EXISTS(SELECT 1 FROM account WHERE type = 'credit_card')",
@@ -1498,7 +1528,13 @@ async fn load_db_events(
                     import::classify_line_item(item.section.as_deref(), item.description.as_str());
                 events.push(CashflowEvent {
                     date,
-                    kind: event_kind_for_item_kind(kind, &item.description, &known_card_aliases),
+                    kind: event_kind_for_item_kind(
+                        kind,
+                        &item.description,
+                        date,
+                        &alias_to_account,
+                        &invoiced_cycles,
+                    ),
                     amount_cents: item.amount_cents.abs(),
                     realized: row.is_projection == 0,
                 });
@@ -1523,7 +1559,7 @@ async fn load_db_events(
             continue;
         }
 
-        if let Some(mut event) = map_cashflow_row((
+        if let Some(event) = map_cashflow_row((
             row.ttype,
             row.amount,
             row.date,
@@ -1532,21 +1568,36 @@ async fn load_db_events(
             row.is_projection,
             row.to_liquidity,
         )) {
-            // Só o crédito FUTURO de uma base com cartão é substituído pelo lump no vencimento.
-            // Sem vínculo de fatura, a compra legada permanece uma saída de caixa; passado e
-            // bases sem cartão conservam a classificação crua.
-            if event.kind == forecast::EventKind::Cartao
-                && row.invoice_id.is_none()
-                && has_card
-                && orphan_credit_from.is_some_and(|today| event.date >= today)
-            {
-                event.kind = forecast::EventKind::FixedOut;
-            }
-            events.push(event);
+            events.push(relabel_orphan_credit_event(
+                event,
+                row.invoice_id.as_deref(),
+                has_card,
+                orphan_credit_from,
+            ));
         }
     }
 
     Ok(events)
+}
+
+/// Só o crédito FUTURO de uma base com cartão é substituído pelo lump no vencimento. Sem vínculo
+/// de fatura, a compra crua (legada ou hipotética de cenário) permanece uma saída de caixa;
+/// passado e bases sem cartão conservam a classificação crua. Compartilhada entre o motor
+/// principal (`load_db_events`) e o ramo de cenário — nenhum dos dois reclassifica sozinho.
+pub(crate) fn relabel_orphan_credit_event(
+    mut event: CashflowEvent,
+    invoice_id: Option<&str>,
+    has_card: bool,
+    orphan_credit_from: Option<NaiveDate>,
+) -> CashflowEvent {
+    if event.kind == forecast::EventKind::Cartao
+        && invoice_id.is_none()
+        && has_card
+        && orphan_credit_from.is_some_and(|today| event.date >= today)
+    {
+        event.kind = forecast::EventKind::FixedOut;
+    }
+    event
 }
 
 async fn load_metric_db_events(
@@ -2203,6 +2254,10 @@ pub struct DashboardSummary {
     pub card_gate: String,
     /// Perna de economia do gate de legitimidade do modo cartão.
     pub card_gate_economy: String,
+    /// Percentual bruto (bps) por trás da perna de economia — a matemática que a tela Cartões
+    /// mostra ("14%, falta 6 p/ 20%"), não só o veredito. `None` só quando a perna é `unknown`
+    /// (sem renda anual para dividir — nunca um número fabricado).
+    pub card_gate_economy_bps: Option<i64>,
     /// Perna de reserva do gate de legitimidade do modo cartão.
     pub card_gate_reserve: String,
     /// Cartão do mês corrente (realizado + projetado), magnitude — o que o dia lê no modo cartão.
@@ -2350,6 +2405,8 @@ pub(crate) async fn dashboard_summary(
     if reserve_months >= RESERVE_MIN_MONTHS as f64 {
         economia_ruler += realized_annual_patrimonio(pool, today_naive).await?;
     }
+    let card_gate_economy_bps =
+        (annual_income > 0).then(|| economia_ruler * 10_000 / annual_income);
     let card_gate_economy = if annual_income <= 0 {
         crate::cards::GateLeg::Unknown
     } else if economia_ruler * 10_000 >= SAVINGS_FLOOR_BPS * annual_income {
@@ -2419,6 +2476,7 @@ pub(crate) async fn dashboard_summary(
         .to_string(),
         card_gate: card_gate.as_str().to_string(),
         card_gate_economy: card_gate_economy.as_str().to_string(),
+        card_gate_economy_bps,
         card_gate_reserve: card_gate_reserve.as_str().to_string(),
         cartao_month_cents: mode.cartao_month_cents,
         next_fatura_date: next_fatura
@@ -2622,6 +2680,17 @@ mod tests {
         .execute(&p)
         .await
         .unwrap();
+        // A fatura do ciclo é o que legitima a linha CARTÕES: como Cartao (não só o alias
+        // conhecido) — sem ela o item cairia em Saída fixa, que é o comportamento correto para
+        // uma proposta aceita sem fatura ainda, mas não é o que este teste quer exercitar (a
+        // atribuição por seção das 5 categorias).
+        sqlx::query(
+            "INSERT INTO invoice (id, account_id, cycle_month, closing_date, due_date) \
+             VALUES ('invoice-card-known', 'card-known', '2026-03', '2026-02-20', '2026-03-15')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
 
         sqlx::query(
             "INSERT INTO \"transaction\" (id, type, amount, date, is_projection) \
@@ -2820,6 +2889,15 @@ mod tests {
         sqlx::query(
             "INSERT INTO account (id, name, type, owner_person_id) \
              VALUES ('card-known', 'Banco A', 'credit_card', 'person-card')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        // A fatura do ciclo é o que legitima a linha como Cartao (chave: fatura existente, não só
+        // alias conhecido) — este teste exercita o resíduo com sinal, não o domínio de fatura.
+        sqlx::query(
+            "INSERT INTO invoice (id, account_id, cycle_month, closing_date, due_date) \
+             VALUES ('invoice-card-known', 'card-known', '2026-03', '2026-02-20', '2026-03-10')",
         )
         .execute(&p)
         .await
@@ -3810,6 +3888,73 @@ mod tests {
         assert_eq!(july.cartao_cents, 85_000);
     }
 
+    /// A semente já embute tudo até hoje (`projection_seed`: Saldo ≤ hoje + gap de transações
+    /// reais até hoje inclusive); reinjetar uma fatura que VENCE hoje por cima abateria o mesmo
+    /// dinheiro duas vezes. A injeção (e a supressão do evento cru correspondente) precisam ficar
+    /// estritamente `> hoje` para não sobrepor o que a semente já contou.
+    #[tokio::test]
+    async fn invoice_due_today_is_not_double_counted_between_seed_and_injection() {
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        let amount_cents = 85_000;
+
+        // Sem fatura: nenhum evento, saldo de hoje nasce só da semente vazia.
+        let baseline_pool = pool().await;
+        let baseline = forecast_dto(&baseline_pool, today).await.unwrap();
+        let baseline_balance = baseline
+            .daily
+            .iter()
+            .find(|d| d.date == "2026-06-15")
+            .expect("dia de hoje na série")
+            .balance_cents;
+
+        // Com fatura vencendo HOJE: a planilha já registrou a Saída de hoje (semente via
+        // sheet_daily_balance + gap) e a fatura persistida existe para o MESMO vencimento — as
+        // duas pernas descrevem o mesmo dinheiro, não dois.
+        let p = pool().await;
+        sqlx::query(
+            "INSERT INTO sheet_daily_balance (sheet_name, date, balance_cents) \
+             VALUES ('2026', '2026-06-14', 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('due-today', 'expense', ?1, '2026-06-15', 1, 1)",
+        )
+        .bind(amount_cents)
+        .execute(&p)
+        .await
+        .unwrap();
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "card-1",
+                card_name: "Cartão",
+                owner_name: "Pessoa",
+                invoice_id: "invoice-1",
+                closing_date: "2026-05-20",
+                due_date: "2026-06-15",
+                stated_total_cents: Some(amount_cents),
+            },
+        )
+        .await;
+
+        let forecast = forecast_dto(&p, today).await.unwrap();
+        let with_invoice_balance = forecast
+            .daily
+            .iter()
+            .find(|d| d.date == "2026-06-15")
+            .expect("dia de hoje na série")
+            .balance_cents;
+
+        assert_eq!(
+            baseline_balance - with_invoice_balance,
+            amount_cents,
+            "a fatura vencendo hoje abate o saldo uma única vez, não em dobro"
+        );
+    }
+
     #[tokio::test]
     async fn future_card_line_item_and_its_invoice_count_once_in_month_metrics() {
         let p = pool().await;
@@ -3940,6 +4085,63 @@ mod tests {
             .collect();
         assert_eq!(card_events.len(), 1);
         assert_eq!(card_events[0].amount_cents, 10_000);
+    }
+
+    /// A chave unificadora do domínio do cartão: o discriminador é "existe fatura para (conta,
+    /// ciclo) da linha", não "o alias é conhecido". Uma proposta recém-aceita cria conta+alias mas
+    /// não materializa a fatura observada até o próximo import — o item tem de continuar Saída fixa
+    /// (visível no forecast), nunca suprimido sem fatura para repor o valor.
+    #[tokio::test]
+    async fn known_card_alias_without_an_invoice_for_its_cycle_stays_a_fixed_outflow() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        crate::commands::card_cmds::create_card_account_inner(
+            &p,
+            "Visa",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('future-known-card', 'expense', 10_000, '2026-06-20', 1, 1)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, section) \
+             VALUES ('future-known-card-item', 'future-known-card', 10_000, 'Visa', 0, 'CARTÕES:')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let events = load_cashflow_events(&p, today, NaiveDate::from_ymd_opt(2026, 6, 30).unwrap())
+            .await
+            .unwrap();
+        assert!(
+            events.iter().any(|event| {
+                event.date == NaiveDate::from_ymd_opt(2026, 6, 20).unwrap()
+                    && event.kind == forecast::EventKind::FixedOut
+                    && event.amount_cents == 10_000
+            }),
+            "sem fatura pro ciclo, o valor não pode sumir — fica Saída fixa"
+        );
+        let card_events: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind == forecast::EventKind::Cartao)
+            .collect();
+        assert!(
+            card_events.is_empty(),
+            "nada suprime o item quando não há fatura para repor"
+        );
     }
 
     #[tokio::test]
@@ -4283,6 +4485,33 @@ mod tests {
         assert_eq!(summary.card_gate_economy, "alive");
         assert_eq!(summary.card_gate_reserve, "alive");
         assert_eq!(summary.card_gate, "alive");
+    }
+
+    /// A tela Cartões precisa mostrar a matemática do gate ("14%, falta 6 p/ 20%"), não só o
+    /// veredito — o percentual bruto (bps) tem que sair do `DashboardSummary` para a UI não
+    /// re-derivar a régua de economia sozinha.
+    #[tokio::test]
+    async fn dashboard_summary_exposes_the_economy_gate_percentage() {
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+
+        let p = pool().await;
+        insert_income(&p, "income", 100_000, "2026-05-05").await;
+        insert_economia_transfer(&p, "economia", 14_000, "2026-05-12").await;
+        let summary = dashboard_summary(&p, today).await.unwrap();
+        assert_eq!(summary.card_gate_economy, "below");
+        assert_eq!(
+            summary.card_gate_economy_bps,
+            Some(1_400),
+            "14.000 de economia sobre 100.000 de renda é 14% (1.400 bps) — a métrica que falta pro piso de 20%"
+        );
+
+        let no_income = pool().await;
+        let summary_no_income = dashboard_summary(&no_income, today).await.unwrap();
+        assert_eq!(summary_no_income.card_gate_economy, "unknown");
+        assert_eq!(
+            summary_no_income.card_gate_economy_bps, None,
+            "sem renda anual, a régua é incomputável — nunca um número fabricado"
+        );
     }
 
     #[tokio::test]

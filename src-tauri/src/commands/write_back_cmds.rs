@@ -1,5 +1,8 @@
 use super::*;
 
+/// (id, account_id, due_date, closing_date, card_name, stated_total_cents, purchases_sum_cents)
+type CardInvoiceRow = (String, String, String, String, String, Option<i64>, i64);
+
 /// Lê as transações e as converte para candidatas de write-back da grade diária do `year`
 /// (magnitude positiva; a coluna vem do tipo). Cada fatura de cartão é uma linha na seção
 /// `CARTÕES:` da Saída do vencimento, preservando a conta que ela representa. A composição ocorre
@@ -10,7 +13,7 @@ pub(crate) async fn load_write_back_txns(
     pool: &SqlitePool,
     year: i32,
 ) -> Result<Vec<WriteBackTxn>, String> {
-    use std::collections::{BTreeMap, HashSet};
+    use std::collections::{BTreeMap, HashMap, HashSet};
 
     let today = chrono::Local::now().date_naive();
     let (has_card,): (i64,) =
@@ -18,38 +21,48 @@ pub(crate) async fn load_write_back_txns(
             .fetch_one(pool)
             .await
             .map_err(|e| format!("query card accounts: {e}"))?;
-    let known_card_aliases: HashSet<String> = if has_card > 0 {
-        let aliases: Vec<(String,)> = sqlx::query_as(
-            "SELECT name FROM account WHERE type = 'credit_card' \
-             UNION \
-             SELECT ca.alias FROM card_alias ca \
+    // Alias → conta (não "alias conhecido" como HashSet): o discriminador de substituição é
+    // "existe fatura para (conta, ciclo) da linha", e resolver a conta é o passo que torna essa
+    // checagem possível por vencimento (ver `invoiced_accounts_by_due` abaixo).
+    let alias_to_account: HashMap<String, String> = if has_card > 0 {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT a.id, a.name FROM account a WHERE a.type = 'credit_card' \
+             UNION ALL \
+             SELECT a.id, ca.alias FROM card_alias ca \
              JOIN account a ON a.id = ca.account_id \
              WHERE a.type = 'credit_card'",
         )
         .fetch_all(pool)
         .await
         .map_err(|e| format!("query card aliases for write-back: {e}"))?;
-        aliases
-            .into_iter()
-            .map(|(alias,)| crate::cards::normalize_alias(&alias))
-            .filter(|alias| !alias.is_empty())
-            .collect()
+        let mut map = HashMap::new();
+        for (account_id, alias) in rows {
+            let normalized = crate::cards::normalize_alias(&alias);
+            if !normalized.is_empty() {
+                map.entry(normalized).or_insert(account_id);
+            }
+        }
+        map
     } else {
-        HashSet::new()
+        HashMap::new()
     };
 
     // Faturas do ano são agrupadas primeiro por vencimento. A ordem das linhas dentro da nota é
     // estável por `created_at, id` da conta, para que um preview repetido não mude sem dado novo.
     let mut invoices_by_due: BTreeMap<String, Vec<write_back::TxnLineItem>> = BTreeMap::new();
+    // Por vencimento, o conjunto de contas que TÊM fatura viva ali — a chave unificadora da
+    // substituição: um alias conhecido cuja conta não aparece aqui (proposta aceita, fatura ainda
+    // não materializada) é preservado como um desconhecido, nunca suprimido sem substituta.
+    let mut invoiced_accounts_by_due: BTreeMap<String, HashSet<String>> = BTreeMap::new();
     if has_card > 0 {
-        let invoices: Vec<(String, String, String, String, Option<i64>, i64)> = sqlx::query_as(
-            "SELECT i.id, i.due_date, i.closing_date, a.name, i.stated_total_cents, \
+        let invoices: Vec<CardInvoiceRow> = sqlx::query_as(
+            "SELECT i.id, i.account_id, i.due_date, i.closing_date, a.name, i.stated_total_cents, \
                     COALESCE(SUM(t.amount), 0) \
              FROM invoice i \
              JOIN account a ON a.id = i.account_id \
              LEFT JOIN \"transaction\" t ON t.invoice_id = i.id AND t.type = 'expense' \
              WHERE i.due_date >= ?1 AND i.due_date < ?2 AND i.due_date >= ?3 \
-             GROUP BY i.id, i.due_date, i.closing_date, a.name, i.stated_total_cents, \
+             GROUP BY i.id, i.account_id, i.due_date, i.closing_date, a.name, i.stated_total_cents, \
                       a.created_at, a.id \
              ORDER BY i.due_date, a.created_at, a.id",
         )
@@ -60,8 +73,15 @@ pub(crate) async fn load_write_back_txns(
         .await
         .map_err(|e| format!("query card invoices: {e}"))?;
 
-        for (_id, due_date, closing_date, card_name, stated_total_cents, purchases_sum_cents) in
-            invoices
+        for (
+            _id,
+            account_id,
+            due_date,
+            closing_date,
+            card_name,
+            stated_total_cents,
+            purchases_sum_cents,
+        ) in invoices
         {
             let closing = NaiveDate::parse_from_str(&closing_date, "%Y-%m-%d")
                 .map_err(|_| format!("fechamento de fatura inválido: {closing_date}"))?;
@@ -73,6 +93,10 @@ pub(crate) async fn load_write_back_txns(
             ) {
                 continue;
             }
+            invoiced_accounts_by_due
+                .entry(due_date.clone())
+                .or_default()
+                .insert(account_id);
             invoices_by_due
                 .entry(due_date)
                 .or_default()
@@ -152,13 +176,17 @@ pub(crate) async fn load_write_back_txns(
                     });
                     continue;
                 }
+                let invoiced_accounts = invoiced_accounts_by_due.get(&date);
                 let replaced_total: i64 = parent_items
                     .iter()
                     .filter(|item| {
                         import::classify_line_item(item.section.as_deref(), &item.description)
                             == import::ItemKind::Cartao
-                            && known_card_aliases
-                                .contains(&crate::cards::normalize_alias(&item.description))
+                            && card_line_covered_by_invoice(
+                                &item.description,
+                                &alias_to_account,
+                                invoiced_accounts,
+                            )
                     })
                     .map(|item| item.amount_cents.abs())
                     .sum();
@@ -170,10 +198,13 @@ pub(crate) async fn load_write_back_txns(
                     if is_card && card_section.is_none() {
                         card_section = item.section.clone();
                     }
-                    let is_known_card = is_card
-                        && known_card_aliases
-                            .contains(&crate::cards::normalize_alias(&item.description));
-                    if !is_known_card {
+                    let is_covered_by_invoice = is_card
+                        && card_line_covered_by_invoice(
+                            &item.description,
+                            &alias_to_account,
+                            invoiced_accounts,
+                        );
+                    if !is_covered_by_invoice {
                         composed.push(item);
                     }
                 }
@@ -247,6 +278,24 @@ pub(crate) async fn load_write_back_txns(
         }
     }
     Ok(out)
+}
+
+/// Casa uma linha de nota `Cartao` com uma fatura VIVA no mesmo vencimento — o discriminador de
+/// substituição/supressão do write-back. "Alias conhecido" sozinho não basta: uma proposta aceita
+/// cria conta+alias mas não materializa a fatura observada até o próximo import, e essa janela não
+/// pode apagar a linha sem substituta. A descrição é casada ANTES do `#` (mesma regra do import em
+/// `item.description.split('#').next()`), para que marcadores como `#reembolso:` não quebrem o
+/// casamento do alias.
+fn card_line_covered_by_invoice(
+    description: &str,
+    alias_to_account: &std::collections::HashMap<String, String>,
+    invoiced_accounts: Option<&std::collections::HashSet<String>>,
+) -> bool {
+    let alias = crate::cards::normalize_alias(description.split('#').next().unwrap_or("").trim());
+    let Some(account_id) = alias_to_account.get(&alias) else {
+        return false;
+    };
+    invoiced_accounts.is_some_and(|accounts| accounts.contains(account_id))
 }
 
 /// Partes itemizadas de uma transação como `TxnLineItem` (valor + descrição), para o
@@ -1712,6 +1761,125 @@ mod tests {
         let note = plan[0].note_text.as_deref().expect("nota itemizada");
         assert!(note.contains("R$ 200,00 - Nubank"));
         assert!(note.contains("R$ 100,00 - Visa"));
+    }
+
+    /// O import casa o alias ANTES do `#` (`item.description.split('#').next()`, import.rs) —
+    /// o write-back precisa da mesma regra. Sem ela, uma linha marcada com `#reembolso:` (uso real
+    /// do dono nas linhas de cartão adicional) nunca casa o alias conhecido: o item some da lista de
+    /// "conhecidos", o write-back preserva os R$ antigos da linha E ainda soma a fatura por cima —
+    /// duplica o valor em vez de a fatura substituir a linha.
+    #[tokio::test]
+    async fn write_back_matches_card_alias_before_the_reembolso_marker_and_does_not_duplicate_the_invoice_line()
+     {
+        let p = pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let due = format!("{year}-03-10");
+
+        sqlx::query("INSERT INTO person (id, name) VALUES ('person-1', 'Pessoa')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day) VALUES ('gio', 'Bradesco Gio', 'credit_card', 'person-1', 20, 10)")
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO invoice (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) VALUES ('gio-invoice', 'gio', ?1, ?2, ?3, 53_000)")
+        .bind(format!("{year}-03"))
+        .bind(format!("{year}-02-20"))
+        .bind(&due)
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) VALUES ('parent', 'expense', 53_000, ?1, 1, 0)")
+        .bind(&due)
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO line_item (id, transaction_id, amount_cents, description, position, is_user_edited, section) VALUES ('gio-old', 'parent', 53_000, 'Bradesco Gio #reembolso:Gio', 0, 0, 'CARTÕES:')")
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let txns = load_write_back_txns(&p, year).await.unwrap();
+        let candidate = txns
+            .iter()
+            .find(|txn| txn.date == due && txn.kind == import::RowKind::Saida)
+            .unwrap();
+
+        assert_eq!(
+            candidate.amount_cents, 53_000,
+            "o marcador #reembolso: não pode fazer a fatura duplicar a linha antiga"
+        );
+        assert_eq!(
+            candidate.items.as_ref().unwrap().len(),
+            1,
+            "a linha vira a fatura, não soma em cima dela"
+        );
+    }
+
+    /// A CHAVE é "existe fatura para (conta, ciclo) da linha", não "o alias é conhecido": uma
+    /// proposta recém-aceita cria conta+alias mas não materializa a fatura observada até o próximo
+    /// import. Um item de cartão conhecido SEM fatura naquele vencimento tem de ser preservado —
+    /// exatamente como um alias desconhecido — nunca suprimido nem substituído sem substituta.
+    #[tokio::test]
+    async fn write_back_preserves_known_card_item_without_its_own_invoice_even_when_sibling_card_has_one()
+     {
+        let p = pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let due = format!("{year}-03-10");
+
+        sqlx::query("INSERT INTO person (id, name) VALUES ('person-1', 'Pessoa')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day) \
+             VALUES ('titular', 'Titular', 'credit_card', 'person-1', 20, 10), \
+                    ('gio', 'Gio', 'credit_card', 'person-1', 20, 10)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        // Só o titular tem fatura persistida neste vencimento — Gio é conta+alias recém-criados
+        // (proposta aceita) sem fatura ainda materializada.
+        sqlx::query("INSERT INTO invoice (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) VALUES ('titular-invoice', 'titular', ?1, ?2, ?3, 10_000)")
+        .bind(format!("{year}-03"))
+        .bind(format!("{year}-02-20"))
+        .bind(&due)
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) VALUES ('parent', 'expense', 15_000, ?1, 1, 0)")
+        .bind(&due)
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO line_item (id, transaction_id, amount_cents, description, position, is_user_edited, section) VALUES ('titular-item', 'parent', 10_000, 'Titular', 0, 0, 'CARTÕES:'), ('gio-item', 'parent', 5_000, 'Gio', 1, 0, 'CARTÕES:')")
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let txns = load_write_back_txns(&p, year).await.unwrap();
+        let candidate = txns
+            .iter()
+            .find(|txn| txn.date == due && txn.kind == import::RowKind::Saida)
+            .unwrap();
+
+        assert_eq!(
+            candidate.amount_cents, 15_000,
+            "Gio (conhecido, sem fatura) preserva seus R$ 50 — a fatura do titular só substitui a linha dele"
+        );
+        assert_eq!(
+            candidate
+                .items
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|item| (item.amount_cents, item.description.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(5_000, "Gio"), (10_000, "Titular")],
+            "item de Gio sobrevive intacto; o de Titular vira a linha da fatura"
+        );
     }
 
     #[tokio::test]

@@ -630,17 +630,26 @@ pub(crate) async fn get_invoice_inner(
             },
         )
         .collect();
+    // Um reembolso vinculado à SÉRIE (não a uma ocorrência) pertence a UMA fatura — a da 1ª
+    // ocorrência (`s.start_cycle_month`), nunca repetido em todo ciclo em que a série materializa
+    // (a lente líquida do drill dobraria a subtração a cada fatura). `refund_txn_id` casa por
+    // compra: a Entrada aparece na fatura DELA, não em toda fatura da série.
     let refunds: Vec<RefundDto> = sqlx::query_as::<_, (String, String, i64, String, i64)>(
         "SELECT DISTINCT r.id,r.date,r.amount,COALESCE(r.description,''),r.is_projection \
          FROM \"transaction\" r \
          LEFT JOIN card_series s ON s.id = r.refund_series_id \
-         LEFT JOIN \"transaction\" occurrence \
-           ON occurrence.card_series_id = s.id AND occurrence.invoice_id = ?1 \
+         LEFT JOIN \"transaction\" purchase ON purchase.id = r.refund_txn_id \
          WHERE r.type = 'income' \
-           AND (r.refund_invoice_id = ?1 OR occurrence.id IS NOT NULL) \
+           AND ( \
+                r.refund_invoice_id = ?1 \
+                OR purchase.invoice_id = ?1 \
+                OR (s.account_id = ?2 AND s.start_cycle_month = ?3) \
+           ) \
          ORDER BY r.date,r.id",
     )
     .bind(invoice_id)
+    .bind(&account_id)
+    .bind(&cycle_month)
     .fetch_all(pool)
     .await
     .map_err(|e| format!("reembolsos: {e}"))?
@@ -1248,6 +1257,16 @@ pub(crate) async fn cancel_card_series_inner(
                 .map_err(|e| format!("cancelar série: {e}"))?;
         }
     }
+    // O reembolso de série (`refund_series_id`) é uma Entrada ÚNICA presa à data de vencimento da
+    // 1ª ocorrência — não é uma ocorrência (`card_series_id`), então o loop acima não a toca.
+    // Cancelar a partir de um ciclo que cobre essa data tem que levá-la junto: senão a Entrada
+    // projetada sobra sem nenhuma Saída que a justifique.
+    sqlx::query("DELETE FROM \"transaction\" WHERE refund_series_id=?1 AND substr(date,1,7)>=?2")
+        .bind(series_id)
+        .bind(from_cycle_month)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("cancelar reembolso da série: {e}"))?;
     sqlx::query("UPDATE card_series SET canceled_from_cycle_month=?2 WHERE id=?1")
         .bind(series_id)
         .bind(from_cycle_month)
@@ -1288,6 +1307,14 @@ pub(crate) async fn delete_card_series_inner(
     for (_, invoice, amount, _) in rows {
         adjust_stated(&mut tx, &invoice, -amount).await?;
     }
+    // `refund_series_id` é `ON DELETE SET NULL`: apagar `card_series` primeiro anularia a FK e
+    // deixaria a Entrada de reembolso viva, sem vínculo — renda fantasma. Apagar a Entrada
+    // explicitamente ANTES garante que ela morre junto com a série que a originou.
+    sqlx::query("DELETE FROM \"transaction\" WHERE refund_series_id=?1")
+        .bind(series_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("apagar reembolso da série: {e}"))?;
     sqlx::query("DELETE FROM card_series WHERE id=?1")
         .bind(series_id)
         .execute(&mut *tx)
@@ -1983,6 +2010,82 @@ mod tests {
         assert_eq!(refunds, vec![(Some(series), None)]);
     }
 
+    /// Reembolso de série (`refund_series_id`) é criado UMA VEZ, junto da série, preso à data de
+    /// vencimento da 1ª ocorrência. Cancelar a partir dessa mesma ocorrência tem de levar o
+    /// reembolso junto — senão a Entrada projetada sobra sem nenhuma Saída que a justifique.
+    #[tokio::test]
+    async fn canceling_a_series_before_its_first_occurrence_removes_the_projected_refund_income() {
+        let pool = pool().await;
+        let card_id = card(&pool, "Neko", 20, 10).await;
+        let start = chrono::Local::now().date_naive().to_string();
+        let series = create_card_series_with_refund_inner(
+            &pool,
+            &card_id,
+            "Assinatura compartilhada",
+            1_500,
+            None,
+            &start,
+            Some(500),
+            &[],
+        )
+        .await
+        .unwrap();
+        let start_cycle_month: String =
+            sqlx::query_scalar("SELECT start_cycle_month FROM card_series WHERE id = ?1")
+                .bind(&series)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        cancel_card_series_inner(&pool, &series, &start_cycle_month)
+            .await
+            .unwrap();
+
+        let refunds: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM \"transaction\" WHERE refund_series_id = ?1")
+                .bind(&series)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            refunds, 0,
+            "cancelar a partir da 1ª ocorrência não pode deixar a Entrada de reembolso projetada"
+        );
+    }
+
+    /// `refund_series_id` tem `ON DELETE SET NULL` — apagar a série sem tratar o reembolso
+    /// deixaria a Entrada com FK anulada: renda fantasma que não traceia mais para série nenhuma.
+    #[tokio::test]
+    async fn deleting_a_series_deletes_its_projected_refund_income_instead_of_orphaning_it() {
+        let pool = pool().await;
+        let card_id = card(&pool, "Neko", 20, 10).await;
+        let start = chrono::Local::now().date_naive().to_string();
+        let series = create_card_series_with_refund_inner(
+            &pool,
+            &card_id,
+            "Assinatura compartilhada",
+            1_500,
+            None,
+            &start,
+            Some(500),
+            &[],
+        )
+        .await
+        .unwrap();
+
+        delete_card_series_inner(&pool, &series).await.unwrap();
+
+        let orphan_income: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM \"transaction\" WHERE type = 'income'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            orphan_income, 0,
+            "apagar a série apaga a Entrada de reembolso — não deixa renda fantasma com FK nula"
+        );
+    }
+
     #[tokio::test]
     async fn invoice_detail_lists_refund_linked_to_its_card_series() {
         let pool = pool().await;
@@ -2012,6 +2115,58 @@ mod tests {
         assert_eq!(detail.refunds.len(), 1);
         assert_eq!(detail.refunds[0].amount_cents, 500);
         assert_eq!(detail.refunds[0].description, "");
+    }
+
+    /// `refund_series_id` aponta para a SÉRIE, não para uma ocorrência — um único reembolso não
+    /// pode aparecer em TODAS as faturas do ciclo (a lente líquida do drill dobraria a subtração
+    /// a cada ciclo). Ele pertence a UMA fatura: a da 1ª ocorrência.
+    #[tokio::test]
+    async fn series_refund_is_listed_once_on_the_first_occurrences_invoice_only() {
+        let pool = pool().await;
+        let card_id = card(&pool, "Neko", 20, 10).await;
+        let start = chrono::Local::now().date_naive().to_string();
+        let series = create_card_series_with_refund_inner(
+            &pool,
+            &card_id,
+            "Assinatura compartilhada",
+            1_500,
+            None,
+            &start,
+            Some(500),
+            &[],
+        )
+        .await
+        .unwrap();
+        let occurrence_invoices: Vec<(String,)> = sqlx::query_as(
+            "SELECT t.invoice_id FROM \"transaction\" t JOIN invoice i ON i.id = t.invoice_id \
+             WHERE t.card_series_id = ?1 ORDER BY i.cycle_month",
+        )
+        .bind(&series)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert!(
+            occurrence_invoices.len() >= 2,
+            "assinatura materializa mais de um ciclo"
+        );
+
+        let first_detail = get_invoice_inner(&pool, &occurrence_invoices[0].0)
+            .await
+            .unwrap();
+        assert_eq!(
+            first_detail.refunds.len(),
+            1,
+            "a 1ª fatura lista o reembolso da série"
+        );
+
+        let later_detail = get_invoice_inner(&pool, &occurrence_invoices[1].0)
+            .await
+            .unwrap();
+        assert_eq!(
+            later_detail.refunds.len(),
+            0,
+            "faturas seguintes não repetem o mesmo reembolso"
+        );
     }
 
     #[tokio::test]

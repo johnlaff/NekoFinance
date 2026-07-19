@@ -57,6 +57,7 @@ export const SUMMARY: DashboardSummary = {
   spending_mode: "debit",
   card_gate: "unknown",
   card_gate_economy: "unknown",
+  card_gate_economy_bps: null,
   card_gate_reserve: "unknown",
   upcoming_invoices: [],
   cartao_month_cents: 0,

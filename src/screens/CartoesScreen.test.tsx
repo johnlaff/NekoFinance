@@ -13,8 +13,14 @@ describe("Cartões", () => {
   it("mostra proposta, gate e a lista no fallback web", () => {
     render(<CartoesScreen />);
     expect(screen.getByText("Cartão de viagens")).toBeInTheDocument();
-    expect(screen.getByText("Economia viva")).toBeInTheDocument();
+    expect(screen.getByText(/Economia viva/)).toBeInTheDocument();
     expect(screen.getByText("Cartão principal")).toBeInTheDocument();
+  });
+
+  it("mostra a matemática do gate — percentual de economia e meses de reserva atuais, não só 'falta'", () => {
+    render(<CartoesScreen />);
+    expect(screen.getByText(/24%/)).toBeInTheDocument();
+    expect(screen.getByText(/4,2 meses/)).toBeInTheDocument();
   });
 
   it("abre o drill com reconciliação e leitura líquida marcada", async () => {

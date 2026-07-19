@@ -331,12 +331,16 @@ pub(crate) async fn scan_card_invoices(
     }
 
     // Reconcilia depois de observar TODAS as células Saída. Assim, esvaziar a seção de cartões
-    // ainda remove a fatura importada, enquanto uma compra realizada preserva seu histórico.
+    // ainda remove a fatura importada, enquanto uma compra realizada — ou um reembolso vinculado
+    // manualmente pelo dono (`refund_invoice_id`, nunca derivado do import) — preserva seu
+    // histórico.
     let stale: Vec<(String, String, String)> = sqlx::query_as(
         "SELECT id, account_id, due_date FROM invoice \
          WHERE source_stated_total_cents IS NOT NULL \
            AND NOT EXISTS (SELECT 1 FROM \"transaction\" t \
                            WHERE t.invoice_id = invoice.id) \
+           AND NOT EXISTS (SELECT 1 FROM \"transaction\" r \
+                           WHERE r.refund_invoice_id = invoice.id) \
            AND (stated_total_cents IS NULL \
                 OR stated_total_cents = source_stated_total_cents)",
     )
@@ -5373,6 +5377,108 @@ mod tests {
         assert_eq!(
             visa_still_present, 1,
             "uma compra real impede apagar a fatura"
+        );
+    }
+
+    /// "Sem transação vinculada" tinha só a metade da checagem — só `invoice_id` (compras). Uma
+    /// sub-fatura importada sem compras mas com uma expectativa MANUAL de reembolso
+    /// (`refund_invoice_id`) tem que sobreviver: a Entrada não é derivada do import, é um vínculo
+    /// do app; apagar a fatura anularia essa FK sem o dono pedir.
+    #[tokio::test]
+    async fn card_scan_keeps_a_removed_imported_card_invoice_that_has_a_linked_refund() {
+        let pool = test_pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let visa = crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Visa",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Mastercard",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let values = vec![
+            vec!["AGOSTO".into(), "".into(), "".into()],
+            vec![],
+            vec!["10".into(), "".into(), "100,00".into()],
+        ];
+        let layout = SheetLayout {
+            id: "layout".into(),
+            sheet_name: year.to_string(),
+            year: Some(year),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 3,
+            date_direction: "both".into(),
+        };
+        let notes = |card: &str| {
+            vec![
+                vec!["".into(); 3],
+                vec![],
+                vec![
+                    "".into(),
+                    "".into(),
+                    format!("CARTÕES:\nR$ 100,00 - {card}"),
+                ],
+            ]
+        };
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &notes("Visa"), &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let visa_invoice: String =
+            sqlx::query_scalar("SELECT id FROM invoice WHERE account_id = ?1")
+                .bind(&visa)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+             (id, type, amount, date, is_fixed, is_projection, refund_invoice_id) \
+             VALUES ('visa-refund', 'income', 5_000, ?1, 0, 1, ?2)",
+        )
+        .bind(format!("{year}-07-25"))
+        .bind(&visa_invoice)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &notes("Mastercard"), &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let (visa_still_present,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM invoice WHERE account_id = ?1")
+                .bind(visa)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            visa_still_present, 1,
+            "um reembolso vinculado impede apagar a fatura"
         );
     }
 

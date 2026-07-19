@@ -55,6 +55,9 @@ export interface DashboardSummary {
   /** Gate composto de legitimidade do modo cartão. */
   card_gate: "alive" | "below" | "unknown";
   card_gate_economy: "alive" | "below" | "unknown";
+  /** Percentual bruto (bps) por trás da perna de economia — a matemática que o gate mostra
+   * ("14%, falta 6 p/ 20%"); `null` só quando a perna é `unknown` (sem renda anual). */
+  card_gate_economy_bps: number | null;
   card_gate_reserve: "alive" | "below" | "unknown";
   /** Cartão do mês corrente (realizado + projetado), magnitude em centavos. */
   cartao_month_cents: number;

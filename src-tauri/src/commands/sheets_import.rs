@@ -774,11 +774,17 @@ async fn import_local_xlsx_inner(
     // calamine não expõe notas de célula (ver banner acima); lemos o zip do .xlsx à parte para
     // recuperá-las. Erro aqui (zip corrompido, layout inesperado) degrada para SEM notas — os
     // valores ainda entram, mas o import não falha por conta de um anexo que este parser
-    // auxiliar não conseguiu ler.
-    let comments_by_sheet = read_xlsx_comments(&workbook_path).unwrap_or_else(|e| {
-        eprintln!("[import] notas de célula do .xlsx indisponíveis: {e} — import sem notas");
-        HashMap::new()
-    });
+    // auxiliar não conseguiu ler. `notes_available` distingue essa FALHA de leitura (todo o
+    // workbook) de uma aba genuinamente sem comentários: só a segunda pode ter semântica
+    // destrutiva na reconciliação de faturas de cartão abaixo — arquivo "realmente sem notas" ≠
+    // "notas indisponíveis".
+    let (comments_by_sheet, notes_available) = match read_xlsx_comments(&workbook_path) {
+        Ok(map) => (map, true),
+        Err(e) => {
+            eprintln!("[import] notas de célula do .xlsx indisponíveis: {e} — import sem notas");
+            (HashMap::new(), false)
+        }
+    };
 
     let sheet_names = workbook.sheet_names().to_vec();
     let mut total = 0usize;
@@ -888,15 +894,17 @@ async fn import_local_xlsx_inner(
                     import::upsert_ceiling_proposal_standalone(pool, source_month, raw_note)
                         .await?;
                 }
-                import::scan_card_invoices_standalone(
-                    pool,
-                    &rows,
-                    card_scan_notes,
-                    &layout,
-                    amount_out_offset,
-                    &card_ctx,
-                )
-                .await?;
+                if notes_available {
+                    import::scan_card_invoices_standalone(
+                        pool,
+                        &rows,
+                        card_scan_notes,
+                        &layout,
+                        amount_out_offset,
+                        &card_ctx,
+                    )
+                    .await?;
+                }
                 continue;
             }
 
@@ -917,15 +925,17 @@ async fn import_local_xlsx_inner(
                     import::upsert_ceiling_proposal_standalone(pool, source_month, raw_note)
                         .await?;
                 }
-                import::scan_card_invoices_standalone(
-                    pool,
-                    &rows,
-                    card_scan_notes,
-                    &layout,
-                    amount_out_offset,
-                    &card_ctx,
-                )
-                .await?;
+                if notes_available {
+                    import::scan_card_invoices_standalone(
+                        pool,
+                        &rows,
+                        card_scan_notes,
+                        &layout,
+                        amount_out_offset,
+                        &card_ctx,
+                    )
+                    .await?;
+                }
                 continue;
             }
 
@@ -966,15 +976,17 @@ async fn import_local_xlsx_inner(
                 }
             }
 
-            import::scan_card_invoices(
-                &mut tx,
-                &rows,
-                card_scan_notes,
-                &layout,
-                amount_out_offset,
-                &card_ctx,
-            )
-            .await?;
+            if notes_available {
+                import::scan_card_invoices(
+                    &mut tx,
+                    &rows,
+                    card_scan_notes,
+                    &layout,
+                    amount_out_offset,
+                    &card_ctx,
+                )
+                .await?;
+            }
 
             let count = import::import_rows_with_options_in_tx(
                 &mut tx,
@@ -1799,6 +1811,62 @@ mod xlsx_comment_notes_tests {
         assert_eq!(
             after_note_removal, 0,
             "uma fatura import-origin sem compras nem ajuste é reconciliada"
+        );
+    }
+
+    /// "Arquivo realmente sem notas" ≠ "notas indisponíveis": só o primeiro tem semântica
+    /// destrutiva (regressão acima). Um `comments.xml` ilegível (zip malformado, formato não
+    /// suportado) degrada `read_xlsx_comments` para `Err` — o import não pode tratar essa falha
+    /// de leitura como "a aba genuinamente não tem cartões" e apagar a fatura por baixo do dono.
+    #[tokio::test]
+    async fn xlsx_reimport_with_unreadable_comments_does_not_delete_card_invoice() {
+        let with_card_note =
+            write_fixture_to_temp(FixtureComments::Notes("CARTÕES:\nR$ 150,00 - Visa"));
+        let unreadable_comments = write_fixture_to_temp(FixtureComments::Malformed);
+        let pool = test_pool().await;
+        let guard = crate::sync_task::SyncGuard::new(());
+        crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Visa",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+
+        import_local_xlsx_inner(&pool, &guard, with_card_note.to_str().unwrap(), "profile-1")
+            .await
+            .unwrap();
+        let after_first_import: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invoice")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(after_first_import, 1, "a nota cria a fatura import-origin");
+
+        import_local_xlsx_inner(
+            &pool,
+            &guard,
+            unreadable_comments.to_str().unwrap(),
+            "profile-1",
+        )
+        .await
+        .unwrap();
+        std::fs::remove_file(with_card_note).unwrap();
+        std::fs::remove_file(unreadable_comments).unwrap();
+
+        let after_unreadable_reimport: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invoice")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            after_unreadable_reimport, 1,
+            "notas indisponíveis (leitura falhou) não podem apagar a fatura — só notas \
+             genuinamente vazias podem"
         );
     }
 }
