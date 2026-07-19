@@ -236,6 +236,12 @@ pub(crate) async fn import_one_tab(
     } else {
         None
     };
+    let amount_out_offset = mappings
+        .iter()
+        .find(|(field, _)| field == "amount_out")
+        .map(|(_, off)| *off as usize)
+        .unwrap_or(2);
+    let card_ctx = import::load_card_scan_ctx(pool).await?;
 
     // Checksum + checagem de duplicata ANTES de abrir a transação (leitura no pool; dentro da tx
     // daria read-your-writes falso-negativo). Dataset idêntico ao último import → idempotente.
@@ -245,6 +251,17 @@ pub(crate) async fn import_one_tab(
     {
         if let Some((source_month, raw_note)) = &ceremony_note {
             import::upsert_ceiling_proposal_standalone(pool, source_month, raw_note).await?;
+        }
+        if descriptions_trusted {
+            import::scan_card_invoices_standalone(
+                pool,
+                &rows,
+                &notes,
+                &layout,
+                amount_out_offset,
+                &card_ctx,
+            )
+            .await?;
         }
         return Ok(ImportOutcome {
             count: 0,
@@ -292,6 +309,18 @@ pub(crate) async fn import_one_tab(
         }
     }
 
+    if descriptions_trusted {
+        import::scan_card_invoices(
+            &mut tx,
+            &rows,
+            &notes,
+            &layout,
+            amount_out_offset,
+            &card_ctx,
+        )
+        .await?;
+    }
+
     let count = import::import_rows_with_options_in_tx(
         &mut tx,
         sheet_name,
@@ -301,6 +330,10 @@ pub(crate) async fn import_one_tab(
         &checksum,
     )
     .await?;
+
+    if descriptions_trusted {
+        import::link_card_refunds(&mut tx, sheet_name, &imported_rows, &card_ctx).await?;
+    }
 
     import::store_balance_series_in_tx(&mut tx, sheet_name, &balances).await?;
 
@@ -825,11 +858,28 @@ pub async fn import_local_xlsx(
             } else {
                 None
             };
+            let amount_out_offset = mappings
+                .iter()
+                .find(|(field, _)| field == "amount_out")
+                .map(|(_, off)| *off as usize)
+                .unwrap_or(2);
+            let card_ctx = import::load_card_scan_ctx(&pool).await?;
 
             if imported_rows.is_empty() {
                 if let Some((source_month, raw_note)) = &ceremony_note {
                     import::upsert_ceiling_proposal_standalone(&pool, source_month, raw_note)
                         .await?;
+                }
+                if notes_found {
+                    import::scan_card_invoices_standalone(
+                        &pool,
+                        &rows,
+                        &sheet_notes,
+                        &layout,
+                        amount_out_offset,
+                        &card_ctx,
+                    )
+                    .await?;
                 }
                 continue;
             }
@@ -850,6 +900,17 @@ pub async fn import_local_xlsx(
                 if let Some((source_month, raw_note)) = &ceremony_note {
                     import::upsert_ceiling_proposal_standalone(&pool, source_month, raw_note)
                         .await?;
+                }
+                if notes_found {
+                    import::scan_card_invoices_standalone(
+                        &pool,
+                        &rows,
+                        &sheet_notes,
+                        &layout,
+                        amount_out_offset,
+                        &card_ctx,
+                    )
+                    .await?;
                 }
                 continue;
             }
@@ -891,6 +952,18 @@ pub async fn import_local_xlsx(
                 }
             }
 
+            if notes_found {
+                import::scan_card_invoices(
+                    &mut tx,
+                    &rows,
+                    &sheet_notes,
+                    &layout,
+                    amount_out_offset,
+                    &card_ctx,
+                )
+                .await?;
+            }
+
             let count = import::import_rows_with_options_in_tx(
                 &mut tx,
                 sheet_name,
@@ -900,6 +973,10 @@ pub async fn import_local_xlsx(
                 &checksum,
             )
             .await?;
+
+            if notes_found {
+                import::link_card_refunds(&mut tx, sheet_name, &imported_rows, &card_ctx).await?;
+            }
 
             import::store_balance_series_in_tx(&mut tx, sheet_name, &balances).await?;
 

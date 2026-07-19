@@ -105,6 +105,29 @@ pub async fn resolve(pool: &SqlitePool, id: &str, choice: &str) -> Result<(), St
                 .map_err(|e| format!("align description base: {e}"))?;
             }
         }
+        "stated_total" if txn_id.starts_with("invoice:") => {
+            let invoice_id = txn_id.trim_start_matches("invoice:");
+            let sheet: i64 = sheet_value
+                .parse()
+                .map_err(|_| "sheet stated_total inválido")?;
+            if sheet_wins {
+                sqlx::query(
+                    "UPDATE invoice SET stated_total_cents=?1, source_stated_total_cents=?1 WHERE id=?2",
+                )
+                .bind(sheet)
+                .bind(invoice_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("apply invoice stated_total: {e}"))?;
+            } else {
+                sqlx::query("UPDATE invoice SET source_stated_total_cents=?1 WHERE id=?2")
+                    .bind(sheet)
+                    .bind(invoice_id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| format!("align invoice stated_total base: {e}"))?;
+            }
+        }
         other => return Err(format!("campo desconhecido: {other}")),
     }
 
@@ -277,5 +300,64 @@ mod tests {
         resolve(&p, "c1", "sheet").await.unwrap();
         assert_eq!(amount_of(&p, "t1").await, (12000, Some(12000)));
         assert!(list_conflicts(&p).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn resolve_invoice_stated_total_applies_or_aligns_the_sheet_base() {
+        let p = pool().await;
+        let card_id = crate::commands::card_cmds::create_card_account_inner(
+            &p,
+            "Visa",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO invoice (id, account_id, cycle_month, closing_date, due_date, stated_total_cents, source_stated_total_cents) \
+             VALUES ('inv', ?1, '2026-06', '2026-05-20', '2026-06-10', 15000, 10000)",
+        )
+        .bind(card_id)
+        .execute(&p)
+        .await
+        .unwrap();
+        seed_conflict(
+            &p,
+            "invoice-conflict",
+            "invoice:inv",
+            "stated_total",
+            "10000",
+            "15000",
+            "20000",
+        )
+        .await;
+        resolve(&p, "invoice-conflict", "local").await.unwrap();
+        let total: (Option<i64>, Option<i64>) = sqlx::query_as(
+            "SELECT stated_total_cents, source_stated_total_cents FROM invoice WHERE id = 'inv'",
+        )
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        assert_eq!(total, (Some(15_000), Some(20_000)));
+
+        sqlx::query(
+            "UPDATE import_conflict SET base_value='20000', local_value='15000', sheet_value='22000', resolved_at=NULL, resolution=NULL WHERE id='invoice-conflict'",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        resolve(&p, "invoice-conflict", "sheet").await.unwrap();
+        let total: (Option<i64>, Option<i64>) = sqlx::query_as(
+            "SELECT stated_total_cents, source_stated_total_cents FROM invoice WHERE id = 'inv'",
+        )
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        assert_eq!(total, (Some(22_000), Some(22_000)));
     }
 }
