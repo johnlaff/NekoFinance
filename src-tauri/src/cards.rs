@@ -83,14 +83,21 @@ pub fn cycle_close_for_purchase(purchase: NaiveDate, closing_day: u32) -> NaiveD
 /// O vencimento no mesmo mês só é possível quando seu dia ainda não passou; o clamp evita que
 /// uma preferência de dia 29–31 torne fevereiro e meses curtos impossíveis de representar.
 pub fn due_date_for_close(close: NaiveDate, due_day: u32) -> NaiveDate {
-    let (year, month) = if due_day > close.day() {
+    let (mut year, mut month) = if due_day > close.day() {
         (close.year(), close.month())
     } else {
         shift_month(close.year(), close.month(), 1).expect("mês posterior representável")
     };
-    let day = due_day.clamp(1, crate::forecast::last_day_of_month(year, month).day());
+    let mut day = due_day.clamp(1, crate::forecast::last_day_of_month(year, month).day());
+    let mut due = NaiveDate::from_ymd_opt(year, month, day).expect("dia de vencimento válido");
 
-    NaiveDate::from_ymd_opt(year, month, day).expect("dia de vencimento válido")
+    if due <= close {
+        (year, month) = shift_month(year, month, 1).expect("mês posterior representável");
+        day = due_day.clamp(1, crate::forecast::last_day_of_month(year, month).day());
+        due = NaiveDate::from_ymd_opt(year, month, day).expect("dia de vencimento válido");
+    }
+
+    due
 }
 
 /// Identidade mensal da fatura, ancorada no mês em que ela vence.
@@ -251,33 +258,16 @@ pub async fn backfill_legacy_credit_purchases(pool: &SqlitePool) -> Result<(), S
                 .fetch_optional(&mut *tx)
                 .await
                 .map_err(|e| format!("backfill buscar fatura: {e}"))?;
-        let invoice_id = match invoice_id {
-            Some((id,)) => id,
-            None => {
-                let id = uuid::Uuid::new_v4().to_string();
-                sqlx::query(
-                    "INSERT INTO invoice (id, account_id, cycle_month, closing_date, due_date) \
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
-                )
-                .bind(&id)
-                .bind(&account_id)
-                .bind(&cycle_month)
-                .bind(closing.to_string())
-                .bind(due.to_string())
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| format!("backfill criar fatura: {e}"))?;
-                id
-            }
-        };
-        sqlx::query(
-            "UPDATE \"transaction\" SET invoice_id = ?1 WHERE id = ?2 AND invoice_id IS NULL",
-        )
-        .bind(&invoice_id)
-        .bind(&purchase_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| format!("backfill vincular compra: {e}"))?;
+        if let Some((invoice_id,)) = invoice_id {
+            sqlx::query(
+                "UPDATE \"transaction\" SET invoice_id = ?1 WHERE id = ?2 AND invoice_id IS NULL",
+            )
+            .bind(&invoice_id)
+            .bind(&purchase_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("backfill vincular compra: {e}"))?;
+        }
     }
     tx.commit()
         .await
@@ -324,6 +314,25 @@ mod tests {
         assert_eq!(due_date_for_close(d("2026-01-05"), 25), d("2026-01-25"));
         assert_eq!(due_date_for_close(d("2026-12-20"), 10), d("2027-01-10"));
         assert_eq!(due_date_for_close(d("2026-01-31"), 31), d("2026-02-28"));
+    }
+
+    #[test]
+    fn due_date_for_close_moves_past_a_february_clamp_that_would_equal_closing() {
+        let close = d("2026-02-28");
+
+        assert_eq!(due_date_for_close(close, 29), d("2026-03-29"));
+        assert_eq!(due_date_for_close(close, 30), d("2026-03-30"));
+        assert_eq!(due_date_for_close(close, 31), d("2026-03-31"));
+    }
+
+    #[test]
+    fn purchase_cycle_due_date_stays_strictly_after_its_closing_date_after_february_clamp() {
+        let close = cycle_close_for_purchase(d("2026-01-29"), 28);
+        let due = due_date_for_close(close, 29);
+
+        assert_eq!(close, d("2026-02-28"));
+        assert_eq!(due, d("2026-03-29"));
+        assert!(due > close);
     }
 
     #[test]
@@ -577,7 +586,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn legacy_credit_purchase_backfill_creates_the_invoice_for_the_next_cycle() {
+    async fn legacy_credit_purchase_backfill_does_not_create_an_invoice_without_a_scanned_invoice()
+    {
         let pool = pool().await;
         let year = chrono::Local::now().year() + 1;
         let purchase = NaiveDate::from_ymd_opt(year, 1, 25).unwrap();
@@ -604,17 +614,27 @@ mod tests {
         .unwrap();
 
         backfill_legacy_credit_purchases(&pool).await.unwrap();
-        let invoice: (String, String, String, Option<i64>) = sqlx::query_as(
-            "SELECT i.cycle_month, i.closing_date, i.due_date, i.stated_total_cents \
-             FROM invoice i JOIN \"transaction\" t ON t.invoice_id = i.id \
-             WHERE t.id = 'legacy-purchase'",
+        let invoice_id: Option<String> = sqlx::query_scalar(
+            "SELECT invoice_id FROM \"transaction\" WHERE id = 'legacy-purchase'",
         )
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(invoice.0, format!("{year}-03"));
-        assert_eq!(invoice.1, format!("{year}-02-20"));
-        assert_eq!(invoice.2, format!("{year}-03-10"));
-        assert_eq!(invoice.3, None, "o vínculo não inventa total declarado");
+        assert_eq!(
+            invoice_id, None,
+            "sem fatura escaneada, a compra permanece solta"
+        );
+        let invoices: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invoice")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(invoices, 0, "o backfill nunca fabrica uma fatura");
+
+        backfill_legacy_credit_purchases(&pool).await.unwrap();
+        let invoices_after_retry: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invoice")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(invoices_after_retry, 0, "reexecutar sem fatura é no-op");
     }
 }

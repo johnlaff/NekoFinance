@@ -70,8 +70,8 @@ pub(crate) async fn load_write_back_txns(
     }
 
     // Entrada + Saída/Diário (expense não-crédito) do ano, cada um na sua data.
-    let rows: Vec<(String, String, String, i64, i64)> = sqlx::query_as(
-        "SELECT id, type, date, amount, is_fixed FROM \"transaction\" \
+    let rows: Vec<(String, String, String, i64, i64, String)> = sqlx::query_as(
+        "SELECT id, type, date, amount, is_fixed, COALESCE(description, '') FROM \"transaction\" \
          WHERE date >= ?1 AND date < ?2 \
            AND (type <> 'expense' OR payment_method IS NULL OR payment_method <> 'credit') \
            AND id NOT LIKE 'derived:%' \
@@ -85,7 +85,8 @@ pub(crate) async fn load_write_back_txns(
     .map_err(|e| format!("query txns: {e}"))?;
 
     let mut out = Vec::new();
-    for (id, t, date, amount, is_fixed) in rows {
+    let mut saidas_by_date: BTreeMap<String, Vec<(String, i64, String)>> = BTreeMap::new();
+    for (id, t, date, amount, is_fixed, description) in rows {
         let mag = amount.abs();
         let kind = match t.as_str() {
             "income" => import::RowKind::Entrada,
@@ -98,55 +99,11 @@ pub(crate) async fn load_write_back_txns(
             }
             _ => continue, // transfer (Economia) → aba Economia
         };
-        if kind == import::RowKind::Saida
-            && let Some(invoice_items) = invoices_by_due.remove(&date)
-        {
-            let parent_items = load_all_txn_items(pool, &id).await?;
-            let first_card = parent_items.iter().position(|item| {
-                import::classify_line_item(item.section.as_deref(), &item.description)
-                    == import::ItemKind::Cartao
-            });
-            let card_section = first_card
-                .and_then(|index| parent_items[index].section.clone())
-                .unwrap_or_else(|| "CARTÕES:".to_string());
-            let replaced_total: i64 = parent_items
-                .iter()
-                .filter(|item| {
-                    import::classify_line_item(item.section.as_deref(), &item.description)
-                        == import::ItemKind::Cartao
-                })
-                .map(|item| item.amount_cents.abs())
-                .sum();
-            let invoice_total: i64 = invoice_items
-                .iter()
-                .map(|item| item.amount_cents.abs())
-                .sum();
-            let mut composed = Vec::with_capacity(parent_items.len() + invoice_items.len());
-            for (index, item) in parent_items.into_iter().enumerate() {
-                if first_card == Some(index) {
-                    composed.extend(invoice_items.iter().cloned().map(|mut item| {
-                        item.section = Some(card_section.clone());
-                        item
-                    }));
-                }
-                if import::classify_line_item(item.section.as_deref(), &item.description)
-                    != import::ItemKind::Cartao
-                {
-                    composed.push(item);
-                }
-            }
-            if first_card.is_none() {
-                composed.extend(invoice_items.into_iter().map(|mut item| {
-                    item.section = Some(card_section.clone());
-                    item
-                }));
-            }
-            out.push(WriteBackTxn {
-                date,
-                kind,
-                amount_cents: mag - replaced_total + invoice_total,
-                items: Some(composed),
-            });
+        if kind == import::RowKind::Saida {
+            saidas_by_date
+                .entry(date)
+                .or_default()
+                .push((id, mag, description));
             continue;
         }
         out.push(WriteBackTxn {
@@ -155,6 +112,73 @@ pub(crate) async fn load_write_back_txns(
             amount_cents: mag,
             items: load_txn_items(pool, &id).await?,
         });
+    }
+
+    // A grade tem uma única célula Saída por dia. Quando ela contém faturas, TODAS as Saídas
+    // daquele dia precisam formar a mesma candidata itemizada; deixar uma segunda candidata solta
+    // faria o agregador descartar a nota e apagaria a seção CARTÕES no write-back.
+    for (date, parents) in saidas_by_date {
+        if let Some(invoice_items) = invoices_by_due.remove(&date) {
+            let mut card_section = None;
+            let mut non_card_total = 0;
+            let mut composed = Vec::new();
+            for (id, amount_cents, description) in parents {
+                let parent_items = load_all_txn_items(pool, &id).await?;
+                if parent_items.is_empty() {
+                    non_card_total += amount_cents;
+                    composed.push(write_back::TxnLineItem {
+                        amount_cents,
+                        description,
+                        section: None,
+                    });
+                    continue;
+                }
+                let replaced_total: i64 = parent_items
+                    .iter()
+                    .filter(|item| {
+                        import::classify_line_item(item.section.as_deref(), &item.description)
+                            == import::ItemKind::Cartao
+                    })
+                    .map(|item| item.amount_cents.abs())
+                    .sum();
+                non_card_total += amount_cents - replaced_total;
+                for item in parent_items {
+                    if import::classify_line_item(item.section.as_deref(), &item.description)
+                        == import::ItemKind::Cartao
+                    {
+                        if card_section.is_none() {
+                            card_section = item.section;
+                        }
+                    } else {
+                        composed.push(item);
+                    }
+                }
+            }
+            let card_section = card_section.unwrap_or_else(|| "CARTÕES:".to_string());
+            let invoice_total: i64 = invoice_items
+                .iter()
+                .map(|item| item.amount_cents.abs())
+                .sum();
+            composed.extend(invoice_items.into_iter().map(|mut item| {
+                item.section = Some(card_section.clone());
+                item
+            }));
+            out.push(WriteBackTxn {
+                date,
+                kind: import::RowKind::Saida,
+                amount_cents: non_card_total + invoice_total,
+                items: Some(composed),
+            });
+        } else {
+            for (id, amount_cents, _description) in parents {
+                out.push(WriteBackTxn {
+                    date: date.clone(),
+                    kind: import::RowKind::Saida,
+                    amount_cents,
+                    items: load_txn_items(pool, &id).await?,
+                });
+            }
+        }
     }
 
     // Células futuras ainda vazias não têm uma candidata-pai para compor: a fatura se torna a
@@ -656,12 +680,14 @@ pub async fn apply_write_back(
             Err(e) => Some(format!("Notas de célula: {e}")),
         }
     };
+    let notes_written = note_updates.is_empty() || note_warning.is_none();
 
     // Auditoria pós-escrita: realinha o `source_*` das transações escritas + registra a
     // escrita no `sync_log`, para que o próximo import reconheça os valores como a NOVA base (sem
     // conflito espúrio). Só roda em escrita bem-sucedida.
     if written > 0 {
-        record_write_back_audit(pool.inner(), &sheet_name, &changed).await?;
+        record_write_back_audit_with_notes(pool.inner(), &sheet_name, &changed, notes_written)
+            .await?;
     }
 
     Ok(WriteBackResult {
@@ -688,6 +714,18 @@ pub(crate) async fn record_write_back_audit(
     sheet_name: &str,
     cells: &[&CellWrite],
 ) -> Result<usize, String> {
+    record_write_back_audit_with_notes(pool, sheet_name, cells, true).await
+}
+
+/// Variante da auditoria que preserva a base de merge das faturas quando a nota não chegou à
+/// planilha. Totais e fórmulas podem ter sido escritos, mas são as linhas da nota que identificam
+/// os totais por cartão; avançar essa base sem a nota faria o próximo import sobrescrever o local.
+pub(crate) async fn record_write_back_audit_with_notes(
+    pool: &SqlitePool,
+    sheet_name: &str,
+    cells: &[&CellWrite],
+    notes_written: bool,
+) -> Result<usize, String> {
     let now = chrono::Utc::now().to_rfc3339();
     let profile_id: Option<(String,)> =
         sqlx::query_as("SELECT id FROM profile ORDER BY created_at LIMIT 1")
@@ -711,7 +749,7 @@ pub(crate) async fn record_write_back_audit(
         // Saída combina o realinhamento da linha fixa de débito com as faturas identificadas pelas
         // linhas da seção de cartões na nota escrita.
         if c.kind.as_str() == "saida" {
-            realigned += realign_saida_cell(&mut tx, c, &now).await?;
+            realigned += realign_saida_cell(&mut tx, c, &now, notes_written).await?;
             record_write_back_log(&mut tx, sheet_name, &now, profile_id.as_ref(), c).await?;
             continue;
         }
@@ -882,10 +920,12 @@ async fn rekey_manual_row_to_deterministic(
         "INSERT INTO \"transaction\" \
            (id, type, amount, description, date, payment_method, is_fixed, from_account_id, \
             to_account_id, is_projection, recurrence_id, source_amount, source_description, \
-            source_note, due_date, created_at, updated_at) \
+            source_note, due_date, invoice_id, card_series_id, refund_invoice_id, refund_txn_id, \
+            refund_series_id, created_at, updated_at) \
          SELECT ?1, type, amount, description, date, payment_method, is_fixed, from_account_id, \
             to_account_id, is_projection, recurrence_id, source_amount, source_description, \
-            source_note, due_date, created_at, ?3 \
+            source_note, due_date, invoice_id, card_series_id, refund_invoice_id, refund_txn_id, \
+            refund_series_id, created_at, ?3 \
          FROM \"transaction\" WHERE id = ?2",
     )
     .bind(&target)
@@ -946,6 +986,7 @@ async fn realign_saida_cell(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     c: &CellWrite,
     now: &str,
+    notes_written: bool,
 ) -> Result<usize, String> {
     // (a) Saída fixa de débito (linha 1:1). NÃO toca em linhas de crédito (tratadas em (b)).
     let debit = sqlx::query(
@@ -961,7 +1002,11 @@ async fn realign_saida_cell(
     .await
     .map_err(|e| format!("realign source_amount (saida débito): {e}"))?;
 
-    let invoices = realign_card_invoices(tx, c).await?;
+    let invoices = if notes_written {
+        realign_card_invoices(tx, c).await?
+    } else {
+        0
+    };
     Ok(debit.rows_affected() as usize + invoices)
 }
 
@@ -1582,6 +1627,86 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn write_back_plan_keeps_card_and_non_card_sections_when_two_saida_parents_share_due_date()
+     {
+        let p = pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let due = format!("{year}-03-10");
+
+        sqlx::query("INSERT INTO person (id, name) VALUES ('person-1', 'Pessoa')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day) \
+             VALUES ('card-a', 'Visa', 'credit_card', 'person-1', 20, 10)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO invoice \
+             (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) \
+             VALUES ('invoice-a', 'card-a', ?1, ?2, ?3, 15_000)",
+        )
+        .bind(format!("{year}-03"))
+        .bind(format!("{year}-02-20"))
+        .bind(&due)
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('a-card-parent', 'expense', 15_000, ?1, 1, 0), \
+                    ('z-fixed-parent', 'expense', 5_000, ?1, 1, 0)",
+        )
+        .bind(&due)
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO line_item \
+             (id, transaction_id, amount_cents, description, position, is_user_edited, section) \
+             VALUES ('old-card', 'a-card-parent', 15_000, 'Visa', 0, 0, 'CARTÕES:'), \
+                    ('rent', 'z-fixed-parent', 5_000, 'Aluguel', 0, 0, 'CONTAS:')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let txns = load_write_back_txns(&p, year).await.unwrap();
+        let grid = vec![
+            vec!["".into(), "MARÇO".into(), "".into(), "".into()],
+            vec![
+                "Dia".into(),
+                "Saldo".into(),
+                "Entrada".into(),
+                "Saída".into(),
+            ],
+            vec!["10".into(), "".into(), "".into(), "".into()],
+        ];
+        let layout = crate::google_sheets::layout_detect::SheetLayout {
+            id: "layout".into(),
+            sheet_name: year.to_string(),
+            year: Some(year),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 6,
+            date_direction: "both".into(),
+        };
+        let plan = write_back::plan_write_back(&grid, &layout, &[("amount_out".into(), 2)], &txns);
+
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].value_cents, 20_000);
+        assert!(plan[0].formula.is_some());
+        let note = plan[0].note_text.as_deref().expect("nota itemizada");
+        assert!(note.contains("CONTAS:\nR$ 50,00 - Aluguel"));
+        assert!(note.contains("CARTÕES:\nR$ 150,00 - Visa"));
+    }
+
+    #[tokio::test]
     async fn card_invoice_writeback_realigns_stated_total_to_its_note_line() {
         let p = pool().await;
         let year = chrono::Local::now().year() + 1;
@@ -1632,6 +1757,64 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(totals, (Some(12_345), Some(12_345)));
+    }
+
+    #[tokio::test]
+    async fn card_invoice_writeback_does_not_advance_the_note_merge_base_when_note_write_fails() {
+        let p = pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let due = format!("{year}-03-10");
+
+        sqlx::query("INSERT INTO person (id, name) VALUES ('person-1', 'Pessoa')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day) \
+             VALUES ('card-a', 'Cartão A', 'credit_card', 'person-1', 20, 10)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO invoice \
+             (id, account_id, cycle_month, closing_date, due_date, stated_total_cents, source_stated_total_cents) \
+             VALUES ('invoice-a', 'card-a', ?1, ?2, ?3, 15_000, 10_000)",
+        )
+        .bind(format!("{year}-03"))
+        .bind(format!("{year}-02-20"))
+        .bind(&due)
+        .execute(&p)
+        .await
+        .unwrap();
+        let cell = CellWrite {
+            a1: "D3".into(),
+            row: 2,
+            col: 3,
+            date: due,
+            kind: "saida".into(),
+            current: "100,00".into(),
+            proposed: "150,00".into(),
+            value_cents: 15_000,
+            changed: true,
+            formula: Some("=SUM(150.00)".into()),
+            note_text: Some("CARTÕES:\nR$ 150,00 - Cartão A".into()),
+        };
+
+        let realigned = record_write_back_audit_with_notes(&p, &year.to_string(), &[&cell], false)
+            .await
+            .unwrap();
+        assert_eq!(
+            realigned, 0,
+            "uma nota não escrita não pode realinhar a fatura"
+        );
+        let totals: (Option<i64>, Option<i64>) = sqlx::query_as(
+            "SELECT stated_total_cents, source_stated_total_cents FROM invoice WHERE id = 'invoice-a'",
+        )
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        assert_eq!(totals, (Some(15_000), Some(10_000)));
     }
 
     #[tokio::test]
@@ -2166,6 +2349,74 @@ mod tests {
             amount, 12_000,
             "o valor (totais/Saldo) não muda no round-trip"
         );
+    }
+
+    #[tokio::test]
+    async fn rekeyed_refund_income_keeps_its_invoice_link_and_remains_in_invoice_detail() {
+        use crate::commands::card_cmds::{
+            create_card_account_inner, create_refund_expectation_inner, get_invoice_inner,
+        };
+        use crate::google_sheets::import::{self, RowKind};
+
+        let p = pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let due = format!("{year}-03-10");
+        let card =
+            create_card_account_inner(&p, "Visa", None, Some(20), Some(10), None, None, None, &[])
+                .await
+                .unwrap();
+        sqlx::query(
+            "INSERT INTO invoice \
+             (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) \
+             VALUES ('invoice-refund', ?1, ?2, ?3, ?4, 10_000)",
+        )
+        .bind(&card)
+        .bind(format!("{year}-03"))
+        .bind(format!("{year}-02-20"))
+        .bind(&due)
+        .execute(&p)
+        .await
+        .unwrap();
+        let refund =
+            create_refund_expectation_inner(&p, "invoice-refund", 2_000, Some("Reembolso"))
+                .await
+                .unwrap();
+
+        let cell = CellWrite {
+            a1: "B3".into(),
+            row: 2,
+            col: 1,
+            date: due.clone(),
+            kind: "entrada".into(),
+            current: "0,00".into(),
+            proposed: "20,00".into(),
+            value_cents: 2_000,
+            changed: true,
+            formula: None,
+            note_text: None,
+        };
+        record_write_back_audit(&p, &year.to_string(), &[&cell])
+            .await
+            .unwrap();
+
+        let target = import::row_id(&year.to_string(), &due, RowKind::Entrada, 0);
+        let (linked_invoice,): (Option<String>,) =
+            sqlx::query_as("SELECT refund_invoice_id FROM \"transaction\" WHERE id = ?1")
+                .bind(&target)
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(linked_invoice.as_deref(), Some("invoice-refund"));
+        let detail = get_invoice_inner(&p, "invoice-refund").await.unwrap();
+        assert_eq!(detail.refunds.len(), 1);
+        assert_eq!(detail.refunds[0].txn_id, target);
+        let old_exists: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"transaction\" WHERE id = ?1")
+                .bind(refund)
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(old_exists.0, 0);
     }
 
     // Garantia de não colisão: se a célula já tem uma linha importada (id

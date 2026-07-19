@@ -499,6 +499,8 @@ pub struct LineItemInput {
     pub position: i64,
 }
 
+type TransactionUpdateCurrent = (i64, i64, String, Option<String>, Option<String>);
+
 /// Substitui TODAS as partes itemizadas de um lançamento e fixa o total do pai = Σ partes.
 ///
 /// Vale também para lançamentos IMPORTADOS: o dono precisa poder detalhar/editar a quebra de uma
@@ -516,6 +518,14 @@ pub async fn update_transaction_items_cmd(
     transaction_id: String,
     items: Vec<LineItemInput>,
 ) -> Result<(), String> {
+    update_transaction_items_inner(pool.inner(), &transaction_id, &items).await
+}
+
+pub(crate) async fn update_transaction_items_inner(
+    pool: &SqlitePool,
+    transaction_id: &str,
+    items: &[LineItemInput],
+) -> Result<(), String> {
     if transaction_id.trim().is_empty() {
         return Err("transaction_id vazio".into());
     }
@@ -525,7 +535,7 @@ pub async fn update_transaction_items_cmd(
         return Err("informe ao menos um item (ou edite o valor simples)".into());
     }
     let mut total_cents: i64 = 0;
-    for item in &items {
+    for item in items {
         if item.amount_cents <= 0 {
             return Err("cada item deve ter valor positivo (magnitude)".into());
         }
@@ -534,24 +544,38 @@ pub async fn update_transaction_items_cmd(
 
     let now = chrono::Utc::now().to_rfc3339();
     let mut tx = pool
-        .inner()
         .begin()
         .await
         .map_err(|e| format!("begin items: {e}"))?;
 
+    let current: Option<(Option<String>, Option<String>, i64, String)> = sqlx::query_as(
+        "SELECT card_series_id, invoice_id, amount, type FROM \"transaction\" \
+         WHERE id = ?1 AND scenario_id IS NULL",
+    )
+    .bind(transaction_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| format!("items (load card): {e}"))?;
+    let Some((card_series_id, invoice_id, old_amount, old_type)) = current else {
+        return Err("lançamento não encontrado".into());
+    };
+    if card_series_id.is_some() {
+        return Err("ocorrência de série: use os gestos da série".into());
+    }
+
     sqlx::query("DELETE FROM line_item WHERE transaction_id = ?1")
-        .bind(&transaction_id)
+        .bind(transaction_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| format!("clear items: {e}"))?;
 
-    for item in &items {
+    for item in items {
         sqlx::query(
             "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, is_user_edited) \
              VALUES (?1, ?2, ?3, ?4, ?5, 1)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
-        .bind(&transaction_id)
+        .bind(transaction_id)
         .bind(item.amount_cents)
         .bind(&item.description)
         .bind(item.position)
@@ -565,7 +589,7 @@ pub async fn update_transaction_items_cmd(
     let affected = sqlx::query(
         r#"UPDATE "transaction" SET amount = ?2, updated_at = ?3 WHERE id = ?1 AND scenario_id IS NULL"#,
     )
-    .bind(&transaction_id)
+    .bind(transaction_id)
     .bind(total_cents)
     .bind(&now)
     .execute(&mut *tx)
@@ -574,6 +598,28 @@ pub async fn update_transaction_items_cmd(
     .rows_affected();
     if affected == 0 {
         return Err("lançamento não encontrado".into());
+    }
+
+    if let Some(invoice_id) = invoice_id {
+        let old_contribution = if old_type == "expense" { old_amount } else { 0 };
+        let new_contribution = if old_type == "expense" {
+            total_cents
+        } else {
+            0
+        };
+        let delta = new_contribution - old_contribution;
+        if delta != 0 {
+            sqlx::query(
+                "UPDATE invoice \
+                 SET stated_total_cents = MAX(0, stated_total_cents + ?2) \
+                 WHERE id = ?1 AND stated_total_cents IS NOT NULL",
+            )
+            .bind(invoice_id)
+            .bind(delta)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("items (adjust invoice): {e}"))?;
+        }
     }
 
     tx.commit()
@@ -748,21 +794,24 @@ pub(crate) async fn update_transaction_inner(
     // A troca de TIPO (entrada↔saída) também invalida a quebra mesmo com o mesmo valor —
     // itens de renda numa linha de despesa ficam semanticamente errados e confundem o write-back.
     // Por isso a query também carrega o `type` antigo e a limpeza dispara em mudança de tipo.
-    let current: Option<(i64, i64, String)> = sqlx::query_as(
-        r#"SELECT t.amount, COUNT(li.id), t.type
+    let current: Option<TransactionUpdateCurrent> = sqlx::query_as(
+        r#"SELECT t.amount, COUNT(li.id), t.type, t.card_series_id, t.invoice_id
            FROM "transaction" t
            LEFT JOIN line_item li ON li.transaction_id = t.id
            WHERE t.id = ?1 AND t.scenario_id IS NULL
-           GROUP BY t.amount, t.type"#,
+           GROUP BY t.amount, t.type, t.card_series_id, t.invoice_id"#,
     )
     .bind(id)
     .fetch_optional(&mut *tx)
     .await
     .map_err(|e| format!("update (load items): {e}"))?;
-    if let Some((old_amount, item_count, old_type)) = current
-        && item_count > 0
-        && (old_amount != amount_cents || old_type.as_str() != txn_type)
-    {
+    let Some((old_amount, item_count, old_type, card_series_id, invoice_id)) = current else {
+        return Err("lançamento não encontrado".into());
+    };
+    if card_series_id.is_some() {
+        return Err("ocorrência de série: use os gestos da série".into());
+    }
+    if item_count > 0 && (old_amount != amount_cents || old_type.as_str() != txn_type) {
         sqlx::query("DELETE FROM line_item WHERE transaction_id = ?1")
             .bind(id)
             .execute(&mut *tx)
@@ -794,6 +843,28 @@ pub(crate) async fn update_transaction_inner(
     if affected == 0 {
         // `tx` é descartada sem commit → rollback automático.
         return Err("lançamento não encontrado".into());
+    }
+
+    if let Some(invoice_id) = invoice_id {
+        let old_contribution = if old_type == "expense" { old_amount } else { 0 };
+        let new_contribution = if txn_type == "expense" {
+            amount_cents
+        } else {
+            0
+        };
+        let delta = new_contribution - old_contribution;
+        if delta != 0 {
+            sqlx::query(
+                "UPDATE invoice \
+                 SET stated_total_cents = MAX(0, stated_total_cents + ?2) \
+                 WHERE id = ?1 AND stated_total_cents IS NOT NULL",
+            )
+            .bind(invoice_id)
+            .bind(delta)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("update (adjust invoice): {e}"))?;
+        }
     }
 
     tx.commit()
@@ -878,6 +949,59 @@ mod tests {
         .unwrap();
     }
 
+    async fn insert_invoice_purchase(
+        pool: &SqlitePool,
+        transaction_id: &str,
+        invoice_id: &str,
+        amount: i64,
+        stated_total_cents: Option<i64>,
+        card_series_id: Option<&str>,
+    ) {
+        sqlx::query("INSERT INTO person (id, name) VALUES ('person-card', 'Pessoa')")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id) \
+             VALUES ('card-account', 'Cartão', 'credit_card', 'person-card')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO invoice \
+             (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) \
+             VALUES (?1, 'card-account', '2026-04', '2026-03-28', '2026-04-10', ?2)",
+        )
+        .bind(invoice_id)
+        .bind(stated_total_cents)
+        .execute(pool)
+        .await
+        .unwrap();
+        if let Some(card_series_id) = card_series_id {
+            sqlx::query(
+                "INSERT INTO card_series (id, account_id, description, amount_cents, count, start_cycle_month) \
+                 VALUES (?1, 'card-account', 'Série', 2_000, 2, '2026-04')",
+            )
+            .bind(card_series_id)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+             (id, type, amount, date, payment_method, is_fixed, is_projection, invoice_id, card_series_id, created_at, updated_at) \
+             VALUES (?1, 'expense', ?2, '2026-03-10', 'credit', 0, 0, ?3, ?4, '2026-03-10T00:00:00Z', '2026-03-10T00:00:00Z')",
+        )
+        .bind(transaction_id)
+        .bind(amount)
+        .bind(invoice_id)
+        .bind(card_series_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
     fn item(amount_cents: i64, description: &str, position: i64) -> LineItemInput {
         LineItemInput {
             amount_cents,
@@ -893,54 +1017,133 @@ mod tests {
         transaction_id: &str,
         items: Vec<LineItemInput>,
     ) -> Result<(), String> {
-        if transaction_id.trim().is_empty() {
-            return Err("transaction_id vazio".into());
-        }
-        if items.is_empty() {
-            return Err("informe ao menos um item (ou edite o valor simples)".into());
-        }
-        let mut total_cents: i64 = 0;
-        for it in &items {
-            if it.amount_cents <= 0 {
-                return Err("cada item deve ter valor positivo (magnitude)".into());
-            }
-            total_cents += it.amount_cents;
-        }
-        let now = chrono::Utc::now().to_rfc3339();
-        let mut tx = pool.begin().await.map_err(|e| format!("begin: {e}"))?;
-        sqlx::query("DELETE FROM line_item WHERE transaction_id = ?1")
-            .bind(transaction_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| format!("clear: {e}"))?;
-        for it in &items {
-            sqlx::query(
-                "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, is_user_edited) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, 1)",
-            )
-            .bind(uuid::Uuid::new_v4().to_string())
-            .bind(transaction_id)
-            .bind(it.amount_cents)
-            .bind(&it.description)
-            .bind(it.position)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| format!("insert: {e}"))?;
-        }
-        let affected =
-            sqlx::query(r#"UPDATE "transaction" SET amount = ?2, updated_at = ?3 WHERE id = ?1"#)
-                .bind(transaction_id)
-                .bind(total_cents)
-                .bind(&now)
-                .execute(&mut *tx)
+        update_transaction_items_inner(pool, transaction_id, &items).await
+    }
+
+    #[tokio::test]
+    async fn update_transaction_adjusts_the_linked_stated_invoice_total() {
+        let pool = test_pool().await;
+        insert_invoice_purchase(
+            &pool,
+            "purchase-edit",
+            "invoice-edit",
+            2_000,
+            Some(10_000),
+            None,
+        )
+        .await;
+
+        update_transaction_inner(
+            &pool,
+            "purchase-edit",
+            "expense",
+            3_000,
+            None,
+            Some("credit".into()),
+            false,
+            "2026-03-10",
+        )
+        .await
+        .unwrap();
+
+        let (stated,): (Option<i64>,) =
+            sqlx::query_as("SELECT stated_total_cents FROM invoice WHERE id = 'invoice-edit'")
+                .fetch_one(&pool)
                 .await
-                .map_err(|e| format!("update: {e}"))?
-                .rows_affected();
-        if affected == 0 {
-            return Err("lançamento não encontrado".into());
-        }
-        tx.commit().await.map_err(|e| format!("commit: {e}"))?;
-        Ok(())
+                .unwrap();
+        assert_eq!(stated, Some(11_000));
+    }
+
+    #[tokio::test]
+    async fn update_transaction_items_adjusts_the_linked_stated_invoice_total() {
+        let pool = test_pool().await;
+        insert_invoice_purchase(
+            &pool,
+            "purchase-items",
+            "invoice-items",
+            2_000,
+            Some(10_000),
+            None,
+        )
+        .await;
+
+        run_update_items(
+            &pool,
+            "purchase-items",
+            vec![item(1_000, "primeiro", 0), item(2_000, "segundo", 1)],
+        )
+        .await
+        .unwrap();
+
+        let (stated,): (Option<i64>,) =
+            sqlx::query_as("SELECT stated_total_cents FROM invoice WHERE id = 'invoice-items'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(stated, Some(11_000));
+    }
+
+    #[tokio::test]
+    async fn update_transaction_rejects_card_series_occurrences() {
+        let pool = test_pool().await;
+        insert_invoice_purchase(
+            &pool,
+            "series-occurrence",
+            "invoice-series",
+            2_000,
+            Some(10_000),
+            Some("series-1"),
+        )
+        .await;
+
+        let err = update_transaction_inner(
+            &pool,
+            "series-occurrence",
+            "expense",
+            3_000,
+            None,
+            Some("credit".into()),
+            false,
+            "2026-03-10",
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err, "ocorrência de série: use os gestos da série");
+    }
+
+    #[tokio::test]
+    async fn update_transaction_leaves_an_invoice_without_stated_total_derived() {
+        let pool = test_pool().await;
+        insert_invoice_purchase(
+            &pool,
+            "purchase-derived",
+            "invoice-derived",
+            2_000,
+            None,
+            None,
+        )
+        .await;
+
+        update_transaction_inner(
+            &pool,
+            "purchase-derived",
+            "expense",
+            3_000,
+            None,
+            Some("credit".into()),
+            false,
+            "2026-03-10",
+        )
+        .await
+        .unwrap();
+
+        let (stated,): (Option<i64>,) =
+            sqlx::query_as("SELECT stated_total_cents FROM invoice WHERE id = 'invoice-derived'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(stated, None);
     }
 
     #[tokio::test]

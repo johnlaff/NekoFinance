@@ -1345,14 +1345,53 @@ pub(crate) async fn finalize_card_events(
     ))
 }
 
-fn event_kind_for_item_kind(kind: import::ItemKind) -> forecast::EventKind {
+fn event_kind_for_item_kind(
+    kind: import::ItemKind,
+    description: &str,
+    known_card_aliases: &std::collections::HashSet<String>,
+) -> forecast::EventKind {
     match kind {
         import::ItemKind::Saida | import::ItemKind::Ajuste => forecast::EventKind::FixedOut,
         import::ItemKind::Diario => forecast::EventKind::Daily,
-        import::ItemKind::Cartao => forecast::EventKind::Cartao,
+        import::ItemKind::Cartao => {
+            let alias =
+                crate::cards::normalize_alias(description.split('#').next().unwrap_or("").trim());
+            if known_card_aliases.contains(&alias) {
+                forecast::EventKind::Cartao
+            } else {
+                forecast::EventKind::FixedOut
+            }
+        }
         import::ItemKind::Economia => forecast::EventKind::Economia,
         import::ItemKind::Patrimonio => forecast::EventKind::Patrimonio,
     }
+}
+
+/// Carrega as identidades humanas que legitimam uma linha de nota como cartão. Uma seção
+/// `CARTÕES:` com alias ainda desconhecido continua sendo Saída até o dono aceitar a proposta;
+/// sem essa distinção, a precedência das faturas suprimiria dinheiro que não tem fatura para repor.
+async fn load_known_card_aliases(
+    pool: &SqlitePool,
+) -> Result<std::collections::HashSet<String>, String> {
+    let names: Vec<(String,)> =
+        sqlx::query_as("SELECT name FROM account WHERE type = 'credit_card'")
+            .fetch_all(pool)
+            .await
+            .map_err(|e| format!("load card names for forecast: {e}"))?;
+    let aliases: Vec<(String,)> = sqlx::query_as(
+        "SELECT ca.alias FROM card_alias ca \
+         JOIN account a ON a.id = ca.account_id WHERE a.type = 'credit_card'",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("load card aliases for forecast: {e}"))?;
+
+    Ok(names
+        .into_iter()
+        .chain(aliases)
+        .map(|(alias,)| crate::cards::normalize_alias(&alias))
+        .filter(|alias| !alias.is_empty())
+        .collect())
 }
 
 async fn load_db_events(
@@ -1363,6 +1402,7 @@ async fn load_db_events(
 ) -> Result<Vec<CashflowEvent>, String> {
     let start = start_inclusive.format("%Y-%m-%d").to_string();
     let end = end_exclusive.format("%Y-%m-%d").to_string();
+    let known_card_aliases = load_known_card_aliases(pool).await?;
 
     const TRANSACTIONS_WITHOUT_EXCLUDED: &str = "SELECT t.id, t.type AS ttype, t.amount, t.date, \
                 COALESCE(t.payment_method,'') AS payment_method, \
@@ -1445,7 +1485,7 @@ async fn load_db_events(
                     import::classify_line_item(item.section.as_deref(), item.description.as_str());
                 events.push(CashflowEvent {
                     date,
-                    kind: event_kind_for_item_kind(kind),
+                    kind: event_kind_for_item_kind(kind, &item.description, &known_card_aliases),
                     amount_cents: item.amount_cents.abs(),
                     realized: row.is_projection == 0,
                 });
@@ -2546,6 +2586,18 @@ mod tests {
     async fn annual_metrics_attributes_line_items_by_section_without_double_counting_parent() {
         let p = pool().await;
 
+        sqlx::query("INSERT INTO person (id, name) VALUES ('person-card', 'Pessoa')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id) \
+             VALUES ('card-known', 'cartao', 'credit_card', 'person-card')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
         sqlx::query(
             "INSERT INTO \"transaction\" (id, type, amount, date, is_projection) \
              VALUES ('income-060', 'income', 1000000, '2026-03-01', 0)",
@@ -2736,6 +2788,17 @@ mod tests {
     #[tokio::test]
     async fn metric_events_reconcile_item_residual_with_sign() {
         let p = pool().await;
+        sqlx::query("INSERT INTO person (id, name) VALUES ('person-card', 'Pessoa')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id) \
+             VALUES ('card-known', 'Banco A', 'credit_card', 'person-card')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
         sqlx::query(
             "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
              VALUES ('t-res', 'expense', 10000, '2026-03-10', 1, 0)",
@@ -3767,6 +3830,91 @@ mod tests {
             NaiveDate::from_ymd_opt(2026, 6, 20).unwrap()
         );
         assert_eq!(card_events[0].amount_cents, 85_000);
+    }
+
+    #[tokio::test]
+    async fn unknown_card_note_alias_remains_a_future_fixed_outflow_when_cards_are_configured() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        crate::commands::card_cmds::create_card_account_inner(
+            &p,
+            "Visa",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('future-unknown-card', 'expense', 10_000, '2026-06-20', 1, 1)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, section) \
+             VALUES ('future-unknown-card-item', 'future-unknown-card', 10_000, 'Nubank', 0, 'CARTÕES:')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let events = load_cashflow_events(&p, today, NaiveDate::from_ymd_opt(2026, 6, 30).unwrap())
+            .await
+            .unwrap();
+        assert!(events.iter().any(|event| {
+            event.date == NaiveDate::from_ymd_opt(2026, 6, 20).unwrap()
+                && event.kind == forecast::EventKind::FixedOut
+                && event.amount_cents == 10_000
+        }));
+    }
+
+    #[tokio::test]
+    async fn known_card_note_alias_is_replaced_once_by_its_invoice() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "visa-account",
+                card_name: "Visa",
+                owner_name: "Pessoa",
+                invoice_id: "visa-invoice",
+                closing_date: "2026-06-10",
+                due_date: "2026-06-20",
+                stated_total_cents: Some(10_000),
+            },
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('future-known-card', 'expense', 10_000, '2026-06-20', 1, 1)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, section) \
+             VALUES ('future-known-card-item', 'future-known-card', 10_000, 'Visa', 0, 'CARTÕES:')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let events = load_cashflow_events(&p, today, NaiveDate::from_ymd_opt(2026, 6, 30).unwrap())
+            .await
+            .unwrap();
+        let card_events: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind == forecast::EventKind::Cartao)
+            .collect();
+        assert_eq!(card_events.len(), 1);
+        assert_eq!(card_events[0].amount_cents, 10_000);
     }
 
     #[tokio::test]
