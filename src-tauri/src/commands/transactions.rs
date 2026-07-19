@@ -508,6 +508,9 @@ type TransactionUpdateCurrent = (
     Option<String>,
 );
 
+/// `(card_series_id, invoice_id, amount, type, payment_method)` da linha antes da edição de itens.
+type ItemsUpdateCurrent = (Option<String>, Option<String>, i64, String, Option<String>);
+
 /// Substitui TODAS as partes itemizadas de um lançamento e fixa o total do pai = Σ partes.
 ///
 /// Vale também para lançamentos IMPORTADOS: o dono precisa poder detalhar/editar a quebra de uma
@@ -555,15 +558,16 @@ pub(crate) async fn update_transaction_items_inner(
         .await
         .map_err(|e| format!("begin items: {e}"))?;
 
-    let current: Option<(Option<String>, Option<String>, i64, String)> = sqlx::query_as(
-        "SELECT card_series_id, invoice_id, amount, type FROM \"transaction\" \
+    let current: Option<ItemsUpdateCurrent> = sqlx::query_as(
+        "SELECT card_series_id, invoice_id, amount, type, payment_method FROM \"transaction\" \
          WHERE id = ?1 AND scenario_id IS NULL",
     )
     .bind(transaction_id)
     .fetch_optional(&mut *tx)
     .await
     .map_err(|e| format!("items (load card): {e}"))?;
-    let Some((card_series_id, invoice_id, old_amount, old_type)) = current else {
+    let Some((card_series_id, invoice_id, old_amount, old_type, old_payment_method)) = current
+    else {
         return Err("lançamento não encontrado".into());
     };
     if card_series_id.is_some() {
@@ -608,12 +612,13 @@ pub(crate) async fn update_transaction_items_inner(
     }
 
     if let Some(invoice_id) = invoice_id {
-        let old_contribution = if old_type == "expense" { old_amount } else { 0 };
-        let new_contribution = if old_type == "expense" {
-            total_cents
-        } else {
-            0
-        };
+        // Espelha `update_transaction_inner`: só compra de CRÉDITO pertence à fatura. Este comando
+        // não muda `type`/`payment_method`, então a mesma condição vale para antes e depois — um
+        // expense de débito com `invoice_id` (rekey de legado) nunca contribuiu para o stated.
+        let belongs_to_invoice =
+            old_type == "expense" && old_payment_method.as_deref() == Some("credit");
+        let old_contribution = if belongs_to_invoice { old_amount } else { 0 };
+        let new_contribution = if belongs_to_invoice { total_cents } else { 0 };
         let delta = new_contribution - old_contribution;
         if delta != 0 {
             sqlx::query(
@@ -1199,6 +1204,61 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(stated, Some(11_000));
+    }
+
+    /// Só compras de CRÉDITO pertencem à fatura (espelha `update_transaction_inner`). Um expense de
+    /// débito carregando `invoice_id` (rekey de legado) não pode inflar/reduzir o stated: ele nunca
+    /// contribuiu para a fatura, então editar sua quebra não deveria mexer no total declarado.
+    #[tokio::test]
+    async fn update_transaction_items_does_not_adjust_a_debit_expense_carrying_a_legacy_invoice_id()
+    {
+        let pool = test_pool().await;
+        sqlx::query("INSERT INTO person (id, name) VALUES ('person-debit', 'Pessoa')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id) \
+             VALUES ('card-account-debit', 'Cartão', 'credit_card', 'person-debit')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO invoice \
+             (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) \
+             VALUES ('invoice-debit', 'card-account-debit', '2026-04', '2026-03-28', '2026-04-10', 10_000)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+             (id, type, amount, date, payment_method, is_fixed, is_projection, invoice_id, created_at, updated_at) \
+             VALUES ('purchase-debit', 'expense', 2_000, '2026-03-10', 'debit', 0, 0, 'invoice-debit', '2026-03-10T00:00:00Z', '2026-03-10T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        run_update_items(
+            &pool,
+            "purchase-debit",
+            vec![item(1_000, "primeiro", 0), item(2_000, "segundo", 1)],
+        )
+        .await
+        .unwrap();
+
+        let (stated,): (Option<i64>,) =
+            sqlx::query_as("SELECT stated_total_cents FROM invoice WHERE id = 'invoice-debit'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            stated,
+            Some(10_000),
+            "expense de débito não pertence à fatura — só crédito ajusta o stated"
+        );
     }
 
     #[tokio::test]

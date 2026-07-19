@@ -2086,6 +2086,86 @@ mod tests {
         );
     }
 
+    /// `transaction.card_series_id` é `ON DELETE CASCADE` (migração do domínio do cartão): apagar a
+    /// série leva as ocorrências junto sem precisar de um DELETE explícito aqui. O `adjust_stated`
+    /// que roda ANTES do delete precisa continuar descontando exatamente o valor das ocorrências —
+    /// nem inflado (se o ajuste não rodasse) nem negativo (o piso em zero de `adjust_stated` cobre
+    /// isso). Este teste trava o contrato para não regredir se a FK mudar de CASCADE para outra coisa.
+    #[tokio::test]
+    async fn deleting_a_series_cascades_its_occurrences_and_decrements_the_stated_total_without_going_negative()
+     {
+        let pool = pool().await;
+        let card_id = card(&pool, "Neko", 20, 10).await;
+        let series =
+            create_card_series_inner(&pool, &card_id, "Parcelado", 500, Some(2), "2026-01-15")
+                .await
+                .unwrap();
+        let occurrences: Vec<(String, String, i64)> = sqlx::query_as(
+            "SELECT id, invoice_id, amount FROM \"transaction\" WHERE card_series_id = ?1 ORDER BY date",
+        )
+        .bind(&series)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            occurrences.len(),
+            2,
+            "série de 2 parcelas materializa 2 ocorrências"
+        );
+        let (_, first_invoice, first_amount) = &occurrences[0];
+        let (_, second_invoice, second_amount) = &occurrences[1];
+        assert_ne!(
+            first_invoice, second_invoice,
+            "cada parcela cai num ciclo/fatura diferente"
+        );
+
+        // Fatura A: stated ABAIXO da ocorrência — sem o piso em zero, o desconto ficaria negativo.
+        set_invoice_stated_total_inner(&pool, first_invoice, Some(first_amount - 300))
+            .await
+            .unwrap();
+        // Fatura B: stated bem acima da ocorrência — precisa DESCONTAR, não ficar inflada em 2_000.
+        set_invoice_stated_total_inner(&pool, second_invoice, Some(2_000))
+            .await
+            .unwrap();
+
+        delete_card_series_inner(&pool, &series).await.unwrap();
+
+        let remaining: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM \"transaction\" WHERE card_series_id = ?1")
+                .bind(&series)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            remaining, 0,
+            "a FK CASCADE apaga as ocorrências junto da série"
+        );
+
+        let stated_a: Option<i64> =
+            sqlx::query_scalar("SELECT stated_total_cents FROM invoice WHERE id = ?1")
+                .bind(first_invoice)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            stated_a,
+            Some(0),
+            "desconto não fica negativo — piso em zero"
+        );
+
+        let stated_b: Option<i64> =
+            sqlx::query_scalar("SELECT stated_total_cents FROM invoice WHERE id = ?1")
+                .bind(second_invoice)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            stated_b,
+            Some(2_000 - second_amount),
+            "desconto aplicado — não fica inflado no valor anterior"
+        );
+    }
+
     #[tokio::test]
     async fn invoice_detail_lists_refund_linked_to_its_card_series() {
         let pool = pool().await;

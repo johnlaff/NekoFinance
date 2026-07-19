@@ -353,10 +353,18 @@ pub(crate) async fn scan_card_invoices(
             .is_some_and(|accounts| !accounts.contains(&account_id))
         {
             sqlx::query("DELETE FROM invoice WHERE id = ?1")
-                .bind(invoice_id)
+                .bind(&invoice_id)
                 .execute(&mut *tx)
                 .await
                 .map_err(|e| format!("reconcile removed card invoices: {e}"))?;
+            // Sem isto, um `import_conflict` de rodadas anteriores (`invoice:<id>/stated_total`)
+            // sobrevive à fatura que ele descreve: órfão, sem alvo resolvível na UI, e trava
+            // `unresolved_conflict_count` acima de zero para sempre.
+            sqlx::query("DELETE FROM import_conflict WHERE transaction_id = ?1")
+                .bind(format!("invoice:{invoice_id}"))
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("reconcile removed card invoice conflict: {e}"))?;
         }
     }
     Ok(outcome)
@@ -5280,6 +5288,97 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(kept, 1, "compra realizada vinculada preserva a fatura");
+    }
+
+    /// A reconciliação apaga a fatura import-origin órfã, mas até aqui não limpava o
+    /// `import_conflict` associado (`invoice:<id>/stated_total`). O conflito sobrevivendo à fatura
+    /// travava `unresolved_conflict_count` acima de zero sem nenhum alvo resolvível na UI.
+    #[tokio::test]
+    async fn card_scan_reconciliation_clears_the_orphan_import_conflict_of_a_deleted_invoice() {
+        let pool = test_pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let visa = crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Visa",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let values = vec![
+            vec!["AGOSTO".into(), "".into(), "".into()],
+            vec![],
+            vec!["10".into(), "".into(), "100,00".into()],
+        ];
+        let layout = SheetLayout {
+            id: "layout".into(),
+            sheet_name: year.to_string(),
+            year: Some(year),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 3,
+            date_direction: "both".into(),
+        };
+        let cards_note = vec![
+            vec!["".into(); 3],
+            vec![],
+            vec!["".into(), "".into(), "CARTÕES:\nR$ 100,00 - Visa".into()],
+        ];
+        let no_cards_note = vec![
+            vec!["".into(); 3],
+            vec![],
+            vec!["".into(), "".into(), "CONTAS:\nR$ 100,00 - Aluguel".into()],
+        ];
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &cards_note, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let invoice_id: String = sqlx::query_scalar("SELECT id FROM invoice WHERE account_id = ?1")
+            .bind(&visa)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        // Conflito órfão: sobrevive de uma rodada de import anterior à que vai apagar a fatura.
+        sqlx::query(
+            "INSERT INTO import_conflict \
+             (id, transaction_id, field, base_value, local_value, sheet_value, created_at) \
+             VALUES ('conf:orphan', ?1, 'stated_total', '10000', '10000', '20000', datetime('now'))",
+        )
+        .bind(format!("invoice:{invoice_id}"))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &no_cards_note, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let invoice_gone: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invoice WHERE id = ?1")
+            .bind(&invoice_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(invoice_gone, 0, "sem seção de cartões, a fatura é removida");
+        assert_eq!(
+            crate::commands::write_back_cmds::unresolved_conflict_count(&pool)
+                .await
+                .unwrap(),
+            0,
+            "o conflito órfão da fatura apagada não pode travar o gate do write-back para sempre"
+        );
     }
 
     #[tokio::test]
