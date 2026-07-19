@@ -20,8 +20,21 @@ The physical machine running the Tauri app. Each device has one active Profile a
 ### Financial Instruments
 
 **Account**:
-A real financial instrument — bank account, credit card, wallet, or savings account. Not a logical grouping (see Sheet Mapping). Has `type` (bank, credit_card, wallet, savings, business, meal_voucher, pension, fgts) and optional fields per type (institution, closing_day, credit_limit, linked_account_id for additional cards).
+A real financial instrument — bank account, credit card, wallet, or savings account. Not a logical grouping (see Sheet Mapping). Has `type` (bank, credit_card, wallet, savings, business, meal_voucher, pension, fgts) and optional fields per type (institution, closing_day, credit_limit, linked_account_id for additional cards). Credit-card accounts have their own writer (outside pockets — the card is a liability, not a pocket): holder cards own a cycle (`closing_day` 1–28 + `due_day`), additional cards link to a holder via `linked_account_id`, carry their own `owner_person_id` and inherit the holder's cycle. Card names plus explicit `card_alias` rows are the import-matching identities; `credit_limit` is discreet display only, never a ruler input.
 _Avoid_: Sheet, category, group
+
+**Invoice** (invoice):
+The persisted credit-card statement: one row per card × cycle, keyed by the due-date month (`UNIQUE(account_id, cycle_month)`), with explicit `closing_date`/`due_date` per invoice (changing a card's cycle never rewrites history). Status (`prevista · aberta · fechada · paga`) is derived from the calendar, never stored. `stated_total_cents` is the authority when present (the sheet line value / direct adjustment); linked purchases are the itemization detail, and every purchase-changing gesture adjusts the stated total additively in the same SQL transaction. Stated-vs-itemized divergence renders as a synthetic reconciliation line ("não itemizado") — never hidden, never an item. Three-way merge on the stated total uses `source_stated_total_cents` as base; both-changed lands in the existing import-conflict queue and blocks write-back. See ADR-0004.
+_Avoid_: Bill, statement (in code), fatura estimada
+
+**Card Series** (card_series):
+One entity for both subscriptions (`count NULL`, materialized through December of the current year, minimum 3 occurrences) and installments (`count N`). Occurrences are projected purchases anchored to **consecutive invoices** (not dates); `n/N` derives from the cycle index and is never stored. Editing regenerates open/future occurrences under the same identity; canceling a subscription takes effect from a cycle onward. Ordinary `recurrence` is never used for card purchases.
+
+**Refund link** (on Transaction):
+A reimbursement is an income row **linked** to at most one target — `refund_invoice_id` (partial allowed), `refund_txn_id` (a purchase) or `refund_series_id` — never a reduction of the invoice or of any judging ruler (gross regime: full income + full outflow). The link powers a marked, didactic net reading only. The `#reembolso:` note marker's derived income gets the invoice link at import time.
+
+**Card Proposal** (card_proposal):
+An unknown card alias found in a cards note section at import becomes a pending proposal (identity = normalized alias; the same alias never re-proposes). Accepting asks for cycle/owner and creates the account + alias; accounts are never created silently.
 
 **Transaction**:
 A normalized financial movement. Has `type` (income, expense, transfer), `payment_method` (debit, credit, pix, cash), and optional `is_fixed` flag. For transfers, uses `from_account_id` and `to_account_id` on the same row. Ownership (who is responsible, who paid, who benefited) is expressed through Split and Account relationships, not stored on the transaction directly.
@@ -58,13 +71,13 @@ The day's actual spending is the sum of that day's debit/PIX/cash variable (`is_
 The method's core metric: the day's Diário spend compared against daily_budget. Green/amber/red based on budget compliance. In card mode (see Spending Mode) this track steps aside by design instead of showing a fake green: the day reads the faturas, and the stipulated ceiling remains visible as a reference.
 
 **Spending Mode** (débito × cartão, derived — never configured):
-A global mode detected purely from the data over a moving window (2 complete months + current): daily constancy (≥ 4 distinct days AND > R$ 50 in a month) ⇒ debit; window without constancy AND a live Cartão event ⇒ card; default debit. Hysteresis is asymmetric by construction — a stray purchase never flips into card mode, one month of constancy flips back to debit. In card mode the day's surface reroutes to the faturas (month's Cartão total + next due date) and a zeroed Diário is legitimate-by-design, not a gap. Card-mode legitimacy carries the method's canonical gate (`card_gate`): the 20–30% savings must be alive (annual economia ruler ≥ 20% floor).
+A global mode detected purely from the data over a moving window (2 complete months + current): daily constancy (≥ 4 distinct days AND > R$ 50 in a month) ⇒ debit; window without constancy AND a live Cartão event ⇒ card; default debit. Hysteresis is asymmetric by construction — a stray purchase never flips into card mode, one month of constancy flips back to debit. In card mode the day's surface reroutes to the faturas (month's Cartão total + next due date, now derived per card from persisted invoices — `upcoming_invoices`) and a zeroed Diário is legitimate-by-design, not a gap. Card-mode legitimacy carries the method's gate (`card_gate`) with two computable legs — the 20–30% savings alive (annual economia ruler ≥ 20% floor) AND reserve ≥ 6 months — composed honestly: any leg below ⇒ below; both alive ⇒ alive; otherwise unknown (an incomputable leg never fabricates a verdict). The third canonical leg ("no rush toward the next patrimony goal") is didactic copy, never computed. Product principle: guide, never punish.
 
 **Epistemic states** (per ruler):
 Every method ruler exposed to the UI judges in explicit states, never numeric sentinels: `verdict` (registered/chosen data), `estimate` (derived number, always displayed with the "Estimativa" mark + the ritual's didactics), `zero` (input present and legitimately zero — dedicated word, e.g. "Sem reserva") and `no_record` (gap — dash + didactic popover with CTA, never a number). DS primitives: `EstimateMark`, `NoRecordDash`, `ModeChip` + the `--state-*` tokens.
 
 **Crédito/Fatura** (the bill is a single due-date lump):
-A credit bill is **one outflow on the due date** (Saída lump), not a per-day accrual. During a cycle you increment a running total, but the recorded output is one lump at the vencimento — `classify()` + write-back already do this. The earlier "credit accumulates daily" track ("Régua 2") was retired (ADR-0001 / plans 022, 027); credit is never compared against income.
+A credit bill is **one outflow on the due date** (Saída lump), not a per-day accrual. During a cycle purchases accrue on the open invoice (see Invoice), and the recorded output is one lump per card at the vencimento: write-back writes one note line per card under the cards section of the due-date cell, merged with the cell's non-card sections. The earlier "credit accumulates daily" track ("Régua 2") was retired (ADR-0001 / plans 022, 027); credit is never compared against income.
 
 **Forecast Engine Types** (forecast `EventKind`):
 The projection engine maps each transaction into exactly one of 6 `EventKind` variants (`src-tauri/src/forecast/mod.rs`), aligned 1:1 with the method's 5 movement types (entrada, saída, diário, economia, cartão) plus a 6th bucket the engine splits out of "economia" for long-term/illiquid investment:
@@ -72,7 +85,7 @@ The projection engine maps each transaction into exactly one of 6 `EventKind` va
 - **Income** (Entrada): `type='income'`.
 - **FixedOut** (Saída fixa): `type='expense'` with `is_fixed=1`, excluding the credit-card bucket once item/transaction classification knows it.
 - **Daily** (Diário): `type='expense'`, `is_fixed=0`, non-credit (débito/PIX/dinheiro).
-- **Cartao** (Cartão): credit-card bill/purchase bucket — its own column, folded into a single Saída lump on the due date. Inside custo de vida but tracked apart.
+- **Cartao** (Cartão): credit-card bill/purchase bucket — its own column, folded into a single Saída lump on the due date. Inside custo de vida but tracked apart. With any card configured, the persisted invoice is the single voice of the future: raw credit events dated today or later are suppressed and each non-paid invoice injects one event at its due date (effective total); realized history still follows the sheet. With no card configured, raw classification stands.
 - **Economia**: guardar em reserva acessível — leaves the spending balance, feeds Economizado%, excluded from custo de vida.
 - **Patrimonio** (Patrimônio): long-term/illiquid investment — leaves the spending balance but is excluded from both custo de vida and accessible Economia%.
 
