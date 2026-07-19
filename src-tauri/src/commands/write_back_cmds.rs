@@ -1779,11 +1779,11 @@ mod tests {
             .execute(&p)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day) VALUES ('gio', 'Bradesco Gio', 'credit_card', 'person-1', 20, 10)")
+        sqlx::query("INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day) VALUES ('bia', 'Bradesco Bia', 'credit_card', 'person-1', 20, 10)")
         .execute(&p)
         .await
         .unwrap();
-        sqlx::query("INSERT INTO invoice (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) VALUES ('gio-invoice', 'gio', ?1, ?2, ?3, 53_000)")
+        sqlx::query("INSERT INTO invoice (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) VALUES ('bia-invoice', 'bia', ?1, ?2, ?3, 53_000)")
         .bind(format!("{year}-03"))
         .bind(format!("{year}-02-20"))
         .bind(&due)
@@ -1795,7 +1795,7 @@ mod tests {
         .execute(&p)
         .await
         .unwrap();
-        sqlx::query("INSERT INTO line_item (id, transaction_id, amount_cents, description, position, is_user_edited, section) VALUES ('gio-old', 'parent', 53_000, 'Bradesco Gio #reembolso:Gio', 0, 0, 'CARTÕES:')")
+        sqlx::query("INSERT INTO line_item (id, transaction_id, amount_cents, description, position, is_user_edited, section) VALUES ('bia-old', 'parent', 53_000, 'Bradesco Bia #reembolso:Bia', 0, 0, 'CARTÕES:')")
         .execute(&p)
         .await
         .unwrap();
@@ -1835,12 +1835,12 @@ mod tests {
         sqlx::query(
             "INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day) \
              VALUES ('titular', 'Titular', 'credit_card', 'person-1', 20, 10), \
-                    ('gio', 'Gio', 'credit_card', 'person-1', 20, 10)",
+                    ('bia', 'Bia', 'credit_card', 'person-1', 20, 10)",
         )
         .execute(&p)
         .await
         .unwrap();
-        // Só o titular tem fatura persistida neste vencimento — Gio é conta+alias recém-criados
+        // Só o titular tem fatura persistida neste vencimento — Bia é conta+alias recém-criados
         // (proposta aceita) sem fatura ainda materializada.
         sqlx::query("INSERT INTO invoice (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) VALUES ('titular-invoice', 'titular', ?1, ?2, ?3, 10_000)")
         .bind(format!("{year}-03"))
@@ -1854,7 +1854,7 @@ mod tests {
         .execute(&p)
         .await
         .unwrap();
-        sqlx::query("INSERT INTO line_item (id, transaction_id, amount_cents, description, position, is_user_edited, section) VALUES ('titular-item', 'parent', 10_000, 'Titular', 0, 0, 'CARTÕES:'), ('gio-item', 'parent', 5_000, 'Gio', 1, 0, 'CARTÕES:')")
+        sqlx::query("INSERT INTO line_item (id, transaction_id, amount_cents, description, position, is_user_edited, section) VALUES ('titular-item', 'parent', 10_000, 'Titular', 0, 0, 'CARTÕES:'), ('bia-item', 'parent', 5_000, 'Bia', 1, 0, 'CARTÕES:')")
         .execute(&p)
         .await
         .unwrap();
@@ -1867,7 +1867,7 @@ mod tests {
 
         assert_eq!(
             candidate.amount_cents, 15_000,
-            "Gio (conhecido, sem fatura) preserva seus R$ 50 — a fatura do titular só substitui a linha dele"
+            "Bia (conhecido, sem fatura) preserva seus R$ 50 — a fatura do titular só substitui a linha dele"
         );
         assert_eq!(
             candidate
@@ -1877,8 +1877,8 @@ mod tests {
                 .iter()
                 .map(|item| (item.amount_cents, item.description.as_str()))
                 .collect::<Vec<_>>(),
-            vec![(5_000, "Gio"), (10_000, "Titular")],
-            "item de Gio sobrevive intacto; o de Titular vira a linha da fatura"
+            vec![(5_000, "Bia"), (10_000, "Titular")],
+            "item de Bia sobrevive intacto; o de Titular vira a linha da fatura"
         );
     }
 

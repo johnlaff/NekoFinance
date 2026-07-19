@@ -5908,19 +5908,19 @@ mod tests {
         .unwrap();
         crate::commands::card_cmds::create_card_account_inner(
             &pool,
-            "Visa Gio",
+            "Visa Bia",
             None,
             None,
             None,
             None,
-            Some("Gio"),
+            Some("Bia"),
             Some(&holder),
-            &["visa gio".into()],
+            &["visa bia".into()],
         )
         .await
         .unwrap();
         let ctx = load_card_scan_ctx(&pool).await.unwrap();
-        let raw_note = "CARTÕES:\nR$ 530,00 - Visa Gio #reembolso:Gio";
+        let raw_note = "CARTÕES:\nR$ 530,00 - Visa Bia #reembolso:Bia";
         let values = vec![
             vec!["JANEIRO".into(), "".into(), "".into()],
             vec![],
