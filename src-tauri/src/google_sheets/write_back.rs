@@ -299,9 +299,10 @@ pub fn plan_write_back(
             .unwrap_or_default();
         let proposed = cents_to_ptbr(txn.amount_cents);
         let changed = parse_number(&current) != txn.amount_cents.abs();
-        // Célula itemizada (≥2 partes) escreve a fórmula `=SUM(...)` (USER_ENTERED) + nota
-        // por-parte. Uma parte ou nenhuma usa escrita RAW numérica, sem fórmula nem nota. O
-        // `value_cents`/`proposed` do diff seguem sendo o TOTAL exibido pela UI.
+        // Célula com duas ou mais partes escreve `=SUM(...)` (USER_ENTERED) + nota por-parte.
+        // Uma parte mantém o valor RAW, mas carrega a nota para preservar a linha de fatura;
+        // nenhuma parte usa escrita RAW sem nota. O `value_cents`/`proposed` do diff seguem
+        // sendo o TOTAL exibido pela UI.
         //
         // GUARDA DE SOMA: itens com soma divergente da
         // célula são persistidos (a classificação sobrevive; o resíduo é reconciliado na
@@ -310,14 +311,13 @@ pub fn plan_write_back(
         // o total (±1 centavo); senão, escrita RAW do total e a nota do dono fica intocada.
         let (formula, note_text) = match txn.items.as_deref() {
             Some(items)
-                if items.len() >= 2
-                    && (items.iter().map(|i| i.amount_cents.abs()).sum::<i64>()
-                        - txn.amount_cents.abs())
-                    .abs()
-                        <= 1 =>
+                if (items.iter().map(|i| i.amount_cents.abs()).sum::<i64>()
+                    - txn.amount_cents.abs())
+                .abs()
+                    <= 1 =>
             {
                 (
-                    Some(build_itemized_cell_value(items)),
+                    (items.len() >= 2).then(|| build_itemized_cell_value(items)),
                     Some(build_itemized_note(items)),
                 )
             }
@@ -1034,8 +1034,9 @@ mod tests {
     }
 
     #[test]
-    fn plan_single_item_stays_raw_numeric() {
-        // Uma única parte NÃO é breakdown → sem fórmula/nota (escrita RAW numérica de hoje).
+    fn plan_single_item_stays_raw_numeric_with_itemized_note() {
+        // Uma única parte NÃO requer fórmula, mas a fatura de cartão precisa preservar a
+        // identidade da linha na nota para o próximo import e para a auditoria pós-escrita.
         let txns = vec![WriteBackTxn {
             date: "2026-01-01".into(),
             kind: RowKind::Diario,
@@ -1045,7 +1046,7 @@ mod tests {
         let plan = plan_write_back(&grid(), &layout(), &mappings(), &txns);
         assert_eq!(plan.len(), 1);
         assert!(plan[0].formula.is_none());
-        assert!(plan[0].note_text.is_none());
+        assert_eq!(plan[0].note_text.as_deref(), Some("R$ 50,00 - Único"));
     }
 
     #[test]

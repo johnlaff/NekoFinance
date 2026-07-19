@@ -1,23 +1,82 @@
 use super::*;
 
 /// Lê as transações e as converte para candidatas de write-back da grade diária do `year`
-/// (magnitude positiva; a coluna vem do tipo). DECISÃO de método (a questão em aberto planilha↔
-/// modelo): o CARTÃO **colapsa para um lump em Saída no VENCIMENTO** — formato canônico que o dono
-/// edita à mão (a planilha crua não tem coluna Cartão). Por isso o crédito é carregado pela janela
-/// de VENCIMENTO, não da compra: uma compra de DEZ/ano-1 vence em JAN/ano e tem que entrar no ano.
-/// Sem cartão configurado, o crédito do ano cai na Saída da própria data. `transfer` (Economia) NÃO
-/// entra aqui — vai para a aba `Economia` (ver `build_economia_plan`).
+/// (magnitude positiva; a coluna vem do tipo). Cada fatura de cartão é uma linha na seção
+/// `CARTÕES:` da Saída do vencimento, preservando a conta que ela representa. A composição ocorre
+/// antes do planejador porque a grade possui uma única célula por data×coluna e a agregação genérica
+/// deliberadamente descarta notas em colisões. Sem cartão configurado, crédito continua na data da
+/// compra. `transfer` (Economia) NÃO entra aqui — vai para a aba `Economia`.
 pub(crate) async fn load_write_back_txns(
     pool: &SqlitePool,
     year: i32,
 ) -> Result<Vec<WriteBackTxn>, String> {
-    // 1) Entrada + Saída/Diário (expense não-crédito) do ano, cada um na sua data.
+    use std::collections::BTreeMap;
+
+    let today = chrono::Local::now().date_naive();
+    let (has_card,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM account WHERE type = 'credit_card'")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("query card accounts: {e}"))?;
+
+    // Faturas do ano são agrupadas primeiro por vencimento. A ordem das linhas dentro da nota é
+    // estável por `created_at, id` da conta, para que um preview repetido não mude sem dado novo.
+    let mut invoices_by_due: BTreeMap<String, Vec<write_back::TxnLineItem>> = BTreeMap::new();
+    if has_card > 0 {
+        let invoices: Vec<(String, String, String, String, Option<i64>, i64)> = sqlx::query_as(
+            "SELECT i.id, i.due_date, i.closing_date, a.name, i.stated_total_cents, \
+                    COALESCE(SUM(t.amount), 0) \
+             FROM invoice i \
+             JOIN account a ON a.id = i.account_id \
+             LEFT JOIN \"transaction\" t ON t.invoice_id = i.id AND t.type = 'expense' \
+             WHERE i.due_date >= ?1 AND i.due_date < ?2 AND i.due_date >= ?3 \
+             GROUP BY i.id, i.due_date, i.closing_date, a.name, i.stated_total_cents, \
+                      a.created_at, a.id \
+             ORDER BY i.due_date, a.created_at, a.id",
+        )
+        .bind(format!("{year:04}-01-01"))
+        .bind(format!("{}-01-01", year + 1))
+        .bind(today.to_string())
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("query card invoices: {e}"))?;
+
+        for (_id, due_date, closing_date, card_name, stated_total_cents, purchases_sum_cents) in
+            invoices
+        {
+            let closing = NaiveDate::parse_from_str(&closing_date, "%Y-%m-%d")
+                .map_err(|_| format!("fechamento de fatura inválido: {closing_date}"))?;
+            let due = NaiveDate::parse_from_str(&due_date, "%Y-%m-%d")
+                .map_err(|_| format!("vencimento de fatura inválido: {due_date}"))?;
+            if matches!(
+                crate::cards::invoice_status(today, closing, due),
+                crate::cards::InvoiceStatus::Paga
+            ) {
+                continue;
+            }
+            invoices_by_due
+                .entry(due_date)
+                .or_default()
+                .push(write_back::TxnLineItem {
+                    amount_cents: crate::cards::effective_total_cents(
+                        stated_total_cents,
+                        purchases_sum_cents,
+                    )
+                    .abs(),
+                    description: card_name,
+                    section: None,
+                });
+        }
+    }
+
+    // Entrada + Saída/Diário (expense não-crédito) do ano, cada um na sua data.
     let rows: Vec<(String, String, String, i64, i64)> = sqlx::query_as(
         "SELECT id, type, date, amount, is_fixed FROM \"transaction\" \
          WHERE date >= ?1 AND date < ?2 \
-           AND NOT (type='expense' AND payment_method='credit') \
+           AND (type <> 'expense' OR payment_method IS NULL OR payment_method <> 'credit') \
            AND id NOT LIKE 'derived:%' \
-           AND scenario_id IS NULL",
+           AND scenario_id IS NULL \
+         ORDER BY date, id",
     )
     .bind(format!("{year:04}-01-01"))
     .bind(format!("{}-01-01", year + 1))
@@ -28,9 +87,6 @@ pub(crate) async fn load_write_back_txns(
     let mut out = Vec::new();
     for (id, t, date, amount, is_fixed) in rows {
         let mag = amount.abs();
-        // Carrega as partes itemizadas desta linha (vazio = não itemizada → escrita RAW). N+1 é
-        // aceitável: write-back é manual e infrequente. Lump de cartão (seção 2) não
-        // tem linha 1:1 importável e segue sem breakdown (items = None).
         let kind = match t.as_str() {
             "income" => import::RowKind::Entrada,
             "expense" => {
@@ -42,84 +98,104 @@ pub(crate) async fn load_write_back_txns(
             }
             _ => continue, // transfer (Economia) → aba Economia
         };
-        let items = load_txn_items(pool, &id).await?;
+        if kind == import::RowKind::Saida
+            && let Some(invoice_items) = invoices_by_due.remove(&date)
+        {
+            let parent_items = load_all_txn_items(pool, &id).await?;
+            let first_card = parent_items.iter().position(|item| {
+                import::classify_line_item(item.section.as_deref(), &item.description)
+                    == import::ItemKind::Cartao
+            });
+            let card_section = first_card
+                .and_then(|index| parent_items[index].section.clone())
+                .unwrap_or_else(|| "CARTÕES:".to_string());
+            let replaced_total: i64 = parent_items
+                .iter()
+                .filter(|item| {
+                    import::classify_line_item(item.section.as_deref(), &item.description)
+                        == import::ItemKind::Cartao
+                })
+                .map(|item| item.amount_cents.abs())
+                .sum();
+            let invoice_total: i64 = invoice_items
+                .iter()
+                .map(|item| item.amount_cents.abs())
+                .sum();
+            let mut composed = Vec::with_capacity(parent_items.len() + invoice_items.len());
+            for (index, item) in parent_items.into_iter().enumerate() {
+                if first_card == Some(index) {
+                    composed.extend(invoice_items.iter().cloned().map(|mut item| {
+                        item.section = Some(card_section.clone());
+                        item
+                    }));
+                }
+                if import::classify_line_item(item.section.as_deref(), &item.description)
+                    != import::ItemKind::Cartao
+                {
+                    composed.push(item);
+                }
+            }
+            if first_card.is_none() {
+                composed.extend(invoice_items.into_iter().map(|mut item| {
+                    item.section = Some(card_section.clone());
+                    item
+                }));
+            }
+            out.push(WriteBackTxn {
+                date,
+                kind,
+                amount_cents: mag - replaced_total + invoice_total,
+                items: Some(composed),
+            });
+            continue;
+        }
         out.push(WriteBackTxn {
             date,
             kind,
             amount_cents: mag,
-            items,
+            items: load_txn_items(pool, &id).await?,
         });
     }
 
-    // 2) Cartão → lump no vencimento. Com cartão configurado, junta as compras cujo VENCIMENTO cai
-    //    no ano-alvo (janela DEZ/ano-1 .. DEZ/ano, pois a fatura vence ~1 mês após a compra).
-    // Dias do cartão são NULL-áveis: FILTRA no SQL (não LIMIT 1 cego) — senão, se o 1º cartão
-    // viesse sem ciclo mas existisse outro completo, o write-back ignoraria o ciclo válido e
-    // lançaria crédito pela data da compra. Ordem determinística para escolher sempre o mesmo.
-    let card: Option<(i64, i64)> = sqlx::query_as(
-        "SELECT closing_day, due_day FROM account \
-         WHERE type='credit_card' AND closing_day IS NOT NULL AND due_day IS NOT NULL \
-         ORDER BY created_at, id LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| format!("query card: {e}"))?;
+    // Células futuras ainda vazias não têm uma candidata-pai para compor: a fatura se torna a
+    // candidata completa, com uma linha de nota por cartão.
+    for (due_date, items) in invoices_by_due {
+        let amount_cents = items.iter().map(|item| item.amount_cents.abs()).sum();
+        out.push(WriteBackTxn {
+            date: due_date,
+            kind: import::RowKind::Saida,
+            amount_cents,
+            items: Some(
+                items
+                    .into_iter()
+                    .map(|mut item| {
+                        item.section = Some("CARTÕES:".to_string());
+                        item
+                    })
+                    .collect(),
+            ),
+        });
+    }
 
-    match card {
-        Some((closing, due)) => {
-            let credit: Vec<(String, i64)> = sqlx::query_as(
-                "SELECT date, amount FROM \"transaction\" \
-                 WHERE type='expense' AND payment_method='credit' AND date >= ?1 AND date <= ?2 \
-                   AND scenario_id IS NULL",
-            )
-            .bind(format!("{:04}-12-01", year - 1))
-            .bind(format!("{year:04}-12-31"))
-            .fetch_all(pool)
-            .await
-            .map_err(|e| format!("query credit: {e}"))?;
-
-            let mut by_due: std::collections::HashMap<String, i64> =
-                std::collections::HashMap::new();
-            for (date, amount) in credit {
-                if let Ok(d) = NaiveDate::parse_from_str(&date, "%Y-%m-%d") {
-                    let due_date = forecast::cycle_due_date(d, closing as u32, due as u32);
-                    if due_date.year() == year {
-                        *by_due
-                            .entry(due_date.format("%Y-%m-%d").to_string())
-                            .or_insert(0) += amount.abs();
-                    }
-                }
-            }
-            for (due_date, cents) in by_due {
-                out.push(WriteBackTxn {
-                    date: due_date,
-                    kind: import::RowKind::Saida,
-                    amount_cents: cents,
-                    // Lump de cartão = soma de compras; sem linha 1:1 → sem breakdown itemizado.
-                    items: None,
-                });
-            }
-        }
-        None => {
-            // Sem cartão: não há ciclo para colapsar — crédito do ano cai na Saída da própria data.
-            let credit: Vec<(String, i64)> = sqlx::query_as(
-                "SELECT date, amount FROM \"transaction\" \
-                 WHERE type='expense' AND payment_method='credit' AND date >= ?1 AND date < ?2 \
-                   AND scenario_id IS NULL",
-            )
-            .bind(format!("{year:04}-01-01"))
-            .bind(format!("{}-01-01", year + 1))
-            .fetch_all(pool)
-            .await
-            .map_err(|e| format!("query credit nocard: {e}"))?;
-            for (date, amount) in credit {
-                out.push(WriteBackTxn {
-                    date,
-                    kind: import::RowKind::Saida,
-                    amount_cents: amount.abs(),
-                    items: None, // crédito por compra (sem cartão) também não itemiza.
-                });
-            }
+    if has_card == 0 {
+        // Sem cartão: não há fatura para representar, então crédito do ano cai na própria data.
+        let credit: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT date, amount FROM \"transaction\" \
+             WHERE type='expense' AND payment_method='credit' AND date >= ?1 AND date < ?2 \
+               AND scenario_id IS NULL ORDER BY date, id",
+        )
+        .bind(format!("{year:04}-01-01"))
+        .bind(format!("{}-01-01", year + 1))
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("query credit nocard: {e}"))?;
+        for (date, amount) in credit {
+            out.push(WriteBackTxn {
+                date,
+                kind: import::RowKind::Saida,
+                amount_cents: amount.abs(),
+                items: None,
+            });
         }
     }
     Ok(out)
@@ -133,6 +209,19 @@ async fn load_txn_items(
     pool: &SqlitePool,
     transaction_id: &str,
 ) -> Result<Option<Vec<write_back::TxnLineItem>>, String> {
+    let rows = load_all_txn_items(pool, transaction_id).await?;
+    if rows.len() < 2 {
+        return Ok(None);
+    }
+    Ok(Some(rows))
+}
+
+/// Partes preservadas mesmo quando há só uma linha: a composição de cartão precisa reconhecer e
+/// substituir a seção inteira antes de decidir se a célula final merece fórmula.
+async fn load_all_txn_items(
+    pool: &SqlitePool,
+    transaction_id: &str,
+) -> Result<Vec<write_back::TxnLineItem>, String> {
     let rows: Vec<(i64, String, Option<String>)> = sqlx::query_as(
         "SELECT amount_cents, description, section FROM line_item \
          WHERE transaction_id = ?1 ORDER BY position",
@@ -141,20 +230,16 @@ async fn load_txn_items(
     .fetch_all(pool)
     .await
     .map_err(|e| format!("query line items: {e}"))?;
-    if rows.len() < 2 {
-        return Ok(None);
-    }
-    Ok(Some(
-        rows.into_iter()
-            .map(
-                |(amount_cents, description, section)| write_back::TxnLineItem {
-                    amount_cents,
-                    description,
-                    section,
-                },
-            )
-            .collect(),
-    ))
+    Ok(rows
+        .into_iter()
+        .map(
+            |(amount_cents, description, section)| write_back::TxnLineItem {
+                amount_cents,
+                description,
+                section,
+            },
+        )
+        .collect())
 }
 
 /// Mensagem (typed-error por string, como o resto deste módulo) quando há conflitos de import
@@ -195,25 +280,6 @@ pub(crate) fn staleness_check(seen: &str, current: &str) -> Result<(), String> {
         return Err(SHEET_CHANGED_MSG.to_string());
     }
     Ok(())
-}
-
-/// Aviso NÃO-bloqueante do write-back: o colapso do lump de cartão (`load_write_back_txns`) usa UM
-/// cartão (o primeiro com ciclo completo). Se houver MAIS DE UM cartão com `closing_day`+`due_day`,
-/// ou QUALQUER cartão SEM esses dias de ciclo, a data da fatura pode não bater com a intenção do
-/// dono — então sinalizamos para a UI pedir conferência. NÃO altera o plano (suporte multi-cartão
-/// está fora de escopo); apenas avisa.
-pub(crate) async fn multi_card_warning(pool: &SqlitePool) -> Result<bool, String> {
-    // Cartões com ciclo COMPLETO (ambos os dias) e cartões com ciclo INCOMPLETO (algum dia ausente).
-    let (with_cycle, without_cycle): (i64, i64) = sqlx::query_as(
-        "SELECT \
-           COALESCE(SUM(CASE WHEN closing_day IS NOT NULL AND due_day IS NOT NULL THEN 1 ELSE 0 END), 0), \
-           COALESCE(SUM(CASE WHEN closing_day IS NULL OR due_day IS NULL THEN 1 ELSE 0 END), 0) \
-         FROM account WHERE type = 'credit_card'",
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| format!("query card cycle: {e}"))?;
-    Ok(with_cycle > 1 || without_cycle > 0)
 }
 
 /// Cria um `SheetsClient` autenticado (mesmo caminho de token de `build_write_back_plan`/
@@ -289,7 +355,7 @@ pub async fn preview_write_back(
 }
 
 /// Resultado da prévia: o diff, o `preview_revision` capturado no Drive para detectar edição
-/// concorrente no apply e o aviso não bloqueante de multi-cartão.
+/// concorrente no apply e o estado do gate de conflitos.
 #[derive(serde::Serialize)]
 pub struct WriteBackPreviewResult {
     pub cells: Vec<CellWrite>,
@@ -297,13 +363,11 @@ pub struct WriteBackPreviewResult {
     pub preview_revision: String,
     /// Há conflitos de import pendentes? A UI desabilita o envio (espelha o gate do backend).
     pub conflicts_pending: bool,
-    /// Mais de um cartão com ciclo, ou um cartão sem ciclo → a data da fatura pode divergir.
-    pub multi_card_warning: bool,
 }
 
 /// Prévia rica e read-only: mesmo plano do `preview_write_back`, mais
-/// o `preview_revision` (re-revisão por edição concorrente), o flag de conflitos pendentes e o aviso
-/// de multi-cartão. Read-only — seguro com a flag desligada.
+/// o `preview_revision` (re-revisão por edição concorrente) e o flag de conflitos pendentes.
+/// Read-only — seguro com a flag desligada.
 #[tauri::command]
 pub async fn preview_write_back_status(
     app_dir: State<'_, AppDataDir>,
@@ -329,12 +393,10 @@ pub async fn preview_write_back_status(
     )
     .await?;
     let conflicts_pending = unresolved_conflict_count(pool.inner()).await? > 0;
-    let multi_card_warning = multi_card_warning(pool.inner()).await?;
     Ok(WriteBackPreviewResult {
         cells,
         preview_revision,
         conflicts_pending,
-        multi_card_warning,
     })
 }
 
@@ -619,8 +681,8 @@ pub async fn apply_write_back(
 ///
 /// `cells` são as células efetivamente ESCRITAS (já filtradas por `changed`). Mapeamos cada uma para
 /// as transações por `(date, type, is_fixed)` derivados do `kind` — o mesmo critério de
-/// `load_write_back_txns`. Cartão (lump no vencimento) não tem linha 1:1 importável, então o realinho
-/// foca nas linhas de movimento direto (income/expense em débito); o teste de round-trip cobre isto.
+/// `load_write_back_txns`. Nas Saídas, as linhas de nota de cartões realinham também as faturas que
+/// a célula representa.
 pub(crate) async fn record_write_back_audit(
     pool: &SqlitePool,
     sheet_name: &str,
@@ -646,10 +708,8 @@ pub(crate) async fn record_write_back_audit(
         rekey_manual_row_to_deterministic(&mut tx, sheet_name, c, profile_id.as_ref(), &now)
             .await?;
 
-        // O kind `saida` cobre DOIS casos físicos na mesma célula: (a) Saídas fixas de débito 1:1 e
-        // (b) o LUMP de cartão no vencimento — soma de compras de crédito (`is_fixed=0`,
-        // `payment_method='credit'`) agrupadas por `cycle_due_date`. O caso (b) não tem linha 1:1
-        // importável, então o realinho do crédito é feito à parte (ver `realign_credit_lump`).
+        // Saída combina o realinhamento da linha fixa de débito com as faturas identificadas pelas
+        // linhas da seção de cartões na nota escrita.
         if c.kind.as_str() == "saida" {
             realigned += realign_saida_cell(&mut tx, c, &now).await?;
             record_write_back_log(&mut tx, sheet_name, &now, profile_id.as_ref(), c).await?;
@@ -880,10 +940,8 @@ async fn rekey_manual_row_to_deterministic(
     Ok(())
 }
 
-/// Realinha a base (`source_amount`) das transações de uma célula `saida`. Cobre os dois casos
-/// físicos da coluna Saída: (a) Saída fixa de débito 1:1 — `source_amount = valor escrito`; (b) o
-/// LUMP de cartão no vencimento — as compras de crédito cujo `cycle_due_date` cai na data da célula
-/// (ver `realign_credit_lump`). Devolve o total de linhas realinhadas (débito + crédito).
+/// Realinha a base (`source_amount`) das saídas fixas de débito e os totais declarados das faturas
+/// representadas pela nota de uma célula Saída. Devolve o total de linhas realinhadas.
 async fn realign_saida_cell(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     c: &CellWrite,
@@ -903,85 +961,62 @@ async fn realign_saida_cell(
     .await
     .map_err(|e| format!("realign source_amount (saida débito): {e}"))?;
 
-    // (b) Lump de cartão: realinha as compras de crédito cujo vencimento cai na data da célula.
-    let credit = realign_credit_lump(tx, &c.date, now).await?;
-    Ok(debit.rows_affected() as usize + credit)
+    let invoices = realign_card_invoices(tx, c).await?;
+    Ok(debit.rows_affected() as usize + invoices)
 }
 
-/// Realinha a base das compras de crédito que compõem o LUMP de uma célula Saída escrita na data
-/// `due_date`. O lump da planilha é `SUM(ABS(amount))` das compras cujo `cycle_due_date` é `due_date`
-/// — não há coluna por-compra na planilha, então a base por-linha não tem snapshot rastreável. Ao
-/// zerar `source_amount` (`NULL`) dessas compras, o merge de 3 vias do próximo import vê `base
-/// ausente` (`reconcile` com `base = None` → `ApplySheet`, sem conflito): o lump agregado passa a
-/// ser a nova base autoritativa e as compras individuais ficam abaixo da granularidade rastreada.
-///
-/// O vencimento é computado em Rust com `forecast::cycle_due_date` — a MESMA função que
-/// `load_write_back_txns` usa para montar o lump —, então o agrupamento não diverge. App suporta um
-/// cartão (`ORDER BY created_at, id LIMIT 1`, igual ao load); sem cartão configurado, nada a fazer.
-async fn realign_credit_lump(
+/// Faz a planilha e o app convergirem por fatura, nunca por compra. A nota escrita contém uma linha
+/// por conta, então a descrição é a chave humana que liga cada total ao registro `invoice` da mesma
+/// data de vencimento. Faturas pagas ficam fora: uma Saída realizada não é proposta nem reescrita.
+async fn realign_card_invoices(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    due_date: &str,
-    now: &str,
+    c: &CellWrite,
 ) -> Result<usize, String> {
-    let card: Option<(i64, i64)> = sqlx::query_as(
-        "SELECT closing_day, due_day FROM account \
-         WHERE type='credit_card' AND closing_day IS NOT NULL AND due_day IS NOT NULL \
-         ORDER BY created_at, id LIMIT 1",
-    )
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(|e| format!("query card for audit: {e}"))?;
-
-    let Some((closing, due)) = card else {
-        return Ok(0); // sem cartão com ciclo → crédito caiu na própria data; nada a colapsar.
+    let Some(note) = c.note_text.as_deref() else {
+        return Ok(0);
     };
-
-    // Limita o scan ao período relevante. Sem bound, uma compra de ANOS atrás com o mesmo
-    // dia-do-mês produziria o mesmo `cycle_due_date` calculado e seria realinhada por engano (base
-    // zerada → no-conflito espúrio no próximo import). Um ciclo de fatura abrange ~2 meses, então
-    // ir 2 anos para trás (1º de janeiro) é uma janela conservadora: larga o bastante para conter as
-    // compras de qualquer ciclo único, mas exclui compras de anos anteriores.
-    let cutoff = {
-        let due = NaiveDate::parse_from_str(due_date, "%Y-%m-%d")
-            .unwrap_or_else(|_| chrono::Local::now().date_naive());
-        NaiveDate::from_ymd_opt(due.year() - 2, 1, 1)
-            .unwrap_or(due)
-            .format("%Y-%m-%d")
-            .to_string()
-    };
-
-    let candidates: Vec<(String, String)> = sqlx::query_as(
-        "SELECT id, date FROM \"transaction\" \
-         WHERE type='expense' AND payment_method='credit' \
-           AND date >= ?1 AND scenario_id IS NULL",
+    let card_lines = import::parse_itemized_note(note);
+    let today = chrono::Local::now().date_naive();
+    let invoices: Vec<(String, String, String, String)> = sqlx::query_as(
+        "SELECT i.id, a.name, i.closing_date, i.due_date \
+         FROM invoice i JOIN account a ON a.id = i.account_id \
+         WHERE i.due_date = ?1 ORDER BY a.created_at, a.id",
     )
-    .bind(&cutoff)
+    .bind(&c.date)
     .fetch_all(&mut **tx)
     .await
-    .map_err(|e| format!("query credit candidates: {e}"))?;
+    .map_err(|e| format!("query invoices for audit: {e}"))?;
 
-    let matching_ids: Vec<String> = candidates
-        .into_iter()
-        .filter_map(|(id, date_str)| {
-            let d = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d").ok()?;
-            let computed = forecast::cycle_due_date(d, closing as u32, due as u32);
-            (computed.format("%Y-%m-%d").to_string() == due_date).then_some(id)
-        })
-        .collect();
-
-    let mut n = 0usize;
-    for id in &matching_ids {
+    let mut updated = 0usize;
+    for (invoice_id, card_name, closing_date, due_date) in invoices {
+        let closing = NaiveDate::parse_from_str(&closing_date, "%Y-%m-%d")
+            .map_err(|_| format!("fechamento de fatura inválido: {closing_date}"))?;
+        let due = NaiveDate::parse_from_str(&due_date, "%Y-%m-%d")
+            .map_err(|_| format!("vencimento de fatura inválido: {due_date}"))?;
+        if matches!(
+            crate::cards::invoice_status(today, closing, due),
+            crate::cards::InvoiceStatus::Paga
+        ) {
+            continue;
+        }
+        let Some(line) = card_lines.iter().find(|line| {
+            line.kind == import::ItemKind::Cartao
+                && crate::cards::normalize_alias(&line.description)
+                    == crate::cards::normalize_alias(&card_name)
+        }) else {
+            continue;
+        };
         sqlx::query(
-            "UPDATE \"transaction\" SET source_amount = NULL, updated_at = ?1 WHERE id = ?2",
+            "UPDATE invoice SET stated_total_cents = ?1, source_stated_total_cents = ?1 WHERE id = ?2",
         )
-        .bind(now)
-        .bind(id)
+        .bind(line.amount_cents)
+        .bind(&invoice_id)
         .execute(&mut **tx)
         .await
-        .map_err(|e| format!("realign credit source_amount: {e}"))?;
-        n += 1;
+        .map_err(|e| format!("realign invoice stated_total: {e}"))?;
+        updated += 1;
     }
-    Ok(n)
+    Ok(updated)
 }
 
 /// Trilha no sync_log (best-effort de auditoria): só quando há um profile a referenciar (FK NOT
@@ -1166,7 +1201,6 @@ pub async fn preview_economia_write_back_status(
         cells,
         preview_revision,
         conflicts_pending,
-        multi_card_warning: false, // a Economia não depende de ciclo de cartão
     })
 }
 
@@ -1351,93 +1385,407 @@ mod tests {
         p
     }
 
-    // A fatura de cartão é escrita como um LUMP em Saída no vencimento, agregado
-    // de compras de crédito individuais (is_fixed=0, payment_method='credit') agrupadas por
-    // `cycle_due_date`. O braço `saida` da auditoria só realinhava linhas `is_fixed=1` não-crédito →
-    // casava ZERO linhas para o lump → a base ficava STALE → conflito espúrio no próximo import.
-    // O fix realinha a base (`source_amount = NULL`) das compras de crédito cujo vencimento cai na
-    // data da célula. `base = None` faz o merge de 3 vias devolver `ApplySheet` (sem conflito).
     #[tokio::test]
-    async fn credit_lump_writeback_realigns_source_amount() {
+    async fn write_back_loads_each_card_invoice_at_its_own_due_date() {
         let p = pool().await;
+        let year = chrono::Local::now().year() + 1;
 
-        // Cartão: fecha dia 25, vence dia 5. Compras de 20 e 22/MAI (≤ 25) vencem em 05/JUN.
-        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-1', 'Tester')")
+        sqlx::query("INSERT INTO person (id, name) VALUES ('person-1', 'Pessoa')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day, created_at) \
+             VALUES ('card-a', 'Cartão A', 'credit_card', 'person-1', 20, 10, '2026-01-01T00:00:00Z'), \
+                    ('card-b', 'Cartão B', 'credit_card', 'person-1', 22, 15, '2026-01-02T00:00:00Z')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO invoice \
+               (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) \
+             VALUES ('invoice-a', 'card-a', ?1, ?2, ?3, 11_100), \
+                    ('invoice-b', 'card-b', ?4, ?5, ?6, 22_200)",
+        )
+        .bind(format!("{year}-03"))
+        .bind(format!("{year}-02-20"))
+        .bind(format!("{year}-03-10"))
+        .bind(format!("{year}-04"))
+        .bind(format!("{year}-03-22"))
+        .bind(format!("{year}-04-15"))
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+               (id, type, amount, date, payment_method, is_fixed, is_projection, invoice_id) \
+             VALUES ('purchase-a', 'expense', 100, ?1, 'credit', 0, 0, 'invoice-a'), \
+                    ('purchase-b', 'expense', 200, ?2, 'credit', 0, 0, 'invoice-b')",
+        )
+        .bind(format!("{year}-02-05"))
+        .bind(format!("{year}-03-05"))
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let txns = load_write_back_txns(&p, year).await.unwrap();
+        let saidas: Vec<&WriteBackTxn> = txns
+            .iter()
+            .filter(|txn| txn.kind == import::RowKind::Saida)
+            .collect();
+
+        assert_eq!(saidas.len(), 2, "uma candidata por vencimento de fatura");
+        let first = saidas
+            .iter()
+            .find(|txn| txn.date == format!("{year}-03-10"))
+            .unwrap();
+        assert_eq!(first.amount_cents, 11_100, "stated é a autoridade");
+        assert_eq!(
+            first.items.as_ref().unwrap()[0].description,
+            "Cartão A",
+            "a nota identifica o cartão da fatura"
+        );
+        let second = saidas
+            .iter()
+            .find(|txn| txn.date == format!("{year}-04-15"))
+            .unwrap();
+        assert_eq!(second.amount_cents, 22_200, "stated é a autoridade");
+        assert_eq!(second.items.as_ref().unwrap()[0].description, "Cartão B");
+    }
+
+    #[tokio::test]
+    async fn write_back_composes_cards_that_share_a_due_date_into_one_candidate() {
+        let p = pool().await;
+        let year = chrono::Local::now().year() + 1;
+
+        sqlx::query("INSERT INTO person (id, name) VALUES ('person-1', 'Pessoa')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day, created_at) \
+             VALUES ('card-a', 'Titular', 'credit_card', 'person-1', 20, 10, '2026-01-01T00:00:00Z'), \
+                    ('card-b', 'Adicional', 'credit_card', 'person-1', 20, 10, '2026-01-02T00:00:00Z')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO invoice \
+               (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) \
+             VALUES ('invoice-a', 'card-a', ?1, ?2, ?3, 10_000), \
+                    ('invoice-b', 'card-b', ?1, ?2, ?3, 20_000)",
+        )
+        .bind(format!("{year}-03"))
+        .bind(format!("{year}-02-20"))
+        .bind(format!("{year}-03-10"))
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let txns = load_write_back_txns(&p, year).await.unwrap();
+        let saidas: Vec<&WriteBackTxn> = txns
+            .iter()
+            .filter(|txn| txn.date == format!("{year}-03-10") && txn.kind == import::RowKind::Saida)
+            .collect();
+
+        assert_eq!(saidas.len(), 1, "a célula recebe uma candidata composta");
+        assert_eq!(saidas[0].amount_cents, 30_000);
+        let items = saidas[0].items.as_ref().unwrap();
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| (
+                    item.amount_cents,
+                    item.description.as_str(),
+                    item.section.as_deref()
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (10_000, "Titular", Some("CARTÕES:")),
+                (20_000, "Adicional", Some("CARTÕES:")),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn write_back_replaces_only_card_items_in_the_parent_candidate() {
+        let p = pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let due = format!("{year}-03-10");
+
+        sqlx::query("INSERT INTO person (id, name) VALUES ('person-1', 'Pessoa')")
             .execute(&p)
             .await
             .unwrap();
         sqlx::query(
             "INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day) \
-             VALUES ('card-1', 'Cartão', 'credit_card', 'pe-1', 25, 5)",
+             VALUES ('card-a', 'Cartão Principal', 'credit_card', 'person-1', 20, 10)",
         )
         .execute(&p)
         .await
         .unwrap();
         sqlx::query(
-            "INSERT INTO \"transaction\" (id, type, amount, date, payment_method, is_fixed, is_projection, source_amount) \
-             VALUES ('buy-1', 'expense', 3000, '2026-05-20', 'credit', 0, 0, 3000), \
-                    ('buy-2', 'expense', 2000, '2026-05-22', 'credit', 0, 0, 2000)",
+            "INSERT INTO invoice \
+               (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) \
+             VALUES ('invoice-a', 'card-a', ?1, ?2, ?3, 25_000)",
         )
+        .bind(format!("{year}-03"))
+        .bind(format!("{year}-02-20"))
+        .bind(&due)
         .execute(&p)
         .await
         .unwrap();
-
-        // A compra abaixo vence em OUTRO ciclo (06/JUN > 25 → vence 05/JUL): NÃO pode ser realinhada.
         sqlx::query(
-            "INSERT INTO \"transaction\" (id, type, amount, date, payment_method, is_fixed, is_projection, source_amount) \
-             VALUES ('buy-other', 'expense', 9000, '2026-06-06', 'credit', 0, 0, 9000)",
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('parent', 'expense', 50_000, ?1, 1, 0)",
+        )
+        .bind(&due)
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO line_item \
+               (id, transaction_id, amount_cents, description, position, is_user_edited, section) \
+             VALUES ('conta', 'parent', 30_000, 'Condomínio', 0, 0, 'CONTAS:'), \
+                    ('card-old', 'parent', 20_000, 'Fatura importada', 1, 0, 'CARTOES:')",
         )
         .execute(&p)
         .await
         .unwrap();
 
+        let txns = load_write_back_txns(&p, year).await.unwrap();
+        let candidate = txns
+            .iter()
+            .find(|txn| txn.date == due && txn.kind == import::RowKind::Saida)
+            .unwrap();
+        assert_eq!(candidate.amount_cents, 55_000);
+        assert_eq!(
+            candidate
+                .items
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|item| (
+                    item.amount_cents,
+                    item.description.as_str(),
+                    item.section.as_deref()
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (30_000, "Condomínio", Some("CONTAS:")),
+                (25_000, "Cartão Principal", Some("CARTOES:")),
+            ],
+            "itens fora de cartões, ordem e grafia do cabeçalho sobrevivem"
+        );
+    }
+
+    #[tokio::test]
+    async fn card_invoice_writeback_realigns_stated_total_to_its_note_line() {
+        let p = pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let due = format!("{year}-03-10");
+
+        sqlx::query("INSERT INTO person (id, name) VALUES ('person-1', 'Pessoa')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day) \
+             VALUES ('card-a', 'Cartão A', 'credit_card', 'person-1', 20, 10)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO invoice \
+               (id, account_id, cycle_month, closing_date, due_date, stated_total_cents, source_stated_total_cents) \
+             VALUES ('invoice-a', 'card-a', ?1, ?2, ?3, 10_000, 8_000)",
+        )
+        .bind(format!("{year}-03"))
+        .bind(format!("{year}-02-20"))
+        .bind(&due)
+        .execute(&p)
+        .await
+        .unwrap();
         let cell = CellWrite {
-            a1: "F5".into(),
-            row: 4,
-            col: 5,
-            date: "2026-06-05".into(),
+            a1: "D3".into(),
+            row: 2,
+            col: 3,
+            date: due,
             kind: "saida".into(),
-            current: "0,00".into(),
-            proposed: "50,00".into(),
-            value_cents: 5000, // 3000 + 2000, o lump da fatura
+            current: "100,00".into(),
+            proposed: "123,45".into(),
+            value_cents: 12_345,
             changed: true,
             formula: None,
-            note_text: None,
+            note_text: Some("CARTÕES:\nR$ 123,45 - Cartão A".into()),
         };
-        let realigned = record_write_back_audit(&p, "2026", &[&cell]).await.unwrap();
-        assert_eq!(
-            realigned, 2,
-            "as duas compras do ciclo de 05/JUN são realinhadas"
-        );
 
-        // As compras do lump têm a base zerada (NULL) → o próximo import com sheet_value = 5000 vê
-        // `base = None` → ApplySheet, sem conflito espúrio.
-        let rows: Vec<(String, Option<i64>)> = sqlx::query_as(
-            "SELECT id, source_amount FROM \"transaction\" \
-             WHERE id IN ('buy-1', 'buy-2') ORDER BY id",
+        let realigned = record_write_back_audit(&p, "2027", &[&cell]).await.unwrap();
+        assert_eq!(realigned, 1, "a fatura escrita é realinhada");
+        let totals: (Option<i64>, Option<i64>) = sqlx::query_as(
+            "SELECT stated_total_cents, source_stated_total_cents FROM invoice WHERE id = 'invoice-a'",
+        )
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        assert_eq!(totals, (Some(12_345), Some(12_345)));
+    }
+
+    #[tokio::test]
+    async fn card_invoice_writeback_realigns_every_card_line_in_a_shared_due_cell() {
+        let p = pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let due = format!("{year}-03-10");
+
+        sqlx::query("INSERT INTO person (id, name) VALUES ('person-1', 'Pessoa')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day) \
+             VALUES ('card-a', 'Cartão A', 'credit_card', 'person-1', 20, 10), \
+                    ('card-b', 'Cartão B', 'credit_card', 'person-1', 20, 10)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO invoice \
+               (id, account_id, cycle_month, closing_date, due_date, stated_total_cents, source_stated_total_cents) \
+             VALUES ('invoice-a', 'card-a', ?1, ?2, ?3, 1, 1), \
+                    ('invoice-b', 'card-b', ?1, ?2, ?3, 2, 2)",
+        )
+        .bind(format!("{year}-03"))
+        .bind(format!("{year}-02-20"))
+        .bind(&due)
+        .execute(&p)
+        .await
+        .unwrap();
+        let cell = CellWrite {
+            a1: "D3".into(),
+            row: 2,
+            col: 3,
+            date: due,
+            kind: "saida".into(),
+            current: "0,03".into(),
+            proposed: "300,00".into(),
+            value_cents: 30_000,
+            changed: true,
+            formula: Some("=SUM(100.00+200.00)".into()),
+            note_text: Some("CARTÕES:\nR$ 100,00 - Cartão A\nR$ 200,00 - Cartão B".into()),
+        };
+
+        assert_eq!(
+            record_write_back_audit(&p, "2027", &[&cell]).await.unwrap(),
+            2
+        );
+        let totals: Vec<(String, Option<i64>, Option<i64>)> = sqlx::query_as(
+            "SELECT id, stated_total_cents, source_stated_total_cents FROM invoice ORDER BY id",
         )
         .fetch_all(&p)
         .await
         .unwrap();
-        assert_eq!(rows.len(), 2);
-        for (id, src) in &rows {
-            assert!(
-                src.is_none(),
-                "{id}: a base do crédito é zerada (NULL) após o write-back do lump"
-            );
-        }
-
-        // A compra de outro ciclo permanece intacta (base preservada).
-        let (other,): (Option<i64>,) =
-            sqlx::query_as("SELECT source_amount FROM \"transaction\" WHERE id = 'buy-other'")
-                .fetch_one(&p)
-                .await
-                .unwrap();
         assert_eq!(
-            other,
-            Some(9000),
-            "compra de outro vencimento não é tocada pelo realinho do lump"
+            totals,
+            vec![
+                ("invoice-a".into(), Some(10_000), Some(10_000)),
+                ("invoice-b".into(), Some(20_000), Some(20_000)),
+            ]
         );
+    }
+
+    #[tokio::test]
+    async fn write_back_does_not_repropose_a_paid_card_invoice() {
+        let p = pool().await;
+        let due = chrono::Local::now().date_naive().pred_opt().unwrap();
+
+        sqlx::query("INSERT INTO person (id, name) VALUES ('person-1', 'Pessoa')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day) \
+             VALUES ('card-a', 'Cartão A', 'credit_card', 'person-1', 20, 10)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO invoice \
+               (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) \
+             VALUES ('invoice-a', 'card-a', ?1, ?2, ?3, 12_345)",
+        )
+        .bind(crate::cards::cycle_month_of(due))
+        .bind(due.pred_opt().unwrap().to_string())
+        .bind(due.to_string())
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let txns = load_write_back_txns(&p, due.year()).await.unwrap();
+        assert!(
+            !txns
+                .iter()
+                .any(|txn| txn.kind == import::RowKind::Saida && txn.date == due.to_string()),
+            "fatura paga não reabre a célula realizada"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_back_keeps_app_refund_expectation_and_excludes_import_derived_income() {
+        let p = pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let due = format!("{year}-03-10");
+
+        sqlx::query("INSERT INTO person (id, name) VALUES ('person-1', 'Pessoa')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day) \
+             VALUES ('card-a', 'Cartão A', 'credit_card', 'person-1', 20, 10)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO invoice (id, account_id, cycle_month, closing_date, due_date) \
+             VALUES ('invoice-a', 'card-a', ?1, ?2, ?3)",
+        )
+        .bind(format!("{year}-03"))
+        .bind(format!("{year}-02-20"))
+        .bind(&due)
+        .execute(&p)
+        .await
+        .unwrap();
+        crate::commands::card_cmds::create_refund_expectation_inner(
+            &p,
+            "invoice-a",
+            9_000,
+            Some("Reembolso esperado"),
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+               (id, type, amount, date, is_fixed, is_projection, refund_invoice_id) \
+             VALUES ('derived:reembolso:import', 'income', 8_000, ?1, 0, 0, 'invoice-a')",
+        )
+        .bind(&due)
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let txns = load_write_back_txns(&p, year).await.unwrap();
+        let entradas: Vec<&WriteBackTxn> = txns
+            .iter()
+            .filter(|txn| txn.kind == import::RowKind::Entrada && txn.date == due)
+            .collect();
+        assert_eq!(entradas.len(), 1);
+        assert_eq!(entradas[0].amount_cents, 9_000);
     }
 
     // A aba Economia é uma ANOTAÇÃO de métrica, não um movimento de caixa.
@@ -1505,78 +1853,6 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e.kind, forecast::EventKind::Economia)),
             "a anotação da aba Economia não aparece como EventKind::Economia (não toca o Saldo)"
-        );
-    }
-
-    // `realign_credit_lump` limita o scan a `date >= 1º/jan do ano-2`; sem esse bound, uma compra de
-    // anos atrás com o mesmo dia do mês produziria o mesmo `cycle_due_date` e seria realinhada por
-    // engano.
-    #[tokio::test]
-    async fn realign_credit_lump_ignores_purchases_from_prior_years() {
-        let p = pool().await;
-
-        // Mesmo cartão do teste de lump: fecha dia 25, vence dia 5.
-        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-1', 'Tester')")
-            .execute(&p)
-            .await
-            .unwrap();
-        sqlx::query(
-            "INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day) \
-             VALUES ('card-1', 'Cartão', 'credit_card', 'pe-1', 25, 5)",
-        )
-        .execute(&p)
-        .await
-        .unwrap();
-
-        // Compra RECENTE: 20/MAI/2026 (≤ 25) → vence 05/JUN/2026.
-        // Compra ANTIGA: 20/MAI/2023 (mesmo dia-do-mês) → vence 05/JUN/2023 (mesmo padrão de dia).
-        sqlx::query(
-            "INSERT INTO \"transaction\" (id, type, amount, date, payment_method, is_fixed, is_projection, source_amount) \
-             VALUES ('buy-2026', 'expense', 3000, '2026-05-20', 'credit', 0, 0, 3000), \
-                    ('buy-2023', 'expense', 7000, '2023-05-20', 'credit', 0, 0, 7000)",
-        )
-        .execute(&p)
-        .await
-        .unwrap();
-
-        // Write-back do lump da fatura de 05/JUN/2026.
-        let cell = CellWrite {
-            a1: "F5".into(),
-            row: 4,
-            col: 5,
-            date: "2026-06-05".into(),
-            kind: "saida".into(),
-            current: "0,00".into(),
-            proposed: "30,00".into(),
-            value_cents: 3000,
-            changed: true,
-            formula: None,
-            note_text: None,
-        };
-        let realigned = record_write_back_audit(&p, "2026", &[&cell]).await.unwrap();
-        assert_eq!(
-            realigned, 1,
-            "só a compra de 2026 entra no ciclo de 05/JUN/2026 (a de 2023 fica fora da janela)"
-        );
-
-        // A compra de 2026 teve a base zerada (NULL).
-        let (recent,): (Option<i64>,) =
-            sqlx::query_as("SELECT source_amount FROM \"transaction\" WHERE id = 'buy-2026'")
-                .fetch_one(&p)
-                .await
-                .unwrap();
-        assert!(recent.is_none(), "a base da compra de 2026 é zerada");
-
-        // A compra de 2023 permanece INTACTA (fora do bound de data → nunca avaliada).
-        let (old,): (Option<i64>,) =
-            sqlx::query_as("SELECT source_amount FROM \"transaction\" WHERE id = 'buy-2023'")
-                .fetch_one(&p)
-                .await
-                .unwrap();
-        assert_eq!(
-            old,
-            Some(7000),
-            "a compra de ano anterior não é realinhada por engano"
         );
     }
 

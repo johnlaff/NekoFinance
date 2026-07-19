@@ -280,38 +280,6 @@ pub fn last_day_of_month(year: i32, month: u32) -> NaiveDate {
         .expect("valid month")
 }
 
-/// Given a checkin date and a card's closing/due days, compute the due date for that cycle.
-/// The cycle closes on `closing_day` of the checkin's month (or previous month if checkin is before
-/// closing_day), and the invoice is due on `due_day` of the following month.
-pub fn cycle_due_date(checkin_date: NaiveDate, closing_day: u32, due_day: u32) -> NaiveDate {
-    // Clamp closing_day to a calendar day present in every month. `closing_day = 0` is not a valid
-    // cycle boundary (the `day() <= closing_day` guard would never hold, always routing to the
-    // prior month); treat it as 1. `closing_day > 28` could skip February; cap at 28.
-    let closing_day = closing_day.clamp(1, 28);
-    let (cycle_close_year, cycle_close_month) = if checkin_date.day() <= closing_day {
-        // Checkin is before or on closing_day → cycle closes this month
-        (checkin_date.year(), checkin_date.month())
-    } else {
-        // Checkin is after closing_day → cycle closed last month
-        if checkin_date.month() == 1 {
-            (checkin_date.year() - 1, 12)
-        } else {
-            (checkin_date.year(), checkin_date.month() - 1)
-        }
-    };
-
-    // Due date is in the month AFTER the cycle closes
-    let (due_year, due_month) = if cycle_close_month == 12 {
-        (cycle_close_year + 1, 1)
-    } else {
-        (cycle_close_year, cycle_close_month + 1)
-    };
-
-    let last_day = last_day_of_month(due_year, due_month);
-    let due_day_clamped = due_day.min(last_day.day());
-    NaiveDate::from_ymd_opt(due_year, due_month, due_day_clamped).expect("valid due date")
-}
-
 /// Projected balance on each month's last day within the (chronological) daily series.
 fn month_end_points(daily: &[DayPoint]) -> Vec<MonthEnd> {
     let mut out: Vec<MonthEnd> = Vec::new();
@@ -1168,62 +1136,6 @@ mod tests {
         // Entre contas líquidas (ou destino desconhecido) → net-zero, ignorado.
         assert_eq!(classify("transfer", false, None, Some("liquid")), None);
         assert_eq!(classify("transfer", false, None, None), None);
-    }
-
-    // ---- Phase 7: credit cycle aggregation (T7.2) ----
-
-    // T7.2a — cycle_due_date: checkin before closing_day → due next month
-    #[test]
-    fn cycle_due_date_before_closing() {
-        // Card closes on day 20, due on day 10
-        // Checkin on Jan 15 (before closing) → cycle closes Jan 20 → due Feb 10
-        let checkin = d("2026-01-15");
-        let due = cycle_due_date(checkin, 20, 10);
-        assert_eq!(due, d("2026-02-10"));
-    }
-
-    // T7.2b — cycle_due_date: checkin after closing_day → due in 2 months
-    #[test]
-    fn cycle_due_date_after_closing() {
-        // Card closes on day 20, due on day 10
-        // Checkin on Jan 25 (after closing) → cycle closed Dec 20 → due Jan 10
-        let checkin = d("2026-01-25");
-        let due = cycle_due_date(checkin, 20, 10);
-        assert_eq!(due, d("2026-01-10"));
-    }
-
-    // T7.2c — cycle_due_date: year boundary
-    #[test]
-    fn cycle_due_date_year_boundary() {
-        // Card closes on day 20, due on day 10
-        // Checkin on Dec 15 → cycle closes Dec 20 → due Jan 10 next year
-        let checkin = d("2025-12-15");
-        let due = cycle_due_date(checkin, 20, 10);
-        assert_eq!(due, d("2026-01-10"));
-    }
-
-    // T7.2d — cycle_due_date: due_day clamped to last day of month
-    #[test]
-    fn cycle_due_date_clamped() {
-        // Card closes on day 20, due on day 31
-        // Checkin on Jan 15 → cycle closes Jan 20 → due Feb 28 (clamped)
-        let checkin = d("2026-01-15");
-        let due = cycle_due_date(checkin, 20, 31);
-        assert_eq!(due, d("2026-02-28"));
-    }
-
-    // T7.2e — cycle_due_date: closing_day = 0 is clamped to 1 (not "always prior month").
-    // Before the clamp, `day() <= 0` was always false → the cycle was always treated as closed
-    // last month regardless of checkin. After clamping to 1: checkin day 15 > closing day 1, so
-    // the cycle closed last month (December) → due January 10.
-    #[test]
-    fn cycle_due_date_closing_day_zero() {
-        let checkin = d("2026-01-15");
-        let due = cycle_due_date(checkin, 0, 10);
-        assert_eq!(due, d("2026-01-10"));
-        // Sanity: a same-month checkin on day 1 (≤ clamped closing_day 1) closes this month → Feb.
-        let due_early = cycle_due_date(d("2026-01-01"), 0, 10);
-        assert_eq!(due_early, d("2026-02-10"));
     }
 
     // ---- Economia + previsão de diário como driver ----

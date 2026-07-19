@@ -169,6 +169,10 @@ pub fn run() {
                     .await
                     .map_err(|e| format!("backfill de empréstimos de cenário: {e}"))?;
 
+                cards::backfill_legacy_credit_purchases(&pool)
+                    .await
+                    .map_err(|e| format!("backfill de compras de cartão: {e}"))?;
+
                 // Backfill das substituições legadas marcadas por sufixo `#repl:` na descrição →
                 // identidade por FK (`transaction.override_id`). Idempotente (a marca some ao
                 // processar); parse ancorado + lookup do override não cabem numa migração SQL.

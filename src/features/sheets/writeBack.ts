@@ -22,9 +22,8 @@ const SAFE_KINDS = new Set(["entrada", "saida", "diario"]);
  * TODAS valem:
  *   1. `enabled` — a flag-mestre do write-back está ligada.
  *   2. `conflictCount === 0` — nenhum conflito de importação bloqueando o envio.
- *   3. `!multiCardWarning` — sem cenário ambíguo de data de fatura.
- *   4. todas as células `changed` têm `kind` em SAFE_KINDS (só valor, sem coluna de fórmula).
- *   5. `previewRevision` não-vazia — uma prévia fresca acabou de ser calculada (token de frescura).
+ *   3. todas as células `changed` têm `kind` em SAFE_KINDS (só valor, sem coluna de fórmula).
+ *   4. `previewRevision` não-vazia — uma prévia fresca acabou de ser calculada (token de frescura).
  * Fora disso, a UI cai no fluxo multi-etapas completo. As salvaguardas do backend (re-checagem de
  * frescura via modifiedTime, gate de conflito, blocklist de colunas de fórmula) seguem rodando
  * SEMPRE — este atalho só evita os cliques manuais nos casos rotineiros.
@@ -32,14 +31,12 @@ const SAFE_KINDS = new Set(["entrada", "saida", "diario"]);
 export function isSafeForFastPath(
   enabled: boolean,
   conflictCount: number,
-  multiCardWarning: boolean,
   changed: CellWrite[],
   previewRevision: string | null,
 ): boolean {
   return (
     enabled &&
     conflictCount === 0 &&
-    !multiCardWarning &&
     changed.length > 0 &&
     changed.every((c) => SAFE_KINDS.has(c.kind)) &&
     !!previewRevision

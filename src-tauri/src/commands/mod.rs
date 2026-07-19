@@ -2479,66 +2479,6 @@ mod tests {
         assert_eq!(err, SHEET_CHANGED_MSG);
     }
 
-    // Dois cartões com ciclo completo (closing+due) → aviso não bloqueante ligado.
-    #[tokio::test]
-    async fn multi_card_warning_set_with_two_cycle_cards() {
-        let pool = fixture_pool().await;
-        let pid = uuid::Uuid::new_v4().to_string();
-        sqlx::query("INSERT INTO person (id, name) VALUES (?1, 'Tester')")
-            .bind(&pid)
-            .execute(&pool)
-            .await
-            .unwrap();
-        let insert_card = |closing: Option<i64>, due: Option<i64>| {
-            let pid = pid.clone();
-            let pool = pool.clone();
-            async move {
-                sqlx::query(
-                    "INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day) \
-                     VALUES (?1, 'Cartão', 'credit_card', ?2, ?3, ?4)",
-                )
-                .bind(uuid::Uuid::new_v4().to_string())
-                .bind(&pid)
-                .bind(closing)
-                .bind(due)
-                .execute(&pool)
-                .await
-                .unwrap();
-            }
-        };
-
-        // Nenhum cartão → sem aviso.
-        assert!(!multi_card_warning(&pool).await.unwrap());
-        // Um cartão completo → ainda sem aviso (caso suportado).
-        insert_card(Some(10), Some(20)).await;
-        assert!(!multi_card_warning(&pool).await.unwrap());
-        // Segundo cartão completo → aviso LIGADO (mais de um ciclo).
-        insert_card(Some(5), Some(15)).await;
-        assert!(multi_card_warning(&pool).await.unwrap());
-    }
-
-    // Um cartão SEM dias de ciclo também liga o aviso porque a data da fatura é ambígua.
-    #[tokio::test]
-    async fn multi_card_warning_set_with_card_missing_cycle() {
-        let pool = fixture_pool().await;
-        let pid = uuid::Uuid::new_v4().to_string();
-        sqlx::query("INSERT INTO person (id, name) VALUES (?1, 'Tester')")
-            .bind(&pid)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(
-            "INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day) \
-             VALUES (?1, 'Cartão sem ciclo', 'credit_card', ?2, NULL, NULL)",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(&pid)
-        .execute(&pool)
-        .await
-        .unwrap();
-        assert!(multi_card_warning(&pool).await.unwrap());
-    }
-
     // No round-trip, o write-back grava o valor LOCAL na planilha; a auditoria realinha a BASE
     // (source_amount) a esse valor. Assim, uma edição local POSTERIOR não vira conflito espúrio: a
     // planilha guarda um valor que o PRÓPRIO app pôs lá (não uma edição independente do dono).

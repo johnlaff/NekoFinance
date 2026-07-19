@@ -147,7 +147,7 @@ export function WriteBackPending({ writeBack }: { writeBack: WriteBackPendingSta
 
   // Caminho rápido "Sincronizar": busca a prévia EM SILÊNCIO (mesma API do painel completo), avalia
   // a segurança e — se segura — abre só a confirmação com um resumo inline. Se NÃO for segura
-  // (conflito, risco de coluna de fórmula, multi-cartão, ou frescura ausente), cai no fluxo completo
+  // (conflito, risco de coluna de fórmula ou frescura ausente), cai no fluxo completo
   // expandindo o painel. As salvaguardas do backend rodam de qualquer forma; este atalho só decide
   // quais cliques o usuário precisa dar.
   // Sem `finally` de propósito: o React Compiler não otimiza componentes com try/finally.
@@ -164,7 +164,6 @@ export function WriteBackPending({ writeBack }: { writeBack: WriteBackPendingSta
       const safe = isSafeForFastPath(
         writeBack.enabled,
         writeBack.conflictCount,
-        result.multi_card_warning,
         changed,
         result.preview_revision,
       );

@@ -1,4 +1,5 @@
 use chrono::{Datelike, NaiveDate};
+use sqlx::SqlitePool;
 
 /// Estado da fatura derivado exclusivamente do calendário, para que banco e interface não
 /// precisem sincronizar uma cópia perecível desse estado.
@@ -173,6 +174,84 @@ pub fn reconciliation_delta_cents(
 /// caixa, acentos ou dois-pontos não crie identidades paralelas.
 pub(crate) fn normalize_alias(s: &str) -> String {
     crate::google_sheets::import::normalize_item_section(s)
+}
+
+/// Vincula compras de crédito legadas à fatura do ciclo correto quando existe um cartão titular
+/// configurado. A fatura é a identidade persistida do vencimento; o backfill só estabelece a FK e
+/// preserva o total declarado, que pode já refletir a planilha importada.
+pub async fn backfill_legacy_credit_purchases(pool: &SqlitePool) -> Result<(), String> {
+    let card: Option<(String, i64, i64)> = sqlx::query_as(
+        "SELECT id, closing_day, due_day FROM account \
+         WHERE type = 'credit_card' AND closing_day IS NOT NULL AND due_day IS NOT NULL \
+         ORDER BY created_at, id LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("backfill cartão: {e}"))?;
+    let Some((account_id, closing_day, due_day)) = card else {
+        return Ok(());
+    };
+
+    let purchases: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, date FROM \"transaction\" \
+         WHERE type = 'expense' AND payment_method = 'credit' AND invoice_id IS NULL \
+           AND scenario_id IS NULL ORDER BY date, id",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("backfill compras: {e}"))?;
+    if purchases.is_empty() {
+        return Ok(());
+    }
+
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| format!("backfill cartão (begin): {e}"))?;
+    for (purchase_id, purchase_date) in purchases {
+        let purchase = NaiveDate::parse_from_str(&purchase_date, "%Y-%m-%d")
+            .map_err(|_| format!("data de compra de crédito inválida: {purchase_date}"))?;
+        let closing = cycle_close_for_purchase(purchase, closing_day as u32);
+        let due = due_date_for_close(closing, due_day as u32);
+        let cycle_month = cycle_month_of(due);
+        let invoice_id: Option<(String,)> =
+            sqlx::query_as("SELECT id FROM invoice WHERE account_id = ?1 AND cycle_month = ?2")
+                .bind(&account_id)
+                .bind(&cycle_month)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| format!("backfill buscar fatura: {e}"))?;
+        let invoice_id = match invoice_id {
+            Some((id,)) => id,
+            None => {
+                let id = uuid::Uuid::new_v4().to_string();
+                sqlx::query(
+                    "INSERT INTO invoice (id, account_id, cycle_month, closing_date, due_date) \
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                )
+                .bind(&id)
+                .bind(&account_id)
+                .bind(&cycle_month)
+                .bind(closing.to_string())
+                .bind(due.to_string())
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("backfill criar fatura: {e}"))?;
+                id
+            }
+        };
+        sqlx::query(
+            "UPDATE \"transaction\" SET invoice_id = ?1 WHERE id = ?2 AND invoice_id IS NULL",
+        )
+        .bind(&invoice_id)
+        .bind(&purchase_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("backfill vincular compra: {e}"))?;
+    }
+    tx.commit()
+        .await
+        .map_err(|e| format!("backfill cartão (commit): {e}"))
 }
 
 #[cfg(test)]
@@ -360,5 +439,133 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn legacy_credit_purchase_backfill_links_the_next_cycle_without_changing_stated_total() {
+        let pool = pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let purchase = NaiveDate::from_ymd_opt(year, 1, 25).unwrap();
+        let closing = cycle_close_for_purchase(purchase, 20);
+        let due = due_date_for_close(closing, 10);
+        let cycle_month = cycle_month_of(due);
+
+        sqlx::query("INSERT INTO person (id, name) VALUES ('person-1', 'Pessoa')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day) \
+             VALUES ('card-1', 'Cartão', 'credit_card', 'person-1', 20, 10)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO invoice \
+               (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) \
+             VALUES ('invoice-1', 'card-1', ?1, ?2, ?3, 99_999)",
+        )
+        .bind(&cycle_month)
+        .bind(closing.to_string())
+        .bind(due.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+               (id, type, amount, date, payment_method, is_fixed, is_projection) \
+             VALUES ('legacy-purchase', 'expense', 1_234, ?1, 'credit', 0, 0)",
+        )
+        .bind(purchase.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        backfill_legacy_credit_purchases(&pool).await.unwrap();
+        let linked: (String, Option<i64>) = sqlx::query_as(
+            "SELECT invoice_id, (SELECT stated_total_cents FROM invoice WHERE id = invoice_id) \
+             FROM \"transaction\" WHERE id = 'legacy-purchase'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(linked, ("invoice-1".into(), Some(99_999)));
+
+        backfill_legacy_credit_purchases(&pool).await.unwrap();
+        let linked_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM \"transaction\" WHERE id = 'legacy-purchase' AND invoice_id = 'invoice-1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            linked_count, 1,
+            "reexecutar não altera a compra já vinculada"
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_credit_purchase_backfill_leaves_credit_without_any_card_untouched() {
+        let pool = pool().await;
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+               (id, type, amount, date, payment_method, is_fixed, is_projection) \
+             VALUES ('legacy-purchase', 'expense', 1_234, '2030-01-25', 'credit', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        backfill_legacy_credit_purchases(&pool).await.unwrap();
+        let invoice_id: Option<String> = sqlx::query_scalar(
+            "SELECT invoice_id FROM \"transaction\" WHERE id = 'legacy-purchase'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(invoice_id, None);
+    }
+
+    #[tokio::test]
+    async fn legacy_credit_purchase_backfill_creates_the_invoice_for_the_next_cycle() {
+        let pool = pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let purchase = NaiveDate::from_ymd_opt(year, 1, 25).unwrap();
+
+        sqlx::query("INSERT INTO person (id, name) VALUES ('person-1', 'Pessoa')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, closing_day, due_day) \
+             VALUES ('card-1', 'Cartão', 'credit_card', 'person-1', 20, 10)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+               (id, type, amount, date, payment_method, is_fixed, is_projection) \
+             VALUES ('legacy-purchase', 'expense', 1_234, ?1, 'credit', 0, 0)",
+        )
+        .bind(purchase.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        backfill_legacy_credit_purchases(&pool).await.unwrap();
+        let invoice: (String, String, String, Option<i64>) = sqlx::query_as(
+            "SELECT i.cycle_month, i.closing_date, i.due_date, i.stated_total_cents \
+             FROM invoice i JOIN \"transaction\" t ON t.invoice_id = i.id \
+             WHERE t.id = 'legacy-purchase'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(invoice.0, format!("{year}-03"));
+        assert_eq!(invoice.1, format!("{year}-02-20"));
+        assert_eq!(invoice.2, format!("{year}-03-10"));
+        assert_eq!(invoice.3, None, "o vínculo não inventa total declarado");
     }
 }

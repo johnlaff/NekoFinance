@@ -511,13 +511,12 @@ export interface CellWrite {
  * Resultado RICO da prévia: o diff + um token de frescura + flags de pré-condição.
  * `preview_revision` é o `modifiedTime` do Drive no instante da prévia; o apply o re-verifica e
  * ABORTA se a planilha tiver mudado (edição concorrente → re-revisão). `conflicts_pending` espelha
- * o gate de conflito do backend (a UI desabilita o envio). `multi_card_warning` é não-bloqueante.
+ * o gate de conflito do backend (a UI desabilita o envio).
  */
 export interface WriteBackPreviewResult {
   cells: CellWrite[];
   preview_revision: string;
   conflicts_pending: boolean;
-  multi_card_warning: boolean;
 }
 
 /** Estado da flag de write-back. `false` → envio ao Sheets desabilitado (só preview). */
@@ -525,8 +524,8 @@ export function writeBackEnabled(): Promise<boolean> {
   return invoke("write_back_enabled");
 }
 
-/** Prévia RICA READ-ONLY: diff + `preview_revision` (frescura) + conflitos pendentes +
- * aviso de multi-cartão. A UI endurecida usa isto para amarrar a aprovação ao que foi visto. */
+/** Prévia RICA READ-ONLY: diff + `preview_revision` (frescura) + conflitos pendentes.
+ * A UI endurecida usa isto para amarrar a aprovação ao que foi visto. */
 export function previewWriteBackStatus(
   spreadsheetId: string,
   sheetName: string,
