@@ -845,6 +845,18 @@ pub(crate) async fn update_transaction_inner(
         return Err("lançamento não encontrado".into());
     }
 
+    // Uma renda não compõe a fatura: depois de devolver a contribuição declarada, desvincula a
+    // linha ainda nesta transação para que uma exclusão posterior não a desconte uma segunda vez.
+    if old_type == "expense" && txn_type != "expense" {
+        sqlx::query(
+            "UPDATE \"transaction\" SET invoice_id = NULL, card_series_id = NULL WHERE id = ?1",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("update (unlink invoice): {e}"))?;
+    }
+
     if let Some(invoice_id) = invoice_id {
         let old_contribution = if old_type == "expense" { old_amount } else { 0 };
         let new_contribution = if txn_type == "expense" {
@@ -1052,6 +1064,55 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(stated, Some(11_000));
+    }
+
+    #[tokio::test]
+    async fn changing_card_purchase_to_income_unlinks_it_before_delete() {
+        let pool = test_pool().await;
+        insert_invoice_purchase(
+            &pool,
+            "purchase-income",
+            "invoice-income",
+            2_000,
+            Some(10_000),
+            None,
+        )
+        .await;
+
+        update_transaction_inner(
+            &pool,
+            "purchase-income",
+            "income",
+            2_000,
+            Some("estorno".into()),
+            Some("pix".into()),
+            false,
+            "2026-03-10",
+        )
+        .await
+        .unwrap();
+
+        let (stated, linked_invoice): (Option<i64>, Option<String>) = sqlx::query_as(
+            "SELECT i.stated_total_cents, t.invoice_id FROM invoice i \
+             JOIN \"transaction\" t ON t.id = 'purchase-income' \
+             WHERE i.id = 'invoice-income'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(stated, Some(8_000));
+        assert_eq!(linked_invoice, None, "renda não pertence à fatura");
+
+        delete_transaction_inner(&pool, "purchase-income")
+            .await
+            .unwrap();
+        let stated_after_delete: Option<i64> = sqlx::query_scalar(
+            "SELECT stated_total_cents FROM invoice WHERE id = 'invoice-income'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(stated_after_delete, Some(8_000));
     }
 
     #[tokio::test]

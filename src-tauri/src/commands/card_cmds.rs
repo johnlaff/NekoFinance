@@ -122,6 +122,12 @@ fn validate_cycle(closing_day: Option<i64>, due_day: Option<i64>) -> Result<(u32
     if !(1..=31).contains(&due) {
         return Err("vencimento deve ser entre 1 e 31".into());
     }
+    if closing == 28 && due >= 29 {
+        return Err(
+            "com fechamento no dia 28, o vencimento deve ser até o dia 28 — fevereiro não tem dia 29+"
+                .into(),
+        );
+    }
     Ok((closing as u32, due as u32))
 }
 
@@ -678,18 +684,21 @@ pub async fn register_card_purchase(
     amount_cents: i64,
     description: Option<String>,
     date: String,
+    refund_cents: Option<i64>,
     tag_ids: Vec<String>,
 ) -> Result<String, String> {
-    register_card_purchase_inner(
+    register_card_purchase_with_refund_inner(
         pool.inner(),
         &card_account_id,
         amount_cents,
         description.as_deref(),
         &date,
+        refund_cents,
         &tag_ids,
     )
     .await
 }
+#[cfg(test)]
 pub(crate) async fn register_card_purchase_inner(
     pool: &SqlitePool,
     card_account_id: &str,
@@ -698,8 +707,33 @@ pub(crate) async fn register_card_purchase_inner(
     date: &str,
     tag_ids: &[String],
 ) -> Result<String, String> {
+    register_card_purchase_with_refund_inner(
+        pool,
+        card_account_id,
+        amount_cents,
+        description,
+        date,
+        None,
+        tag_ids,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn register_card_purchase_with_refund_inner(
+    pool: &SqlitePool,
+    card_account_id: &str,
+    amount_cents: i64,
+    description: Option<&str>,
+    date: &str,
+    refund_cents: Option<i64>,
+    tag_ids: &[String],
+) -> Result<String, String> {
     if amount_cents <= 0 {
         return Err("valor deve ser positivo".into());
+    }
+    if refund_cents.is_some_and(|value| value <= 0) {
+        return Err("reembolso deve ser positivo".into());
     }
     let date = parse_date(date)?;
     let (closing, due) = effective_cycle(pool, card_account_id).await?;
@@ -711,10 +745,25 @@ pub(crate) async fn register_card_purchase_inner(
     sqlx::query("INSERT INTO \"transaction\" (id,type,amount,description,date,payment_method,is_fixed,is_projection,invoice_id) VALUES (?1,'expense',?2,?3,?4,'credit',0,?5,?6)")
         .bind(&id).bind(amount_cents).bind(description.map(str::trim).filter(|s|!s.is_empty())).bind(date.to_string()).bind((date>chrono::Local::now().date_naive()) as i64).bind(&invoice_id).execute(&mut *tx).await.map_err(|e|format!("registrar compra: {e}"))?;
     adjust_stated(&mut tx, &invoice_id, amount_cents).await?;
-    tx.commit().await.map_err(|e| format!("compra: {e}"))?;
-    if !tag_ids.is_empty() {
-        crate::tags::set_transaction_tags(pool, &id, tag_ids).await?;
+    if let Some(refund_cents) = refund_cents {
+        let due: String = sqlx::query_scalar("SELECT due_date FROM invoice WHERE id = ?1")
+            .bind(&invoice_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| format!("reembolso: {e}"))?;
+        let due_date = parse_date(&due)?;
+        sqlx::query("INSERT INTO \"transaction\" (id,type,amount,date,is_fixed,is_projection,refund_invoice_id) VALUES (?1,'income',?2,?3,0,?4,?5)")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(refund_cents)
+            .bind(&due)
+            .bind((due_date > chrono::Local::now().date_naive()) as i64)
+            .bind(&invoice_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("criar reembolso: {e}"))?;
     }
+    crate::tags::set_transaction_tags_on_conn(&mut tx, &id, tag_ids).await?;
+    tx.commit().await.map_err(|e| format!("compra: {e}"))?;
     Ok(id)
 }
 
@@ -855,7 +904,69 @@ async fn materialize_series(
     Ok(())
 }
 
+/// Estende assinaturas ativas até dezembro do ano corrente ao abrir o banco. A inserção de cada
+/// ocorrência é idempotente por série × fatura, portanto reabrir o app não duplica cobranças.
+pub async fn advance_active_subscriptions(pool: &SqlitePool) -> Result<(), String> {
+    let subscriptions: Vec<(String, String, String, i64, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, account_id, description, amount_cents, start_cycle_month, canceled_from_cycle_month \
+         FROM card_series WHERE count IS NULL",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("assinaturas: {e}"))?;
+    let today = chrono::Local::now().date_naive();
+
+    for (series_id, account_id, description, amount_cents, start_cycle, canceled_from) in
+        subscriptions
+    {
+        let (closing, due) = effective_cycle(pool, &account_id).await?;
+        let current_cycle = cards::cycle_month_of(cards::due_date_for_close(
+            cards::cycle_close_for_purchase(today, closing),
+            due,
+        ));
+        if canceled_from
+            .as_deref()
+            .is_some_and(|cycle| cycle <= current_cycle.as_str())
+        {
+            continue;
+        }
+        let display_day = sqlx::query_scalar::<_, String>(
+            "SELECT date FROM \"transaction\" WHERE card_series_id = ?1 ORDER BY date, id LIMIT 1",
+        )
+        .bind(&series_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| format!("assinatura: {e}"))?
+        .and_then(|date| parse_date(&date).ok().map(|date| date.day()))
+        .unwrap_or(1);
+
+        let mut tx = pool
+            .begin()
+            .await
+            .map_err(|e| format!("avançar assinatura: {e}"))?;
+        materialize_series(
+            &mut tx,
+            &series_id,
+            &account_id,
+            &description,
+            amount_cents,
+            None,
+            &start_cycle,
+            canceled_from.as_deref(),
+            closing,
+            due,
+            display_day,
+        )
+        .await?;
+        tx.commit()
+            .await
+            .map_err(|e| format!("avançar assinatura: {e}"))?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn create_card_series(
     pool: State<'_, SqlitePool>,
     card_account_id: String,
@@ -863,17 +974,22 @@ pub async fn create_card_series(
     amount_cents: i64,
     count: Option<i64>,
     start_date: String,
+    refund_cents: Option<i64>,
+    tag_ids: Vec<String>,
 ) -> Result<String, String> {
-    create_card_series_inner(
+    create_card_series_with_refund_inner(
         pool.inner(),
         &card_account_id,
         &description,
         amount_cents,
         count,
         &start_date,
+        refund_cents,
+        &tag_ids,
     )
     .await
 }
+#[cfg(test)]
 pub(crate) async fn create_card_series_inner(
     pool: &SqlitePool,
     card_account_id: &str,
@@ -881,6 +997,30 @@ pub(crate) async fn create_card_series_inner(
     amount_cents: i64,
     count: Option<i64>,
     start_date: &str,
+) -> Result<String, String> {
+    create_card_series_with_refund_inner(
+        pool,
+        card_account_id,
+        description,
+        amount_cents,
+        count,
+        start_date,
+        None,
+        &[],
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn create_card_series_with_refund_inner(
+    pool: &SqlitePool,
+    card_account_id: &str,
+    description: &str,
+    amount_cents: i64,
+    count: Option<i64>,
+    start_date: &str,
+    refund_cents: Option<i64>,
+    tag_ids: &[String],
 ) -> Result<String, String> {
     if description.trim().is_empty() {
         return Err("descrição obrigatória".into());
@@ -890,6 +1030,9 @@ pub(crate) async fn create_card_series_inner(
     }
     if count.is_some_and(|n| !(1..=120).contains(&n)) {
         return Err("quantidade deve ser entre 1 e 120".into());
+    }
+    if refund_cents.is_some_and(|value| value <= 0) {
+        return Err("reembolso deve ser positivo".into());
     }
     let start = parse_date(start_date)?;
     let (closing, due) = effective_cycle(pool, card_account_id).await?;
@@ -914,6 +1057,37 @@ pub(crate) async fn create_card_series_inner(
         start.day(),
     )
     .await?;
+    let occurrence_ids: Vec<(String,)> = sqlx::query_as(
+        "SELECT id FROM \"transaction\" WHERE card_series_id = ?1 ORDER BY date, id",
+    )
+    .bind(&id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|e| format!("série: {e}"))?;
+    for (occurrence_id,) in occurrence_ids {
+        crate::tags::set_transaction_tags_on_conn(&mut tx, &occurrence_id, tag_ids).await?;
+    }
+    if let Some(refund_cents) = refund_cents {
+        let due: String = sqlx::query_scalar(
+            "SELECT i.due_date FROM \"transaction\" t \
+             JOIN invoice i ON i.id = t.invoice_id \
+             WHERE t.card_series_id = ?1 ORDER BY i.cycle_month, t.id LIMIT 1",
+        )
+        .bind(&id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| format!("reembolso da série: {e}"))?;
+        let due_date = parse_date(&due)?;
+        sqlx::query("INSERT INTO \"transaction\" (id,type,amount,date,is_fixed,is_projection,refund_series_id) VALUES (?1,'income',?2,?3,0,?4,?5)")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(refund_cents)
+            .bind(&due)
+            .bind((due_date > chrono::Local::now().date_naive()) as i64)
+            .bind(&id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("criar reembolso da série: {e}"))?;
+    }
     tx.commit().await.map_err(|e| format!("série: {e}"))?;
     Ok(id)
 }
@@ -1439,6 +1613,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejects_cycle_that_collides_after_february_due_date_clamp() {
+        let pool = pool().await;
+        let err = create_card_account_inner(
+            &pool,
+            "Ciclo inválido",
+            None,
+            Some(28),
+            Some(29),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("fechamento no dia 28"), "erro: {err}");
+
+        card(&pool, "Último dia seguro", 28, 28).await;
+        card(&pool, "Vencimento 29 seguro", 20, 29).await;
+    }
+
+    #[tokio::test]
     async fn purchase_uses_correct_cycle_reuses_invoice_and_never_deadlocks_single_connection() {
         let pool = pool().await;
         let id = card(&pool, "Neko", 20, 10).await;
@@ -1543,6 +1739,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn advancing_active_subscriptions_extends_an_old_subscription_through_current_december_idempotently()
+     {
+        let pool = pool().await;
+        let card_id = card(&pool, "Neko", 20, 10).await;
+        let today = chrono::Local::now().date_naive();
+        let start_cycle = format!("{}-01", today.year() - 1);
+        sqlx::query(
+            "INSERT INTO card_series \
+             (id, account_id, description, amount_cents, count, start_cycle_month) \
+             VALUES ('old-subscription', ?1, 'Streaming', 4_990, NULL, ?2)",
+        )
+        .bind(&card_id)
+        .bind(&start_cycle)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        advance_active_subscriptions(&pool).await.unwrap();
+        let cycles: Vec<(String,)> = sqlx::query_as(
+            "SELECT i.cycle_month FROM \"transaction\" t \
+             JOIN invoice i ON i.id = t.invoice_id \
+             WHERE t.card_series_id = 'old-subscription' ORDER BY i.cycle_month",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            cycles.first().map(|cycle| cycle.0.as_str()),
+            Some(start_cycle.as_str())
+        );
+        assert_eq!(
+            cycles.last().map(|cycle| cycle.0.as_str()),
+            Some(format!("{}-12", today.year()).as_str())
+        );
+        let count_after_first_run = cycles.len();
+
+        advance_active_subscriptions(&pool).await.unwrap();
+        let count_after_second_run: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM \"transaction\" WHERE card_series_id = 'old-subscription'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count_after_second_run as usize, count_after_first_run);
+    }
+
+    #[tokio::test]
     async fn additive_accounting_floors_at_zero_and_follows_delete_and_cancel() {
         let pool = pool().await;
         let id = card(&pool, "Neko", 20, 10).await;
@@ -1635,6 +1878,87 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(linked, None);
+    }
+
+    #[tokio::test]
+    async fn registering_card_purchase_with_refund_links_the_same_invoice_and_rolls_back_on_tag_failure()
+     {
+        let card_pool = pool().await;
+        let card_id = card(&card_pool, "Neko", 20, 10).await;
+        let purchase = register_card_purchase_with_refund_inner(
+            &card_pool,
+            &card_id,
+            2_500,
+            Some("compra"),
+            "2026-01-15",
+            Some(800),
+            &[],
+        )
+        .await
+        .unwrap();
+        let purchase_invoice: String =
+            sqlx::query_scalar("SELECT invoice_id FROM \"transaction\" WHERE id = ?1")
+                .bind(&purchase)
+                .fetch_one(&card_pool)
+                .await
+                .unwrap();
+        let refund_invoice: Option<String> = sqlx::query_scalar(
+            "SELECT refund_invoice_id FROM \"transaction\" WHERE type = 'income'",
+        )
+        .fetch_one(&card_pool)
+        .await
+        .unwrap();
+        assert_eq!(refund_invoice.as_deref(), Some(purchase_invoice.as_str()));
+
+        let rollback_pool = pool().await;
+        let rollback_card = card(&rollback_pool, "Neko", 20, 10).await;
+        let err = register_card_purchase_with_refund_inner(
+            &rollback_pool,
+            &rollback_card,
+            2_500,
+            Some("compra"),
+            "2026-01-15",
+            Some(800),
+            &["tag-inexistente".into()],
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("attach tag"), "erro: {err}");
+        let transactions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM \"transaction\"")
+            .fetch_one(&rollback_pool)
+            .await
+            .unwrap();
+        let invoices: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invoice")
+            .fetch_one(&rollback_pool)
+            .await
+            .unwrap();
+        assert_eq!(transactions, 0, "falha não persiste compra nem reembolso");
+        assert_eq!(invoices, 0, "falha também reverte a fatura criada");
+    }
+
+    #[tokio::test]
+    async fn creating_card_series_with_refund_creates_one_income_linked_to_the_series() {
+        let pool = pool().await;
+        let card_id = card(&pool, "Neko", 20, 10).await;
+        let series = create_card_series_with_refund_inner(
+            &pool,
+            &card_id,
+            "Assinatura compartilhada",
+            1_500,
+            None,
+            "2026-01-15",
+            Some(500),
+            &[],
+        )
+        .await
+        .unwrap();
+        let refunds: Vec<(Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT refund_series_id, refund_invoice_id FROM \"transaction\" WHERE type = 'income'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(refunds, vec![(Some(series), None)]);
     }
 
     #[tokio::test]

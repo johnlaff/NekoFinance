@@ -173,6 +173,10 @@ pub fn run() {
                     .await
                     .map_err(|e| format!("backfill de compras de cartão: {e}"))?;
 
+                commands::advance_active_subscriptions(&pool)
+                    .await
+                    .map_err(|e| format!("avançar assinaturas de cartão: {e}"))?;
+
                 // Backfill das substituições legadas marcadas por sufixo `#repl:` na descrição →
                 // identidade por FK (`transaction.override_id`). Idempotente (a marca some ao
                 // processar); parse ancorado + lookup do override não cabem numa migração SQL.

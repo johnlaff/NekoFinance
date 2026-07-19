@@ -1215,6 +1215,7 @@ struct MetricTxnRow {
     is_fixed: i64,
     is_projection: i64,
     to_liquidity: String,
+    invoice_id: Option<String>,
 }
 
 struct MetricLineItemRow {
@@ -1399,14 +1400,26 @@ async fn load_db_events(
     start_inclusive: NaiveDate,
     end_exclusive: NaiveDate,
     exclude_from_totals: bool,
+    orphan_credit_from: Option<NaiveDate>,
 ) -> Result<Vec<CashflowEvent>, String> {
     let start = start_inclusive.format("%Y-%m-%d").to_string();
     let end = end_exclusive.format("%Y-%m-%d").to_string();
     let known_card_aliases = load_known_card_aliases(pool).await?;
+    let has_card = if orphan_credit_from.is_some() {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT EXISTS(SELECT 1 FROM account WHERE type = 'credit_card')",
+        )
+        .fetch_one(pool)
+        .await
+        .map_err(|e| format!("cartões: {e}"))?
+            != 0
+    } else {
+        false
+    };
 
     const TRANSACTIONS_WITHOUT_EXCLUDED: &str = "SELECT t.id, t.type AS ttype, t.amount, t.date, \
                 COALESCE(t.payment_method,'') AS payment_method, \
-                t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity \
+                t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity, t.invoice_id \
          FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
          WHERE t.date >= ?1 AND t.date < ?2 AND t.scenario_id IS NULL \
            AND NOT EXISTS ( \
@@ -1416,7 +1429,7 @@ async fn load_db_events(
            )";
     const TRANSACTIONS_ALL: &str = "SELECT t.id, t.type AS ttype, t.amount, t.date, \
                 COALESCE(t.payment_method,'') AS payment_method, \
-                t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity \
+                t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity, t.invoice_id \
          FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
          WHERE t.date >= ?1 AND t.date < ?2 AND t.scenario_id IS NULL";
     let transaction_query = if exclude_from_totals {
@@ -1510,7 +1523,7 @@ async fn load_db_events(
             continue;
         }
 
-        if let Some(event) = map_cashflow_row((
+        if let Some(mut event) = map_cashflow_row((
             row.ttype,
             row.amount,
             row.date,
@@ -1519,6 +1532,16 @@ async fn load_db_events(
             row.is_projection,
             row.to_liquidity,
         )) {
+            // Só o crédito FUTURO de uma base com cartão é substituído pelo lump no vencimento.
+            // Sem vínculo de fatura, a compra legada permanece uma saída de caixa; passado e
+            // bases sem cartão conservam a classificação crua.
+            if event.kind == forecast::EventKind::Cartao
+                && row.invoice_id.is_none()
+                && has_card
+                && orphan_credit_from.is_some_and(|today| event.date > today)
+            {
+                event.kind = forecast::EventKind::FixedOut;
+            }
             events.push(event);
         }
     }
@@ -1532,7 +1555,7 @@ async fn load_metric_db_events(
     start_inclusive: NaiveDate,
     end_exclusive: NaiveDate,
 ) -> Result<Vec<CashflowEvent>, String> {
-    let raw_events = load_db_events(pool, start_inclusive, end_exclusive, true).await?;
+    let raw_events = load_db_events(pool, start_inclusive, end_exclusive, true, None).await?;
     finalize_card_events(pool, today, start_inclusive, end_exclusive, raw_events).await
 }
 
@@ -1553,7 +1576,8 @@ pub(crate) async fn load_cashflow_events(
         .ok_or("horizonte inválido para intervalo de caixa")?;
     // Sem o filtro `exclude_from_totals`: a visão de caixa continua contabilizando todo dinheiro
     // que sai, mesmo que um lançamento esteja excluído das métricas de método.
-    let raw_events = load_db_events(pool, raw_start, end_exclusive, false).await?;
+    let raw_events =
+        load_db_events(pool, raw_start, end_exclusive, false, Some(today_naive)).await?;
     finalize_card_events(pool, today_naive, today_naive, end_exclusive, raw_events).await
 }
 
@@ -2076,7 +2100,7 @@ pub(crate) async fn month_grid_at(
 
     // A grade reaproveita a mesma construção final de eventos do forecast: uma nota itemizada
     // entra pelos seus itens, e a fatura substitui qualquer Cartão cru futuro no vencimento.
-    let raw_events = load_db_events(pool, first, end_exclusive, false).await?;
+    let raw_events = load_db_events(pool, first, end_exclusive, false, Some(today)).await?;
     let events = finalize_card_events(pool, today, first, end_exclusive, raw_events).await?;
     let mut flows_by_date: std::collections::HashMap<String, (i64, i64, i64)> =
         std::collections::HashMap::new();
@@ -3915,6 +3939,62 @@ mod tests {
             .collect();
         assert_eq!(card_events.len(), 1);
         assert_eq!(card_events[0].amount_cents, 10_000);
+    }
+
+    #[tokio::test]
+    async fn orphan_future_credit_purchase_remains_a_fixed_outflow_while_linked_purchase_uses_invoice_once()
+     {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "visa-account",
+                card_name: "Visa",
+                owner_name: "Pessoa",
+                invoice_id: "visa-invoice",
+                closing_date: "2026-06-10",
+                due_date: "2026-06-25",
+                stated_total_cents: Some(10_000),
+            },
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, payment_method, is_fixed, is_projection, invoice_id) \
+             VALUES ('linked-credit', 'expense', 10000, '2026-06-20', 'credit', 1, 1, 'visa-invoice'), \
+                    ('orphan-credit', 'expense', 10000, '2026-07-21', 'credit', 1, 1, NULL)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            forecast_horizon_end(&p, today).await.unwrap(),
+            NaiveDate::from_ymd_opt(2026, 7, 21).unwrap(),
+            "a compra órfã estende o horizonte de caixa"
+        );
+        let events = load_cashflow_events(&p, today, NaiveDate::from_ymd_opt(2026, 7, 31).unwrap())
+            .await
+            .unwrap();
+        assert!(events.iter().any(|event| {
+            event.date == NaiveDate::from_ymd_opt(2026, 7, 21).unwrap()
+                && event.kind == forecast::EventKind::FixedOut
+                && event.amount_cents == 10_000
+        }));
+        let invoice_events: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind == forecast::EventKind::Cartao)
+            .collect();
+        assert_eq!(
+            invoice_events.len(),
+            1,
+            "a compra vinculada não dobra a fatura"
+        );
+        assert_eq!(invoice_events[0].amount_cents, 10_000);
+        assert_eq!(
+            events.iter().map(|event| event.amount_cents).sum::<i64>(),
+            20_000
+        );
     }
 
     #[tokio::test]

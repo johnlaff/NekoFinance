@@ -936,13 +936,15 @@ async fn rekey_manual_row_to_deterministic(
     .map_err(|e| format!("rekey copy parent: {e}"))?;
 
     // Reponta as filhas (literais por tabela; sqlx exige &'static str). Cobre TODA tabela que
-    // referencia `transaction.id`: `split`/`transaction_tag`/`line_item` (FK ON DELETE CASCADE) e
-    // `import_conflict` (mesma coluna, sem FK). `?1`=novo id, `?2`=id antigo.
+    // referencia `transaction.id`: `split`/`transaction_tag`/`line_item` (FK ON DELETE CASCADE),
+    // `import_conflict` (mesma coluna, sem FK) e o alvo de reembolso (FK ON DELETE SET NULL).
+    // `?1`=novo id, `?2`=id antigo.
     for stmt in [
         "UPDATE split SET transaction_id = ?1 WHERE transaction_id = ?2",
         "UPDATE transaction_tag SET transaction_id = ?1 WHERE transaction_id = ?2",
         "UPDATE line_item SET transaction_id = ?1 WHERE transaction_id = ?2",
         "UPDATE import_conflict SET transaction_id = ?1 WHERE transaction_id = ?2",
+        "UPDATE \"transaction\" SET refund_txn_id = ?1 WHERE refund_txn_id = ?2",
     ] {
         sqlx::query(stmt)
             .bind(&target)
@@ -2417,6 +2419,74 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(old_exists.0, 0);
+    }
+
+    #[tokio::test]
+    async fn rekeyed_card_purchase_keeps_incoming_refund_transaction_link() {
+        use crate::commands::card_cmds::create_card_account_inner;
+        use crate::google_sheets::import::{self, RowKind};
+
+        let p = pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let date = format!("{year}-03-10");
+        let card =
+            create_card_account_inner(&p, "Visa", None, Some(20), Some(10), None, None, None, &[])
+                .await
+                .unwrap();
+        sqlx::query(
+            "INSERT INTO invoice \
+             (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) \
+             VALUES ('invoice-purchase', ?1, ?2, ?3, ?4, 10_000)",
+        )
+        .bind(&card)
+        .bind(format!("{year}-03"))
+        .bind(format!("{year}-02-20"))
+        .bind(&date)
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+             (id, type, amount, date, payment_method, is_fixed, is_projection, invoice_id) \
+             VALUES ('purchase-old', 'expense', 10_000, ?1, 'debit', 1, 1, 'invoice-purchase'), \
+                    ('refund-income', 'income', 2_000, ?1, NULL, 0, 1, NULL)",
+        )
+        .bind(&date)
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE \"transaction\" SET refund_txn_id = 'purchase-old' WHERE id = 'refund-income'",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let cell = CellWrite {
+            a1: "B3".into(),
+            row: 2,
+            col: 1,
+            date: date.clone(),
+            kind: "saida".into(),
+            current: "0,00".into(),
+            proposed: "100,00".into(),
+            value_cents: 10_000,
+            changed: true,
+            formula: None,
+            note_text: None,
+        };
+        record_write_back_audit(&p, &year.to_string(), &[&cell])
+            .await
+            .unwrap();
+
+        let target = import::row_id(&year.to_string(), &date, RowKind::Saida, 0);
+        let refund_target: Option<String> = sqlx::query_scalar(
+            "SELECT refund_txn_id FROM \"transaction\" WHERE id = 'refund-income'",
+        )
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        assert_eq!(refund_target.as_deref(), Some(target.as_str()));
     }
 
     // Garantia de não colisão: se a célula já tem uma linha importada (id

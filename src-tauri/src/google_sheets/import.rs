@@ -160,6 +160,7 @@ pub(crate) async fn scan_card_invoices(
     }
     let blocks = month_blocks_for(&values[month_row], layout.block_size as usize);
     let mut outcome = CardScanOutcome::default();
+    let mut present: HashMap<String, HashSet<String>> = HashMap::new();
 
     for (row_idx, row) in values
         .iter()
@@ -178,19 +179,19 @@ pub(crate) async fn scan_card_invoices(
             continue;
         }
         for &(offset, month) in &blocks {
-            let Some(due_date) = chrono::NaiveDate::from_ymd_opt(year, month, day) else {
+            let Some(due_date_value) = chrono::NaiveDate::from_ymd_opt(year, month, day) else {
                 continue;
             };
-            let Some(note) = notes
+            let due_date = due_date_value.to_string();
+            // A célula foi visitada dentro da geometria da Saída, mesmo sem nota: ela participa
+            // da reconciliação global das faturas que aquele vencimento pode declarar.
+            present.entry(due_date.clone()).or_default();
+            let note = notes
                 .get(row_idx)
                 .and_then(|note_row| note_row.get(offset + amount_out_offset))
-            else {
-                continue;
-            };
-            if note.trim().is_empty() {
-                continue;
-            }
-            let cycle_month = cards::cycle_month_of(due_date);
+                .map(String::as_str)
+                .unwrap_or("");
+            let cycle_month = cards::cycle_month_of(due_date_value);
             let card_items: Vec<_> = parse_itemized_note_opts(note, true)
                 .into_iter()
                 .filter(|item| item.kind == ItemKind::Cartao)
@@ -198,7 +199,6 @@ pub(crate) async fn scan_card_invoices(
             if card_items.is_empty() {
                 continue;
             }
-            let mut present_account_ids = HashSet::new();
             for item in card_items {
                 let display_name = item.description.trim();
                 let alias_source = display_name.split('#').next().unwrap_or("").trim();
@@ -227,13 +227,16 @@ pub(crate) async fn scan_card_invoices(
                     outcome.ignored_items += 1;
                     continue;
                 };
-                present_account_ids.insert(account_id.clone());
-                let (closing_year, closing_month) = if closing_day < due_date.day() {
-                    (due_date.year(), due_date.month())
-                } else if due_date.month() == 1 {
-                    (due_date.year() - 1, 12)
+                present
+                    .entry(due_date.clone())
+                    .or_default()
+                    .insert(account_id.clone());
+                let (closing_year, closing_month) = if closing_day < due_date_value.day() {
+                    (due_date_value.year(), due_date_value.month())
+                } else if due_date_value.month() == 1 {
+                    (due_date_value.year() - 1, 12)
                 } else {
-                    (due_date.year(), due_date.month() - 1)
+                    (due_date_value.year(), due_date_value.month() - 1)
                 };
                 let closing_date = chrono::NaiveDate::from_ymd_opt(
                     closing_year,
@@ -252,7 +255,7 @@ pub(crate) async fn scan_card_invoices(
                 .map_err(|e| format!("load invoice: {e}"))?;
                 let (invoice_id, local, base, created) = if let Some((id, local, base)) = existing {
                     sqlx::query("UPDATE invoice SET due_date = ?1 WHERE id = ?2")
-                        .bind(due_date.to_string())
+                        .bind(&due_date)
                         .bind(&id)
                         .execute(&mut *tx)
                         .await
@@ -268,7 +271,7 @@ pub(crate) async fn scan_card_invoices(
                     .bind(account_id)
                     .bind(&cycle_month)
                     .bind(closing_date.to_string())
-                    .bind(due_date.to_string())
+                    .bind(&due_date)
                     .bind(item.amount_cents)
                     .execute(&mut *tx)
                     .await
@@ -324,27 +327,31 @@ pub(crate) async fn scan_card_invoices(
                     outcome.conflicts += 1;
                 }
             }
-            let stale: Vec<(String, String)> = sqlx::query_as(
-                "SELECT id, account_id FROM invoice \
-                 WHERE due_date = ?1 \
-                   AND source_stated_total_cents IS NOT NULL \
-                   AND NOT EXISTS (SELECT 1 FROM \"transaction\" t \
-                                   WHERE t.invoice_id = invoice.id \
-                                     AND t.type = 'expense' AND t.is_projection = 0)",
-            )
-            .bind(due_date.to_string())
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(|e| format!("load removed card invoices: {e}"))?;
-            for (invoice_id, account_id) in stale {
-                if !present_account_ids.contains(&account_id) {
-                    sqlx::query("DELETE FROM invoice WHERE id = ?1")
-                        .bind(invoice_id)
-                        .execute(&mut *tx)
-                        .await
-                        .map_err(|e| format!("reconcile removed card invoices: {e}"))?;
-                }
-            }
+        }
+    }
+
+    // Reconcilia depois de observar TODAS as células Saída. Assim, esvaziar a seção de cartões
+    // ainda remove a fatura importada, enquanto uma compra realizada preserva seu histórico.
+    let stale: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT id, account_id, due_date FROM invoice \
+         WHERE source_stated_total_cents IS NOT NULL \
+           AND NOT EXISTS (SELECT 1 FROM \"transaction\" t \
+                           WHERE t.invoice_id = invoice.id \
+                             AND t.type = 'expense' AND t.is_projection = 0)",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|e| format!("load removed card invoices: {e}"))?;
+    for (invoice_id, account_id, due_date) in stale {
+        if present
+            .get(&due_date)
+            .is_some_and(|accounts| !accounts.contains(&account_id))
+        {
+            sqlx::query("DELETE FROM invoice WHERE id = ?1")
+                .bind(invoice_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("reconcile removed card invoices: {e}"))?;
         }
     }
     Ok(outcome)
@@ -5161,6 +5168,113 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(visa_still_present, 0);
+    }
+
+    #[tokio::test]
+    async fn card_scan_removes_invoice_when_its_last_card_line_is_removed_but_keeps_real_purchase()
+    {
+        let pool = test_pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let visa = crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Visa",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let values = vec![
+            vec!["AGOSTO".into(), "".into(), "".into()],
+            vec![],
+            vec!["10".into(), "".into(), "100,00".into()],
+        ];
+        let layout = SheetLayout {
+            id: "layout".into(),
+            sheet_name: year.to_string(),
+            year: Some(year),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 3,
+            date_direction: "both".into(),
+        };
+        let cards_note = vec![
+            vec!["".into(); 3],
+            vec![],
+            vec!["".into(), "".into(), "CARTÕES:\nR$ 100,00 - Visa".into()],
+        ];
+        let no_cards_note = vec![
+            vec!["".into(); 3],
+            vec![],
+            vec!["".into(), "".into(), "CONTAS:\nR$ 100,00 - Aluguel".into()],
+        ];
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &cards_note, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let first_invoice: String =
+            sqlx::query_scalar("SELECT id FROM invoice WHERE account_id = ?1")
+                .bind(&visa)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &no_cards_note, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let removed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invoice WHERE id = ?1")
+            .bind(&first_invoice)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            removed, 0,
+            "sem seção de cartões, a fatura importada é removida"
+        );
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &cards_note, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let retained_invoice: String =
+            sqlx::query_scalar("SELECT id FROM invoice WHERE account_id = ?1")
+                .bind(&visa)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" \
+             (id, type, amount, date, payment_method, is_fixed, is_projection, invoice_id) \
+             VALUES ('visa-real-purchase', 'expense', 2_000, ?1, 'credit', 0, 0, ?2)",
+        )
+        .bind(format!("{year}-07-20"))
+        .bind(&retained_invoice)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &no_cards_note, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invoice WHERE id = ?1")
+            .bind(&retained_invoice)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(kept, 1, "compra realizada vinculada preserva a fatura");
     }
 
     #[tokio::test]

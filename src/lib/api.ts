@@ -1391,11 +1391,13 @@ export function registerCardPurchase(input: {
   amountCents: number;
   description?: string | null;
   date: string;
+  refundCents?: number | null;
   tagIds: string[];
 }): Promise<string> {
   return invoke("register_card_purchase", {
     ...input,
     description: input.description ?? null,
+    refundCents: input.refundCents ?? null,
   });
 }
 export function moveCardPurchase(
@@ -1416,8 +1418,13 @@ export function createCardSeries(input: {
   amountCents: number;
   count: number | null;
   startDate: string;
+  refundCents?: number | null;
+  tagIds: string[];
 }): Promise<string> {
-  return invoke("create_card_series", input);
+  return invoke("create_card_series", {
+    ...input,
+    refundCents: input.refundCents ?? null,
+  });
 }
 export function updateCardSeries(
   seriesId: string,

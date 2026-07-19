@@ -1,9 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   createCardSeries,
-  createRefundExpectation,
   listCards,
-  listInvoices,
   registerCardPurchase,
   type Card,
 } from "../lib/api";
@@ -60,12 +58,16 @@ export interface CardSubmitInput {
  */
 export async function submitCardPurchase(input: CardSubmitInput): Promise<void> {
   window.localStorage.setItem(LAST_CARD_KEY, input.cardId);
+  const parsedRefundCents = parseBRLToCents(input.refundAmount);
+  const refundCents =
+    parsedRefundCents && parsedRefundCents > 0 ? parsedRefundCents : null;
   if (input.cardRepeat === "never") {
     await registerCardPurchase({
       cardAccountId: input.cardId,
       amountCents: input.amountCents,
       description: input.description.trim() || null,
       date: input.date,
+      refundCents,
       tagIds: input.tagIds,
     });
   } else {
@@ -75,12 +77,8 @@ export async function submitCardPurchase(input: CardSubmitInput): Promise<void> 
       amountCents: input.amountCents,
       count: input.cardRepeat === "subscription" ? null : input.installments,
       startDate: input.date,
+      refundCents,
+      tagIds: input.tagIds,
     });
-  }
-  const refundCents = parseBRLToCents(input.refundAmount);
-  if (refundCents && refundCents > 0) {
-    const invoices = await listInvoices(input.cardId);
-    const invoice = invoices.find((item) => item.status === "aberta") ?? invoices[0];
-    if (invoice) await createRefundExpectation(invoice.id, refundCents, null);
   }
 }
