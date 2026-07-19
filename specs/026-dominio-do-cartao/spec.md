@@ -128,7 +128,15 @@ CREATE TABLE invoice (
 - **`stated_total` é a autoridade** quando presente. Total efetivo =
   `stated_total` se houver, senão Σ compras. Divergência entre `stated_total`
   e Σ compras = **linha de reconciliação** no drill (D10) — nunca some, nunca
-  vira item.
+  vira item (leitura honesta: "parte não itemizada" da fatura).
+- **Contabilidade aditiva** (evita dupla contagem entre planilha, compras do
+  app e séries): quando `stated_total` está presente, todo gesto que muda as
+  compras da fatura ajusta o `stated_total` na MESMA transação — registrar
+  compra soma, apagar subtrai, remanejar subtrai na origem e soma no destino,
+  materializar/regenerar/cancelar ocorrência de série idem. É o gesto do
+  método ("a compra soma na fatura em aberto") aplicado ao total declarado.
+  O ajuste direto (D10) grava valor absoluto. Com `stated_total` ausente, o
+  efetivo deriva da soma e nada é ajustado.
 - Datas explícitas por fatura: mudar o ciclo da conta depois não reescreve
   faturas existentes. Import fixa `due_date` = data da célula (autoridade da
   planilha); criação pelo app deriva do ciclo efetivo.
@@ -228,9 +236,14 @@ CREATE TABLE card_proposal (
    dispensada nunca re-propõe. **Nenhuma conta nasce em silêncio.**
 4. Ano anterior best-effort: linha sem valor parseável não vira fatura;
    célula realizada alimenta fatura `paga` (histórico).
-5. O upsert respeita `stated_total` de ajuste manual mais novo que o import
-   (mesma régua de 3 vias do reconcile: planilha muda → aplica; só local
-   mudou → preserva; ambos → conflito).
+5. O upsert respeita `stated_total` de ajuste local mais novo que o import
+   (mesma régua de 3 vias do reconcile, com base própria:
+   `invoice.source_stated_total_cents`, migração desta fatia): planilha mudou
+   e local não → aplica planilha (total e base); só local mudou → preserva o
+   local e avança a base; ambos mudaram e divergem → conflito na fila
+   `import_conflict` (`transaction_id = "invoice:<id>"`, campo
+   `stated_total`), resolvido pela UI existente de conflitos — e o write-back
+   segue bloqueado até resolver (guarda existente).
 
 O marcador `#reembolso:` continua criando a Entrada derivada; quando a linha
 etiquetada casa um alias de cartão, a Entrada derivada ganha
