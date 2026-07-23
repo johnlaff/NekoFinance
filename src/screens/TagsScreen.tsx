@@ -591,6 +591,17 @@ function ExceptionsCard({
 // interruptores é o caminho de um rótulo virar exceção.
 // ---------------------------------------------------------------------------
 
+/** No desktop o fold nasce aberto — a coluna larga merece o ranking à vista
+ *  (densidade por ambiente); no polegar continua fechado, consequência no fim.
+ *  Segue colapsável nos dois casos. */
+function foldStartsOpen(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(min-width: 901px)").matches
+  );
+}
+
 function LabelsFold({
   labels,
   monthLabel,
@@ -604,7 +615,7 @@ function LabelsFold({
   const maxLabel = maxLabelTotal(labels);
   return (
     <section className="tags__card">
-      <details className="tags__fold">
+      <details className="tags__fold" open={foldStartsOpen() || undefined}>
         <summary>
           <TagsIcon size={16} strokeWidth={1.75} aria-hidden="true" />
           <b>Movimentação por rótulo</b>
@@ -804,14 +815,23 @@ export function TagsScreen() {
             headline={headline}
             onCreateNew={() => dispatch({ type: "toggleNew" })}
           />
-          <ThirdPartiesCard people={dto.third_parties} monthLabel={monthLabel} />
-          <ExceptionsCard
-            exceptions={exceptions}
-            ctx={ctx}
-            formOpenForNew={form.open && form.editingId === null}
-            onToggleNew={() => dispatch({ type: "toggleNew" })}
-          />
-          <LabelsFold labels={labels} monthLabel={monthLabel} ctx={ctx} />
+          {/* Duas colunas independentes no desktop (terceiros | exceções + rótulos);
+              no mobile os wrappers dissolvem (display: contents) e a pilha segue o
+              DOM — que é sempre a ordem de leitura. */}
+          <div className="tags__grid">
+            <div className="tags__col">
+              <ThirdPartiesCard people={dto.third_parties} monthLabel={monthLabel} />
+            </div>
+            <div className="tags__col">
+              <ExceptionsCard
+                exceptions={exceptions}
+                ctx={ctx}
+                formOpenForNew={form.open && form.editingId === null}
+                onToggleNew={() => dispatch({ type: "toggleNew" })}
+              />
+              <LabelsFold labels={labels} monthLabel={monthLabel} ctx={ctx} />
+            </div>
+          </div>
         </>
       );
     }

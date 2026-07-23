@@ -13,10 +13,45 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
-  /* Coluna de leitura centrada no palco do conteúdo — o mesmo contrato de
-     Configurações; sem isso o desktop largo abre um vazio só à direita. */
+  /* Até o desktop, coluna de leitura centrada; no desktop o grid de duas
+     colunas assume e o teto sai — o palco inteiro trabalha. */
   max-width: 640px;
   margin: 0 auto;
+  width: 100%;
+}
+
+/* Wrappers de coluna: invisíveis no mobile (a pilha segue o DOM); viram colunas
+   de verdade no desktop. Mesmo contrato da onda Hoje — massas díspares nunca
+   casam linha (start abre buraco; stretch estica tint sobre vazio). */
+.tags__grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.tags__col {
+  display: contents;
+}
+
+@media (min-width: 901px) {
+  .tags {
+    max-width: none;
+    margin: 0;
+  }
+
+  .tags__grid {
+    display: grid;
+    grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+    gap: var(--space-6);
+    align-items: start;
+  }
+
+  .tags__col {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+    min-width: 0;
+  }
 }
 
 .tags__nav {
