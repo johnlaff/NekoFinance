@@ -62,11 +62,6 @@
   color: var(--text-faint);
 }
 
-.lc-search--desk {
-  width: 300px;
-  flex: none;
-}
-
 /* ---- Linha de filtros: mês + tipo + custo de vida ---- */
 
 .lc-filters {
@@ -468,12 +463,6 @@
   color: var(--text-faint);
 }
 
-/* ---- Busca na zona do polegar (mobile) ---- */
-
-.lc-dock {
-  display: none;
-}
-
 /* ---- Bottom sheet de filtro (mobile) ---- */
 
 /* O dialog É o painel: colado na base, ele deixa o ::backdrop exposto — o toque
@@ -574,6 +563,11 @@
    ============================================================ */
 
 @media (min-width: 701px) {
+  .lc-search {
+    width: 300px;
+    flex: none;
+  }
+
   .lc-row {
     grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1.15fr) 110px;
     grid-template-areas: "ic name ctx val";
@@ -600,8 +594,12 @@
    ============================================================ */
 
 @media (max-width: 700px) {
-  .lc-search--desk {
-    display: none;
+  /* Contexto e busca empilham; a busca ocupa a largura toda — no fluxo,
+     nunca flutuando sobre dado. */
+  .lc-head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-4);
   }
 
   .lc-ftrigger {
@@ -631,24 +629,6 @@
 
   .lc-daymark__saldo {
     order: 0;
-  }
-
-  /* A busca vive no fluxo, mas gruda acima do dock do shell enquanto a lista
-     rola — sempre a um polegar de distância, sem roubar a primeira dobra. */
-  .lc-dock {
-    display: block;
-    position: sticky;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 84px);
-    z-index: 5;
-    padding-top: var(--space-4);
-  }
-
-  /* Pill flutuante, no idioma do dock do shell: quase opaco + sombra discreta —
-     o conteúdo rola por baixo sem virar ruído atrás de vidro. */
-  .lc-dock .lc-search {
-    background: color-mix(in srgb, var(--surface) 96%, transparent);
-    backdrop-filter: blur(12px);
-    box-shadow: var(--shadow-2);
   }
 }
 

@@ -192,7 +192,7 @@ describe("TransactionsScreen (Lançamentos)", () => {
     await screen.findByText("Com diferença");
 
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    const search = screen.getAllByLabelText("Buscar lançamento")[0]!;
+    const search = screen.getByLabelText("Buscar lançamento");
     await user.type(search, "Gio");
 
     expect(screen.queryByText("Com diferença")).not.toBeInTheDocument();
@@ -267,7 +267,7 @@ describe("TransactionsScreen (Lançamentos)", () => {
     mockCommands({ get_recent_transactions: [] });
     renderLedger();
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    const search = (await screen.findAllByLabelText("Buscar lançamento"))[0]!;
+    const search = await screen.findByLabelText("Buscar lançamento");
     await user.type(search, "pix");
     expect(
       screen.getByText('Nada em junho para "pix". Limpe a busca ou troque o filtro.'),

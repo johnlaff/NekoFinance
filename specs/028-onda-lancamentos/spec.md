@@ -21,9 +21,11 @@ reembolso por linha).
 1. **Cabeçalho** — o título "Lançamentos" vive no shell (sh-top no desktop, appbar no
    mobile — nenhuma tela o duplica); a tela abre com a frase de contexto ("Tudo o que
    entrou e saiu, dia a dia." — sem alegar ordenação, que muda com o mês visto). No
-   desktop, a busca mora ao lado dela (o par clássico título-à-esquerda / busca-à-direita); no mobile ela desce
-   para o rodapé da lista (zona do polegar). O crumb da appbar mostra o mês visto
-   ("Julho de 2026") via store de crumbs do shell.
+   desktop, a busca mora ao lado dela (o par clássico título-à-esquerda /
+   busca-à-direita); no mobile as duas empilham e a busca ocupa a largura cheia —
+   um único campo nos dois viewports, sempre no fluxo, nunca flutuando sobre dado.
+   O crumb da appbar mostra o mês visto ("Julho de 2026") via store de crumbs do
+   shell.
 2. **Linha de filtros** — `MonthNav` (mês visto; "Hoje" volta ao corrente) + filtro por
    tipo: **chips inline no desktop** (Todos + os 5 tipos na ordem canônica de
    `FORM_KINDS`), **bottom sheet no mobile** (gatilho "Tipo: {atual} ▾"; dialog nativo
@@ -33,9 +35,6 @@ reembolso por linha).
    carga): o estado vazio não renderiza card algum. A primeira dobra pertence ao
    conteúdo primário, e a descoberta da feature vive na ação de marcar item.
 4. **Lista por daymarks** — ver "Modelo célula×nota" abaixo.
-5. **Busca no rodapé (mobile)** — vive no fluxo após a lista, mas gruda acima do
-   dock do shell enquanto a lista rola (pill flutuante): sempre a um polegar, sem
-   roubar a primeira dobra.
 
 ### Desktop (>900px)
 
@@ -49,7 +48,8 @@ celular). A linha de reconciliação corre como frase única, fora da grade.
 ### Mobile (≤700px)
 
 Linhas em flex (ícone 42px + nome/contexto empilhados + valor à direita). Daymark
-centrado entre fios. Filtro em bottom sheet; busca no rodapé da lista. Alvos ≥44px.
+centrado entre fios. Filtro em bottom sheet; busca em largura cheia no topo. Alvos
+≥44px.
 
 ## Modelo célula×nota (o corpo da tela)
 

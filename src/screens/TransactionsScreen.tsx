@@ -760,8 +760,10 @@ export function TransactionsScreen() {
     );
   }
 
-  const searchField = (extraClass: string) => (
-    <label className={`lc-search ${extraClass}`}>
+  // Um único campo de busca nos dois viewports: ao lado do contexto no desktop,
+  // largura cheia sob ele no mobile — sempre no fluxo, nunca flutuando sobre dado.
+  const searchField = (
+    <label className="lc-search">
       <Search size={15} strokeWidth={1.75} aria-hidden="true" />
       <input
         type="search"
@@ -835,12 +837,12 @@ export function TransactionsScreen() {
   return (
     <div className="lc">
       {/* O título da tela vive no shell (sh-top/appbar, com o mês no crumb); aqui
-          entram a frase de contexto e — no desktop — a busca ao lado dela. No mobile
-          a busca desce para a zona do polegar, no rodapé da lista (mesmo estado). */}
+          entram a frase de contexto e a busca — lado a lado no desktop, empilhadas
+          com a busca em largura cheia no mobile. */}
       <header className="lc-head">
         {/* Sem alegar ordenação: num mês futuro a lista sobe do mais próximo. */}
         <p className="lc-head__teach">Tudo o que entrou e saiu, dia a dia.</p>
-        {searchField("lc-search--desk")}
+        {searchField}
       </header>
 
       <div className="lc-filters">
@@ -882,9 +884,6 @@ export function TransactionsScreen() {
       <ObligationsCard />
 
       {content}
-
-      {/* Busca na zona do polegar (mobile) — mesmo estado do campo do cabeçalho. */}
-      <div className="lc-dock">{searchField("lc-search--dock")}</div>
 
       <FilterSheet
         open={sheetOpen}
