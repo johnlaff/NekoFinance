@@ -1,716 +1,643 @@
+/* ============================================================
+   Lançamentos — o Livro-razão célula×nota.
+   A célula (dia, coluna) é a autoridade do total; a nota itemiza;
+   a diferença célula×nota é linha sintética, nunca item.
+   Superfícies calmas: espaço separa, fio é exceção, hierarquia é
+   tipográfica e o acento só aparece onde carrega significado.
+   ============================================================ */
+
 .lc {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-6);
+  max-width: 880px;
 }
-.lc-tools {
+
+/* ---- Cabeçalho: contexto à esquerda, busca à direita (desktop) ---- */
+
+.lc-head {
   display: flex;
   align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-8);
 }
-.lc-tools__sp {
-  flex: 1;
+
+.lc-head__teach {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
 }
+
 .lc-search {
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 32px;
-  padding: 0 11px;
+  gap: var(--space-3);
+  height: 42px;
+  padding: 0 var(--space-5);
+  border: var(--bw-hair) solid var(--border);
+  border-radius: var(--radius-pill);
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
   color: var(--text-faint);
-  width: 220px;
+  transition:
+    border-color var(--dur-fast) var(--ease-standard),
+    background-color var(--dur-fast) var(--ease-standard);
 }
+
+.lc-search:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
 .lc-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
   background: none;
-  border: none;
-  outline: none;
   color: var(--text);
-  font-family: inherit;
-  font-size: 13px;
-  width: 100%;
+  font: inherit;
+  font-size: var(--fs-body);
+  outline: none;
 }
+
+.lc-search input::placeholder {
+  color: var(--text-faint);
+}
+
+.lc-search--desk {
+  width: 300px;
+  flex: none;
+}
+
+/* ---- Linha de filtros: mês + tipo + custo de vida ---- */
+
 .lc-filters {
   display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.lc-fchip {
-  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 11px;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.lc-ftrigger {
+  display: none;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--hit-touch);
+  padding: 0 var(--space-6);
+  border: var(--bw-hair) solid var(--border);
   border-radius: var(--radius-pill);
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 12.5px;
-  font-weight: 600;
-  font-family: var(--font-sans);
-  transition: var(--t-hover);
-}
-.lc-fchip:hover {
-  background: var(--surface-hover);
-  color: var(--text);
-}
-.lc-fchip.is-on {
-  border-color: transparent;
-  color: var(--text-strong);
-}
-.lc-fchip__dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  flex: none;
-}
-.lc-card {
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-1);
-  overflow: hidden;
-}
-/* future banner — native <button> with flex reset */
-.lc-future {
-  appearance: none;
-  border: none;
-  border-bottom: 1px solid var(--border);
-  font: inherit;
-  color: inherit;
-  text-align: inherit;
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 13px 18px;
-  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
   cursor: pointer;
-  transition: var(--t-hover);
 }
-.lc-future:hover {
-  background: var(--surface-hover);
+
+.lc-ftrigger b {
+  color: var(--text);
+  font-weight: var(--fw-semibold);
 }
-.lc-future__ic {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  background: var(--warning-tint);
-  color: var(--warning-400);
+
+.lc-chips {
   display: flex;
   align-items: center;
-  justify-content: center;
-  flex: none;
+  gap: var(--space-2);
 }
-.lc-future__t {
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--text);
-}
-.lc-future__s {
-  font-size: 11.5px;
-  color: var(--text-faint);
-}
-.lc-future__amt {
-  margin-left: auto;
-  font-family: var(--font-money);
-  font-variant-numeric: tabular-nums;
-  font-size: 13px;
-  color: var(--text-muted);
-  text-align: right;
-}
-/* group header */
-.lc-gh {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 11px 18px;
-  background: var(--bg);
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  border-bottom: 1px solid var(--border);
-  /* On very narrow widths let the net sum wrap to a second line instead of
-     clipping against the card's overflow (the Saldo pill stays with the day). */
-  flex-wrap: wrap;
-}
-.lc-gh__t {
-  font-size: 12.5px;
-  font-weight: 700;
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-.lc-gh--today {
-  background: var(--surface-selected);
-}
-.lc-gh--today .lc-gh__t {
-  color: var(--primary);
-}
-.lc-gh__sum {
-  margin-left: auto;
-  font-family: var(--font-money);
-  font-variant-numeric: tabular-nums;
-  font-size: 11.5px;
-  color: var(--text-faint);
-}
-/* Chained end-of-day Saldo pill (day-grouped "Por mês"), colored by the
-   canonical thermometer band. Sits right after the day label; the net sum
-   keeps its margin-left:auto and stays flush-right. */
-.lc-gh__saldo {
-  font-family: var(--font-money);
-  font-variant-numeric: tabular-nums;
-  font-size: 11.5px;
-  font-weight: 700;
-  padding: 3px 9px 3px 8px;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
-}
-.lc-gh__saldo::before {
-  content: "Saldo";
-  font-family: var(--font-sans);
-  font-weight: 600;
-  font-size: 9.5px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  opacity: 0.75;
-}
-/* Month context banner — static (the per-day headers below it are the sticky
-   ones), with a distinct surface so it reads as a section, not a day. */
-.lc-gh--month {
-  position: static;
-  background: var(--surface-2);
-}
-.lc-gh--month .lc-gh__t {
-  color: var(--text);
-  font-size: 13px;
-}
-/* Today marker: a neutral "Hoje" chip + a stronger day label — NOT a jade
-   fill, so the brand green stays reserved for the Saldo thermometer (WCAG
-   1.4.1: the text label carries the meaning, not color alone). */
-.lc-gh__t--strong {
-  color: var(--text-strong);
-}
-.lc-gh__today {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--surface-elevated);
-  color: var(--text-muted);
-  border: 1px solid var(--border-strong);
-  white-space: nowrap;
-}
-/* row — native <button> with grid reset so the layout is preserved */
-.lc-row {
-  appearance: none;
+
+.lc-chip {
+  height: 34px;
+  padding: 0 var(--space-5);
+  border: var(--bw-hair) solid transparent;
+  border-radius: var(--radius-pill);
   background: none;
-  border: none;
-  border-bottom: 1px solid var(--border);
-  font: inherit;
-  color: inherit;
-  text-align: inherit;
-  width: 100%;
-  display: grid;
-  grid-template-columns: 48px 132px 1fr auto;
-  align-items: center;
-  gap: 12px;
-  padding: 0 18px;
-  min-height: 52px;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
   cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-standard);
+  transition:
+    color var(--dur-fast) var(--ease-standard),
+    background-color var(--dur-fast) var(--ease-standard);
 }
-.lc-row:hover {
-  background: var(--surface-hover);
-}
-.lc-row--future {
-  opacity: 0.62;
-}
-/* Day-grouped rows drop the leading date column (the day header carries it). */
-.lc-row--nodate {
-  grid-template-columns: 132px 1fr auto;
-}
-.lc-row__date {
-  font-family: var(--font-money);
-  font-variant-numeric: tabular-nums;
-  font-size: 12.5px;
-  color: var(--text-muted);
-}
-.lc-row__type {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 12.5px;
-  font-weight: 600;
-}
-.lc-row__type .dot {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-on-primary);
-  font-size: 10px;
-  font-weight: 800;
-  flex: none;
-}
-.lc-row__desc {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.lc-row__t {
-  font-size: 14px;
+
+.lc-chip:hover {
   color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.lc-row__amt {
-  font-family: var(--font-money);
-  font-variant-numeric: tabular-nums;
-  font-size: 14px;
-  font-weight: 600;
-  text-align: right;
-  white-space: nowrap;
-}
-.lc-tag {
-  display: inline-flex;
-  align-items: center;
-  height: 18px;
-  padding: 0 8px;
-  border-radius: var(--radius-pill);
-  white-space: nowrap;
   background: var(--surface-2);
-  border: 1px solid var(--border);
-  font-size: 10.5px;
-  font-weight: 600;
-  color: var(--text-muted);
-  flex: none;
 }
-.lc-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 18px;
-  padding: 0 7px;
-  border-radius: var(--radius-pill);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  flex: none;
+
+.lc-chip.is-on {
+  color: var(--text-strong);
+  background: var(--surface-2);
+  border-color: var(--border);
+  font-weight: var(--fw-semibold);
 }
-.lc-chev {
+
+.lc-filters__tot {
+  margin-left: auto;
+  font-size: var(--fs-sm);
   color: var(--text-faint);
-  flex: none;
-  transition: transform var(--dur-fast) var(--ease-standard);
 }
-.lc-chev.is-open {
-  transform: rotate(90deg);
+
+/* ---- Daymark: marcador à esquerda, o fio completa a linha ---- */
+
+.lc-day {
+  display: flex;
+  flex-direction: column;
 }
-/* parts panel */
-.lc-parts {
-  padding: 8px 18px 14px 222px;
-  background: var(--bg-subtle);
-  border-bottom: 1px solid var(--border);
-}
-.lc-parts__note {
-  font-size: 11px;
-  color: var(--text-faint);
-  margin: 0 0 8px;
+
+.lc-daymark {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+  gap: var(--space-5);
+  margin: var(--space-7) 0 var(--space-3);
+  color: var(--text-faint);
 }
-.lc-parts__warn {
-  display: inline-flex;
-  align-items: center;
-  height: 18px;
-  padding: 0 7px;
+
+.lc-day:first-child .lc-daymark {
+  margin-top: 0;
+}
+
+.lc-daymark__t {
+  margin: 0;
+  font-size: var(--fs-label);
+  font-weight: var(--fw-medium);
+  color: inherit;
+}
+
+.lc-daymark--today .lc-daymark__t {
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+}
+
+.lc-daymark::after {
+  content: "";
+  flex: 1;
+  height: var(--bw-hair);
+  background: var(--border);
+}
+
+.lc-daymark__today {
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  border: var(--bw-hair) solid var(--border);
   border-radius: var(--radius-pill);
-  border: 1px solid color-mix(in srgb, var(--warning-400) 34%, transparent);
-  background: color-mix(in srgb, var(--warning-400) 10%, transparent);
-  color: var(--warning-400);
-  font-size: 10.5px;
-  font-weight: 700;
+  padding: 1px var(--space-4);
 }
-.lc-part {
+
+.lc-daymark__saldo {
+  order: 3;
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-semibold);
+  border-radius: var(--radius-pill);
+  padding: 2px var(--space-4);
+}
+
+/* ---- Cabeçalho de célula: a autoridade do total ---- */
+
+.lc-cellhead {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 16px;
-  padding: 4px 0;
+  gap: var(--space-5);
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) 0;
+  font-size: var(--fs-label);
+  font-weight: var(--fw-regular);
 }
-.lc-part__amt {
-  font-family: var(--font-money);
-  font-variant-numeric: tabular-nums;
-  font-size: 13px;
-  flex: none;
-  text-align: right;
-}
-.lc-part__desc {
-  font-size: 13px;
-  color: var(--text-muted);
-  min-width: 0;
+
+.lc-cellhead__label {
   display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-.lc-part__text {
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  color: var(--text-faint);
+  font-weight: var(--fw-semibold);
   min-width: 0;
+}
+
+.lc-cellhead__total {
+  color: var(--text-muted);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+}
+
+.lc-selo {
+  font-style: normal;
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-semibold);
+  color: var(--warning-400);
+  background: color-mix(in srgb, var(--warning-400) 12%, transparent);
+  border-radius: var(--radius-pill);
+  padding: 1px var(--space-4);
+  margin-left: var(--space-2);
+}
+
+/* ---- Linhas: ícone · nome · contexto · valor ---- */
+
+.lc-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.lc-row {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  grid-template-areas:
+    "ic name val"
+    "ic ctx val";
+  column-gap: var(--space-5);
+  row-gap: 1px;
+  align-items: center;
+  width: 100%;
+  padding: var(--space-4) 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background-color var(--dur-fast) var(--ease-standard);
+}
+
+.lc-row:hover {
+  background: var(--surface-2);
+}
+
+.lc-row__ic {
+  grid-area: ic;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--radius-circle);
+  background: var(--surface-2);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.lc-row:hover .lc-row__ic {
+  background: var(--surface);
+}
+
+.lc-row__name {
+  grid-area: name;
+  align-self: end;
+  min-width: 0;
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.lc-row__ctx {
+  grid-area: ctx;
+  align-self: start;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
-.lc-kind {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 20px;
-  padding: 0 7px;
+
+.lc-row__val {
+  grid-area: val;
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  text-align: right;
+}
+
+.lc-row--future .lc-row__name {
+  color: var(--text-muted);
+}
+
+/* ---- Pílulas de metadado (junto do nome, nunca no dinheiro) ---- */
+
+.lc-pill {
+  display: inline-block;
+  font-style: normal;
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-semibold);
+  line-height: 1.4;
   border-radius: var(--radius-pill);
-  border: 1px solid var(--border);
-  font-size: 10.5px;
-  font-weight: 700;
+  padding: 1px var(--space-4);
+  margin-left: var(--space-3);
+  vertical-align: 1px;
   white-space: nowrap;
-  flex: none;
 }
-.lc-kind__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex: none;
+
+.lc-pill--mono {
+  font-family: var(--font-mono);
+  font-weight: var(--fw-regular);
+  color: var(--text-muted);
+  background: var(--surface-2);
 }
-.lc-part-actions {
+
+/* Reembolso é dinheiro que volta — status, não marca: verde em toda paleta. */
+.lc-pill--ok {
+  color: var(--success-400);
+  background: color-mix(in srgb, var(--success-400) 14%, transparent);
+}
+
+.lc-pill--prev {
+  color: var(--text-muted);
+  background: var(--surface-2);
+}
+
+.lc-pill--tag {
+  border: var(--bw-hair) solid var(--border);
+  background: none;
+  font-weight: var(--fw-medium);
+}
+
+/* ---- Linha sintética de reconciliação (pertence à célula) ---- */
+
+.lc-recdif {
   display: flex;
-  gap: 8px;
-  margin-top: 10px;
+  align-items: baseline;
+  gap: var(--space-5);
+  padding: var(--space-4) 0;
+  margin-top: var(--space-1);
+  border-top: var(--bw-hair) dashed var(--border);
+  color: var(--warning-400);
+  pointer-events: none;
 }
-/* tag picker inline panel */
-.lc-tagpicker {
-  margin-top: 10px;
-  padding: 10px 12px;
-  background: var(--bg);
-  border: 1px solid var(--border);
+
+.lc-recdif__txt {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-sm);
+}
+
+.lc-recdif__txt b {
+  font-weight: var(--fw-medium);
+}
+
+.lc-recdif__val {
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+/* ---- Painel expandido de ações ---- */
+
+.lc-panel {
+  margin: 0 0 var(--space-4) calc(42px + var(--space-5));
+  padding: var(--space-4) var(--space-5);
   border-radius: var(--radius-sm);
+  background: var(--surface-2);
 }
+
+.lc-panel__note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-3);
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+}
+
+.lc-panel__note--warn {
+  color: var(--warning-400);
+}
+
+.lc-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+/* ---- Tag picker ---- */
+
+.lc-tagpicker {
+  margin-top: var(--space-4);
+}
+
 .lc-tagpicker__chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-3);
 }
+
+.lc-tagpicker__none {
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+}
+
+.lc-tagpicker__actions {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
 .lc-tagchip {
-  display: inline-flex;
-  align-items: center;
-  height: 24px;
-  padding: 0 10px;
+  border: var(--bw-hair) solid var(--border);
   border-radius: var(--radius-pill);
-  border: 1px solid var(--border);
-  background: transparent;
+  background: none;
   color: var(--text-muted);
+  font-size: var(--fs-label);
+  padding: var(--space-2) var(--space-5);
   cursor: pointer;
-  font-size: 12px;
-  font-weight: 600;
-  font-family: var(--font-sans);
-  transition: var(--t-hover);
 }
-.lc-tagchip:hover {
-  background: var(--surface-hover);
-  color: var(--text);
+
+/* ---- Disclosure de futuros do mês corrente ---- */
+
+.lc-future .lc-daymark {
+  margin-top: var(--space-5);
 }
-.lc-tagchip.is-on {
-  border-width: 1.5px;
+
+.lc-future__sum {
+  color: var(--text-faint);
+  font-size: var(--fs-sm);
 }
+
+/* ---- Vazio ---- */
+
 .lc-empty {
-  padding: 48px 18px;
+  margin: 0;
+  padding: var(--space-10) var(--space-6);
   text-align: center;
+  font-size: var(--fs-sm);
   color: var(--text-faint);
-  font-size: 13px;
 }
-/* inline retry link inside lc-empty */
-.lc-retry-btn {
-  appearance: none;
-  background: none;
-  border: none;
-  font: inherit;
+
+/* ---- Busca na zona do polegar (mobile) ---- */
+
+.lc-dock {
+  display: none;
+}
+
+/* ---- Bottom sheet de filtro (mobile) ---- */
+
+.lc-sheet {
+  border: 0;
   padding: 0;
-  cursor: pointer;
-  color: var(--primary);
-}
-/* skeleton */
-.lc-skeleton {
-  padding: 24px 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.lc-skel-row {
-  height: 20px;
-  border-radius: var(--radius-xs);
-  background: var(--surface-2);
-  animation: lc-pulse 1.4s ease-in-out infinite;
-}
-@keyframes lc-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.45;
-  }
-}
-
-@media (max-width: 720px) {
-  .lc-row {
-    grid-template-columns: 48px minmax(0, 1fr) auto;
-    grid-template-areas:
-      "date desc amt"
-      ". type amt";
-    gap: 4px 8px;
-    min-height: 64px;
-    padding: 8px 10px;
-  }
-  .lc-row__date {
-    grid-area: date;
-  }
-  .lc-row__type {
-    grid-area: type;
-    min-width: 0;
-  }
-  .lc-row__desc {
-    grid-area: desc;
-    min-width: 0;
-  }
-  .lc-row__amt {
-    grid-area: amt;
-    max-width: 84px;
-    font-size: 12.5px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .lc-parts {
-    padding: 10px 10px 14px 58px;
-  }
-  .lc-parts__note {
-    align-items: flex-start;
-  }
-  .lc-part {
-    align-items: flex-start;
-    gap: 8px;
-  }
-  .lc-part__desc {
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .lc-part__text {
-    white-space: normal;
-    overflow-wrap: anywhere;
-  }
-  .lc-part__amt {
-    max-width: 76px;
-    font-size: 12px;
-  }
-  .lc-part-actions {
-    flex-wrap: wrap;
-  }
-}
-
-/* --- Obrigações recorrentes --- */
-
-.lc-mark-wrap {
-  position: relative;
-  display: inline-flex;
-  flex: none;
-}
-.lc-mark-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: var(--radius-xs);
-  border: none;
-  background: transparent;
-  color: var(--text-faint);
-  cursor: pointer;
-  flex: none;
-  transition: var(--t-hover);
-}
-.lc-mark-btn:hover,
-.lc-mark-btn[aria-expanded="true"] {
-  background: var(--surface-hover);
-  color: var(--text);
-}
-
-.lc-obligation-panel {
-  position: absolute;
-  z-index: 5;
-  top: 100%;
-  left: 0;
-  margin-top: 6px;
-  width: min(340px, 80vw);
-  padding: 12px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-1);
-}
-.lc-obligation-panel__hint {
-  margin: 0 0 10px;
-  font-size: 11.5px;
-  color: var(--text-faint);
-}
-.lc-obligation-panel__row {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.lc-obligation-panel__field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--text-muted);
-}
-.lc-obligation-panel__field input {
-  height: 30px;
-  padding: 0 9px;
-  background: var(--bg-subtle);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xs);
-  color: var(--text);
-  font-family: inherit;
-  font-size: 13px;
-}
-.lc-obligation-panel__checkbox {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
-  font-size: 11.5px;
-  color: var(--text-muted);
-}
-.lc-obligation-panel__preview {
-  margin: 0 0 10px;
-  font-size: 12px;
-  color: var(--text);
-  font-weight: 600;
-}
-.lc-obligation-panel__error {
-  margin: 0 0 10px;
-  font-size: 11.5px;
-  color: var(--danger-400);
-}
-.lc-obligation-panel__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.lc-obligation-row {
-  border-bottom: 1px solid var(--border);
-}
-.lc-obligation-row:last-child {
-  border-bottom: none;
-}
-.lc-obligation-row__bar {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.lc-obligation-row__head {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  padding: 10px 0;
   background: none;
-  border: none;
-  cursor: pointer;
-  text-align: left;
+  max-width: none;
+  max-height: none;
+  width: 100%;
+  height: 100dvh;
+  margin: 0;
 }
-.lc-obligation-row__name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+
+.lc-sheet::backdrop {
+  background: var(--bg-scrim, rgb(0 0 0 / 0.5));
 }
-.lc-obligation-row__avg {
-  font-size: 12px;
-  color: var(--text-faint);
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  white-space: nowrap;
+
+.lc-sheet__panel {
+  position: fixed;
+  inset: auto 0 0 0;
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  background: var(--surface);
+  border-top: var(--bw-hair) solid var(--border);
+  padding: var(--space-7) var(--space-6)
+    calc(var(--space-8) + env(safe-area-inset-bottom));
 }
-.lc-obligation-row__trend {
-  display: inline-flex;
-  color: var(--text-faint);
-  flex: none;
+
+.lc-sheet__t {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-title);
+  color: var(--text-strong);
 }
-.lc-obligation-row__delete {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  flex: none;
-  border-radius: var(--radius-xs);
-  border: none;
-  background: transparent;
-  color: var(--text-faint);
-  cursor: pointer;
-  transition: var(--t-hover);
-}
-.lc-obligation-row__delete:hover {
-  background: var(--danger-tint);
-  color: var(--danger-400);
-}
-.lc-obligation-history {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 0 0 10px 23px;
-}
-.lc-obligation-history__row {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  font-size: 12.5px;
-  color: var(--text-muted);
-}
-.lc-obligation-history__month {
-  min-width: 56px;
-  font-weight: 600;
-  color: var(--text);
-}
-.lc-obligation-history__count {
-  flex: 1;
+
+.lc-sheet__hint {
+  margin: 0 0 var(--space-5);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
   color: var(--text-faint);
 }
 
-@media (max-width: 720px) {
-  .lc-obligation-row__avg {
+.lc-sheet__opts {
+  display: flex;
+  flex-direction: column;
+}
+
+.lc-sheet__opts button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-5);
+  min-height: var(--hit-touch);
+  padding: var(--space-4) var(--space-2);
+  border: 0;
+  border-top: var(--bw-hair) solid var(--border);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.lc-sheet__opts button:first-child {
+  border-top: 0;
+}
+
+.lc-sheet__opts button small {
+  display: block;
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+}
+
+.lc-sheet__opts button[aria-pressed="true"] {
+  color: var(--text-strong);
+  font-weight: var(--fw-semibold);
+}
+
+/* ---- Coreografia de entrada (superfícies transitam; dinheiro nunca anima) ---- */
+
+@media (prefers-reduced-motion: no-preference) {
+  .lc-head {
+    animation: lc-in 0.4s var(--ease-standard) both;
+  }
+
+  .lc-filters {
+    animation: lc-in 0.4s var(--ease-standard) both 0.08s;
+  }
+
+  .lc-list {
+    animation: lc-in 0.45s var(--ease-standard) both 0.16s;
+  }
+}
+
+@keyframes lc-in {
+  from {
+    opacity: 0;
+    translate: 0 8px;
+  }
+
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+/* ============================================================
+   Desktop (>700px): colunas de verdade — nome | contexto | valor.
+   É o alinhamento vertical que faz a lista escanear como desktop.
+   ============================================================ */
+
+@media (min-width: 701px) {
+  .lc-row {
+    grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1.15fr) 110px;
+    grid-template-areas: "ic name ctx val";
+    padding: var(--space-4) var(--space-2);
+  }
+
+  .lc-row__ic {
+    width: 34px;
+    height: 34px;
+  }
+
+  .lc-row__name,
+  .lc-row__ctx {
+    align-self: center;
+  }
+
+  .lc-panel {
+    margin-left: calc(34px + var(--space-5) + var(--space-2));
+  }
+}
+
+/* ============================================================
+   Mobile (≤700px): filtro em bottom sheet, busca no polegar.
+   ============================================================ */
+
+@media (max-width: 700px) {
+  .lc-search--desk {
     display: none;
+  }
+
+  .lc-ftrigger {
+    display: inline-flex;
+  }
+
+  .lc-chips {
+    display: none;
+  }
+
+  .lc-filters__tot {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+
+  /* Daymark centrado entre fios — o idioma de feed do celular. */
+  .lc-daymark::before {
+    content: "";
+    flex: 1;
+    height: var(--bw-hair);
+    background: var(--border);
+  }
+
+  .lc-daymark {
+    justify-content: center;
+  }
+
+  .lc-daymark__saldo {
+    order: 0;
+  }
+
+  .lc-dock {
+    display: block;
+    padding-top: var(--space-4);
   }
 }

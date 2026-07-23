@@ -228,6 +228,11 @@ export function ObligationsCard() {
     }
   }
 
+  // Sem obrigações (e sem erro) o card não existe: a primeira dobra pertence ao
+  // conteúdo primário, e a descoberta da feature vive na ação de marcar item —
+  // um estado vazio permanente seria didática fixa ocupando a tela.
+  if (listQ.loading || (listQ.error == null && obligations.length === 0)) return null;
+
   return (
     <section className="card lc-obligations-card">
       <div className="card__head">
@@ -240,16 +245,9 @@ export function ObligationsCard() {
         </span>
       </div>
       <div className="card__body">
-        {listQ.loading ? (
-          <p style={{ color: "var(--text-faint)", fontSize: 13 }}>Carregando…</p>
-        ) : listQ.error != null ? (
+        {listQ.error != null ? (
           <p role="alert" style={{ color: "var(--text-faint)", fontSize: 13 }}>
             Não foi possível carregar as obrigações.
-          </p>
-        ) : obligations.length === 0 ? (
-          <p style={{ color: "var(--text-faint)", fontSize: 13 }}>
-            Nenhuma obrigação marcada ainda. Abra um lançamento itemizado e use o ícone
-            de repetição num item (ex.: "Aluguel") para começar a acompanhar sua série.
           </p>
         ) : (
           obligations.map((ob) => (
