@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { CalendarRange, Clock3, CreditCard, Landmark, TrendingUp } from "lucide-react";
 import { Button } from "../design-system/components/Button";
 import { EmptyState } from "../design-system/components/EmptyState";
@@ -165,92 +165,136 @@ export function DashboardScreen() {
         A Mia separou o que importa hoje — a ordem muda com o seu dia, os números nunca.
       </p>
 
-      <div className="hoje__grid">
-        <BlockDay
-          summary={summary}
-          invoices={invoices}
-          cardMode={cardMode}
-          baselineOutflowCents={forecast.baseline_outflow_cents}
-          cards={cardsQ.data ?? []}
-          onSeeAll={() => navigate("lancamentos")}
-          onOpenTeto={() => navigate("teto")}
-        />
-
-        {insight && <MonthInsightNote insight={insight} month={month} today={today} />}
-
-        <section
-          className="hoje__card hoje__card--moves"
-          aria-labelledby="hoje-moves-title"
-        >
-          <header className="hoje__cardhead">
-            <span className="ic" aria-hidden="true">
-              <CalendarRange size={17} strokeWidth={1.75} />
-            </span>
-            <h2 id="hoje-moves-title">Próximos movimentos</h2>
-            <button
-              type="button"
-              className="hoje__more"
-              onClick={() => navigate("lancamentos")}
-            >
-              Ver tudo ›
-            </button>
-          </header>
-          <UpcomingMoves
-            bills={billsQ.data ?? []}
-            nextIncome={nextIncome}
-            today={today}
-          />
-          {metric && (
-            <div className="hoje__pair">
-              <div className="side">
-                <div className="v">
-                  <Money cents={metric.cost_of_living_cents} size="inherit" />
-                </div>
-                <div className="l">Custo de vida no mês</div>
-              </div>
-              <div className="side">
-                <div className="v">
-                  {(metric.savings_rate_bps / 100).toLocaleString("pt-BR", {
-                    maximumFractionDigits: 1,
-                  })}
-                  %
-                </div>
-                <div className="l">Guardado no mês</div>
-              </div>
-            </div>
-          )}
-        </section>
-
-        <section
-          className="hoje__card hoje__card--saldo"
-          aria-labelledby="hoje-saldo-title"
-        >
-          <header className="hoje__cardhead">
-            <span className="ic" aria-hidden="true">
-              <Landmark size={17} strokeWidth={1.75} />
-            </span>
-            <h2 id="hoje-saldo-title">Saldo e reserva</h2>
-            <button
-              type="button"
-              className="hoje__more"
-              onClick={() => navigate("mes")}
-            >
-              Ver o mês ›
-            </button>
-          </header>
-          <SaldoReserva
-            saldoHoje={saldoHoje}
+      <HojeGrid
+        deckMode={cardMode && invoices.count > 0}
+        blockDay={
+          <BlockDay
             summary={summary}
-            onMapReserve={() => navigate("config")}
+            invoices={invoices}
+            cardMode={cardMode}
+            baselineOutflowCents={forecast.baseline_outflow_cents}
+            cards={cardsQ.data ?? []}
+            onSeeAll={() => navigate("lancamentos")}
+            onOpenTeto={() => navigate("teto")}
           />
-        </section>
-      </div>
+        }
+        monthInsightNote={
+          insight ? (
+            <MonthInsightNote insight={insight} month={month} today={today} />
+          ) : null
+        }
+        moves={
+          <section
+            className="hoje__card hoje__card--moves"
+            aria-labelledby="hoje-moves-title"
+          >
+            <header className="hoje__cardhead">
+              <span className="ic" aria-hidden="true">
+                <CalendarRange size={17} strokeWidth={1.75} />
+              </span>
+              <h2 id="hoje-moves-title">Próximos movimentos</h2>
+              <button
+                type="button"
+                className="hoje__more"
+                onClick={() => navigate("lancamentos")}
+              >
+                Ver tudo ›
+              </button>
+            </header>
+            <UpcomingMoves
+              bills={billsQ.data ?? []}
+              nextIncome={nextIncome}
+              today={today}
+            />
+            {metric && (
+              <div className="hoje__pair">
+                <div className="side">
+                  <div className="v">
+                    <Money cents={metric.cost_of_living_cents} size="inherit" />
+                  </div>
+                  <div className="l">Custo de vida no mês</div>
+                </div>
+                <div className="side">
+                  <div className="v">
+                    {(metric.savings_rate_bps / 100).toLocaleString("pt-BR", {
+                      maximumFractionDigits: 1,
+                    })}
+                    %
+                  </div>
+                  <div className="l">Guardado no mês</div>
+                </div>
+              </div>
+            )}
+          </section>
+        }
+        saldo={
+          <section
+            className="hoje__card hoje__card--saldo"
+            aria-labelledby="hoje-saldo-title"
+          >
+            <header className="hoje__cardhead">
+              <span className="ic" aria-hidden="true">
+                <Landmark size={17} strokeWidth={1.75} />
+              </span>
+              <h2 id="hoje-saldo-title">Saldo e reserva</h2>
+              <button
+                type="button"
+                className="hoje__more"
+                onClick={() => navigate("mes")}
+              >
+                Ver o mês ›
+              </button>
+            </header>
+            <SaldoReserva
+              saldoHoje={saldoHoje}
+              summary={summary}
+              onMapReserve={() => navigate("config")}
+            />
+          </section>
+        }
+      />
 
       {!isTauri && (
         <p className="hoje__preview">
           Preview web — abra o app desktop para ver seus dados.
         </p>
       )}
+    </div>
+  );
+}
+
+/**
+ * Malha de cards em COLUNAS INDEPENDENTES no desktop: cada coluna empilha seus
+ * cards com altura natural — nada estica para casar linha, nada abre buraco.
+ * No modo cartão o bloco do dia (alto) ancora a coluna esquerda sozinho e os
+ * demais compõem a direita; no débito as massas se repartem 2×2.
+ * No mobile os wrappers somem (`display: contents`) e a ordem de leitura vem
+ * do `order` dos próprios cards: dia → insight → movimentos → saldo.
+ */
+function HojeGrid({
+  deckMode,
+  blockDay,
+  monthInsightNote,
+  moves,
+  saldo,
+}: {
+  deckMode: boolean;
+  blockDay: ReactNode;
+  monthInsightNote: ReactNode;
+  moves: ReactNode;
+  saldo: ReactNode;
+}) {
+  return (
+    <div className="hoje__grid">
+      <div className="hoje__col">
+        {blockDay}
+        {!deckMode && moves}
+      </div>
+      <div className="hoje__col">
+        {monthInsightNote}
+        {deckMode && moves}
+        {saldo}
+      </div>
     </div>
   );
 }
@@ -369,12 +413,7 @@ function BlockDay({
     ceiling > 0 ? Math.min(100, Math.round((spentToday / ceiling) * 100)) : 0;
 
   return (
-    <section
-      className={`hoje__card hoje__blockday ${
-        cardMode && invoices.count > 0 ? "hoje__blockday--deck" : ""
-      }`}
-      aria-labelledby="hoje-day-title"
-    >
+    <section className="hoje__card hoje__blockday" aria-labelledby="hoje-day-title">
       <header className="hoje__cardhead">
         <span className="ic" aria-hidden="true">
           <Clock3 size={17} strokeWidth={1.75} />
