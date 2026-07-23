@@ -20,6 +20,7 @@ Read `readme.md` in this skill first — it covers brand principles, voice, visu
 - Writes to a user's data are a first-class approval surface — show a before→after diff, never auto-apply.
 - Voice: calm, plain, sentence-case, "you" for the user, no emoji, no cat puns.
 - Color: zinc neutrals + ONE configurable brand accent (`--accent`/`--accent-ink`; jade default via `data-accent` on `<html>`); method-status colors are fixed and never follow the accent; charts use the fixed `--chart-1..6` data palette.
+- Didactics behind a question: fixed conceptual copy collapses into a tappable "Como funciona?" (`InfoPopover`); inline stays for variable data, one sentence of context and CTAs. Every ruler/progress bar is the DS `Meter`. Full screen-level rules: `docs/ui-standards.md` in the app repo — mandatory before any screen work.
 
 **If creating visual artifacts** (slides, mocks, throwaway prototypes): copy the assets and tokens you need into your output folder and build static/standalone HTML. For component-driven mocks, you can reuse the patterns in `ui_kits/` (read components from the compiled bundle, or copy a component's JSX and inline it).
 

@@ -90,3 +90,4 @@ See `PRODUCT.md` for the full design strategy.
 - **Anti-references**: traditional banks, gamified apps, corporate ERPs, neon neobanks, SaaS cream
 - **Design principles**: night-first, precision without noise, discreet confidence, friendly guidance, data-first / chrome-second
 - **Design system**: "Midnight Purr" — zinc neutrals, configurable brand accent (jade default) hard-separated from method-status colors, Geist type, dark-first. Tokens in `src/design-system/`. Skill at `.agents/skills/neko-finance-design/SKILL.md`.
+- **UI standards**: `docs/ui-standards.md` is MANDATORY reading before any screen work — hard rules for copy (didactics behind a question, one invitation per state, formula copy must match the engine), layout (independent columns, DOM = reading order, token values before prototype mapping), components (Meter for every bar, EmptyState for load/error), per-environment ergonomics (mobile first screen, thumb vs mouse density) and baseline regeneration.

@@ -50,6 +50,7 @@ Full design system at `src/design-system/`. Agent skill at `.agents/skills/neko-
 3. **Discreet confidence** — the tool knows what it's doing and doesn't need to prove it. Restraint over flash; capability over decoration.
 4. **Friendly guidance** — Mia is warm but not chatty. Advice is specific, actionable, and never moralizing. The user is the decision-maker.
 5. **Data-first, chrome-second** — the numbers own the screen. UI chrome (nav, headers, controls) recedes until needed.
+6. **Didactics behind a question** — the app teaches the method, but fixed conceptual copy never occupies the screen as a permanent paragraph. Variable data and CTAs stay inline; explanation opens on demand from a tappable question. Hard rules in `docs/ui-standards.md`.
 
 ## Accessibility & Inclusion
 
