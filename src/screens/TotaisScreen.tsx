@@ -192,10 +192,16 @@ function CustoCard({ m, cardMode }: { m: MonthMetric; cardMode: boolean }) {
       <header className="mes__cardhead">
         <Wallet size={16} strokeWidth={1.75} className="ic" />
         <h3 id="mes-custo-t">Custo de vida</h3>
-        <span className="mes__headmoney">
-          <Money cents={m.cost_of_living_cents} size="inherit" />
-        </span>
+        <InfoPopover term="custo_de_vida" hideMarker>
+          <span className="mes__how">
+            Como funciona?
+            <span style={SR_ONLY}> — Custo de vida</span>
+          </span>
+        </InfoPopover>
       </header>
+      <div className="mes__kpi-val">
+        <Money cents={m.cost_of_living_cents} size="inherit" />
+      </div>
       <SegBar
         className="mes__segbar"
         segments={parts.map((p) => ({
@@ -208,7 +214,11 @@ function CustoCard({ m, cardMode }: { m: MonthMetric; cardMode: boolean }) {
       <ul className="mes__comp">
         {parts.map((p) => (
           <li key={p.name}>
-            <span className="mes__dot" style={{ background: p.color }} />
+            <span
+              aria-hidden="true"
+              className="mes__dot"
+              style={{ background: p.color }}
+            />
             <span className="mes__comp-name">
               {p.name}
               {p.context ? <small>{p.context}</small> : null}
@@ -221,12 +231,6 @@ function CustoCard({ m, cardMode }: { m: MonthMetric; cardMode: boolean }) {
       </ul>
       <footer className="mes__cardfoot">
         <HealthBadge level={status.level} label={status.label} />
-        <InfoPopover term="custo_de_vida" hideMarker>
-          <span className="mes__how">
-            Como funciona?
-            <span style={SR_ONLY}> — Custo de vida</span>
-          </span>
-        </InfoPopover>
       </footer>
     </section>
   );
@@ -321,17 +325,16 @@ function ComparadoCard({
   trend,
   activeYear,
   activeMonth,
+  onPick,
 }: {
   trend: MonthMetric[];
   activeYear: number;
   activeMonth: number;
+  onPick: (ym: string) => void;
 }) {
   // Escala honesta: teto = max(40%, maior valor da janela) — a grade nunca
   // mente a altura relativa das barras; zero é chão.
   const scaleMax = Math.max(4000, ...trend.map((t) => t.savings_rate_bps));
-  const barsLabel = `Economizado por mês: ${trend
-    .map((t) => `${MES[t.month - 1]} ${pctDisplay(t.savings_rate_bps)}%`)
-    .join(", ")}`;
   return (
     <section className="mes__card mes__card--comp" aria-labelledby="mes-comp-t">
       <header className="mes__cardhead">
@@ -339,19 +342,25 @@ function ComparadoCard({
         <h3 id="mes-comp-t">Comparado aos meses anteriores</h3>
       </header>
       <div className="mes__comp-body">
-        <div className="mes__bars" role="img" aria-label={barsLabel}>
+        {/* Cada barra é atalho para o mês dela (mesma navegação do MonthNav). */}
+        <div className="mes__bars">
           {trend.map((t) => {
             const isSel = t.year === activeYear && t.month === activeMonth;
+            const pct = pctDisplay(t.savings_rate_bps);
             const h = (t.savings_rate_bps / scaleMax) * 100;
             return (
-              <div
+              <button
+                type="button"
                 className={`mes__bar${isSel ? " mes__bar--now" : ""}`}
                 key={`${t.year}-${t.month}`}
+                aria-label={`${MES[t.month - 1]}: ${pct}% — ver o mês`}
+                aria-current={isSel ? "true" : undefined}
+                onClick={() => onPick(ymOf(t))}
               >
-                <i style={{ height: `${h.toFixed(2)}%` }} />
+                <i aria-hidden="true" style={{ height: `${h.toFixed(2)}%` }} />
                 <em>{MES_ABBR[t.month - 1]}</em>
-                <b>{pctDisplay(t.savings_rate_bps)}%</b>
-              </div>
+                <b>{pct}%</b>
+              </button>
             );
           })}
         </div>
@@ -499,7 +508,12 @@ export function TotaisScreen() {
         <PerformanceCard m={m} />
         <DiarioMedioCard m={m} isCurrent={isCurrent} />
         {!noRecord && (
-          <ComparadoCard trend={trend} activeYear={m.year} activeMonth={m.month} />
+          <ComparadoCard
+            trend={trend}
+            activeYear={m.year}
+            activeMonth={m.month}
+            onPick={(ym) => setSelectedYm(ym === todayYm ? null : ym)}
+          />
         )}
         {ownerTotals.length >= 2 && <OwnerTotalsCard ownerTotals={ownerTotals} />}
       </div>

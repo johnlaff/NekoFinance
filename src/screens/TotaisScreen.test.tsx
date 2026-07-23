@@ -227,15 +227,27 @@ describe("TotaisScreen (render)", () => {
     });
     render(<TotaisScreen />);
 
-    const bars = await screen.findByRole("img", { name: /Economizado por mês/ });
-    expect(within(bars).getByText("Mai")).toBeInTheDocument();
-    expect(within(bars).getByText("Jun")).toBeInTheDocument();
-    // A leitura diz o fato da janela (Jan 15% e Mai 20% do annual; Jun 25% do forecast).
+    // Cada barra é botão-atalho para o mês dela (Jan 15% e Mai 20% do annual;
+    // Jun 25% do forecast).
+    expect(
+      await screen.findByRole("button", { name: "Maio: 20% — ver o mês" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Junho: 25% — ver o mês" }),
+    ).toBeInTheDocument();
+    // A leitura diz o fato da janela.
     expect(
       screen.getByText(
         "Entre Jan e Jun, o economizado foi de 15% a 25% — o melhor mês foi Junho.",
       ),
     ).toBeInTheDocument();
+
+    // Clicar numa barra navega para o mês dela.
+    await userEvent.click(
+      screen.getByRole("button", { name: "Maio: 20% — ver o mês" }),
+    );
+    expect(screen.getByText(/Maio de 2026/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hoje" })).toBeInTheDocument();
   });
 
   it("custo de vida decompõe por componente com o bucket Cartão", async () => {

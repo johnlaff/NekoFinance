@@ -24,7 +24,7 @@ Não há matemática nova: todos os números vêm dos DTOs existentes (`MonthMet
    2026") via store de crumbs do shell.
 2. **Economia guardada** (bento, coluna 1) — o instrumento do método. Ver "Régua de
    economia" abaixo.
-3. **Custo de vida** (bento, coluna 2) — total no cabeçalho do card; segbar por
+3. **Custo de vida** (bento, coluna 2) — total como número do corpo; segbar por
    componente (Saídas fixas · Diário · Cartão, cores `--type-*`) e a lista dos três
    com valores; estado "Dentro da renda" / "Acima da renda".
 4. **Performance** (linha compacta, coluna 1) — "Sobrou dinheiro" / "Faltou dinheiro"
@@ -41,6 +41,10 @@ No desktop (>900px) o fluxo é grid de 2 colunas (gap uniforme `--space-6`); os 
 2–3 formam a primeira linha (alturas que conversam: o card da régua estica e ancora a
 nota no pé), 4–5 a segunda, 6 e 7 em largura cheia. No mobile, coluna única na mesma
 ordem do DOM — a colunização é só CSS.
+
+**Anatomia única dos cards**: cabeçalho (ícone + título + "Como funciona?" no mesmo
+endereço nos quatro) → corpo (o número grande + instrumento/contexto) → rodapé
+(badge de estado, com a folga ancorada acima dele).
 
 ## Régua de economia (instrumento)
 
@@ -85,7 +89,9 @@ ordem do DOM — a colunização é só CSS.
   cronológica), altura proporcional numa escala honesta: teto = max(40%, maior valor
   da janela) — a grade não mente a altura relativa das barras; zero é chão (barra
   mínima de 2px, visual apenas). O mês visto destaca em `--primary`; os demais em
-  neutro. Valor de cada barra visível ("{pct}%").
+  neutro. Valor de cada barra visível ("{pct}%"). **Cada barra é botão-atalho para o
+  mês dela** (mesma navegação do `MonthNav`; nome acessível "{Mês}: {pct}% — ver o
+  mês").
 - **Desktop**: evidência à esquerda (barras), leitura à direita (frase). **Mobile**:
   barras em cima, frase embaixo.
 - **A leitura diz o fato da série, nunca julga mês isolado**: todos zero → "O

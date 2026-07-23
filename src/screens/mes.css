@@ -27,7 +27,7 @@
 
 .mes__context {
   margin: var(--space-2) 0 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 1.5;
   color: var(--text-muted);
   max-width: 52ch;
@@ -65,25 +65,18 @@
 
 .mes__cardhead h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 600;
   color: var(--text-strong);
 }
 
-.mes__headmoney {
-  margin-left: auto;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-strong);
-}
-
-/* O gatilho didático senta à direita quando é o único vizinho do título. */
+/* O gatilho didático senta sempre à direita do título — mesmo endereço nos 4 cards. */
 .mes__cardhead .nk-term-wrap {
   margin-left: auto;
 }
 
 .mes__how {
-  font-size: 12px;
+  font-size: var(--fs-label);
   color: var(--text-faint);
   text-decoration: underline dotted;
   text-underline-offset: 3px;
@@ -106,7 +99,7 @@
 .mes__hero-pct {
   font-family: var(--font-money);
   font-variant-numeric: tabular-nums lining-nums;
-  font-size: 34px;
+  font-size: var(--fs-money-xl);
   font-weight: 600;
   letter-spacing: -0.03em;
   color: var(--text-strong);
@@ -118,7 +111,7 @@
 
 .mes__hero-pct small {
   font-family: var(--font-sans);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 400;
   letter-spacing: 0;
   color: var(--text-faint);
@@ -130,7 +123,7 @@
 
 .mes__rulnote {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-label);
   line-height: 1.5;
   color: var(--text-faint);
 }
@@ -165,7 +158,7 @@
 }
 
 .mes__comp-name {
-  font-size: 13.5px;
+  font-size: var(--fs-sm);
   color: var(--text);
   display: flex;
   flex-direction: column;
@@ -173,30 +166,33 @@
 }
 
 .mes__comp-name small {
-  font-size: 12px;
+  font-size: var(--fs-label);
   color: var(--text-faint);
 }
 
 .mes__comp-val {
   margin-left: auto;
-  font-size: 13.5px;
+  font-size: var(--fs-sm);
   color: var(--text-strong);
 }
 
-/* ---- Performance · Diário médio (linha compacta) ---- */
+/* ---- Número dos cards compactos (Custo · Performance · Diário médio) ---- */
 
 .mes__kpi-val {
   font-family: var(--font-money);
   font-variant-numeric: tabular-nums;
+  /* Degrau intermediário deliberado entre --fs-money-lg (22) e --fs-money-xl (34):
+     o herói da tela é o percentual da régua; estes são o segundo tier. */
   font-size: 26px;
   font-weight: 600;
-  letter-spacing: -0.02em;
+  letter-spacing: var(--ls-tight);
   color: var(--text-strong);
+  margin-bottom: var(--space-4);
 }
 
 .mes__equation {
   margin: var(--space-3) 0 0;
-  font-size: 12.5px;
+  font-size: var(--fs-label);
   line-height: 1.6;
   color: var(--text-muted);
 }
@@ -216,6 +212,7 @@
   height: 96px;
 }
 
+/* Barra = botão-atalho para o mês (mesma navegação do MonthNav). */
 .mes__bar {
   flex: 1;
   min-width: 0;
@@ -223,6 +220,25 @@
   grid-template-rows: minmax(0, 1fr) auto auto;
   justify-items: center;
   gap: var(--space-2);
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.mes__bar:hover i {
+  background: color-mix(in srgb, var(--text-muted) 30%, var(--surface-2));
+}
+
+.mes__bar--now:hover i {
+  background: var(--primary);
+}
+
+.mes__bar:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .mes__bar i {
@@ -240,12 +256,12 @@
 
 .mes__bar em {
   font-style: normal;
-  font-size: 11px;
+  font-size: var(--fs-micro);
   color: var(--text-faint);
 }
 
 .mes__bar b {
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-weight: 600;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
@@ -257,7 +273,7 @@
 
 .mes__comp-note {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 1.55;
   color: var(--text-muted);
 }
@@ -278,7 +294,7 @@
 
 .mes__webhint {
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-label);
 }
 
 /* ---- Desktop: o bento vira 2 colunas; comp e titulares em largura cheia ---- */
