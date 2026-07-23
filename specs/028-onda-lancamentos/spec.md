@@ -20,8 +20,8 @@ reembolso por linha).
 
 1. **Cabeçalho** — o título "Lançamentos" vive no shell (sh-top no desktop, appbar no
    mobile — nenhuma tela o duplica); a tela abre com a frase de contexto ("Tudo o que
-   entrou e saiu, do mais recente para o mais antigo."). No desktop, a busca mora ao
-   lado dela (o par clássico título-à-esquerda / busca-à-direita); no mobile ela desce
+   entrou e saiu, dia a dia." — sem alegar ordenação, que muda com o mês visto). No
+   desktop, a busca mora ao lado dela (o par clássico título-à-esquerda / busca-à-direita); no mobile ela desce
    para o rodapé da lista (zona do polegar). O crumb da appbar mostra o mês visto
    ("Julho de 2026") via store de crumbs do shell.
 2. **Linha de filtros** — `MonthNav` (mês visto; "Hoje" volta ao corrente) + filtro por
@@ -33,8 +33,9 @@ reembolso por linha).
    carga): o estado vazio não renderiza card algum. A primeira dobra pertence ao
    conteúdo primário, e a descoberta da feature vive na ação de marcar item.
 4. **Lista por daymarks** — ver "Modelo célula×nota" abaixo.
-5. **Busca no rodapé (mobile)** — input de busca in-flow após a lista, com clearance
-   para o dock do shell.
+5. **Busca no rodapé (mobile)** — vive no fluxo após a lista, mas gruda acima do
+   dock do shell enquanto a lista rola (pill flutuante): sempre a um polegar, sem
+   roubar a primeira dobra.
 
 ### Desktop (>900px)
 
@@ -66,15 +67,18 @@ centrado entre fios. Filtro em bottom sheet; busca no rodapé da lista. Alvos �
     exatamente o valor da célula (o import preserva a autoridade).
 - **Ordem dos dias — distância de hoje**: passado em ordem decrescente (o mais recente
   primeiro); dias futuros do mês corrente ficam atrás de um `Disclosure` ("O que ainda
-  vem neste mês — {n} lançamentos · {Σ}") no topo, em ordem crescente (o próximo
+  vem neste mês — {n} lançamentos · {Σ}"; o resumo conta lançamentos — nunca itens —
+  e soma pela célula, nunca pela nota) no topo, em ordem crescente (o próximo
   primeiro); mês inteiramente futuro lista em ordem crescente sem disclosure. A primeira
   dobra do mobile pertence ao realizado.
 
 ### Linhas
 
 - Lançamento **itemizado** (`line_items.length > 0`): cada item vira uma linha —
-  ícone circular na cor do kind do item, nome (descrição do item), contexto
-  ("{Kind}" + " · {Seção}" quando a nota tem seção), valor.
+  ícone circular na cor do kind do item, nome (descrição do item), contexto (a
+  Seção da nota, na gramática do dono; sem seção, o nome do kind — nunca os dois,
+  pois o kind deriva da seção), valor. O estado previsto desce do lançamento-pai
+  para cada linha de item.
 - Lançamento **simples**: a própria linha — ícone do tipo, descrição, contexto
   ("{Tipo}" + qualificadores: "vence {data}" quando há `due_date`).
 - **Pílulas junto do nome, nunca na coluna do dinheiro**: parcela `n/N` (mono),
@@ -120,9 +124,12 @@ Quando `||amount| − Σ|itens|| > 1` centavo num lançamento itemizado:
 
 ## Backend (uma adição de leitura, TDD)
 
-`TransactionRow.has_refund_link: bool` — verdadeiro quando (a) a Entrada tem
-`refund_invoice_id`, ou (b) a despesa tem `invoice_id` cuja fatura tem expectativa de
-reembolso (`EXISTS` de Entrada vinculada). Habilita a pílula "Reembolso" sem N+1.
+`TransactionRow.has_refund_link: bool` — verdadeiro quando (a) a Entrada aponta um
+alvo de reembolso (fatura, compra ou série), ou (b) a despesa é alvo de uma Entrada
+vinculada — no ramo da fatura, só quando a linha pertence à fatura (expense + credit;
+débito com `invoice_id` de legado fica fora). Índices parciais cobrem os três ramos.
+E `get_recent_transactions` ganha `month` opcional ("YYYY-MM"): o Livro-razão busca
+mês-escopado — a janela recente pura cortaria meses antigos no limite.
 
 ## Motion
 
