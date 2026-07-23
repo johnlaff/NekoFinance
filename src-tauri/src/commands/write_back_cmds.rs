@@ -1188,7 +1188,7 @@ pub(crate) async fn load_economia_by_month(
            AND NOT EXISTS ( \
                SELECT 1 FROM transaction_tag tt2 \
                JOIN tag tg ON tg.id = tt2.tag_id \
-               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
+               WHERE tt2.transaction_id = t.id AND tg.exclude_from_savings = 1 \
            ) \
          ORDER BY t.date, li.position",
     )
@@ -1226,7 +1226,7 @@ pub(crate) async fn load_economia_by_month(
            AND NOT EXISTS ( \
                SELECT 1 FROM transaction_tag tt2 \
                JOIN tag tg ON tg.id = tt2.tag_id \
-               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
+               WHERE tt2.transaction_id = t.id AND tg.exclude_from_savings = 1 \
            ) \
          GROUP BY substr(t.date, 1, 7)",
     )
@@ -2335,7 +2335,7 @@ mod tests {
         let tag = crate::tags::create_tag(&p, "Ignorar", "var(--cat-jade)", None, false)
             .await
             .unwrap();
-        crate::tags::update_tag_exclude(&p, &tag, true)
+        crate::tags::update_tag_rulers(&p, &tag, true, true, true, true)
             .await
             .unwrap();
         crate::tags::set_transaction_tags(&p, "tx-ignored", std::slice::from_ref(&tag))

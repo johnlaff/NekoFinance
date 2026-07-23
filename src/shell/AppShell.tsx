@@ -41,7 +41,7 @@ const SCREEN_META: Record<Screen, { title: string; crumb: string }> = {
   ano: { title: "O ano", crumb: "O ano num olhar" },
   calendario: { title: "Calendário", crumb: "Saúde do saldo dia a dia" },
   horizonte: { title: "Horizonte", crumb: "Para onde o saldo vai" },
-  tags: { title: "Tags", crumb: "Gasto por tag" },
+  tags: { title: "Tags", crumb: "O que as réguas enxergam" },
   mia: { title: "Mia", crumb: "Sua copilota financeira" },
   // Fora da nav (destino de CTA a partir da Hoje e de Configurações), mas com meta própria.
   teto: { title: "Teto do diário", crumb: "A cerimônia do gasto variável" },

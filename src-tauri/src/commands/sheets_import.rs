@@ -1190,7 +1190,7 @@ pub async fn last_sync_at(pool: State<'_, SqlitePool>) -> Result<Option<String>,
     last_sync_at_query(pool.inner()).await
 }
 
-async fn last_sync_at_query(pool: &SqlitePool) -> Result<Option<String>, String> {
+pub(crate) async fn last_sync_at_query(pool: &SqlitePool) -> Result<Option<String>, String> {
     sqlx::query_scalar::<_, Option<String>>(
         "SELECT MAX(timestamp) FROM sync_log WHERE event_type IN ('import', 'write_back')",
     )

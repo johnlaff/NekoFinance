@@ -335,6 +335,33 @@ for (const [label, width, height] of [
   });
 }
 
+// Tags no mobile: veredito como large-title, terceiros e exceções em coluna única,
+// interruptores com alvo expandido — a tela inteira na ergonomia de polegar.
+for (const theme of ["dark", "light"] as const) {
+  test(`Tags — mobile ${theme}`, async ({ page }) => {
+    await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript((t: string) => {
+      localStorage.setItem("neko-theme", t);
+    }, theme);
+    await mockTauri(page, {
+      list_scenarios_cmd: [],
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [],
+    });
+    await page.goto("/");
+    // No mobile a tela vive no menu "Mais telas" do dock.
+    await page.getByRole("button", { name: "Mais telas" }).click();
+    await page.getByRole("button", { name: "Tags", exact: false }).click();
+    await page.waitForTimeout(350);
+    await expect(page).toHaveScreenshot(`mobile-tags-${theme}.png`, {
+      fullPage: true,
+      maxDiffPixelRatio: 0.02,
+    });
+  });
+}
+
 // Configurações no mobile: o segundo shell do desenho — appbar com blur, dock
 // flutuante com FAB e o greet como large-title que silencia a appbar.
 for (const theme of ["dark", "light"] as const) {

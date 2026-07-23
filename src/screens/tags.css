@@ -1,200 +1,730 @@
-/* Neko Finance — TagsScreen redesign styles (ported verbatim from Extras.jsx ScreenTags).
-   Class names are kept exactly as the redesign prototype uses them.
-   Do NOT edit redesign.css or App.css — this file is self-contained. */
+/* ============================================================
+   Tags — a tela que protege a honestidade das réguas.
+   A tag é um interruptor de contabilidade: decide o que Performance,
+   Custo de vida, Economia e Diário médio enxergam. O Saldo nunca tem
+   interruptor — garantia estrutural, sem configuração. A ordem narra
+   pela prova: veredito → dinheiro de terceiros (detectado) → exceções
+   (declaradas) → movimentação por rótulo (consequência, atrás de disclosure).
+   Superfícies calmas: espaço separa, fio é exceção, hierarquia é
+   tipográfica e o acento só aparece onde carrega significado.
+   ============================================================ */
 
-.xs {
+.tags {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--space-6);
+  /* Até o desktop, coluna de leitura centrada; no desktop o grid de duas
+     colunas assume e o teto sai — o palco inteiro trabalha. */
+  max-width: 640px;
+  margin: 0 auto;
+  width: 100%;
 }
-.xs-title {
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--text-strong);
-}
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-1);
-}
-.card__head {
+
+/* Wrappers de coluna: invisíveis no mobile (a pilha segue o DOM); viram colunas
+   de verdade no desktop. Mesmo contrato da onda Hoje — massas díspares nunca
+   casam linha (start abre buraco; stretch estica tint sobre vazio). */
+.tags__grid {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 16px 20px 4px;
+  flex-direction: column;
+  gap: var(--space-6);
 }
-.card__title {
-  display: flex;
+
+.tags__col {
+  display: contents;
+}
+
+@media (min-width: 901px) {
+  .tags {
+    max-width: none;
+    margin: 0;
+  }
+
+  .tags__grid {
+    display: grid;
+    grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+    gap: var(--space-6);
+    align-items: start;
+  }
+
+  .tags__col {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+    min-width: 0;
+  }
+}
+
+.tags__nav {
+  align-self: flex-start;
+}
+
+/* ---- Canal de identidade: tag é sempre chip (fundo tonal + texto); tipo do
+   método e bolsão seguem como glifo — a colisão de paleta resolve por canal,
+   nunca subtraindo cores. ---- */
+
+.tags__chip {
+  display: inline-flex;
   align-items: center;
-  gap: 9px;
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text-strong);
+  gap: var(--space-3);
+  font-size: var(--fs-label);
+  font-weight: var(--fw-medium);
+  color: var(--text);
+  background: color-mix(in srgb, var(--tc) 17%, transparent);
+  border: var(--bw-hair) solid color-mix(in srgb, var(--tc) 34%, transparent);
+  border-radius: var(--radius-pill);
+  padding: 3px 11px;
   white-space: nowrap;
+  max-width: 100%;
+  min-width: 0; /* permite encolher dentro da linha flex; sem isto o texto nunca trunca */
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.card__title .ic {
+
+.tags__tdot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-circle);
+  background: var(--tc);
+  flex: none;
+}
+
+/* ---- Veredito — a única "hero" da tela ---- */
+
+.tags__verdict {
+  padding: var(--space-2) 0 0;
+}
+
+.tags__vlabel {
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+  margin: 0 0 var(--space-3);
+}
+
+.tags__verdict h1 {
+  font-size: var(--fs-h1);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.034em;
+  margin: 0;
+  line-height: 1.1;
+  text-wrap: balance;
+}
+
+.tags__verdict p {
+  margin: var(--space-4) 0 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  line-height: var(--lh-relaxed);
+  max-width: 52ch;
+}
+
+.tags__cf {
   color: var(--text-faint);
 }
-.card__body {
-  padding: 14px 20px 18px;
+
+.tags__cta {
+  margin-top: var(--space-5);
 }
-/* tags */
-.tg-row {
+
+.tags__stale {
+  margin: var(--space-4) 0 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  line-height: var(--lh-relaxed);
+}
+
+.tags__stale b {
+  color: var(--text);
+  font-weight: var(--fw-medium);
+}
+
+.tags__relink {
+  font: inherit;
+  font-size: inherit;
+  color: var(--text);
+  background: none;
+  border: 0;
+  padding: 2px 4px;
+  margin-left: 2px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+
+.tags__relink:hover {
+  color: var(--text-strong);
+}
+
+.tags__relink:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* ---- Vazio didático (zero tags): ensina o conceito, não o mecanismo ---- */
+
+.tags__void {
+  padding: var(--space-5) var(--space-2) var(--space-3);
+}
+
+.tags__void h1 {
+  margin: 0 0 var(--space-4);
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-semibold);
+  color: var(--text-strong);
+  letter-spacing: -0.02em;
+}
+
+.tags__void p {
+  margin: 0 0 var(--space-6);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  line-height: var(--lh-relaxed);
+  max-width: 54ch;
+}
+
+/* ---- Cards de seção ---- */
+
+.tags__card {
+  background: var(--surface);
+  border: var(--bw-hair) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+  padding: var(--space-6) var(--space-6) var(--space-5);
+}
+
+.tags__sechead {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--border);
+  gap: var(--space-4);
+  margin: 0 0 var(--space-3);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
 }
-.tg-row:last-child {
-  border-bottom: none;
-}
-.tg-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 4px;
+
+.tags__sechead .ic {
+  color: var(--text-faint);
   flex: none;
 }
-.tg-name {
-  font-size: 14px;
+
+.tags__sechead b,
+.tags__sechead h2 {
+  margin: 0;
+  font-size: inherit;
+  font-weight: var(--fw-medium);
   color: var(--text);
-  width: 130px;
+  letter-spacing: -0.01em;
+}
+
+/* Anotação inerte — mesma altura do botão irmão, sem se passar por um. */
+.tags__note {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.tags__more {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+  padding: var(--space-2) var(--space-1);
+  border-radius: var(--radius-xs);
+  position: relative;
+  white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+
+.tags__more:hover {
+  color: var(--text);
+}
+
+.tags__more:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Alvo de toque expandido sem inflar o layout. */
+.tags__more::before {
+  content: "";
+  position: absolute;
+  inset: -10px -6px;
+}
+
+.tags__exempty {
+  margin: var(--space-2) 0 0;
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+  line-height: var(--lh-normal);
+}
+
+.tags__toggle-error {
+  margin: 0 0 var(--space-3);
+  font-size: var(--fs-label);
+  color: var(--danger-400);
+  line-height: var(--lh-normal);
+}
+
+/* ---- Dinheiro de terceiros — saiu / voltou / em aberto / quitado / sem registro ---- */
+
+.tags__prow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-4) 0;
+}
+
+.tags__prow + .tags__prow {
+  border-top: var(--bw-hair) solid var(--border);
+}
+
+.tags__pav {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-circle);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  display: grid;
+  place-items: center;
+  font-size: var(--fs-label);
+  font-weight: var(--fw-semibold);
   flex: none;
 }
-.tg-track {
+
+.tags__pwho {
+  min-width: 0;
   flex: 1;
-  height: 10px;
-  border-radius: var(--radius-pill);
-  background: var(--bg-subtle);
-  overflow: hidden;
 }
-.tg-fill {
-  display: block; /* span inline ignora width/height — a barra nunca aparecia */
-  height: 100%;
-  border-radius: var(--radius-pill);
+
+.tags__pwho b {
+  display: block;
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  color: var(--text);
 }
-.tg-amt {
-  font-family: var(--font-money);
+
+.tags__pwho small {
+  display: block;
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+  margin-top: 2px;
   font-variant-numeric: tabular-nums;
-  font-size: 13.5px;
-  font-weight: 600;
-  width: 110px;
+}
+
+.tags__pend {
   text-align: right;
   flex: none;
 }
-/* header: title + month nav + "Nova tag" */
-.xs-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  flex-wrap: wrap;
-}
-.xs-head__actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+
+.tags__pval {
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  white-space: nowrap;
 }
 
-/* "Nova tag" form panel */
-.tg-form__row {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
+.tags__pval--settled {
+  color: var(--text-faint);
+  font-weight: var(--fw-regular);
 }
-.tg-form__input {
+
+.tags__page {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+
+/* ---- Exceções — linha de tag expansível ---- */
+
+.tags__ex {
+  border-top: var(--bw-hair) solid var(--border);
+}
+
+.tags__ex:first-of-type {
+  border-top: 0;
+}
+
+.tags__exsum {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-4) 0;
+  cursor: pointer;
+  list-style: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color var(--dur-fast) var(--ease-standard);
+}
+
+.tags__exsum::-webkit-details-marker {
+  display: none;
+}
+
+.tags__exsum:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
+}
+
+.tags__exsum:hover {
+  background: var(--surface-hover);
+  border-radius: var(--radius-sm);
+}
+
+.tags__exmeta {
+  min-width: 0;
+  flex: 1;
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.tags__exval {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  flex: none;
+  white-space: nowrap;
+}
+
+.tags__chev {
+  color: var(--text-faint);
+  flex: none;
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+/* `>` escopa por nível: um fold aberto não gira o chevron de uma linha de
+   rótulo fechada dentro dele (cada par details/summary resolve sozinho). */
+details[open] > summary .tags__chev {
+  transform: rotate(90deg);
+}
+
+/* ---- Painel de interruptores por régua (compartilhado exceção × rótulo) ----
+   O recuo é um trilho: um recuo maior tentaria alinhar com o chip, que tem
+   largura variável por nome — alinhamento que nunca fecharia. */
+
+.tags__panel {
+  padding: 0 0 var(--space-3) var(--space-5);
+  border-left: var(--bw-hair) solid var(--border);
+  margin-left: 3px;
+}
+
+.tags__rule {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-5);
+  padding: var(--space-4) 0;
+}
+
+.tags__rule + .tags__rule {
+  border-top: var(--bw-hair) solid var(--border);
+}
+
+.tags__rwhat {
+  min-width: 0;
+  flex: 1;
+}
+
+.tags__rwhat b {
+  display: block;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+
+.tags__rwhat-note {
+  display: block;
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+  margin-top: 3px;
+  line-height: var(--lh-relaxed);
+}
+
+/* A frase de uma régua desligada ganha peso: é ela que carrega o efeito em reais. */
+.tags__rwhat-note.is-off {
+  color: var(--text-muted);
+}
+
+.tags__rowactions {
+  padding-top: var(--space-3);
+}
+
+/* Garantia do saldo: uma vez por seção, não uma por tag. */
+.tags__guar {
+  margin: var(--space-4) 0 0;
+  padding-top: var(--space-4);
+  border-top: var(--bw-hair) solid var(--border);
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+  line-height: var(--lh-relaxed);
+}
+
+.tags__guar b {
+  color: var(--text-muted);
+  font-weight: var(--fw-medium);
+}
+
+/* ---- Movimentação por rótulo — disclosure bare, recuo máximo, barra neutra ---- */
+
+.tags__fold > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-2) 0 var(--space-3);
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  transition: background-color var(--dur-fast) var(--ease-standard);
+}
+
+.tags__fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.tags__fold > summary b {
+  color: var(--text);
+  font-weight: var(--fw-medium);
+}
+
+.tags__fold > summary svg:first-child {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.tags__fold > summary:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
+}
+
+.tags__fold > summary:hover {
+  background: var(--surface-hover);
+  border-radius: var(--radius-sm);
+}
+
+.tags__fc {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.tags__lbl-row {
+  border-top: var(--bw-hair) solid var(--border);
+}
+
+.tags__lblsum {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  cursor: pointer;
+  list-style: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color var(--dur-fast) var(--ease-standard);
+}
+
+.tags__lblsum::-webkit-details-marker {
+  display: none;
+}
+
+.tags__lblsum:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
+}
+
+.tags__lblsum:hover {
+  background: var(--surface-hover);
+  border-radius: var(--radius-sm);
+}
+
+.tags__lbar {
+  flex: 1;
+  min-width: 40px;
+}
+
+.tags__lval {
+  font-size: var(--fs-label);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: -0.02em;
+  flex: none;
+  white-space: nowrap;
+}
+
+.tags__lcount {
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+  flex: none;
+  min-width: 58px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.tags__lbl-row .tags__panel {
+  padding-bottom: var(--space-4);
+}
+
+/* ---- Formulário criar/editar tag ---- */
+
+.tags__form {
+  padding: var(--space-4) 0;
+  border-top: var(--bw-hair) solid var(--border);
+  margin-top: var(--space-2);
+}
+
+.tags__form-row {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+}
+
+.tags__form-input {
   flex: 1;
   min-width: 160px;
-  padding: 9px 12px;
+  padding: var(--space-4) var(--space-5);
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--surface-2);
+  border: var(--bw-hair) solid var(--border-input);
+  background: var(--bg-subtle);
   color: var(--text);
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-family: var(--font-sans);
 }
-.tg-form__input--emoji {
+
+.tags__form-input--emoji {
   flex: none;
   width: 80px;
   min-width: 0;
 }
-.tg-form__swatches {
+
+.tags__swatches {
   display: flex;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
 }
-.tg-swatch {
+
+.tags__swatch {
   width: 24px;
   height: 24px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   border: 2px solid transparent;
   cursor: pointer;
   padding: 0;
+  position: relative;
 }
-.tg-swatch.is-on {
+
+.tags__swatch.is-on {
   border-color: var(--text);
 }
-.tg-form__error {
+
+.tags__swatch:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Alvo de toque 44px sem inflar o desenho. */
+.tags__swatch::before {
+  content: "";
+  position: absolute;
+  /* O containing block é o padding-box (24px − 2×2px de borda = 20px):
+     20 + 2×12 = 44px de alvo real. */
+  inset: -12px;
+  border-radius: var(--radius-circle);
+}
+
+.tags__form-error {
   color: var(--danger-400);
-  font-size: 13px;
-  margin: 0 0 12px;
+  font-size: var(--fs-sm);
+  margin: 0 0 var(--space-4);
 }
 
-/* per-tag "ignorar nos cálculos" toggle */
-.tg-row.is-excluded .tg-name,
-.tg-row.is-excluded .tg-amt {
-  color: var(--text-muted);
-}
-.tg-toggle {
-  flex: none;
-  width: 82px;
-  text-align: center;
-  padding: 4px 8px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 11.5px;
-  font-family: var(--font-sans);
-  cursor: pointer;
-  transition: background-color var(--dur-fast) var(--ease-standard);
-}
-.tg-toggle.is-excluded {
-  background: var(--surface-2);
-  color: var(--text-faint);
-}
-.tg-edit {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: background-color var(--dur-fast) var(--ease-standard);
-}
-.tg-edit:hover {
-  background: var(--surface-2);
-}
-
-/* footer hint */
-.tg-hint {
-  font-size: 12.5px;
-  color: var(--text-faint);
+.tags__form-actions {
   display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  margin: 0;
-  line-height: 1.5;
+  gap: var(--space-4);
 }
-.tg-hint em {
-  font-style: normal;
-  color: var(--text-muted);
+
+/* ============================================================
+   Mobile (≤700px): alvos de toque ≥44px, quebras que não perdem dígito.
+   ============================================================ */
+
+@media (max-width: 700px) {
+  .tags__exsum,
+  .tags__lblsum {
+    padding: var(--space-5) 0;
+    min-height: var(--hit-touch);
+  }
+
+  .tags__fold > summary {
+    padding: var(--space-4) 0 var(--space-5);
+    min-height: var(--hit-touch);
+  }
+
+  .tags__more {
+    padding: 13px 6px;
+    margin: -13px -6px -13px auto;
+    min-height: var(--hit-touch);
+  }
+
+  .tags__relink {
+    padding: var(--space-4);
+    margin: calc(var(--space-4) * -1);
+  }
+
+  /* Nome longo + valor grande na mesma linha: o número nunca perde dígito.
+     A quebra muda de lugar (regra 10) — a SEQUÊNCIA do DOM nunca muda, nunca
+     via `order` (isso divergiria leitor de tela × leitura visual). O item
+     secundário (meta/barra) força a própria quebra com `flex-basis:100%`;
+     chip e valor+chevron mantêm sua ordem real em torno dele. */
+  .tags__exsum,
+  .tags__lblsum {
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
+  }
+
+  .tags__exmeta {
+    flex: 1 0 100%;
+  }
+
+  .tags__exval {
+    margin-left: auto;
+  }
+
+  .tags__lbar {
+    flex: 1 0 100%;
+    min-width: 20px;
+  }
+
+  .tags__lval {
+    margin-left: auto;
+  }
+
+  .tags__panel {
+    padding-left: var(--space-4);
+  }
+}
+
+/* ============================================================
+   Reduced motion: cobre animation E transition — categoria inteira,
+   não caso a caso (uma transição nova entraria sem cobertura senão).
+   ============================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  .tags *,
+  .tags *::before,
+  .tags *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

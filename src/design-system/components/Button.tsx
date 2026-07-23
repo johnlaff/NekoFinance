@@ -32,16 +32,15 @@ const BTN_BASE: CSSProperties = {
   whiteSpace: "nowrap",
 };
 
-interface ButtonProps {
+/** Estende os atributos nativos do botão: aria e data atravessam até o elemento —
+ * um primitivo que os engole torna padrões como disclosure (aria-expanded)
+ * estruturalmente impossíveis para quem o consome. */
+interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: "primary" | "secondary" | "ghost" | "danger";
   size?: "sm" | "md" | "lg";
   iconLeft?: ReactNode;
   iconRight?: ReactNode;
   children: ReactNode;
-  onClick?: () => void;
-  type?: "button" | "submit";
-  className?: string;
-  disabled?: boolean;
 }
 
 const variantStyles: Record<string, string> = {
@@ -70,6 +69,7 @@ export function Button({
   type = "button",
   className = "",
   disabled = false,
+  ...rest
 }: ButtonProps) {
   const vStyle = variantStyles[variant] ?? variantStyles["primary"] ?? "";
   const sStyle = sizeStyles[size] ?? sizeStyles["md"] ?? "";
@@ -87,6 +87,7 @@ export function Button({
       onClick={onClick}
       className={className}
       style={style}
+      {...rest}
     >
       {iconLeft}
       {children}

@@ -1958,11 +1958,11 @@ mod tests {
         let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
         let y2026 = load_year_events(&pool, 2026, today).await.unwrap();
         assert_eq!(y2026.len(), 1, "só 2026-06-15 cai em 2026");
-        assert_eq!(y2026[0].amount_cents, 100_000);
+        assert_eq!(y2026[0].event.amount_cents, 100_000);
 
         let y2027 = load_year_events(&pool, 2027, today).await.unwrap();
         assert_eq!(y2027.len(), 1, "2027-01-01 cai em 2027 (limite exclusivo)");
-        assert_eq!(y2027[0].amount_cents, 200_000);
+        assert_eq!(y2027[0].event.amount_cents, 200_000);
     }
 
     // ===================================================================================
@@ -2816,7 +2816,7 @@ mod tests {
         let tag = crate::tags::create_tag(&pool, "Reembolso", "var(--cat-jade)", None, false)
             .await
             .unwrap();
-        crate::tags::update_tag_exclude(&pool, &tag, true)
+        crate::tags::update_tag_rulers(&pool, &tag, true, true, true, true)
             .await
             .unwrap();
         crate::tags::set_transaction_tags(&pool, "exp-ignored", std::slice::from_ref(&tag))
@@ -2862,7 +2862,7 @@ mod tests {
         let tag = crate::tags::create_tag(&pool, "Ignorar", "var(--cat-jade)", None, false)
             .await
             .unwrap();
-        crate::tags::update_tag_exclude(&pool, &tag, true)
+        crate::tags::update_tag_rulers(&pool, &tag, true, true, true, true)
             .await
             .unwrap();
         crate::tags::set_transaction_tags(&pool, "tr-ignored", std::slice::from_ref(&tag))
@@ -2891,7 +2891,7 @@ mod tests {
         let tag = crate::tags::create_tag(&pool, "Ignorar", "var(--cat-jade)", None, false)
             .await
             .unwrap();
-        crate::tags::update_tag_exclude(&pool, &tag, true)
+        crate::tags::update_tag_rulers(&pool, &tag, true, true, true, true)
             .await
             .unwrap();
         crate::tags::set_transaction_tags(&pool, "exp-ignored", std::slice::from_ref(&tag))
