@@ -1,159 +1,507 @@
-.cal {
+/* Calendário — grade de saldo dia a dia com agenda master-detail.
+   Namespace .calendario__* (classe curta colide com globais do shell). */
+
+.calendario {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--space-6);
 }
-.cal-head {
+
+/* ---- Cabeçalho: mês dia a dia + MonthNav ---- */
+
+.calendario__head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-5);
   flex-wrap: wrap;
 }
-.cal-title {
+
+.calendario__head-text h2 {
+  margin: 0;
   font-size: 20px;
-  font-weight: 700;
+  font-weight: var(--fw-bold);
+  letter-spacing: -0.01em;
   color: var(--text-strong);
 }
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-1);
-}
-.cal-legend {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
-  font-size: 11.5px;
+
+.calendario__context {
+  margin: var(--space-2) 0 0;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
-.cal-legend span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+
+.calendario__how {
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: help;
 }
-.cal-legend i {
-  width: 13px;
-  height: 13px;
-  border-radius: 3px;
-  border: 1px solid var(--border);
+
+/* ---- Composição: grade + legenda (col 1) e agenda (col 2 no desktop) ---- */
+
+.calendario__main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
 }
-/* big month */
-.cal-dow {
+
+/* ---- Grade ---- */
+
+.calendario__grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.calendario__dow,
+.calendario__week {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 8px;
-  padding: 16px 18px 0;
+  gap: var(--space-3);
 }
-.cal-dow span {
+
+.calendario__dow span {
   font-size: 10.5px;
-  font-weight: 700;
+  font-weight: var(--fw-bold);
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-faint);
   text-align: center;
+  padding-bottom: var(--space-1);
 }
-.cal-grid {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 8px;
-  padding: 8px 18px 18px;
-}
-.cal-cell {
-  aspect-ratio: 1.25;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  padding: 7px 8px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  min-width: 0;
-  transition: transform var(--dur-fast) var(--ease-standard);
-}
-.cal-cell:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-2);
-}
-/* The day cell is an interactive button (navigates to the ledger); reset the
-   native button chrome and keep the flex layout, add a visible focus ring. */
-button.cal-cell {
+
+/* A célula é um gridcell interativo; reset do chrome nativo de botão. */
+.calendario__cell {
   font: inherit;
   text-align: left;
   color: inherit;
   cursor: pointer;
-  width: 100%;
-}
-button.cal-cell:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: -2px;
-}
-.cal-cell--empty {
-  background: transparent;
-  border: none;
-}
-.cal-cell--today {
-  outline: 2px solid var(--primary);
-  outline-offset: -2px;
-}
-.cal-cell__d {
-  font-family: var(--font-money);
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text);
-}
-.cal-cell__s {
-  font-family: var(--font-money);
-  font-variant-numeric: tabular-nums;
-  font-size: 11px;
-  font-weight: 600;
-  text-align: right;
-}
-.cal-cell--future {
-  opacity: 0.5;
-}
-/* year of minis */
-.cal-year {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 18px;
-  padding: 18px;
-}
-@media (max-width: 900px) {
-  .cal-year {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-@media (max-width: 560px) {
-  .cal-year {
-    grid-template-columns: 1fr;
-  }
-}
-.cal-mini__h {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text);
-  text-transform: capitalize;
-  margin-bottom: 8px;
+  min-width: 0;
+  border: var(--bw-default) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: var(--space-4) var(--space-4) var(--space-4);
+  min-height: 76px;
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: var(--space-1);
 }
-.cal-mini__perf {
+
+.calendario__cell--out {
+  border: 0;
+  background: none;
+  cursor: default;
+  min-height: 0;
+}
+
+.calendario__cell-d {
   font-family: var(--font-money);
   font-variant-numeric: tabular-nums;
-  font-size: 11px;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
 }
-.cal-mini__grid {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 3px;
+
+.calendario__cell-mv {
+  font-family: var(--font-money);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+  min-height: 1.2em;
 }
-.cal-mini__cell {
-  aspect-ratio: 1;
+
+.calendario__mv-up {
+  color: var(--money-pos);
+}
+
+.calendario__cell-s {
+  font-family: var(--font-money);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-label);
+  font-weight: var(--fw-semibold);
+  color: var(--text-muted);
+  margin-top: auto;
+}
+
+/* Eventos do mês — cor gasta só onde significa (borda), nunca tint contínuo. */
+.calendario__cell--income {
+  border-color: color-mix(in srgb, var(--money-pos) 40%, var(--border));
+}
+
+.calendario__cell--lowest {
+  border-color: var(--warning-400);
+}
+
+.calendario__cell--lowest .calendario__cell-s {
+  color: var(--warning-400);
+}
+
+/* Realizado × previsto é gramática de borda: tracejada = ainda não aconteceu. */
+.calendario__cell--future {
+  border-style: dashed;
+  background: none;
+}
+
+.calendario__cell--future .calendario__cell-d,
+.calendario__cell--future .calendario__cell-s {
+  color: var(--text-faint);
+}
+
+.calendario__cell--today {
+  border-style: solid;
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+}
+
+.calendario__cell--today .calendario__cell-d {
+  color: var(--primary);
+}
+
+.calendario__cell--selected {
+  outline: var(--bw-accent) solid var(--primary);
+  outline-offset: 1px;
+}
+
+.calendario__cell:focus-visible {
+  outline: var(--bw-accent) solid var(--primary);
+  outline-offset: 3px;
+}
+
+/* ---- Legenda ---- */
+
+.calendario__legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3) var(--space-6);
+  flex-wrap: wrap;
+  font-size: var(--fs-micro);
+  color: var(--text-muted);
+}
+
+.calendario__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.calendario__legend-item i {
+  width: 11px;
+  height: 11px;
   border-radius: 3px;
+  border: var(--bw-hair) solid var(--border);
+  flex: none;
 }
-.cal-mini__cell--today {
-  outline: 1.5px solid var(--primary);
-  outline-offset: -1.5px;
+
+.calendario__k--today {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 25%, transparent);
+}
+
+.calendario__k--income {
+  border-color: color-mix(in srgb, var(--money-pos) 55%, transparent);
+}
+
+.calendario__k--lowest {
+  border-color: var(--warning-400);
+}
+
+.calendario__k--future {
+  border-style: dashed;
+}
+
+.calendario__dot,
+.calendario__dot.calendario__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-circle);
+  border: 0;
+}
+
+.calendario__dot--income {
+  background: var(--money-pos);
+}
+
+.calendario__dot--lowest {
+  background: var(--warning-400);
+}
+
+/* A legenda descreve as cores que o viewport usa: termômetro+pontos no
+   celular, eventos na grade cheia do desktop. */
+.calendario__legend-item--mob {
+  display: none;
+}
+
+/* ---- Agenda do dia ---- */
+
+.calendario__agenda {
+  border: var(--bw-default) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.calendario__agenda h3 {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+  color: var(--text-strong);
+}
+
+.calendario__agenda-tag {
+  margin: calc(-1 * var(--space-3)) 0 0;
+  align-self: flex-start;
+  display: inline-block;
+  font-size: var(--fs-micro);
+  color: var(--text-muted);
+  border: var(--bw-hair) dashed var(--border-strong, var(--border));
+  border-radius: var(--radius-pill);
+  padding: 1px var(--space-4);
+}
+
+.calendario__agenda-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.calendario__agenda-list li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-5);
+  padding: var(--space-3) 0;
+  font-size: var(--fs-sm);
+}
+
+.calendario__agenda-list li + li {
+  border-top: var(--bw-hair) solid var(--border);
+}
+
+.calendario__agenda-desc {
+  color: var(--text);
+  min-width: 0;
+}
+
+.calendario__agenda-empty {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.calendario__agenda-comps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.calendario__agenda-comps li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-5);
+  padding: var(--space-1) 0;
+  font-size: var(--fs-label);
+  color: var(--text-muted);
+}
+
+.calendario__agenda-saldo {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: var(--bw-hair) solid var(--border);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text-strong);
+}
+
+/* Pílulas de metadado (junto do nome, nunca no dinheiro) — gramática do Livro-razão. */
+.calendario__pill {
+  display: inline-block;
+  font-style: normal;
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-semibold);
+  line-height: 1.4;
+  border-radius: var(--radius-pill);
+  padding: 1px var(--space-4);
+  margin-left: var(--space-3);
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+
+.calendario__pill--mono {
+  font-family: var(--font-mono);
+  font-weight: var(--fw-regular);
+  color: var(--text-muted);
+  background: var(--surface-2);
+}
+
+/* Reembolso é dinheiro que volta — status, não marca: verde em toda paleta. */
+.calendario__pill--ok {
+  color: var(--success-400);
+  background: color-mix(in srgb, var(--success-400) 14%, transparent);
+}
+
+.calendario__pill--prev {
+  color: var(--text-muted);
+  background: var(--surface-2);
+}
+
+.calendario__agenda-link {
+  align-self: flex-start;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--primary);
+  cursor: pointer;
+  min-height: var(--hit-min);
+  display: inline-flex;
+  align-items: center;
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+
+.calendario__agenda-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.calendario__preview-note {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: var(--fs-label);
+}
+
+/* ═══ Desktop (≥901px) — master-detail: a grade à esquerda, o dia escolhido
+   vive num painel fixo à direita. ═══ */
+
+@media (min-width: 901px) {
+  .calendario__main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 340px;
+    gap: var(--space-6) var(--space-8);
+    align-items: start;
+  }
+
+  .calendario__grid {
+    grid-column: 1;
+  }
+
+  .calendario__legend {
+    grid-column: 1;
+  }
+
+  .calendario__agenda {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    position: sticky;
+    top: var(--space-6);
+  }
+
+  .calendario__cell:not(.calendario__cell--out):hover {
+    border-color: var(--border-strong, var(--text-faint));
+  }
+
+  .calendario__cell--today:hover,
+  .calendario__cell--lowest:hover {
+    border-color: currentColor;
+  }
+}
+
+/* ═══ Mobile (≤900px) — fallback deliberado, não planilha encolhida: em
+   390px, 7 colunas × 3 dados dá ~50px por célula. A grade vira NAVEGAÇÃO
+   (dia + saúde pelo termômetro) e os números moram na agenda do dia. ═══ */
+
+@media (max-width: 900px) {
+  .calendario__cell {
+    aspect-ratio: 1;
+    min-height: 0;
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    position: relative;
+    border-radius: var(--radius-sm);
+    /* A cor da célula é o termômetro: faixas fixas em reais. */
+    background: var(--cell-band, var(--surface));
+  }
+
+  .calendario__cell--out {
+    aspect-ratio: 1;
+    background: none;
+  }
+
+  .calendario__cell-mv,
+  .calendario__cell-s {
+    display: none;
+  }
+
+  .calendario__cell-d {
+    font-size: 13.5px;
+  }
+
+  /* Eventos viram pontos discretos sob o número (menor saldo vence entrada). */
+  .calendario__cell--income::after,
+  .calendario__cell--lowest::after {
+    content: "";
+    position: absolute;
+    bottom: 5px;
+    left: 50%;
+    translate: -50% 0;
+    width: 4px;
+    height: 4px;
+    border-radius: var(--radius-circle);
+    background: var(--money-pos);
+  }
+
+  .calendario__cell--lowest::after {
+    background: var(--warning-400);
+  }
+
+  /* Previsto esmaece o tint; o número segue legível. */
+  .calendario__cell--future {
+    border-style: dashed;
+    background: color-mix(in srgb, var(--cell-band, transparent) 45%, transparent);
+  }
+
+  .calendario__cell--today {
+    background: color-mix(in srgb, var(--primary) 10%, var(--cell-band, transparent));
+  }
+
+  .calendario__legend-item--desk {
+    display: none;
+  }
+
+  .calendario__legend-item--mob {
+    display: inline-flex;
+  }
+
+  /* Alvo de toque: o gap é o que rouba os 44px nas telas estreitas. */
+  @media (max-width: 380px) {
+    .calendario__dow,
+    .calendario__week {
+      gap: var(--space-2);
+    }
+
+    .calendario__grid {
+      gap: var(--space-2);
+    }
+
+    .calendario__cell {
+      aspect-ratio: auto;
+      min-height: var(--hit-touch);
+    }
+  }
+
+  .calendario__agenda-link {
+    min-height: var(--hit-touch);
+  }
 }

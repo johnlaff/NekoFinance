@@ -478,14 +478,37 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         ],
       },
       get_ceiling_proposal_cmd: null,
-      get_month_grid: FORECAST.daily.map((d) => ({
-        date: d.date,
-        day: Number(d.date.slice(8, 10)),
-        income_cents: d.income_cents,
-        fixed_out_cents: d.fixed_out_cents,
-        daily_out_cents: d.daily_out_cents,
-        balance_cents: d.balance_cents,
-      })),
+      // Dias 01–09 são corrente realizada (o Calendário costura realizado ×
+      // projeção; sem eles os dias passados virariam travessão), 10+ espelham
+      // a projeção — mesma fonte dos demais consumidores do grid.
+      get_month_grid: [
+        ...[
+          [1, 700000, 0, 0, 910000],
+          [2, 0, 120000, 4300, 785700],
+          [3, 0, 0, 0, 785700],
+          [4, 0, 0, 9400, 776300],
+          [5, 0, 0, 0, 776300],
+          [6, 0, 18900, 0, 757400],
+          [7, 0, 0, 0, 757400],
+          [8, 100000, 0, 0, 857400],
+          [9, 0, 0, 11600, 845800],
+        ].map(([day, inc, fixed, daily, bal]) => ({
+          date: `2026-06-${String(day).padStart(2, "0")}`,
+          day,
+          income_cents: inc,
+          fixed_out_cents: fixed,
+          daily_out_cents: daily,
+          balance_cents: bal,
+        })),
+        ...FORECAST.daily.map((d) => ({
+          date: d.date,
+          day: Number(d.date.slice(8, 10)),
+          income_cents: d.income_cents,
+          fixed_out_cents: d.fixed_out_cents,
+          daily_out_cents: d.daily_out_cents,
+          balance_cents: d.balance_cents,
+        })),
+      ],
       tag_totals_for_month_cmd: TAG_TOTALS,
       list_tags_cmd: TAG_TOTALS,
       get_annual_metrics: ANNUAL,
