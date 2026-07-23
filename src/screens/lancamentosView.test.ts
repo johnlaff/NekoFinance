@@ -94,9 +94,27 @@ describe("buildDayGroups — célula×nota", () => {
     date: "2026-07-12",
     is_fixed: true,
     line_items: [
-      item({ id: "li-1", amount_cents: 400066, description: "Bradesco João", section: "CARTÕES |", position: 0 }),
-      item({ id: "li-2", amount_cents: 407764, description: "Bradesco Gio", section: null, position: 1 }),
-      item({ id: "li-3", amount_cents: 2298, description: "Inter", section: null, position: 2 }),
+      item({
+        id: "li-1",
+        amount_cents: 400066,
+        description: "Bradesco João",
+        section: "CARTÕES |",
+        position: 0,
+      }),
+      item({
+        id: "li-2",
+        amount_cents: 407764,
+        description: "Bradesco Gio",
+        section: null,
+        position: 1,
+      }),
+      item({
+        id: "li-3",
+        amount_cents: 2298,
+        description: "Inter",
+        section: null,
+        position: 2,
+      }),
     ],
   });
 
@@ -133,7 +151,12 @@ describe("buildDayGroups — célula×nota", () => {
 
   it("separa células por tipo dentro do dia, na ordem canônica", () => {
     const entrada = txn({ id: "e1", type: "income", amount: 24, date: "2026-07-10" });
-    const saida = txn({ id: "s1", amount: -228524, is_fixed: true, date: "2026-07-10" });
+    const saida = txn({
+      id: "s1",
+      amount: -228524,
+      is_fixed: true,
+      date: "2026-07-10",
+    });
     const days = buildDayGroups([saida, entrada], TODAY);
     expect(days[0]!.cells.map((c) => c.type)).toEqual(["entrada", "saida"]);
   });
@@ -168,8 +191,12 @@ describe("buildDayGroups — célula×nota", () => {
     const aVencer = txn({ id: "a1", due_date: "2026-08-12", is_fixed: true });
     const days = buildDayGroups([vencida, aVencer], TODAY);
     const rows = days[0]!.cells[0]!.rows;
-    expect(rows.find((r) => r.key === "v1")!.context).toBe("Saída · venceu 12 de julho");
-    expect(rows.find((r) => r.key === "a1")!.context).toBe("Saída · vence 12 de agosto");
+    expect(rows.find((r) => r.key === "v1")!.context).toBe(
+      "Saída · venceu 12 de julho",
+    );
+    expect(rows.find((r) => r.key === "a1")!.context).toBe(
+      "Saída · vence 12 de agosto",
+    );
   });
 
   it("tags de lançamento itemizado sobem para o cel-head", () => {
@@ -194,7 +221,13 @@ describe("applySearch", () => {
           item({ id: "li-3", amount_cents: 2298, description: "Inter" }),
         ],
       }),
-      txn({ id: "alug", amount: -148474, description: "Aluguel", date: "2026-07-10", is_fixed: true }),
+      txn({
+        id: "alug",
+        amount: -148474,
+        description: "Aluguel",
+        date: "2026-07-10",
+        is_fixed: true,
+      }),
     ],
     TODAY,
   );
@@ -253,13 +286,23 @@ describe("splitAroundToday", () => {
 describe("emptyListCopy", () => {
   it("prioriza a busca, cita o termo", () => {
     expect(
-      emptyListCopy({ query: "pix", filterName: "Diário", monthName: "julho", cardMode: true }),
+      emptyListCopy({
+        query: "pix",
+        filterName: "Diário",
+        monthName: "julho",
+        cardMode: true,
+      }),
     ).toBe('Nada em julho para "pix". Limpe a busca ou troque o filtro.');
   });
 
   it("filtro de Diário no modo cartão ensina onde o variável vive", () => {
     expect(
-      emptyListCopy({ query: "", filterName: "Diário", monthName: "julho", cardMode: true }),
+      emptyListCopy({
+        query: "",
+        filterName: "Diário",
+        monthName: "julho",
+        cardMode: true,
+      }),
     ).toBe(
       "Nenhum lançamento de diário em julho. No modo cartão, o variável vive nas faturas.",
     );
@@ -267,7 +310,12 @@ describe("emptyListCopy", () => {
 
   it("sem filtro nem busca, frase neutra", () => {
     expect(
-      emptyListCopy({ query: "", filterName: null, monthName: "julho", cardMode: false }),
+      emptyListCopy({
+        query: "",
+        filterName: null,
+        monthName: "julho",
+        cardMode: false,
+      }),
     ).toBe("Nenhum lançamento em julho.");
   });
 });

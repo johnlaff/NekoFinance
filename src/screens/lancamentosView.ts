@@ -178,7 +178,12 @@ function pillsOfTxn(t: TransactionRow, todayIso: string): RowPills {
   };
 }
 
-const EMPTY_PILLS: RowPills = { installment: null, previsto: false, refund: false, tags: [] };
+const EMPTY_PILLS: RowPills = {
+  installment: null,
+  previsto: false,
+  refund: false,
+  tags: [],
+};
 
 /**
  * Agrupa lançamentos em dias (ordem crescente de data) e, dentro do dia, em
@@ -326,7 +331,8 @@ export function emptyListCopy(opts: {
   cardMode: boolean;
 }): string {
   const q = opts.query.trim();
-  if (q) return `Nada em ${opts.monthName} para "${q}". Limpe a busca ou troque o filtro.`;
+  if (q)
+    return `Nada em ${opts.monthName} para "${q}". Limpe a busca ou troque o filtro.`;
   if (opts.filterName) {
     const base = `Nenhum lançamento de ${opts.filterName.toLowerCase()} em ${opts.monthName}.`;
     if (opts.filterName === "Diário" && opts.cardMode)

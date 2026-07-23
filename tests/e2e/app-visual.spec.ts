@@ -217,7 +217,10 @@ for (const theme of ["dark", "light"] as const) {
         list_obligations_cmd: [],
       });
       await page.goto("/");
-      await page.getByRole("button", { name: "Lançamentos", exact: false }).first().click();
+      await page
+        .getByRole("button", { name: "Lançamentos", exact: false })
+        .first()
+        .click();
       await page.waitForTimeout(350);
     });
 
@@ -230,7 +233,9 @@ for (const theme of ["dark", "light"] as const) {
 
     test("filtro por tipo abre em bottom sheet", async ({ page }) => {
       await page.getByRole("button", { name: /Tipo:/ }).click();
-      await expect(page.getByRole("dialog", { name: "Filtrar por tipo" })).toBeVisible();
+      await expect(
+        page.getByRole("dialog", { name: "Filtrar por tipo" }),
+      ).toBeVisible();
       await page.waitForTimeout(200);
       await expect(page).toHaveScreenshot(`mobile-lancamentos-sheet-${theme}.png`, {
         maxDiffPixelRatio: 0.02,

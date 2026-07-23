@@ -111,7 +111,9 @@ describe("TransactionsScreen (Lançamentos)", () => {
     renderLedger();
 
     // Os itens são linhas de primeira classe (não escondidos atrás de expansão).
-    expect(await screen.findByRole("button", { name: "Bradesco João" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Bradesco João" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Bradesco Gio" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Inter" })).toBeInTheDocument();
     // O cabeçalho de célula declara a coluna e carrega o total como autoridade.
@@ -196,7 +198,9 @@ describe("TransactionsScreen (Lançamentos)", () => {
     expect(screen.queryByText("Com diferença")).not.toBeInTheDocument();
     expect(screen.queryByText("Diferença no detalhamento")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Bradesco Gio" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Bradesco João" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Bradesco João" }),
+    ).not.toBeInTheDocument();
   });
 
   it("pílulas de metadado moram junto do nome: parcela, reembolso e previsto", async () => {
@@ -230,8 +234,21 @@ describe("TransactionsScreen (Lançamentos)", () => {
 
   it("filtro por tipo seleciona células inteiras", async () => {
     const rows = [
-      { ...TXNS[1]!, id: "fix-1", description: "Aluguel", date: currentMonthISO(10), payment_method: "debit", is_fixed: true },
-      { ...TXNS[1]!, id: "card-1", description: "Compra no crédito", date: currentMonthISO(11), payment_method: "credit" },
+      {
+        ...TXNS[1]!,
+        id: "fix-1",
+        description: "Aluguel",
+        date: currentMonthISO(10),
+        payment_method: "debit",
+        is_fixed: true,
+      },
+      {
+        ...TXNS[1]!,
+        id: "card-1",
+        description: "Compra no crédito",
+        date: currentMonthISO(11),
+        payment_method: "credit",
+      },
     ];
     mockCommands({ get_recent_transactions: rows });
     renderLedger();
@@ -241,7 +258,9 @@ describe("TransactionsScreen (Lançamentos)", () => {
     await user.click(screen.getByRole("button", { name: "Cartão" }));
 
     expect(screen.queryByRole("button", { name: "Aluguel" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Compra no crédito" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Compra no crédito" }),
+    ).toBeInTheDocument();
   });
 
   it("vazio com busca cita o termo e o mês", async () => {

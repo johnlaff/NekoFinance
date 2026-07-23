@@ -3,13 +3,14 @@
 ## Contexto
 
 O Livro-razão atual apresenta lançamentos como linhas expansíveis (data + tipo + descrição
-+ valor), com os itens da nota escondidos atrás de um toque e a divergência item×célula
-reportada como aviso interno ("Itens não batem"). A direção da identidade define outra
-leitura: a **célula é a autoridade** — cada dia expõe, por coluna do método, o total da
-célula; a nota itemiza; e a diferença célula×nota aparece como **linha sintética de
-reconciliação**, nunca como item. A lista explode as notas em linhas de primeira classe,
-agrupadas por dia (daymarks), com colunas de verdade no desktop e metadados como pílulas
-junto do nome — nunca na coluna do dinheiro.
+
+- valor), com os itens da nota escondidos atrás de um toque e a divergência item×célula
+  reportada como aviso interno ("Itens não batem"). A direção da identidade define outra
+  leitura: a **célula é a autoridade** — cada dia expõe, por coluna do método, o total da
+  célula; a nota itemiza; e a diferença célula×nota aparece como **linha sintética de
+  reconciliação**, nunca como item. A lista explode as notas em linhas de primeira classe,
+  agrupadas por dia (daymarks), com colunas de verdade no desktop e metadados como pílulas
+  junto do nome — nunca na coluna do dinheiro.
 
 Não há matemática nova de domínio: o import já grava o total da célula como `amount` do
 lançamento e as linhas da nota como `line_items` (a divergência é derivável por

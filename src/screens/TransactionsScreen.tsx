@@ -235,7 +235,12 @@ function TagPicker({
         )}
       </div>
       <div className="lc-tagpicker__actions">
-        <Button size="sm" variant="primary" onClick={() => void save()} disabled={saving}>
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={() => void save()}
+          disabled={saving}
+        >
           Aplicar
         </Button>
         <Button size="sm" variant="ghost" onClick={onDone}>
@@ -251,7 +256,9 @@ function RowPillsInline({ row }: { row: DisplayRow }) {
   const { pills } = row;
   return (
     <>
-      {pills.installment && <span className="lc-pill lc-pill--mono">{pills.installment}</span>}
+      {pills.installment && (
+        <span className="lc-pill lc-pill--mono">{pills.installment}</span>
+      )}
       {pills.refund && <span className="lc-pill lc-pill--ok">Reembolso</span>}
       {pills.previsto && <span className="lc-pill lc-pill--prev">Previsto</span>}
       {pills.tags.map((tag) => (
@@ -566,8 +573,8 @@ function FilterSheet({
       <div className="lc-sheet__panel">
         <h3 className="lc-sheet__t">Filtrar por tipo</h3>
         <p className="lc-sheet__hint">
-          Os tipos do método: Diário é o variável do dia; Saída é conta fixa; Cartão soma
-          na fatura e vira Saída no vencimento.
+          Os tipos do método: Diário é o variável do dia; Saída é conta fixa; Cartão
+          soma na fatura e vira Saída no vencimento.
         </p>
         <div className="lc-sheet__opts">
           {FILTER_CHIPS.map((f) => (
@@ -728,7 +735,9 @@ export function TransactionsScreen() {
 
   const cardMode = summaryQ.data?.spending_mode === "card";
   const filterName =
-    filter !== "todos" ? (FILTER_CHIPS.find((f) => f.key === filter)?.label ?? null) : null;
+    filter !== "todos"
+      ? (FILTER_CHIPS.find((f) => f.key === filter)?.label ?? null)
+      : null;
 
   // Web-preview fallback
   if (!isTauri) {
