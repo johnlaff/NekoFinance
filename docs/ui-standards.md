@@ -20,7 +20,11 @@ that deviates must say why in the PR.
    it serves ("Como o mês está indo?") and carries the live answer as its
    subtitle — the current number, scoped to its period. Instruments (charts,
    tables) live behind the door, never as the door: nobody should have to
-   interpret a chart to discover which question it answers.
+   interpret a chart to discover which question it answers. Two boundaries: primary
+   navigation keeps noun names — the question lives in the crumb and in the door's
+   preview, never as a renamed tab; and the questions are the method's own — a
+   question the method rejects (spend-by-category is the classic) does not earn a
+   door by being familiar.
 3. **Inline stays for: variable data, one sentence of context, and CTAs.** Numbers,
    dates and percentages are the content — they never collapse. An action is never
    hidden inside a popover: empty/missing states keep their CTA visible.
