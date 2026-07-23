@@ -107,7 +107,10 @@ export function DashboardScreen() {
 
   const today = forecast.today;
   const month = monthOf(today);
-  const monthDaily = forecast.daily.filter((d) => monthOf(d.date) === month);
+  // Recorte por ano-mês (prefixo ISO): só o número do mês colidiria o mesmo mês
+  // de anos diferentes quando o horizonte cruza a virada.
+  const monthKey = today.slice(0, 7);
+  const monthDaily = forecast.daily.filter((d) => d.date.slice(0, 7) === monthKey);
   const insight = monthInsight(monthDaily, today);
   const invoices = openInvoicesView(summary.upcoming_invoices);
   const metric = currentMonthMetric(forecast.months, today);
@@ -270,9 +273,11 @@ function TeachLine({
   const ceiling = summary.daily_budget;
   const source = summary.daily_ceiling_source;
 
-  const guardPhrase = savingsBound
-    ? "mantém a economia planejada do ano viva — hoje é ela quem manda, não o caixa"
-    : `o saldo aguenta até ${monthEndLabel} sem nenhum dia no vermelho`;
+  // O número é SÓ o guardrail que morde (caixa ou economia) — o teto nunca entra
+  // nele; é o segundo limite do dia e a didática o apresenta como tal.
+  const numberPhrase = savingsBound
+    ? "Este é o limite da economia: o maior gasto que mantém a meta do ano viva — hoje é ela quem manda, não o caixa."
+    : `Este é o limite do caixa: o maior gasto que o saldo aguenta até ${monthEndLabel} sem nenhum dia no vermelho.`;
 
   const tetoClause =
     source === "chosen" ? (
@@ -282,7 +287,10 @@ function TeachLine({
         <button type="button" className="hoje__link" onClick={onOpenTeto}>
           teto que você estipulou
         </button>{" "}
-        — <Money cents={ceiling} size="inherit" /> por dia — segue como referência.
+        — <Money cents={ceiling} size="inherit" /> por dia —{" "}
+        {cardMode
+          ? "segue como referência."
+          : "é o segundo limite do dia: vale o mais apertado dos dois."}
       </>
     ) : source === "estimate" ? (
       <>
@@ -308,33 +316,12 @@ function TeachLine({
       </>
     );
 
-  if (cardMode) {
-    return (
-      <>
-        Este é o limite do dia: o maior gasto que {guardPhrase}. No cartão, a compra
-        pesa na fatura seguinte — este número protege o caixa deste mês.
-        {tetoClause}
-      </>
-    );
-  }
-  if (ceiling > 0) {
-    return (
-      <>
-        É o menor de dois limites: o teto diário
-        {source === "estimate" ? " estimado" : ""} de{" "}
-        <Money cents={ceiling} size="inherit" /> e o que {guardPhrase}.
-        {source === "estimate" ? (
-          <>
-            {" "}
-            <EstimateMark term={TETO_ESTIMATE_TERM} />
-          </>
-        ) : null}
-      </>
-    );
-  }
   return (
     <>
-      É o que {guardPhrase} — ainda sem teto diário estipulado.
+      {numberPhrase}
+      {cardMode
+        ? " No cartão, a compra pesa na fatura seguinte — este número protege o caixa deste mês."
+        : ""}
       {tetoClause}
     </>
   );
@@ -368,9 +355,11 @@ function BlockDay({
   for (const card of cards) {
     if (!openAccounts.has(card.id)) zeroed.push(card.name);
   }
+  // O texto/aria dizem o percentual REAL (150% acima do típico é dado, não ruído);
+  // só a barra satura em 100 — largura é reforço visual, nunca o número.
   const pct =
     baselineOutflowCents > 0
-      ? Math.min(100, Math.round((invoices.totalCents / baselineOutflowCents) * 100))
+      ? Math.round((invoices.totalCents / baselineOutflowCents) * 100)
       : null;
 
   const ceiling = summary.daily_budget;
@@ -380,7 +369,12 @@ function BlockDay({
     ceiling > 0 ? Math.min(100, Math.round((spentToday / ceiling) * 100)) : 0;
 
   return (
-    <section className="hoje__card hoje__blockday" aria-labelledby="hoje-day-title">
+    <section
+      className={`hoje__card hoje__blockday ${
+        cardMode && invoices.count > 0 ? "hoje__blockday--deck" : ""
+      }`}
+      aria-labelledby="hoje-day-title"
+    >
       <header className="hoje__cardhead">
         <span className="ic" aria-hidden="true">
           <Clock3 size={17} strokeWidth={1.75} />
@@ -428,7 +422,7 @@ function BlockDay({
                     role="img"
                     aria-label={`Faturas em aberto somam ${pct}% do gasto típico de um mês`}
                   >
-                    <i style={{ width: `${pct}%` }} />
+                    <i style={{ width: `${Math.min(100, pct)}%` }} />
                   </div>
                 )}
                 <p className="hoje__fatura-note">
@@ -455,13 +449,6 @@ function BlockDay({
                   </ul>
                 </div>
               ))}
-              {zeroed.length > 0 && (
-                <p className="hoje__zerados">
-                  {joinNames(zeroed)} {zeroed.length === 1 ? "está" : "estão"} sem
-                  fatura em aberto — cartão parado sai da lista sozinho e volta quando
-                  você usar.
-                </p>
-              )}
             </>
           ) : (
             <div className="hoje__fatura">
@@ -484,6 +471,12 @@ function BlockDay({
               </p>
             </div>
           )}
+          {zeroed.length > 0 && (
+            <p className="hoje__zerados">
+              {joinNames(zeroed)} {zeroed.length === 1 ? "está" : "estão"} sem fatura em
+              aberto — cartão parado sai da lista sozinho e volta quando você usar.
+            </p>
+          )}
           <p className="hoje__gloss">
             O Diário fica zerado de propósito: ele é para débito e Pix, que mexem o
             saldo na hora. Se um dia você migrar para o débito, o check-in do diário
@@ -500,8 +493,11 @@ function BlockDay({
                 {" "}
                 /{" "}
                 {source === "none" ? (
+                  // Com proposta pendente o convite é ÚNICO em toda a tela: revisar.
                   <button type="button" className="hoje__link" onClick={onOpenTeto}>
-                    Sem teto — estipular
+                    {summary.ceiling_proposal_pending
+                      ? "Proposta do teto aguardando — revisar"
+                      : "Sem teto — estipular"}
                   </button>
                 ) : (
                   <>
@@ -608,12 +604,12 @@ function MonthInsightNote({
       <p>
         Fechando o dia assim, {(MES[month] ?? "").toLowerCase()} termina em{" "}
         <b>{band.label}</b> — saldo previsto de{" "}
-        <b>
+        <b className={insight.endBalanceCents < 0 ? "hoje__money-neg" : undefined}>
           <Money cents={insight.endBalanceCents} size="inherit" />
         </b>
         . O ponto mais apertado do mês é{" "}
         {insight.minIsOngoing ? <b>hoje</b> : <b>dia {minDay}</b>}:{" "}
-        <b>
+        <b className={insight.minCents < 0 ? "hoje__money-neg" : undefined}>
           <Money cents={insight.minCents} size="inherit" />
         </b>
         {insight.minIsOngoing && !minIsToday ? <> desde o dia {minDay}</> : null}

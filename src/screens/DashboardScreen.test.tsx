@@ -85,7 +85,9 @@ describe("DashboardScreen (Hoje)", () => {
     renderHoje();
 
     expect(await screen.findByText("Diário de hoje")).toBeInTheDocument();
-    expect(screen.getByText(/menor de dois limites/)).toBeInTheDocument();
+    // O número exibido é só o guardrail; o teto é apresentado como SEGUNDO limite,
+    // nunca como componente do número (o motor não o inclui no min).
+    expect(screen.getByText(/segundo limite do dia/)).toBeInTheDocument();
     expect(
       screen.getByRole("img", { name: /Diário de hoje em \d+% do teto/ }),
     ).toBeInTheDocument();
@@ -126,10 +128,12 @@ describe("DashboardScreen (Hoje)", () => {
     const review = await screen.findByRole("button", {
       name: "A planilha propõe um teto — revisar.",
     });
-    // Com proposta pendente o convite é ÚNICO — sem "Estipular o teto" duplicado.
+    // Com proposta pendente o convite é ÚNICO na tela inteira: nenhum "estipular"
+    // sobra (nem no herói, nem no bloco do dia).
+    expect(screen.queryByText(/estipular/i)).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Estipular o teto" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: "Proposta do teto aguardando — revisar" }),
+    ).toBeInTheDocument();
     await user.click(review);
     expect(app.navigate).toHaveBeenCalledWith("teto");
   });
@@ -204,13 +208,20 @@ describe("DashboardScreen (Hoje)", () => {
       },
       get_forecast: FORECAST,
       get_upcoming_bills_cmd: [],
-      list_cards: [],
+      list_cards: [
+        { id: "inter", name: "Inter" },
+        { id: "bb", name: "BB" },
+      ],
     });
     renderHoje();
 
     expect(await screen.findByText("Cartão do mês")).toBeInTheDocument();
     expect(screen.getByText(/Próxima fatura:/)).toBeInTheDocument();
     expect(screen.getByText("Modo cartão")).toBeInTheDocument();
+    // Cartão parado nunca some em silêncio — mesmo sem NENHUMA fatura em aberto.
+    expect(
+      screen.getByText(/Inter e BB estão sem fatura em aberto/),
+    ).toBeInTheDocument();
   });
 
   it("insight da Mia: fechamento na faixa do termômetro + ponto mais apertado + entrada", async () => {

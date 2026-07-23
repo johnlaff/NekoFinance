@@ -321,6 +321,11 @@
   font-weight: var(--fw-medium);
 }
 
+/* Dinheiro negativo no insight: o 3º eixo de cor (dinheiro) fala mais alto que a voz. */
+.hoje__insight b.hoje__money-neg {
+  color: var(--money-neg);
+}
+
 .hoje__insight-cat {
   flex: none;
   margin-top: 2px;
@@ -543,7 +548,9 @@
     gap: var(--space-3) var(--space-5);
   }
 
-  .hoje__blockday {
+  /* O bloco só ancora a coluna inteira quando a lista de faturas lhe dá altura;
+     curto (modo débito ou sem fatura aberta), ele flui em grade 2×2 equilibrada. */
+  .hoje__blockday--deck {
     grid-row: span 3;
   }
 
