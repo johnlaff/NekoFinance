@@ -15,6 +15,7 @@ mod scenarios;
 mod splits;
 mod sync_task;
 mod tags;
+mod tags_screen;
 
 use oauth::AppDataDir;
 use std::sync::{Arc, Mutex};
@@ -77,7 +78,8 @@ pub fn run() {
             tags::set_transaction_tags_cmd,
             tags::tag_totals_for_month_cmd,
             tags::update_tag_cmd,
-            tags::update_tag_exclude_cmd,
+            tags::update_tag_rulers_cmd,
+            tags_screen::get_tags_screen,
             recurrence::delete_series_from_cmd,
             recurrence::delete_series_all_cmd,
             recurrence::update_series_from_cmd,

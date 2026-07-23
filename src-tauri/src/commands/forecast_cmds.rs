@@ -141,27 +141,35 @@ pub(crate) async fn realized_annual_savings(
             format!("{cur_ym}-01"),
         )
     };
-    // Mesmo filtro `exclude_from_totals` ("Ignorar") de `load_year_events`/`annual_metrics`: uma
-    // linha marcada cai fora da MÉTRICA, então também não pode entrar no net de poupança realizada,
-    // senão o guardrail e o painel de métricas divergem.
-    let row: (i64, i64) = sqlx::query_as(
+    // As duas pernas adotam réguas DISTINTAS: a renda-base do guardrail 20–30% é a
+    // view Economia (`exclude_from_savings`); o net/colchão do ano é figura de Performance
+    // (`exclude_from_performance`). Por isso a renda entra em duas views num SELECT só — a
+    // devolvida (denominador) filtra por savings; a do net filtra por performance junto da saída.
+    // Com uma tag 4× desligada as três pernas caem juntas, reproduzindo o filtro único antigo.
+    let row: (i64, i64, i64) = sqlx::query_as(
         "SELECT \
-           COALESCE(SUM(CASE WHEN t.type='income' THEN t.amount ELSE 0 END), 0), \
-           COALESCE(SUM(CASE WHEN t.type='expense' THEN t.amount ELSE 0 END), 0) \
+           COALESCE(SUM(CASE WHEN t.type='income' \
+             AND NOT EXISTS (SELECT 1 FROM transaction_tag tt2 JOIN tag tg ON tg.id = tt2.tag_id \
+                 WHERE tt2.transaction_id = t.id AND tg.exclude_from_savings = 1) \
+             THEN t.amount ELSE 0 END), 0), \
+           COALESCE(SUM(CASE WHEN t.type='income' \
+             AND NOT EXISTS (SELECT 1 FROM transaction_tag tt2 JOIN tag tg ON tg.id = tt2.tag_id \
+                 WHERE tt2.transaction_id = t.id AND tg.exclude_from_performance = 1) \
+             THEN t.amount ELSE 0 END), 0), \
+           COALESCE(SUM(CASE WHEN t.type='expense' \
+             AND NOT EXISTS (SELECT 1 FROM transaction_tag tt2 JOIN tag tg ON tg.id = tt2.tag_id \
+                 WHERE tt2.transaction_id = t.id AND tg.exclude_from_performance = 1) \
+             THEN t.amount ELSE 0 END), 0) \
          FROM \"transaction\" t WHERE t.date >= ?1 AND t.date < ?2 \
-           AND t.type IN ('income','expense') AND t.scenario_id IS NULL \
-           AND NOT EXISTS ( \
-               SELECT 1 FROM transaction_tag tt2 \
-               JOIN tag tg ON tg.id = tt2.tag_id \
-               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
-           )",
+           AND t.type IN ('income','expense') AND t.scenario_id IS NULL",
     )
     .bind(&lower)
     .bind(&upper)
     .fetch_one(pool)
     .await
     .map_err(|e| format!("realized annual: {e}"))?;
-    Ok((row.0, row.0 - row.1)) // (renda, poupança=net) dos meses completos
+    let (income_savings, income_perf, expense_perf) = row;
+    Ok((income_savings, income_perf - expense_perf)) // (renda-base, net colchão) dos meses completos
 }
 
 /// Economia REGISTRADA do ano até hoje (meses completos). É o numerador do "Economizado" do
@@ -209,7 +217,7 @@ pub(crate) async fn realized_annual_economia(
            AND NOT EXISTS ( \
                SELECT 1 FROM transaction_tag tt2 \
                JOIN tag tg ON tg.id = tt2.tag_id \
-               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
+               WHERE tt2.transaction_id = t.id AND tg.exclude_from_savings = 1 \
            )",
     )
     .bind(&lower)
@@ -236,7 +244,7 @@ pub(crate) async fn realized_annual_economia(
            AND NOT EXISTS ( \
                SELECT 1 FROM transaction_tag tt2 \
                JOIN tag tg ON tg.id = tt2.tag_id \
-               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
+               WHERE tt2.transaction_id = t.id AND tg.exclude_from_savings = 1 \
            ) \
          GROUP BY substr(t.date, 1, 7)",
     )
@@ -324,7 +332,7 @@ pub(crate) async fn realized_annual_patrimonio(
            AND NOT EXISTS ( \
                SELECT 1 FROM transaction_tag tt2 \
                JOIN tag tg ON tg.id = tt2.tag_id \
-               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
+               WHERE tt2.transaction_id = t.id AND tg.exclude_from_performance = 1 \
            )",
     )
     .bind(&lower)
@@ -349,7 +357,7 @@ pub(crate) async fn realized_annual_patrimonio(
            AND NOT EXISTS ( \
                SELECT 1 FROM transaction_tag tt2 \
                JOIN tag tg ON tg.id = tt2.tag_id \
-               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
+               WHERE tt2.transaction_id = t.id AND tg.exclude_from_performance = 1 \
            )",
     )
     .bind(&lower)
@@ -400,7 +408,10 @@ pub(crate) async fn spending_mode_summary(
     let mut next_fatura_by_date: std::collections::BTreeMap<String, i64> =
         std::collections::BTreeMap::new();
 
-    for e in &events {
+    // Detecção de modo é pergunta de FORMA-do-gasto → view Custo de vida: um lançamento excluído
+    // dessa régua não conta como diário/cartão para o modo (preserva o comportamento do backfill).
+    for me in events.iter().filter(|me| me.mask.cost_of_living) {
+        let e = &me.event;
         let ym = e.date.format("%Y-%m").to_string();
         let slot = window_keys.iter().position(|k| *k == ym);
         match e.kind {
@@ -474,26 +485,32 @@ pub(crate) async fn projected_annual_savings(
     // malformada que começa com o ano mas não é ISO válida.
     let start = format!("{}-01-01", today_naive.year());
     let end = format!("{}-12-31", today_naive.year());
-    // Mesmo filtro `exclude_from_totals` de `realized_annual_savings`/`load_year_events`: linhas
-    // "Ignorar" ficam fora da projeção de poupança como ficam fora das métricas.
-    let row: (i64, i64) = sqlx::query_as(
+    // Réguas por perna iguais às de `realized_annual_savings`: renda-base → Economia
+    // (`exclude_from_savings`); net → Performance (`exclude_from_performance`).
+    let row: (i64, i64, i64) = sqlx::query_as(
         "SELECT \
-           COALESCE(SUM(CASE WHEN t.type='income' THEN t.amount ELSE 0 END), 0), \
-           COALESCE(SUM(CASE WHEN t.type='expense' THEN t.amount ELSE 0 END), 0) \
+           COALESCE(SUM(CASE WHEN t.type='income' \
+             AND NOT EXISTS (SELECT 1 FROM transaction_tag tt2 JOIN tag tg ON tg.id = tt2.tag_id \
+                 WHERE tt2.transaction_id = t.id AND tg.exclude_from_savings = 1) \
+             THEN t.amount ELSE 0 END), 0), \
+           COALESCE(SUM(CASE WHEN t.type='income' \
+             AND NOT EXISTS (SELECT 1 FROM transaction_tag tt2 JOIN tag tg ON tg.id = tt2.tag_id \
+                 WHERE tt2.transaction_id = t.id AND tg.exclude_from_performance = 1) \
+             THEN t.amount ELSE 0 END), 0), \
+           COALESCE(SUM(CASE WHEN t.type='expense' \
+             AND NOT EXISTS (SELECT 1 FROM transaction_tag tt2 JOIN tag tg ON tg.id = tt2.tag_id \
+                 WHERE tt2.transaction_id = t.id AND tg.exclude_from_performance = 1) \
+             THEN t.amount ELSE 0 END), 0) \
          FROM \"transaction\" t WHERE t.date >= ?1 AND t.date <= ?2 \
-           AND t.type IN ('income','expense') AND t.scenario_id IS NULL \
-           AND NOT EXISTS ( \
-               SELECT 1 FROM transaction_tag tt2 \
-               JOIN tag tg ON tg.id = tt2.tag_id \
-               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
-           )",
+           AND t.type IN ('income','expense') AND t.scenario_id IS NULL",
     )
     .bind(&start)
     .bind(&end)
     .fetch_one(pool)
     .await
     .map_err(|e| format!("projected annual: {e}"))?;
-    Ok((row.0, row.0 - row.1))
+    let (income_savings, income_perf, expense_perf) = row;
+    Ok((income_savings, income_perf - expense_perf))
 }
 
 /// Gasto típico de um mês = MEDIANA do CUSTO DE VIDA (fixas + diário + cartão, classificado por
@@ -522,8 +539,11 @@ pub(crate) async fn realized_monthly_baseline_detail(
     let window_start = month_start - chrono::Months::new(6);
     let events = load_metric_db_events(pool, today_naive, window_start, month_start).await?;
 
+    // Mediana do CUSTO DE VIDA → view Custo de vida: só entram os eventos cuja máscara conta nessa
+    // régua (uma tag `exclude_from_cost_of_living` tira a linha do gasto típico, e só dela).
     let mut by_month: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-    for e in events {
+    for me in events.iter().filter(|me| me.mask.cost_of_living) {
+        let e = &me.event;
         match e.kind {
             forecast::EventKind::FixedOut
             | forecast::EventKind::Daily
@@ -577,7 +597,10 @@ pub(crate) async fn realized_savings_baseline(
     let mut economia_by: std::collections::HashMap<(i32, u32), i64> =
         std::collections::HashMap::new();
     let mut active: std::collections::BTreeSet<(i32, u32)> = std::collections::BTreeSet::new();
-    for e in events {
+    // Medianas de renda e economia → view Economia: a régua de gate de financiamento enxerga só
+    // os eventos que contam nela (uma tag `exclude_from_savings` tira renda/economia do mês típico).
+    for me in events.iter().filter(|me| me.mask.savings) {
+        let e = &me.event;
         let key = (e.date.year(), e.date.month());
         active.insert(key);
         match e.kind {
@@ -1247,7 +1270,7 @@ pub(crate) struct CardInvoiceEvent {
     pub has_refund_expectation: bool,
 }
 
-async fn load_card_invoice_events(
+pub(crate) async fn load_card_invoice_events(
     pool: &SqlitePool,
     today: NaiveDate,
     start_inclusive: NaiveDate,
@@ -1324,30 +1347,30 @@ async fn load_card_invoice_events(
 /// supressão do evento cru que ela substitui — usam o MESMO limite estritamente futuro
 /// (`> today`, nunca `>= today`): uma fatura vencendo hoje já está contada pela semente, e
 /// reinjetá-la aqui abateria o mesmo dinheiro duas vezes.
-pub(crate) fn apply_card_invoice_precedence(
+/// Genérica no envelope do evento (caixa `CashflowEvent` ou métrica `MetricEvent`) para o
+/// invariante da precedência viver num lugar só: `is_future_cartao` marca o Cartão cru futuro a
+/// descartar; `make_lump` constrói o evento sintético da fatura no vencimento.
+pub(crate) fn apply_card_invoice_precedence<T>(
     today: NaiveDate,
     has_card: bool,
-    raw_events: Vec<CashflowEvent>,
+    raw_events: Vec<T>,
     invoices: &[CardInvoiceEvent],
-) -> Vec<CashflowEvent> {
+    is_future_cartao: impl Fn(&T) -> bool,
+    make_lump: impl Fn(&CardInvoiceEvent) -> T,
+) -> Vec<T> {
     if !has_card {
         return raw_events;
     }
 
-    let mut events: Vec<CashflowEvent> = raw_events
+    let mut events: Vec<T> = raw_events
         .into_iter()
-        .filter(|event| !(event.kind == forecast::EventKind::Cartao && event.date > today))
+        .filter(|event| !is_future_cartao(event))
         .collect();
     events.extend(
         invoices
             .iter()
             .filter(|invoice| invoice.due_date > today)
-            .map(|invoice| CashflowEvent {
-                date: invoice.due_date,
-                kind: forecast::EventKind::Cartao,
-                amount_cents: invoice.amount_cents,
-                realized: false,
-            }),
+            .map(make_lump),
     );
     events
 }
@@ -1362,7 +1385,51 @@ pub(crate) async fn finalize_card_events(
     let (has_card, invoices) =
         load_card_invoice_events(pool, today, start_inclusive, Some(end_exclusive)).await?;
     Ok(apply_card_invoice_precedence(
-        today, has_card, raw_events, &invoices,
+        today,
+        has_card,
+        raw_events,
+        &invoices,
+        |event: &CashflowEvent| event.kind == forecast::EventKind::Cartao && event.date > today,
+        |invoice| CashflowEvent {
+            date: invoice.due_date,
+            kind: forecast::EventKind::Cartao,
+            amount_cents: invoice.amount_cents,
+            realized: false,
+        },
+    ))
+}
+
+/// Como [`finalize_card_events`], mas no stream de MÉTRICAS. A fatura materializada é um evento
+/// SINTÉTICO: recebe `RulerMask::ALL` — o exclude de uma compra interna não vive no lump (o total
+/// da fatura sai da conta de qualquer forma, e o valor suprimido de uma compra realizada já cai
+/// pela máscara dela antes de virar lump). Preserva o comportamento do flag único: uma tag 4×
+/// desligada dentro de uma fatura não reduz o lump, exatamente como antes.
+pub(crate) async fn finalize_card_metric_events(
+    pool: &SqlitePool,
+    today: NaiveDate,
+    start_inclusive: NaiveDate,
+    end_exclusive: NaiveDate,
+    raw_events: Vec<forecast::MetricEvent>,
+) -> Result<Vec<forecast::MetricEvent>, String> {
+    let (has_card, invoices) =
+        load_card_invoice_events(pool, today, start_inclusive, Some(end_exclusive)).await?;
+    Ok(apply_card_invoice_precedence(
+        today,
+        has_card,
+        raw_events,
+        &invoices,
+        |me: &forecast::MetricEvent| {
+            me.event.kind == forecast::EventKind::Cartao && me.event.date > today
+        },
+        |invoice| forecast::MetricEvent {
+            event: CashflowEvent {
+                date: invoice.due_date,
+                kind: forecast::EventKind::Cartao,
+                amount_cents: invoice.amount_cents,
+                realized: false,
+            },
+            mask: forecast::RulerMask::ALL,
+        },
     ))
 }
 
@@ -1439,13 +1506,24 @@ pub(crate) async fn load_invoiced_cycles(
     Ok(rows.into_iter().collect())
 }
 
-async fn load_db_events(
+/// Um evento de método + o `transaction_id` do lançamento-pai. O caminho de MÉTRICAS usa o id
+/// para herdar a máscara de réguas das tags (itens de nota e resíduo da célula herdam a máscara
+/// do pai); o caminho de CAIXA descarta o id.
+pub(crate) struct RawDbEvent {
+    pub(crate) event: CashflowEvent,
+    pub(crate) transaction_id: String,
+}
+
+/// Decompõe TODAS as transações da janela `[start, end)` em eventos de método, sem filtro de tag
+/// — a exclusão por tag virou máscara por régua, aplicada depois de carregar. Fonte única da
+/// decomposição linha→evento (itens de nota, resíduo da célula, relabel de crédito órfão),
+/// compartilhada pelos caminhos de caixa (descarta a máscara) e de métricas (a herda).
+pub(crate) async fn load_raw_db_events(
     pool: &SqlitePool,
     start_inclusive: NaiveDate,
     end_exclusive: NaiveDate,
-    exclude_from_totals: bool,
     orphan_credit_from: Option<NaiveDate>,
-) -> Result<Vec<CashflowEvent>, String> {
+) -> Result<Vec<RawDbEvent>, String> {
     let start = start_inclusive.format("%Y-%m-%d").to_string();
     let end = end_exclusive.format("%Y-%m-%d").to_string();
     let alias_to_account = load_card_alias_index(pool).await?;
@@ -1462,54 +1540,24 @@ async fn load_db_events(
         false
     };
 
-    const TRANSACTIONS_WITHOUT_EXCLUDED: &str = "SELECT t.id, t.type AS ttype, t.amount, t.date, \
-                COALESCE(t.payment_method,'') AS payment_method, \
-                t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity, t.invoice_id \
-         FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
-         WHERE t.date >= ?1 AND t.date < ?2 AND t.scenario_id IS NULL \
-           AND NOT EXISTS ( \
-               SELECT 1 FROM transaction_tag tt2 \
-               JOIN tag tg ON tg.id = tt2.tag_id \
-               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
-           )";
-    const TRANSACTIONS_ALL: &str = "SELECT t.id, t.type AS ttype, t.amount, t.date, \
+    const TRANSACTIONS: &str = "SELECT t.id, t.type AS ttype, t.amount, t.date, \
                 COALESCE(t.payment_method,'') AS payment_method, \
                 t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity, t.invoice_id \
          FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
          WHERE t.date >= ?1 AND t.date < ?2 AND t.scenario_id IS NULL";
-    let transaction_query = if exclude_from_totals {
-        TRANSACTIONS_WITHOUT_EXCLUDED
-    } else {
-        TRANSACTIONS_ALL
-    };
-    let txn_rows: Vec<MetricTxnRow> = sqlx::query_as(transaction_query)
+    let txn_rows: Vec<MetricTxnRow> = sqlx::query_as(TRANSACTIONS)
         .bind(&start)
         .bind(&end)
         .fetch_all(pool)
         .await
         .map_err(|e| format!("query metric transactions: {e}"))?;
 
-    const ITEMS_WITHOUT_EXCLUDED: &str = "SELECT li.transaction_id, li.amount_cents, li.description, li.section \
-         FROM line_item li \
-         JOIN \"transaction\" t ON t.id = li.transaction_id \
-         WHERE t.date >= ?1 AND t.date < ?2 AND t.scenario_id IS NULL \
-           AND NOT EXISTS ( \
-               SELECT 1 FROM transaction_tag tt2 \
-               JOIN tag tg ON tg.id = tt2.tag_id \
-               WHERE tt2.transaction_id = t.id AND tg.exclude_from_totals = 1 \
-           ) \
-         ORDER BY li.transaction_id, li.position";
-    const ITEMS_ALL: &str = "SELECT li.transaction_id, li.amount_cents, li.description, li.section \
+    const ITEMS: &str = "SELECT li.transaction_id, li.amount_cents, li.description, li.section \
          FROM line_item li \
          JOIN \"transaction\" t ON t.id = li.transaction_id \
          WHERE t.date >= ?1 AND t.date < ?2 AND t.scenario_id IS NULL \
          ORDER BY li.transaction_id, li.position";
-    let item_query = if exclude_from_totals {
-        ITEMS_WITHOUT_EXCLUDED
-    } else {
-        ITEMS_ALL
-    };
-    let item_rows: Vec<(String, i64, String, Option<String>)> = sqlx::query_as(item_query)
+    let item_rows: Vec<(String, i64, String, Option<String>)> = sqlx::query_as(ITEMS)
         .bind(&start)
         .bind(&end)
         .fetch_all(pool)
@@ -1541,17 +1589,20 @@ async fn load_db_events(
             for item in items {
                 let kind =
                     import::classify_line_item(item.section.as_deref(), item.description.as_str());
-                events.push(CashflowEvent {
-                    date,
-                    kind: event_kind_for_item_kind(
-                        kind,
-                        &item.description,
+                events.push(RawDbEvent {
+                    event: CashflowEvent {
                         date,
-                        &alias_to_account,
-                        &invoiced_cycles,
-                    ),
-                    amount_cents: item.amount_cents.abs(),
-                    realized: row.is_projection == 0,
+                        kind: event_kind_for_item_kind(
+                            kind,
+                            &item.description,
+                            date,
+                            &alias_to_account,
+                            &invoiced_cycles,
+                        ),
+                        amount_cents: item.amount_cents.abs(),
+                        realized: row.is_projection == 0,
+                    },
+                    transaction_id: row.id.clone(),
                 });
             }
             // A célula é a dona do TOTAL: se as partes da nota não somam o pai, o resíduo
@@ -1564,11 +1615,14 @@ async fn load_db_events(
             let parts_sum: i64 = items.iter().map(|i| i.amount_cents.abs()).sum();
             let residual = row.amount.abs() - parts_sum;
             if residual != 0 {
-                events.push(CashflowEvent {
-                    date,
-                    kind: forecast::EventKind::FixedOut,
-                    amount_cents: residual,
-                    realized: row.is_projection == 0,
+                events.push(RawDbEvent {
+                    event: CashflowEvent {
+                        date,
+                        kind: forecast::EventKind::FixedOut,
+                        amount_cents: residual,
+                        realized: row.is_projection == 0,
+                    },
+                    transaction_id: row.id.clone(),
                 });
             }
             continue;
@@ -1583,16 +1637,101 @@ async fn load_db_events(
             row.is_projection,
             row.to_liquidity,
         )) {
-            events.push(relabel_orphan_credit_event(
-                event,
-                row.invoice_id.as_deref(),
-                has_card,
-                orphan_credit_from,
-            ));
+            events.push(RawDbEvent {
+                event: relabel_orphan_credit_event(
+                    event,
+                    row.invoice_id.as_deref(),
+                    has_card,
+                    orphan_credit_from,
+                ),
+                transaction_id: row.id,
+            });
         }
     }
 
     Ok(events)
+}
+
+/// Eventos de CAIXA da janela: todo dinheiro que entra/sai, sem máscara (o Saldo sempre conta).
+async fn load_db_events(
+    pool: &SqlitePool,
+    start_inclusive: NaiveDate,
+    end_exclusive: NaiveDate,
+    orphan_credit_from: Option<NaiveDate>,
+) -> Result<Vec<CashflowEvent>, String> {
+    Ok(
+        load_raw_db_events(pool, start_inclusive, end_exclusive, orphan_credit_from)
+            .await?
+            .into_iter()
+            .map(|raw| raw.event)
+            .collect(),
+    )
+}
+
+/// Eventos de MÉTRICA da janela: cada evento carrega a máscara de réguas herdada das tags do
+/// lançamento-pai. Lançamento sem tag conta em todas as réguas (`RulerMask::ALL`).
+async fn load_db_metric_events(
+    pool: &SqlitePool,
+    start_inclusive: NaiveDate,
+    end_exclusive: NaiveDate,
+    orphan_credit_from: Option<NaiveDate>,
+) -> Result<Vec<forecast::MetricEvent>, String> {
+    let raw = load_raw_db_events(pool, start_inclusive, end_exclusive, orphan_credit_from).await?;
+    let mask_by_txn = load_ruler_mask_map(pool, start_inclusive, end_exclusive).await?;
+    Ok(raw
+        .into_iter()
+        .map(|raw| forecast::MetricEvent {
+            event: raw.event,
+            mask: mask_by_txn
+                .get(&raw.transaction_id)
+                .copied()
+                .unwrap_or(forecast::RulerMask::ALL),
+        })
+        .collect())
+}
+
+/// Máscara de réguas por transação na janela `[start, end)`: a máscara de um lançamento é a
+/// INTERSEÇÃO (`RulerMask::and`) das suas tags — conta numa régua só se NENHUMA tag o excluir
+/// dela. Escopo por data via JOIN em "transaction" para não varrer a base inteira; lançamento
+/// sem tag não aparece aqui e herda `RulerMask::ALL` no chamador.
+pub(crate) async fn load_ruler_mask_map(
+    pool: &SqlitePool,
+    start_inclusive: NaiveDate,
+    end_exclusive: NaiveDate,
+) -> Result<std::collections::HashMap<String, forecast::RulerMask>, String> {
+    let start = start_inclusive.format("%Y-%m-%d").to_string();
+    let end = end_exclusive.format("%Y-%m-%d").to_string();
+    let rows: Vec<(String, i64, i64, i64, i64)> = sqlx::query_as(
+        "SELECT tt.transaction_id, \
+                tg.exclude_from_performance, tg.exclude_from_cost_of_living, \
+                tg.exclude_from_savings, tg.exclude_from_daily_avg \
+         FROM transaction_tag tt \
+         JOIN tag tg ON tg.id = tt.tag_id \
+         JOIN \"transaction\" t ON t.id = tt.transaction_id \
+         WHERE t.date >= ?1 AND t.date < ?2 AND t.scenario_id IS NULL",
+    )
+    .bind(&start)
+    .bind(&end)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("ruler mask map: {e}"))?;
+
+    let mut mask_by_txn: std::collections::HashMap<String, forecast::RulerMask> =
+        std::collections::HashMap::new();
+    for (transaction_id, perf, cost, savings, daily) in rows {
+        // Um flag = 1 exclui a régua; a máscara da TAG conta na régua quando o flag é 0.
+        let tag_mask = forecast::RulerMask {
+            performance: perf == 0,
+            cost_of_living: cost == 0,
+            savings: savings == 0,
+            daily_avg: daily == 0,
+        };
+        mask_by_txn
+            .entry(transaction_id)
+            .and_modify(|m| *m = m.and(tag_mask))
+            .or_insert(tag_mask);
+    }
+    Ok(mask_by_txn)
 }
 
 /// Só o crédito FUTURO de uma base com cartão é substituído pelo lump no vencimento. Sem vínculo
@@ -1620,10 +1759,10 @@ async fn load_metric_db_events(
     today: NaiveDate,
     start_inclusive: NaiveDate,
     end_exclusive: NaiveDate,
-) -> Result<Vec<CashflowEvent>, String> {
+) -> Result<Vec<forecast::MetricEvent>, String> {
     let raw_events =
-        load_db_events(pool, start_inclusive, end_exclusive, true, Some(today)).await?;
-    finalize_card_events(pool, today, start_inclusive, end_exclusive, raw_events).await
+        load_db_metric_events(pool, start_inclusive, end_exclusive, Some(today)).await?;
+    finalize_card_metric_events(pool, today, start_inclusive, end_exclusive, raw_events).await
 }
 
 /// Loads forward cashflow events for the projection window: future transactions (date > today,
@@ -1641,10 +1780,9 @@ pub(crate) async fn load_cashflow_events(
     let end_exclusive = horizon_end
         .succ_opt()
         .ok_or("horizonte inválido para intervalo de caixa")?;
-    // Sem o filtro `exclude_from_totals`: a visão de caixa continua contabilizando todo dinheiro
-    // que sai, mesmo que um lançamento esteja excluído das métricas de método.
-    let raw_events =
-        load_db_events(pool, raw_start, end_exclusive, false, Some(today_naive)).await?;
+    // Sem máscara de réguas: a visão de caixa continua contabilizando todo dinheiro que sai,
+    // mesmo que um lançamento esteja excluído de alguma régua de método.
+    let raw_events = load_db_events(pool, raw_start, end_exclusive, Some(today_naive)).await?;
     finalize_card_events(pool, today_naive, today_naive, end_exclusive, raw_events).await
 }
 
@@ -1682,7 +1820,7 @@ pub(crate) async fn load_realized_month_events(
     pool: &SqlitePool,
     month_start: NaiveDate,
     today_naive: NaiveDate,
-) -> Result<Vec<CashflowEvent>, String> {
+) -> Result<Vec<forecast::MetricEvent>, String> {
     let end_exclusive = today_naive
         .succ_opt()
         .ok_or("data de hoje inválida para intervalo de métricas")?;
@@ -1695,7 +1833,7 @@ pub(crate) async fn load_metric_events(
     pool: &SqlitePool,
     today_naive: NaiveDate,
     horizon_end: NaiveDate,
-) -> Result<Vec<CashflowEvent>, String> {
+) -> Result<Vec<forecast::MetricEvent>, String> {
     let month_start = NaiveDate::from_ymd_opt(today_naive.year(), today_naive.month(), 1)
         .ok_or("data de hoje inválida")?;
     let end_exclusive = horizon_end
@@ -1707,17 +1845,20 @@ pub(crate) async fn load_metric_events(
         .ok_or("data de hoje inválida para intervalo futuro de métricas")?;
     metric.extend(load_metric_db_events(pool, today_naive, future_start, end_exclusive).await?);
     let daily_ceiling = projection_daily_ceiling(pool, today_naive).await?;
+    // Cobertura de dias do teto = fato COMPORTAMENTAL (o dia teve registro de Diário), sem máscara:
+    // um dia coberto por gasto excluído de alguma régua não recebe dupla projeção do teto.
     let days_with_daily: std::collections::HashSet<NaiveDate> = metric
         .iter()
-        .filter(|e| e.kind == forecast::EventKind::Daily)
-        .map(|e| e.date)
+        .filter(|me| me.event.kind == forecast::EventKind::Daily)
+        .map(|me| me.event.date)
         .collect();
-    metric.extend(forecast::project_daily_ceiling(
+    // Teto projetado = evento SINTÉTICO → conta em todas as réguas (`RulerMask::ALL`).
+    metric.extend(forecast::lift_all(&forecast::project_daily_ceiling(
         daily_ceiling,
         today_naive,
         horizon_end,
         &days_with_daily,
-    ));
+    )));
     Ok(metric)
 }
 
@@ -1868,9 +2009,8 @@ pub(crate) async fn forecast_dto(
         seed,
         today_naive,
         &events,
-        // Máscara ALL: as réguas por tag entram quando o loader carregar os flags por
-        // lançamento; até lá, o filtro de exclusão segue no SQL do loader.
-        &forecast::lift_all(&metric_events),
+        // O loader de métricas já carrega a máscara de réguas por lançamento em cada evento.
+        &metric_events,
         horizon_end,
         &annotation,
     );
@@ -2074,7 +2214,7 @@ pub(crate) async fn load_year_events(
     pool: &SqlitePool,
     year: i32,
     today: NaiveDate,
-) -> Result<Vec<CashflowEvent>, String> {
+) -> Result<Vec<forecast::MetricEvent>, String> {
     let start = NaiveDate::from_ymd_opt(year, 1, 1).ok_or("ano inválido")?;
     let end = NaiveDate::from_ymd_opt(year + 1, 1, 1).ok_or("ano inválido")?;
     load_metric_db_events(pool, today, start, end).await
@@ -2097,25 +2237,25 @@ pub(crate) async fn annual_metrics(
     // project_daily_ceiling já se limita ao fim do mês corrente.
     if year == today.year() {
         let daily_ceiling = projection_daily_ceiling(pool, today).await?;
+        // Cobertura de dias do teto = fato COMPORTAMENTAL (o dia teve Diário), sem máscara.
         let days_with_daily: std::collections::HashSet<NaiveDate> = events
             .iter()
-            .filter(|e| e.kind == forecast::EventKind::Daily)
-            .map(|e| e.date)
+            .filter(|me| me.event.kind == forecast::EventKind::Daily)
+            .map(|me| me.event.date)
             .collect();
         let month_end = forecast::last_day_of_month(today.year(), today.month());
-        events.extend(forecast::project_daily_ceiling(
+        // Teto projetado = evento SINTÉTICO → conta em todas as réguas (`RulerMask::ALL`).
+        events.extend(forecast::lift_all(&forecast::project_daily_ceiling(
             daily_ceiling,
             today,
             month_end,
             &days_with_daily,
-        ));
+        )));
     }
     let months: Vec<(i32, u32)> = (1..=12).map(|m| (year, m)).collect();
     let annotation = load_economia_annotation(pool, &[year]).await?;
-    // Máscara ALL: a visão anual ganha as réguas por tag quando o loader carregar os
-    // flags por lançamento; o filtro de exclusão segue no SQL do loader.
-    let metrics =
-        forecast::month_metrics_for(today, &forecast::lift_all(&events), &months, &annotation);
+    // O loader de métricas já carrega a máscara de réguas por lançamento em cada evento.
+    let metrics = forecast::month_metrics_for(today, &events, &months, &annotation);
     let months = metrics
         .iter()
         .map(|m| MonthMetricDto {
@@ -2181,7 +2321,7 @@ pub(crate) async fn month_grid_at(
 
     // A grade reaproveita a mesma construção final de eventos do forecast: uma nota itemizada
     // entra pelos seus itens, e a fatura substitui qualquer Cartão cru futuro no vencimento.
-    let raw_events = load_db_events(pool, first, end_exclusive, false, Some(today)).await?;
+    let raw_events = load_db_events(pool, first, end_exclusive, Some(today)).await?;
     let events = finalize_card_events(pool, today, first, end_exclusive, raw_events).await?;
     let mut flows_by_date: std::collections::HashMap<String, (i64, i64, i64)> =
         std::collections::HashMap::new();
@@ -2568,10 +2708,12 @@ mod tests {
         .unwrap();
     }
 
-    /// Liga uma tag `exclude_from_totals = 1` ("Ignorar") a um lançamento.
+    /// Liga uma tag "Ignorar" (4 réguas desligadas = semântica do flag único antigo) a um lançamento.
     async fn tag_as_excluded(pool: &SqlitePool, txn_id: &str) {
         sqlx::query(
-            "INSERT INTO tag (id, name, exclude_from_totals) VALUES ('tg-ignore', 'Ignorar', 1)",
+            "INSERT INTO tag (id, name, exclude_from_performance, exclude_from_cost_of_living, \
+                              exclude_from_savings, exclude_from_daily_avg) \
+             VALUES ('tg-ignore', 'Ignorar', 1, 1, 1, 1)",
         )
         .execute(pool)
         .await
@@ -2585,11 +2727,10 @@ mod tests {
         .unwrap();
     }
 
-    // Uma despesa FUTURA marcada com tag "Ignorar" (`exclude_from_totals`)
-    // continua pesando no Saldo PROJETADO — o dinheiro vai sair da conta de qualquer forma. A tag
-    // só suprime as MÉTRICAS (Performance/Custo de vida), nunca a visão de CAIXA. Por isso,
-    // `load_cashflow_events` não pode filtrar a linha por `exclude_from_totals`. Este teste guarda
-    // os DOIS lados: caixa inclui, métrica exclui.
+    // Uma despesa FUTURA marcada com tag "Ignorar" (4 réguas desligadas) continua pesando no Saldo
+    // PROJETADO — o dinheiro vai sair da conta de qualquer forma. A tag só mascara as MÉTRICAS
+    // (Performance/Custo de vida), nunca a visão de CAIXA. Por isso `load_cashflow_events` não
+    // carrega máscara de réguas. Este teste guarda os DOIS lados: caixa inclui, métrica zera.
     #[tokio::test]
     async fn excluded_tag_expense_still_lowers_projected_balance() {
         let p = pool().await;
@@ -2613,9 +2754,9 @@ mod tests {
         assert_eq!(cash[0].kind, forecast::EventKind::Daily);
         assert_eq!(cash[0].amount_cents, 5000);
 
-        // Lado MÉTRICA: uma despesa REALIZADA "Ignorar" do mês corrente É excluída (filtro
-        // intencional preservado em `load_realized_month_events`). Guarda contra remover o filtro
-        // da função errada.
+        // Lado MÉTRICA: uma despesa REALIZADA "Ignorar" (4 réguas desligadas) do mês corrente NÃO
+        // some do stream — entra com a máscara 4× desligada, então o motor a zera em todas as
+        // réguas. A exclusão virou máscara por evento, não filtro no SQL do loader.
         let month_start = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
         insert_expense(&p, "past-ign", 7000, "2026-06-10").await;
         sqlx::query(
@@ -2627,9 +2768,19 @@ mod tests {
         let metric = load_realized_month_events(&p, month_start, today)
             .await
             .unwrap();
+        assert_eq!(
+            metric.len(),
+            1,
+            "a linha 'Ignorar' entra no stream de métricas"
+        );
+        let masked = &metric[0];
+        assert_eq!(masked.event.amount_cents, 7000);
         assert!(
-            metric.is_empty(),
-            "a despesa realizada 'Ignorar' some das MÉTRICAS"
+            !masked.mask.performance
+                && !masked.mask.cost_of_living
+                && !masked.mask.savings
+                && !masked.mask.daily_avg,
+            "a máscara 4× desligada tira a linha de todas as réguas"
         );
     }
 
@@ -2974,13 +3125,13 @@ mod tests {
 
         let cartao: i64 = events
             .iter()
-            .filter(|e| e.kind == forecast::EventKind::Cartao)
-            .map(|e| e.amount_cents)
+            .filter(|me| me.event.kind == forecast::EventKind::Cartao)
+            .map(|me| me.event.amount_cents)
             .sum();
         let fixed: i64 = events
             .iter()
-            .filter(|e| e.kind == forecast::EventKind::FixedOut)
-            .map(|e| e.amount_cents)
+            .filter(|me| me.event.kind == forecast::EventKind::FixedOut)
+            .map(|me| me.event.amount_cents)
             .sum();
         assert_eq!(cartao, 12_000);
         assert_eq!(fixed, -2_000, "resíduo com sinal reduz a Saída fixa");
@@ -3381,9 +3532,9 @@ mod tests {
         );
     }
 
-    // `realized_annual_savings` precisa aplicar o MESMO filtro `exclude_from_totals`
-    // ("Ignorar") de `load_year_events`/`annual_metrics`. Uma linha marcada cai fora da métrica;
-    // se entrasse no net de poupança realizada, o guardrail e o painel de métricas divergiriam.
+    // `realized_annual_savings` exclui as linhas de uma tag "Ignorar" (4 réguas desligadas), em
+    // paridade com `load_year_events`/`annual_metrics`. Uma linha marcada cai fora da métrica; se
+    // entrasse no net de poupança realizada, o guardrail e o painel de métricas divergiriam.
     #[tokio::test]
     async fn realized_annual_savings_excludes_ignorar_tagged_rows() {
         let p = pool().await;
@@ -4042,14 +4193,14 @@ mod tests {
             .unwrap();
         let card_events: Vec<_> = events
             .iter()
-            .filter(|event| event.kind == forecast::EventKind::Cartao)
+            .filter(|me| me.event.kind == forecast::EventKind::Cartao)
             .collect();
         assert_eq!(card_events.len(), 1);
         assert_eq!(
-            card_events[0].date,
+            card_events[0].event.date,
             NaiveDate::from_ymd_opt(2026, 6, 20).unwrap()
         );
-        assert_eq!(card_events[0].amount_cents, 85_000);
+        assert_eq!(card_events[0].event.amount_cents, 85_000);
     }
 
     #[tokio::test]
@@ -4730,5 +4881,188 @@ mod tests {
         let grid = month_grid_at(&p, 2026, 6, today).await.unwrap();
         let due = grid.iter().find(|day| day.day == 20).unwrap();
         assert_eq!(due.fixed_out_cents, 85_000);
+    }
+
+    // === Onda Tags: máscara de réguas real (banco → motor) ===
+
+    /// Renda/despesa REALIZADAS (`is_projection = 0`); `is_fixed = 1` ⇒ Saída fixa (custo de vida).
+    async fn insert_realized_fixed(
+        pool: &SqlitePool,
+        id: &str,
+        ttype: &str,
+        amount: i64,
+        date: &str,
+    ) {
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES (?1, ?2, ?3, ?4, 1, 0)",
+        )
+        .bind(id)
+        .bind(ttype)
+        .bind(amount)
+        .bind(date)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    // (a) Golden de equivalência: uma tag com as 4 réguas desligadas reproduz o flag único antigo —
+    // as MÉTRICAS (mensal, anual e mediana de custo) excluem a linha; o CAIXA a inclui.
+    #[tokio::test]
+    async fn golden_four_rulers_off_excludes_from_metrics_keeps_in_cash() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        // Março COMPLETO (hoje = junho): renda 500k + duas saídas fixas de 100k.
+        insert_realized_fixed(&p, "inc", "income", 500_000, "2026-03-05").await;
+        insert_realized_fixed(&p, "exp-a", "expense", 100_000, "2026-03-10").await;
+        insert_realized_fixed(&p, "exp-b", "expense", 100_000, "2026-03-12").await;
+
+        // Baseline sem tag: as duas saídas contam.
+        let base = annual_metrics(&p, 2026, today).await.unwrap();
+        let mar = base.months.iter().find(|m| m.month == 3).unwrap();
+        assert_eq!(mar.cost_of_living_cents, 200_000);
+        assert_eq!(mar.performance_cents, 300_000);
+        assert_eq!(realized_monthly_baseline(&p, today).await.unwrap(), 200_000);
+
+        // Tag exp-a com as 4 réguas desligadas.
+        let tag = crate::tags::create_tag(&p, "Ignorar", "var(--cat-jade)", None, false)
+            .await
+            .unwrap();
+        crate::tags::update_tag_rulers(&p, &tag, true, true, true, true)
+            .await
+            .unwrap();
+        crate::tags::set_transaction_tags(&p, "exp-a", std::slice::from_ref(&tag))
+            .await
+            .unwrap();
+
+        // MÉTRICA: idêntico a um mundo sem exp-a.
+        let after = annual_metrics(&p, 2026, today).await.unwrap();
+        let mar = after.months.iter().find(|m| m.month == 3).unwrap();
+        assert_eq!(
+            mar.cost_of_living_cents, 100_000,
+            "custo de vida perde exp-a"
+        );
+        assert_eq!(mar.performance_cents, 400_000, "performance = 500 − 100");
+        assert_eq!(
+            realized_monthly_baseline(&p, today).await.unwrap(),
+            100_000,
+            "a mediana de custo perde exp-a"
+        );
+
+        // CAIXA: o grid do mês conta as DUAS saídas (o Saldo sempre conta).
+        let grid = month_grid_at(&p, 2026, 3, today).await.unwrap();
+        let out: i64 = grid
+            .iter()
+            .map(|d| d.fixed_out_cents + d.daily_out_cents)
+            .sum();
+        assert_eq!(out, 200_000, "o caixa inclui a linha excluída das métricas");
+    }
+
+    // (b) Divergência POR RÉGUA atravessando a fronteira SQL/máscara: desligar SÓ a Economia de um
+    // transfer→reserva muda `realized_annual_economia` (guardrail) mas não a mediana de custo.
+    #[tokio::test]
+    async fn savings_ruler_off_changes_economia_not_cost_baseline() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        insert_reserve_account(&p, 0).await;
+        insert_realized_fixed(&p, "exp", "expense", 40_000, "2026-03-10").await;
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) \
+             VALUES ('tr', 'transfer', 30_000, '2026-03-20', 'acc-res', 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        assert_eq!(realized_annual_economia(&p, today).await.unwrap(), 30_000);
+        assert_eq!(realized_monthly_baseline(&p, today).await.unwrap(), 40_000);
+
+        // Só a régua de Economia desligada, no transfer.
+        let tag = crate::tags::create_tag(&p, "Fora da economia", "c", None, false)
+            .await
+            .unwrap();
+        crate::tags::update_tag_rulers(&p, &tag, false, false, true, false)
+            .await
+            .unwrap();
+        crate::tags::set_transaction_tags(&p, "tr", std::slice::from_ref(&tag))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            realized_annual_economia(&p, today).await.unwrap(),
+            0,
+            "savings-off tira o transfer da Economia"
+        );
+        assert_eq!(
+            realized_monthly_baseline(&p, today).await.unwrap(),
+            40_000,
+            "a régua de custo de vida fica intacta"
+        );
+    }
+
+    // (b) Simétrico: desligar SÓ o Custo de vida de uma despesa muda a mediana de custo mas não a
+    // renda anual (base do guardrail 20–30%).
+    #[tokio::test]
+    async fn cost_ruler_off_changes_baseline_not_annual_income() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        insert_realized_fixed(&p, "inc", "income", 100_000, "2026-03-05").await;
+        insert_realized_fixed(&p, "exp", "expense", 40_000, "2026-03-10").await;
+
+        assert_eq!(realized_monthly_baseline(&p, today).await.unwrap(), 40_000);
+        assert_eq!(realized_annual_savings(&p, today).await.unwrap().0, 100_000);
+
+        // Só a régua de Custo de vida desligada, na despesa.
+        let tag = crate::tags::create_tag(&p, "Fora do custo", "c", None, false)
+            .await
+            .unwrap();
+        crate::tags::update_tag_rulers(&p, &tag, false, true, false, false)
+            .await
+            .unwrap();
+        crate::tags::set_transaction_tags(&p, "exp", std::slice::from_ref(&tag))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            realized_monthly_baseline(&p, today).await.unwrap(),
+            0,
+            "cost-off tira a despesa do custo típico"
+        );
+        assert_eq!(
+            realized_annual_savings(&p, today).await.unwrap().0,
+            100_000,
+            "a renda anual não muda com a régua de custo"
+        );
+    }
+
+    // (c) Pool de UMA conexão (deadlock conhecido do repo): a query nova de máscara de réguas
+    // compõe com as queries de evento do loader de métricas numa conexão só, sem "pool timed out"
+    // — e a máscara reflete o flag por régua. `pool()` já usa `max_connections(1)`.
+    #[tokio::test]
+    async fn ruler_mask_map_survives_single_connection_pool() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+        insert_realized_fixed(&p, "exp", "expense", 40_000, "2026-03-10").await;
+        let tag = crate::tags::create_tag(&p, "T", "c", None, false)
+            .await
+            .unwrap();
+        crate::tags::update_tag_rulers(&p, &tag, false, true, false, false)
+            .await
+            .unwrap();
+        crate::tags::set_transaction_tags(&p, "exp", std::slice::from_ref(&tag))
+            .await
+            .unwrap();
+
+        let start = NaiveDate::from_ymd_opt(2026, 3, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+        let events = load_metric_db_events(&p, today, start, end).await.unwrap();
+        let masked = events
+            .iter()
+            .find(|me| me.event.amount_cents == 40_000)
+            .expect("a despesa entra no stream de métricas");
+        assert!(
+            !masked.mask.cost_of_living && masked.mask.performance && masked.mask.savings,
+            "a máscara reflete SÓ o custo de vida desligado, numa conexão só"
+        );
     }
 }

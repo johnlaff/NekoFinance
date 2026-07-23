@@ -33,11 +33,12 @@
 //! `backfill_scenario_override_replacements` (startup) converte esses marcadores em FK e os remove.
 
 use crate::commands::forecast_cmds::{
-    self, finalize_card_events, forecast_horizon_end, load_economia_annotation,
-    load_forecast_events, load_metric_events, projection_seed, reserve_floor,
+    self, finalize_card_events, finalize_card_metric_events, forecast_horizon_end,
+    load_economia_annotation, load_forecast_events, load_metric_events, load_ruler_mask_map,
+    projection_seed, reserve_floor,
 };
 use crate::commands::map_cashflow_row;
-use crate::forecast::{self, CashflowEvent};
+use crate::forecast::{self, CashflowEvent, MetricEvent, RulerMask};
 use crate::obligations;
 use chrono::{Datelike, Months, NaiveDate};
 use serde::Serialize;
@@ -1662,6 +1663,17 @@ struct CardAwareRow {
     is_projection: i64,
     to_liquidity: String,
     invoice_id: Option<String>,
+    /// Máscara de réguas herdada pelos eventos gerados desta linha. Linhas REAIS reconstruídas do
+    /// banco recebem a máscara das tags do lançamento; linhas HIPOTÉTICAS do cenário não têm tag →
+    /// `RulerMask::ALL`. O `From` assume ALL; o ramo de métrica sobrescreve as linhas reais.
+    mask: RulerMask,
+}
+
+impl CardAwareRow {
+    fn with_mask(mut self, mask: RulerMask) -> Self {
+        self.mask = mask;
+        self
+    }
 }
 
 impl From<RawTxnRow> for CardAwareRow {
@@ -1676,6 +1688,7 @@ impl From<RawTxnRow> for CardAwareRow {
             is_projection: r.is_projection,
             to_liquidity: r.to_liquidity,
             invoice_id: r.invoice_id,
+            mask: RulerMask::ALL,
         }
     }
 }
@@ -1692,6 +1705,7 @@ impl From<&HypoTxnRow> for CardAwareRow {
             is_projection: r.is_projection,
             to_liquidity: r.to_liquidity.clone(),
             invoice_id: r.invoice_id.clone(),
+            mask: RulerMask::ALL,
         }
     }
 }
@@ -1707,7 +1721,7 @@ async fn build_card_aware_events(
     pool: &SqlitePool,
     rows: Vec<CardAwareRow>,
     today: NaiveDate,
-) -> Result<Vec<CashflowEvent>, String> {
+) -> Result<Vec<MetricEvent>, String> {
     if rows.is_empty() {
         return Ok(Vec::new());
     }
@@ -1743,6 +1757,9 @@ async fn build_card_aware_events(
         let Ok(date) = NaiveDate::parse_from_str(&row.date, "%Y-%m-%d") else {
             continue;
         };
+        // Itens de nota e o resíduo da célula herdam a máscara do lançamento-pai (mesma semântica
+        // de transação-inteira do motor principal).
+        let mask = row.mask;
         if row.ttype == "expense"
             && let Some(items) = items_by_txn.get(&row.id)
             && !items.is_empty()
@@ -1752,17 +1769,20 @@ async fn build_card_aware_events(
                     section.as_deref(),
                     description,
                 );
-                events.push(CashflowEvent {
-                    date,
-                    kind: forecast_cmds::event_kind_for_item_kind(
-                        kind,
-                        description,
+                events.push(MetricEvent {
+                    event: CashflowEvent {
                         date,
-                        &alias_to_account,
-                        &invoiced_cycles,
-                    ),
-                    amount_cents: amount_cents.abs(),
-                    realized: row.is_projection == 0,
+                        kind: forecast_cmds::event_kind_for_item_kind(
+                            kind,
+                            description,
+                            date,
+                            &alias_to_account,
+                            &invoiced_cycles,
+                        ),
+                        amount_cents: amount_cents.abs(),
+                        realized: row.is_projection == 0,
+                    },
+                    mask,
                 });
             }
             // Mesma convenção de resíduo com sinal de `load_db_events` — a célula é a dona do
@@ -1770,11 +1790,14 @@ async fn build_card_aware_events(
             let parts_sum: i64 = items.iter().map(|(amount, _, _)| amount.abs()).sum();
             let residual = row.amount.abs() - parts_sum;
             if residual != 0 {
-                events.push(CashflowEvent {
-                    date,
-                    kind: forecast::EventKind::FixedOut,
-                    amount_cents: residual,
-                    realized: row.is_projection == 0,
+                events.push(MetricEvent {
+                    event: CashflowEvent {
+                        date,
+                        kind: forecast::EventKind::FixedOut,
+                        amount_cents: residual,
+                        realized: row.is_projection == 0,
+                    },
+                    mask,
                 });
             }
             continue;
@@ -1788,12 +1811,15 @@ async fn build_card_aware_events(
             row.is_projection,
             row.to_liquidity,
         )) {
-            events.push(forecast_cmds::relabel_orphan_credit_event(
-                event,
-                row.invoice_id.as_deref(),
-                has_card,
-                Some(today),
-            ));
+            events.push(MetricEvent {
+                event: forecast_cmds::relabel_orphan_credit_event(
+                    event,
+                    row.invoice_id.as_deref(),
+                    has_card,
+                    Some(today),
+                ),
+                mask,
+            });
         }
     }
     Ok(events)
@@ -1952,8 +1978,8 @@ pub(crate) async fn get_scenario_forecast_inner(
         seed,
         today,
         &real_chain_events,
-        // Máscara ALL: o loader de métricas ainda aplica o filtro de exclusão no SQL.
-        &forecast::lift_all(&real_metric_events),
+        // O loader de métricas já carrega a máscara de réguas por lançamento em cada evento.
+        &real_metric_events,
         horizon_end,
         &annotation,
     );
@@ -1989,12 +2015,19 @@ pub(crate) async fn get_scenario_forecast_inner(
     let scenario_end_exclusive = horizon_end
         .succ_opt()
         .ok_or("horizonte inválido para faturas do cenário")?;
+    // O encadeamento de caixa não tem máscara (o Saldo sempre conta): descarta a máscara logo
+    // após reconstruir os eventos.
     let mut chain_rows: Vec<CardAwareRow> = scenario_chain_adjusted
         .into_iter()
         .map(CardAwareRow::from)
         .collect();
     chain_rows.extend(hypo_chain_rows.iter().map(CardAwareRow::from));
-    let mut scenario_chain_events = build_card_aware_events(pool, chain_rows, today).await?;
+    let mut scenario_chain_events: Vec<CashflowEvent> =
+        build_card_aware_events(pool, chain_rows, today)
+            .await?
+            .into_iter()
+            .map(|me| me.event)
+            .collect();
     scenario_chain_events = finalize_card_events(
         pool,
         today,
@@ -2003,17 +2036,25 @@ pub(crate) async fn get_scenario_forecast_inner(
         scenario_chain_events,
     )
     .await?;
+    // Linhas REAIS reconstruídas do banco recebem a máscara das suas tags (a supressão do cenário
+    // não muda o `transaction_id`, então a máscara segue válida); linhas HIPOTÉTICAS não têm tag →
+    // `RulerMask::ALL` do `From`. Assim a régua de uma tag vale igual no ramo real e no cenário.
+    let metric_month_start = NaiveDate::from_ymd_opt(today.year(), today.month(), 1)
+        .ok_or("data de hoje inválida para faturas do cenário")?;
+    let metric_mask = load_ruler_mask_map(pool, metric_month_start, scenario_end_exclusive).await?;
     let mut metric_rows: Vec<CardAwareRow> = scenario_metric_adjusted
         .into_iter()
-        .map(CardAwareRow::from)
+        .map(|r| {
+            let mask = metric_mask.get(&r.id).copied().unwrap_or(RulerMask::ALL);
+            CardAwareRow::from(r).with_mask(mask)
+        })
         .collect();
     metric_rows.extend(hypo_metric_rows.iter().map(CardAwareRow::from));
     let mut scenario_metric_events = build_card_aware_events(pool, metric_rows, today).await?;
-    scenario_metric_events = finalize_card_events(
+    scenario_metric_events = finalize_card_metric_events(
         pool,
         today,
-        NaiveDate::from_ymd_opt(today.year(), today.month(), 1)
-            .ok_or("data de hoje inválida para faturas do cenário")?,
+        metric_month_start,
         scenario_end_exclusive,
         scenario_metric_events,
     )
@@ -2033,24 +2074,26 @@ pub(crate) async fn get_scenario_forecast_inner(
         horizon_end,
         &days_with_daily_chain,
     ));
+    // Cobertura de dias do teto = fato COMPORTAMENTAL (o dia teve Diário), sem máscara.
     let days_with_daily_metric: std::collections::HashSet<NaiveDate> = scenario_metric_events
         .iter()
-        .filter(|e| e.kind == forecast::EventKind::Daily)
-        .map(|e| e.date)
+        .filter(|me| me.event.kind == forecast::EventKind::Daily)
+        .map(|me| me.event.date)
         .collect();
-    scenario_metric_events.extend(forecast::project_daily_ceiling(
+    // Teto projetado = evento SINTÉTICO → conta em todas as réguas (`RulerMask::ALL`).
+    scenario_metric_events.extend(forecast::lift_all(&forecast::project_daily_ceiling(
         daily_ceiling,
         today,
         horizon_end,
         &days_with_daily_metric,
-    ));
+    )));
 
     let scenario_fc = forecast::project_with_metrics(
         seed,
         today,
         &scenario_chain_events,
-        // Máscara ALL: eventos hipotéticos/ajustados de cenário não têm tag.
-        &forecast::lift_all(&scenario_metric_events),
+        // As linhas reais carregam a máscara das suas tags; as hipotéticas contam em todas as réguas.
+        &scenario_metric_events,
         horizon_end,
         &annotation,
     );

@@ -820,14 +820,15 @@ async fn import_rows_core(
                         sqlx::query(
                             "INSERT OR REPLACE INTO \"transaction\" \
                              (id, type, amount, description, date, is_fixed, is_projection, \
-                              created_at, updated_at) \
-                             VALUES (?1, 'income', ?2, ?3, ?4, 0, 0, ?5, ?5)",
+                              counterparty_person_id, created_at, updated_at) \
+                             VALUES (?1, 'income', ?2, ?3, ?4, 0, 0, ?6, ?5, ?5)",
                         )
                         .bind(&derived_id)
                         .bind(tagged.line_amount_cents)
                         .bind(&desc)
                         .bind(&row.date)
                         .bind(&now)
+                        .bind(&person_id)
                         .execute(&mut **tx)
                         .await
                         .map_err(|e| format!("insert reembolso Entrada: {e}"))?;
@@ -853,14 +854,15 @@ async fn import_rows_core(
                         sqlx::query(
                             "INSERT OR REPLACE INTO \"transaction\" \
                              (id, type, amount, description, date, is_fixed, is_projection, \
-                              created_at, updated_at) \
-                             VALUES (?1, 'income', ?2, ?3, ?4, 0, 0, ?5, ?5)",
+                              counterparty_person_id, created_at, updated_at) \
+                             VALUES (?1, 'income', ?2, ?3, ?4, 0, 0, ?6, ?5, ?5)",
                         )
                         .bind(&derived_id)
                         .bind(share_cents)
                         .bind(&desc)
                         .bind(&row.date)
                         .bind(&now)
+                        .bind(&person_id)
                         .execute(&mut **tx)
                         .await
                         .map_err(|e| format!("insert dividir Entrada: {e}"))?;

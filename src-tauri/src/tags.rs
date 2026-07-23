@@ -13,9 +13,14 @@ pub struct Tag {
     pub color: String,
     pub emoji: Option<String>,
     pub is_special: bool,
-    /// Quando `true`, lançamentos com esta tag saem das métricas derivadas (Performance,
-    /// Custo de vida, Economizado%) — mas continuam no Saldo (movimento de caixa real).
-    pub exclude_from_totals: bool,
+    /// Interruptores de contabilidade por régua: `true` tira os lançamentos desta tag SÓ da
+    /// régua homônima (Performance · Custo de vida · Economia · Diário médio), e de nenhuma
+    /// outra. O Saldo (cadeia de caixa) nunca tem máscara — dinheiro que entrou e saiu de
+    /// verdade sempre conta.
+    pub exclude_from_performance: bool,
+    pub exclude_from_cost_of_living: bool,
+    pub exclude_from_savings: bool,
+    pub exclude_from_daily_avg: bool,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow, PartialEq, Eq)]
@@ -25,8 +30,11 @@ pub struct TagTotal {
     pub color: String,
     pub emoji: Option<String>,
     pub is_special: bool,
-    /// Ver `Tag::exclude_from_totals`.
-    pub exclude_from_totals: bool,
+    /// Ver `Tag` — os quatro interruptores de régua.
+    pub exclude_from_performance: bool,
+    pub exclude_from_cost_of_living: bool,
+    pub exclude_from_savings: bool,
+    pub exclude_from_daily_avg: bool,
     /// Soma (em centavos, valor absoluto) dos lançamentos do mês com esta tag.
     pub total_cents: i64,
 }
@@ -53,7 +61,8 @@ pub async fn create_tag(
 
 pub async fn list_tags(pool: &SqlitePool) -> Result<Vec<Tag>, String> {
     sqlx::query_as::<_, Tag>(
-        "SELECT id, name, color, emoji, is_special, exclude_from_totals FROM tag \
+        "SELECT id, name, color, emoji, is_special, exclude_from_performance, \
+                exclude_from_cost_of_living, exclude_from_savings, exclude_from_daily_avg FROM tag \
          ORDER BY is_special DESC, name COLLATE NOCASE",
     )
     .fetch_all(pool)
@@ -98,18 +107,28 @@ pub(crate) async fn set_transaction_tags_on_conn(
     Ok(())
 }
 
-/// Liga/desliga a exclusão das métricas para uma tag. Erro se a tag não existir.
-pub async fn update_tag_exclude(
+/// Grava os quatro interruptores de régua de uma tag num único UPDATE (idempotente). Cada bool
+/// liga a exclusão da régua homônima; nenhum toca no Saldo. Erro se a tag não existir.
+pub async fn update_tag_rulers(
     pool: &SqlitePool,
     tag_id: &str,
-    exclude: bool,
+    exclude_from_performance: bool,
+    exclude_from_cost_of_living: bool,
+    exclude_from_savings: bool,
+    exclude_from_daily_avg: bool,
 ) -> Result<(), String> {
-    let rows = sqlx::query("UPDATE tag SET exclude_from_totals = ?1 WHERE id = ?2")
-        .bind(exclude as i64)
-        .bind(tag_id)
-        .execute(pool)
-        .await
-        .map_err(|e| format!("update_tag_exclude: {e}"))?;
+    let rows = sqlx::query(
+        "UPDATE tag SET exclude_from_performance = ?1, exclude_from_cost_of_living = ?2, \
+                        exclude_from_savings = ?3, exclude_from_daily_avg = ?4 WHERE id = ?5",
+    )
+    .bind(exclude_from_performance as i64)
+    .bind(exclude_from_cost_of_living as i64)
+    .bind(exclude_from_savings as i64)
+    .bind(exclude_from_daily_avg as i64)
+    .bind(tag_id)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("update_tag_rulers: {e}"))?;
     if rows.rows_affected() == 0 {
         return Err(format!("tag not found: {tag_id}"));
     }
@@ -118,7 +137,7 @@ pub async fn update_tag_exclude(
 
 /// Renomeia/recolore uma tag existente (nome, cor e emoji). `is_special` segue a convenção do
 /// nome (`!` no início fixa no topo), então é re-derivado aqui — igual ao caminho de criação.
-/// Erro se a tag não existir. Não toca em `exclude_from_totals` (toggle próprio).
+/// Erro se a tag não existir. Não toca nos interruptores de régua (toggle próprio).
 pub async fn update_tag(
     pool: &SqlitePool,
     tag_id: &str,
@@ -152,7 +171,8 @@ pub async fn tag_totals_for_month(
 ) -> Result<Vec<TagTotal>, String> {
     let ym = format!("{year:04}-{month:02}");
     sqlx::query_as::<_, TagTotal>(
-        "SELECT t.id, t.name, t.color, t.emoji, t.is_special, t.exclude_from_totals, \
+        "SELECT t.id, t.name, t.color, t.emoji, t.is_special, t.exclude_from_performance, \
+                t.exclude_from_cost_of_living, t.exclude_from_savings, t.exclude_from_daily_avg, \
                 COALESCE(SUM(ABS(tr.amount)), 0) AS total_cents \
          FROM tag t \
          LEFT JOIN transaction_tag tt ON tt.tag_id = t.id \
@@ -217,12 +237,23 @@ pub async fn update_tag_cmd(
 }
 
 #[tauri::command]
-pub async fn update_tag_exclude_cmd(
+pub async fn update_tag_rulers_cmd(
     pool: State<'_, SqlitePool>,
     tag_id: String,
-    exclude: bool,
+    exclude_from_performance: bool,
+    exclude_from_cost_of_living: bool,
+    exclude_from_savings: bool,
+    exclude_from_daily_avg: bool,
 ) -> Result<(), String> {
-    update_tag_exclude(pool.inner(), &tag_id, exclude).await
+    update_tag_rulers(
+        pool.inner(),
+        &tag_id,
+        exclude_from_performance,
+        exclude_from_cost_of_living,
+        exclude_from_savings,
+        exclude_from_daily_avg,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -300,14 +331,16 @@ mod tests {
     }
 
     // Renomear/recolorir tag existente: `is_special` re-deriva da convenção `!` do nome;
-    // `exclude_from_totals` não é tocado (toggle próprio).
+    // os interruptores de régua não são tocados (toggle próprio).
     #[tokio::test]
     async fn update_tag_renames_recolors_and_rederives_special() {
         let p = pool().await;
         let id = create_tag(&p, "Viagem", "var(--cat-jade)", None, false)
             .await
             .unwrap();
-        update_tag_exclude(&p, &id, true).await.unwrap();
+        update_tag_rulers(&p, &id, true, true, true, true)
+            .await
+            .unwrap();
 
         update_tag(&p, &id, "! Pagar", "var(--cat-brass)", Some("⚠️"))
             .await
@@ -319,9 +352,41 @@ mod tests {
         assert_eq!(t.color, "var(--cat-brass)");
         assert_eq!(t.emoji.as_deref(), Some("⚠️"));
         assert!(t.is_special, "nome com '!' fixa no topo (re-derivado)");
-        assert!(t.exclude_from_totals, "toggle do plan 034 preservado");
+        assert!(
+            t.exclude_from_performance
+                && t.exclude_from_cost_of_living
+                && t.exclude_from_savings
+                && t.exclude_from_daily_avg,
+            "interruptores de régua preservados por update_tag"
+        );
 
         // Tag inexistente → erro explícito (não upsert silencioso).
         assert!(update_tag(&p, "nope", "X", "c", None).await.is_err());
+    }
+
+    // Cada interruptor é independente: gravar SÓ savings deixa as outras três réguas ligadas.
+    #[tokio::test]
+    async fn update_tag_rulers_writes_each_flag_independently() {
+        let p = pool().await;
+        let id = create_tag(&p, "Terceiros", "var(--cat-sky)", None, false)
+            .await
+            .unwrap();
+        // Só a régua de Economia desligada.
+        update_tag_rulers(&p, &id, false, false, true, false)
+            .await
+            .unwrap();
+        let tags = list_tags(&p).await.unwrap();
+        let t = tags.iter().find(|t| t.id == id).unwrap();
+        assert!(!t.exclude_from_performance);
+        assert!(!t.exclude_from_cost_of_living);
+        assert!(t.exclude_from_savings, "só a Economia foi excluída");
+        assert!(!t.exclude_from_daily_avg);
+
+        // Tag inexistente → erro explícito.
+        assert!(
+            update_tag_rulers(&p, "nope", true, true, true, true)
+                .await
+                .is_err()
+        );
     }
 }
