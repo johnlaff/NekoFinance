@@ -33,6 +33,13 @@ for humans, and versions follow [SemVer](https://semver.org/).
 
 ### Changed
 
+- Tags now carry four independent exclusion flags (Performance, Custo de vida,
+  Economia, Diário médio) instead of a single all-or-nothing toggle — each flag
+  controls whether a tagged movement counts in that ruler. The balance chain
+  remains untouched (Saldo always reflects real cash movement). The Tags screen
+  is now a ruler-exception panel: it displays the cost-of-living verdict with
+  current exclusions, third-party movement aggregations, and per-tag effects on
+  each ruler.
 - The Configurações screen was recomposed under the identity direction: it
   opens with a trust verdict ("Tudo neste dispositivo" plus a live state line
   that reports disconnection, pending changes and import conflicts with the
