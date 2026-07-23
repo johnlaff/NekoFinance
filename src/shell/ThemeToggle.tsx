@@ -35,7 +35,13 @@ function applyTheme(theme: Theme) {
   themeListeners.forEach((cb) => cb());
 }
 
-export function ThemeToggle({ variant = "icon" }: { variant?: "icon" | "row" }) {
+/** Estado do tema + troca com o reveal circular, para qualquer superfície (shell,
+ *  Configurações). O store de módulo continua a fonte única; o reveal parte do
+ *  controle que disparou o evento (centro do rect na ativação por teclado). */
+export function useThemeSwitch(): {
+  theme: Theme;
+  toggleTheme: (event: React.MouseEvent<HTMLElement>) => void;
+} {
   const theme = useSyncExternalStore(
     subscribeTheme,
     () => currentTheme,
@@ -44,6 +50,7 @@ export function ThemeToggle({ variant = "icon" }: { variant?: "icon" | "row" }) 
 
   // Reconcilia store ↔ storage no mount: aplica o tema salvo no <html> ao abrir
   // o app e realinha o store quando o storage foi mexido por fora (testes).
+  // Idempotente — múltiplos consumidores montados não disputam.
   useEffect(() => {
     const stored = getStoredTheme();
     if (
@@ -56,7 +63,7 @@ export function ThemeToggle({ variant = "icon" }: { variant?: "icon" | "row" }) 
   }, []);
 
   // React Compiler memoizes; no manual useCallback needed.
-  const toggle = (event: React.MouseEvent<HTMLButtonElement>) => {
+  const toggleTheme = (event: React.MouseEvent<HTMLElement>) => {
     const next: Theme = theme === "dark" ? "light" : "dark";
 
     // SO em reduced motion ou toggle "Animações" desligado → troca instantânea.
@@ -81,6 +88,12 @@ export function ThemeToggle({ variant = "icon" }: { variant?: "icon" | "row" }) 
       applyTheme(next);
     });
   };
+
+  return { theme, toggleTheme };
+}
+
+export function ThemeToggle({ variant = "icon" }: { variant?: "icon" | "row" }) {
+  const { theme, toggleTheme: toggle } = useThemeSwitch();
 
   // O ícone mostra para ONDE o toque leva (sol no escuro, lua no claro).
   const icon =

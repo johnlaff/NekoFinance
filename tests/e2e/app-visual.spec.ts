@@ -269,6 +269,99 @@ for (const theme of ["dark", "light"] as const) {
   });
 }
 
+// Configurações: a porta "Gerenciar" guarda o painel denso da conexão (planilha,
+// import) — o estado aberto é uma superfície própria que o baseline padrão não vê.
+test("Configurações com a porta Gerenciar aberta", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockTauri(page, {
+    list_scenarios_cmd: [],
+    list_scenario_transactions_cmd: [],
+    list_obligations_cmd: [],
+  });
+  await page.goto("/");
+  await page
+    .getByRole("button", { name: "Configurações", exact: false })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "Gerenciar" }).click();
+  await page.waitForTimeout(350);
+  await expect(page).toHaveScreenshot("Configuracoes-gerenciar-dark.png", {
+    fullPage: true,
+    maxDiffPixelRatio: 0.02,
+  });
+});
+
+// A rolagem do app vive na .sh-body (o fullPage não a alcança) — sem estes
+// baselines, Aparência e Rotina nunca apareceriam em captura nenhuma.
+for (const [label, width, height] of [
+  ["", 1440, 1000],
+  ["mobile-", 390, 844],
+] as const) {
+  test(`Configurações — ${label ? "mobile " : ""}seções finais (Aparência + Rotina)`, async ({
+    page,
+  }) => {
+    await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width, height });
+    await mockTauri(page, {
+      list_scenarios_cmd: [],
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [],
+    });
+    await page.goto("/");
+    if (label) {
+      await page.getByRole("button", { name: "Mais telas" }).click();
+      await page.getByRole("button", { name: "Configurações", exact: false }).click();
+    } else {
+      await page
+        .getByRole("button", { name: "Configurações", exact: false })
+        .first()
+        .click();
+    }
+    await page.waitForTimeout(350);
+    // Screenshot de ELEMENTO: a posição da janela de rolagem não é
+    // determinística entre máquinas (o scrollHeight varia por poucos px),
+    // então o alvo é o card — nunca a viewport rolada até o fim.
+    for (const section of ["aparencia", "rotina"] as const) {
+      const card = page.locator(`section[aria-labelledby="config-${section}"]`);
+      await card.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(200);
+      await expect(card).toHaveScreenshot(`${label}config-${section}-dark.png`, {
+        maxDiffPixelRatio: 0.02,
+      });
+    }
+  });
+}
+
+// Configurações no mobile: o segundo shell do desenho — appbar com blur, dock
+// flutuante com FAB e o greet como large-title que silencia a appbar.
+for (const theme of ["dark", "light"] as const) {
+  test(`Configurações — mobile ${theme}`, async ({ page }) => {
+    await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript((t: string) => {
+      localStorage.setItem("neko-theme", t);
+    }, theme);
+    await mockTauri(page, {
+      list_scenarios_cmd: [],
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [],
+    });
+    await page.goto("/");
+    // No mobile a tela vive no menu "Mais telas" do dock.
+    await page.getByRole("button", { name: "Mais telas" }).click();
+    await page.getByRole("button", { name: "Configurações", exact: false }).click();
+    await page.waitForTimeout(350);
+    await expect(page).toHaveScreenshot(`mobile-config-${theme}.png`, {
+      fullPage: true,
+      maxDiffPixelRatio: 0.02,
+    });
+  });
+}
+
 // Calendário no mobile: fallback deliberado — a grade é navegação (dia + saúde
 // pelo termômetro) e os números moram na agenda do dia tocado, abaixo da grade.
 for (const theme of ["dark", "light"] as const) {

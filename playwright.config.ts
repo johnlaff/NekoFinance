@@ -15,6 +15,20 @@ export default defineConfig({
       use: {
         browserName: "chromium",
         viewport: { width: 1440, height: 960 },
+        // O formato dos controles nativos (input time: 24h × 12h AM/PM) segue
+        // o locale do PROCESSO do browser — env no Linux, --lang em outros
+        // SOs; o `locale` do context não o alcança. Sem o pin, um runner
+        // en-US alarga o input, o texto vizinho quebra uma linha a mais e o
+        // screenshot diverge do baseline gerado em pt-BR.
+        launchOptions: {
+          args: ["--lang=pt-BR"],
+          env: {
+            ...(process.env as Record<string, string>),
+            LANG: "pt_BR.UTF-8",
+            LC_ALL: "pt_BR.UTF-8",
+            LANGUAGE: "pt_BR",
+          },
+        },
       },
     },
   ],
@@ -30,6 +44,11 @@ export default defineConfig({
   timeout: 30_000,
   use: {
     baseURL,
+    // Controles nativos (ex.: input time) renderizam pelo locale do browser —
+    // sem pinar, um runner en-US mostra 12h com AM/PM, o input alarga e o
+    // layout quebra linha diferente do baseline gerado em pt-BR.
+    locale: "pt-BR",
+    timezoneId: "America/Sao_Paulo",
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
     video: "retain-on-failure",
