@@ -219,13 +219,13 @@
   min-height: 0;
   display: grid;
   gap: var(--space-4);
-  /* O padding não colapsa com o track em 0fr — fechado ele viraria uma faixa
-     morta de 8px; por isso só existe aberto, animado junto com a porta. */
-  padding-top: 0;
-  transition: padding-top var(--dur-base) var(--ease-standard);
 }
-.config__door[data-open="true"] .config__doorin {
-  padding-top: var(--space-4);
+/* Respiro entre a última linha e o conteúdo da porta: margin DENTRO do box
+   clipado (o overflow:hidden faz BFC, então ela não colapsa para fora) — um
+   padding no doorin não colapsaria com o track em 0fr e deixaria uma faixa
+   morta de 8px com a porta fechada. */
+.config__doorin > :first-child {
+  margin-top: var(--space-4);
 }
 
 /* ── Aparência ───────────────────────────────────────────────── */

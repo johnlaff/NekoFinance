@@ -293,13 +293,13 @@ test("Configurações com a porta Gerenciar aberta", async ({ page }) => {
   });
 });
 
-// A rolagem do app vive na .sh-body (o fullPage não a alcança) — sem este
-// baseline, Aparência e Rotina nunca apareceriam em captura nenhuma.
+// A rolagem do app vive na .sh-body (o fullPage não a alcança) — sem estes
+// baselines, Aparência e Rotina nunca apareceriam em captura nenhuma.
 for (const [label, width, height] of [
   ["", 1440, 1000],
   ["mobile-", 390, 844],
 ] as const) {
-  test(`Configurações — ${label ? "mobile " : ""}fim da tela (Aparência + Rotina)`, async ({
+  test(`Configurações — ${label ? "mobile " : ""}seções finais (Aparência + Rotina)`, async ({
     page,
   }) => {
     await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
@@ -321,11 +321,17 @@ for (const [label, width, height] of [
         .click();
     }
     await page.waitForTimeout(350);
-    await page.locator(".sh-body").evaluate((el) => el.scrollTo(0, el.scrollHeight));
-    await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot(`${label}config-fim-dark.png`, {
-      maxDiffPixelRatio: 0.02,
-    });
+    // Screenshot de ELEMENTO: a posição da janela de rolagem não é
+    // determinística entre máquinas (o scrollHeight varia por poucos px),
+    // então o alvo é o card — nunca a viewport rolada até o fim.
+    for (const section of ["aparencia", "rotina"] as const) {
+      const card = page.locator(`section[aria-labelledby="config-${section}"]`);
+      await card.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(200);
+      await expect(card).toHaveScreenshot(`${label}config-${section}-dark.png`, {
+        maxDiffPixelRatio: 0.02,
+      });
+    }
   });
 }
 
