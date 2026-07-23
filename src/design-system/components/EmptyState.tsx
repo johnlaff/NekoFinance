@@ -54,11 +54,18 @@ export function EmptyState({
   useCSS();
   if (variant === "skeleton") {
     return (
-      <div className={["nk-skel", className].filter(Boolean).join(" ")}>
+      // Carregamento anunciado ao leitor de tela (aria-live implícito do role=status);
+      // as barras são puramente decorativas.
+      <div
+        className={["nk-skel", className].filter(Boolean).join(" ")}
+        role="status"
+        aria-label="Carregando"
+      >
         {Array.from({ length: skeletonRows }).map((_, i) => (
           <div
             className="nk-skel__row"
             key={i}
+            aria-hidden="true"
             style={{ width: `${100 - (i % 3) * 14}%` }}
           />
         ))}
@@ -66,7 +73,12 @@ export function EmptyState({
     );
   }
   return (
-    <div className={["nk-state", className].filter(Boolean).join(" ")}>
+    // Erro é interrupção real: role=alert anuncia imediatamente; os demais estados
+    // são polos (status) — o conteúdo textual do bloco é o anúncio.
+    <div
+      className={["nk-state", className].filter(Boolean).join(" ")}
+      role={variant === "error" ? "alert" : "status"}
+    >
       {variant === "loading" ? (
         <div className="nk-state__spin" />
       ) : (
