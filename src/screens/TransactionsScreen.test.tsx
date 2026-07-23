@@ -4,6 +4,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { TransactionsScreen } from "./TransactionsScreen";
 import { NekoAppProvider } from "../shell/appContext";
 import { TXNS, mockCommands, mockInvoke } from "../test/commands";
+import { crumbOverridesSnapshot } from "../shell/crumbStore";
 import type { TransactionRow } from "../lib/api";
 import type * as FormatModule from "../lib/format";
 
@@ -29,7 +30,7 @@ function renderLedger() {
   );
 }
 
-/** ISO date in the CURRENT month, so rows land in the default "Por mês" view regardless of clock. */
+/** ISO date in the CURRENT month, so rows land in the month view regardless of clock. */
 function currentMonthISO(day = 15): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
@@ -37,8 +38,8 @@ function currentMonthISO(day = 15): string {
 
 describe("TransactionsScreen (Lançamentos)", () => {
   beforeEach(() => {
-    // A tela abre no "Por mês" do MÊS CORRENTE; congela o relógio em junho/2026 para
-    // alinhar com as fixtures datadas (2026-06-…) em qualquer data real de execução.
+    // A tela abre no mês corrente; congela o relógio em junho/2026 para alinhar
+    // com as fixtures datadas (2026-06-…) em qualquer data real de execução.
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.setSystemTime(new Date("2026-06-20T12:00:00-03:00"));
     mockInvoke.mockReset();
@@ -49,53 +50,59 @@ describe("TransactionsScreen (Lançamentos)", () => {
   });
 
   it("renders the ledger with the loaded transactions", async () => {
-    // Datas no mês corrente para o default "Por mês" (independe do relógio).
     const rows = TXNS.map((t, i) => ({ ...t, date: currentMonthISO(10 + i) }));
     mockCommands({ get_recent_transactions: rows });
     renderLedger();
-    expect(await screen.findByText(rows[2]!.description)).toBeInTheDocument();
+    expect(await screen.findByText(rows[0]!.description)).toBeInTheDocument();
   });
 
-  it("opens in Por mês view by default and lists it first", async () => {
-    mockCommands({ get_recent_transactions: TXNS });
-    renderLedger();
-
-    const month = await screen.findByRole("radio", { name: "Por mês" });
-    const timeline = screen.getByRole("radio", { name: "Linha do tempo" });
-
-    expect(month).toHaveAttribute("aria-checked", "true");
-    expect(timeline).toHaveAttribute("aria-checked", "false");
-    expect(
-      month.compareDocumentPosition(timeline) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+  it("publica o mês visto no crumb da appbar e limpa ao desmontar", async () => {
+    mockCommands({ get_recent_transactions: [] });
+    const { unmount } = renderLedger();
+    await waitFor(() =>
+      expect(crumbOverridesSnapshot()).toEqual({ lancamentos: "Junho de 2026" }),
+    );
+    unmount();
+    expect(crumbOverridesSnapshot()).toEqual({});
   });
 
-  it("shows kind badges and a quiet divergence marker for itemized rows", async () => {
+  it("explode a nota em linhas de item sob o cabeçalho de célula", async () => {
     const txns = [
       {
         ...TXNS[1]!,
-        id: "itemized-061",
-        amount: 10_000,
-        description: "Despesa itemizada",
-        date: currentMonthISO(15),
+        id: "cel-12",
+        amount: 810_158,
+        description: "Saída",
+        date: currentMonthISO(12),
         payment_method: "debit",
         is_fixed: true,
         line_items: [
           {
-            id: "li-card",
-            transaction_id: "itemized-061",
-            amount_cents: 4_000,
-            description: "Compra crédito",
+            id: "li-1",
+            transaction_id: "cel-12",
+            amount_cents: 400_066,
+            description: "Bradesco João",
             position: 0,
             kind: "cartao",
+            section: "CARTÕES |",
           },
           {
-            id: "li-saida",
-            transaction_id: "itemized-061",
-            amount_cents: 3_000,
-            description: "Conta fixa",
+            id: "li-2",
+            transaction_id: "cel-12",
+            amount_cents: 407_764,
+            description: "Bradesco Gio",
             position: 1,
-            kind: "saida",
+            kind: "cartao",
+            section: null,
+          },
+          {
+            id: "li-3",
+            transaction_id: "cel-12",
+            amount_cents: 2_298,
+            description: "Inter",
+            position: 2,
+            kind: "cartao",
+            section: null,
           },
         ],
       },
@@ -103,40 +110,36 @@ describe("TransactionsScreen (Lançamentos)", () => {
     mockCommands({ get_recent_transactions: txns });
     renderLedger();
 
-    // userEvent + fake timers: os delays internos precisam avançar o relógio falso.
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    const row = await screen.findByRole("button", { name: "Despesa itemizada" });
-    await user.click(row);
-
-    expect(screen.getByLabelText("Item classificado como Cartão")).toBeInTheDocument();
-    expect(screen.getByLabelText("Item classificado como Saída")).toBeInTheDocument();
-    expect(screen.getByText("Itens não batem")).toBeInTheDocument();
+    // Os itens são linhas de primeira classe (não escondidos atrás de expansão).
+    expect(
+      await screen.findByRole("button", { name: /^Bradesco João/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Bradesco Gio/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Inter/ })).toBeInTheDocument();
+    // O cabeçalho de célula declara a coluna e carrega o total como autoridade.
+    expect(screen.getByText("Saída — Total da célula")).toBeInTheDocument();
+    expect(screen.getByText(/8\.101,58/)).toBeInTheDocument();
   });
 
-  it("items of an income row carry the Entrada badge, never Saída", async () => {
+  it("acusa a diferença célula×nota com selo e linha sintética — nunca item", async () => {
     const txns = [
       {
-        ...TXNS[2]!,
-        id: "income-itemized",
-        amount: 300_264,
-        description: "Entrada itemizada",
+        ...TXNS[1]!,
+        id: "cel-dif",
+        amount: 810_158,
+        description: "Saída",
         date: currentMonthISO(12),
+        payment_method: "debit",
+        is_fixed: true,
         line_items: [
           {
-            id: "li-inc-1",
-            transaction_id: "income-itemized",
-            amount_cents: 257_764,
-            description: "salário",
+            id: "li-a",
+            transaction_id: "cel-dif",
+            amount_cents: 810_128,
+            description: "Único item",
             position: 0,
-            kind: "entrada",
-          },
-          {
-            id: "li-inc-2",
-            transaction_id: "income-itemized",
-            amount_cents: 42_500,
-            description: "reembolso",
-            position: 1,
-            kind: "entrada",
+            kind: "cartao",
+            section: null,
           },
         ],
       },
@@ -144,17 +147,134 @@ describe("TransactionsScreen (Lançamentos)", () => {
     mockCommands({ get_recent_transactions: txns });
     renderLedger();
 
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    const row = await screen.findByRole("button", { name: "Entrada itemizada" });
-    await user.click(row);
+    expect(await screen.findByText("Com diferença")).toBeInTheDocument();
+    const dif = screen.getByText("Diferença no detalhamento");
+    expect(dif).toBeInTheDocument();
+    // A linha sintética não é interativa (nunca um item da lista de ações).
+    expect(dif.closest("li")).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByText(/0,30/)).toBeInTheDocument();
+  });
 
-    expect(screen.getAllByLabelText("Item classificado como Entrada")).toHaveLength(2);
+  it("busca ativa esconde a reconciliação (subconjunto não compara com a célula)", async () => {
+    const txns = [
+      {
+        ...TXNS[1]!,
+        id: "cel-dif",
+        amount: 810_158,
+        description: "Saída",
+        date: currentMonthISO(12),
+        payment_method: "debit",
+        is_fixed: true,
+        line_items: [
+          {
+            id: "li-a",
+            transaction_id: "cel-dif",
+            amount_cents: 400_066,
+            description: "Bradesco João",
+            position: 0,
+            kind: "cartao",
+            section: null,
+          },
+          {
+            id: "li-b",
+            transaction_id: "cel-dif",
+            amount_cents: 407_764,
+            description: "Bradesco Gio",
+            position: 1,
+            kind: "cartao",
+            section: null,
+          },
+        ],
+      },
+    ];
+    mockCommands({ get_recent_transactions: txns });
+    renderLedger();
+    await screen.findByText("Com diferença");
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const search = screen.getByLabelText("Buscar lançamento");
+    await user.type(search, "Gio");
+
+    expect(screen.queryByText("Com diferença")).not.toBeInTheDocument();
+    expect(screen.queryByText("Diferença no detalhamento")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Bradesco Gio/ })).toBeInTheDocument();
     expect(
-      screen.queryByLabelText("Item classificado como Saída"),
+      screen.queryByRole("button", { name: /^Bradesco João/ }),
     ).not.toBeInTheDocument();
   });
 
-  it("Por mês: cabeçalho do dia mostra o Saldo encadeado, colorido pela banda", async () => {
+  it("pílulas de metadado moram junto do nome: parcela, reembolso e previsto", async () => {
+    const rows: TransactionRow[] = [
+      {
+        ...TXNS[1]!,
+        id: "rec-1:9",
+        description: "Financiamento",
+        date: currentMonthISO(7),
+        installment_index: 10,
+        installment_total: 36,
+        has_refund_link: true,
+      },
+      {
+        ...TXNS[1]!,
+        id: "fut-1",
+        description: "Conta futura",
+        date: currentMonthISO(28),
+        is_projection: true,
+      },
+    ];
+    mockCommands({ get_recent_transactions: rows });
+    renderLedger();
+
+    const row = await screen.findByRole("button", { name: /^Financiamento/ });
+    expect(row).toHaveTextContent("10/36");
+    expect(row).toHaveTextContent("Reembolso");
+    // O lançamento futuro vive no disclosure do mês corrente.
+    expect(screen.getByText("O que ainda vem neste mês")).toBeInTheDocument();
+  });
+
+  it("filtro por tipo seleciona células inteiras", async () => {
+    const rows = [
+      {
+        ...TXNS[1]!,
+        id: "fix-1",
+        description: "Aluguel",
+        date: currentMonthISO(10),
+        payment_method: "debit",
+        is_fixed: true,
+      },
+      {
+        ...TXNS[1]!,
+        id: "card-1",
+        description: "Compra no crédito",
+        date: currentMonthISO(11),
+        payment_method: "credit",
+      },
+    ];
+    mockCommands({ get_recent_transactions: rows });
+    renderLedger();
+    await screen.findByRole("button", { name: /^Aluguel/ });
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await user.click(screen.getByRole("button", { name: "Cartão" }));
+
+    expect(screen.queryByRole("button", { name: /^Aluguel/ })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Compra no crédito/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("vazio com busca cita o termo e o mês", async () => {
+    mockCommands({ get_recent_transactions: [] });
+    renderLedger();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const search = await screen.findByLabelText("Buscar lançamento");
+    await user.type(search, "pix");
+    expect(
+      screen.getByText('Nada em junho para "pix". Limpe a busca ou troque o filtro.'),
+    ).toBeInTheDocument();
+  });
+
+  it("daymark carrega o Saldo encadeado, colorido pela banda", async () => {
     const rows = [
       { ...TXNS[1]!, id: "saldo-1", description: "Aluguel", date: currentMonthISO(3) },
     ];
@@ -173,40 +293,23 @@ describe("TransactionsScreen (Lançamentos)", () => {
     });
     renderLedger();
 
-    // O grupo do dia agrupa os lançamentos e o cabeçalho carrega o Saldo do fim
-    // do dia com rótulo acessível; o rótulo do dia é "weekday, dia" (03/06 = Qua).
     expect(await screen.findByLabelText(/Saldo do dia.*380,00/)).toBeInTheDocument();
-    expect(screen.getByText("Qua, 3")).toBeInTheDocument();
+    expect(screen.getByText(/3 de junho/)).toBeInTheDocument();
   });
 
-  it("Por mês: cabeçalho do dia de hoje traz o chip 'Hoje' (sem selo redundante na linha)", async () => {
-    // Relógio congelado em 2026-06-20 → hoje.
+  it("daymark de hoje traz o chip 'Hoje'", async () => {
     const todayIso = currentMonthISO(20);
     const rows = [
       { ...TXNS[1]!, id: "hoje-1", description: "Compra de hoje", date: todayIso },
     ];
-    mockCommands({
-      get_recent_transactions: rows,
-      get_month_grid: [
-        {
-          date: todayIso,
-          day: 20,
-          income_cents: 0,
-          fixed_out_cents: 5_000,
-          daily_out_cents: 0,
-          balance_cents: 300_000,
-        },
-      ],
-    });
+    mockCommands({ get_recent_transactions: rows, get_month_grid: [] });
     renderLedger();
 
-    // O marcador de hoje é um chip textual "Hoje" no cabeçalho do dia — e é o
-    // ÚNICO "Hoje" na tela (o selo redundante da linha foi removido).
     expect(await screen.findByText("Hoje")).toBeInTheDocument();
     expect(screen.getAllByText("Hoje")).toHaveLength(1);
   });
 
-  it("Por mês: dia sem Saldo no grid não renderiza a pílula", async () => {
+  it("dia sem Saldo no grid não renderiza a pílula", async () => {
     const rows = [
       { ...TXNS[1]!, id: "saldo-2", description: "Aluguel", date: currentMonthISO(3) },
     ];
@@ -225,14 +328,14 @@ describe("TransactionsScreen (Lançamentos)", () => {
     });
     renderLedger();
 
-    await screen.findByRole("button", { name: "Aluguel" });
+    await screen.findByRole("button", { name: /^Aluguel/ });
     expect(screen.queryByLabelText(/Saldo do dia/)).not.toBeInTheDocument();
   });
 });
 
-// Feature 3: apagar uma série recorrente com escopo (só esta / em diante / toda a série).
+// Apagar uma série recorrente com escopo (só esta / em diante / toda a série).
 describe("TransactionsScreen — apagar série recorrente", () => {
-  // Uma ocorrência de série no mês corrente (aparece na visão "Por mês" padrão).
+  // Uma ocorrência de série no mês corrente (aparece na visão padrão).
   function seriesRow(): TransactionRow {
     const d = new Date();
     const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-15`;
@@ -248,7 +351,7 @@ describe("TransactionsScreen — apagar série recorrente", () => {
   }
 
   async function openRowActions() {
-    const row = await screen.findByRole("button", { name: "Aluguel" });
+    const row = await screen.findByRole("button", { name: /^Aluguel/ });
     await userEvent.click(row);
     return screen.getByRole("button", { name: "Apagar da série" });
   }

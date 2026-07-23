@@ -153,27 +153,39 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     await expect(dialog).toBeVisible();
   });
 
-  test("Lançamentos shows classified item badges in the expanded row", async ({
+  test("Lançamentos explode a nota em linhas de item, com a célula como autoridade", async ({
     page,
   }, testInfo) => {
     await page.getByRole("button", { name: "Lançamentos", exact: true }).click();
-    await page.getByRole("button", { name: "Compromisso fixo demo" }).click();
 
-    await expect(page.getByLabel("Item classificado como Cartão")).toBeVisible();
-    await expect(page.getByLabel("Item classificado como Saída")).toBeVisible();
-    await expect(page.getByText("itens não batem")).toBeVisible();
+    // Regressão do shell: vindo de uma tela COM large-title (Hoje), a appbar da
+    // tela sem herói recupera o título — o `quiet` nunca fica preso.
+    await expect(page.locator(".sh-appbar")).not.toHaveClass(/sh-appbar--quiet/);
+
+    // Itens da nota são linhas de primeira classe; o contexto carrega a seção.
+    await expect(
+      page.getByRole("button", { name: /^Compra no crédito demo/ }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: /^Conta fixa demo/ })).toBeVisible();
+    await expect(page.getByText("Saída — Total da célula").first()).toBeVisible();
+    // Divergência célula×nota (t3: célula 125,00 × itens 100,00): selo no
+    // cabeçalho + linha sintética de reconciliação — nunca um item.
+    await expect(page.getByText("Com diferença")).toBeVisible();
+    await expect(page.getByText("Diferença no detalhamento")).toBeVisible();
 
     await page.screenshot({
       fullPage: true,
-      path: testInfo.outputPath("lancamentos-item-badges.png"),
+      path: testInfo.outputPath("lancamentos-celula-nota.png"),
     });
 
     await page.setViewportSize({ width: 390, height: 840 });
-    await expect(page.getByLabel("Item classificado como Cartão")).toBeVisible();
-    await expect(page.getByLabel("Item classificado como Saída")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /^Compra no crédito demo/ }),
+    ).toBeVisible();
+    await expect(page.getByText("Com diferença")).toBeVisible();
     await page.screenshot({
       fullPage: true,
-      path: testInfo.outputPath("lancamentos-item-badges-mobile.png"),
+      path: testInfo.outputPath("lancamentos-celula-nota-mobile.png"),
     });
   });
 

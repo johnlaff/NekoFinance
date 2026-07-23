@@ -85,6 +85,7 @@ export const TXNS: TransactionRow[] = [
     due_date: null,
     installment_index: null,
     installment_total: null,
+    has_refund_link: false,
   },
   {
     id: "t2",
@@ -102,6 +103,7 @@ export const TXNS: TransactionRow[] = [
     due_date: null,
     installment_index: null,
     installment_total: null,
+    has_refund_link: false,
   },
   {
     id: "t3",
@@ -119,6 +121,7 @@ export const TXNS: TransactionRow[] = [
     due_date: null,
     installment_index: null,
     installment_total: null,
+    has_refund_link: false,
   },
 ];
 

@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import "./App.css";
 import "./redesign.css";
 import { AppShell, type Screen } from "./shell/AppShell";
 import { NekoAppProvider, type ComposeOptions } from "./shell/appContext";
+import { crumbOverridesSnapshot, subscribeCrumbs } from "./shell/crumbStore";
 import { Compose } from "./shell/Compose";
 import { DashboardScreen } from "./screens/DashboardScreen";
 import { eyebrowDate, localTodayIso } from "./screens/hojeView";
@@ -77,6 +78,9 @@ function App() {
     return out;
   })();
 
+  // Crumbs por tela sobrepostos pelas próprias telas (ex.: o mês visto no Livro-razão).
+  const crumbOverrides = useSyncExternalStore(subscribeCrumbs, crumbOverridesSnapshot);
+
   const nekoApp = {
     navigate: (s: Screen) => setScreen(s),
     openCompose: (options: ComposeOptions = {}) =>
@@ -104,7 +108,7 @@ function App() {
             }))
           }
           hints={hints}
-          crumbs={{ hoje: eyebrowDate(localTodayIso()) }}
+          crumbs={{ hoje: eyebrowDate(localTodayIso()), ...crumbOverrides }}
         >
           <div key={screen} className="ak-screen neko-app">
             {screen === "hoje" && <DashboardScreen />}

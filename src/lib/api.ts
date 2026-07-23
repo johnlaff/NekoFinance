@@ -126,6 +126,8 @@ export interface TransactionRow {
   installment_index: number | null;
   /** Total de parcelas da série; null = não é lançamento de série. */
   installment_total: number | null;
+  /** Há dinheiro que volta ligado à linha (Entrada vinculada ↔ fatura/compra/série). */
+  has_refund_link: boolean;
 }
 
 export interface SheetInfo {
@@ -850,6 +852,12 @@ export interface MonthGridDay {
 
 export function getMonthGrid(year: number, month: number): Promise<MonthGridDay[]> {
   return invoke("get_month_grid", { year, month });
+}
+
+/** Lançamentos do mês ("YYYY-MM") — o Livro-razão é mês-escopado; a janela
+ *  recente pura cortaria meses antigos no limite. */
+export function getMonthTransactions(month: string): Promise<TransactionRow[]> {
+  return invoke("get_recent_transactions", { limit: 1000, month });
 }
 
 /** Timestamp UTC ("YYYY-MM-DD HH:MM:SS") da última sincronização com a planilha

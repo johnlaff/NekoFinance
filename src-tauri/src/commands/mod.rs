@@ -1136,7 +1136,7 @@ mod tests {
         // Lançamento sem split → sem titulares.
         insert_realized(&pool, "expense", -5000, "2026-06-04").await;
 
-        let rows = recent_transactions(&pool, 10).await.unwrap();
+        let rows = recent_transactions(&pool, 10, None).await.unwrap();
         let split = rows.iter().find(|r| r.id == "t1").unwrap();
         assert_eq!(split.owners, vec!["Ana".to_string(), "Bruno".to_string()]);
         let solo = rows.iter().find(|r| r.id != "t1").unwrap();
@@ -1157,7 +1157,7 @@ mod tests {
             .await
             .unwrap();
 
-        let rows = recent_transactions(&pool, 10).await.unwrap();
+        let rows = recent_transactions(&pool, 10, None).await.unwrap();
         let tagged = rows.iter().find(|r| r.id == "t1").unwrap();
         assert_eq!(tagged.tags.len(), 1);
         assert_eq!(tagged.tags[0].name, "Viagem");

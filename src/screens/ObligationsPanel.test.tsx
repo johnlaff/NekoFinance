@@ -89,7 +89,8 @@ describe("Obrigações recorrentes (plano 069)", () => {
     renderLedger();
 
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    const row = await screen.findByRole("button", { name: "Despesa itemizada" });
+    // No Livro-razão célula×nota o item da nota É a linha; o painel dela carrega a ação.
+    const row = await screen.findByRole("button", { name: /^Aluguel/ });
     await user.click(row);
 
     const markBtn = await screen.findByLabelText(
@@ -148,7 +149,8 @@ describe("Obrigações recorrentes (plano 069)", () => {
     renderLedger();
 
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    const row = await screen.findByRole("button", { name: "Despesa itemizada" });
+    // No Livro-razão célula×nota o item da nota É a linha; o painel dela carrega a ação.
+    const row = await screen.findByRole("button", { name: /^Aluguel/ });
     await user.click(row);
     const markBtn = await screen.findByLabelText(
       'Marcar "Aluguel" como obrigação recorrente',
@@ -211,7 +213,8 @@ describe("Obrigações recorrentes (plano 069)", () => {
     renderLedger();
 
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    const row = await screen.findByRole("button", { name: "Despesa itemizada" });
+    // No Livro-razão célula×nota o item da nota É a linha; o painel dela carrega a ação.
+    const row = await screen.findByRole("button", { name: /^Aluguel/ });
     await user.click(row);
     const markBtn = await screen.findByLabelText(
       'Marcar "Aluguel" como obrigação recorrente',
@@ -332,7 +335,8 @@ describe("Obrigações recorrentes (plano 069)", () => {
     renderLedger();
 
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    const row = await screen.findByRole("button", { name: "Despesa itemizada" });
+    // No Livro-razão célula×nota o item da nota É a linha; o painel dela carrega a ação.
+    const row = await screen.findByRole("button", { name: /^Aluguel/ });
     await user.click(row);
     const markBtn = await screen.findByLabelText(
       'Marcar "Aluguel" como obrigação recorrente',

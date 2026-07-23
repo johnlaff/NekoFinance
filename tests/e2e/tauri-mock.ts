@@ -268,6 +268,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         due_date: null,
         installment_index: null,
         installment_total: null,
+        has_refund_link: false,
       },
       {
         id: "t2",
@@ -285,6 +286,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         due_date: null,
         installment_index: 3,
         installment_total: 12,
+        has_refund_link: true,
       },
       {
         id: "t3",
@@ -303,9 +305,10 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
             id: "li-t3-card",
             transaction_id: "t3",
             amount_cents: 4500,
-            description: "Compra credito demo",
+            description: "Compra no crédito demo",
             position: 0,
             kind: "cartao",
+            section: "CARTÕES |",
           },
           {
             id: "li-t3-saida",
@@ -314,11 +317,13 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
             description: "Conta fixa demo",
             position: 1,
             kind: "saida",
+            section: "CONTAS:",
           },
         ],
         due_date: "2026-06-28",
         installment_index: null,
         installment_total: null,
+        has_refund_link: false,
       },
       {
         id: "t4",
@@ -336,6 +341,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         due_date: null,
         installment_index: null,
         installment_total: null,
+        has_refund_link: false,
       },
       {
         id: "t5",
@@ -353,6 +359,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         due_date: null,
         installment_index: null,
         installment_total: null,
+        has_refund_link: false,
       },
     ];
 

@@ -1,22 +1,31 @@
 import "./lancamentos.css";
-import { useState, useReducer } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import {
-  CalendarRange,
-  ChevronRight,
+  ArrowDownLeft,
+  CreditCard,
+  Landmark,
   Pencil,
-  Plus,
+  PiggyBank,
+  ReceiptText,
   Search,
   Tags,
   Trash2,
+  TriangleAlert,
+  Wallet,
 } from "lucide-react";
 import { Button } from "../design-system/components/Button";
-import { SegmentedControl } from "../design-system/components/SegmentedControl";
+import { Disclosure } from "../design-system/components/Disclosure";
+import { EmptyState } from "../design-system/components/EmptyState";
+import { Money, SignedMoney } from "../design-system/components/Money";
+import { MonthNav } from "../design-system/components/MonthNav";
 import {
   deleteSeriesAll,
   deleteSeriesFrom,
   deleteTransaction,
+  getDashboardSummary,
+  getForecast,
   getMonthGrid,
-  getRecentTransactions,
+  getMonthTransactions,
   isTauri,
   listTags,
   setTransactionTags,
@@ -26,113 +35,63 @@ import {
   type TransactionRow,
 } from "../lib/api";
 import { useCommand, invalidateCommands } from "../lib/useCommand";
-import {
-  fmtBRL,
-  MES,
-  monthOf,
-  saldoBand,
-  TYPE_META,
-  type MovementType,
-} from "../lib/nkFormat";
-import { todayISO, fmtDayMonth } from "../lib/format";
-import { Money, SignedMoney } from "../design-system/components/Money";
+import { fmtBRL, MES, saldoBand } from "../lib/nkFormat";
+import { todayISO } from "../lib/format";
 import { useNekoApp } from "../shell/appContext";
+import { setCrumb } from "../shell/crumbStore";
 import { MarkObligationAction, ObligationsCard } from "./ObligationsPanel";
+import {
+  applySearch,
+  buildDayGroups,
+  countRows,
+  daymarkLabel,
+  daysSummary,
+  emptyListCopy,
+  LINE_ITEM_KIND_META,
+  monthTitle,
+  splitAroundToday,
+  toMovementType,
+  type CellGroup,
+  type DayGroup,
+  type DisplayRow,
+  type FilterKey,
+} from "./lancamentosView";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const FETCH_LIMIT = 400;
-
 /** ISO today, computed once per module load (stable for a day). */
 const TODAY = todayISO();
 
-type FilterKey = "todos" | MovementType;
-type ViewMode = "monthOnly" | "anchor";
-interface LineItemKindMeta {
-  name: string;
-  color: string;
-}
+/** Ícone semântico por kind — traço na cor do tipo sobre círculo neutro. */
+const KIND_ICON: Record<LineItemKind, typeof Wallet> = {
+  entrada: ArrowDownLeft,
+  saida: ReceiptText,
+  diario: Wallet,
+  economia: PiggyBank,
+  cartao: CreditCard,
+  patrimonio: Landmark,
+  ajuste: TriangleAlert,
+};
+
+// Ordem canônica dos 5 tipos (a mesma de FORM_KINDS) e rótulos no singular, iguais
+// aos nomes de TYPE_META — o mesmo vocabulário em todo seletor de tipo do app.
+const FILTER_CHIPS: { key: FilterKey; label: string; hint: string }[] = [
+  { key: "todos", label: "Todos", hint: "Tudo o que entrou e saiu" },
+  { key: "entrada", label: "Entrada", hint: "Dinheiro que chegou" },
+  { key: "saida", label: "Saída", hint: "Conta fixa do mês" },
+  { key: "diario", label: "Diário", hint: "O variável do dia" },
+  { key: "economia", label: "Economia", hint: "O que você guardou" },
+  { key: "cartao", label: "Cartão", hint: "Soma na fatura e vira Saída no vencimento" },
+];
 
 // ---------------------------------------------------------------------------
-// Type mapping: TransactionRow → MovementType (the 5 pillars of the method)
-// ---------------------------------------------------------------------------
-
-/**
- * Maps a raw TransactionRow to one of the 5 MovementTypes used by the method.
- * income → entrada
- * transfer → economia
- * expense + is_fixed → saida
- * expense + payment_method === "credit" → cartao
- * expense + everything else → diario
- */
-function toMovementType(t: TransactionRow): MovementType {
-  if (t.type === "income") return "entrada";
-  if (t.type === "transfer") return "economia";
-  if (t.is_fixed) return "saida";
-  if (t.payment_method === "credit") return "cartao";
-  return "diario";
-}
-
-// ---------------------------------------------------------------------------
-// Pure helpers
+// Pure helpers (screen-local)
 // ---------------------------------------------------------------------------
 
 function monthKey(iso: string): string {
   return iso.slice(0, 7);
-}
-
-function monthLabel(key: string): string {
-  const [y, m] = key.split("-");
-  const mIdx = parseInt(m ?? "1", 10) - 1;
-  return `${MES[mIdx] ?? m} ${y}`;
-}
-
-/** Net signed cents for a row (income = positive, everything else = negative). */
-function signedCents(t: TransactionRow): number {
-  const abs = Math.abs(t.amount);
-  return toMovementType(t) === "entrada" ? abs : -abs;
-}
-
-/** Group a list of rows into descending month order [["2026-06", [...]], ...]. */
-function groupByMonth(rows: TransactionRow[]): [string, TransactionRow[]][] {
-  const map = new Map<string, TransactionRow[]>();
-  for (const t of rows) {
-    const k = monthKey(t.date);
-    if (!map.has(k)) map.set(k, []);
-    map.get(k)!.push(t);
-  }
-  return Array.from(map.entries()).toSorted((a, b) => (a[0] < b[0] ? 1 : -1));
-}
-
-const DOW = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
-
-/** Group rows by ISO day in ASCENDING order (1 → 31) — statement order, so the
- *  chained end-of-day Saldo reads naturally from top to bottom. */
-function groupByDay(rows: TransactionRow[]): [string, TransactionRow[]][] {
-  const map = new Map<string, TransactionRow[]>();
-  for (const t of rows) {
-    if (!map.has(t.date)) map.set(t.date, []);
-    map.get(t.date)!.push(t);
-  }
-  return Array.from(map.entries()).toSorted((a, b) => (a[0] < b[0] ? -1 : 1));
-}
-
-/** Day-group header label: weekday abbreviation + day-of-month, e.g. "Qua, 3". */
-function dayHeaderLabel(iso: string): string {
-  const [y, m, d] = iso.split("-").map((n) => parseInt(n, 10));
-  const weekday = new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1).getDay();
-  return `${DOW[weekday]}, ${d}`;
-}
-
-/** End-of-month Saldo = last chained balance in the grid (null when unknown). */
-function endOfMonthBalance(grid: MonthGridDay[]): number | null {
-  for (let i = grid.length - 1; i >= 0; i--) {
-    const balance = grid[i]?.balance_cents;
-    if (balance != null) return balance;
-  }
-  return null;
 }
 
 // Stable per-(year,month) fetchers for useCommand (its effect captures the first
@@ -146,11 +105,16 @@ function monthGridFetcher(year: number, month: number): () => Promise<MonthGridD
   _monthGridFetchers.set(key, fn);
   return fn;
 }
-const emptyGridFetcher = () => Promise.resolve<MonthGridDay[]>([]);
 
-/** Current month index (0-based), relative to the current year month. */
-function currentMonthIndex(): number {
-  return new Date().getMonth();
+// O Livro-razão busca por MÊS (a janela recente pura cortaria meses antigos no
+// limite e o mês navegado pareceria vazio). Mesmo padrão de fetcher estável.
+const _monthTxFetchers = new Map<string, () => Promise<TransactionRow[]>>();
+function monthTxFetcher(monthKey: string): () => Promise<TransactionRow[]> {
+  const cached = _monthTxFetchers.get(monthKey);
+  if (cached) return cached;
+  const fn = () => getMonthTransactions(monthKey);
+  _monthTxFetchers.set(monthKey, fn);
+  return fn;
 }
 
 /**
@@ -209,31 +173,6 @@ function handleDelete(t: TransactionRow): void {
 }
 
 // ---------------------------------------------------------------------------
-// Filter chip definitions
-// ---------------------------------------------------------------------------
-
-// Ordem canônica dos 5 tipos (a mesma de FORM_KINDS) e rótulos no singular, iguais
-// aos nomes de TYPE_META — o mesmo vocabulário em todo seletor de tipo do app.
-const FILTER_CHIPS: { key: FilterKey; label: string; color: string }[] = [
-  { key: "todos", label: "Todos", color: "var(--text-faint)" },
-  { key: "entrada", label: "Entrada", color: "var(--type-entrada)" },
-  { key: "saida", label: "Saída", color: "var(--type-saida)" },
-  { key: "diario", label: "Diário", color: "var(--type-diario)" },
-  { key: "economia", label: "Economia", color: "var(--type-economia)" },
-  { key: "cartao", label: "Cartão", color: "var(--type-cartao)" },
-];
-
-const LINE_ITEM_KIND_META: Record<LineItemKind, LineItemKindMeta> = {
-  entrada: { name: TYPE_META.entrada.name, color: TYPE_META.entrada.color },
-  saida: { name: TYPE_META.saida.name, color: TYPE_META.saida.color },
-  cartao: { name: TYPE_META.cartao.name, color: TYPE_META.cartao.color },
-  diario: { name: TYPE_META.diario.name, color: TYPE_META.diario.color },
-  economia: { name: TYPE_META.economia.name, color: TYPE_META.economia.color },
-  patrimonio: { name: "Patrimônio", color: "var(--text-muted)" },
-  ajuste: { name: "Ajuste", color: "var(--warning-400)" },
-};
-
-// ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
 
@@ -276,9 +215,7 @@ function TagPicker({
     <div className="lc-tagpicker">
       <div className="lc-tagpicker__chips">
         {allTags.length === 0 ? (
-          <span style={{ fontSize: 12, color: "var(--text-faint)" }}>
-            Nenhuma tag criada ainda.
-          </span>
+          <span className="lc-tagpicker__none">Nenhuma tag criada ainda.</span>
         ) : (
           allTags.map((tag) => {
             const on = selected.has(tag.id);
@@ -306,7 +243,7 @@ function TagPicker({
           })
         )}
       </div>
-      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+      <div className="lc-tagpicker__actions">
         <Button
           size="sm"
           variant="primary"
@@ -323,663 +260,351 @@ function TagPicker({
   );
 }
 
-/** A single transaction row with optional expanded parts panel. */
-function Row({
-  t,
-  open,
-  onToggle,
-  onEdit,
-  onDelete,
-  allTags,
-  hideDate,
-}: {
-  t: TransactionRow;
-  open: boolean;
-  onToggle: () => void;
-  onEdit: (t: TransactionRow) => void;
-  onDelete: (t: TransactionRow) => void;
-  allTags: Tag[];
-  /** Omit the leading date column (day-grouped view already shows the day). */
-  hideDate?: boolean | undefined;
-}) {
-  const mvType = toMovementType(t);
-  const tm = TYPE_META[mvType];
-  const totalCents = Math.abs(t.amount);
-  const isFuture = t.date > TODAY;
-  const isEntrada = mvType === "entrada";
-  const hasItems = t.line_items.length > 1;
-  const lineItemsTotal = t.line_items.reduce(
-    (sum, item) => sum + Math.abs(item.amount_cents),
-    0,
-  );
-  const lineItemsDiverge =
-    t.line_items.length > 0 && Math.abs(lineItemsTotal - totalCents) > 1;
-  const isImported = t.provenance === "importado";
-  const [showTagPicker, setShowTagPicker] = useState(false);
-
-  const installmentLabel =
-    t.installment_index != null && t.installment_total != null
-      ? `${t.installment_index}/${t.installment_total}`
-      : null;
-
+/** Pílulas de metadado junto do nome — nunca na coluna do dinheiro. */
+function RowPillsInline({ row }: { row: DisplayRow }) {
+  const { pills } = row;
   return (
     <>
-      <button
-        type="button"
-        className={
-          "lc-row" +
-          (isFuture ? " lc-row--future" : "") +
-          (hideDate ? " lc-row--nodate" : "")
-        }
-        onClick={onToggle}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            onToggle();
-          }
-        }}
-        aria-expanded={open}
-        aria-label={t.description || "Lançamento"}
-      >
-        {!hideDate && <span className="lc-row__date">{fmtDayMonth(t.date)}</span>}
-        <span className="lc-row__type" style={{ color: tm.color }}>
-          <span className="dot" style={{ background: tm.color }}>
-            {tm.glyph}
-          </span>
-          {tm.name}
-        </span>
-        <span className="lc-row__desc">
-          <ChevronRight
-            size={13}
-            strokeWidth={1.75}
-            className={"lc-chev" + (open ? " is-open" : "")}
-          />
-          <span className="lc-row__t" title={t.description}>
-            {t.description || "—"}
-          </span>
-          {hasItems && <span className="lc-tag">{`${t.line_items.length} itens`}</span>}
-          {installmentLabel && <span className="lc-tag">{installmentLabel}</span>}
-          {t.tags.map((tag) => (
-            <span
-              key={tag.id}
-              className="lc-tag"
-              style={{
-                borderColor: `color-mix(in srgb, ${tag.color} 40%, transparent)`,
-                color: tag.color,
-              }}
-            >
-              {tag.emoji ? `${tag.emoji} ` : ""}
-              {tag.name}
-            </span>
-          ))}
-          {isFuture && (
-            <span
-              className="lc-pill"
-              style={{ background: "var(--warning-tint)", color: "var(--warning-400)" }}
-            >
-              Previsto
-            </span>
-          )}
-        </span>
+      {pills.installment && (
+        <span className="lc-pill lc-pill--mono">{pills.installment}</span>
+      )}
+      {pills.refund && <span className="lc-pill lc-pill--ok">Reembolso</span>}
+      {pills.previsto && <span className="lc-pill lc-pill--prev">Previsto</span>}
+      {pills.tags.map((tag) => (
         <span
-          className="lc-row__amt"
+          key={tag.id}
+          className="lc-pill lc-pill--tag"
           style={{
-            color: isEntrada
-              ? "var(--money-pos)"
-              : isFuture
-                ? "var(--text-faint)"
-                : "var(--money-neg)",
+            borderColor: `color-mix(in srgb, ${tag.color} 40%, transparent)`,
+            color: tag.color,
           }}
         >
-          <SignedMoney cents={isEntrada ? totalCents : -totalCents} size="inherit" />
+          {tag.emoji ? `${tag.emoji} ` : ""}
+          {tag.name}
         </span>
-      </button>
-      {open && (
-        <div className="lc-parts">
-          {t.line_items.length > 0 ? (
-            <>
-              <p className="lc-parts__note">
-                <Pencil size={11} strokeWidth={1.75} />
-                {`${t.line_items.length} ${t.line_items.length === 1 ? "item" : "itens"}`}
-                {hasItems ? " · viram a nota da célula na planilha" : ""}
-                {lineItemsDiverge && (
-                  <span className="lc-parts__warn">Itens não batem</span>
-                )}
-              </p>
-              {t.line_items.map((li, i) => {
-                const kind = LINE_ITEM_KIND_META[li.kind];
-                return (
-                  <div className="lc-part" key={li.id ?? `li-${i}`}>
-                    <span className="lc-part__desc">
-                      <span
-                        className="lc-kind"
-                        aria-label={`Item classificado como ${kind.name}`}
-                        style={{
-                          color: kind.color,
-                          borderColor: `color-mix(in srgb, ${kind.color} 34%, transparent)`,
-                          background: `color-mix(in srgb, ${kind.color} 10%, transparent)`,
-                        }}
-                      >
-                        <span
-                          className="lc-kind__dot"
-                          style={{ background: kind.color }}
-                        />
-                        {kind.name}
-                      </span>
-                      <span className="lc-part__text">{li.description}</span>
-                      <MarkObligationAction item={li} />
-                    </span>
-                    <span
-                      className="lc-part__amt"
-                      style={{
-                        color: isEntrada ? "var(--money-pos)" : "var(--money-neg)",
-                      }}
-                    >
-                      <SignedMoney
-                        cents={
-                          isEntrada
-                            ? Math.abs(li.amount_cents)
-                            : -Math.abs(li.amount_cents)
-                        }
-                        size="inherit"
-                      />
-                    </span>
-                  </div>
-                );
-              })}
-            </>
-          ) : (
-            <p className="lc-parts__note">
-              <Pencil size={11} strokeWidth={1.75} />
-              Lançamento simples · sem itens detalhados
-            </p>
-          )}
-
-          {isImported && (
-            <p className="lc-parts__note" style={{ color: "var(--warning-400)" }}>
-              Lançamento importado · edição e exclusão via planilha
-            </p>
-          )}
-
-          <div className="lc-part-actions">
-            <Button
-              size="sm"
-              variant="ghost"
-              iconLeft={<Pencil size={13} strokeWidth={1.75} />}
-              disabled={isImported}
-              onClick={(e?: React.MouseEvent) => {
-                e?.stopPropagation();
-                onEdit(t);
-              }}
-            >
-              Editar
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              iconLeft={<Tags size={13} strokeWidth={1.75} />}
-              onClick={(e?: React.MouseEvent) => {
-                e?.stopPropagation();
-                setShowTagPicker((v) => !v);
-              }}
-            >
-              Tags
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              iconLeft={<Trash2 size={13} strokeWidth={1.75} />}
-              disabled={isImported}
-              onClick={(e?: React.MouseEvent) => {
-                e?.stopPropagation();
-                onDelete(t);
-              }}
-            >
-              {isSeriesRow(t) ? "Apagar da série" : "Apagar"}
-            </Button>
-          </div>
-
-          {showTagPicker && (
-            <TagPicker
-              transactionId={t.id}
-              currentTagIds={t.tags.map((tag) => tag.id)}
-              allTags={allTags}
-              onDone={() => setShowTagPicker(false)}
-            />
-          )}
-        </div>
-      )}
-    </>
-  );
-}
-
-/** A sticky day-group header: label + (optional chained Saldo pill) + net sum. */
-function GroupHeader({
-  title,
-  today,
-  sum,
-  balance,
-  todayChip,
-}: {
-  title: string;
-  today: boolean;
-  sum: number;
-  /** Chained end-of-day balance in cents; renders the Saldo pill when present. */
-  balance?: number | null | undefined;
-  /** Mark today with a neutral "Hoje" chip + stronger label (no jade fill) —
-   *  keeps the brand green reserved for the Saldo thermometer. */
-  todayChip?: boolean | undefined;
-}) {
-  const band = balance != null ? saldoBand(balance) : null;
-  return (
-    <div className={"lc-gh" + (today ? " lc-gh--today" : "")}>
-      <span className={"lc-gh__t" + (todayChip ? " lc-gh__t--strong" : "")}>
-        {title}
-      </span>
-      {todayChip && <span className="lc-gh__today">Hoje</span>}
-      {band && (
-        <span
-          className="lc-gh__saldo"
-          style={{ background: band.fill, color: band.text }}
-          aria-label={`Saldo do dia ${fmtBRL(balance!)}`}
-        >
-          {/* O rótulo do pill já anuncia "Saldo do dia R$ X"; o valor visível fica
-              aria-hidden para o leitor de tela não falar o número duas vezes. */}
-          <span aria-hidden="true">
-            <Money cents={balance!} size="inherit" />
-          </span>
-        </span>
-      )}
-      <span className="lc-gh__sum">
-        <SignedMoney cents={sum} size="inherit" />
-      </span>
-    </div>
-  );
-}
-
-/** A group of rows under a single GroupHeader. */
-function Group({
-  title,
-  today,
-  rows,
-  balance,
-  hideDate,
-  todayChip,
-  openIds,
-  toggle,
-  onEdit,
-  onDelete,
-  allTags,
-}: {
-  title: string;
-  today: boolean;
-  rows: TransactionRow[];
-  /** Chained end-of-day balance for day groups (Saldo pill in the header). */
-  balance?: number | null | undefined;
-  /** Hide the per-row date when the group header already carries the day. */
-  hideDate?: boolean | undefined;
-  /** Render the neutral "Hoje" chip on the header (day-grouped view). */
-  todayChip?: boolean | undefined;
-  openIds: ReadonlySet<string>;
-  toggle: (id: string) => void;
-  onEdit: (t: TransactionRow) => void;
-  onDelete: (t: TransactionRow) => void;
-  allTags: Tag[];
-}) {
-  const sum = rows.reduce((s, t) => s + signedCents(t), 0);
-  return (
-    <>
-      <GroupHeader
-        title={title}
-        today={today}
-        sum={sum}
-        balance={balance}
-        todayChip={todayChip}
-      />
-      {rows.map((t) => (
-        <Row
-          key={t.id}
-          t={t}
-          open={openIds.has(t.id)}
-          onToggle={() => toggle(t.id)}
-          onEdit={onEdit}
-          onDelete={onDelete}
-          allTags={allTags}
-          hideDate={hideDate}
-        />
       ))}
     </>
   );
 }
 
-/** Skeleton placeholder while loading. */
-function Skeleton() {
-  return (
-    <div className="lc-card">
-      <div className="lc-skeleton">
-        {Array.from({ length: 7 }).map((_, i) => (
-          <div
-            key={i}
-            className="lc-skel-row"
-            style={{ width: `${60 + (i % 3) * 15}%` }}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Toolbar sub-component
-// ---------------------------------------------------------------------------
-
-function LcToolbar({
-  view,
-  mOffset,
-  search,
-  onViewChange,
-  onMonthPrev,
-  onMonthNext,
-  onSearchChange,
-  onNew,
-}: {
-  view: ViewMode;
-  mOffset: number;
-  search: string;
-  onViewChange: (v: ViewMode) => void;
-  onMonthPrev: () => void;
-  onMonthNext: () => void;
-  onSearchChange: (q: string) => void;
-  onNew: () => void;
-}) {
-  // mOffset is read only for determining rendered label when needed; no direct use here
-  void mOffset;
-  return (
-    <div className="lc-tools">
-      <SegmentedControl
-        size="sm"
-        ariaLabel="Modo de visualização"
-        value={view}
-        onChange={(v) => onViewChange(v as ViewMode)}
-        options={[
-          { value: "monthOnly", label: "Por mês" },
-          { value: "anchor", label: "Linha do tempo" },
-        ]}
-      />
-      {view === "monthOnly" && (
-        <div style={{ display: "inline-flex", gap: 4 }}>
-          <button
-            className="sh-iconbtn"
-            onClick={onMonthPrev}
-            aria-label="Mês anterior"
-            type="button"
-          >
-            <ChevronRight
-              size={15}
-              strokeWidth={1.75}
-              style={{ transform: "rotate(180deg)" }}
-            />
-          </button>
-          <button
-            className="sh-iconbtn"
-            onClick={onMonthNext}
-            aria-label="Próximo mês"
-            type="button"
-          >
-            <ChevronRight size={15} strokeWidth={1.75} />
-          </button>
-        </div>
-      )}
-      <span className="lc-tools__sp" />
-      <label className="lc-search">
-        <Search size={14} strokeWidth={1.75} />
-        <input
-          placeholder="Buscar…"
-          value={search}
-          onChange={(e) => onSearchChange(e.target.value)}
-          aria-label="Buscar lançamentos"
-        />
-      </label>
-      <Button
-        size="sm"
-        variant="primary"
-        iconLeft={<Plus size={14} strokeWidth={1.75} />}
-        onClick={onNew}
-      >
-        Novo
-      </Button>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Future banner sub-component
-// ---------------------------------------------------------------------------
-
-function FutureBanner({
-  count,
-  sum,
-  expanded,
+/** Uma linha do Livro-razão: ícone · nome · contexto · valor (colunas no desktop). */
+function RowLine({
+  row,
+  open,
   onToggle,
 }: {
-  count: number;
-  sum: number;
-  expanded: boolean;
+  row: DisplayRow;
+  open: boolean;
   onToggle: () => void;
 }) {
+  const Icon = KIND_ICON[row.kind];
+  const kindColor = LINE_ITEM_KIND_META[row.kind].color;
+  const positive = row.signedCents > 0;
   return (
     <button
       type="button"
-      className="lc-future"
+      className={"lc-row" + (row.pills.previsto ? " lc-row--future" : "")}
       onClick={onToggle}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onToggle();
-        }
-      }}
-      aria-expanded={expanded}
-      aria-label="Lançamentos futuros já previstos"
+      aria-expanded={open}
+      // Sem aria-label: o nome acessível é o conteúdo real da linha (nome,
+      // pílulas, contexto e valor) — um rótulo só com o nome esconderia o
+      // dinheiro do leitor de tela.
     >
-      <span className="lc-future__ic">
-        <CalendarRange size={16} strokeWidth={1.75} />
+      <span className="lc-row__ic" style={{ color: kindColor }} aria-hidden="true">
+        <Icon size={17} strokeWidth={1.75} />
       </span>
-      <div>
-        <div className="lc-future__t">{count} lançamentos futuros já previstos</div>
-        <div className="lc-future__s">
-          {expanded ? "Toque para recolher" : "Toque para ver. Não atrapalham aqui."}
-        </div>
-      </div>
-      <span className="lc-future__amt">
-        <SignedMoney cents={sum} size="inherit" />
-        <br />
-        <ChevronRight
-          size={14}
-          strokeWidth={1.75}
-          style={expanded ? { transform: "rotate(90deg)" } : undefined}
-        />
+      <span className="lc-row__name">
+        {row.name}
+        <RowPillsInline row={row} />
+      </span>
+      <span className="lc-row__ctx">{row.context}</span>
+      <span
+        className="lc-row__val"
+        style={{
+          color: positive
+            ? "var(--money-pos)"
+            : row.pills.previsto
+              ? "var(--text-faint)"
+              : "var(--money-neg)",
+        }}
+      >
+        <SignedMoney cents={row.signedCents} size="inherit" />
       </span>
     </button>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Anchor view sub-component
-// ---------------------------------------------------------------------------
-
-function AnchorView({
-  futureRows,
-  todayRows,
-  pastRows,
-  todayLabel,
-  allRows,
-  transactions,
-  openIds,
-  toggle,
+/** Painel de ações da linha (as ações são do lançamento dono; o item marca obrigação). */
+function RowPanel({
+  row,
   onEdit,
-  onDelete,
   allTags,
 }: {
-  futureRows: TransactionRow[];
-  todayRows: TransactionRow[];
-  pastRows: TransactionRow[];
-  todayLabel: string;
-  allRows: TransactionRow[];
-  transactions: TransactionRow[] | undefined;
-  openIds: ReadonlySet<string>;
-  toggle: (id: string) => void;
+  row: DisplayRow;
   onEdit: (t: TransactionRow) => void;
-  onDelete: (t: TransactionRow) => void;
   allTags: Tag[];
 }) {
-  const [showFuture, setShowFuture] = useState(false);
-  const futureSum = futureRows.reduce((s, t) => s + signedCents(t), 0);
-
+  const t = row.txn;
+  const isImported = t.provenance === "importado";
+  const [showTagPicker, setShowTagPicker] = useState(false);
   return (
-    <div className="lc-card">
-      {futureRows.length > 0 && (
-        <>
-          <FutureBanner
-            count={futureRows.length}
-            sum={futureSum}
-            expanded={showFuture}
-            onToggle={() => setShowFuture((v) => !v)}
-          />
-          {showFuture &&
-            groupByMonth(futureRows)
-              .slice()
-              .reverse()
-              .map(([k, rows]) => (
-                <Group
-                  key={k}
-                  title={"Futuro · " + monthLabel(k)}
-                  today={false}
-                  rows={rows.slice().sort((a, b) => (a.date < b.date ? -1 : 1))}
-                  openIds={openIds}
-                  toggle={toggle}
-                  onEdit={onEdit}
-                  onDelete={onDelete}
-                  allTags={allTags}
-                />
-              ))}
-        </>
+    <div className="lc-panel">
+      {row.item && (
+        <p className="lc-panel__note">
+          Item da nota do dia — as ações valem para a célula inteira.
+          <MarkObligationAction item={row.item} />
+        </p>
       )}
-
-      {/* Today section */}
-      {todayRows.length > 0 ? (
-        <Group
-          title={todayLabel}
-          today
-          rows={todayRows}
-          openIds={openIds}
-          toggle={toggle}
-          onEdit={onEdit}
-          onDelete={onDelete}
-          allTags={allTags}
-        />
-      ) : (
-        <div className="lc-gh lc-gh--today">
-          <span className="lc-gh__t">{todayLabel}</span>
-          <span className="lc-gh__sum" style={{ color: "var(--text-faint)" }}>
-            sem lançamentos
-          </span>
-        </div>
+      {isImported && (
+        <p className="lc-panel__note lc-panel__note--warn">
+          Lançamento importado · edição e exclusão via planilha
+        </p>
       )}
-
-      {/* Past months */}
-      {groupByMonth(pastRows).map(([k, rows]) => (
-        <Group
-          key={k}
-          title={monthLabel(k)}
-          today={false}
-          rows={rows}
-          openIds={openIds}
-          toggle={toggle}
-          onEdit={onEdit}
-          onDelete={onDelete}
+      <div className="lc-panel__actions">
+        <Button
+          size="sm"
+          variant="ghost"
+          iconLeft={<Pencil size={13} strokeWidth={1.75} />}
+          disabled={isImported}
+          onClick={(e?: React.MouseEvent) => {
+            e?.stopPropagation();
+            onEdit(t);
+          }}
+        >
+          Editar
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          iconLeft={<Tags size={13} strokeWidth={1.75} />}
+          onClick={(e?: React.MouseEvent) => {
+            e?.stopPropagation();
+            setShowTagPicker((v) => !v);
+          }}
+        >
+          Tags
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          iconLeft={<Trash2 size={13} strokeWidth={1.75} />}
+          disabled={isImported}
+          onClick={(e?: React.MouseEvent) => {
+            e?.stopPropagation();
+            handleDelete(t);
+          }}
+        >
+          {isSeriesRow(t) ? "Apagar da série" : "Apagar"}
+        </Button>
+      </div>
+      {showTagPicker && (
+        <TagPicker
+          transactionId={t.id}
+          currentTagIds={t.tags.map((tag) => tag.id)}
           allTags={allTags}
+          onDone={() => setShowTagPicker(false)}
         />
-      ))}
-
-      {allRows.length === 0 && (
-        <div className="lc-empty">
-          {transactions?.length === 0
-            ? "Importe sua planilha em Configurações para começar."
-            : "Nenhum resultado para o filtro atual."}
-        </div>
       )}
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Month-only view sub-component
-// ---------------------------------------------------------------------------
+/** Cabeçalho de célula: coluna do método + total como autoridade (+ selo de diferença). */
+function CellHead({ cell, searchActive }: { cell: CellGroup; searchActive: boolean }) {
+  const showDiff = !searchActive && cell.diffCents !== 0;
+  return (
+    <h3 className="lc-cellhead">
+      <span className="lc-cellhead__label">
+        {cell.label}
+        {showDiff && <i className="lc-selo">Com diferença</i>}
+        {cell.refund && <i className="lc-pill lc-pill--ok">Reembolso</i>}
+        {cell.tags.map((tag) => (
+          <i
+            key={tag.id}
+            className="lc-pill lc-pill--tag"
+            style={{
+              borderColor: `color-mix(in srgb, ${tag.color} 40%, transparent)`,
+              color: tag.color,
+            }}
+          >
+            {tag.emoji ? `${tag.emoji} ` : ""}
+            {tag.name}
+          </i>
+        ))}
+      </span>
+      <b className="lc-cellhead__total">
+        <Money cents={cell.totalCents} size="inherit" />
+      </b>
+    </h3>
+  );
+}
 
-function MonthView({
-  targetKey,
-  inMonthRows,
-  balanceByDate,
-  endBalance,
-  openIds,
+/** Linha sintética de reconciliação — pertence à célula, nunca conta como item. */
+function DiffLine({ diffCents }: { diffCents: number }) {
+  const phrase =
+    diffCents > 0
+      ? "O total da célula é maior que a soma dos itens da nota."
+      : "O total da célula é menor que a soma dos itens da nota.";
+  return (
+    <li className="lc-recdif" aria-disabled="true">
+      <span className="lc-recdif__txt">
+        <b>Diferença no detalhamento</b> — {phrase}
+      </span>
+      <span className="lc-recdif__val">
+        <Money cents={Math.abs(diffCents)} size="inherit" />
+      </span>
+    </li>
+  );
+}
+
+/** Grupo-célula: cabeçalho + linhas + reconciliação. */
+function CellBlock({
+  cell,
+  searchActive,
+  openKeys,
   toggle,
   onEdit,
-  onDelete,
   allTags,
 }: {
-  targetKey: string;
-  inMonthRows: TransactionRow[];
-  /** ISO date → chained end-of-day balance (cents), from get_month_grid. */
-  balanceByDate: Map<string, number | null>;
-  /** Projected/realized Saldo at the end of the month (cents, null if unknown). */
-  endBalance: number | null;
-  openIds: ReadonlySet<string>;
-  toggle: (id: string) => void;
+  cell: CellGroup;
+  searchActive: boolean;
+  openKeys: ReadonlySet<string>;
+  toggle: (key: string) => void;
   onEdit: (t: TransactionRow) => void;
-  onDelete: (t: TransactionRow) => void;
   allTags: Tag[];
 }) {
-  const days = groupByDay(inMonthRows);
+  const showDiff = !searchActive && cell.diffCents !== 0;
   return (
-    <div className="lc-card">
-      {/* Month context banner — the toolbar has no month label; keep it here.
-          Shows the end-of-month Saldo (spreadsheet parity), falling back to the
-          month's net when no grid balance is available. */}
-      <div className="lc-gh lc-gh--month">
-        <span className="lc-gh__t">{monthLabel(targetKey)}</span>
-        <span className="lc-gh__sum">
-          {endBalance != null ? (
-            <>
-              Saldo fim · <Money cents={endBalance} size="inherit" />
-            </>
-          ) : (
-            <SignedMoney
-              cents={inMonthRows.reduce((s, t) => s + signedCents(t), 0)}
-              size="inherit"
+    <section className="lc-cell" aria-label={cell.label}>
+      <CellHead cell={cell} searchActive={searchActive} />
+      <ul className="lc-rows">
+        {cell.rows.map((row) => (
+          <li key={row.key}>
+            <RowLine
+              row={row}
+              open={openKeys.has(row.key)}
+              onToggle={() => toggle(row.key)}
             />
-          )}
-        </span>
+            {openKeys.has(row.key) && (
+              <RowPanel row={row} onEdit={onEdit} allTags={allTags} />
+            )}
+          </li>
+        ))}
+        {showDiff && <DiffLine diffCents={cell.diffCents} />}
+      </ul>
+    </section>
+  );
+}
+
+/** Um dia do Livro-razão: daymark + grupos-célula. */
+function DayBlock({
+  day,
+  balance,
+  searchActive,
+  openKeys,
+  toggle,
+  onEdit,
+  allTags,
+}: {
+  day: DayGroup;
+  /** Saldo encadeado do fim do dia (paridade com a coluna Saldo da planilha). */
+  balance: number | null | undefined;
+  searchActive: boolean;
+  openKeys: ReadonlySet<string>;
+  toggle: (key: string) => void;
+  onEdit: (t: TransactionRow) => void;
+  allTags: Tag[];
+}) {
+  const band = balance != null ? saldoBand(balance) : null;
+  const isToday = day.date === TODAY;
+  return (
+    <section className="lc-day">
+      <div className={"lc-daymark" + (isToday ? " lc-daymark--today" : "")}>
+        <h2 className="lc-daymark__t">{daymarkLabel(day.date)}</h2>
+        {isToday && <span className="lc-daymark__today">Hoje</span>}
+        {band && (
+          <span
+            className="lc-daymark__saldo"
+            style={{ background: band.fill, color: band.text }}
+            aria-label={`Saldo do dia ${fmtBRL(balance!)}`}
+          >
+            {/* O rótulo já anuncia "Saldo do dia R$ X"; o valor visível fica aria-hidden
+                para o leitor de tela não falar o número duas vezes. */}
+            <span aria-hidden="true">
+              <Money cents={balance!} size="inherit" />
+            </span>
+          </span>
+        )}
       </div>
-      {days.map(([iso, rows]) => (
-        <Group
-          key={iso}
-          title={dayHeaderLabel(iso)}
-          today={false}
-          todayChip={iso === TODAY}
-          balance={balanceByDate.get(iso)}
-          hideDate
-          rows={rows}
-          openIds={openIds}
+      {day.cells.map((cell) => (
+        <CellBlock
+          key={cell.key}
+          cell={cell}
+          searchActive={searchActive}
+          openKeys={openKeys}
           toggle={toggle}
           onEdit={onEdit}
-          onDelete={onDelete}
           allTags={allTags}
         />
       ))}
-      {inMonthRows.length === 0 && (
-        <div className="lc-empty">Nenhum lançamento neste mês para o filtro atual.</div>
-      )}
-    </div>
+    </section>
+  );
+}
+
+/** Bottom sheet de filtro por tipo (mobile) — dialog nativo, mesma gramática do Compose. */
+function FilterSheet({
+  open,
+  filter,
+  onPick,
+  onClose,
+}: {
+  open: boolean;
+  filter: FilterKey;
+  onPick: (f: FilterKey) => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    const dialog = ref.current;
+    if (!dialog) return;
+    if (open && !dialog.open) dialog.showModal();
+    else if (!open && dialog.open) dialog.close();
+  }, [open]);
+
+  return (
+    <dialog
+      ref={ref}
+      className="lc-sheet"
+      aria-label="Filtrar por tipo"
+      onClose={onClose}
+      // Light-dismiss nativo (toque no backdrop fecha); Esc já é nativo do dialog.
+      {...{ closedby: "any" }}
+    >
+      <div>
+        <h3 className="lc-sheet__t">Filtrar por tipo</h3>
+        {/* Sem parágrafo didático: os hints por opção já ensinam cada tipo. */}
+        <div className="lc-sheet__opts">
+          {FILTER_CHIPS.map((f) => (
+            <button
+              key={f.key}
+              type="button"
+              aria-pressed={filter === f.key}
+              onClick={() => {
+                onPick(f.key);
+                onClose();
+              }}
+            >
+              <span>
+                {f.label}
+                <small>{f.hint}</small>
+              </span>
+              {filter === f.key && <span aria-hidden="true">✓</span>}
+            </button>
+          ))}
+        </div>
+      </div>
+    </dialog>
   );
 }
 
@@ -988,36 +613,39 @@ function MonthView({
 // ---------------------------------------------------------------------------
 
 interface LcState {
-  view: ViewMode;
   filter: FilterKey;
-  openIds: ReadonlySet<string>;
+  openKeys: ReadonlySet<string>;
   mOffset: number;
   search: string;
+  sheetOpen: boolean;
 }
 
 type LcAction =
-  | { type: "SET_VIEW"; view: ViewMode }
   | { type: "SET_FILTER"; filter: FilterKey }
-  | { type: "TOGGLE_OPEN"; id: string }
-  | { type: "SET_M_OFFSET"; delta: number }
-  | { type: "SET_SEARCH"; search: string };
+  | { type: "TOGGLE_OPEN"; key: string }
+  | { type: "MONTH_DELTA"; delta: number }
+  | { type: "MONTH_TODAY" }
+  | { type: "SET_SEARCH"; search: string }
+  | { type: "SET_SHEET"; open: boolean };
 
 function lcReducer(state: LcState, action: LcAction): LcState {
   switch (action.type) {
-    case "SET_VIEW":
-      return { ...state, view: action.view };
     case "SET_FILTER":
       return { ...state, filter: action.filter };
     case "TOGGLE_OPEN": {
-      const next = new Set(state.openIds);
-      if (next.has(action.id)) next.delete(action.id);
-      else next.add(action.id);
-      return { ...state, openIds: next };
+      const next = new Set(state.openKeys);
+      if (next.has(action.key)) next.delete(action.key);
+      else next.add(action.key);
+      return { ...state, openKeys: next };
     }
-    case "SET_M_OFFSET":
+    case "MONTH_DELTA":
       return { ...state, mOffset: state.mOffset + action.delta };
+    case "MONTH_TODAY":
+      return { ...state, mOffset: 0 };
     case "SET_SEARCH":
       return { ...state, search: action.search };
+    case "SET_SHEET":
+      return { ...state, sheetOpen: action.open };
     default:
       return state;
   }
@@ -1030,28 +658,46 @@ function lcReducer(state: LcState, action: LcAction): LcState {
 export function TransactionsScreen() {
   const { openCompose } = useNekoApp();
 
+  const { data: allTags } = useCommand("list_tags:lc", listTags);
+  // Modo de gasto (copy do vazio) e custo de vida do mês — caches compartilhados do app.
+  const summaryQ = useCommand("get_dashboard_summary", getDashboardSummary);
+  const forecastQ = useCommand("get_forecast", getForecast);
+
+  const [state, dispatch] = useReducer(lcReducer, {
+    filter: "todos",
+    openKeys: new Set<string>(),
+    mOffset: 0,
+    search: "",
+    sheetOpen: false,
+  });
+  const { filter, openKeys, mOffset, search, sheetOpen } = state;
+
+  // Mês visto (offset a partir do corrente).
+  const now = new Date();
+  const targetDate = new Date(now.getFullYear(), now.getMonth() + mOffset, 1);
+  const targetYear = targetDate.getFullYear();
+  const targetMonth = targetDate.getMonth() + 1;
+  const targetKey = `${targetYear}-${String(targetMonth).padStart(2, "0")}`;
+  const monthName = (MES[targetMonth - 1] ?? "").toLowerCase();
+  const crumbLabel = monthTitle(targetKey);
+
+  // A lista do mês visto — escopada no backend, nunca cortada por janela recente.
   const {
     data: transactions,
     loading,
     error,
-  } = useCommand("get_recent_transactions:lc", () =>
-    getRecentTransactions(FETCH_LIMIT),
-  );
+  } = useCommand(`get_month_transactions:${targetKey}`, monthTxFetcher(targetKey));
 
-  const { data: allTags } = useCommand("list_tags:lc", listTags);
+  // O crumb da appbar acompanha o mês visto; ao sair da tela, volta ao padrão.
+  // `setCrumb` é função de módulo (identidade fixa) — o efeito só re-dispara
+  // quando o rótulo muda de verdade.
+  useEffect(() => {
+    setCrumb("lancamentos", crumbLabel);
+    return () => setCrumb("lancamentos", null);
+  }, [crumbLabel]);
 
-  const [state, dispatch] = useReducer(lcReducer, {
-    view: "monthOnly",
-    filter: "todos",
-    openIds: new Set<string>(),
-    mOffset: 0,
-    search: "",
-  });
-
-  const { view, filter, openIds, mOffset, search } = state;
-
-  function toggle(id: string) {
-    dispatch({ type: "TOGGLE_OPEN", id });
+  function toggle(key: string) {
+    dispatch({ type: "TOGGLE_OPEN", key });
   }
 
   function handleEdit(t: TransactionRow) {
@@ -1066,169 +712,185 @@ export function TransactionsScreen() {
     });
   }
 
-  function handleNew() {
-    openCompose({ mode: "new" });
-  }
-
-  // Derive filtered + searched rows (React Compiler caches these)
+  // Pipeline: tipo → grupos célula×nota → busca → em torno de hoje. (A lista já
+  // chega mês-escopada; o guard por monthKey só protege contra cache de outro mês.)
   const rows = transactions ?? [];
-  const filteredByType =
+  const typed =
     filter !== "todos" ? rows.filter((t) => toMovementType(t) === filter) : rows;
-  const allRows: TransactionRow[] = search.trim()
-    ? filteredByType.filter((t) => {
-        const q = search.trim().toLowerCase();
-        return t.description?.toLowerCase().includes(q) || t.date.includes(q);
-      })
-    : filteredByType;
+  const inMonth = typed.filter((t) => monthKey(t.date) === targetKey);
+  const grouped = buildDayGroups(inMonth, TODAY);
+  const searchActive = search.trim().length > 0;
+  const visible = applySearch(grouped, search);
+  const { future, past } = splitAroundToday(visible, TODAY);
+  const isCurrentMonth = targetKey === monthKey(TODAY);
+  const futureSummary = daysSummary(future);
 
-  const futureRows = allRows.filter((t) => t.date > TODAY);
-  const todayRows = allRows.filter((t) => t.date === TODAY);
-  const pastRows = allRows.filter((t) => t.date < TODAY);
-
-  // Today label for group header
-  const todayParts = TODAY.split("-");
-  const todayDay = parseInt(todayParts[2] ?? "1", 10);
-  const todayMonthName = MES[monthOf(TODAY)]?.toLowerCase() ?? "";
-  const todayLabel = `Hoje · ${todayDay} de ${todayMonthName}`;
-
-  // Month-only mode: which month to show
-  const currentMonthIdx = currentMonthIndex();
-  const targetMonthIdx = currentMonthIdx + mOffset;
-  // Wrap around 0-11 for the month, adjust year for offset
-  const targetDate = new Date(new Date().getFullYear(), targetMonthIdx, 1);
-  const targetYear = String(targetDate.getFullYear());
-  const targetMonth = String(targetDate.getMonth() + 1).padStart(2, "0");
-  const targetKey = `${targetYear}-${targetMonth}`;
-  const inMonthRows = allRows.filter((t) => monthKey(t.date) === targetKey);
-
-  // Chained day balances for the "Por mês" view. Fetch only in that view (the
-  // timeline is month-scoped); the fetcher is stable per (year, month).
-  const isMonthView = view === "monthOnly";
+  // Saldo encadeado por dia (paridade com a coluna Saldo da planilha).
   const gridQ = useCommand(
-    isMonthView ? `month_grid:${targetKey}` : "month_grid:idle",
-    isMonthView
-      ? monthGridFetcher(Number(targetYear), Number(targetMonth))
-      : emptyGridFetcher,
+    `month_grid:${targetKey}`,
+    monthGridFetcher(targetYear, targetMonth),
   );
   const monthGrid = gridQ.data ?? [];
   const balanceByDate = new Map<string, number | null>(
     monthGrid.map((d) => [d.date, d.balance_cents]),
   );
-  const endBalance = endOfMonthBalance(monthGrid);
+
+  // Custo de vida do mês visto — só quando o motor cobre o mês (nunca fabricado).
+  const monthMetric = forecastQ.data?.months.find(
+    (m) => m.year === targetYear && m.month === targetMonth,
+  );
+  const costOfLiving = monthMetric?.cost_of_living_cents ?? null;
+
+  const cardMode = summaryQ.data?.spending_mode === "card";
+  const filterName =
+    filter !== "todos"
+      ? (FILTER_CHIPS.find((f) => f.key === filter)?.label ?? null)
+      : null;
 
   // Web-preview fallback
   if (!isTauri) {
     return (
       <div className="lc">
-        <div className="lc-card">
-          <div className="lc-empty">
-            Preview web — abra o app desktop para ver seus lançamentos.
-          </div>
-        </div>
+        <EmptyState
+          variant="empty"
+          title="Preview web"
+          description="Abra o app desktop para ver seus lançamentos."
+        />
       </div>
     );
   }
 
-  // -------------------------------------------------------------------------
-  // Content area
-  // -------------------------------------------------------------------------
+  // Um único campo de busca nos dois viewports: ao lado do contexto no desktop,
+  // largura cheia sob ele no mobile — sempre no fluxo, nunca flutuando sobre dado.
+  const searchField = (
+    <label className="lc-search">
+      <Search size={15} strokeWidth={1.75} aria-hidden="true" />
+      <input
+        type="search"
+        placeholder="Buscar lançamento"
+        value={search}
+        onChange={(e) => dispatch({ type: "SET_SEARCH", search: e.target.value })}
+        aria-label="Buscar lançamento"
+      />
+    </label>
+  );
 
   let content: React.ReactNode;
-
   if (loading && !transactions) {
-    content = <Skeleton />;
+    content = <EmptyState variant="skeleton" skeletonRows={7} />;
   } else if (error && !transactions) {
     content = (
-      <div className="lc-card">
-        <div className="lc-empty">
-          Não foi possível carregar os lançamentos.{" "}
-          <button
-            type="button"
-            className="lc-retry-btn"
-            onClick={() => {
-              invalidateCommands();
-            }}
-          >
+      <EmptyState
+        variant="error"
+        title="Não foi possível carregar os lançamentos"
+        description="Confira a conexão e tente de novo."
+        action={
+          <Button size="sm" variant="ghost" onClick={() => invalidateCommands()}>
             Tentar novamente
-          </button>
-        </div>
-      </div>
-    );
-  } else if (view === "monthOnly") {
-    content = (
-      <MonthView
-        targetKey={targetKey}
-        inMonthRows={inMonthRows}
-        balanceByDate={balanceByDate}
-        endBalance={endBalance}
-        openIds={openIds}
-        toggle={toggle}
-        onEdit={handleEdit}
-        onDelete={handleDelete}
-        allTags={allTags ?? []}
+          </Button>
+        }
       />
     );
   } else {
-    content = (
-      <AnchorView
-        futureRows={futureRows}
-        todayRows={todayRows}
-        pastRows={pastRows}
-        todayLabel={todayLabel}
-        allRows={allRows}
-        transactions={transactions}
-        openIds={openIds}
+    const dayBlock = (day: DayGroup) => (
+      <DayBlock
+        key={day.date}
+        day={day}
+        balance={balanceByDate.get(day.date)}
+        searchActive={searchActive}
+        openKeys={openKeys}
         toggle={toggle}
         onEdit={handleEdit}
-        onDelete={handleDelete}
         allTags={allTags ?? []}
       />
+    );
+    content = (
+      <div className="lc-list">
+        {future.length > 0 &&
+          (isCurrentMonth ? (
+            <Disclosure
+              className="lc-future"
+              title="O que ainda vem neste mês"
+              summary={
+                <span className="lc-future__sum">
+                  {futureSummary.txnCount}{" "}
+                  {futureSummary.txnCount === 1 ? "lançamento" : "lançamentos"} ·{" "}
+                  <SignedMoney cents={futureSummary.sumCents} size="inherit" />
+                </span>
+              }
+            >
+              {future.map(dayBlock)}
+            </Disclosure>
+          ) : (
+            future.map(dayBlock)
+          ))}
+        {past.map(dayBlock)}
+        {countRows(visible) === 0 && (
+          <p className="lc-empty">
+            {emptyListCopy({ query: search, filterName, monthName, cardMode })}
+          </p>
+        )}
+      </div>
     );
   }
 
   return (
     <div className="lc">
-      {/* Toolbar */}
-      <LcToolbar
-        view={view}
-        mOffset={mOffset}
-        search={search}
-        onViewChange={(v) => dispatch({ type: "SET_VIEW", view: v })}
-        onMonthPrev={() => dispatch({ type: "SET_M_OFFSET", delta: -1 })}
-        onMonthNext={() => dispatch({ type: "SET_M_OFFSET", delta: 1 })}
-        onSearchChange={(q) => dispatch({ type: "SET_SEARCH", search: q })}
-        onNew={handleNew}
-      />
+      {/* O título da tela vive no shell (sh-top/appbar, com o mês no crumb); aqui
+          entram a frase de contexto e a busca — lado a lado no desktop, empilhadas
+          com a busca em largura cheia no mobile. */}
+      <header className="lc-head">
+        {/* Sem alegar ordenação: num mês futuro a lista sobe do mais próximo. */}
+        <p className="lc-head__teach">Tudo o que entrou e saiu, dia a dia.</p>
+        {searchField}
+      </header>
 
-      {/* Filter chips */}
       <div className="lc-filters">
-        {FILTER_CHIPS.map((f) => (
-          <button
-            key={f.key}
-            type="button"
-            className={"lc-fchip" + (filter === f.key ? " is-on" : "")}
-            onClick={() => dispatch({ type: "SET_FILTER", filter: f.key })}
-            style={
-              filter === f.key
-                ? { background: `color-mix(in srgb,${f.color} 16%, transparent)` }
-                : undefined
-            }
-          >
-            <span className="lc-fchip__dot" style={{ background: f.color }} />
-            {f.label}
-          </button>
-        ))}
+        <MonthNav
+          label={crumbLabel}
+          onPrev={() => dispatch({ type: "MONTH_DELTA", delta: -1 })}
+          onNext={() => dispatch({ type: "MONTH_DELTA", delta: 1 })}
+          onToday={() => dispatch({ type: "MONTH_TODAY" })}
+          atToday={isCurrentMonth}
+        />
+        <button
+          type="button"
+          className="lc-ftrigger"
+          onClick={() => dispatch({ type: "SET_SHEET", open: true })}
+        >
+          Tipo: <b>{FILTER_CHIPS.find((f) => f.key === filter)?.label}</b>{" "}
+          <span aria-hidden="true">▾</span>
+        </button>
+        <div className="lc-chips" role="group" aria-label="Filtrar por tipo">
+          {FILTER_CHIPS.map((f) => (
+            <button
+              key={f.key}
+              type="button"
+              className={"lc-chip" + (filter === f.key ? " is-on" : "")}
+              aria-pressed={filter === f.key}
+              onClick={() => dispatch({ type: "SET_FILTER", filter: f.key })}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        {costOfLiving != null && (
+          <span className="lc-filters__tot">
+            Custo de vida — <Money cents={costOfLiving} size="inherit" /> no mês
+          </span>
+        )}
       </div>
 
       <ObligationsCard />
 
       {content}
 
-      {!isTauri && (
-        <p style={{ color: "var(--text-faint)", fontSize: 12 }}>
-          Preview web — abra o app desktop para ver seus dados.
-        </p>
-      )}
+      <FilterSheet
+        open={sheetOpen}
+        filter={filter}
+        onPick={(f) => dispatch({ type: "SET_FILTER", filter: f })}
+        onClose={() => dispatch({ type: "SET_SHEET", open: false })}
+      />
     </div>
   );
 }

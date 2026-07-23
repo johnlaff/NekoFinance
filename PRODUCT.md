@@ -51,6 +51,7 @@ Full design system at `src/design-system/`. Agent skill at `.agents/skills/neko-
 4. **Friendly guidance** — Mia is warm but not chatty. Advice is specific, actionable, and never moralizing. The user is the decision-maker.
 5. **Data-first, chrome-second** — the numbers own the screen. UI chrome (nav, headers, controls) recedes until needed.
 6. **Didactics behind a question** — the app teaches the method, but fixed conceptual copy never occupies the screen as a permanent paragraph. Variable data and CTAs stay inline; explanation opens on demand from a tappable question. Hard rules in `docs/ui-standards.md`.
+7. **Calm-clean surfaces** — separation comes from whitespace and surface contrast, not from boxes and borders; hierarchy is typographic (size, weight, ink shade), and accent color is spent only where it carries meaning. The owner's standing aesthetic preference. Hard rules in `docs/ui-standards.md` ("Calm density").
 
 ## Accessibility & Inclusion
 

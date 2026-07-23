@@ -287,7 +287,9 @@ export function AppShell({
       ([entry]) => setTitleAssumed(!(entry?.isIntersecting ?? false)),
       { root: body },
     );
-    let current: Element | null = null;
+    // Sentinel: o 1º bind SEMPRE processa — sem ele, tela nova sem herói faria
+    // early-return (null === null) e herdaria o `quiet` da tela anterior.
+    let current: Element | null | undefined = undefined;
     const bind = () => {
       const large = body.querySelector("[data-large-title]");
       if (large === current) return;
