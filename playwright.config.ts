@@ -30,6 +30,11 @@ export default defineConfig({
   timeout: 30_000,
   use: {
     baseURL,
+    // Controles nativos (ex.: input time) renderizam pelo locale do browser —
+    // sem pinar, um runner en-US mostra 12h com AM/PM, o input alarga e o
+    // layout quebra linha diferente do baseline gerado em pt-BR.
+    locale: "pt-BR",
+    timezoneId: "America/Sao_Paulo",
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
     video: "retain-on-failure",
