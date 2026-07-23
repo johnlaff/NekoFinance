@@ -33,6 +33,15 @@ for humans, and versions follow [SemVer](https://semver.org/).
 
 ### Changed
 
+- The Configurações screen was recomposed under the identity direction: it
+  opens with a trust verdict ("Tudo neste dispositivo" plus a live state line
+  that reports disconnection, pending changes and import conflicts with the
+  same weight as good news), organizes everything into Conexão, Privacidade,
+  Bolsos, Aparência and Rotina sections, and folds the dense spreadsheet
+  panel and local import behind a "Gerenciar" door. A dark-theme switch now
+  lives in Aparência next to the accent selector, and the design system
+  gained a proper Switch control whose off state stays visible in the light
+  theme.
 - Registering from Hoje now always goes through the compose flow (dock FAB,
   sidebar CTA or the N shortcut) with explicit approval — the day block is a
   reading surface and no longer embeds a quick-register form.

@@ -1,19 +1,15 @@
 import "./config.css";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   Bell,
-  Database,
+  CircleGauge,
   FileUp,
-  HardDrive,
   Landmark,
   Link,
   Lock,
   Palette,
-  RefreshCw,
-  CircleGauge,
-  Settings,
+  Table2,
   Shield,
-  Sparkles,
 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { PocketsCard } from "../features/pockets/PocketsCard";
@@ -33,6 +29,7 @@ import {
   getDailyBudget,
   GOOGLE_CLIENT_ID,
   isTauri,
+  lastSyncAt,
   registerOsReminder,
   setAppSetting,
   startOAuthFlow,
@@ -45,80 +42,72 @@ import {
   systemPrefersReducedMotion,
 } from "../lib/motion";
 import { playThemeReveal, readMotionLog } from "../shell/themeReveal";
+import { useThemeSwitch } from "../shell/ThemeToggle";
 import { safeErrorMessage } from "../lib/errors";
+import { syncRecencyLabel } from "../lib/syncRecency";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { Button } from "../design-system/components/Button";
-import { SegmentedControl } from "../design-system/components/SegmentedControl";
+import { InfoPopover } from "../design-system/components/InfoPopover";
 import { Money } from "../design-system/components/Money";
+import { Switch } from "../design-system/components/Switch";
+import { greetState } from "./configView";
 
 // ---------------------------------------------------------------------------
-// Inline styles (hoisted — React Compiler: never inline in JSX)
+// Linha da gramática de card da direção: título + sub à esquerda, controle à
+// direita; tile de ícone só na primeira linha de cada seção.
 // ---------------------------------------------------------------------------
 
-const TIME_INPUT_STYLE: React.CSSProperties = {
-  fontFamily: "var(--font-money)",
-  fontSize: "var(--fs-body)",
-  background: "var(--bg-subtle)",
-  border: "var(--bw-hair) solid var(--border-input)",
-  borderRadius: "var(--radius-xs)",
-  color: "var(--text)",
-  padding: "4px 8px",
-  height: "var(--hit-min)",
-};
-
-// ---------------------------------------------------------------------------
-// Toggle switch — matches the redesign's .sw/.sw__k exactly
-// ---------------------------------------------------------------------------
-
-function Toggle({
-  on,
-  onClick,
-  label,
-}: {
-  on: boolean;
-  onClick: () => void;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      className={"sw " + (on ? "on" : "off")}
-      onClick={onClick}
-      role="switch"
-      aria-checked={on}
-      aria-label={label}
-    >
-      <span className="sw__k" />
-    </button>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// cfg-item row helper — mirrors the redesign's `item()` closure
-// ---------------------------------------------------------------------------
-
-function CfgItem({
+function Line({
   icon: Icon,
   title,
   sub,
+  subExtra,
   right,
 }: {
-  icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
-  title: React.ReactNode;
-  sub: string;
-  right?: React.ReactNode;
+  icon?: React.ComponentType<{ size?: number; strokeWidth?: number }>;
+  title: ReactNode;
+  sub: ReactNode;
+  subExtra?: ReactNode;
+  right?: ReactNode;
 }) {
   return (
-    <div className="cfg-item">
-      <span className="cfg-item__ic">
-        <Icon size={17} strokeWidth={1.75} />
-      </span>
-      <div>
-        <div className="cfg-item__t">{title}</div>
-        <div className="cfg-item__s">{sub}</div>
+    <div className="config__line">
+      {Icon ? (
+        <span className="config__lineic">
+          <Icon size={17} strokeWidth={1.75} />
+        </span>
+      ) : null}
+      <div className="config__what">
+        <div className="config__what-t">{title}</div>
+        <div className="config__what-s">{sub}</div>
+        {subExtra}
       </div>
-      {right != null ? <span className="cfg-item__r">{right}</span> : null}
+      {right != null ? <span className="config__right">{right}</span> : null}
     </div>
+  );
+}
+
+function SecHead({
+  icon: Icon,
+  id,
+  title,
+  action,
+}: {
+  icon: React.ComponentType<{
+    size?: number;
+    strokeWidth?: number;
+    className?: string;
+  }>;
+  id: string;
+  title: string;
+  action?: ReactNode;
+}) {
+  return (
+    <header className="config__sechead">
+      <Icon size={16} strokeWidth={1.75} className="ic" />
+      <h2 id={id}>{title}</h2>
+      {action}
+    </header>
   );
 }
 
@@ -137,6 +126,7 @@ function CfgItem({
 function MotionDiagnostics() {
   const [verdict, setVerdict] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
+  const [diagOpen, setDiagOpen] = useState(false);
 
   const facts = [
     `sistema ${systemPrefersReducedMotion() ? "reduzido" : "normal"}`,
@@ -273,30 +263,65 @@ function MotionDiagnostics() {
     }, 1100);
   }
 
+  // Ferramenta de depuração, não didática: fica atrás de porta para o jargão
+  // do motor (WAAPI, tokens, View Transitions) não ocupar a leitura padrão.
   return (
-    <CfgItem
-      icon={Sparkles}
-      title="Diagnóstico de animações"
-      sub={verdict ?? facts}
-      right={
-        <span style={{ display: "inline-flex", gap: 8 }}>
-          <Button variant="secondary" onClick={runTest} disabled={running}>
-            {running ? "Testando…" : "Testar"}
-          </Button>
-          <Button variant="secondary" onClick={runRevealTest} disabled={running}>
-            Testar reveal
-          </Button>
-        </span>
-      }
-    />
+    <>
+      <Line
+        title="Diagnóstico de animações"
+        sub="Teste se este dispositivo executa as animações do app."
+        right={
+          <button
+            type="button"
+            className="config__more"
+            aria-expanded={diagOpen}
+            aria-controls="config-motion-diag"
+            onClick={() => setDiagOpen((o) => !o)}
+          >
+            {diagOpen ? "Fechar" : "Abrir"}
+          </button>
+        }
+      />
+      <div
+        className="config__door"
+        id="config-motion-diag"
+        data-open={diagOpen}
+        inert={!diagOpen}
+        role="region"
+        aria-label="Diagnóstico de animações"
+      >
+        <div className="config__doorin">
+          <div className="config__diag">
+            {/* aria-live: o resultado chega ~1,8s após o clique — o leitor de
+                tela precisa ser avisado sem re-navegar até a linha. */}
+            <p className="config__diag-verdict" aria-live="polite">
+              {verdict ?? facts}
+            </p>
+            <span className="config__btns">
+              <Button variant="ghost" size="sm" onClick={runTest} disabled={running}>
+                {running ? "Testando…" : "Testar"}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={runRevealTest}
+                disabled={running}
+              >
+                Testar reveal
+              </Button>
+            </span>
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
 
 // ---------------------------------------------------------------------------
-// DailyReminderSection — OS-level reminder toggle + time picker
+// Rotina — lembrete diário (toggle + horário) e atalho do teto
 // ---------------------------------------------------------------------------
 
-function DailyReminderSection() {
+function ReminderLines() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [time, setTime] = useState("20:00");
   const [saving, setSaving] = useState(false);
@@ -333,142 +358,125 @@ function DailyReminderSection() {
     }
   }
 
-  async function handleToggle(val: string) {
-    const next = val === "on";
+  async function handleToggle(next: boolean) {
     setEnabled(next);
     setSaving(true);
-    await setAppSetting("daily_reminder_enabled", next ? "true" : "false");
-    await syncOsReminder(next, time);
-    setSaving(false);
+    // Reset espelhado nos dois caminhos (não `finally`: o React Compiler não
+    // suporta finalizer e o componente perderia a memoização automática).
+    try {
+      await setAppSetting("daily_reminder_enabled", next ? "true" : "false");
+      await syncOsReminder(next, time);
+      setSaving(false);
+    } catch {
+      // Persistência falhou; o estado local já reflete a escolha e o próximo load relê.
+      setSaving(false);
+    }
   }
 
   async function handleTimeChange(e: React.ChangeEvent<HTMLInputElement>) {
     const val = e.currentTarget.value;
     setTime(val);
     setSaving(true);
-    await setAppSetting("daily_reminder_time", val);
-    if (enabled) await syncOsReminder(true, val);
-    setSaving(false);
+    try {
+      await setAppSetting("daily_reminder_time", val);
+      if (enabled) await syncOsReminder(true, val);
+      setSaving(false);
+    } catch {
+      // Persistência falhou; o horário local segue editável e o próximo load relê.
+      setSaving(false);
+    }
   }
 
   if (!isTauri || enabled === null) return null;
 
   return (
-    <section className="card">
-      <div className="card__head">
-        <span className="card__title">
-          <Bell size={16} strokeWidth={1.75} className="ic" />
-          Notificações
-        </span>
-      </div>
-      <div className="cfg-sec">
-        <div className="cfg-item">
-          <span className="cfg-item__ic">
-            <Bell size={17} strokeWidth={1.75} />
-          </span>
-          <div>
-            <div className="cfg-item__t">Lembrete diário</div>
-            <div className="cfg-item__s">
-              Notificação nativa no horário escolhido — no Windows, dispara mesmo com o
-              app fechado.
-              {osWarn ? (
-                <strong role="alert" style={{ color: "var(--warning-400)" }}>
-                  {" "}
-                  {osWarn}
-                </strong>
-              ) : null}
-            </div>
-          </div>
-          <span className="cfg-item__r">
-            <SegmentedControl
-              options={[
-                { value: "on", label: "Ligado" },
-                { value: "off", label: "Desligado" },
-              ]}
-              value={enabled ? "on" : "off"}
-              onChange={(val) => void handleToggle(val)}
-              size="sm"
+    <>
+      <Line
+        icon={Bell}
+        title="Lembrete diário"
+        sub={
+          <>
+            Notificação nativa no horário escolhido — no Windows, dispara mesmo com o
+            app fechado.
+            {osWarn ? (
+              <strong role="alert" className="config__warn">
+                {" "}
+                {osWarn}
+              </strong>
+            ) : null}
+          </>
+        }
+        right={
+          <Switch
+            on={enabled}
+            onChange={(next) => void handleToggle(next)}
+            label="Lembrete diário"
+            disabled={saving}
+          />
+        }
+      />
+      {enabled ? (
+        <Line
+          title="Horário"
+          sub="Hora local (24 h) para receber o aviso."
+          right={
+            <input
+              type="time"
+              className="config__time"
+              value={time}
+              onChange={(e) => void handleTimeChange(e)}
               disabled={saving}
-              ariaLabel="Ativar ou desativar lembrete diário"
+              aria-label="Horário do lembrete diário"
             />
-          </span>
-        </div>
-        {enabled ? (
-          <div className="cfg-item">
-            <span className="cfg-item__ic">
-              <Bell size={17} strokeWidth={1.75} />
-            </span>
-            <div>
-              <div className="cfg-item__t">Horário</div>
-              <div className="cfg-item__s">Hora local (24 h) para receber o aviso.</div>
-            </div>
-            <span className="cfg-item__r">
-              <input
-                type="time"
-                value={time}
-                onChange={(e) => void handleTimeChange(e)}
-                disabled={saving}
-                style={TIME_INPUT_STYLE}
-                aria-label="Horário do lembrete diário"
-              />
-            </span>
-          </div>
-        ) : null}
-      </div>
-    </section>
+          }
+        />
+      ) : null}
+    </>
   );
 }
 
-// ---------------------------------------------------------------------------
-// TetoLinkSection — resumo do teto do Diário com link para a tela própria
-// ---------------------------------------------------------------------------
-
 /** O teto edita-se em UMA fonte só: a tela "Teto do diário" (cerimônia por itens + divisor).
  * Aqui fica o resumo do estado atual e o caminho até lá. */
-function TetoLinkSection() {
+function TetoLine() {
   const { navigate } = useNekoApp();
   const budgetQ = useCommand("get_daily_budget", getDailyBudget);
   const budget = budgetQ.data;
   return (
-    <section className="card">
-      <div className="card__head">
-        <span className="card__title">
-          <CircleGauge size={16} strokeWidth={1.75} className="ic" />
-          Teto do Diário
-        </span>
-      </div>
-      <div className="cfg-sec">
-        <CfgItem
-          icon={CircleGauge}
-          title={
-            budget == null ? (
-              // Fetch ainda no ar: sem negativo fabricado ("sem teto") antes do dado chegar.
-              "Teto do Diário"
-            ) : budget.per_day_cents > 0 ? (
-              <>
-                Teto estipulado: <Money cents={budget.per_day_cents} size="inherit" />{" "}
-                por dia
-              </>
-            ) : (
-              "Sem teto estipulado"
-            )
-          }
-          sub="A cerimônia (itens mensais ÷ dias) e a edição vivem na tela do teto."
-          right={
-            <Button variant="secondary" onClick={() => navigate("teto")}>
-              Abrir teto do diário
-            </Button>
-          }
-        />
-      </div>
-    </section>
+    <Line
+      icon={CircleGauge}
+      title="Teto do diário"
+      sub={
+        budget == null ? (
+          // Fetch ainda no ar: sem negativo fabricado ("sem teto") antes do dado chegar.
+          "A cerimônia do gasto variável."
+        ) : budget.per_day_cents > 0 ? (
+          <>
+            Teto estipulado: <Money cents={budget.per_day_cents} size="inherit" /> por
+            dia.
+          </>
+        ) : (
+          "Sem teto estipulado."
+        )
+      }
+      right={
+        <button
+          type="button"
+          className="config__more"
+          aria-label="Abrir teto do diário"
+          onClick={() => navigate("teto")}
+        >
+          Abrir →
+        </button>
+      }
+    />
   );
 }
 
-// DataBackupRow — backup button row inside Seus dados card
+// ---------------------------------------------------------------------------
+// Privacidade — backup do banco
 // ---------------------------------------------------------------------------
 
-function DataBackupRow() {
+function BackupLine() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -500,33 +508,30 @@ function DataBackupRow() {
   }
 
   return (
-    <div className="cfg-item">
-      <span className="cfg-item__ic">
-        <HardDrive size={17} strokeWidth={1.75} />
-      </span>
-      <div>
-        <div className="cfg-item__t">Backup do banco</div>
-        <div className="cfg-item__s">
+    <Line
+      title="Backup do banco"
+      sub={
+        <>
           Salva uma cópia íntegra (.db) onde você escolher.{" "}
           {msg ? <strong>{msg}</strong> : null}
           {err ? (
-            <strong role="alert" style={{ color: "var(--danger-400)" }}>
+            <strong role="alert" className="config__err">
               {err}
             </strong>
           ) : null}
-        </div>
-      </div>
-      <span className="cfg-item__r">
+        </>
+      }
+      right={
         <Button
-          variant="secondary"
+          variant="ghost"
           size="sm"
           onClick={() => void doBackup()}
           disabled={busy || !isTauri}
         >
           {busy ? "Salvando…" : "Fazer backup"}
         </Button>
-      </span>
-    </div>
+      }
+    />
   );
 }
 
@@ -553,14 +558,23 @@ export function SettingsScreen({
 }) {
   const appInfo = useCommand("get_app_info", getAppInfo).data ?? null;
   const writeBack = useWriteBackPending();
+  const { data: lastSync } = useCommand("last_sync_at", lastSyncAt);
+  const { theme, toggleTheme } = useThemeSwitch();
 
   // Persistido em localStorage e refletido em <html data-motion> (src/lib/motion.ts).
   // Ligar FORÇA animações mesmo com o SO em movimento reduzido (escolha explícita).
   const [animacoes, setAnimacoes] = useState(() => motionEnabled());
   const [accent, setAccent] = useState<Accent>(() => getStoredAccent());
   const [reconnecting, setReconnecting] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
 
   const isConnected = authStatus === "connected";
+  const greet = greetState(
+    authStatus,
+    writeBack.pendingCount,
+    writeBack.conflictCount,
+    isConnected ? syncRecencyLabel(lastSync) : null,
+  );
 
   /** Força um novo fluxo OAuth (token novo). Necessário quando o app reporta "conectado" mas o
    *  refresh token está morto (HTTP 400) — sem isso não há como refazer a autenticação. */
@@ -578,274 +592,251 @@ export function SettingsScreen({
   }
 
   return (
-    <div className="xs">
-      <div className="xs-title">Configurações e privacidade</div>
-
-      {/* ── Planilha conectada ─────────────────────────────────── */}
-      <section className="card">
-        <div className="card__head">
-          <span className="card__title">
-            <Database size={16} strokeWidth={1.75} className="ic" />
-            Planilha conectada
-          </span>
-        </div>
-        <div className="cfg-sec">
-          <CfgItem
-            icon={Link}
-            title="Google Sheets"
-            sub={
-              isConnected
-                ? "Conectado — dados sincronizados com a sua planilha"
-                : authStatus === "loading"
-                  ? "Verificando conexão…"
-                  : "Desconectado"
-            }
-            right={
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => handleReconnect()}
-                disabled={reconnecting || !GOOGLE_CLIENT_ID}
-              >
-                {reconnecting ? "Reconectando…" : "Reconectar"}
-              </Button>
-            }
-          />
-          <CfgItem
-            icon={Lock}
-            title="Escrita só com aprovação"
-            sub="Toda escrita na planilha exige prévia com diff e a sua confirmação"
-            right={<span className="cfg-badge cfg-badge--local">Ativo</span>}
-          />
-        </div>
-        <div className="card__body">
-          <GoogleSheetsPanel authStatus={authStatus} onAuthChange={onAuthChange} />
-        </div>
+    <div className="config">
+      {/* ── Veredito: título de identidade + linha de estado viva ── */}
+      <section className="config__greet" data-large-title>
+        <h1>Tudo neste dispositivo</h1>
+        <span className="config__state" data-tone={greet.tone}>
+          <span className="config__state-dot" aria-hidden="true" />
+          <b>{greet.headline}</b>
+          {greet.detail ? <> · {greet.detail}</> : null}
+        </span>
       </section>
 
-      {/* ── Importar arquivo local ─────────────────────────────── */}
-      <section className="card">
-        <div className="card__head">
-          <span className="card__title">
-            <FileUp size={16} strokeWidth={1.75} className="ic" />
-            Importar arquivo local
-          </span>
+      {/* ── Conexão ────────────────────────────────────────────── */}
+      <section className="config__card" aria-labelledby="config-conexao">
+        <SecHead
+          icon={Table2}
+          id="config-conexao"
+          title="Conexão"
+          action={
+            <button
+              type="button"
+              className="config__more"
+              aria-expanded={manageOpen}
+              aria-controls="config-manage"
+              onClick={() => setManageOpen((o) => !o)}
+            >
+              Gerenciar
+            </button>
+          }
+        />
+        <Line
+          icon={Link}
+          title="Google Sheets"
+          sub={
+            isConnected
+              ? writeBack.sheetName
+                ? `Conta conectada · Aba ${writeBack.sheetName}`
+                : "Conta conectada"
+              : authStatus === "loading"
+                ? "Verificando conexão…"
+                : authStatus === "expired"
+                  ? "Sessão expirada — reconecte para sincronizar"
+                  : "Desconectado"
+          }
+          right={
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => handleReconnect()}
+              disabled={reconnecting || !GOOGLE_CLIENT_ID}
+            >
+              {reconnecting ? "Reconectando…" : "Reconectar"}
+            </Button>
+          }
+        />
+        <Line
+          title="Escrita só com aprovação"
+          sub="Nenhuma mudança na planilha sem seu OK."
+          right={<span className="config__pill">Sempre</span>}
+        />
+        <div className="config__panel">
+          <ConflictGate onResolved={writeBack.refresh} />
+          <WriteBackPending writeBack={writeBack} />
         </div>
-        <div className="cfg-sec">
-          <div className="cfg-item">
-            <span className="cfg-item__ic">
-              <FileUp size={17} strokeWidth={1.75} />
-            </span>
-            <div>
-              <div className="cfg-item__t">Planilha .xlsx</div>
-              <div className="cfg-item__s">
-                Importa todas as abas, detectando o layout automaticamente. Linhas já
-                importadas são ignoradas.
-              </div>
-            </div>
-            <span className="cfg-item__r">
-              <LocalXlsxImport />
-            </span>
+        <div
+          className="config__door"
+          id="config-manage"
+          data-open={manageOpen}
+          inert={!manageOpen}
+          role="region"
+          aria-label="Gerenciar conexão"
+        >
+          <div className="config__doorin">
+            <GoogleSheetsPanel authStatus={authStatus} onAuthChange={onAuthChange} />
+            <Line
+              icon={FileUp}
+              title="Importar planilha .xlsx"
+              sub="Importa todas as abas, detectando o layout automaticamente. Linhas já importadas são ignoradas."
+              right={<LocalXlsxImport />}
+            />
           </div>
         </div>
       </section>
 
-      {/* ── Sincronização ──────────────────────────────────────── */}
-      <section className="card">
-        <div className="card__head">
-          <span className="card__title">
-            <RefreshCw size={16} strokeWidth={1.75} className="ic" />
-            Sincronização
-          </span>
-        </div>
-        <div className="card__body">
-          <ConflictGate onResolved={writeBack.refresh} />
-          <WriteBackPending writeBack={writeBack} />
-          {!writeBack.loading &&
-            writeBack.pendingCount === 0 &&
-            writeBack.conflictCount === 0 && (
-              <p
-                style={{
-                  fontSize: "var(--fs-sm)",
-                  color: "var(--text-muted)",
-                  margin: 0,
-                }}
-              >
-                Nenhuma alteração pendente de envio para a planilha.
-              </p>
-            )}
-        </div>
+      {/* ── Privacidade ────────────────────────────────────────── */}
+      <section className="config__card" aria-labelledby="config-privacidade">
+        <SecHead icon={Shield} id="config-privacidade" title="Privacidade" />
+        <Line
+          icon={Lock}
+          title="Seus dados"
+          sub="Guardados só neste aparelho — nada de uso é enviado."
+          subExtra={
+            <div className="config__path" title={appInfo ? appInfo.db_path : undefined}>
+              <code>{appInfo ? appInfo.db_path : "—"}</code>
+            </div>
+          }
+          right={<span className="config__pill">Local</span>}
+        />
+        <BackupLine />
+        <Line
+          title="A Mia responde local"
+          sub="Sua planilha não vai para a nuvem."
+          right={<span className="config__pill">Local</span>}
+        />
+        <Line
+          title="Conta Google"
+          sub="Token no chaveiro do sistema."
+          right={<span className="config__pill">Local</span>}
+        />
       </section>
 
       {/* ── Bolsos ─────────────────────────────────────────────── */}
-      <section className="card">
-        <div className="card__head">
-          <span className="card__title">
-            <Landmark size={16} strokeWidth={1.75} className="ic" />
-            Bolsos
-          </span>
-        </div>
-        <div className="card__body">
+      <section className="config__card" aria-labelledby="config-bolsos">
+        <SecHead icon={Landmark} id="config-bolsos" title="Bolsos" />
+        <div className="config__panel">
           <PocketsCard />
           <PocketsManager />
         </div>
       </section>
 
-      {/* ── Lembrete diário (desktop only) ────────────────────── */}
-      <DailyReminderSection />
-
-      {/* ── Teto do Diário (resumo + link para a tela própria) ── */}
-      <TetoLinkSection />
-
-      {/* ── Privacidade ────────────────────────────────────────── */}
-      <section className="card">
-        <div className="card__head">
-          <span className="card__title">
-            <Shield size={16} strokeWidth={1.75} className="ic" />
-            Privacidade
-          </span>
-        </div>
-        <div className="cfg-sec">
-          <CfgItem
-            icon={Lock}
-            title="Tudo neste dispositivo"
-            sub="Seus dados não saem do computador"
-            right={<span className="cfg-badge cfg-badge--local">Local</span>}
-          />
-          {/* Fato, não configuração: não existe caminho de nuvem para ligar/desligar. */}
-          <CfgItem
-            icon={Sparkles}
-            title="Mia responde localmente"
-            sub="Sem enviar dados financeiros para a nuvem"
-            right={<span className="cfg-badge cfg-badge--local">Local</span>}
-          />
-        </div>
-      </section>
-
       {/* ── Aparência ──────────────────────────────────────────── */}
-      <section className="card">
-        <div className="card__head">
-          <span className="card__title">
-            <Settings size={16} strokeWidth={1.75} className="ic" />
-            Aparência
-          </span>
-        </div>
-        <div className="cfg-sec">
-          {/* O sub é um diagnóstico vivo: expõe o que o motor do WebView reporta
-              (movimento reduzido? View Transitions?) para depurar sem devtools. */}
-          <CfgItem
-            icon={Sparkles}
-            title="Animações"
-            sub={[
-              systemPrefersReducedMotion()
-                ? animacoes
-                  ? "Forçando animações (o sistema pede movimento reduzido)"
-                  : "Seguindo o movimento reduzido do sistema"
-                : animacoes
-                  ? "Transições e gráficos animados"
-                  : "Desligadas neste dispositivo",
-              ...(typeof document.startViewTransition !== "function"
-                ? ["sem View Transitions"]
-                : []),
-            ].join(" · ")}
-            right={
-              <Toggle
-                on={animacoes}
-                onClick={() => {
-                  const next = !animacoes;
-                  setAnimacoes(next);
-                  setMotionPreference(next ? "on" : "off");
+      <section className="config__card" aria-labelledby="config-aparencia">
+        <SecHead icon={Palette} id="config-aparencia" title="Aparência" />
+        <Line
+          title="Tema escuro"
+          sub="Feito para uso noturno."
+          right={
+            <Switch
+              on={theme === "dark"}
+              onChange={(_next, event) => toggleTheme(event)}
+              label="Tema escuro"
+            />
+          }
+        />
+        {/* O sub é um diagnóstico vivo: expõe o que o motor do WebView reporta
+            (movimento reduzido? View Transitions?) para depurar sem devtools. */}
+        <Line
+          title="Animações"
+          sub={[
+            systemPrefersReducedMotion()
+              ? animacoes
+                ? "Forçando animações (o sistema pede movimento reduzido)"
+                : "Seguindo o movimento reduzido do sistema"
+              : animacoes
+                ? "Transições e gráficos animados"
+                : "Desligadas neste dispositivo",
+            ...(typeof document.startViewTransition !== "function"
+              ? ["sem View Transitions"]
+              : []),
+          ].join(" · ")}
+          right={
+            <Switch
+              on={animacoes}
+              onChange={(next) => {
+                setAnimacoes(next);
+                setMotionPreference(next ? "on" : "off");
+              }}
+              label="Animações"
+            />
+          }
+        />
+        <MotionDiagnostics />
+        <div className="config__line config__line--block">
+          <div className="config__what">
+            <div className="config__what-t">
+              Cor de destaque{" "}
+              <InfoPopover
+                term={{
+                  title: "Cor de destaque",
+                  body: "Pinta o chrome, os botões e a seleção. As cores de status do método — paz, atenção, dinheiro — não mudam com a paleta.",
                 }}
-                label="Animações"
-              />
-            }
-          />
-          <MotionDiagnostics />
-          <div className="cfg-item">
-            <span className="cfg-item__ic">
-              <Palette size={17} strokeWidth={1.75} />
-            </span>
-            <div className="cfg-item__grow">
-              <div className="cfg-item__t">Cor de destaque</div>
-              <div className="cfg-item__s">
-                Pinta o chrome, os botões e a seleção. As cores de status do método —
-                paz, atenção, dinheiro — não mudam com a paleta.
-              </div>
-              <div className="cfg-accents" role="group" aria-label="Cor de destaque">
-                {ACCENTS.map((a) => (
-                  <button
-                    key={a.key}
-                    type="button"
-                    className={`cfg-accent ${accent === a.key ? "cfg-accent--on" : ""}`}
-                    aria-pressed={accent === a.key}
-                    onClick={() => {
-                      setAccent(a.key);
-                      applyAccent(a.key);
-                    }}
-                  >
-                    <i style={{ background: a.swatch }} aria-hidden="true" />
-                    <span>{a.label}</span>
-                  </button>
-                ))}
-              </div>
+                hideMarker
+              >
+                <span className="config__how">Como funciona?</span>
+              </InfoPopover>
+            </div>
+            <div className="config__what-s">
+              A cor que o app usa nos seus destaques.
+            </div>
+            {/* Radiogroup APG com roving tabindex: uma parada de Tab; setas
+                percorrem e selecionam (padrão de radio de seleção imediata). */}
+            <div
+              className="config__accents"
+              role="radiogroup"
+              aria-label="Cor de destaque"
+              onKeyDown={(e) => {
+                const delta =
+                  e.key === "ArrowRight" || e.key === "ArrowDown"
+                    ? 1
+                    : e.key === "ArrowLeft" || e.key === "ArrowUp"
+                      ? -1
+                      : 0;
+                if (delta === 0) return;
+                e.preventDefault();
+                const idx = ACCENTS.findIndex((a) => a.key === accent);
+                const next = ACCENTS[(idx + delta + ACCENTS.length) % ACCENTS.length];
+                if (!next) return;
+                setAccent(next.key);
+                applyAccent(next.key);
+                const group = e.currentTarget;
+                requestAnimationFrame(() => {
+                  group
+                    .querySelector<HTMLButtonElement>('[aria-checked="true"]')
+                    ?.focus();
+                });
+              }}
+            >
+              {ACCENTS.map((a) => (
+                <button
+                  key={a.key}
+                  type="button"
+                  role="radio"
+                  className="config__swatch"
+                  style={{ background: a.swatch }}
+                  aria-checked={accent === a.key}
+                  tabIndex={accent === a.key ? 0 : -1}
+                  aria-label={a.label}
+                  title={a.label}
+                  onClick={() => {
+                    setAccent(a.key);
+                    applyAccent(a.key);
+                  }}
+                />
+              ))}
             </div>
           </div>
         </div>
       </section>
 
-      {/* ── Seus dados ─────────────────────────────────────────── */}
-      <section className="card">
-        <div className="card__head">
-          <span className="card__title">
-            <HardDrive size={16} strokeWidth={1.75} className="ic" />
-            Seus dados
-          </span>
-        </div>
-        <div className="cfg-sec">
-          <div className="cfg-item">
-            <span className="cfg-item__ic">
-              <HardDrive size={17} strokeWidth={1.75} />
-            </span>
-            <div>
-              <div className="cfg-item__t">Onde ficam os dados</div>
-              <div className="cfg-item__s">
-                Banco SQLite em <code>{appInfo ? appInfo.db_path : "—"}</code>, somente
-                neste dispositivo.
-              </div>
-            </div>
-          </div>
-          <DataBackupRow />
-          <div className="cfg-item">
-            <span className="cfg-item__ic">
-              <Shield size={17} strokeWidth={1.75} />
-            </span>
-            <div>
-              <div className="cfg-item__t">Telemetria</div>
-              <div className="cfg-item__s">
-                O Neko não envia nenhum dado de uso. Suas finanças não saem da sua
-                máquina.
-              </div>
-            </div>
-          </div>
-          <div className="cfg-item">
-            <span className="cfg-item__ic">
-              <Settings size={17} strokeWidth={1.75} />
-            </span>
-            <div>
-              <div className="cfg-item__t">Versão</div>
-              <div className="cfg-item__s">
-                Neko Finance {appInfo ? `v${appInfo.version}` : "—"} · Tauri desktop
-              </div>
-            </div>
-          </div>
-        </div>
+      {/* ── Rotina ─────────────────────────────────────────────── */}
+      <section className="config__card" aria-labelledby="config-rotina">
+        <SecHead icon={Bell} id="config-rotina" title="Rotina" />
+        <ReminderLines />
+        <TetoLine />
       </section>
 
-      {!isTauri ? (
-        <p style={{ fontSize: 12, color: "var(--text-faint)" }}>
-          Preview web — abra o app desktop para ver seus dados reais.
-        </p>
-      ) : null}
+      {/* ── Rodapé quieto ──────────────────────────────────────── */}
+      <p className="config__foot">
+        Neko Finance {appInfo ? `v${appInfo.version}` : "—"} · Tauri desktop
+        {!isTauri ? (
+          <>
+            <br />
+            Preview web — abra o app desktop para ver seus dados reais.
+          </>
+        ) : null}
+      </p>
     </div>
   );
 }

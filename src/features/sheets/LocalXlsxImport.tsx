@@ -52,7 +52,7 @@ export function LocalXlsxImport() {
   return (
     <div className="xlsx-import">
       <Button
-        variant="secondary"
+        variant="ghost"
         onClick={() => void handlePick()}
         disabled={importing || !isTauri}
       >

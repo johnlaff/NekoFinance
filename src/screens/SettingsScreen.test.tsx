@@ -39,20 +39,67 @@ describe("SettingsScreen", () => {
     document.documentElement.removeAttribute("data-accent");
     renderSettings();
 
-    const group = screen.getByRole("group", { name: "Cor de destaque" });
-    const jade = within(group).getByRole("button", { name: /Jade/ });
-    const lima = within(group).getByRole("button", { name: /Lima/ });
-    expect(jade).toHaveAttribute("aria-pressed", "true");
+    const group = screen.getByRole("radiogroup", { name: "Cor de destaque" });
+    const jade = within(group).getByRole("radio", { name: "Jade" });
+    const lima = within(group).getByRole("radio", { name: "Lima" });
+    expect(jade).toHaveAttribute("aria-checked", "true");
 
     await user.click(lima);
     expect(document.documentElement.getAttribute("data-accent")).toBe("lima");
     expect(localStorage.getItem("neko-accent")).toBe("lima");
-    expect(lima).toHaveAttribute("aria-pressed", "true");
-    expect(jade).toHaveAttribute("aria-pressed", "false");
+    expect(lima).toHaveAttribute("aria-checked", "true");
+    expect(jade).toHaveAttribute("aria-checked", "false");
 
     await user.click(jade);
     expect(document.documentElement.hasAttribute("data-accent")).toBe(false);
     expect(localStorage.getItem("neko-accent")).toBe("jade");
+  });
+
+  it("swatches de acento: roving tabindex com setas (uma parada de Tab)", async () => {
+    const user = userEvent.setup();
+    mockCommands({ get_app_info: APP_INFO });
+    localStorage.removeItem("neko-accent");
+    document.documentElement.removeAttribute("data-accent");
+    renderSettings();
+
+    const group = screen.getByRole("radiogroup", { name: "Cor de destaque" });
+    const jade = within(group).getByRole("radio", { name: "Jade" });
+    const lima = within(group).getByRole("radio", { name: "Lima" });
+    // Só o selecionado é parada de Tab.
+    expect(jade).toHaveAttribute("tabindex", "0");
+    expect(lima).toHaveAttribute("tabindex", "-1");
+
+    // Seta seleciona o próximo e move o roving.
+    jade.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(lima).toHaveAttribute("aria-checked", "true");
+    expect(lima).toHaveAttribute("tabindex", "0");
+    expect(jade).toHaveAttribute("tabindex", "-1");
+    expect(document.documentElement.getAttribute("data-accent")).toBe("lima");
+
+    // Seta para trás volta ao jade (com wrap coberto pelo módulo).
+    await user.keyboard("{ArrowLeft}");
+    expect(jade).toHaveAttribute("aria-checked", "true");
+    expect(localStorage.getItem("neko-accent")).toBe("jade");
+  });
+
+  it("diagnóstico de animações fica atrás de porta (jargão fora da leitura padrão)", async () => {
+    const user = userEvent.setup();
+    mockCommands({ get_app_info: APP_INFO });
+    renderSettings();
+
+    // Fechada por padrão: a região existe, mas inerte; o rótulo didático fica visível.
+    expect(screen.getByText("Diagnóstico de animações")).toBeInTheDocument();
+    const door = document.getElementById("config-motion-diag");
+    expect(door).toHaveAttribute("inert");
+
+    const toggle = screen.getByRole("button", { name: "Abrir" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(door).not.toHaveAttribute("inert");
+    // O verdict/facts vive numa região aria-live para anunciar o resultado do teste.
+    expect(door?.querySelector('[aria-live="polite"]')).not.toBeNull();
   });
 
   it("shows the local data location and version", async () => {
@@ -63,7 +110,54 @@ describe("SettingsScreen", () => {
       expect(screen.getByText(APP_INFO.db_path)).toBeInTheDocument();
     });
     expect(screen.getByText(/v0\.1\.0/)).toBeInTheDocument();
-    expect(screen.getByText(/não envia nenhum dado/)).toBeInTheDocument();
+    expect(screen.getByText(/nada de uso é enviado/)).toBeInTheDocument();
+  });
+
+  it("greet: veredito com má notícia quando desconectado", () => {
+    mockCommands({ get_app_info: APP_INFO });
+    renderSettings(); // authStatus="disconnected"
+
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Tudo neste dispositivo" }),
+    ).toBeInTheDocument();
+    // "Desconectado" também aparece no sub da linha Google Sheets — mira a pílula.
+    expect(
+      screen.getByText("Desconectado", { selector: ".config__state b" }),
+    ).toBeInTheDocument();
+  });
+
+  it("escrita só com aprovação é fato (pílula), nunca um toggle", () => {
+    mockCommands({ get_app_info: APP_INFO });
+    renderSettings();
+
+    expect(screen.getByText("Escrita só com aprovação")).toBeInTheDocument();
+    expect(screen.getByText("Sempre")).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: /escrita/i })).not.toBeInTheDocument();
+  });
+
+  it("porta Gerenciar abre e fecha o painel denso da conexão", async () => {
+    const user = userEvent.setup();
+    mockCommands({ get_app_info: APP_INFO });
+    renderSettings();
+
+    const door = screen.getByRole("button", { name: "Gerenciar" });
+    expect(door).toHaveAttribute("aria-expanded", "false");
+    // Fechada, a região fica inerte — nada dentro dela é focável.
+    expect(document.getElementById("config-manage")).toHaveAttribute("inert");
+
+    await user.click(door);
+    expect(door).toHaveAttribute("aria-expanded", "true");
+    expect(document.getElementById("config-manage")).not.toHaveAttribute("inert");
+  });
+
+  it("tema escuro é um switch que reflete o tema atual", () => {
+    mockCommands({ get_app_info: APP_INFO });
+    renderSettings();
+
+    expect(screen.getByRole("switch", { name: "Tema escuro" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
   });
 
   it("imports a local xlsx through the native dialog and reports the result", async () => {
@@ -187,7 +281,7 @@ describe("SettingsScreen", () => {
     });
     renderSettings();
 
-    expect(await screen.findByText("Sem teto estipulado")).toBeInTheDocument();
+    expect(await screen.findByText("Sem teto estipulado.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Abrir teto do diário" }));
     expect(appCtx.navigate).toHaveBeenCalledWith("teto");
   });
@@ -203,8 +297,8 @@ describe("SettingsScreen", () => {
       expect(
         screen.getByText(
           (_, el) =>
-            el?.className === "cfg-item__t" &&
-            /Teto estipulado: R\$\s?40,33 por dia/.test(
+            el?.className === "config__what-s" &&
+            /Teto estipulado: R\$\s?40,33 por dia\./.test(
               (el.textContent ?? "").replace(/\s+/g, " "),
             ),
         ),
@@ -241,13 +335,8 @@ describe("DailyReminderSection", () => {
     mockSettings({}); // chaves ausentes → ligado por padrão
     renderSettings();
 
-    await waitFor(() => {
-      expect(
-        screen.getByRole("radiogroup", { name: /lembrete diário/i }),
-      ).toBeInTheDocument();
-    });
-    const on = screen.getByRole("radio", { name: "Ligado" });
-    expect(on).toHaveAttribute("aria-checked", "true");
+    const toggle = await screen.findByRole("switch", { name: "Lembrete diário" });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
   });
 
   it("persists the toggle off", async () => {
@@ -255,13 +344,8 @@ describe("DailyReminderSection", () => {
     mockSettings({});
     renderSettings();
 
-    await waitFor(() =>
-      expect(
-        screen.getByRole("radiogroup", { name: /lembrete diário/i }),
-      ).toBeInTheDocument(),
-    );
-
-    await user.click(screen.getByRole("radio", { name: "Desligado" }));
+    const toggle = await screen.findByRole("switch", { name: "Lembrete diário" });
+    await user.click(toggle);
 
     await waitFor(() =>
       expect(mockInvoke).toHaveBeenCalledWith("set_app_setting", {
