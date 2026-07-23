@@ -1952,7 +1952,8 @@ pub(crate) async fn get_scenario_forecast_inner(
         seed,
         today,
         &real_chain_events,
-        &real_metric_events,
+        // Máscara ALL: o loader de métricas ainda aplica o filtro de exclusão no SQL.
+        &forecast::lift_all(&real_metric_events),
         horizon_end,
         &annotation,
     );
@@ -2048,7 +2049,8 @@ pub(crate) async fn get_scenario_forecast_inner(
         seed,
         today,
         &scenario_chain_events,
-        &scenario_metric_events,
+        // Máscara ALL: eventos hipotéticos/ajustados de cenário não têm tag.
+        &forecast::lift_all(&scenario_metric_events),
         horizon_end,
         &annotation,
     );

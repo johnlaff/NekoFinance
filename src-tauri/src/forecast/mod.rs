@@ -35,6 +35,62 @@ pub struct CashflowEvent {
     pub realized: bool,
 }
 
+/// Em quais réguas do método um evento conta. A tag do lançamento é um interruptor de
+/// contabilidade: cada flag desligado tira o evento dos insumos DAQUELA régua, e só dela.
+/// O Saldo (encadeamento de caixa) não tem máscara por definição — dinheiro que entrou e
+/// saiu de verdade sempre conta; por isso a máscara vive no stream de MÉTRICAS
+/// ([`MetricEvent`]) e nunca no de caixa.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RulerMask {
+    pub performance: bool,
+    pub cost_of_living: bool,
+    pub savings: bool,
+    pub daily_avg: bool,
+}
+
+impl RulerMask {
+    /// Conta em todas as réguas (lançamento sem tag; eventos sintéticos).
+    pub const ALL: RulerMask = RulerMask {
+        performance: true,
+        cost_of_living: true,
+        savings: true,
+        daily_avg: true,
+    };
+
+    /// Interseção: um lançamento com várias tags fica fora de uma régua se QUALQUER
+    /// tag o excluir dela (mesma semântica do flag único que esta máscara substitui).
+    pub fn and(self, other: RulerMask) -> RulerMask {
+        RulerMask {
+            performance: self.performance && other.performance,
+            cost_of_living: self.cost_of_living && other.cost_of_living,
+            savings: self.savings && other.savings,
+            daily_avg: self.daily_avg && other.daily_avg,
+        }
+    }
+}
+
+/// Evento do stream de métricas: o evento de caixa + a máscara de réguas herdada das
+/// tags do lançamento-pai (itens de nota e resíduo herdam a máscara do pai). O tipo
+/// separado é o lockstep em forma de código: todo call site de métricas é obrigado
+/// pelo compilador a declarar de onde vem a máscara.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MetricEvent {
+    pub event: CashflowEvent,
+    pub mask: RulerMask,
+}
+
+/// Eleva eventos de caixa a eventos de métrica contando em todas as réguas — para
+/// eventos sintéticos (teto projetado, hipotéticos de cenário) e testes.
+pub fn lift_all(events: &[CashflowEvent]) -> Vec<MetricEvent> {
+    events
+        .iter()
+        .map(|&event| MetricEvent {
+            event,
+            mask: RulerMask::ALL,
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DayPoint {
     pub date: NaiveDate,
@@ -48,34 +104,50 @@ pub struct MonthEnd {
     pub balance_cents: i64,
 }
 
+/// Métricas de decisão de um mês. Como a máscara por régua faz cada régua enxergar o
+/// próprio conjunto de eventos, cada campo declara a VIEW que serve — as equações
+/// exibidas nas telas fecham com o motor porque leem campos da mesma view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MonthMetric {
     pub year: i32,
     pub month: u32,
-    /// Renda do mês (Entradas).
+    /// Renda do mês na view ECONOMIA — a "sua renda" do método, denominador do
+    /// Economizado% exibido (o que um terceiro devolve e está fora da Economia não
+    /// entra aqui).
     pub income_cents: i64,
+    /// Renda do mês na view PERFORMANCE (a perna positiva de `performance_cents`).
+    pub income_performance_cents: i64,
+    /// View PERFORMANCE: renda − (fixas + diário + previsão + cartão + economia +
+    /// patrimônio), tudo filtrado pela máscara de Performance.
     pub performance_cents: i64,
+    /// View CUSTO DE VIDA: fixas + diário realizado + cartão.
     pub cost_of_living_cents: i64,
-    /// Saídas FIXAS realizadas (coluna Saída sem cartão/economia/patrimônio).
+    /// Saídas FIXAS realizadas (view CUSTO DE VIDA — componente exibido).
     pub fixed_out_cents: i64,
-    /// Diário REALIZADO (coluna Diário).
+    /// Diário REALIZADO (view CUSTO DE VIDA — componente exibido).
     pub daily_out_cents: i64,
-    /// Previsão de diário do mês (teto dos dias futuros + diários pré-lançados). Entra na
-    /// Performance — o mês corrente considera o que ainda vai ser gasto — mas fica fora do
-    /// custo de vida, que reporta só o realizado.
+    /// Diário REALIZADO na view DIÁRIO MÉDIO — numerador de `real_daily_avg_cents`.
+    pub daily_avg_out_cents: i64,
+    /// Previsão de diário do mês (teto dos dias futuros + diários pré-lançados), view
+    /// PERFORMANCE. Entra na Performance — o mês corrente considera o que ainda vai
+    /// ser gasto — mas fica fora do custo de vida, que reporta só o realizado.
     pub daily_projected_cents: i64,
-    /// Gastos com cartão, bucket próprio dentro do custo de vida.
+    /// Gastos com cartão (view CUSTO DE VIDA — componente exibido).
     pub cartao_cents: i64,
+    /// Diário médio = `daily_avg_out_cents` ÷ dias decorridos.
     pub real_daily_avg_cents: i64,
+    /// Economizado% = economia ÷ renda, ambos na view ECONOMIA.
     pub savings_rate_bps: i64,
-    /// Economia lançada no mês — numerador do Economizado% (savings_rate_bps). Excluída do custo
-    /// de vida, mas descontada da Performance como todo dinheiro que saiu.
+    /// Economia lançada no mês (view ECONOMIA), reconciliada com a anotação da aba —
+    /// numerador do Economizado%. Excluída do custo de vida, mas descontada da
+    /// Performance (na view de lá) como todo dinheiro que saiu.
     pub economia_cents: i64,
-    /// Patrimônio/long-term/illiquid. Excluído de custo de vida e Economia% acessível, mas reduz
-    /// Performance/Saldo como saída.
+    /// Patrimônio/long-term/illiquid (view PERFORMANCE). Excluído de custo de vida e
+    /// Economia% acessível, mas reduz Performance/Saldo como saída.
     pub patrimonio_cents: i64,
-    /// Saída TOTAL lançada no mês para cobertura = custo de vida lançado (fixas + diário realizado
-    /// + diário projetado/pré-lançado + cartão). Não inclui economia/patrimônio.
+    /// Saída TOTAL lançada no mês para cobertura ("quanto do viver já está lançado") =
+    /// view CUSTO DE VIDA + diário projetado da mesma view. Não inclui
+    /// economia/patrimônio.
     pub total_outflow_cents: i64,
 }
 
@@ -315,7 +387,7 @@ fn deepest(daily: &[DayPoint]) -> Option<DayPoint> {
 /// for the real daily average (kept as an argument — no ambient clock).
 fn month_metrics(
     today: NaiveDate,
-    events: &[CashflowEvent],
+    events: &[MetricEvent],
     months: &[MonthEnd],
     annotation: &std::collections::HashMap<(i32, u32), i64>,
 ) -> Vec<MonthMetric> {
@@ -323,34 +395,92 @@ fn month_metrics(
         .iter()
         .map(|me| {
             let (year, month) = (me.year, me.month);
-            let mut income = 0i64;
-            let mut fixed_out = 0i64;
-            let mut daily_realized = 0i64;
-            let mut daily_projected = 0i64;
-            let mut cartao = 0i64;
-            let mut economia = 0i64;
-            let mut patrimonio = 0i64;
-            for e in events
+            // Os buckets alimentam réguas CRUZADAS (o diário entra em Performance,
+            // Custo de vida e Diário médio; a renda em Performance e na base do
+            // Economizado%), então cada régua acumula a própria view do bucket,
+            // filtrada pela sua máscara. Sufixos: _p Performance · _c Custo de vida ·
+            // _s Economia · _d Diário médio.
+            let mut income_p = 0i64;
+            let mut income_s = 0i64;
+            let mut fixed_p = 0i64;
+            let mut fixed_c = 0i64;
+            let mut daily_real_p = 0i64;
+            let mut daily_real_c = 0i64;
+            let mut daily_real_d = 0i64;
+            let mut daily_proj_p = 0i64;
+            let mut daily_proj_c = 0i64;
+            let mut cartao_p = 0i64;
+            let mut cartao_c = 0i64;
+            let mut economia_p = 0i64;
+            let mut economia_s = 0i64;
+            let mut patrimonio_p = 0i64;
+            for me in events
                 .iter()
-                .filter(|e| e.date.year() == year && e.date.month() == month)
+                .filter(|me| me.event.date.year() == year && me.event.date.month() == month)
             {
+                let (e, m) = (&me.event, me.mask);
                 match e.kind {
-                    EventKind::Income => income += e.amount_cents,
-                    EventKind::FixedOut => fixed_out += e.amount_cents,
+                    EventKind::Income => {
+                        if m.performance {
+                            income_p += e.amount_cents;
+                        }
+                        if m.savings {
+                            income_s += e.amount_cents;
+                        }
+                    }
+                    EventKind::FixedOut => {
+                        if m.performance {
+                            fixed_p += e.amount_cents;
+                        }
+                        if m.cost_of_living {
+                            fixed_c += e.amount_cents;
+                        }
+                    }
                     EventKind::Daily => {
                         // A DATA decide realizado × previsão (o flag `realized` vem de
                         // `is_projection`, que fica congelado no import e vira stale quando o
                         // dia passa): dia já vivido é realizado; dia futuro é previsão (teto dos
                         // dias restantes + diários pré-lançados). Mês passado nunca tem previsão.
                         if e.date <= today {
-                            daily_realized += e.amount_cents;
+                            if m.performance {
+                                daily_real_p += e.amount_cents;
+                            }
+                            if m.cost_of_living {
+                                daily_real_c += e.amount_cents;
+                            }
+                            if m.daily_avg {
+                                daily_real_d += e.amount_cents;
+                            }
                         } else {
-                            daily_projected += e.amount_cents;
+                            if m.performance {
+                                daily_proj_p += e.amount_cents;
+                            }
+                            if m.cost_of_living {
+                                daily_proj_c += e.amount_cents;
+                            }
                         }
                     }
-                    EventKind::Economia => economia += e.amount_cents,
-                    EventKind::Cartao => cartao += e.amount_cents,
-                    EventKind::Patrimonio => patrimonio += e.amount_cents,
+                    EventKind::Economia => {
+                        if m.performance {
+                            economia_p += e.amount_cents;
+                        }
+                        if m.savings {
+                            economia_s += e.amount_cents;
+                        }
+                    }
+                    EventKind::Cartao => {
+                        if m.performance {
+                            cartao_p += e.amount_cents;
+                        }
+                        if m.cost_of_living {
+                            cartao_c += e.amount_cents;
+                        }
+                    }
+                    EventKind::Patrimonio => {
+                        if m.performance {
+                            patrimonio_p += e.amount_cents;
+                        }
+                    }
                 }
             }
             // Anotação da aba Economia para este mês (import via store_economia_entries). A
@@ -360,16 +490,20 @@ fn month_metrics(
             // deliberado: dinheiro GENUINAMENTE disjunto (anotação só-planilha + transfer manual
             // ainda não escrito de volta) fica subcontado até o próximo write-back alinhar a aba —
             // preferível à dupla contagem permanente que o `+=` causava após cada round-trip.
+            // A reconciliação é POR VIEW (a anotação da aba não tem tag, então alcança as duas):
+            // se a anotação dominar o `max`, desligar a Economia de uma tag não muda o número —
+            // fronteira honesta, e o efeito computado mostra R$ 0.
             let annotation_cents = annotation.get(&(year, month)).copied().unwrap_or(0);
-            economia = economia.max(annotation_cents);
+            let economia_p = economia_p.max(annotation_cents);
+            let economia_s = economia_s.max(annotation_cents);
             // Custo de vida = Saídas fixas + Diário realizado + Cartão. Economia e Patrimônio são
             // outflows reais, mas não são custo de vida.
-            let cost_of_living_cents = fixed_out + daily_realized + cartao;
+            let cost_of_living_cents = fixed_c + daily_real_c + cartao_c;
             // Performance = Entradas − (fixas + diário + cartão + economia + patrimônio + previsão
             // de diário restante). A previsão entra: o mês corrente já considera o que ainda vai
             // ser gasto até o fim do mês e melhora conforme o gasto real fica abaixo do teto.
-            let performance_cents = income
-                - (fixed_out + daily_realized + daily_projected + cartao + economia + patrimonio);
+            let performance_cents = income_p
+                - (fixed_p + daily_real_p + daily_proj_p + cartao_p + economia_p + patrimonio_p);
 
             let first = NaiveDate::from_ymd_opt(year, month, 1).expect("valid month");
             let last = last_day_of_month(year, month);
@@ -381,14 +515,14 @@ fn month_metrics(
             };
             // Diário médio = Σ Diário REALIZADO ÷ dias decorridos (D/N). A previsão não entra.
             let real_daily_avg_cents = if elapsed > 0 {
-                daily_realized / elapsed
+                daily_real_d / elapsed
             } else {
                 0
             };
 
             // Economizado% = economia lançada ÷ entradas (não mais o superávit/performance).
-            let savings_rate_bps = if income > 0 {
-                economia * 10_000 / income
+            let savings_rate_bps = if income_s > 0 {
+                economia_s * 10_000 / income_s
             } else {
                 0
             };
@@ -396,18 +530,20 @@ fn month_metrics(
             MonthMetric {
                 year,
                 month,
-                income_cents: income,
+                income_cents: income_s,
+                income_performance_cents: income_p,
                 performance_cents,
                 cost_of_living_cents,
-                fixed_out_cents: fixed_out,
-                daily_out_cents: daily_realized,
-                daily_projected_cents: daily_projected,
-                cartao_cents: cartao,
+                fixed_out_cents: fixed_c,
+                daily_out_cents: daily_real_c,
+                daily_avg_out_cents: daily_real_d,
+                daily_projected_cents: daily_proj_p,
+                cartao_cents: cartao_c,
                 real_daily_avg_cents,
                 savings_rate_bps,
-                economia_cents: economia,
-                patrimonio_cents: patrimonio,
-                total_outflow_cents: fixed_out + daily_realized + daily_projected + cartao,
+                economia_cents: economia_s,
+                patrimonio_cents: patrimonio_p,
+                total_outflow_cents: fixed_c + daily_real_c + daily_proj_c + cartao_c,
             }
         })
         .collect()
@@ -418,7 +554,7 @@ fn month_metrics(
 /// do `MonthEnd` não importa aqui (as métricas só usam os eventos do mês).
 pub fn month_metrics_for(
     today: NaiveDate,
-    events: &[CashflowEvent],
+    events: &[MetricEvent],
     months: &[(i32, u32)],
     annotation: &std::collections::HashMap<(i32, u32), i64>,
 ) -> Vec<MonthMetric> {
@@ -484,11 +620,12 @@ pub fn project(
 ) -> Forecast {
     // Sem anotação da aba Economia: só os eventos (inclui transfers de reserva REAIS) decidem o
     // Economizado%. As métricas de produção que precisam da anotação chamam `project_with_metrics`.
+    // Conveniência sem máscara: todos os eventos contam em todas as réguas.
     project_with_metrics(
         seed_cents,
         today,
         events,
-        events,
+        &lift_all(events),
         horizon_end,
         &std::collections::HashMap::new(),
     )
@@ -502,11 +639,14 @@ pub fn project(
 /// mês corrente PRECISA do realizado de hoje-pra-trás no mês (renda e saídas já lançadas), senão
 /// junho aparece com sinal trocado e o guardrail de poupança decide sobre o mês pela metade.
 /// Por isso `metric_events` cobre o mês inteiro (realizado + projetado).
+///
+/// `metric_events` carrega a máscara de réguas por evento ([`MetricEvent`]); o
+/// encadeamento de caixa (`chain_events`) segue sem máscara — o Saldo sempre conta.
 pub fn project_with_metrics(
     seed_cents: i64,
     today: NaiveDate,
     chain_events: &[CashflowEvent],
-    metric_events: &[CashflowEvent],
+    metric_events: &[MetricEvent],
     horizon_end: NaiveDate,
     annotation: &std::collections::HashMap<(i32, u32), i64>,
 ) -> Forecast {
@@ -794,10 +934,12 @@ mod tests {
             year,
             month,
             income_cents: 0,
+            income_performance_cents: 0,
             performance_cents: 0,
             cost_of_living_cents: cost,
             fixed_out_cents: cost,
             daily_out_cents: 0,
+            daily_avg_out_cents: 0,
             daily_projected_cents: 0,
             cartao_cents: 0,
             real_daily_avg_cents: 0,
@@ -827,10 +969,12 @@ mod tests {
             year,
             month,
             income_cents: 0,
+            income_performance_cents: 0,
             performance_cents: 0,
             cost_of_living_cents: cost,
             fixed_out_cents: cost,
             daily_out_cents: 0,
+            daily_avg_out_cents: 0,
             daily_projected_cents: 0,
             cartao_cents: 0,
             real_daily_avg_cents: 0,
@@ -921,7 +1065,7 @@ mod tests {
             0,
             d("2026-03-01"),
             &events,
-            &events,
+            &lift_all(&events),
             d("2026-03-31"),
             &annotation,
         );
@@ -945,7 +1089,7 @@ mod tests {
             0,
             d("2026-03-01"),
             &events,
-            &events,
+            &lift_all(&events),
             d("2026-03-31"),
             &annotation,
         );
@@ -964,7 +1108,7 @@ mod tests {
             0,
             d("2026-03-01"),
             &events,
-            &events,
+            &lift_all(&events),
             d("2026-03-31"),
             &annotation,
         );
@@ -1022,7 +1166,7 @@ mod tests {
         ];
         let metrics = month_metrics_for(
             d("2026-07-02"),
-            &events,
+            &lift_all(&events),
             &[(2026, 6)],
             &std::collections::HashMap::new(),
         );
@@ -1030,6 +1174,156 @@ mod tests {
         assert_eq!(m.daily_projected_cents, 0, "mês encerrado não tem previsão");
         assert_eq!(m.daily_out_cents, 80_000);
         assert_eq!(m.performance_cents, 920_000);
+    }
+
+    // ---- Máscara por régua (interruptores de contabilidade por tag) ----
+
+    /// Evento de métrica com máscara custom (helper local dos testes de máscara).
+    fn mev(date: &str, kind: EventKind, amount_cents: i64, mask: RulerMask) -> MetricEvent {
+        MetricEvent {
+            event: ev(date, kind, amount_cents),
+            mask,
+        }
+    }
+
+    fn no_annotation() -> std::collections::HashMap<(i32, u32), i64> {
+        std::collections::HashMap::new()
+    }
+
+    // Um gasto fora do CUSTO DE VIDA (e só dele) some do custo e dos componentes
+    // exibidos, mas segue contando em Performance e no Diário médio — as views do
+    // mesmo bucket divergem, e cada campo serve a régua que declara.
+    #[test]
+    fn mask_excludes_single_ruler_only() {
+        let off_cost = RulerMask {
+            cost_of_living: false,
+            ..RulerMask::ALL
+        };
+        let events = [
+            mev("2026-03-05", EventKind::Income, 1_000_000, RulerMask::ALL),
+            mev("2026-03-10", EventKind::Daily, 200_000, RulerMask::ALL),
+            mev("2026-03-12", EventKind::Daily, 100_000, off_cost),
+        ];
+        let m = &month_metrics_for(d("2026-03-31"), &events, &[(2026, 3)], &no_annotation())[0];
+        assert_eq!(
+            m.cost_of_living_cents, 200_000,
+            "custo sem o gasto mascarado"
+        );
+        assert_eq!(
+            m.daily_out_cents, 200_000,
+            "componente exibido = view do custo"
+        );
+        assert_eq!(
+            m.daily_avg_out_cents, 300_000,
+            "diário médio segue contando"
+        );
+        assert_eq!(m.real_daily_avg_cents, 300_000 / 31);
+        assert_eq!(m.performance_cents, 700_000, "performance segue contando");
+        assert_eq!(
+            m.total_outflow_cents, 200_000,
+            "cobertura acompanha o custo"
+        );
+    }
+
+    // A renda fora da ECONOMIA sai da base do Economizado% ("o que devolvem não é sua
+    // renda"), mas permanece na Performance — o denominador menor SOBE o percentual.
+    #[test]
+    fn mask_income_diverges_between_savings_base_and_performance() {
+        let off_savings = RulerMask {
+            savings: false,
+            ..RulerMask::ALL
+        };
+        let events = [
+            mev("2026-03-05", EventKind::Income, 500_000, RulerMask::ALL),
+            mev("2026-03-06", EventKind::Income, 500_000, off_savings),
+            mev("2026-03-20", EventKind::Economia, 100_000, RulerMask::ALL),
+        ];
+        let m = &month_metrics_for(d("2026-03-31"), &events, &[(2026, 3)], &no_annotation())[0];
+        assert_eq!(
+            m.income_cents, 500_000,
+            "base do Economizado% = view Economia"
+        );
+        assert_eq!(m.income_performance_cents, 1_000_000);
+        assert_eq!(m.savings_rate_bps, 2_000, "100/500 = 20%, não 10%");
+        assert_eq!(
+            m.performance_cents, 900_000,
+            "1000 − 100 na view Performance"
+        );
+    }
+
+    // O teste da mentira aritmética (decisão do desenho): a MESMA exclusão move a
+    // Performance pelo LÍQUIDO (entrou − saiu) e o custo de vida pela SAÍDA — quem
+    // devolve mais do que gasta PIORA a performance ao sair, enquanto o custo cai.
+    #[test]
+    fn mask_performance_moves_by_net_cost_by_outflow() {
+        let base = [
+            mev("2026-03-05", EventKind::Income, 1_000_000, RulerMask::ALL),
+            mev("2026-03-08", EventKind::Income, 497_764, RulerMask::ALL),
+            mev("2026-03-10", EventKind::Daily, 407_764, RulerMask::ALL),
+        ];
+        let with = &month_metrics_for(d("2026-03-31"), &base, &[(2026, 3)], &no_annotation())[0];
+
+        let off_perf_cost = RulerMask {
+            performance: false,
+            cost_of_living: false,
+            ..RulerMask::ALL
+        };
+        let masked = [
+            base[0],
+            mev("2026-03-08", EventKind::Income, 497_764, off_perf_cost),
+            mev("2026-03-10", EventKind::Daily, 407_764, off_perf_cost),
+        ];
+        let without =
+            &month_metrics_for(d("2026-03-31"), &masked, &[(2026, 3)], &no_annotation())[0];
+
+        // Custo cai pela saída inteira; performance PIORA em (entrou − saiu) = 90.000.
+        assert_eq!(
+            with.cost_of_living_cents - without.cost_of_living_cents,
+            407_764
+        );
+        assert_eq!(with.performance_cents - without.performance_cents, 90_000);
+    }
+
+    // Fronteira da anotação: a aba Economia não tem tag, então quando ela domina o
+    // `max`, desligar a Economia de uma tag não muda o número — o efeito honesto é 0.
+    #[test]
+    fn mask_annotation_floor_survives_savings_exclusion() {
+        let off_savings = RulerMask {
+            savings: false,
+            ..RulerMask::ALL
+        };
+        let events = [
+            mev("2026-03-05", EventKind::Income, 1_000_000, RulerMask::ALL),
+            mev("2026-03-20", EventKind::Economia, 100_000, off_savings),
+        ];
+        let mut annotation = std::collections::HashMap::new();
+        annotation.insert((2026i32, 3u32), 100_000i64);
+        let m = &month_metrics_for(d("2026-03-31"), &events, &[(2026, 3)], &annotation)[0];
+        assert_eq!(
+            m.economia_cents, 100_000,
+            "anotação sustenta o piso mesmo com o evento fora da Economia"
+        );
+        assert_eq!(m.savings_rate_bps, 1_000);
+    }
+
+    // Interseção de tags: fora de uma régua se QUALQUER tag excluir (semântica do
+    // flag único preservada na composição).
+    #[test]
+    fn mask_and_composes_by_intersection() {
+        let off_cost = RulerMask {
+            cost_of_living: false,
+            ..RulerMask::ALL
+        };
+        let off_savings = RulerMask {
+            savings: false,
+            ..RulerMask::ALL
+        };
+        let composed = off_cost.and(off_savings);
+        assert!(!composed.cost_of_living);
+        assert!(!composed.savings);
+        assert!(composed.performance);
+        assert!(composed.daily_avg);
+        assert_eq!(RulerMask::ALL.and(RulerMask::ALL), RulerMask::ALL);
     }
 
     // T5.3 — cash ≠ performance: month ends negative in cash while performance is positive.

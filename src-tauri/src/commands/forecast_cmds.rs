@@ -1748,13 +1748,18 @@ pub struct MonthEndDto {
 pub struct MonthMetricDto {
     pub year: i32,
     pub month: u32,
+    /// Renda na view ECONOMIA — a "sua renda" do método, denominador do Economizado%.
     pub income_cents: i64,
+    /// Renda na view PERFORMANCE (perna positiva de `performance_cents`).
+    pub income_performance_cents: i64,
     pub performance_cents: i64,
     pub cost_of_living_cents: i64,
     /// Saídas fixas realizadas (coluna Saída sem cartão/economia/patrimônio).
     pub fixed_out_cents: i64,
-    /// Diário realizado (coluna Diário).
+    /// Diário realizado (coluna Diário, view CUSTO DE VIDA).
     pub daily_out_cents: i64,
+    /// Diário realizado na view DIÁRIO MÉDIO — numerador de `real_daily_avg_cents`.
+    pub daily_avg_out_cents: i64,
     /// Previsão de diário do mês (teto dos dias futuros + pré-lançados); desconta a Performance.
     pub daily_projected_cents: i64,
     /// Cartão realizado, bucket próprio dentro do custo de vida.
@@ -1863,7 +1868,9 @@ pub(crate) async fn forecast_dto(
         seed,
         today_naive,
         &events,
-        &metric_events,
+        // Máscara ALL: as réguas por tag entram quando o loader carregar os flags por
+        // lançamento; até lá, o filtro de exclusão segue no SQL do loader.
+        &forecast::lift_all(&metric_events),
         horizon_end,
         &annotation,
     );
@@ -2041,10 +2048,12 @@ pub(crate) async fn forecast_dto(
                 year: m.year,
                 month: m.month,
                 income_cents: m.income_cents,
+                income_performance_cents: m.income_performance_cents,
                 performance_cents: m.performance_cents,
                 cost_of_living_cents: m.cost_of_living_cents,
                 fixed_out_cents: m.fixed_out_cents,
                 daily_out_cents: m.daily_out_cents,
+                daily_avg_out_cents: m.daily_avg_out_cents,
                 daily_projected_cents: m.daily_projected_cents,
                 cartao_cents: m.cartao_cents,
                 real_daily_avg_cents: m.real_daily_avg_cents,
@@ -2103,17 +2112,22 @@ pub(crate) async fn annual_metrics(
     }
     let months: Vec<(i32, u32)> = (1..=12).map(|m| (year, m)).collect();
     let annotation = load_economia_annotation(pool, &[year]).await?;
-    let metrics = forecast::month_metrics_for(today, &events, &months, &annotation);
+    // Máscara ALL: a visão anual ganha as réguas por tag quando o loader carregar os
+    // flags por lançamento; o filtro de exclusão segue no SQL do loader.
+    let metrics =
+        forecast::month_metrics_for(today, &forecast::lift_all(&events), &months, &annotation);
     let months = metrics
         .iter()
         .map(|m| MonthMetricDto {
             year: m.year,
             month: m.month,
             income_cents: m.income_cents,
+            income_performance_cents: m.income_performance_cents,
             performance_cents: m.performance_cents,
             cost_of_living_cents: m.cost_of_living_cents,
             fixed_out_cents: m.fixed_out_cents,
             daily_out_cents: m.daily_out_cents,
+            daily_avg_out_cents: m.daily_avg_out_cents,
             daily_projected_cents: m.daily_projected_cents,
             cartao_cents: m.cartao_cents,
             real_daily_avg_cents: m.real_daily_avg_cents,
@@ -2686,7 +2700,7 @@ mod tests {
         let today = NaiveDate::from_ymd_opt(2026, 3, 31).unwrap();
         let metrics = forecast::month_metrics_for(
             today,
-            std::slice::from_ref(&income),
+            &forecast::lift_all(std::slice::from_ref(&income)),
             &[(2026, 3)],
             &annotation,
         );
