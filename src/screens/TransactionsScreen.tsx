@@ -25,7 +25,7 @@ import {
   getDashboardSummary,
   getForecast,
   getMonthGrid,
-  getRecentTransactions,
+  getMonthTransactions,
   isTauri,
   listTags,
   setTransactionTags,
@@ -45,11 +45,11 @@ import {
   buildDayGroups,
   countRows,
   daymarkLabel,
+  daysSummary,
   emptyListCopy,
   LINE_ITEM_KIND_META,
   monthTitle,
   splitAroundToday,
-  sumSigned,
   toMovementType,
   type CellGroup,
   type DayGroup,
@@ -60,8 +60,6 @@ import {
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-const FETCH_LIMIT = 400;
 
 /** ISO today, computed once per module load (stable for a day). */
 const TODAY = todayISO();
@@ -85,7 +83,7 @@ const FILTER_CHIPS: { key: FilterKey; label: string; hint: string }[] = [
   { key: "saida", label: "Saída", hint: "Conta fixa do mês" },
   { key: "diario", label: "Diário", hint: "O variável do dia" },
   { key: "economia", label: "Economia", hint: "O que você guardou" },
-  { key: "cartao", label: "Cartão", hint: "Compra que soma na fatura" },
+  { key: "cartao", label: "Cartão", hint: "Soma na fatura e vira Saída no vencimento" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -105,6 +103,17 @@ function monthGridFetcher(year: number, month: number): () => Promise<MonthGridD
   if (cached) return cached;
   const fn = () => getMonthGrid(year, month);
   _monthGridFetchers.set(key, fn);
+  return fn;
+}
+
+// O Livro-razão busca por MÊS (a janela recente pura cortaria meses antigos no
+// limite e o mês navegado pareceria vazio). Mesmo padrão de fetcher estável.
+const _monthTxFetchers = new Map<string, () => Promise<TransactionRow[]>>();
+function monthTxFetcher(monthKey: string): () => Promise<TransactionRow[]> {
+  const cached = _monthTxFetchers.get(monthKey);
+  if (cached) return cached;
+  const fn = () => getMonthTransactions(monthKey);
+  _monthTxFetchers.set(monthKey, fn);
   return fn;
 }
 
@@ -297,7 +306,9 @@ function RowLine({
       className={"lc-row" + (row.pills.previsto ? " lc-row--future" : "")}
       onClick={onToggle}
       aria-expanded={open}
-      aria-label={row.name}
+      // Sem aria-label: o nome acessível é o conteúdo real da linha (nome,
+      // pílulas, contexto e valor) — um rótulo só com o nome esconderia o
+      // dinheiro do leitor de tela.
     >
       <span className="lc-row__ic" style={{ color: kindColor }} aria-hidden="true">
         <Icon size={17} strokeWidth={1.75} />
@@ -570,12 +581,9 @@ function FilterSheet({
       // Light-dismiss nativo (toque no backdrop fecha); Esc já é nativo do dialog.
       {...{ closedby: "any" }}
     >
-      <div className="lc-sheet__panel">
+      <div>
         <h3 className="lc-sheet__t">Filtrar por tipo</h3>
-        <p className="lc-sheet__hint">
-          Os tipos do método: Diário é o variável do dia; Saída é conta fixa; Cartão
-          soma na fatura e vira Saída no vencimento.
-        </p>
+        {/* Sem parágrafo didático: os hints por opção já ensinam cada tipo. */}
         <div className="lc-sheet__opts">
           {FILTER_CHIPS.map((f) => (
             <button
@@ -650,13 +658,6 @@ function lcReducer(state: LcState, action: LcAction): LcState {
 export function TransactionsScreen() {
   const { openCompose } = useNekoApp();
 
-  const {
-    data: transactions,
-    loading,
-    error,
-  } = useCommand("get_recent_transactions:lc", () =>
-    getRecentTransactions(FETCH_LIMIT),
-  );
   const { data: allTags } = useCommand("list_tags:lc", listTags);
   // Modo de gasto (copy do vazio) e custo de vida do mês — caches compartilhados do app.
   const summaryQ = useCommand("get_dashboard_summary", getDashboardSummary);
@@ -679,6 +680,13 @@ export function TransactionsScreen() {
   const targetKey = `${targetYear}-${String(targetMonth).padStart(2, "0")}`;
   const monthName = (MES[targetMonth - 1] ?? "").toLowerCase();
   const crumbLabel = monthTitle(targetKey);
+
+  // A lista do mês visto — escopada no backend, nunca cortada por janela recente.
+  const {
+    data: transactions,
+    loading,
+    error,
+  } = useCommand(`get_month_transactions:${targetKey}`, monthTxFetcher(targetKey));
 
   // O crumb da appbar acompanha o mês visto; ao sair da tela, volta ao padrão.
   // `setCrumb` é função de módulo (identidade fixa) — o efeito só re-dispara
@@ -704,7 +712,8 @@ export function TransactionsScreen() {
     });
   }
 
-  // Pipeline: tipo → mês → grupos célula×nota → busca → em torno de hoje.
+  // Pipeline: tipo → grupos célula×nota → busca → em torno de hoje. (A lista já
+  // chega mês-escopada; o guard por monthKey só protege contra cache de outro mês.)
   const rows = transactions ?? [];
   const typed =
     filter !== "todos" ? rows.filter((t) => toMovementType(t) === filter) : rows;
@@ -714,8 +723,7 @@ export function TransactionsScreen() {
   const visible = applySearch(grouped, search);
   const { future, past } = splitAroundToday(visible, TODAY);
   const isCurrentMonth = targetKey === monthKey(TODAY);
-  const futureCount = countRows(future);
-  const futureSum = sumSigned(future);
+  const futureSummary = daysSummary(future);
 
   // Saldo encadeado por dia (paridade com a coluna Saldo da planilha).
   const gridQ = useCommand(
@@ -803,8 +811,9 @@ export function TransactionsScreen() {
               title="O que ainda vem neste mês"
               summary={
                 <span className="lc-future__sum">
-                  {futureCount} {futureCount === 1 ? "lançamento" : "lançamentos"} ·{" "}
-                  <SignedMoney cents={futureSum} size="inherit" />
+                  {futureSummary.txnCount}{" "}
+                  {futureSummary.txnCount === 1 ? "lançamento" : "lançamentos"} ·{" "}
+                  <SignedMoney cents={futureSummary.sumCents} size="inherit" />
                 </span>
               }
             >
@@ -829,9 +838,8 @@ export function TransactionsScreen() {
           entram a frase de contexto e — no desktop — a busca ao lado dela. No mobile
           a busca desce para a zona do polegar, no rodapé da lista (mesmo estado). */}
       <header className="lc-head">
-        <p className="lc-head__teach">
-          Tudo o que entrou e saiu, do mais recente para o mais antigo.
-        </p>
+        {/* Sem alegar ordenação: num mês futuro a lista sobe do mais próximo. */}
+        <p className="lc-head__teach">Tudo o que entrou e saiu, dia a dia.</p>
         {searchField("lc-search--desk")}
       </header>
 
@@ -864,7 +872,7 @@ export function TransactionsScreen() {
             </button>
           ))}
         </div>
-        {costOfLiving != null && costOfLiving > 0 && (
+        {costOfLiving != null && (
           <span className="lc-filters__tot">
             Custo de vida — <Money cents={costOfLiving} size="inherit" /> no mês
           </span>

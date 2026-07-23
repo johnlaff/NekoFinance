@@ -437,6 +437,14 @@
   font-size: var(--fs-label);
   padding: var(--space-2) var(--space-5);
   cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-standard),
+    background-color var(--dur-fast) var(--ease-standard);
+}
+
+.lc-tagchip:hover {
+  background: var(--surface-2);
+  color: var(--text);
 }
 
 /* ---- Disclosure de futuros do mês corrente ---- */
@@ -468,42 +476,31 @@
 
 /* ---- Bottom sheet de filtro (mobile) ---- */
 
+/* O dialog É o painel: colado na base, ele deixa o ::backdrop exposto — o toque
+   no scrim cai no backdrop e o light-dismiss nativo (closedby) fecha. Um dialog
+   transparente cobrindo o viewport engoliria o toque. */
 .lc-sheet {
-  border: 0;
-  padding: 0;
-  background: none;
-  max-width: none;
-  max-height: none;
+  margin: auto 0 0;
   width: 100%;
-  height: 100dvh;
-  margin: 0;
+  max-width: none;
+  max-height: 85dvh;
+  border: 0;
+  border-top: var(--bw-hair) solid var(--border);
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  background: var(--surface);
+  color: var(--text);
+  padding: var(--space-7) var(--space-6)
+    calc(var(--space-8) + env(safe-area-inset-bottom));
 }
 
 .lc-sheet::backdrop {
   background: var(--bg-scrim, rgb(0 0 0 / 0.5));
 }
 
-.lc-sheet__panel {
-  position: fixed;
-  inset: auto 0 0 0;
-  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
-  background: var(--surface);
-  border-top: var(--bw-hair) solid var(--border);
-  padding: var(--space-7) var(--space-6)
-    calc(var(--space-8) + env(safe-area-inset-bottom));
-}
-
 .lc-sheet__t {
   margin: 0 0 var(--space-2);
   font-size: var(--fs-title);
   color: var(--text-strong);
-}
-
-.lc-sheet__hint {
-  margin: 0 0 var(--space-5);
-  font-size: var(--fs-sm);
-  line-height: 1.5;
-  color: var(--text-faint);
 }
 
 .lc-sheet__opts {
@@ -636,8 +633,228 @@
     order: 0;
   }
 
+  /* A busca vive no fluxo, mas gruda acima do dock do shell enquanto a lista
+     rola — sempre a um polegar de distância, sem roubar a primeira dobra. */
   .lc-dock {
     display: block;
+    position: sticky;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 84px);
+    z-index: 5;
     padding-top: var(--space-4);
+  }
+
+  /* Pill flutuante, no idioma do dock do shell: quase opaco + sombra discreta —
+     o conteúdo rola por baixo sem virar ruído atrás de vidro. */
+  .lc-dock .lc-search {
+    background: color-mix(in srgb, var(--surface) 96%, transparent);
+    backdrop-filter: blur(12px);
+    box-shadow: var(--shadow-2);
+  }
+}
+
+/* ============================================================
+   Obrigações recorrentes — componentes do ObligationsPanel que
+   moram nesta tela (card, painel de marcação, histórico).
+   ============================================================ */
+
+.lc-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  font-size: 10.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  flex: none;
+}
+.lc-kind__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+.lc-mark-wrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+.lc-mark-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-xs);
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  flex: none;
+  transition: var(--t-hover);
+}
+.lc-mark-btn:hover,
+.lc-mark-btn[aria-expanded="true"] {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.lc-obligation-panel {
+  position: absolute;
+  z-index: 5;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  width: min(340px, 80vw);
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-1);
+}
+.lc-obligation-panel__hint {
+  margin: 0 0 10px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.lc-obligation-panel__row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.lc-obligation-panel__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.lc-obligation-panel__field input {
+  height: 30px;
+  padding: 0 9px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+}
+.lc-obligation-panel__checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.lc-obligation-panel__preview {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 600;
+}
+.lc-obligation-panel__error {
+  margin: 0 0 10px;
+  font-size: 11.5px;
+  color: var(--danger-400);
+}
+.lc-obligation-panel__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.lc-obligation-row {
+  border-bottom: 1px solid var(--border);
+}
+.lc-obligation-row:last-child {
+  border-bottom: none;
+}
+.lc-obligation-row__bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.lc-obligation-row__head {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+.lc-obligation-row__name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lc-obligation-row__avg {
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.lc-obligation-row__trend {
+  display: inline-flex;
+  color: var(--text-faint);
+  flex: none;
+}
+.lc-obligation-row__delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: var(--radius-xs);
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: var(--t-hover);
+}
+.lc-obligation-row__delete:hover {
+  background: var(--danger-tint);
+  color: var(--danger-400);
+}
+.lc-obligation-history {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 0 10px 23px;
+}
+.lc-obligation-history__row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+.lc-obligation-history__month {
+  min-width: 56px;
+  font-weight: 600;
+  color: var(--text);
+}
+.lc-obligation-history__count {
+  flex: 1;
+  color: var(--text-faint);
+}
+
+@media (max-width: 700px) {
+  .lc-obligation-row__avg {
+    display: none;
   }
 }

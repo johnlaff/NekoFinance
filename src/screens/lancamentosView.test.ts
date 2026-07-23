@@ -6,12 +6,12 @@ import {
   cellHeadLabel,
   countRows,
   daymarkLabel,
+  daysSummary,
   emptyListCopy,
   monthTitle,
   normalizeQuery,
   sectionLabel,
   splitAroundToday,
-  sumSigned,
   toMovementType,
 } from "./lancamentosView";
 
@@ -252,6 +252,23 @@ describe("applySearch", () => {
   it("normalizeQuery remove diacríticos", () => {
     expect(normalizeQuery("João Áçãô")).toBe("joao acao");
   });
+
+  it("acha item pela descrição do lançamento-pai e pela data", () => {
+    const comPai = buildDayGroups(
+      [
+        txn({
+          id: "pai",
+          description: "Fatura mista",
+          date: "2026-07-12",
+          is_fixed: true,
+          line_items: [item({ id: "m1", amount_cents: 1000, description: "Mercado" })],
+        }),
+      ],
+      TODAY,
+    );
+    expect(countRows(applySearch(comPai, "Fatura mista"))).toBe(1);
+    expect(countRows(applySearch(comPai, "2026-07-12"))).toBe(1);
+  });
 });
 
 describe("splitAroundToday", () => {
@@ -271,15 +288,37 @@ describe("splitAroundToday", () => {
     expect(future.map((d) => d.date)).toEqual(["2026-07-26", "2026-07-30"]);
   });
 
-  it("sumSigned soma com sinal (entrada positiva)", () => {
+  it("daysSummary conta lançamentos e soma pela CÉLULA, nunca pela nota", () => {
     const days = buildDayGroups(
       [
         txn({ id: "in", type: "income", amount: 5000 }),
-        txn({ id: "out", amount: -2000 }),
+        // Célula divergente: 810158 na célula, 810128 na nota — a autoridade manda.
+        txn({
+          id: "cel",
+          amount: -810158,
+          is_fixed: true,
+          line_items: [
+            item({ id: "i1", amount_cents: 400066 }),
+            item({ id: "i2", amount_cents: 410062 }),
+          ],
+        }),
       ],
       TODAY,
     );
-    expect(sumSigned(days)).toBe(3000);
+    const s = daysSummary(days);
+    expect(s.txnCount).toBe(2); // 2 lançamentos, nunca 3 (itens não contam)
+    expect(s.sumCents).toBe(5000 - 810158); // célula, não a soma da nota
+  });
+
+  it("item de célula futura desce o estado previsto para a linha", () => {
+    const futura = txn({
+      id: "fut",
+      date: "2026-07-30",
+      is_fixed: true,
+      line_items: [item({ id: "fi", amount_cents: 1000 })],
+    });
+    const days = buildDayGroups([futura], TODAY);
+    expect(days[0]!.cells[0]!.rows[0]!.pills.previsto).toBe(true);
   });
 });
 

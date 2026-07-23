@@ -178,12 +178,17 @@ function pillsOfTxn(t: TransactionRow, todayIso: string): RowPills {
   };
 }
 
-const EMPTY_PILLS: RowPills = {
-  installment: null,
-  previsto: false,
-  refund: false,
-  tags: [],
-};
+/** Pílulas de linha de item: só o estado temporal desce do lançamento-pai
+ *  (uma célula futura precisa marcar cada linha); parcela/reembolso/tags do
+ *  pai vivem no cabeçalho da célula. */
+function itemPills(t: TransactionRow, todayIso: string): RowPills {
+  return {
+    installment: null,
+    previsto: t.is_projection || t.date > todayIso,
+    refund: false,
+    tags: [],
+  };
+}
 
 /**
  * Agrupa lançamentos em dias (ordem crescente de data) e, dentro do dia, em
@@ -234,7 +239,7 @@ export function buildDayGroups(rows: TransactionRow[], todayIso: string): DayGro
               signedCents: item.kind === "entrada" ? abs : -abs,
               txn: t,
               item,
-              pills: EMPTY_PILLS,
+              pills: itemPills(t, todayIso),
             });
           }
         } else {
@@ -278,8 +283,12 @@ export function applySearch(days: DayGroup[], query: string): DayGroup[] {
   for (const day of days) {
     const cells: CellGroup[] = [];
     for (const cell of day.cells) {
+      // O palheiro inclui o lançamento-pai (descrição e data): achar "Fatura X"
+      // pelo item da nota, ou um dia inteiro por "2026-07-12".
       const rows = cell.rows.filter((r) =>
-        normalizeQuery(`${r.name} ${r.context}`).includes(q),
+        normalizeQuery(
+          `${r.name} ${r.context} ${r.txn.description} ${r.txn.date}`,
+        ).includes(q),
       );
       if (rows.length > 0) cells.push({ ...cell, rows, diffCents: 0 });
     }
@@ -302,15 +311,24 @@ export function splitAroundToday(days: DayGroup[], todayIso: string): SplitDays 
   return { future, past };
 }
 
-/** Σ com sinal de todos os grupos (entrada positiva) — o resumo do disclosure de futuros. */
-export function sumSigned(days: DayGroup[]): number {
-  let sum = 0;
+export interface DaysSummary {
+  /** Lançamentos distintos (nunca itens de nota). */
+  txnCount: number;
+  /** Σ com sinal por CÉLULA (a autoridade) — nunca pela nota, que pode divergir. */
+  sumCents: number;
+}
+
+/** Resumo honesto de um conjunto de dias (o disclosure de futuros). */
+export function daysSummary(days: DayGroup[]): DaysSummary {
+  const txns = new Set<string>();
+  let sumCents = 0;
   for (const day of days) {
     for (const cell of day.cells) {
-      for (const row of cell.rows) sum += row.signedCents;
+      sumCents += cell.type === "entrada" ? cell.totalCents : -cell.totalCents;
+      for (const row of cell.rows) txns.add(row.txn.id);
     }
   }
-  return sum;
+  return { txnCount: txns.size, sumCents };
 }
 
 /** Total de linhas exibíveis (itens contam; reconciliação não). */

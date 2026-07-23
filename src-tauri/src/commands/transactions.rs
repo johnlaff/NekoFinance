@@ -136,8 +136,9 @@ pub struct TransactionRow {
 pub async fn get_recent_transactions(
     pool: State<'_, SqlitePool>,
     limit: i64,
+    month: Option<String>,
 ) -> Result<Vec<TransactionRow>, String> {
-    recent_transactions(pool.inner(), limit).await
+    recent_transactions(pool.inner(), limit, month.as_deref()).await
 }
 
 #[derive(sqlx::FromRow)]
@@ -162,9 +163,12 @@ pub(crate) struct RecentRow {
     has_refund_link: i64,
 }
 
+/// `month` ("YYYY-MM") escopa ao mês do Livro-razão — sem ele, a janela recente
+/// pura cortaria meses antigos no `limit` e o mês navegado pareceria vazio.
 pub(crate) async fn recent_transactions(
     pool: &SqlitePool,
     limit: i64,
+    month: Option<&str>,
 ) -> Result<Vec<TransactionRow>, String> {
     // Titulares vêm de um subquery agregado (GROUP_CONCAT com separador '|') — sem N+1.
     let rows: Vec<RecentRow> = sqlx::query_as(
@@ -180,12 +184,16 @@ pub(crate) async fn recent_transactions(
                  OR t.refund_series_id IS NOT NULL \
                  OR EXISTS (SELECT 1 FROM \"transaction\" r WHERE r.scenario_id IS NULL AND ( \
                         r.refund_txn_id = t.id \
-                        OR (t.invoice_id IS NOT NULL AND r.refund_invoice_id = t.invoice_id) \
+                        OR (t.type = 'expense' AND t.payment_method = 'credit' \
+                            AND t.invoice_id IS NOT NULL AND r.refund_invoice_id = t.invoice_id) \
                         OR (t.card_series_id IS NOT NULL AND r.refund_series_id = t.card_series_id)))) \
                     AS has_refund_link \
-         FROM \"transaction\" t WHERE t.scenario_id IS NULL ORDER BY t.date DESC LIMIT ?1",
+         FROM \"transaction\" t WHERE t.scenario_id IS NULL \
+           AND (?2 IS NULL OR substr(t.date, 1, 7) = ?2) \
+         ORDER BY t.date DESC LIMIT ?1",
     )
     .bind(limit)
+    .bind(month)
     .fetch_all(pool)
     .await
     .map_err(|e| format!("query: {e}"))?;
@@ -2028,11 +2036,37 @@ mod tests {
         .unwrap();
         insert_txn(&pool, "nodue-1", 2000).await;
 
-        let rows = recent_transactions(&pool, 50).await.unwrap();
+        let rows = recent_transactions(&pool, 50, None).await.unwrap();
         let with_due = rows.iter().find(|r| r.id == "due-1").unwrap();
         assert_eq!(with_due.due_date.as_deref(), Some("2026-07-10"));
         let without_due = rows.iter().find(|r| r.id == "nodue-1").unwrap();
         assert_eq!(without_due.due_date, None, "sem vencimento → None");
+    }
+
+    #[tokio::test]
+    async fn recent_transactions_scoped_by_month() {
+        let pool = test_pool().await;
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, created_at, updated_at) VALUES \
+             ('mar-1', 'expense', 1000, '2026-03-10', 0, 0, '2026-03-10T00:00:00Z', '2026-03-10T00:00:00Z'), \
+             ('abr-1', 'expense', 2000, '2026-04-02', 0, 0, '2026-04-02T00:00:00Z', '2026-04-02T00:00:00Z'), \
+             ('abr-2', 'income', 3000, '2026-04-28', 0, 0, '2026-04-28T00:00:00Z', '2026-04-28T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Com mês: só as linhas do mês pedido, independente do limite recente.
+        let april = recent_transactions(&pool, 400, Some("2026-04"))
+            .await
+            .unwrap();
+        let mut ids: Vec<&str> = april.iter().map(|r| r.id.as_str()).collect();
+        ids.sort();
+        assert_eq!(ids, vec!["abr-1", "abr-2"]);
+
+        // Sem mês: comportamento recente inalterado (todas, até o limite).
+        let all = recent_transactions(&pool, 400, None).await.unwrap();
+        assert_eq!(all.len(), 3);
     }
 
     #[tokio::test]
@@ -2058,10 +2092,19 @@ mod tests {
         .await
         .unwrap();
 
-        // (a) Despesa da fatura (lump) — a Entrada vinculada abaixo cria a expectativa.
+        // (a) Compra de crédito da fatura — a Entrada vinculada abaixo cria a expectativa.
         sqlx::query(
-            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, invoice_id, created_at, updated_at) \
-             VALUES ('fat-1', 'expense', -407764, '2026-07-12', 0, 0, 'inv-1', '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z')",
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, payment_method, invoice_id, created_at, updated_at) \
+             VALUES ('fat-1', 'expense', -407764, '2026-07-12', 0, 0, 'credit', 'inv-1', '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // (a2) Débito com invoice_id herdado (rekey de legado): NUNCA pertence à
+        // fatura, então não herda a expectativa de reembolso dela.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, payment_method, invoice_id, created_at, updated_at) \
+             VALUES ('deb-1', 'expense', -5000, '2026-07-12', 0, 0, 'debit', 'inv-1', '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z')",
         )
         .execute(&pool)
         .await
@@ -2086,7 +2129,7 @@ mod tests {
         // (d) Linha sem vínculo nenhum.
         insert_txn(&pool, "solta-1", 700).await;
 
-        let rows = recent_transactions(&pool, 50).await.unwrap();
+        let rows = recent_transactions(&pool, 50, None).await.unwrap();
         let by_id = |id: &str| rows.iter().find(|r| r.id == id).unwrap();
         assert!(
             by_id("fat-1").has_refund_link,
@@ -2107,6 +2150,10 @@ mod tests {
         assert!(
             !by_id("solta-1").has_refund_link,
             "linha sem vínculo → sem pílula"
+        );
+        assert!(
+            !by_id("deb-1").has_refund_link,
+            "débito com invoice_id de legado não herda o reembolso da fatura"
         );
     }
 
@@ -2194,7 +2241,7 @@ mod tests {
         .await
         .unwrap();
 
-        let recent = recent_transactions(&pool, 50).await.unwrap();
+        let recent = recent_transactions(&pool, 50, None).await.unwrap();
         assert!(
             recent.iter().all(|r| r.id != "hypo-1"),
             "linha hipotética vazou para recent_transactions"
@@ -2230,7 +2277,7 @@ mod tests {
         .await
         .unwrap();
 
-        let rows = recent_transactions(&pool, 50).await.unwrap();
+        let rows = recent_transactions(&pool, 50, None).await.unwrap();
         let first = rows.iter().find(|r| r.id == format!("{rec_id}:0")).unwrap();
         assert_eq!(first.installment_index, Some(1), "0-based → 1-based");
         assert_eq!(first.installment_total, Some(6));
@@ -2247,7 +2294,7 @@ mod tests {
     async fn installment_fields_null_for_single_transaction() {
         let pool = test_pool().await;
         insert_txn(&pool, "single", 1000).await;
-        let rows = recent_transactions(&pool, 50).await.unwrap();
+        let rows = recent_transactions(&pool, 50, None).await.unwrap();
         let row = rows.iter().find(|r| r.id == "single").unwrap();
         assert_eq!(row.installment_index, None);
         assert_eq!(row.installment_total, None);

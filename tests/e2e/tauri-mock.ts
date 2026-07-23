@@ -305,7 +305,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
             id: "li-t3-card",
             transaction_id: "t3",
             amount_cents: 4500,
-            description: "Compra credito demo",
+            description: "Compra no crédito demo",
             position: 0,
             kind: "cartao",
             section: "CARTÕES |",

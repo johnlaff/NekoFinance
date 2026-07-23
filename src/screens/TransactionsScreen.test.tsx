@@ -112,10 +112,10 @@ describe("TransactionsScreen (Lançamentos)", () => {
 
     // Os itens são linhas de primeira classe (não escondidos atrás de expansão).
     expect(
-      await screen.findByRole("button", { name: "Bradesco João" }),
+      await screen.findByRole("button", { name: /^Bradesco João/ }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Bradesco Gio" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Inter" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Bradesco Gio/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Inter/ })).toBeInTheDocument();
     // O cabeçalho de célula declara a coluna e carrega o total como autoridade.
     expect(screen.getByText("Saída — Total da célula")).toBeInTheDocument();
     expect(screen.getByText(/8\.101,58/)).toBeInTheDocument();
@@ -197,9 +197,9 @@ describe("TransactionsScreen (Lançamentos)", () => {
 
     expect(screen.queryByText("Com diferença")).not.toBeInTheDocument();
     expect(screen.queryByText("Diferença no detalhamento")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Bradesco Gio" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Bradesco Gio/ })).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Bradesco João" }),
+      screen.queryByRole("button", { name: /^Bradesco João/ }),
     ).not.toBeInTheDocument();
   });
 
@@ -225,7 +225,7 @@ describe("TransactionsScreen (Lançamentos)", () => {
     mockCommands({ get_recent_transactions: rows });
     renderLedger();
 
-    const row = await screen.findByRole("button", { name: "Financiamento" });
+    const row = await screen.findByRole("button", { name: /^Financiamento/ });
     expect(row).toHaveTextContent("10/36");
     expect(row).toHaveTextContent("Reembolso");
     // O lançamento futuro vive no disclosure do mês corrente.
@@ -252,14 +252,14 @@ describe("TransactionsScreen (Lançamentos)", () => {
     ];
     mockCommands({ get_recent_transactions: rows });
     renderLedger();
-    await screen.findByRole("button", { name: "Aluguel" });
+    await screen.findByRole("button", { name: /^Aluguel/ });
 
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     await user.click(screen.getByRole("button", { name: "Cartão" }));
 
-    expect(screen.queryByRole("button", { name: "Aluguel" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Aluguel/ })).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Compra no crédito" }),
+      screen.getByRole("button", { name: /^Compra no crédito/ }),
     ).toBeInTheDocument();
   });
 
@@ -328,7 +328,7 @@ describe("TransactionsScreen (Lançamentos)", () => {
     });
     renderLedger();
 
-    await screen.findByRole("button", { name: "Aluguel" });
+    await screen.findByRole("button", { name: /^Aluguel/ });
     expect(screen.queryByLabelText(/Saldo do dia/)).not.toBeInTheDocument();
   });
 });
@@ -351,7 +351,7 @@ describe("TransactionsScreen — apagar série recorrente", () => {
   }
 
   async function openRowActions() {
-    const row = await screen.findByRole("button", { name: "Aluguel" });
+    const row = await screen.findByRole("button", { name: /^Aluguel/ });
     await userEvent.click(row);
     return screen.getByRole("button", { name: "Apagar da série" });
   }

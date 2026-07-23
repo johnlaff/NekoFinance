@@ -164,9 +164,9 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
 
     // Itens da nota são linhas de primeira classe; o contexto carrega a seção.
     await expect(
-      page.getByRole("button", { name: "Compra credito demo" }),
+      page.getByRole("button", { name: /^Compra no crédito demo/ }),
     ).toBeVisible();
-    await expect(page.getByRole("button", { name: "Conta fixa demo" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^Conta fixa demo/ })).toBeVisible();
     await expect(page.getByText("Saída — Total da célula").first()).toBeVisible();
     // Divergência célula×nota (t3: célula 125,00 × itens 100,00): selo no
     // cabeçalho + linha sintética de reconciliação — nunca um item.
@@ -180,7 +180,7 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
 
     await page.setViewportSize({ width: 390, height: 840 });
     await expect(
-      page.getByRole("button", { name: "Compra credito demo" }),
+      page.getByRole("button", { name: /^Compra no crédito demo/ }),
     ).toBeVisible();
     await expect(page.getByText("Com diferença")).toBeVisible();
     await page.screenshot({
