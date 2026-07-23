@@ -25,7 +25,7 @@
 
 .hoje__greet {
   text-align: center;
-  padding: var(--space-5) 0 var(--space-6);
+  padding: var(--space-7) 0 var(--space-8);
 }
 
 .hoje__greet-cat {
@@ -33,7 +33,7 @@
 }
 
 .hoje__greet h1 {
-  margin: var(--space-4) 0 var(--space-1);
+  margin: var(--space-6) 0 var(--space-1);
   font-size: 30px;
   font-weight: var(--fw-semibold);
   letter-spacing: -0.035em;
@@ -61,7 +61,7 @@
 
 .hoje__teach {
   max-width: 52ch;
-  margin: var(--space-4) auto 0;
+  margin: var(--space-5) auto 0;
   font-size: var(--fs-sm);
   color: var(--text-faint);
   line-height: var(--lh-normal);
@@ -74,7 +74,7 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  margin: 0 0 var(--space-4);
+  margin: 0 0 var(--space-5);
   font-size: var(--fs-sm);
   color: var(--text-faint);
 }
@@ -84,12 +84,27 @@
   flex: none;
 }
 
-/* ---- Malha de cards ---- */
+/* ---- Malha de cards ----
+   Bento: cards da mesma linha alinham topo E fundo (stretch); a folga de altura
+   vai para DENTRO do card, ancorada por elemento (a nota no pé, o ar ao redor) —
+   nunca vira buraco entre cards. */
 
 .hoje__grid {
   display: grid;
-  gap: var(--space-3);
-  align-items: start;
+  gap: var(--space-6);
+}
+
+.hoje__blockday,
+.hoje__card--moves,
+.hoje__card--saldo {
+  display: flex;
+  flex-direction: column;
+}
+
+/* No bloco do dia, o glossário final ancora no pé; o ar fica entre o dado e a nota. */
+.hoje__blockday .hoje__gloss:last-child {
+  margin-top: auto;
+  padding-top: var(--space-5);
 }
 
 .hoje__card {
@@ -97,14 +112,14 @@
   border: var(--bw-hair) solid var(--border);
   border-radius: var(--radius-xl);
   background: var(--surface);
-  padding: var(--space-4) var(--space-4) var(--space-4);
+  padding: var(--space-6);
 }
 
 .hoje__cardhead {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin: 0 0 var(--space-3);
+  margin: 0 0 var(--space-5);
 }
 
 .hoje__cardhead .ic {
@@ -142,7 +157,7 @@
   align-items: baseline;
   gap: var(--space-3);
   flex-wrap: wrap;
-  margin: 0 0 var(--space-2);
+  margin: 0 0 var(--space-3);
   font-size: 32px;
   font-weight: var(--fw-semibold);
   letter-spacing: -0.04em;
@@ -156,7 +171,7 @@
 }
 
 .hoje__modo {
-  margin: 0 0 var(--space-3);
+  margin: 0 0 var(--space-5);
 }
 
 /* A fatura em aberto é o corpo do card no modo cartão: o método manda mantê-la à
@@ -164,8 +179,8 @@
 .hoje__fatura {
   border: var(--bw-hair) dashed var(--border-strong);
   border-radius: var(--radius-md);
-  padding: var(--space-3) var(--space-3);
-  margin: 0 0 var(--space-3);
+  padding: var(--space-5);
+  margin: 0 0 var(--space-5);
 }
 
 .hoje__fatura-head {
@@ -183,7 +198,7 @@
   height: 6px;
   border-radius: var(--radius-pill);
   background: var(--surface-2);
-  margin: var(--space-2) 0;
+  margin: var(--space-4) 0;
   overflow: hidden;
 }
 
@@ -204,17 +219,17 @@
 }
 
 .hoje__zerados {
-  margin-top: var(--space-3);
+  margin-top: var(--space-5);
 }
 
 .hoje__gloss {
-  margin-top: var(--space-3);
+  margin-top: var(--space-5);
 }
 
 /* Agrupamento por vencimento: o modelo mental é "o que vence primeiro",
    não "que cartões eu tenho". */
 .hoje__venc {
-  margin: var(--space-3) 0 0;
+  margin: var(--space-5) 0 0;
   font-size: var(--fs-xs);
   font-weight: var(--fw-semibold);
   letter-spacing: 0.01em;
@@ -230,8 +245,8 @@
 .hoje__rows li {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) 0;
+  gap: var(--space-4);
+  padding: var(--space-5) 0;
 }
 
 .hoje__rows .ic {
@@ -287,7 +302,7 @@
   height: 9px;
   border-radius: var(--radius-pill);
   background: var(--surface-2);
-  margin: var(--space-3) 0 var(--space-2);
+  margin: var(--space-5) 0 var(--space-4);
   overflow: hidden;
 }
 
@@ -306,7 +321,7 @@
   border: var(--bw-hair) solid color-mix(in oklch, var(--accent) 22%, transparent);
   border-radius: var(--radius-xl);
   background: color-mix(in oklch, var(--accent) 6%, var(--surface));
-  padding: var(--space-4);
+  padding: var(--space-6);
   font-size: var(--fs-md);
   color: var(--text-muted);
   line-height: var(--lh-normal);
@@ -338,15 +353,20 @@
   border-top: var(--bw-hair) solid var(--border);
   border-radius: 0;
   background: none;
-  padding: var(--space-3) 0 0;
-  margin: var(--space-3) 0 0;
+  padding: var(--space-5) 0 0;
+  margin: var(--space-5) 0 0;
+}
+
+/* Âncora bento: o divisor de voz assenta no pé do card de saldo. */
+.hoje__card--saldo .hoje__insight {
+  margin-top: auto;
 }
 
 /* ---- Próximos movimentos: carrossel no polegar, lista no mouse ---- */
 
 .hoje__moves {
   display: flex;
-  gap: var(--space-3);
+  gap: var(--space-5);
   overflow-x: auto;
   padding: 2px 2px var(--space-2);
   scroll-snap-type: x proximity;
@@ -365,7 +385,7 @@
   scroll-snap-align: start;
   border: var(--bw-hair) solid var(--border);
   border-radius: var(--radius-lg);
-  padding: var(--space-4) var(--space-3) 0;
+  padding: var(--space-6) var(--space-5) 0;
   text-align: center;
 }
 
@@ -377,7 +397,7 @@
   border-radius: var(--radius-circle);
   background: var(--surface-2);
   color: var(--text-muted);
-  margin-bottom: var(--space-3);
+  margin-bottom: var(--space-5);
 }
 
 .hoje__move-logo.is-income {
@@ -407,8 +427,8 @@
 
 .hoje__move-dt {
   width: 100%;
-  margin-top: var(--space-3);
-  padding: var(--space-2) 0 11px;
+  margin-top: var(--space-5);
+  padding: var(--space-4) 0 var(--space-5);
   border-top: var(--bw-hair) solid var(--border);
   font-size: var(--fs-xs);
   color: var(--text-faint);
@@ -431,8 +451,9 @@
 .hoje__pair {
   display: flex;
   justify-content: space-between;
-  gap: var(--space-4);
-  margin-top: var(--space-4);
+  gap: var(--space-6);
+  margin-top: auto;
+  padding-top: var(--space-6);
 }
 
 .hoje__pair .side:last-child {
@@ -456,14 +477,28 @@
 .hoje__statpair {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: var(--space-3);
+  gap: var(--space-5);
+  /* Bento: o par preenche o card; cada caixa estica junto com a vizinha. */
+  flex: 1;
 }
 
 .hoje__stat {
+  display: flex;
+  flex-direction: column;
   border: var(--bw-hair) solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface-2);
-  padding: var(--space-4);
+  padding: var(--space-6);
+}
+
+/* A régua e sua frase leem juntas — o conjunto assenta no pé da caixa.
+   O respiro mínimo vive no rótulo acima; o `auto` só distribui a folga. */
+.hoje__stat .sl {
+  margin-bottom: var(--space-5);
+}
+
+.hoje__stat .hoje__gauge {
+  margin-top: auto;
 }
 
 .hoje__stat .sv {
@@ -489,7 +524,7 @@
   height: 6px;
   border-radius: var(--radius-pill);
   background: var(--surface);
-  margin: var(--space-3) 0 var(--space-2);
+  margin: var(--space-5) 0 var(--space-4);
   overflow: hidden;
 }
 
@@ -545,7 +580,7 @@
 @media (min-width: 901px) {
   .hoje__grid {
     grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
-    gap: var(--space-3) var(--space-5);
+    gap: var(--space-6);
   }
 
   /* O bloco só ancora a coluna inteira quando a lista de faturas lhe dá altura;
