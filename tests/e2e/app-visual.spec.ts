@@ -200,6 +200,31 @@ test.describe("teto do diário + estados de dado", () => {
   });
 });
 
+// Este mês no mobile: o bento colapsa em coluna única na ordem do DOM
+// (régua → custo → performance → diário médio → série histórica).
+for (const theme of ["dark", "light"] as const) {
+  test(`Este mês — mobile ${theme}`, async ({ page }) => {
+    await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript((t: string) => {
+      localStorage.setItem("neko-theme", t);
+    }, theme);
+    await mockTauri(page, {
+      list_scenarios_cmd: [],
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [],
+    });
+    await page.goto("/");
+    await page.getByRole("button", { name: "Este mês", exact: false }).first().click();
+    await page.waitForTimeout(350);
+    await expect(page).toHaveScreenshot(`mobile-mes-${theme}.png`, {
+      fullPage: true,
+      maxDiffPixelRatio: 0.02,
+    });
+  });
+}
+
 // Lançamentos no mobile: a ergonomia própria do viewport — busca na zona do
 // polegar (rodapé da lista) e filtro por tipo em bottom sheet.
 for (const theme of ["dark", "light"] as const) {

@@ -7,18 +7,25 @@ import {
   performanceStatus,
   economizadoStatus,
   custoVidaStatus,
+  serieLeitura,
   SAVINGS_MIN_BPS,
 } from "./totaisStatus";
+import { crumbOverridesSnapshot } from "../shell/crumbStore";
 import type { MonthMetric } from "../lib/api";
 import {
   ANNUAL_METRICS,
   FORECAST,
   OWNER_TOTALS,
+  SUMMARY,
   mockCommands,
   mockInvoke,
 } from "../test/commands";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+
+function monthFixture(overrides: Partial<MonthMetric>): MonthMetric {
+  return { ...FORECAST.months[0]!, ...overrides };
+}
 
 describe("TotaisScreen — regras do método (puro)", () => {
   it("Performance: >=0 Sobrou, <0 Faltou", () => {
@@ -27,53 +34,138 @@ describe("TotaisScreen — regras do método (puro)", () => {
     expect(performanceStatus(-1).label).toBe("Faltou dinheiro");
     expect(performanceStatus(-1).level).toBe("risk");
   });
+
   it("Economizado: >=20% (2000bps) dentro do ideal", () => {
     expect(economizadoStatus(2500).label).toBe("Dentro do ideal");
     expect(economizadoStatus(2000).label).toBe("Dentro do ideal");
     expect(economizadoStatus(1900).label).toBe("Abaixo do ideal");
   });
+
+  it("Economizado: zero tem nome próprio — Nada guardado", () => {
+    expect(economizadoStatus(0).label).toBe("Nada guardado");
+    expect(economizadoStatus(0).level).toBe("watch");
+    // Guardou algo (mesmo 1 bps) → já não é "Nada guardado".
+    expect(economizadoStatus(1).label).toBe("Abaixo do ideal");
+  });
+
+  it("Economizado: acima de 30% é Acima do ideal", () => {
+    expect(economizadoStatus(3001).label).toBe("Acima do ideal");
+    expect(economizadoStatus(3000).label).toBe("Dentro do ideal");
+  });
+
   it("SAVINGS_MIN_BPS é a constante canônica de 20% (compartilhada entre as telas)", () => {
-    // Guarda o piso canônico: outras telas importam esta mesma constante,
-    // então um rename/mudança de valor falha aqui em vez de silenciosamente divergir.
     expect(SAVINGS_MIN_BPS).toBe(2000);
-    // Confirma que o badge mensal usa exatamente este limiar.
     expect(economizadoStatus(SAVINGS_MIN_BPS).label).toBe("Dentro do ideal");
     expect(economizadoStatus(SAVINGS_MIN_BPS - 1).label).toBe("Abaixo do ideal");
   });
+
   it("Custo de vida: custo<=renda dentro da renda", () => {
     expect(custoVidaStatus(500, 1000).label).toBe("Dentro da renda");
     expect(custoVidaStatus(1200, 1000).label).toBe("Acima da renda");
   });
+
   it("currentMonthMetric acha o mês do `today`", () => {
-    const months = [
-      { year: 2026, month: 5 },
-      { year: 2026, month: 6 },
-    ] as MonthMetric[];
+    const months = FORECAST.months.filter((month) => month.month === 6);
     expect(currentMonthMetric(months, "2026-06-13")?.month).toBe(6);
     expect(currentMonthMetric(months, "2026-07-01")).toBeNull();
   });
 });
 
+describe("serieLeitura — a leitura diz o fato, nunca julga mês isolado", () => {
+  it("sem meses anteriores não fabrica comparação", () => {
+    expect(serieLeitura([monthFixture({ month: 6 })])).toBe(
+      "Sem meses anteriores para comparar ainda.",
+    );
+  });
+
+  it("todos zero: é o mesmo zero em todos, não uma queda", () => {
+    const trend = [4, 5, 6].map((month) =>
+      monthFixture({ month, savings_rate_bps: 0 }),
+    );
+    expect(serieLeitura(trend)).toBe(
+      "O economizado está em zero nos últimos 3 meses — é o mesmo zero em todos, não uma queda.",
+    );
+  });
+
+  it("caso geral: faixa da janela + melhor mês (percentuais truncados)", () => {
+    const trend = [
+      monthFixture({ month: 5, savings_rate_bps: 1590 }),
+      monthFixture({ month: 6, savings_rate_bps: 2540 }),
+    ];
+    expect(serieLeitura(trend)).toBe(
+      "Entre Mai e Jun, o economizado foi de 15% a 25% — o melhor mês foi Junho.",
+    );
+  });
+});
+
 describe("TotaisScreen (render)", () => {
-  it("mostra as 4 métricas-herói e o status do mês corrente", async () => {
+  it("bento mostra os cards canônicos do mês e os status do método", async () => {
     mockInvoke.mockReset();
-    mockCommands({ get_forecast: FORECAST, owner_totals_for_month_cmd: [] });
+    mockCommands({
+      get_forecast: FORECAST,
+      get_dashboard_summary: SUMMARY,
+      get_annual_metrics: ANNUAL_METRICS,
+      owner_totals_for_month_cmd: [],
+    });
     render(<TotaisScreen />);
 
     await waitFor(() => {
       expect(screen.getByText("Performance")).toBeInTheDocument();
     });
-    // "Custo de vida" nomeia o tile e a linha do FlowCard (mesmo conceito, mesmo termo).
+    expect(screen.getByText("Economia guardada")).toBeInTheDocument();
     expect(screen.getAllByText("Custo de vida").length).toBeGreaterThan(0);
-    expect(screen.getByText("Economizado")).toBeInTheDocument();
     expect(screen.getByText("Diário médio")).toBeInTheDocument();
-    // Status do método aparece (performance positiva no mock → "Sobrou dinheiro").
+    // Status do método (performance positiva e economizado 25% no mock).
     expect(screen.getByText("Sobrou dinheiro")).toBeInTheDocument();
+    expect(screen.getByText("Dentro do ideal")).toBeInTheDocument();
+  });
+
+  it("régua de economia: pino do mês na escala 0→40 e leitura anual", async () => {
+    mockInvoke.mockReset();
+    mockCommands({
+      get_forecast: FORECAST,
+      get_dashboard_summary: SUMMARY,
+      get_annual_metrics: ANNUAL_METRICS,
+      owner_totals_for_month_cmd: [],
+    });
+    render(<TotaisScreen />);
+
+    expect(
+      await screen.findByRole("img", {
+        name: "Régua de economia de 0% a 40% com zona-alvo de 20% a 30%; Junho em 25%",
+      }),
+    ).toBeInTheDocument();
+    // A nota fecha com a régua anual (economia_ruler_rate_bps: 500 → 5%).
+    expect(
+      screen.getByText("No ano: 5% — a régua julga a média anual, não o mês."),
+    ).toBeInTheDocument();
+  });
+
+  it("crumb da appbar mostra o mês visto", async () => {
+    mockInvoke.mockReset();
+    mockCommands({
+      get_forecast: FORECAST,
+      get_dashboard_summary: SUMMARY,
+      get_annual_metrics: ANNUAL_METRICS,
+      owner_totals_for_month_cmd: [],
+    });
+    const { unmount } = render(<TotaisScreen />);
+
+    await waitFor(() => {
+      expect(crumbOverridesSnapshot().mes).toBe("Junho de 2026");
+    });
+    unmount();
+    expect(crumbOverridesSnapshot().mes).toBeUndefined();
   });
 
   it("seletor de mês: avança para o próximo mês e volta ao hoje", async () => {
     mockInvoke.mockReset();
-    mockCommands({ get_forecast: FORECAST, owner_totals_for_month_cmd: [] });
+    mockCommands({
+      get_forecast: FORECAST,
+      get_dashboard_summary: SUMMARY,
+      get_annual_metrics: ANNUAL_METRICS,
+      owner_totals_for_month_cmd: [],
+    });
     render(<TotaisScreen />);
     await waitFor(() => expect(screen.getByText("Performance")).toBeInTheDocument());
     // Começa no mês corrente (junho) → sem botão "Hoje".
@@ -92,6 +184,8 @@ describe("TotaisScreen (render)", () => {
     mockInvoke.mockReset();
     mockCommands({
       get_forecast: FORECAST,
+      get_dashboard_summary: SUMMARY,
+      get_annual_metrics: ANNUAL_METRICS,
       owner_totals_for_month_cmd: OWNER_TOTALS,
     });
     render(<TotaisScreen />);
@@ -101,14 +195,18 @@ describe("TotaisScreen (render)", () => {
     });
     expect(screen.getByText("Titular A")).toBeInTheDocument();
     expect(screen.getByText("Titular B")).toBeInTheDocument();
-    // Os valores (R$ 3.200,00 e R$ 1.800,00) aparecem como Money.
     expect(screen.getByText(/3\.200,00/)).toBeInTheDocument();
     expect(screen.getByText(/1\.800,00/)).toBeInTheDocument();
   });
 
   it("não mostra a seção por titular quando não há split (lista vazia)", async () => {
     mockInvoke.mockReset();
-    mockCommands({ get_forecast: FORECAST, owner_totals_for_month_cmd: [] });
+    mockCommands({
+      get_forecast: FORECAST,
+      get_dashboard_summary: SUMMARY,
+      get_annual_metrics: ANNUAL_METRICS,
+      owner_totals_for_month_cmd: [],
+    });
     render(<TotaisScreen />);
 
     await waitFor(() => {
@@ -119,35 +217,40 @@ describe("TotaisScreen (render)", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("Economizado mostra badge de status (Dentro do ideal quando >= 20%)", async () => {
-    mockInvoke.mockReset();
-    // FORECAST tem savings_rate_bps: 2500 em junho → "Dentro do ideal".
-    mockCommands({ get_forecast: FORECAST, owner_totals_for_month_cmd: [] });
-    render(<TotaisScreen />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Economizado")).toBeInTheDocument();
-    });
-    expect(screen.getByText("Dentro do ideal")).toBeInTheDocument();
-  });
-
-  it("trend inclui meses realizados anteriores vindos do annual metrics", async () => {
+  it("série do economizado inclui meses realizados vindos do annual metrics", async () => {
     mockInvoke.mockReset();
     mockCommands({
       get_forecast: FORECAST,
+      get_dashboard_summary: SUMMARY,
       get_annual_metrics: ANNUAL_METRICS,
       owner_totals_for_month_cmd: [],
     });
     render(<TotaisScreen />);
 
-    const trend = await screen.findByRole("region", {
-      name: "Resultado nos últimos meses",
-    });
-    expect(within(trend).getByText("Mai")).toBeInTheDocument();
-    expect(within(trend).getByText("Jun")).toBeInTheDocument();
+    // Cada barra é botão-atalho para o mês dela (Jan 15% e Mai 20% do annual;
+    // Jun 25% do forecast).
+    expect(
+      await screen.findByRole("button", { name: "Maio: 20% — ver o mês" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Junho: 25% — ver o mês" }),
+    ).toBeInTheDocument();
+    // A leitura diz o fato da janela.
+    expect(
+      screen.getByText(
+        "Entre Jan e Jun, o economizado foi de 15% a 25% — o melhor mês foi Junho.",
+      ),
+    ).toBeInTheDocument();
+
+    // Clicar numa barra navega para o mês dela.
+    await userEvent.click(
+      screen.getByRole("button", { name: "Maio: 20% — ver o mês" }),
+    );
+    expect(screen.getByText(/Maio de 2026/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hoje" })).toBeInTheDocument();
   });
 
-  it("Para onde foi o dinheiro usa o bucket Cartão do MonthMetric", async () => {
+  it("custo de vida decompõe por componente com o bucket Cartão", async () => {
     mockInvoke.mockReset();
     const forecast = {
       ...FORECAST,
@@ -163,14 +266,92 @@ describe("TotaisScreen (render)", () => {
           : month,
       ),
     };
-    mockCommands({ get_forecast: forecast, owner_totals_for_month_cmd: [] });
+    mockCommands({
+      get_forecast: forecast,
+      get_dashboard_summary: SUMMARY,
+      get_annual_metrics: ANNUAL_METRICS,
+      owner_totals_for_month_cmd: [],
+    });
     render(<TotaisScreen />);
 
-    const outflow = await screen.findByRole("region", {
-      name: "Para onde foi o dinheiro",
+    const custo = await screen.findByRole("region", { name: "Custo de vida" });
+    expect(within(custo).getByText("Cartão")).toBeInTheDocument();
+    expect(within(custo).getByText(/1\.500,00/)).toBeInTheDocument();
+    expect(within(custo).getByText("Saídas fixas")).toBeInTheDocument();
+    expect(within(custo).getByText(/1\.000,00/)).toBeInTheDocument();
+    // O segbar carrega o texto equivalente completo da composição.
+    expect(
+      within(custo).getByRole("img", { name: /Composição do custo de vida/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("modo cartão: Diário zerado no mês corrente explica onde o variável vive", async () => {
+    mockInvoke.mockReset();
+    mockCommands({
+      get_forecast: FORECAST,
+      get_dashboard_summary: { ...SUMMARY, spending_mode: "card" },
+      get_annual_metrics: ANNUAL_METRICS,
+      owner_totals_for_month_cmd: [],
     });
-    expect(within(outflow).getByText("Cartão")).toBeInTheDocument();
-    expect(within(outflow).getByText(/1\.500,00/)).toBeInTheDocument();
+    render(<TotaisScreen />);
+
+    expect(
+      await screen.findByText("Não lançado — o variável vive no cartão"),
+    ).toBeInTheDocument();
+  });
+
+  it("Nada guardado: mês com economia zero recebe o estado próprio", async () => {
+    mockInvoke.mockReset();
+    const forecast = {
+      ...FORECAST,
+      months: FORECAST.months.map((month) =>
+        month.month === 6
+          ? { ...month, economia_cents: 0, savings_rate_bps: 0 }
+          : month,
+      ),
+    };
+    mockCommands({
+      get_forecast: forecast,
+      get_dashboard_summary: SUMMARY,
+      get_annual_metrics: ANNUAL_METRICS,
+      owner_totals_for_month_cmd: [],
+    });
+    render(<TotaisScreen />);
+
+    expect(await screen.findByText("Nada guardado")).toBeInTheDocument();
+  });
+
+  it("sem registro de economia: a régua não julga e a série não compara", async () => {
+    mockInvoke.mockReset();
+    const forecast = {
+      ...FORECAST,
+      annual_savings: {
+        ...FORECAST.annual_savings,
+        economia_state: "no_record" as const,
+      },
+    };
+    mockCommands({
+      get_forecast: forecast,
+      get_dashboard_summary: SUMMARY,
+      get_annual_metrics: ANNUAL_METRICS,
+      owner_totals_for_month_cmd: [],
+    });
+    render(<TotaisScreen />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Sem registro")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(
+        "Sem registro de economia na planilha — a régua espera o primeiro aporte.",
+      ),
+    ).toBeInTheDocument();
+    // Sem registro não há o que comparar: a faixa histórica não renderiza.
+    expect(
+      screen.queryByText("Comparado aos meses anteriores"),
+    ).not.toBeInTheDocument();
+    // E o estado "Nada guardado" (que julga) não aparece.
+    expect(screen.queryByText("Nada guardado")).not.toBeInTheDocument();
   });
 
   it("Performance: subtexto inclui a Economia como termo e a conta fecha (economia > 0)", async () => {
@@ -190,28 +371,28 @@ describe("TotaisScreen (render)", () => {
           : month,
       ),
     };
-    mockCommands({ get_forecast: forecast, owner_totals_for_month_cmd: [] });
+    mockCommands({
+      get_forecast: forecast,
+      get_dashboard_summary: SUMMARY,
+      get_annual_metrics: ANNUAL_METRICS,
+      owner_totals_for_month_cmd: [],
+    });
     render(<TotaisScreen />);
 
     await waitFor(() => expect(screen.getByText("Performance")).toBeInTheDocument());
 
-    // Os três termos exibidos fecham com o valor da Performance mostrado acima.
+    // Os termos exibidos fecham com o valor da Performance mostrado no card.
     // Os valores renderizam dentro de <Money> (a11y), então casamos pelo textContent
     // completo do parágrafo em vez do texto direto de um único nó.
     expect(
       screen.getByText(
         (_content, el) =>
-          el?.classList.contains("mes-tile__sub") === true &&
+          el?.classList.contains("mes__equation") === true &&
           (el.textContent ?? "").replace(/\s+/g, " ") ===
             "Entradas R$ 7.000,00 − Custo de vida R$ 2.500,00 − Economia R$ 1.000,00",
       ),
     ).toBeInTheDocument();
     expect(screen.getAllByText("+R$ 3.500,00").length).toBeGreaterThan(0);
-
-    // O FlowCard também expõe a Economia como linha própria do fluxo.
-    const flow = screen.getByRole("region", { name: "Entrou e Saiu" });
-    expect(within(flow).getByText("Economia")).toBeInTheDocument();
-    expect(within(flow).getByText(/1\.000,00/)).toBeInTheDocument();
   });
 
   it("Performance: Patrimônio também é termo explícito e a conta fecha (patrimonio > 0)", async () => {
@@ -233,7 +414,12 @@ describe("TotaisScreen (render)", () => {
           : month,
       ),
     };
-    mockCommands({ get_forecast: forecast, owner_totals_for_month_cmd: [] });
+    mockCommands({
+      get_forecast: forecast,
+      get_dashboard_summary: SUMMARY,
+      get_annual_metrics: ANNUAL_METRICS,
+      owner_totals_for_month_cmd: [],
+    });
     render(<TotaisScreen />);
 
     await waitFor(() => expect(screen.getByText("Performance")).toBeInTheDocument());
@@ -241,18 +427,12 @@ describe("TotaisScreen (render)", () => {
     expect(
       screen.getByText(
         (_content, el) =>
-          el?.classList.contains("mes-tile__sub") === true &&
+          el?.classList.contains("mes__equation") === true &&
           (el.textContent ?? "").replace(/\s+/g, " ") ===
             "Entradas R$ 7.000,00 − Custo de vida R$ 2.500,00 − Economia R$ 1.000,00 − Patrimônio R$ 500,00",
       ),
     ).toBeInTheDocument();
     expect(screen.getAllByText("+R$ 3.000,00").length).toBeGreaterThan(0);
-
-    // FlowCard expõe a linha Patrimônio; "Para onde foi o dinheiro" soma os 3 grupos no header.
-    const flow = screen.getByRole("region", { name: "Entrou e Saiu" });
-    expect(within(flow).getByText("Patrimônio")).toBeInTheDocument();
-    const outCard = screen.getByRole("region", { name: "Para onde foi o dinheiro" });
-    expect(within(outCard).getByText("R$ 4.000,00")).toBeInTheDocument();
   });
 
   it("Performance: previsão de diário restante é termo explícito e a conta fecha", async () => {
@@ -274,7 +454,12 @@ describe("TotaisScreen (render)", () => {
           : month,
       ),
     };
-    mockCommands({ get_forecast: forecast, owner_totals_for_month_cmd: [] });
+    mockCommands({
+      get_forecast: forecast,
+      get_dashboard_summary: SUMMARY,
+      get_annual_metrics: ANNUAL_METRICS,
+      owner_totals_for_month_cmd: [],
+    });
     render(<TotaisScreen />);
 
     await waitFor(() => expect(screen.getByText("Performance")).toBeInTheDocument());
@@ -282,26 +467,26 @@ describe("TotaisScreen (render)", () => {
     expect(
       screen.getByText(
         (_content, el) =>
-          el?.classList.contains("mes-tile__sub") === true &&
+          el?.classList.contains("mes__equation") === true &&
           (el.textContent ?? "").replace(/\s+/g, " ") ===
             "Entradas R$ 7.000,00 − Custo de vida R$ 2.500,00 − Previsão de diário R$ 1.200,00",
       ),
     ).toBeInTheDocument();
     expect(screen.getAllByText("+R$ 3.300,00").length).toBeGreaterThan(0);
-
-    const flow = screen.getByRole("region", { name: "Entrou e Saiu" });
-    expect(within(flow).getByText("Previsão de diário")).toBeInTheDocument();
   });
 
-  it("Custo de vida sublabel soletra os 3 baldes (fixas + diário + cartão)", async () => {
+  it("Diário médio zerado recebe o estado próprio", async () => {
     mockInvoke.mockReset();
-    mockCommands({ get_forecast: FORECAST, owner_totals_for_month_cmd: [] });
+    // FORECAST tem real_daily_avg_cents: 0 em junho.
+    mockCommands({
+      get_forecast: FORECAST,
+      get_dashboard_summary: SUMMARY,
+      get_annual_metrics: ANNUAL_METRICS,
+      owner_totals_for_month_cmd: [],
+    });
     render(<TotaisScreen />);
 
-    await waitFor(() => {
-      expect(screen.getAllByText("Custo de vida").length).toBeGreaterThan(0);
-    });
-    // A definição exibida usa os mesmos 3 baldes irmãos do card "Para onde foi o dinheiro".
-    expect(screen.getByText("= Saídas fixas + Diário + Cartão")).toBeInTheDocument();
+    const card = await screen.findByRole("region", { name: "Diário médio" });
+    expect(within(card).getByText("Zerado")).toBeInTheDocument();
   });
 });

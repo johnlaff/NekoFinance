@@ -201,10 +201,14 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
       "aria-current",
       "page",
     );
-    // TotaisScreen renders "Performance" and "Custo de vida" tiles. "Custo de vida" aparece
-    // mais de uma vez de propósito (tile, FlowCard e equação usam o MESMO termo) — first().
-    await expect(page.getByText("Performance")).toBeVisible();
-    await expect(page.getByText("Custo de vida").first()).toBeVisible();
+    // Os títulos dos cards são headings; o termo também aparece no sufixo acessível do
+    // gatilho "Como funciona?" e na equação da Performance — o heading é o âncora único.
+    await expect(
+      page.getByRole("heading", { name: "Performance", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Custo de vida", exact: true }),
+    ).toBeVisible();
     await page.screenshot({
       fullPage: true,
       path: testInfo.outputPath("totais.png"),
