@@ -1,278 +1,347 @@
-/* status-chip: inline-flex badge with a coloured dot (bg/color set via inline style) */
-.status-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 11px 4px 9px;
-  border-radius: var(--radius-pill);
-  font-size: 12px;
-  font-weight: 600;
-}
-.status-chip__dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex: none;
-}
+/* Este mês — bento com a régua do método e o custo de vida por componente.
+   Namespace .mes__* (classe curta colide com globais do shell). */
 
 .mes {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--space-6);
 }
-.mes-head {
+
+/* ---- Cabeçalho: mês em números + MonthNav ---- */
+
+.mes__head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-5);
   flex-wrap: wrap;
 }
-.mes-title {
+
+.mes__head-text h2 {
+  margin: 0;
   font-size: 20px;
   font-weight: 700;
+  letter-spacing: -0.01em;
   color: var(--text-strong);
 }
-.mes-result {
+
+.mes__context {
+  margin: var(--space-2) 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  max-width: 52ch;
+}
+
+/* ---- Bento: coluna única no mobile; 2 colunas no desktop ---- */
+
+.mes__bento {
   display: grid;
-  grid-template-columns: 1.1fr 1fr 1fr;
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-6);
 }
-@media (max-width: 820px) {
-  .mes-result {
-    grid-template-columns: 1fr;
-  }
-}
-.mes-tile {
+
+.mes__card {
+  display: flex;
+  flex-direction: column;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-1);
-  padding: 18px 20px;
+  padding: var(--space-7) var(--space-7) var(--space-6);
 }
-.mes-tile--hero {
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--primary) 7%, var(--surface)),
-    var(--surface)
-  );
-}
-.mes-tile__lab {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-  margin: 0 0 8px;
+
+.mes__cardhead {
   display: flex;
   align-items: center;
-  gap: 7px;
-  white-space: nowrap;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-5);
 }
-.mes-tile__val {
-  font-family: var(--font-money);
-  font-variant-numeric: tabular-nums;
-  font-size: 32px;
-  font-weight: 800;
-  line-height: 1;
-  letter-spacing: -0.01em;
-}
-.mes-tile__sub {
-  font-size: 12.5px;
+
+.mes__cardhead .ic {
   color: var(--text-muted);
-  margin: 8px 0 0;
+  flex: none;
 }
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-1);
+
+.mes__cardhead h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-strong);
 }
-.card__head {
+
+.mes__headmoney {
+  margin-left: auto;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+/* O gatilho didático senta à direita quando é o único vizinho do título. */
+.mes__cardhead .nk-term-wrap {
+  margin-left: auto;
+}
+
+.mes__how {
+  font-size: 12px;
+  color: var(--text-faint);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: help;
+}
+
+/* Folga de altura ancora no pé do card — nunca vira buraco entre vizinhos. */
+.mes__cardfoot {
+  margin-top: auto;
+  padding-top: var(--space-5);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 16px 20px 4px;
+  gap: var(--space-4);
+  flex-wrap: wrap;
 }
-.card__title {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  font-size: 14px;
-  font-weight: 700;
+
+/* ---- Economia guardada: número-herói + régua ---- */
+
+.mes__hero-pct {
+  font-family: var(--font-money);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-size: 34px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
   color: var(--text-strong);
-  white-space: nowrap;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  flex-wrap: wrap;
 }
-.card__title .ic {
+
+.mes__hero-pct small {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0;
   color: var(--text-faint);
 }
-.card__body {
-  padding: 16px 20px 20px;
+
+.mes__ruler {
+  margin: var(--space-6) 0 var(--space-2);
 }
-/* stacked bar */
-.mes-bar {
+
+.mes__rulnote {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-faint);
+}
+
+/* ---- Custo de vida: segbar + componentes ---- */
+
+.mes__segbar {
+  margin: var(--space-2) 0 var(--space-5);
+}
+
+.mes__comp {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
-  height: 34px;
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  margin-bottom: 16px;
+  flex-direction: column;
+  gap: var(--space-4);
 }
-.mes-bar__seg {
-  height: 100%;
-}
-.mes-leg {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px 24px;
-}
-@media (max-width: 640px) {
-  .mes-leg {
-    grid-template-columns: 1fr;
-  }
-}
-.mes-leg__row {
+
+.mes__comp li {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  align-items: baseline;
+  gap: var(--space-4);
 }
-.mes-leg__dot {
-  width: 11px;
-  height: 11px;
+
+.mes__dot {
+  width: 9px;
+  height: 9px;
   border-radius: 3px;
   flex: none;
+  align-self: center;
 }
-.mes-leg__name {
-  font-size: 13px;
+
+.mes__comp-name {
+  font-size: 13.5px;
   color: var(--text);
-  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
-.mes-leg__amt {
+
+.mes__comp-name small {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.mes__comp-val {
+  margin-left: auto;
+  font-size: 13.5px;
+  color: var(--text-strong);
+}
+
+/* ---- Performance · Diário médio (linha compacta) ---- */
+
+.mes__kpi-val {
   font-family: var(--font-money);
   font-variant-numeric: tabular-nums;
-  font-size: 13px;
+  font-size: 26px;
   font-weight: 600;
-  color: var(--text);
+  letter-spacing: -0.02em;
+  color: var(--text-strong);
 }
-.mes-leg__pct {
+
+.mes__equation {
+  margin: var(--space-3) 0 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+/* ---- Comparado aos meses anteriores (faixa de largura cheia) ---- */
+
+.mes__comp-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.mes__bars {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-4);
+  height: 96px;
+}
+
+.mes__bar {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  justify-items: center;
+  gap: var(--space-2);
+}
+
+.mes__bar i {
+  width: 100%;
+  max-width: 46px;
+  align-self: end;
+  min-height: 2px;
+  border-radius: 6px 6px 3px 3px;
+  background: var(--surface-2);
+}
+
+.mes__bar--now i {
+  background: var(--primary);
+}
+
+.mes__bar em {
+  font-style: normal;
   font-size: 11px;
   color: var(--text-faint);
-  width: 38px;
-  text-align: right;
 }
-/* in vs out */
-.mes-flow {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.mes-flow__row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.mes-flow__lab {
-  width: 90px;
-  flex: none;
-  font-size: 12.5px;
-  color: var(--text-muted);
-}
-.mes-flow__track {
-  flex: 1;
-  height: 14px;
-  border-radius: var(--radius-pill);
-  background: var(--bg-subtle);
-  overflow: hidden;
-}
-.mes-flow__fill {
-  display: block; /* span inline ignora width/height — a barra nunca aparecia */
-  height: 100%;
-  border-radius: var(--radius-pill);
-}
-.mes-flow__amt {
-  font-family: var(--font-money);
-  font-variant-numeric: tabular-nums;
-  font-size: 13px;
+
+.mes__bar b {
+  font-size: 12px;
   font-weight: 600;
-  width: 120px;
-  text-align: right;
-  flex: none;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
-/* trend */
-.mes-trend {
-  display: flex;
-  align-items: flex-end;
-  gap: 10px;
-  height: 120px;
-  padding-top: 8px;
+
+.mes__bar--now b {
+  color: var(--text-strong);
 }
-.mes-trend__col {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  height: 100%;
-  justify-content: flex-end;
-}
-.mes-trend__bar {
-  width: 60%;
-  border-radius: 4px 4px 0 0;
-  min-height: 3px;
-}
-.mes-trend__m {
-  font-size: 12px;
-  color: var(--text-faint);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-/* compact value label above each trend bar */
-.mes-trend__val-label {
-  font-family: var(--font-money);
-  font-size: 12px;
-  color: var(--text-faint);
-}
-/* "referência anual…" note in the trend card header */
-.mes-trend__ref-label {
-  font-size: 12px;
-  color: var(--text-faint);
-}
-/* annual ytd sub-line in the Economizado tile */
-.mes-tile__sub--ytd {
-  margin-top: 4px;
-  font-size: 12px;
-}
-/* money figure in card header (e.g. "Para onde foi o dinheiro") */
-.card__head-money {
-  font-family: var(--font-money);
-  font-size: 12.5px;
-  color: var(--text-faint);
-}
-/* "Sobrou no mês" summary row in FlowCard */
-.mes-flow__summary {
-  margin-top: 18px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-}
-.mes-flow__summary-lab {
+
+.mes__comp-note {
+  margin: 0;
   font-size: 13px;
+  line-height: 1.55;
   color: var(--text-muted);
 }
-.mes-flow__summary-val {
-  font-family: var(--font-money);
-  font-variant-numeric: tabular-nums;
-  font-size: 18px;
-  font-weight: 700;
+
+/* ---- Por titular ---- */
+
+.mes__owners {
+  display: flex;
+  gap: var(--space-9);
+  flex-wrap: wrap;
 }
-.mes-grid2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 18px;
+
+.mes__owner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
 }
-@media (max-width: 820px) {
-  .mes-grid2 {
-    grid-template-columns: 1fr;
+
+.mes__webhint {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+/* ---- Desktop: o bento vira 2 colunas; comp e titulares em largura cheia ---- */
+
+@media (min-width: 901px) {
+  .mes__bento {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mes__card--comp,
+  .mes__card--owners {
+    grid-column: 1 / -1;
+  }
+
+  /* Evidência à esquerda, leitura à direita. */
+  .mes__comp-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+    align-items: center;
+    column-gap: var(--space-9);
+  }
+
+  .mes__bars {
+    height: 76px;
+  }
+}
+
+/* ---- Coreografia de entrada (uma vez por montagem; dinheiro não anima) ---- */
+
+@media (prefers-reduced-motion: no-preference) {
+  .mes__head {
+    animation: mes-pop 0.5s cubic-bezier(0.2, 0, 0, 1) both 0.06s;
+  }
+
+  .mes__bento > :nth-child(1) {
+    animation: mes-pop 0.45s cubic-bezier(0.2, 0, 0, 1) both 0.16s;
+  }
+
+  .mes__bento > :nth-child(2) {
+    animation: mes-pop 0.45s cubic-bezier(0.2, 0, 0, 1) both 0.26s;
+  }
+
+  .mes__bento > :nth-child(3) {
+    animation: mes-pop 0.45s cubic-bezier(0.2, 0, 0, 1) both 0.36s;
+  }
+
+  .mes__bento > :nth-child(4) {
+    animation: mes-pop 0.45s cubic-bezier(0.2, 0, 0, 1) both 0.44s;
+  }
+
+  .mes__bento > :nth-child(n + 5) {
+    animation: mes-pop 0.45s cubic-bezier(0.2, 0, 0, 1) both 0.52s;
+  }
+}
+
+@keyframes mes-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
   }
 }

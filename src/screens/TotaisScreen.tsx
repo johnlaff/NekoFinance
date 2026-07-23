@@ -1,8 +1,9 @@
 import "./mes.css";
-import { useState } from "react";
-import { TrendingUp, Wallet, PiggyBank, LayoutList, GitCompare } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ChartColumn, Clock3, PiggyBank, TrendingUp, Wallet } from "lucide-react";
 import {
   getAnnualMetrics,
+  getDashboardSummary,
   getForecast,
   ownerTotalsForMonth,
   isTauri,
@@ -14,12 +15,22 @@ import { MonthNav } from "../design-system/components/MonthNav";
 import { EmptyState } from "../design-system/components/EmptyState";
 import { OwnerChip } from "../design-system/components/OwnerChip";
 import { Money, SignedMoney } from "../design-system/components/Money";
-import { fmtCompact, MES, MES_ABBR } from "../lib/nkFormat";
+import { HealthBadge } from "../design-system/components/HealthBadge";
+import { Badge } from "../design-system/components/Badge";
+import { InfoPopover } from "../design-system/components/InfoPopover";
+import { NoRecordDash } from "../design-system/components/NoRecordDash";
+import { RangeRuler } from "../design-system/components/RangeRuler";
+import { SegBar } from "../design-system/components/SegBar";
+import { fmtBRL, MES, MES_ABBR } from "../lib/nkFormat";
+import { SR_ONLY } from "../design-system/srOnly";
+import { setCrumb } from "../shell/crumbStore";
 import {
   currentMonthMetric,
   performanceStatus,
   economizadoStatus,
   custoVidaStatus,
+  pctDisplay,
+  serieLeitura,
 } from "./totaisStatus";
 
 /** "YYYY-MM" from a MonthMetric. */
@@ -57,429 +68,324 @@ function mergePastAnnualWithForecastMonths(
   );
 }
 
-/** StatusChip: a small dot + label badge matching the existing design vocabulary. */
-function StatusChip({ level, label }: { level: string; label: string }) {
-  const colors: Record<string, { bg: string; fg: string; dot: string }> = {
-    strong: {
-      bg: "var(--success-tint)",
-      fg: "var(--success-400)",
-      dot: "var(--success-400)",
-    },
-    steady: {
-      bg: "var(--primary-quiet)",
-      fg: "var(--primary-quiet-text)",
-      dot: "var(--primary)",
-    },
-    watch: {
-      bg: "var(--warning-tint)",
-      fg: "var(--warning-400)",
-      dot: "var(--warning-400)",
-    },
-    risk: {
-      bg: "var(--danger-tint)",
-      fg: "var(--danger-400)",
-      dot: "var(--danger-400)",
-    },
-  };
-  const t = colors[level] ?? colors["watch"]!;
-  return (
-    <span className="status-chip" style={{ background: t.bg, color: t.fg }}>
-      <span
-        aria-hidden="true"
-        className="status-chip__dot"
-        style={{ background: t.dot }}
-      />
-      {label}
-    </span>
-  );
-}
-
 // ---------------------------------------------------------------------------
-// Sub-components (split from the giant TotaisScreen for no-giant-component)
+// Cards do bento
 // ---------------------------------------------------------------------------
 
-interface HeroTilesProps {
-  performance: number;
-  entradas: number;
-  saidaTotal: number;
-  custoVida: number;
-  economia: number;
-  patrimonio: number;
-  previsaoDiario: number;
-  economizadoPct: number;
-  ytdPctLabel: string;
-  perfStatus: { level: string; label: string };
-  custoStatus: { level: string; label: string };
-  econStatus: { level: string; label: string };
-}
-
-function HeroTiles({
-  performance,
-  entradas,
-  saidaTotal,
-  custoVida,
-  economia,
-  patrimonio,
-  previsaoDiario,
-  economizadoPct,
-  ytdPctLabel,
-  perfStatus,
-  custoStatus,
-  econStatus,
-}: HeroTilesProps) {
-  return (
-    <div className="mes-result">
-      {/* Resultado */}
-      <div className="mes-tile mes-tile--hero">
-        <p className="mes-tile__lab">
-          <TrendingUp size={14} strokeWidth={1.75} />
-          <span>Performance</span>
-          {previsaoDiario > 0 ? (
-            <span style={{ fontWeight: 400, textTransform: "none" }}>
-              {" "}
-              (com previsão)
-            </span>
-          ) : null}
-        </p>
-        <div
-          className="mes-tile__val"
-          style={{
-            color: performance >= 0 ? "var(--money-pos)" : "var(--money-neg)",
-          }}
-        >
-          <SignedMoney cents={performance} size="inherit" />
-        </div>
-        {/* A conta exibida precisa fechar com a Performance do motor: Economia, Patrimônio e a
-            previsão de diário restante são termos explícitos (Performance = Entradas − Custo de
-            vida − Economia − Patrimônio − Previsão de diário). */}
-        <p className="mes-tile__sub">
-          Entradas <Money cents={entradas} size="inherit" /> − Custo de vida{" "}
-          <Money cents={saidaTotal} size="inherit" />
-          {economia > 0 ? (
-            <>
-              {" "}
-              − Economia <Money cents={economia} size="inherit" />
-            </>
-          ) : null}
-          {patrimonio > 0 ? (
-            <>
-              {" "}
-              − Patrimônio <Money cents={patrimonio} size="inherit" />
-            </>
-          ) : null}
-          {previsaoDiario > 0 ? (
-            <>
-              {" "}
-              − Previsão de diário <Money cents={previsaoDiario} size="inherit" />
-            </>
-          ) : null}
-        </p>
-        <div style={{ marginTop: 10 }}>
-          <StatusChip level={perfStatus.level} label={perfStatus.label} />
-        </div>
-      </div>
-
-      {/* Custo de vida */}
-      <div className="mes-tile">
-        <p className="mes-tile__lab">
-          <Wallet size={14} strokeWidth={1.75} />
-          Custo de vida
-        </p>
-        <div className="mes-tile__val" style={{ color: "var(--text-strong)" }}>
-          <Money cents={custoVida} size="inherit" />
-        </div>
-        <p className="mes-tile__sub">= Saídas fixas + Diário + Cartão</p>
-        <div style={{ marginTop: 10 }}>
-          <StatusChip level={custoStatus.level} label={custoStatus.label} />
-        </div>
-      </div>
-
-      {/* Economizado */}
-      <div className="mes-tile">
-        <p className="mes-tile__lab">
-          <PiggyBank size={14} strokeWidth={1.75} />
-          Economizado
-        </p>
-        <div
-          className="mes-tile__val"
-          style={{
-            color: economizadoPct >= 20 ? "var(--money-pos)" : "var(--warning-400)",
-          }}
-        >
-          {economizadoPct.toFixed(0)}%
-        </div>
-        <p className="mes-tile__sub">
-          <Money cents={economia} size="inherit" /> guardados · meta de 20% a 30%
-        </p>
-        <p className="mes-tile__sub mes-tile__sub--ytd">{ytdPctLabel}</p>
-        <div style={{ marginTop: 10 }}>
-          <StatusChip level={econStatus.level} label={econStatus.label} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-interface OutPartsCardProps {
-  saidaTotal: number;
-  economia: number;
-  patrimonio: number;
-  outParts: { name: string; val: number; color: string }[];
-  outTotal: number;
-}
-
-function OutPartsCard({
-  saidaTotal,
-  economia,
-  patrimonio,
-  outParts,
-  outTotal,
-}: OutPartsCardProps) {
-  return (
-    <section className="card" aria-label="Para onde foi o dinheiro">
-      <div className="card__head">
-        <span className="card__title">
-          <LayoutList size={16} strokeWidth={1.75} className="ic" />
-          Para onde foi o dinheiro
-        </span>
-        <span className="card__head-money">
-          <Money cents={saidaTotal + economia + patrimonio} size="inherit" />
-        </span>
-      </div>
-      <div className="card__body">
-        <div className="mes-bar">
-          {outParts.map((p) =>
-            p.val > 0 ? (
-              <span
-                key={p.name}
-                className="mes-bar__seg"
-                style={{
-                  background: p.color,
-                  width: ((p.val / outTotal) * 100).toFixed(2) + "%",
-                }}
-              />
-            ) : null,
-          )}
-        </div>
-        <div className="mes-leg">
-          {outParts.map((p) => (
-            <div className="mes-leg__row" key={p.name}>
-              <span className="mes-leg__dot" style={{ background: p.color }} />
-              <span className="mes-leg__name">{p.name}</span>
-              <span className="mes-leg__amt">
-                <Money cents={p.val} size="inherit" />
-              </span>
-              <span className="mes-leg__pct">
-                {Math.round((p.val / outTotal) * 100)}%
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-interface FlowCardProps {
-  entradas: number;
-  saidaTotal: number;
-  economia: number;
-  patrimonio: number;
-  previsaoDiario: number;
-  performance: number;
-}
-
-function FlowRow({
-  label,
-  value,
-  entradas,
-  fill,
-  amtColor,
-  fillOpacity,
+function EconomiaCard({
+  m,
+  ytdBps,
+  noRecord,
 }: {
-  label: string;
-  value: number;
-  entradas: number;
-  fill: string;
-  amtColor: string;
-  fillOpacity?: number;
+  m: MonthMetric;
+  ytdBps: number;
+  noRecord: boolean;
 }) {
-  const width = Math.min(100, (value / Math.max(entradas, 1)) * 100).toFixed(2) + "%";
+  const pct = pctDisplay(m.savings_rate_bps);
+  const status = economizadoStatus(m.savings_rate_bps);
+  const pinColor =
+    status.level === "strong"
+      ? "var(--success-400)"
+      : status.level === "steady"
+        ? "var(--primary)"
+        : "var(--warning-400)";
   return (
-    <div className="mes-flow__row">
-      <span className="mes-flow__lab">{label}</span>
-      <span className="mes-flow__track">
-        <span
-          className="mes-flow__fill"
-          style={{ width, background: fill, opacity: fillOpacity }}
-        />
-      </span>
-      <span className="mes-flow__amt" style={{ color: amtColor }}>
-        <Money cents={value} size="inherit" />
-      </span>
-    </div>
-  );
-}
-
-function FlowCard({
-  entradas,
-  saidaTotal,
-  economia,
-  patrimonio,
-  previsaoDiario,
-  performance,
-}: FlowCardProps) {
-  return (
-    <section className="card" aria-label="Entrou e Saiu">
-      <div className="card__head">
-        <span className="card__title">
-          <GitCompare size={16} strokeWidth={1.75} className="ic" />
-          Entrou × Saiu
-        </span>
-      </div>
-      <div className="card__body">
-        <div className="mes-flow">
-          <FlowRow
-            label="Entradas"
-            value={entradas}
-            entradas={entradas}
-            fill="var(--money-pos)"
-            amtColor="var(--money-pos)"
-          />
-          <FlowRow
-            label="Custo de vida"
-            value={saidaTotal}
-            entradas={entradas}
-            fill="var(--type-saida)"
-            amtColor="var(--money-neg)"
-          />
-          {/* Economia, Patrimônio e previsão de diário restante são termos do resultado:
-              sem eles a aritmética exibida não fecharia com o "Sobrou no mês". A ordem
-              espelha a equação do tile Performance. */}
-          {economia > 0 ? (
-            <FlowRow
-              label="Economia"
-              value={economia}
-              entradas={entradas}
-              fill="var(--type-economia)"
-              amtColor="var(--type-economia)"
-            />
-          ) : null}
-          {patrimonio > 0 ? (
-            <FlowRow
-              label="Patrimônio"
-              value={patrimonio}
-              entradas={entradas}
-              fill="var(--text-muted)"
-              amtColor="var(--text-muted)"
-            />
-          ) : null}
-          {previsaoDiario > 0 ? (
-            <FlowRow
-              label="Previsão de diário"
-              value={previsaoDiario}
-              entradas={entradas}
-              fill="var(--type-diario)"
-              amtColor="var(--text-muted)"
-              fillOpacity={0.55}
-            />
-          ) : null}
-        </div>
-        <div className="mes-flow__summary">
-          <span className="mes-flow__summary-lab">Sobrou no mês</span>
-          <span
-            className="mes-flow__summary-val"
-            style={{
-              color: performance >= 0 ? "var(--money-pos)" : "var(--money-neg)",
-            }}
-          >
-            <SignedMoney cents={performance} size="inherit" />
+    <section className="mes__card mes__card--econ" aria-labelledby="mes-econ-t">
+      <header className="mes__cardhead">
+        <PiggyBank size={16} strokeWidth={1.75} className="ic" />
+        <h3 id="mes-econ-t">Economia guardada</h3>
+        <InfoPopover term="economizado" hideMarker>
+          <span className="mes__how">
+            Como funciona?
+            <span style={SR_ONLY}> — Economia guardada</span>
           </span>
-        </div>
-      </div>
+        </InfoPopover>
+      </header>
+      {noRecord ? (
+        <>
+          <div className="mes__hero-pct">
+            <NoRecordDash
+              term={{
+                title: "Economia sem registro",
+                body: "A planilha ainda não tem lançamentos de Economia. Registre o primeiro aporte para a régua ler o mês.",
+              }}
+            />
+          </div>
+          <RangeRuler
+            className="mes__ruler"
+            max={40}
+            zone={{ from: 20, to: 30 }}
+            marks={RULER_MARKS}
+            pin={null}
+            label="Régua de economia de 0% a 40% com zona-alvo de 20% a 30%; sem registro de economia"
+          />
+          <p className="mes__cardfoot mes__rulnote">
+            Sem registro de economia na planilha — a régua espera o primeiro aporte.
+          </p>
+        </>
+      ) : (
+        <>
+          <div className="mes__hero-pct">
+            {pct}%
+            <small>
+              <Money cents={m.economia_cents} size="inherit" /> de{" "}
+              <Money cents={m.income_cents} size="inherit" /> que entraram
+            </small>
+          </div>
+          <RangeRuler
+            className="mes__ruler"
+            max={40}
+            zone={{ from: 20, to: 30 }}
+            marks={RULER_MARKS}
+            pin={{ value: m.savings_rate_bps / 100, label: `${pct}%`, color: pinColor }}
+            label={`Régua de economia de 0% a 40% com zona-alvo de 20% a 30%; ${MES[m.month - 1]} em ${pct}%`}
+          />
+          <footer className="mes__cardfoot">
+            <HealthBadge level={status.level} label={status.label} />
+            <p className="mes__rulnote">
+              No ano: {pctDisplay(ytdBps)}% — a régua julga a média anual, não o mês.
+            </p>
+          </footer>
+        </>
+      )}
     </section>
   );
 }
 
-interface TrendCardProps {
-  trend: { year: number; month: number; performance_cents: number }[];
-  maxAbs: number;
+const RULER_MARKS = [
+  { at: 20, label: "20%" },
+  { at: 30, label: "30%" },
+  { at: 40, label: "40%" },
+];
+
+function CustoCard({ m, cardMode }: { m: MonthMetric; cardMode: boolean }) {
+  const status = custoVidaStatus(m.cost_of_living_cents, m.income_cents);
+  const total = Math.max(m.cost_of_living_cents, 1);
+  const parts = [
+    {
+      name: "Saídas fixas",
+      val: m.fixed_out_cents,
+      color: "var(--type-saida)",
+      context: null as string | null,
+    },
+    {
+      name: "Diário",
+      val: m.daily_out_cents,
+      color: "var(--type-diario)",
+      context:
+        cardMode && m.daily_out_cents === 0
+          ? "Não lançado — o variável vive no cartão"
+          : null,
+    },
+    {
+      name: "Cartão",
+      val: m.cartao_cents,
+      color: "var(--type-cartao)",
+      context: null as string | null,
+    },
+  ];
+  const segLabel = `Composição do custo de vida: ${parts
+    .map((p) => `${p.name} ${fmtBRL(p.val)}`)
+    .join(", ")}`;
+  return (
+    <section className="mes__card mes__card--custo" aria-labelledby="mes-custo-t">
+      <header className="mes__cardhead">
+        <Wallet size={16} strokeWidth={1.75} className="ic" />
+        <h3 id="mes-custo-t">Custo de vida</h3>
+        <span className="mes__headmoney">
+          <Money cents={m.cost_of_living_cents} size="inherit" />
+        </span>
+      </header>
+      <SegBar
+        className="mes__segbar"
+        segments={parts.map((p) => ({
+          name: p.name,
+          fraction: p.val / total,
+          color: p.color,
+        }))}
+        label={segLabel}
+      />
+      <ul className="mes__comp">
+        {parts.map((p) => (
+          <li key={p.name}>
+            <span className="mes__dot" style={{ background: p.color }} />
+            <span className="mes__comp-name">
+              {p.name}
+              {p.context ? <small>{p.context}</small> : null}
+            </span>
+            <span className="mes__comp-val">
+              <Money cents={p.val} size="inherit" />
+            </span>
+          </li>
+        ))}
+      </ul>
+      <footer className="mes__cardfoot">
+        <HealthBadge level={status.level} label={status.label} />
+        <InfoPopover term="custo_de_vida" hideMarker>
+          <span className="mes__how">
+            Como funciona?
+            <span style={SR_ONLY}> — Custo de vida</span>
+          </span>
+        </InfoPopover>
+      </footer>
+    </section>
+  );
+}
+
+function PerformanceCard({ m }: { m: MonthMetric }) {
+  const status = performanceStatus(m.performance_cents);
+  return (
+    <section className="mes__card mes__card--kpi" aria-labelledby="mes-perf-t">
+      <header className="mes__cardhead">
+        <TrendingUp size={16} strokeWidth={1.75} className="ic" />
+        <h3 id="mes-perf-t">Performance</h3>
+        <InfoPopover term="performance" hideMarker>
+          <span className="mes__how">
+            Como funciona?
+            <span style={SR_ONLY}> — Performance</span>
+          </span>
+        </InfoPopover>
+      </header>
+      <div
+        className="mes__kpi-val"
+        style={{
+          color: m.performance_cents >= 0 ? "var(--money-pos)" : "var(--money-neg)",
+        }}
+      >
+        <SignedMoney cents={m.performance_cents} size="inherit" />
+      </div>
+      {/* A conta exibida precisa fechar com a Performance do motor: Economia, Patrimônio e a
+          previsão de diário restante são termos explícitos (Performance = Entradas − Custo de
+          vida − Economia − Patrimônio − Previsão de diário). */}
+      <p className="mes__equation">
+        Entradas <Money cents={m.income_cents} size="inherit" /> − Custo de vida{" "}
+        <Money cents={m.cost_of_living_cents} size="inherit" />
+        {m.economia_cents > 0 ? (
+          <>
+            {" "}
+            − Economia <Money cents={m.economia_cents} size="inherit" />
+          </>
+        ) : null}
+        {m.patrimonio_cents > 0 ? (
+          <>
+            {" "}
+            − Patrimônio <Money cents={m.patrimonio_cents} size="inherit" />
+          </>
+        ) : null}
+        {m.daily_projected_cents > 0 ? (
+          <>
+            {" "}
+            − Previsão de diário{" "}
+            <Money cents={m.daily_projected_cents} size="inherit" />
+          </>
+        ) : null}
+      </p>
+      <footer className="mes__cardfoot">
+        <HealthBadge level={status.level} label={status.label} />
+      </footer>
+    </section>
+  );
+}
+
+function DiarioMedioCard({ m, isCurrent }: { m: MonthMetric; isCurrent: boolean }) {
+  return (
+    <section className="mes__card mes__card--kpi" aria-labelledby="mes-diario-t">
+      <header className="mes__cardhead">
+        <Clock3 size={16} strokeWidth={1.75} className="ic" />
+        <h3 id="mes-diario-t">Diário médio</h3>
+        <InfoPopover term="diario_medio" hideMarker>
+          <span className="mes__how">
+            Como funciona?
+            <span style={SR_ONLY}> — Diário médio</span>
+          </span>
+        </InfoPopover>
+      </header>
+      <div className="mes__kpi-val">
+        <Money cents={m.real_daily_avg_cents} size="inherit" />
+      </div>
+      <p className="mes__equation">
+        {isCurrent
+          ? "Média realizada por dia até hoje"
+          : "Média realizada por dia no mês"}
+      </p>
+      {m.real_daily_avg_cents === 0 ? (
+        <footer className="mes__cardfoot">
+          <Badge tone="secondary">Zerado</Badge>
+        </footer>
+      ) : null}
+    </section>
+  );
+}
+
+function ComparadoCard({
+  trend,
+  activeYear,
+  activeMonth,
+}: {
+  trend: MonthMetric[];
   activeYear: number;
   activeMonth: number;
-}
-
-function TrendCard({ trend, maxAbs, activeYear, activeMonth }: TrendCardProps) {
+}) {
+  // Escala honesta: teto = max(40%, maior valor da janela) — a grade nunca
+  // mente a altura relativa das barras; zero é chão.
+  const scaleMax = Math.max(4000, ...trend.map((t) => t.savings_rate_bps));
+  const barsLabel = `Economizado por mês: ${trend
+    .map((t) => `${MES[t.month - 1]} ${pctDisplay(t.savings_rate_bps)}%`)
+    .join(", ")}`;
   return (
-    <section className="card" aria-label="Resultado nos últimos meses">
-      <div className="card__head">
-        <span className="card__title">
-          <TrendingUp size={16} strokeWidth={1.75} className="ic" />
-          Resultado nos últimos meses
-        </span>
-      </div>
-      <div className="card__body">
-        <div className="mes-trend">
+    <section className="mes__card mes__card--comp" aria-labelledby="mes-comp-t">
+      <header className="mes__cardhead">
+        <ChartColumn size={16} strokeWidth={1.75} className="ic" />
+        <h3 id="mes-comp-t">Comparado aos meses anteriores</h3>
+      </header>
+      <div className="mes__comp-body">
+        <div className="mes__bars" role="img" aria-label={barsLabel}>
           {trend.map((t) => {
-            const h = (Math.abs(t.performance_cents) / maxAbs) * 100;
-            const pos = t.performance_cents >= 0;
             const isSel = t.year === activeYear && t.month === activeMonth;
-            const abbr = MES_ABBR[t.month - 1] ?? "";
+            const h = (t.savings_rate_bps / scaleMax) * 100;
             return (
-              <div className="mes-trend__col" key={`${t.year}-${t.month}`}>
-                <span className="mes-trend__val-label">
-                  {fmtCompact(t.performance_cents)}
-                </span>
-                <div
-                  className="mes-trend__bar"
-                  style={{
-                    height: h.toFixed(2) + "%",
-                    background: pos ? "var(--money-pos)" : "var(--money-neg)",
-                    opacity: isSel ? 1 : 0.45,
-                  }}
-                />
-                <span className="mes-trend__m">{abbr}</span>
+              <div
+                className={`mes__bar${isSel ? " mes__bar--now" : ""}`}
+                key={`${t.year}-${t.month}`}
+              >
+                <i style={{ height: `${h.toFixed(2)}%` }} />
+                <em>{MES_ABBR[t.month - 1]}</em>
+                <b>{pctDisplay(t.savings_rate_bps)}%</b>
               </div>
             );
           })}
         </div>
+        <p className="mes__comp-note">{serieLeitura(trend)}</p>
       </div>
     </section>
   );
 }
 
-interface OwnerTotalsCardProps {
-  ownerTotals: OwnerTotal[];
-}
-
-function OwnerTotalsCard({ ownerTotals }: OwnerTotalsCardProps) {
+function OwnerTotalsCard({ ownerTotals }: { ownerTotals: OwnerTotal[] }) {
   return (
-    <section className="card" aria-label="Por titular">
-      <div className="card__head">
-        <span className="card__title">Por titular</span>
-      </div>
-      <div className="card__body">
-        <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
-          {ownerTotals.map((o) => (
-            <span
-              key={o.owner_person_id}
-              style={{ display: "flex", flexDirection: "column", gap: 8 }}
-            >
-              <OwnerChip name={o.owner_name} avatar />
-              <Money cents={o.total_cents} size="md" />
-            </span>
-          ))}
-        </div>
+    <section className="mes__card mes__card--owners" aria-label="Por titular">
+      <header className="mes__cardhead">
+        <h3>Por titular</h3>
+      </header>
+      <div className="mes__owners">
+        {ownerTotals.map((o) => (
+          <span key={o.owner_person_id} className="mes__owner">
+            <OwnerChip name={o.owner_name} avatar />
+            <Money cents={o.total_cents} size="md" />
+          </span>
+        ))}
       </div>
     </section>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Main screen — thin composition
+// Tela — composição fina
 // ---------------------------------------------------------------------------
 
 export function TotaisScreen() {
   const forecastQ = useCommand("get_forecast", getForecast);
+  const summaryQ = useCommand("get_dashboard_summary", getDashboardSummary);
   const [selectedYm, setSelectedYm] = useState<string | null>(null);
   const forecast = forecastQ.data ?? null;
   const forecastYear = Number(forecast?.today.slice(0, 4)) || new Date().getFullYear();
@@ -497,6 +403,17 @@ export function TotaisScreen() {
     () => ownerTotalsForMonth(ownerYear, ownerMonth),
   );
   const ownerTotals: OwnerTotal[] = ownerTotalsQ.data ?? [];
+
+  // O crumb da appbar mostra o mês visto; `setCrumb` é função de módulo
+  // (identidade fixa), então o efeito só re-dispara quando o rótulo muda.
+  const crumbMonth = Number(activeYmForOwners.slice(5, 7)) || 0;
+  const crumbLabel = crumbMonth
+    ? `${MES[crumbMonth - 1]} de ${activeYmForOwners.slice(0, 4)}`
+    : null;
+  useEffect(() => {
+    setCrumb("mes", crumbLabel);
+    return () => setCrumb("mes", null);
+  }, [crumbLabel]);
 
   if (forecastQ.loading) {
     return <EmptyState variant="skeleton" skeletonRows={6} />;
@@ -542,57 +459,22 @@ export function TotaisScreen() {
 
   const isCurrent = activeYm === todayYm;
   const monthName = MES[m.month - 1] ?? "";
+  const cardMode = isCurrent && summaryQ.data?.spending_mode === "card";
+  const noRecord = forecast.annual_savings.economia_state === "no_record";
 
-  // Derived metrics
-  const performance = m.performance_cents;
-  const entradas = m.income_cents;
-  const saidaTotal = m.cost_of_living_cents; // custo de vida = saída total
-  const custoVida = m.cost_of_living_cents;
-  const economia = m.economia_cents;
-  const patrimonio = m.patrimonio_cents;
-  const previsaoDiario = m.daily_projected_cents;
-  const economizadoPct = m.savings_rate_bps / 100;
-  const fixedOut = m.fixed_out_cents;
-  const dailyOut = m.daily_out_cents;
-  const cartao = m.cartao_cents;
-
-  // "Para onde foi o dinheiro" bar segments.
-  const outParts = [
-    { name: "Saídas fixas", val: fixedOut, color: "var(--type-saida)" },
-    { name: "Cartão", val: cartao, color: "var(--type-cartao)" },
-    { name: "Diário", val: dailyOut, color: "var(--type-diario)" },
-    { name: "Economia", val: economia, color: "var(--type-economia)" },
-    { name: "Patrimônio", val: patrimonio, color: "var(--text-muted)" },
-  ];
-  const outTotal = Math.max(saidaTotal + economia + patrimonio, 1);
-
-  // Trend: last 6 months in chronological order (most recent = current idx).
+  // Série: últimos 6 meses até o mês visto, ordem cronológica.
   const trendStart = Math.max(0, idx - 5);
-  const trend = months.slice(trendStart, idx + 1);
-  const maxAbs = Math.max(...trend.map((t) => Math.abs(t.performance_cents)), 1);
-
-  // Annual savings for the annual economizado% reference.
-  const a = forecast.annual_savings;
-  const ytdPctRaw = Math.round(
-    (a.registered_economia_cents / Math.max(1, a.realized_income_cents)) * 100,
-  );
-  const ytdPct = Math.min(ytdPctRaw, 100);
-  const ytdPctLabel =
-    ytdPctRaw > 100
-      ? "no ano: >100% acumulado · meta 20–30% (média anual)"
-      : `no ano: ${ytdPct}% acumulado · meta 20–30% (média anual)`;
-
-  // Status badges (keeps existing test assertions for label text).
-  const perfStatus = performanceStatus(performance);
-  const econStatus = economizadoStatus(m.savings_rate_bps);
-  const custoStatus = custoVidaStatus(custoVida, entradas);
+  const trend = idx >= 0 ? months.slice(trendStart, idx + 1) : [m];
 
   return (
     <div className="mes">
-      {/* Header */}
-      <div className="mes-head">
-        <div className="mes-title">
-          {monthName} {m.year}
+      <header className="mes__head">
+        <div className="mes__head-text">
+          <h2>{monthName} em números</h2>
+          <p className="mes__context">
+            A conta que o método faz todo mês: o que entrou, o que a vida custou, o que
+            sobrou guardado.
+          </p>
         </div>
         <MonthNav
           label={`${monthName} de ${m.year}`}
@@ -605,76 +487,25 @@ export function TotaisScreen() {
           prevLabel="Mês anterior"
           nextLabel="Próximo mês"
         />
-      </div>
+      </header>
 
-      {/* Hero tiles: Resultado, Custo de vida, Economizado */}
-      <HeroTiles
-        performance={performance}
-        entradas={entradas}
-        saidaTotal={saidaTotal}
-        custoVida={custoVida}
-        economia={economia}
-        patrimonio={patrimonio}
-        previsaoDiario={previsaoDiario}
-        economizadoPct={economizadoPct}
-        ytdPctLabel={ytdPctLabel}
-        perfStatus={perfStatus}
-        custoStatus={custoStatus}
-        econStatus={econStatus}
-      />
-
-      {/* Two-column cards */}
-      <div className="mes-grid2">
-        <OutPartsCard
-          saidaTotal={saidaTotal}
-          economia={economia}
-          patrimonio={patrimonio}
-          outParts={outParts}
-          outTotal={outTotal}
+      <div className="mes__bento">
+        <EconomiaCard
+          m={m}
+          ytdBps={forecast.annual_savings.economia_ruler_rate_bps}
+          noRecord={noRecord}
         />
-        <FlowCard
-          entradas={entradas}
-          saidaTotal={saidaTotal}
-          economia={economia}
-          patrimonio={patrimonio}
-          previsaoDiario={previsaoDiario}
-          performance={performance}
-        />
+        <CustoCard m={m} cardMode={cardMode} />
+        <PerformanceCard m={m} />
+        <DiarioMedioCard m={m} isCurrent={isCurrent} />
+        {!noRecord && (
+          <ComparadoCard trend={trend} activeYear={m.year} activeMonth={m.month} />
+        )}
+        {ownerTotals.length >= 2 && <OwnerTotalsCard ownerTotals={ownerTotals} />}
       </div>
-
-      {/* Resultado nos últimos meses (trend) */}
-      <TrendCard
-        trend={trend}
-        maxAbs={maxAbs}
-        activeYear={m.year}
-        activeMonth={m.month}
-      />
-
-      {/* Diário médio tile (text anchor kept for tests) */}
-      <section className="card" aria-label="Diário médio">
-        <div className="card__head">
-          <span className="card__title">Diário médio</span>
-        </div>
-        <div className="card__body">
-          <div
-            className="mes-tile__val"
-            style={{ fontSize: 24, color: "var(--text-strong)" }}
-          >
-            <Money cents={m.real_daily_avg_cents} size="lg" />
-          </div>
-          <p className="mes-tile__sub">
-            {isCurrent
-              ? "média realizada por dia até hoje"
-              : "média realizada por dia no mês"}
-          </p>
-        </div>
-      </section>
-
-      {/* Por titular (shown only when 2+ owners) */}
-      {ownerTotals.length >= 2 && <OwnerTotalsCard ownerTotals={ownerTotals} />}
 
       {!isTauri && (
-        <p style={{ color: "var(--text-faint)", fontSize: 12 }}>
+        <p className="mes__webhint">
           Preview web — abra o app desktop para ver seus dados.
         </p>
       )}
