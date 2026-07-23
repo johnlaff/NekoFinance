@@ -32,8 +32,13 @@ that deviates must say why in the PR.
    proposal), every surface that mentions it uses the _same phrase_ — never two
    different invitations for the same act. Punctuation may differ by context (prose
    takes a final period; inline labels don't).
-5. **CTAs are verb + object** ("Estipular o teto", "Registrar lançamento"), sentence-case,
-   first letter capitalized. No label starts lowercase.
+5. **CTAs are verb + object** ("Estipular o teto", "Registrar lançamento"), sentence-case.
+   **No rendered copy starts lowercase — ever.** Every string that opens an element or a
+   visual line (label, pill, tail, section note, summary, status caption) begins with a
+   capital letter or a non-letter (digit, "R$", "—"). Lowercase is only legal
+   mid-sentence, continuing a line another string started (a money suffix, a crumb after
+   "·"). Prototype copy routinely arrives lowercase — capitalize at the implementation
+   boundary, don't wait for review to catch it.
 6. **Copy that describes a formula must match the engine.** Before shipping a sentence
    like "the smaller of two limits", read the function that computes the number and
    verify the sentence is literally true. A sentence that claims a `min` the engine

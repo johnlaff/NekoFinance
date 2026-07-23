@@ -148,8 +148,8 @@ export function offRulerCount(counts: TagRulerFlags): number {
 export function exceptionSummary(counts: TagRulerFlags): string {
   const off = offRulerCount(counts);
   return off === 0
-    ? "conta em todas as réguas"
-    : `fora de ${off} de ${RULER_ORDER.length} réguas`;
+    ? "Conta em todas as réguas"
+    : `Fora de ${off} de ${RULER_ORDER.length} réguas`;
 }
 
 export function isException(tag: Pick<TagsScreenTag, "counts_in">): boolean {
@@ -305,7 +305,7 @@ export function personRow(p: TagsScreenThirdParty, monthLabel: string): PersonRo
         ...base,
         detail: `Saiu ${formatBRL(p.out_cents)} · voltou ${formatBRL(p.back_cents)}`,
         value: { kind: "money", cents: p.back_cents - p.out_cents },
-        tail: "a seu favor",
+        tail: "A seu favor",
       };
     case "series": {
       const total = p.series_total ?? 0;
@@ -315,7 +315,7 @@ export function personRow(p: TagsScreenThirdParty, monthLabel: string): PersonRo
         ...base,
         detail: `Voltou ${formatBRL(p.back_cents)} · parcela ${done} de ${total}`,
         value: { kind: "money", cents: p.back_cents },
-        tail: remaining > 0 ? `falta ${pluralParcelas(remaining)}` : "série concluída",
+        tail: remaining > 0 ? `Falta ${pluralParcelas(remaining)}` : "Série concluída",
       };
     }
     case "open": {
@@ -327,7 +327,7 @@ export function personRow(p: TagsScreenThirdParty, monthLabel: string): PersonRo
             ? `Saiu ${formatBRL(p.out_cents)} · voltou ${formatBRL(p.back_cents)} até agora`
             : `Saiu ${formatBRL(p.out_cents)} · sem retorno`,
         value: { kind: "money", cents: p.out_cents - p.back_cents },
-        tail: `em aberto há ${pluralDias(days)}`,
+        tail: `Em aberto há ${pluralDias(days)}`,
       };
     }
     case "settled":
@@ -335,14 +335,14 @@ export function personRow(p: TagsScreenThirdParty, monthLabel: string): PersonRo
         ...base,
         detail: `Saiu ${formatBRL(p.out_cents)} · voltou ${formatBRL(p.back_cents)}`,
         value: { kind: "text", text: "Quitado" },
-        tail: p.settled_date ? `em ${shortDayMonth(p.settled_date)}` : "",
+        tail: p.settled_date ? `Em ${shortDayMonth(p.settled_date)}` : "",
       };
     case "none":
       return {
         ...base,
         detail: `Nenhum lançamento em ${monthLabel}.`,
         value: { kind: "text", text: "—" },
-        tail: "sem registro",
+        tail: "Sem registro",
       };
   }
 }

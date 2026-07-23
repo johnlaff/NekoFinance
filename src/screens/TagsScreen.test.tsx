@@ -246,11 +246,11 @@ describe("TagsScreen", () => {
     render(<TagsScreen />);
     await screen.findByText("Dinheiro de terceiros");
 
-    expect(screen.getByText("a seu favor")).toBeInTheDocument();
-    expect(screen.getByText("em aberto há 13 dias")).toBeInTheDocument();
-    expect(screen.getByText("falta 1 parcela")).toBeInTheDocument();
+    expect(screen.getByText("A seu favor")).toBeInTheDocument();
+    expect(screen.getByText("Em aberto há 13 dias")).toBeInTheDocument();
+    expect(screen.getByText("Falta 1 parcela")).toBeInTheDocument();
     expect(screen.getByText("Quitado")).toBeInTheDocument();
-    expect(screen.getByText("sem registro")).toBeInTheDocument();
+    expect(screen.getByText("Sem registro")).toBeInTheDocument();
     // Bruna sem lançamento no mês: nunca um "R$ 0,00" fabricado.
     expect(screen.getByText("—")).toBeInTheDocument();
   });
@@ -287,8 +287,8 @@ describe("TagsScreen", () => {
     render(<TagsScreen />);
     await screen.findByText("Exceções");
     // Duas exceções de 4×4 (Gio, Trânsito) e uma de 1×4 (Reembolso).
-    expect(screen.getAllByText(/fora de 4 de 4 réguas/)).toHaveLength(2);
-    expect(screen.getByText(/fora de 1 de 4 réguas/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Fora de 4 de 4 réguas/)).toHaveLength(2);
+    expect(screen.getByText(/Fora de 1 de 4 réguas/)).toBeInTheDocument();
   });
 
   it("frase da régua: metade fixa sempre visível; efeito só quando desligada", async () => {

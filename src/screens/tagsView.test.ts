@@ -342,20 +342,20 @@ describe("rulerSwitchLabel", () => {
 // ---------------------------------------------------------------------------
 
 describe("offRulerCount / exceptionSummary / isException", () => {
-  it("todas ligadas: resumo é 'conta em todas as réguas', não é exceção", () => {
+  it("todas ligadas: resumo é 'Conta em todas as réguas', não é exceção", () => {
     expect(offRulerCount(ALL_ON)).toBe(0);
-    expect(exceptionSummary(ALL_ON)).toBe("conta em todas as réguas");
+    expect(exceptionSummary(ALL_ON)).toBe("Conta em todas as réguas");
     expect(isException({ counts_in: ALL_ON })).toBe(false);
   });
 
-  it("1 de 4 desligada: 'fora de 1 de 4 réguas', é exceção", () => {
+  it("1 de 4 desligada: 'Fora de 1 de 4 réguas', é exceção", () => {
     const counts: TagRulerFlags = { ...ALL_ON, savings: false };
     expect(offRulerCount(counts)).toBe(1);
-    expect(exceptionSummary(counts)).toBe("fora de 1 de 4 réguas");
+    expect(exceptionSummary(counts)).toBe("Fora de 1 de 4 réguas");
     expect(isException({ counts_in: counts })).toBe(true);
   });
 
-  it("4 de 4 desligadas: 'fora de 4 de 4 réguas'", () => {
+  it("4 de 4 desligadas: 'Fora de 4 de 4 réguas'", () => {
     const counts: TagRulerFlags = {
       performance: false,
       cost_of_living: false,
@@ -363,7 +363,7 @@ describe("offRulerCount / exceptionSummary / isException", () => {
       daily_avg: false,
     };
     expect(offRulerCount(counts)).toBe(4);
-    expect(exceptionSummary(counts)).toBe("fora de 4 de 4 réguas");
+    expect(exceptionSummary(counts)).toBe("Fora de 4 de 4 réguas");
   });
 });
 
@@ -472,7 +472,7 @@ describe("personRow", () => {
     );
     expect(row.detail).toBe(`Saiu ${formatBRL(407764)} · voltou ${formatBRL(497764)}`);
     expect(row.value).toEqual({ kind: "money", cents: 90000 });
-    expect(row.tail).toBe("a seu favor");
+    expect(row.tail).toBe("A seu favor");
   });
 
   it("open sem retorno: valor é o que saiu, tail com a idade em dias", () => {
@@ -488,7 +488,7 @@ describe("personRow", () => {
     );
     expect(row.detail).toBe(`Saiu ${formatBRL(5000)} · sem retorno`);
     expect(row.value).toEqual({ kind: "money", cents: 5000 });
-    expect(row.tail).toBe("em aberto há 13 dias");
+    expect(row.tail).toBe("Em aberto há 13 dias");
   });
 
   it("open com retorno parcial: desconta o que já voltou", () => {
@@ -507,7 +507,7 @@ describe("personRow", () => {
       `Saiu ${formatBRL(10000)} · voltou ${formatBRL(4000)} até agora`,
     );
     expect(row.value).toEqual({ kind: "money", cents: 6000 });
-    expect(row.tail).toBe("em aberto há 1 dia");
+    expect(row.tail).toBe("Em aberto há 1 dia");
   });
 
   it("series: parcela k de N no detalhe, parcelas restantes na tail", () => {
@@ -524,7 +524,7 @@ describe("personRow", () => {
     );
     expect(row.detail).toBe(`Voltou ${formatBRL(11700)} · parcela 2 de 3`);
     expect(row.value).toEqual({ kind: "money", cents: 11700 });
-    expect(row.tail).toBe("falta 1 parcela");
+    expect(row.tail).toBe("Falta 1 parcela");
   });
 
   it("series concluída: sem parcela restante", () => {
@@ -539,7 +539,7 @@ describe("personRow", () => {
       }),
       "julho",
     );
-    expect(row.tail).toBe("série concluída");
+    expect(row.tail).toBe("Série concluída");
   });
 
   it("settled: valor é texto 'Quitado', nunca fabrica um número", () => {
@@ -556,7 +556,7 @@ describe("personRow", () => {
     );
     expect(row.detail).toBe(`Saiu ${formatBRL(2200)} · voltou ${formatBRL(2200)}`);
     expect(row.value).toEqual({ kind: "text", text: "Quitado" });
-    expect(row.tail).toBe("em 4 de julho");
+    expect(row.tail).toBe("Em 4 de julho");
   });
 
   it("none: sem lançamento no mês, valor é travessão", () => {
@@ -566,7 +566,7 @@ describe("personRow", () => {
     );
     expect(row.detail).toBe("Nenhum lançamento em julho.");
     expect(row.value).toEqual({ kind: "text", text: "—" });
-    expect(row.tail).toBe("sem registro");
+    expect(row.tail).toBe("Sem registro");
   });
 });
 

@@ -492,7 +492,7 @@ function ThirdPartiesCard({
       <div className="tags__sechead">
         <Users size={16} strokeWidth={1.75} className="ic" aria-hidden="true" />
         <b id="tags-terceiros">Dinheiro de terceiros</b>
-        <span className="tags__note">detectado no import</span>
+        <span className="tags__note">Detectado no import</span>
       </div>
       {people.map((p) => {
         const row = personRow(p, monthLabel);
