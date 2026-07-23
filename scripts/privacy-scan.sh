@@ -61,6 +61,7 @@ scan_tree_for_pattern() {
       --glob '!.private-forbidden-patterns' \
       --glob '!SESSION-CONTEXT.md' \
       --glob '!.methodology-pack/**' \
+      --glob '!.claude/skills/neko-fontes-brutas/**' \
       -- "$pattern" . || true
   )
 

@@ -1,0 +1,710 @@
+/* Tela Hoje — direção "Conversa com a Mia": saudação-veredito, curadoria da assistente,
+   bloco do dia (as faturas como velocímetro no modo cartão), insight com voz e par
+   saldo+reserva. Vocabulário BEM sobre os tokens do DS "Midnight Purr". */
+
+.hoje {
+  --ok: var(--success-400);
+  --warn: var(--warning-400);
+
+  display: flex;
+  flex-direction: column;
+  max-width: 1160px;
+  margin: 0 auto;
+}
+
+.hoje__stale {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--warning-tint);
+  color: var(--warn);
+  font-size: var(--fs-sm);
+}
+
+/* ---- Saudação-veredito: o herói é a frase, não um painel ---- */
+
+.hoje__greet {
+  text-align: center;
+  padding: var(--space-7) 0 var(--space-8);
+}
+
+.hoje__greet-cat {
+  color: var(--text);
+}
+
+.hoje__greet h1 {
+  margin: var(--space-6) 0 var(--space-1);
+  font-size: 30px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.035em;
+}
+
+.hoje__verdict {
+  margin: 0;
+  font-size: 21px;
+  font-weight: var(--fw-medium);
+  letter-spacing: -0.025em;
+  line-height: var(--lh-snug);
+  color: var(--text-faint);
+}
+
+.hoje__verdict-money {
+  color: var(--accent);
+  font-weight: var(--fw-semibold);
+}
+
+.hoje__verdict b {
+  display: block;
+  color: var(--text);
+  font-weight: var(--fw-medium);
+}
+
+.hoje__teach {
+  max-width: 52ch;
+  margin: var(--space-5) auto 0;
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+  line-height: var(--lh-normal);
+}
+
+/* ---- Curadoria: a assistente assina a ordem, nunca os números ---- */
+
+.hoje__curated {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-5);
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+}
+
+.hoje__curated-cat {
+  color: var(--accent);
+  flex: none;
+}
+
+/* ---- Malha de cards ----
+   Bento: cards da mesma linha alinham topo E fundo (stretch); a folga de altura
+   vai para DENTRO do card, ancorada por elemento (a nota no pé, o ar ao redor) —
+   nunca vira buraco entre cards. */
+
+.hoje__grid {
+  display: grid;
+  gap: var(--space-6);
+}
+
+.hoje__blockday,
+.hoje__card--moves,
+.hoje__card--saldo {
+  display: flex;
+  flex-direction: column;
+}
+
+/* No bloco do dia, o glossário final ancora no pé; o ar fica entre o dado e a nota. */
+.hoje__blockday .hoje__gloss:last-child {
+  margin-top: auto;
+  padding-top: var(--space-5);
+}
+
+.hoje__card {
+  min-width: 0;
+  border: var(--bw-hair) solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  padding: var(--space-6);
+}
+
+.hoje__cardhead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-5);
+}
+
+.hoje__cardhead .ic {
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+}
+
+.hoje__cardhead h2 {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+}
+
+.hoje__more {
+  margin-left: auto;
+  padding: var(--space-2) 0;
+  margin-block: calc(var(--space-2) * -1);
+  border: 0;
+  background: none;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.hoje__more:hover {
+  color: var(--text);
+}
+
+/* ---- Bloco do dia ---- */
+
+.hoje__daytotal {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin: 0 0 var(--space-3);
+  font-size: 32px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.04em;
+}
+
+.hoje__daytotal small {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-regular);
+  letter-spacing: 0;
+  color: var(--text-faint);
+}
+
+.hoje__modo {
+  margin: 0 0 var(--space-5);
+}
+
+/* A fatura em aberto é o corpo do card no modo cartão: o método manda mantê-la à
+   vista — a fatura crescendo é o velocímetro de quem gasta no crédito. */
+.hoje__fatura {
+  border: var(--bw-hair) dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+  margin: 0 0 var(--space-5);
+}
+
+.hoje__fatura-head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--fs-sm);
+}
+
+.hoje__fatura-head .money {
+  font-weight: var(--fw-semibold);
+}
+
+.hoje__fatura-bar {
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  margin: var(--space-4) 0;
+  overflow: hidden;
+}
+
+.hoje__fatura-bar i {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+.hoje__fatura-note,
+.hoje__zerados,
+.hoje__gloss {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  line-height: var(--lh-normal);
+}
+
+.hoje__zerados {
+  margin-top: var(--space-5);
+}
+
+.hoje__gloss {
+  margin-top: var(--space-5);
+}
+
+/* Agrupamento por vencimento: o modelo mental é "o que vence primeiro",
+   não "que cartões eu tenho". */
+.hoje__venc {
+  margin: var(--space-5) 0 0;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.01em;
+  color: var(--text-faint);
+}
+
+.hoje__rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hoje__rows li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-5) 0;
+}
+
+.hoje__rows .ic {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-circle);
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+
+.hoje__what {
+  flex: 1;
+  min-width: 0;
+}
+
+.hoje__what b {
+  display: block;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+}
+
+.hoje__what small {
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+}
+
+.hoje__val {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+}
+
+/* Reembolso é dinheiro que volta — status, não marca: verde em toda paleta. */
+.hoje__reemb {
+  display: inline-block;
+  margin-left: var(--space-2);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--success-tint);
+  color: var(--ok);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-semibold);
+  font-style: normal;
+  letter-spacing: 0.02em;
+  vertical-align: 2px;
+}
+
+/* ---- Check-in do teto (modo débito) ---- */
+
+.hoje__ci-track {
+  height: 9px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  margin: var(--space-5) 0 var(--space-4);
+  overflow: hidden;
+}
+
+.hoje__ci-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+}
+
+/* ---- Insight: a voz da Mia é tint, não caixa dentro de caixa ---- */
+
+.hoje__insight {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  border: var(--bw-hair) solid color-mix(in oklch, var(--accent) 22%, transparent);
+  border-radius: var(--radius-xl);
+  background: color-mix(in oklch, var(--accent) 6%, var(--surface));
+  padding: var(--space-6);
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+  line-height: var(--lh-normal);
+}
+
+.hoje__insight p {
+  margin: 0;
+}
+
+.hoje__insight b {
+  color: var(--text);
+  font-weight: var(--fw-medium);
+}
+
+/* Dinheiro negativo no insight: o 3º eixo de cor (dinheiro) fala mais alto que a voz. */
+.hoje__insight b.hoje__money-neg {
+  color: var(--money-neg);
+}
+
+.hoje__insight-cat {
+  flex: none;
+  margin-top: 2px;
+  color: var(--accent);
+}
+
+/* Insight DENTRO de card é divisor com voz: sem fundo, sem raio — só o fio e a faísca. */
+.hoje__card .hoje__insight {
+  border: 0;
+  border-top: var(--bw-hair) solid var(--border);
+  border-radius: 0;
+  background: none;
+  padding: var(--space-5) 0 0;
+  margin: var(--space-5) 0 0;
+}
+
+/* Âncora bento: o divisor de voz assenta no pé do card de saldo. */
+.hoje__card--saldo .hoje__insight {
+  margin-top: auto;
+}
+
+/* ---- Próximos movimentos: carrossel no polegar, lista no mouse ---- */
+
+.hoje__moves {
+  display: flex;
+  gap: var(--space-5);
+  overflow-x: auto;
+  padding: 2px 2px var(--space-2);
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+}
+
+.hoje__moves::-webkit-scrollbar {
+  display: none;
+}
+
+.hoje__move {
+  flex: 0 0 146px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  scroll-snap-align: start;
+  border: var(--bw-hair) solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6) var(--space-5) 0;
+  text-align: center;
+}
+
+.hoje__move-logo {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-circle);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  margin-bottom: var(--space-5);
+}
+
+.hoje__move-logo.is-income {
+  background: var(--success-tint);
+  color: var(--ok);
+}
+
+.hoje__move-nm {
+  max-width: 100%;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hoje__move-vl {
+  margin-top: var(--space-1);
+  font-size: 17px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.025em;
+}
+
+.hoje__move-vl.is-income {
+  color: var(--ok);
+}
+
+.hoje__move-dt {
+  width: 100%;
+  margin-top: var(--space-5);
+  padding: var(--space-4) 0 var(--space-5);
+  border-top: var(--bw-hair) solid var(--border);
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+
+.hoje__move-dt.is-soon {
+  color: var(--warn);
+  font-weight: var(--fw-medium);
+}
+
+.hoje__moves-empty {
+  margin: 0;
+  padding: var(--space-2) 0;
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+}
+
+/* Rodapé do card: o par do mês — custo de vida × guardado. O mês não é julgado
+   (a régua da economia é anual): nenhum estado de cor aqui. */
+.hoje__pair {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-6);
+  margin-top: auto;
+  padding-top: var(--space-6);
+}
+
+.hoje__pair .side:last-child {
+  text-align: right;
+}
+
+.hoje__pair .v {
+  font-size: 25px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.035em;
+}
+
+.hoje__pair .l {
+  margin-top: 2px;
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+}
+
+/* ---- Par de estado: saldo + reserva, cada um com sua régua ---- */
+
+.hoje__statpair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-5);
+  /* Bento: o par preenche o card; cada caixa estica junto com a vizinha. */
+  flex: 1;
+}
+
+.hoje__stat {
+  display: flex;
+  flex-direction: column;
+  border: var(--bw-hair) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  padding: var(--space-6);
+}
+
+/* A régua e sua frase leem juntas — o conjunto assenta no pé da caixa.
+   O respiro mínimo vive no rótulo acima; o `auto` só distribui a folga. */
+.hoje__stat .sl {
+  margin-bottom: var(--space-5);
+}
+
+.hoje__stat .hoje__gauge {
+  margin-top: auto;
+}
+
+.hoje__stat .sv {
+  font-size: 22px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.03em;
+}
+
+.hoje__stat .sl {
+  margin-top: 2px;
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+}
+
+/* CTA de régua dentro do valor do stat: link discreto, nunca no corpo do número. */
+.hoje__stat .sv .hoje__link {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-regular);
+  letter-spacing: 0;
+}
+
+.hoje__gauge {
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  margin: var(--space-5) 0 var(--space-4);
+  overflow: hidden;
+}
+
+.hoje__gauge i {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+}
+
+.hoje__stat-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+
+.hoje__stat .dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: var(--radius-circle);
+}
+
+@media (max-width: 480px) {
+  .hoje__statpair {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---- Links discretos (CTAs de régua) ---- */
+
+.hoje__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--primary-quiet-text);
+  font: inherit;
+  font-size: inherit;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.hoje__preview {
+  margin: var(--space-3) 0 0;
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+
+/* ---- Desktop: o veredito abre em palco; o resto compõe em duas colunas ---- */
+
+@media (min-width: 901px) {
+  .hoje__grid {
+    grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+    gap: var(--space-6);
+  }
+
+  /* O bloco só ancora a coluna inteira quando a lista de faturas lhe dá altura;
+     curto (modo débito ou sem fatura aberta), ele flui em grade 2×2 equilibrada. */
+  .hoje__blockday--deck {
+    grid-row: span 3;
+  }
+
+  /* O carrossel é gesto de polegar; no mouse o mesmo conteúdo vira lista. */
+  .hoje__moves {
+    flex-direction: column;
+    gap: 0;
+    overflow: visible;
+    padding: 0;
+  }
+
+  .hoje__move {
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "logo nm vl"
+      "logo dt vl";
+    align-items: center;
+    column-gap: var(--space-3);
+    row-gap: 1px;
+    flex: none;
+    width: auto;
+    border: 0;
+    border-top: var(--bw-hair) solid var(--border);
+    border-radius: 0;
+    padding: 11px 2px;
+    text-align: left;
+  }
+
+  .hoje__move:first-child {
+    border-top: 0;
+  }
+
+  .hoje__move-logo {
+    grid-area: logo;
+    width: 36px;
+    height: 36px;
+    margin: 0;
+  }
+
+  .hoje__move-nm {
+    grid-area: nm;
+    align-self: end;
+    color: var(--text);
+    font-size: 13.5px;
+  }
+
+  .hoje__move-dt {
+    grid-area: dt;
+    align-self: start;
+    width: auto;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    text-align: left;
+  }
+
+  .hoje__move-vl {
+    grid-area: vl;
+    margin: 0;
+    font-size: 14.5px;
+  }
+}
+
+/* ---- Coreografia de entrada: superfícies transitam; dinheiro nunca anima sozinho ---- */
+
+@media (prefers-reduced-motion: no-preference) {
+  .hoje__greet {
+    animation: hoje-pop 0.5s cubic-bezier(0.2, 0, 0, 1) both 0.1s;
+  }
+
+  .hoje__curated {
+    animation: hoje-pop 0.4s cubic-bezier(0.2, 0, 0, 1) both 0.26s;
+  }
+
+  .hoje__blockday {
+    animation: hoje-pop 0.45s cubic-bezier(0.2, 0, 0, 1) both 0.38s;
+  }
+
+  .hoje__insight--month {
+    animation: hoje-pop 0.45s cubic-bezier(0.2, 0, 0, 1) both 0.5s;
+  }
+
+  .hoje__card--moves {
+    animation: hoje-pop 0.45s cubic-bezier(0.2, 0, 0, 1) both 0.6s;
+  }
+
+  .hoje__card--saldo {
+    animation: hoje-pop 0.45s cubic-bezier(0.2, 0, 0, 1) both 0.7s;
+  }
+}
+
+@keyframes hoje-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (max-width: 700px) {
+  .hoje__greet {
+    padding: var(--space-2) 0 var(--space-4);
+  }
+
+  .hoje__greet-cat svg {
+    width: 56px;
+    height: 56px;
+  }
+
+  .hoje__greet h1 {
+    font-size: 26px;
+  }
+
+  .hoje__verdict {
+    font-size: 18px;
+  }
+}

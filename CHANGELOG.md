@@ -8,6 +8,15 @@ for humans, and versions follow [SemVer](https://semver.org/).
 
 ### Added
 
+- The Hoje screen was recomposed around the daily verdict: a greeting hero
+  ("Pode gastar hoje …" with the binding guardrail named and a teaching
+  layer), the assistant's curation line, a day block that in card mode shows
+  open invoices grouped by due date (per-card lines with status context,
+  reimbursement tag and an honest footer for idle cards), a month insight in
+  Mia's voice derived from the projected balance chain, upcoming movements
+  (bills plus the next expected income), and a saldo + reserve pair with
+  gauges. Desktop composes in two columns; mobile stacks under a large title
+  coordinated with the app bar.
 - Credit cards are now a first-class domain: register multiple cards (with
   additional cards per person inheriting the holder's cycle), track persisted
   invoices per card × cycle with derived status, and follow subscriptions and
@@ -24,6 +33,9 @@ for humans, and versions follow [SemVer](https://semver.org/).
 
 ### Changed
 
+- Registering from Hoje now always goes through the compose flow (dock FAB,
+  sidebar CTA or the N shortcut) with explicit approval — the day block is a
+  reading surface and no longer embeds a quick-register form.
 - Write-back now writes one note line per card in the due-date cell instead
   of collapsing all credit into a single card's lump; the multi-card warning
   is gone because the limitation is gone.

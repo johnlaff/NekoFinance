@@ -1224,7 +1224,16 @@ struct MetricLineItemRow {
     section: Option<String>,
 }
 
-type CardInvoiceRow = (String, String, String, String, String, Option<i64>, i64);
+type CardInvoiceRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<i64>,
+    i64,
+    i64,
+);
 
 #[derive(Debug, Clone)]
 pub(crate) struct CardInvoiceEvent {
@@ -1234,6 +1243,8 @@ pub(crate) struct CardInvoiceEvent {
     pub closing_date: NaiveDate,
     pub due_date: NaiveDate,
     pub amount_cents: i64,
+    /// Existe Entrada vinculada (`refund_invoice_id`) — a expectativa de reembolso da fatura.
+    pub has_refund_expectation: bool,
 }
 
 async fn load_card_invoice_events(
@@ -1255,7 +1266,9 @@ async fn load_card_invoice_events(
     let upper = end_exclusive.map(|end| end.format("%Y-%m-%d").to_string());
     let rows: Vec<CardInvoiceRow> = sqlx::query_as(
         "SELECT i.account_id, a.name, COALESCE(p.name, ''), i.closing_date, i.due_date, \
-                i.stated_total_cents, COALESCE(SUM(ABS(t.amount)), 0) \
+                i.stated_total_cents, COALESCE(SUM(ABS(t.amount)), 0), \
+                EXISTS(SELECT 1 FROM \"transaction\" r WHERE r.refund_invoice_id = i.id \
+                       AND r.scenario_id IS NULL) \
          FROM invoice i \
          JOIN account a ON a.id = i.account_id \
          LEFT JOIN person p ON p.id = a.owner_person_id \
@@ -1284,6 +1297,7 @@ async fn load_card_invoice_events(
                 due_date,
                 stated_total_cents,
                 purchases_sum_cents,
+                has_refund_expectation,
             )| {
                 Ok(CardInvoiceEvent {
                     account_id,
@@ -1297,6 +1311,7 @@ async fn load_card_invoice_events(
                         stated_total_cents,
                         purchases_sum_cents,
                     ),
+                    has_refund_expectation: has_refund_expectation != 0,
                 })
             },
         )
@@ -2229,6 +2244,8 @@ pub struct UpcomingInvoiceDto {
     pub amount_cents: i64,
     pub status: String,
     pub owner_name: String,
+    /// Existe Entrada vinculada à fatura (`refund_invoice_id`) — etiqueta "Reembolso" na Hoje.
+    pub has_refund_expectation: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -2241,6 +2258,8 @@ pub struct DashboardSummary {
     /// Overlay: existe proposta da cerimônia do teto aguardando confirmação do dono.
     pub ceiling_proposal_pending: bool,
     pub daily_spend_today: i64,
+    /// Compras de cartão realizadas HOJE (magnitude) — o total do bloco do dia no modo cartão.
+    pub card_spend_today_cents: i64,
     pub reserve_months: f64,
     /// Estado epistêmico da reserva: `verdict` (mediana de 6 meses completos) · `estimate`
     /// ("retrato vivo", 1–5 meses) · `zero` (contas de reserva zeradas) · `no_record`.
@@ -2333,6 +2352,21 @@ pub(crate) async fn dashboard_summary(
     .fetch_one(pool)
     .await
     .map_err(|e| format!("query daily spend: {e}"))?;
+
+    // Espelho do `daily_spend` para o modo cartão: compras de cartão realizadas HOJE — manual
+    // (`payment_method='credit'`) ou vinculada a fatura (`invoice_id`). O lump importado do
+    // vencimento (célula da planilha) tem `payment_method` NULL e nunca vira compra, então o
+    // pagamento da fatura não conta como gasto do dia.
+    let card_spend: (i64,) = sqlx::query_as(
+        "SELECT COALESCE((SELECT SUM(ABS(amount)) FROM \"transaction\" \
+                          WHERE type='expense' AND is_projection=0 AND date = ?1 \
+                            AND (payment_method = 'credit' OR invoice_id IS NOT NULL) \
+                            AND scenario_id IS NULL), 0)",
+    )
+    .bind(&today)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("query card spend: {e}"))?;
 
     // Reserva em MESES de custo de vida (método): saldo das contas de reserva ÷ custo de vida mensal.
     // Custo de vida mensal = mediana das saídas dos últimos meses completos (realized_monthly_baseline
@@ -2440,6 +2474,7 @@ pub(crate) async fn dashboard_summary(
             .as_str()
             .to_string(),
             owner_name: invoice.owner_name.clone(),
+            has_refund_expectation: invoice.has_refund_expectation,
         })
         .collect();
     let next_fatura = if has_card {
@@ -2465,6 +2500,7 @@ pub(crate) async fn dashboard_summary(
         daily_ceiling_source: ceiling.source.as_str().to_string(),
         ceiling_proposal_pending,
         daily_spend_today: daily_spend.0,
+        card_spend_today_cents: card_spend.0,
         reserve_months,
         reserve_state: reserve_state.to_string(),
         reserve_basis_months,
@@ -4372,6 +4408,147 @@ mod tests {
         assert_eq!(summary.upcoming_invoices[0].status, "fechada");
         assert_eq!(summary.upcoming_invoices[1].account_id, "holder");
         assert_eq!(summary.upcoming_invoices[1].owner_name, "Ana");
+    }
+
+    // O bloco do dia no modo cartão mostra "quanto somou nas faturas HOJE" — a soma é das
+    // COMPRAS de cartão do dia (magnitude, mesmo contrato do `daily_spend_today`): manual
+    // (`payment_method='credit'`) ou vinculada a fatura (`invoice_id`). O lump importado do
+    // vencimento (célula da planilha, `payment_method` NULL e sem vínculo de compra) é o
+    // PAGAMENTO da fatura, nunca gasto do dia — não pode entrar.
+    #[tokio::test]
+    async fn card_spend_today_sums_only_todays_card_purchases() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        let today_str = today.format("%Y-%m-%d").to_string();
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "card-1",
+                card_name: "Cartão",
+                owner_name: "Pessoa",
+                invoice_id: "invoice-1",
+                closing_date: "2026-06-20",
+                due_date: "2026-07-10",
+                stated_total_cents: None,
+            },
+        )
+        .await;
+
+        // Compra manual de hoje, vinculada à fatura (o caminho do `register_card_purchase`).
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, \
+             payment_method, invoice_id) VALUES ('buy-1', 'expense', 4_500, ?1, 0, 0, 'credit', 'invoice-1')",
+        )
+        .bind(&today_str)
+        .execute(&p)
+        .await
+        .unwrap();
+        // Compra legada de hoje sem vínculo (só `payment_method`), gravada NEGATIVA (importada):
+        // magnitude soma, sinal não cancela.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, \
+             payment_method) VALUES ('buy-2', 'expense', -2_000, ?1, 0, 0, 'credit')",
+        )
+        .bind(&today_str)
+        .execute(&p)
+        .await
+        .unwrap();
+        // Ocorrência PROJETADA de série hoje: futuro, não gasto realizado.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, \
+             payment_method, invoice_id) VALUES ('proj-1', 'expense', 9_900, ?1, 0, 1, 'credit', 'invoice-1')",
+        )
+        .bind(&today_str)
+        .execute(&p)
+        .await
+        .unwrap();
+        // Lump importado do vencimento hoje (pagamento de fatura): `payment_method` NULL, sem vínculo.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('lump-1', 'expense', 85_000, ?1, 0, 0)",
+        )
+        .bind(&today_str)
+        .execute(&p)
+        .await
+        .unwrap();
+        // Diário de hoje: pertence ao outro modo, nunca à soma do cartão.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('daily-1', 'expense', 3_000, ?1, 0, 0)",
+        )
+        .bind(&today_str)
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let summary = dashboard_summary(&p, today).await.unwrap();
+        assert_eq!(
+            summary.card_spend_today_cents, 6_500,
+            "compras de cartão de hoje: 4.500 + 2.000; projeção, lump e Diário fora"
+        );
+    }
+
+    // A linha da fatura na Hoje etiqueta "Reembolso" quando existe Entrada vinculada
+    // (`refund_invoice_id`) — expectativa do protocolo do adicional. O flag viaja no DTO
+    // para a tela não pagar um `get_invoice` por cartão.
+    #[tokio::test]
+    async fn upcoming_invoices_flag_refund_expectations() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "card-shared",
+                card_name: "Compartilhado",
+                owner_name: "Gio",
+                invoice_id: "invoice-shared",
+                closing_date: "2026-06-20",
+                due_date: "2026-07-12",
+                stated_total_cents: Some(98_770),
+            },
+        )
+        .await;
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "card-solo",
+                card_name: "Próprio",
+                owner_name: "Eu",
+                invoice_id: "invoice-solo",
+                closing_date: "2026-06-20",
+                due_date: "2026-07-10",
+                stated_total_cents: Some(163_172),
+            },
+        )
+        .await;
+        // Entrada projetada no vencimento com o vínculo de reembolso da sub-fatura.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, \
+             refund_invoice_id) VALUES ('refund-1', 'income', 98_770, '2026-07-12', 0, 1, 'invoice-shared')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let summary = dashboard_summary(&p, today).await.unwrap();
+        let shared = summary
+            .upcoming_invoices
+            .iter()
+            .find(|i| i.account_id == "card-shared")
+            .unwrap();
+        let solo = summary
+            .upcoming_invoices
+            .iter()
+            .find(|i| i.account_id == "card-solo")
+            .unwrap();
+        assert!(
+            shared.has_refund_expectation,
+            "fatura com Entrada vinculada"
+        );
+        assert!(
+            !solo.has_refund_expectation,
+            "fatura sem expectativa de reembolso"
+        );
     }
 
     #[tokio::test]

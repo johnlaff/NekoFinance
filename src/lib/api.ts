@@ -33,6 +33,8 @@ export interface UpcomingInvoice {
   amount_cents: number;
   status: "prevista" | "aberta" | "fechada" | "paga";
   owner_name: string;
+  /** Existe Entrada vinculada à fatura (expectativa de reembolso) — etiqueta na Hoje. */
+  has_refund_expectation: boolean;
 }
 
 export interface DashboardSummary {
@@ -44,6 +46,8 @@ export interface DashboardSummary {
   /** Overlay: existe proposta da cerimônia do teto aguardando confirmação. */
   ceiling_proposal_pending: boolean;
   daily_spend_today: number;
+  /** Compras de cartão realizadas hoje (magnitude, centavos) — o total do bloco do dia no modo cartão. */
+  card_spend_today_cents: number;
   reserve_months: number;
   /** Estado epistêmico da reserva (veredito · retrato vivo · zerada · sem registro). */
   reserve_state: "verdict" | "estimate" | "zero" | "no_record";

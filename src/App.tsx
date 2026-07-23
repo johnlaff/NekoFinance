@@ -5,6 +5,7 @@ import { AppShell, type Screen } from "./shell/AppShell";
 import { NekoAppProvider, type ComposeOptions } from "./shell/appContext";
 import { Compose } from "./shell/Compose";
 import { DashboardScreen } from "./screens/DashboardScreen";
+import { eyebrowDate, localTodayIso } from "./screens/hojeView";
 import { TransactionsScreen } from "./screens/TransactionsScreen";
 import { TotaisScreen } from "./screens/TotaisScreen";
 import { AnnualScreen } from "./screens/AnnualScreen";
@@ -103,6 +104,7 @@ function App() {
             }))
           }
           hints={hints}
+          crumbs={{ hoje: eyebrowDate(localTodayIso()) }}
         >
           <div key={screen} className="ak-screen neko-app">
             {screen === "hoje" && <DashboardScreen />}
