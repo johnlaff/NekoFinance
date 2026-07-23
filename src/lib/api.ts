@@ -227,12 +227,18 @@ export interface MonthMetric {
   year: number;
   month: number;
   income_cents: number;
+  /** Renda do mês na view PERFORMANCE (perna positiva de `performance_cents`) — diverge de
+   * `income_cents` quando uma tag entra/sai da régua de Performance mas não da de Economia. */
+  income_performance_cents: number;
   performance_cents: number;
   cost_of_living_cents: number;
   /** Saídas fixas realizadas (coluna Saída sem cartão/economia/patrimônio). */
   fixed_out_cents: number;
   /** Diário realizado (coluna Diário). */
   daily_out_cents: number;
+  /** Diário realizado na view DIÁRIO MÉDIO — numerador de `real_daily_avg_cents` (diverge de
+   * `daily_out_cents` quando uma tag entra/sai só da régua de Diário médio). */
+  daily_avg_out_cents: number;
   /** Previsão de diário do mês (teto dos dias futuros + pré-lançados); desconta a Performance. */
   daily_projected_cents: number;
   /** Cartão realizado, bucket próprio dentro do custo de vida. */
@@ -825,14 +831,13 @@ export interface Tag {
   color: string;
   emoji: string | null;
   is_special: boolean;
-  /** Quando true, lançamentos com esta tag saem das métricas (Performance, Custo de vida,
-   * Economizado%) — mas continuam no Saldo (movimento de caixa real). */
-  exclude_from_totals: boolean;
-}
-
-export interface TagTotal extends Tag {
-  /** Soma (centavos, valor absoluto) dos lançamentos do mês com esta tag. */
-  total_cents: number;
+  /** Os 4 interruptores de régua — cada um tira os lançamentos desta tag da régua
+   * correspondente (Performance, Custo de vida, Economia, Diário médio). O Saldo não tem
+   * flag: é garantia estrutural, sempre conta o movimento de caixa real. */
+  exclude_from_performance: boolean;
+  exclude_from_cost_of_living: boolean;
+  exclude_from_savings: boolean;
+  exclude_from_daily_avg: boolean;
 }
 
 export interface AnnualMetrics {
@@ -900,13 +905,107 @@ export function updateTag(
   return invoke("update_tag_cmd", { tagId, name, color, emoji });
 }
 
-/** Liga/desliga "Ignorar nos cálculos" para uma tag (sai das métricas, não do Saldo). */
-export function updateTagExclude(tagId: string, exclude: boolean): Promise<void> {
-  return invoke("update_tag_exclude_cmd", { tagId, exclude });
+/** Liga/desliga os 4 interruptores de régua de uma tag (UPDATE único, idempotente). */
+export function updateTagRulers(
+  tagId: string,
+  excludeFromPerformance: boolean,
+  excludeFromCostOfLiving: boolean,
+  excludeFromSavings: boolean,
+  excludeFromDailyAvg: boolean,
+): Promise<void> {
+  return invoke("update_tag_rulers_cmd", {
+    tagId,
+    excludeFromPerformance,
+    excludeFromCostOfLiving,
+    excludeFromSavings,
+    excludeFromDailyAvg,
+  });
 }
 
-export function tagTotalsForMonth(year: number, month: number): Promise<TagTotal[]> {
-  return invoke("tag_totals_for_month_cmd", { year, month });
+/** Estado epistêmico de uma pessoa na seção "Dinheiro de terceiros" — deriva de vínculos
+ * reais (marcador de nota, split, cartão adicional, expectativa de reembolso), nunca fabricado. */
+export type ThirdPartyState = "favor" | "open" | "series" | "settled" | "none";
+
+export interface TagsScreenThirdParty {
+  person_id: string;
+  name: string;
+  /** Saiu no mês da tela (magnitude). */
+  out_cents: number;
+  /** Voltou no mês da tela, realizado (magnitude). */
+  back_cents: number;
+  /** Retorno esperado vinculado, ainda não realizado (magnitude). */
+  expected_cents: number;
+  state: ThirdPartyState;
+  /** Dias desde a saída/expectativa — só em estado "open". */
+  open_since_days: number | null;
+  /** Parcelas já voltaram / total da série — só em estado "series". */
+  series_done: number | null;
+  series_total: number | null;
+  /** Data da quitação — só em estado "settled". */
+  settled_date: string | null;
+}
+
+/** Os 4 interruptores de régua de uma tag, na chave positiva do DTO da tela
+ * (`true` = a régua CALCULA esta tag) — inverso do flag de escrita `exclude_from_*`. */
+export interface TagRulerFlags {
+  performance: boolean;
+  cost_of_living: boolean;
+  savings: boolean;
+  daily_avg: boolean;
+}
+
+/** Contribuição marginal de uma tag a cada régua: o motor recomputa o mês com o flag
+ * invertido e reporta a diferença — o mesmo número serve à frase ligada e desligada. */
+export interface TagRulerEffects {
+  performance_delta_cents: number;
+  cost_delta_cents: number;
+  /** Δ na renda-base da view Economia. */
+  savings_base_delta_cents: number;
+  /** Δ na economia registrada (reconciliada com a anotação da aba). */
+  savings_amount_delta_cents: number;
+  daily_avg_delta_cents: number;
+}
+
+export interface TagsScreenTag {
+  id: string;
+  name: string;
+  color: string;
+  emoji: string | null;
+  is_special: boolean;
+  counts_in: TagRulerFlags;
+  /** O que a tag movimentou no mês (semântica do antigo tag_totals) — nunca a autoridade
+   * do veredito, só o rótulo de "linha à direita". */
+  month_total_cents: number;
+  txn_count: number;
+  effects: TagRulerEffects;
+}
+
+export interface TagsScreenVerdict {
+  /** Custo de vida com os interruptores atuais — a manchete A/C. */
+  cost_current_cents: number;
+  /** Custo de vida se todas as tags contassem em todas as réguas — a cauda de A. */
+  cost_all_on_cents: number;
+  /** Média mensal de terceiros detectados (12 meses + corrente, meses com movimento) — manchete B. */
+  third_party_avg_cents: number | null;
+  third_party_people: number;
+  has_exceptions: boolean;
+}
+
+export interface TagsScreenDto {
+  /** "YYYY-MM" do mês da tela. */
+  month: string;
+  verdict: TagsScreenVerdict;
+  third_parties: TagsScreenThirdParty[];
+  tags: TagsScreenTag[];
+  /** Última sincronização com a planilha — a idade do dado exibida na manchete F quando a
+   * leitura atual falha (a falha em si é o erro da query, nunca este campo sozinho). */
+  last_sync_at: string | null;
+}
+
+/** DTO completo da tela Tags: veredito, dinheiro de terceiros, exceções e rótulos —
+ * exceção × rótulo é derivado de `tags[].counts_in` no frontend, não um campo à parte. */
+export function getTagsScreen(year: number, month: number): Promise<TagsScreenDto> {
+  return invoke("get_tags_screen", { year, month });
 }
 
 // --- Multi-titular / split (read-side) ---

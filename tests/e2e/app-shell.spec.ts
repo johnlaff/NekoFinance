@@ -84,7 +84,7 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
       "aria-current",
       "page",
     );
-    await expect(page.getByText("! Pagar", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Nova tag" })).toBeVisible();
 
     // Navigate to Configurações (Sistema group)
     await page.getByRole("button", { name: "Configurações" }).click();
@@ -250,13 +250,18 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     });
   });
 
-  test("Tags (TagsScreen) renders tag list with demo tags", async ({
+  test("Tags (TagsScreen) shows the ruler exceptions and third-party money", async ({
     page,
   }, testInfo) => {
     await page.getByRole("button", { name: "Tags" }).click();
-    await expect(page.getByText("! Pagar", { exact: true })).toBeVisible();
-    await expect(page.getByText("Categoria demo A", { exact: true })).toBeVisible();
-    await expect(page.getByText("Categoria demo B", { exact: true })).toBeVisible();
+    await expect(page.getByText("Exceções", { exact: true })).toBeVisible();
+    await expect(page.getByText("Trânsito", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("Dinheiro de terceiros", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Movimentação por rótulo", { exact: true }),
+    ).toBeVisible();
     await page.screenshot({
       fullPage: true,
       path: testInfo.outputPath("tags.png"),

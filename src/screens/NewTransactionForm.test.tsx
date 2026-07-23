@@ -14,7 +14,10 @@ const TAGS: Tag[] = [
     color: "#3aa",
     emoji: null,
     is_special: false,
-    exclude_from_totals: false,
+    exclude_from_performance: false,
+    exclude_from_cost_of_living: false,
+    exclude_from_savings: false,
+    exclude_from_daily_avg: false,
   },
   {
     id: "pagar",
@@ -22,7 +25,10 @@ const TAGS: Tag[] = [
     color: "#a83",
     emoji: null,
     is_special: true,
-    exclude_from_totals: false,
+    exclude_from_performance: false,
+    exclude_from_cost_of_living: false,
+    exclude_from_savings: false,
+    exclude_from_daily_avg: false,
   },
 ];
 
