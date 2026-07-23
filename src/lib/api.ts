@@ -126,6 +126,8 @@ export interface TransactionRow {
   installment_index: number | null;
   /** Total de parcelas da série; null = não é lançamento de série. */
   installment_total: number | null;
+  /** Há dinheiro que volta ligado à linha (Entrada vinculada ↔ fatura/compra/série). */
+  has_refund_link: boolean;
 }
 
 export interface SheetInfo {

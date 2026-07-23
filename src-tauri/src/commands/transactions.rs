@@ -126,6 +126,10 @@ pub struct TransactionRow {
     /// Total de parcelas da série. None fora de série recorrente. Derivado de
     /// `recurrence.repetitions` + o índice embutido no id `{rec_id}:{i}` (não-armazenado).
     pub installment_total: Option<i64>,
+    /// Há dinheiro que volta ligado a esta linha: a Entrada aponta um alvo de reembolso
+    /// (fatura, compra ou série) ou a despesa é alvo de uma Entrada vinculada.
+    /// Habilita a pílula "Reembolso" no Livro-razão sem N+1.
+    pub has_refund_link: bool,
 }
 
 #[tauri::command]
@@ -154,6 +158,8 @@ pub(crate) struct RecentRow {
     due_date: Option<String>,
     /// Série a que pertence (NULL = lançamento avulso). Usado para derivar "N/M parcelas".
     recurrence_id: Option<String>,
+    /// Vínculo de reembolso em qualquer direção (0/1) — ver `TransactionRow.has_refund_link`.
+    has_refund_link: i64,
 }
 
 pub(crate) async fn recent_transactions(
@@ -169,7 +175,14 @@ pub(crate) async fn recent_transactions(
                      JOIN person p ON p.id = s.owner_person_id \
                      WHERE s.transaction_id = t.id ORDER BY p.name COLLATE NOCASE)), '') AS owners, \
                 (t.source_amount IS NOT NULL) AS has_source, \
-                t.due_date, t.recurrence_id \
+                t.due_date, t.recurrence_id, \
+                (t.refund_invoice_id IS NOT NULL OR t.refund_txn_id IS NOT NULL \
+                 OR t.refund_series_id IS NOT NULL \
+                 OR EXISTS (SELECT 1 FROM \"transaction\" r WHERE r.scenario_id IS NULL AND ( \
+                        r.refund_txn_id = t.id \
+                        OR (t.invoice_id IS NOT NULL AND r.refund_invoice_id = t.invoice_id) \
+                        OR (t.card_series_id IS NOT NULL AND r.refund_series_id = t.card_series_id)))) \
+                    AS has_refund_link \
          FROM \"transaction\" t WHERE t.scenario_id IS NULL ORDER BY t.date DESC LIMIT ?1",
     )
     .bind(limit)
@@ -326,6 +339,7 @@ pub(crate) async fn recent_transactions(
                 due_date: r.due_date,
                 installment_index,
                 installment_total,
+                has_refund_link: r.has_refund_link != 0,
             }
         })
         .collect())
@@ -2019,6 +2033,81 @@ mod tests {
         assert_eq!(with_due.due_date.as_deref(), Some("2026-07-10"));
         let without_due = rows.iter().find(|r| r.id == "nodue-1").unwrap();
         assert_eq!(without_due.due_date, None, "sem vencimento → None");
+    }
+
+    #[tokio::test]
+    async fn recent_transactions_carry_refund_link() {
+        let pool = test_pool().await;
+        // Conta-cartão + fatura para ancorar os vínculos.
+        sqlx::query("INSERT INTO person (id, name) VALUES ('pers-reemb', 'Titular')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id) \
+             VALUES ('acc-card', 'Bradesco Gio', 'credit_card', 'pers-reemb')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO invoice (id, account_id, cycle_month, closing_date, due_date) \
+             VALUES ('inv-1', 'acc-card', '2026-07', '2026-06-28', '2026-07-12')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // (a) Despesa da fatura (lump) — a Entrada vinculada abaixo cria a expectativa.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, invoice_id, created_at, updated_at) \
+             VALUES ('fat-1', 'expense', -407764, '2026-07-12', 0, 0, 'inv-1', '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // (b) Entrada de reembolso vinculada à fatura.
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, refund_invoice_id, created_at, updated_at) \
+             VALUES ('reemb-1', 'income', 100399, '2026-07-08', 0, 0, 'inv-1', '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // (c) Compra avulsa com reembolso apontando direto para ela.
+        insert_txn(&pool, "compra-1", 5000).await;
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, refund_txn_id, created_at, updated_at) \
+             VALUES ('reemb-2', 'income', 5000, '2026-03-11', 0, 0, 'compra-1', '2026-03-11T00:00:00Z', '2026-03-11T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // (d) Linha sem vínculo nenhum.
+        insert_txn(&pool, "solta-1", 700).await;
+
+        let rows = recent_transactions(&pool, 50).await.unwrap();
+        let by_id = |id: &str| rows.iter().find(|r| r.id == id).unwrap();
+        assert!(
+            by_id("fat-1").has_refund_link,
+            "fatura com Entrada vinculada → tem reembolso"
+        );
+        assert!(
+            by_id("reemb-1").has_refund_link,
+            "a própria Entrada de reembolso carrega o vínculo"
+        );
+        assert!(
+            by_id("compra-1").has_refund_link,
+            "compra com reembolso direto → tem reembolso"
+        );
+        assert!(
+            by_id("reemb-2").has_refund_link,
+            "Entrada vinculada à compra carrega o vínculo"
+        );
+        assert!(
+            !by_id("solta-1").has_refund_link,
+            "linha sem vínculo → sem pílula"
+        );
     }
 
     #[tokio::test]
