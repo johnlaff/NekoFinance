@@ -47,9 +47,17 @@ Current scope:
 
 - Chromium only for speed and cost.
 - Desktop and mobile-width smoke paths.
-- Screenshots captured as test artifacts for visual inspection.
+- Versioned visual baselines (`tests/e2e/*-snapshots/`) for every screen in both
+  themes, plus state variants (spending mode, missing-data states, accent palette).
 - Traces/videos retained on failure.
-- Pixel-perfect visual snapshot testing is deferred until the design system stabilizes.
+
+Baseline discipline:
+
+- An intentional visual change regenerates baselines from scratch: delete the snapshot
+  directories, run the suite once to record, run it again to verify stability.
+  `--update-snapshots` alone is not enough — it does not rewrite sub-threshold drift.
+- Specs freeze the clock (`page.clock.install`) so greetings/dates render
+  deterministically, and the dev server env is pinned so local and CI render alike.
 
 Commands:
 
