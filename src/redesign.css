@@ -246,6 +246,14 @@
   margin: 0 auto;
 }
 
+/* Ultrawide: o teto de leitura sobe um degrau em vez de deixar o vazio crescer
+   dos dois lados; telas com max-width próprio menor seguem se autolimitando. */
+@media (min-width: 1700px) {
+  .sh-bodyinner {
+    max-width: 1360px;
+  }
+}
+
 /* Chrome mobile só existe no viewport dele. */
 .sh-appbar,
 .sh-dock {

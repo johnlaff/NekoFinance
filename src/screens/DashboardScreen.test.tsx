@@ -85,9 +85,11 @@ describe("DashboardScreen (Hoje)", () => {
     renderHoje();
 
     expect(await screen.findByText("Diário de hoje")).toBeInTheDocument();
-    // O número exibido é só o guardrail; o teto é apresentado como SEGUNDO limite,
-    // nunca como componente do número (o motor não o inclui no min).
-    expect(screen.getByText(/segundo limite do dia/)).toBeInTheDocument();
+    // O número exibido é só o guardrail; a mecânica completa (teto = segundo
+    // limite) mora na didática recolhida "Como funciona?" — padrão do método.
+    expect(screen.getByText("Como funciona?")).toBeInTheDocument();
+    // O teto informado vira rótulo curto tocável (leva à tela do teto).
+    expect(screen.getByRole("button", { name: /por dia/ })).toBeInTheDocument();
     expect(
       screen.getByRole("img", { name: /Diário de hoje em \d+% do teto/ }),
     ).toBeInTheDocument();
@@ -126,13 +128,13 @@ describe("DashboardScreen (Hoje)", () => {
     renderHoje();
 
     const review = await screen.findByRole("button", {
-      name: "A planilha propõe um teto — revisar.",
+      name: "Proposta do teto — revisar.",
     });
     // Com proposta pendente o convite é ÚNICO na tela inteira: nenhum "estipular"
-    // sobra (nem no herói, nem no bloco do dia).
+    // sobra, e a MESMA frase aparece nos dois pontos (herói e denominador).
     expect(screen.queryByText(/estipular/i)).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Proposta do teto aguardando — revisar" }),
+      screen.getByRole("button", { name: "Proposta do teto — revisar" }),
     ).toBeInTheDocument();
     await user.click(review);
     expect(app.navigate).toHaveBeenCalledWith("teto");
@@ -194,6 +196,32 @@ describe("DashboardScreen (Hoje)", () => {
     // A régua de Diário sai de cena no modo cartão.
     expect(screen.queryByText("Diário de hoje")).not.toBeInTheDocument();
     expect(screen.getByText(/nada somado à fatura hoje/)).toBeInTheDocument();
+    // A didática do velocímetro mora no cabeçalho tocável; só o dado fica inline.
+    expect(screen.getByText(/Até aqui: \d+% do gasto típico/)).toBeInTheDocument();
+    expect(screen.queryByText(/é o velocímetro de quem gasta/)).not.toBeInTheDocument();
+    // "Ver tudo" das faturas leva à tela Cartões, não ao livro-razão.
+    expect(
+      screen.getByRole("button", { name: "Ver tudo — faturas dos cartões" }),
+    ).toBeInTheDocument();
+  });
+
+  it("reserva em retrato vivo: a Mia diz quantos meses já existem e quantos faltam", async () => {
+    mockCommands({
+      get_dashboard_summary: {
+        ...SUMMARY,
+        reserve_state: "estimate",
+        reserve_basis_months: 4,
+      },
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_cards: [],
+    });
+    renderHoje();
+
+    const insight = await screen.findByLabelText("Leitura da Mia sobre a reserva");
+    // O selo "Estimativa" explica o conceito; a Mia entrega o DADO da janela.
+    expect(insight).toHaveTextContent("4 de 6 meses completos");
+    expect(insight).toHaveTextContent("faltam 2 meses");
   });
 
   it("modo cartão sem fatura em aberto: recai no Cartão do mês, nunca lista vazia muda", async () => {

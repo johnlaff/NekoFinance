@@ -3,6 +3,8 @@ import { CalendarRange, Clock3, CreditCard, Landmark, TrendingUp } from "lucide-
 import { Button } from "../design-system/components/Button";
 import { EmptyState } from "../design-system/components/EmptyState";
 import { EstimateMark } from "../design-system/components/EstimateMark";
+import { InfoPopover } from "../design-system/components/InfoPopover";
+import { Meter } from "../design-system/components/Meter";
 import { MiaAvatar } from "../design-system/components/MiaAvatar";
 import { ModeChip } from "../design-system/components/ModeChip";
 import { Money } from "../design-system/components/Money";
@@ -58,6 +60,19 @@ const RESERVE_ZERO_TERM = {
 const TETO_NONE_TERM = {
   title: "Sem teto estipulado",
   body: "Não há teto escolhido nem histórico de Diário para estimar um. A cerimônia do teto lista o mês variável por categoria e divide pelos dias.",
+};
+// Didática do veredito recolhida (padrão do método: pergunta tocável, resposta sob demanda).
+const VERDICT_HOW_DEBIT = {
+  title: "Como funciona",
+  body: "O número é o menor entre o que o caixa aguenta e o que preserva a economia do ano. O teto diário é o segundo limite: no dia a dia vale o mais apertado dos dois.",
+};
+const VERDICT_HOW_CARD = {
+  title: "Como funciona",
+  body: "O número é o limite que protege o caixa e a economia do ano. No cartão, a compra pesa na fatura seguinte — por isso o dia acompanha as faturas, e o teto fica como referência.",
+};
+const FATURAS_TERM = {
+  title: "O velocímetro de quem vive no crédito",
+  body: "Cada compra soma na fatura do cartão usado — é aqui que o seu gasto variável mora. O Diário fica zerado de propósito: ele é para débito e Pix, que mexem o saldo na hora.",
 };
 
 export function DashboardScreen() {
@@ -174,7 +189,9 @@ export function DashboardScreen() {
             cardMode={cardMode}
             baselineOutflowCents={forecast.baseline_outflow_cents}
             cards={cardsQ.data ?? []}
-            onSeeAll={() => navigate("lancamentos")}
+            // No modo cartão o corpo do bloco são as faturas — "ver tudo" delas é a
+            // tela Cartões, não o livro-razão.
+            onSeeAll={() => navigate(cardMode ? "cartoes" : "lancamentos")}
             onOpenTeto={() => navigate("teto")}
           />
         }
@@ -196,6 +213,7 @@ export function DashboardScreen() {
               <button
                 type="button"
                 className="hoje__more"
+                aria-label="Ver tudo — próximos movimentos"
                 onClick={() => navigate("lancamentos")}
               >
                 Ver tudo ›
@@ -266,10 +284,11 @@ export function DashboardScreen() {
 /**
  * Malha de cards em COLUNAS INDEPENDENTES no desktop: cada coluna empilha seus
  * cards com altura natural — nada estica para casar linha, nada abre buraco.
- * No modo cartão o bloco do dia (alto) ancora a coluna esquerda sozinho e os
- * demais compõem a direita; no débito as massas se repartem 2×2.
- * No mobile os wrappers somem (`display: contents`) e a ordem de leitura vem
- * do `order` dos próprios cards: dia → insight → movimentos → saldo.
+ * A ordem do DOM é SEMPRE a ordem de leitura (dia → insight → movimentos →
+ * saldo), em qualquer modo: o `deckMode` só muda ONDE a quebra de coluna cai
+ * (depois do bloco alto de faturas, ou depois do insight) — leitor de tela e
+ * tab order nunca divergem do visual. No mobile os wrappers somem
+ * (`display: contents`) e a pilha segue o DOM.
  */
 function HojeGrid({
   deckMode,
@@ -284,15 +303,23 @@ function HojeGrid({
   moves: ReactNode;
   saldo: ReactNode;
 }) {
-  return (
+  return deckMode ? (
+    <div className="hoje__grid">
+      <div className="hoje__col">{blockDay}</div>
+      <div className="hoje__col">
+        {monthInsightNote}
+        {moves}
+        {saldo}
+      </div>
+    </div>
+  ) : (
     <div className="hoje__grid">
       <div className="hoje__col">
         {blockDay}
-        {!deckMode && moves}
+        {monthInsightNote}
       </div>
       <div className="hoje__col">
-        {monthInsightNote}
-        {deckMode && moves}
+        {moves}
         {saldo}
       </div>
     </div>
@@ -318,23 +345,23 @@ function TeachLine({
   const source = summary.daily_ceiling_source;
 
   // O número é SÓ o guardrail que morde (caixa ou economia) — o teto nunca entra
-  // nele; é o segundo limite do dia e a didática o apresenta como tal.
+  // nele; é o segundo limite do dia. Uma frase sempre visível; a mecânica completa
+  // mora no "Como funciona" (didática atrás de pergunta, o padrão do método).
   const numberPhrase = savingsBound
-    ? "Este é o limite da economia: o maior gasto que mantém a meta do ano viva — hoje é ela quem manda, não o caixa."
+    ? "Este é o limite da economia: o maior gasto que mantém a meta do ano viva."
     : `Este é o limite do caixa: o maior gasto que o saldo aguenta até ${monthEndLabel} sem nenhum dia no vermelho.`;
 
+  // Ação nunca se esconde: os estados sem teto mantêm o CTA visível; os estados
+  // informados encolhem a um rótulo curto com o valor.
   const tetoClause =
     source === "chosen" ? (
       <>
         {" "}
-        O{" "}
+        Teto:{" "}
         <button type="button" className="hoje__link" onClick={onOpenTeto}>
-          teto que você estipulou
-        </button>{" "}
-        — <Money cents={ceiling} size="inherit" /> por dia —{" "}
-        {cardMode
-          ? "segue como referência."
-          : "é o segundo limite do dia: vale o mais apertado dos dois."}
+          <Money cents={ceiling} size="inherit" /> por dia
+        </button>
+        .
       </>
     ) : source === "estimate" ? (
       <>
@@ -346,14 +373,13 @@ function TeachLine({
       <>
         {" "}
         <button type="button" className="hoje__link" onClick={onOpenTeto}>
-          A planilha propõe um teto — revisar.
+          Proposta do teto — revisar.
         </button>
       </>
     ) : (
       <>
         {" "}
-        O método pede um segundo limite, o teto diário que você estipula — e ele ainda
-        não está definido.{" "}
+        Ainda sem teto diário.{" "}
         <button type="button" className="hoje__link" onClick={onOpenTeto}>
           Estipular o teto
         </button>
@@ -363,10 +389,10 @@ function TeachLine({
   return (
     <>
       {numberPhrase}
-      {cardMode
-        ? " No cartão, a compra pesa na fatura seguinte — este número protege o caixa deste mês."
-        : ""}
-      {tetoClause}
+      {tetoClause}{" "}
+      <InfoPopover term={cardMode ? VERDICT_HOW_CARD : VERDICT_HOW_DEBIT} hideMarker>
+        <span className="hoje__how">Como funciona?</span>
+      </InfoPopover>
     </>
   );
 }
@@ -419,7 +445,14 @@ function BlockDay({
           <Clock3 size={17} strokeWidth={1.75} />
         </span>
         <h2 id="hoje-day-title">Gasto variável de hoje</h2>
-        <button type="button" className="hoje__more" onClick={onSeeAll}>
+        <button
+          type="button"
+          className="hoje__more"
+          aria-label={
+            cardMode ? "Ver tudo — faturas dos cartões" : "Ver tudo — gasto variável"
+          }
+          onClick={onSeeAll}
+        >
           Ver tudo ›
         </button>
       </header>
@@ -447,29 +480,28 @@ function BlockDay({
             <>
               <div className="hoje__fatura">
                 <div className="hoje__fatura-head">
-                  <span>
-                    Faturas em aberto — {invoices.count}{" "}
-                    {invoices.count === 1 ? "cartão" : "cartões"}
-                  </span>
+                  <InfoPopover term={FATURAS_TERM} hideMarker>
+                    <span className="hoje__how hoje__how--label">
+                      Faturas em aberto — {invoices.count}{" "}
+                      {invoices.count === 1 ? "cartão" : "cartões"}
+                    </span>
+                  </InfoPopover>
                   <span className="money">
                     <Money cents={invoices.totalCents} size="inherit" />
                   </span>
                 </div>
                 {pct !== null && (
-                  <div
-                    className="hoje__fatura-bar"
-                    role="img"
-                    aria-label={`Faturas em aberto somam ${pct}% do gasto típico de um mês`}
-                  >
-                    <i style={{ width: `${Math.min(100, pct)}%` }} />
-                  </div>
+                  <>
+                    <Meter
+                      className="hoje__fatura-bar"
+                      fraction={pct / 100}
+                      color="var(--accent)"
+                    />
+                    <p className="hoje__fatura-note">
+                      Até aqui: {pct}% do gasto típico de um mês.
+                    </p>
+                  </>
                 )}
-                <p className="hoje__fatura-note">
-                  É aqui que o seu gasto variável mora: cada compra soma na fatura do
-                  cartão usado. O método manda deixá-las à vista — a fatura crescendo é
-                  o velocímetro de quem gasta no crédito.
-                  {pct !== null ? ` Até aqui: ${pct}% do gasto típico de um mês.` : ""}
-                </p>
               </div>
               {invoices.groups.map((group) => (
                 <div key={group.dueDate}>
@@ -516,26 +548,22 @@ function BlockDay({
               aberto — cartão parado sai da lista sozinho e volta quando você usar.
             </p>
           )}
-          <p className="hoje__gloss">
-            O Diário fica zerado de propósito: ele é para débito e Pix, que mexem o
-            saldo na hora. Se um dia você migrar para o débito, o check-in do diário
-            volta a governar este bloco — sozinho.
-          </p>
         </>
       ) : (
         <>
-          <div className="hoje__fatura-head">
-            <span style={{ color: "var(--text-muted)" }}>Diário de hoje</span>
+          <div className="hoje__ci-head">
+            <span className="hoje__ci-label">Diário de hoje</span>
             <span className="money">
               <Money cents={spentToday} size="inherit" />
-              <span style={{ color: "var(--text-faint)", fontWeight: 400 }}>
+              <span className="hoje__ci-denom">
                 {" "}
                 /{" "}
                 {source === "none" ? (
-                  // Com proposta pendente o convite é ÚNICO em toda a tela: revisar.
+                  // Com proposta pendente o convite é ÚNICO em toda a tela: revisar
+                  // (mesma frase do herói).
                   <button type="button" className="hoje__link" onClick={onOpenTeto}>
                     {summary.ceiling_proposal_pending
-                      ? "Proposta do teto aguardando — revisar"
+                      ? "Proposta do teto — revisar"
                       : "Sem teto — estipular"}
                   </button>
                 ) : (
@@ -550,23 +578,17 @@ function BlockDay({
             </span>
           </div>
           {ceiling > 0 && (
-            <div
+            <Meter
               className="hoje__ci-track"
-              role="img"
-              aria-label={
+              fraction={ciPct / 100}
+              height={9}
+              color={overCeiling ? "var(--danger-500)" : "var(--type-diario)"}
+              label={
                 overCeiling
                   ? "Diário de hoje acima do teto"
                   : `Diário de hoje em ${ciPct}% do teto`
               }
-            >
-              <span
-                className="hoje__ci-fill"
-                style={{
-                  width: `${ciPct}%`,
-                  background: overCeiling ? "var(--danger-500)" : "var(--type-diario)",
-                }}
-              />
-            </div>
+            />
           )}
           {source === "none" && !summary.ceiling_proposal_pending && (
             <p className="hoje__gloss">
@@ -643,13 +665,21 @@ function MonthInsightNote({
       <p>
         Fechando o dia assim, {(MES[month] ?? "").toLowerCase()} termina em{" "}
         <b>{band.label}</b> — saldo previsto de{" "}
-        <b className={insight.endBalanceCents < 0 ? "hoje__money-neg" : undefined}>
-          <Money cents={insight.endBalanceCents} size="inherit" />
+        <b>
+          <Money
+            cents={insight.endBalanceCents}
+            size="inherit"
+            sign={insight.endBalanceCents < 0 ? "negative" : "none"}
+          />
         </b>
         . O ponto mais apertado do mês é{" "}
         {insight.minIsOngoing ? <b>hoje</b> : <b>dia {minDay}</b>}:{" "}
-        <b className={insight.minCents < 0 ? "hoje__money-neg" : undefined}>
-          <Money cents={insight.minCents} size="inherit" />
+        <b>
+          <Money
+            cents={insight.minCents}
+            size="inherit"
+            sign={insight.minCents < 0 ? "negative" : "none"}
+          />
         </b>
         {insight.minIsOngoing && !minIsToday ? <> desde o dia {minDay}</> : null}
         {incomeDay !== null ? (
@@ -711,7 +741,9 @@ function UpcomingMoves({
       : []),
   ]
     .sort((a, b) => a.date.localeCompare(b.date))
-    .slice(0, 6);
+    // 8 na lista do desktop; o mobile esconde 7–8 via CSS (carrossel de polegar
+    // pede menos peças que a lista de mouse).
+    .slice(0, 8);
 
   if (moves.length === 0) {
     return <p className="hoje__moves-empty">Nada vencendo nos próximos dias.</p>;
@@ -776,14 +808,12 @@ function SaldoReserva({
           <div className="sl">Saldo hoje</div>
           {band.key !== "none" && (
             <>
-              <div className="hoje__gauge" aria-hidden="true">
-                <i
-                  style={{
-                    width: `${saldoGaugeFraction(band.key) * 100}%`,
-                    background: band.text,
-                  }}
-                />
-              </div>
+              <Meter
+                className="hoje__gauge"
+                fraction={saldoGaugeFraction(band.key)}
+                color={band.text}
+                trackColor="var(--surface)"
+              />
               <div className="hoje__stat-note">
                 <span
                   className="dot"
@@ -826,14 +856,12 @@ function SaldoReserva({
           <div className="sl">Reserva de emergência</div>
           {(reserveState === "verdict" || reserveState === "estimate") && (
             <>
-              <div className="hoje__gauge" aria-hidden="true">
-                <i
-                  style={{
-                    width: `${reserveFraction * 100}%`,
-                    background: reserveOk ? "var(--ok)" : "var(--warn)",
-                  }}
-                />
-              </div>
+              <Meter
+                className="hoje__gauge"
+                fraction={reserveFraction}
+                color={reserveOk ? "var(--ok)" : "var(--warn)"}
+                trackColor="var(--surface)"
+              />
               <div className="hoje__stat-note">
                 <span
                   className="dot"
@@ -850,16 +878,22 @@ function SaldoReserva({
           )}
         </div>
       </div>
-      <ReserveInsight state={reserveState} onMapReserve={onMapReserve} />
+      <ReserveInsight
+        state={reserveState}
+        basisMonths={summary.reserve_basis_months}
+        onMapReserve={onMapReserve}
+      />
     </>
   );
 }
 
 function ReserveInsight({
   state,
+  basisMonths,
   onMapReserve,
 }: {
   state: DashboardSummary["reserve_state"];
+  basisMonths: number;
   onMapReserve: () => void;
 }) {
   if (state === "verdict") return null;
@@ -886,9 +920,13 @@ function ReserveInsight({
             <b>6 meses do custo de vida</b>.
           </>
         ) : (
+          // O selo "Estimativa" já explica o conceito de retrato vivo; aqui entra o
+          // DADO que o selo não tem — quanto da janela já existe e quanto falta.
           <>
-            A régua ainda é um retrato vivo: poucos meses completos de custo de vida.
-            Ela já orienta — e vira veredito quando a janela de 6 meses fechar.
+            Retrato vivo com <b>{basisMonths} de 6 meses completos</b> de custo de vida
+            —{" "}
+            {6 - basisMonths === 1 ? "falta 1 mês" : `faltam ${6 - basisMonths} meses`}{" "}
+            para a régua virar veredito.
           </>
         )}
       </p>

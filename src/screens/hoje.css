@@ -8,8 +8,6 @@
 
   display: flex;
   flex-direction: column;
-  max-width: 1160px;
-  margin: 0 auto;
 }
 
 .hoje__stale {
@@ -87,10 +85,9 @@
 /* ---- Malha de cards ----
    Colunas INDEPENDENTES: cada coluna empilha seus cards com altura natural e gap
    uniforme — nada estica para casar linha (tint vazio), nada abre buraco entre
-   cards. No mobile os wrappers de coluna somem (`display: contents`) e a ordem de
-   leitura vem do `order` dos cards: dia → insight → movimentos → saldo. (A ordem
-   do DOM segue as colunas; o desvio visual no empilhado é entre dois blocos
-   complementares adjacentes.) */
+   cards. A ordem do DOM é sempre a ordem de leitura (dia → insight → movimentos →
+   saldo); no mobile os wrappers somem (`display: contents`) e a pilha segue o
+   DOM tal qual. */
 
 .hoje__grid {
   display: flex;
@@ -100,22 +97,6 @@
 
 .hoje__col {
   display: contents;
-}
-
-.hoje__blockday {
-  order: 1;
-}
-
-.hoje__insight--month {
-  order: 2;
-}
-
-.hoje__card--moves {
-  order: 3;
-}
-
-.hoje__card--saldo {
-  order: 4;
 }
 
 .hoje__blockday,
@@ -134,9 +115,10 @@
 .hoje__card {
   min-width: 0;
   border: var(--bw-hair) solid var(--border);
-  border-radius: var(--radius-xl);
+  border-radius: var(--radius-md);
   background: var(--surface);
   padding: var(--space-6);
+  box-shadow: var(--shadow-1);
 }
 
 .hoje__cardhead {
@@ -218,19 +200,9 @@
   font-weight: var(--fw-semibold);
 }
 
+/* Trilho/raio/preenchimento vêm do Meter (DS); aqui só o ritmo local. */
 .hoje__fatura-bar {
-  height: 6px;
-  border-radius: var(--radius-pill);
-  background: var(--surface-2);
   margin: var(--space-4) 0;
-  overflow: hidden;
-}
-
-.hoje__fatura-bar i {
-  display: block;
-  height: 100%;
-  border-radius: var(--radius-pill);
-  background: var(--accent);
 }
 
 .hoje__fatura-note,
@@ -323,17 +295,27 @@
 /* ---- Check-in do teto (modo débito) ---- */
 
 .hoje__ci-track {
-  height: 9px;
-  border-radius: var(--radius-pill);
-  background: var(--surface-2);
   margin: var(--space-5) 0 var(--space-4);
-  overflow: hidden;
 }
 
-.hoje__ci-fill {
-  display: block;
-  height: 100%;
-  border-radius: var(--radius-pill);
+.hoje__ci-head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--fs-sm);
+}
+
+.hoje__ci-head .money {
+  font-weight: var(--fw-semibold);
+}
+
+.hoje__ci-label {
+  color: var(--text-muted);
+}
+
+.hoje__ci-denom {
+  color: var(--text-faint);
+  font-weight: var(--fw-regular);
 }
 
 /* ---- Insight: a voz da Mia é tint, não caixa dentro de caixa ---- */
@@ -358,11 +340,6 @@
 .hoje__insight b {
   color: var(--text);
   font-weight: var(--fw-medium);
-}
-
-/* Dinheiro negativo no insight: o 3º eixo de cor (dinheiro) fala mais alto que a voz. */
-.hoje__insight b.hoje__money-neg {
-  color: var(--money-neg);
 }
 
 .hoje__insight-cat {
@@ -393,7 +370,7 @@
   gap: var(--space-5);
   overflow-x: auto;
   padding: 2px 2px var(--space-2);
-  scroll-snap-type: x proximity;
+  scroll-snap-type: x mandatory;
   scrollbar-width: none;
 }
 
@@ -510,7 +487,7 @@
   display: flex;
   flex-direction: column;
   border: var(--bw-hair) solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   background: var(--surface-2);
   padding: var(--space-6);
 }
@@ -545,22 +522,12 @@
 }
 
 .hoje__gauge {
-  height: 6px;
-  border-radius: var(--radius-pill);
-  background: var(--surface);
   margin: var(--space-5) 0 var(--space-4);
-  overflow: hidden;
-}
-
-.hoje__gauge i {
-  display: block;
-  height: 100%;
-  border-radius: var(--radius-pill);
 }
 
 .hoje__stat-note {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
   font-size: var(--fs-xs);
   color: var(--text-faint);
@@ -579,6 +546,20 @@
   }
 }
 
+/* ---- "Como funciona?" — didática atrás de pergunta (padrão do método) ---- */
+
+.hoje__how {
+  color: var(--text-faint);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: help;
+}
+
+.hoje__how--label {
+  color: inherit;
+  font-weight: var(--fw-medium);
+}
+
 /* ---- Links discretos (CTAs de régua) ---- */
 
 .hoje__link {
@@ -591,6 +572,11 @@
   text-decoration: underline dotted;
   text-underline-offset: 3px;
   cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+
+.hoje__link:hover {
+  color: var(--text);
 }
 
 .hoje__preview {
@@ -718,6 +704,17 @@
 }
 
 @media (max-width: 700px) {
+  /* Alvo de polegar: a caixa de toque cresce sem mexer no layout (margem negativa). */
+  .hoje__more {
+    padding-block: var(--space-4);
+    margin-block: calc(var(--space-4) * -1);
+  }
+
+  /* Carrossel de polegar pede menos peças que a lista de mouse. */
+  .hoje__move:nth-child(n + 7) {
+    display: none;
+  }
+
   .hoje__greet {
     padding: var(--space-2) 0 var(--space-4);
   }
