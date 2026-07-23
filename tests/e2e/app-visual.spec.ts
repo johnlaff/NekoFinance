@@ -268,3 +268,48 @@ for (const theme of ["dark", "light"] as const) {
     });
   });
 }
+
+// Calendário no mobile: fallback deliberado — a grade é navegação (dia + saúde
+// pelo termômetro) e os números moram na agenda do dia tocado, abaixo da grade.
+for (const theme of ["dark", "light"] as const) {
+  test.describe(`Calendário — mobile ${theme}`, () => {
+    test.beforeEach(async ({ page }) => {
+      await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.addInitScript((t: string) => {
+        localStorage.setItem("neko-theme", t);
+      }, theme);
+      await mockTauri(page, {
+        list_scenarios_cmd: [],
+        list_scenario_transactions_cmd: [],
+        list_obligations_cmd: [],
+      });
+      await page.goto("/");
+      await page
+        .getByRole("button", { name: "Calendário", exact: true })
+        .first()
+        .click();
+      await page.waitForTimeout(350);
+    });
+
+    test("grade como navegação com a agenda de hoje", async ({ page }) => {
+      await expect(page).toHaveScreenshot(`mobile-calendario-${theme}.png`, {
+        fullPage: true,
+        maxDiffPixelRatio: 0.02,
+      });
+    });
+
+    test("tocar um dia realizado move a agenda", async ({ page }) => {
+      await page.getByRole("gridcell", { name: /^2 de junho/ }).click();
+      await expect(
+        page.getByRole("heading", { name: "Terça-feira, 2 de junho" }),
+      ).toBeVisible();
+      await page.waitForTimeout(200);
+      await expect(page).toHaveScreenshot(`mobile-calendario-dia-${theme}.png`, {
+        fullPage: true,
+        maxDiffPixelRatio: 0.02,
+      });
+    });
+  });
+}

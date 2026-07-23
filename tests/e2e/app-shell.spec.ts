@@ -215,17 +215,17 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     });
   });
 
-  test("Calendário (YearGridScreen) renders the month calendar", async ({
+  test("Calendário (YearGridScreen) renders the balance grid with the day agenda", async ({
     page,
   }, testInfo) => {
-    await page.getByRole("button", { name: "Calendário" }).click();
-    await expect(page.getByRole("button", { name: "Calendário" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
-    // Calendar has segmented control with "Mês" / "Ano inteiro"
-    await expect(page.getByText("Mês", { exact: true })).toBeVisible();
-    await expect(page.getByText("Ano inteiro", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Calendário", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Calendário", exact: true }),
+    ).toHaveAttribute("aria-current", "page");
+    // Master-detail: grade do mês + agenda do dia selecionado (hoje).
+    await expect(page.getByRole("grid", { name: /junho de 2026/i })).toBeVisible();
+    await expect(page.getByText("Menor saldo do mês")).toBeVisible();
+    await expect(page.getByText("Saldo que o dia deixou")).toBeVisible();
     await page.screenshot({
       fullPage: true,
       path: testInfo.outputPath("calendario.png"),
