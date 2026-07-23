@@ -188,6 +188,22 @@ describe("YearGridScreen (Calendário)", () => {
     expect(screen.getByRole("gridcell", { name: /15 de junho/ })).toHaveFocus();
   });
 
+  it("PageDown troca o mês e o roving segue o dia focado, não o dia 1", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    mockAll();
+    renderCal();
+    const grid = await screen.findByRole("grid", { name: /junho/i });
+    const today = within(grid).getByRole("gridcell", { name: /10 de junho/ });
+    today.focus();
+    await user.keyboard("{PageDown}");
+    const july10 = await screen.findByRole("gridcell", { name: /10 de julho/ });
+    expect(july10).toHaveFocus();
+    expect(july10).toHaveAttribute("tabindex", "0");
+    // A próxima seta parte do dia focado — nunca salta de volta ao dia 1.
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("gridcell", { name: /11 de julho/ })).toHaveFocus();
+  });
+
   it("navegar o mês atualiza a grade e zera a seleção para o dia 1", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     mockAll();

@@ -63,7 +63,7 @@
 }
 
 .calendario__dow span {
-  font-size: 10.5px;
+  font-size: var(--fs-micro);
   font-weight: var(--fw-bold);
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -82,7 +82,8 @@
   border: var(--bw-default) solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
-  padding: var(--space-4) var(--space-4) var(--space-4);
+  padding: var(--space-4);
+  transition: border-color var(--dur-fast) var(--ease-standard);
   min-height: 76px;
   display: flex;
   flex-direction: column;
@@ -186,7 +187,7 @@
   gap: var(--space-3);
 }
 
-.calendario__legend-item i {
+.calendario__k {
   width: 11px;
   height: 11px;
   border-radius: 3px;
@@ -211,12 +212,11 @@
   border-style: dashed;
 }
 
-.calendario__dot,
-.calendario__dot.calendario__dot {
+.calendario__dot {
   width: 5px;
   height: 5px;
   border-radius: var(--radius-circle);
-  border: 0;
+  flex: none;
 }
 
 .calendario__dot--income {
@@ -445,7 +445,7 @@
   }
 
   .calendario__cell-d {
-    font-size: 13.5px;
+    font-size: var(--fs-sm);
   }
 
   /* Eventos viram pontos discretos sob o número (menor saldo vence entrada). */
@@ -473,7 +473,12 @@
   }
 
   .calendario__cell--today {
+    border-width: var(--bw-accent);
     background: color-mix(in srgb, var(--primary) 10%, var(--cell-band, transparent));
+  }
+
+  .calendario__cell--today .calendario__cell-d {
+    font-weight: var(--fw-bold);
   }
 
   .calendario__legend-item--desk {

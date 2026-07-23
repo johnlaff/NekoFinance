@@ -148,19 +148,39 @@ function CalendarioLegend() {
         aconteceu
       </span>
       <span className="calendario__legend-item calendario__legend-item--mob">
-        <i style={{ background: "var(--saldo-band-comfortable-fill)" }} /> Folga
+        <i
+          className="calendario__k"
+          style={{ background: "var(--saldo-band-comfortable-fill)" }}
+        />{" "}
+        Folga
       </span>
       <span className="calendario__legend-item calendario__legend-item--mob">
-        <i style={{ background: "var(--saldo-band-ok-fill)" }} /> OK
+        <i
+          className="calendario__k"
+          style={{ background: "var(--saldo-band-ok-fill)" }}
+        />{" "}
+        OK
       </span>
       <span className="calendario__legend-item calendario__legend-item--mob">
-        <i style={{ background: "var(--saldo-band-tight-fill)" }} /> Apertado
+        <i
+          className="calendario__k"
+          style={{ background: "var(--saldo-band-tight-fill)" }}
+        />{" "}
+        Apertado
       </span>
       <span className="calendario__legend-item calendario__legend-item--mob">
-        <i style={{ background: "var(--saldo-band-negative-fill)" }} /> Negativo
+        <i
+          className="calendario__k"
+          style={{ background: "var(--saldo-band-negative-fill)" }}
+        />{" "}
+        Negativo
       </span>
       <span className="calendario__legend-item calendario__legend-item--mob">
-        <i style={{ background: "var(--saldo-band-critical-fill)" }} /> Crítico
+        <i
+          className="calendario__k"
+          style={{ background: "var(--saldo-band-critical-fill)" }}
+        />{" "}
+        Crítico
       </span>
       <span className="calendario__legend-item calendario__legend-item--mob">
         <i className="calendario__dot calendario__dot--income" /> Entrada
@@ -293,7 +313,7 @@ export function YearGridScreen() {
     return () => setCrumb("calendario", null);
   }, [crumbLabel]);
 
-  if (forecastQ.loading || gridQ.loading) {
+  if (forecastQ.loading || gridQ.loading || prevGridQ.loading) {
     return <EmptyState variant="skeleton" skeletonRows={6} />;
   }
   if (forecastQ.error || gridQ.error) {
@@ -389,8 +409,12 @@ export function YearGridScreen() {
         Number(nextYm.slice(5, 7)),
         0,
       ).getDate();
-      pendingFocus.current = `${nextYm}-${String(Math.min(day, dim)).padStart(2, "0")}`;
+      const target = `${nextYm}-${String(Math.min(day, dim)).padStart(2, "0")}`;
+      pendingFocus.current = target;
       goMonth(delta);
+      // Depois do reset do goMonth: o roving tabIndex segue o dia-alvo do mês
+      // novo (sem isto a próxima seta partiria do dia 1, não do dia focado).
+      setFocusedIso(target);
     }
   };
 
