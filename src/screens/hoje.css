@@ -85,13 +85,37 @@
 }
 
 /* ---- Malha de cards ----
-   Bento: cards da mesma linha alinham topo E fundo (stretch); a folga de altura
-   vai para DENTRO do card, ancorada por elemento (a nota no pé, o ar ao redor) —
-   nunca vira buraco entre cards. */
+   Colunas INDEPENDENTES: cada coluna empilha seus cards com altura natural e gap
+   uniforme — nada estica para casar linha (tint vazio), nada abre buraco entre
+   cards. No mobile os wrappers de coluna somem (`display: contents`) e a ordem de
+   leitura vem do `order` dos cards: dia → insight → movimentos → saldo. (A ordem
+   do DOM segue as colunas; o desvio visual no empilhado é entre dois blocos
+   complementares adjacentes.) */
 
 .hoje__grid {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: var(--space-6);
+}
+
+.hoje__col {
+  display: contents;
+}
+
+.hoje__blockday {
+  order: 1;
+}
+
+.hoje__insight--month {
+  order: 2;
+}
+
+.hoje__card--moves {
+  order: 3;
+}
+
+.hoje__card--saldo {
+  order: 4;
 }
 
 .hoje__blockday,
@@ -579,14 +603,17 @@
 
 @media (min-width: 901px) {
   .hoje__grid {
+    display: grid;
     grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
     gap: var(--space-6);
+    align-items: start;
   }
 
-  /* O bloco só ancora a coluna inteira quando a lista de faturas lhe dá altura;
-     curto (modo débito ou sem fatura aberta), ele flui em grade 2×2 equilibrada. */
-  .hoje__blockday--deck {
-    grid-row: span 3;
+  .hoje__col {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+    min-width: 0;
   }
 
   /* O carrossel é gesto de polegar; no mouse o mesmo conteúdo vira lista. */
