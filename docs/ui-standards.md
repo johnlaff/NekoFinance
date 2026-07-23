@@ -85,20 +85,42 @@ that deviates must say why in the PR.
     and interactive row; reading widths capped (`ch`-based); the content ceiling rises
     one step on ultrawide (≥ 1700px) instead of letting side voids grow.
 
+## Calm density (clean)
+
+The reference look is the current fintech clean standard: generous whitespace, soft
+surfaces, typographic hierarchy, near-invisible structure. These rules keep every wave
+honest to it.
+
+18. **Whitespace separates; borders are the exception.** Separation comes from spacing
+    and surface contrast first. A hairline divider is a list's rhythm marker, not a
+    default wrapper — when everything sits in a bordered box, the screen reads as a
+    form, not a ledger.
+19. **Hierarchy is typographic.** Size, weight and ink shade (strong/base/muted/faint)
+    carry the ranking; money is the typographic hero of its surface. A screen that
+    needs a colored box to rank content has a type-scale problem, not a color problem.
+20. **Accent is spent, not sprayed.** Brand accent and method-status colors appear only
+    where they carry meaning (primary action, judged state, the datum itself);
+    everything else stays neutral. Decorative color dilutes the signal of status color
+    everywhere else in the app.
+21. **Metadata earns its pill.** A pill/badge on a row exists for state the user acts
+    on or must not miss (Previsto, parcela, reembolso, tag). If every row at rest
+    carries one, none of them is information — fold the constant ones into the context
+    column.
+
 ## Honest numbers (reinforcing the DS working rules)
 
-18. **Text and `aria` tell the true value; only the bar saturates.** Never clamp a
+22. **Text and `aria` tell the true value; only the bar saturates.** Never clamp a
     displayed or announced percentage at 100% — a bar may cap its width, the number
     never lies.
-19. Money is tabular and never animates; method-status colors never follow the brand
+23. Money is tabular and never animates; method-status colors never follow the brand
     accent; missing data never renders as zero. (Contracts of the design system —
     restated here because every wave touches them.)
 
 ## Verification
 
-20. **Visual baselines regenerate from scratch** (`rm -rf` the snapshot dirs, run the
+24. **Visual baselines regenerate from scratch** (`rm -rf` the snapshot dirs, run the
     suite twice — record then verify) whenever a screen changes intentionally.
     `--update-snapshots` alone does not rewrite sub-threshold drift.
-21. Every wave passes: `npm run check`, e2e visual smoke with inspected screenshots,
+25. Every wave passes: `npm run check`, e2e visual smoke with inspected screenshots,
     React Doctor with no new findings, and the impeccable audit + critique gates before
     it is considered done.

@@ -199,3 +199,42 @@ test.describe("teto do diário + estados de dado", () => {
     });
   });
 });
+
+// Lançamentos no mobile: a ergonomia própria do viewport — busca na zona do
+// polegar (rodapé da lista) e filtro por tipo em bottom sheet.
+for (const theme of ["dark", "light"] as const) {
+  test.describe(`Lançamentos — mobile ${theme}`, () => {
+    test.beforeEach(async ({ page }) => {
+      await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.addInitScript((t: string) => {
+        localStorage.setItem("neko-theme", t);
+      }, theme);
+      await mockTauri(page, {
+        list_scenarios_cmd: [],
+        list_scenario_transactions_cmd: [],
+        list_obligations_cmd: [],
+      });
+      await page.goto("/");
+      await page.getByRole("button", { name: "Lançamentos", exact: false }).first().click();
+      await page.waitForTimeout(350);
+    });
+
+    test("lista célula×nota com daymarks", async ({ page }) => {
+      await expect(page).toHaveScreenshot(`mobile-lancamentos-${theme}.png`, {
+        fullPage: true,
+        maxDiffPixelRatio: 0.02,
+      });
+    });
+
+    test("filtro por tipo abre em bottom sheet", async ({ page }) => {
+      await page.getByRole("button", { name: /Tipo:/ }).click();
+      await expect(page.getByRole("dialog", { name: "Filtrar por tipo" })).toBeVisible();
+      await page.waitForTimeout(200);
+      await expect(page).toHaveScreenshot(`mobile-lancamentos-sheet-${theme}.png`, {
+        maxDiffPixelRatio: 0.02,
+      });
+    });
+  });
+}
