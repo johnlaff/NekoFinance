@@ -199,10 +199,7 @@ export type TagsHeadline =
 /** `fetchFailed` = a leitura ATUAL falhou (erro da query com DTO em cache): o número
  * fica, com a idade da última sincronização (`last_sync_at`) — manchete F. O DTO
  * sempre carrega `last_sync_at`; sozinho ele não significa falha nenhuma. */
-export function resolveHeadline(
-  dto: TagsScreenDto,
-  fetchFailed = false,
-): TagsHeadline {
+export function resolveHeadline(dto: TagsScreenDto, fetchFailed = false): TagsHeadline {
   if (dto.tags.length === 0) return { kind: "empty-tags" };
   if (fetchFailed) {
     return {

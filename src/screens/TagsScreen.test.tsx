@@ -298,7 +298,9 @@ describe("TagsScreen", () => {
     const excecoes = screen.getByText("Exceções").closest("section")!;
     await userEvent.click(within(excecoes).getByText("Gio").closest("summary")!);
 
-    const perf = within(excecoes).getByRole("switch", { name: "Performance · tag Gio" });
+    const perf = within(excecoes).getByRole("switch", {
+      name: "Performance · tag Gio",
+    });
     const custo = within(excecoes).getByRole("switch", {
       name: "Custo de vida · tag Gio",
     });
@@ -407,7 +409,8 @@ describe("TagsScreen", () => {
     // no remount encontrando o cache da última leitura boa.
     let calls = 0;
     mockCommands({
-      get_tags_screen: () => (calls++ === 0 ? good : new Error("planilha indisponível")),
+      get_tags_screen: () =>
+        calls++ === 0 ? good : new Error("planilha indisponível"),
     });
     const first = render(<TagsScreen />);
     expect(await first.findByText(/7\.028,73/)).toBeInTheDocument();

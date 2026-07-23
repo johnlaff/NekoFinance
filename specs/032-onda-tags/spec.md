@@ -69,12 +69,12 @@ pub struct MetricEvent { pub event: CashflowEvent, pub mask: RulerMask }
 
 Os buckets alimentam réguas cruzadas, então cada régua acumula sua própria view:
 
-| Régua | Insumos (filtrados pela sua máscara) |
-| --- | --- |
-| Performance | `income_p − (fixed_p + daily_real_p + daily_proj_p + cartao_p + economia_p + patrimonio_p)` |
-| Custo de vida | `fixed_c + daily_real_c + cartao_c` |
-| Economia | `economia_s × 10000 / income_s` |
-| Diário médio | `daily_real_d / dias decorridos` |
+| Régua         | Insumos (filtrados pela sua máscara)                                                        |
+| ------------- | ------------------------------------------------------------------------------------------- |
+| Performance   | `income_p − (fixed_p + daily_real_p + daily_proj_p + cartao_p + economia_p + patrimonio_p)` |
+| Custo de vida | `fixed_c + daily_real_c + cartao_c`                                                         |
+| Economia      | `economia_s × 10000 / income_s`                                                             |
+| Diário médio  | `daily_real_d / dias decorridos`                                                            |
 
 Campos do `MonthMetric` (cada um declara a view que serve — as equações exibidas nas
 telas fecham com o motor, regra 6 do ui-standards):
@@ -106,19 +106,19 @@ Testes golden cobrem os dois extremos + views divergentes.
 
 ### Sítios SQL em lockstep (cada agregado adota o flag da régua que alimenta)
 
-| Sítio (`forecast_cmds.rs`) | Flag |
-| --- | --- |
-| `load_db_events` (caminho de métricas) | máscara por evento (mapa `transaction_id → 4 MINs` em query própria; caminho de caixa segue sem filtro) |
-| `realized_annual_savings` — perna renda | `exclude_from_savings` (base do guardrail 20–30%) |
-| `realized_annual_savings` — perna net (colchão) | `exclude_from_performance` (net do ano = figura de performance) |
-| `realized_annual_economia` (itens + transfers) | `exclude_from_savings` |
-| `realized_annual_patrimonio` | `exclude_from_performance` |
-| `projected_annual_savings` — renda / net | savings / performance (mesmo racional) |
-| `realized_savings_baseline` (medianas do gate de financiamento) | `exclude_from_savings` |
-| `realized_monthly_baseline` (mediana do custo de vida) | `exclude_from_cost_of_living` |
-| `spending_mode_summary` | view Custo de vida (detecção de modo é pergunta de forma-do-gasto; preserva o comportamento do backfill) |
-| Cobertura de dias do teto projetado (`days_with_daily`) | **sem máscara** — fato comportamental (o dia teve registro), não valor de régua; um dia coberto por gasto excluído não recebe dupla projeção |
-| `month_grid`, caminhos de caixa | sem filtro (inalterados) |
+| Sítio (`forecast_cmds.rs`)                                      | Flag                                                                                                                                         |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `load_db_events` (caminho de métricas)                          | máscara por evento (mapa `transaction_id → 4 MINs` em query própria; caminho de caixa segue sem filtro)                                      |
+| `realized_annual_savings` — perna renda                         | `exclude_from_savings` (base do guardrail 20–30%)                                                                                            |
+| `realized_annual_savings` — perna net (colchão)                 | `exclude_from_performance` (net do ano = figura de performance)                                                                              |
+| `realized_annual_economia` (itens + transfers)                  | `exclude_from_savings`                                                                                                                       |
+| `realized_annual_patrimonio`                                    | `exclude_from_performance`                                                                                                                   |
+| `projected_annual_savings` — renda / net                        | savings / performance (mesmo racional)                                                                                                       |
+| `realized_savings_baseline` (medianas do gate de financiamento) | `exclude_from_savings`                                                                                                                       |
+| `realized_monthly_baseline` (mediana do custo de vida)          | `exclude_from_cost_of_living`                                                                                                                |
+| `spending_mode_summary`                                         | view Custo de vida (detecção de modo é pergunta de forma-do-gasto; preserva o comportamento do backfill)                                     |
+| Cobertura de dias do teto projetado (`days_with_daily`)         | **sem máscara** — fato comportamental (o dia teve registro), não valor de régua; um dia coberto por gasto excluído não recebe dupla projeção |
+| `month_grid`, caminhos de caixa                                 | sem filtro (inalterados)                                                                                                                     |
 
 ### Vínculo de pessoa nos derivados
 
@@ -216,7 +216,7 @@ mesmo `tags[]`.
 ### API de escrita
 
 - `update_tag_rulers_cmd(tag_id, exclude_from_performance, exclude_from_cost_of_living,
-  exclude_from_savings, exclude_from_daily_avg)` substitui `update_tag_exclude_cmd`
+exclude_from_savings, exclude_from_daily_avg)` substitui `update_tag_exclude_cmd`
   (UPDATE único, idempotente). `create_tag`/`update_tag`/`list_tags` ganham/expõem os
   4 flags; `exclude_from_totals` sai dos DTOs e do frontend.
 
@@ -242,14 +242,14 @@ mesmo `tags[]`.
 
 ### Estados da manchete (A–F do desenho, `tagsView.ts` puro)
 
-| Estado | Condição | Manchete |
-| --- | --- | --- |
-| A | `has_exceptions` | número atual + "já deixa de fora R$ X" + cauda "Sem as exceções, contariam R$ Y" |
-| B | sem exceção, terceiros detectados | "Suas réguas contam dinheiro que não é seu." + média mensal com `EstimateMark` + CTA "Tirar isso das réguas" |
-| C | sem exceção, sem detecção | número seco + "Nenhuma exceção declarada — e nada a declarar." (sem parabéns) |
-| D | zero tags | vazio que ensina o conceito ("Tags não são categorias.") + CTA "Criar primeira tag" |
-| E | carregando | `EmptyState` skeleton (nunca spinner sobre conteúdo) |
-| F | sincronia falhou | número fica, com a idade (`sync_stale_at`) + "Tentar de novo" |
+| Estado | Condição                          | Manchete                                                                                                     |
+| ------ | --------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| A      | `has_exceptions`                  | número atual + "já deixa de fora R$ X" + cauda "Sem as exceções, contariam R$ Y"                             |
+| B      | sem exceção, terceiros detectados | "Suas réguas contam dinheiro que não é seu." + média mensal com `EstimateMark` + CTA "Tirar isso das réguas" |
+| C      | sem exceção, sem detecção         | número seco + "Nenhuma exceção declarada — e nada a declarar." (sem parabéns)                                |
+| D      | zero tags                         | vazio que ensina o conceito ("Tags não são categorias.") + CTA "Criar primeira tag"                          |
+| E      | carregando                        | `EmptyState` skeleton (nunca spinner sobre conteúdo)                                                         |
+| F      | sincronia falhou                  | número fica, com a idade (`sync_stale_at`) + "Tentar de novo"                                                |
 
 Frases dos interruptores (metade fixa ensina o vocabulário; metade variável é o efeito):
 
