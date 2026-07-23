@@ -62,7 +62,7 @@ dígitos virariam fonte de 8px.
 - Alvo de toque ≥ 44px (gap reduz em <380px antes de encolher a célula).
 
 A frase didática do "Como funciona?" cobre as duas leituras (eventos no desktop,
-termômetro no mobile) — o copy inline não bifurca por viewport (regra 7); só a
+termômetro no mobile) — o copy inline não bifurca por viewport (regra 8); só a
 **legenda** muda, porque descreve as cores que o viewport realmente usa:
 
 - Desktop: Hoje · Entrada · Menor saldo do mês · Previsto — ainda não aconteceu.
