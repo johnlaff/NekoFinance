@@ -20,6 +20,21 @@ if (typeof globalThis.ResizeObserver === "undefined") {
   globalThis.ResizeObserver = ResizeObserverStub;
 }
 
+// jsdom doesn't implement IntersectionObserver (the shell's large-title coordination
+// watches the screen's hero). No-op stub: unit tests assert the BIND contract; real
+// visibility tracking is covered by the Playwright visual specs.
+if (typeof globalThis.IntersectionObserver === "undefined") {
+  const noop = () => undefined;
+  class IntersectionObserverStub {
+    observe = noop;
+    unobserve = noop;
+    disconnect = noop;
+    takeRecords = () => [];
+  }
+  globalThis.IntersectionObserver =
+    IntersectionObserverStub as unknown as typeof IntersectionObserver;
+}
+
 // jsdom doesn't implement the native <dialog> API (showModal/show/close).
 // The Compose drawer uses a real <dialog>; polyfill the methods so component
 // tests can open/close it. Real browsers (and the Playwright e2e) use the

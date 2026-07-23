@@ -22,7 +22,7 @@ describe("App (redesign)", () => {
       get_upcoming_bills_cmd: [],
     });
     render(<App />);
-    expect(await screen.findByText("Pode gastar hoje")).toBeInTheDocument();
-    expect(screen.getByText("Check-in de hoje")).toBeInTheDocument();
+    expect(await screen.findByText(/Pode gastar hoje/)).toBeInTheDocument();
+    expect(screen.getByText("Gasto variável de hoje")).toBeInTheDocument();
   });
 });

@@ -23,40 +23,29 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
   test("Hoje renders the redesign surface with mocked data", async ({
     page,
   }, testInfo) => {
-    // Hero: "Pode gastar hoje" is the new headline
-    await expect(page.getByText("Pode gastar hoje")).toBeVisible();
+    // Saudação-veredito: o herói é a frase (relógio congelado às 12h ⇒ "Boa tarde.").
+    await expect(page.getByRole("heading", { name: "Boa tarde." })).toBeVisible();
+    await expect(page.getByText(/Pode gastar hoje/)).toBeVisible();
 
-    // Forecast aside: "Saldo no fim de" month label
-    await expect(page.getByText(/Saldo no fim de/)).toBeVisible();
+    // Curadoria da assistente assina a ordem dos blocos.
+    await expect(page.getByText(/A Mia separou o que importa hoje/)).toBeVisible();
 
-    // Hero stats dl (Saldo hoje / Reserva / Teto diário)
-    await expect(page.getByText("Saldo hoje", { exact: true })).toBeVisible();
-    await expect(page.getByText("Reserva", { exact: true })).toBeVisible();
-    await expect(page.getByText("Teto diário", { exact: true })).toBeVisible();
-
-    // CheckinCard: "Check-in de hoje" card title
-    await expect(page.getByText("Check-in de hoje")).toBeVisible();
-
-    // Type chips: Diário / Cartão / Saída (only 3 in checkin, no Economia)
-    const radiogroup = page.getByRole("radiogroup", { name: "Tipo de movimento" });
-    await expect(radiogroup).toBeVisible();
-    await expect(radiogroup.getByRole("radio", { name: /Diário/ })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-    await expect(radiogroup.getByRole("radio", { name: /Cartão/ })).toBeVisible();
-    await expect(radiogroup.getByRole("radio", { name: /Saída/ })).toBeVisible();
-
-    // Value input + Registrar button. exact:true so it matches the check-in's
-    // "Valor" and not the always-mounted Compose dialog's "Valor único".
-    await expect(page.getByLabel("Valor", { exact: true })).toBeVisible();
+    // Bloco do dia (modo débito do fixture): check-in do teto, sem registro inline.
+    await expect(page.getByText("Gasto variável de hoje")).toBeVisible();
+    await expect(page.getByText("Diário de hoje")).toBeVisible();
+    await expect(page.getByRole("radiogroup")).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Registrar", exact: true }),
-    ).toBeVisible();
+    ).toHaveCount(0);
 
-    // UpcomingCard: "A pagar em breve" (from mock UPCOMING_BILLS)
-    await expect(page.getByText("A pagar em breve")).toBeVisible();
+    // Insight do mês na voz da Mia (derivado da corrente de saldo do mock).
+    await expect(page.getByLabel("Leitura da Mia")).toBeVisible();
+
+    // Próximos movimentos (do mock UPCOMING_BILLS) e o par saldo + reserva.
+    await expect(page.getByText("Próximos movimentos")).toBeVisible();
     await expect(page.getByText("Compromisso fixo demo")).toBeVisible();
+    await expect(page.getByText("Saldo hoje", { exact: true })).toBeVisible();
+    await expect(page.getByText("Reserva de emergência")).toBeVisible();
 
     await page.screenshot({
       fullPage: true,

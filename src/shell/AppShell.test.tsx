@@ -135,4 +135,51 @@ describe("AppShell — shell por viewport (todos os destinos alcançáveis)", ()
     screen.getByRole("button", { name: "Registrar lançamento (N)" }).click();
     expect(onCompose).toHaveBeenCalledTimes(1);
   });
+
+  it("crumb por tela sobrepõe o de SCREEN_META (a data da Hoje)", () => {
+    render(
+      <AppShell
+        active="hoje"
+        onNavigate={vi.fn()}
+        authStatus="connected"
+        crumbs={{ hoje: "Quarta-feira, 15 de julho" }}
+      >
+        <div />
+      </AppShell>,
+    );
+    expect(screen.getAllByText("Quarta-feira, 15 de julho").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Quanto posso gastar hoje")).not.toBeInTheDocument();
+  });
+});
+
+describe("AppShell — coordenação large-title", () => {
+  beforeEach(() => {
+    mockInvoke.mockReset();
+    mockCommands({ last_sync_at: null });
+  });
+
+  // O stub global de IntersectionObserver (setup.ts) é no-op: o contrato testado
+  // aqui é o BIND (quiet imediato quando o título grande aparece), não o scroll.
+  it("título grande montado DEPOIS do dado chegar ainda aquieta a appbar", async () => {
+    const { container, rerender } = render(
+      <AppShell active="hoje" onNavigate={vi.fn()} authStatus="connected">
+        <div />
+      </AppShell>,
+    );
+    const appbar = container.querySelector(".sh-appbar")!;
+    // Sem título grande na tela, a appbar assume o título direto.
+    expect(appbar.className).not.toContain("sh-appbar--quiet");
+
+    // O herói data-gated monta num render posterior (skeleton → dado):
+    rerender(
+      <AppShell active="hoje" onNavigate={vi.fn()} authStatus="connected">
+        <section data-large-title>
+          <h1>Boa noite.</h1>
+        </section>
+      </AppShell>,
+    );
+    await vi.waitFor(() => {
+      expect(appbar.className).toContain("sh-appbar--quiet");
+    });
+  });
 });

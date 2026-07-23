@@ -76,7 +76,9 @@ test.describe("teto do diário + estados de dado", () => {
     });
   });
 
-  test("Hoje no modo cartão: check-in lê as faturas", async ({ page }) => {
+  test("Hoje no modo cartão: as faturas por vencimento são o corpo do bloco do dia", async ({
+    page,
+  }) => {
     await mockTauri(page, {
       list_scenarios_cmd: [],
       list_scenario_transactions_cmd: [],
@@ -87,18 +89,58 @@ test.describe("teto do diário + estados de dado", () => {
         daily_ceiling_source: "chosen",
         ceiling_proposal_pending: false,
         daily_spend_today: 0,
+        card_spend_today_cents: 15990,
         reserve_months: 4.5,
         reserve_state: "estimate",
         reserve_basis_months: 4,
         reserve_trend: "flat",
         spending_mode: "card",
         card_gate: "below",
+        card_gate_economy: "below",
+        card_gate_economy_bps: 1400,
+        card_gate_reserve: "alive",
         cartao_month_cents: 260000,
         next_fatura_date: "2026-06-20",
         next_fatura_amount_cents: 140000,
+        upcoming_invoices: [
+          {
+            account_id: "itau",
+            card_name: "Itaú",
+            due_date: "2026-06-20",
+            amount_cents: 174739,
+            status: "aberta",
+            owner_name: "Eu",
+            has_refund_expectation: false,
+          },
+          {
+            account_id: "amazon",
+            card_name: "Amazon",
+            due_date: "2026-06-20",
+            amount_cents: 19562,
+            status: "fechada",
+            owner_name: "Eu",
+            has_refund_expectation: false,
+          },
+          {
+            account_id: "gio",
+            card_name: "Bradesco Gio",
+            due_date: "2026-06-22",
+            amount_cents: 98770,
+            status: "aberta",
+            owner_name: "Gio",
+            has_refund_expectation: true,
+          },
+        ],
         transaction_count: 42,
         last_real_tx_date: "2026-06-09",
       },
+      list_cards: [
+        { id: "itau", name: "Itaú" },
+        { id: "amazon", name: "Amazon" },
+        { id: "gio", name: "Bradesco Gio" },
+        { id: "inter", name: "Inter" },
+        { id: "bb", name: "BB" },
+      ],
     });
     await page.goto("/");
     await page.waitForTimeout(350);
@@ -121,15 +163,20 @@ test.describe("teto do diário + estados de dado", () => {
         daily_ceiling_source: "none",
         ceiling_proposal_pending: true,
         daily_spend_today: 0,
+        card_spend_today_cents: 0,
         reserve_months: 0,
         reserve_state: "no_record",
         reserve_basis_months: 0,
         reserve_trend: "flat",
         spending_mode: "debit",
         card_gate: "unknown",
+        card_gate_economy: "unknown",
+        card_gate_economy_bps: null,
+        card_gate_reserve: "unknown",
         cartao_month_cents: 0,
         next_fatura_date: null,
         next_fatura_amount_cents: 0,
+        upcoming_invoices: [],
         transaction_count: 2,
         last_real_tx_date: "2026-06-09",
       },

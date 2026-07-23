@@ -13,18 +13,22 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
       daily_ceiling_source: "chosen",
       ceiling_proposal_pending: false,
       daily_spend_today: 3800,
-      credit_spend_month: 120000,
-      has_credit: true,
+      card_spend_today_cents: 0,
       reserve_months: 4.5,
       reserve_state: "verdict",
       reserve_basis_months: 6,
       reserve_trend: "down",
       spending_mode: "debit",
       card_gate: "unknown",
+      card_gate_economy: "unknown",
+      card_gate_economy_bps: null,
+      card_gate_reserve: "unknown",
       cartao_month_cents: 0,
       next_fatura_date: null,
       next_fatura_amount_cents: 0,
+      upcoming_invoices: [],
       transaction_count: 42,
+      last_real_tx_date: "2026-06-09",
     };
 
     const FORECAST = {
@@ -485,6 +489,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
       get_app_info: APP_INFO,
       get_pockets: POCKETS,
       create_account: "e2e-account-id",
+      list_cards: [],
       // Onboarding já concluído nestes cenários — o overlay não cobre o app.
       get_app_setting: "true",
       set_app_setting: null,

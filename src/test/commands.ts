@@ -50,6 +50,7 @@ export const SUMMARY: DashboardSummary = {
   daily_ceiling_source: "chosen",
   ceiling_proposal_pending: false,
   daily_spend_today: 3800,
+  card_spend_today_cents: 0,
   reserve_months: 4.5,
   reserve_state: "estimate",
   reserve_basis_months: 4,

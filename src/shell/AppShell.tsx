@@ -209,6 +209,7 @@ export function AppShell({
   children,
   onCompose,
   hints,
+  crumbs,
 }: {
   active: Screen;
   onNavigate: (screen: Screen) => void;
@@ -218,8 +219,11 @@ export function AppShell({
   onCompose?: () => void;
   /** Dicas numéricas da nav: { hoje: "R$ 27,17", mes: "R$ 1,2 mil" }. */
   hints?: Partial<Record<Screen, string>>;
+  /** Crumb por tela sobrepondo o de `SCREEN_META` — ex.: a data de hoje na Hoje. */
+  crumbs?: Partial<Record<Screen, string>>;
 }) {
   const meta = SCREEN_META[active];
+  const crumb = crumbs?.[active] ?? meta.crumb;
   const connected = authStatus === "connected";
   const bodyRef = useRef<HTMLDivElement>(null);
   // Dock encolhe ao rolar para baixo e volta ao subir (padrão de tab bar de app).
@@ -269,6 +273,7 @@ export function AppShell({
     return () => body.removeEventListener("scroll", onScroll);
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/effect-needs-cleanup -- os dois observers são desligados no retorno (mo.disconnect + io.disconnect); o observe vive num closure que a análise estática não rastreia
   useEffect(() => {
     const body = bodyRef.current;
     if (!body) return;
@@ -276,18 +281,32 @@ export function AppShell({
     // scrollTop da anterior e o dock ficaria preso encolhido.
     body.scrollTop = 0;
     setDockMin(false);
-    const large = body.querySelector("[data-large-title]");
-    if (!large) {
-      setTitleAssumed(true);
-      return;
-    }
-    setTitleAssumed(false);
-    const obs = new IntersectionObserver(
+    // O título grande pode montar DEPOIS do dado chegar (herói atrás de skeleton):
+    // um MutationObserver troca o alvo observado quando o nó aparece ou some.
+    const io = new IntersectionObserver(
       ([entry]) => setTitleAssumed(!(entry?.isIntersecting ?? false)),
       { root: body },
     );
-    obs.observe(large);
-    return () => obs.disconnect();
+    let current: Element | null = null;
+    const bind = () => {
+      const large = body.querySelector("[data-large-title]");
+      if (large === current) return;
+      if (current) io.unobserve(current);
+      current = large;
+      if (!large) {
+        setTitleAssumed(true);
+        return;
+      }
+      setTitleAssumed(false);
+      io.observe(large);
+    };
+    bind();
+    const mo = new MutationObserver(bind);
+    mo.observe(body, { childList: true, subtree: true });
+    return () => {
+      mo.disconnect();
+      io.disconnect();
+    };
   }, [active]);
 
   return (
@@ -366,7 +385,7 @@ export function AppShell({
         </span>
         <div className="sh-appbar__title">
           <span className="sh-appbar__t">{meta.title}</span>
-          <small>{meta.crumb}</small>
+          <small>{crumb}</small>
         </div>
         <div className="sh-appbar__trail">
           <ThemeToggle />
@@ -378,7 +397,7 @@ export function AppShell({
         <header className="sh-top">
           <div>
             <div className="sh-top__title">{meta.title}</div>
-            <div className="sh-top__crumb">{meta.crumb}</div>
+            <div className="sh-top__crumb">{crumb}</div>
           </div>
         </header>
         <div className="sh-body" ref={bodyRef}>
