@@ -23,6 +23,7 @@ import { syncRecencyLabel } from "../lib/syncRecency";
 import { Button } from "../design-system/components/Button";
 import { EmptyState } from "../design-system/components/EmptyState";
 import { EstimateMark } from "../design-system/components/EstimateMark";
+import { InfoPopover } from "../design-system/components/InfoPopover";
 import { Meter } from "../design-system/components/Meter";
 import { Money } from "../design-system/components/Money";
 import { MonthNav } from "../design-system/components/MonthNav";
@@ -300,6 +301,7 @@ function RulerRow({
 function TagPanel({
   tag,
   busy,
+  failed,
   onToggleRuler,
   onEdit,
   editing,
@@ -309,6 +311,7 @@ function TagPanel({
 }: {
   tag: TagsScreenTag;
   busy: boolean;
+  failed: boolean;
   onToggleRuler: (ruler: RulerKey) => void;
   onEdit: () => void;
   editing: boolean;
@@ -318,6 +321,11 @@ function TagPanel({
 }) {
   return (
     <div className="tags__panel">
+      {failed ? (
+        <p role="alert" className="tags__toggle-error">
+          Não foi possível salvar — o interruptor voltou ao estado real. Tente de novo.
+        </p>
+      ) : null}
       {RULER_ORDER.map((ruler) => (
         <RulerRow
           key={ruler}
@@ -366,6 +374,8 @@ interface TagRowCtx {
    *  grava as quatro colunas de uma vez, então um segundo clique montado da base
    *  velha desfaria o primeiro em silêncio (lost update). */
   busyTagId: string | null;
+  /** Tag cuja última escrita falhou — o painel dela mostra o aviso. */
+  failedTagId: string | null;
   onToggleRuler: (tag: TagsScreenTag, ruler: RulerKey) => void;
   form: FormState;
   dispatch: React.Dispatch<FormAction>;
@@ -378,6 +388,7 @@ function TagPanelFor({ tag, ctx }: { tag: TagsScreenTag; ctx: TagRowCtx }) {
     <TagPanel
       tag={tag}
       busy={ctx.busyTagId === tag.id}
+      failed={ctx.failedTagId === tag.id}
       onToggleRuler={(r) => ctx.onToggleRuler(tag, r)}
       onEdit={() => ctx.onEdit(tag)}
       editing={ctx.form.open && ctx.form.editingId === tag.id}
@@ -405,7 +416,7 @@ function VerdictSection({
   onCreateNew: () => void;
 }) {
   return (
-    <section className="tags__verdict" data-large-title>
+    <section className="tags__verdict" data-large-title aria-live="polite">
       <p className="tags__vlabel">{verdictLabel(monthKey)}</p>
       {headline.kind === "exceptions" && (
         <>
@@ -494,7 +505,7 @@ function ThirdPartiesCard({
     <section className="tags__card" aria-labelledby="tags-terceiros">
       <div className="tags__sechead">
         <Users size={16} strokeWidth={1.75} className="ic" aria-hidden="true" />
-        <b id="tags-terceiros">Dinheiro de terceiros</b>
+        <h2 id="tags-terceiros">Dinheiro de terceiros</h2>
         <span className="tags__note">Detectado no import</span>
       </div>
       {people.map((p) => {
@@ -550,8 +561,13 @@ function ExceptionsCard({
           className="ic"
           aria-hidden="true"
         />
-        <b id="tags-excecoes">Exceções</b>
-        <button type="button" className="tags__more" onClick={onToggleNew}>
+        <h2 id="tags-excecoes">Exceções</h2>
+        <button
+          type="button"
+          className="tags__more"
+          aria-expanded={formOpenForNew}
+          onClick={onToggleNew}
+        >
           {formOpenForNew ? "Cancelar" : "Nova tag"}
         </button>
       </div>
@@ -581,9 +597,15 @@ function ExceptionsCard({
         ))
       )}
       <p className="tags__guar">
-        <b>O saldo da conta sempre conta</b> — o dinheiro entrou e saiu de verdade. Os
-        interruptores só mudam o que as réguas enxergam. O valor à direita é o que cada
-        tag movimentou; só entra na conta da manchete o que sai do custo de vida.
+        <b>O saldo da conta sempre conta</b> — o dinheiro entrou e saiu de verdade.{" "}
+        <InfoPopover
+          term={{
+            title: "Como os interruptores contam",
+            body: "Os interruptores só mudam o que as réguas enxergam — nunca o Saldo. O valor à direita é o que cada tag movimentou no mês; na conta da manchete só entra o que sai do custo de vida.",
+          }}
+        >
+          Como funciona?
+        </InfoPopover>
       </p>
     </section>
   );
@@ -614,11 +636,14 @@ function LabelsFold({
   monthLabel: string;
   ctx: TagRowCtx;
 }) {
+  // Decisão de montagem: o valor não muda por render (viewport estável) e o
+  // <details> segue não-controlado — o toggle manual do usuário persiste.
+  const [startsOpen] = useState(foldStartsOpen);
   if (labels.length === 0) return null;
   const maxLabel = maxLabelTotal(labels);
   return (
     <section className="tags__card">
-      <details className="tags__fold" open={foldStartsOpen() || undefined}>
+      <details className="tags__fold" open={startsOpen || undefined}>
         <summary>
           <TagsIcon size={16} strokeWidth={1.75} aria-hidden="true" />
           <b>Movimentação por rótulo</b>
@@ -672,6 +697,8 @@ export function TagsScreen() {
   // Tag com escrita de réguas em voo — as 4 réguas dela travam juntas até o refetch
   // (o UPDATE grava as quatro colunas; base velha num 2º clique desfaria o 1º).
   const [busyTagId, setBusyTagId] = useState<string | null>(null);
+  // Tag cuja última escrita FALHOU — o aviso fica no painel dela até o próximo gesto.
+  const [failedTagId, setFailedTagId] = useState<string | null>(null);
 
   // O crumb da appbar acompanha o mês visto; ao sair da tela, volta ao padrão. `setCrumb`
   // é função de módulo (identidade fixa) — o efeito só re-dispara quando o rótulo muda.
@@ -682,10 +709,12 @@ export function TagsScreen() {
 
   function handleToggleRuler(tag: TagsScreenTag, ruler: RulerKey) {
     setBusyTagId(tag.id);
+    setFailedTagId(null);
     toggleRuler(tag, ruler)
       .then(() => invalidateCommands())
       .catch(() => {
-        // Silencioso — alternar é best-effort; o próximo refetch reflete o estado real.
+        // O refetch reflete o estado real; o usuário fica sabendo que o gesto não pegou.
+        setFailedTagId(tag.id);
       })
       .finally(() => setBusyTagId((t) => (t === tag.id ? null : t)));
   }
@@ -780,7 +809,11 @@ export function TagsScreen() {
             marcar o que você quer encontrar depois — assinaturas para cancelar,
             reembolsos da empresa.
           </p>
-          <Button variant="ghost" onClick={() => dispatch({ type: "toggleNew" })}>
+          <Button
+            variant="ghost"
+            aria-expanded={form.open}
+            onClick={() => dispatch({ type: "toggleNew" })}
+          >
             Criar primeira tag
           </Button>
           {form.open && (
@@ -796,6 +829,7 @@ export function TagsScreen() {
       const { exceptions, labels } = splitExceptionsAndLabels(dto.tags);
       const ctx: TagRowCtx = {
         busyTagId,
+        failedTagId,
         onToggleRuler: handleToggleRuler,
         form,
         dispatch,

@@ -207,7 +207,10 @@
   flex: none;
 }
 
-.tags__sechead b {
+.tags__sechead b,
+.tags__sechead h2 {
+  margin: 0;
+  font-size: inherit;
   font-weight: var(--fw-medium);
   color: var(--text);
   letter-spacing: -0.01em;
@@ -256,6 +259,13 @@
   margin: var(--space-2) 0 0;
   font-size: var(--fs-sm);
   color: var(--text-faint);
+  line-height: var(--lh-normal);
+}
+
+.tags__toggle-error {
+  margin: 0 0 var(--space-3);
+  font-size: var(--fs-label);
+  color: var(--danger-400);
   line-height: var(--lh-normal);
 }
 
