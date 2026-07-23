@@ -149,6 +149,11 @@
   cursor: pointer;
   text-decoration: underline;
   text-underline-offset: 3px;
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+
+.tags__relink:hover {
+  color: var(--text-strong);
 }
 
 .tags__relink:focus-visible {
@@ -622,7 +627,9 @@ details[open] > summary .tags__chev {
 .tags__swatch::before {
   content: "";
   position: absolute;
-  inset: -8px;
+  /* O containing block é o padding-box (24px − 2×2px de borda = 20px):
+     20 + 2×12 = 44px de alvo real. */
+  inset: -12px;
   border-radius: var(--radius-circle);
 }
 

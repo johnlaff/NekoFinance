@@ -482,11 +482,16 @@ async fn load_third_parties(
 
     // Fonte 1 — marcadores de reembolso: a perna "saiu" = valor integral da linha (a Entrada
     // derivada carrega o valor fronteado). Splits cobrem a perna "saiu" do #dividir:.
+    // Derivada JÁ ligada a fatura de conta VINCULADA pertence à fonte CARTÃO (o import liga
+    // #reembolso: de linha de Cartão à sub-fatura) — sem o corte, out e back dobrariam.
     let reembolso_out: Vec<(String, i64, String)> = sqlx::query_as(
         "SELECT counterparty_person_id, SUM(ABS(amount)), MIN(date) \
          FROM \"transaction\" \
          WHERE id LIKE 'derived:reembolso:%' AND counterparty_person_id IS NOT NULL \
            AND substr(date,1,7) = ?1 AND scenario_id IS NULL \
+           AND NOT EXISTS (SELECT 1 FROM invoice iv JOIN account av ON av.id = iv.account_id \
+                WHERE iv.id = \"transaction\".refund_invoice_id \
+                  AND av.linked_account_id IS NOT NULL) \
          GROUP BY counterparty_person_id",
     )
     .bind(&ym_s)
@@ -558,6 +563,9 @@ async fn load_third_parties(
          WHERE (id LIKE 'derived:reembolso:%' OR id LIKE 'derived:dividir:%') \
            AND counterparty_person_id IS NOT NULL AND is_projection = 0 AND date <= ?2 \
            AND substr(date,1,7) = ?1 AND scenario_id IS NULL \
+           AND NOT EXISTS (SELECT 1 FROM invoice iv JOIN account av ON av.id = iv.account_id \
+                WHERE iv.id = \"transaction\".refund_invoice_id \
+                  AND av.linked_account_id IS NOT NULL) \
          GROUP BY counterparty_person_id",
     )
     .bind(&ym_s)
@@ -596,6 +604,9 @@ async fn load_third_parties(
          WHERE (id LIKE 'derived:reembolso:%' OR id LIKE 'derived:dividir:%') \
            AND counterparty_person_id IS NOT NULL AND (is_projection = 1 OR date > ?2) \
            AND date <= ?3 AND scenario_id IS NULL \
+           AND NOT EXISTS (SELECT 1 FROM invoice iv JOIN account av ON av.id = iv.account_id \
+                WHERE iv.id = \"transaction\".refund_invoice_id \
+                  AND av.linked_account_id IS NOT NULL) \
          GROUP BY counterparty_person_id",
     )
     .bind(&ym_s)
@@ -626,32 +637,28 @@ async fn load_third_parties(
         }
     }
 
-    // Série de reembolso vinculada (parcelamento com `count`): parcelas realizadas até o fim do mês
-    // × total. O dono é o titular do cartão vinculado da série.
-    let series_rows: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT a.owner_person_id, cs.count \
+    // Série de reembolso vinculada (parcelamento com `count`): parcelas realizadas até o fim do
+    // mês × total, com `done` escopado à PRÓPRIA série — nunca a soma cruzada das séries da
+    // pessoa. Com mais de uma série viva no mês, a do reembolso mais RECENTE representa a linha
+    // (ordem ascendente + sobrescrita = a última vence, deterministicamente).
+    let series_rows: Vec<(String, i64, i64)> = sqlx::query_as(
+        "SELECT a.owner_person_id, cs.count, \
+                (SELECT COUNT(*) FROM \"transaction\" t2 \
+                  WHERE t2.refund_series_id = cs.id AND t2.is_projection = 0 \
+                    AND t2.date <= ?2 AND t2.scenario_id IS NULL) \
          FROM \"transaction\" t JOIN card_series cs ON cs.id = t.refund_series_id \
          JOIN account a ON a.id = cs.account_id \
-         WHERE t.refund_series_id IS NOT NULL AND cs.count IS NOT NULL \
+         WHERE cs.count IS NOT NULL \
            AND substr(t.date,1,7) = ?1 AND t.scenario_id IS NULL \
-         GROUP BY a.owner_person_id, cs.id, cs.count",
+         GROUP BY a.owner_person_id, cs.id, cs.count \
+         ORDER BY MAX(t.date) ASC",
     )
     .bind(&ym_s)
+    .bind(&last_s)
     .fetch_all(pool)
     .await
     .map_err(|e| format!("série de reembolso: {e}"))?;
-    for (pid, total) in series_rows {
-        let done: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM \"transaction\" t JOIN card_series cs ON cs.id = t.refund_series_id \
-             JOIN account a ON a.id = cs.account_id \
-             WHERE a.owner_person_id = ?1 AND t.is_projection = 0 AND t.date <= ?2 \
-               AND cs.count IS NOT NULL AND t.scenario_id IS NULL",
-        )
-        .bind(&pid)
-        .bind(&last_s)
-        .fetch_one(pool)
-        .await
-        .map_err(|e| format!("parcelas realizadas: {e}"))?;
+    for (pid, total, done) in series_rows {
         if let Some(a) = aggs.get_mut(&pid) {
             a.series = Some((done.max(0) as u32, total.max(0) as u32));
         }
@@ -1364,5 +1371,98 @@ mod tests {
         assert_eq!(dto.month, "2026-03");
         let ana = line(&dto.third_parties, "Ana");
         assert_eq!(ana.state, "settled");
+    }
+
+    async fn add_series(p: &SqlitePool, id: &str, account: &str, count: i64) {
+        sqlx::query(
+            "INSERT INTO card_series (id, account_id, description, amount_cents, count, \
+             start_cycle_month) VALUES (?1, ?2, 'Parcelado', 1000, ?3, '2026-01')",
+        )
+        .bind(id)
+        .bind(account)
+        .bind(count)
+        .execute(p)
+        .await
+        .unwrap();
+    }
+
+    async fn add_series_refund(p: &SqlitePool, id: &str, series: &str, date: &str) {
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_projection, \
+             refund_series_id) VALUES (?1, 'income', 1000, ?2, 0, ?3)",
+        )
+        .bind(id)
+        .bind(date)
+        .bind(series)
+        .execute(p)
+        .await
+        .unwrap();
+    }
+
+    // Pessoa com DUAS séries de reembolso vivas no mês: `done` é escopado à própria série
+    // (nunca a soma cruzada de todas as séries da pessoa) e a linha representa a série do
+    // reembolso mais RECENTE do mês — decisão explícita, não loteria de ordem de GROUP BY.
+    #[tokio::test]
+    async fn two_series_same_person_keep_scoped_done_and_latest_series() {
+        let p = mem_pool().await;
+        let today = d("2026-03-31");
+        add_person(&p, "tit", "Titular").await;
+        add_person(&p, "gio", "Gio").await;
+        add_account(&p, "main", "bank", "tit", None).await;
+        add_account(&p, "card_g", "credit_card", "gio", Some("main")).await;
+
+        // Série A (3 parcelas): 2 realizadas, a do mês em 08/03.
+        add_series(&p, "sa", "card_g", 3).await;
+        add_series_refund(&p, "ra1", "sa", "2026-02-10").await;
+        add_series_refund(&p, "ra2", "sa", "2026-03-08").await;
+        // Série B (5 parcelas): 3 realizadas, a do mês em 20/03 — a mais recente.
+        add_series(&p, "sb", "card_g", 5).await;
+        add_series_refund(&p, "rb1", "sb", "2026-01-15").await;
+        add_series_refund(&p, "rb2", "sb", "2026-02-15").await;
+        add_series_refund(&p, "rb3", "sb", "2026-03-20").await;
+
+        let aggs = load_third_parties(&p, today, 2026, 3).await.unwrap();
+        let gio = aggs.iter().find(|a| a.name == "Gio").unwrap();
+        assert_eq!(
+            gio.series,
+            Some((3, 5)),
+            "a série do reembolso mais recente (B) representa a linha, com done da PRÓPRIA série"
+        );
+    }
+
+    // `#reembolso:` numa linha de Cartão de conta VINCULADA: o import grava counterparty E
+    // refund_invoice_id na mesma Entrada derivada. A fonte CARTÃO é a autoridade — a derivada
+    // não pode dobrar em out (linha + fatura) nem em back (derivado + reembolso da fatura).
+    #[tokio::test]
+    async fn marker_refund_on_linked_card_line_counts_once() {
+        let p = mem_pool().await;
+        let today = d("2026-03-31");
+        add_person(&p, "tit", "Titular").await;
+        add_person(&p, "gio", "Gio").await;
+        add_account(&p, "main", "bank", "tit", None).await;
+        add_account(&p, "card_g", "credit_card", "gio", Some("main")).await;
+        add_invoice(&p, "inv_g", "card_g", "2026-03-15", 40000).await;
+
+        // A Entrada derivada do marcador, JÁ ligada à fatura da conta vinculada
+        // (o que import::link_card_refunds produz).
+        add_txn(
+            &p,
+            "derived:reembolso:e9:0",
+            "income",
+            15000,
+            "2026-03-05",
+            0,
+            Some("gio"),
+            Some("inv_g"),
+        )
+        .await;
+
+        let aggs = load_third_parties(&p, today, 2026, 3).await.unwrap();
+        let gio = aggs.iter().find(|a| a.name == "Gio").unwrap();
+        assert_eq!(
+            gio.out_cents, 40000,
+            "saiu = só o total efetivo da fatura (a linha marcada vive dentro dela)"
+        );
+        assert_eq!(gio.back_cents, 15000, "voltou conta UMA vez, nunca dobrado");
     }
 }

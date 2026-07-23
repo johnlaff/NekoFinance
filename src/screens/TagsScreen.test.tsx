@@ -282,6 +282,39 @@ describe("TagsScreen", () => {
     );
   });
 
+  it("escrita em voo trava as 4 réguas da MESMA tag (lost update): o 2º clique espera", async () => {
+    // O UPDATE grava as 4 colunas de uma vez; um 2º clique montado da base velha
+    // desfaria o 1º em silêncio. Enquanto a escrita voa, a tag inteira trava.
+    let release!: () => void;
+    const pending = new Promise<null>((res) => {
+      release = () => res(null);
+    });
+    mockCommands({
+      get_tags_screen: RICH_DTO,
+      update_tag_rulers_cmd: () => pending,
+    });
+    render(<TagsScreen />);
+    await screen.findByText("Exceções");
+    const excecoes = screen.getByText("Exceções").closest("section")!;
+    await userEvent.click(within(excecoes).getByText("Gio").closest("summary")!);
+
+    const perf = within(excecoes).getByRole("switch", { name: "Performance · tag Gio" });
+    const custo = within(excecoes).getByRole("switch", {
+      name: "Custo de vida · tag Gio",
+    });
+    await userEvent.click(perf);
+    expect(custo).toBeDisabled();
+    expect(perf).toBeDisabled();
+    // Régua de OUTRA tag segue livre — o trava é por tag, não global.
+    await userEvent.click(within(excecoes).getByText("Trânsito").closest("summary")!);
+    expect(
+      within(excecoes).getByRole("switch", { name: "Performance · tag Trânsito" }),
+    ).toBeEnabled();
+
+    release();
+    await waitFor(() => expect(perf).toBeEnabled());
+  });
+
   it("resumo da exceção: 'fora de N de 4 réguas' e o rótulo ligado a todas", async () => {
     mockCommands({ get_tags_screen: RICH_DTO });
     render(<TagsScreen />);

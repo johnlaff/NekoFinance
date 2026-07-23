@@ -299,7 +299,7 @@ function RulerRow({
 
 function TagPanel({
   tag,
-  busyRuler,
+  busy,
   onToggleRuler,
   onEdit,
   editing,
@@ -308,7 +308,7 @@ function TagPanel({
   onSubmit,
 }: {
   tag: TagsScreenTag;
-  busyRuler: RulerKey | null;
+  busy: boolean;
   onToggleRuler: (ruler: RulerKey) => void;
   onEdit: () => void;
   editing: boolean;
@@ -323,7 +323,7 @@ function TagPanel({
           key={ruler}
           ruler={ruler}
           tag={tag}
-          busy={busyRuler === ruler}
+          busy={busy}
           onToggle={() => onToggleRuler(ruler)}
         />
       ))}
@@ -362,7 +362,10 @@ function TagChip({ tag }: { tag: TagsScreenTag }) {
 /** Contexto compartilhado por toda linha de Exceções/Rótulo — evita repetir a
  * mesma dúzia de props em cada card (o painel de réguas é o mesmo em ambos). */
 interface TagRowCtx {
-  busyKey: string | null;
+  /** Tag com escrita de réguas em voo: as 4 réguas DELA travam juntas — o UPDATE
+   *  grava as quatro colunas de uma vez, então um segundo clique montado da base
+   *  velha desfaria o primeiro em silêncio (lost update). */
+  busyTagId: string | null;
   onToggleRuler: (tag: TagsScreenTag, ruler: RulerKey) => void;
   form: FormState;
   dispatch: React.Dispatch<FormAction>;
@@ -374,7 +377,7 @@ function TagPanelFor({ tag, ctx }: { tag: TagsScreenTag; ctx: TagRowCtx }) {
   return (
     <TagPanel
       tag={tag}
-      busyRuler={RULER_ORDER.find((r) => ctx.busyKey === `${tag.id}:${r}`) ?? null}
+      busy={ctx.busyTagId === tag.id}
       onToggleRuler={(r) => ctx.onToggleRuler(tag, r)}
       onEdit={() => ctx.onEdit(tag)}
       editing={ctx.form.open && ctx.form.editingId === tag.id}
@@ -666,8 +669,9 @@ export function TagsScreen() {
   } = useCommand(`tags_screen:${ym}`, tagsScreenFetcher(year, month));
 
   const [form, dispatch] = useReducer(formReducer, initialForm);
-  // Chave "{tagId}:{régua}" da régua com escrita em voo — desabilita só aquele switch.
-  const [busyKey, setBusyKey] = useState<string | null>(null);
+  // Tag com escrita de réguas em voo — as 4 réguas dela travam juntas até o refetch
+  // (o UPDATE grava as quatro colunas; base velha num 2º clique desfaria o 1º).
+  const [busyTagId, setBusyTagId] = useState<string | null>(null);
 
   // O crumb da appbar acompanha o mês visto; ao sair da tela, volta ao padrão. `setCrumb`
   // é função de módulo (identidade fixa) — o efeito só re-dispara quando o rótulo muda.
@@ -677,14 +681,13 @@ export function TagsScreen() {
   }, [crumbLabel]);
 
   function handleToggleRuler(tag: TagsScreenTag, ruler: RulerKey) {
-    const key = `${tag.id}:${ruler}`;
-    setBusyKey(key);
+    setBusyTagId(tag.id);
     toggleRuler(tag, ruler)
       .then(() => invalidateCommands())
       .catch(() => {
         // Silencioso — alternar é best-effort; o próximo refetch reflete o estado real.
       })
-      .finally(() => setBusyKey((k) => (k === key ? null : k)));
+      .finally(() => setBusyTagId((t) => (t === tag.id ? null : t)));
   }
 
   async function submitForm() {
@@ -792,7 +795,7 @@ export function TagsScreen() {
     } else {
       const { exceptions, labels } = splitExceptionsAndLabels(dto.tags);
       const ctx: TagRowCtx = {
-        busyKey,
+        busyTagId,
         onToggleRuler: handleToggleRuler,
         form,
         dispatch,
