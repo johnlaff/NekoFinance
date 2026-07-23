@@ -105,6 +105,9 @@ export interface LineItem {
 export interface TransactionRow {
   id: string;
   type: string;
+  /** Magnitude em centavos; o SINAL armazenado não é contrato (linhas importadas e
+   *  manuais divergem — o backend compara sempre por valor absoluto). Exibição
+   *  deriva o sinal do tipo de movimento: entrada positiva, resto negativo. */
   amount: number;
   description: string;
   date: string;
