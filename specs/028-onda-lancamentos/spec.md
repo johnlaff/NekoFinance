@@ -2,15 +2,14 @@
 
 ## Contexto
 
-O Livro-razão atual apresenta lançamentos como linhas expansíveis (data + tipo + descrição
-
-- valor), com os itens da nota escondidos atrás de um toque e a divergência item×célula
-  reportada como aviso interno ("Itens não batem"). A direção da identidade define outra
-  leitura: a **célula é a autoridade** — cada dia expõe, por coluna do método, o total da
-  célula; a nota itemiza; e a diferença célula×nota aparece como **linha sintética de
-  reconciliação**, nunca como item. A lista explode as notas em linhas de primeira classe,
-  agrupadas por dia (daymarks), com colunas de verdade no desktop e metadados como pílulas
-  junto do nome — nunca na coluna do dinheiro.
+O Livro-razão apresentava lançamentos como linhas expansíveis (data, tipo, descrição e
+valor), com os itens da nota escondidos atrás de um toque e a divergência item×célula
+reportada como aviso interno ("Itens não batem"). A direção da identidade define outra
+leitura: a **célula é a autoridade** — cada dia expõe, por coluna do método, o total da
+célula; a nota itemiza; e a diferença célula×nota aparece como **linha sintética de
+reconciliação**, nunca como item. A lista explode as notas em linhas de primeira classe,
+agrupadas por dia (daymarks), com colunas de verdade no desktop e metadados como pílulas
+junto do nome — nunca na coluna do dinheiro.
 
 Não há matemática nova de domínio: o import já grava o total da célula como `amount` do
 lançamento e as linhas da nota como `line_items` (a divergência é derivável por
@@ -19,17 +18,20 @@ reembolso por linha).
 
 ## Estrutura da tela (ordem do fluxo)
 
-1. **Cabeçalho** — h1 "Lançamentos" + frase de contexto ("Tudo o que entrou e saiu, do
-   mais recente para o mais antigo."). No desktop, a busca mora ao lado do título (o par
-   clássico título-à-esquerda / busca-à-direita); no mobile ela desce para o rodapé da
-   lista (zona do polegar). O crumb da appbar mostra o mês visto ("Julho de 2026") via
-   prop `crumbs` do shell.
+1. **Cabeçalho** — o título "Lançamentos" vive no shell (sh-top no desktop, appbar no
+   mobile — nenhuma tela o duplica); a tela abre com a frase de contexto ("Tudo o que
+   entrou e saiu, do mais recente para o mais antigo."). No desktop, a busca mora ao
+   lado dela (o par clássico título-à-esquerda / busca-à-direita); no mobile ela desce
+   para o rodapé da lista (zona do polegar). O crumb da appbar mostra o mês visto
+   ("Julho de 2026") via store de crumbs do shell.
 2. **Linha de filtros** — `MonthNav` (mês visto; "Hoje" volta ao corrente) + filtro por
    tipo: **chips inline no desktop** (Todos + os 5 tipos na ordem canônica de
    `FORM_KINDS`), **bottom sheet no mobile** (gatilho "Tipo: {atual} ▾"; dialog nativo
    com opções e didática curta dos tipos). À direita, quando o motor cobre o mês visto:
    "Custo de vida — {X} no mês" (nunca fabricado; oculto sem dado).
-3. **Proposta de obrigações** (`ObligationsCard`) — preservada na posição atual.
+3. **Obrigações recorrentes** (`ObligationsCard`) — só quando há obrigações (ou erro de
+   carga): o estado vazio não renderiza card algum. A primeira dobra pertence ao
+   conteúdo primário, e a descoberta da feature vive na ação de marcar item.
 4. **Lista por daymarks** — ver "Modelo célula×nota" abaixo.
 5. **Busca no rodapé (mobile)** — input de busca in-flow após a lista, com clearance
    para o dock do shell.
@@ -130,8 +132,8 @@ O bottom sheet abre/fecha com a transição do dialog nativo (mesma gramática d
 
 ## Acessibilidade
 
-- Hierarquia: h1 no título, h2 por dia (daymark), grupos-célula como listas (`ul/li`);
-  o `cel-head` é cabeçalho visual do grupo com texto completo para leitores.
+- Hierarquia: o título da tela é do shell; h2 por dia (daymark), h3 no cabeçalho de
+  célula, grupos-célula como listas (`ul/li`).
 - Ordem do DOM = ordem de leitura em todos os viewports (a colunização é só CSS).
 - Painéis expansíveis com `aria-expanded`; sheet com `role="dialog"` nativo, foco
   gerenciado, Esc/backdrop fecham.
