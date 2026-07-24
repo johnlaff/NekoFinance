@@ -61,6 +61,22 @@ describe("Cartões", () => {
     ).toBeInTheDocument();
   });
 
+  it("fatura sem itens rende como lump — sem zero fabricado nem reconciliação cheia", async () => {
+    const user = userEvent.setup();
+    render(<CartoesScreen />);
+    await user.click(screen.getByRole("radio", { name: "Jul · Fechada" }));
+    expect(
+      screen.getByText(
+        "Registrada como valor único — sem compras itemizadas neste ciclo.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Compras itemizadas")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Não itemizado/)).not.toBeInTheDocument();
+    // Sem reembolso vinculado, o líquido (igual ao total) não ganha linha.
+    expect(screen.queryByText(/Líquido de reembolsos/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Fechou em 20 de jun/)).toBeInTheDocument();
+  });
+
   it("prefill do ajuste preserva centavos", async () => {
     const user = userEvent.setup();
     render(<CartoesScreen />);

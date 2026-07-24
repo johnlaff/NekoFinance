@@ -47,9 +47,11 @@ import { safeErrorMessage } from "../lib/errors";
 import { centsToBRLInput, parseBRLToCents } from "../lib/format";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import {
+  type BarsModel,
   buildBars,
   cycleOptions,
   cycleStateLabel,
+  type CardSeries,
   cycleWindow,
   dateLabel,
   defaultInvoiceId,
@@ -103,27 +105,129 @@ const DEMO_AGO: InvoiceSummary = {
 };
 
 const DEMO_INVOICES: InvoiceSummary[] = [
-  { ...DEMO_AGO, id: "demo-mar", cycle_month: "2026-03", closing_date: "2026-02-20", due_date: "2026-03-10", status: "paga", stated_total_cents: 163_000, purchases_sum_cents: 163_000, effective_total_cents: 163_000, reconciliation_delta_cents: null },
-  { ...DEMO_AGO, id: "demo-abr", cycle_month: "2026-04", closing_date: "2026-03-20", due_date: "2026-04-10", status: "paga", stated_total_cents: 223_000, purchases_sum_cents: 223_000, effective_total_cents: 223_000, reconciliation_delta_cents: null },
-  { ...DEMO_AGO, id: "demo-mai", cycle_month: "2026-05", closing_date: "2026-04-20", due_date: "2026-05-10", status: "paga", stated_total_cents: 189_000, purchases_sum_cents: 189_000, effective_total_cents: 189_000, reconciliation_delta_cents: null },
-  { ...DEMO_AGO, id: "demo-jun", cycle_month: "2026-06", closing_date: "2026-05-20", due_date: "2026-06-10", status: "paga", stated_total_cents: 270_000, purchases_sum_cents: 270_000, effective_total_cents: 270_000, reconciliation_delta_cents: null },
-  { ...DEMO_AGO, id: "demo-jul", cycle_month: "2026-07", closing_date: "2026-06-20", due_date: "2026-07-10", status: "fechada", stated_total_cents: 249_000, purchases_sum_cents: 249_000, effective_total_cents: 249_000, reconciliation_delta_cents: null },
+  {
+    ...DEMO_AGO,
+    id: "demo-mar",
+    cycle_month: "2026-03",
+    closing_date: "2026-02-20",
+    due_date: "2026-03-10",
+    status: "paga",
+    stated_total_cents: 163_000,
+    purchases_sum_cents: 163_000,
+    effective_total_cents: 163_000,
+    reconciliation_delta_cents: null,
+  },
+  {
+    ...DEMO_AGO,
+    id: "demo-abr",
+    cycle_month: "2026-04",
+    closing_date: "2026-03-20",
+    due_date: "2026-04-10",
+    status: "paga",
+    stated_total_cents: 223_000,
+    purchases_sum_cents: 223_000,
+    effective_total_cents: 223_000,
+    reconciliation_delta_cents: null,
+  },
+  {
+    ...DEMO_AGO,
+    id: "demo-mai",
+    cycle_month: "2026-05",
+    closing_date: "2026-04-20",
+    due_date: "2026-05-10",
+    status: "paga",
+    stated_total_cents: 189_000,
+    purchases_sum_cents: 189_000,
+    effective_total_cents: 189_000,
+    reconciliation_delta_cents: null,
+  },
+  {
+    ...DEMO_AGO,
+    id: "demo-jun",
+    cycle_month: "2026-06",
+    closing_date: "2026-05-20",
+    due_date: "2026-06-10",
+    status: "paga",
+    stated_total_cents: 270_000,
+    purchases_sum_cents: 270_000,
+    effective_total_cents: 270_000,
+    reconciliation_delta_cents: null,
+  },
+  {
+    ...DEMO_AGO,
+    id: "demo-jul",
+    cycle_month: "2026-07",
+    closing_date: "2026-06-20",
+    due_date: "2026-07-10",
+    status: "fechada",
+    stated_total_cents: 249_000,
+    purchases_sum_cents: 249_000,
+    effective_total_cents: 249_000,
+    reconciliation_delta_cents: null,
+  },
   DEMO_AGO,
 ];
 
 const DEMO_DETAIL: InvoiceDetail = {
   ...DEMO_AGO,
   purchases: [
-    { txn_id: "p1", date: "2026-06-25", description: "Mercado", amount_cents: 239_900, owner_name: "Eu", series_id: null, installment_label: null, is_projection: false },
-    { txn_id: "p2", date: "2026-07-02", description: "Notebook", amount_cents: 64_000, owner_name: "Eu", series_id: "s2", installment_label: "2/5", is_projection: false },
-    { txn_id: "p3", date: "2026-07-10", description: "Farmácia", amount_cents: 95_010, owner_name: "Parceiro(a)", series_id: null, installment_label: null, is_projection: false },
-    { txn_id: "p4", date: "2026-07-15", description: "Streaming", amount_cents: 4_990, owner_name: "Eu", series_id: "s1", installment_label: null, is_projection: false },
+    {
+      txn_id: "p1",
+      date: "2026-06-25",
+      description: "Mercado",
+      amount_cents: 239_900,
+      owner_name: "Eu",
+      series_id: null,
+      installment_label: null,
+      is_projection: false,
+    },
+    {
+      txn_id: "p2",
+      date: "2026-07-02",
+      description: "Notebook",
+      amount_cents: 64_000,
+      owner_name: "Eu",
+      series_id: "s2",
+      installment_label: "2/5",
+      is_projection: false,
+    },
+    {
+      txn_id: "p3",
+      date: "2026-07-10",
+      description: "Farmácia",
+      amount_cents: 95_010,
+      owner_name: "Parceiro(a)",
+      series_id: null,
+      installment_label: null,
+      is_projection: false,
+    },
+    {
+      txn_id: "p4",
+      date: "2026-07-15",
+      description: "Streaming",
+      amount_cents: 4_990,
+      owner_name: "Eu",
+      series_id: "s1",
+      installment_label: null,
+      is_projection: false,
+    },
   ],
   refunds: [
-    { txn_id: "r1", date: "2026-08-10", amount_cents: 35_000, description: "Parte compartilhada", is_projection: true },
+    {
+      txn_id: "r1",
+      date: "2026-08-10",
+      amount_cents: 35_000,
+      description: "Parte compartilhada",
+      is_projection: true,
+    },
   ],
   sub_invoices: [
-    { account_id: "demo-additional", card_name: "Cartão adicional", owner_name: "Parceiro(a)", effective_total_cents: 86_000 },
+    {
+      account_id: "demo-additional",
+      card_name: "Cartão adicional",
+      owner_name: "Parceiro(a)",
+      effective_total_cents: 86_000,
+    },
   ],
   emitter_total_cents: 514_900,
 };
@@ -381,9 +485,7 @@ export function CartoesScreen() {
             className="cartoes__detail"
             ref={detailRef}
             tabIndex={-1}
-            aria-label={
-              selectedCard ? `Faturas de ${selectedCard.name}` : "Faturas"
-            }
+            aria-label={selectedCard ? `Faturas de ${selectedCard.name}` : "Faturas"}
           >
             {drilled ? (
               <div className="cartoes__back">
@@ -433,13 +535,13 @@ function ProposalBanner({
       aria-label={`Proposta de cartão: ${proposal.display_name}`}
     >
       <span className="cartoes__sniff">
-        <Activity size={14} aria-hidden="true" />
-        A Mia farejou um cartão na planilha
+        <Activity size={14} aria-hidden="true" />A Mia farejou um cartão na planilha
       </span>
       <p className="cartoes__proposal-copy">
-        Uma linha da seção de cartões de {monthLabelLower(proposal.source_month)} não casa
-        com nenhum cartão que o app conhece: <strong>{proposal.display_name}</strong>.
-        Quer cadastrar para acompanhar a fatura?
+        Uma linha da seção de cartões de {monthLabelLower(proposal.source_month)} não
+        casa com nenhum cartão que o app conhece:{" "}
+        <strong>{proposal.display_name}</strong>. Quer cadastrar para acompanhar a
+        fatura?
       </p>
       <div className="cartoes__actions">
         <Button variant="primary" size="sm" disabled={busy} onClick={onCreate}>
@@ -737,67 +839,33 @@ function InvoiceDetailBody({
 }: {
   card: Card;
   detail: InvoiceDetail;
-  bars: ReturnType<typeof buildBars>;
+  bars: BarsModel;
   todayISO: string;
 }) {
-  const [adjusting, setAdjusting] = useState(false);
-  const [amount, setAmount] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [editingSeries, setEditingSeries] = useState<{
-    id: string;
-    description: string;
-    amount: string;
-  } | null>(null);
-
   const series = groupSeries(detail.purchases);
-  const net = netOfRefunds(detail);
+  return (
+    <>
+      <InvoiceHero detail={detail} todayISO={todayISO} />
+      <InvoiceBars bars={bars} />
+      <TotaisSection detail={detail} />
+      <PurchasesSection purchases={detail.purchases} cycleMonth={detail.cycle_month} />
+      {series.length > 0 ? (
+        <SeriesSection series={series} cycleMonth={detail.cycle_month} />
+      ) : null}
+      <RefundsSection refunds={detail.refunds} />
+      <RecorteSection card={card} detail={detail} />
+      <NetLine detail={detail} />
+    </>
+  );
+}
 
-  function saveStatedTotal() {
-    if (!isTauri) return;
-    const cents = parseBRLToCents(amount);
-    if (cents == null) return;
-    setBusy(true);
-    void setInvoiceStatedTotal(detail.id, cents)
-      .then(() => {
-        setAdjusting(false);
-        invalidateCommands();
-      })
-      .catch(() => undefined)
-      .finally(() => setBusy(false));
-  }
-
-  function movePurchase(txnId: string, delta: number) {
-    if (!isTauri) return;
-    void moveCardPurchase(txnId, shiftCycleMonth(detail.cycle_month, delta))
-      .then(invalidateCommands)
-      .catch(() => undefined);
-  }
-
-  function saveSeries() {
-    if (!editingSeries || !isTauri) return;
-    const cents = parseBRLToCents(editingSeries.amount);
-    if (cents == null) return;
-    setBusy(true);
-    void updateCardSeries(editingSeries.id, editingSeries.description, cents)
-      .then(() => {
-        setEditingSeries(null);
-        invalidateCommands();
-      })
-      .catch(() => undefined)
-      .finally(() => setBusy(false));
-  }
-
-  function cancelSeries(seriesId: string, description: string) {
-    if (
-      !isTauri ||
-      !window.confirm(`Cancelar "${description}" a partir deste ciclo?`)
-    )
-      return;
-    void cancelCardSeries(seriesId, detail.cycle_month)
-      .then(invalidateCommands)
-      .catch(() => undefined);
-  }
-
+function InvoiceHero({
+  detail,
+  todayISO,
+}: {
+  detail: InvoiceDetail;
+  todayISO: string;
+}) {
   return (
     <>
       <div className="cartoes__hero">
@@ -814,7 +882,13 @@ function InvoiceDetailBody({
       <InfoPopover term={INVOICE_TERM}>
         <span className="cartoes__how">Como a fatura entra no mês</span>
       </InfoPopover>
+    </>
+  );
+}
 
+function InvoiceBars({ bars }: { bars: BarsModel }) {
+  return (
+    <>
       <div role="img" aria-label={bars.aria}>
         <div className="cartoes__bars">
           {bars.bars.map((bar) => (
@@ -832,7 +906,31 @@ function InvoiceDetailBody({
         </div>
       </div>
       <p className="cartoes__bars-cap">{bars.caption}</p>
+    </>
+  );
+}
 
+function TotaisSection({ detail }: { detail: InvoiceDetail }) {
+  const [adjusting, setAdjusting] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  function saveStatedTotal() {
+    if (!isTauri) return;
+    const cents = parseBRLToCents(amount);
+    if (cents == null) return;
+    setBusy(true);
+    void setInvoiceStatedTotal(detail.id, cents)
+      .then(() => {
+        setAdjusting(false);
+        invalidateCommands();
+      })
+      .catch(() => undefined)
+      .finally(() => setBusy(false));
+  }
+
+  return (
+    <>
       <SectionHead icon={<ListChecks size={15} aria-hidden="true" />} title="Totais" />
       <div className="cartoes__totline cartoes__totline--head">
         <span>Total declarado</span>
@@ -840,16 +938,27 @@ function InvoiceDetailBody({
           <Money cents={detail.effective_total_cents} size="inherit" />
         </b>
       </div>
-      <div className="cartoes__totline">
-        <span>Compras itemizadas</span>
-        <Money cents={detail.purchases_sum_cents} size="inherit" />
-      </div>
-      {detail.reconciliation_delta_cents != null ? (
-        <div className="cartoes__recon">
-          <span>Não itemizado — parte da fatura sem linha</span>
-          <Money cents={detail.reconciliation_delta_cents} size="inherit" />
-        </div>
-      ) : null}
+      {/* A planilha registra a fatura como lump por cartão — sem itens, a linha
+          "Compras R$ 0,00" e uma reconciliação do valor inteiro seriam ruído
+          que trai o uso real; a leitura honesta é uma frase só. */}
+      {detail.purchases.length > 0 ? (
+        <>
+          <div className="cartoes__totline">
+            <span>Compras itemizadas</span>
+            <Money cents={detail.purchases_sum_cents} size="inherit" />
+          </div>
+          {detail.reconciliation_delta_cents != null ? (
+            <div className="cartoes__recon">
+              <span>Não itemizado — parte da fatura sem linha</span>
+              <Money cents={detail.reconciliation_delta_cents} size="inherit" />
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <p className="cartoes__discrete cartoes__lump">
+          Registrada como valor único — sem compras itemizadas neste ciclo.
+        </p>
+      )}
       {adjusting ? (
         <div className="cartoes__adjust-row">
           <input
@@ -872,7 +981,9 @@ function InvoiceDetailBody({
           className="cartoes__adjust"
           onClick={() => {
             setAmount(
-              centsToBRLInput(detail.stated_total_cents ?? detail.effective_total_cents),
+              centsToBRLInput(
+                detail.stated_total_cents ?? detail.effective_total_cents,
+              ),
             );
             setAdjusting(true);
           }}
@@ -880,243 +991,322 @@ function InvoiceDetailBody({
           Ajustar total declarado
         </Button>
       )}
-
-      {detail.purchases.length > 0 ? (
-        <>
-          <SectionHead
-            icon={<ShoppingBag size={15} aria-hidden="true" />}
-            title="Compras"
-          />
-          <ul className="cartoes__rows">
-            {detail.purchases.map((purchase) => (
-              <li key={purchase.txn_id}>
-                <span className="cartoes__what">
-                  <b>
-                    {purchase.description}
-                    {purchase.installment_label ? (
-                      <span className="cartoes__parc">{purchase.installment_label}</span>
-                    ) : null}
-                  </b>
-                  <small>
-                    {dateLabel(purchase.date)} ·{" "}
-                    <OwnerChip who={ownerKind(purchase.owner_name)} />
-                  </small>
-                </span>
-                {purchase.series_id ? null : (
-                  <span className="cartoes__move">
-                    <button
-                      type="button"
-                      className="cartoes__move-btn"
-                      aria-label={`Mover ${purchase.description} para o ciclo anterior`}
-                      onClick={() => movePurchase(purchase.txn_id, -1)}
-                    >
-                      <ChevronLeft size={15} aria-hidden="true" />
-                    </button>
-                    <button
-                      type="button"
-                      className="cartoes__move-btn"
-                      aria-label={`Mover ${purchase.description} para o ciclo seguinte`}
-                      onClick={() => movePurchase(purchase.txn_id, 1)}
-                    >
-                      <ChevronRight size={15} aria-hidden="true" />
-                    </button>
-                  </span>
-                )}
-                <span className="cartoes__val">
-                  <Money cents={purchase.amount_cents} size="inherit" />
-                </span>
-              </li>
-            ))}
-          </ul>
-        </>
-      ) : null}
-
-      {series.length > 0 ? (
-        <>
-          <SectionHead icon={<Repeat size={15} aria-hidden="true" />} title="Séries" />
-          <div className="cartoes__series">
-            {series.map(({ id, kind, occurrence }) => {
-              const isEditing = editingSeries?.id === id;
-              const progress =
-                kind === "installment"
-                  ? installmentProgress(occurrence.installment_label, occurrence.amount_cents)
-                  : null;
-              return (
-                <div key={id} className="cartoes__serie">
-                  {isEditing ? (
-                    <div className="cartoes__serie-edit">
-                      <label className="cartoes__label">
-                        Descrição
-                        <input
-                          className="cartoes__field"
-                          value={editingSeries.description}
-                          onChange={(event) =>
-                            setEditingSeries({
-                              ...editingSeries,
-                              description: event.target.value,
-                            })
-                          }
-                        />
-                      </label>
-                      <label className="cartoes__label">
-                        Valor BRL
-                        <input
-                          className="cartoes__field"
-                          inputMode="decimal"
-                          value={editingSeries.amount}
-                          onChange={(event) =>
-                            setEditingSeries({
-                              ...editingSeries,
-                              amount: event.target.value,
-                            })
-                          }
-                        />
-                      </label>
-                      <p className="cartoes__discrete">Regenera as ocorrências futuras.</p>
-                      <div className="cartoes__actions">
-                        <Button variant="primary" size="sm" disabled={busy} onClick={saveSeries}>
-                          Salvar
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => setEditingSeries(null)}>
-                          Cancelar
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="cartoes__serie-head">
-                        <b>
-                          {occurrence.description} —{" "}
-                          {kind === "installment" ? "parcelado" : "assinatura"}
-                        </b>
-                        <Money cents={occurrence.amount_cents} size="inherit" />
-                      </div>
-                      {progress ? (
-                        <>
-                          <Meter
-                            className="cartoes__prog"
-                            fraction={progress.fraction}
-                            color="var(--accent)"
-                          />
-                          <span className="cartoes__prog-cap">
-                            Parcela {progress.current} de {progress.total} · faltam{" "}
-                            <Money cents={progress.remainingCents} size="inherit" /> em{" "}
-                            {progress.remainingCycles}{" "}
-                            {progress.remainingCycles === 1 ? "fatura" : "faturas"}
-                          </span>
-                        </>
-                      ) : kind === "subscription" ? (
-                        <span className="cartoes__prog-cap">
-                          {subscriptionCadence(occurrence.date)}
-                        </span>
-                      ) : null}
-                      <div className="cartoes__actions">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          aria-label={`Editar ${occurrence.description}`}
-                          onClick={() =>
-                            setEditingSeries({
-                              id,
-                              description: occurrence.description,
-                              amount: centsToBRLInput(occurrence.amount_cents),
-                            })
-                          }
-                        >
-                          Editar
-                        </Button>
-                        {kind === "subscription" ? (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            aria-label={`Cancelar ${occurrence.description} a partir deste ciclo`}
-                            onClick={() => cancelSeries(id, occurrence.description)}
-                          >
-                            Cancelar a partir deste ciclo
-                          </Button>
-                        ) : null}
-                      </div>
-                    </>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </>
-      ) : null}
-
-      {detail.refunds.length > 0 ? (
-        <>
-          <SectionHead
-            icon={<Undo2 size={15} aria-hidden="true" />}
-            title="Reembolsos vinculados"
-          />
-          <ul className="cartoes__rows">
-            {detail.refunds.map((refund) => (
-              <li key={refund.txn_id}>
-                <span className="cartoes__what">
-                  <b>
-                    {refund.description}
-                    {refund.is_projection ? (
-                      <span className="cartoes__chip cartoes__chip--prevista">
-                        Prevista
-                      </span>
-                    ) : null}
-                  </b>
-                  <small>
-                    Entra como Entrada no vencimento — a régua julga o valor cheio
-                  </small>
-                </span>
-                <span className="cartoes__val cartoes__val--in">
-                  + <Money cents={refund.amount_cents} size="inherit" />
-                </span>
-              </li>
-            ))}
-          </ul>
-        </>
-      ) : null}
-
-      {detail.sub_invoices.length > 0 ? (
-        <>
-          <SectionHead
-            icon={<Users size={15} aria-hidden="true" />}
-            title="Recorte por dono"
-          />
-          <div className="cartoes__subinv">
-            <span>
-              <OwnerChip who={ownerKind(card.owner_name)} /> Titular
-            </span>
-            <Money cents={detail.effective_total_cents} size="inherit" />
-          </div>
-          {detail.sub_invoices.map((sub) => (
-            <div key={sub.account_id} className="cartoes__subinv">
-              <span>
-                <OwnerChip who={ownerKind(sub.owner_name)} /> {sub.card_name}
-              </span>
-              <Money cents={sub.effective_total_cents} size="inherit" />
-            </div>
-          ))}
-          <div className="cartoes__emitter">
-            <span>Total do emissor</span>
-            <b>
-              <Money cents={detail.emitter_total_cents} size="inherit" />
-            </b>
-          </div>
-        </>
-      ) : null}
-
-      <p className="cartoes__net">
-        Líquido de reembolsos <Money cents={net} size="inherit" />
-        <InfoPopover
-          term={{
-            title: "Leitura de conferência",
-            body: "As réguas do método julgam o valor bruto; o líquido de reembolsos existe só para conferir a divisão. Limite e pontos não entram em régua nenhuma.",
-          }}
-        >
-          <span className="cartoes__badge">Conferência</span>
-        </InfoPopover>
-      </p>
     </>
+  );
+}
+
+function PurchasesSection({
+  purchases,
+  cycleMonth,
+}: {
+  purchases: InvoiceDetail["purchases"];
+  cycleMonth: string;
+}) {
+  if (purchases.length === 0) return null;
+
+  function movePurchase(txnId: string, delta: number) {
+    if (!isTauri) return;
+    void moveCardPurchase(txnId, shiftCycleMonth(cycleMonth, delta))
+      .then(invalidateCommands)
+      .catch(() => undefined);
+  }
+
+  return (
+    <>
+      <SectionHead
+        icon={<ShoppingBag size={15} aria-hidden="true" />}
+        title="Compras"
+      />
+      <ul className="cartoes__rows">
+        {purchases.map((purchase) => (
+          <li key={purchase.txn_id}>
+            <span className="cartoes__what">
+              <b>
+                {purchase.description}
+                {purchase.installment_label ? (
+                  <span className="cartoes__parc">{purchase.installment_label}</span>
+                ) : null}
+              </b>
+              <small>
+                {dateLabel(purchase.date)} ·{" "}
+                <OwnerChip who={ownerKind(purchase.owner_name)} />
+              </small>
+            </span>
+            {purchase.series_id ? null : (
+              <span className="cartoes__move">
+                <button
+                  type="button"
+                  className="cartoes__move-btn"
+                  aria-label={`Mover ${purchase.description} para o ciclo anterior`}
+                  onClick={() => movePurchase(purchase.txn_id, -1)}
+                >
+                  <ChevronLeft size={15} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className="cartoes__move-btn"
+                  aria-label={`Mover ${purchase.description} para o ciclo seguinte`}
+                  onClick={() => movePurchase(purchase.txn_id, 1)}
+                >
+                  <ChevronRight size={15} aria-hidden="true" />
+                </button>
+              </span>
+            )}
+            <span className="cartoes__val">
+              <Money cents={purchase.amount_cents} size="inherit" />
+            </span>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+function SeriesSection({
+  series,
+  cycleMonth,
+}: {
+  series: CardSeries[];
+  cycleMonth: string;
+}) {
+  const [editingSeries, setEditingSeries] = useState<{
+    id: string;
+    description: string;
+    amount: string;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  function saveSeries() {
+    if (!editingSeries || !isTauri) return;
+    const cents = parseBRLToCents(editingSeries.amount);
+    if (cents == null) return;
+    setBusy(true);
+    void updateCardSeries(editingSeries.id, editingSeries.description, cents)
+      .then(() => {
+        setEditingSeries(null);
+        invalidateCommands();
+      })
+      .catch(() => undefined)
+      .finally(() => setBusy(false));
+  }
+
+  function cancelSeries(seriesId: string, description: string) {
+    if (!isTauri || !window.confirm(`Cancelar "${description}" a partir deste ciclo?`))
+      return;
+    void cancelCardSeries(seriesId, cycleMonth)
+      .then(invalidateCommands)
+      .catch(() => undefined);
+  }
+
+  return (
+    <>
+      <SectionHead icon={<Repeat size={15} aria-hidden="true" />} title="Séries" />
+      <div className="cartoes__series">
+        {series.map(({ id, kind, occurrence }) => {
+          const isEditing = editingSeries?.id === id;
+          const progress =
+            kind === "installment"
+              ? installmentProgress(
+                  occurrence.installment_label,
+                  occurrence.amount_cents,
+                )
+              : null;
+          return (
+            <div key={id} className="cartoes__serie">
+              {isEditing ? (
+                <div className="cartoes__serie-edit">
+                  <label className="cartoes__label">
+                    Descrição
+                    <input
+                      className="cartoes__field"
+                      value={editingSeries.description}
+                      onChange={(event) =>
+                        setEditingSeries({
+                          ...editingSeries,
+                          description: event.target.value,
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="cartoes__label">
+                    Valor BRL
+                    <input
+                      className="cartoes__field"
+                      inputMode="decimal"
+                      value={editingSeries.amount}
+                      onChange={(event) =>
+                        setEditingSeries({
+                          ...editingSeries,
+                          amount: event.target.value,
+                        })
+                      }
+                    />
+                  </label>
+                  <p className="cartoes__discrete">Regenera as ocorrências futuras.</p>
+                  <div className="cartoes__actions">
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      disabled={busy}
+                      onClick={saveSeries}
+                    >
+                      Salvar
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setEditingSeries(null)}
+                    >
+                      Cancelar
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="cartoes__serie-head">
+                    <b>
+                      {occurrence.description} —{" "}
+                      {kind === "installment" ? "parcelado" : "assinatura"}
+                    </b>
+                    <Money cents={occurrence.amount_cents} size="inherit" />
+                  </div>
+                  {progress ? (
+                    <>
+                      <Meter
+                        className="cartoes__prog"
+                        fraction={progress.fraction}
+                        color="var(--accent)"
+                      />
+                      <span className="cartoes__prog-cap">
+                        Parcela {progress.current} de {progress.total} · faltam{" "}
+                        <Money cents={progress.remainingCents} size="inherit" /> em{" "}
+                        {progress.remainingCycles}{" "}
+                        {progress.remainingCycles === 1 ? "fatura" : "faturas"}
+                      </span>
+                    </>
+                  ) : kind === "subscription" ? (
+                    <span className="cartoes__prog-cap">
+                      {subscriptionCadence(occurrence.date)}
+                    </span>
+                  ) : null}
+                  <div className="cartoes__actions">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Editar ${occurrence.description}`}
+                      onClick={() =>
+                        setEditingSeries({
+                          id,
+                          description: occurrence.description,
+                          amount: centsToBRLInput(occurrence.amount_cents),
+                        })
+                      }
+                    >
+                      Editar
+                    </Button>
+                    {kind === "subscription" ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`Cancelar ${occurrence.description} a partir deste ciclo`}
+                        onClick={() => cancelSeries(id, occurrence.description)}
+                      >
+                        Cancelar a partir deste ciclo
+                      </Button>
+                    ) : null}
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+function RefundsSection({ refunds }: { refunds: InvoiceDetail["refunds"] }) {
+  if (refunds.length === 0) return null;
+  return (
+    <>
+      <SectionHead
+        icon={<Undo2 size={15} aria-hidden="true" />}
+        title="Reembolsos vinculados"
+      />
+      <ul className="cartoes__rows">
+        {refunds.map((refund) => (
+          <li key={refund.txn_id}>
+            <span className="cartoes__what">
+              <b>
+                {refund.description}
+                {refund.is_projection ? (
+                  <span className="cartoes__chip cartoes__chip--prevista">
+                    Prevista
+                  </span>
+                ) : null}
+              </b>
+              <small>
+                Entra como Entrada no vencimento — a régua julga o valor cheio
+              </small>
+            </span>
+            <span className="cartoes__val cartoes__val--in">
+              + <Money cents={refund.amount_cents} size="inherit" />
+            </span>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+function RecorteSection({ card, detail }: { card: Card; detail: InvoiceDetail }) {
+  if (detail.sub_invoices.length === 0) return null;
+  return (
+    <>
+      <SectionHead
+        icon={<Users size={15} aria-hidden="true" />}
+        title="Recorte por dono"
+      />
+      <div className="cartoes__subinv">
+        <span>
+          <OwnerChip who={ownerKind(card.owner_name)} /> Titular
+        </span>
+        <Money cents={detail.effective_total_cents} size="inherit" />
+      </div>
+      {detail.sub_invoices.map((sub) => (
+        <div key={sub.account_id} className="cartoes__subinv">
+          <span>
+            <OwnerChip who={ownerKind(sub.owner_name)} /> {sub.card_name}
+          </span>
+          <Money cents={sub.effective_total_cents} size="inherit" />
+        </div>
+      ))}
+      <div className="cartoes__emitter">
+        <span>Total do emissor</span>
+        <b>
+          <Money cents={detail.emitter_total_cents} size="inherit" />
+        </b>
+      </div>
+    </>
+  );
+}
+
+function NetLine({ detail }: { detail: InvoiceDetail }) {
+  // Sem reembolso vinculado o líquido é igual ao total — linha constante não
+  // ganha lugar; a leitura de conferência só aparece com trabalho a fazer.
+  if (detail.refunds.length === 0) return null;
+  return (
+    <p className="cartoes__net">
+      Líquido de reembolsos <Money cents={netOfRefunds(detail)} size="inherit" />
+      <InfoPopover
+        term={{
+          title: "Leitura de conferência",
+          body: "As réguas do método julgam o valor bruto; o líquido de reembolsos existe só para conferir a divisão. Limite e pontos não entram em régua nenhuma.",
+        }}
+      >
+        <span className="cartoes__badge">Conferência</span>
+      </InfoPopover>
+    </p>
   );
 }
 
@@ -1273,7 +1463,9 @@ function CardForm({
           </select>
         </label>
         {additional ? (
-          <p className="cartoes__discrete cartoes__inherit">Herda o ciclo do titular.</p>
+          <p className="cartoes__discrete cartoes__inherit">
+            Herda o ciclo do titular.
+          </p>
         ) : (
           <>
             <label className="cartoes__label">

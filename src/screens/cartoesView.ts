@@ -31,11 +31,6 @@ function shortMonth(cycleMonth: string): string {
   return capitalize(label);
 }
 
-/** "Agosto de 2026" para o mês do ciclo. */
-export function monthLabel(cycleMonth: string): string {
-  return capitalize(MONTH_FORMAT.format(noon(`${cycleMonth}-01`)));
-}
-
 /** "agosto de 2026" — para uso no meio de frase, onde maiúscula seria erro. */
 export function monthLabelLower(cycleMonth: string): string {
   return MONTH_FORMAT.format(noon(`${cycleMonth}-01`));
@@ -60,8 +55,8 @@ export function cycleWindow(
   invoices: InvoiceSummary[],
   limit = CYCLE_WINDOW_LIMIT,
 ): InvoiceSummary[] {
-  return [...invoices]
-    .sort((a, b) => a.cycle_month.localeCompare(b.cycle_month))
+  return invoices
+    .toSorted((a, b) => a.cycle_month.localeCompare(b.cycle_month))
     .slice(-limit);
 }
 
@@ -114,7 +109,10 @@ export interface BarsModel {
   caption: string;
 }
 
-export function buildBars(window: InvoiceSummary[], selectedId: string | null): BarsModel {
+export function buildBars(
+  window: InvoiceSummary[],
+  selectedId: string | null,
+): BarsModel {
   const max = Math.max(...window.map((i) => i.effective_total_cents), 0);
   const bars = window.map((invoice) => ({
     id: invoice.id,
@@ -139,7 +137,8 @@ export function buildBars(window: InvoiceSummary[], selectedId: string | null): 
 
 // -------------------------------------------------------------------- herói --
 
-/** O subtítulo diz qual autoridade produziu o número (spec 026 D3). */
+/** O subtítulo diz qual autoridade produziu o número: o total declarado da
+    planilha manda quando existe; sem ele, o efetivo é a soma das compras. */
 export function heroSubtitle(statedTotalCents: number | null): string {
   return statedTotalCents != null
     ? "Total declarado — autoridade da planilha"
@@ -221,7 +220,9 @@ export function groupSeries(purchases: CardPurchase[]): CardSeries[] {
   });
   return Array.from(series, ([id, occurrence]) => ({
     id,
-    kind: occurrence.installment_label ? ("installment" as const) : ("subscription" as const),
+    kind: occurrence.installment_label
+      ? ("installment" as const)
+      : ("subscription" as const),
     occurrence,
   }));
 }

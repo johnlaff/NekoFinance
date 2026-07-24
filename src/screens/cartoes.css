@@ -539,6 +539,11 @@ b > .cartoes__chip {
   color: var(--text-muted);
 }
 
+.cartoes__lump {
+  margin: 0;
+  padding: var(--space-2) 0 0;
+}
+
 .cartoes__adjust {
   justify-self: start;
 }

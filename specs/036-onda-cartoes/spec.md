@@ -79,11 +79,16 @@ Face de acento calma — o único lugar do app onde o acento vira superfície:
 
 ## Totais + reconciliação
 
-- "Total declarado" / "Compras itemizadas" e, quando houver delta, a linha de
-  reconciliação: "Não itemizado — parte da fatura sem linha" (tracejada,
-  itálica) — **nunca vira item** (spec 026 D3).
+- Com compras itemizadas: "Total declarado" / "Compras itemizadas" e, quando
+  houver delta, a linha de reconciliação: "Não itemizado — parte da fatura sem
+  linha" (tracejada, itálica) — **nunca vira item** (spec 026 D3).
+- **Sem nenhuma compra itemizada** — o modo dominante da planilha real, que
+  registra a fatura como lump por cartão — a leitura colapsa numa frase:
+  "Registrada como valor único — sem compras itemizadas neste ciclo." Nada de
+  "Compras R$ 0,00" (zero fabricado) nem reconciliação do valor inteiro
+  (ruído sem informação além do próprio total).
 - "Ajustar total declarado" mantém o gesto atual (input + confirmar), com o
-  rótulo completo.
+  rótulo completo, nos dois modos.
 
 ## Compras
 
