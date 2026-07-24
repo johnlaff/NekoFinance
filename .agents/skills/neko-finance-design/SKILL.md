@@ -6,6 +6,15 @@ user-invocable: true
 
 Read `readme.md` in this skill first — it covers brand principles, voice, visual foundations, iconography, the token system, the chart language, accessibility rules, and a component inventory. Then explore the other files.
 
+**Design context**
+- **Register**: product (app UI / dashboard)
+- **User**: solo engineer in home office at night, low ambient light
+- **Brand**: precise, discreet, trustworthy, friendly
+- **Mode**: dark-first (nighttime use), WCAG AA minimum
+- **References**: YNAB (discipline), Notion (clean minimal), Stripe Dashboard (clear data)
+- **Anti-references**: traditional banks, gamified apps, corporate ERPs, neon neobanks, SaaS cream
+- **Design principles**: night-first, precision without noise, discreet confidence, friendly guidance, data-first / chrome-second
+
 **Layout**
 - `styles.css` — the entry point; link it to get every token + font. It only `@import`s `tokens/*.css`.
 - `tokens/` — colors, typography, spacing, elevation, motion (CSS custom properties; dark `:root` + `[data-theme="light"]`).
