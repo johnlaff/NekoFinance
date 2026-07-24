@@ -28,7 +28,7 @@ test.describe("Side-sheet de cenários", () => {
     await expect(sheet).toBeVisible();
     // Não-modal: o Horizonte reflui (classe de reflow) e o conteúdo por trás segue clicável.
     await expect(page.locator(".hz.hz--sheet-open")).toBeVisible();
-    await expect(page.getByText("Horizonte de saldos")).toBeVisible();
+    await expect(page.getByText("A estrada até dezembro")).toBeVisible();
     // O foco entra no sheet ao abrir (show() não move o foco sozinho).
     await expect(page.locator("dialog.scn-sheet *:focus")).toHaveCount(1);
     // Escape fecha (gesto reposto à mão no dialog não-modal).

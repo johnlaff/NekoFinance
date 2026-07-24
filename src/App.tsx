@@ -117,7 +117,7 @@ function App() {
             {screen === "cartoes" && <CartoesScreen />}
             {screen === "ano" && <AnnualScreen />}
             {screen === "calendario" && <YearGridScreen />}
-            {screen === "horizonte" && <HorizonteScreen />}
+            {screen === "horizonte" && <HorizonteScreen onNavigate={setScreen} />}
             {screen === "tags" && <TagsScreen />}
             {screen === "mia" && <CopilotScreen />}
             {screen === "teto" && <TetoScreen />}

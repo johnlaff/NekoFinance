@@ -279,8 +279,8 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
       "aria-current",
       "page",
     );
-    await expect(page.getByText("Horizonte de saldos")).toBeVisible();
-    await expect(page.getByText("Trajetória até dezembro")).toBeVisible();
+    await expect(page.getByText("A estrada até dezembro")).toBeVisible();
+    await expect(page.getByText("Os próximos 12 meses")).toBeVisible();
     await page.screenshot({
       fullPage: true,
       path: testInfo.outputPath("horizonte.png"),
