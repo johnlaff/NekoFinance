@@ -715,6 +715,10 @@ export function upsertDailyBudgetWithCategories(
 export interface DailyBudget {
   per_day_cents: number;
   divisor_days: number | null;
+  /** `YYYY-MM` da cerimônia que produziu o teto — a idade que a tela conta. */
+  ceremony_month: string | null;
+  /** Nota crua da planilha que sustenta o teto; `null` quando a cerimônia foi feita no app. */
+  source_note: string | null;
   categories: DailyBudgetCategory[];
 }
 
@@ -728,6 +732,8 @@ export interface CeilingProposal {
   per_day_cents: number;
   divisor_days: number;
   source_month: string;
+  /** Nota crua da célula, reproduzida como prova; `null` em propostas anteriores à coluna. */
+  raw_note: string | null;
   items: { name: string; amount_cents: number }[];
 }
 

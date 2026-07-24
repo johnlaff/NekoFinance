@@ -1,182 +1,316 @@
-import { useState } from "react";
-import type { CSSProperties } from "react";
-import { CircleGauge, ListChecks, Plus, Trash2 } from "lucide-react";
+import "./teto.css";
+import { useEffect, useRef, useState } from "react";
+import { Clock3, Gauge, ListChecks, Plus, Trash2 } from "lucide-react";
 import { Button } from "../design-system/components/Button";
-import { SegmentedControl } from "../design-system/components/SegmentedControl";
 import { EmptyState } from "../design-system/components/EmptyState";
+import { EstimateMark } from "../design-system/components/EstimateMark";
 import { InfoPopover } from "../design-system/components/InfoPopover";
+import { ModeChip } from "../design-system/components/ModeChip";
 import { Money } from "../design-system/components/Money";
 import {
   acceptCeilingProposal,
   dismissCeilingProposal,
   getCeilingProposal,
   getDailyBudget,
+  getDashboardSummary,
   isTauri,
   upsertDailyBudgetWithCategories,
-  type CeilingProposal,
   type DailyBudget,
 } from "../lib/api";
-import { parseBRLToCents } from "../lib/format";
+import { centsToBRLInput, formatBRL, parseBRLToCents, todayISO } from "../lib/format";
+import { safeErrorMessage } from "../lib/errors";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
+import {
+  GUIDED_QUESTIONS,
+  buildTetoView,
+  categoriesFromDraft,
+  ceilingPerDayCents,
+  ceremonyAgeLabel,
+  ceremonyMonthLabel,
+  divisorFromText,
+  draftTotalCents,
+  guardTriggered,
+  monthYearLabel,
+  type DraftItem,
+  type TetoProof,
+  type TetoView,
+} from "./tetoView";
 
-// A cerimônia do teto: itens mensais do gasto variável ÷ divisor de dias = teto/dia. O teto só
-// vira veredito por gesto explícito do dono — a proposta importada da planilha é um banner de
-// confirmação, nunca escrita silenciosa. Estilos içados (convenção do arquivo: nunca inline no
-// JSX para não recriar objetos por render).
-const FIELD: CSSProperties = {
-  background: "var(--surface-2)",
-  border: "1px solid var(--border-input)",
-  borderRadius: "var(--radius-xs)",
-  color: "var(--text)",
-  font: "inherit",
-  padding: "8px 10px",
-  width: "100%",
-};
-
-const FIELD_AMOUNT: CSSProperties = {
-  ...FIELD,
-  fontVariantNumeric: "tabular-nums",
-  textAlign: "right",
-  width: 120,
-};
-
-const FIELD_DIVISOR: CSSProperties = {
-  ...FIELD,
-  fontVariantNumeric: "tabular-nums",
-  textAlign: "right",
-  width: 76,
-};
-
-const ITEM_ROW: CSSProperties = {
-  alignItems: "center",
-  display: "flex",
-  gap: 8,
-};
-
-const LIST: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  gap: 8,
-  listStyle: "none",
-  margin: 0,
-  padding: 0,
-};
-
-const DERIVED_LINE: CSSProperties = {
-  alignItems: "baseline",
-  borderTop: "1px solid var(--border)",
-  display: "flex",
-  gap: 8,
-  justifyContent: "space-between",
-  marginTop: 12,
-  paddingTop: 12,
-};
-
-const PROPOSAL_ITEMS: CSSProperties = {
-  color: "var(--text-muted)",
-  fontSize: 12.5,
-  margin: "6px 0 0",
-  paddingLeft: 18,
-};
-
-const ACTIONS_ROW: CSSProperties = {
-  display: "flex",
-  flexWrap: "wrap",
-  gap: 8,
-  marginTop: 12,
-};
-
-const REMOVE_BTN: CSSProperties = {
-  alignItems: "center",
-  background: "none",
-  border: "1px solid var(--border-input)",
-  borderRadius: "var(--radius-md)",
-  color: "var(--text-muted)",
-  cursor: "pointer",
-  display: "inline-flex",
-  justifyContent: "center",
-  minHeight: 36,
-  minWidth: 36,
-};
-
-const HINT: CSSProperties = {
-  color: "var(--text-faint)",
-  fontSize: 12.5,
-  margin: "8px 0 0",
-};
+// A tela do teto é o REGISTRO de uma decisão com prova: o número decidido, a cerimônia que o
+// produziu (itens, fórmula e a nota original da planilha), a idade dessa cerimônia e como o dia
+// lê o teto. Editar é um rito raro em três batidas na própria superfície — nunca um modal, nunca
+// um formulário permanente. A composição vive no view-model puro `tetoView`.
 
 const CEREMONY_TERM = {
   title: "Cerimônia do teto",
-  body: "Liste o que o mês variável comporta por categoria, some e divida pelos dias. O resultado é o teto diário estipulado — o número que o dia inteiro respeita.",
+  body: "Liste o que o mês variável comporta por categoria, some e divida pelos dias. O resultado, arredondado para cima, é o teto diário — o número que o dia inteiro respeita. O método pede que ela se refaça de três em três meses.",
 };
 
-interface DraftItem {
-  /** Identidade estável da linha do draft (id da categoria ou sequencial local). */
-  key: string;
-  name: string;
-  amountText: string;
-}
+const SPEEDOMETER_TERM = {
+  title: "O velocímetro do dia",
+  body: "É a barra da Hoje que compara o gasto do dia com a régua vigente. No modo cartão a régua são as faturas em aberto — cada compra no crédito soma nelas, e o teto fica de referência. Se o gasto variável voltar para o débito, o velocímetro passa a medir o Diário contra o teto sozinho, sem nenhum ajuste seu.",
+};
 
+const FREE_MONEY_TERM = {
+  title: "O mês variável",
+  body: "É o dinheiro livre: o gasto que varia com a sua escolha do dia — comida, transporte, saúde, lazer, compras. Contas fixas, cartão e economia ficam de fora, cada um com a sua própria régua.",
+};
+
+/** Uma linha em branco do rito, com identidade estável para o React. */
 let draftRowSeq = 0;
-function nextDraftKey(): string {
+function blankItem(name = ""): DraftItem {
   draftRowSeq += 1;
-  return `draft-${draftRowSeq}`;
+  return { key: `draft-${draftRowSeq}`, name, amountText: "" };
 }
 
-function budgetIdentity(budget: DailyBudget): string {
-  return [
-    budget.per_day_cents,
-    budget.divisor_days ?? "",
-    ...budget.categories.map((c) => c.id),
-  ].join("|");
-}
-
-function draftFromBudget(budget: DailyBudget): DraftItem[] {
-  return budget.categories.map((c) => ({
+function itemsFromBudget(budget: DailyBudget | undefined): DraftItem[] {
+  const rows = budget?.categories ?? [];
+  if (rows.length === 0) return [blankItem()];
+  return rows.map((c) => ({
     key: c.id,
     name: c.name,
-    amountText: (c.amount_cents / 100).toLocaleString("pt-BR", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }),
+    amountText: centsToBRLInput(c.amount_cents),
   }));
+}
+
+type RiteStep = "items" | "guided" | "divisor" | "accept" | "direct";
+
+interface RiteState {
+  step: RiteStep;
+  items: DraftItem[];
+  divisorText: string;
+  directText: string;
+  /** Pergunta corrente da cerimônia guiada. */
+  guidedIndex: number;
+  /** A guarda do "vença o dia" já foi lida e recusada. */
+  guardAcknowledged: boolean;
+  /** Batida que abriu o atalho do valor direto — para onde o "Voltar" retorna. */
+  returnTo?: RiteStep | undefined;
+}
+
+function openRite(budget: DailyBudget | undefined, step: RiteStep): RiteState {
+  return {
+    step,
+    items:
+      step === "guided"
+        ? GUIDED_QUESTIONS.map((q) => blankItem(q.category))
+        : itemsFromBudget(budget),
+    divisorText: String(budget?.divisor_days ?? 31),
+    directText: "",
+    guidedIndex: 0,
+    guardAcknowledged: false,
+  };
 }
 
 export function TetoScreen() {
   const budgetQ = useCommand("get_daily_budget", getDailyBudget);
   const proposalQ = useCommand("get_ceiling_proposal", getCeilingProposal);
-  const budget = budgetQ.data;
+  const summaryQ = useCommand("get_dashboard_summary", getDashboardSummary);
+  const [rite, setRite] = useState<RiteState | null>(null);
+
+  const view = buildTetoView({
+    budget: budgetQ.data,
+    proposal: proposalQ.data,
+    summary: summaryQ.data,
+    today: todayISO(),
+  });
+
+  if (budgetQ.error) {
+    return (
+      <div className="teto neko-app">
+        <EmptyState
+          variant="error"
+          title="Não foi possível carregar o teto"
+          description="Confira a conexão e tente de novo."
+          action={
+            <Button size="sm" variant="ghost" onClick={() => invalidateCommands()}>
+              Tentar novamente
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
+
+  if (view.kind === "loading") {
+    return (
+      <div className="teto neko-app">
+        <EmptyState variant="skeleton" skeletonRows={5} />
+      </div>
+    );
+  }
 
   return (
+    // Bento de colunas INDEPENDENTES no desktop (massas díspares nunca se alinham por linha);
+    // no mobile as colunas se dissolvem e os cards fluem na ordem do DOM.
     <div className="teto neko-app">
-      {proposalQ.data ? (
-        <ProposalBanner
-          proposal={proposalQ.data}
-          currentPerDayCents={budget?.per_day_cents ?? 0}
-        />
-      ) : null}
-      {budget ? (
-        // A identidade do orçamento salvo remonta o editor: aceitar a proposta (ou salvar)
-        // rehidrata o draft com o que foi gravado, em vez de conservar campos obsoletos.
-        <TetoEditor key={budgetIdentity(budget)} initial={budget} />
-      ) : (
-        <EmptyState variant="skeleton" skeletonRows={5} />
-      )}
+      <Verdict
+        view={view}
+        onStartRite={(step) => setRite(openRite(budgetQ.data, step))}
+      />
+      <div className="teto__col">
+        {rite ? (
+          <Rite
+            state={rite}
+            view={view}
+            onChange={setRite}
+            onClose={() => setRite(null)}
+          />
+        ) : view.proof ? (
+          <ProofCard proof={view.proof} view={view} />
+        ) : null}
+      </div>
+      <div className="teto__col">
+        {rite ? (
+          // Durante o rito, a prova vigente segue à vista: é o "antes" que o aceite substitui.
+          view.proof ? (
+            <ProofCard proof={view.proof} view={view} />
+          ) : null
+        ) : (
+          <>
+            {view.kind === "chosen" ? (
+              <AgeCard
+                view={view}
+                onRecalibrate={() => setRite(openRite(budgetQ.data, "items"))}
+              />
+            ) : null}
+            <ReadingCard view={view} />
+          </>
+        )}
+      </div>
     </div>
   );
 }
 
-function ProposalBanner({
-  proposal,
-  currentPerDayCents,
+// ----------------------------------------------------------------- veredito --
+
+function Verdict({
+  view,
+  onStartRite,
 }: {
-  proposal: CeilingProposal;
-  currentPerDayCents: number;
+  view: TetoView;
+  onStartRite: (step: RiteStep) => void;
 }) {
+  return (
+    <div className="teto__verdict">
+      <p className="teto__vlabel">
+        {view.kind === "proposal"
+          ? "Proposta encontrada"
+          : view.kind === "estimate"
+            ? "Pelo seu histórico"
+            : view.kind === "none"
+              ? "A régua do gasto livre"
+              : ceremonyMonthLabel(view.ceremonyMonth)}
+        {view.kind === "estimate" ? (
+          <EstimateMark
+            term={{
+              title: "Número em estimativa",
+              body: "É a média do Diário dos meses com registro, exibida enquanto não há teto escolhido. A cerimônia transforma a estimativa em decisão.",
+            }}
+          />
+        ) : null}
+      </p>
+      <VerdictHeadline view={view} onStartRite={onStartRite} />
+      {view.kind === "chosen" ? (
+        /* Sem o gate do método: esta tela registra a decisão do dono, e o julgamento da
+           legitimidade do modo cartão mora onde a economia é julgada. */
+        <ModeChip className="teto__modechip" mode={view.mode} />
+      ) : null}
+    </div>
+  );
+}
+
+function VerdictHeadline({
+  view,
+  onStartRite,
+}: {
+  view: TetoView;
+  onStartRite: (step: RiteStep) => void;
+}) {
+  switch (view.kind) {
+    case "proposal":
+      return <ProposalVerdict view={view} />;
+    case "estimate":
+      return (
+        <>
+          <h1 data-large-title>
+            Cerca de <Money cents={view.perDayCents} size="inherit" hideCents /> por
+            dia, pelo seu histórico.
+          </h1>
+          <p>
+            É a média do gasto variável dos seus meses com registro — não um teto
+            escolhido.{" "}
+            <span className="teto__cf">
+              A cerimônia transforma a estimativa em decisão.
+            </span>
+          </p>
+          <div className="teto__vactions">
+            <Button variant="primary" onClick={() => onStartRite("items")}>
+              Estipular o teto
+            </Button>
+          </div>
+        </>
+      );
+    case "none":
+      return (
+        <>
+          <h1 data-large-title>Você ainda não tem um teto.</h1>
+          <p>
+            O teto nasce do seu extrato: some as despesas variáveis de um mês, divida
+            pelos dias e arredonde para cima.{" "}
+            <span className="teto__cf">Cinco perguntas e o número sai pronto.</span>
+          </p>
+          <div className="teto__vactions">
+            <Button variant="primary" onClick={() => onStartRite("guided")}>
+              Estipular o teto
+            </Button>
+            <button
+              type="button"
+              className="teto__quiet"
+              onClick={() => onStartRite("direct")}
+            >
+              Já sei meu teto
+            </button>
+          </div>
+        </>
+      );
+    default:
+      return view.mode === "card" ? (
+        <>
+          <h1 data-large-title>
+            Seu teto é <Money cents={view.perDayCents} size="inherit" /> por dia.
+          </h1>
+          <p>
+            O dia é medido pelas faturas enquanto você vive no crédito — e o teto fica
+            de guarda: a régua que você consulta antes de qualquer gasto livre.{" "}
+            <span className="teto__cf">O método manda mantê-lo à vista.</span>
+          </p>
+        </>
+      ) : (
+        <>
+          <h1 data-large-title>
+            Seu dia comporta <Money cents={view.perDayCents} size="inherit" />.
+          </h1>
+          <p>
+            O velocímetro do dia mede o Diário lançado contra este teto.{" "}
+            <span className="teto__cf">
+              O quanto dá para gastar hoje responde por outra régua — o caixa e a
+              economia do ano; no dia a dia vale o mais apertado dos dois.
+            </span>
+          </p>
+        </>
+      );
+  }
+}
+
+function ProposalVerdict({ view }: { view: TetoView }) {
+  const proposal = view.proposal;
   const [busy, setBusy] = useState(false);
+  if (!proposal) return null;
+  const totalCents = proposal.items.reduce((sum, it) => sum + it.amount_cents, 0);
 
   function resolve(action: "accept" | "dismiss") {
-    if (!isTauri) return;
+    if (!isTauri || !proposal) return;
     setBusy(true);
     const call =
       action === "accept"
@@ -190,312 +324,731 @@ function ProposalBanner({
   }
 
   return (
-    <section className="card">
-      <div className="card__head">
-        <span className="card__title">
-          <ListChecks size={16} strokeWidth={1.75} className="ic" />
-          Proposta da sua planilha
-        </span>
-      </div>
-      <div className="card__body">
-        <p style={{ margin: 0 }}>
-          A planilha documenta uma cerimônia de teto em notas do Diário:{" "}
-          <strong>
-            <Money cents={proposal.per_day_cents} size="inherit" /> por dia
-          </strong>{" "}
-          {proposal.items.length > 0 ? (
-            <>
-              (
-              <Money
-                cents={proposal.items.reduce((s, i) => s + i.amount_cents, 0)}
-                size="inherit"
-              />{" "}
-              ÷ {proposal.divisor_days} dias, anotada em {proposal.source_month}).
-            </>
-          ) : (
-            <>
-              (÷ {proposal.divisor_days} dias, anotada em {proposal.source_month}).
-            </>
-          )}
-        </p>
-        {proposal.items.length > 0 && (
-          <ul style={PROPOSAL_ITEMS}>
-            {proposal.items.map((it) => (
-              <li key={it.name + it.amount_cents}>
-                {it.name} — <Money cents={it.amount_cents} size="inherit" />
-              </li>
-            ))}
-          </ul>
+    <>
+      <h1 data-large-title>
+        Sua planilha propõe <Money cents={proposal.per_day_cents} size="inherit" /> por
+        dia.
+      </h1>
+      <p>
+        A cerimônia está anotada nas notas do Diário:{" "}
+        {totalCents > 0 ? (
+          <>
+            <b>
+              <Money cents={totalCents} size="inherit" /> ÷ {proposal.divisor_days} dias
+            </b>
+            ,{" "}
+          </>
+        ) : (
+          <>
+            <b>÷ {proposal.divisor_days} dias</b>,{" "}
+          </>
         )}
-        <div style={ACTIONS_ROW}>
-          <Button variant="primary" onClick={() => resolve("accept")} disabled={busy}>
-            Usar este teto
-          </Button>
-          <Button variant="ghost" onClick={() => resolve("dismiss")} disabled={busy}>
-            Agora não
-          </Button>
-        </div>
-        <p style={HINT}>
-          {currentPerDayCents > 0 ? (
+        escrita em {monthYearLabel(proposal.source_month) ?? "outro mês"}.{" "}
+        <span className="teto__cf">
+          {view.currentPerDayCents > 0 ? (
             <>
               Usar este teto substitui o atual de{" "}
-              <Money cents={currentPerDayCents} size="inherit" /> por dia. Nada é
-              gravado sem a sua confirmação.
+              <Money cents={view.currentPerDayCents} size="inherit" /> por dia.
             </>
           ) : (
-            <>
-              Nada é gravado sem a sua confirmação — o teto só vira veredito quando você
-              escolhe.
-            </>
+            "Nada é gravado sem o seu aceite."
           )}
+        </span>
+      </p>
+      <div className="teto__vactions">
+        <Button variant="primary" onClick={() => resolve("accept")} disabled={busy}>
+          Usar este teto
+        </Button>
+        <Button variant="ghost" onClick={() => resolve("dismiss")} disabled={busy}>
+          Agora não
+        </Button>
+      </div>
+    </>
+  );
+}
+
+// ------------------------------------------------------------ prova e cards --
+
+function ProofCard({ proof, view }: { proof: TetoProof; view: TetoView }) {
+  return (
+    <section className="teto__card" aria-labelledby="teto-prova">
+      <div className="teto__cardhead">
+        <ListChecks size={16} strokeWidth={1.75} className="ic" aria-hidden="true" />
+        <h2 id="teto-prova">A prova do número</h2>
+        {proof.sourceNote ? (
+          <span className="teto__note">Anotada na sua planilha</span>
+        ) : null}
+      </div>
+
+      <ul className="teto__items">
+        {proof.items.map((item) => (
+          <li key={item.id} className="teto__item">
+            <span className="teto__itemname">
+              <b>{item.name}</b>
+            </span>
+            <span className="teto__itemamt">
+              <Money cents={item.amountCents} size="inherit" />
+              <small>/mês</small>
+            </span>
+          </li>
+        ))}
+      </ul>
+
+      <div className="teto__formula">
+        <div className="teto__frow">
+          {/* O conceito ancora UMA vez, na linha que o soma — repetido em cada item, viraria
+              ruído constante em vez de informação. */}
+          <span>
+            Total do <InfoPopover term={FREE_MONEY_TERM}>mês variável</InfoPopover>
+          </span>
+          <b>
+            <Money cents={proof.totalCents} size="inherit" />
+          </b>
+        </div>
+        <div className="teto__frow">
+          <span>Dividido por</span>
+          <b>{proof.divisorDays} dias</b>
+        </div>
+        <div className="teto__frow teto__frow--result">
+          <span>Teto por dia</span>
+          <b>
+            <Money cents={proof.perDayCents} size="inherit" />
+          </b>
+        </div>
+      </div>
+      <p className="teto__round">Arredondado para cima, sempre — teto é teto.</p>
+
+      {view.proofMatchesVerdict ? null : (
+        <p className="teto__mismatch" role="note">
+          O teto em vigor é <Money cents={view.currentPerDayCents} size="inherit" /> por
+          dia — os itens acima somam outro número. Recalibre para os dois voltarem a
+          contar a mesma história.
         </p>
+      )}
+
+      {proof.sourceNote ? (
+        <details className="teto__fold">
+          <summary>Ver a nota original da planilha</summary>
+          <div className="teto__cite">
+            <code>{proof.sourceNote}</code>
+            <small>
+              Reproduzida como está na nota da célula — a sua notação é o contrato: o
+              que o app gravar de volta mantém esse formato.
+            </small>
+          </div>
+        </details>
+      ) : null}
+    </section>
+  );
+}
+
+function AgeCard({
+  view,
+  onRecalibrate,
+}: {
+  view: TetoView;
+  onRecalibrate: () => void;
+}) {
+  const age = view.ageMonths;
+  return (
+    <section className="teto__card" aria-labelledby="teto-idade">
+      <div className="teto__cardhead">
+        <Clock3 size={16} strokeWidth={1.75} className="ic" aria-hidden="true" />
+        {/* O marcador "i" fica escondido: dentro do título ele partiria a frase — o pontilhado
+            do termo já convida à didática. */}
+        <h2 id="teto-idade">
+          <InfoPopover term={CEREMONY_TERM} hideMarker>
+            {age == null ? "A cerimônia do seu teto" : ceremonyAgeLabel(age)}
+          </InfoPopover>
+        </h2>
+      </div>
+      <p className="teto__cardbody">
+        {view.recalibrationDue
+          ? "O método recalibra de três em três meses — refaça quando o extrato contar outra história."
+          : "O método recalibra de três em três meses; a sua ainda está no prazo."}
+      </p>
+      <div className="teto__cardactions">
+        <Button variant="primary" onClick={onRecalibrate}>
+          Recalibrar o teto
+        </Button>
       </div>
     </section>
   );
 }
 
-function TetoEditor({ initial }: { initial: DailyBudget }) {
-  const hasCeremony = initial.categories.length > 0 || initial.divisor_days != null;
-  const [mode, setMode] = useState<"items" | "direct">(
-    initial.per_day_cents > 0 && !hasCeremony ? "direct" : "items",
-  );
-  const [items, setItems] = useState<DraftItem[]>(() => draftFromBudget(initial));
-  const [divisorText, setDivisorText] = useState(String(initial.divisor_days ?? 30));
-  const [directText, setDirectText] = useState(
-    initial.per_day_cents > 0 && !hasCeremony
-      ? (initial.per_day_cents / 100).toLocaleString("pt-BR", {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        })
-      : "",
-  );
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const guided = initial.per_day_cents === 0 && initial.categories.length === 0;
-  const divisor = Number.parseInt(divisorText, 10);
-  const monthlyTotal = items.reduce(
-    (sum, it) => sum + (parseBRLToCents(it.amountText) ?? 0),
-    0,
-  );
-  // Resto arredonda PARA CIMA (teto é teto) — mesma regra do núcleo Rust e da cerimônia real
-  // (1.250,00 ÷ 31 = 40,33), para o aceite da proposta e o editor nunca divergirem num centavo.
-  const perDayFromItems =
-    Number.isFinite(divisor) && divisor > 0 ? Math.ceil(monthlyTotal / divisor) : 0;
-
-  function save() {
-    if (!isTauri) return;
-    setError(null);
-    if (mode === "direct") {
-      const cents = parseBRLToCents(directText);
-      if (!cents || cents <= 0) {
-        setError("Informe um valor por dia maior que zero.");
-        return;
-      }
-      persist(cents, [], null);
-      return;
-    }
-    const categories = items
-      .map((it, position) => ({
-        name: it.name.trim(),
-        amount_cents: parseBRLToCents(it.amountText) ?? 0,
-        position,
-      }))
-      .filter((c) => c.name !== "" || c.amount_cents > 0);
-    if (categories.some((c) => c.name === "" || c.amount_cents <= 0)) {
-      setError("Cada categoria precisa de nome e valor mensal maior que zero.");
-      return;
-    }
-    if (categories.length === 0) {
-      setError("Liste ao menos uma categoria mensal, ou use o valor direto.");
-      return;
-    }
-    if (!Number.isFinite(divisor) || divisor <= 0) {
-      setError("O divisor de dias precisa ser maior que zero.");
-      return;
-    }
-    if (perDayFromItems <= 0) {
-      setError(
-        "A soma mensal dividida pelos dias precisa resultar em um teto maior que zero.",
-      );
-      return;
-    }
-    persist(perDayFromItems, categories, divisor);
-  }
-
-  function persist(
-    perDay: number,
-    categories: { name: string; amount_cents: number; position: number }[],
-    div: number | null,
-  ) {
-    setSaving(true);
-    upsertDailyBudgetWithCategories(perDay, categories, div)
-      .then(() => invalidateCommands())
-      .catch((e: unknown) => setError(String(e)))
-      .finally(() => setSaving(false));
-  }
-
-  function removeCeiling() {
-    if (!isTauri) return;
-    setSaving(true);
-    upsertDailyBudgetWithCategories(0, [], null)
-      .then(() => {
-        setItems([]);
-        setDirectText("");
-        invalidateCommands();
-      })
-      .catch((e: unknown) => setError(String(e)))
-      .finally(() => setSaving(false));
-  }
-
+function ReadingCard({ view }: { view: TetoView }) {
   return (
-    <section className="card">
-      <div className="card__head">
-        <span className="card__title">
-          <CircleGauge size={16} strokeWidth={1.75} className="ic" />
-          <InfoPopover term={CEREMONY_TERM} hideMarker>
-            Teto do diário
-          </InfoPopover>
-        </span>
-        {initial.per_day_cents > 0 && (
-          <span style={{ color: "var(--text-muted)", fontSize: 12.5 }}>
-            Hoje: <Money cents={initial.per_day_cents} size="inherit" /> por dia
-          </span>
-        )}
+    <section className="teto__card" aria-labelledby="teto-leitura">
+      <div className="teto__cardhead">
+        <Gauge size={16} strokeWidth={1.75} className="ic" aria-hidden="true" />
+        <h2 id="teto-leitura">Como o dia lê o teto</h2>
       </div>
-      <div className="card__body">
-        {guided && (
-          <p style={{ margin: "0 0 12px", color: "var(--text-muted)" }}>
-            Você ainda não estipulou um teto. A cerimônia é simples: liste o que o mês
-            variável comporta por categoria, some e divida pelos dias — ou informe um
-            valor direto por dia.
-          </p>
-        )}
-
-        <SegmentedControl
-          ariaLabel="Como estipular o teto"
-          options={[
-            { value: "items", label: "Por itens (cerimônia)" },
-            { value: "direct", label: "Valor direto" },
-          ]}
-          value={mode}
-          onChange={(v) => setMode(v as "items" | "direct")}
-        />
-
-        {mode === "items" ? (
+      <p className="teto__cardbody">
+        O <InfoPopover term={SPEEDOMETER_TERM}>velocímetro</InfoPopover> do dia está
+        medindo{" "}
+        {view.mode === "card" ? (
           <>
-            <ul style={LIST}>
-              {items.map((it, i) => (
-                <li key={it.key} style={ITEM_ROW}>
-                  <input
-                    style={FIELD}
-                    aria-label={`Nome da categoria ${i + 1}`}
-                    placeholder="Categoria (ex.: alimentação)"
-                    value={it.name}
-                    onChange={(e) =>
-                      setItems((prev) =>
-                        prev.map((p, j) =>
-                          j === i ? { ...p, name: e.target.value } : p,
-                        ),
-                      )
-                    }
-                  />
-                  <input
-                    style={FIELD_AMOUNT}
-                    inputMode="decimal"
-                    aria-label={`Valor mensal da categoria ${i + 1}`}
-                    placeholder="R$ mensal"
-                    value={it.amountText}
-                    onChange={(e) =>
-                      setItems((prev) =>
-                        prev.map((p, j) =>
-                          j === i ? { ...p, amountText: e.target.value } : p,
-                        ),
-                      )
-                    }
-                  />
-                  <button
-                    type="button"
-                    style={REMOVE_BTN}
-                    aria-label={`Remover categoria ${i + 1}`}
-                    onClick={() => setItems((prev) => prev.filter((_, j) => j !== i))}
-                  >
-                    <Trash2 size={14} strokeWidth={1.75} aria-hidden="true" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-            <div style={ACTIONS_ROW}>
-              <Button
-                variant="ghost"
-                onClick={() =>
-                  setItems((prev) => [
-                    ...prev,
-                    { key: nextDraftKey(), name: "", amountText: "" },
-                  ])
-                }
-              >
-                <Plus size={14} strokeWidth={1.75} />
-                Adicionar categoria
-              </Button>
-            </div>
-            <div style={DERIVED_LINE}>
-              <span style={{ color: "var(--text-muted)" }}>
-                Soma mensal <Money cents={monthlyTotal} size="inherit" /> ÷{" "}
-                <input
-                  style={FIELD_DIVISOR}
-                  inputMode="numeric"
-                  aria-label="Divisor de dias"
-                  value={divisorText}
-                  onChange={(e) => setDivisorText(e.target.value)}
-                />{" "}
-                dias
-              </span>
-              <span>
-                Teto: <Money cents={perDayFromItems} size="inherit" /> por dia
-              </span>
-            </div>
-            <p style={HINT}>
-              O divisor são os dias do mês da cerimônia — a planilha costuma fixar um
-              (ex.: 31) e mantê-lo o ano todo; ajuste se quiser precisão mês a mês.
-            </p>
+            as <b>faturas em aberto</b> — cada compra no crédito soma nelas.
           </>
         ) : (
-          <div style={ITEM_ROW}>
-            <label htmlFor="teto-direct" style={{ color: "var(--text-muted)" }}>
-              Teto por dia (R$)
-            </label>
-            <input
-              id="teto-direct"
-              style={FIELD_AMOUNT}
-              inputMode="decimal"
-              value={directText}
-              onChange={(e) => setDirectText(e.target.value)}
-            />
-          </div>
+          <>
+            o <b>Diário lançado</b> contra este teto.
+          </>
         )}
-
-        {error && (
-          <p role="alert" style={{ color: "var(--danger-400)", fontSize: 12.5 }}>
-            {error}
-          </p>
-        )}
-
-        <div style={ACTIONS_ROW}>
-          <Button variant="primary" onClick={save} disabled={saving}>
-            Salvar teto
-          </Button>
-          {initial.per_day_cents > 0 && (
-            <Button variant="ghost" onClick={removeCeiling} disabled={saving}>
-              Remover teto
-            </Button>
-          )}
-        </div>
-        <p style={HINT}>
-          O teto orienta o velocímetro do dia e o forecast dos dias futuros. No modo
-          cartão ele permanece visível como referência.
-        </p>
-      </div>
+      </p>
     </section>
   );
+}
+
+// --------------------------------------------------------------------- rito --
+
+function Rite({
+  state,
+  view,
+  onChange,
+  onClose,
+}: {
+  state: RiteState;
+  view: TetoView;
+  onChange: (next: RiteState) => void;
+  onClose: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  // Uma superfície por gesto: a batida que entra recebe o foco, para o teclado e o leitor de
+  // tela seguirem a mesma sequência que o olho.
+  useEffect(() => {
+    headingRef.current?.focus();
+  }, [state.step, state.guidedIndex]);
+
+  const totalCents = draftTotalCents(state.items);
+  const divisor = divisorFromText(state.divisorText);
+  const newPerDayCents =
+    state.step === "direct"
+      ? (parseBRLToCents(state.directText) ?? 0)
+      : ceilingPerDayCents(totalCents, divisor ?? 0);
+  const showGuard =
+    state.step === "accept" &&
+    !state.guardAcknowledged &&
+    guardTriggered(view.currentPerDayCents, newPerDayCents);
+
+  function persist(perDayCents: number, itemized: boolean) {
+    if (!isTauri) return;
+    setError(null);
+    if (perDayCents <= 0) {
+      setError("O teto precisa ser maior que zero.");
+      return;
+    }
+    const categories = itemized ? categoriesFromDraft(state.items) : [];
+    setSaving(true);
+    upsertDailyBudgetWithCategories(
+      perDayCents,
+      categories,
+      itemized ? (divisor ?? null) : null,
+    )
+      .then(() => {
+        invalidateCommands();
+        onClose();
+      })
+      .catch((e: unknown) => setError(safeErrorMessage(e)))
+      .finally(() => setSaving(false));
+  }
+
+  const stepLabel =
+    state.step === "guided"
+      ? `Pergunta ${state.guidedIndex + 1} de ${GUIDED_QUESTIONS.length}`
+      : state.step === "direct"
+        ? "Teto direto"
+        : `Batida ${state.step === "items" ? 1 : state.step === "divisor" ? 2 : 3} de 3`;
+  const dots = state.step === "guided" ? GUIDED_QUESTIONS.length : 3;
+  const filled =
+    state.step === "guided"
+      ? state.guidedIndex + 1
+      : state.step === "items"
+        ? 1
+        : state.step === "divisor"
+          ? 2
+          : 3;
+
+  return (
+    <section className="teto__rite" aria-labelledby="teto-batida">
+      <p className="teto__step">{stepLabel}</p>
+      <span className="teto__dots" aria-hidden="true">
+        {Array.from({ length: dots }, (_, i) => (
+          <i key={i} className={i < filled ? "on" : ""} />
+        ))}
+      </span>
+
+      {showGuard ? (
+        <Guard
+          currentCents={view.currentPerDayCents}
+          newCents={newPerDayCents}
+          totalCents={totalCents}
+          divisorDays={divisor ?? 0}
+          headingRef={headingRef}
+          onProceed={() => onChange({ ...state, guardAcknowledged: true })}
+          onKeep={onClose}
+        />
+      ) : (
+        <RiteStepBody
+          state={state}
+          view={view}
+          totalCents={totalCents}
+          divisor={divisor}
+          newPerDayCents={newPerDayCents}
+          headingRef={headingRef}
+          saving={saving}
+          onChange={onChange}
+          onClose={onClose}
+          onPersist={persist}
+        />
+      )}
+
+      {error ? (
+        <p className="teto__error" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+/** Contrato comum das batidas: o estado do rito e os derivados que a superfície exibe. */
+interface BeatProps {
+  state: RiteState;
+  view: TetoView;
+  totalCents: number;
+  divisor: number | null;
+  newPerDayCents: number;
+  headingRef: React.RefObject<HTMLHeadingElement | null>;
+  saving: boolean;
+  onChange: (next: RiteState) => void;
+  onClose: () => void;
+  onPersist: (perDayCents: number, itemized: boolean) => void;
+}
+
+/** Uma batida por vez na superfície — o dispatcher só escolhe qual delas entra. */
+function RiteStepBody(props: BeatProps) {
+  switch (props.state.step) {
+    case "guided":
+      return <GuidedBeat {...props} />;
+    case "items":
+      return <ItemsBeat {...props} />;
+    case "divisor":
+      return <DivisorBeat {...props} />;
+    case "direct":
+      return <DirectBeat {...props} />;
+    default:
+      return <AcceptBeat {...props} />;
+  }
+}
+
+/** A cerimônia guiada: as cinco perguntas do método, uma por vez. */
+function GuidedBeat({ state, headingRef, onChange, onClose }: BeatProps) {
+  const q = GUIDED_QUESTIONS[state.guidedIndex];
+  if (!q) return null;
+  const last = state.guidedIndex === GUIDED_QUESTIONS.length - 1;
+  return (
+    <>
+      <h2 id="teto-batida" tabIndex={-1} ref={headingRef}>
+        {q.question}
+      </h2>
+      <p className="teto__sub">{q.hint}</p>
+      <div className="teto__field">
+        <label htmlFor="teto-guided">{q.category} por mês (R$)</label>
+        <input
+          id="teto-guided"
+          className="teto__input teto__input--amount"
+          inputMode="decimal"
+          value={state.items[state.guidedIndex]?.amountText ?? ""}
+          onChange={(e) =>
+            onChange({
+              ...state,
+              items: state.items.map((it, i) =>
+                i === state.guidedIndex ? { ...it, amountText: e.target.value } : it,
+              ),
+            })
+          }
+        />
+      </div>
+      <p className="teto__escape">
+        <button
+          type="button"
+          className="teto__quiet"
+          onClick={() => onChange({ ...state, step: "direct", returnTo: "guided" })}
+        >
+          Já sei meu teto
+        </button>
+      </p>
+      <div className="teto__ritefoot">
+        <Button
+          variant="ghost"
+          onClick={() =>
+            state.guidedIndex === 0
+              ? onClose()
+              : onChange({ ...state, guidedIndex: state.guidedIndex - 1 })
+          }
+        >
+          Voltar
+        </Button>
+        <Button
+          variant="primary"
+          onClick={() =>
+            onChange(
+              last
+                ? { ...state, step: "divisor" }
+                : { ...state, guidedIndex: state.guidedIndex + 1 },
+            )
+          }
+        >
+          {last ? "Definir os dias" : "Próxima pergunta"}
+        </Button>
+      </div>
+    </>
+  );
+}
+
+/** Batida 1: os itens do mês variável, revisados pelo extrato. */
+function ItemsBeat({ state, totalCents, headingRef, onChange, onClose }: BeatProps) {
+  return (
+    <>
+      <h2 id="teto-batida" tabIndex={-1} ref={headingRef}>
+        O que o seu mês variável comporta?
+      </h2>
+      <p className="teto__sub">
+        Ajuste pelo extrato, não pela esperança — ele é a melhor testemunha do seu
+        hábito.
+      </p>
+      <ul className="teto__rows">
+        {state.items.map((item, i) => (
+          <li key={item.key} className="teto__row">
+            <input
+              className="teto__input"
+              aria-label={`Nome da categoria ${i + 1}`}
+              placeholder="Categoria"
+              value={item.name}
+              onChange={(e) =>
+                onChange({
+                  ...state,
+                  items: state.items.map((it, j) =>
+                    j === i ? { ...it, name: e.target.value } : it,
+                  ),
+                })
+              }
+            />
+            <input
+              className="teto__input teto__input--amount"
+              inputMode="decimal"
+              aria-label={`Valor mensal da categoria ${i + 1}`}
+              placeholder="R$ mensal"
+              value={item.amountText}
+              onChange={(e) =>
+                onChange({
+                  ...state,
+                  items: state.items.map((it, j) =>
+                    j === i ? { ...it, amountText: e.target.value } : it,
+                  ),
+                })
+              }
+            />
+            <button
+              type="button"
+              className="teto__del"
+              aria-label={`Remover ${item.name || `categoria ${i + 1}`}`}
+              onClick={() =>
+                onChange({
+                  ...state,
+                  items: state.items.filter((_, j) => j !== i),
+                })
+              }
+            >
+              <Trash2 size={14} strokeWidth={1.75} aria-hidden="true" />
+            </button>
+          </li>
+        ))}
+      </ul>
+      <div className="teto__addrow">
+        <Button
+          variant="ghost"
+          onClick={() => onChange({ ...state, items: [...state.items, blankItem()] })}
+        >
+          <Plus size={14} strokeWidth={1.75} />
+          Adicionar categoria
+        </Button>
+      </div>
+      <p className="teto__runsum" aria-live="polite">
+        <span>Total do mês variável</span>
+        <b>
+          <Money cents={totalCents} size="inherit" />
+        </b>
+      </p>
+      <p className="teto__escape">
+        <button
+          type="button"
+          className="teto__quiet"
+          onClick={() => onChange({ ...state, step: "direct", returnTo: "items" })}
+        >
+          Já sei meu teto
+        </button>
+      </p>
+      <div className="teto__ritefoot">
+        <Button variant="ghost" onClick={onClose}>
+          Voltar
+        </Button>
+        <Button
+          variant="primary"
+          onClick={() => onChange({ ...state, step: "divisor" })}
+        >
+          Definir os dias
+        </Button>
+      </div>
+    </>
+  );
+}
+
+/** Batida 2: o divisor de dias — a régua que não se troca no meio do mês. */
+function DivisorBeat({
+  state,
+  view,
+  totalCents,
+  divisor,
+  headingRef,
+  onChange,
+}: BeatProps) {
+  const invalid = divisor == null;
+  return (
+    <>
+      <h2 id="teto-batida" tabIndex={-1} ref={headingRef}>
+        Por quantos dias dividir o total?
+      </h2>
+      <p className="teto__sub">
+        A régua do método é fixar um número e mantê-lo o ano todo — trocar no meio do
+        mês tira a comparação.
+      </p>
+      <div className="teto__divstage">
+        <span className="teto__dividend">
+          <Money cents={totalCents} size="inherit" />
+        </span>
+        <span className="teto__obelus" aria-hidden="true">
+          ÷
+        </span>
+        <input
+          id="teto-divisor"
+          className="teto__input teto__input--divisor"
+          inputMode="numeric"
+          aria-label="Divisor de dias"
+          aria-describedby={invalid ? "teto-divisor-err" : undefined}
+          aria-invalid={invalid || undefined}
+          value={state.divisorText}
+          onChange={(e) => onChange({ ...state, divisorText: e.target.value })}
+        />
+        <span className="teto__unit">dias</span>
+      </div>
+      {invalid ? (
+        <p className="teto__ferr" id="teto-divisor-err" role="alert">
+          O divisor precisa de pelo menos 1 dia.
+        </p>
+      ) : (
+        <p className="teto__divhint">
+          O teto novo aparece no aceite, pronto e arredondado para cima.
+        </p>
+      )}
+      <div className="teto__ritefoot">
+        <Button
+          variant="ghost"
+          onClick={() =>
+            onChange({
+              ...state,
+              step: view.kind === "none" ? "guided" : "items",
+              guidedIndex: GUIDED_QUESTIONS.length - 1,
+            })
+          }
+        >
+          Voltar
+        </Button>
+        <Button
+          variant="primary"
+          disabled={invalid}
+          onClick={() => onChange({ ...state, step: "accept" })}
+        >
+          Ver o teto novo
+        </Button>
+      </div>
+    </>
+  );
+}
+
+/** O atalho de quem já sabe o número: grava sem cerimônia, e sem prova a exibir. */
+function DirectBeat({
+  state,
+  newPerDayCents,
+  headingRef,
+  saving,
+  onChange,
+  onClose,
+  onPersist,
+}: BeatProps) {
+  return (
+    <>
+      <h2 id="teto-batida" tabIndex={-1} ref={headingRef}>
+        Qual é o seu teto por dia?
+      </h2>
+      <p className="teto__sub">
+        Sem cerimônia: o número que você já sabe. A prova fica de fora até a próxima
+        cerimônia.
+      </p>
+      <div className="teto__field">
+        <label htmlFor="teto-direct">Teto por dia (R$)</label>
+        <input
+          id="teto-direct"
+          className="teto__input teto__input--amount"
+          inputMode="decimal"
+          value={state.directText}
+          onChange={(e) => onChange({ ...state, directText: e.target.value })}
+        />
+      </div>
+      <div className="teto__ritefoot">
+        <Button
+          variant="ghost"
+          onClick={() =>
+            state.returnTo
+              ? onChange({ ...state, step: state.returnTo, returnTo: undefined })
+              : onClose()
+          }
+        >
+          Voltar
+        </Button>
+        <Button
+          variant="primary"
+          disabled={saving}
+          onClick={() => onPersist(newPerDayCents, false)}
+        >
+          Usar este teto
+        </Button>
+      </div>
+    </>
+  );
+}
+
+/** Batida 3: o aceite — antes → depois, prospectivo, e só então grava. */
+function AcceptBeat({
+  state,
+  view,
+  totalCents,
+  divisor,
+  newPerDayCents,
+  headingRef,
+  saving,
+  onChange,
+  onPersist,
+}: BeatProps) {
+  return (
+    <>
+      <h2 id="teto-batida" tabIndex={-1} ref={headingRef}>
+        O seu teto novo está pronto.
+      </h2>
+      <p className="teto__sub">
+        <Money cents={totalCents} size="inherit" /> ÷ {divisor ?? 0} dias, arredondado
+        para cima — teto é teto.
+      </p>
+      <div
+        className="teto__accept"
+        role="group"
+        aria-label={
+          view.currentPerDayCents > 0
+            ? `Teto sai de ${brl(view.currentPerDayCents)} para ${brl(newPerDayCents)} por dia, válido daqui para frente`
+            : `Teto de ${brl(newPerDayCents)} por dia, válido daqui para frente`
+        }
+      >
+        <div className="teto__aline" aria-hidden="true">
+          {view.currentPerDayCents > 0 ? (
+            <>
+              <span className="teto__aold">
+                <Money cents={view.currentPerDayCents} size="inherit" />
+              </span>
+              <span className="teto__aarrow">→</span>
+            </>
+          ) : null}
+          <span className="teto__anew">
+            <Money cents={newPerDayCents} size="inherit" />
+            <small>por dia</small>
+          </span>
+        </div>
+        <p className="teto__ameta">Calculado agora, com os itens que você revisou</p>
+        <p className="teto__avale">
+          Vale daqui para frente — os dias já vividos não mudam.
+        </p>
+      </div>
+      <div className="teto__ritefoot">
+        <Button
+          variant="ghost"
+          onClick={() =>
+            onChange({ ...state, step: "divisor", guardAcknowledged: false })
+          }
+        >
+          Voltar
+        </Button>
+        <Button
+          variant="primary"
+          disabled={saving}
+          onClick={() => onPersist(newPerDayCents, true)}
+        >
+          Usar este teto
+        </Button>
+      </div>
+    </>
+  );
+}
+
+function Guard({
+  currentCents,
+  newCents,
+  totalCents,
+  divisorDays,
+  headingRef,
+  onProceed,
+  onKeep,
+}: {
+  currentCents: number;
+  newCents: number;
+  totalCents: number;
+  divisorDays: number;
+  headingRef: React.RefObject<HTMLHeadingElement | null>;
+  onProceed: () => void;
+  onKeep: () => void;
+}) {
+  return (
+    <>
+      <h2 id="teto-batida" tabIndex={-1} ref={headingRef}>
+        Antes de baixar o teto, vença o dia primeiro.
+      </h2>
+      <div className="teto__guard">
+        <p>
+          Você está baixando o teto de <b>{brl(currentCents)}</b> para{" "}
+          <b>{brl(newCents)}</b> — e o seu extrato ainda conta a história antiga. Baixar
+          por esperança pinta a planilha de verde hoje, mas o extrato segue o mesmo, e o
+          vermelho reaparece na frente. Mantenha a régua, gaste menos de verdade, e o
+          número desce sozinho na próxima cerimônia.
+        </p>
+        <p className="teto__ameta">
+          {brl(totalCents)} ÷ {divisorDays} dias, arredondado para cima
+        </p>
+      </div>
+      <div className="teto__ritefoot">
+        <Button variant="ghost" onClick={onProceed}>
+          Baixar assim mesmo
+        </Button>
+        <Button variant="primary" onClick={onKeep}>
+          Manter {brl(currentCents)} por dia
+        </Button>
+      </div>
+    </>
+  );
+}
+
+/** Dinheiro dentro de texto puro (aria-label, rótulo de botão) — o componente Money é JSX. */
+function brl(cents: number): string {
+  return formatBRL(cents);
 }
