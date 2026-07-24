@@ -4,7 +4,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-DETECTOR=".agents/skills/impeccable/scripts/detect.mjs"
 # All hand-written UI sources (App.tsx is composition-only since spec 004; the
 # screens/shell/features dirs carry the actual UI). Vendored design-system
 # files are upstream artifacts and stay out of scope.
@@ -13,15 +12,18 @@ mapfile -t FILES < <(
     \( -name "*.tsx" -o -name "*.css" \) ! -name "*.test.tsx" 2>/dev/null
 )
 
-if [[ ! -f "$DETECTOR" ]]; then
-  printf 'Impeccable detector not found. Skipping UI audit.\n' >&2
-  exit 0
-fi
-
 printf 'Running Impeccable UI audit...\n'
-node "$DETECTOR" --json "${FILES[@]}"
 
+# The published CLI is the supported automation entry point, so the gate runs
+# identically on a workstation and on a CI runner with no editor plugin present.
+# Detector settings live in .impeccable/config.json and are picked up implicitly.
+set +e
+npx --yes impeccable@latest detect --json "${FILES[@]}"
 EXIT=$?
+set -e
+
+# Detector contract: 0 = clean, 2 = findings, anything else = the detector itself
+# failed and must not read as a passing gate.
 if [[ $EXIT -eq 2 ]]; then
   printf '\nUI anti-patterns found. Run `npm run ui:audit` locally for details.\n' >&2
   exit 1
