@@ -107,7 +107,11 @@ that deviates must say why in the PR.
 19. **Thumb vs mouse density.** Horizontal carousels use `scroll-snap-type: x mandatory`
     and at most 6 items on mobile; the desktop list form may show more (CSS hides the
     surplus on the small breakpoint). Touch targets ≥ 44px — grow the hit area with
-    padding + negative margin, never by inflating the layout.
+    padding + negative margin, never by inflating the layout. Programmatic scroll
+    targets (drill tops, anchors) that live under the fixed appbar carry
+    `scroll-margin-top` its size — `scrollIntoView` aligns to the scrollport and the
+    bar covers the target; DOM visibility checks (`toBeVisible`) do not detect
+    occlusion, only an inspected screenshot does.
 20. **Desktop earns its density.** Hover states (+`transition`) on every inline link
     and interactive row; reading widths capped (`ch`-based); the content ceiling rises
     one step on ultrawide (≥ 1700px) instead of letting side voids grow.
