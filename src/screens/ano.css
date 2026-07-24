@@ -1,254 +1,795 @@
+/* O ano — o tribunal do método: veredito → régua da faixa → onde o ano termina → os doze
+   meses → o ano em números → renda ao longo dos anos → a linha da Mia.
+   Namespace .ano__* (classe curta colide com globais do shell). */
+
 .ano {
   display: flex;
   flex-direction: column;
-  gap: 18px;
-}
-.ano-nav-btn {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-}
-.ano-nav-year {
-  border: none;
-  background: transparent;
-  font-weight: 700;
-  font-size: 20px;
-  color: var(--text-strong);
-  padding: 0 4px;
-  font-family: var(--font-sans);
-}
-.ano-chart__caption {
-  padding: 0 20px 14px;
-  font-size: 12px;
-  color: var(--text-faint);
-}
-.ano-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.ano-title {
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--text-strong);
-}
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-1);
-  overflow: hidden;
-}
-.ano-kpis {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 14px;
-}
-@media (max-width: 860px) {
-  .ano-kpis {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-.ano-kpi {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-1);
-  padding: 16px 18px;
-}
-.ano-kpi__l {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-  margin: 0 0 6px;
-}
-.ano-kpi__v {
-  font-family: var(--font-money);
-  font-variant-numeric: tabular-nums;
-  font-size: 24px;
-  font-weight: 800;
-  letter-spacing: -0.01em;
-}
-.ano-tbl {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-.ano-tbl th {
-  padding: 11px 14px;
-  text-align: right;
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-subtle);
-  white-space: nowrap;
-}
-.ano-tbl th:first-child {
-  text-align: left;
-}
-.ano-tbl td {
-  padding: 10px 14px;
-  text-align: right;
-  border-bottom: 1px solid var(--border);
-  font-family: var(--font-money);
-  font-variant-numeric: tabular-nums;
-  color: var(--text);
-  white-space: nowrap;
-}
-.ano-tbl td:first-child {
-  text-align: left;
-  font-family: var(--font-sans);
-  color: var(--text-muted);
-  text-transform: capitalize;
-}
-.ano-tbl tr:hover td {
-  background: var(--surface-hover);
-}
-.ano-tbl tr.is-current td {
-  background: var(--surface-selected);
-}
-.ano-tbl tr.is-current td:first-child {
-  color: var(--primary);
-  font-weight: 700;
-}
-.ano-tbl tr.is-future td {
-  color: var(--text-faint);
-}
-.ano-tbl tfoot td {
-  font-weight: 700;
-  border-top: 2px solid var(--border-strong);
-  border-bottom: none;
-  background: var(--bg-subtle);
-  color: var(--text-strong);
-}
-.ano-tbl tfoot td:first-child {
-  font-family: var(--font-sans);
-}
-.ano-chart {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  height: 160px;
-  padding: 16px 20px 0;
-}
-.ano-col {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  height: 100%;
-  justify-content: flex-end;
-}
-.ano-col__bar {
-  width: 64%;
-  border-radius: 4px 4px 0 0;
-  min-height: 3px;
-}
-.ano-col__m {
-  font-size: 10.5px;
-  color: var(--text-faint);
-  text-transform: uppercase;
-}
-.ano-cmp {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 18px 20px;
-}
-.ano-cmp__row {
-  display: grid;
-  grid-template-columns: 54px 1fr 1fr 40px 40px;
-  gap: 14px;
-  align-items: center;
-}
-.ano-cmp__pct {
-  font-size: 12px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-.ano-cmp__m {
-  font-size: 12px;
-  color: var(--text-muted);
-  text-transform: uppercase;
-}
-.ano-cmp__bar {
-  height: 22px;
-  border-radius: var(--radius-sm);
-  display: flex;
-  align-items: center;
-  padding: 0 8px;
-  font-family: var(--font-money);
-  font-variant-numeric: tabular-nums;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-on-primary);
-  justify-content: flex-end;
-  min-width: 40px;
-}
-.ano-cmp__foot {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 4px 20px 18px;
-  border-top: 1px solid var(--border);
-  margin-top: 2px;
-}
-.ano-cmp__sum {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px 14px;
-  font-size: 12px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
-.ano-cmp__sum-y {
-  font-weight: 700;
-  min-width: 40px;
-}
-.ano-cmp__sum-pct {
-  margin-left: auto;
-  font-weight: 600;
-  color: var(--text);
-}
-.ano-legend {
-  display: flex;
-  gap: 16px;
-  padding: 0 20px 16px;
-}
-.ano-legend span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-.ano-legend i {
-  width: 11px;
-  height: 11px;
-  border-radius: 3px;
+  gap: var(--space-6);
 }
 
-/* Nota de rodapé da tabela anual (marcador † do Resultado com previsão). */
-.ano-foot-note {
-  margin: 6px 2px 0;
-  font-size: 11.5px;
+.ano__webhint {
   color: var(--text-faint);
+  font-size: var(--fs-label);
+}
+
+/* ---- Trocar de ano vive no conteúdo (nasce nos dois viewports; o veredito tem dono) ---- */
+
+.ano__yhead {
+  display: flex;
+  align-items: center;
+}
+
+.ano__ynav {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.ano__ynav button {
+  position: relative;
+  font: inherit;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+/* Alvo de toque de 44px sem inchar a silhueta: a área cresce por pseudo-elemento. */
+.ano__ynav button::before {
+  content: "";
+  position: absolute;
+  inset: -8px;
+}
+
+.ano__ynav button:hover:not(:disabled) {
+  color: var(--text-strong);
+  border-color: var(--text-muted);
+}
+
+.ano__ynav button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ano__ynav button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.ano__ycur {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-strong);
+  padding: 0 var(--space-4);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* ---- Veredito: manchete na voz da marca, cor de status FORA daqui ---- */
+
+.ano__verdict {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.ano__vlabel {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--fs-label);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.ano__verdict h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.03em;
+  line-height: var(--lh-tight);
+  color: var(--text-strong);
+}
+
+.ano__verdict p {
+  margin: 0;
+  font-size: var(--fs-body);
+  line-height: 1.55;
+  color: var(--text-muted);
+  max-width: 60ch;
+}
+
+.ano__verdict p b {
+  color: var(--text-strong);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Fecho didático em tom mais tênue — o convite do método, nunca uma acusação. */
+.ano__cf {
+  color: var(--text-faint);
+}
+
+/* ---- Anatomia do card (comum a todos) ---- */
+
+.ano__card {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+  padding: var(--space-7) var(--space-7) var(--space-6);
+}
+
+.ano__cardhead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-5);
+}
+
+.ano__cardhead .ic {
+  color: var(--text-muted);
+  flex: none;
+}
+
+.ano__cardhead h3 {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.ano__note {
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* O gatilho didático senta à direita do cabeçalho — mesmo endereço em todos os cards. */
+.ano__cardhead .nk-term-wrap {
+  margin-left: auto;
+}
+
+.ano__how {
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: help;
+}
+
+/* ---- A faixa do método (a régua é do DS; aqui só o entorno) ---- */
+
+.ano__ruler {
+  margin: var(--space-3) 0 0;
+}
+
+/* O display declara o próprio recorte: sem isso a régua afirmaria o ano medindo 7 meses. */
+.ano__gaugebase {
+  margin: var(--space-5) 0 0;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+  text-align: center;
+}
+
+.ano__gaugefoot {
+  margin: var(--space-4) 0 0;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.ano__gaugefoot b {
+  color: var(--text-strong);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Onde o ano termina: dois cenários, cor de DINHEIRO (nunca status) ---- */
+
+.ano__dec {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+  flex-wrap: wrap;
+  row-gap: var(--space-2);
+}
+
+.ano__dec--alt {
+  padding-top: 0;
+}
+
+.ano__decval {
+  font-family: var(--font-money);
+  font-size: 23px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums lining-nums;
+  color: var(--text-strong);
+}
+
+/* Sinal aritmético usa a cor de dinheiro — a régua é quem reprova, não este número. */
+.ano__decval.neg {
+  color: var(--money-neg);
+}
+
+.ano__decval--sm {
+  font-size: 19px;
+}
+
+.ano__est-inline,
+.ano__decalt-lbl {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.ano__decnote {
+  margin: var(--space-4) 0 0;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.ano__decnote b {
+  color: var(--text-strong);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Os doze meses ---- */
+
+.ano__months {
+  display: flex;
+  flex-direction: column;
+}
+
+.ano__mrow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  flex-wrap: wrap;
+  row-gap: var(--space-2);
+}
+
+.ano__mrow + .ano__mrow {
+  border-top: 1px solid var(--border);
+}
+
+.ano__mname {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  width: 34px;
+  flex: none;
+  letter-spacing: -0.01em;
+}
+
+.ano__mrow.now .ano__mname {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+/* Barra decorativa (aria-hidden): trilho = renda; preenchimento = economia; tique = 20%. */
+.ano__mbar {
+  flex: 1;
+  height: 16px;
+  position: relative;
+  min-width: 80px;
+}
+
+/* Quem porta o comprimento é a BORDA, então ela se separa do card nos dois temas. */
+.ano__mbar .inflow {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--text-faint);
+}
+
+.ano__mbar .saved {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 6px;
+  background: var(--success-400);
+  min-width: 2px;
+}
+
+.ano__mbar .target {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 2px;
+  background: var(--text-muted);
+  opacity: 0.85;
+}
+
+.ano__mbar.fut .inflow {
+  background: transparent;
+  border: 1px dashed var(--text-faint);
+}
+
+.ano__mval {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: -0.02em;
+  flex: none;
+  white-space: nowrap;
+  text-align: right;
+  min-width: 84px;
+}
+
+.ano__mpct {
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+  min-width: 30px;
+  text-align: right;
+}
+
+.ano__mflag {
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+  border: 1px dashed var(--text-faint);
+  border-radius: var(--radius-pill);
+  padding: 1px 7px;
+  flex: none;
+  white-space: nowrap;
+}
+
+.ano__mlegend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+  margin: var(--space-5) 0 0;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+}
+
+.ano__mlegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.ano__mlegend i {
+  width: 16px;
+  height: 9px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.ano__mlegend i.k-in {
+  background: var(--surface-2);
+  border: 1px solid var(--text-faint);
+}
+.ano__mlegend i.k-sv {
+  background: var(--success-400);
+}
+.ano__mlegend i.k-fu {
+  border: 1px dashed var(--text-faint);
+}
+.ano__mlegend i.k-tg {
+  width: 2px;
+  height: 13px;
+  background: var(--text-muted);
+  border-radius: 2px;
+}
+
+/* ---- O ano em números (disclosure — lista, nunca tabela) ---- */
+
+.ano__fold {
+  margin-top: var(--space-5);
+  border-top: 1px solid var(--border);
+}
+
+.ano__foldsum,
+.ano__mysum {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  padding: var(--space-4) 0;
+  background: none;
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  min-height: 44px;
+}
+
+.ano__foldsum b {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.ano__foldsum svg {
+  color: var(--text-muted);
+  flex: none;
+}
+
+.ano__fc {
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+}
+
+.ano__foldsum .ano__exchev,
+.ano__mysum .ano__exchev {
+  margin-left: auto;
+  color: var(--text-faint);
+  transition: transform 0.18s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.ano__foldsum[aria-expanded="true"] .ano__exchev,
+.ano__mysum[aria-expanded="true"] .ano__exchev {
+  transform: rotate(90deg);
+}
+
+.ano__foldsum:focus-visible,
+.ano__mysum:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+.ano__myhint {
+  margin: var(--space-2) 0 var(--space-3);
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+}
+
+.ano__my {
+  border-top: 1px solid var(--border);
+}
+
+.ano__myname {
+  font-size: var(--fs-body);
+  font-weight: 450;
+  color: var(--text-strong);
+  min-width: 40px;
+  letter-spacing: -0.01em;
+}
+
+.ano__my.fut .ano__myname {
+  color: var(--text-muted);
+}
+
+/* O resultado do mês é a única grandeza que sobrevive à linha fechada. */
+.ano__myres {
+  margin-left: auto;
+  font-size: var(--fs-body);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums lining-nums;
+  white-space: nowrap;
+  color: var(--text-strong);
+}
+
+/* Sinal aritmético do mês usa a cor de DINHEIRO — o mês não é julgável (quem julga é o ano). */
+.ano__myres.neg {
+  color: var(--money-neg);
+}
+
+.ano__my.fut .ano__myres {
+  color: var(--text-muted);
+}
+
+/* O detalhe herda o trilho de recuo das telas irmãs (Tags nas exceções). */
+.ano__mydet {
+  padding: var(--space-1) 0 var(--space-5) var(--space-6);
+  border-left: 1px solid var(--border);
+  margin: 0 0 var(--space-1) 3px;
+}
+
+.ano__mdl {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-5);
+  padding: var(--space-2) 0;
+  font-size: var(--fs-sm);
+}
+
+.ano__mdl + .ano__mdl {
+  border-top: 1px solid var(--border);
+}
+
+.ano__mdl span {
+  color: var(--text-muted);
+}
+
+.ano__mdl b {
+  margin-left: auto;
+  font-weight: 450;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+
+/* A fronteira realizado × previsto: dita uma vez, não repetida em cinco selos. */
+.ano__mydiv {
+  margin: var(--space-5) 0 var(--space-1);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+}
+
+.ano__mytot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) 0 var(--space-1);
+  margin-top: var(--space-3);
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+  row-gap: var(--space-2);
+}
+
+.ano__mytot .ano__myname {
+  font-weight: 600;
+}
+
+.ano__mytot-meta {
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.ano__foldnote {
+  border-top: 0;
+  padding-top: var(--space-3);
+}
+
+/* ---- Sua renda ao longo dos anos ---- */
+
+.ano__years {
+  display: flex;
+  flex-direction: column;
+}
+
+.ano__yr {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) 0;
+  flex-wrap: wrap;
+  row-gap: var(--space-3);
+}
+
+.ano__yr + .ano__yr {
+  border-top: 1px solid var(--border);
+}
+
+.ano__yrname {
+  font-size: var(--fs-sm);
+  color: var(--text-strong);
+  font-weight: 500;
+  width: 44px;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.ano__yrmeter {
+  flex: 1;
+  min-width: 60px;
+}
+
+.ano__yrval {
+  font-size: var(--fs-sm);
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: -0.02em;
+  flex: none;
+  white-space: nowrap;
+  min-width: 96px;
+  text-align: right;
+}
+
+.ano__yrpct {
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+  flex: none;
+  min-width: 52px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.ano__yrpct.zero {
+  color: var(--warning-400);
+}
+
+.ano__yrfoot {
+  margin: var(--space-4) 0 0;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.ano__yrfoot b {
+  color: var(--text-strong);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- A linha da Mia ---- */
+
+.ano__card--mia {
+  gap: var(--space-5);
+}
+
+.ano__mia {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+
+.ano__mav {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.ano__mtxt {
+  min-width: 0;
+  flex: 1;
+  font-size: var(--fs-sm);
+  color: var(--text-strong);
+  line-height: 1.5;
+}
+
+.ano__mtxt small {
+  display: block;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  margin-top: var(--space-3);
+  line-height: 1.5;
+}
+
+.ano__miaact {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  background: none;
+  color: var(--text-strong);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: var(--space-4) var(--space-6);
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.ano__miaact:hover {
+  background: var(--surface-2);
+}
+
+.ano__miaact:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+/* ---- Mobile: os doze meses reflui — texto inteiro, barra em largura cheia embaixo ----
+   `order` só na barra DECORATIVA (aria-hidden): a sequência de leitura do texto segue a
+   ordem do DOM, intocada. */
+
+@media (max-width: 640px) {
+  .ano__mbar {
+    order: 5;
+    flex: 1 0 100%;
+    min-width: 0;
+    height: 12px;
+  }
+  .ano__mval {
+    margin-left: auto;
+  }
+  .ano__mytot-meta {
+    flex: 1 0 100%;
+  }
+}
+
+/* ---- Bento: coluna única no mobile; 2 colunas independentes no desktop ----
+   Massas díspares → colunas INDEPENDENTES (nunca row-alignment: `start` abre buracos,
+   `stretch` estica card curto sobre tint vazio). No mobile as colunas se dissolvem via
+   `display: contents` e os cards fluem na ordem do DOM (a narrativa aprovada). */
+
+.ano__bento {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-6);
+}
+
+.ano__col {
+  display: contents;
+}
+
+@media (min-width: 1000px) {
+  .ano__bento {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .ano__col {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+    min-width: 0;
+  }
+
+  /* A tela ocupa a largura do palco de conteúdo; o teto sobe um degrau no ultrawide em vez
+     de deixar o vazio lateral crescer. */
+  .ano {
+    max-width: 1180px;
+  }
+}
+
+@media (min-width: 1700px) {
+  .ano {
+    max-width: 1400px;
+  }
+}
+
+/* A régua herói respira em largura, mas não vira um traço perdido em ultrawide. */
+.ano__ruler,
+.ano__gaugebase {
+  max-width: 860px;
+}
+
+/* ---- Coreografia de entrada (uma vez por montagem; dinheiro nunca anima) ---- */
+
+@media (prefers-reduced-motion: no-preference) {
+  .ano__verdict {
+    animation: ano-pop 0.5s cubic-bezier(0.2, 0, 0, 1) both 0.08s;
+  }
+  .ano > .ano__card,
+  .ano__bento {
+    animation: ano-pop 0.45s cubic-bezier(0.2, 0, 0, 1) both 0.2s;
+  }
+}
+
+@keyframes ano-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }

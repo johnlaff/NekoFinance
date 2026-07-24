@@ -9,18 +9,19 @@ const MARK_STYLE: CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
   gap: 4,
-  padding: "1px 7px",
+  padding: "1px 8px",
   borderRadius: 999,
-  border: "1px solid color-mix(in srgb, var(--state-estimate) 45%, transparent)",
+  border: "1px solid color-mix(in srgb, var(--state-estimate) 40%, transparent)",
+  background: "color-mix(in srgb, var(--state-estimate) 12%, transparent)",
   color: "var(--state-estimate)",
   fontSize: "var(--fs-micro)",
   fontWeight: 500,
   lineHeight: 1.6,
   whiteSpace: "nowrap",
-  // Sinal de interatividade: a didática mora no popover; sem o marcador "i", o pontilhado
-  // é o convite (mesma linguagem dos termos explicáveis das réguas).
-  textDecoration: "underline dotted",
-  textUnderlineOffset: 3,
+  // O chip é a afordância: borda + fundo tênue na cor de estado leem como marca tocável. Um
+  // sublinhado pontilhado por cima da pílula dobra o sinal e suja a linha — a didática abre no
+  // popover ao tocar/passar o cursor.
+  cursor: "help",
 };
 
 export interface EstimateMarkProps {

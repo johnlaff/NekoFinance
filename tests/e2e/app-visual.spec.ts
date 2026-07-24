@@ -38,6 +38,11 @@ for (const theme of ["dark", "light"] as const) {
         await page.getByRole("button", { name, exact: false }).first().click();
         // Rede zero (mock in-page): um tick de layout basta para estabilizar.
         await page.waitForTimeout(350);
+        // O ano dispara 3 buscas anuais paralelas (renda ao longo dos anos); o rodapé só
+        // aparece com ≥ 2 anos carregados — espera determinística contra o flash parcial.
+        if (name === "O ano") {
+          await page.getByText(/Ganhar mais não vira economia/).waitFor();
+        }
         const slug = name.normalize("NFD").replace(/[^a-zA-Z]/g, "");
         await expect(page).toHaveScreenshot(`${slug}-${theme}.png`, {
           fullPage: true,
@@ -219,6 +224,33 @@ for (const theme of ["dark", "light"] as const) {
     await page.getByRole("button", { name: "Este mês", exact: false }).first().click();
     await page.waitForTimeout(350);
     await expect(page).toHaveScreenshot(`mobile-mes-${theme}.png`, {
+      fullPage: true,
+      maxDiffPixelRatio: 0.02,
+    });
+  });
+}
+
+// O ano no mobile: os doze meses refluem (texto inteiro, barra decorativa em largura
+// cheia embaixo) e a régua da faixa segue como instrumento herói.
+for (const theme of ["dark", "light"] as const) {
+  test(`O ano — mobile ${theme}`, async ({ page }) => {
+    await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript((t: string) => {
+      localStorage.setItem("neko-theme", t);
+    }, theme);
+    await mockTauri(page, {
+      list_scenarios_cmd: [],
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [],
+    });
+    await page.goto("/");
+    // No mobile "O ano" vive no menu "Mais telas" (o dock tem 5 destinos fixos).
+    await page.getByRole("button", { name: "Mais telas" }).click();
+    await page.getByRole("button", { name: "O ano", exact: false }).first().click();
+    await page.waitForTimeout(350);
+    await expect(page).toHaveScreenshot(`mobile-ano-${theme}.png`, {
       fullPage: true,
       maxDiffPixelRatio: 0.02,
     });

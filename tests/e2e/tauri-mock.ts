@@ -185,7 +185,17 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
           balance_cents: 1234000,
         },
       ],
-      month_end: [{ year: 2026, month: 6, balance_cents: 1234000 }],
+      // Saldos de fim de mês da projeção: junho (corrente) + jul–dez (futuro no horizonte),
+      // para a tela O ano projetar onde dezembro termina.
+      month_end: [
+        { year: 2026, month: 6, balance_cents: 1234000 },
+        { year: 2026, month: 7, balance_cents: 1299520 },
+        { year: 2026, month: 8, balance_cents: 1468037 },
+        { year: 2026, month: 9, balance_cents: 1825323 },
+        { year: 2026, month: 10, balance_cents: 2212289 },
+        { year: 2026, month: 11, balance_cents: 2605000 },
+        { year: 2026, month: 12, balance_cents: 2997711 },
+      ],
       months: [
         {
           year: 2026,
@@ -420,22 +430,77 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
       db_path: "C:\\Users\\you\\AppData\\Roaming\\app.neko.finance\\neko-finance.db",
     };
 
+    // Planilha real de 2026 (centavos): renda e performance por mês, economia zerada — o ano
+    // que abre o veredito "não guardou nada". Com o relógio em junho, jul–dez são futuros e
+    // set–dez reprovam o lastro (saída bem abaixo do gasto típico).
+    const REAL_2026 = [
+      { m: 1, income: 965132, perf: -99751 },
+      { m: 2, income: 1623670, perf: 492689 },
+      { m: 3, income: 1042963, perf: -50308 },
+      { m: 4, income: 1342641, perf: -135002 },
+      { m: 5, income: 1274701, perf: 189619 },
+      { m: 6, income: 1018860, perf: -124321 },
+      { m: 7, income: 1211421, perf: -30506 },
+      { m: 8, income: 1015607, perf: 168517 },
+      { m: 9, income: 740808, perf: 357286 },
+      { m: 10, income: 739857, perf: 386966 },
+      { m: 11, income: 739857, perf: 392711 },
+      { m: 12, income: 736867, perf: 392711 },
+    ];
     const ANNUAL = {
       year: 2026,
-      months: Array.from({ length: 12 }, (_, i) => ({
+      months: REAL_2026.map((r) => ({
         year: 2026,
-        month: i + 1,
-        income_cents: i + 1 === 6 ? 700000 : 0,
-        performance_cents: i + 1 === 6 ? 450000 : 0,
-        cost_of_living_cents: i + 1 === 6 ? 250000 : 0,
-        fixed_out_cents: i + 1 === 6 ? 250000 : 0,
+        month: r.m,
+        income_cents: r.income,
+        income_performance_cents: r.income,
+        performance_cents: r.perf,
+        cost_of_living_cents: r.income - r.perf,
+        fixed_out_cents: r.income - r.perf,
         daily_out_cents: 0,
+        daily_avg_out_cents: 0,
+        daily_projected_cents: 0,
         cartao_cents: 0,
         real_daily_avg_cents: 0,
         economia_cents: 0,
         patrimonio_cents: 0,
-        savings_rate_bps: i + 1 === 6 ? 2200 : 0,
+        savings_rate_bps: 0,
       })),
+    };
+
+    // Anos anteriores para "Sua renda ao longo dos anos": renda crescendo, economia zero —
+    // a narrativa medida na planilha real (ganhar mais não vira economia sozinho).
+    const yearMonths = (year: number, base: number) => ({
+      year,
+      months: Array.from({ length: 12 }, (_, i) => {
+        const income = base + (i % 3) * 20000;
+        return {
+          year,
+          month: i + 1,
+          income_cents: income,
+          income_performance_cents: income,
+          performance_cents: Math.round(income * 0.05),
+          cost_of_living_cents: Math.round(income * 0.95),
+          fixed_out_cents: Math.round(income * 0.95),
+          daily_out_cents: 0,
+          daily_avg_out_cents: 0,
+          daily_projected_cents: 0,
+          cartao_cents: 0,
+          real_daily_avg_cents: 0,
+          economia_cents: 0,
+          patrimonio_cents: 0,
+          savings_rate_bps: 0,
+        };
+      }),
+    });
+    const ANNUAL_BY_YEAR: Record<number, unknown> = {
+      2026: ANNUAL,
+      2025: yearMonths(2025, 1010000),
+      2024: yearMonths(2024, 850000),
+    };
+    const annualForYear = (args?: Record<string, unknown>) => {
+      const year = Number(args?.["year"]);
+      return ANNUAL_BY_YEAR[year] ?? { year, months: [] };
     };
 
     const TAG_TOTALS = [
@@ -703,7 +768,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
       list_tags_cmd: TAG_TOTALS,
       get_tags_screen: TAGS_SCREEN,
       update_tag_rulers_cmd: null,
-      get_annual_metrics: ANNUAL,
+      get_annual_metrics: annualForYear,
       get_recent_transactions: TXNS,
       get_upcoming_bills_cmd: UPCOMING_BILLS,
       get_import_conflicts: [],
@@ -720,8 +785,14 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
 
     Object.defineProperty(window, "__TAURI_INTERNALS__", {
       value: {
-        invoke: (cmd: string) => {
-          if (cmd in responses) return Promise.resolve(responses[cmd]);
+        // Alguns comandos dependem dos argumentos (ex.: `get_annual_metrics` por ano). O
+        // handler pode ser um valor estático ou uma função dos args.
+        invoke: (cmd: string, args?: Record<string, unknown>) => {
+          if (cmd in responses) {
+            const r = responses[cmd];
+            const handler = r as ((a?: Record<string, unknown>) => unknown) | undefined;
+            return Promise.resolve(typeof r === "function" ? handler!(args) : r);
+          }
           return Promise.reject(new Error(`e2e mock: unmocked command ${cmd}`));
         },
         transformCallback: () => 0,
