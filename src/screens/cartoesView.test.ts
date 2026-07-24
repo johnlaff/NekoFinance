@@ -33,12 +33,42 @@ function inv(over: Partial<InvoiceSummary> & { id: string }): InvoiceSummary {
 }
 
 const WINDOW: InvoiceSummary[] = [
-  inv({ id: "mar", cycle_month: "2026-03", status: "paga", effective_total_cents: 163_000 }),
-  inv({ id: "abr", cycle_month: "2026-04", status: "paga", effective_total_cents: 223_000 }),
-  inv({ id: "mai", cycle_month: "2026-05", status: "paga", effective_total_cents: 189_000 }),
-  inv({ id: "jun", cycle_month: "2026-06", status: "paga", effective_total_cents: 270_000 }),
-  inv({ id: "jul", cycle_month: "2026-07", status: "fechada", effective_total_cents: 249_000 }),
-  inv({ id: "ago", cycle_month: "2026-08", status: "aberta", effective_total_cents: 300_000 }),
+  inv({
+    id: "mar",
+    cycle_month: "2026-03",
+    status: "paga",
+    effective_total_cents: 163_000,
+  }),
+  inv({
+    id: "abr",
+    cycle_month: "2026-04",
+    status: "paga",
+    effective_total_cents: 223_000,
+  }),
+  inv({
+    id: "mai",
+    cycle_month: "2026-05",
+    status: "paga",
+    effective_total_cents: 189_000,
+  }),
+  inv({
+    id: "jun",
+    cycle_month: "2026-06",
+    status: "paga",
+    effective_total_cents: 270_000,
+  }),
+  inv({
+    id: "jul",
+    cycle_month: "2026-07",
+    status: "fechada",
+    effective_total_cents: 249_000,
+  }),
+  inv({
+    id: "ago",
+    cycle_month: "2026-08",
+    status: "aberta",
+    effective_total_cents: 300_000,
+  }),
 ];
 
 describe("cycleWindow", () => {
@@ -76,12 +106,8 @@ describe("defaultInvoiceId", () => {
   it("prefere a fatura aberta, senão a próxima a vencer, senão a mais recente", () => {
     const open = inv({ id: "ago" });
     const due = inv({ id: "jul", status: "fechada" });
-    expect(
-      defaultInvoiceId({ open_invoice: open, next_due: due }, WINDOW),
-    ).toBe("ago");
-    expect(
-      defaultInvoiceId({ open_invoice: null, next_due: due }, WINDOW),
-    ).toBe("jul");
+    expect(defaultInvoiceId({ open_invoice: open, next_due: due }, WINDOW)).toBe("ago");
+    expect(defaultInvoiceId({ open_invoice: null, next_due: due }, WINDOW)).toBe("jul");
     expect(defaultInvoiceId({ open_invoice: null, next_due: null }, WINDOW)).toBe(
       "ago",
     );
@@ -144,13 +170,22 @@ describe("cycleStateLabel", () => {
 
   it("nomeia o fechamento, a abertura futura e o pagamento", () => {
     expect(
-      cycleStateLabel(inv({ id: "jul", status: "fechada", closing_date: "2026-07-20" }), "2026-08-01"),
+      cycleStateLabel(
+        inv({ id: "jul", status: "fechada", closing_date: "2026-07-20" }),
+        "2026-08-01",
+      ),
     ).toMatch(/^Fechou em 20 de jul/);
     expect(
-      cycleStateLabel(inv({ id: "set", status: "prevista", closing_date: "2026-09-20" }), "2026-08-01"),
+      cycleStateLabel(
+        inv({ id: "set", status: "prevista", closing_date: "2026-09-20" }),
+        "2026-08-01",
+      ),
     ).toMatch(/^Fecha em 20 de set/);
     expect(
-      cycleStateLabel(inv({ id: "jun", status: "paga", due_date: "2026-07-10" }), "2026-08-01"),
+      cycleStateLabel(
+        inv({ id: "jun", status: "paga", due_date: "2026-07-10" }),
+        "2026-08-01",
+      ),
     ).toMatch(/^Paga em 10 de jul/);
   });
 });
@@ -262,7 +297,13 @@ describe("netOfRefunds", () => {
       netOfRefunds({
         effective_total_cents: 428_900,
         refunds: [
-          { txn_id: "r", date: "2026-08-10", amount_cents: 35_000, description: "Parte", is_projection: true },
+          {
+            txn_id: "r",
+            date: "2026-08-10",
+            amount_cents: 35_000,
+            description: "Parte",
+            is_projection: true,
+          },
         ],
       }),
     ).toBe(393_900);
