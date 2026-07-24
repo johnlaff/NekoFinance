@@ -232,17 +232,20 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     });
   });
 
-  test("O ano (AnnualScreen) renders the year view with month abbreviations", async ({
+  test("O ano (AnnualScreen) renders the verdict and the method ruler", async ({
     page,
   }, testInfo) => {
     await page.getByRole("button", { name: "O ano", exact: true }).click();
     await expect(
       page.getByRole("button", { name: "O ano", exact: true }),
     ).toHaveAttribute("aria-current", "page");
-    // Annual screen has "Este ano" / "Comparar anos" segmented tabs
-    await expect(page.getByText("Este ano")).toBeVisible();
-    await expect(page.getByText("Comparar anos")).toBeVisible();
-    // Shows month abbreviations in the chart
+    // Nova direção: veredito → régua da faixa → os doze meses (sem tabela nem abas).
+    // Âncora no heading: o texto também vive no rótulo de leitor de tela do "Como funciona?".
+    await expect(
+      page.getByRole("heading", { name: "A faixa do método" }),
+    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Os doze meses" })).toBeVisible();
+    // Abreviações dos meses nas linhas do ano.
     await expect(page.getByText("Jun", { exact: true }).first()).toBeVisible();
     await page.screenshot({
       fullPage: true,

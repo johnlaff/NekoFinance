@@ -8,6 +8,19 @@ for humans, and versions follow [SemVer](https://semver.org/).
 
 ### Added
 
+- The O ano screen became the place where the method actually judges: it opens
+  on a verdict and the band ruler (fixed 0–40% scale with the 20–30% target
+  zone) instead of KPI tiles and a seven-column table, because the savings rate
+  is only meaningful as a yearly average. A ballast test now gates that verdict
+  — a month ahead only supports it when its booked outflow reaches 60% of
+  typical spend; below that the month is flagged for review and the verdict
+  falls back to what was actually lived, with the sample size printed on the
+  ruler so it never claims to measure a full year from a few months. "Where
+  December ends" projects the year in two scenarios (as booked, and if the
+  flagged months cost the usual), the twelve months read as one row each
+  (income rail, savings fill, 20% tick), the yearly numbers moved into an
+  expandable list, and income is compared across years. On desktop the verdict
+  and ruler span full width with the supporting cards in a two-column bento.
 - The Hoje screen was recomposed around the daily verdict: a greeting hero
   ("Pode gastar hoje …" with the binding guardrail named and a teaching
   layer), the assistant's curation line, a day block that in card mode shows
@@ -33,6 +46,16 @@ for humans, and versions follow [SemVer](https://semver.org/).
 
 ### Changed
 
+- "Performance acumulada" is gone from the product. Summing monthly performance
+  over a year is not something the method does — once you start setting money
+  aside, savings is the number that matters, not the leftover. The yearly
+  reading it used to occupy is now "where December ends", projected in two
+  scenarios. The "Comparar anos" tab went with it: the comparison the method
+  asks for is income across years, so that now lives on the screen permanently
+  instead of behind a tab.
+- The "Estimativa" mark no longer stacks a dotted underline on top of its pill
+  border — the chip alone reads as tappable, and doubling the signal made the
+  line noisy wherever the mark appears.
 - Tags now carry four independent exclusion flags (Performance, Custo de vida,
   Economia, Diário médio) instead of a single all-or-nothing toggle — each flag
   controls whether a tagged movement counts in that ruler. The balance chain

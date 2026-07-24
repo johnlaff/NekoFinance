@@ -1,256 +1,236 @@
-import { render, screen, waitFor, within, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { AnnualScreen } from "./AnnualScreen";
-import type { AnnualMetrics, MonthMetric } from "../lib/api";
 import { FORECAST, mockCommands, mockInvoke } from "../test/commands";
+import type { AnnualMetrics, Forecast, MonthMetric, MonthEnd } from "../lib/api";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
-const mk = (month: number, perf: number, cost: number): MonthMetric => ({
-  year: 2026,
-  month,
-  income_cents: perf + cost,
-  income_performance_cents: perf + cost,
-  performance_cents: perf,
-  cost_of_living_cents: cost,
-  fixed_out_cents: cost,
-  daily_out_cents: 0,
-  daily_avg_out_cents: 0,
-  daily_projected_cents: 0,
-  cartao_cents: 0,
-  real_daily_avg_cents: 0,
-  economia_cents: 0,
-  patrimonio_cents: 0,
-  savings_rate_bps: 0,
-});
+// Planilha real de 2026 (em centavos) — a mesma que ancora o desenho aprovado. Com o relógio
+// em junho, os vividos são jan–jun; jul–dez são futuros e set–dez reprovam o lastro.
+interface Row {
+  m: number;
+  income: number;
+  perf: number;
+  eco: number;
+  end: number;
+}
+const REAL: Row[] = [
+  { m: 1, income: 965132, perf: -99751, eco: 0, end: 957349 },
+  { m: 2, income: 1623670, perf: 492689, eco: 0, end: 1450038 },
+  { m: 3, income: 1042963, perf: -50308, eco: 0, end: 1399730 },
+  { m: 4, income: 1342641, perf: -135002, eco: 0, end: 1264728 },
+  { m: 5, income: 1274701, perf: 189619, eco: 0, end: 1454347 },
+  { m: 6, income: 1018860, perf: -124321, eco: 0, end: 1330026 },
+  { m: 7, income: 1211421, perf: -30506, eco: 0, end: 1299520 },
+  { m: 8, income: 1015607, perf: 168517, eco: 0, end: 1468037 },
+  { m: 9, income: 740808, perf: 357286, eco: 0, end: 1825323 },
+  { m: 10, income: 739857, perf: 386966, eco: 0, end: 2212289 },
+  { m: 11, income: 739857, perf: 392711, eco: 0, end: 2605000 },
+  { m: 12, income: 736867, perf: 392711, eco: 0, end: 2997711 },
+];
 
-const ANNUAL: AnnualMetrics = {
-  year: 2026,
-  months: Array.from({ length: 12 }, (_, i) =>
-    mk(i + 1, i + 1 === 3 ? 450000 : 0, i + 1 === 3 ? 250000 : 0),
-  ),
+function mkMonth(r: Row, year = 2026): MonthMetric {
+  return {
+    year,
+    month: r.m,
+    income_cents: r.income,
+    income_performance_cents: r.income,
+    performance_cents: r.perf,
+    cost_of_living_cents: 0,
+    fixed_out_cents: 0,
+    daily_out_cents: 0,
+    daily_avg_out_cents: 0,
+    daily_projected_cents: 0,
+    cartao_cents: 0,
+    real_daily_avg_cents: 0,
+    economia_cents: r.eco,
+    patrimonio_cents: 0,
+    savings_rate_bps: r.income > 0 ? Math.round((r.eco / r.income) * 10000) : 0,
+  };
+}
+
+const ANNUAL_2026: AnnualMetrics = { year: 2026, months: REAL.map((r) => mkMonth(r)) };
+
+// Handler ciente do ano: 2026 e 2025 têm dados; qualquer outro ano vem vazio (no_record).
+const annualByYear = (args?: Record<string, unknown>): AnnualMetrics => {
+  const year = Number(args?.["year"]);
+  if (year === 2026) return ANNUAL_2026;
+  if (year === 2025) return { year: 2025, months: REAL.map((r) => mkMonth(r, 2025)) };
+  return {
+    year,
+    months: Array.from({ length: 12 }, (_, i) =>
+      mkMonth({ m: i + 1, income: 0, perf: 0, eco: 0, end: 0 }, year),
+    ),
+  };
 };
 
-const monthGridHandler = (args?: Record<string, unknown>) => {
+// Forecast com month_end de todos os 12 meses — dezembro projetado para o cenário do ano.
+const MONTH_END_2026: MonthEnd[] = REAL.map((r) => ({
+  year: 2026,
+  month: r.m,
+  balance_cents: r.end,
+}));
+const testForecast: Forecast = {
+  ...FORECAST,
+  today: "2026-06-10",
+  month_end: MONTH_END_2026,
+};
+
+const SUMMARY = (reserveMonths: number) => ({
+  balance: 1330026,
+  daily_budget: 20000,
+  daily_ceiling_source: "chosen" as const,
+  ceiling_proposal_pending: false,
+  daily_spend_today: 0,
+  card_spend_today_cents: 0,
+  reserve_months: reserveMonths,
+  reserve_state: "verdict" as const,
+  reserve_basis_months: 6,
+  reserve_trend: "flat",
+  spending_mode: "debit" as const,
+  card_gate: "unknown" as const,
+  card_gate_economy: "unknown" as const,
+  card_gate_economy_bps: null,
+  card_gate_reserve: "unknown" as const,
+  cartao_month_cents: 0,
+  next_fatura_date: null,
+  next_fatura_amount_cents: 0,
+  upcoming_invoices: [],
+  transaction_count: 40,
+  last_real_tx_date: "2026-06-09",
+});
+
+const monthGrid = (args?: Record<string, unknown>) => {
   const month = Number(args?.["month"]);
-  const mm = String(month).padStart(2, "0");
+  const found = REAL.find((r) => r.m === month);
   return [
     {
-      date: `2026-${mm}-28`,
+      date: `2026-${String(month).padStart(2, "0")}-28`,
       day: 28,
       income_cents: 0,
       fixed_out_cents: 0,
       daily_out_cents: 0,
-      daily_projected_cents: 0,
-      balance_cents: month === 1 ? 111000 : month === 5 ? 555000 : null,
+      balance_cents: found ? found.end : null,
     },
   ];
 };
 
-describe("AnnualScreen", () => {
+function setup({ reserve = 4.5 }: { reserve?: number } = {}) {
+  mockInvoke.mockReset();
+  mockCommands({
+    get_annual_metrics: annualByYear,
+    get_forecast: testForecast,
+    get_dashboard_summary: SUMMARY(reserve),
+    get_month_grid: monthGrid,
+  });
+  render(<AnnualScreen />);
+}
+
+describe("AnnualScreen — direção Conversa com a Mia", () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.setSystemTime(new Date("2026-06-10T12:00:00-03:00"));
   });
-
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it("renderiza a tabela anual (redesign) com as colunas e 12 meses", async () => {
-    mockInvoke.mockReset();
-    mockCommands({
-      get_annual_metrics: ANNUAL,
-      get_forecast: FORECAST,
-      get_month_grid: monthGridHandler,
-    });
-    render(<AnnualScreen />);
-
-    // Espera a tabela carregar — cabeçalho único "Saldo fim" como âncora.
-    await waitFor(() => expect(screen.getByText("Saldo fim")).toBeInTheDocument());
-    // Cabeçalhos do redesign — "Custo de vida" aparece no KPI e no cabeçalho, por isso getAllByText.
-    expect(screen.getAllByText("Custo de vida").length).toBeGreaterThan(0);
-    expect(screen.getByText("Resultado")).toBeInTheDocument();
-    expect(screen.getByText("Diário")).toBeInTheDocument();
-    expect(screen.getByText("Economia")).toBeInTheDocument();
-    expect(screen.getByText("Entradas")).toBeInTheDocument();
-    // 12 meses (linhas do corpo).
-    expect(screen.getByText("Janeiro")).toBeInTheDocument();
-    expect(screen.getByText("Março")).toBeInTheDocument();
-    expect(screen.getByText("Dezembro")).toBeInTheDocument();
-    // Rodapé "Realizado" (antigo "Total").
-    expect(screen.getByText("Realizado")).toBeInTheDocument();
-  });
-
-  it("linha TOTAL: Economizado% anual é ΣEconomia/ΣEntradas (ponderado, não média das taxas)", async () => {
-    mockInvoke.mockReset();
-    const base = (month: number): MonthMetric => ({
-      year: 2026,
-      month,
-      income_cents: 0,
-      income_performance_cents: 0,
-      performance_cents: 0,
-      cost_of_living_cents: 0,
-      fixed_out_cents: 0,
-      daily_out_cents: 0,
-      daily_avg_out_cents: 0,
-      daily_projected_cents: 0,
-      cartao_cents: 0,
-      real_daily_avg_cents: 0,
-      economia_cents: 0,
-      patrimonio_cents: 0,
-      savings_rate_bps: 0,
-    });
-    const months = Array.from({ length: 12 }, (_, i) => base(i + 1));
-    // Jan: 30% (30k/100k). Fev: 10% (30k/300k). Média simples = 20%, mas o anual ponderado
-    // = 60k/400k = 15%.
-    months[0] = {
-      ...base(1),
-      income_cents: 100_000,
-      economia_cents: 30_000,
-      savings_rate_bps: 3000,
-    };
-    months[1] = {
-      ...base(2),
-      income_cents: 300_000,
-      economia_cents: 30_000,
-      savings_rate_bps: 1000,
-    };
-    mockCommands({
-      get_annual_metrics: { year: 2026, months },
-      get_forecast: FORECAST,
-      get_month_grid: monthGridHandler,
-    });
-    render(<AnnualScreen />);
-
-    // Aguarda o rodapé "Realizado" aparecer (substitui o antigo "Total").
-    await waitFor(() => expect(screen.getByText("Realizado")).toBeInTheDocument());
-    // Economizado% ponderado no tfoot: ΣEconomia/ΣEntradas = 60k/400k = 15%.
-    // Pode aparecer também no KPI card, então verificamos que existe ao menos uma ocorrência.
-    expect(screen.getAllByText("15%").length).toBeGreaterThan(0);
-    // Não é a média simples de 30%+10%=20%.
-    expect(screen.queryByText("20%")).not.toBeInTheDocument();
-  });
-
-  it("Comparar anos: mostra Economizado% por mês e resumo ponderado (absoluto maior ≠ taxa maior)", async () => {
-    mockInvoke.mockReset();
-    const base = (year: number, month: number): MonthMetric => ({
-      year,
-      month,
-      income_cents: 0,
-      income_performance_cents: 0,
-      performance_cents: 0,
-      cost_of_living_cents: 0,
-      fixed_out_cents: 0,
-      daily_out_cents: 0,
-      daily_avg_out_cents: 0,
-      daily_projected_cents: 0,
-      cartao_cents: 0,
-      real_daily_avg_cents: 0,
-      economia_cents: 0,
-      patrimonio_cents: 0,
-      savings_rate_bps: 0,
-    });
-    // yearA=2025: Jan 30k/100k = 30%. yearB=2026: Jan 40k/400k = 10%.
-    // Economia absoluta MAIOR em B (40k>30k), mas a TAXA é MENOR (10%<30%) —
-    // exatamente o que a feature existe para expor. Dado só em janeiro (mês
-    // decorrido no ano corrente, cutoff = junho no relógio congelado).
-    const yearMonths = (
-      year: number,
-      income: number,
-      economia: number,
-      bps: number,
-    ) => {
-      const arr = Array.from({ length: 12 }, (_, i) => base(year, i + 1));
-      arr[0] = {
-        ...base(year, 1),
-        income_cents: income,
-        economia_cents: economia,
-        savings_rate_bps: bps,
-      };
-      return arr;
-    };
-    mockCommands({
-      get_annual_metrics: (args?: Record<string, unknown>) => ({
-        year: Number(args?.["year"]),
-        months:
-          Number(args?.["year"]) === 2025
-            ? yearMonths(2025, 100_000, 30_000, 3000)
-            : yearMonths(2026, 400_000, 40_000, 1000),
-      }),
-      get_forecast: FORECAST,
-      get_month_grid: monthGridHandler,
-    });
-    render(<AnnualScreen />);
-
-    // Troca para a aba "Comparar anos".
+  it("abre pelo veredito na voz da marca (economia zero + reserva baixa = não guardou nada)", async () => {
+    setup();
     await waitFor(() =>
-      expect(screen.getByRole("radio", { name: "Comparar anos" })).toBeInTheDocument(),
+      expect(screen.getByText("Você não guardou nada em 2026.")).toBeInTheDocument(),
     );
-    fireEvent.click(screen.getByRole("radio", { name: "Comparar anos" }));
-
-    // Taxa por mês: 30% (2025) e 10% (2026) presentes; a média simples 20% NÃO aparece.
-    await waitFor(() => expect(screen.getAllByText("30%").length).toBeGreaterThan(0));
-    expect(screen.getAllByText("10%").length).toBeGreaterThan(0);
-    expect(screen.queryByText("20%")).not.toBeInTheDocument();
-
-    // Resumo por ano: Entradas + Economizado% ponderado do ano corrente (só Jan).
-    expect(screen.getByText(/Economizado 30%/)).toBeInTheDocument();
-    expect(screen.getByText(/Economizado 10%/)).toBeInTheDocument();
+    // Rótulo do veredito e selo de estimativa (há meses suspeitos à frente).
+    expect(screen.getByText(/Economizado · 2026/)).toBeInTheDocument();
+    expect(screen.getByText("Estimativa")).toBeInTheDocument();
   });
 
-  it("KPI Performance acum. soma performance_cents do motor (mês com economia > 0)", async () => {
-    mockInvoke.mockReset();
-    const months = Array.from({ length: 12 }, (_, i) => mk(i + 1, 0, 0));
-    // Março: Entradas 7.000, Saída total 2.500, Economia 2.000 → Performance do motor = 2.500.
-    // A re-derivação local (Entradas − Saída total = 4.500) ignoraria a Economia.
-    months[2] = {
-      ...mk(3, 250_000, 250_000),
-      income_cents: 700_000,
-      economia_cents: 200_000,
-    };
-    mockCommands({
-      get_annual_metrics: { year: 2026, months },
-      get_forecast: FORECAST,
-      get_month_grid: monthGridHandler,
-    });
-    render(<AnnualScreen />);
-
+  it("a régua da faixa é o instrumento, com escala 0→40 e recorte declarado", async () => {
+    setup();
     await waitFor(() =>
-      expect(screen.getByText("Performance acum.")).toBeInTheDocument(),
+      expect(screen.getByText("A faixa do método")).toBeInTheDocument(),
     );
-    const kpi = screen.getByText("Performance acum.").closest(".ano-kpi")!;
-    expect(within(kpi as HTMLElement).getByText("R$ 2,5 mil")).toBeInTheDocument();
+    // O recorte declara os meses vividos — a régua não afirma o ano medindo 6 meses.
+    expect(screen.getByText(/em 6 de 12 meses já vividos/i)).toBeInTheDocument();
+    // A régua expõe o texto equivalente (role img) com a escala e a zona-alvo.
+    const ruler = screen.getByRole("img", {
+      name: /faixa vai de 20% a 30%, numa escala de 0% a 40%/i,
+    });
+    expect(ruler).toBeInTheDocument();
+  });
+
+  it("onde dezembro termina: dois cenários com o alternativo quando há suspeitos", async () => {
+    setup();
+    await waitFor(() =>
+      expect(screen.getByText("Onde dezembro termina")).toBeInTheDocument(),
+    );
+    // Cenário lançado (dezembro projetado) e o cenário do gasto típico.
     expect(
-      within(kpi as HTMLElement).queryByText("R$ 4,5 mil"),
-    ).not.toBeInTheDocument();
+      screen.getByText("Se o resto do ano custar o que está lançado"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Se os meses a conferir custarem o de sempre"),
+    ).toBeInTheDocument();
   });
 
-  it("preenche Saldo fim de meses passados a partir do month-grid realizado", async () => {
-    mockInvoke.mockReset();
-    mockCommands({
-      get_annual_metrics: ANNUAL,
-      get_forecast: FORECAST,
-      get_month_grid: monthGridHandler,
-    });
-    render(<AnnualScreen />);
-
-    await waitFor(() => expect(screen.getByText("Saldo fim")).toBeInTheDocument());
-    expect(screen.getByText(/1\.110,00/)).toBeInTheDocument();
-    expect(screen.getByText(/5\.550,00/)).toBeInTheDocument();
+  it("os doze meses aparecem como linhas; meses futuros sem percentual", async () => {
+    setup();
+    await waitFor(() => expect(screen.getByText("Os doze meses")).toBeInTheDocument());
+    // Abreviações capitalizadas dos meses.
+    expect(screen.getAllByText("Jan").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Dez").length).toBeGreaterThan(0);
+    // Selo "Conferir" nos meses suspeitos (set–dez).
+    expect(screen.getAllByText("Conferir").length).toBeGreaterThan(0);
   });
 
-  it("mostra Saldo fim histórico quando o ano exibido é anterior ao forecast", async () => {
-    mockInvoke.mockReset();
-    mockCommands({
-      get_annual_metrics: ANNUAL,
-      get_forecast: { ...FORECAST, today: "2027-06-10", month_end: [] },
-      get_month_grid: monthGridHandler,
-    });
-    render(<AnnualScreen />);
+  it("o ano em números é disclosure (lista), abre e mostra o detalhe do mês", async () => {
+    setup();
+    const fold = await screen.findByRole("button", { name: /O ano em números/i });
+    expect(fold).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(fold);
+    expect(fold).toHaveAttribute("aria-expanded", "true");
+    // A fronteira previsto é dita uma vez.
+    expect(screen.getByText("Daqui para frente é previsão")).toBeInTheDocument();
+    // Total Vivido no rodapé.
+    expect(screen.getByText("Vivido")).toBeInTheDocument();
+  });
 
-    await waitFor(() => expect(screen.getByText("Saldo fim")).toBeInTheDocument());
-    expect(screen.getByText(/1\.110,00/)).toBeInTheDocument();
-    expect(screen.getByText(/5\.550,00/)).toBeInTheDocument();
+  it("sua renda ao longo dos anos aparece com percentual guardado", async () => {
+    setup();
+    await waitFor(() =>
+      expect(screen.getByText("Sua renda ao longo dos anos")).toBeInTheDocument(),
+    );
+    expect(screen.getAllByText(/guardado/).length).toBeGreaterThan(0);
+  });
+
+  it("zero por escolha: economia zero mas reserva ≥ 6 meses", async () => {
+    setup({ reserve: 8 });
+    await waitFor(() =>
+      expect(
+        screen.getByText("Você zerou a economia para não tocar na reserva."),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("sem registro: ano vazio mostra o veredito e não monta os cards", async () => {
+    setup();
+    await waitFor(() =>
+      expect(screen.getByText("A faixa do método")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Ano anterior" })); // 2025
+    fireEvent.click(screen.getByRole("button", { name: "Ano anterior" })); // 2024 (vazio)
+    await waitFor(() =>
+      expect(screen.getByText("2024 não tem registro.")).toBeInTheDocument(),
+    );
+    expect(screen.queryByText("A faixa do método")).not.toBeInTheDocument();
+  });
+
+  it("navegação de ano: próximo desabilitado no ano corrente", async () => {
+    setup();
+    await waitFor(() =>
+      expect(screen.getByText("A faixa do método")).toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "Próximo ano" })).toBeDisabled();
   });
 });
