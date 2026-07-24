@@ -8,6 +8,19 @@ for humans, and versions follow [SemVer](https://semver.org/).
 
 ### Added
 
+- The Teto do diário screen became the record of a decision with proof: it opens
+  on the ceiling itself with the detected spending mode stating what the day is
+  measured against, then shows the ceremony that produced it (the variable-month
+  items, the `total ÷ days` formula rounded up, and the original spreadsheet note
+  reproduced verbatim behind a disclosure), the age of that ceremony against the
+  method's three-month cadence, and how the day reads the ceiling. Editing is no
+  longer the screen's permanent state: it became a three-beat rite on the surface
+  (items → divisor → before/after acceptance), with a guard that explains the
+  consequence when the new ceiling is lower and still lets it through, a guided
+  five-question ceremony for whoever has no ceiling yet, and a calm inline refusal
+  when the divisor is missing. The spreadsheet proposal moved from a banner into a
+  verdict state of its own, and the ceiling's provenance (the note and the month
+  the ceremony was made) now survives the import.
 - The O ano screen became the place where the method actually judges: it opens
   on a verdict and the band ruler (fixed 0–40% scale with the 20–30% target
   zone) instead of KPI tiles and a seven-column table, because the savings rate

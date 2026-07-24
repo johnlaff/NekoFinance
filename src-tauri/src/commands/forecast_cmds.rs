@@ -878,11 +878,22 @@ pub(crate) async fn upsert_daily_budget_with_categories_inner(
         .begin()
         .await
         .map_err(|e| format!("upsert daily budget (begin): {e}"))?;
-    upsert_daily_budget_with_categories_tx(&mut tx, amount_cents, categories, divisor_days).await?;
+    upsert_daily_budget_with_categories_tx(&mut tx, amount_cents, categories, divisor_days, None)
+        .await?;
     tx.commit()
         .await
         .map_err(|e| format!("upsert daily budget (commit): {e}"))?;
     Ok(())
+}
+
+/// Proveniência da cerimônia que produziu o teto: a nota da planilha que a tela reproduz e o mês
+/// em que a cerimônia foi feita. `None` no upsert = cerimônia do rito no app (mês corrente, sem
+/// nota) — o registro sucessor nasce limpo, então a nota de uma proposta antiga nunca sobrevive a
+/// uma cerimônia nova.
+pub(crate) struct CeremonyProvenance<'a> {
+    pub source_note: Option<&'a str>,
+    /// `YYYY-MM` da cerimônia (o mês da nota, não o do aceite).
+    pub ceremony_month: &'a str,
 }
 
 /// Núcleo em transação JÁ ABERTA — o caller é dono do commit (o aceite de proposta compõe este
@@ -892,6 +903,7 @@ pub(crate) async fn upsert_daily_budget_with_categories_tx(
     amount_cents: i64,
     categories: &[CategoryInput],
     divisor_days: Option<i64>,
+    provenance: Option<CeremonyProvenance<'_>>,
 ) -> Result<(), String> {
     // Valida ANTES de escrever (atomicidade lógica: ou tudo válido, ou nada muda).
     for c in categories {
@@ -925,15 +937,21 @@ pub(crate) async fn upsert_daily_budget_with_categories_tx(
     if amount_cents > 0 {
         let budget_id = uuid::Uuid::new_v4().to_string();
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let ceremony_month = provenance
+            .as_ref()
+            .map_or_else(|| today[..7].to_string(), |p| p.ceremony_month.to_string());
         sqlx::query(
-            "INSERT INTO daily_budget (id, person_id, amount, start_date, status, divisor_days) \
-             VALUES (?1, ?2, ?3, ?4, 'active', ?5)",
+            "INSERT INTO daily_budget \
+             (id, person_id, amount, start_date, status, divisor_days, source_note, ceremony_month) \
+             VALUES (?1, ?2, ?3, ?4, 'active', ?5, ?6, ?7)",
         )
         .bind(&budget_id)
         .bind(&person_id)
         .bind(amount_cents)
         .bind(&today)
         .bind(divisor_days)
+        .bind(provenance.as_ref().and_then(|p| p.source_note))
+        .bind(&ceremony_month)
         .execute(&mut **tx)
         .await
         .map_err(|e| format!("upsert_daily_budget (insert): {e}"))?;
@@ -1006,21 +1024,38 @@ pub async fn get_daily_budget_categories_cmd(
 pub struct DailyBudgetDto {
     pub per_day_cents: i64,
     pub divisor_days: Option<i64>,
+    /// `YYYY-MM` em que a cerimônia foi feita — a idade que a tela conta para convidar à
+    /// recalibração. `None` só em orçamento sem registro.
+    pub ceremony_month: Option<String>,
+    /// Nota crua da célula que documenta a cerimônia, quando o teto nasceu de uma proposta
+    /// aceita. `None` = cerimônia feita no app (não há nota da planilha para reproduzir).
+    pub source_note: Option<String>,
     pub categories: Vec<DailyBudgetCategoryRow>,
 }
 
+/// Linha do orçamento ativo como o banco a devolve (o DTO acrescenta as categorias).
+#[derive(sqlx::FromRow, Default)]
+struct ActiveBudgetRow {
+    amount: i64,
+    divisor_days: Option<i64>,
+    ceremony_month: Option<String>,
+    source_note: Option<String>,
+}
+
 pub(crate) async fn get_daily_budget_inner(pool: &SqlitePool) -> Result<DailyBudgetDto, String> {
-    let active: Option<(i64, Option<i64>)> = sqlx::query_as(
-        "SELECT amount, divisor_days FROM daily_budget WHERE status='active' AND amount > 0 \
-         ORDER BY start_date DESC LIMIT 1",
+    let active = sqlx::query_as::<_, ActiveBudgetRow>(
+        "SELECT amount, divisor_days, ceremony_month, source_note FROM daily_budget \
+         WHERE status='active' AND amount > 0 ORDER BY start_date DESC LIMIT 1",
     )
     .fetch_optional(pool)
     .await
-    .map_err(|e| format!("get_daily_budget: {e}"))?;
-    let (per_day_cents, divisor_days) = active.unwrap_or((0, None));
+    .map_err(|e| format!("get_daily_budget: {e}"))?
+    .unwrap_or_default();
     Ok(DailyBudgetDto {
-        per_day_cents,
-        divisor_days,
+        per_day_cents: active.amount,
+        divisor_days: active.divisor_days,
+        ceremony_month: active.ceremony_month,
+        source_note: active.source_note,
         categories: get_daily_budget_categories_inner(pool).await?,
     })
 }
@@ -1037,6 +1072,9 @@ pub struct CeilingProposalDto {
     pub per_day_cents: i64,
     pub divisor_days: i64,
     pub source_month: String,
+    /// Nota crua da célula, reproduzida na tela como prova. `None` em propostas registradas
+    /// antes da coluna de proveniência existir.
+    pub raw_note: Option<String>,
     pub items: Vec<CeilingProposalItemDto>,
 }
 
@@ -1049,14 +1087,14 @@ pub struct CeilingProposalItemDto {
 pub(crate) async fn get_ceiling_proposal_inner(
     pool: &SqlitePool,
 ) -> Result<Option<CeilingProposalDto>, String> {
-    let row: Option<(String, i64, i64, String, String)> = sqlx::query_as(
-        "SELECT id, per_day_cents, divisor_days, source_month, items_json \
+    let row: Option<(String, i64, i64, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, per_day_cents, divisor_days, source_month, items_json, raw_note \
          FROM ceiling_proposal WHERE status='pending' LIMIT 1",
     )
     .fetch_optional(pool)
     .await
     .map_err(|e| format!("get_ceiling_proposal: {e}"))?;
-    let Some((id, per_day_cents, divisor_days, source_month, items_json)) = row else {
+    let Some((id, per_day_cents, divisor_days, source_month, items_json, raw_note)) = row else {
         return Ok(None);
     };
     // Fronteira interna, mas ainda parse-validado: um items_json corrompido não pode derrubar a
@@ -1067,6 +1105,7 @@ pub(crate) async fn get_ceiling_proposal_inner(
         per_day_cents,
         divisor_days,
         source_month,
+        raw_note,
         items,
     }))
 }
@@ -1088,15 +1127,15 @@ pub(crate) async fn accept_ceiling_proposal_inner(
         .begin()
         .await
         .map_err(|e| format!("accept proposal (begin): {e}"))?;
-    let row: Option<(i64, i64, String)> = sqlx::query_as(
-        "SELECT per_day_cents, divisor_days, items_json FROM ceiling_proposal \
-         WHERE id = ?1 AND status = 'pending'",
+    let row: Option<(i64, i64, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT per_day_cents, divisor_days, items_json, source_month, raw_note \
+         FROM ceiling_proposal WHERE id = ?1 AND status = 'pending'",
     )
     .bind(proposal_id)
     .fetch_optional(&mut *tx)
     .await
     .map_err(|e| format!("accept proposal (lookup): {e}"))?;
-    let Some((per_day_cents, divisor_days, items_json)) = row else {
+    let Some((per_day_cents, divisor_days, items_json, source_month, raw_note)) = row else {
         return Err("proposta de teto não encontrada ou já resolvida".into());
     };
     let items: Vec<CeilingProposalItemDto> = serde_json::from_str(&items_json).unwrap_or_default();
@@ -1109,8 +1148,19 @@ pub(crate) async fn accept_ceiling_proposal_inner(
             position: i as i64,
         })
         .collect();
-    upsert_daily_budget_with_categories_tx(&mut tx, per_day_cents, &categories, Some(divisor_days))
-        .await?;
+    // A cerimônia aceita continua sendo a cerimônia da NOTA: a idade que a tela conta corre do
+    // mês em que o dono a escreveu na planilha, não do dia do aceite.
+    upsert_daily_budget_with_categories_tx(
+        &mut tx,
+        per_day_cents,
+        &categories,
+        Some(divisor_days),
+        Some(CeremonyProvenance {
+            source_note: raw_note.as_deref(),
+            ceremony_month: &source_month,
+        }),
+    )
+    .await?;
     sqlx::query(
         "UPDATE ceiling_proposal SET status='accepted', resolved_at=datetime('now') WHERE id=?1",
     )
@@ -3993,6 +4043,50 @@ mod tests {
                 .unwrap();
         assert_eq!(status, "dismissed");
         assert!(get_ceiling_proposal_inner(&p).await.unwrap().is_none());
+    }
+
+    // A proveniência da cerimônia sobrevive ao aceite: a nota crua vira a prova reproduzida na
+    // tela e a idade da cerimônia corre do mês da NOTA, não do dia do aceite. Uma cerimônia
+    // feita depois, no app, nasce sem nota — a prova passa a ser a do app.
+    #[tokio::test]
+    async fn ceiling_provenance_survives_accept_and_resets_on_app_ceremony() {
+        let p = pool().await;
+        seed_person(&p).await;
+        let note = "Mensal  R$ 1250,00  Variável\nR$ 1250,00 / 31 Dias = R$ 40,33";
+        sqlx::query(
+            "INSERT INTO ceiling_proposal \
+             (id, note_hash, per_day_cents, divisor_days, items_json, source_month, status, raw_note) \
+             VALUES ('cp-9', 'h9', 4033, 31, '[{\"name\":\"Variável\",\"amount_cents\":125000}]', '2025-09', 'pending', ?1)",
+        )
+        .bind(note)
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let pending = get_ceiling_proposal_inner(&p).await.unwrap().unwrap();
+        assert_eq!(pending.raw_note.as_deref(), Some(note));
+
+        accept_ceiling_proposal_inner(&p, "cp-9").await.unwrap();
+        let budget = get_daily_budget_inner(&p).await.unwrap();
+        assert_eq!(budget.source_note.as_deref(), Some(note));
+        assert_eq!(budget.ceremony_month.as_deref(), Some("2025-09"));
+
+        // Cerimônia refeita no app: registro sucessor sem nota, com o mês corrente.
+        upsert_daily_budget_with_categories_inner(
+            &p,
+            4355,
+            &[cat("Variável", 135_000, 0)],
+            Some(31),
+        )
+        .await
+        .unwrap();
+        let refeito = get_daily_budget_inner(&p).await.unwrap();
+        assert_eq!(refeito.per_day_cents, 4_355);
+        assert_eq!(refeito.source_note, None, "a nota antiga não sobrevive");
+        assert_eq!(
+            refeito.ceremony_month.as_deref(),
+            Some(&chrono::Local::now().format("%Y-%m").to_string()[..]),
+        );
     }
 
     // O resumo do dashboard expõe a procedência do teto e o overlay de proposta pendente.

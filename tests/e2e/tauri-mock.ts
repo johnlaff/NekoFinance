@@ -727,6 +727,11 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
       get_daily_budget_cmd: {
         per_day_cents: 4300,
         divisor_days: 30,
+        ceremony_month: "2025-09",
+        // A nota reproduz exatamente os itens abaixo: a prova da tela do teto não pode
+        // divergir do que a citação afirma.
+        source_note:
+          "Mensal  R$ 900,00  Alimentação\nMensal  R$ 390,00  Transporte\nTotal = R$ 1290,00\nR$ 1290,00 / 30 Dias = R$ 43,00",
         categories: [
           { id: "cat-1", name: "Alimentação", amount_cents: 90000, position: 0 },
           { id: "cat-2", name: "Transporte", amount_cents: 39000, position: 1 },

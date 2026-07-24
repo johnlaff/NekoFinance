@@ -60,7 +60,9 @@ that deviates must say why in the PR.
    cards; `stretch` inflates short surfaces over empty tint (a voice note must never
    stretch). Use per-column wrappers (flex column, uniform gap) that dissolve on mobile
    via `display: contents`. Native masonry (`grid-lanes`) is not a baseline until it
-   ships cross-browser.
+   ships cross-browser. Grid items default to `min-width: auto`, and `display: contents`
+   promotes the cards themselves to grid items: set `min-width: 0` on them, or one row of
+   fixed-width fields drags the whole screen past the 390px viewport.
 10. **DOM order is reading order — always.** Screen readers and tab order follow the
     DOM, not `order` or visual placement. Layout variants may only change _where the
     column break falls_, never the sequence of children. No `order` property to fake a

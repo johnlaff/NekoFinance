@@ -1,0 +1,688 @@
+/* Teto do diário — o registro de uma decisão com prova: veredito → prova do número → idade da
+   cerimônia → como o dia lê o teto. Editar é o rito de três batidas, na própria superfície.
+   Namespace .teto__* (classe curta colide com globais do shell). */
+
+.teto {
+  display: grid;
+  gap: var(--space-6);
+  align-items: start;
+}
+
+/* Item de grid tem `min-width: auto`: sem isto, uma linha de campos com largura fixa dilata
+   a faixa e leva a tela inteira para fora do viewport de 390px. */
+.teto > *,
+.teto__col > * {
+  min-width: 0;
+}
+
+/* Coluna do bento: wrapper próprio para que cada uma empilhe no seu ritmo — alinhar por linha
+   com massas díspares abre buracos (`start`) ou estica superfície curta sobre vazio (`stretch`). */
+.teto__col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+/* Mobile: as colunas se dissolvem e os cards fluem na ordem do DOM. */
+@media (max-width: 899px) {
+  .teto__col {
+    display: contents;
+  }
+}
+
+@media (min-width: 900px) {
+  .teto {
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  }
+
+  /* O veredito é a manchete da tela: largura cheia, com a linha de leitura travada no texto. */
+  .teto__verdict {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Teto de conteúdo sobe um passo no ultrawide em vez de deixar os vazios laterais crescerem. */
+@media (min-width: 1700px) {
+  .teto {
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+    max-width: 1280px;
+  }
+}
+
+/* ---- Veredito: manchete na voz da marca; cor de status FORA daqui (o método não julga o
+   teto — ele registra a decisão do dono) ---- */
+
+.teto__verdict {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.teto__vlabel {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--fs-label);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.teto__verdict h1 {
+  margin: 0;
+  font-size: var(--fs-h1);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.03em;
+  line-height: var(--lh-tight);
+  color: var(--text-strong);
+}
+
+.teto__verdict p {
+  margin: 0;
+  font-size: var(--fs-body);
+  line-height: 1.55;
+  color: var(--text-muted);
+  max-width: 52ch;
+}
+
+.teto__verdict p b {
+  color: var(--text-strong);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Fecho didático em tom mais tênue — o convite do método, nunca uma cobrança. */
+.teto__cf {
+  color: var(--text-faint);
+}
+
+.teto__vactions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-top: var(--space-3);
+}
+
+.teto__modechip {
+  align-self: flex-start;
+  margin-top: var(--space-2);
+}
+
+/* ---- Anatomia do card (comum a todos) ---- */
+
+.teto__card {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+  padding: var(--space-7) var(--space-7) var(--space-6);
+}
+
+.teto__cardhead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-5);
+}
+
+.teto__cardhead .ic {
+  color: var(--text-muted);
+  flex: none;
+}
+
+.teto__cardhead h2 {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.teto__note {
+  margin-left: auto;
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.teto__cardbody {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.teto__cardbody b {
+  color: var(--text-strong);
+  font-weight: 500;
+}
+
+.teto__cardactions {
+  margin-top: var(--space-5);
+}
+
+/* ---- A prova do número: os itens, a fórmula e a nota original ---- */
+
+.teto__items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.teto__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+}
+
+/* Filete como marcador de ritmo da lista — não como caixa em volta de cada linha. */
+.teto__item + .teto__item {
+  border-top: 1px solid var(--border);
+}
+
+.teto__itemname {
+  flex: 1;
+  min-width: 0;
+}
+
+.teto__itemname b {
+  display: block;
+  font-size: var(--fs-sm);
+  font-weight: 450;
+  color: var(--text-strong);
+  letter-spacing: -0.01em;
+}
+
+.teto__itemamt {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text-strong);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.teto__itemamt small {
+  font-weight: 400;
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+  margin-left: 3px;
+}
+
+.teto__formula {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  border-top: 1px solid var(--border);
+  margin-top: var(--space-3);
+  padding-top: var(--space-5);
+}
+
+.teto__frow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.teto__frow b {
+  color: var(--text-strong);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* O resultado é o herói tipográfico da prova — sem caixa, sem cor: só peso e tamanho. */
+.teto__frow--result {
+  font-size: var(--fs-body);
+}
+
+.teto__frow--result b {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+
+.teto__round {
+  margin: var(--space-3) 0 0;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+}
+
+.teto__mismatch {
+  margin: var(--space-4) 0 0;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.teto__fold {
+  border-top: 1px solid var(--border);
+  margin-top: var(--space-5);
+}
+
+.teto__fold > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  /* Alvo de toque de 44px sem inchar a linha de leitura. */
+  min-height: 44px;
+  cursor: pointer;
+  font-size: var(--fs-label);
+  color: var(--text-muted);
+  list-style: none;
+}
+
+.teto__fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.teto__fold > summary::before {
+  content: "›";
+  display: inline-block;
+  color: var(--text-faint);
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.teto__fold[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.teto__fold > summary:hover {
+  color: var(--text-strong);
+}
+
+.teto__fold > summary:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  border-radius: var(--radius-xs);
+}
+
+.teto__cite {
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  padding: var(--space-5);
+  margin-bottom: var(--space-4);
+}
+
+.teto__cite code {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  line-height: 1.6;
+  color: var(--text-muted);
+  /* A notação do dono é o contrato: quebras e espaços da nota preservados. */
+  white-space: pre-wrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.teto__cite small {
+  display: block;
+  margin-top: var(--space-4);
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+  line-height: 1.5;
+}
+
+/* ---- O rito: uma superfície por gesto ---- */
+
+.teto__rite {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+  padding: var(--space-7);
+  animation: teto-beat-in var(--dur-deliberate) var(--ease-standard) both;
+}
+
+@keyframes teto-beat-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.teto__step {
+  margin: 0 0 var(--space-3);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.teto__dots {
+  display: flex;
+  gap: 5px;
+  margin-bottom: var(--space-5);
+}
+
+.teto__dots i {
+  width: 14px;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+}
+
+.teto__dots i.on {
+  background: var(--accent);
+}
+
+.teto__rite h2 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-h3);
+  font-weight: 600;
+  letter-spacing: -0.024em;
+  line-height: var(--lh-tight);
+  color: var(--text-strong);
+}
+
+.teto__rite h2:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  border-radius: var(--radius-xs);
+}
+
+.teto__sub {
+  margin: 0 0 var(--space-5);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-muted);
+  max-width: 52ch;
+}
+
+.teto__rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.teto__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.teto__field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.teto__field label {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.teto__input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-xs);
+  padding: 8px 11px;
+}
+
+.teto__input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.teto__input--amount {
+  flex: none;
+  width: 120px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Toque: o campo é o próprio alvo, então cresce em altura (não há hit area a esticar por
+   fora), e o valor cede largura para o nome da categoria caber na linha de 390px. */
+@media (max-width: 640px) {
+  .teto__input {
+    min-height: 44px;
+  }
+
+  .teto__input--amount {
+    width: 104px;
+  }
+}
+
+.teto__input--divisor {
+  flex: none;
+  width: 76px;
+  text-align: center;
+  font-size: var(--fs-h3);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 10px 8px;
+}
+
+.teto__del {
+  position: relative;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  background: none;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+/* Alvo de toque de 44px sem inchar a silhueta da linha. */
+.teto__del::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+}
+
+.teto__del:hover {
+  color: var(--text-strong);
+  border-color: var(--text-muted);
+}
+
+.teto__del:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.teto__addrow {
+  margin-top: var(--space-4);
+}
+
+.teto__runsum {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-4);
+  border-top: 1px solid var(--border);
+  margin: var(--space-5) 0 0;
+  padding-top: var(--space-5);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.teto__runsum b {
+  color: var(--text-strong);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* O escape do rito vive no corpo, não no rodapé: o rodapé é sempre [voltar] × [avançar]. */
+.teto__escape {
+  margin: var(--space-4) 0 0;
+}
+
+.teto__ritefoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-top: var(--space-6);
+}
+
+.teto__quiet {
+  font: inherit;
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+  background: none;
+  border: 0;
+  padding: var(--space-2) 0;
+  min-height: 44px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--border);
+}
+
+.teto__quiet:hover {
+  color: var(--text-strong);
+}
+
+.teto__quiet:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  border-radius: var(--radius-xs);
+}
+
+/* ---- Batida 2: o palco da divisão ---- */
+
+.teto__divstage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  padding: var(--space-6) 0 var(--space-3);
+}
+
+.teto__dividend {
+  font-size: var(--fs-body);
+  color: var(--text-muted);
+}
+
+.teto__obelus {
+  font-size: var(--fs-h3);
+  color: var(--text-faint);
+}
+
+.teto__unit {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.teto__divhint,
+.teto__ferr {
+  margin: 0;
+  font-size: var(--fs-label);
+  line-height: 1.5;
+  text-align: center;
+  color: var(--text-faint);
+}
+
+/* O erro fala no tom da casa: cor de texto, nunca alarme vermelho sobre o campo. */
+.teto__ferr {
+  color: var(--text-muted);
+}
+
+/* ---- Batida 3: o aceite ---- */
+
+.teto__accept,
+.teto__guard {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  padding: var(--space-5);
+}
+
+.teto__aline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  padding: var(--space-2) 0 var(--space-4);
+}
+
+.teto__aold {
+  font-size: var(--fs-body);
+  color: var(--text-faint);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.teto__aarrow {
+  color: var(--text-faint);
+}
+
+.teto__anew {
+  font-size: var(--fs-money-lg);
+  font-weight: 600;
+  color: var(--text-strong);
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.teto__anew small {
+  font-size: var(--fs-label);
+  color: var(--text-muted);
+  font-weight: 400;
+  margin-left: var(--space-2);
+}
+
+.teto__ameta {
+  margin: 0;
+  text-align: center;
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+}
+
+.teto__avale {
+  margin: var(--space-4) 0 0;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+  text-align: center;
+  font-size: var(--fs-label);
+  color: var(--text-muted);
+}
+
+.teto__guard p {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.teto__guard p b {
+  color: var(--text-strong);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.teto__guard .teto__ameta {
+  margin-top: var(--space-4);
+}
+
+.teto__error {
+  margin: var(--space-5) 0 0;
+  font-size: var(--fs-label);
+  color: var(--danger-400);
+}

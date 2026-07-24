@@ -62,7 +62,9 @@ test.describe("teto do diário + estados de dado", () => {
     await page.setViewportSize({ width: 1440, height: 1000 });
   });
 
-  test("tela Teto do diário (editor da cerimônia)", async ({ page }) => {
+  test("tela Teto do diário (veredito, prova e idade da cerimônia)", async ({
+    page,
+  }) => {
     await mockTauri(page, {
       list_scenarios_cmd: [],
       list_scenario_transactions_cmd: [],
@@ -79,6 +81,88 @@ test.describe("teto do diário + estados de dado", () => {
       fullPage: true,
       maxDiffPixelRatio: 0.02,
     });
+  });
+
+  // O rito ocupa a superfície no lugar dos cards de leitura — nunca um modal por cima.
+  test("tela Teto do diário — o rito da recalibração na primeira batida", async ({
+    page,
+  }) => {
+    await mockTauri(page, {
+      list_scenarios_cmd: [],
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [],
+    });
+    await page.goto("/");
+    await page
+      .getByRole("button", { name: "Configurações", exact: false })
+      .first()
+      .click();
+    await page.getByRole("button", { name: "Abrir teto do diário" }).click();
+    await page.getByRole("button", { name: "Recalibrar o teto" }).click();
+    await page.waitForTimeout(350);
+    await expect(page).toHaveScreenshot("Teto-rito-dark.png", {
+      fullPage: true,
+      maxDiffPixelRatio: 0.02,
+    });
+  });
+});
+
+// Teto no mobile: a coluna de leitura inteira na ergonomia de polegar — o veredito e o
+// modo detectado cabem na primeira tela, a prova vem logo abaixo.
+for (const theme of ["dark", "light"] as const) {
+  test(`Teto do diário — mobile ${theme}`, async ({ page }) => {
+    await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript((t: string) => {
+      localStorage.setItem("neko-theme", t);
+    }, theme);
+    await mockTauri(page, {
+      list_scenarios_cmd: [],
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [],
+    });
+    await page.goto("/");
+    // A tela vive fora da nav: o caminho é o mesmo do desktop, por Configurações.
+    await page.getByRole("button", { name: "Mais telas" }).click();
+    await page.getByRole("button", { name: "Configurações", exact: false }).click();
+    await page.getByRole("button", { name: "Abrir teto do diário" }).click();
+    await page.waitForTimeout(350);
+    await expect(page).toHaveScreenshot(`mobile-teto-${theme}.png`, {
+      fullPage: true,
+      maxDiffPixelRatio: 0.02,
+    });
+  });
+}
+
+// O rito no polegar: campos com altura de toque e a linha nome × valor × remover inteira
+// dentro de 390px.
+test("Teto do diário — rito no mobile", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockTauri(page, {
+    list_scenarios_cmd: [],
+    list_scenario_transactions_cmd: [],
+    list_obligations_cmd: [],
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Mais telas" }).click();
+  await page.getByRole("button", { name: "Configurações", exact: false }).click();
+  await page.getByRole("button", { name: "Abrir teto do diário" }).click();
+  await page.getByRole("button", { name: "Recalibrar o teto" }).click();
+  await page.waitForTimeout(350);
+  await expect(page).toHaveScreenshot("mobile-teto-rito-dark.png", {
+    fullPage: true,
+    maxDiffPixelRatio: 0.02,
+  });
+});
+
+test.describe("teto do diário — estados de dado", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 1440, height: 1000 });
   });
 
   test("Hoje no modo cartão: as faturas por vencimento são o corpo do bloco do dia", async ({

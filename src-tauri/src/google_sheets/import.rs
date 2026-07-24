@@ -2127,8 +2127,8 @@ pub(crate) async fn upsert_ceiling_proposal_in_tx(
         .map_err(|e| format!("ceiling proposal (supersede): {e}"))?;
     sqlx::query(
         "INSERT INTO ceiling_proposal \
-         (id, note_hash, per_day_cents, divisor_days, items_json, source_month, status) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending')",
+         (id, note_hash, per_day_cents, divisor_days, items_json, source_month, status, raw_note) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7)",
     )
     .bind(uuid::Uuid::new_v4().to_string())
     .bind(&note_hash)
@@ -2136,6 +2136,9 @@ pub(crate) async fn upsert_ceiling_proposal_in_tx(
     .bind(i64::from(ceremony.divisor_days))
     .bind(&items_json)
     .bind(source_month)
+    // A nota vai CRUA (não a normalizada do hash): a citação na tela é reprodução, e a
+    // formatação do dono — recuos, quebras, a grafia dos itens — faz parte da prova.
+    .bind(raw_note)
     .execute(&mut **tx)
     .await
     .map_err(|e| format!("ceiling proposal (insert): {e}"))?;
