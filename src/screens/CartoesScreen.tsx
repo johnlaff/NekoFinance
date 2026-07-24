@@ -751,6 +751,7 @@ function CardTile({
                 onClick={onEdit}
               >
                 <Pencil size={14} aria-hidden="true" />
+                Editar
               </Button>
             </div>
             <span className="cartoes__discrete">
@@ -848,7 +849,11 @@ function InvoiceDetailBody({
       <InvoiceHero detail={detail} todayISO={todayISO} />
       <InvoiceBars bars={bars} />
       <TotaisSection detail={detail} />
-      <PurchasesSection purchases={detail.purchases} cycleMonth={detail.cycle_month} />
+      <PurchasesSection
+        purchases={detail.purchases}
+        cycleMonth={detail.cycle_month}
+        cardOwner={card.owner_name}
+      />
       {series.length > 0 ? (
         <SeriesSection series={series} cycleMonth={detail.cycle_month} />
       ) : null}
@@ -914,11 +919,16 @@ function TotaisSection({ detail }: { detail: InvoiceDetail }) {
   const [adjusting, setAdjusting] = useState(false);
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   function saveStatedTotal() {
     if (!isTauri) return;
     const cents = parseBRLToCents(amount);
-    if (cents == null) return;
+    if (cents == null) {
+      setError("Valor inválido — use o formato 1.234,56.");
+      return;
+    }
+    setError(null);
     setBusy(true);
     void setInvoiceStatedTotal(detail.id, cents)
       .then(() => {
@@ -965,7 +975,10 @@ function TotaisSection({ detail }: { detail: InvoiceDetail }) {
             aria-label="Total declarado"
             className="cartoes__field"
             value={amount}
-            onChange={(event) => setAmount(event.target.value)}
+            onChange={(event) => {
+              setAmount(event.target.value);
+              setError(null);
+            }}
           />
           <Button variant="primary" size="sm" disabled={busy} onClick={saveStatedTotal}>
             Confirmar
@@ -973,6 +986,11 @@ function TotaisSection({ detail }: { detail: InvoiceDetail }) {
           <Button variant="ghost" size="sm" onClick={() => setAdjusting(false)}>
             Cancelar
           </Button>
+          {error ? (
+            <p role="alert" className="cartoes__error">
+              {error}
+            </p>
+          ) : null}
         </div>
       ) : (
         <Button
@@ -998,9 +1016,11 @@ function TotaisSection({ detail }: { detail: InvoiceDetail }) {
 function PurchasesSection({
   purchases,
   cycleMonth,
+  cardOwner,
 }: {
   purchases: InvoiceDetail["purchases"];
   cycleMonth: string;
+  cardOwner: string;
 }) {
   if (purchases.length === 0) return null;
 
@@ -1028,8 +1048,15 @@ function PurchasesSection({
                 ) : null}
               </b>
               <small>
-                {dateLabel(purchase.date)} ·{" "}
-                <OwnerChip who={ownerKind(purchase.owner_name)} />
+                {dateLabel(purchase.date)}
+                {/* Pill em toda linha não é informação: o dono só aparece
+                    quando diverge do titular do cartão. */}
+                {purchase.owner_name !== cardOwner ? (
+                  <>
+                    {" "}
+                    · <OwnerChip who={ownerKind(purchase.owner_name)} />
+                  </>
+                ) : null}
               </small>
             </span>
             {purchase.series_id ? null : (
@@ -1075,11 +1102,16 @@ function SeriesSection({
     amount: string;
   } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   function saveSeries() {
     if (!editingSeries || !isTauri) return;
     const cents = parseBRLToCents(editingSeries.amount);
-    if (cents == null) return;
+    if (cents == null) {
+      setError("Valor inválido — use o formato 1.234,56.");
+      return;
+    }
+    setError(null);
     setBusy(true);
     void updateCardSeries(editingSeries.id, editingSeries.description, cents)
       .then(() => {
@@ -1134,14 +1166,20 @@ function SeriesSection({
                       className="cartoes__field"
                       inputMode="decimal"
                       value={editingSeries.amount}
-                      onChange={(event) =>
+                      onChange={(event) => {
                         setEditingSeries({
                           ...editingSeries,
                           amount: event.target.value,
-                        })
-                      }
+                        });
+                        setError(null);
+                      }}
                     />
                   </label>
+                  {error ? (
+                    <p role="alert" className="cartoes__error">
+                      {error}
+                    </p>
+                  ) : null}
                   <p className="cartoes__discrete">Regenera as ocorrências futuras.</p>
                   <div className="cartoes__actions">
                     <Button

@@ -24,11 +24,19 @@ vivem num view-model puro novo (`cartoesView.ts`, TDD).
    recorte por dono, líquido de conferência.
 5. **Formulário** de cadastro/edição (estado sobreposto à lista).
 
-Desktop: bento de 2 colunas independentes (lista `340px` | detalhe `1fr`),
+Desktop: bento de 2 colunas independentes (lista `340px` | detalhe `1fr`;
+ultrawide ≥ 1700px sobe o teto para `1280px` e a lista para `380px`),
 regra 9 do `ui-standards`. Mobile: lista → drill como estado da tela — tocar
-num cartão revela o detalhe com "Voltar" no topo; a sequência do DOM não muda
-por viewport, só a visibilidade (regra 10). O shell não muda: Cartões segue no
-menu "Mais" do dock — a composição do dock é decisão da fundação.
+num cartão revela o detalhe com "Voltar" no topo; o alvo do scroll carrega
+`scroll-margin-top` do tamanho do appbar fixo, senão a única saída do drill
+nasce coberta por ele. A sequência do DOM não muda por viewport, só a
+visibilidade (regra 10). O shell não muda: Cartões segue no menu "Mais" do
+dock — a composição do dock é decisão da fundação.
+
+Moldura é de quem age: a proposta (banner acionável) e o painel do drill têm
+borda; o gate rende como linha nua sob o veredito e a meta do cartão como
+bloco de fundo sutil — quatro caixas consecutivas leriam como formulário
+(regra 21).
 
 ## Card-face (assinatura da tela)
 
@@ -92,9 +100,13 @@ Face de acento calma — o único lugar do app onde o acento vira superfície:
 
 ## Compras
 
-- Linha: descrição (+ `n/N` mono quando parcela), subtítulo "dd mmm ·
-  {OwnerChip}", valor tabular à direita.
-- Remanejo por ícones ‹ › com `aria-label` nomeando o ciclo de destino.
+- Linha: descrição (+ `n/N` mono quando parcela), subtítulo com a data e —
+  **só quando o dono diverge do titular** — o `OwnerChip` (pill em toda linha
+  não é informação, regra 24); valor tabular à direita.
+- Remanejo por ícones ‹ › com `aria-label` nomeando o ciclo de destino e
+  alvo de toque de 44px (área crescida por margem negativa, regra 19).
+- "Confirmar"/"Salvar" com valor BRL inválido respondem com erro inline
+  (`role="alert"`) — nunca falham em silêncio.
 
 ## Séries
 

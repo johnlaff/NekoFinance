@@ -27,15 +27,13 @@
   text-wrap: balance;
 }
 
+/* O gate é a prova do veredito, não um formulário: linha nua sob o h1 —
+   espaço e tipografia separam; a moldura fica com quem age (proposta). */
 .cartoes__gate {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-4);
-  padding: var(--space-4) var(--space-5);
-  border: var(--bw-hair) solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
 }
 
 .cartoes__gate-leg,
@@ -155,6 +153,13 @@
 
   .cartoes--drilled .cartoes__back {
     display: block;
+  }
+
+  /* O appbar é fixed sobre o scrollport: sem esta margem, o scrollIntoView do
+     drill alinha o Voltar por baixo dele e a única saída fica invisível. */
+  .cartoes__detail,
+  .cartoes__list {
+    scroll-margin-top: calc(env(safe-area-inset-top, 0px) + 70px);
   }
 }
 
@@ -290,9 +295,8 @@
   display: grid;
   gap: var(--space-3);
   padding: var(--space-4) var(--space-6);
-  border: var(--bw-hair) solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--surface);
+  background: var(--bg-subtle);
 }
 
 .cartoes__meta-row {
@@ -626,13 +630,16 @@ b > .cartoes__chip {
   gap: var(--space-1);
 }
 
+/* Alvo de toque ≥ 44px: a área cresce por margem negativa vertical (a linha
+   absorve), nunca inflando o layout — mover compra de ciclo não tolera erro
+   de toque. */
 .cartoes__move-btn {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
-  padding: var(--space-2);
-  margin: calc(-1 * var(--space-2)) 0;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  margin-block: calc(-1 * var(--space-4));
   border: 0;
   border-radius: var(--radius-xs);
   background: none;
@@ -839,5 +846,16 @@ b > .cartoes__chip {
   .cartoes__hero-due {
     justify-items: start;
     text-align: start;
+  }
+}
+
+/* Ultrawide: o teto de conteúdo sobe — o vazio lateral não cresce. */
+@media (min-width: 1700px) {
+  .cartoes {
+    max-width: 1280px;
+  }
+
+  .cartoes__cols {
+    grid-template-columns: 380px minmax(0, 1fr);
   }
 }
