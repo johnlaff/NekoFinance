@@ -84,6 +84,22 @@ describe("Cartões", () => {
     expect(screen.getByLabelText("Total declarado")).toHaveValue("4289,00");
   });
 
+  it("editar o adicional abre o formulário do adicional, não do titular", async () => {
+    const user = userEvent.setup();
+    render(<CartoesScreen />);
+    await user.click(screen.getByRole("button", { name: "Editar Cartão adicional" }));
+    expect(screen.getByLabelText("Nome")).toHaveValue("Cartão adicional");
+  });
+
+  it("trocar de ciclo descarta o ajuste em andamento — nunca herda o valor de outro mês", async () => {
+    const user = userEvent.setup();
+    render(<CartoesScreen />);
+    await user.click(screen.getByRole("button", { name: "Ajustar total declarado" }));
+    expect(screen.getByLabelText("Total declarado")).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: "Jul · Fechada" }));
+    expect(screen.queryByLabelText("Total declarado")).not.toBeInTheDocument();
+  });
+
   it("valida os dias do ciclo", () => {
     expect(validateCardCycle("29", "10")).toMatch(/1 e 28/);
     expect(validateCardCycle("20", "32")).toMatch(/1 e 31/);

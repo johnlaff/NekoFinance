@@ -15,6 +15,7 @@ import {
   nextDueAcross,
   ownerKind,
   subscriptionCadence,
+  totalsHeadLabel,
   verdictLine,
 } from "./cartoesView";
 
@@ -83,6 +84,32 @@ describe("cycleWindow", () => {
     expect(win[0]!.id).toBe("abr");
     expect(win.at(-1)!.id).toBe("z");
   });
+
+  it("ancora a janela na fatura aberta quando há muitas previstas à frente", () => {
+    const many = [
+      ...WINDOW,
+      ...Array.from({ length: 10 }, (_, i) =>
+        inv({
+          id: `prev-${i}`,
+          cycle_month: `2027-${String(i + 1).padStart(2, "0")}`,
+          status: "prevista" as const,
+        }),
+      ),
+    ];
+    const win = cycleWindow(many, "ago");
+    expect(win).toHaveLength(6);
+    expect(win.some((i) => i.id === "ago")).toBe(true);
+    // 4 de história antes da âncora + a âncora + 1 prevista depois
+    expect(win[4]!.id).toBe("ago");
+    expect(win[5]!.id).toBe("prev-0");
+  });
+
+  it("sem âncora ou com âncora no fim, mantém os últimos 6", () => {
+    expect(cycleWindow(WINDOW, "ago").map((i) => i.id)).toEqual(
+      WINDOW.map((i) => i.id),
+    );
+    expect(cycleWindow(WINDOW, null).at(-1)!.id).toBe("ago");
+  });
 });
 
 describe("cycleOptions", () => {
@@ -142,12 +169,33 @@ describe("buildBars", () => {
     expect(bars.caption).toBe("Faturas dos últimos 5 ciclos.");
   });
 
-  it("sobrevive à janela de valores zerados", () => {
+  it("sobrevive à janela de valores zerados e marca o zero como zero", () => {
     const bars = buildBars(
       [inv({ id: "a", effective_total_cents: 0, status: "paga" })],
       "a",
     );
     expect(bars.bars[0]!.pct).toBe(0);
+    expect(bars.bars[0]!.zero).toBe(true);
+  });
+
+  it("distingue anos no rótulo e no equivalente textual quando a janela cruza a virada", () => {
+    const bars = buildBars(
+      [
+        inv({ id: "dez25", cycle_month: "2025-12", status: "paga" }),
+        inv({ id: "jan26", cycle_month: "2026-01", status: "aberta" }),
+      ],
+      "jan26",
+    );
+    expect(bars.bars[0]!.label).toBe("Dez ’25");
+    expect(bars.bars[1]!.label).toBe("Jan");
+    expect(bars.aria).toContain("Dez ’25");
+  });
+});
+
+describe("totalsHeadLabel", () => {
+  it("nomeia a autoridade da linha de totais", () => {
+    expect(totalsHeadLabel(428_900)).toBe("Total declarado");
+    expect(totalsHeadLabel(null)).toBe("Compras itemizadas");
   });
 });
 
@@ -177,7 +225,12 @@ describe("cycleStateLabel", () => {
     ).toMatch(/^Fechou em 20 de jul/);
     expect(
       cycleStateLabel(
-        inv({ id: "set", status: "prevista", closing_date: "2026-09-20" }),
+        inv({
+          id: "set",
+          status: "prevista",
+          closing_date: "2026-09-20",
+          due_date: "2026-10-10",
+        }),
         "2026-08-01",
       ),
     ).toMatch(/^Fecha em 20 de set/);

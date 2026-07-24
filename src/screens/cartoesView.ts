@@ -50,14 +50,28 @@ function monthNameLower(cycleMonth: string): string {
 
 export const CYCLE_WINDOW_LIMIT = 6;
 
-/** Janela de exibição: ciclos em ordem velho → novo, os últimos `limit`. */
+/**
+ * Janela de exibição: ciclos em ordem velho → novo, `limit` no total. Com uma
+ * âncora (a fatura aberta/próxima), a janela a contém sempre — séries longas
+ * materializam muitas previstas à frente, e "os últimos 6" deixariam a aberta
+ * sem rádio nem barra. A âncora senta na penúltima posição quando há história:
+ * até `limit − 2` ciclos vividos antes dela + 1 prevista depois.
+ */
 export function cycleWindow(
   invoices: InvoiceSummary[],
+  anchorId?: string | null,
   limit = CYCLE_WINDOW_LIMIT,
 ): InvoiceSummary[] {
-  return invoices
-    .toSorted((a, b) => a.cycle_month.localeCompare(b.cycle_month))
-    .slice(-limit);
+  const sorted = invoices.toSorted((a, b) =>
+    a.cycle_month.localeCompare(b.cycle_month),
+  );
+  const anchorIdx = anchorId ? sorted.findIndex((i) => i.id === anchorId) : -1;
+  if (anchorIdx < 0) return sorted.slice(-limit);
+  const start = Math.min(
+    Math.max(0, anchorIdx - (limit - 2)),
+    Math.max(0, sorted.length - limit),
+  );
+  return sorted.slice(start, start + limit);
 }
 
 export interface CycleOption {
@@ -71,14 +85,17 @@ export interface CycleOption {
  */
 export function cycleOptions(window: InvoiceSummary[]): CycleOption[] {
   const latestYear = window.at(-1)?.cycle_month.slice(0, 4);
-  return window.map((invoice) => {
-    const year = invoice.cycle_month.slice(0, 4);
-    const suffix = year === latestYear ? "" : ` ’${year.slice(2)}`;
-    return {
-      value: invoice.id,
-      label: `${shortMonth(invoice.cycle_month)}${suffix} · ${capitalize(invoice.status)}`,
-    };
-  });
+  return window.map((invoice) => ({
+    value: invoice.id,
+    label: `${monthWithYear(invoice.cycle_month, latestYear)} · ${capitalize(invoice.status)}`,
+  }));
+}
+
+/** "Ago", ou "Dez ’25" quando o ciclo não pertence ao ano de referência. */
+function monthWithYear(cycleMonth: string, latestYear: string | undefined): string {
+  const year = cycleMonth.slice(0, 4);
+  const suffix = year === latestYear ? "" : ` ’${year.slice(2)}`;
+  return `${shortMonth(cycleMonth)}${suffix}`;
 }
 
 /** Seleção default do drill: a aberta, senão a próxima a vencer, senão a mais recente. */
@@ -100,6 +117,8 @@ export interface BarModel {
   pct: number;
   cents: number;
   selected: boolean;
+  /** Valor zero de verdade — a barra não desenha nem o mínimo visual. */
+  zero: boolean;
 }
 
 export interface BarsModel {
@@ -114,12 +133,14 @@ export function buildBars(
   selectedId: string | null,
 ): BarsModel {
   const max = Math.max(...window.map((i) => i.effective_total_cents), 0);
+  const latestYear = window.at(-1)?.cycle_month.slice(0, 4);
   const bars = window.map((invoice) => ({
     id: invoice.id,
-    label: shortMonth(invoice.cycle_month),
+    label: monthWithYear(invoice.cycle_month, latestYear),
     pct: max > 0 ? Math.round((invoice.effective_total_cents / max) * 100) : 0,
     cents: invoice.effective_total_cents,
     selected: invoice.id === selectedId,
+    zero: invoice.effective_total_cents === 0,
   }));
   const selected = window.find((i) => i.id === selectedId);
   const accumulating =
@@ -129,13 +150,21 @@ export function buildBars(
   return {
     bars,
     aria: `Faturas por ciclo: ${window
-      .map((i) => `${shortMonth(i.cycle_month)} ${formatBRL(i.effective_total_cents)}`)
+      .map(
+        (i) =>
+          `${monthWithYear(i.cycle_month, latestYear)} ${formatBRL(i.effective_total_cents)}`,
+      )
       .join(", ")}.`,
     caption: `Faturas dos últimos ${window.length} ciclos${accumulating}`,
   };
 }
 
 // -------------------------------------------------------------------- herói --
+
+/** Rótulo da linha-cabeça de Totais — a mesma autoridade do herói. */
+export function totalsHeadLabel(statedTotalCents: number | null): string {
+  return statedTotalCents != null ? "Total declarado" : "Compras itemizadas";
+}
 
 /** O subtítulo diz qual autoridade produziu o número: o total declarado da
     planilha manda quando existe; sem ele, o efetivo é a soma das compras. */

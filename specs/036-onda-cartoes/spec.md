@@ -61,17 +61,22 @@ Face de acento calma — o único lugar do app onde o acento vira superfície:
   com a autoridade** (regra 6): `stated_total` presente → "Total declarado —
   autoridade da planilha"; ausente → "Soma das compras itemizadas".
 - Vencimento ("Vence 10 de ago") + estado do ciclo ("Fecha em 5 dias" na
-  aberta; "Fechou {dd de mmm}" na fechada; "Abre {dd de mmm}" na prevista;
-  "Paga {dd de mmm}" na paga) — derivação pura com `today` injetado.
+  aberta; "Fechou em {dd de mmm}" na fechada; "Fecha em {dd de mmm}" na
+  prevista — a data de abertura do ciclo não é dado do contrato, e inventá-la
+  seria mentir; "Paga em {dd de mmm}" na paga) — derivação pura com `today`
+  injetado.
 - **Chip de status com cor fixa** (nunca segue o acento): `paga` → success,
   `fechada` → warning, `aberta` → tinta forte neutra, `prevista` → neutra
   apagada. O mapeamento atual `aberta → Badge primary` (acento) morre.
 
 ## Seletor de ciclo
 
-- Segmentado com os últimos ≤ 6 ciclos (velho → novo), cada opção com o mês e
-  o status ("Ago · Aberta"); seleção default = fatura aberta, senão a próxima
-  a vencer, senão a mais recente.
+- Segmentado com ≤ 6 ciclos (velho → novo), cada opção com o mês e o status
+  ("Ago · Aberta"); seleção default = fatura aberta, senão a próxima a vencer,
+  senão a mais recente. A janela é **ancorada na seleção default**: séries
+  longas materializam muitas previstas à frente, e "os últimos 6" deixariam a
+  aberta sem rádio nem barra — a âncora senta na penúltima posição (até 4 de
+  história + a âncora + 1 prevista).
 - Trocar de ciclo recarrega o detalhe; o remanejo de compra ("Mover para o
   ciclo anterior/seguinte") permanece.
 
@@ -87,9 +92,12 @@ Face de acento calma — o único lugar do app onde o acento vira superfície:
 
 ## Totais + reconciliação
 
-- Com compras itemizadas: "Total declarado" / "Compras itemizadas" e, quando
-  houver delta, a linha de reconciliação: "Não itemizado — parte da fatura sem
-  linha" (tracejada, itálica) — **nunca vira item** (spec 026 D3).
+- A linha-cabeça nomeia a mesma autoridade do herói: "Total declarado" quando
+  o declarado existe, "Compras itemizadas" quando o efetivo é a soma (e aí a
+  segunda linha não repete o mesmo número). Com declarado + compras: "Total
+  declarado" / "Compras itemizadas" e, quando houver delta, a linha de
+  reconciliação: "Não itemizado — parte da fatura sem linha" (tracejada,
+  itálica) — **nunca vira item** (spec 026 D3).
 - **Sem nenhuma compra itemizada** — o modo dominante da planilha real, que
   registra a fatura como lump por cartão — a leitura colapsa numa frase:
   "Registrada como valor único — sem compras itemizadas neste ciclo." Nada de

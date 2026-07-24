@@ -859,3 +859,8 @@ b > .cartoes__chip {
     grid-template-columns: 380px minmax(0, 1fr);
   }
 }
+
+/* Valor zero de verdade: sem barra — o mínimo visual mentiria gasto. */
+.cartoes__bars i.is-zero {
+  min-height: 0;
+}

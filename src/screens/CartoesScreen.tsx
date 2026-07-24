@@ -63,6 +63,7 @@ import {
   netOfRefunds,
   ownerKind,
   subscriptionCadence,
+  totalsHeadLabel,
   verdictLine,
 } from "./cartoesView";
 import "./cartoes.css";
@@ -469,7 +470,7 @@ export function CartoesScreen() {
                 additionals={additions.get(card.id) ?? []}
                 todayISO={todayISO}
                 onSelect={() => selectCard(card.id)}
-                onEdit={() => setForm({ card })}
+                onEdit={(target) => setForm({ card: target })}
               />
             ))}
             <Button
@@ -658,9 +659,11 @@ function CardTile({
   additionals: Card[];
   todayISO: string;
   onSelect: () => void;
-  onEdit: () => void;
+  /** Recebe o cartão a editar — o titular OU um adicional aninhado. */
+  onEdit: (target: Card) => void;
 }) {
-  const next = card.next_due;
+  // A aberta ainda sem vencimento derivado também é "a próxima fatura".
+  const next = card.next_due ?? card.open_invoice;
 
   if (!selected) {
     return (
@@ -732,7 +735,7 @@ function CardTile({
             variant="ghost"
             size="sm"
             aria-label={`Editar ${card.name}`}
-            onClick={onEdit}
+            onClick={() => onEdit(card)}
           >
             <Pencil size={14} aria-hidden="true" />
             Editar
@@ -748,7 +751,7 @@ function CardTile({
                 variant="ghost"
                 size="sm"
                 aria-label={`Editar ${additional.name}`}
-                onClick={onEdit}
+                onClick={() => onEdit(additional)}
               >
                 <Pencil size={14} aria-hidden="true" />
                 Editar
@@ -773,7 +776,8 @@ function InvoicePanel({ card, todayISO }: { card: Card; todayISO: string }) {
     : card.id === "demo-holder"
       ? DEMO_INVOICES
       : [];
-  const cycles = cycleWindow(invoices);
+  const anchorId = card.open_invoice?.id ?? card.next_due?.id ?? null;
+  const cycles = cycleWindow(invoices, anchorId);
   const [chosen, setChosen] = useState<string | null>(null);
   const selectedId =
     chosen && cycles.some((invoice) => invoice.id === chosen)
@@ -785,6 +789,32 @@ function InvoicePanel({ card, todayISO }: { card: Card; todayISO: string }) {
     detailFetcher(selectedId),
   );
   const detail = isTauri ? (detailQ.data ?? null) : demoDetailFor(selectedId);
+
+  if (isTauri && invoicesQ.error) {
+    return (
+      <section className="cartoes__panel">
+        <EmptyState
+          variant="error"
+          title="Não foi possível carregar as faturas"
+          description="Confira a conexão e tente de novo."
+          action={
+            <Button size="sm" variant="ghost" onClick={() => invalidateCommands()}>
+              Tentar novamente
+            </Button>
+          }
+        />
+      </section>
+    );
+  }
+
+  // Carregando não é ausência: o "Sem fatura registrada" só depois da resposta.
+  if (isTauri && !invoicesQ.data) {
+    return (
+      <section className="cartoes__panel">
+        <EmptyState variant="skeleton" skeletonRows={4} />
+      </section>
+    );
+  }
 
   if (cycles.length === 0 || !selectedId) {
     return (
@@ -819,11 +849,25 @@ function InvoicePanel({ card, todayISO }: { card: Card; todayISO: string }) {
       </CycleScroller>
 
       {detail ? (
+        // key por fatura: trocar de ciclo NÃO pode herdar o estado do ajuste —
+        // confirmar o valor pré-preenchido de agosto na fatura de julho.
         <InvoiceDetailBody
+          key={detail.id}
           card={card}
           detail={detail}
           bars={bars}
           todayISO={todayISO}
+        />
+      ) : isTauri && detailQ.error ? (
+        <EmptyState
+          variant="error"
+          title="Não foi possível carregar a fatura"
+          description="Confira a conexão e tente de novo."
+          action={
+            <Button size="sm" variant="ghost" onClick={() => invalidateCommands()}>
+              Tentar novamente
+            </Button>
+          }
         />
       ) : selectedSummary ? (
         <EmptyState variant="skeleton" skeletonRows={4} />
@@ -899,7 +943,11 @@ function InvoiceBars({ bars }: { bars: BarsModel }) {
           {bars.bars.map((bar) => (
             <i
               key={bar.id}
-              className={bar.selected ? "is-selected" : undefined}
+              className={
+                [bar.selected ? "is-selected" : "", bar.zero ? "is-zero" : ""]
+                  .filter(Boolean)
+                  .join(" ") || undefined
+              }
               style={{ height: `${bar.pct}%` }}
             />
           ))}
@@ -943,7 +991,7 @@ function TotaisSection({ detail }: { detail: InvoiceDetail }) {
     <>
       <SectionHead icon={<ListChecks size={15} aria-hidden="true" />} title="Totais" />
       <div className="cartoes__totline cartoes__totline--head">
-        <span>Total declarado</span>
+        <span>{totalsHeadLabel(detail.stated_total_cents)}</span>
         <b>
           <Money cents={detail.effective_total_cents} size="inherit" />
         </b>
@@ -953,10 +1001,14 @@ function TotaisSection({ detail }: { detail: InvoiceDetail }) {
           que trai o uso real; a leitura honesta é uma frase só. */}
       {detail.purchases.length > 0 ? (
         <>
-          <div className="cartoes__totline">
-            <span>Compras itemizadas</span>
-            <Money cents={detail.purchases_sum_cents} size="inherit" />
-          </div>
+          {/* Sem total declarado o efetivo JÁ É a soma das compras — repetir a
+              linha diria o mesmo número duas vezes. */}
+          {detail.stated_total_cents != null ? (
+            <div className="cartoes__totline">
+              <span>Compras itemizadas</span>
+              <Money cents={detail.purchases_sum_cents} size="inherit" />
+            </div>
+          ) : null}
           {detail.reconciliation_delta_cents != null ? (
             <div className="cartoes__recon">
               <span>Não itemizado — parte da fatura sem linha</span>
