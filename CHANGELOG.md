@@ -8,6 +8,21 @@ for humans, and versions follow [SemVer](https://semver.org/).
 
 ### Added
 
+- The Horizonte screen became the cash radar: the only view that looks strictly
+  forward (projected, in months, to the end of the data), answering the method's
+  question — is there a hole in the road? It opens on a three-voice verdict (clear
+  path · a squeeze ahead · nothing booked yet) with the smallest point named and
+  the honest twin (where December ends if the un-ballasted months cost the usual).
+  The road to December draws the booked line, the un-ballasted zone, the dotted
+  "if it costs the usual" trace, and the zero and low point, with a numbers fold.
+  A twelve-month signal grid colours each month by its end-of-month balance band
+  and carries the three epistemic states (lived · projected-with-ballast · review ·
+  no record), each month opening in the Calendar. The projected commitments group
+  by month (installment `n/N`, reimbursement as a linked income), and the "E se?"
+  entry carries the two financing-gate rulers. Delineated from its neighbours: O
+  ano judges the method, Horizonte guards the cash, and Hoje's "can spend" is
+  proven by the horizon's lowest point. The ballast rule, typical spend, trust
+  frontier and typical trace all come from the forecast engine — no backend change.
 - The Teto do diário screen became the record of a decision with proof: it opens
   on the ceiling itself with the detected spending mode stating what the day is
   measured against, then shows the ceremony that produced it (the variable-month

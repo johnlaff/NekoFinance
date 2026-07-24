@@ -1,162 +1,820 @@
+/* Horizonte — o radar do caixa: veredito (livre · aperto · vazio) → a estrada até dezembro →
+   os próximos 12 meses (semáforo do saldo) → o que já está marcado → E se? (cenários).
+   Namespace .hz__* (classe curta colide com globais do shell). */
+
 .hz {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+/* Item de grid tem `min-width: auto`: sem isto, a estrada e as linhas de largura fixa dilatam
+   a faixa e levam a tela para fora do viewport de 390px. */
+.hz > *,
+.hz__col > * {
+  min-width: 0;
+}
+
+.hz > .hz__verdict,
+.hz > .hz__scnrow,
+.hz > .hz__roadcard,
+.hz > .hz__webhint {
+  grid-column: 1 / -1;
+}
+
+/* Bento: coluna única no mobile (colunas dissolvidas via `display: contents`, cards na ordem
+   do DOM); duas colunas independentes no desktop (massas díspares nunca se alinham por linha). */
+.hz__col {
+  display: contents;
+}
+
+@media (min-width: 1000px) {
+  .hz {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    max-width: 1180px;
+  }
+
+  .hz__col {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+    min-width: 0;
+  }
+}
+
+@media (min-width: 1700px) {
+  .hz {
+    max-width: 1400px;
+  }
+}
+
+.hz__webhint {
+  color: var(--text-faint);
+  font-size: var(--fs-label);
+}
+
+/* ---- Veredito: a manchete na voz da marca ---- */
+
+.hz__verdict {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--space-2);
 }
-.hz-title {
-  font-size: 20px;
-  font-weight: 700;
+
+.hz__vlabel {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-label);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.hz__verdict h1 {
+  margin: 0;
+  font-size: var(--fs-h1);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.03em;
+  line-height: var(--lh-tight);
   color: var(--text-strong);
+  text-wrap: balance;
 }
-.card {
+
+.hz__vbody {
+  margin: var(--space-4) 0 0;
+  font-size: var(--fs-body);
+  line-height: 1.55;
+  color: var(--text-muted);
+  max-width: 52ch;
+}
+
+.hz__vbody b {
+  color: var(--text-strong);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.hz__neg,
+.hz__vbody b.hz__neg {
+  color: var(--money-neg);
+}
+
+.hz__cf {
+  color: var(--text-faint);
+}
+
+.hz__vactions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.hz__prov {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  align-self: flex-start;
+  margin-top: var(--space-5);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 5px 12px;
+}
+
+.hz__provdot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+
+/* ---- Anatomia do card ---- */
+
+.hz__card {
+  display: flex;
+  flex-direction: column;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-1);
-}
-.card__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 16px 20px 4px;
-}
-.card__title {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text-strong);
-  white-space: nowrap;
-}
-.card__title .ic {
-  color: var(--text-faint);
-}
-.card__body {
-  padding: 16px 20px 20px;
-}
-.hz-alert {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 18px;
-  border-radius: var(--radius-md);
-  background: var(--warning-tint);
-  border: 1px solid color-mix(in srgb, var(--warning-400) 30%, transparent);
-}
-.hz-alert--ok {
-  background: var(--success-tint);
-  border-color: color-mix(in srgb, var(--success-400) 30%, transparent);
-}
-.hz-alert__ic {
-  flex: none;
-}
-.hz-alert__t {
-  font-size: 13.5px;
-  color: var(--text);
-  font-weight: 600;
-}
-.hz-alert__s {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-.hz-months {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 12px;
-}
-.hz-mcard {
-  padding: 14px 16px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  background: var(--surface);
-}
-.hz-mcard__m {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-  margin-bottom: 6px;
-}
-.hz-mcard__v {
-  font-family: var(--font-money);
-  font-variant-numeric: tabular-nums;
-  font-size: 18px;
-  font-weight: 700;
-}
-.hz-mcard__b {
-  font-size: 11px;
-  margin-top: 4px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-.hz-mcard__chip {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+  padding: var(--space-6) var(--space-6) var(--space-5);
 }
 
-/* Vencimentos próximos (bills section, preserved for completeness) */
-.hz-bills-title {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-  margin: 24px 0 10px;
-}
-.hz-bills-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.hz-bill-row {
+.hz__cardhead {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-.hz-bill-date {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 8px;
-  border-radius: var(--radius-pill, 999px);
-  background: var(--surface-2, var(--surface));
-  border: 1px solid var(--border);
-  font-size: 11px;
-  font-weight: 500;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+  font-size: var(--fs-sm);
   color: var(--text-muted);
-  white-space: nowrap;
+}
+
+.hz__cardhead .ic {
+  color: var(--text-muted);
   flex: none;
 }
-.hz-bill-desc {
-  flex: 1;
-  font-size: 13px;
-  color: var(--text);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+
+.hz__cardhead h2 {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-strong);
+  letter-spacing: -0.01em;
 }
-.hz-bill-amt {
-  font-family: var(--font-money);
-  font-variant-numeric: tabular-nums;
-  font-size: 13px;
-  color: var(--danger-400);
-  white-space: nowrap;
-}
-.hz-empty {
+
+.hz__note {
+  margin-left: auto;
+  font-size: var(--fs-label);
   color: var(--text-faint);
-  font-size: 13px;
-  padding: 8px 0;
+  white-space: nowrap;
+}
+
+.hz__secnote {
+  margin: var(--space-5) 0 0;
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.hz__secnote b {
+  color: var(--text-strong);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- A estrada (gráfico próprio de três linhas) ---- */
+
+.hz__road {
+  margin: var(--space-2) 0 0;
+}
+
+.hz__road svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.hz-road-ax {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.hz-road-zero {
+  stroke: var(--text-faint);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+
+.hz-road-mlab {
+  font-size: 9.5px;
+  fill: var(--text-faint);
+}
+
+.hz-road-ylab {
+  font-size: 9px;
+  fill: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.hz-road-fogzone {
+  fill: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.hz-road-lanc {
+  fill: none;
+  stroke: var(--text-strong);
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.hz-road-fog {
+  fill: none;
+  stroke: var(--text-faint);
+  stroke-width: 1.4;
+  stroke-dasharray: 4 4;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.hz-road-tip {
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-width: 1.4;
+  stroke-dasharray: 1.5 3.5;
+  stroke-linecap: round;
+}
+
+.hz-road-mark {
+  fill: none;
+  stroke: var(--text-strong);
+  stroke-width: 1.6;
+}
+
+.hz-road-markz {
+  fill: var(--money-neg);
+}
+
+.hz__roadlegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4) var(--space-6);
+  margin: var(--space-4) 0 0;
+  font-size: var(--fs-label);
+  color: var(--text-muted);
+}
+
+.hz__lg {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.hz__lg i {
+  display: inline-block;
+  width: 16px;
+  height: 0;
+  border-top: 2px solid var(--text-strong);
+}
+
+.hz__lg--fog i {
+  border-top-style: dashed;
+  border-top-color: var(--text-faint);
+}
+
+.hz__lg--tip i {
+  border-top-style: dotted;
+  border-top-color: var(--text-muted);
+}
+
+.hz__roadends {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-5);
+  margin: var(--space-4) 0 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.hz__roadends b {
+  color: var(--text-strong);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.hz__roadends .hz__neg b {
+  color: var(--money-neg);
+}
+
+.hz__fold {
+  border-top: 1px solid var(--border);
+  margin-top: var(--space-4);
+}
+
+.hz__fold > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 44px;
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.hz__fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.hz__fold > summary::before {
+  content: "›";
+  display: inline-block;
+  color: var(--text-faint);
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.hz__fold[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.hz__fold > summary:hover {
+  color: var(--text-strong);
+}
+
+.hz__fold > summary:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  border-radius: var(--radius-xs);
+}
+
+.hz__numtbl {
+  width: 100%;
+  border-collapse: collapse;
+  margin: var(--space-3) 0 var(--space-2);
+  font-size: var(--fs-sm);
+}
+
+.hz__numtbl th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-faint);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.hz__numtbl td {
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.hz__numtbl tr:last-child td {
+  border-bottom: 0;
+}
+
+.hz__num {
+  text-align: right;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+td.hz__num.hz__neg,
+.hz__numtbl td.hz__neg {
+  color: var(--money-neg);
+}
+
+/* ---- A grade dos 12 meses (assinatura) ---- */
+
+.hz__mgrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+  margin: var(--space-2) 0 0;
+}
+
+@media (min-width: 480px) {
+  .hz__mgrid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.hz__mcard {
+  display: block;
+  min-width: 0;
+  text-align: left;
+  font: inherit;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-4) 9px 9px;
+  color: inherit;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease-standard),
+    background var(--dur-fast) var(--ease-standard);
+}
+
+.hz__mcard:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.hz__mcard:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.hz__mh {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: 7px;
+}
+
+.hz__mh b {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  color: var(--text-strong);
+  letter-spacing: -0.01em;
+}
+
+.hz__mh small {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.hz__dots {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2.5px;
+}
+
+.hz__d {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 3px;
+  background: var(--surface-hover);
+}
+
+.hz__d--off {
+  background: none;
+}
+
+/* Vivido: cor cheia da banda (injetada inline pelo saldo do mês). */
+.hz__d--viv {
+  background: var(--text-faint);
+}
+
+/* Previsto com lastro: a banda em tom mais tênue (`currentColor` vem inline do saldo do mês). */
+.hz__d--prev {
+  background: color-mix(in srgb, currentColor 34%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 72%, transparent);
+}
+
+/* Sem lastro: nunca cor de aprovação — só o contorno tracejado do "conferir". */
+.hz__d--conf {
+  background: none;
+  border: 1px dashed var(--text-faint);
+}
+
+.hz__d--today {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.hz__mfim {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 5px;
+  margin-top: var(--space-4);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  min-width: 0;
+}
+
+.hz__mfim b {
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.hz__mcard--conf .hz__mfim b {
+  color: var(--text-muted);
+}
+
+.hz__seal {
+  display: inline-flex;
+  font-size: 9.5px;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 1px 7px;
+}
+
+.hz__mcard--sem {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 96px;
+  border-style: dashed;
+  color: var(--text-faint);
+}
+
+.hz__mcard--sem .hz__dash {
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text-faint);
+}
+
+.hz__mcard--sem small {
+  font-size: 10.5px;
+}
+
+.hz__gridlegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-5);
+  margin: var(--space-5) 0 0;
+  font-size: var(--fs-micro);
+  color: var(--text-muted);
+}
+
+.hz__gl {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.hz__gl i {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.hz__gl--viv i {
+  background: var(--success-400);
+}
+
+.hz__gl--prev i {
+  background: color-mix(in srgb, var(--success-400) 34%, transparent);
+  border: 1px solid color-mix(in srgb, var(--success-400) 72%, transparent);
+}
+
+.hz__gl--conf i {
+  border: 1px dashed var(--text-faint);
+}
+
+.hz__gl--sem i {
+  border: 1px dashed var(--border);
+}
+
+/* ---- O que já está marcado ---- */
+
+.hz__comsum {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-7);
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.hz__comsum b {
+  color: var(--text-strong);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.hz__mfold > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 44px;
+  padding: var(--space-3) 0;
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--fs-sm);
+  color: var(--text-strong);
+  border-top: 1px solid var(--border);
+}
+
+.hz__mfold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.hz__mfold > summary::before {
+  content: "›";
+  display: inline-block;
+  color: var(--text-muted);
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.hz__mfold[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.hz__mfold > summary:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  border-radius: var(--radius-xs);
+}
+
+.hz__mfold > summary b {
+  font-weight: 500;
+}
+
+.hz__msum {
+  margin-left: auto;
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.hz__mbody {
+  padding: 0 0 var(--space-3) var(--space-7);
+}
+
+.hz__line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-4) 0;
+}
+
+.hz__line + .hz__line {
+  border-top: 1px solid var(--border);
+}
+
+.hz__dia {
+  min-width: 34px;
+  flex: none;
+  text-align: center;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 5px 6px;
+  white-space: nowrap;
+}
+
+.hz__what {
+  min-width: 0;
+  flex: 1;
+}
+
+.hz__what b {
+  display: block;
+  font-size: var(--fs-sm);
+  font-weight: 450;
+  color: var(--text-strong);
+  letter-spacing: -0.01em;
+}
+
+.hz__what small {
+  display: block;
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+
+.hz__nn {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-muted);
+}
+
+.hz__amt {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text-strong);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.hz__amt--in {
+  color: var(--money-pos);
+}
+
+/* ---- E se? ---- */
+
+.hz__esebody {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.hz__esebody b {
+  color: var(--text-strong);
+  font-weight: 500;
+}
+
+.hz__eseacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-top: var(--space-5);
+}
+
+/* ---- Coreografia: a estrada se desenha; a grade assenta em onda; dinheiro entra pronto ---- */
+
+@media (prefers-reduced-motion: no-preference) {
+  .hz-road-lanc {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    animation: hz-road-draw 0.48s cubic-bezier(0.2, 0, 0, 1) forwards;
+  }
+
+  .hz-road-fog {
+    animation: hz-fade 0.3s cubic-bezier(0.2, 0, 0, 1) 0.34s both;
+  }
+
+  .hz-road-tip {
+    animation: hz-fade 0.3s cubic-bezier(0.2, 0, 0, 1) 0.42s both;
+  }
+
+  .hz__mcard {
+    animation: hz-set 0.34s cubic-bezier(0.2, 0, 0, 1) both;
+  }
+
+  .hz__mcard:nth-child(1) {
+    animation-delay: 0s;
+  }
+  .hz__mcard:nth-child(2) {
+    animation-delay: 0.05s;
+  }
+  .hz__mcard:nth-child(3) {
+    animation-delay: 0.1s;
+  }
+  .hz__mcard:nth-child(4) {
+    animation-delay: 0.15s;
+  }
+  .hz__mcard:nth-child(5) {
+    animation-delay: 0.2s;
+  }
+  .hz__mcard:nth-child(6) {
+    animation-delay: 0.25s;
+  }
+  .hz__mcard:nth-child(7) {
+    animation-delay: 0.3s;
+  }
+  .hz__mcard:nth-child(8) {
+    animation-delay: 0.35s;
+  }
+  .hz__mcard:nth-child(9) {
+    animation-delay: 0.4s;
+  }
+  .hz__mcard:nth-child(10) {
+    animation-delay: 0.45s;
+  }
+  .hz__mcard:nth-child(11) {
+    animation-delay: 0.5s;
+  }
+  .hz__mcard:nth-child(12) {
+    animation-delay: 0.55s;
+  }
+}
+
+@keyframes hz-road-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes hz-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes hz-set {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
