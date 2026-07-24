@@ -10,11 +10,15 @@ import { CartoesScreen } from "./CartoesScreen";
 import { shiftCycleMonth, validateCardCycle } from "../lib/cardCycle";
 
 describe("Cartões", () => {
-  it("mostra proposta, gate e a lista no fallback web", () => {
+  it("mostra veredito, proposta, gate e a lista no fallback web", () => {
     render(<CartoesScreen />);
+    expect(
+      screen.getByRole("heading", { name: "A próxima fatura vence 10 de ago." }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Cartão de viagens")).toBeInTheDocument();
     expect(screen.getByText(/Economia viva/)).toBeInTheDocument();
     expect(screen.getByText("Cartão principal")).toBeInTheDocument();
+    expect(screen.getByText("Cartão reserva")).toBeInTheDocument();
   });
 
   it("mostra a matemática do gate — percentual de economia e meses de reserva atuais, não só 'falta'", () => {
@@ -23,37 +27,77 @@ describe("Cartões", () => {
     expect(screen.getByText(/4,2 meses/)).toBeInTheDocument();
   });
 
-  it("abre o drill com reconciliação e leitura líquida marcada", async () => {
-    const user = userEvent.setup();
+  it("expõe o drill com herói honesto, reconciliação e leitura líquida marcada", () => {
     render(<CartoesScreen />);
-    await user.click(screen.getByRole("button", { name: /Faturas/ }));
+    expect(
+      screen.getByText("Total declarado — autoridade da planilha"),
+    ).toBeInTheDocument();
     expect(screen.getByText(/Não itemizado/)).toBeInTheDocument();
     expect(screen.getByText(/Líquido de reembolsos/)).toBeInTheDocument();
     expect(screen.getByText("Conferência")).toBeInTheDocument();
   });
 
-  it("agrupa séries e oferece seus gestos no drill", async () => {
+  it("seleciona a fatura aberta por padrão e nomeia os ciclos com o status", () => {
+    render(<CartoesScreen />);
+    const selected = screen.getByRole("radio", { name: "Ago · Aberta" });
+    expect(selected).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Jul · Fechada" })).toBeInTheDocument();
+  });
+
+  it("carrega o histórico em barras com equivalente textual", () => {
+    render(<CartoesScreen />);
+    const bars = screen.getByRole("img", { name: /Faturas por ciclo/ });
+    expect(bars.getAttribute("aria-label")).toContain("Ago");
+  });
+
+  it("deriva progresso de parcela e cadência de assinatura nas séries", () => {
+    render(<CartoesScreen />);
+    expect(screen.getByRole("heading", { name: "Séries" })).toBeInTheDocument();
+    expect(screen.getByText(/Parcela 2 de 5/)).toBeInTheDocument();
+    expect(screen.getByText(/Todo mês, dia 15/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Editar Notebook" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Cancelar Streaming a partir deste ciclo" }),
+    ).toBeInTheDocument();
+  });
+
+  it("fatura sem itens rende como lump — sem zero fabricado nem reconciliação cheia", async () => {
     const user = userEvent.setup();
     render(<CartoesScreen />);
-
-    await user.click(screen.getByRole("button", { name: /Faturas/ }));
-
-    expect(screen.getByRole("heading", { name: "Séries" })).toBeInTheDocument();
-    expect(screen.getAllByText("Assinatura").length).toBeGreaterThan(1);
-    expect(screen.getAllByRole("button", { name: "Editar" }).length).toBeGreaterThan(1);
+    await user.click(screen.getByRole("radio", { name: "Jul · Fechada" }));
     expect(
-      screen.getByRole("button", { name: "Cancelar a partir deste ciclo" }),
+      screen.getByText(
+        "Registrada como valor único — sem compras itemizadas neste ciclo.",
+      ),
     ).toBeInTheDocument();
+    expect(screen.queryByText("Compras itemizadas")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Não itemizado/)).not.toBeInTheDocument();
+    // Sem reembolso vinculado, o líquido (igual ao total) não ganha linha.
+    expect(screen.queryByText(/Líquido de reembolsos/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Fechou em 20 de jun/)).toBeInTheDocument();
   });
 
   it("prefill do ajuste preserva centavos", async () => {
     const user = userEvent.setup();
     render(<CartoesScreen />);
-
-    await user.click(screen.getByRole("button", { name: /Faturas/ }));
-    await user.click(screen.getByRole("button", { name: "Ajustar total" }));
-
+    await user.click(screen.getByRole("button", { name: "Ajustar total declarado" }));
     expect(screen.getByLabelText("Total declarado")).toHaveValue("4289,00");
+  });
+
+  it("editar o adicional abre o formulário do adicional, não do titular", async () => {
+    const user = userEvent.setup();
+    render(<CartoesScreen />);
+    await user.click(screen.getByRole("button", { name: "Editar Cartão adicional" }));
+    expect(screen.getByLabelText("Nome")).toHaveValue("Cartão adicional");
+  });
+
+  it("trocar de ciclo descarta o ajuste em andamento — nunca herda o valor de outro mês", async () => {
+    const user = userEvent.setup();
+    render(<CartoesScreen />);
+    await user.click(screen.getByRole("button", { name: "Ajustar total declarado" }));
+    expect(screen.getByLabelText("Total declarado")).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: "Jul · Fechada" }));
+    expect(screen.queryByLabelText("Total declarado")).not.toBeInTheDocument();
   });
 
   it("valida os dias do ciclo", () => {
