@@ -109,6 +109,86 @@ pub(crate) const CATALOG: &[ToolSpec] = &[
             description: "Uma linha por conta, com tipo, liquidez, instituição e saldo.",
         }],
     },
+    ToolSpec {
+        name: "get_month_analysis",
+        summary: "Um mês fechado nas contas do método: entradas, os cinco baldes de saída, custo \
+                  de vida, performance e Economizado% — com um mês de comparação opcional.",
+        use_for: "Perguntas sobre UM mês — \"como foi maio\", \"quanto gastei no mês passado\", \
+                  \"maio contra abril\", \"quanto sobrou em junho\", \"como está o mês corrente\".",
+        not_for: "Julgar se a economia do mês está boa: a faixa 20–30% é ANUAL (use \
+                  get_year_analysis); saldo dia a dia (use get_cashflow_calendar); lista de \
+                  lançamentos do mês (use search_transactions).",
+        params: &["month", "compare_to"],
+        includes: &[
+            Include {
+                name: "days",
+                description: "Um dia por linha, como a planilha os escreve: entrada, saída fixa, \
+                              diário e o Saldo encadeado.",
+            },
+            Include {
+                name: "owners",
+                description: "Quanto cada titular respondeu no mês (divisão de despesas).",
+            },
+        ],
+    },
+    ToolSpec {
+        name: "get_year_analysis",
+        summary: "O ano na régua do método: Economizado% contra a faixa 20–30%, o recorte que \
+                  sustenta o número, os meses sem lastro e um ano de comparação opcional.",
+        use_for: "Perguntas sobre o ANO e sobre o veredito da economia — \"estou dentro da \
+                  faixa?\", \"quanto guardei este ano\", \"2026 contra 2025\", \"quanto falta \
+                  para os 20%\".",
+        not_for: "Fechamento de um mês (use get_month_analysis); saldo projetado à frente (use \
+                  get_forecast); comparar a renda TOTAL de um ano em curso com a de um ano \
+                  fechado, que acusaria uma queda inexistente — a comparação honesta entre anos é \
+                  a renda média por mês com registro, e ela já vem pronta.",
+        params: &["year", "compare_to"],
+        includes: &[
+            Include {
+                name: "months",
+                description: "Os doze meses do ano, com entrada, saída, economia, performance e \
+                              a marca de vivido/sem lastro.",
+            },
+            Include {
+                name: "year_end",
+                description: "Onde o ano termina: saldo do último mês projetado e o cenário em \
+                              que os meses sem lastro custassem o típico. Roda a projeção.",
+            },
+        ],
+    },
+    ToolSpec {
+        name: "get_forecast",
+        summary: "A projeção do caixa daqui para frente: saldo por mês, menor saldo do recorte, \
+                  quanto dá para gastar hoje e o que ainda falta lançar.",
+        use_for: "Perguntas sobre o FUTURO — \"tem buraco à frente?\", \"como termino o ano\", \
+                  \"quanto posso gastar hoje\", \"e se eu financiar?\" (com scenario_id).",
+        not_for: "Meses já vividos (use get_month_analysis ou get_cashflow_calendar); o dia a dia \
+                  da projeção quando a pergunta é sobre uma data (use get_cashflow_calendar).",
+        params: &["range", "scenario_id"],
+        includes: &[
+            Include {
+                name: "daily",
+                description: "Saldo projetado dia a dia dentro do recorte.",
+            },
+            Include {
+                name: "coverage",
+                description: "Por mês futuro, quanto do gasto típico já foi lançado — o que diz \
+                              se a projeção daquele mês é crível.",
+            },
+        ],
+    },
+    ToolSpec {
+        name: "get_cashflow_calendar",
+        summary: "O caixa dia a dia num recorte de datas: movimento do dia, saldo que ele deixou \
+                  e o menor saldo do período. Passado lê a planilha, futuro lê a projeção.",
+        use_for: "Perguntas ancoradas em DATA — \"como fica o saldo até o dia 10\", \"qual o pior \
+                  dia do mês\", \"o que acontece na semana que vem\", \"o saldo aguenta até o \
+                  salário?\".",
+        not_for: "Totais do mês nas contas do método (use get_month_analysis); os lançamentos de \
+                  um dia (use search_transactions).",
+        params: &["range", "cursor"],
+        includes: &[],
+    },
 ];
 
 pub(crate) fn spec(name: &str) -> Option<&'static ToolSpec> {

@@ -294,6 +294,164 @@ pub fn month_coverage(
         .collect()
 }
 
+/// Um mês futuro só sustenta o veredito do ano se a saída lançada for compatível com a vida
+/// real: piso de 60% do gasto típico. Abaixo disso o mês é SEM LASTRO — tem lançamento, só tem
+/// pouco: pode ser mês barato de verdade ou pode faltar lançar.
+pub const LASTRO_FLOOR_BPS: i64 = 6_000;
+
+/// A régua ANUAL do método sobre os doze meses de um ano: o Economizado% que julga, o recorte
+/// que o sustenta e os meses à frente que ainda não têm lastro.
+///
+/// Sem o teste de lastro, um dezembro vazio inflaria o percentual do ano inteiro e o veredito
+/// diria "dentro da faixa" sobre um ano que ninguém viveu. Enquanto houver mês sem lastro, a
+/// régua recua ao que já foi vivido — e o recorte vai junto, para que o número nunca se
+/// apresente como se fosse do ano fechado.
+///
+/// A mesma régua é composta na tela O ano (`src/screens/anoView.ts`); as duas leem o mesmo
+/// motor e precisam continuar dando o mesmo número — mudou aqui, muda lá.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnnualRuler {
+    pub lived_months: u32,
+    pub future_months: u32,
+    /// Gasto típico do ano = mediana das saídas dos meses vividos.
+    pub typical_spend_cents: i64,
+    /// Meses à frente cuja saída lançada não alcança o piso de lastro.
+    pub suspect_months: Vec<u32>,
+    pub income_lived_cents: i64,
+    pub economia_lived_cents: i64,
+    /// Sobra dos meses vividos (Performance somada) — o colchão do ano.
+    pub surplus_lived_cents: i64,
+    pub income_year_cents: i64,
+    pub economia_year_cents: i64,
+    /// Meses vividos COM renda registrada. É o denominador honesto para comparar um ano com
+    /// outro: dividir um ano em curso por doze inventaria uma queda que não aconteceu.
+    pub recorded_months: u32,
+    /// Renda média por mês com registro.
+    pub avg_income_cents: i64,
+    /// Economizado% do recorte vivido; `None` sem renda para dividir.
+    pub lived_bps: Option<i64>,
+    /// Economizado% do ano inteiro (vivido + lançado à frente).
+    pub projected_bps: Option<i64>,
+    /// O percentual que JULGA: o vivido enquanto houver mês sem lastro, senão o do ano.
+    pub bps: Option<i64>,
+    /// A régua fala do recorte vivido (e não do ano fechado).
+    pub scope_lived: bool,
+    /// Algum mês vivido teve movimento — sem isso, o ano não tem o que julgar.
+    pub has_data: bool,
+}
+
+/// Saída total de um mês = tudo que deixou a conta = renda − performance. Inclui Economia e
+/// Patrimônio de propósito: para o teste de lastro o que importa é se o mês parece vivido.
+fn month_outflow(m: &MonthMetric) -> i64 {
+    m.income_cents - m.performance_cents
+}
+
+pub fn annual_ruler(months: &[MonthMetric], year: i32, today: NaiveDate) -> AnnualRuler {
+    let by_month = |month: u32| months.iter().find(|m| m.year == year && m.month == month);
+    let lived_of = |month: u32| match year.cmp(&today.year()) {
+        std::cmp::Ordering::Less => true,
+        std::cmp::Ordering::Greater => false,
+        std::cmp::Ordering::Equal => month <= today.month(),
+    };
+
+    // Mês ausente na entrada vale zero em toda figura — o motor pode vir esparso, e um mês sem
+    // evento é um mês de zeros, não um buraco.
+    let rows: Vec<(u32, Option<&MonthMetric>)> = (1..=12).map(|m| (m, by_month(m))).collect();
+    let figure = |m: Option<&MonthMetric>, pick: fn(&MonthMetric) -> i64| m.map_or(0, pick);
+
+    let lived_outflows: Vec<i64> = rows
+        .iter()
+        .filter(|(month, _)| lived_of(*month))
+        .map(|(_, m)| figure(*m, month_outflow))
+        .collect();
+    let typical_spend_cents = median_cents(lived_outflows);
+    // O piso trunca em centavos: a fronteira é determinística, e um centavo não decide lastro.
+    let lastro_threshold = typical_spend_cents * LASTRO_FLOOR_BPS / 10_000;
+
+    let suspect_months: Vec<u32> = rows
+        .iter()
+        .filter(|(month, m)| {
+            !lived_of(*month)
+                && typical_spend_cents > 0
+                && figure(*m, month_outflow) < lastro_threshold
+        })
+        .map(|(month, _)| *month)
+        .collect();
+
+    let sum = |pick: fn(&MonthMetric) -> i64, lived_only: bool| -> i64 {
+        rows.iter()
+            .filter(|(month, _)| !lived_only || lived_of(*month))
+            .map(|(_, m)| figure(*m, pick))
+            .sum()
+    };
+    let income_lived_cents = sum(|m| m.income_cents, true);
+    let economia_lived_cents = sum(|m| m.economia_cents, true);
+    let income_year_cents = sum(|m| m.income_cents, false);
+    let economia_year_cents = sum(|m| m.economia_cents, false);
+
+    // TRUNCA, como o motor mensal e como a exibição: um percentual arredondado para cima faria a
+    // tela mostrar 21% onde a conversa diria 22%.
+    let rate = |economia: i64, income: i64| (income > 0).then(|| economia * 10_000 / income);
+    let lived_bps = rate(economia_lived_cents, income_lived_cents);
+    let projected_bps = rate(economia_year_cents, income_year_cents);
+    let scope_lived = !suspect_months.is_empty();
+
+    let lived_months = rows.iter().filter(|(month, _)| lived_of(*month)).count() as u32;
+    let recorded: Vec<i64> = rows
+        .iter()
+        .filter(|(month, _)| lived_of(*month))
+        .map(|(_, m)| figure(*m, |m| m.income_cents))
+        .filter(|income| *income > 0)
+        .collect();
+    AnnualRuler {
+        lived_months,
+        future_months: 12 - lived_months,
+        typical_spend_cents,
+        suspect_months,
+        income_lived_cents,
+        economia_lived_cents,
+        surplus_lived_cents: sum(|m| m.performance_cents, true),
+        income_year_cents,
+        economia_year_cents,
+        recorded_months: recorded.len() as u32,
+        avg_income_cents: if recorded.is_empty() {
+            0
+        } else {
+            recorded.iter().sum::<i64>() / recorded.len() as i64
+        },
+        lived_bps,
+        projected_bps,
+        bps: if scope_lived {
+            lived_bps
+        } else {
+            projected_bps
+        },
+        scope_lived,
+        has_data: rows.iter().any(|(month, m)| {
+            lived_of(*month)
+                && (figure(*m, |m| m.income_cents) != 0
+                    || figure(*m, |m| m.economia_cents) != 0
+                    || figure(*m, month_outflow) != 0)
+        }),
+    }
+}
+
+/// Mediana em centavos (par ⇒ média dos dois centrais, truncada) — o estimador de "mês típico"
+/// das réguas do método, robusto a um mês atípico ao contrário da média. Janela vazia vale 0,
+/// e é o chamador que decide o que "sem histórico" significa na régua dele.
+pub fn median_cents(mut vals: Vec<i64>) -> i64 {
+    if vals.is_empty() {
+        return 0;
+    }
+    vals.sort_unstable();
+    let mid = vals.len() / 2;
+    if vals.len() % 2 == 1 {
+        vals[mid]
+    } else {
+        (vals[mid - 1] + vals[mid]) / 2
+    }
+}
+
 /// Net signed effect of an event on the balance (income adds, outflows subtract).
 fn signed(e: &CashflowEvent) -> i64 {
     match e.kind {
@@ -1649,5 +1807,86 @@ mod tests {
             sample(0, 0, false),
         ];
         assert_eq!(detect_spending_mode(&window), SpendingMode::Debit);
+    }
+
+    // --- Régua anual: o teste de lastro ---
+
+    fn month(
+        month: u32,
+        income_cents: i64,
+        outflow_cents: i64,
+        economia_cents: i64,
+    ) -> MonthMetric {
+        MonthMetric {
+            year: 2026,
+            month,
+            income_cents,
+            income_performance_cents: income_cents,
+            performance_cents: income_cents - outflow_cents,
+            cost_of_living_cents: outflow_cents - economia_cents,
+            fixed_out_cents: outflow_cents - economia_cents,
+            daily_out_cents: 0,
+            daily_avg_out_cents: 0,
+            daily_projected_cents: 0,
+            cartao_cents: 0,
+            real_daily_avg_cents: 0,
+            savings_rate_bps: 0,
+            economia_cents,
+            patrimonio_cents: 0,
+            total_outflow_cents: outflow_cents - economia_cents,
+        }
+    }
+
+    // Um mês à frente com saída magra derruba o lastro do ano: a régua recua ao vivido e diz
+    // que recuou. Sem isso, um dezembro vazio inflaria o percentual do ano inteiro.
+    #[test]
+    fn annual_ruler_falls_back_to_the_lived_cut_when_a_future_month_is_thin() {
+        let mut months: Vec<MonthMetric> = (1..=6)
+            .map(|m| month(m, 800_000, 500_000, 200_000))
+            .collect();
+        months.push(month(7, 900_000, 50_000, 0));
+
+        let ruler = annual_ruler(&months, 2026, d("2026-06-15"));
+
+        assert_eq!(ruler.lived_months, 6);
+        assert_eq!(ruler.typical_spend_cents, 500_000);
+        assert_eq!(ruler.suspect_months, vec![7, 8, 9, 10, 11, 12]);
+        assert_eq!(ruler.lived_bps, Some(2_500));
+        // 1.200.000 guardados sobre 5.700.000 de renda: o mês magro dilui o ano.
+        assert_eq!(ruler.projected_bps, Some(2_105));
+        assert_eq!(ruler.bps, Some(2_500));
+        assert!(ruler.scope_lived);
+    }
+
+    // Com todo mês do ano lastreado, a régua fala do ano inteiro — é o ano fechado que o método
+    // julga.
+    #[test]
+    fn annual_ruler_covers_the_whole_year_when_every_month_has_lastro() {
+        let months: Vec<MonthMetric> = (1..=12)
+            .map(|m| month(m, 800_000, 500_000, 200_000))
+            .collect();
+
+        let ruler = annual_ruler(&months, 2026, d("2026-12-31"));
+
+        assert_eq!(ruler.lived_months, 12);
+        assert!(ruler.suspect_months.is_empty());
+        assert!(!ruler.scope_lived);
+        assert_eq!(ruler.bps, Some(2_500));
+        assert_eq!(ruler.income_year_cents, 9_600_000);
+    }
+
+    // Ano sem renda registrada não tem percentual: nulo, jamais um zero que passaria por
+    // veredito de "não guardou nada".
+    #[test]
+    fn annual_ruler_without_income_has_no_percentage() {
+        let ruler = annual_ruler(&[], 2026, d("2026-07-25"));
+
+        assert_eq!(ruler.bps, None);
+        assert_eq!(ruler.typical_spend_cents, 0);
+        assert!(
+            ruler.suspect_months.is_empty(),
+            "sem gasto típico não há como acusar falta de lastro"
+        );
+        assert!(!ruler.has_data);
     }
 }

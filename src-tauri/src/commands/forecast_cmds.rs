@@ -96,6 +96,11 @@ pub(crate) const SAVINGS_TARGET_BPS: i64 = 2500;
 /// (`SAVINGS_TARGET_BPS`, centro da faixa) que o guardrail de poupança usa.
 pub(crate) const SAVINGS_FLOOR_BPS: i64 = 2_000;
 
+/// Teto da faixa de economia do método (30%): acima dele o ano guardou além do ideal, e o
+/// convite é gastar um pouco mais se quiser — nunca uma reprovação. Fecha o trio da faixa
+/// canônica 20–30% com piso e meta, numa casa só para que não possam divergir.
+pub(crate) const SAVINGS_CEILING_BPS: i64 = 3_000;
+
 /// Limiar de cobertura: um mês futuro com menos de 60% do gasto típico já lançado é tratado como
 /// INCOMPLETO (projeção otimista demais — o "chá revelação" do método). Margem ampla porque o
 /// método aceita variação mês a mês; abaixo disso é quase certo que falta fatura/variável.
@@ -560,19 +565,7 @@ pub(crate) async fn realized_monthly_baseline_detail(
     if vals.is_empty() {
         return Ok((0, 0));
     }
-    Ok((median_cents(vals), months))
-}
-
-/// Mediana em centavos (par ⇒ média dos dois centrais, truncada). Estimador comum das réguas
-/// de "mês típico" — robusto a um mês atípico, ao contrário da média.
-fn median_cents(mut vals: Vec<i64>) -> i64 {
-    vals.sort_unstable();
-    let mid = vals.len() / 2;
-    if vals.len() % 2 == 1 {
-        vals[mid]
-    } else {
-        (vals[mid - 1] + vals[mid]) / 2
-    }
+    Ok((forecast::median_cents(vals), months))
 }
 
 /// Rendas e economia de um mês típico: `(mediana(renda), mediana(economia))` sobre os últimos
@@ -629,7 +622,10 @@ pub(crate) async fn realized_savings_baseline(
         let annotated = annotation.get(key).copied().unwrap_or(0);
         economias.push(derived.max(annotated));
     }
-    Ok((median_cents(incomes), median_cents(economias)))
+    Ok((
+        forecast::median_cents(incomes),
+        forecast::median_cents(economias),
+    ))
 }
 
 /// Teto de diário "típico" por dia. Fonte única para (a) projetar o gasto diário nos dias futuros do
@@ -2363,11 +2359,14 @@ pub struct AnnualMetricsDto {
     pub months: Vec<MonthMetricDto>,
 }
 
-pub(crate) async fn annual_metrics(
+/// As doze métricas do ano no tipo do MOTOR — a forma que as réguas puras consomem, antes de
+/// virar DTO de fio. Quem responde a uma tela usa [`annual_metrics`]; quem aplica uma régua do
+/// método (a faixa anual, por exemplo) lê daqui, sem passar pela serialização.
+pub(crate) async fn annual_month_metrics(
     pool: &SqlitePool,
     year: i32,
     today: NaiveDate,
-) -> Result<AnnualMetricsDto, String> {
+) -> Result<Vec<forecast::MonthMetric>, String> {
     let mut events = load_year_events(pool, year, today).await?;
     // Mesmo teto de diário do forecast para o MÊS CORRENTE: sem ele, a Performance do mesmo mês
     // divergia entre a visão anual e o Totais (o teto só existe no caminho do forecast). O
@@ -2392,8 +2391,21 @@ pub(crate) async fn annual_metrics(
     let months: Vec<(i32, u32)> = (1..=12).map(|m| (year, m)).collect();
     let annotation = load_economia_annotation(pool, &[year]).await?;
     // O loader de métricas já carrega a máscara de réguas por lançamento em cada evento.
-    let metrics = forecast::month_metrics_for(today, &events, &months, &annotation);
-    let months = metrics
+    Ok(forecast::month_metrics_for(
+        today,
+        &events,
+        &months,
+        &annotation,
+    ))
+}
+
+pub(crate) async fn annual_metrics(
+    pool: &SqlitePool,
+    year: i32,
+    today: NaiveDate,
+) -> Result<AnnualMetricsDto, String> {
+    let months = annual_month_metrics(pool, year, today)
+        .await?
         .iter()
         .map(|m| MonthMetricDto {
             year: m.year,

@@ -139,6 +139,94 @@ impl<T> Listing<T> {
     }
 }
 
+/// Página de uma lista longa. `total` cobre o recorte inteiro (nunca a página) e `next_cursor`
+/// é o convite para a próxima — ausente quando a lista acabou.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct Page<T> {
+    pub items: Vec<T>,
+    pub returned: usize,
+    pub total: usize,
+    pub next_cursor: Option<String>,
+}
+
+impl<T> Page<T> {
+    /// Uma página de até [`MAX_ROWS`] itens a partir de `offset`, com o cursor ancorado na CHAVE
+    /// do primeiro item que ficou de fora.
+    pub(crate) fn from(
+        all: Vec<T>,
+        offset: usize,
+        scope: &str,
+        key: impl Fn(&T) -> String,
+    ) -> Self {
+        let total = all.len();
+        let mut items: Vec<T> = all.into_iter().skip(offset).collect();
+        let next_cursor = (items.len() > MAX_ROWS).then(|| {
+            let next = Cursor::encode(scope, &key(&items[MAX_ROWS]));
+            items.truncate(MAX_ROWS);
+            next
+        });
+        Self {
+            returned: items.len(),
+            items,
+            total,
+            next_cursor,
+        }
+    }
+}
+
+/// Cursor opaco de paginação. Carrega a chave do próximo item — não o número da página, que
+/// repetiria ou pularia linha assim que a lista mudasse debaixo dele — e a impressão do recorte
+/// que o gerou, para que um cursor de outra chamada seja recusado em vez de paginar outra lista.
+pub(crate) struct Cursor;
+
+impl Cursor {
+    pub(crate) fn encode(scope: &str, key: &str) -> String {
+        hex::encode(format!("{scope}|{key}"))
+    }
+
+    /// A recusa de um cursor que não serve a esta chamada — seja porque veio de outro recorte,
+    /// seja porque a linha que ele ancorava não está mais lá.
+    pub(crate) fn refused() -> ToolError {
+        ToolError::new(
+            ErrorCode::InvalidArgument,
+            "Este cursor não é desta chamada.",
+            "Repita a chamada sem o argumento cursor para começar do início do recorte.",
+        )
+    }
+
+    pub(crate) fn decode(raw: &str, scope: &str) -> Result<String, ToolError> {
+        let decoded = hex::decode(raw)
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .ok_or_else(Self::refused)?;
+        let (found, key) = decoded.split_once('|').ok_or_else(Self::refused)?;
+        if found != scope {
+            return Err(Self::refused());
+        }
+        Ok(key.to_string())
+    }
+}
+
+/// Diferença entre duas leituras, pronta: quanto mudou em centavos e quanto isso representa da
+/// base, em basis points. `change_bps` é nulo quando a base é zero — variação sobre nada não
+/// existe, e fabricar um número aqui seria justamente a conta que a ferramenta evita.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub(crate) struct Delta {
+    pub cents: i64,
+    pub change_bps: Option<i64>,
+}
+
+impl Delta {
+    pub(crate) fn between(now: i64, before: i64) -> Self {
+        let cents = now - before;
+        Self {
+            cents,
+            // A base entra em módulo: com base negativa, o sinal da variação é o da diferença.
+            change_bps: (before != 0).then(|| cents * 10_000 / before.abs()),
+        }
+    }
+}
+
 /// Por que a chamada não produziu resposta. O código é para o loop decidir; `message` e `fix`
 /// são para o modelo se corrigir sozinho na mesma rodada.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -150,6 +238,8 @@ pub(crate) enum ErrorCode {
     UnknownArgument,
     /// Argumento declarado, valor inválido (tipo errado, fora do vocabulário).
     InvalidArgument,
+    /// Argumento bem formado apontando para o que não existe (um cenário, por exemplo).
+    NotFound,
     /// Leitura do banco falhou.
     ReadFailed,
 }

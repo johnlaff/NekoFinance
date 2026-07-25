@@ -28,6 +28,9 @@ export function median(values: number[]): number {
 // real: piso de 60% do gasto típico (a mediana das saídas dos meses vividos). Abaixo disso
 // o mês é SUSPEITO — tem lançamento, só tem pouco: pode ser mês barato de verdade ou pode
 // faltar lançar. Enquanto houver suspeito, o veredito recua para o realizado.
+//
+// A mesma régua é computada no motor (`forecast::annual_ruler`, `LASTRO_FLOOR_BPS`), que é o
+// que a conversa lê. As duas precisam dar o mesmo número: mudou aqui, muda lá.
 const LASTRO_FLOOR = 0.6;
 
 // ------------------------------------------------------------------- tipos --
