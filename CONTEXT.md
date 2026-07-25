@@ -120,6 +120,8 @@ These live in the forecast DTO (`get_forecast`), computed in the Rust core — n
 
 **MonthCoverage**: per future month, how much of the typical baseline outflow has been pre-launched. Drives the Previsibilidade card — an empty future month makes the projection optimistic until salary/fixed/fatura/diário are entered.
 
+**AnnualRuler** (`forecast::annual_ruler`): the method's 20–30% band applied to one year's twelve `MonthMetric`s. **Lastro test**: a month ahead only backs the annual verdict when its launched outflow reaches 60% of the typical spend (median of the lived months' outflow, Economia included — what matters is whether the month looks lived); below that the month is _suspect_ and the ruler falls back to the lived cut, printing the scope alongside the number so a partial year never reads as a closed one. Percentages truncate, like the monthly engine and the display. Composed in the Ano screen (`src/screens/anoView.ts`) and in the conversation facade (`get_year_analysis`) — same engine, same number, kept in sync by hand. Comparing two years uses `avg_income_cents` over months **with** income, never year totals: a year in progress against a closed one would fake an income drop.
+
 **binding_guardrail**: "pode gastar até X hoje" is the MIN of two limits — cash (no day goes negative) and savings (keep the annual Economizado% ≥ target). `binding_guardrail` says which one bit.
 
 **Colchão**: net surplus kept in cash instead of a formal Economia transfer — a valid adaptation the app recognizes before teaching (ColchaoCard). Shown beside `registered_economia` so the two are never conflated.

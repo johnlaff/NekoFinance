@@ -101,6 +101,48 @@ async fn active_budget(pool: &SqlitePool, per_day: i64) {
     .unwrap();
 }
 
+async fn card_expense(pool: &SqlitePool, id: &str, amount: i64, date: &str) {
+    sqlx::query(
+        "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, \
+                                      payment_method) \
+         VALUES (?1, 'expense', ?2, ?3, 0, 0, 'credit')",
+    )
+    .bind(id)
+    .bind(amount)
+    .bind(date)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Transferência para um bolso: destino de reserva é Economia, destino ilíquido é Patrimônio.
+async fn transfer(pool: &SqlitePool, id: &str, amount: i64, date: &str, to_account: &str) {
+    sqlx::query(
+        "INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) \
+         VALUES (?1, 'transfer', ?2, ?3, ?4, 0)",
+    )
+    .bind(id)
+    .bind(amount)
+    .bind(date)
+    .bind(to_account)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Saldo encadeado da planilha para um dia — a corrente que o calendário lê no passado e a
+/// semente de onde a projeção parte.
+async fn sheet_balance(pool: &SqlitePool, date: &str, cents: i64) {
+    sqlx::query(
+        "INSERT INTO sheet_daily_balance (sheet_name, date, balance_cents) VALUES ('2026', ?1, ?2)",
+    )
+    .bind(date)
+    .bind(cents)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 /// Mundo base: uma pessoa, conta corrente e reserva, três meses completos de custo de vida
 /// (o "retrato vivo" da reserva) e renda no ano.
 async fn world(pool: &SqlitePool) {
@@ -124,6 +166,79 @@ async fn world(pool: &SqlitePool) {
         )
         .await;
     }
+}
+
+/// Dois meses vividos com os cinco tipos do método na mesa (entrada, fixa, diário, cartão e
+/// economia): o mundo das análises temporais.
+async fn timeline(pool: &SqlitePool) {
+    person(pool).await;
+    account(pool, "acc-bank", "Conta corrente", "bank", 500_000).await;
+    account(pool, "acc-reserve", "Reserva", "savings", 900_000).await;
+
+    income(pool, "in-mai", 800_000, "2026-05-01").await;
+    expense(pool, "fx-mai", 200_000, "2026-05-05", true).await;
+    expense(pool, "di-mai", 50_000, "2026-05-10", false).await;
+    card_expense(pool, "cc-mai", 30_000, "2026-05-12").await;
+    transfer(pool, "ec-mai", 100_000, "2026-05-28", "acc-reserve").await;
+
+    income(pool, "in-jun", 900_000, "2026-06-01").await;
+    expense(pool, "fx-jun", 200_000, "2026-06-05", true).await;
+    expense(pool, "di-jun", 60_000, "2026-06-10", false).await;
+    card_expense(pool, "cc-jun", 30_000, "2026-06-12").await;
+    transfer(pool, "ec-jun", 150_000, "2026-06-28", "acc-reserve").await;
+}
+
+/// Sete meses vividos de composição estável e um futuro quase vazio — o mundo em que a régua
+/// anual precisa escolher entre o recorte vivido e a projeção do ano inteiro.
+async fn lived_year(pool: &SqlitePool) {
+    person(pool).await;
+    account(pool, "acc-bank", "Conta corrente", "bank", 500_000).await;
+    account(pool, "acc-reserve", "Reserva", "savings", 300_000).await;
+    for month in 1..=7 {
+        income(
+            pool,
+            &format!("in-{month:02}"),
+            800_000,
+            &format!("2026-{month:02}-01"),
+        )
+        .await;
+        expense(
+            pool,
+            &format!("fx-{month:02}"),
+            200_000,
+            &format!("2026-{month:02}-05"),
+            true,
+        )
+        .await;
+        expense(
+            pool,
+            &format!("di-{month:02}"),
+            100_000,
+            &format!("2026-{month:02}-10"),
+            false,
+        )
+        .await;
+        transfer(
+            pool,
+            &format!("ec-{month:02}"),
+            200_000,
+            &format!("2026-{month:02}-20"),
+            "acc-reserve",
+        )
+        .await;
+    }
+    // Agosto pré-lançado só com a renda e uma fixa magra: tem lançamento, tem pouco.
+    income(pool, "in-08", 900_000, "2026-08-01").await;
+    expense(pool, "fx-08", 50_000, "2026-08-05", true).await;
+}
+
+/// Futuro pré-lançado sobre a corrente da planilha: semente conhecida no dia 24 e agosto inteiro
+/// lançado — o mundo da projeção e do calendário.
+async fn projected_future(pool: &SqlitePool) {
+    sheet_balance(pool, "2026-07-24", 1_000_000).await;
+    income(pool, "in-ago", 900_000, "2026-08-01").await;
+    expense(pool, "fx-ago", 300_000, "2026-08-10", true).await;
+    expense(pool, "fx-ago-fim", 100_000, "2026-08-31", true).await;
 }
 
 // --- Contrato do envelope ---------------------------------------------------------------
@@ -204,6 +319,16 @@ async fn no_number_in_any_envelope_is_a_float() {
             "get_accounts_and_net_worth",
             json!({"include": ["accounts"]}),
         ),
+        (
+            "get_month_analysis",
+            json!({"month": "2026-06", "compare_to": "2026-05", "include": ["days", "owners"]}),
+        ),
+        (
+            "get_year_analysis",
+            json!({"year": 2026, "compare_to": 2025, "include": ["months", "year_end"]}),
+        ),
+        ("get_forecast", json!({"include": ["daily", "coverage"]})),
+        ("get_cashflow_calendar", json!({})),
     ] {
         let env = call(&p, tool, args).await;
         let json = serde_json::to_value(&env).unwrap();
@@ -642,4 +767,633 @@ async fn accounts_and_net_worth_sums_by_liquidity() {
     assert_eq!(worth["accounts"]["items"][0]["name"], "Conta corrente");
     assert_eq!(worth["accounts"]["items"][0]["liquidity"], "liquid");
     assert_eq!(worth["accounts"]["items"][0]["balance_cents"], 500_000);
+}
+
+// --- Um mês em detalhe ------------------------------------------------------------------
+
+#[tokio::test]
+async fn month_analysis_publishes_the_engine_buckets() {
+    let p = pool().await;
+    timeline(&p).await;
+
+    let mai = data(&p, "get_month_analysis", json!({"month": "2026-05"})).await;
+
+    assert_eq!(mai["month"], "2026-05");
+    assert_eq!(mai["income_cents"], 800_000);
+    assert_eq!(mai["buckets"]["fixed_out_cents"], 200_000);
+    assert_eq!(mai["buckets"]["daily_out_cents"], 50_000);
+    assert_eq!(mai["buckets"]["cartao_cents"], 30_000);
+    assert_eq!(mai["buckets"]["economia_cents"], 100_000);
+    assert_eq!(mai["buckets"]["patrimonio_cents"], 0);
+    // Custo de vida = fixas + diário + cartão. Economia e Patrimônio ficam FORA: são dinheiro
+    // que saiu da conta, não custo de viver.
+    assert_eq!(mai["cost_of_living_cents"], 280_000);
+    assert_eq!(mai["performance_cents"], 420_000);
+    assert_eq!(mai["economizado_bps"], 1_250);
+    assert_eq!(mai["cost_of_living_within_income"], true);
+}
+
+/// As buckets são as do motor de projeção, uma a uma. Um balde a mais (ou com outro nome) faria
+/// a conversa falar um dialeto que as telas não falam — e duas somas do mesmo mês divergiriam.
+#[tokio::test]
+async fn month_buckets_speak_the_engine_vocabulary_one_to_one() {
+    let p = pool().await;
+    timeline(&p).await;
+
+    let mai = data(&p, "get_month_analysis", json!({"month": "2026-05"})).await;
+    let buckets: Vec<&str> = mai["buckets"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+
+    assert_eq!(
+        buckets,
+        // Os cinco tipos de SAÍDA do motor, em ordem alfabética como o envelope os serializa.
+        vec![
+            "cartao_cents",
+            "daily_out_cents",
+            "economia_cents",
+            "fixed_out_cents",
+            "patrimonio_cents",
+        ]
+    );
+    // Entrada é o sexto tipo do motor e fica fora do objeto porque não é saída.
+    assert!(mai["income_cents"].is_i64());
+    let out = &mai["buckets"];
+    assert_eq!(
+        mai["cost_of_living_cents"].as_i64().unwrap(),
+        out["fixed_out_cents"].as_i64().unwrap()
+            + out["daily_out_cents"].as_i64().unwrap()
+            + out["cartao_cents"].as_i64().unwrap()
+    );
+}
+
+#[tokio::test]
+async fn month_analysis_defaults_to_the_current_month_and_says_where_it_stands() {
+    let p = pool().await;
+    timeline(&p).await;
+
+    let now = call(&p, "get_month_analysis", json!({})).await;
+    assert!(now.ok);
+    assert_eq!(now.meta.period.start, "2026-07-01");
+    assert_eq!(now.meta.period.end, "2026-07-31");
+    assert_eq!(now.data.unwrap()["status"], "current");
+
+    let past = data(&p, "get_month_analysis", json!({"month": "2026-05"})).await;
+    assert_eq!(past["status"], "complete");
+
+    let ahead = data(&p, "get_month_analysis", json!({"month": "2026-09"})).await;
+    assert_eq!(ahead["status"], "future");
+}
+
+#[tokio::test]
+async fn month_analysis_hands_the_comparison_already_subtracted() {
+    let p = pool().await;
+    timeline(&p).await;
+
+    let jun = data(
+        &p,
+        "get_month_analysis",
+        json!({"month": "2026-06", "compare_to": "2026-05"}),
+    )
+    .await;
+
+    assert_eq!(jun["compare_to"]["month"], "2026-05");
+    assert_eq!(jun["compare_to"]["cost_of_living_cents"], 280_000);
+    // Nenhuma conta sobra para quem consome: cada figura vem com a diferença em centavos e a
+    // variação relativa em basis points.
+    assert_eq!(jun["delta"]["income"]["cents"], 100_000);
+    assert_eq!(jun["delta"]["income"]["change_bps"], 1_250);
+    assert_eq!(jun["delta"]["cost_of_living"]["cents"], 10_000);
+    assert_eq!(jun["delta"]["cost_of_living"]["change_bps"], 357);
+    assert_eq!(jun["delta"]["economia"]["cents"], 50_000);
+    assert_eq!(jun["delta"]["economia"]["change_bps"], 5_000);
+    assert_eq!(jun["delta"]["performance"]["cents"], 40_000);
+    // Economizado% é percentual: a diferença é de pontos-base, não variação sobre variação.
+    assert_eq!(jun["delta"]["economizado_bps"], 416);
+}
+
+#[tokio::test]
+async fn month_analysis_change_is_null_when_there_is_no_base_to_divide() {
+    let p = pool().await;
+    timeline(&p).await;
+
+    let mai = data(
+        &p,
+        "get_month_analysis",
+        json!({"month": "2026-05", "compare_to": "2026-04"}),
+    )
+    .await;
+
+    assert_eq!(mai["delta"]["income"]["cents"], 800_000);
+    // Abril não teve renda: variação relativa sobre zero não existe — nula, nunca inventada.
+    assert_eq!(mai["delta"]["income"]["change_bps"], Value::Null);
+}
+
+#[tokio::test]
+async fn month_analysis_day_grid_only_with_include() {
+    let p = pool().await;
+    timeline(&p).await;
+
+    let lean = data(&p, "get_month_analysis", json!({"month": "2026-05"})).await;
+    assert!(lean.get("days").is_none());
+
+    let full = data(
+        &p,
+        "get_month_analysis",
+        json!({"month": "2026-05", "include": ["days"]}),
+    )
+    .await;
+    let days = &full["days"];
+    assert_eq!(days["total"], 31);
+    assert_eq!(days["items"][0]["date"], "2026-05-01");
+    assert_eq!(days["items"][0]["income_cents"], 800_000);
+    assert_eq!(days["items"][9]["daily_out_cents"], 50_000);
+}
+
+#[tokio::test]
+async fn month_analysis_owners_only_with_include() {
+    let p = pool().await;
+    timeline(&p).await;
+    sqlx::query(
+        "INSERT INTO split (id, transaction_id, amount, owner_person_id) \
+         VALUES ('sp-1', 'di-mai', 50000, 'p-eu')",
+    )
+    .execute(&p)
+    .await
+    .unwrap();
+
+    let owners = data(
+        &p,
+        "get_month_analysis",
+        json!({"month": "2026-05", "include": ["owners"]}),
+    )
+    .await;
+
+    assert_eq!(owners["owners"]["items"][0]["owner_name"], "Eu");
+    assert_eq!(owners["owners"]["items"][0]["total_cents"], 50_000);
+}
+
+#[tokio::test]
+async fn month_analysis_refuses_a_month_that_is_not_a_month() {
+    let p = pool().await;
+    timeline(&p).await;
+
+    let env = call(&p, "get_month_analysis", json!({"month": "julho"})).await;
+    let err = env.error.unwrap();
+
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
+    // A recusa diz o formato aceito e mostra um mês escrito nele — corrigir não depende de
+    // adivinhar a forma.
+    assert!(err.message.contains("YYYY-MM"), "message: {}", err.message);
+    assert!(err.fix.contains("2026-07"), "fix: {}", err.fix);
+}
+
+// --- Um ano na régua anual --------------------------------------------------------------
+
+#[tokio::test]
+async fn year_analysis_publishes_the_annual_economizado_ruler() {
+    let p = pool().await;
+    lived_year(&p).await;
+
+    let env = call(&p, "get_year_analysis", json!({"year": 2026})).await;
+    assert!(env.ok, "{:?}", env.error);
+    assert_eq!(env.meta.period.start, "2026-01-01");
+    assert_eq!(env.meta.period.end, "2026-12-31");
+    let year = env.data.unwrap();
+
+    assert_eq!(year["year"], 2026);
+    assert_eq!(year["lived_months"], 7);
+    assert_eq!(year["income_lived_cents"], 5_600_000);
+    assert_eq!(year["economia_lived_cents"], 1_400_000);
+    assert_eq!(year["income_year_cents"], 6_500_000);
+    assert_eq!(year["economia_year_cents"], 1_400_000);
+    // A faixa do método é ANUAL: 20% de piso, 25% de alvo, 30% de teto.
+    assert_eq!(year["economizado"]["lived_bps"], 2_500);
+    assert_eq!(year["economizado"]["projected_bps"], 2_153);
+    assert_eq!(year["economizado"]["band"]["floor_bps"], 2_000);
+    assert_eq!(year["economizado"]["band"]["target_bps"], 2_500);
+    assert_eq!(year["economizado"]["band"]["ceiling_bps"], 3_000);
+    assert_eq!(year["economizado"]["verdict"], "in_band");
+}
+
+#[tokio::test]
+async fn year_analysis_falls_back_to_the_lived_cut_when_a_future_month_has_no_lastro() {
+    let p = pool().await;
+    lived_year(&p).await;
+
+    let year = data(&p, "get_year_analysis", json!({"year": 2026})).await;
+
+    // Gasto típico = mediana das saídas vividas (fixa + diário + economia = 500.000).
+    assert_eq!(year["typical_spend_cents"], 500_000);
+    // Agosto tem lançamento, só tem pouco; setembro a dezembro nem isso. Enquanto houver mês
+    // sem lastro, a régua recua ao vivido e IMPRIME o recorte.
+    assert_eq!(year["suspect_months"], json!([8, 9, 10, 11, 12]));
+    assert_eq!(year["economizado"]["bps"], 2_500);
+    assert_eq!(year["economizado"]["scope"], "lived");
+    assert_eq!(year["economizado"]["state"], "estimate");
+}
+
+#[tokio::test]
+async fn year_analysis_ruler_covers_the_whole_year_when_every_month_has_lastro() {
+    let p = pool().await;
+    person(&p).await;
+    account(&p, "acc-bank", "Conta corrente", "bank", 500_000).await;
+    account(&p, "acc-reserve", "Reserva", "savings", 300_000).await;
+    for month in 1..=12 {
+        income(
+            &p,
+            &format!("in-25-{month:02}"),
+            600_000,
+            &format!("2025-{month:02}-01"),
+        )
+        .await;
+        transfer(
+            &p,
+            &format!("ec-25-{month:02}"),
+            120_000,
+            &format!("2025-{month:02}-20"),
+            "acc-reserve",
+        )
+        .await;
+    }
+
+    let year = data(&p, "get_year_analysis", json!({"year": 2025})).await;
+
+    assert_eq!(year["lived_months"], 12);
+    assert_eq!(year["suspect_months"], json!([]));
+    assert_eq!(year["economizado"]["scope"], "year");
+    assert_eq!(year["economizado"]["state"], "verdict");
+    assert_eq!(year["economizado"]["bps"], 2_000);
+    assert_eq!(year["economizado"]["verdict"], "in_band");
+}
+
+#[tokio::test]
+async fn year_analysis_reads_zero_economia_as_a_choice_when_the_reserve_is_protected() {
+    let p = pool().await;
+    person(&p).await;
+    account(&p, "acc-bank", "Conta corrente", "bank", 500_000).await;
+    account(&p, "acc-reserve", "Reserva", "savings", 2_000_000).await;
+    for month in 1..=6 {
+        income(
+            &p,
+            &format!("in-{month:02}"),
+            800_000,
+            &format!("2026-{month:02}-01"),
+        )
+        .await;
+        expense(
+            &p,
+            &format!("fx-{month:02}"),
+            200_000,
+            &format!("2026-{month:02}-05"),
+            true,
+        )
+        .await;
+        expense(
+            &p,
+            &format!("di-{month:02}"),
+            100_000,
+            &format!("2026-{month:02}-10"),
+            false,
+        )
+        .await;
+    }
+
+    let year = data(&p, "get_year_analysis", json!({"year": 2026})).await;
+
+    // Reserva de 6,6 meses com economia zerada é a troca CERTA na ordem do método — nunca o
+    // "abaixo da faixa" que puniria a escolha.
+    assert_eq!(year["economizado"]["verdict"], "zero_by_choice");
+    assert_eq!(year["economia_lived_cents"], 0);
+}
+
+#[tokio::test]
+async fn year_analysis_without_any_lived_month_has_no_record() {
+    let p = pool().await;
+    person(&p).await;
+
+    let year = data(&p, "get_year_analysis", json!({"year": 2026})).await;
+
+    assert_eq!(year["economizado"]["verdict"], "no_record");
+    assert_eq!(year["economizado"]["state"], "no_record");
+    assert_eq!(year["economizado"]["bps"], Value::Null);
+}
+
+#[tokio::test]
+async fn year_analysis_compares_two_years_with_the_delta_ready() {
+    let p = pool().await;
+    lived_year(&p).await;
+    for month in 1..=12 {
+        income(
+            &p,
+            &format!("in-25-{month:02}"),
+            600_000,
+            &format!("2025-{month:02}-01"),
+        )
+        .await;
+        transfer(
+            &p,
+            &format!("ec-25-{month:02}"),
+            120_000,
+            &format!("2025-{month:02}-20"),
+            "acc-reserve",
+        )
+        .await;
+    }
+
+    let year = data(
+        &p,
+        "get_year_analysis",
+        json!({"year": 2026, "compare_to": 2025}),
+    )
+    .await;
+
+    assert_eq!(year["compare_to"]["year"], 2025);
+    assert_eq!(year["compare_to"]["economizado"]["bps"], 2_000);
+    assert_eq!(year["compare_to"]["economizado"]["scope"], "year");
+    // A comparação entre anos é de renda MÉDIA por mês com registro: 2026 tem sete meses
+    // vividos e 2025 tem doze, e comparar os totais acusaria uma queda que é só o calendário.
+    assert_eq!(year["recorded_months"], 7);
+    assert_eq!(year["avg_income_cents"], 800_000);
+    assert_eq!(year["compare_to"]["recorded_months"], 12);
+    assert_eq!(year["compare_to"]["avg_income_cents"], 600_000);
+    assert_eq!(year["delta"]["avg_income"]["cents"], 200_000);
+    assert_eq!(year["delta"]["avg_income"]["change_bps"], 3_333);
+    assert_eq!(year["delta"]["economizado_bps"], 500);
+}
+
+#[tokio::test]
+async fn year_analysis_months_only_with_include() {
+    let p = pool().await;
+    lived_year(&p).await;
+
+    let lean = data(&p, "get_year_analysis", json!({"year": 2026})).await;
+    assert!(lean.get("months").is_none());
+
+    let full = data(
+        &p,
+        "get_year_analysis",
+        json!({"year": 2026, "include": ["months"]}),
+    )
+    .await;
+    let months = &full["months"];
+
+    assert_eq!(months["total"], 12);
+    assert_eq!(months["items"][0]["month"], "2026-01");
+    assert_eq!(months["items"][0]["income_cents"], 800_000);
+    assert_eq!(months["items"][0]["economia_cents"], 200_000);
+    assert_eq!(months["items"][0]["lived"], true);
+    assert_eq!(months["items"][7]["suspect"], true);
+}
+
+// --- A projeção à frente ----------------------------------------------------------------
+
+#[tokio::test]
+async fn forecast_answers_the_range_with_the_month_end_and_the_guardrail() {
+    let p = pool().await;
+    timeline(&p).await;
+    projected_future(&p).await;
+
+    let env = call(
+        &p,
+        "get_forecast",
+        json!({"range": {"start": "2026-08-01", "end": "2026-08-31"}}),
+    )
+    .await;
+    assert!(env.ok, "{:?}", env.error);
+    assert_eq!(env.meta.period.start, "2026-08-01");
+    assert_eq!(env.meta.period.end, "2026-08-31");
+    let forecast = env.data.unwrap();
+
+    assert_eq!(forecast["today"], "2026-07-25");
+    assert_eq!(forecast["month_end"]["items"][0]["month"], "2026-08");
+    assert_eq!(
+        forecast["month_end"]["items"][0]["balance_cents"],
+        1_500_000
+    );
+    assert_eq!(forecast["end_balance_cents"], 1_500_000);
+    // O menor saldo é o do RECORTE pedido; o fundo do poço do horizonte inteiro tem campo
+    // próprio, para que a resposta não troque um pelo outro.
+    assert_eq!(forecast["lowest_balance"]["balance_cents"], 1_500_000);
+    assert_eq!(
+        forecast["horizon_lowest_balance"]["balance_cents"],
+        1_000_000
+    );
+    assert!(["cash", "savings"].contains(&forecast["binding"].as_str().unwrap()));
+    assert!(forecast["safe_to_spend_today_cents"].is_i64());
+}
+
+#[tokio::test]
+async fn forecast_daily_only_with_include_and_never_leaves_the_range() {
+    let p = pool().await;
+    timeline(&p).await;
+    projected_future(&p).await;
+
+    let lean = data(&p, "get_forecast", json!({})).await;
+    assert!(lean.get("daily").is_none());
+
+    let full = data(
+        &p,
+        "get_forecast",
+        json!({"range": {"start": "2026-08-01", "end": "2026-08-31"}, "include": ["daily"]}),
+    )
+    .await;
+    let daily = &full["daily"];
+
+    assert_eq!(daily["total"], 31);
+    assert_eq!(daily["items"][0]["date"], "2026-08-01");
+    assert_eq!(daily["items"][0]["balance_cents"], 1_900_000);
+    assert_eq!(daily["items"][30]["date"], "2026-08-31");
+}
+
+#[tokio::test]
+async fn forecast_default_range_starts_today_and_ends_at_the_horizon() {
+    let p = pool().await;
+    timeline(&p).await;
+    projected_future(&p).await;
+
+    let env = call(&p, "get_forecast", json!({})).await;
+
+    assert_eq!(env.meta.period.start, "2026-07-25");
+    assert_eq!(env.meta.period.end, "2026-08-31");
+}
+
+#[tokio::test]
+async fn forecast_refuses_a_range_that_ended_before_today() {
+    let p = pool().await;
+    timeline(&p).await;
+
+    let env = call(
+        &p,
+        "get_forecast",
+        json!({"range": {"start": "2026-05-01", "end": "2026-05-31"}}),
+    )
+    .await;
+    let err = env.error.unwrap();
+
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
+    // A recusa entrega a porta certa em vez de só fechar a errada.
+    assert!(err.fix.contains("get_month_analysis"), "fix: {}", err.fix);
+}
+
+#[tokio::test]
+async fn forecast_with_a_scenario_hands_the_comparison_ready() {
+    let p = pool().await;
+    timeline(&p).await;
+    projected_future(&p).await;
+    let scenario = crate::scenarios::create_scenario(&p, "Sem o carro")
+        .await
+        .unwrap();
+    crate::scenarios::add_scenario_transaction(
+        &p,
+        &scenario.id,
+        "expense",
+        200_000,
+        "Parcela do carro",
+        "2026-08-15",
+        Some("debit"),
+        true,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let forecast = data(
+        &p,
+        "get_forecast",
+        json!({"scenario_id": scenario.id, "range": {"start": "2026-08-01", "end": "2026-08-31"}}),
+    )
+    .await;
+    let s = &forecast["scenario"];
+
+    assert_eq!(s["name"], "Sem o carro");
+    assert_eq!(s["month_end"]["items"][0]["month"], "2026-08");
+    assert_eq!(s["month_end"]["items"][0]["balance_cents"], 1_300_000);
+    assert_eq!(s["month_end"]["items"][0]["delta_cents"], -200_000);
+    assert!(s["safe_to_spend_delta_cents"].is_i64());
+}
+
+#[tokio::test]
+async fn forecast_names_the_scenario_that_does_not_exist() {
+    let p = pool().await;
+    timeline(&p).await;
+
+    let env = call(&p, "get_forecast", json!({"scenario_id": "sc-fantasma"})).await;
+    let err = env.error.unwrap();
+
+    assert_eq!(err.code, ErrorCode::NotFound);
+    assert!(!err.fix.is_empty());
+}
+
+// --- O calendário de caixa --------------------------------------------------------------
+
+#[tokio::test]
+async fn cashflow_calendar_walks_the_days_with_movement_and_balance() {
+    let p = pool().await;
+    timeline(&p).await;
+    projected_future(&p).await;
+    expense(&p, "di-27", 20_000, "2026-07-27", false).await;
+
+    let calendar = data(
+        &p,
+        "get_cashflow_calendar",
+        json!({"range": {"start": "2026-07-23", "end": "2026-07-27"}}),
+    )
+    .await;
+    let items = calendar["days"]["items"].as_array().unwrap();
+
+    assert_eq!(items.len(), 5);
+    // Antes de hoje a corrente é a da planilha: sem Saldo importado, o dia não inventa número.
+    assert_eq!(items[0]["date"], "2026-07-23");
+    assert_eq!(items[0]["balance_cents"], Value::Null);
+    assert_eq!(items[0]["movement_cents"], Value::Null);
+    assert_eq!(items[1]["date"], "2026-07-24");
+    assert_eq!(items[1]["balance_cents"], 1_000_000);
+    assert_eq!(items[1]["is_future"], false);
+    // De hoje em diante quem responde é a projeção, e o movimento é o passo da corrente.
+    assert_eq!(items[2]["date"], "2026-07-25");
+    assert_eq!(items[2]["balance_cents"], 1_000_000);
+    assert_eq!(items[2]["movement_cents"], 0);
+    assert_eq!(items[4]["date"], "2026-07-27");
+    assert_eq!(items[4]["balance_cents"], 980_000);
+    assert_eq!(items[4]["movement_cents"], -20_000);
+    assert_eq!(items[4]["daily_out_cents"], 20_000);
+    assert_eq!(items[4]["is_future"], true);
+    assert_eq!(calendar["lowest_balance"]["date"], "2026-07-27");
+}
+
+#[tokio::test]
+async fn cashflow_calendar_totals_cover_the_whole_range_not_the_page() {
+    let p = pool().await;
+    timeline(&p).await;
+    projected_future(&p).await;
+
+    let first = data(
+        &p,
+        "get_cashflow_calendar",
+        json!({"range": {"start": "2026-01-01", "end": "2026-12-31"}}),
+    )
+    .await;
+
+    assert_eq!(first["days"]["returned"], envelope::MAX_ROWS);
+    assert_eq!(first["days"]["total"], 365);
+    let cursor = first["days"]["next_cursor"].as_str().unwrap().to_string();
+    // Entradas do ano inteiro: maio 800.000 + junho 900.000 + agosto 900.000.
+    assert_eq!(first["totals"]["income_cents"], 2_600_000);
+
+    let second = data(
+        &p,
+        "get_cashflow_calendar",
+        json!({"range": {"start": "2026-01-01", "end": "2026-12-31"}, "cursor": cursor}),
+    )
+    .await;
+
+    assert_eq!(second["days"]["returned"], 365 - envelope::MAX_ROWS);
+    assert_eq!(second["days"]["next_cursor"], Value::Null);
+    assert_eq!(second["days"]["items"][0]["date"], "2026-07-20");
+    // O agregado é do RECORTE, não da página: as duas páginas dizem o mesmo total.
+    assert_eq!(second["totals"]["income_cents"], 2_600_000);
+    assert_eq!(second["totals"], first["totals"]);
+}
+
+#[tokio::test]
+async fn cashflow_calendar_refuses_a_cursor_from_another_range() {
+    let p = pool().await;
+    timeline(&p).await;
+
+    let first = data(
+        &p,
+        "get_cashflow_calendar",
+        json!({"range": {"start": "2026-01-01", "end": "2026-12-31"}}),
+    )
+    .await;
+    let cursor = first["days"]["next_cursor"].as_str().unwrap().to_string();
+
+    let env = call(
+        &p,
+        "get_cashflow_calendar",
+        json!({"range": {"start": "2026-02-01", "end": "2026-12-31"}, "cursor": cursor}),
+    )
+    .await;
+    let err = env.error.unwrap();
+
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
+    assert!(err.fix.contains("cursor"), "fix: {}", err.fix);
+}
+
+#[tokio::test]
+async fn cashflow_calendar_defaults_to_the_current_month() {
+    let p = pool().await;
+    timeline(&p).await;
+
+    let env = call(&p, "get_cashflow_calendar", json!({})).await;
+
+    assert!(env.ok, "{:?}", env.error);
+    assert_eq!(env.meta.period.start, "2026-07-01");
+    assert_eq!(env.meta.period.end, "2026-07-31");
+    assert_eq!(env.data.unwrap()["days"]["total"], 31);
 }

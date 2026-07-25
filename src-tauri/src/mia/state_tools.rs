@@ -6,22 +6,19 @@
 //! que o domínio expressa em dois dialetos (`chosen`/`none` no teto, `verdict`/`no_record` nas
 //! demais) e a fachada publica num só.
 
-use super::Args;
 use super::envelope::{DataState, Listing, Period, Reading, ToolError, ToolOutput, ToolResult};
+use super::time_tools::coverage_listing;
+use super::{Args, insert};
 use crate::commands::{
-    CeilingSource, RESERVE_MIN_MONTHS, SAVINGS_FLOOR_BPS, SAVINGS_TARGET_BPS,
+    CeilingSource, RESERVE_MIN_MONTHS, SAVINGS_CEILING_BPS, SAVINGS_FLOOR_BPS, SAVINGS_TARGET_BPS,
     daily_ceiling_reading, dashboard_summary, economia_ruler_reading, forecast_dto,
     get_ceiling_proposal_inner, get_daily_budget_inner, last_sync_at_query, pockets,
     reserve_reading, spending_mode_summary,
 };
 use chrono::{Datelike, NaiveDate};
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::json;
 use sqlx::SqlitePool;
-
-/// Teto da faixa de economia do método (20–30% ao ano). O piso e o centro já vivem no motor
-/// (guardrail e gate do cartão decidem por eles); o teto é didático — nunca julga.
-const SAVINGS_BAND_CEILING_BPS: i64 = 3_000;
 
 /// Dias sem lançamento a partir dos quais o dado do Diário deixa de descrever o presente.
 const STALE_ENTRY_DAYS: i64 = 7;
@@ -169,14 +166,6 @@ struct Gap {
     fix: &'static str,
 }
 
-#[derive(Serialize)]
-struct CoverageDto {
-    month: String,
-    coverage_bps: i64,
-    is_complete: bool,
-    estimated_missing_cents: i64,
-}
-
 pub(crate) async fn data_status(pool: &SqlitePool, args: &Args, today: NaiveDate) -> ToolResult {
     let iso = today.format("%Y-%m-%d").to_string();
     // Realizado é decidido pela DATA (≤ hoje), não pelo `is_projection` congelado — que fica
@@ -319,21 +308,11 @@ pub(crate) async fn data_status(pool: &SqlitePool, args: &Args, today: NaiveDate
         let forecast = forecast_dto(pool, today)
             .await
             .map_err(ToolError::read_failed)?;
-        let coverage: Vec<CoverageDto> = forecast
-            .coverage
-            .iter()
-            .map(|c| CoverageDto {
-                month: format!("{:04}-{:02}", c.year, c.month),
-                coverage_bps: c.coverage_bps,
-                is_complete: c.is_complete,
-                estimated_missing_cents: c.estimated_missing_cents,
-            })
-            .collect();
         insert(
             &mut data,
             "future_coverage",
             json!({
-                "months": Listing::capped(coverage),
+                "months": coverage_listing(forecast.coverage.iter()),
                 "baseline_outflow_cents": forecast.baseline_outflow_cents,
                 "total_missing_cents": forecast.total_missing_cents,
                 "trusted_through_month": forecast.trusted_through_month,
@@ -394,7 +373,7 @@ pub(crate) async fn budget_settings(
         "method_targets": {
             "economia_floor_bps": SAVINGS_FLOOR_BPS,
             "economia_target_bps": SAVINGS_TARGET_BPS,
-            "economia_ceiling_bps": SAVINGS_BAND_CEILING_BPS,
+            "economia_ceiling_bps": SAVINGS_CEILING_BPS,
             "reserve_months": RESERVE_MIN_MONTHS,
         },
     });
@@ -488,18 +467,6 @@ pub(crate) async fn accounts_and_net_worth(
 }
 
 // --- Costura ----------------------------------------------------------------------------
-
-/// Acrescenta um campo ao objeto de dados. A serialização de um tipo próprio não falha; um
-/// `json!` mal formado seria erro de programação, não de dado.
-fn insert(data: &mut Value, key: &str, value: impl Serialize) {
-    let object = data
-        .as_object_mut()
-        .expect("dados de ferramenta são sempre um objeto");
-    object.insert(
-        key.to_string(),
-        serde_json::to_value(value).expect("dados de ferramenta são serializáveis"),
-    );
-}
 
 fn month_period(today: NaiveDate) -> Period {
     let start = NaiveDate::from_ymd_opt(today.year(), today.month(), 1).expect("dia 1 existe");
