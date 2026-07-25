@@ -439,6 +439,28 @@ async fn reserve_states_walk_the_ladder() {
     assert_eq!(snapshot["reserve"]["months_display"], "4,5");
     assert_eq!(snapshot["reserve"]["balance_cents"], 900_000);
     assert_eq!(snapshot["reserve"]["target_months"], 6);
+
+    // Janela cheia de seis meses: veredito. O degrau importa por dois motivos — é o estado que
+    // o método persegue, e é o único que exercita a tradução do `verdict` do domínio.
+    let s = pool().await;
+    person(&s).await;
+    account(&s, "acc-reserve", "Reserva", "savings", 1_200_000).await;
+    for (i, month) in ["01", "02", "03", "04", "05", "06"].iter().enumerate() {
+        expense(
+            &s,
+            &format!("fx-{i}"),
+            200_000,
+            &format!("2026-{month}-05"),
+            true,
+        )
+        .await;
+    }
+    let snapshot = data(&s, "get_financial_snapshot", json!({})).await;
+    assert_eq!(snapshot["reserve"]["state"], "verdict");
+    assert_eq!(snapshot["reserve"]["basis_months"], 6);
+    assert_eq!(snapshot["reserve"]["months_tenths"], 60);
+    // Inteiro não ganha casa decimal — a mesma escrita da tela.
+    assert_eq!(snapshot["reserve"]["months_display"], "6");
 }
 
 // --- As quatro perguntas de estado ------------------------------------------------------

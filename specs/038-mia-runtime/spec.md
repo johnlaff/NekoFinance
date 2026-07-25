@@ -138,7 +138,9 @@ Módulo `mia`, com o loop como máquina de estados pequena. Sem framework de age
 
 ### 2. Fachada — dispatch único sobre os helpers puros
 
-Uma porta de entrada (`dispatch(pool, call) -> envelope`) para as 14 ferramentas, chamando os mesmos helpers puros que os comandos Tauri já chamam. Sem camada de serviço nova, sem refactor dos comandos existentes, sem espelhar a interface 1:1.
+Uma porta de entrada (`dispatch(pool, call) -> envelope`) para as 14 ferramentas, chamando os mesmos helpers puros que os comandos Tauri já chamam. Sem camada de serviço nova, sem espelhar a interface 1:1, e sem mudar a superfície nem o comportamento de comando existente.
+
+A régua vive numa função só. Quando a ferramenta precisa de uma leitura que hoje está embutida no corpo de um comando, a leitura é extraída para helper compartilhado e o comando passa a chamá-lo — comportamento preservado, provado pelos testes que já cercam o comando. Copiar a régua para dentro da fachada é o que não se faz: duas implementações divergem, e o número da conversa deixa de bater com o da tela.
 
 As ferramentas: `get_financial_snapshot` · `get_month_analysis` · `get_year_analysis` · `get_cashflow_calendar` · `search_transactions` · `get_tags` · `get_commitments` · `get_forecast` · `simulate_scenario` · `get_accounts_and_net_worth` · `get_budget_settings` · `get_data_status` · `get_method_guidance` · `propose_transaction`.
 

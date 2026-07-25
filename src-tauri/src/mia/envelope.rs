@@ -198,8 +198,9 @@ pub(crate) struct Meta {
     pub period: Period,
     pub as_of: String,
     /// Impressão digital dos dados lidos. Duas respostas com a mesma revisão leram o mesmo
-    /// mundo; é o que amarra uma proposta ao estado que a originou. Nulo só quando o próprio
-    /// banco não pôde ser lido — a mesma falha que o `error` da resposta descreve.
+    /// mundo; é o que amarra uma proposta ao estado que a originou. A revisão é tirada antes
+    /// da ferramenta rodar, e é nula quando essa leitura falha — independentemente de a
+    /// ferramenta ter respondido.
     pub data_revision: Option<String>,
     /// Teto de linhas aplicado nesta chamada — o modelo lê o corte em vez de supor.
     pub row_limit: usize,
