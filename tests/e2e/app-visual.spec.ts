@@ -549,3 +549,99 @@ for (const theme of ["dark", "light"] as const) {
     });
   });
 }
+
+// Mia: a conversa. O estado inicial é a saudação do gato (o mais desenhado da tela) e a
+// resposta traz o recibo auditável — a assinatura da onda. No desktop o painel dos números
+// acompanha à direita e o composer fica ancorado na base.
+for (const theme of ["dark", "light"] as const) {
+  test(`Mia — resposta com recibo ${theme}`, async ({ page }) => {
+    await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.addInitScript((t: string) => {
+      localStorage.setItem("neko-theme", t);
+    }, theme);
+    await mockTauri(page, {
+      list_scenarios_cmd: [],
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [],
+    });
+    await page.goto("/");
+    await page.getByRole("button", { name: "Mia", exact: false }).first().click();
+    await page.getByRole("button", { name: "Quanto posso gastar hoje?" }).click();
+    // A segunda pergunta sai do painel: cada linha dele é um atalho de conversa.
+    await page.getByRole("button", { name: /Economizado no ano/ }).click();
+    await page.waitForTimeout(350);
+    await expect(page).toHaveScreenshot(`Mia-recibo-${theme}.png`, {
+      fullPage: true,
+      maxDiffPixelRatio: 0.02,
+    });
+  });
+}
+
+// Mia no mobile: sem o painel (densidade de mouse), com as sugestões roláveis com o polegar
+// e o composer acima do dock flutuante.
+test.describe("Mia — mobile", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript(() => {
+      localStorage.setItem("neko-theme", "dark");
+    });
+    await mockTauri(page, {
+      list_scenarios_cmd: [],
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [],
+    });
+    await page.goto("/");
+    await page.getByRole("button", { name: "Mia", exact: false }).first().click();
+    await page.waitForTimeout(350);
+  });
+
+  test("saudação do gato com o composer ancorado", async ({ page }) => {
+    await expect(page).toHaveScreenshot("mobile-mia-dark.png", {
+      fullPage: true,
+      maxDiffPixelRatio: 0.02,
+    });
+  });
+
+  test("resposta com recibo cabe na coluna do polegar", async ({ page }) => {
+    await page.getByRole("button", { name: "Quanto posso gastar hoje?" }).click();
+    await page.waitForTimeout(350);
+    await expect(page).toHaveScreenshot("mobile-mia-recibo-dark.png", {
+      fullPage: true,
+      maxDiffPixelRatio: 0.02,
+    });
+  });
+});
+
+// As três respostas mais novas da onda — recusa por capacidade (que ensina), ambiguidade e
+// didática — nasceram sem baseline; são o que quebra primeiro numa mudança de copy.
+test("Mia — recusa, ambiguidade e didática", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.addInitScript(() => {
+    localStorage.setItem("neko-theme", "dark");
+  });
+  await mockTauri(page, {
+    list_scenarios_cmd: [],
+    list_scenario_transactions_cmd: [],
+    list_obligations_cmd: [],
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Mia", exact: false }).first().click();
+  const input = page.getByLabel("Mensagem para a Mia");
+  for (const question of ["onde gastei mais?", "e a fatura deste mês?"]) {
+    await input.fill(question);
+    await input.press("Enter");
+    await page.waitForTimeout(150);
+  }
+  await page.getByRole("button", { name: "O que é buraco do futuro?" }).click();
+  await page.waitForTimeout(350);
+  await expect(page).toHaveScreenshot("Mia-recusas-dark.png", {
+    fullPage: true,
+    maxDiffPixelRatio: 0.02,
+  });
+});

@@ -1,4 +1,5 @@
-import { InfoPopover, type GlossaryEntry } from "./InfoPopover";
+import { InfoPopover } from "./InfoPopover";
+import type { GlossaryEntry } from "../glossary";
 
 /**
  * ProvBadge — proveniência de um lançamento (como ele chegou aqui), padrão spreadsheet-aware do

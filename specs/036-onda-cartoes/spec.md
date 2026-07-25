@@ -36,7 +36,7 @@ dock — a composição do dock é decisão da fundação.
 Moldura é de quem age: a proposta (banner acionável) e o painel do drill têm
 borda; o gate rende como linha nua sob o veredito e a meta do cartão como
 bloco de fundo sutil — quatro caixas consecutivas leriam como formulário
-(regra 21).
+(regra 22).
 
 ## Card-face (assinatura da tela)
 
@@ -110,7 +110,7 @@ Face de acento calma — o único lugar do app onde o acento vira superfície:
 
 - Linha: descrição (+ `n/N` mono quando parcela), subtítulo com a data e —
   **só quando o dono diverge do titular** — o `OwnerChip` (pill em toda linha
-  não é informação, regra 24); valor tabular à direita.
+  não é informação, regra 25); valor tabular à direita.
 - Remanejo por ícones ‹ › com `aria-label` nomeando o ciclo de destino e
   alvo de toque de 44px (área crescida por margem negativa, regra 19).
 - "Confirmar"/"Salvar" com valor BRL inválido respondem com erro inline
@@ -173,7 +173,7 @@ Face de acento calma — o único lugar do app onde o acento vira superfície:
    de origem no DTO — sem dado, a frase seria fabricada. Morre.
 4. O status "Aberta" no protótipo usa a tinta do acento sobre o card-face por
    contraste; fora dele a produção usa tinta neutra forte — cor de status
-   nunca segue o acento (regra 27).
+   nunca segue o acento (regra 28).
 5. O dock do protótipo mostra Cartões; a fundação coordena o dock e Cartões
    vive no "Mais" — o shell fica intocado.
 6. As barras `aria-hidden` do protótipo ganham equivalente textual

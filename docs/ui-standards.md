@@ -115,6 +115,13 @@ that deviates must say why in the PR.
 20. **Desktop earns its density.** Hover states (+`transition`) on every inline link
     and interactive row; reading widths capped (`ch`-based); the content ceiling rises
     one step on ultrawide (≥ 1700px) instead of letting side voids grow.
+21. **An anchored element floats over the content until the scroll ends.** A screen
+    whose composer/toolbar is `position: sticky; bottom: 0` must scroll the **scroller**
+    to its end (`scrollTo({top: scrollHeight})`), not itself: `scrollIntoView({block:
+"end"})` aligns the screen's end to the scrollport's end and stops while padding
+    remains, leaving the new content under the anchored bar. Sticky bottom also honors
+    the scroller's own `padding-bottom` — on mobile that padding is exactly the room the
+    floating dock needs, so the composer lands above it for free.
 
 ## Calm density (clean)
 
@@ -122,45 +129,47 @@ The reference look is the current fintech clean standard: generous whitespace, s
 surfaces, typographic hierarchy, near-invisible structure. These rules keep every wave
 honest to it.
 
-21. **Whitespace separates; borders are the exception.** Separation comes from spacing
+22. **Whitespace separates; borders are the exception.** Separation comes from spacing
     and surface contrast first. A hairline divider is a list's rhythm marker, not a
     default wrapper — when everything sits in a bordered box, the screen reads as a
     form, not a ledger.
-22. **Hierarchy is typographic.** Size, weight and ink shade (strong/base/muted/faint)
+23. **Hierarchy is typographic.** Size, weight and ink shade (strong/base/muted/faint)
     carry the ranking; money is the typographic hero of its surface. A screen that
     needs a colored box to rank content has a type-scale problem, not a color problem.
-23. **Accent is spent, not sprayed.** Brand accent and method-status colors appear only
+24. **Accent is spent, not sprayed.** Brand accent and method-status colors appear only
     where they carry meaning (primary action, judged state, the datum itself);
     everything else stays neutral. Decorative color dilutes the signal of status color
     everywhere else in the app.
-24. **Metadata earns its pill.** A pill/badge on a row exists for state the user acts
+25. **Metadata earns its pill.** A pill/badge on a row exists for state the user acts
     on or must not miss (Previsto, parcela, reembolso, tag). If every row at rest
     carries one, none of them is information — fold the constant ones into the context
     column.
 
 ## Honest numbers (reinforcing the DS working rules)
 
-25. **Text and `aria` tell the true value; only the bar saturates.** Never clamp a
+26. **Text and `aria` tell the true value; only the bar saturates.** Never clamp a
     displayed or announced percentage at 100% — a bar may cap its width, the number
     never lies.
-26. **Display sign derives from the movement type, never from the raw amount.**
+27. **Display sign derives from the movement type, never from the raw amount.**
     `TransactionRow.amount` carries magnitude; its stored sign is not a contract
     (imported and manual rows differ, and the backend compares by absolute value).
     Render money through the ledger rule — entrada positive, everything else
     negative — or an expense renders as `+R$ 43,00`.
-27. Money is tabular and never animates; method-status colors never follow the brand
+28. Money is tabular and never animates; method-status colors never follow the brand
     accent; missing data never renders as zero. (Contracts of the design system —
     restated here because every wave touches them.)
 
 ## Verification
 
-28. **Visual baselines regenerate from scratch** (`rm -rf` the snapshot dirs, run the
+29. **Visual baselines regenerate from scratch** (`rm -rf` the snapshot dirs, run the
     suite twice — record then verify) whenever a screen changes intentionally.
-    `--update-snapshots` alone does not rewrite sub-threshold drift.
-29. **A shared e2e fixture feeds many screens.** Changing `tauri-mock` data
+    `--update-snapshots` alone does not rewrite sub-threshold drift, and its default
+    `changed` mode has been observed passing a rewritten screen against its stale
+    baseline — pass `--update-snapshots=all` when regenerating deliberately.
+30. **A shared e2e fixture feeds many screens.** Changing `tauri-mock` data
     re-records baselines beyond the screen under work; inspect every consumer's
     regenerated baseline before committing — a richer fixture must read as richer,
     not different.
-30. Every wave passes: `npm run check`, e2e visual smoke with inspected screenshots,
+31. Every wave passes: `npm run check`, e2e visual smoke with inspected screenshots,
     React Doctor with no new findings, and the impeccable audit + critique gates before
     it is considered done.

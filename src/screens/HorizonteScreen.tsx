@@ -38,11 +38,6 @@ const TYPICAL_TERM = {
   body: "É a mediana das saídas dos seus meses vividos completos. Um mês futuro só sustenta o veredito quando a saída lançada cobre ao menos 60% dele; abaixo disso o mês fica em compasso de conferir, e a estrada mostra também onde ele iria se custasse o de sempre.",
 };
 
-const HOLE_TERM = {
-  title: "O buraco do futuro",
-  body: "É o menor ponto da estrada quando ele cruza o zero. Não é sentença: dá para atravessar — antecipar uma entrada, adiar uma saída que caiba, ou cruzar com a reserva por partes, repondo depois. O método manda achar o buraco maior à frente e planejar a travessia com folga.",
-};
-
 const SEMAPHORE_TERM = {
   title: "O semáforo do saldo",
   body: "A cor de cada mês é a faixa do seu saldo no fim dele — as faixas fixas da sua planilha (folga, ok, apertado, negativo, crítico). Um mês sem lastro não ganha cor de aprovação: fica tracejado, em compasso de conferir. A verdade dia a dia mora no Calendário, que cada mês abre.",
@@ -376,7 +371,7 @@ function Verdict({
             <Money cents={view.deficit.cents} size="inherit" />
           </b>{" "}
           em {fmtDayMonth(view.deficit.dateISO)}. É um{" "}
-          <InfoPopover term={HOLE_TERM}>buraco</InfoPopover> na estrada — dá para
+          <InfoPopover term="buraco_do_futuro">buraco</InfoPopover> na estrada — dá para
           atravessar: <b>antecipar</b> uma entrada, <b>adiar</b> uma saída que caiba, ou
           cruzar com a <b>reserva</b>, por partes, repondo depois.
         </p>

@@ -310,6 +310,6 @@ Efeito R$ 0 em régua desligada → só a frase fixa + "não muda o resultado" (
   estados).
 - **e2e**: `Tags-{dark,light}` + `mobile-tags-{dark,light}` do zero (2×); fixture do
   `tauri-mock` com os três blocos povoados — inspecionar TODOS os baselines re-gravados
-  (fixture compartilhada, regra 29).
+  (fixture compartilhada, regra 30).
 - Gates da onda: `npm run check`, React Doctor sem novos, impeccable audit + critique,
   revisão adversarial multi-lente antes do PR, CI verde.

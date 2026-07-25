@@ -1,192 +1,553 @@
-/* Neko Finance — Mia (CopilotScreen) styles.
-   Verbatim port of the .mia-* / .xs / .card CSS from Extras.jsx (ScreenMia).
-   Scoped to this screen only; do NOT edit redesign.css or App.css. */
+/* Neko Finance — tela Mia (a conversa).
+   Chat de verdade: a thread rola, o composer fica ancorado na base do scroller e o
+   painel dos números acompanha à direita. Escopo desta tela; o chrome do shell e os
+   primitivos compartilhados vivem em redesign.css. */
 
-.xs {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
+.mia {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 312px;
+  grid-template-rows: 1fr auto;
+  column-gap: var(--space-9);
+  /* A tela ocupa a altura do scroller para o composer nascer na base mesmo com a
+     conversa curta; a margem negativa devolve o respiro do shell, que passa a ser
+     pago DENTRO do dock — senão o composer flutua 64px acima do fim da rolagem. */
+  /* Altura do scrollport menos o respiro de topo do shell: é o que faz o composer nascer
+     na base com a conversa curta. O respiro de baixo é devolvido pela margem negativa e
+     pago DENTRO do dock, senão ele flutuaria 64px acima do fim da rolagem. */
+  min-height: calc(100dvh - var(--topbar-h) - 26px);
+  margin-bottom: -64px;
 }
 
-.xs-title {
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--text-strong);
+.mia__thread {
+  grid-column: 1;
+  grid-row: 1;
+  width: 100%;
+  max-width: 720px;
+  justify-self: center;
+  padding-top: var(--space-2);
+}
+/* Sem conversa, saudação e composer viajam juntos para o meio da coluna: um composer
+   ancorado na base com 400px de vão acima lê como sobra de layout, não como composição.
+   No polegar isso não vale — lá o composer fica ao alcance, na base (regra de ergonomia). */
+@media (min-width: 701px) {
+  .mia--empty {
+    grid-template-rows: auto auto;
+    align-content: center;
+  }
+  .mia--empty .mia__thread {
+    grid-row: 1;
+  }
+  .mia--empty .mia__dock {
+    grid-row: 2;
+    position: static;
+    padding-bottom: 0;
+    background: none;
+  }
+  /* O painel acompanha o bloco: ancorado no topo ele viraria uma ilha solta acima da
+     saudação centralizada. */
+  .mia--empty .mia__ctx {
+    grid-row: 1 / span 2;
+    align-self: center;
+    position: static;
+    margin-top: 0;
+  }
 }
 
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-1);
+/* Respiro entre a última resposta e o composer ancorado. O encaixe de verdade vem da
+   rolagem até o fim do scroller (a tela rola ATÉ o fim, não até o fim de si mesma). */
+.mia:not(.mia--empty) .mia__thread {
+  padding-bottom: var(--space-6);
 }
 
-.card__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 16px 20px 4px;
-}
-
-.card__title {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text-strong);
-  white-space: nowrap;
-}
-
-.card__title .ic {
+.mia__stale {
+  margin: 0 0 var(--space-5);
+  font-size: var(--fs-label);
   color: var(--text-faint);
 }
 
-.card__body {
-  padding: 14px 20px 18px;
-}
+/* ---- Estado inicial: a saudação do gato (o mais desenhado da tela) ---- */
 
-.mia-badge {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--success-400);
-  background: var(--success-tint);
-  padding: 3px 8px;
-  border-radius: 999px;
-}
-
-/* Mia chat */
-.mia {
-  display: grid;
-  grid-template-rows: 1fr auto;
-  height: calc(100vh - var(--topbar-h) - 90px);
-  min-height: 480px;
-}
-
-.mia-stream {
-  overflow: auto;
+.mia__greet {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 4px 2px 16px;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-11) 0 var(--space-9);
+}
+.mia__greet-cat {
+  width: 68px;
+  height: 68px;
+  border-radius: var(--radius-circle);
+  background: var(--primary);
+  color: var(--text-on-primary);
+  display: grid;
+  place-items: center;
+}
+.mia__greet h1 {
+  margin: 0;
+  font-size: var(--fs-h1);
+  font-weight: var(--fw-bold);
+  letter-spacing: -0.02em;
+  color: var(--text-strong);
+}
+.mia__greet-say {
+  margin: 0;
+  max-width: 46ch;
+  font-size: var(--fs-title);
+  line-height: var(--lh-relaxed);
+  color: var(--text-muted);
+}
+.mia__greet-web {
+  margin: var(--space-2) 0 0;
+  font-size: var(--fs-label);
+  color: var(--text-faint);
 }
 
-.mia-msg {
-  display: flex;
-  gap: 11px;
-  max-width: 78%;
-}
+/* ---- Marco de dia ---- */
 
-.mia-msg--user {
-  align-self: flex-end;
-  flex-direction: row-reverse;
-}
-
-.mia-av {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  flex: none;
-  background: var(--surface-elevated);
+.mia__daymark {
   display: flex;
   align-items: center;
-  justify-content: center;
-  overflow: hidden;
+  gap: var(--space-5);
+  margin: var(--space-7) 0 var(--space-5);
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+}
+.mia__daymark::before,
+.mia__daymark::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
 }
 
-.mia-bub {
-  padding: 12px 15px;
-  border-radius: 14px;
-  font-size: 14px;
-  line-height: 1.5;
+/* ---- Mensagens ---- */
+
+.mia__msg {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-5);
+  margin: var(--space-6) 0;
+  max-width: 88%;
+  animation: mia-rise var(--dur-base) var(--ease-standard) both;
+}
+.mia__msg--you {
+  justify-content: flex-end;
+  margin-left: auto;
+}
+.mia__av {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-circle);
+  flex: none;
+  margin-top: var(--space-1);
+  background: var(--surface-elevated);
+  color: var(--primary);
+  display: grid;
+  place-items: center;
+}
+.mia__bubble {
+  margin: 0;
+  padding: var(--space-5) var(--space-7);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: var(--fs-title);
+  line-height: var(--lh-normal);
   color: var(--text);
 }
+.mia__bubble time {
+  display: block;
+  margin-top: var(--space-2);
+  text-align: right;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+}
 
-.mia-msg:not(.mia-msg--user) .mia-bub {
+.mia__said {
+  min-width: 0;
+  padding: var(--space-6) var(--space-6) var(--space-5);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border);
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-top-left-radius: 4px;
 }
-
-.mia-msg--user .mia-bub {
-  background: var(--primary-quiet);
-  border: 1px solid color-mix(in srgb, var(--primary) 22%, transparent);
-  border-top-right-radius: 4px;
+.mia__say,
+.mia__note {
+  margin: 0;
+  font-size: var(--fs-body);
+  line-height: var(--lh-relaxed);
+  color: var(--text);
 }
-
-.mia-calc {
-  margin-top: 9px;
-  padding: 10px 12px;
-  background: var(--bg-subtle);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  font-family: var(--font-mono);
-  font-size: 12px;
+.mia__note {
+  margin-top: var(--space-5);
   color: var(--text-muted);
-  line-height: 1.7;
-  white-space: pre-line;
 }
-
-.mia-sugg {
+.mia__say b {
+  font-weight: var(--fw-semibold);
+  color: var(--text-strong);
+}
+.mia__prov {
   display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 10px;
+  justify-content: space-between;
+  gap: var(--space-5);
+  margin: var(--space-5) 0 0;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
 }
 
-.mia-chip {
-  padding: 7px 12px;
+/* ---- Recibo: a assinatura da tela — a conta que o motor fez, impressa ---- */
+
+.mia__receipt {
+  margin: var(--space-5) 0 0;
+  padding: var(--space-4) var(--space-5);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+}
+.mia__rl {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-6);
+  padding: var(--space-2) 0;
+  font-size: var(--fs-sm);
+}
+.mia__rl-label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  min-width: 0;
+  color: var(--text-muted);
+}
+/* O operador é impresso na margem: a conta fica visível, não subentendida. A largura
+   fixa alinha os símbolos numa coluna própria — "mín" é o mais largo deles. */
+.mia__op {
+  width: 26px;
+  flex: none;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+}
+.mia__rl-val {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  white-space: nowrap;
+  text-align: right;
+  color: var(--text);
+}
+.mia__rl--result {
+  margin-top: var(--space-2);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-body);
+}
+.mia__rl--result .mia__rl-label {
+  color: var(--text);
+}
+.mia__rl--result .mia__rl-val {
+  font-weight: var(--fw-semibold);
+  color: var(--text-strong);
+}
+
+/* Cor de estado do método — fixa, nunca segue o acento da marca. Ela vive na linha de
+   RESULTADO do recibo (o veredito da conta); os operandos ficam neutros. */
+.mia__rl-val.mia--ok {
+  color: var(--success-400);
+}
+.mia__rl-val.mia--warn {
+  color: var(--warning-400);
+}
+.mia__rl-val.mia--bad {
+  color: var(--danger-400);
+}
+
+/* ---- Saídas de uma resposta: opções e o caminho concreto ---- */
+
+.mia__opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-top: var(--space-5);
+}
+/* Resposta rápida dentro da bolha: superfície em vez de contorno, para não virar uma
+   segunda fileira de sugestões idêntica à do dock logo abaixo. */
+.mia__opts .mia__chip {
+  border-color: transparent;
+  background: var(--surface-elevated);
+}
+.mia__opts .mia__chip:hover {
+  border-color: var(--border-strong);
+}
+/* Tinta neutra por decisão: numa resposta com veredito verde, um CTA de acento poria
+   dois verdes de significados diferentes (status × marca) na mesma bolha. A pílula já
+   carrega a afordância; o acento entra só no hover. */
+.mia__cta {
+  margin-top: var(--space-5);
+  padding: var(--space-4) var(--space-6);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-strong);
+  background: none;
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+  cursor: pointer;
+  transition: var(--t-hover);
+}
+.mia__cta:hover {
+  background: var(--surface-hover);
+  color: var(--primary);
+}
+
+/* ---- Painel: os números por trás ---- */
+
+.mia__ctx {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: start;
+  position: sticky;
+  top: var(--space-2);
+  margin-top: var(--space-6);
+  padding: var(--space-6) var(--space-7) var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.mia__ctx h2 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+  color: var(--text-strong);
+}
+.mia__ctx-note {
+  margin: 0 0 var(--space-5);
+  font-size: var(--fs-label);
+  line-height: var(--lh-normal);
+  color: var(--text-faint);
+}
+.mia__mc {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-5);
+  width: 100%;
+  padding: var(--space-4) 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: none;
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: var(--t-hover);
+}
+.mia__mc:hover .mia__mc-label {
+  color: var(--text);
+}
+.mia__mc-label {
+  color: var(--text-muted);
+}
+.mia__mc-val {
+  white-space: nowrap;
+  font-weight: var(--fw-semibold);
+  color: var(--text-strong);
+}
+/* No painel só o fato FORA da régua ganha cor: cinco valores coloridos viram semáforo e
+   a atenção deixa de significar alguma coisa. */
+.mia__mc-val.mia--warn {
+  color: var(--warning-400);
+}
+.mia__mc-val.mia--bad {
+  color: var(--danger-400);
+}
+.mia__ctx-foot {
+  margin: var(--space-5) 0 0;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+}
+
+/* ---- Dock: sugestões, composer e a linha de honestidade ---- */
+
+.mia__dock {
+  grid-column: 1;
+  grid-row: 2;
+  width: 100%;
+  max-width: 720px;
+  justify-self: center;
+  position: sticky;
+  bottom: 0;
+  padding: var(--space-5) 0 var(--space-12);
+  /* O véu cobre a thread que rola por baixo — sem ele o texto encosta no composer. */
+  background: linear-gradient(to top, var(--bg) 82%, transparent);
+}
+.mia__sugg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+/* No desktop as demais sugestões viveriam em 3 linhas de pílula empurrando o composer —
+   lá o painel já oferece cada pergunta com o valor dela ao lado. */
+.mia__sugg .mia__chip:nth-child(n + 5) {
+  display: none;
+}
+.mia__chip {
+  padding: var(--space-4) var(--space-6);
   border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   background: var(--surface);
+  font: inherit;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
-  font-size: 12.5px;
   cursor: pointer;
   transition: var(--t-hover);
-  font-family: var(--font-sans);
 }
-
-.mia-chip:hover {
-  background: var(--surface-hover);
+.mia__chip:hover {
   border-color: var(--border-strong);
   color: var(--text);
 }
-
-.mia-input {
+.mia__composer {
   display: flex;
-  gap: 10px;
   align-items: center;
-  padding: 10px;
-  background: var(--surface);
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-4) var(--space-4) var(--space-7);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
 }
-
-.mia-input input {
+.mia__composer input {
   flex: 1;
-  background: none;
+  min-width: 0;
+  /* O campo é o alvo de toque do composer inteiro: 44px de altura mesmo com o texto
+     centrado numa linha de 25px (regra de ergonomia de polegar). */
+  min-height: 44px;
   border: none;
+  background: none;
   outline: none;
+  font: inherit;
+  font-size: var(--fs-title);
   color: var(--text);
-  font-family: inherit;
-  font-size: 14px;
+}
+.mia__composer input::placeholder {
+  color: var(--text-faint);
+}
+.mia__send {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border: 0;
+  border-radius: var(--radius-circle);
+  display: grid;
+  place-items: center;
+  background: var(--primary);
+  color: var(--text-on-primary);
+  cursor: pointer;
+  transition: var(--t-hover);
+}
+.mia__send:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+.mia__send:disabled {
+  background: var(--surface-elevated);
+  color: var(--text-faint);
+  cursor: default;
+}
+.mia__honesty {
+  margin: var(--space-5) 0 0;
+  text-align: center;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
 }
 
-/* Loading skeleton */
-.mia-skeleton {
-  height: 14px;
-  border-radius: 4px;
-  background: var(--bg-subtle);
-  animation: mia-pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes mia-pulse {
-  0%,
-  100% {
-    opacity: 1;
+@keyframes mia-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
   }
-  50% {
-    opacity: 0.45;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mia__msg {
+    animation: none;
+  }
+}
+
+/* ---- Tablet: o painel cede a largura antes de sumir ---- */
+
+@media (max-width: 1100px) {
+  .mia {
+    grid-template-columns: minmax(0, 1fr) 264px;
+    column-gap: var(--space-8);
+  }
+}
+
+/* ---- Mobile: uma coluna; o painel é densidade de mouse e sai ---- */
+
+@media (max-width: 900px) {
+  .mia {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: calc(100dvh - var(--topbar-h) - 22px);
+    margin-bottom: -56px;
+  }
+  .mia__ctx {
+    display: none;
+  }
+  .mia__dock {
+    padding-bottom: var(--space-11);
+  }
+}
+
+@media (max-width: 700px) {
+  .mia {
+    /* O scroller mobile já paga o aluguel do dock flutuante no padding dele. */
+    margin-bottom: 0;
+    min-height: calc(100dvh - 192px);
+  }
+  .mia__msg,
+  .mia__msg--you {
+    max-width: 94%;
+  }
+  /* No polegar o composer não sobe, mas a saudação também não fica colada no appbar com
+     um vão morto abaixo: ela centraliza no espaço que sobra (regra 18). */
+  .mia--empty .mia__thread {
+    display: grid;
+    align-content: center;
+  }
+  .mia__greet {
+    padding: var(--space-7) 0 var(--space-6);
+  }
+  .mia__greet h1 {
+    font-size: var(--fs-h2);
+  }
+  .mia__greet-say {
+    font-size: var(--fs-body);
+  }
+  /* Pílulas roláveis: o cartão cortado na borda é o convite para arrastar. */
+  .mia__sugg {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+    margin-inline: calc(-1 * var(--space-6));
+    padding-inline: var(--space-6);
+  }
+  .mia__sugg::-webkit-scrollbar {
+    display: none;
+  }
+  /* No polegar a fileira rola: nenhuma sugestão fica de fora (a regra de esconder a
+     partir da quinta é do desktop, onde o painel cobre o resto). */
+  .mia__sugg .mia__chip,
+  .mia__sugg .mia__chip:nth-child(n + 5) {
+    display: inline-block;
+    flex: none;
+    white-space: nowrap;
+    scroll-snap-align: start;
+    /* Alvo de toque de 44px sem inflar o layout. */
+    min-height: 44px;
+  }
+  .mia__dock {
+    padding-bottom: var(--space-5);
   }
 }
