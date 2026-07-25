@@ -6,6 +6,12 @@ mod conflicts;
 mod forecast;
 mod google_sheets;
 mod http;
+// A fachada da conversa é porta INTERNA: quem a consome é o loop do copiloto, não o shell
+// Tauri — nenhum comando expõe as ferramentas ao webview, e é essa ausência que mantém a
+// leitura do domínio atrás do consentimento. Sem chamador no binário, o compilador leria a
+// superfície inteira como morta.
+#[allow(dead_code)]
+mod mia;
 mod oauth;
 mod obligations;
 mod os_scheduler;

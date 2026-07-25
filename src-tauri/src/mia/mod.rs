@@ -1,0 +1,206 @@
+//! Fachada da conversa: a porta única de leitura sobre o domínio.
+//!
+//! Uma chamada de ferramenta entra, um envelope comum sai. As ferramentas chamam os MESMOS
+//! helpers puros que os comandos Tauri chamam — a fachada não é uma segunda implementação do
+//! método, é outra porta para a mesma. Duas implementações da mesma régua divergiriam, e a
+//! resposta da conversa deixaria de bater com a da tela.
+//!
+//! Tudo aqui é somente leitura. Nenhuma ferramenta escreve, e é essa ausência que torna a
+//! defesa contra injeção estrutural em vez de censura de conteúdo.
+
+pub(crate) mod catalog;
+pub(crate) mod envelope;
+mod state_tools;
+
+use catalog::ToolSpec;
+use envelope::{Clock, Envelope, ErrorCode, Meta, Period, ToolError, ToolResult, data_revision};
+use serde_json::Value;
+use sqlx::SqlitePool;
+
+/// A chamada como o modelo a emite: nome e argumentos crus, ainda não validados.
+pub(crate) struct ToolCall {
+    pub name: String,
+    pub arguments: Value,
+}
+
+impl ToolCall {
+    pub(crate) fn new(name: impl Into<String>, arguments: Value) -> Self {
+        Self {
+            name: name.into(),
+            arguments,
+        }
+    }
+}
+
+/// Argumentos já validados contra o catálogo. Construí-los é a validação: uma ferramenta nunca
+/// vê argumento que não declarou.
+pub(crate) struct Args {
+    includes: Vec<String>,
+}
+
+impl Args {
+    fn parse(spec: &'static ToolSpec, arguments: &Value) -> Result<Self, ToolError> {
+        let object = match arguments {
+            Value::Null => return Ok(Self { includes: vec![] }),
+            Value::Object(map) => map,
+            _ => {
+                return Err(ToolError::new(
+                    ErrorCode::InvalidArgument,
+                    "Os argumentos precisam ser um objeto.",
+                    format!(
+                        "Chame {} com um objeto, por exemplo {{\"include\": [\"{}\"]}}.",
+                        spec.name,
+                        spec.includes.first().map(|i| i.name).unwrap_or("")
+                    ),
+                ));
+            }
+        };
+
+        // Fail-closed: argumento não declarado nunca é ignorado em silêncio. Ignorar seria pior
+        // que recusar — o modelo acreditaria ter filtrado o que a ferramenta devolveu inteiro.
+        for key in object.keys() {
+            if key != "include" && !spec.params.contains(&key.as_str()) {
+                let mut accepted = vec!["include"];
+                accepted.extend(spec.params);
+                return Err(ToolError::new(
+                    ErrorCode::UnknownArgument,
+                    format!("{} não aceita o argumento \"{key}\".", spec.name),
+                    format!("Chame de novo usando só: {}.", accepted.join(", ")),
+                ));
+            }
+        }
+
+        let mut includes = Vec::new();
+        if let Some(raw) = object.get("include") {
+            let list = raw.as_array().ok_or_else(|| {
+                ToolError::new(
+                    ErrorCode::InvalidArgument,
+                    "\"include\" precisa ser uma lista de nomes.",
+                    format!(
+                        "Use include: [\"{}\"].",
+                        spec.includes.first().map(|i| i.name).unwrap_or("")
+                    ),
+                )
+            })?;
+            for item in list {
+                let name = item.as_str().ok_or_else(|| {
+                    ToolError::new(
+                        ErrorCode::InvalidArgument,
+                        "Cada item de \"include\" precisa ser texto.",
+                        format!("Expansões disponíveis: {}.", spec.include_menu()),
+                    )
+                })?;
+                if spec.include(name).is_none() {
+                    return Err(ToolError::new(
+                        ErrorCode::InvalidArgument,
+                        format!("{} não tem a expansão \"{name}\".", spec.name),
+                        if spec.includes.is_empty() {
+                            format!("{} não aceita expansões — chame sem include.", spec.name)
+                        } else {
+                            format!("Expansões disponíveis: {}.", spec.include_menu())
+                        },
+                    ));
+                }
+                includes.push(name.to_string());
+            }
+        }
+        Ok(Self { includes })
+    }
+
+    /// A expansão foi pedida explicitamente?
+    pub(crate) fn wants(&self, include: &str) -> bool {
+        self.includes.iter().any(|i| i == include)
+    }
+}
+
+/// A porta. Despacha a chamada e devolve o envelope — inclusive quando falha: erro de
+/// ferramenta é resposta, não exceção, porque o modelo precisa lê-lo para se corrigir na mesma
+/// rodada.
+pub(crate) async fn dispatch(pool: &SqlitePool, call: &ToolCall, clock: Clock) -> Envelope {
+    let revision = data_revision(pool).await.ok();
+    let today = clock.today();
+
+    let Some(spec) = catalog::spec(&call.name) else {
+        return envelope_for(
+            &call.name,
+            clock,
+            revision,
+            Period::day(today),
+            Err(ToolError::new(
+                ErrorCode::UnknownTool,
+                format!("Não existe a ferramenta \"{}\".", call.name),
+                format!("Escolha uma destas: {}.", catalog::tool_names().join(", ")),
+            )),
+        );
+    };
+
+    let outcome = match Args::parse(spec, &call.arguments) {
+        Err(e) => Err(e),
+        Ok(args) => run(pool, spec, &args, today).await,
+    };
+
+    let period = match &outcome {
+        Ok(out) => out.period.clone(),
+        Err(_) => Period::day(today),
+    };
+    envelope_for(spec.name, clock, revision, period, outcome)
+}
+
+async fn run(
+    pool: &SqlitePool,
+    spec: &'static ToolSpec,
+    args: &Args,
+    today: chrono::NaiveDate,
+) -> ToolResult {
+    match spec.name {
+        "get_financial_snapshot" => state_tools::financial_snapshot(pool, args, today).await,
+        "get_data_status" => state_tools::data_status(pool, args, today).await,
+        "get_budget_settings" => state_tools::budget_settings(pool, args, today).await,
+        "get_accounts_and_net_worth" => {
+            state_tools::accounts_and_net_worth(pool, args, today).await
+        }
+        // O catálogo é a fonte da verdade dos nomes; uma entrada sem braço aqui é erro de
+        // programação, e o teste de cobertura do catálogo o pega antes de qualquer rodada.
+        other => Err(ToolError::new(
+            ErrorCode::UnknownTool,
+            format!("A ferramenta \"{other}\" está declarada mas não foi ligada."),
+            "Use outra ferramenta do catálogo.".to_string(),
+        )),
+    }
+}
+
+fn envelope_for(
+    tool: &str,
+    clock: Clock,
+    data_revision: Option<String>,
+    period: Period,
+    outcome: ToolResult,
+) -> Envelope {
+    let meta = Meta {
+        currency: envelope::CURRENCY,
+        timezone: clock.timezone(),
+        period,
+        as_of: clock.as_of(),
+        data_revision,
+        row_limit: envelope::MAX_ROWS,
+    };
+    match outcome {
+        Ok(out) => Envelope {
+            tool: tool.to_string(),
+            ok: true,
+            meta,
+            data: Some(out.data),
+            error: None,
+        },
+        Err(error) => Envelope {
+            tool: tool.to_string(),
+            ok: false,
+            meta,
+            data: None,
+            error: Some(error),
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests;
