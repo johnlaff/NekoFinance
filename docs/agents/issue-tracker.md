@@ -10,6 +10,8 @@ Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all op
 - **Comment on an issue**: `gh issue comment <number> --body "..."`
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
 - **Close**: `gh issue close <number> --comment "..."
+- **Edit a PR body**: `gh pr edit` aborts on a GraphQL error about Projects (classic) before applying the change, and returns a non-zero exit code that is easy to lose behind a redirect (checked 2026-07). Patch through the REST API: `jq -n --rawfile body body.md '{body: $body}' | gh api repos/{owner}/{repo}/pulls/<number> -X PATCH --input -`
+- **Close from a PR**: the auto-close keywords are English-only — `Closes #123`, `Fixes #123`, `Resolves #123`. PR bodies here are written in Portuguese, so put the English keyword on its own line: `Fecha #123` is decorative text and leaves the issue open after the merge, to be closed by hand.
 
 Infer the repo from `git remote -v` — `gh` does this automatically when run inside a clone.
 
