@@ -1206,6 +1206,113 @@ pub async fn dismiss_ceiling_proposal_cmd(
     dismiss_ceiling_proposal_inner(pool.inner(), &proposal_id).await
 }
 
+/// Reserva em MESES de custo de vida, com o estado epistêmico que a acompanha.
+///
+/// A tabela `reserve.current_months` não tem writer de produção, então a cobertura é derivada ao
+/// vivo: saldo das contas de reserva ÷ custo de vida mensal (mediana das saídas dos meses
+/// completos). O método não exige histórico mínimo — 1–5 meses valem como "retrato vivo"
+/// (estimativa marcada) e 6 meses completos viram veredito.
+pub(crate) struct ReserveReading {
+    pub balance_cents: i64,
+    /// Custo de vida mensal que serve de divisor. `0` = sem histórico para dividir.
+    pub baseline_cents: i64,
+    /// Meses completos que sustentam o divisor — o que separa veredito de retrato vivo.
+    pub basis_months: i64,
+    pub months: f64,
+    /// `verdict` · `estimate` · `zero` (contas mapeadas e zeradas) · `no_record`.
+    pub state: &'static str,
+    pub trend: String,
+}
+
+pub(crate) async fn reserve_reading(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+) -> Result<ReserveReading, String> {
+    let balance: (i64,) =
+        sqlx::query_as("SELECT COALESCE(SUM(balance), 0) FROM account WHERE liquidity = 'reserve'")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("query reserve balance: {e}"))?;
+    let has_accounts: (i64,) =
+        sqlx::query_as("SELECT EXISTS(SELECT 1 FROM account WHERE liquidity = 'reserve')")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("query reserve accounts: {e}"))?;
+    let (baseline, basis_months) = realized_monthly_baseline_detail(pool, today_naive).await?;
+    let months = if baseline > 0 {
+        balance.0 as f64 / baseline as f64
+    } else {
+        0.0
+    };
+    // Sem contas de reserva mapeadas ou sem baseline nenhum, não há número honesto (sem
+    // registro); contas mapeadas zeradas são o alerta legítimo (zero-diagnóstico).
+    let state = if has_accounts.0 == 0 || baseline <= 0 {
+        "no_record"
+    } else if balance.0 == 0 {
+        "zero"
+    } else if basis_months >= 6 {
+        "verdict"
+    } else {
+        "estimate"
+    };
+    let trend: (String,) = sqlx::query_as(
+        "SELECT COALESCE(trend, 'flat') FROM reserve ORDER BY last_calculated_at DESC LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("query reserve trend: {e}"))?
+    .unwrap_or(("flat".to_string(),));
+
+    Ok(ReserveReading {
+        balance_cents: balance.0,
+        baseline_cents: baseline,
+        basis_months,
+        months,
+        state,
+        trend: trend.0,
+    })
+}
+
+/// A régua de economia que JULGA: Economia registrada do ano mais, só quando a reserva líquida
+/// cobre ≥ 6 meses de custo de vida, o Patrimônio realizado. O método constrói liquidez
+/// primeiro; poupança de longo prazo só conta depois que o colchão existe.
+///
+/// Uma régua só, sem bifurcar semântica: alimenta o guardrail de poupança, o Economizado% e a
+/// perna de economia do gate do modo cartão.
+pub(crate) struct EconomiaRulerReading {
+    /// Economia registrada + patrimônio condicional — o numerador que julga.
+    pub cents: i64,
+    pub registered_cents: i64,
+    pub patrimonio_cents: i64,
+    pub includes_patrimonio: bool,
+    /// `verdict` (régua viva) · `no_record` (nada registrado — a superfície mostra a sobra
+    /// derivada como estimativa marcada).
+    pub state: &'static str,
+}
+
+pub(crate) async fn economia_ruler_reading(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+) -> Result<EconomiaRulerReading, String> {
+    let registered = realized_annual_economia(pool, today_naive).await?;
+    let patrimonio = realized_annual_patrimonio(pool, today_naive).await?;
+    let balance: (i64,) =
+        sqlx::query_as("SELECT COALESCE(SUM(balance), 0) FROM account WHERE liquidity = 'reserve'")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("query reserve balance: {e}"))?;
+    let baseline = realized_monthly_baseline(pool, today_naive).await?;
+    let includes_patrimonio = baseline > 0 && balance.0 >= baseline * RESERVE_MIN_MONTHS;
+    let cents = registered + if includes_patrimonio { patrimonio } else { 0 };
+    Ok(EconomiaRulerReading {
+        cents,
+        registered_cents: registered,
+        patrimonio_cents: patrimonio,
+        includes_patrimonio,
+        state: if cents > 0 { "verdict" } else { "no_record" },
+    })
+}
+
 /// Piso de reserva = colchão intocável que a folga de caixa não pode comer.
 ///
 /// Lógica em duas camadas:
@@ -2068,26 +2175,11 @@ pub(crate) async fn forecast_dto(
     let reserve_floor_cents = reserve_floor(pool, today_naive).await?;
     // Poupança ANUAL realizada (não o mês isolado, não o ano projetado-incompleto).
     let (annual_income, annual_savings_amt) = realized_annual_savings(pool, today_naive).await?;
-    // Economia REGISTRADA do ano (transfers→reserva): numerador do Economizado%. O net
-    // `annual_savings_amt` é só exibição do colchão (não decide).
-    let annual_economia = realized_annual_economia(pool, today_naive).await?;
-    // Previdência condicional à reserva líquida: com ≥ 6 meses de reserva, o patrimônio conta na
-    // régua de economia (e no guardrail — uma régua só, sem bifurcar semântica).
-    let annual_patrimonio = realized_annual_patrimonio(pool, today_naive).await?;
-    let reserve_balance: (i64,) =
-        sqlx::query_as("SELECT COALESCE(SUM(balance), 0) FROM account WHERE liquidity = 'reserve'")
-            .fetch_one(pool)
-            .await
-            .map_err(|e| format!("query reserve balance: {e}"))?;
-    let baseline_for_reserve = realized_monthly_baseline(pool, today_naive).await?;
-    let includes_previdencia =
-        baseline_for_reserve > 0 && reserve_balance.0 >= baseline_for_reserve * RESERVE_MIN_MONTHS;
-    let economia_ruler = annual_economia
-        + if includes_previdencia {
-            annual_patrimonio
-        } else {
-            0
-        };
+    let economia = economia_ruler_reading(pool, today_naive).await?;
+    let annual_economia = economia.registered_cents;
+    let annual_patrimonio = economia.patrimonio_cents;
+    let includes_previdencia = economia.includes_patrimonio;
+    let economia_ruler = economia.cents;
     let sts = forecast::safe_to_spend_today(
         &fc,
         annual_income,
@@ -2121,12 +2213,7 @@ pub(crate) async fn forecast_dto(
         economia_ruler_cents: economia_ruler,
         economia_ruler_rate_bps: rate_bps(economia_ruler, annual_income),
         includes_previdencia,
-        economia_state: if economia_ruler > 0 {
-            "verdict"
-        } else {
-            "no_record"
-        }
-        .to_string(),
+        economia_state: economia.state.to_string(),
         projected_income_cents: proj_income,
         projected_savings_cents: proj_savings,
         projected_rate_bps: rate_bps(proj_savings, proj_income),
@@ -2572,48 +2659,8 @@ pub(crate) async fn dashboard_summary(
     .await
     .map_err(|e| format!("query card spend: {e}"))?;
 
-    // Reserva em MESES de custo de vida (método): saldo das contas de reserva ÷ custo de vida mensal.
-    // Custo de vida mensal = mediana das saídas dos últimos meses completos (realized_monthly_baseline
-    // = fixas + diário + cartão). A tabela `reserve.current_months` não tem writer de produção (só seed
-    // de teste), então derivamos ao vivo dos dados importados — espelha os R$ que o PocketsCard mostra.
-    // `trend` permanece da tabela/snapshot (default 'flat' enquanto não há histórico).
-    let reserve_balance: (i64,) =
-        sqlx::query_as("SELECT COALESCE(SUM(balance), 0) FROM account WHERE liquidity = 'reserve'")
-            .fetch_one(pool)
-            .await
-            .map_err(|e| format!("query reserve balance: {e}"))?;
-    let has_reserve_accounts: (i64,) =
-        sqlx::query_as("SELECT EXISTS(SELECT 1 FROM account WHERE liquidity = 'reserve')")
-            .fetch_one(pool)
-            .await
-            .map_err(|e| format!("query reserve accounts: {e}"))?;
-    let (reserve_baseline, reserve_basis_months) =
-        realized_monthly_baseline_detail(pool, today_naive).await?;
-    let reserve_months = if reserve_baseline > 0 {
-        reserve_balance.0 as f64 / reserve_baseline as f64
-    } else {
-        0.0
-    };
-    // Estado epistêmico da reserva: o método não exige histórico mínimo — com 1–5 meses o custo
-    // de vida vale como "retrato vivo" (estimativa marcada); 6 meses completos é o veredito.
-    // Sem contas de reserva mapeadas ou sem baseline nenhum, não há número honesto (sem
-    // registro); contas mapeadas zeradas são o alerta legítimo (zero-diagnóstico).
-    let reserve_state = if has_reserve_accounts.0 == 0 || reserve_baseline <= 0 {
-        "no_record"
-    } else if reserve_balance.0 == 0 {
-        "zero"
-    } else if reserve_basis_months >= 6 {
-        "verdict"
-    } else {
-        "estimate"
-    };
-    let reserve_trend: (String,) = sqlx::query_as(
-        "SELECT COALESCE(trend, 'flat') FROM reserve ORDER BY last_calculated_at DESC LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| format!("query reserve trend: {e}"))?
-    .unwrap_or(("flat".to_string(),));
+    // Reserva em MESES de custo de vida (método) — espelha os R$ que o PocketsCard mostra.
+    let reserve = reserve_reading(pool, today_naive).await?;
 
     // Transações já realizadas: por DATA (≤ hoje), não pelo `is_projection` congelado (stale
     // quando o dono não re-importa por dias — auditoria de robustez a edições).
@@ -2639,10 +2686,7 @@ pub(crate) async fn dashboard_summary(
     // Gate de legitimidade do modo cartão: a economia 20–30% precisa estar VIVA (piso de 20%
     // sobre a régua anual de economia, com a previdência condicional à reserva ≥ 6 meses).
     let (annual_income, _) = realized_annual_savings(pool, today_naive).await?;
-    let mut economia_ruler = realized_annual_economia(pool, today_naive).await?;
-    if reserve_months >= RESERVE_MIN_MONTHS as f64 {
-        economia_ruler += realized_annual_patrimonio(pool, today_naive).await?;
-    }
+    let economia_ruler = economia_ruler_reading(pool, today_naive).await?.cents;
     let card_gate_economy_bps =
         (annual_income > 0).then(|| economia_ruler * 10_000 / annual_income);
     let card_gate_economy = if annual_income <= 0 {
@@ -2652,9 +2696,9 @@ pub(crate) async fn dashboard_summary(
     } else {
         crate::cards::GateLeg::Below
     };
-    let card_gate_reserve = if reserve_state == "no_record" {
+    let card_gate_reserve = if reserve.state == "no_record" {
         crate::cards::GateLeg::Unknown
-    } else if reserve_months >= RESERVE_MIN_MONTHS as f64 {
+    } else if reserve.months >= RESERVE_MIN_MONTHS as f64 {
         crate::cards::GateLeg::Alive
     } else {
         crate::cards::GateLeg::Below
@@ -2705,10 +2749,10 @@ pub(crate) async fn dashboard_summary(
         ceiling_proposal_pending,
         daily_spend_today: daily_spend.0,
         card_spend_today_cents: card_spend.0,
-        reserve_months,
-        reserve_state: reserve_state.to_string(),
-        reserve_basis_months,
-        reserve_trend: reserve_trend.0,
+        reserve_months: reserve.months,
+        reserve_state: reserve.state.to_string(),
+        reserve_basis_months: reserve.basis_months,
+        reserve_trend: reserve.trend,
         spending_mode: match mode.mode {
             forecast::SpendingMode::Debit => "debit",
             forecast::SpendingMode::Card => "card",
