@@ -172,6 +172,17 @@ impl<T> Page<T> {
             next_cursor,
         }
     }
+
+    /// Troca os itens preservando a contagem e o cursor. A página é escolhida sobre a CHAVE das
+    /// linhas e vestida depois, em lote — quem paginou já disse quantas são e onde continuar.
+    pub(crate) fn with_items<U>(self, items: Vec<U>) -> Page<U> {
+        Page {
+            returned: items.len(),
+            items,
+            total: self.total,
+            next_cursor: self.next_cursor,
+        }
+    }
 }
 
 /// Cursor opaco de paginação. Carrega a chave do próximo item — não o número da página, que
@@ -180,7 +191,10 @@ impl<T> Page<T> {
 pub(crate) struct Cursor;
 
 impl Cursor {
+    /// O `|` separa escopo e chave, então o escopo nunca o carrega — um recorte que o usasse
+    /// como separador interno cortaria a si mesmo na volta e recusaria o próprio cursor.
     pub(crate) fn encode(scope: &str, key: &str) -> String {
+        debug_assert!(!scope.contains('|'), "o escopo não carrega o separador");
         hex::encode(format!("{scope}|{key}"))
     }
 

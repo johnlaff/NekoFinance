@@ -43,6 +43,16 @@ async fn person(pool: &SqlitePool) -> String {
     id
 }
 
+/// Uma segunda pessoa — a divisão de despesas só existe quando há com quem dividir.
+async fn another_person(pool: &SqlitePool, id: &str, name: &str) {
+    sqlx::query("INSERT INTO person (id, name) VALUES (?1, ?2)")
+        .bind(id)
+        .bind(name)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
 async fn account(pool: &SqlitePool, id: &str, name: &str, kind: &str, balance: i64) {
     let owner = "p-eu";
     let liquidity = crate::commands::liquidity_for_type(kind);
@@ -125,6 +135,99 @@ async fn transfer(pool: &SqlitePool, id: &str, amount: i64, date: &str, to_accou
     .bind(amount)
     .bind(date)
     .bind(to_account)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Uma linha do Livro-razão com tudo o que o recorte filtra. Os helpers curtos acima bastam para
+/// as réguas; o recorte precisa de descrição, conta, forma de pagamento e natureza no mesmo gesto.
+struct Line<'a> {
+    id: &'a str,
+    kind: &'a str,
+    amount: i64,
+    date: &'a str,
+    description: &'a str,
+    method: &'a str,
+    fixed: bool,
+    from_account: Option<&'a str>,
+    to_account: Option<&'a str>,
+}
+
+impl Default for Line<'_> {
+    fn default() -> Self {
+        Self {
+            id: "",
+            kind: "expense",
+            amount: 10_000,
+            date: "2026-07-10",
+            description: "",
+            method: "debit",
+            fixed: false,
+            from_account: None,
+            to_account: None,
+        }
+    }
+}
+
+async fn line(pool: &SqlitePool, l: Line<'_>) {
+    sqlx::query(
+        "INSERT INTO \"transaction\" (id, type, amount, date, description, payment_method, \
+                                      is_fixed, is_projection, from_account_id, to_account_id) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?9)",
+    )
+    .bind(l.id)
+    .bind(l.kind)
+    .bind(l.amount)
+    .bind(l.date)
+    .bind(l.description)
+    .bind(l.method)
+    .bind(i64::from(l.fixed))
+    .bind(l.from_account)
+    .bind(l.to_account)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn tag(pool: &SqlitePool, id: &str, name: &str) {
+    sqlx::query("INSERT INTO tag (id, name, color) VALUES (?1, ?2, 'var(--cat-jade)')")
+        .bind(id)
+        .bind(name)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// Uma tag que desliga o interruptor do custo de vida — o gasto que sai da conta mas não é meu
+/// custo de viver (dinheiro de terceiro é o caso canônico).
+async fn tag_outside_cost(pool: &SqlitePool, id: &str, name: &str) {
+    tag(pool, id, name).await;
+    sqlx::query("UPDATE tag SET exclude_from_cost_of_living = 1 WHERE id = ?1")
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+async fn tag_on(pool: &SqlitePool, transaction: &str, tag: &str) {
+    sqlx::query("INSERT INTO transaction_tag (transaction_id, tag_id) VALUES (?1, ?2)")
+        .bind(transaction)
+        .bind(tag)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// Quem respondeu por (parte de) um lançamento — a divisão de despesas do multi-titular.
+async fn split_on(pool: &SqlitePool, id: &str, transaction: &str, amount: i64, person: &str) {
+    sqlx::query(
+        "INSERT INTO split (id, transaction_id, amount, owner_person_id) VALUES (?1, ?2, ?3, ?4)",
+    )
+    .bind(id)
+    .bind(transaction)
+    .bind(amount)
+    .bind(person)
     .execute(pool)
     .await
     .unwrap();
@@ -232,6 +335,205 @@ async fn lived_year(pool: &SqlitePool) {
     expense(pool, "fx-08", 50_000, "2026-08-05", true).await;
 }
 
+/// O mês corrente com variedade de recorte — débito, pix, fixa e variável, com tag, titular e
+/// conta — mais uma linha em maio, para que o recorte tenha o que cortar.
+async fn ledger(pool: &SqlitePool) {
+    person(pool).await;
+    another_person(pool, "p-gio", "Gio").await;
+    account(pool, "acc-bank", "Conta corrente", "bank", 500_000).await;
+    account(pool, "acc-reserve", "Reserva", "savings", 900_000).await;
+    tag(pool, "tg-mercado", "Mercado").await;
+
+    line(
+        pool,
+        Line {
+            id: "lx-salario",
+            kind: "income",
+            amount: 800_000,
+            date: "2026-07-01",
+            description: "Salário",
+            to_account: Some("acc-bank"),
+            ..Default::default()
+        },
+    )
+    .await;
+    line(
+        pool,
+        Line {
+            id: "lx-aluguel",
+            amount: 200_000,
+            date: "2026-07-05",
+            description: "Aluguel",
+            fixed: true,
+            from_account: Some("acc-bank"),
+            ..Default::default()
+        },
+    )
+    .await;
+    line(
+        pool,
+        Line {
+            id: "lx-mercado",
+            amount: 32_000,
+            date: "2026-07-10",
+            description: "Mercado",
+            ..Default::default()
+        },
+    )
+    .await;
+    line(
+        pool,
+        Line {
+            id: "lx-farmacia",
+            amount: 8_000,
+            date: "2026-07-12",
+            description: "Farmácia",
+            method: "pix",
+            ..Default::default()
+        },
+    )
+    .await;
+    line(
+        pool,
+        Line {
+            id: "lx-economia",
+            kind: "transfer",
+            amount: 150_000,
+            date: "2026-07-20",
+            description: "Para a reserva",
+            to_account: Some("acc-reserve"),
+            ..Default::default()
+        },
+    )
+    .await;
+    line(
+        pool,
+        Line {
+            id: "lx-maio",
+            amount: 45_000,
+            date: "2026-05-18",
+            description: "Mercado de maio",
+            ..Default::default()
+        },
+    )
+    .await;
+
+    tag_on(pool, "lx-mercado", "tg-mercado").await;
+    tag_on(pool, "lx-maio", "tg-mercado").await;
+    split_on(pool, "sp-gio", "lx-mercado", 12_000, "p-gio").await;
+}
+
+/// O mesmo mês com um cartão de verdade: conta emissora, ciclo e uma compra na fatura aberta.
+/// Devolve o id da conta do cartão.
+async fn ledger_with_card(pool: &SqlitePool) -> String {
+    ledger(pool).await;
+    let card = crate::commands::card_cmds::create_card_account_inner(
+        pool,
+        "Cartão",
+        Some("Banco Exemplo"),
+        Some(5),
+        Some(15),
+        None,
+        Some("Eu"),
+        None,
+        &[],
+    )
+    .await
+    .unwrap();
+    crate::commands::card_cmds::register_card_purchase_with_refund_inner(
+        pool,
+        &card,
+        60_000,
+        Some("Restaurante"),
+        "2026-07-03",
+        None,
+        &[],
+    )
+    .await
+    .unwrap();
+    card
+}
+
+/// O que já está comprometido à frente: um parcelamento de cartão com reembolso vinculado, uma
+/// assinatura sem fim e uma série de lançamentos do Livro-razão. Devolve o id do cartão.
+async fn commitments(pool: &SqlitePool) -> String {
+    let card = ledger_with_card(pool).await;
+    crate::commands::card_cmds::create_card_series_with_refund_inner(
+        pool,
+        &card,
+        "Notebook",
+        100_000,
+        Some(6),
+        "2026-07-03",
+        Some(50_000),
+        &[],
+    )
+    .await
+    .unwrap();
+    crate::commands::card_cmds::create_card_series_with_refund_inner(
+        pool,
+        &card,
+        "Streaming",
+        3_000,
+        None,
+        "2026-07-03",
+        None,
+        &[],
+    )
+    .await
+    .unwrap();
+    crate::recurrence::create_recurring_series(
+        pool,
+        &crate::recurrence::RecurringTemplate {
+            txn_type: "expense".into(),
+            amount: 120_000,
+            description: Some("Academia".into()),
+            start: chrono::NaiveDate::from_ymd_opt(2026, 8, 5).unwrap(),
+            payment_method: Some("debit".into()),
+            is_fixed: true,
+        },
+        crate::recurrence::Frequency::Mensal,
+        6,
+    )
+    .await
+    .unwrap();
+    card
+}
+
+/// Uma obrigação nomeada sobre o item que se repete na nota — a série que a planilha não guarda.
+/// Devolve o id da obrigação.
+async fn rent_obligation(pool: &SqlitePool) -> String {
+    for (i, month) in ["05", "06", "07"].iter().enumerate() {
+        let txn = format!("rent-{month}");
+        line(
+            pool,
+            Line {
+                id: &txn,
+                amount: 180_000 + (i as i64 * 10_000),
+                date: &format!("2026-{month}-10"),
+                description: "Contas",
+                fixed: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, \
+                                    section) \
+             VALUES (?1, ?2, ?3, 'Aluguel', 0, 'CONTAS:')",
+        )
+        .bind(format!("li-{month}"))
+        .bind(&txn)
+        .bind(180_000 + (i as i64 * 10_000))
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    crate::obligations::create_obligation(pool, "Aluguel", "Aluguel", Some("CONTAS:"))
+        .await
+        .unwrap()
+}
+
 /// Futuro pré-lançado sobre a corrente da planilha: semente conhecida no dia 24 e agosto inteiro
 /// lançado — o mundo da projeção e do calendário.
 async fn projected_future(pool: &SqlitePool) {
@@ -307,6 +609,7 @@ async fn no_number_in_any_envelope_is_a_float() {
     world(&p).await;
     active_budget(&p, 5_000).await;
     expense(&p, "hoje", 4_300, "2026-07-25", false).await;
+    let obligation = rent_obligation(&p).await;
 
     for (tool, args) in [
         (
@@ -329,6 +632,16 @@ async fn no_number_in_any_envelope_is_a_float() {
         ),
         ("get_forecast", json!({"include": ["daily", "coverage"]})),
         ("get_cashflow_calendar", json!({})),
+        (
+            "search_transactions",
+            json!({"include": ["tags", "items", "owners"]}),
+        ),
+        ("get_tags", json!({"include": ["effects", "third_parties"]})),
+        ("get_commitments", json!({"include": ["occurrences"]})),
+        (
+            "get_commitments",
+            json!({"obligation_id": obligation, "include": ["occurrences"]}),
+        ),
     ] {
         let env = call(&p, tool, args).await;
         let json = serde_json::to_value(&env).unwrap();
@@ -442,7 +755,10 @@ async fn include_must_be_a_list_of_names() {
 #[tokio::test]
 async fn every_tool_declares_use_for_and_not_for_and_answers() {
     let p = pool().await;
-    world(&p).await;
+    // O mundo mais completo da suíte: contas, cartão com fatura, séries, tags e titulares. Uma
+    // expansão só se prova alcançável quando existe o dado que ela expande.
+    commitments(&p).await;
+    rent_obligation(&p).await;
 
     for spec in catalog::CATALOG {
         assert!(!spec.use_for.is_empty(), "{}: sem \"use para\"", spec.name);
@@ -457,7 +773,8 @@ async fn every_tool_declares_use_for_and_not_for_and_answers() {
         assert!(env.ok, "{} não respondeu: {:?}", spec.name, env.error);
 
         // Toda expansão declarada é alcançável — catálogo que promete o que não entrega é
-        // pior que catálogo curto.
+        // pior que catálogo curto. A expansão de uma LISTA cai dentro de cada linha (as tags de
+        // um lançamento), então a busca é pelo nome em qualquer profundidade.
         for include in spec.include_names() {
             let env = call(&p, spec.name, json!({ "include": [include] })).await;
             assert!(
@@ -466,11 +783,20 @@ async fn every_tool_declares_use_for_and_not_for_and_answers() {
                 spec.name, env.error
             );
             assert!(
-                env.data.unwrap().get(include).is_some(),
+                has_key(&env.data.unwrap(), include),
                 "{}: include {include} pedido e ausente",
                 spec.name
             );
         }
+    }
+}
+
+/// A chave existe em algum ponto da resposta?
+fn has_key(value: &Value, key: &str) -> bool {
+    match value {
+        Value::Object(map) => map.contains_key(key) || map.values().any(|item| has_key(item, key)),
+        Value::Array(items) => items.iter().any(|item| has_key(item, key)),
+        _ => false,
     }
 }
 
@@ -1480,4 +1806,598 @@ async fn cashflow_calendar_defaults_to_the_current_month() {
     assert_eq!(env.meta.period.start, "2026-07-01");
     assert_eq!(env.meta.period.end, "2026-07-31");
     assert_eq!(env.data.unwrap()["days"]["total"], 31);
+}
+
+// --- O recorte de lançamentos -----------------------------------------------------------
+
+#[tokio::test]
+async fn search_lists_the_current_month_with_the_lines_and_the_totals() {
+    let p = pool().await;
+    ledger(&p).await;
+
+    let env = call(&p, "search_transactions", json!({})).await;
+    assert!(env.ok, "{:?}", env.error);
+    // Sem recorte pedido, o recorte é o mês corrente — nunca a base inteira.
+    assert_eq!(env.meta.period.start, "2026-07-01");
+    assert_eq!(env.meta.period.end, "2026-07-31");
+    let found = env.data.unwrap();
+
+    let items = found["transactions"]["items"].as_array().unwrap();
+    assert_eq!(items.len(), 5);
+    // Mais recente primeiro, que é a ordem em que a pessoa lê o próprio mês.
+    assert_eq!(items[0]["date"], "2026-07-20");
+    assert_eq!(items[0]["description"], "Para a reserva");
+    assert_eq!(items[0]["amount_cents"], 150_000);
+    // O tipo do método vem classificado pelo motor: transferência para a reserva é Economia.
+    assert_eq!(items[0]["movement"], "economia");
+    assert_eq!(items[0]["provenance"], "manual");
+    assert_eq!(items[4]["date"], "2026-07-01");
+    assert_eq!(items[4]["movement"], "entrada");
+
+    let totals = &found["totals"];
+    assert_eq!(totals["count"], 5);
+    assert_eq!(totals["income_cents"], 800_000);
+    assert_eq!(totals["expense_cents"], 240_000);
+    assert_eq!(totals["transfer_cents"], 150_000);
+}
+
+#[tokio::test]
+async fn search_filters_by_range_value_payment_method_and_nature() {
+    let p = pool().await;
+    ledger(&p).await;
+
+    let may = data(
+        &p,
+        "search_transactions",
+        json!({"range": {"start": "2026-05-01", "end": "2026-05-31"}}),
+    )
+    .await;
+    assert_eq!(may["totals"]["count"], 1);
+    assert_eq!(
+        may["transactions"]["items"][0]["description"],
+        "Mercado de maio"
+    );
+
+    let big = data(&p, "search_transactions", json!({"min_cents": 100_000})).await;
+    assert_eq!(big["totals"]["count"], 3);
+
+    let band = data(
+        &p,
+        "search_transactions",
+        json!({"min_cents": 10_000, "max_cents": 100_000}),
+    )
+    .await;
+    assert_eq!(band["totals"]["count"], 1);
+    assert_eq!(band["transactions"]["items"][0]["description"], "Mercado");
+
+    let pix = data(&p, "search_transactions", json!({"payment_method": "pix"})).await;
+    assert_eq!(pix["totals"]["count"], 1);
+    assert_eq!(pix["transactions"]["items"][0]["description"], "Farmácia");
+
+    let fixed = data(&p, "search_transactions", json!({"nature": "fixed"})).await;
+    assert_eq!(fixed["totals"]["count"], 1);
+    assert_eq!(fixed["transactions"]["items"][0]["description"], "Aluguel");
+    assert_eq!(fixed["transactions"]["items"][0]["movement"], "saida");
+
+    let variable = data(&p, "search_transactions", json!({"nature": "variable"})).await;
+    assert_eq!(variable["totals"]["expense_cents"], 40_000);
+}
+
+#[tokio::test]
+async fn search_filters_by_tag_and_by_responsible_person() {
+    let p = pool().await;
+    ledger(&p).await;
+
+    let tagged = data(
+        &p,
+        "search_transactions",
+        json!({"tag_id": "tg-mercado", "range": {"start": "2026-01-01", "end": "2026-12-31"}}),
+    )
+    .await;
+    assert_eq!(tagged["totals"]["count"], 2);
+
+    let gio = data(
+        &p,
+        "search_transactions",
+        json!({"owner_person_id": "p-gio"}),
+    )
+    .await;
+    assert_eq!(gio["totals"]["count"], 1);
+    assert_eq!(gio["transactions"]["items"][0]["description"], "Mercado");
+}
+
+/// Filtrar por conta alcança a compra no cartão: ela não aponta a conta, aponta a FATURA — e
+/// "quanto gastei com este cartão" é a pergunta que a conversa precisa responder.
+#[tokio::test]
+async fn search_by_account_reaches_the_card_through_the_invoice() {
+    let p = pool().await;
+    let card = ledger_with_card(&p).await;
+
+    let on_card = data(
+        &p,
+        "search_transactions",
+        json!({"account_id": card, "range": {"start": "2026-07-01", "end": "2026-07-31"}}),
+    )
+    .await;
+
+    assert_eq!(on_card["totals"]["count"], 1);
+    assert_eq!(
+        on_card["transactions"]["items"][0]["description"],
+        "Restaurante"
+    );
+    assert_eq!(on_card["transactions"]["items"][0]["movement"], "cartao");
+
+    let on_bank = data(&p, "search_transactions", json!({"account_id": "acc-bank"})).await;
+    assert_eq!(on_bank["totals"]["count"], 2);
+}
+
+#[tokio::test]
+async fn search_sort_speaks_a_controlled_vocabulary() {
+    let p = pool().await;
+    ledger(&p).await;
+
+    let cheapest = data(&p, "search_transactions", json!({"sort": "amount_asc"})).await;
+    let items = cheapest["transactions"]["items"].as_array().unwrap();
+    assert_eq!(items[0]["description"], "Farmácia");
+    assert_eq!(items[4]["description"], "Salário");
+
+    let oldest = data(&p, "search_transactions", json!({"sort": "date_asc"})).await;
+    assert_eq!(oldest["transactions"]["items"][0]["date"], "2026-07-01");
+
+    let env = call(&p, "search_transactions", json!({"sort": "amount"})).await;
+    let err = env.error.unwrap();
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
+    // A recusa entrega o vocabulário inteiro: corrigir não depende de adivinhar a palavra.
+    assert!(err.fix.contains("amount_asc"), "fix: {}", err.fix);
+    assert!(err.fix.contains("date_desc"), "fix: {}", err.fix);
+}
+
+/// O agregado responde pelo FILTRO, não pela página. Uma soma da página mentiria — e é
+/// exatamente a mentira que uma resposta paginada esconderia bem.
+#[tokio::test]
+async fn search_totals_cover_the_whole_filter_across_pages() {
+    let p = pool().await;
+    person(&p).await;
+    for i in 0..(envelope::MAX_ROWS + 30) {
+        line(
+            &p,
+            Line {
+                id: &format!("many-{i:04}"),
+                amount: 1_000,
+                date: "2026-07-08",
+                description: "Café",
+                ..Default::default()
+            },
+        )
+        .await;
+    }
+
+    let first = data(&p, "search_transactions", json!({})).await;
+    assert_eq!(first["transactions"]["returned"], envelope::MAX_ROWS);
+    assert_eq!(first["transactions"]["total"], envelope::MAX_ROWS + 30);
+    assert_eq!(
+        first["totals"]["expense_cents"],
+        (envelope::MAX_ROWS as i64 + 30) * 1_000
+    );
+    let cursor = first["transactions"]["next_cursor"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let second = data(&p, "search_transactions", json!({"cursor": cursor})).await;
+    assert_eq!(second["transactions"]["returned"], 30);
+    assert_eq!(second["transactions"]["next_cursor"], Value::Null);
+    assert_eq!(second["totals"], first["totals"]);
+}
+
+#[tokio::test]
+async fn search_refuses_a_cursor_from_another_filter() {
+    let p = pool().await;
+    person(&p).await;
+    for i in 0..(envelope::MAX_ROWS + 5) {
+        line(
+            &p,
+            Line {
+                id: &format!("many-{i:04}"),
+                amount: 1_000,
+                date: "2026-07-08",
+                description: "Café",
+                ..Default::default()
+            },
+        )
+        .await;
+    }
+
+    let first = data(&p, "search_transactions", json!({})).await;
+    let cursor = first["transactions"]["next_cursor"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let env = call(
+        &p,
+        "search_transactions",
+        json!({"cursor": cursor, "sort": "amount_asc"}),
+    )
+    .await;
+    let err = env.error.unwrap();
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
+    assert!(err.fix.contains("cursor"), "fix: {}", err.fix);
+}
+
+#[tokio::test]
+async fn search_expands_tags_items_and_owners_only_with_include() {
+    let p = pool().await;
+    ledger(&p).await;
+    sqlx::query(
+        "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, section) \
+         VALUES ('li-1', 'lx-mercado', 32000, 'Feira', 0, 'CONTAS:')",
+    )
+    .execute(&p)
+    .await
+    .unwrap();
+
+    let lean = data(&p, "search_transactions", json!({"tag_id": "tg-mercado"})).await;
+    let line = &lean["transactions"]["items"][0];
+    assert!(line.get("tags").is_none());
+    assert!(line.get("items").is_none());
+    assert!(line.get("owners").is_none());
+
+    let full = data(
+        &p,
+        "search_transactions",
+        json!({"tag_id": "tg-mercado", "include": ["tags", "items", "owners"]}),
+    )
+    .await;
+    let line = &full["transactions"]["items"][0];
+    // Tag e pessoa vêm com identidade: é por ela que a próxima pergunta filtra, e nenhuma outra
+    // ferramenta entrega o id de uma pessoa.
+    assert_eq!(line["tags"][0]["id"], "tg-mercado");
+    assert_eq!(line["tags"][0]["name"], "Mercado");
+    assert_eq!(line["items"][0]["description"], "Feira");
+    assert_eq!(line["items"][0]["amount_cents"], 32_000);
+    assert_eq!(line["owners"][0]["person_id"], "p-gio");
+    assert_eq!(line["owners"][0]["name"], "Gio");
+    assert_eq!(line["owners"][0]["amount_cents"], 12_000);
+}
+
+// --- O que já está comprometido ----------------------------------------------------------
+
+#[tokio::test]
+async fn commitments_group_by_series_with_the_installment_read_from_the_cycle() {
+    let p = pool().await;
+    commitments(&p).await;
+
+    let env = call(
+        &p,
+        "get_commitments",
+        json!({"range": {"start": "2026-08-01", "end": "2026-12-31"}}),
+    )
+    .await;
+    assert!(env.ok, "{:?}", env.error);
+    assert_eq!(env.meta.period.start, "2026-08-01");
+    let ahead = env.data.unwrap();
+
+    let series = ahead["card_series"]["items"].as_array().unwrap();
+    let notebook = series
+        .iter()
+        .find(|s| s["description"] == "Notebook")
+        .expect("o parcelamento está entre os compromissos");
+
+    assert_eq!(notebook["kind"], "installment");
+    assert_eq!(notebook["card_name"], "Cartão");
+    assert_eq!(notebook["amount_cents"], 100_000);
+    // A primeira parcela venceu em 15/07, fora do recorte: restam cinco de seis.
+    assert_eq!(notebook["occurrences_in_range"], 5);
+    assert_eq!(notebook["committed_cents"], 500_000);
+    assert_eq!(notebook["installments_total"], 6);
+    // A parcela n/N sai do índice do CICLO, nunca de um contador guardado na linha.
+    assert_eq!(notebook["next"]["cycle_month"], "2026-08");
+    assert_eq!(notebook["next"]["due_date"], "2026-08-15");
+    assert_eq!(notebook["next"]["installment_index"], 2);
+
+    // A assinatura não tem fim: dizer "5 de 5" mentiria sobre o que vem depois de dezembro.
+    let streaming = series
+        .iter()
+        .find(|s| s["description"] == "Streaming")
+        .expect("a assinatura está entre os compromissos");
+    assert_eq!(streaming["kind"], "subscription");
+    assert_eq!(streaming["installments_total"], Value::Null);
+    assert_eq!(streaming["next"]["installment_index"], Value::Null);
+}
+
+#[tokio::test]
+async fn commitments_show_the_refund_linked_to_a_series() {
+    let p = pool().await;
+    commitments(&p).await;
+
+    let ahead = data(
+        &p,
+        "get_commitments",
+        json!({"range": {"start": "2026-07-01", "end": "2026-12-31"}}),
+    )
+    .await;
+    let series = ahead["card_series"]["items"].as_array().unwrap();
+
+    let notebook = series
+        .iter()
+        .find(|s| s["description"] == "Notebook")
+        .unwrap();
+    assert_eq!(notebook["refund"]["linked"], true);
+    assert_eq!(notebook["refund"]["expected_cents"], 50_000);
+
+    let streaming = series
+        .iter()
+        .find(|s| s["description"] == "Streaming")
+        .unwrap();
+    assert_eq!(streaming["refund"]["linked"], false);
+    assert_eq!(streaming["refund"]["expected_cents"], 0);
+}
+
+#[tokio::test]
+async fn commitments_carry_the_recurring_series_of_the_ledger_and_the_total_of_the_range() {
+    let p = pool().await;
+    commitments(&p).await;
+
+    let ahead = data(
+        &p,
+        "get_commitments",
+        json!({"range": {"start": "2026-08-01", "end": "2026-12-31"}}),
+    )
+    .await;
+
+    let academia = &ahead["recurring"]["items"][0];
+    assert_eq!(academia["description"], "Academia");
+    assert_eq!(academia["frequency"], "mensal");
+    assert_eq!(academia["amount_cents"], 120_000);
+    assert_eq!(academia["occurrences_in_range"], 5);
+    assert_eq!(academia["committed_cents"], 600_000);
+    assert_eq!(academia["next"]["date"], "2026-08-05");
+    assert_eq!(academia["next"]["installment_index"], 1);
+    assert_eq!(academia["installments_total"], 6);
+
+    // O total cobre o recorte inteiro: parcelas (500.000) + assinatura (15.000) + série (600.000).
+    assert_eq!(ahead["committed_cents"], 1_115_000);
+}
+
+#[tokio::test]
+async fn commitments_default_to_the_twelve_months_ahead() {
+    let p = pool().await;
+    commitments(&p).await;
+
+    let env = call(&p, "get_commitments", json!({})).await;
+
+    assert!(env.ok, "{:?}", env.error);
+    assert_eq!(env.meta.period.start, "2026-07-25");
+    assert_eq!(env.meta.period.end, "2027-07-25");
+}
+
+#[tokio::test]
+async fn commitments_answer_by_obligation_with_the_history_and_the_typical_month() {
+    let p = pool().await;
+    ledger(&p).await;
+    let obligation = rent_obligation(&p).await;
+
+    let env = call(
+        &p,
+        "get_commitments",
+        json!({"obligation_id": obligation, "range": {"start": "2026-01-01", "end": "2026-12-31"}}),
+    )
+    .await;
+    assert!(env.ok, "{:?}", env.error);
+    let rent = env.data.unwrap();
+
+    assert_eq!(rent["obligation"]["name"], "Aluguel");
+    assert_eq!(rent["obligation"]["kind"], "saida");
+    // 180.000 · 190.000 · 200.000 — o típico é a mediana, o mesmo estimador das réguas.
+    assert_eq!(rent["typical_cents"], 190_000);
+    assert_eq!(rent["last"]["month"], "2026-07");
+    assert_eq!(rent["last"]["total_cents"], 200_000);
+    // A diferença contra o típico vem pronta: subir de aluguel é a pergunta, não a conta.
+    assert_eq!(rent["delta_vs_typical"]["cents"], 10_000);
+    assert_eq!(rent["delta_vs_typical"]["change_bps"], 526);
+    assert_eq!(rent["committed_cents"], 570_000);
+
+    let months = rent["months"]["items"].as_array().unwrap();
+    assert_eq!(months.len(), 3);
+    assert_eq!(months[0]["month"], "2026-05");
+    assert_eq!(months[0]["total_cents"], 180_000);
+    assert_eq!(months[0]["count"], 1);
+}
+
+#[tokio::test]
+async fn commitments_list_the_obligations_that_touch_the_range() {
+    let p = pool().await;
+    ledger(&p).await;
+    rent_obligation(&p).await;
+
+    let ahead = data(
+        &p,
+        "get_commitments",
+        json!({"range": {"start": "2026-06-01", "end": "2026-12-31"}}),
+    )
+    .await;
+    let obligations = ahead["obligations"]["items"].as_array().unwrap();
+
+    assert_eq!(obligations.len(), 1);
+    assert_eq!(obligations[0]["name"], "Aluguel");
+    // Junho e julho caem no recorte; maio ficou de fora.
+    assert_eq!(obligations[0]["occurrences_in_range"], 2);
+    assert_eq!(obligations[0]["committed_cents"], 390_000);
+}
+
+#[tokio::test]
+async fn commitments_occurrences_only_with_include() {
+    let p = pool().await;
+    commitments(&p).await;
+
+    let range = json!({"start": "2026-08-01", "end": "2026-09-30"});
+    let lean = data(&p, "get_commitments", json!({"range": range})).await;
+    assert!(lean.get("occurrences").is_none());
+
+    let full = data(
+        &p,
+        "get_commitments",
+        json!({"range": {"start": "2026-08-01", "end": "2026-09-30"}, "include": ["occurrences"]}),
+    )
+    .await;
+    let occurrences = full["occurrences"]["items"].as_array().unwrap();
+
+    // Em ordem de data: a série do dia 5, depois as duas do vencimento do dia 15.
+    assert_eq!(occurrences[0]["date"], "2026-08-05");
+    assert_eq!(occurrences[0]["description"], "Academia");
+    assert_eq!(occurrences[0]["source"], "recurrence");
+    assert_eq!(occurrences[0]["installment_index"], 1);
+    let notebook = occurrences
+        .iter()
+        .find(|o| o["description"] == "Notebook")
+        .expect("a parcela do notebook está entre as ocorrências");
+    assert_eq!(notebook["date"], "2026-08-15");
+    assert_eq!(notebook["source"], "card_series");
+    assert_eq!(notebook["installment_index"], 2);
+    assert_eq!(notebook["amount_cents"], 100_000);
+}
+
+#[tokio::test]
+async fn commitments_name_the_obligation_that_does_not_exist() {
+    let p = pool().await;
+    commitments(&p).await;
+
+    let env = call(
+        &p,
+        "get_commitments",
+        json!({"obligation_id": "ob-fantasma"}),
+    )
+    .await;
+    let err = env.error.unwrap();
+
+    assert_eq!(err.code, ErrorCode::NotFound);
+    assert!(!err.fix.is_empty());
+}
+
+// --- As tags como interruptores de régua -------------------------------------------------
+
+#[tokio::test]
+async fn tags_publish_the_switches_of_each_ruler_and_what_the_tag_moved() {
+    let p = pool().await;
+    ledger(&p).await;
+    tag_outside_cost(&p, "tg-terceiro", "Da outra pessoa").await;
+    tag_on(&p, "lx-aluguel", "tg-terceiro").await;
+
+    let env = call(&p, "get_tags", json!({})).await;
+    assert!(env.ok, "{:?}", env.error);
+    assert_eq!(env.meta.period.start, "2026-07-01");
+    assert_eq!(env.meta.period.end, "2026-07-31");
+    let tags = env.data.unwrap();
+
+    assert_eq!(tags["month"], "2026-07");
+    assert_eq!(tags["has_exceptions"], true);
+    let items = tags["tags"]["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+
+    // A tag mais pesada do mês vem primeiro, com os quatro interruptores explícitos: a tag
+    // decide em quais réguas o lançamento conta — ela não é um envelope de orçamento.
+    let outside = &items[0];
+    assert_eq!(outside["id"], "tg-terceiro");
+    assert_eq!(outside["month_total_cents"], 200_000);
+    assert_eq!(outside["transaction_count"], 1);
+    assert_eq!(outside["counts_in"]["cost_of_living"], false);
+    assert_eq!(outside["counts_in"]["performance"], true);
+    assert_eq!(outside["counts_in"]["savings"], true);
+    assert_eq!(outside["counts_in"]["daily_avg"], true);
+
+    let mercado = &items[1];
+    assert_eq!(mercado["id"], "tg-mercado");
+    assert_eq!(mercado["month_total_cents"], 32_000);
+    assert_eq!(mercado["counts_in"]["cost_of_living"], true);
+}
+
+/// O custo com os interruptores de hoje ao lado do custo se todas as tags contassem: é a conta
+/// que mostra o preço das exceções sem que ninguém precise fazê-la.
+#[tokio::test]
+async fn tags_print_the_cost_with_and_without_the_exceptions() {
+    let p = pool().await;
+    ledger(&p).await;
+    tag_outside_cost(&p, "tg-terceiro", "Da outra pessoa").await;
+    tag_on(&p, "lx-aluguel", "tg-terceiro").await;
+
+    let tags = data(&p, "get_tags", json!({})).await;
+
+    // Julho: aluguel 200.000 + mercado 32.000 + farmácia 8.000. O aluguel está fora do custo.
+    assert_eq!(tags["cost_of_living_cents"], 40_000);
+    assert_eq!(tags["cost_if_every_tag_counted_cents"], 240_000);
+}
+
+#[tokio::test]
+async fn tags_answer_the_month_asked() {
+    let p = pool().await;
+    ledger(&p).await;
+
+    let env = call(&p, "get_tags", json!({"month": "2026-05"})).await;
+    assert!(env.ok, "{:?}", env.error);
+    assert_eq!(env.meta.period.start, "2026-05-01");
+    assert_eq!(env.meta.period.end, "2026-05-31");
+    let tags = env.data.unwrap();
+
+    assert_eq!(tags["month"], "2026-05");
+    assert_eq!(tags["tags"]["items"][0]["month_total_cents"], 45_000);
+}
+
+#[tokio::test]
+async fn tags_effects_come_computed_only_with_include() {
+    let p = pool().await;
+    ledger(&p).await;
+    tag_outside_cost(&p, "tg-terceiro", "Da outra pessoa").await;
+    tag_on(&p, "lx-aluguel", "tg-terceiro").await;
+
+    let lean = data(&p, "get_tags", json!({})).await;
+    assert!(lean.get("effects").is_none());
+
+    let full = data(&p, "get_tags", json!({"include": ["effects"]})).await;
+    let effects = full["effects"]["items"].as_array().unwrap();
+    let outside = effects
+        .iter()
+        .find(|e| e["tag_id"] == "tg-terceiro")
+        .expect("efeitos da tag com exceção");
+
+    // Ligar o interruptor de custo devolveria o aluguel ao custo de vida; a Performance mexe
+    // pelo líquido, e as duas contas são diferentes por construção.
+    assert_eq!(outside["cost_delta_cents"], 200_000);
+    assert!(outside["performance_delta_cents"].is_i64());
+}
+
+#[tokio::test]
+async fn tags_third_parties_only_with_include_and_carry_the_person() {
+    let p = pool().await;
+    ledger(&p).await;
+
+    let lean = data(&p, "get_tags", json!({})).await;
+    assert!(lean.get("third_parties").is_none());
+    // A manchete do dinheiro de terceiros fica no default: são dois números, não uma lista.
+    assert_eq!(lean["third_party_people"], 1);
+
+    let full = data(&p, "get_tags", json!({"include": ["third_parties"]})).await;
+    let line = &full["third_parties"]["items"][0];
+
+    assert_eq!(line["person_id"], "p-gio");
+    assert_eq!(line["name"], "Gio");
+    assert_eq!(line["out_cents"], 12_000);
+    assert!(!line["state"].as_str().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn search_refuses_a_payment_method_that_is_not_one() {
+    let p = pool().await;
+    ledger(&p).await;
+
+    let env = call(
+        &p,
+        "search_transactions",
+        json!({"payment_method": "boleto"}),
+    )
+    .await;
+    let err = env.error.unwrap();
+
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
+    assert!(err.fix.contains("credit"), "fix: {}", err.fix);
 }

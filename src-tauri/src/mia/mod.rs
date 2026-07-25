@@ -10,6 +10,7 @@
 
 pub(crate) mod catalog;
 pub(crate) mod envelope;
+mod ledger_tools;
 mod state_tools;
 mod time_tools;
 
@@ -178,6 +179,45 @@ impl Args {
             .ok_or_else(|| Self::invalid(key, "texto", format!("{key}: \"…\"")))
     }
 
+    /// Valor em centavos. Dinheiro só entra inteiro: um float aqui viraria centavo perdido no
+    /// arredondamento, e o recibo não pega o que a comparação já comeu.
+    pub(crate) fn cents(&self, key: &str) -> Result<Option<i64>, ToolError> {
+        let Some(raw) = self.value(key) else {
+            return Ok(None);
+        };
+        raw.as_i64().map(Some).ok_or_else(|| {
+            Self::invalid(
+                key,
+                "um valor em centavos inteiros",
+                format!("{key}: 50000 (R$ 500,00)"),
+            )
+        })
+    }
+
+    /// Palavra de um vocabulário fechado. A recusa lista o vocabulário inteiro: corrigir uma
+    /// palavra errada nunca depende de adivinhar a palavra certa.
+    pub(crate) fn choice(
+        &self,
+        key: &str,
+        vocabulary: &[&'static str],
+    ) -> Result<Option<&'static str>, ToolError> {
+        let Some(raw) = self.text(key)? else {
+            return Ok(None);
+        };
+        vocabulary
+            .iter()
+            .find(|word| **word == raw)
+            .copied()
+            .map(Some)
+            .ok_or_else(|| {
+                ToolError::new(
+                    ErrorCode::InvalidArgument,
+                    format!("\"{raw}\" não é um valor de \"{key}\"."),
+                    format!("Chame de novo com {key} em: {}.", vocabulary.join(", ")),
+                )
+            })
+    }
+
     /// Recorte de datas explícitas (`{"start": "…", "end": "…"}`). O vocabulário da fachada não
     /// tem "últimos 30 dias": quem chama diz as duas pontas, e a resposta responde por elas.
     pub(crate) fn range(&self, key: &str) -> Result<Option<(NaiveDate, NaiveDate)>, ToolError> {
@@ -273,6 +313,9 @@ async fn run(
         "get_year_analysis" => time_tools::year_analysis(pool, args, today).await,
         "get_forecast" => time_tools::forecast(pool, args, today).await,
         "get_cashflow_calendar" => time_tools::cashflow_calendar(pool, args, today).await,
+        "search_transactions" => ledger_tools::search_transactions(pool, args, today).await,
+        "get_tags" => ledger_tools::tags(pool, args, today).await,
+        "get_commitments" => ledger_tools::commitments(pool, args, today).await,
         // O catálogo é a fonte da verdade dos nomes; uma entrada sem braço aqui é erro de
         // programação, e o teste de cobertura do catálogo o pega antes de qualquer rodada.
         other => Err(ToolError::new(

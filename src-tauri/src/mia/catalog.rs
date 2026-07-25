@@ -178,6 +178,87 @@ pub(crate) const CATALOG: &[ToolSpec] = &[
         ],
     },
     ToolSpec {
+        name: "search_transactions",
+        summary: "Os lançamentos de um recorte, filtrados por período, valor, conta, tag, pessoa \
+                  responsável, forma de pagamento e natureza — com os totais do filtro inteiro e \
+                  paginação por cursor.",
+        use_for: "Perguntas de recorte próprio, sobre lançamentos — \"quanto gastei com esta \
+                  conta em maio\", \"o que passou de R$ 500\", \"o que a outra pessoa respondeu\", \
+                  \"o que foi no crédito\", \"quais são as fixas do mês\".",
+        not_for: "Os baldes do mês nas contas do método (use get_month_analysis): a soma das \
+                  linhas filtradas não é o custo de vida, que o motor compõe com as faturas e as \
+                  máscaras de tag. Saldo por dia (use get_cashflow_calendar). O que já está \
+                  comprometido à frente (use get_commitments).",
+        params: &[
+            "range",
+            "min_cents",
+            "max_cents",
+            "account_id",
+            "tag_id",
+            "owner_person_id",
+            "payment_method",
+            "nature",
+            "sort",
+            "cursor",
+        ],
+        includes: &[
+            Include {
+                name: "tags",
+                description: "As tags de cada linha.",
+            },
+            Include {
+                name: "items",
+                description: "As partes itemizadas da nota de cada linha, com o balde de cada uma.",
+            },
+            Include {
+                name: "owners",
+                description: "Quem respondeu por cada linha (divisão de despesas).",
+            },
+        ],
+    },
+    ToolSpec {
+        name: "get_tags",
+        summary: "As tags de um mês: em quais réguas cada uma conta, o que movimentou, o preço \
+                  das exceções no custo de vida e o dinheiro de terceiros.",
+        use_for: "Perguntas sobre TAGS e sobre dinheiro que não é seu — \"quais tags puxaram o \
+                  mês\", \"o que está fora do custo de vida\", \"quanto saiu em nome de outra \
+                  pessoa\", \"quanto ainda me devem\".",
+        not_for: "Orçar por categoria: o método não orça por categoria, e a tag não é envelope de \
+                  gasto — ela é interruptor de contabilidade, e decide em quais réguas o \
+                  lançamento conta. O custo de vida do mês nas contas do método vem de \
+                  get_month_analysis; os lançamentos de uma tag, de search_transactions.",
+        params: &["month"],
+        includes: &[
+            Include {
+                name: "effects",
+                description: "Quanto cada régua mexeria se o interruptor daquela tag fosse ligado.",
+            },
+            Include {
+                name: "third_parties",
+                description: "Uma linha por pessoa: o que saiu em nome dela, o que voltou, o que \
+                              ainda se espera e em que estado está.",
+            },
+        ],
+    },
+    ToolSpec {
+        name: "get_commitments",
+        summary: "O que já está comprometido nos ciclos à frente: parcelamentos e assinaturas do \
+                  cartão, séries do Livro-razão e obrigações nomeadas — com a parcela n/N e o \
+                  reembolso vinculado.",
+        use_for: "Perguntas sobre o que JÁ ESTÁ PROMETIDO — \"quais parcelas ainda tenho\", \
+                  \"quanto sai por mês em assinatura\", \"quanto falta do notebook\", \"o \
+                  aluguel subiu?\" (com obligation_id).",
+        not_for: "O saldo que sobra depois disso (use get_forecast); o total de uma fatura e o \
+                  próximo vencimento (use get_financial_snapshot); os lançamentos já feitos (use \
+                  search_transactions).",
+        params: &["range", "obligation_id"],
+        includes: &[Include {
+            name: "occurrences",
+            description: "Uma linha por parcela ou ocorrência dentro do recorte, com data, \
+                          valor e posição na série.",
+        }],
+    },
+    ToolSpec {
         name: "get_cashflow_calendar",
         summary: "O caixa dia a dia num recorte de datas: movimento do dia, saldo que ele deixou \
                   e o menor saldo do período. Passado lê a planilha, futuro lê a projeção.",
