@@ -163,6 +163,28 @@ pub(crate) struct RecentRow {
     has_refund_link: i64,
 }
 
+/// As colunas que compõem uma [`RecentRow`]. Vivem numa lista só porque duas leituras montam a
+/// MESMA linha do Livro-razão: a janela recente da tela e o recorte filtrado da conversa. Duas
+/// listas divergiriam campo a campo, e a conversa passaria a mostrar uma linha que a tela não tem.
+///
+/// Titulares vêm de um subquery agregado (GROUP_CONCAT com separador '|') — sem N+1.
+pub(crate) const RECENT_ROW_COLUMNS: &str = "t.id, t.type, t.amount, COALESCE(t.description,'') AS description, t.date, \
+     COALESCE(t.payment_method,'') AS payment_method, t.is_projection, t.is_fixed, \
+     COALESCE((SELECT GROUP_CONCAT(name, '|') FROM \
+         (SELECT DISTINCT p.name FROM split s \
+          JOIN person p ON p.id = s.owner_person_id \
+          WHERE s.transaction_id = t.id ORDER BY p.name COLLATE NOCASE)), '') AS owners, \
+     (t.source_amount IS NOT NULL) AS has_source, \
+     t.due_date, t.recurrence_id, \
+     (t.refund_invoice_id IS NOT NULL OR t.refund_txn_id IS NOT NULL \
+      OR t.refund_series_id IS NOT NULL \
+      OR EXISTS (SELECT 1 FROM \"transaction\" r WHERE r.scenario_id IS NULL AND ( \
+             r.refund_txn_id = t.id \
+             OR (t.type = 'expense' AND t.payment_method = 'credit' \
+                 AND t.invoice_id IS NOT NULL AND r.refund_invoice_id = t.invoice_id) \
+             OR (t.card_series_id IS NOT NULL AND r.refund_series_id = t.card_series_id)))) \
+         AS has_refund_link";
+
 /// `month` ("YYYY-MM") escopa ao mês do Livro-razão — sem ele, a janela recente
 /// pura cortaria meses antigos no `limit` e o mês navegado pareceria vazio.
 pub(crate) async fn recent_transactions(
@@ -170,34 +192,30 @@ pub(crate) async fn recent_transactions(
     limit: i64,
     month: Option<&str>,
 ) -> Result<Vec<TransactionRow>, String> {
-    // Titulares vêm de um subquery agregado (GROUP_CONCAT com separador '|') — sem N+1.
-    let rows: Vec<RecentRow> = sqlx::query_as(
-        "SELECT t.id, t.type, t.amount, COALESCE(t.description,'') AS description, t.date, \
-                COALESCE(t.payment_method,'') AS payment_method, t.is_projection, t.is_fixed, \
-                COALESCE((SELECT GROUP_CONCAT(name, '|') FROM \
-                    (SELECT DISTINCT p.name FROM split s \
-                     JOIN person p ON p.id = s.owner_person_id \
-                     WHERE s.transaction_id = t.id ORDER BY p.name COLLATE NOCASE)), '') AS owners, \
-                (t.source_amount IS NOT NULL) AS has_source, \
-                t.due_date, t.recurrence_id, \
-                (t.refund_invoice_id IS NOT NULL OR t.refund_txn_id IS NOT NULL \
-                 OR t.refund_series_id IS NOT NULL \
-                 OR EXISTS (SELECT 1 FROM \"transaction\" r WHERE r.scenario_id IS NULL AND ( \
-                        r.refund_txn_id = t.id \
-                        OR (t.type = 'expense' AND t.payment_method = 'credit' \
-                            AND t.invoice_id IS NOT NULL AND r.refund_invoice_id = t.invoice_id) \
-                        OR (t.card_series_id IS NOT NULL AND r.refund_series_id = t.card_series_id)))) \
-                    AS has_refund_link \
+    // Só o texto constante das colunas entra por formatação; o recorte entra por placeholder.
+    let sql = format!(
+        "SELECT {RECENT_ROW_COLUMNS} \
          FROM \"transaction\" t WHERE t.scenario_id IS NULL \
            AND (?2 IS NULL OR substr(t.date, 1, 7) = ?2) \
-         ORDER BY t.date DESC LIMIT ?1",
-    )
-    .bind(limit)
-    .bind(month)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| format!("query: {e}"))?;
+         ORDER BY t.date DESC LIMIT ?1"
+    );
+    let rows: Vec<RecentRow> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(limit)
+        .bind(month)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("query: {e}"))?;
 
+    hydrate_transactions(pool, rows).await
+}
+
+/// Veste as linhas cruas com o que a leitura em lote sabe e a linha sozinha não: tags, itens da
+/// nota, titulares, proveniência e a posição na série. A ordem das linhas é preservada — quem
+/// escolheu a ordem foi a consulta, não esta função.
+pub(crate) async fn hydrate_transactions(
+    pool: &SqlitePool,
+    rows: Vec<RecentRow>,
+) -> Result<Vec<TransactionRow>, String> {
     // Tags só das transações EFETIVAMENTE retornadas acima (busca pelos IDs reais). Uma janela
     // `ORDER BY date DESC LIMIT ?1` separada não garante o MESMO conjunto quando há empate de data
     // na borda do LIMIT (desempate arbitrário do SQLite), e linhas visíveis perderiam suas tags.

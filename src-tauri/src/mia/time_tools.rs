@@ -771,7 +771,7 @@ fn day_grid(day: MonthGridDayDto) -> DayGridDto {
     }
 }
 
-fn month_period(year: i32, month: u32) -> Result<Period, ToolError> {
+pub(super) fn month_period(year: i32, month: u32) -> Result<Period, ToolError> {
     let start = NaiveDate::from_ymd_opt(year, month, 1).ok_or_else(|| {
         ToolError::new(
             super::ErrorCode::InvalidArgument,
