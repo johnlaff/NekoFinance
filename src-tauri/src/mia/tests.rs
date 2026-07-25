@@ -1149,6 +1149,90 @@ async fn year_analysis_months_only_with_include() {
     assert_eq!(months["items"][7]["suspect"], true);
 }
 
+// A régua anual tem UMA definição: a porta que a tela O ano consome e a resposta que a conversa
+// dá saem da mesma função do motor. Enquanto este teste passar, nenhuma das duas superfícies pode
+// afirmar um percentual, um veredito ou um fim de ano que a outra não mostra.
+#[tokio::test]
+async fn the_screen_and_the_conversation_read_the_same_ruler() {
+    let p = pool().await;
+    lived_year(&p).await;
+    sheet_balance(&p, "2026-06-30", 900_000).await;
+    sheet_balance(&p, "2026-07-24", 1_000_000).await;
+
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 25).unwrap();
+    let screen = crate::commands::annual_ruler_dto(&p, 2026, today)
+        .await
+        .unwrap();
+    let screen = serde_json::to_value(&screen).unwrap();
+    let talk = data(
+        &p,
+        "get_year_analysis",
+        json!({"year": 2026, "include": ["months", "year_end"]}),
+    )
+    .await;
+
+    // O ano tem o que julgar e o que projetar — sem isto a comparação abaixo passaria vazia.
+    assert!(screen["bps"].is_i64(), "régua sem percentual: {screen}");
+    assert!(
+        screen["year_end"]["end_balance_typical_cents"].is_i64(),
+        "cenário do fim do ano ausente: {screen}"
+    );
+
+    assert_eq!(screen["bps"], talk["economizado"]["bps"]);
+    assert_eq!(screen["verdict"], talk["economizado"]["verdict"]);
+    assert_eq!(screen["lived_bps"], talk["economizado"]["lived_bps"]);
+    assert_eq!(
+        screen["projected_bps"],
+        talk["economizado"]["projected_bps"]
+    );
+    assert_eq!(
+        screen["scope_lived"],
+        talk["economizado"]["scope"] == "lived"
+    );
+    assert_eq!(screen["typical_spend_cents"], talk["typical_spend_cents"]);
+    assert_eq!(screen["income_lived_cents"], talk["income_lived_cents"]);
+    assert_eq!(screen["economia_year_cents"], talk["economia_year_cents"]);
+    assert_eq!(
+        screen["shortfall_year_cents"],
+        talk["shortfall_to_floor_cents"]
+    );
+    assert_eq!(
+        screen["per_month_shortfall_cents"],
+        talk["per_month_shortfall_cents"]
+    );
+    assert_eq!(
+        screen["year_end"]["end_balance_cents"],
+        talk["year_end"]["end_balance_cents"]
+    );
+    assert_eq!(
+        screen["year_end"]["end_balance_typical_cents"],
+        talk["year_end"]["end_balance_typical_cents"]
+    );
+
+    let suspects: Vec<Value> = screen["months"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["suspect"] == true)
+        .map(|m| m["month"].clone())
+        .collect();
+    assert_eq!(Value::Array(suspects), talk["suspect_months"]);
+
+    // A linha do mês também: a saída, o vivido e o lastro são a mesma leitura nas duas bocas.
+    for (screen_month, talk_month) in screen["months"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(talk["months"]["items"].as_array().unwrap())
+    {
+        let month = screen_month["month"].as_u64().unwrap();
+        assert_eq!(talk_month["month"], format!("2026-{month:02}"));
+        assert_eq!(screen_month["outflow_cents"], talk_month["outflow_cents"]);
+        assert_eq!(screen_month["lived"], talk_month["lived"]);
+        assert_eq!(screen_month["suspect"], talk_month["suspect"]);
+    }
+}
+
 // --- A projeção à frente ----------------------------------------------------------------
 
 #[tokio::test]

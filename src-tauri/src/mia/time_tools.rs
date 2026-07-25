@@ -11,10 +11,10 @@ use super::envelope::{
 };
 use super::{Args, insert};
 use crate::commands::{
-    MonthCoverageDto, MonthGridDayDto, RESERVE_MIN_MONTHS, SAVINGS_CEILING_BPS, SAVINGS_FLOOR_BPS,
-    SAVINGS_TARGET_BPS, annual_month_metrics, forecast_dto, month_grid_at, reserve_reading,
+    MonthCoverageDto, MonthGridDayDto, SAVINGS_CEILING_BPS, SAVINGS_FLOOR_BPS, SAVINGS_TARGET_BPS,
+    annual_month_end, annual_month_metrics, forecast_dto, month_grid_at, reserve_reading,
 };
-use crate::forecast::{self, AnnualRuler, MonthMetric};
+use crate::forecast::{self, AnnualRuler};
 use chrono::{Datelike, NaiveDate};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -280,18 +280,23 @@ pub(crate) async fn year_analysis(pool: &SqlitePool, args: &Args, today: NaiveDa
     }
 
     if args.wants("months") {
-        let months: Vec<YearMonthDto> = (1..=12)
-            .map(|month| {
-                let m = metrics.iter().find(|m| m.month == month);
+        // A linha do mês costura as duas leituras que já existem: as figuras de caixa do motor e
+        // a régua sobre elas. A saída sai da régua — recomputá-la aqui abriria a divergência que
+        // a régua única fecha.
+        let months: Vec<YearMonthDto> = ruler
+            .months
+            .iter()
+            .map(|line| {
+                let m = metrics.iter().find(|m| m.month == line.month);
                 YearMonthDto {
-                    month: format!("{year:04}-{month:02}"),
+                    month: format!("{year:04}-{:02}", line.month),
                     income_cents: m.map_or(0, |m| m.income_cents),
-                    outflow_cents: m.map_or(0, |m| m.income_cents - m.performance_cents),
+                    outflow_cents: line.outflow_cents,
                     economia_cents: m.map_or(0, |m| m.economia_cents),
                     performance_cents: m.map_or(0, |m| m.performance_cents),
                     economizado_bps: m.map_or(0, |m| m.savings_rate_bps),
-                    lived: (year, month) <= (today.year(), today.month()),
-                    suspect: ruler.suspect_months.contains(&month),
+                    lived: line.lived,
+                    suspect: line.suspect,
                 }
             })
             .collect();
@@ -302,7 +307,7 @@ pub(crate) async fn year_analysis(pool: &SqlitePool, args: &Args, today: NaiveDa
         insert(
             &mut data,
             "year_end",
-            year_end(pool, year, &ruler, &metrics, today).await?,
+            year_end(pool, year, &ruler, today).await?,
         );
     }
 
@@ -321,10 +326,6 @@ fn year_dto(
     ruler: &AnnualRuler,
     reserve_months: Option<f64>,
 ) -> YearDto {
-    // Arredonda (não trunca) o piso de 20%: é a mesma conta que a tela imprime, e um centavo de
-    // diferença entre as duas superfícies seria visível na hora de conferir.
-    let shortfall_to_floor_cents =
-        (ruler.income_year_cents * SAVINGS_FLOOR_BPS + 5_000) / 10_000 - ruler.economia_year_cents;
     YearDto {
         year,
         is_current_year: year == today.year(),
@@ -338,7 +339,7 @@ fn year_dto(
         recorded_months: ruler.recorded_months,
         avg_income_cents: ruler.avg_income_cents,
         typical_spend_cents: ruler.typical_spend_cents,
-        suspect_months: ruler.suspect_months.clone(),
+        suspect_months: ruler.suspect_months(),
         economizado: EconomizadoDto {
             state: match (ruler.bps, ruler.scope_lived) {
                 (None, _) => DataState::NoRecord,
@@ -349,110 +350,39 @@ fn year_dto(
             scope: if ruler.scope_lived { "lived" } else { "year" },
             lived_bps: ruler.lived_bps,
             projected_bps: ruler.projected_bps,
-            verdict: band_verdict(ruler, reserve_months),
+            verdict: forecast::band_verdict(ruler, reserve_months).as_str(),
             band: BandDto {
                 floor_bps: SAVINGS_FLOOR_BPS,
                 target_bps: SAVINGS_TARGET_BPS,
                 ceiling_bps: SAVINGS_CEILING_BPS,
             },
         },
-        shortfall_to_floor_cents,
-        per_month_shortfall_cents: (ruler.future_months > 0)
-            .then(|| shortfall_to_floor_cents / ruler.future_months as i64),
-    }
-}
-
-/// O veredito da faixa, composto como a tela O ano o compõe: ano sem registro não julga;
-/// economia zerada com a reserva já protegida é a troca CERTA na ordem do método (proteger a
-/// reserva vem antes de guardar mais), nunca uma falta; o resto lê a régua contra a faixa.
-fn band_verdict(ruler: &AnnualRuler, reserve_months: Option<f64>) -> &'static str {
-    if !ruler.has_data {
-        return "no_record";
-    }
-    if ruler.economia_lived_cents == 0
-        && reserve_months.is_some_and(|m| m >= RESERVE_MIN_MONTHS as f64)
-    {
-        return "zero_by_choice";
-    }
-    match ruler.bps {
-        None => "no_record",
-        Some(bps) if bps < SAVINGS_FLOOR_BPS => "below_band",
-        Some(bps) if bps <= SAVINGS_CEILING_BPS => "in_band",
-        Some(_) => "above_band",
+        shortfall_to_floor_cents: ruler.shortfall_year_cents,
+        per_month_shortfall_cents: ruler.per_month_shortfall_cents,
     }
 }
 
 /// Onde o ano termina: o saldo do último mês com projeção e o cenário em que cada mês sem
-/// lastro custasse o típico — o "e se eu lançar o que falta" que a tela do ano publica.
+/// lastro custasse o típico — a mesma leitura que a tela do ano publica, do mesmo motor.
 async fn year_end(
     pool: &SqlitePool,
     year: i32,
     ruler: &AnnualRuler,
-    months: &[MonthMetric],
     today: NaiveDate,
 ) -> Result<Value, ToolError> {
-    let forecast = forecast_dto(pool, today)
+    let month_end = annual_month_end(pool, year, today)
         .await
         .map_err(ToolError::read_failed)?;
-    let mut by_month: std::collections::BTreeMap<u32, i64> = std::collections::BTreeMap::new();
-    // Meses já vividos leem a corrente da planilha; os de hoje em diante, a projeção.
-    for (ym, balance) in sheet_month_end_balances(pool, year).await? {
-        by_month.insert(ym, balance);
-    }
-    for m in forecast.month_end.iter().filter(|m| m.year == year) {
-        by_month.insert(m.month, m.balance_cents);
-    }
+    let end = forecast::year_end_scenario(ruler, &month_end);
 
-    let Some((&end_month, &end_balance)) = by_month.iter().next_back() else {
+    let Some(end_month) = end.end_month else {
         return Ok(json!({ "end_month": Value::Null, "end_balance_cents": Value::Null }));
     };
-    // Cada mês sem lastro até o fim custaria o típico: a diferença é o que a projeção deixou de
-    // fora. Só existe quando há mês sem lastro dentro da janela que termina o ano.
-    let missing: i64 = ruler
-        .suspect_months
-        .iter()
-        .filter(|month| **month <= end_month)
-        .map(|month| {
-            // A saída lançada sai da MESMA fonte que produziu o gasto típico: comparar duas
-            // leituras de pipelines diferentes daria um cenário que a tela não reproduz.
-            let launched = months
-                .iter()
-                .find(|m| m.month == *month)
-                .map_or(0, |m| m.income_cents - m.performance_cents);
-            ruler.typical_spend_cents - launched
-        })
-        .sum();
-
     Ok(json!({
         "end_month": format!("{year:04}-{end_month:02}"),
-        "end_balance_cents": end_balance,
-        "end_balance_typical_cents": (missing > 0).then_some(end_balance - missing),
+        "end_balance_cents": end.end_balance_cents,
+        "end_balance_typical_cents": end.end_balance_typical_cents,
     }))
-}
-
-/// Último Saldo importado de cada mês do ano — a mesma leitura que a grade do mês publica,
-/// direto da série da planilha.
-async fn sheet_month_end_balances(
-    pool: &SqlitePool,
-    year: i32,
-) -> Result<Vec<(u32, i64)>, ToolError> {
-    let rows: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT date, balance_cents FROM sheet_daily_balance \
-         WHERE date >= ?1 AND date <= ?2 ORDER BY date",
-    )
-    .bind(format!("{year:04}-01-01"))
-    .bind(format!("{year:04}-12-31"))
-    .fetch_all(pool)
-    .await
-    .map_err(|e| ToolError::read_failed(format!("saldos do ano: {e}")))?;
-
-    let mut by_month: std::collections::BTreeMap<u32, i64> = std::collections::BTreeMap::new();
-    for (date, balance) in rows {
-        if let Some(month) = date.get(5..7).and_then(|m| m.parse::<u32>().ok()) {
-            by_month.insert(month, balance);
-        }
-    }
-    Ok(by_month.into_iter().collect())
 }
 
 // --- A projeção à frente ----------------------------------------------------------------

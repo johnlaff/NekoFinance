@@ -505,6 +505,75 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
       return ANNUAL_BY_YEAR[year] ?? { year, months: [] };
     };
 
+    // A régua anual do método sobre 2026, como o motor a devolve com o relógio em 10/06: seis
+    // meses vividos, gasto típico de R$ 11.121,26 (mediana das saídas de jan–jun) e set–dez sem
+    // lastro. Anos anteriores chegam fechados; qualquer outro, sem registro.
+    const TIPICO = 1112126;
+    const rulerForYear = (args?: Record<string, unknown>) => {
+      const year = Number(args?.["year"]);
+      const known = year === 2026 || year === 2025 || year === 2024;
+      const lived = (m: number) => year < 2026 || m <= 6;
+      const suspect = (m: number) => known && year === 2026 && m >= 9;
+      const rows =
+        year === 2026
+          ? REAL_2026
+          : REAL_2026.map((r) => ({ ...r, income: 1010000, perf: 50500 }));
+      const outflow = (r: { income: number; perf: number }) => r.income - r.perf;
+      const livedRows = rows.filter((r) => lived(r.m));
+      const incomeLived = livedRows.reduce((s, r) => s + r.income, 0);
+      const incomeYear = rows.reduce((s, r) => s + r.income, 0);
+      const futureMonths = 12 - livedRows.length;
+      const shortfallYear = Math.round(incomeYear * 0.2);
+      return {
+        year,
+        lived_months: known ? livedRows.length : 12,
+        future_months: known ? futureMonths : 0,
+        typical_spend_cents: known ? TIPICO : 0,
+        income_lived_cents: known ? incomeLived : 0,
+        economia_lived_cents: 0,
+        surplus_lived_cents: known ? livedRows.reduce((s, r) => s + r.perf, 0) : 0,
+        income_year_cents: known ? incomeYear : 0,
+        economia_year_cents: 0,
+        recorded_months: known ? livedRows.length : 0,
+        avg_income_cents: known ? Math.trunc(incomeLived / livedRows.length) : 0,
+        lived_bps: known ? 0 : null,
+        projected_bps: known ? 0 : null,
+        bps: known ? 0 : null,
+        scope_lived: year === 2026,
+        has_data: known,
+        shortfall_lived_cents: known ? Math.round(incomeLived * 0.2) : 0,
+        shortfall_year_cents: known ? shortfallYear : 0,
+        per_month_shortfall_cents:
+          known && futureMonths > 0 ? Math.round(shortfallYear / futureMonths) : null,
+        verdict: known ? "below_band" : "no_record",
+        band: { floor_bps: 2000, target_bps: 2500, ceiling_bps: 3000 },
+        months: rows.map((r) => ({
+          month: r.m,
+          outflow_cents: known ? outflow(r) : 0,
+          lived: lived(r.m),
+          suspect: suspect(r.m),
+          missing_cents: suspect(r.m) ? TIPICO - outflow(r) : 0,
+        })),
+        month_end: known
+          ? FORECAST.month_end
+              .filter((m) => m.year === 2026)
+              .map((m) => ({ ...m, year }))
+          : [],
+        year_end: known
+          ? {
+              end_month: 12,
+              end_balance_cents: 2997711,
+              // 2.997.711 menos o silêncio de set–dez (R$ 30.207,89).
+              end_balance_typical_cents: year === 2026 ? -23078 : null,
+            }
+          : {
+              end_month: null,
+              end_balance_cents: null,
+              end_balance_typical_cents: null,
+            },
+      };
+    };
+
     const TAG_TOTALS = [
       {
         id: "p",
@@ -776,6 +845,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
       get_tags_screen: TAGS_SCREEN,
       update_tag_rulers_cmd: null,
       get_annual_metrics: annualForYear,
+      get_annual_ruler: rulerForYear,
       get_recent_transactions: TXNS,
       get_upcoming_bills_cmd: UPCOMING_BILLS,
       get_import_conflicts: [],

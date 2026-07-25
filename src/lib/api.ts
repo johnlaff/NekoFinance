@@ -855,6 +855,69 @@ export function getAnnualMetrics(year: number): Promise<AnnualMetrics> {
   return invoke("get_annual_metrics", { year });
 }
 
+/** Veredito do ano contra a faixa 20–30% do método. */
+export type BandVerdict =
+  "no_record" | "zero_by_choice" | "below_band" | "in_band" | "above_band";
+
+/** Um mês do ano na ótica do método. */
+export interface AnnualRulerMonth {
+  month: number;
+  /** Saída total do mês (renda − performance) — a figura que alimenta o gasto típico. */
+  outflow_cents: number;
+  lived: boolean;
+  /** Mês à frente cuja saída lançada não alcança o piso de lastro. */
+  suspect: boolean;
+  /** Quanto faltaria lançar para o mês custar o típico; zero em mês vivido ou lastreado. */
+  missing_cents: number;
+}
+
+export interface YearEnd {
+  end_month: number | null;
+  end_balance_cents: number | null;
+  /** O saldo se os meses sem lastro até o fim custassem o típico; nulo sem silêncio a descontar. */
+  end_balance_typical_cents: number | null;
+}
+
+/**
+ * A régua anual do método, computada no motor (`forecast::annual_ruler`). É a MESMA leitura que a
+ * conversa responde — a tela compõe a apresentação, nunca a régua.
+ */
+export interface AnnualRuler {
+  year: number;
+  lived_months: number;
+  future_months: number;
+  /** Gasto típico = mediana das saídas dos meses vividos. */
+  typical_spend_cents: number;
+  income_lived_cents: number;
+  economia_lived_cents: number;
+  /** Sobra dos meses vividos (Performance somada) — o colchão. */
+  surplus_lived_cents: number;
+  income_year_cents: number;
+  economia_year_cents: number;
+  recorded_months: number;
+  avg_income_cents: number;
+  lived_bps: number | null;
+  projected_bps: number | null;
+  /** O percentual que JULGA: o vivido enquanto houver mês sem lastro, senão o do ano. */
+  bps: number | null;
+  scope_lived: boolean;
+  has_data: boolean;
+  /** Falta para o piso de 20%; negativo = o piso já passou. */
+  shortfall_lived_cents: number;
+  shortfall_year_cents: number;
+  per_month_shortfall_cents: number | null;
+  verdict: BandVerdict;
+  band: { floor_bps: number; target_bps: number; ceiling_bps: number };
+  months: AnnualRulerMonth[];
+  /** Saldo de fim de cada mês do ano (corrente da planilha até o vivido, projeção à frente). */
+  month_end: MonthEnd[];
+  year_end: YearEnd;
+}
+
+export function getAnnualRuler(year: number): Promise<AnnualRuler> {
+  return invoke("get_annual_ruler", { year });
+}
+
 export interface MonthGridDay {
   date: string;
   day: number;
