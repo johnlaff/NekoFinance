@@ -2,7 +2,14 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { AnnualScreen } from "./AnnualScreen";
 import { FORECAST, mockCommands, mockInvoke } from "../test/commands";
-import type { AnnualMetrics, Forecast, MonthMetric, MonthEnd } from "../lib/api";
+import type {
+  AnnualMetrics,
+  AnnualRuler,
+  BandVerdict,
+  Forecast,
+  MonthMetric,
+  MonthEnd,
+} from "../lib/api";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -77,6 +84,101 @@ const testForecast: Forecast = {
   month_end: MONTH_END_2026,
 };
 
+// A régua que o motor devolve sobre essas linhas com o relógio em 10/06/2026: seis meses
+// vividos, gasto típico de R$ 11.121,26 (mediana das saídas de jan–jun) e set–dez sem lastro
+// (jul e ago passam o piso de 60%). Os números são fato do motor — provados em
+// `forecast::annual_ruler`; aqui são ENTRADA da tela.
+const TIPICO_2026 = 1112126;
+const SUSPEITOS_2026 = [9, 10, 11, 12];
+
+function mkRuler(
+  year: number,
+  { verdict }: { verdict: BandVerdict } = { verdict: "below_band" },
+): AnnualRuler {
+  const lived = (m: number) => (year < 2026 ? true : m <= 6);
+  const suspect = (m: number) => year === 2026 && SUSPEITOS_2026.includes(m);
+  const outflow = (r: Row) => r.income - r.perf;
+  const livedRows = REAL.filter((r) => lived(r.m));
+  const sum = (rows: Row[], pick: (r: Row) => number) =>
+    rows.reduce((acc, r) => acc + pick(r), 0);
+  const incomeLived = sum(livedRows, (r) => r.income);
+  const incomeYear = sum(REAL, (r) => r.income);
+  const futureMonths = 12 - livedRows.length;
+  const shortfallYear = Math.round(incomeYear * 0.2);
+  return {
+    year,
+    lived_months: livedRows.length,
+    future_months: futureMonths,
+    typical_spend_cents: year === 2026 ? TIPICO_2026 : 1130981,
+    income_lived_cents: incomeLived,
+    economia_lived_cents: 0,
+    surplus_lived_cents: sum(livedRows, (r) => r.perf),
+    income_year_cents: incomeYear,
+    economia_year_cents: 0,
+    recorded_months: livedRows.length,
+    avg_income_cents: Math.trunc(incomeLived / livedRows.length),
+    lived_bps: 0,
+    projected_bps: 0,
+    bps: 0,
+    scope_lived: year === 2026,
+    has_data: true,
+    shortfall_lived_cents: Math.round(incomeLived * 0.2),
+    shortfall_year_cents: shortfallYear,
+    per_month_shortfall_cents:
+      futureMonths > 0 ? Math.round(shortfallYear / futureMonths) : null,
+    verdict,
+    band: { floor_bps: 2000, target_bps: 2500, ceiling_bps: 3000 },
+    months: REAL.map((r) => ({
+      month: r.m,
+      outflow_cents: outflow(r),
+      lived: lived(r.m),
+      suspect: suspect(r.m),
+      missing_cents: suspect(r.m) ? TIPICO_2026 - outflow(r) : 0,
+    })),
+    month_end: REAL.map((r) => ({ year, month: r.m, balance_cents: r.end })),
+    year_end: {
+      end_month: 12,
+      end_balance_cents: 2997711,
+      end_balance_typical_cents: suspect(12) ? -23078 : null,
+    },
+  };
+}
+
+/** Ano sem um único lançamento: a régua não tem o que julgar. */
+function emptyRuler(year: number): AnnualRuler {
+  const base = mkRuler(year);
+  return {
+    ...base,
+    typical_spend_cents: 0,
+    income_lived_cents: 0,
+    surplus_lived_cents: 0,
+    income_year_cents: 0,
+    recorded_months: 0,
+    avg_income_cents: 0,
+    lived_bps: null,
+    projected_bps: null,
+    bps: null,
+    scope_lived: false,
+    has_data: false,
+    shortfall_lived_cents: 0,
+    shortfall_year_cents: 0,
+    per_month_shortfall_cents: null,
+    verdict: "no_record",
+    months: base.months.map((m) => ({
+      ...m,
+      outflow_cents: 0,
+      suspect: false,
+      missing_cents: 0,
+    })),
+    month_end: [],
+    year_end: {
+      end_month: null,
+      end_balance_cents: null,
+      end_balance_typical_cents: null,
+    },
+  };
+}
+
 const SUMMARY = (reserveMonths: number) => ({
   balance: 1330026,
   daily_budget: 20000,
@@ -101,28 +203,24 @@ const SUMMARY = (reserveMonths: number) => ({
   last_real_tx_date: "2026-06-09",
 });
 
-const monthGrid = (args?: Record<string, unknown>) => {
-  const month = Number(args?.["month"]);
-  const found = REAL.find((r) => r.m === month);
-  return [
-    {
-      date: `2026-${String(month).padStart(2, "0")}-28`,
-      day: 28,
-      income_cents: 0,
-      fixed_out_cents: 0,
-      daily_out_cents: 0,
-      balance_cents: found ? found.end : null,
-    },
-  ];
-};
-
+// O veredito da faixa é decidido no motor, que lê a reserva no backend: a tela recebe o
+// resultado e o narra. `reserve` aqui escolhe qual leitura a régua devolve.
 function setup({ reserve = 4.5 }: { reserve?: number } = {}) {
   mockInvoke.mockReset();
+  const rulerByYear = (args?: Record<string, unknown>): AnnualRuler => {
+    const year = Number(args?.["year"]);
+    if (year === 2026 || year === 2025) {
+      return mkRuler(year, {
+        verdict: reserve >= 6 ? "zero_by_choice" : "below_band",
+      });
+    }
+    return emptyRuler(year);
+  };
   mockCommands({
     get_annual_metrics: annualByYear,
+    get_annual_ruler: rulerByYear,
     get_forecast: testForecast,
     get_dashboard_summary: SUMMARY(reserve),
-    get_month_grid: monthGrid,
   });
   render(<AnnualScreen />);
 }

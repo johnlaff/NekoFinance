@@ -1,17 +1,11 @@
 import { describe, it, expect } from "vitest";
-import type { MonthMetric, MonthEnd } from "../lib/api";
-import {
-  outflowCents,
-  median,
-  buildAnoView,
-  buildIncomeAcrossYears,
-  type AnoInput,
-} from "./anoView";
+import type { AnnualRuler, MonthMetric } from "../lib/api";
+import { buildAnoView, buildIncomeAcrossYears, type AnoInput } from "./anoView";
 
 // ---------------------------------------------------------------- fixtures --
-// Planilha real de 2026 (a mesma que ancora o desenho aprovado do #200), em centavos.
-// Cada mês carrega income/performance/economia; a saída total sai = income − performance.
-// `end` é o saldo projetado no fim do mês (do motor). Julho é o mês corrente.
+// Planilha real de 2026 (a mesma que ancora o desenho aprovado do #200), em centavos, com a
+// régua que o motor devolve sobre ela. Os números da régua são fato do motor (provados em
+// `forecast::annual_ruler`); aqui eles são ENTRADA — o que está sob teste é a composição da tela.
 interface Row {
   m: number;
   income: number;
@@ -34,6 +28,9 @@ const REAL_2026: Row[] = [
   { m: 12, income: 736867, perf: 392711, eco: 0, end: 2997711 },
 ];
 
+/** Gasto típico do ano: mediana das saídas de jan–jul. */
+const TIPICO = 1130981;
+
 function monthMetric(r: Row, year = 2026): MonthMetric {
   return {
     year,
@@ -50,205 +47,240 @@ function monthMetric(r: Row, year = 2026): MonthMetric {
     real_daily_avg_cents: 0,
     economia_cents: r.eco,
     patrimonio_cents: 0,
-    savings_rate_bps: r.income > 0 ? Math.round((r.eco / r.income) * 10000) : 0,
+    savings_rate_bps: r.income > 0 ? Math.trunc((r.eco / r.income) * 10000) : 0,
   };
 }
 
-function realInput(overrides: Partial<AnoInput> = {}): AnoInput {
-  const months = REAL_2026.map((r) => monthMetric(r));
-  const monthEnd: MonthEnd[] = REAL_2026.map((r) => ({
-    year: 2026,
-    month: r.m,
-    balance_cents: r.end,
-  }));
+/**
+ * A régua do motor sobre a planilha real, com hoje em 15/07/2026: sete meses vividos, gasto
+ * típico de R$ 11.309,81 e setembro a dezembro sem lastro (agosto passa o piso de 60%).
+ */
+function realRuler(overrides: Partial<AnnualRuler> = {}): AnnualRuler {
+  const outflow = (r: Row): number => r.income - r.perf;
+  const suspects = [9, 10, 11, 12];
   return {
     year: 2026,
-    today: "2026-07-15",
-    months,
-    monthEnd,
-    reserveMonths: null,
+    lived_months: 7,
+    future_months: 5,
+    typical_spend_cents: TIPICO,
+    income_lived_cents: 8479388,
+    economia_lived_cents: 0,
+    surplus_lived_cents: 242420,
+    income_year_cents: 12452384,
+    economia_year_cents: 0,
+    recorded_months: 7,
+    avg_income_cents: Math.trunc(8479388 / 7),
+    lived_bps: 0,
+    projected_bps: 0,
+    bps: 0,
+    scope_lived: true,
+    has_data: true,
+    shortfall_lived_cents: 1695878,
+    shortfall_year_cents: 2490477,
+    per_month_shortfall_cents: 498095,
+    verdict: "below_band",
+    band: { floor_bps: 2000, target_bps: 2500, ceiling_bps: 3000 },
+    months: REAL_2026.map((r) => ({
+      month: r.m,
+      outflow_cents: outflow(r),
+      lived: r.m <= 7,
+      suspect: suspects.includes(r.m),
+      missing_cents: suspects.includes(r.m) ? TIPICO - outflow(r) : 0,
+    })),
+    month_end: REAL_2026.map((r) => ({
+      year: 2026,
+      month: r.m,
+      balance_cents: r.end,
+    })),
+    year_end: {
+      end_month: 12,
+      end_balance_cents: 2997711,
+      // 2.997.711 − 3.096.209 de silêncio nos quatro meses sem lastro.
+      end_balance_typical_cents: -98498,
+    },
     ...overrides,
   };
 }
 
-// ------------------------------------------------------------------ helpers --
+function realInput(overrides: Partial<AnoInput> = {}): AnoInput {
+  return {
+    year: 2026,
+    today: "2026-07-15",
+    months: REAL_2026.map((r) => monthMetric(r)),
+    ruler: realRuler(),
+    ...overrides,
+  };
+}
 
-describe("anoView — helpers puros", () => {
-  it("outflowCents = income − performance", () => {
-    expect(outflowCents({ income_cents: 965132, performance_cents: -99751 })).toBe(
-      1064883,
-    );
-    expect(outflowCents({ income_cents: 1623670, performance_cents: 492689 })).toBe(
-      1130981,
-    );
-  });
+// --------------------------------------------------------- as doze linhas ----
 
-  it("median de janela ímpar e par", () => {
-    expect(median([3, 1, 2])).toBe(2);
-    expect(median([4, 1, 3, 2])).toBe(2.5);
-    expect(median([])).toBe(0);
-  });
-});
-
-// ------------------------------------------------------------ teste de lastro --
-
-describe("anoView — teste de lastro (planilha real 2026)", () => {
-  it("gasto típico é a mediana das saídas dos meses vividos (jan–jul)", () => {
+describe("anoView — as doze linhas do ano", () => {
+  it("costura as figuras de caixa do mês com a leitura do método", () => {
     const v = buildAnoView(realInput());
-    // mediana de [1064883,1085082,1093271,1130981,1143181,1241927,1477643] = 1130981
-    expect(v.typicalSpendCents).toBe(1130981);
-  });
 
-  it("piso de 60%: set–dez reprovam, ago passa", () => {
-    const v = buildAnoView(realInput());
-    // 0.6 × 1.130.981 = 678.588,6 → ago (847.090) passa; set–dez (< 386k) reprovam
-    expect(v.suspects).toEqual([9, 10, 11, 12]);
-    const ago = v.months.find((x) => x.month === 8)!;
-    expect(ago.suspect).toBe(false);
-    const set = v.months.find((x) => x.month === 9)!;
+    const fev = v.months.find((m) => m.month === 2)!;
+    expect(fev.income).toBe(1623670);
+    expect(fev.economia).toBe(0);
+    expect(fev.performance).toBe(492689);
+    expect(fev.outflow).toBe(1130981); // do motor: renda − performance
+    expect(fev.endBalance).toBe(1450038);
+    expect(fev.lived).toBe(true);
+    expect(fev.suspect).toBe(false);
+
+    const set = v.months.find((m) => m.month === 9)!;
+    expect(set.future).toBe(true);
     expect(set.suspect).toBe(true);
   });
-});
 
-// ------------------------------------------------------------ agregados anuais --
-
-describe("anoView — agregados anuais e veredito", () => {
-  it("realizado: 7 meses vividos, economia zero, sobra R$ 2.424,20", () => {
+  it("o mês corrente é o de hoje, e só ele", () => {
     const v = buildAnoView(realInput());
-    expect(v.livedCount).toBe(7);
-    expect(v.incomeLived).toBe(8479388); // ENT_R
-    expect(v.economiaLived).toBe(0); // ECO_R
-    expect(v.surplusLived).toBe(242420); // PERF_R = R$ 2.424,20
-    expect(v.livedPct).toBe(0);
-  });
+    expect(v.months.filter((m) => m.current).map((m) => m.month)).toEqual([7]);
 
-  it("ano inteiro: entradas R$ 124.523,84; falta anual para 20% = R$ 24.904,77", () => {
-    const v = buildAnoView(realInput());
-    expect(v.incomeYear).toBe(12452384); // ENT_A
-    expect(v.economiaYear).toBe(0); // ECO_A
-    // ENT_R*0.2 − ECO_R = 1.695.877,6 → arredonda p/ 1.695.878 (R$ 16.958,78)
-    expect(v.shortfallLivedCents).toBe(1695878);
-    // ENT_A*0.2 − ECO_A = 2.490.476,8 → 2.490.477 (R$ 24.904,77)
-    expect(v.shortfallYearCents).toBe(2490477);
-  });
-
-  it("com meses suspeitos, o veredito recua para o realizado (estimativa) e a régua declara o recorte vivido", () => {
-    const v = buildAnoView(realInput());
-    expect(v.estimate).toBe(true);
-    expect(v.rulerScopeLived).toBe(true);
-    expect(v.rulerPct).toBe(0);
-    // economia zero + reserva desconhecida → "não guardou nada"
-    expect(v.verdict.kind).toBe("below_band");
-  });
-
-  it("onde dezembro termina: lançado R$ 29.977,11; cenário típico −R$ 984,98", () => {
-    const v = buildAnoView(realInput());
-    expect(v.endMonth).toBe(12);
-    expect(v.endBalanceCents).toBe(2997711); // DEZ
-    expect(v.endBalanceTypicalCents).toBe(-98498); // DEZ_TIPICO = −R$ 984,98
-  });
-});
-
-// ------------------------------------------------------- estados epistêmicos --
-
-describe("anoView — estados epistêmicos do veredito", () => {
-  it("dentro da faixa quando a taxa fecha entre 20% e 30%, sem suspeitos", () => {
-    // Ano fechado (passado): todos vividos, economia 25% em cada mês, sem suspeitos.
-    const months = REAL_2026.map((r) =>
-      monthMetric({ ...r, eco: Math.round(r.income * 0.25) }, 2025),
-    );
-    const v = buildAnoView({
+    const passado = buildAnoView({
+      ...realInput(),
       year: 2025,
-      today: "2026-07-15",
-      months,
-      monthEnd: REAL_2026.map((r) => ({
-        year: 2025,
-        month: r.m,
-        balance_cents: r.end,
-      })),
-      reserveMonths: 8,
+      months: REAL_2026.map((r) => monthMetric(r, 2025)),
+      ruler: realRuler({ year: 2025 }),
     });
-    expect(v.livedCount).toBe(12);
-    expect(v.estimate).toBe(false);
-    expect(v.rulerScopeLived).toBe(false);
-    expect(v.rulerPct).toBe(25);
-    expect(v.verdict.kind).toBe("in_band");
+    expect(passado.isCurrentYear).toBe(false);
+    expect(passado.months.some((m) => m.current)).toBe(false);
   });
 
-  it("zero por escolha: economia zero mas reserva ≥ 6 meses", () => {
-    const v = buildAnoView(realInput({ reserveMonths: 8 }));
-    expect(v.verdict.kind).toBe("zero_by_choice");
+  it("mês futuro exibe savedPct null (— na tela), nunca 0%", () => {
+    const v = buildAnoView(realInput());
+    expect(v.months.find((m) => m.month === 12)!.savedPct).toBeNull();
+    expect(v.months.find((m) => m.month === 1)!.savedPct).toBe(0);
   });
 
-  it("sem registro: nenhum mês vivido tem atividade", () => {
-    const empty = Array.from({ length: 12 }, (_, i) =>
-      monthMetric({ m: i + 1, income: 0, perf: 0, eco: 0, end: 0 }, 2024),
+  it("mês sem saldo importado fica sem saldo, nunca com zero", () => {
+    const v = buildAnoView(
+      realInput({
+        ruler: realRuler({
+          month_end: REAL_2026.filter((r) => r.m <= 9).map((r) => ({
+            year: 2026,
+            month: r.m,
+            balance_cents: r.end,
+          })),
+        }),
+      }),
     );
-    const v = buildAnoView({
-      year: 2024,
-      today: "2026-07-15",
-      months: empty,
-      monthEnd: [],
-      reserveMonths: null,
-    });
+    expect(v.months.find((m) => m.month === 9)!.endBalance).toBe(1825323);
+    expect(v.months.find((m) => m.month === 10)!.endBalance).toBeNull();
+  });
+
+  it("mês ausente do motor entra como mês de zeros (a entrada pode vir esparsa)", () => {
+    const v = buildAnoView(
+      realInput({
+        months: REAL_2026.filter((r) => r.m !== 3).map((r) => monthMetric(r)),
+      }),
+    );
+    const mar = v.months.find((m) => m.month === 3)!;
+    expect(v.months).toHaveLength(12);
+    expect(mar.income).toBe(0);
+    expect(mar.economia).toBe(0);
+  });
+});
+
+// ------------------------------------------------------- a régua já pronta ---
+
+describe("anoView — a régua chega pronta do motor", () => {
+  it("o percentual que julga vem em pontos-base e a tela só o exibe", () => {
+    const v = buildAnoView(realInput());
+    expect(v.rulerPct).toBe(0);
+    expect(v.rulerScopeLived).toBe(true);
+    expect(v.estimate).toBe(true);
+
+    const fechado = buildAnoView(
+      realInput({
+        ruler: realRuler({
+          bps: 2537,
+          lived_bps: 2537,
+          projected_bps: 2537,
+          scope_lived: false,
+          verdict: "in_band",
+          months: realRuler().months.map((m) => ({
+            ...m,
+            suspect: false,
+            missing_cents: 0,
+          })),
+        }),
+      }),
+    );
+    expect(fechado.rulerPct).toBeCloseTo(25.37, 5);
+    expect(fechado.livedPct).toBeCloseTo(25.37, 5);
+    expect(fechado.estimate).toBe(false);
+    expect(fechado.verdict.kind).toBe("in_band");
+  });
+
+  it("sem renda para dividir, o percentual é nulo — nunca um zero que passaria por veredito", () => {
+    const v = buildAnoView(
+      realInput({
+        ruler: realRuler({
+          bps: null,
+          lived_bps: null,
+          projected_bps: null,
+          has_data: false,
+          verdict: "no_record",
+        }),
+      }),
+    );
+    expect(v.rulerPct).toBeNull();
+    expect(v.livedPct).toBeNull();
     expect(v.hasData).toBe(false);
     expect(v.verdict.kind).toBe("no_record");
   });
 
-  it("meses futuros exibem savedPct null (— na tela), nunca 0%", () => {
+  it("agregados, falta para os 20% e gasto típico saem da régua sem recomposição", () => {
     const v = buildAnoView(realInput());
-    const dez = v.months.find((x) => x.month === 12)!;
-    expect(dez.future).toBe(true);
-    expect(dez.savedPct).toBeNull();
-    const jan = v.months.find((x) => x.month === 1)!;
-    expect(jan.lived).toBe(true);
-    expect(jan.savedPct).toBe(0);
+
+    expect(v.livedCount).toBe(7);
+    expect(v.futureCount).toBe(5);
+    expect(v.incomeLived).toBe(8479388);
+    expect(v.economiaLived).toBe(0);
+    expect(v.surplusLived).toBe(242420);
+    expect(v.incomeYear).toBe(12452384);
+    expect(v.typicalSpendCents).toBe(TIPICO);
+    expect(v.suspects).toEqual([9, 10, 11, 12]);
+    expect(v.shortfallLivedCents).toBe(1695878);
+    expect(v.shortfallYearCents).toBe(2490477);
+    expect(v.perMonthShortfallCents).toBe(498095);
   });
-});
 
-// -------------------------------------------------------------- robustez ----
+  it("onde o ano termina e o cenário do gasto típico vêm decididos", () => {
+    const v = buildAnoView(realInput());
+    expect(v.endMonth).toBe(12);
+    expect(v.endBalanceCents).toBe(2997711);
+    expect(v.endBalanceTypicalCents).toBe(-98498);
 
-describe("anoView — robustez (achados da revisão externa do desenho)", () => {
-  it("sem meses suspeitos: sem cenário alternativo de dezembro", () => {
-    // Todos os futuros com saída ≥ 60% do típico (usa o realizado de jan em todos).
-    const rows = REAL_2026.map((r) =>
-      r.m > 7 ? { ...r, income: 1211421, perf: -30506 } : r,
+    const semSuspeito = buildAnoView(
+      realInput({
+        ruler: realRuler({
+          year_end: {
+            end_month: 12,
+            end_balance_cents: 2997711,
+            end_balance_typical_cents: null,
+          },
+        }),
+      }),
     );
-    const v = buildAnoView(realInput({ months: rows.map((r) => monthMetric(r)) }));
-    expect(v.suspects).toEqual([]);
-    expect(v.endBalanceTypicalCents).toBeNull();
-    expect(v.estimate).toBe(false);
+    expect(semSuspeito.endBalanceTypicalCents).toBeNull();
   });
 
-  it("horizonte curto: dezembro sem saldo → usa o último mês projetado e o nomeia", () => {
-    // month_end só vai até setembro (mês 9).
-    const monthEnd: MonthEnd[] = REAL_2026.filter((r) => r.m <= 9).map((r) => ({
-      year: 2026,
-      month: r.m,
-      balance_cents: r.end,
-    }));
-    const v = buildAnoView(realInput({ monthEnd }));
-    expect(v.endMonth).toBe(9);
-    expect(v.endBalanceCents).toBe(1825323);
-    // só o suspeito de setembro entra no cenário típico (≤ endMonth)
-    expect(Number.isFinite(v.endBalanceTypicalCents!)).toBe(true);
-  });
-
-  it("ano fechado sem futuro: sem divisão por zero em 'por mês'", () => {
-    const months = REAL_2026.map((r) => monthMetric(r, 2025));
-    const v = buildAnoView({
-      year: 2025,
-      today: "2026-07-15",
-      months,
-      monthEnd: REAL_2026.map((r) => ({
-        year: 2025,
-        month: r.m,
-        balance_cents: r.end,
-      })),
-      reserveMonths: null,
-    });
-    expect(v.months.filter((x) => x.future)).toHaveLength(0);
-    expect(v.perMonthShortfallCents).toBeNull();
+  it("ano sem saldo nenhum não monta o bloco do fim do ano", () => {
+    const v = buildAnoView(
+      realInput({
+        ruler: realRuler({
+          month_end: [],
+          year_end: {
+            end_month: null,
+            end_balance_cents: null,
+            end_balance_typical_cents: null,
+          },
+        }),
+      }),
+    );
+    expect(v.endMonth).toBeNull();
+    expect(v.endBalanceCents).toBeNull();
   });
 });
 

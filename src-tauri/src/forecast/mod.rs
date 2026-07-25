@@ -299,6 +299,46 @@ pub fn month_coverage(
 /// pouco: pode ser mês barato de verdade ou pode faltar lançar.
 pub const LASTRO_FLOOR_BPS: i64 = 6_000;
 
+/// Meta de poupança do método para o guardrail ANUAL "pode gastar": **25% (2500 bps)** — a MÉDIA
+/// da faixa canônica 20–30% (MÉDIA ANUAL: o ano todo deve ficar na faixa, os meses variam). É uma
+/// barra DELIBERADAMENTE mais alta que o piso de 20%: o gate anual decide quanto se pode gastar
+/// HOJE, então mira no alvo médio, não no piso.
+///
+/// O piso de 20% (`SAVINGS_FLOOR_BPS`) é o que os indicadores MENSAIS e ANUAIS usam (badge
+/// "Dentro do ideal", cor da visão anual, gate da fase "operar"), lenientes a variações de um
+/// mês. Ambos ficam dentro da faixa canônica; não os unifique sem decisão de método (unificar
+/// afrouxaria o gate anual). O espelho da tela é `SAVINGS_MIN_BPS` (`src/screens/totaisStatus.ts`).
+pub const SAVINGS_TARGET_BPS: i64 = 2_500;
+
+/// Piso da faixa de economia do método (20%): abaixo dele a economia não está "viva" — é o
+/// vermelho da escada das réguas e o gate de legitimidade do modo cartão. Distinto da META
+/// (`SAVINGS_TARGET_BPS`, centro da faixa) que o guardrail de poupança usa.
+pub const SAVINGS_FLOOR_BPS: i64 = 2_000;
+
+/// Teto da faixa de economia do método (30%): acima dele o ano guardou além do ideal, e o
+/// convite é gastar um pouco mais se quiser — nunca uma reprovação. Fecha o trio da faixa
+/// canônica 20–30% com piso e meta, numa casa só para que não possam divergir.
+pub const SAVINGS_CEILING_BPS: i64 = 3_000;
+
+/// Meses de reserva mínimos do método: abaixo disso a liquidez ainda está sendo construída, e é
+/// ela que vem primeiro na ordem do método — economia zerada só é escolha com a reserva de pé.
+pub const RESERVE_MIN_MONTHS: i64 = 6;
+
+/// Um mês do ano na ótica do método: o que saiu, se já foi vivido, se tem lastro para sustentar o
+/// veredito e quanto faltaria lançar para ele parecer um mês típico.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnnualRulerMonth {
+    pub month: u32,
+    /// Saída total do mês (renda − performance) — a mesma figura que alimenta o gasto típico.
+    pub outflow_cents: i64,
+    pub lived: bool,
+    /// Mês à frente cuja saída lançada não alcança o piso de lastro.
+    pub suspect: bool,
+    /// Quanto faltaria lançar para o mês custar o típico. Zero em mês vivido ou lastreado: o que
+    /// já foi vivido não deve nada ao futuro.
+    pub missing_cents: i64,
+}
+
 /// A régua ANUAL do método sobre os doze meses de um ano: o Economizado% que julga, o recorte
 /// que o sustenta e os meses à frente que ainda não têm lastro.
 ///
@@ -307,16 +347,16 @@ pub const LASTRO_FLOOR_BPS: i64 = 6_000;
 /// régua recua ao que já foi vivido — e o recorte vai junto, para que o número nunca se
 /// apresente como se fosse do ano fechado.
 ///
-/// A mesma régua é composta na tela O ano (`src/screens/anoView.ts`); as duas leem o mesmo
-/// motor e precisam continuar dando o mesmo número — mudou aqui, muda lá.
+/// É a única definição da régua: a tela O ano e a conversa leem esta função, nenhuma das duas
+/// recompõe a faixa por conta própria.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnnualRuler {
     pub lived_months: u32,
     pub future_months: u32,
     /// Gasto típico do ano = mediana das saídas dos meses vividos.
     pub typical_spend_cents: i64,
-    /// Meses à frente cuja saída lançada não alcança o piso de lastro.
-    pub suspect_months: Vec<u32>,
+    /// Os doze meses na ótica do método, em ordem.
+    pub months: Vec<AnnualRulerMonth>,
     pub income_lived_cents: i64,
     pub economia_lived_cents: i64,
     /// Sobra dos meses vividos (Performance somada) — o colchão do ano.
@@ -338,6 +378,101 @@ pub struct AnnualRuler {
     pub scope_lived: bool,
     /// Algum mês vivido teve movimento — sem isso, o ano não tem o que julgar.
     pub has_data: bool,
+    /// Quanto falta guardar para o recorte vivido fechar no piso de 20%. Negativo = já passou.
+    pub shortfall_lived_cents: i64,
+    /// Quanto falta guardar para o ANO fechar no piso de 20%. É o denominador que a tela usa no
+    /// convite: a falta dos meses vividos fecharia o ano num número menor.
+    pub shortfall_year_cents: i64,
+    /// A falta do ano dividida pelos meses que restam; nula em ano sem futuro.
+    pub per_month_shortfall_cents: Option<i64>,
+}
+
+impl AnnualRuler {
+    /// Os meses à frente sem lastro, em ordem.
+    pub fn suspect_months(&self) -> Vec<u32> {
+        self.months
+            .iter()
+            .filter(|m| m.suspect)
+            .map(|m| m.month)
+            .collect()
+    }
+}
+
+/// O veredito do ano contra a faixa 20–30%.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BandVerdict {
+    /// O ano não tem movimento vivido para julgar.
+    NoRecord,
+    /// Economia zerada com a reserva de pé: a ordem do método cumprida, não uma falta.
+    ZeroByChoice,
+    BelowBand,
+    InBand,
+    AboveBand,
+}
+
+impl BandVerdict {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BandVerdict::NoRecord => "no_record",
+            BandVerdict::ZeroByChoice => "zero_by_choice",
+            BandVerdict::BelowBand => "below_band",
+            BandVerdict::InBand => "in_band",
+            BandVerdict::AboveBand => "above_band",
+        }
+    }
+}
+
+/// O veredito da faixa: ano sem registro não julga; economia zerada com a reserva já protegida é
+/// a troca CERTA na ordem do método (proteger a reserva vem antes de guardar mais), nunca uma
+/// falta; o resto lê a régua contra a faixa.
+pub fn band_verdict(ruler: &AnnualRuler, reserve_months: Option<f64>) -> BandVerdict {
+    if !ruler.has_data {
+        return BandVerdict::NoRecord;
+    }
+    if ruler.economia_lived_cents == 0
+        && reserve_months.is_some_and(|m| m >= RESERVE_MIN_MONTHS as f64)
+    {
+        return BandVerdict::ZeroByChoice;
+    }
+    match ruler.bps {
+        None => BandVerdict::NoRecord,
+        Some(bps) if bps < SAVINGS_FLOOR_BPS => BandVerdict::BelowBand,
+        Some(bps) if bps <= SAVINGS_CEILING_BPS => BandVerdict::InBand,
+        Some(_) => BandVerdict::AboveBand,
+    }
+}
+
+/// Onde o ano termina: o saldo do último mês projetado e o cenário em que cada mês sem lastro
+/// custasse o típico.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct YearEnd {
+    pub end_month: Option<u32>,
+    pub end_balance_cents: Option<i64>,
+    /// O saldo se os meses sem lastro até o fim custassem o típico. `None` quando não há mês sem
+    /// lastro na janela — sem silêncio a descontar, o cenário alternativo não existe.
+    pub end_balance_typical_cents: Option<i64>,
+}
+
+/// O fim do ano a partir da régua e dos saldos de fim de mês (`(mês, saldo)`, esparso).
+///
+/// O ano termina no último mês que tem saldo: dezembro quando a projeção alcança, senão o mês
+/// mais distante do horizonte — e só os meses sem lastro DENTRO dessa janela entram no cenário,
+/// porque descontar um dezembro que o saldo nem alcança inventaria um rombo.
+pub fn year_end_scenario(ruler: &AnnualRuler, month_end: &[(u32, i64)]) -> YearEnd {
+    let Some(&(end_month, end_balance)) = month_end.iter().max_by_key(|(month, _)| *month) else {
+        return YearEnd::default();
+    };
+    let missing: i64 = ruler
+        .months
+        .iter()
+        .filter(|m| m.suspect && m.month <= end_month)
+        .map(|m| m.missing_cents)
+        .sum();
+    YearEnd {
+        end_month: Some(end_month),
+        end_balance_cents: Some(end_balance),
+        end_balance_typical_cents: (missing > 0).then_some(end_balance - missing),
+    }
 }
 
 /// Saída total de um mês = tudo que deixou a conta = renda − performance. Inclui Economia e
@@ -368,14 +503,26 @@ pub fn annual_ruler(months: &[MonthMetric], year: i32, today: NaiveDate) -> Annu
     // O piso trunca em centavos: a fronteira é determinística, e um centavo não decide lastro.
     let lastro_threshold = typical_spend_cents * LASTRO_FLOOR_BPS / 10_000;
 
-    let suspect_months: Vec<u32> = rows
+    let ruler_months: Vec<AnnualRulerMonth> = rows
         .iter()
-        .filter(|(month, m)| {
-            !lived_of(*month)
-                && typical_spend_cents > 0
-                && figure(*m, month_outflow) < lastro_threshold
+        .map(|(month, m)| {
+            let outflow_cents = figure(*m, month_outflow);
+            let lived = lived_of(*month);
+            let suspect = !lived && typical_spend_cents > 0 && outflow_cents < lastro_threshold;
+            AnnualRulerMonth {
+                month: *month,
+                outflow_cents,
+                lived,
+                suspect,
+                // `.max(0)`: um mês sem lastro pode ter saída negativa (estorno) — o que falta
+                // lançar nunca é menos que zero.
+                missing_cents: if suspect {
+                    (typical_spend_cents - outflow_cents).max(0)
+                } else {
+                    0
+                },
+            }
         })
-        .map(|(month, _)| *month)
         .collect();
 
     let sum = |pick: fn(&MonthMetric) -> i64, lived_only: bool| -> i64 {
@@ -394,9 +541,16 @@ pub fn annual_ruler(months: &[MonthMetric], year: i32, today: NaiveDate) -> Annu
     let rate = |economia: i64, income: i64| (income > 0).then(|| economia * 10_000 / income);
     let lived_bps = rate(economia_lived_cents, income_lived_cents);
     let projected_bps = rate(economia_year_cents, income_year_cents);
-    let scope_lived = !suspect_months.is_empty();
+    let scope_lived = ruler_months.iter().any(|m| m.suspect);
+
+    // A falta ARREDONDA (não trunca): é a conta que a tela imprime como convite, e meio centavo
+    // a menos apareceria como um "falta guardar" que não fecha o piso.
+    let shortfall =
+        |income: i64, economia: i64| round_half_up(income * SAVINGS_FLOOR_BPS, 10_000) - economia;
+    let shortfall_year_cents = shortfall(income_year_cents, economia_year_cents);
 
     let lived_months = rows.iter().filter(|(month, _)| lived_of(*month)).count() as u32;
+    let future_months = 12 - lived_months;
     let recorded: Vec<i64> = rows
         .iter()
         .filter(|(month, _)| lived_of(*month))
@@ -405,9 +559,9 @@ pub fn annual_ruler(months: &[MonthMetric], year: i32, today: NaiveDate) -> Annu
         .collect();
     AnnualRuler {
         lived_months,
-        future_months: 12 - lived_months,
+        future_months,
         typical_spend_cents,
-        suspect_months,
+        months: ruler_months,
         income_lived_cents,
         economia_lived_cents,
         surplus_lived_cents: sum(|m| m.performance_cents, true),
@@ -433,7 +587,18 @@ pub fn annual_ruler(months: &[MonthMetric], year: i32, today: NaiveDate) -> Annu
                     || figure(*m, |m| m.economia_cents) != 0
                     || figure(*m, month_outflow) != 0)
         }),
+        shortfall_lived_cents: shortfall(income_lived_cents, economia_lived_cents),
+        shortfall_year_cents,
+        per_month_shortfall_cents: (future_months > 0)
+            .then(|| round_half_up(shortfall_year_cents, future_months as i64)),
     }
+}
+
+/// Divisão que arredonda meio para CIMA (o `Math.round` da tela), em inteiros: `floor(n/d + 0.5)`.
+/// Divisão inteira em Rust trunca em direção ao zero, o que faria um valor negativo arredondar
+/// para o lado oposto ao da tela.
+fn round_half_up(numerator: i64, denominator: i64) -> i64 {
+    (2 * numerator + denominator).div_euclid(2 * denominator)
 }
 
 /// Mediana em centavos (par ⇒ média dos dois centrais, truncada) — o estimador de "mês típico"
@@ -1850,7 +2015,7 @@ mod tests {
 
         assert_eq!(ruler.lived_months, 6);
         assert_eq!(ruler.typical_spend_cents, 500_000);
-        assert_eq!(ruler.suspect_months, vec![7, 8, 9, 10, 11, 12]);
+        assert_eq!(ruler.suspect_months(), vec![7, 8, 9, 10, 11, 12]);
         assert_eq!(ruler.lived_bps, Some(2_500));
         // 1.200.000 guardados sobre 5.700.000 de renda: o mês magro dilui o ano.
         assert_eq!(ruler.projected_bps, Some(2_105));
@@ -1869,7 +2034,7 @@ mod tests {
         let ruler = annual_ruler(&months, 2026, d("2026-12-31"));
 
         assert_eq!(ruler.lived_months, 12);
-        assert!(ruler.suspect_months.is_empty());
+        assert!(ruler.suspect_months().is_empty());
         assert!(!ruler.scope_lived);
         assert_eq!(ruler.bps, Some(2_500));
         assert_eq!(ruler.income_year_cents, 9_600_000);
@@ -1884,9 +2049,162 @@ mod tests {
         assert_eq!(ruler.bps, None);
         assert_eq!(ruler.typical_spend_cents, 0);
         assert!(
-            ruler.suspect_months.is_empty(),
+            ruler.suspect_months().is_empty(),
             "sem gasto típico não há como acusar falta de lastro"
         );
         assert!(!ruler.has_data);
+    }
+
+    /// Seis meses vividos guardando 25%, e um julho magro à frente — a régua do ano em curso.
+    fn open_year() -> AnnualRuler {
+        let mut months: Vec<MonthMetric> = (1..=6)
+            .map(|m| month(m, 800_000, 500_000, 200_000))
+            .collect();
+        months.push(month(7, 900_000, 50_000, 0));
+        annual_ruler(&months, 2026, d("2026-06-15"))
+    }
+
+    // Cada mês sem lastro carrega o preço do próprio silêncio: quanto faltaria lançar para ele
+    // parecer um mês típico. É o insumo do cenário de fim de ano — e quem o compõe (tela ou
+    // conversa) nunca refaz a subtração.
+    #[test]
+    fn annual_ruler_prices_each_thin_month_by_what_it_is_missing() {
+        let ruler = open_year();
+
+        let julho = ruler.months.iter().find(|m| m.month == 7).unwrap();
+        assert!(julho.suspect);
+        assert_eq!(julho.outflow_cents, 50_000);
+        assert_eq!(julho.missing_cents, 450_000); // 500.000 típico − 50.000 lançados
+
+        // Mês ausente da entrada não lançou nada: falta o típico inteiro.
+        assert_eq!(
+            ruler
+                .months
+                .iter()
+                .find(|m| m.month == 12)
+                .unwrap()
+                .missing_cents,
+            500_000
+        );
+        // Mês vivido não deve nada ao futuro — o que ele custou já é fato.
+        let junho = ruler.months.iter().find(|m| m.month == 6).unwrap();
+        assert!(junho.lived && !junho.suspect);
+        assert_eq!(junho.missing_cents, 0);
+    }
+
+    // A falta para o piso de 20% nos dois recortes, e a parcela por mês que resta — a mesma
+    // conta que a tela imprime e que a conversa responde.
+    #[test]
+    fn annual_ruler_measures_the_shortfall_to_the_floor() {
+        let ruler = open_year();
+
+        // Vivido: 20% de 4.800.000 = 960.000, e já guardou 1.200.000 → o piso ficou para trás.
+        assert_eq!(ruler.shortfall_lived_cents, -240_000);
+        // Ano: 20% de 5.700.000 = 1.140.000 contra os mesmos 1.200.000.
+        assert_eq!(ruler.shortfall_year_cents, -60_000);
+        assert_eq!(ruler.per_month_shortfall_cents, Some(-10_000)); // ÷ 6 meses à frente
+
+        let closed: Vec<MonthMetric> = (1..=12).map(|m| month(m, 800_000, 800_000, 0)).collect();
+        let closed = annual_ruler(&closed, 2026, d("2026-12-31"));
+        assert_eq!(closed.shortfall_year_cents, 1_920_000);
+        assert_eq!(
+            closed.per_month_shortfall_cents, None,
+            "ano sem futuro não divide a falta por mês nenhum"
+        );
+    }
+
+    // --- Régua anual: o veredito da faixa ---
+
+    #[test]
+    fn band_verdict_reads_the_ruler_against_the_band() {
+        let inside: Vec<MonthMetric> = (1..=12)
+            .map(|m| month(m, 800_000, 600_000, 200_000))
+            .collect();
+        let inside = annual_ruler(&inside, 2026, d("2026-12-31"));
+        assert_eq!(band_verdict(&inside, None), BandVerdict::InBand);
+
+        let above: Vec<MonthMetric> = (1..=12)
+            .map(|m| month(m, 800_000, 500_000, 300_000))
+            .collect();
+        let above = annual_ruler(&above, 2026, d("2026-12-31"));
+        assert_eq!(band_verdict(&above, None), BandVerdict::AboveBand);
+
+        let below: Vec<MonthMetric> = (1..=12)
+            .map(|m| month(m, 800_000, 750_000, 50_000))
+            .collect();
+        let below = annual_ruler(&below, 2026, d("2026-12-31"));
+        assert_eq!(band_verdict(&below, None), BandVerdict::BelowBand);
+    }
+
+    // Zerar a economia com a reserva já protegida é a ordem do método cumprida, não uma falta.
+    // Sem reserva conhecida, o mesmo zero é "não guardou nada".
+    #[test]
+    fn band_verdict_reads_zero_economia_against_the_reserve() {
+        let months: Vec<MonthMetric> = (1..=12).map(|m| month(m, 800_000, 800_000, 0)).collect();
+        let ruler = annual_ruler(&months, 2026, d("2026-12-31"));
+
+        assert_eq!(band_verdict(&ruler, Some(8.0)), BandVerdict::ZeroByChoice);
+        assert_eq!(band_verdict(&ruler, Some(3.0)), BandVerdict::BelowBand);
+        assert_eq!(band_verdict(&ruler, None), BandVerdict::BelowBand);
+    }
+
+    // Ano sem um único movimento vivido não julga ninguém.
+    #[test]
+    fn band_verdict_without_data_does_not_judge() {
+        let ruler = annual_ruler(&[], 2026, d("2026-07-25"));
+        assert_eq!(band_verdict(&ruler, Some(8.0)), BandVerdict::NoRecord);
+    }
+
+    // --- Onde o ano termina ---
+
+    // O ano termina no último mês com saldo, e o cenário desconta o que os meses sem lastro
+    // deixaram de lançar até ali.
+    #[test]
+    fn year_end_scenario_discounts_the_thin_months_up_to_the_closing_month() {
+        let ruler = open_year();
+        let balances: Vec<(u32, i64)> = vec![(6, 1_800_000), (7, 1_900_000), (12, 2_000_000)];
+
+        let end = year_end_scenario(&ruler, &balances);
+
+        assert_eq!(end.end_month, Some(12));
+        assert_eq!(end.end_balance_cents, Some(2_000_000));
+        // 450.000 de julho + 500.000 × 5 meses vazios = 2.950.000 fora da projeção.
+        assert_eq!(end.end_balance_typical_cents, Some(-950_000));
+    }
+
+    // Horizonte curto: só os meses sem lastro DENTRO da janela que fecha o ano entram na conta —
+    // descontar um dezembro que o saldo nem alcança seria inventar um rombo.
+    #[test]
+    fn year_end_scenario_only_counts_thin_months_inside_the_horizon() {
+        let ruler = open_year();
+
+        let end = year_end_scenario(&ruler, &[(6, 1_800_000), (7, 1_900_000)]);
+
+        assert_eq!(end.end_month, Some(7));
+        assert_eq!(end.end_balance_typical_cents, Some(1_450_000)); // 1.900.000 − 450.000
+    }
+
+    // Ano inteiro lastreado não tem cenário alternativo: a projeção já conta a vida inteira.
+    #[test]
+    fn year_end_scenario_has_no_alternative_when_every_month_has_lastro() {
+        let months: Vec<MonthMetric> = (1..=12)
+            .map(|m| month(m, 800_000, 500_000, 200_000))
+            .collect();
+        let ruler = annual_ruler(&months, 2026, d("2026-12-31"));
+
+        let end = year_end_scenario(&ruler, &[(12, 2_000_000)]);
+
+        assert_eq!(end.end_balance_cents, Some(2_000_000));
+        assert_eq!(end.end_balance_typical_cents, None);
+    }
+
+    // Sem nenhum saldo, o ano não tem fim para mostrar — nulo, nunca zero.
+    #[test]
+    fn year_end_scenario_without_balances_has_no_end() {
+        let end = year_end_scenario(&open_year(), &[]);
+
+        assert_eq!(end.end_month, None);
+        assert_eq!(end.end_balance_cents, None);
+        assert_eq!(end.end_balance_typical_cents, None);
     }
 }

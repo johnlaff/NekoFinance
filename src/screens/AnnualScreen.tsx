@@ -11,13 +11,10 @@ import {
 } from "lucide-react";
 import {
   getAnnualMetrics,
+  getAnnualRuler,
   getForecast,
-  getMonthGrid,
-  getDashboardSummary,
   isTauri,
   type MonthMetric,
-  type MonthEnd,
-  type MonthGridDay,
 } from "../lib/api";
 import { useCommand } from "../lib/useCommand";
 import { todayISO } from "../lib/format";
@@ -55,9 +52,6 @@ const RULER_MARKS = [
 function fetchForecast() {
   return getForecast();
 }
-function fetchSummary() {
-  return getDashboardSummary();
-}
 
 const _annualCache = new Map<number, () => ReturnType<typeof getAnnualMetrics>>();
 function annualFetcher(year: number): () => ReturnType<typeof getAnnualMetrics> {
@@ -68,35 +62,17 @@ function annualFetcher(year: number): () => ReturnType<typeof getAnnualMetrics> 
   return fn;
 }
 
-const _histCache = new Map<string, () => Promise<MonthEnd[]>>();
-function historicalEndFetcher(year: number, today: string): () => Promise<MonthEnd[]> {
-  const key = `${year}:${today}`;
-  const cached = _histCache.get(key);
+const _rulerCache = new Map<number, () => ReturnType<typeof getAnnualRuler>>();
+function rulerFetcher(year: number): () => ReturnType<typeof getAnnualRuler> {
+  const cached = _rulerCache.get(year);
   if (cached) return cached;
-  const fn = async () => {
-    const grids = await Promise.all(
-      pastMonthNumbers(year, today).map(async (month) => ({
-        month,
-        days: await getMonthGrid(year, month),
-      })),
-    );
-    return grids.flatMap(({ month, days }) => {
-      const balance = lastNonNullBalance(days);
-      return balance == null ? [] : [{ year, month, balance_cents: balance }];
-    });
-  };
-  _histCache.set(key, fn);
+  const fn = () => getAnnualRuler(year);
+  _rulerCache.set(year, fn);
   return fn;
 }
 
 // ------------------------------------------------------------------ helpers --
 
-function yearOf(iso: string): number {
-  return parseInt(iso.slice(0, 4), 10);
-}
-function monthOf(iso: string): number {
-  return parseInt(iso.slice(5, 7), 10);
-}
 function cap(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
@@ -110,21 +86,6 @@ function monthAbbr(month: number): string {
 /** "1 mês" / "7 meses" — a concordância quebra em janeiro, quando só um mês foi vivido. */
 function mesesLabel(n: number): string {
   return `${n} ${n === 1 ? "mês" : "meses"}`;
-}
-
-function pastMonthNumbers(year: number, today: string): number[] {
-  const cy = yearOf(today);
-  const cm = monthOf(today);
-  if (year < cy) return Array.from({ length: 12 }, (_, i) => i + 1);
-  if (year > cy) return [];
-  return Array.from({ length: Math.max(0, cm - 1) }, (_, i) => i + 1);
-}
-function lastNonNullBalance(days: MonthGridDay[]): number | null {
-  for (let i = days.length - 1; i >= 0; i -= 1) {
-    const b = days[i]?.balance_cents;
-    if (b != null) return b;
-  }
-  return null;
 }
 
 /** Cor do pino da régua = status do MÉTODO (a única cor de status da tela): fora da faixa é
@@ -723,14 +684,12 @@ export function AnnualScreen() {
   const [year, setYear] = useState(thisYear);
 
   const forecastQ = useCommand("get_forecast", fetchForecast);
-  const summaryQ = useCommand("get_dashboard_summary", fetchSummary);
   const annualQ = useCommand(`annual_metrics:${year}:ano`, annualFetcher(year));
+  // A régua do método chega decidida do motor — inclusive o veredito, que lê a reserva no
+  // backend. É a mesma leitura que a conversa dá quando perguntam pelo ano.
+  const rulerQ = useCommand(`annual_ruler:${year}`, rulerFetcher(year));
 
   const today = forecastQ.data?.today ?? todayISO();
-  const historicalQ = useCommand(
-    `month_grid_ends:${year}:${today}`,
-    historicalEndFetcher(year, today),
-  );
 
   // Renda ao longo dos anos: o ano visto e os dois anteriores (o que o método manda comparar).
   const prevA = year - 1;
@@ -758,18 +717,18 @@ export function AnnualScreen() {
   // A nav de ano permanece visível durante a troca de ano — só o corpo esqueletiza, para o
   // usuário seguir navegando sem a tela inteira piscar.
   const ready =
-    !forecastQ.loading && !annualQ.loading && !historicalQ.loading && !!annualQ.data;
+    !forecastQ.loading &&
+    !annualQ.loading &&
+    !rulerQ.loading &&
+    !!annualQ.data &&
+    !!rulerQ.data;
 
   const months: MonthMetric[] = annualQ.data?.months ?? [];
-  const monthEnd: MonthEnd[] = [
-    ...(forecastQ.data?.month_end ?? []),
-    ...(historicalQ.data ?? []),
-  ];
-  const reserveMonths = summaryQ.data?.reserve_months ?? null;
 
-  const v = ready
-    ? buildAnoView({ year, today, months, monthEnd, reserveMonths })
-    : null;
+  const v =
+    ready && rulerQ.data
+      ? buildAnoView({ year, today, months, ruler: rulerQ.data })
+      : null;
 
   // "Sua renda ao longo dos anos" só monta quando TODOS os anos comparados carregaram — senão
   // as linhas apareceriam em corrida (uma por ano que chega), piscando estados parciais.

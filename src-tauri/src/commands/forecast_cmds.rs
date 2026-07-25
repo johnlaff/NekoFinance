@@ -80,36 +80,16 @@ pub(crate) async fn projection_seed(
     Ok(balance + gap.0)
 }
 
-/// Meta de poupança do método para o guardrail ANUAL "pode gastar": **25% (2500 bps)** — a MÉDIA
-/// da faixa canônica 20–30% (MÉDIA ANUAL: o ano todo deve ficar na faixa, os meses variam). É uma
-/// barra DELIBERADAMENTE mais alta que o piso de 20% do método: o gate anual decide quanto se pode
-/// gastar HOJE, então mira no alvo médio, não no piso.
-///
-/// O piso mínimo de 20% (2000 bps) é o `SAVINGS_MIN_BPS` do frontend (`src/screens/totaisStatus.ts`),
-/// usado nos indicadores/visuais MENSAIS e ANUAIS (badge "Dentro do ideal", cor da visão anual,
-/// gate da fase "operar"), que são lenientes a variações de um mês. Ambos os limiares ficam dentro
-/// da faixa canônica 20–30%; não os unifique sem decisão de método (unificar afrouxaria o gate anual).
-pub(crate) const SAVINGS_TARGET_BPS: i64 = 2500;
-
-/// Piso da faixa de economia do método (20%): abaixo dele a economia não está "viva" — é o
-/// vermelho da escada das réguas e o gate de legitimidade do modo cartão. Distinto da META
-/// (`SAVINGS_TARGET_BPS`, centro da faixa) que o guardrail de poupança usa.
-pub(crate) const SAVINGS_FLOOR_BPS: i64 = 2_000;
-
-/// Teto da faixa de economia do método (30%): acima dele o ano guardou além do ideal, e o
-/// convite é gastar um pouco mais se quiser — nunca uma reprovação. Fecha o trio da faixa
-/// canônica 20–30% com piso e meta, numa casa só para que não possam divergir.
-pub(crate) const SAVINGS_CEILING_BPS: i64 = 3_000;
+/// A faixa do método e o piso da reserva vivem no motor, com as réguas que os aplicam; a casca
+/// os reexporta para que os DTOs publiquem os mesmos limiares que julgam.
+pub(crate) use crate::forecast::{
+    RESERVE_MIN_MONTHS, SAVINGS_CEILING_BPS, SAVINGS_FLOOR_BPS, SAVINGS_TARGET_BPS,
+};
 
 /// Limiar de cobertura: um mês futuro com menos de 60% do gasto típico já lançado é tratado como
 /// INCOMPLETO (projeção otimista demais — o "chá revelação" do método). Margem ampla porque o
 /// método aceita variação mês a mês; abaixo disso é quase certo que falta fatura/variável.
 pub(crate) const COVERAGE_COMPLETE_BPS: i64 = 6_000;
-
-/// Meses de reserva mínimos do método (fase "operar"): o mesmo limiar que o frontend usa em
-/// `colchaoPhase.ts` (RESERVE_MIN_MONTHS). Mantidos em sync manualmente (a lógica de fase é
-/// puramente frontend; se mudar, atualizar os dois).
-pub(crate) const RESERVE_MIN_MONTHS: i64 = 6;
 
 /// Renda e net REALIZADOS do ano corrente até hoje (`is_projection = 0`): a poupança é o net
 /// `renda − saída` realizado dos meses completos. Retorna `(renda, net)` — o `net` superávit
@@ -2399,6 +2379,186 @@ pub(crate) async fn annual_month_metrics(
     ))
 }
 
+/// Saldos de fim de mês do ano, `(mês, saldo)` em ordem. Os meses já vividos leem a corrente da
+/// planilha; do mês corrente em diante manda a projeção, que é quem conhece o que ainda não
+/// aconteceu. Ano fechado não consulta a projeção: ela só olha para frente.
+pub(crate) async fn annual_month_end(
+    pool: &SqlitePool,
+    year: i32,
+    today: NaiveDate,
+) -> Result<Vec<(u32, i64)>, String> {
+    let mut by_month: std::collections::BTreeMap<u32, i64> = sheet_month_end_balances(pool, year)
+        .await?
+        .into_iter()
+        .collect();
+    if year >= today.year() {
+        let fc = forecast_dto(pool, today).await?;
+        for m in fc.month_end.iter().filter(|m| m.year == year) {
+            by_month.insert(m.month, m.balance_cents);
+        }
+    }
+    Ok(by_month.into_iter().collect())
+}
+
+/// Último Saldo importado de cada mês do ano — a mesma leitura que a grade do mês publica,
+/// direto da série da planilha.
+pub(crate) async fn sheet_month_end_balances(
+    pool: &SqlitePool,
+    year: i32,
+) -> Result<Vec<(u32, i64)>, String> {
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT date, balance_cents FROM sheet_daily_balance \
+         WHERE date >= ?1 AND date <= ?2 ORDER BY date",
+    )
+    .bind(format!("{year:04}-01-01"))
+    .bind(format!("{year:04}-12-31"))
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("saldos do ano: {e}"))?;
+
+    let mut by_month: std::collections::BTreeMap<u32, i64> = std::collections::BTreeMap::new();
+    for (date, balance) in rows {
+        if let Some(month) = date.get(5..7).and_then(|m| m.parse::<u32>().ok()) {
+            by_month.insert(month, balance);
+        }
+    }
+    Ok(by_month.into_iter().collect())
+}
+
+/// Um mês do ano na ótica do método — o que saiu, se já foi vivido, se sustenta o veredito e
+/// quanto faltaria lançar para custar o típico.
+#[derive(serde::Serialize)]
+pub struct AnnualRulerMonthDto {
+    pub month: u32,
+    pub outflow_cents: i64,
+    pub lived: bool,
+    pub suspect: bool,
+    pub missing_cents: i64,
+}
+
+/// Onde o ano termina, com o cenário em que os meses sem lastro custassem o típico.
+#[derive(serde::Serialize)]
+pub struct YearEndDto {
+    pub end_month: Option<u32>,
+    pub end_balance_cents: Option<i64>,
+    pub end_balance_typical_cents: Option<i64>,
+}
+
+/// A régua anual do método pronta para consumo: o Economizado% que julga, o recorte que o
+/// sustenta, o veredito da faixa e o fim do ano. Sai inteira do motor (`forecast::annual_ruler`)
+/// — é a MESMA leitura que a conversa responde em `get_year_analysis`, sem segunda composição.
+#[derive(serde::Serialize)]
+pub struct AnnualRulerDto {
+    pub year: i32,
+    pub lived_months: u32,
+    pub future_months: u32,
+    /// Mediana das saídas dos meses vividos: o mês típico contra o qual o futuro é medido.
+    pub typical_spend_cents: i64,
+    pub income_lived_cents: i64,
+    pub economia_lived_cents: i64,
+    /// A sobra dos meses vividos — o colchão, distinto da Economia registrada.
+    pub surplus_lived_cents: i64,
+    pub income_year_cents: i64,
+    pub economia_year_cents: i64,
+    /// Meses vividos com renda registrada e a média por mês deles — a leitura que compara um ano
+    /// com outro sem que o calendário finja uma queda de renda.
+    pub recorded_months: u32,
+    pub avg_income_cents: i64,
+    pub lived_bps: Option<i64>,
+    pub projected_bps: Option<i64>,
+    /// O percentual que JULGA: o vivido enquanto houver mês sem lastro, senão o do ano.
+    pub bps: Option<i64>,
+    /// A régua fala do recorte vivido (e não do ano fechado).
+    pub scope_lived: bool,
+    pub has_data: bool,
+    /// Quanto falta guardar para o piso de 20%, nos dois recortes. Negativo = o piso já passou.
+    pub shortfall_lived_cents: i64,
+    pub shortfall_year_cents: i64,
+    pub per_month_shortfall_cents: Option<i64>,
+    /// `no_record` · `zero_by_choice` · `below_band` · `in_band` · `above_band`.
+    pub verdict: &'static str,
+    pub band: BandDto,
+    pub months: Vec<AnnualRulerMonthDto>,
+    /// Saldo de fim de cada mês do ano (corrente da planilha até o vivido, projeção à frente).
+    pub month_end: Vec<MonthEndDto>,
+    pub year_end: YearEndDto,
+}
+
+/// A faixa do método que o veredito aplica, publicada junto do número que ela julga.
+#[derive(serde::Serialize)]
+pub struct BandDto {
+    pub floor_bps: i64,
+    pub target_bps: i64,
+    pub ceiling_bps: i64,
+}
+
+pub(crate) async fn annual_ruler_dto(
+    pool: &SqlitePool,
+    year: i32,
+    today: NaiveDate,
+) -> Result<AnnualRulerDto, String> {
+    let metrics = annual_month_metrics(pool, year, today).await?;
+    let ruler = forecast::annual_ruler(&metrics, year, today);
+    let month_end = annual_month_end(pool, year, today).await?;
+    let year_end = forecast::year_end_scenario(&ruler, &month_end);
+    // Sem reserva conhecida o veredito não pode ler economia zerada como escolha — é o "não
+    // guardou nada" honesto, e é assim que a conversa também a lê.
+    let reserve = reserve_reading(pool, today).await?;
+    let reserve_months = (reserve.state != "no_record").then_some(reserve.months);
+
+    Ok(AnnualRulerDto {
+        year,
+        lived_months: ruler.lived_months,
+        future_months: ruler.future_months,
+        typical_spend_cents: ruler.typical_spend_cents,
+        income_lived_cents: ruler.income_lived_cents,
+        economia_lived_cents: ruler.economia_lived_cents,
+        surplus_lived_cents: ruler.surplus_lived_cents,
+        income_year_cents: ruler.income_year_cents,
+        economia_year_cents: ruler.economia_year_cents,
+        recorded_months: ruler.recorded_months,
+        avg_income_cents: ruler.avg_income_cents,
+        lived_bps: ruler.lived_bps,
+        projected_bps: ruler.projected_bps,
+        bps: ruler.bps,
+        scope_lived: ruler.scope_lived,
+        has_data: ruler.has_data,
+        shortfall_lived_cents: ruler.shortfall_lived_cents,
+        shortfall_year_cents: ruler.shortfall_year_cents,
+        per_month_shortfall_cents: ruler.per_month_shortfall_cents,
+        verdict: forecast::band_verdict(&ruler, reserve_months).as_str(),
+        band: BandDto {
+            floor_bps: SAVINGS_FLOOR_BPS,
+            target_bps: SAVINGS_TARGET_BPS,
+            ceiling_bps: SAVINGS_CEILING_BPS,
+        },
+        months: ruler
+            .months
+            .iter()
+            .map(|m| AnnualRulerMonthDto {
+                month: m.month,
+                outflow_cents: m.outflow_cents,
+                lived: m.lived,
+                suspect: m.suspect,
+                missing_cents: m.missing_cents,
+            })
+            .collect(),
+        month_end: month_end
+            .into_iter()
+            .map(|(month, balance_cents)| MonthEndDto {
+                year,
+                month,
+                balance_cents,
+            })
+            .collect(),
+        year_end: YearEndDto {
+            end_month: year_end.end_month,
+            end_balance_cents: year_end.end_balance_cents,
+            end_balance_typical_cents: year_end.end_balance_typical_cents,
+        },
+    })
+}
+
 pub(crate) async fn annual_metrics(
     pool: &SqlitePool,
     year: i32,
@@ -2535,6 +2695,14 @@ pub async fn get_annual_metrics(
     year: i32,
 ) -> Result<AnnualMetricsDto, String> {
     annual_metrics(pool.inner(), year, chrono::Local::now().date_naive()).await
+}
+
+#[tauri::command]
+pub async fn get_annual_ruler(
+    pool: State<'_, SqlitePool>,
+    year: i32,
+) -> Result<AnnualRulerDto, String> {
+    annual_ruler_dto(pool.inner(), year, chrono::Local::now().date_naive()).await
 }
 
 // --- Dashboard query commands ---
