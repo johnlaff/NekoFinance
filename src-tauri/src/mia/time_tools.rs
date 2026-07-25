@@ -280,18 +280,23 @@ pub(crate) async fn year_analysis(pool: &SqlitePool, args: &Args, today: NaiveDa
     }
 
     if args.wants("months") {
-        let months: Vec<YearMonthDto> = (1..=12)
-            .map(|month| {
-                let m = metrics.iter().find(|m| m.month == month);
+        // A linha do mês costura as duas leituras que já existem: as figuras de caixa do motor e
+        // a régua sobre elas. A saída sai da régua — recomputá-la aqui abriria a divergência que
+        // a régua única fecha.
+        let months: Vec<YearMonthDto> = ruler
+            .months
+            .iter()
+            .map(|line| {
+                let m = metrics.iter().find(|m| m.month == line.month);
                 YearMonthDto {
-                    month: format!("{year:04}-{month:02}"),
+                    month: format!("{year:04}-{:02}", line.month),
                     income_cents: m.map_or(0, |m| m.income_cents),
-                    outflow_cents: m.map_or(0, |m| m.income_cents - m.performance_cents),
+                    outflow_cents: line.outflow_cents,
                     economia_cents: m.map_or(0, |m| m.economia_cents),
                     performance_cents: m.map_or(0, |m| m.performance_cents),
                     economizado_bps: m.map_or(0, |m| m.savings_rate_bps),
-                    lived: ruler.months.iter().any(|m| m.month == month && m.lived),
-                    suspect: ruler.months.iter().any(|m| m.month == month && m.suspect),
+                    lived: line.lived,
+                    suspect: line.suspect,
                 }
             })
             .collect();

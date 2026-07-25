@@ -1167,7 +1167,7 @@ async fn the_screen_and_the_conversation_read_the_same_ruler() {
     let talk = data(
         &p,
         "get_year_analysis",
-        json!({"year": 2026, "include": ["year_end"]}),
+        json!({"year": 2026, "include": ["months", "year_end"]}),
     )
     .await;
 
@@ -1217,6 +1217,20 @@ async fn the_screen_and_the_conversation_read_the_same_ruler() {
         .map(|m| m["month"].clone())
         .collect();
     assert_eq!(Value::Array(suspects), talk["suspect_months"]);
+
+    // A linha do mês também: a saída, o vivido e o lastro são a mesma leitura nas duas bocas.
+    for (screen_month, talk_month) in screen["months"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(talk["months"]["items"].as_array().unwrap())
+    {
+        let month = screen_month["month"].as_u64().unwrap();
+        assert_eq!(talk_month["month"], format!("2026-{month:02}"));
+        assert_eq!(screen_month["outflow_cents"], talk_month["outflow_cents"]);
+        assert_eq!(screen_month["lived"], talk_month["lived"]);
+        assert_eq!(screen_month["suspect"], talk_month["suspect"]);
+    }
 }
 
 // --- A projeção à frente ----------------------------------------------------------------

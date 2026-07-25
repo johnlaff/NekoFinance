@@ -179,30 +179,6 @@ function emptyRuler(year: number): AnnualRuler {
   };
 }
 
-const SUMMARY = (reserveMonths: number) => ({
-  balance: 1330026,
-  daily_budget: 20000,
-  daily_ceiling_source: "chosen" as const,
-  ceiling_proposal_pending: false,
-  daily_spend_today: 0,
-  card_spend_today_cents: 0,
-  reserve_months: reserveMonths,
-  reserve_state: "verdict" as const,
-  reserve_basis_months: 6,
-  reserve_trend: "flat",
-  spending_mode: "debit" as const,
-  card_gate: "unknown" as const,
-  card_gate_economy: "unknown" as const,
-  card_gate_economy_bps: null,
-  card_gate_reserve: "unknown" as const,
-  cartao_month_cents: 0,
-  next_fatura_date: null,
-  next_fatura_amount_cents: 0,
-  upcoming_invoices: [],
-  transaction_count: 40,
-  last_real_tx_date: "2026-06-09",
-});
-
 // O veredito da faixa é decidido no motor, que lê a reserva no backend: a tela recebe o
 // resultado e o narra. `reserve` aqui escolhe qual leitura a régua devolve.
 function setup({ reserve = 4.5 }: { reserve?: number } = {}) {
@@ -220,7 +196,6 @@ function setup({ reserve = 4.5 }: { reserve?: number } = {}) {
     get_annual_metrics: annualByYear,
     get_annual_ruler: rulerByYear,
     get_forecast: testForecast,
-    get_dashboard_summary: SUMMARY(reserve),
   });
   render(<AnnualScreen />);
 }
