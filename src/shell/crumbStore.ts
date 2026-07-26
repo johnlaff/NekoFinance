@@ -1,4 +1,4 @@
-import type { Screen } from "./AppShell";
+import type { Screen } from "./screens";
 
 /**
  * Crumb da appbar sobreposto pela própria tela (ex.: o mês visto no Livro-razão).

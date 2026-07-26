@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { SCREEN_KEYS } from "./AppShell";
+import { SCREEN_KEYS } from "./screens";
 
 // Sem este teste, paridade é promessa: tela nova entraria sem a conversa saber respondê-la.
 const MANIFEST_PATH = join(process.cwd(), "docs", "mia-tool-parity.md");

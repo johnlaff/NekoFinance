@@ -1,7 +1,8 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import "./App.css";
 import "./redesign.css";
-import { AppShell, type Screen } from "./shell/AppShell";
+import { AppShell } from "./shell/AppShell";
+import type { Screen } from "./shell/screens";
 import { NekoAppProvider, type ComposeOptions } from "./shell/appContext";
 import { crumbOverridesSnapshot, subscribeCrumbs } from "./shell/crumbStore";
 import { Compose } from "./shell/Compose";

@@ -1,7 +1,8 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { AppShell, type Screen } from "./AppShell";
+import { AppShell } from "./AppShell";
+import type { Screen } from "./screens";
 import { mockCommands, mockInvoke } from "../test/commands";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
