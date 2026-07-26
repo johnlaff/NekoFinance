@@ -37,7 +37,7 @@ The public repo must stay source-neutral and data-free. Do not commit private so
 - Keep ESLint, TypeScript strict mode, Prettier, rustfmt, clippy, tests, privacy scan, and npm audit green.
 - Do not lower coverage or loosen rules to make a task pass without documenting a concrete reason.
 - For frontend layout or flow changes, run Playwright visual smoke and inspect screenshots or traces.
-- For React hook/state/effect changes, run React Doctor advisory scan with telemetry disabled.
+- React Doctor gates pull requests (`blocking: warning`, scope `changed`): anything the PR introduces must be fixed, not waived. It is not part of `npm run check`, and no local command reproduces its verdict in full — so a frontend change is only cleared once the PR check is green. `npm run doctor` (whole project) and `npm run doctor:changed` (against the base) run it locally with telemetry disabled, as an early signal rather than proof.
 
 ## Agent skills
 

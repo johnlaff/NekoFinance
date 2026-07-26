@@ -8,6 +8,16 @@ on:
       - "package.json"
       - "package-lock.json"
       - "doctor.config.json"
+  # O scan de `main` varre o projeto inteiro e é o que mantém a dívida existente visível: o gate de
+  # PR compara com a base e enxerga só o que o PR introduz, então o que já estava lá nunca
+  # apareceria por ali.
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "package.json"
+      - "package-lock.json"
+      - "doctor.config.json"
 
 # Least privilege at the top level; the write scopes react-doctor needs to
 # annotate pull requests are granted at the job level below.
@@ -33,7 +43,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: millionco/react-doctor@e877ca7cbaa197e441ebd0a0e7fbc3901972f915 # react-doctor@0.7.6
+      # O pin é o COMMIT do release, nunca o objeto de tag. A versão fica junto do CLI que o gate
+      # local usa: pinada atrás, o CI passa a julgar o mesmo código por outro conjunto de regras.
+      - uses: millionco/react-doctor@01820bb4fd4d0a4aebcd8df2b2a143a098649cb2 # v2.2.8
         with:
-          blocking: none
+          # Este é o gate: nenhuma ferramenta local reproduz o veredito do scan por completo, então
+          # deixá-lo consultivo é o mesmo que não ter regra — a violação chega ao merge com um
+          # comentário que ninguém é obrigado a atender. `scope: changed` mantém a cobrança no que
+          # o PR introduz; a dívida que já existia é assunto do scan de `main`.
+          blocking: warning
           scope: changed

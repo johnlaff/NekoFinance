@@ -11,12 +11,15 @@
 pub(crate) mod catalog;
 pub(crate) mod envelope;
 mod ledger_tools;
+mod method_tools;
+mod scenario_tools;
 mod state_tools;
 mod time_tools;
 
 use catalog::ToolSpec;
 use chrono::NaiveDate;
 use envelope::{Clock, Envelope, ErrorCode, Meta, Period, ToolError, ToolResult, data_revision};
+use method_tools::MethodPack;
 use serde_json::Value;
 use sqlx::SqlitePool;
 
@@ -194,6 +197,36 @@ impl Args {
         })
     }
 
+    /// Lista de objetos: cada mudança preserva seus campos para a ferramenta validar a própria
+    /// gramática, sem aceitar valores soltos que não têm como ser interpretados.
+    pub(crate) fn objects(
+        &self,
+        key: &str,
+    ) -> Result<Vec<&serde_json::Map<String, Value>>, ToolError> {
+        let Some(raw) = self.value(key) else {
+            return Ok(vec![]);
+        };
+        let list = raw.as_array().ok_or_else(|| {
+            Self::invalid(
+                key,
+                "uma lista de objetos",
+                format!("{key}: [{{\"campo\": \"valor\"}}]"),
+            )
+        })?;
+        list.iter()
+            .enumerate()
+            .map(|(index, item)| {
+                item.as_object().ok_or_else(|| {
+                    ToolError::new(
+                        ErrorCode::InvalidArgument,
+                        format!("O item #{} de \"{key}\" precisa ser um objeto.", index + 1),
+                        format!("Chame de novo com {key}: [{{\"campo\": \"valor\"}}]."),
+                    )
+                })
+            })
+            .collect()
+    }
+
     /// Palavra de um vocabulário fechado. A recusa lista o vocabulário inteiro: corrigir uma
     /// palavra errada nunca depende de adivinhar a palavra certa.
     pub(crate) fn choice(
@@ -251,6 +284,13 @@ impl Args {
     }
 }
 
+/// O mundo de uma rodada: o relógio que carimba as respostas e onde o pack curado do método
+/// está montado. Uma leitura só do relógio por rodada, um caminho só para o conteúdo servido.
+pub(crate) struct Context {
+    pub clock: Clock,
+    pub pack: MethodPack,
+}
+
 /// Acrescenta um campo ao objeto de dados de uma ferramenta. A serialização de um tipo próprio
 /// não falha; um `json!` mal formado seria erro de programação, não de dado.
 pub(crate) fn insert(data: &mut Value, key: &str, value: impl serde::Serialize) {
@@ -266,14 +306,14 @@ pub(crate) fn insert(data: &mut Value, key: &str, value: impl serde::Serialize) 
 /// A porta. Despacha a chamada e devolve o envelope — inclusive quando falha: erro de
 /// ferramenta é resposta, não exceção, porque o modelo precisa lê-lo para se corrigir na mesma
 /// rodada.
-pub(crate) async fn dispatch(pool: &SqlitePool, call: &ToolCall, clock: Clock) -> Envelope {
+pub(crate) async fn dispatch(pool: &SqlitePool, call: &ToolCall, ctx: &Context) -> Envelope {
     let revision = data_revision(pool).await.ok();
-    let today = clock.today();
+    let today = ctx.clock.today();
 
     let Some(spec) = catalog::spec(&call.name) else {
         return envelope_for(
             &call.name,
-            clock,
+            ctx.clock,
             revision,
             Period::day(today),
             Err(ToolError::new(
@@ -286,14 +326,14 @@ pub(crate) async fn dispatch(pool: &SqlitePool, call: &ToolCall, clock: Clock) -
 
     let outcome = match Args::parse(spec, &call.arguments) {
         Err(e) => Err(e),
-        Ok(args) => run(pool, spec, &args, today).await,
+        Ok(args) => run(pool, spec, &args, today, ctx).await,
     };
 
     let period = match &outcome {
         Ok(out) => out.period.clone(),
         Err(_) => Period::day(today),
     };
-    envelope_for(spec.name, clock, revision, period, outcome)
+    envelope_for(spec.name, ctx.clock, revision, period, outcome)
 }
 
 async fn run(
@@ -301,6 +341,7 @@ async fn run(
     spec: &'static ToolSpec,
     args: &Args,
     today: chrono::NaiveDate,
+    ctx: &Context,
 ) -> ToolResult {
     match spec.name {
         "get_financial_snapshot" => state_tools::financial_snapshot(pool, args, today).await,
@@ -316,6 +357,8 @@ async fn run(
         "search_transactions" => ledger_tools::search_transactions(pool, args, today).await,
         "get_tags" => ledger_tools::tags(pool, args, today).await,
         "get_commitments" => ledger_tools::commitments(pool, args, today).await,
+        "simulate_scenario" => scenario_tools::simulate_scenario(pool, args, today).await,
+        "get_method_guidance" => method_tools::method_guidance(&ctx.pack, args, today).await,
         // O catálogo é a fonte da verdade dos nomes; uma entrada sem braço aqui é erro de
         // programação, e o teste de cobertura do catálogo o pega antes de qualquer rodada.
         other => Err(ToolError::new(

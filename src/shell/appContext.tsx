@@ -1,5 +1,5 @@
 import { createContext, use } from "react";
-import type { Screen } from "./AppShell";
+import type { Screen } from "./screens";
 import type { MovementType } from "../lib/nkFormat";
 
 export interface ComposeOptions {

@@ -18,7 +18,7 @@ import { fmtDate, fmtDayMonth, formatBRL, fmtAxisBRL } from "../lib/format";
 import { saldoBand } from "../lib/nkFormat";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { syncRecencyLabel } from "../lib/syncRecency";
-import type { Screen } from "../shell/AppShell";
+import type { Screen } from "../shell/screens";
 import {
   buildHorizonteView,
   type CommitmentMonth,

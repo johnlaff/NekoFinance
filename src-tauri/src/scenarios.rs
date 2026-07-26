@@ -1454,48 +1454,11 @@ async fn load_real_rows(
         .map_err(|e| format!("load_real_rows: {e}"))
 }
 
-/// Superset-select das linhas HIPOTÉTICAS do cenário (`t.scenario_id = ?`), com `id`/`description`/
-/// `recurrence_id`/`loan_id` a mais (o cenário nunca sofre override; `loan_id` identifica o grupo
-/// de empréstimo).
-async fn load_hypothetical_rows(
-    pool: &SqlitePool,
-    scenario_id: &str,
-    start: &str,
-    inclusive_start: bool,
-    end: &str,
-) -> Result<Vec<HypoTxnRow>, String> {
-    const INCLUSIVE: &str = "SELECT t.id, t.type AS \"type\", t.amount, t.date, \
-         COALESCE(t.payment_method,'') AS payment_method, \
-         t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity, \
-         t.recurrence_id, t.description, t.loan_id, t.override_id, t.invoice_id \
-         FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
-         WHERE t.date >= ?2 AND t.date <= ?3 AND t.scenario_id = ?1";
-    const EXCLUSIVE: &str = "SELECT t.id, t.type AS \"type\", t.amount, t.date, \
-         COALESCE(t.payment_method,'') AS payment_method, \
-         t.is_fixed, t.is_projection, COALESCE(a.liquidity,'') AS to_liquidity, \
-         t.recurrence_id, t.description, t.loan_id, t.override_id, t.invoice_id \
-         FROM \"transaction\" t LEFT JOIN account a ON a.id = t.to_account_id \
-         WHERE t.date > ?2 AND t.date <= ?3 AND t.scenario_id = ?1";
-    let sql = if inclusive_start {
-        INCLUSIVE
-    } else {
-        EXCLUSIVE
-    };
-    sqlx::query_as(sql)
-        .bind(scenario_id)
-        .bind(start)
-        .bind(end)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| format!("load_hypothetical_rows: {e}"))
-}
-
-/// TODAS as linhas hipotéticas do cenário, SEM janela de data — a detecção de empréstimo e a
-/// lista de `changes` precisam ver o grupo INTEIRO, independentemente das janelas de data do
-/// encadeamento (`date >= today`) e das métricas (`date >= month_start`), que existem só para o
-/// cálculo de saldo e recortariam linhas do grupo (uma parcela além do horizonte, uma linha antes
-/// da janela). `ORDER BY date, id` torna determinística a escolha do "primeiro" grupo de
-/// empréstimo reportado.
+/// TODAS as linhas hipotéticas do cenário (`t.scenario_id = ?`), SEM janela de data — a projeção
+/// aplica as janelas dela em memória, e a detecção de empréstimo e a lista de `changes` precisam
+/// ver o grupo INTEIRO (uma parcela além do horizonte, uma linha antes da janela). Superset-select
+/// das linhas reais, com `id`/`description`/`loan_id`/`override_id` a mais. `ORDER BY date, id`
+/// torna determinística a escolha do "primeiro" grupo de empréstimo reportado.
 async fn load_all_hypothetical_rows(
     pool: &SqlitePool,
     scenario_id: &str,
@@ -1938,34 +1901,56 @@ fn current_month_income(fc: &forecast::Forecast, today: NaiveDate) -> i64 {
         .unwrap_or(0)
 }
 
-pub(crate) async fn get_scenario_forecast_inner(
-    pool: &SqlitePool,
-    scenario_id: &str,
-    today: NaiveDate,
-) -> Result<ScenarioCompareDto, String> {
-    let scenario: Scenario =
-        sqlx::query_as("SELECT id, name, person_id FROM scenario WHERE id = ?1")
-            .bind(scenario_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| format!("get_scenario_forecast: {e}"))?
-            .ok_or_else(|| format!("scenario not found: {scenario_id}"))?;
+/// Os dois ramos da projeção medidos pelo mesmo motor — o mundo real e o mundo com as linhas
+/// hipotéticas por cima — com as diferenças já subtraídas.
+///
+/// É o núcleo numérico que o cenário SALVO e a hipótese EFÊMERA compartilham. Separá-lo do
+/// `ScenarioCompareDto` é o que permite simular sem gravar: quem chama traz as linhas, de onde
+/// quer que elas venham, e o motor não sabe (nem precisa saber) se existe um cenário por trás.
+pub(crate) struct ProjectionComparison {
+    pub real_horizon_end: NaiveDate,
+    pub real_month_end: Vec<forecast_cmds::MonthEndDto>,
+    pub real_deepest_deficit: Option<forecast_cmds::DayPointDto>,
+    pub real_performance_cents: i64,
+    pub real_safe_to_spend_today_cents: i64,
+    pub real_binding_guardrail: String,
+    pub real_cost_of_living_cents: i64,
+    pub real_income_cents: i64,
 
+    pub scenario_month_end: Vec<forecast_cmds::MonthEndDto>,
+    pub scenario_deepest_deficit: Option<forecast_cmds::DayPointDto>,
+    pub scenario_performance_cents: i64,
+    pub scenario_safe_to_spend_today_cents: i64,
+    pub scenario_binding_guardrail: String,
+    pub scenario_cost_of_living_cents: i64,
+    pub scenario_income_cents: i64,
+
+    pub month_end: Vec<ScenarioMonthEnd>,
+    pub deepest_deficit_delta_cents: Option<i64>,
+    pub performance_delta_cents: i64,
+    pub safe_to_spend_delta_cents: i64,
+    pub cost_of_living_delta_cents: i64,
+}
+
+/// Projeta o mundo real e o mundo com `hypothetical` por cima, ajustado pelo `plan` de supressão.
+///
+/// As janelas de data (encadeamento a partir de hoje, métricas a partir do mês corrente) são
+/// aplicadas aqui, sobre a lista inteira — quem chama entrega TODAS as linhas hipotéticas, sem
+/// recortar. O horizonte estica até a linha hipotética mais distante, senão uma parcela além do
+/// horizonte real sairia da projeção sem aviso.
+async fn compare_projection(
+    pool: &SqlitePool,
+    hypothetical: &[HypoTxnRow],
+    plan: &SuppressionPlan,
+    today: NaiveDate,
+) -> Result<ProjectionComparison, String> {
     let real_horizon_end = forecast_horizon_end(pool, today).await?;
-    let scenario_max: (Option<String>,) =
-        sqlx::query_as("SELECT MAX(date) FROM \"transaction\" WHERE scenario_id = ?1")
-            .bind(scenario_id)
-            .fetch_one(pool)
-            .await
-            .map_err(|e| format!("scenario max date: {e}"))?;
-    let scenario_max_date = scenario_max
-        .0
-        .as_deref()
-        .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
-    let horizon_end = match scenario_max_date {
-        Some(d) if d > real_horizon_end => d,
-        _ => real_horizon_end,
-    };
+    let horizon_end = hypothetical
+        .iter()
+        .filter_map(|r| NaiveDate::parse_from_str(&r.date, "%Y-%m-%d").ok())
+        .max()
+        .filter(|d| *d > real_horizon_end)
+        .unwrap_or(real_horizon_end);
 
     let seed = projection_seed(pool, today).await?;
     let years: Vec<i32> = (today.year()..=horizon_end.year()).collect();
@@ -1984,10 +1969,7 @@ pub(crate) async fn get_scenario_forecast_inner(
         &annotation,
     );
 
-    // --- Ramo CENÁRIO: linhas reais AJUSTADAS pelos overrides + linhas hipotéticas do cenário. ---
-    let overrides = list_scenario_overrides(pool, scenario_id).await?;
-    let plan = build_suppression_plan(pool, &overrides, today).await?;
-
+    // --- Ramo CENÁRIO: linhas reais AJUSTADAS pelos overrides + linhas hipotéticas. ---
     let today_str = today.format("%Y-%m-%d").to_string();
     let horizon_str = horizon_end.format("%Y-%m-%d").to_string();
     let month_start_str = NaiveDate::from_ymd_opt(today.year(), today.month(), 1)
@@ -2004,13 +1986,17 @@ pub(crate) async fn get_scenario_forecast_inner(
     // double-count com o encadeamento.
     let real_chain_raw = load_real_rows(pool, &today_str, false, &horizon_str).await?;
     let real_metric_raw = load_real_rows(pool, &month_start_str, true, &horizon_str).await?;
-    let hypo_chain_rows =
-        load_hypothetical_rows(pool, scenario_id, &today_str, true, &horizon_str).await?;
-    let hypo_metric_rows =
-        load_hypothetical_rows(pool, scenario_id, &month_start_str, true, &horizon_str).await?;
+    let window = |from: &str| -> Vec<&HypoTxnRow> {
+        hypothetical
+            .iter()
+            .filter(|r| r.date.as_str() >= from && r.date.as_str() <= horizon_str.as_str())
+            .collect()
+    };
+    let hypo_chain_rows = window(&today_str);
+    let hypo_metric_rows = window(&month_start_str);
 
-    let scenario_chain_adjusted = apply_suppression(real_chain_raw, &plan);
-    let scenario_metric_adjusted = apply_suppression(real_metric_raw, &plan);
+    let scenario_chain_adjusted = apply_suppression(real_chain_raw, plan);
+    let scenario_metric_adjusted = apply_suppression(real_metric_raw, plan);
 
     let scenario_end_exclusive = horizon_end
         .succ_opt()
@@ -2021,7 +2007,7 @@ pub(crate) async fn get_scenario_forecast_inner(
         .into_iter()
         .map(CardAwareRow::from)
         .collect();
-    chain_rows.extend(hypo_chain_rows.iter().map(CardAwareRow::from));
+    chain_rows.extend(hypo_chain_rows.into_iter().map(CardAwareRow::from));
     let mut scenario_chain_events: Vec<CashflowEvent> =
         build_card_aware_events(pool, chain_rows, today)
             .await?
@@ -2049,7 +2035,7 @@ pub(crate) async fn get_scenario_forecast_inner(
             CardAwareRow::from(r).with_mask(mask)
         })
         .collect();
-    metric_rows.extend(hypo_metric_rows.iter().map(CardAwareRow::from));
+    metric_rows.extend(hypo_metric_rows.into_iter().map(CardAwareRow::from));
     let mut scenario_metric_events = build_card_aware_events(pool, metric_rows, today).await?;
     scenario_metric_events = finalize_card_metric_events(
         pool,
@@ -2185,11 +2171,53 @@ pub(crate) async fn get_scenario_forecast_inner(
         _ => None,
     };
 
-    // --- Empréstimo + changes: usam TODAS as linhas hipotéticas do cenário (sem janela de data).
-    // As janelas de encadeamento/métrica existem só para o cálculo de saldo; a detecção e a lista
-    // de `changes` precisam do grupo inteiro — senão `loan_total_cost` poderia superestimar o
-    // custo por não ver todas as linhas do financiamento.
+    Ok(ProjectionComparison {
+        real_horizon_end,
+        real_month_end,
+        real_deepest_deficit,
+        real_performance_cents,
+        real_safe_to_spend_today_cents: real_sts.amount_cents,
+        real_binding_guardrail: guardrail_str(real_sts.binding),
+        real_cost_of_living_cents,
+        real_income_cents,
+
+        scenario_month_end,
+        scenario_deepest_deficit,
+        scenario_performance_cents,
+        scenario_safe_to_spend_today_cents: scenario_sts.amount_cents,
+        scenario_binding_guardrail: guardrail_str(scenario_sts.binding),
+        scenario_cost_of_living_cents,
+        scenario_income_cents,
+
+        month_end,
+        deepest_deficit_delta_cents,
+        performance_delta_cents: scenario_performance_cents - real_performance_cents,
+        safe_to_spend_delta_cents: scenario_sts.amount_cents - real_sts.amount_cents,
+        cost_of_living_delta_cents: scenario_cost_of_living_cents - real_cost_of_living_cents,
+    })
+}
+
+pub(crate) async fn get_scenario_forecast_inner(
+    pool: &SqlitePool,
+    scenario_id: &str,
+    today: NaiveDate,
+) -> Result<ScenarioCompareDto, String> {
+    let scenario: Scenario =
+        sqlx::query_as("SELECT id, name, person_id FROM scenario WHERE id = ?1")
+            .bind(scenario_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("get_scenario_forecast: {e}"))?
+            .ok_or_else(|| format!("scenario not found: {scenario_id}"))?;
+
+    let overrides = list_scenario_overrides(pool, scenario_id).await?;
+    let plan = build_suppression_plan(pool, &overrides, today).await?;
+    // TODAS as linhas hipotéticas do cenário, sem janela de data: a projeção aplica as janelas
+    // dela, e a detecção de empréstimo e a lista de `changes` precisam do grupo INTEIRO — senão
+    // `loan_total_cost` subestimaria o custo por não ver todas as parcelas.
     let all_hypo_rows = load_all_hypothetical_rows(pool, scenario_id).await?;
+    let comparison = compare_projection(pool, &all_hypo_rows, &plan, today).await?;
+
     // Insumos da régua de reserva — os MESMOS do `reserve_months` do dashboard (numerador =
     // contas de reserva; denominador = mediana dos meses completos), para "antes" coincidir com
     // o dashboard. O compare é somente-leitura: queries direto no pool, sem transação aberta.
@@ -2303,33 +2331,82 @@ pub(crate) async fn get_scenario_forecast_inner(
         scenario_id: scenario.id,
         scenario_name: scenario.name,
 
-        real_today: today_str,
-        real_horizon_end: real_horizon_end.format("%Y-%m-%d").to_string(),
-        real_month_end,
-        real_deepest_deficit,
-        real_performance_cents,
-        real_safe_to_spend_today_cents: real_sts.amount_cents,
-        real_binding_guardrail: guardrail_str(real_sts.binding),
-        real_cost_of_living_cents,
-        real_income_cents,
+        real_today: today.format("%Y-%m-%d").to_string(),
+        real_horizon_end: comparison.real_horizon_end.format("%Y-%m-%d").to_string(),
+        real_month_end: comparison.real_month_end,
+        real_deepest_deficit: comparison.real_deepest_deficit,
+        real_performance_cents: comparison.real_performance_cents,
+        real_safe_to_spend_today_cents: comparison.real_safe_to_spend_today_cents,
+        real_binding_guardrail: comparison.real_binding_guardrail,
+        real_cost_of_living_cents: comparison.real_cost_of_living_cents,
+        real_income_cents: comparison.real_income_cents,
 
-        scenario_month_end,
-        scenario_deepest_deficit,
-        scenario_performance_cents,
-        scenario_safe_to_spend_today_cents: scenario_sts.amount_cents,
-        scenario_binding_guardrail: guardrail_str(scenario_sts.binding),
-        scenario_cost_of_living_cents,
-        scenario_income_cents,
+        scenario_month_end: comparison.scenario_month_end,
+        scenario_deepest_deficit: comparison.scenario_deepest_deficit,
+        scenario_performance_cents: comparison.scenario_performance_cents,
+        scenario_safe_to_spend_today_cents: comparison.scenario_safe_to_spend_today_cents,
+        scenario_binding_guardrail: comparison.scenario_binding_guardrail,
+        scenario_cost_of_living_cents: comparison.scenario_cost_of_living_cents,
+        scenario_income_cents: comparison.scenario_income_cents,
 
-        month_end,
-        deepest_deficit_delta_cents,
-        performance_delta_cents: scenario_performance_cents - real_performance_cents,
-        safe_to_spend_delta_cents: scenario_sts.amount_cents - real_sts.amount_cents,
-        cost_of_living_delta_cents: scenario_cost_of_living_cents - real_cost_of_living_cents,
+        month_end: comparison.month_end,
+        deepest_deficit_delta_cents: comparison.deepest_deficit_delta_cents,
+        performance_delta_cents: comparison.performance_delta_cents,
+        safe_to_spend_delta_cents: comparison.safe_to_spend_delta_cents,
+        cost_of_living_delta_cents: comparison.cost_of_living_delta_cents,
 
         changes,
         loan,
     })
+}
+
+/// Uma linha da hipótese, já validada pela porta que a recebeu: magnitude positiva, tipo do
+/// vocabulário do método e, quando é Economia, a liquidez do destino resolvida.
+#[derive(Clone)]
+pub(crate) struct HypotheticalLine {
+    /// `income` · `expense` · `transfer` — o mesmo vocabulário do livro-razão real.
+    pub kind: &'static str,
+    pub amount_cents: i64,
+    pub date: NaiveDate,
+    pub payment_method: Option<String>,
+    pub is_fixed: bool,
+    /// Liquidez da conta de destino (`reserve` = Economia, `illiquid` = Patrimônio). Nula fora
+    /// de uma transferência.
+    pub to_liquidity: Option<String>,
+}
+
+/// Projeta uma hipótese EFÊMERA: as linhas nascem em memória, passam pelo mesmo motor do cenário
+/// salvo e morrem com a resposta. Nenhuma escrita acontece — não há cenário, não há linha, não há
+/// o que apagar depois. É essa ausência que torna a simulação segura de oferecer à conversa.
+pub(crate) async fn simulate_hypothesis(
+    pool: &SqlitePool,
+    lines: &[HypotheticalLine],
+    today: NaiveDate,
+) -> Result<ProjectionComparison, String> {
+    let simulation_namespace = uuid::Uuid::new_v4();
+    let rows: Vec<HypoTxnRow> = lines
+        .iter()
+        .enumerate()
+        .map(|(index, line)| HypoTxnRow {
+            // O namespace único impede que a linha hipotética herde itens de nota de um
+            // lançamento real com o mesmo id; a hipótese não tem nota própria.
+            id: format!("hipotese:{simulation_namespace}:{index}"),
+            ttype: line.kind.to_string(),
+            amount: line.amount_cents,
+            date: line.date.format("%Y-%m-%d").to_string(),
+            payment_method: line.payment_method.clone().unwrap_or_default(),
+            is_fixed: i64::from(line.is_fixed),
+            // Mesma convenção do caminho que grava: o que ainda não aconteceu é projeção.
+            is_projection: i64::from(line.date > today),
+            to_liquidity: line.to_liquidity.clone().unwrap_or_default(),
+            recurrence_id: None,
+            description: None,
+            loan_id: None,
+            override_id: None,
+            invoice_id: None,
+        })
+        .collect();
+    compare_projection(pool, &rows, &SuppressionPlan::default(), today).await
 }
 
 // --- Tauri command wrappers ---

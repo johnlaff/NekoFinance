@@ -4,7 +4,7 @@ import { formatBRL } from "../lib/format";
 import { MES } from "../lib/nkFormat";
 import { saldoBand } from "../lib/saldoHeatmap";
 import { faturaDayLabel, localTodayIso, openInvoicesView } from "./hojeView";
-import type { Screen } from "../shell/AppShell";
+import type { Screen } from "../shell/screens";
 
 // View-model puro da tela Mia — a conversa. Aqui moram o roteamento da pergunta, as
 // respostas determinísticas e as recusas honestas. Nenhuma regra de método nasce aqui:
