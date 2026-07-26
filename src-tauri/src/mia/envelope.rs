@@ -254,6 +254,8 @@ pub(crate) enum ErrorCode {
     InvalidArgument,
     /// Argumento bem formado apontando para o que não existe (um cenário, por exemplo).
     NotFound,
+    /// Conteúdo que não passou na varredura de privacidade — não sai da máquina.
+    PrivacyBlocked,
     /// Leitura do banco falhou.
     ReadFailed,
 }

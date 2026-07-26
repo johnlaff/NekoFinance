@@ -367,7 +367,7 @@ fn totals_of(
     totals
 }
 
-const MOVEMENTS: &[&str] = &[
+pub(super) const MOVEMENTS: &[&str] = &[
     "entrada",
     "saida",
     "diario",

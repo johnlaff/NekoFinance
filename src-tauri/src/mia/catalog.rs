@@ -270,6 +270,43 @@ pub(crate) const CATALOG: &[ToolSpec] = &[
         params: &["range", "cursor"],
         includes: &[],
     },
+    ToolSpec {
+        name: "simulate_scenario",
+        summary: "Uma hipótese jogada por cima do mundo real, com os dois lados projetados pelo \
+                  mesmo motor e as diferenças já feitas. NADA é gravado: a simulação não cria \
+                  cenário nem lançamento, e não há o que apagar depois. Cada mudança é \
+                  {movement, amount_cents, date} — movement em entrada · saida · diario · \
+                  cartao · economia · patrimonio, valor sempre positivo (o sinal vem do \
+                  movement) — mais os opcionais repeat_months (repete a linha mês a mês; as \
+                  datas são contadas pela ferramenta) e description.",
+        use_for: "Perguntas de \"e se\" — \"dá para assumir uma parcela de R$ 800?\", \"e se eu \
+                  cortar R$ 300 por mês?\", \"e se eu guardar mais R$ 500 todo mês?\", \"esse \
+                  gasto abre buraco lá na frente?\".",
+        not_for: "A projeção do mundo como ele está, sem hipótese nenhuma (use get_forecast); um \
+                  cenário SALVO, que tem nome e vive na tela Horizonte (use get_forecast com \
+                  scenario_id). Simular também não registra: um lançamento que a pessoa QUER \
+                  passa pelo gesto de aprovar, nunca por uma simulação.",
+        params: &["changes"],
+        includes: &[Include {
+            name: "month_end",
+            description: "Saldo de fim de mês nos dois mundos, com a diferença.",
+        }],
+    },
+    ToolSpec {
+        name: "get_method_guidance",
+        summary: "O capítulo do método sobre um tópico, servido inteiro do material curado \
+                  local. Tópicos: metodo · diario · cartao · economia · reserva · dividas · \
+                  financiamento · patrimonio · renda · casal · planejamento.",
+        use_for: "Perguntas sobre o MÉTODO, não sobre os números — \"o que é o Diário?\", \"por \
+                  que a reserva vem antes de investir?\", \"como o método trata dívida?\", \"me \
+                  explica a faixa de economia\", \"o que o método diz sobre financiamento?\".",
+        not_for: "Qualquer número da pessoa, que vem das outras ferramentas: esta camada \
+                  EXPLICA e nunca calcula. A resposta que nasce daqui é explicação do método, e \
+                  precisa se apresentar como tal — jamais como conta feita sobre os lançamentos \
+                  de quem perguntou.",
+        params: &["topic"],
+        includes: &[],
+    },
 ];
 
 pub(crate) fn spec(name: &str) -> Option<&'static ToolSpec> {

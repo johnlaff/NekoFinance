@@ -48,6 +48,9 @@ const SCREEN_META: Record<Screen, { title: string; crumb: string }> = {
   config: { title: "Configurações", crumb: "Conexão e privacidade" },
 };
 
+/** As telas do app em tempo de execução — o manifesto de paridade da conversa as enumera. */
+export const SCREEN_KEYS = Object.keys(SCREEN_META) as Screen[];
+
 interface NavItem {
   key: Screen;
   label: string;

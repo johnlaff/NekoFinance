@@ -5,6 +5,9 @@ use super::*;
 use chrono::DateTime;
 use serde_json::{Value, json};
 use sqlx::sqlite::SqlitePoolOptions;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 /// Pool de UMA conexão, como o de produção: pool default esconde deadlock de transação.
 async fn pool() -> SqlitePool {
@@ -23,7 +26,131 @@ fn clock() -> Clock {
 }
 
 async fn call(pool: &SqlitePool, name: &str, arguments: Value) -> Envelope {
-    dispatch(pool, &ToolCall::new(name, arguments), clock()).await
+    let pack_root = pack_fixture();
+    call_with_pack(pool, &pack_root, name, arguments).await
+}
+
+async fn call_with_pack(
+    pool: &SqlitePool,
+    pack_root: &Path,
+    name: &str,
+    arguments: Value,
+) -> Envelope {
+    let ctx = Context {
+        clock: clock(),
+        pack: method_tools::MethodPack::at(pack_root),
+    };
+    dispatch(pool, &ToolCall::new(name, arguments), &ctx).await
+}
+
+/// O pack da suíte é isolado para que o contrato da fachada não dependa de conteúdo privado.
+fn pack_fixture() -> PathBuf {
+    static PACK: OnceLock<PathBuf> = OnceLock::new();
+
+    PACK.get_or_init(|| {
+        let root = std::env::temp_dir().join("neko-finance-mia-pack-fixture");
+        std::fs::create_dir_all(root.join("chapters")).unwrap();
+        for topic in method_tools::TOPICS {
+            std::fs::write(
+                root.join("chapters").join(format!("{topic}.md")),
+                // O título difere do nome do tópico de propósito: os dois coincidindo, o teste do
+                // título passaria também com o parser quebrado, porque o tópico é o fallback.
+                format!("# Capítulo de {topic}\n\nOrientação sintética do método para a suíte.\n"),
+            )
+            .unwrap();
+        }
+        std::fs::write(
+            root.join("forbidden-extra.txt"),
+            "termo-ausente-da-fixture\n",
+        )
+        .unwrap();
+        root
+    })
+    .clone()
+}
+
+/// Pack temporário para provar os limites de privacidade sem depender do material privado.
+struct TempPack {
+    root: PathBuf,
+}
+
+impl TempPack {
+    fn new() -> Self {
+        let root = std::env::temp_dir().join(format!(
+            "neko-finance-mia-test-pack-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        Self { root }
+    }
+
+    fn absent() -> Self {
+        Self {
+            root: std::env::temp_dir().join(format!(
+                "neko-finance-mia-test-pack-{}",
+                uuid::Uuid::new_v4()
+            )),
+        }
+    }
+
+    fn path(&self) -> &Path {
+        &self.root
+    }
+
+    fn chapter(&self, topic: &str, content: &str) {
+        let chapters = self.root.join("chapters");
+        std::fs::create_dir_all(&chapters).unwrap();
+        std::fs::write(chapters.join(format!("{topic}.md")), content).unwrap();
+    }
+
+    fn root_file(&self, name: &str, content: &str) {
+        std::fs::write(self.root.join(name), content).unwrap();
+    }
+}
+
+impl Drop for TempPack {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn parity_manifest_rows() -> Vec<[String; 4]> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("docs")
+        .join("mia-tool-parity.md");
+    let manifest = std::fs::read_to_string(path).unwrap();
+
+    manifest
+        .lines()
+        .filter(|line| line.starts_with('|'))
+        .filter_map(|line| {
+            let mut columns: Vec<String> = line
+                .split('|')
+                .skip(1)
+                .map(str::trim)
+                .map(str::to_string)
+                .collect();
+            if columns.last().is_some_and(|column| column.is_empty()) {
+                columns.pop();
+            }
+            let is_header = columns.first().is_some_and(|column| column == "Tela");
+            let is_separator = !columns.is_empty()
+                && columns.iter().all(|column| {
+                    let dashes = column.trim_matches(':');
+                    !dashes.is_empty() && dashes.chars().all(|character| character == '-')
+                });
+            (!is_header && !is_separator).then_some(columns)
+        })
+        .map(|columns| {
+            columns.try_into().unwrap_or_else(|columns: Vec<String>| {
+                panic!(
+                    "linha do manifesto precisa ter quatro colunas, encontrou {}",
+                    columns.len()
+                )
+            })
+        })
+        .collect()
 }
 
 /// Envelope de sucesso, com os dados. Falha o teste se a porta recusou.
@@ -31,6 +158,31 @@ async fn data(pool: &SqlitePool, name: &str, arguments: Value) -> Value {
     let env = call(pool, name, arguments).await;
     assert!(env.ok, "esperava sucesso, veio {:?}", env.error);
     env.data.expect("envelope de sucesso carrega dados")
+}
+
+async fn user_table_row_counts(pool: &SqlitePool) -> BTreeMap<String, i64> {
+    let tables: Vec<(String,)> = sqlx::query_as(
+        "SELECT name FROM sqlite_master \
+         WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_sqlx%' \
+         ORDER BY name",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+
+    let mut counts = BTreeMap::new();
+    for (table,) in tables {
+        // O nome vem do catálogo interno do SQLite e é escapado como identificador antes de
+        // formar a consulta, portanto não transporta entrada externa para o SQL dinâmico.
+        let escaped_table = table.replace('"', "\"\"");
+        let query = format!("SELECT COUNT(*) FROM \"{escaped_table}\"");
+        let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(query))
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        counts.insert(table, count);
+    }
+    counts
 }
 
 async fn person(pool: &SqlitePool) -> String {
@@ -769,14 +921,16 @@ async fn every_tool_declares_use_for_and_not_for_and_answers() {
         );
         assert!(!spec.summary.is_empty(), "{}: sem resumo", spec.name);
 
-        let env = call(&p, spec.name, json!({})).await;
+        let env = call(&p, spec.name, Value::Object(minimal_args(spec.name))).await;
         assert!(env.ok, "{} não respondeu: {:?}", spec.name, env.error);
 
         // Toda expansão declarada é alcançável — catálogo que promete o que não entrega é
         // pior que catálogo curto. A expansão de uma LISTA cai dentro de cada linha (as tags de
         // um lançamento), então a busca é pelo nome em qualquer profundidade.
         for include in spec.include_names() {
-            let env = call(&p, spec.name, json!({ "include": [include] })).await;
+            let mut arguments = minimal_args(spec.name);
+            arguments.insert("include".to_string(), json!([include]));
+            let env = call(&p, spec.name, Value::Object(arguments)).await;
             assert!(
                 env.ok,
                 "{} com include {include} falhou: {:?}",
@@ -791,12 +945,48 @@ async fn every_tool_declares_use_for_and_not_for_and_answers() {
     }
 }
 
+fn minimal_args(tool: &str) -> serde_json::Map<String, Value> {
+    let mut arguments = serde_json::Map::new();
+    if tool == "simulate_scenario" {
+        arguments.insert(
+            "changes".to_string(),
+            json!([{
+                "movement": "saida",
+                "amount_cents": 50000,
+                "date": "2026-07-28"
+            }]),
+        );
+    }
+    arguments
+}
+
 /// A chave existe em algum ponto da resposta?
 fn has_key(value: &Value, key: &str) -> bool {
     match value {
         Value::Object(map) => map.contains_key(key) || map.values().any(|item| has_key(item, key)),
         Value::Array(items) => items.iter().any(|item| has_key(item, key)),
         _ => false,
+    }
+}
+
+#[tokio::test]
+async fn manifest_tools_resolve_to_catalog_and_catalog_tools_have_surface() {
+    let rows = parity_manifest_rows();
+    let manifest_tools: Vec<&str> = rows.iter().map(|row| row[3].trim_matches('`')).collect();
+
+    for tool in &manifest_tools {
+        assert!(
+            catalog::CATALOG.iter().any(|spec| spec.name == *tool),
+            "A ferramenta desconhecida \"{tool}\" foi citada no manifesto de paridade."
+        );
+    }
+
+    for spec in catalog::CATALOG {
+        assert!(
+            manifest_tools.contains(&spec.name),
+            "A ferramenta \"{}\" está órfã no manifesto: ferramenta sem superfície é ferramenta que ninguém alcança.",
+            spec.name
+        );
     }
 }
 
@@ -2400,4 +2590,506 @@ async fn search_refuses_a_payment_method_that_is_not_one() {
 
     assert_eq!(err.code, ErrorCode::InvalidArgument);
     assert!(err.fix.contains("credit"), "fix: {}", err.fix);
+}
+
+// --- A hipótese efêmera -----------------------------------------------------------------
+
+#[tokio::test]
+async fn simulation_does_not_write_to_any_user_table() {
+    let p = pool().await;
+    timeline(&p).await;
+
+    // A garantia da hipótese é que nada é gravado; fotografar só duas tabelas deixaria uma
+    // escrita acidental em qualquer outra tabela passar sem ser percebida.
+    let before = user_table_row_counts(&p).await;
+
+    let scenario = data(
+        &p,
+        "simulate_scenario",
+        json!({
+            "changes": [{
+                "movement": "saida",
+                "amount_cents": 50_000,
+                "date": "2026-07-28"
+            }]
+        }),
+    )
+    .await;
+
+    let after = user_table_row_counts(&p).await;
+
+    assert_eq!(scenario["ephemeral"], true);
+    for table in before.keys().chain(after.keys()) {
+        let before_count = before.get(table).copied().unwrap_or_default();
+        let after_count = after.get(table).copied().unwrap_or_default();
+        let entered = (after_count - before_count).max(0);
+        let exited = (before_count - after_count).max(0);
+        assert_eq!(
+            after_count, before_count,
+            "A simulação alterou a tabela \"{table}\": {entered} linha(s) entraram; {exited} saíram."
+        );
+    }
+}
+
+#[tokio::test]
+async fn simulation_uses_a_unique_namespace_for_hypothetical_line_ids() {
+    let p = pool().await;
+    // A linha histórica está fora da projeção, mas seu item continuaria acessível por uma busca
+    // de nota que usasse o mesmo id sintético da hipótese.
+    sqlx::query(
+        "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+         VALUES ('hipotese:0', 'expense', 50000, '2026-06-10', 1, 0)",
+    )
+    .execute(&p)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, section) \
+         VALUES ('item-historico', 'hipotese:0', 50000, 'Reserva', 0, 'ECONOMIA:')",
+    )
+    .execute(&p)
+    .await
+    .unwrap();
+
+    let scenario = data(
+        &p,
+        "simulate_scenario",
+        json!({
+            "changes": [{
+                "movement": "saida",
+                "amount_cents": 50_000,
+                "date": "2026-07-28"
+            }]
+        }),
+    )
+    .await;
+
+    assert_eq!(scenario["delta"]["cost_of_living_cents"], 50_000);
+}
+
+#[tokio::test]
+async fn high_outflow_hypothesis_lowers_safe_to_spend_and_lowest_balance() {
+    let p = pool().await;
+    world(&p).await;
+    sqlx::query("UPDATE account SET balance = 2000000 WHERE id = 'acc-bank'")
+        .execute(&p)
+        .await
+        .unwrap();
+    transfer(&p, "ec-reserva", 800_000, "2026-06-28", "acc-reserve").await;
+
+    let scenario = data(
+        &p,
+        "simulate_scenario",
+        json!({
+            "changes": [{
+                "movement": "saida",
+                "amount_cents": 5_000_000,
+                "date": "2026-07-26"
+            }]
+        }),
+    )
+    .await;
+
+    let delta = scenario["delta"]["safe_to_spend_cents"]
+        .as_i64()
+        .expect("a diferença de safe-to-spend sai em centavos");
+    let baseline = scenario["baseline"]["lowest_balance"]["balance_cents"]
+        .as_i64()
+        .expect("o mundo base tem saldo mínimo");
+    let hypothesis = scenario["hypothesis"]["lowest_balance"]["balance_cents"]
+        .as_i64()
+        .expect("a hipótese tem saldo mínimo");
+
+    assert!(delta < 0, "delta: {delta}");
+    assert!(
+        hypothesis < baseline,
+        "hipótese: {hypothesis}; base: {baseline}"
+    );
+}
+
+#[tokio::test]
+async fn repeating_months_materializes_dates_in_the_tool() {
+    let p = pool().await;
+    world(&p).await;
+
+    let scenario = data(
+        &p,
+        "simulate_scenario",
+        json!({
+            "changes": [{
+                "movement": "saida",
+                "amount_cents": 50_000,
+                "date": "2026-07-31",
+                "repeat_months": 3
+            }]
+        }),
+    )
+    .await;
+    let lines = scenario["lines"]["items"].as_array().unwrap();
+
+    assert_eq!(lines.len(), 3);
+    assert_eq!(lines[0]["date"], "2026-07-31");
+    assert_eq!(lines[1]["date"], "2026-08-31");
+    assert_eq!(lines[2]["date"], "2026-09-30");
+}
+
+#[tokio::test]
+async fn simulation_refuses_movement_outside_the_vocabulary() {
+    let p = pool().await;
+    let env = call(
+        &p,
+        "simulate_scenario",
+        json!({
+            "changes": [{
+                "movement": "investimento",
+                "amount_cents": 50_000,
+                "date": "2026-07-28"
+            }]
+        }),
+    )
+    .await;
+    let err = env.error.unwrap();
+
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
+    for movement in [
+        "entrada",
+        "saida",
+        "diario",
+        "cartao",
+        "economia",
+        "patrimonio",
+    ] {
+        assert!(err.fix.contains(movement), "fix: {}", err.fix);
+    }
+}
+
+#[tokio::test]
+async fn simulation_refuses_dates_before_current_month() {
+    let p = pool().await;
+    let env = call(
+        &p,
+        "simulate_scenario",
+        json!({
+            "changes": [{
+                "movement": "saida",
+                "amount_cents": 50_000,
+                "date": "2026-06-30"
+            }]
+        }),
+    )
+    .await;
+    let err = env.error.unwrap();
+
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
+    assert!(err.fix.contains("get_month_analysis"), "fix: {}", err.fix);
+}
+
+#[tokio::test]
+async fn simulation_refuses_a_change_beyond_the_ten_year_horizon() {
+    let p = pool().await;
+    let limit = "2036-07-25";
+    let env = call(
+        &p,
+        "simulate_scenario",
+        json!({
+            "changes": [{
+                "movement": "saida",
+                "amount_cents": 50_000,
+                "date": "2036-07-26"
+            }]
+        }),
+    )
+    .await;
+    let err = env.error.unwrap();
+
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
+    assert!(err.message.contains(limit), "message: {}", err.message);
+}
+
+#[tokio::test]
+async fn simulation_refuses_a_repetition_that_crosses_the_ten_year_horizon() {
+    let p = pool().await;
+    let env = call(
+        &p,
+        "simulate_scenario",
+        json!({
+            "changes": [{
+                "movement": "saida",
+                "amount_cents": 50_000,
+                "date": "2036-07-25",
+                "repeat_months": 2
+            }]
+        }),
+    )
+    .await;
+    let err = env.error.unwrap();
+
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
+    assert!(
+        err.message.contains("2036-07-25"),
+        "message: {}",
+        err.message
+    );
+}
+
+#[tokio::test]
+async fn simulation_refuses_an_amount_above_the_line_limit() {
+    let p = pool().await;
+    let env = call(
+        &p,
+        "simulate_scenario",
+        json!({
+            "changes": [{
+                "movement": "saida",
+                "amount_cents": 100_000_000_001i64,
+                "date": "2026-07-28"
+            }]
+        }),
+    )
+    .await;
+    let err = env.error.unwrap();
+
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
+    assert!(
+        err.message.contains("R$ 1.000.000.000,00"),
+        "message: {}",
+        err.message
+    );
+}
+
+#[tokio::test]
+async fn simulation_refuses_a_description_with_the_wrong_type_and_names_its_position() {
+    let p = pool().await;
+    let env = call(
+        &p,
+        "simulate_scenario",
+        json!({
+            "changes": [
+                {
+                    "movement": "saida",
+                    "amount_cents": 50_000,
+                    "date": "2026-07-28"
+                },
+                {
+                    "movement": "saida",
+                    "amount_cents": 50_000,
+                    "date": "2026-07-29",
+                    "description": 42
+                }
+            ]
+        }),
+    )
+    .await;
+    let err = env.error.unwrap();
+
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
+    assert!(
+        err.message.contains("mudança #2"),
+        "message: {}",
+        err.message
+    );
+    assert!(err.fix.contains("description"), "fix: {}", err.fix);
+}
+
+#[tokio::test]
+async fn simulation_refuses_unknown_change_field_with_position_and_accepted_fields() {
+    let p = pool().await;
+    let env = call(
+        &p,
+        "simulate_scenario",
+        json!({
+            "changes": [
+                {
+                    "movement": "saida",
+                    "amount_cents": 50_000,
+                    "date": "2026-07-28"
+                },
+                {
+                    "movement": "saida",
+                    "amount_cents": 50_000,
+                    "date": "2026-07-29",
+                    "conta": "acc-bank"
+                }
+            ]
+        }),
+    )
+    .await;
+    let err = env.error.unwrap();
+
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
+    assert!(
+        err.message.contains("mudança #2"),
+        "message: {}",
+        err.message
+    );
+    for field in [
+        "movement",
+        "amount_cents",
+        "date",
+        "repeat_months",
+        "description",
+    ] {
+        assert!(err.fix.contains(field), "fix: {}", err.fix);
+    }
+}
+
+#[tokio::test]
+async fn simulation_refuses_empty_hypothesis_with_ready_example() {
+    let p = pool().await;
+    let env = call(&p, "simulate_scenario", json!({"changes": []})).await;
+    let err = env.error.unwrap();
+
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
+    assert!(err.fix.contains("changes: [{"), "fix: {}", err.fix);
+    assert!(err.fix.contains("saida"), "fix: {}", err.fix);
+}
+
+#[tokio::test]
+async fn simulation_only_returns_month_end_with_include() {
+    let p = pool().await;
+    world(&p).await;
+
+    let lean = data(
+        &p,
+        "simulate_scenario",
+        json!({
+            "changes": [{
+                "movement": "saida",
+                "amount_cents": 50_000,
+                "date": "2026-07-28"
+            }]
+        }),
+    )
+    .await;
+    assert!(lean.get("month_end").is_none());
+
+    let expanded = data(
+        &p,
+        "simulate_scenario",
+        json!({
+            "changes": [{
+                "movement": "saida",
+                "amount_cents": 50_000,
+                "date": "2026-07-28"
+            }],
+            "include": ["month_end"]
+        }),
+    )
+    .await;
+    assert!(expanded.get("month_end").is_some());
+}
+
+// --- O método explicado -----------------------------------------------------------------
+
+#[tokio::test]
+async fn method_guidance_serves_requested_chapter_with_method_provenance() {
+    let p = pool().await;
+
+    let guidance = data(&p, "get_method_guidance", json!({"topic": "diario"})).await;
+
+    assert_eq!(guidance["topic"], "diario");
+    assert_eq!(guidance["provenance"], "metodo");
+    assert_eq!(guidance["title"], "Capítulo de diario");
+    assert!(
+        guidance["content"]
+            .as_str()
+            .unwrap()
+            .contains("Orientação sintética do método para a suíte."),
+    );
+}
+
+#[tokio::test]
+async fn method_guidance_defaults_to_overview() {
+    let p = pool().await;
+
+    let guidance = data(&p, "get_method_guidance", json!({})).await;
+
+    assert_eq!(guidance["topic"], "metodo");
+    assert_eq!(guidance["provenance"], "metodo");
+}
+
+#[tokio::test]
+async fn method_guidance_refuses_topic_outside_vocabulary() {
+    let p = pool().await;
+    let env = call(&p, "get_method_guidance", json!({"topic": "investimentos"})).await;
+    let err = env.error.unwrap();
+
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
+    for topic in method_tools::TOPICS {
+        assert!(err.fix.contains(topic), "fix: {}", err.fix);
+    }
+}
+
+#[tokio::test]
+async fn method_guidance_without_pack_hides_absolute_path() {
+    let p = pool().await;
+    let pack = TempPack::absent();
+    let absolute_path = pack.path().display().to_string();
+    assert!(!pack.path().exists());
+
+    let env = call_with_pack(&p, pack.path(), "get_method_guidance", json!({})).await;
+    let err = env.error.unwrap();
+
+    assert_eq!(err.code, ErrorCode::NotFound);
+    assert!(
+        !err.message.contains(&absolute_path),
+        "message: {}",
+        err.message
+    );
+}
+
+#[tokio::test]
+async fn method_guidance_privacy_gate_blocks_without_echoing_forbidden_term() {
+    let p = pool().await;
+    let term = "segredo-plantado-da-suíte";
+    let pack = TempPack::new();
+    pack.chapter("diario", &format!("# Diário\n\n{term}\n"));
+    pack.root_file("forbidden-extra.txt", term);
+
+    let env = call_with_pack(
+        &p,
+        pack.path(),
+        "get_method_guidance",
+        json!({"topic": "diario"}),
+    )
+    .await;
+    let err = env.error.unwrap();
+
+    assert_eq!(err.code, ErrorCode::PrivacyBlocked);
+    assert!(!err.message.contains(term), "message: {}", err.message);
+    assert!(!err.fix.contains(term), "fix: {}", err.fix);
+}
+
+#[tokio::test]
+async fn method_guidance_blocks_a_deny_list_with_a_whitespace_only_entry() {
+    let p = pool().await;
+    let pack = TempPack::new();
+    pack.chapter("metodo", "# Método\n\nOrientação sintética.\n");
+    pack.root_file("forbidden-extra.txt", " \t \n");
+
+    let env = call_with_pack(&p, pack.path(), "get_method_guidance", json!({})).await;
+    let err = env.error.unwrap();
+
+    assert!(!env.ok);
+    assert!(env.data.is_none());
+    assert_eq!(err.code, ErrorCode::PrivacyBlocked);
+    assert!(
+        err.message.contains("forbidden-extra.txt"),
+        "message: {}",
+        err.message
+    );
+    assert!(err.message.contains("#1"), "message: {}", err.message);
+}
+
+#[tokio::test]
+async fn method_guidance_fails_closed_without_deny_list() {
+    let p = pool().await;
+    let pack = TempPack::new();
+    pack.chapter("metodo", "# Método\n\nOrientação sintética.\n");
+
+    let env = call_with_pack(&p, pack.path(), "get_method_guidance", json!({})).await;
+
+    assert!(!env.ok);
+    assert!(env.data.is_none());
+    assert_eq!(env.error.unwrap().code, ErrorCode::PrivacyBlocked);
 }
