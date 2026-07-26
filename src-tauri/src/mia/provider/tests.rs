@@ -679,3 +679,76 @@ fn drift_treats_a_catalog_without_data_as_unreadable() {
         Err(ref drift) if matches!(drift.drift, Drift::CatalogUnreadable { .. })
     ));
 }
+
+use super::egress::{EgressDenied, check, on_redirect};
+
+#[test]
+fn egress_accepts_the_pinned_request_endpoint() {
+    let request = request_for(default_pin(), vec![]);
+
+    assert_eq!(check(request.url), Ok(()));
+}
+
+#[test]
+fn egress_refuses_an_insecure_scheme() {
+    assert!(matches!(
+        check("http://openrouter.ai/api/v1/chat/completions"),
+        Err(EgressDenied::InsecureScheme)
+    ));
+}
+
+#[test]
+fn egress_refuses_a_host_with_an_allowed_prefix() {
+    assert!(matches!(
+        check("https://openrouter.ai.evil.example/api/v1/chat/completions"),
+        Err(EgressDenied::HostNotAllowed { ref host }) if host == "openrouter.ai.evil.example"
+    ));
+}
+
+#[test]
+fn egress_refuses_an_unlisted_host() {
+    assert!(matches!(
+        check("https://evil.example/api/v1/chat/completions"),
+        Err(EgressDenied::HostNotAllowed { ref host }) if host == "evil.example"
+    ));
+}
+
+#[test]
+fn egress_refuses_an_unlisted_subdomain() {
+    assert!(matches!(
+        check("https://sub.openrouter.ai/api/v1/chat/completions"),
+        Err(EgressDenied::HostNotAllowed { ref host }) if host == "sub.openrouter.ai"
+    ));
+}
+
+#[test]
+fn egress_refuses_credentials_in_the_authority() {
+    assert!(matches!(
+        check("https://openrouter.ai@evil.example/api/v1/chat/completions"),
+        Err(EgressDenied::CredentialsInUrl)
+    ));
+}
+
+#[test]
+fn egress_refuses_an_explicit_non_standard_port() {
+    assert!(matches!(
+        check("https://openrouter.ai:8443/api/v1/chat/completions"),
+        Err(EgressDenied::PortNotAllowed { port: 8443 })
+    ));
+}
+
+#[test]
+fn egress_accepts_an_explicit_https_port() {
+    assert_eq!(
+        check("https://openrouter.ai:443/api/v1/chat/completions"),
+        Ok(())
+    );
+}
+
+#[test]
+fn egress_refuses_redirects_to_an_allowed_host() {
+    assert_eq!(
+        on_redirect("https://openrouter.ai/another-path"),
+        EgressDenied::RedirectRefused
+    );
+}

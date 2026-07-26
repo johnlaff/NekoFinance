@@ -13,6 +13,7 @@ pub(crate) mod envelope;
 mod ledger_tools;
 mod method_tools;
 pub(crate) mod provider;
+pub(crate) mod run;
 mod scenario_tools;
 mod state_tools;
 mod time_tools;
@@ -335,6 +336,24 @@ pub(crate) async fn dispatch(pool: &SqlitePool, call: &ToolCall, ctx: &Context) 
         Err(_) => Period::day(today),
     };
     envelope_for(spec.name, ctx.clock, revision, period, outcome)
+}
+
+/// Envelope de recusa montado pelo laço ANTES de a ferramenta rodar. A validação local que falha
+/// nunca executa, e o modelo recebe a recusa no mesmo formato de qualquer outra resposta — é isso
+/// que lhe permite se corrigir na mesma rodada.
+pub(crate) async fn refuse(
+    pool: &SqlitePool,
+    tool: &str,
+    ctx: &Context,
+    error: ToolError,
+) -> Envelope {
+    envelope_for(
+        tool,
+        ctx.clock,
+        data_revision(pool).await.ok(),
+        Period::day(ctx.clock.today()),
+        Err(error),
+    )
 }
 
 async fn run(

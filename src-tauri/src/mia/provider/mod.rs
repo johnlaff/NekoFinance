@@ -9,6 +9,7 @@
 //! do sistema e a some no cabeçalho — não há caminho daqui até um log, um evento ou o banco.
 
 pub(crate) mod drift;
+pub(crate) mod egress;
 pub(crate) mod pins;
 pub(crate) mod request;
 pub(crate) mod stream;
