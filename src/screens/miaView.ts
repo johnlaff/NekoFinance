@@ -209,14 +209,21 @@ export function routeQuestion(question: string): Route {
     if (term) return { kind: "intent", id: `termo_${term.key}` };
   }
 
-  const scored = INTENT_PATTERNS.map(({ id, patterns }) => ({
-    id,
-    score: patterns.filter((p) => hits(text, p)).length,
-  })).filter((s) => s.score > 0);
+  const scored: { id: IntentId; score: number }[] = [];
+  for (const { id, patterns } of INTENT_PATTERNS) {
+    let score = 0;
+    for (const pattern of patterns) {
+      if (hits(text, pattern)) score += 1;
+    }
+    if (score > 0) scored.push({ id, score });
+  }
 
   if (scored.length === 0) return { kind: "unknown" };
   const top = Math.max(...scored.map((s) => s.score));
-  const winners = scored.filter((s) => s.score === top).map((s) => s.id);
+  const winners: IntentId[] = [];
+  for (const scoredIntent of scored) {
+    if (scoredIntent.score === top) winners.push(scoredIntent.id);
+  }
   if (winners.length === 1) return { kind: "intent", id: winners[0]! };
   // Empate: perguntar é sempre mais barato que supor — só as intenções com pergunta
   // própria viram opções (uma capacidade não suportada não é alternativa a nada).

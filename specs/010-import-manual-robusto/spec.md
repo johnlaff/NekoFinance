@@ -147,7 +147,7 @@ Fatos verificados na documentação oficial (2026-06-12, evitando o que o Google
   fluxo web e NÃO são adicionados. **Contingência registrada**: se o dogfooding mostrar
   `refresh_token` vazio no token armazenado, adicioná-los em `build_auth_url` (1 linha).
 - **`client_secret` é opcional** no token exchange de app instalado; relatos de campo
-  divergem, então o app envia o secret **quando configurado** (`VITE_GOOGLE_CLIENT_SECRET`,
+  divergem, então o app envia o secret **quando configurado** (`VITE_GOOGLE_DESKTOP_CLIENT_KEY`,
   local/gitignored; o secret de Desktop app não é confidencial por definição).
 - A criação do OAuth client **não tem caminho por CLI**: o `gcloud iap oauth-clients` é
   deprecado (IAP OAuth Admin APIs desligam em jan–mar/2026), só cria client web e exige
@@ -161,7 +161,7 @@ Implementação:
   (`extractSpreadsheetId` — zero dependência do Drive; a falha do picker não bloqueia).
 - `client_secret` opcional propagado frontend → comandos → exchange/refresh
   (`ensure_valid_token`/`refresh_access_token` já existiam em `token_store.rs`).
-- Env vars unificadas: `VITE_GOOGLE_CLIENT_ID` + `VITE_GOOGLE_CLIENT_SECRET` (o
+- Env vars unificadas: `VITE_GOOGLE_CLIENT_ID` + `VITE_GOOGLE_DESKTOP_CLIENT_KEY` (o
   `.env.example` documentava `GOOGLE_OAUTH_CLIENT_ID`, que o código nunca leu).
 - `check_auth_status`: expirado **com** refresh_token = "connected" (renova sob demanda no
   próximo uso); "expired" só quando precisa reconectar de verdade.
@@ -394,7 +394,7 @@ Verificação adversarial (4 lentes: app×método, robustez a edições, gaps/co
    user em `console.cloud.google.com/auth/branding` e `auth/audience`, client em
    `auth/clients/create` → fornecer **Client ID** (e o Secret, para o `.env`).
 3. Criar `.env` local (gitignored) com `VITE_GOOGLE_CLIENT_ID=` e
-   `VITE_GOOGLE_CLIENT_SECRET=`.
+   `VITE_GOOGLE_DESKTOP_CLIENT_KEY=`.
 4. **URL (ou ID) da planilha real** para o primeiro dogfooding (ou colar direto no campo
    novo da UI).
 5. Em reconexões futuras após mudança de scope, **reconectar** (novo consentimento).

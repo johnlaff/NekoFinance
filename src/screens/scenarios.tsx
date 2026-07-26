@@ -13,7 +13,6 @@ import {
   Trash2,
   Repeat,
   Landmark,
-  Pencil,
   CircleDollarSign,
   ArrowRight,
   TrendingUp,
@@ -83,6 +82,7 @@ import { Button } from "../design-system/components/Button";
 import { Disclosure } from "../design-system/components/Disclosure";
 import { InfoPopover } from "../design-system/components/InfoPopover";
 import { safeErrorMessage, errorText } from "../lib/errors";
+import { LoanGroupItem } from "./LoanGroupItem";
 import "./scenarios.css";
 
 /** Mensagem de erro para ações do cenário: as rejeições do backend (data anterior ao mês
@@ -565,14 +565,18 @@ function HypotheticalList({
     }
   }
 
-  async function removeLoan(loanId: string) {
+  /** `false` diz que o empréstimo continua no cenário: o erro já está na tela e quem chamou
+   *  decide o que manter aberto. Engolir a falha em silêncio faria a lista mentir. */
+  async function removeLoan(loanId: string): Promise<boolean> {
     setError(null);
     try {
       await deleteScenarioLoan(scenarioId, loanId);
       invalidateCommands();
+      return true;
     } catch (err) {
       invalidateCommands();
       setError(scenarioErrorMessage(err));
+      return false;
     }
   }
 
@@ -722,188 +726,6 @@ function ReplacementGroupItem({
         {group.lines.map((r) => renderRow(r))}
       </div>
     </Disclosure>
-  );
-}
-
-/** "O principal + 12 parcelas saem do cenário." — a confirmação de remover o grupo nomeia o
- * que morre, com o plural certo para cada combinação de linhas presentes. */
-function loanDeathNote(hasPrincipal: boolean, installmentCount: number): string {
-  if (hasPrincipal && installmentCount > 0) {
-    const s = installmentCount === 1 ? "parcela" : "parcelas";
-    return `O principal + ${installmentCount} ${s} saem do cenário.`;
-  }
-  if (hasPrincipal) return "O principal sai do cenário.";
-  return installmentCount === 1
-    ? "A parcela restante sai do cenário."
-    : `As ${installmentCount} parcelas saem do cenário.`;
-}
-
-interface LoanGroupItemProps {
-  group: LoanGroup;
-  isNew: boolean;
-  /** Muda a cada salvamento — refaz o recibo (scroll/foco) mesmo re-salvando o mesmo alvo. */
-  focusTick: number;
-  isEditing: boolean;
-  onEdit: (request: LoanEditRequest) => void;
-  onRemove: (loanId: string) => Promise<void>;
-  renderRow: (r: ScenarioTransactionRow, label?: string) => ReactNode;
-}
-
-function LoanGroupItem({
-  group: g,
-  isNew,
-  focusTick,
-  isEditing,
-  onEdit,
-  onRemove,
-  renderRow,
-}: LoanGroupItemProps) {
-  const [confirmRemove, setConfirmRemove] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const confirmRef = useRef<HTMLDivElement>(null);
-  const wasConfirming = useRef(false);
-
-  // Recibo da criação/edição: rola até o grupo e move o foco para o cabeçalho do Disclosure —
-  // o realce visual fica no CSS (`.scn-loan-flash`, que colapsa sob reduced-motion).
-  useEffect(() => {
-    if (!isNew) return;
-    const el = rootRef.current;
-    if (!el) return;
-    el.scrollIntoView?.({
-      behavior: motionEnabled() ? "smooth" : "auto",
-      block: "nearest",
-    });
-    el.querySelector<HTMLElement>(".nk-disc__head")?.focus({ preventScroll: true });
-  }, [isNew, focusTick]);
-
-  // A troca botões→confirmação desmonta o botão "Remover" que tinha o foco; sem gestão o foco
-  // cai no <body> bem no momento da ação destrutiva. Foca o bloco do aviso (não o botão
-  // destrutivo — Enter repetido não pode confirmar sem querer); cancelar devolve ao "Remover".
-  useEffect(() => {
-    if (confirmRemove) {
-      confirmRef.current?.focus({ preventScroll: true });
-    } else if (wasConfirming.current) {
-      rootRef.current
-        ?.querySelector<HTMLElement>(".scn-loan-group__actions button:last-of-type")
-        ?.focus({ preventScroll: true });
-    }
-    wasConfirming.current = confirmRemove;
-  }, [confirmRemove]);
-
-  const anyRow = g.principal ?? g.installments[0];
-  if (!anyRow) return null;
-  const label =
-    g.loan?.description ??
-    stripScenarioMarker(anyRow.description).replace(/ parcela \d+\/\d+$/, "");
-  const installmentCents = Math.abs(g.installments[0]?.amount ?? 0);
-  // Linhas que a lixeira removeu deste grupo: a edição regenera a série e as restaura — o
-  // formulário avisa antes de salvar.
-  const presentRows = g.installments.length + (g.principal ? 1 : 0);
-  const missingRows = g.loan ? Math.max(0, g.loan.term_months + 1 - presentRows) : 0;
-
-  async function confirmRemoval() {
-    if (busy) return;
-    setBusy(true);
-    await onRemove(g.loanId);
-    setBusy(false);
-    setConfirmRemove(false);
-  }
-
-  return (
-    <div ref={rootRef} className={isNew ? "scn-loan-flash" : undefined}>
-      <Disclosure
-        className={"scn-loan-group" + (isEditing ? " scn-loan-group--editing" : "")}
-        title={label}
-        {...(isEditing
-          ? {
-              accent: "brass" as const,
-              icon: <Pencil size={14} strokeWidth={1.75} />,
-            }
-          : {})}
-        defaultOpen={isNew || isEditing}
-        summary={
-          <>
-            {g.principal && (
-              <>
-                Recebe <Money cents={Math.abs(g.principal.amount)} size="inherit" />
-                {" · "}
-              </>
-            )}
-            {/* Grupo só com o principal (parcelas excluídas à mão): não inventa
-                "Paga 0× de R$ 0,00". */}
-            {g.installments.length > 0 && (
-              <>
-                Paga {g.installments.length}× de{" "}
-                <Money cents={installmentCents} size="inherit" />
-              </>
-            )}
-          </>
-        }
-      >
-        {g.loan &&
-          (confirmRemove ? (
-            <div
-              role="alert"
-              className="scn-loan-group__confirm"
-              ref={confirmRef}
-              tabIndex={-1}
-            >
-              <p className="scn-hint">
-                {loanDeathNote(g.principal != null, g.installments.length)}
-              </p>
-              <div className="scn-loan-group__actions">
-                <Button
-                  size="sm"
-                  variant="danger"
-                  onClick={() => void confirmRemoval()}
-                  disabled={busy}
-                >
-                  {busy ? "Removendo…" : "Remover empréstimo"}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setConfirmRemove(false)}
-                  disabled={busy}
-                >
-                  Cancelar
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <div className="scn-loan-group__actions">
-              <Button
-                size="sm"
-                variant="secondary"
-                iconLeft={<Pencil size={13} strokeWidth={1.75} />}
-                onClick={() => onEdit({ loan: g.loan!, missingRows })}
-                disabled={isEditing}
-              >
-                {isEditing ? "Em edição…" : "Editar"}
-              </Button>
-              {/* Remover também trava durante a edição: apagar o alvo do formulário aberto
-                  deixaria a edição órfã (salvar iria falhar contra um id que não existe). */}
-              <Button
-                size="sm"
-                variant="ghost"
-                iconLeft={<Trash2 size={13} strokeWidth={1.75} />}
-                onClick={() => setConfirmRemove(true)}
-                disabled={isEditing}
-              >
-                Remover
-              </Button>
-            </div>
-          ))}
-        <div className="scn-txn-list scn-loan-group__rows">
-          {g.principal && renderRow(g.principal, "Principal")}
-          {g.installments.map((r) => {
-            const m = /parcela (\d+\/\d+)/.exec(stripScenarioMarker(r.description));
-            return renderRow(r, m ? `Parcela ${m[1]}` : undefined);
-          })}
-        </div>
-      </Disclosure>
-    </div>
   );
 }
 
@@ -1142,6 +964,203 @@ interface LoanSectionProps {
   onSaved: (saved: LoanSaved) => void;
 }
 
+/** O que o usuário digitou, cru: o input é a fonte e quem interpreta é quem valida. */
+interface LoanFormValues {
+  description: string;
+  principal: string;
+  termMonths: string;
+  ratePct: string;
+  disbursementDate: string;
+  firstDate: string;
+}
+
+/** Campos que já foram tocados e não passam — a mensagem só aparece depois da primeira
+ *  interação, para o formulário não nascer vermelho. */
+type LoanFieldErrors = Record<
+  "termMonths" | "ratePct" | "disbursementDate" | "firstDate",
+  boolean
+>;
+
+interface LoanFormFieldsProps {
+  values: LoanFormValues;
+  errors: LoanFieldErrors;
+  onChange: (field: keyof LoanFormValues, value: string) => void;
+}
+
+function LoanFormFields({ values, errors, onChange }: LoanFormFieldsProps) {
+  const { description, principal, termMonths, ratePct, disbursementDate, firstDate } =
+    values;
+  const {
+    termMonths: termShowError,
+    ratePct: rateShowError,
+    disbursementDate: disbursementDateShowError,
+    firstDate: firstDateShowError,
+  } = errors;
+  return (
+    <>
+      <div className="scn-field">
+        <label htmlFor="scn-loan-desc">Descrição</label>
+        <input
+          id="scn-loan-desc"
+          value={description}
+          onChange={(e) => onChange("description", e.target.value)}
+        />
+      </div>
+      <div className="scn-row3" style={{ marginTop: 8 }}>
+        <div className="scn-field">
+          <label htmlFor="scn-loan-principal">Valor</label>
+          <input
+            id="scn-loan-principal"
+            inputMode="decimal"
+            placeholder="0,00"
+            value={principal}
+            onChange={(e) => onChange("principal", e.target.value)}
+          />
+        </div>
+        <div className="scn-field">
+          <label htmlFor="scn-loan-term">Nº parcelas</label>
+          <input
+            id="scn-loan-term"
+            type="number"
+            min={1}
+            max={480}
+            value={termMonths}
+            onChange={(e) => onChange("termMonths", e.target.value)}
+            aria-invalid={termShowError || undefined}
+            aria-describedby={termShowError ? "scn-loan-term-err" : undefined}
+          />
+          {termShowError && (
+            <p id="scn-loan-term-err" className="scn-error">
+              Prazo inválido — use um número inteiro de 1 a 480.
+            </p>
+          )}
+        </div>
+        <div className="scn-field">
+          <label htmlFor="scn-loan-rate">Juros a.m. (%)</label>
+          <input
+            id="scn-loan-rate"
+            inputMode="decimal"
+            value={ratePct}
+            onChange={(e) => onChange("ratePct", e.target.value)}
+            aria-invalid={rateShowError || undefined}
+            aria-describedby={rateShowError ? "scn-loan-rate-err" : undefined}
+          />
+          {rateShowError && (
+            <p id="scn-loan-rate-err" className="scn-error">
+              Taxa inválida — use um número, ex.: 1,8.
+            </p>
+          )}
+        </div>
+      </div>
+      <div className="scn-row2" style={{ marginTop: 8 }}>
+        <div className="scn-field">
+          {/* O trigger do popover é um <button> nativo — vive AO LADO do label, nunca dentro
+              (label com controle aninhado disputa o clique com o foco do input). O texto do
+              trigger é só para leitor de tela; visualmente fica o marcador "i". */}
+          <span className="scn-label-row">
+            <label htmlFor="scn-loan-disb">Data do desembolso</label>
+            <InfoPopover
+              term={{
+                title: "Desembolso",
+                body: "O dia em que o dinheiro do empréstimo entra na sua conta. A partir dessa data o valor recebido soma na trajetória do cenário — as parcelas seguem o próprio calendário.",
+              }}
+            >
+              <span style={SR_ONLY}>O que é a data do desembolso</span>
+            </InfoPopover>
+          </span>
+          <input
+            id="scn-loan-disb"
+            type="date"
+            value={disbursementDate}
+            onChange={(e) => onChange("disbursementDate", e.target.value)}
+            required
+            aria-invalid={disbursementDateShowError || undefined}
+            aria-describedby={
+              disbursementDateShowError ? "scn-loan-disb-err" : undefined
+            }
+          />
+          {disbursementDateShowError && (
+            <p id="scn-loan-disb-err" className="scn-error">
+              Informe a data em que o dinheiro entra.
+            </p>
+          )}
+        </div>
+        <div className="scn-field">
+          <label htmlFor="scn-loan-first">Data da 1ª parcela</label>
+          <input
+            id="scn-loan-first"
+            type="date"
+            value={firstDate}
+            onChange={(e) => onChange("firstDate", e.target.value)}
+            required
+            aria-invalid={firstDateShowError || undefined}
+            aria-describedby={firstDateShowError ? "scn-loan-first-err" : undefined}
+          />
+          {firstDateShowError && (
+            <p id="scn-loan-first-err" className="scn-error">
+              Informe a data da primeira parcela.
+            </p>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+interface LoanPreviewProps {
+  numericInputsValid: boolean;
+  loading: boolean;
+  hasError: boolean;
+  hasData: boolean;
+  installmentCents: number;
+  totalPaidCents: number;
+  creditCostCents: number;
+}
+
+function LoanPreview({
+  numericInputsValid,
+  loading,
+  hasError,
+  hasData,
+  installmentCents,
+  totalPaidCents,
+  creditCostCents,
+}: LoanPreviewProps) {
+  return (
+    <>
+      {numericInputsValid && loading && (
+        <p className="scn-preview" aria-live="polite">
+          Calculando a prévia do empréstimo…
+        </p>
+      )}
+      {numericInputsValid && hasError && (
+        <div className="scn-preview-error" role="alert">
+          <p>Não foi possível calcular a prévia do empréstimo.</p>
+          <Button size="sm" variant="secondary" onClick={() => invalidateCommands()}>
+            Tentar novamente
+          </Button>
+        </div>
+      )}
+      {numericInputsValid && !loading && !hasError && hasData && (
+        <div className="scn-loan-summary">
+          <div className="scn-loan-summary__row">
+            <span>Parcela</span>
+            <Money cents={installmentCents} size="sm" />
+          </div>
+          <div className="scn-loan-summary__row">
+            <span>Total pago</span>
+            <Money cents={totalPaidCents} size="sm" />
+          </div>
+          <div className="scn-loan-summary__row">
+            <span>Custo do crédito</span>
+            <Money cents={creditCostCents} size="sm" />
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function LoanSection({ scenarioId, editing, onCancelEdit, onSaved }: LoanSectionProps) {
   const [principal, setPrincipal] = useState(() =>
     editing ? centsToAmountInput(editing.loan.principal_cents) : "",
@@ -1167,6 +1186,17 @@ function LoanSection({ scenarioId, editing, onCancelEdit, onSaved }: LoanSection
    * arma o aviso de restauração; o clique seguinte confirma. */
   const [confirmRestore, setConfirmRestore] = useState(false);
   const sectionRef = useRef<HTMLElement>(null);
+
+  const fieldSetters: Record<keyof LoanFormValues, (value: string) => void> = {
+    description: setDescription,
+    principal: setPrincipal,
+    termMonths: setTermMonths,
+    ratePct: setRatePct,
+    disbursementDate: setDisbursementDate,
+    firstDate: setFirstDate,
+  };
+  const setLoanField = (field: keyof LoanFormValues, value: string) =>
+    fieldSetters[field](value);
 
   // Entrar em edição traz o formulário à vista com o foco no primeiro campo — ele fica no fim
   // do sheet e a ação partiu do grupo, lá em cima na lista.
@@ -1268,143 +1298,32 @@ function LoanSection({ scenarioId, editing, onCancelEdit, onSaved }: LoanSection
       <p className="scn-section-title" id="scn-loan-title">
         {editing ? "Editar empréstimo" : "Dimensionar um empréstimo"}
       </p>
-      <div className="scn-field">
-        <label htmlFor="scn-loan-desc">Descrição</label>
-        <input
-          id="scn-loan-desc"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-        />
-      </div>
-      <div className="scn-row3" style={{ marginTop: 8 }}>
-        <div className="scn-field">
-          <label htmlFor="scn-loan-principal">Valor</label>
-          <input
-            id="scn-loan-principal"
-            inputMode="decimal"
-            placeholder="0,00"
-            value={principal}
-            onChange={(e) => setPrincipal(e.target.value)}
-          />
-        </div>
-        <div className="scn-field">
-          <label htmlFor="scn-loan-term">Nº parcelas</label>
-          <input
-            id="scn-loan-term"
-            type="number"
-            min={1}
-            max={480}
-            value={termMonths}
-            onChange={(e) => setTermMonths(e.target.value)}
-            aria-invalid={termShowError || undefined}
-            aria-describedby={termShowError ? "scn-loan-term-err" : undefined}
-          />
-          {termShowError && (
-            <p id="scn-loan-term-err" className="scn-error">
-              Prazo inválido — use um número inteiro de 1 a 480.
-            </p>
-          )}
-        </div>
-        <div className="scn-field">
-          <label htmlFor="scn-loan-rate">Juros a.m. (%)</label>
-          <input
-            id="scn-loan-rate"
-            inputMode="decimal"
-            value={ratePct}
-            onChange={(e) => setRatePct(e.target.value)}
-            aria-invalid={rateShowError || undefined}
-            aria-describedby={rateShowError ? "scn-loan-rate-err" : undefined}
-          />
-          {rateShowError && (
-            <p id="scn-loan-rate-err" className="scn-error">
-              Taxa inválida — use um número, ex.: 1,8.
-            </p>
-          )}
-        </div>
-      </div>
-      <div className="scn-row2" style={{ marginTop: 8 }}>
-        <div className="scn-field">
-          {/* O trigger do popover é um <button> nativo — vive AO LADO do label, nunca dentro
-              (label com controle aninhado disputa o clique com o foco do input). O texto do
-              trigger é só para leitor de tela; visualmente fica o marcador "i". */}
-          <span className="scn-label-row">
-            <label htmlFor="scn-loan-disb">Data do desembolso</label>
-            <InfoPopover
-              term={{
-                title: "Desembolso",
-                body: "O dia em que o dinheiro do empréstimo entra na sua conta. A partir dessa data o valor recebido soma na trajetória do cenário — as parcelas seguem o próprio calendário.",
-              }}
-            >
-              <span style={SR_ONLY}>O que é a data do desembolso</span>
-            </InfoPopover>
-          </span>
-          <input
-            id="scn-loan-disb"
-            type="date"
-            value={disbursementDate}
-            onChange={(e) => setDisbursementDate(e.target.value)}
-            required
-            aria-invalid={disbursementDateShowError || undefined}
-            aria-describedby={
-              disbursementDateShowError ? "scn-loan-disb-err" : undefined
-            }
-          />
-          {disbursementDateShowError && (
-            <p id="scn-loan-disb-err" className="scn-error">
-              Informe a data em que o dinheiro entra.
-            </p>
-          )}
-        </div>
-        <div className="scn-field">
-          <label htmlFor="scn-loan-first">Data da 1ª parcela</label>
-          <input
-            id="scn-loan-first"
-            type="date"
-            value={firstDate}
-            onChange={(e) => setFirstDate(e.target.value)}
-            required
-            aria-invalid={firstDateShowError || undefined}
-            aria-describedby={firstDateShowError ? "scn-loan-first-err" : undefined}
-          />
-          {firstDateShowError && (
-            <p id="scn-loan-first-err" className="scn-error">
-              Informe a data da primeira parcela.
-            </p>
-          )}
-        </div>
-      </div>
-      {numericInputsValid && previewQ.loading && (
-        <p className="scn-preview" aria-live="polite">
-          Calculando a prévia do empréstimo…
-        </p>
-      )}
-      {numericInputsValid && previewQ.error !== null && (
-        <div className="scn-preview-error" role="alert">
-          <p>Não foi possível calcular a prévia do empréstimo.</p>
-          <Button size="sm" variant="secondary" onClick={() => invalidateCommands()}>
-            Tentar novamente
-          </Button>
-        </div>
-      )}
-      {numericInputsValid &&
-        !previewQ.loading &&
-        previewQ.error === null &&
-        previewQ.data !== undefined && (
-          <div className="scn-loan-summary">
-            <div className="scn-loan-summary__row">
-              <span>Parcela</span>
-              <Money cents={installmentCents} size="sm" />
-            </div>
-            <div className="scn-loan-summary__row">
-              <span>Total pago</span>
-              <Money cents={totalPaidCents} size="sm" />
-            </div>
-            <div className="scn-loan-summary__row">
-              <span>Custo do crédito</span>
-              <Money cents={creditCostCents} size="sm" />
-            </div>
-          </div>
-        )}
+      <LoanFormFields
+        values={{
+          description,
+          principal,
+          termMonths,
+          ratePct,
+          disbursementDate,
+          firstDate,
+        }}
+        errors={{
+          termMonths: termShowError,
+          ratePct: rateShowError,
+          disbursementDate: disbursementDateShowError,
+          firstDate: firstDateShowError,
+        }}
+        onChange={setLoanField}
+      />
+      <LoanPreview
+        numericInputsValid={numericInputsValid}
+        loading={previewQ.loading}
+        hasError={previewQ.error !== null}
+        hasData={previewQ.data !== undefined}
+        installmentCents={installmentCents}
+        totalPaidCents={totalPaidCents}
+        creditCostCents={creditCostCents}
+      />
       {error && (
         <p role="alert" className="scn-error">
           {error}
@@ -1576,6 +1495,13 @@ function reserveMonthsState(months: number): MethodState {
   };
 }
 
+function formatReserveMonths(months: number): string {
+  return months.toLocaleString("pt-BR", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+}
+
 /**
  * Antes → depois da régua de reserva; cor e rótulo derivam do DEPOIS (é ele que o gate julga).
  * O "antes" fica em cor neutra, fora da cor de estado — mesma disciplina do
@@ -1592,19 +1518,16 @@ function ReserveMonthsBadge({
 }) {
   const state = reserveMonthsState(after);
   const { Icon } = state;
-  const fmt = (months: number) =>
-    months.toLocaleString("pt-BR", {
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 1,
-    });
   return (
     <span className="scn-loan-summary__reserve" style={{ color: state.color }}>
       <Icon size={13} strokeWidth={1.75} aria-hidden="true" />
       {state.label} ·{" "}
       {before != null && (
-        <span className="scn-loan-summary__reserve-before">{fmt(before)} → </span>
+        <span className="scn-loan-summary__reserve-before">
+          {formatReserveMonths(before)} →{" "}
+        </span>
       )}
-      {fmt(after)} meses
+      {formatReserveMonths(after)} meses
     </span>
   );
 }
@@ -1645,6 +1568,10 @@ function savingsAfterState(
     color: "var(--primary-quiet-text)",
     Icon: CheckCircle2,
   };
+}
+
+function formatSavingsRate(bps: number): string {
+  return `${Math.floor(bps / 100)}%`;
 }
 
 /**
@@ -1689,13 +1616,14 @@ function SavingsRateBadge({
   // TRUNCA (floor), nunca arredonda: 1999 bps arredondado viraria "20%" ao lado do rótulo
   // "Abaixo do piso" — número e veredito se contradiriam na fronteira exata que o gate julga.
   // Truncar nunca superestima a poupança, o viés conservador certo para um gate financeiro.
-  const pct = (bps: number) => `${Math.floor(bps / 100)}%`;
   return (
     <span className="scn-loan-summary__savings" style={{ color: state.color }}>
       <Icon size={13} strokeWidth={1.75} aria-hidden="true" />
       {state.label} ·{" "}
-      <span className="scn-loan-summary__savings-before">{pct(before)} → </span>
-      {pct(Math.max(0, after))}
+      <span className="scn-loan-summary__savings-before">
+        {formatSavingsRate(before)} →{" "}
+      </span>
+      {formatSavingsRate(Math.max(0, after))}
     </span>
   );
 }
@@ -2250,6 +2178,372 @@ function useMeasuredWidth(
   return width || fallback;
 }
 
+type DualLineChartPoint = ScenarioCompareDto["month_end"][number];
+
+interface DualLineChartLayout {
+  width: number;
+  height: number;
+  padLeft: number;
+  padRight: number;
+  padTop: number;
+  padBottom: number;
+  innerWidth: number;
+  innerHeight: number;
+}
+
+function dualLineChartLayout(width: number): DualLineChartLayout {
+  const height = 220;
+  const padLeft = 72; // gutter dos ticks Y — "R$ 35 mil" em mono 10.5px ocupa ~56px + respiro
+  const padRight = 12 + CHART_LABEL_GUTTER;
+  const padTop = 14;
+  const padBottom = 26;
+  return {
+    width,
+    height,
+    padLeft,
+    padRight,
+    padTop,
+    padBottom,
+    innerWidth: width - padLeft - padRight,
+    innerHeight: height - padTop - padBottom,
+  };
+}
+
+interface DualLineChartSeries {
+  allValues: number[];
+  scale: ReturnType<typeof niceChartScale>;
+  x: (index: number) => number;
+  y: (cents: number) => number;
+  realPoints: string;
+  scenarioPoints: string;
+  worstIndex: number;
+  worst: DualLineChartPoint | undefined;
+  showWorst: boolean;
+  hasNegative: boolean;
+  zeroInDomain: boolean;
+  lastPoint: DualLineChartPoint | undefined;
+}
+
+function dualLineChartSeries(
+  points: DualLineChartPoint[],
+  layout: DualLineChartLayout,
+): DualLineChartSeries {
+  const allValues = points.flatMap((point) => [
+    point.real_balance_cents,
+    point.scenario_balance_cents,
+  ]);
+  const scale = niceChartScale(allValues);
+  const range = scale.max - scale.min || 1;
+  const x = (index: number) =>
+    layout.padLeft +
+    (points.length === 1
+      ? layout.innerWidth / 2
+      : (index / (points.length - 1)) * layout.innerWidth);
+  const y = (cents: number) =>
+    layout.padTop +
+    layout.innerHeight -
+    ((cents - scale.min) / range) * layout.innerHeight;
+  const realPoints = points
+    .map((point, index) => `${x(index)},${y(point.real_balance_cents)}`)
+    .join(" ");
+  const scenarioPoints = points
+    .map((point, index) => `${x(index)},${y(point.scenario_balance_cents)}`)
+    .join(" ");
+
+  // Pior FIM DE MÊS da simulação — o marcador na resolução DESTE gráfico. Só rende quando
+  // é de fato o vale da série (não o último ponto de uma linha monotônica, que já tem os
+  // rótulos de fim de linha ao lado).
+  let worstIndex = 0;
+  points.forEach((point, index) => {
+    if (
+      point.scenario_balance_cents < (points[worstIndex]?.scenario_balance_cents ?? 0)
+    ) {
+      worstIndex = index;
+    }
+  });
+  const worst = points[worstIndex];
+
+  return {
+    allValues,
+    scale,
+    x,
+    y,
+    realPoints,
+    scenarioPoints,
+    worstIndex,
+    worst,
+    showWorst: points.length > 1 && worstIndex !== points.length - 1,
+    hasNegative: allValues.some((value) => value < 0),
+    zeroInDomain: scale.min <= 0 && scale.max >= 0,
+    lastPoint: points[points.length - 1],
+  };
+}
+
+interface DualLineChartEndLabels {
+  labelX: number;
+  realLabelY: number;
+  scenarioLabelY: number;
+}
+
+function dualLineChartEndLabels(
+  point: DualLineChartPoint | undefined,
+  pointCount: number,
+  layout: DualLineChartLayout,
+  x: (index: number) => number,
+  y: (cents: number) => number,
+): DualLineChartEndLabels {
+  if (!point) return { labelX: 0, realLabelY: 0, scenarioLabelY: 0 };
+  // Colocação direction-aware + clamp do PAR (nunca de cada rótulo isolado, que comprimia
+  // o vão de volta perto das bordas) — geometria pura e testada em `scenarioHelpers`.
+  const placed = placeChartEndLabels(
+    y(point.real_balance_cents),
+    y(point.scenario_balance_cents),
+    layout.padTop + 8,
+    layout.height - layout.padBottom - 2,
+  );
+  return {
+    labelX: x(pointCount - 1) + 12,
+    realLabelY: placed.realLabelY,
+    scenarioLabelY: placed.scenarioLabelY,
+  };
+}
+
+function DualLineChartLegend() {
+  return (
+    // Redundância: a legenda repete cor+traço com texto — nunca só a cor conta a história
+    // (regra do DS: status nunca é só cor).
+    <div className="scn-dualchart__legend">
+      <span className="scn-dualchart__legend-item">
+        <span className="scn-dualchart__legend-swatch scn-dualchart__legend-swatch--real" />
+        Real
+      </span>
+      <span className="scn-dualchart__legend-item">
+        <span className="scn-dualchart__legend-swatch scn-dualchart__legend-swatch--scenario" />
+        Simulação
+      </span>
+    </div>
+  );
+}
+
+interface DualLineChartPlotProps {
+  points: DualLineChartPoint[];
+  layout: DualLineChartLayout;
+  series: DualLineChartSeries;
+  endLabels: DualLineChartEndLabels;
+  hover: number | null;
+  ariaLabel: string;
+}
+
+function DualLineChartPlot({
+  points,
+  layout,
+  series,
+  endLabels,
+  hover,
+  ariaLabel,
+}: DualLineChartPlotProps) {
+  const { x, y, scale, worst, worstIndex } = series;
+  const hovered = hover != null ? points[hover] : null;
+
+  return (
+    <svg
+      className="scn-dualchart"
+      viewBox={`0 0 ${layout.width} ${layout.height}`}
+      role="img"
+      aria-label={ariaLabel}
+    >
+      {/* Grade horizontal + ticks Y: só linhas horizontais (--chart-grid), rótulos em
+          mono micro (--chart-axis) — Y implícito pela grade, sem eixo pesado (DS §8). */}
+      {scale.ticks.map((tick) => (
+        <g key={tick}>
+          <line
+            className="scn-dualchart__grid"
+            x1={layout.padLeft}
+            x2={layout.width - layout.padRight + 6}
+            y1={y(tick)}
+            y2={y(tick)}
+          />
+          <text
+            className="scn-dualchart__tick"
+            x={layout.padLeft - 8}
+            y={y(tick) + 3.5}
+          >
+            {fmtAxisBRL(tick)}
+          </text>
+        </g>
+      ))}
+      {/* Zero como LIMIAR (não baseline): tracejado de perigo quando há mês negativo;
+          com domínio contendo 0 mas tudo no azul, a grade comum já o mostra. */}
+      {series.zeroInDomain && series.hasNegative && (
+        <line
+          className="scn-dualchart__zero"
+          x1={layout.padLeft}
+          x2={layout.width - layout.padRight + 6}
+          y1={y(0)}
+          y2={y(0)}
+        />
+      )}
+      {/* Meses no eixo X — âncora das pontas para dentro (mesma regra do DiffSparkline). */}
+      {points.map((point, index) => (
+        <text
+          key={`${point.year}-${point.month}`}
+          className="scn-dualchart__xlabel"
+          x={x(index)}
+          y={layout.height - 8}
+          textAnchor={
+            index === 0 ? "start" : index === points.length - 1 ? "end" : "middle"
+          }
+        >
+          {MES_ABBR[point.month - 1]}
+        </text>
+      ))}
+
+      <polyline className="scn-dualchart__real" points={series.realPoints} />
+      <polyline className="scn-dualchart__scenario" points={series.scenarioPoints} />
+
+      {/* Pontos vazados em cada mês (hollow dots do DS): tornam a resolução mensal
+          legível — a linha é uma interpolação entre 12 fatos, não um contínuo diário. */}
+      {points.map((point, index) => (
+        <g key={`dot-${point.year}-${point.month}`} aria-hidden="true">
+          <circle
+            className="scn-dualchart__dot scn-dualchart__dot--real"
+            cx={x(index)}
+            cy={y(point.real_balance_cents)}
+            r={hover === index ? 4 : 2.75}
+          />
+          <circle
+            className="scn-dualchart__dot scn-dualchart__dot--scenario"
+            cx={x(index)}
+            cy={y(point.scenario_balance_cents)}
+            r={hover === index ? 4 : 2.75}
+          />
+        </g>
+      ))}
+
+      {/* Crosshair do hover */}
+      {hovered && hover !== null && (
+        <line
+          aria-hidden="true"
+          className="scn-dualchart__crosshair"
+          x1={x(hover)}
+          x2={x(hover)}
+          y1={layout.padTop}
+          y2={layout.height - layout.padBottom}
+        />
+      )}
+
+      {/* Pior fim de mês da SIMULAÇÃO — valor na resolução do gráfico, cor pela regra
+          de sinal do dinheiro (nunca cor de série para sinal, DS §8). */}
+      {series.showWorst && worst && (
+        <g aria-hidden="true">
+          <circle
+            cx={x(worstIndex)}
+            cy={y(worst.scenario_balance_cents)}
+            r={3.5}
+            fill={
+              worst.scenario_balance_cents < 0
+                ? "var(--danger-400)"
+                : "var(--text-faint)"
+            }
+          />
+          <text
+            className="scn-dualchart__worst"
+            x={
+              x(worstIndex) < layout.padLeft + 60
+                ? x(worstIndex) + 8
+                : Math.min(layout.width - layout.padRight - 20, x(worstIndex))
+            }
+            y={Math.min(
+              y(worst.scenario_balance_cents) + 18,
+              layout.height - layout.padBottom - 4,
+            )}
+            textAnchor={x(worstIndex) < layout.padLeft + 60 ? "start" : "middle"}
+            fill={
+              worst.scenario_balance_cents < 0
+                ? "var(--danger-400)"
+                : "var(--text-muted)"
+            }
+          >
+            {fmtAxisBRL(worst.scenario_balance_cents)}
+          </text>
+        </g>
+      )}
+
+      {series.lastPoint && (
+        <>
+          {/* Halo (paint-order: stroke) como segunda defesa, MELHOR-ESFORÇO: o suporte a
+              paint-order em <text> é irregular fora de Chromium/WebView2 (ex.: WebKitGTK) —
+              a defesa primária é o GUTTER à direita do plot, que vale em qualquer engine. */}
+          <text
+            className="scn-dualchart__label"
+            x={endLabels.labelX}
+            y={endLabels.realLabelY}
+            textAnchor="start"
+            fontSize="11"
+            fontWeight="600"
+            fill="var(--primary)"
+            stroke="var(--surface)"
+            strokeWidth={3}
+            paintOrder="stroke"
+          >
+            Real
+          </text>
+          <text
+            className="scn-dualchart__label"
+            x={endLabels.labelX}
+            y={endLabels.scenarioLabelY}
+            textAnchor="start"
+            fontSize="11"
+            fontWeight="600"
+            fill="var(--sim-scenario)"
+            stroke="var(--surface)"
+            strokeWidth={3}
+            paintOrder="stroke"
+          >
+            Simulação
+          </text>
+        </>
+      )}
+    </svg>
+  );
+}
+
+function DualLineChartTooltip({
+  point,
+  horizontalFraction,
+}: {
+  point: DualLineChartPoint;
+  horizontalFraction: number;
+}) {
+  return (
+    // Tooltip de hover (HTML sobre o gráfico, mesmo vocabulário do BalanceTrajectory).
+    // aria-hidden: leitura exata já está no aria-label do SVG + cards acima.
+    <div
+      className="nk-spark__tip"
+      aria-hidden="true"
+      style={{
+        left: `${horizontalFraction * 100}%`,
+        transform: `translateX(${horizontalFraction > 0.82 ? "-100%" : horizontalFraction < 0.18 ? "0" : "-50%"})`,
+      }}
+    >
+      <span className="nk-spark__tip-day">
+        {MES[point.month - 1]} {point.year}
+      </span>
+      <span className="scn-dualchart__tip-row">
+        <span className="scn-dualchart__legend-swatch scn-dualchart__legend-swatch--real" />
+        <span className="nk-spark__tip-val">{formatBRL(point.real_balance_cents)}</span>
+      </span>
+      <span className="scn-dualchart__tip-row">
+        <span className="scn-dualchart__legend-swatch scn-dualchart__legend-swatch--scenario" />
+        <span className="nk-spark__tip-val">
+          {formatBRL(point.scenario_balance_cents)}
+        </span>
+      </span>
+      <span className="scn-dualchart__tip-delta">Δ {fmtSigned(point.delta_cents)}</span>
+    </div>
+  );
+}
+
 /**
  * Trajetória mensal real × simulação. Três decisões estruturais:
  * - Domínio Y "nice" (`niceChartScale`) SÓ sobre os pontos mensais desenhados — nunca forçado
@@ -2267,89 +2561,43 @@ function DualLineChart({ compare }: { compare: ScenarioCompareDto }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<number | null>(null);
   const points = compare.month_end;
-  const W = useMeasuredWidth(wrapRef, 960);
-  const H = 220;
-  const padLeft = 72; // gutter dos ticks Y — "R$ 35 mil" em mono 10.5px ocupa ~56px + respiro
-  const padRight = 12 + CHART_LABEL_GUTTER;
-  const padTop = 14;
-  const padBottom = 26;
-  const innerW = W - padLeft - padRight;
-  const innerH = H - padTop - padBottom;
-
-  const allVals = points.flatMap((p) => [
-    p.real_balance_cents,
-    p.scenario_balance_cents,
-  ]);
-  const scale = niceChartScale(allVals);
-  const range = scale.max - scale.min || 1;
-  const x = (i: number) =>
-    padLeft + (points.length === 1 ? innerW / 2 : (i / (points.length - 1)) * innerW);
-  const y = (cents: number) => padTop + innerH - ((cents - scale.min) / range) * innerH;
-
-  const realPts = points.map((p, i) => `${x(i)},${y(p.real_balance_cents)}`).join(" ");
-  const scenarioPts = points
-    .map((p, i) => `${x(i)},${y(p.scenario_balance_cents)}`)
-    .join(" ");
-
-  // Pior FIM DE MÊS da simulação — o marcador na resolução DESTE gráfico. Só rende quando
-  // é de fato o vale da série (não o último ponto de uma linha monotônica, que já tem os
-  // rótulos de fim de linha ao lado).
-  let worstIdx = 0;
-  points.forEach((p, i) => {
-    if (p.scenario_balance_cents < (points[worstIdx]?.scenario_balance_cents ?? 0)) {
-      worstIdx = i;
-    }
-  });
-  const worst = points[worstIdx];
-  const showWorst = points.length > 1 && worstIdx !== points.length - 1;
-
-  const hasNegative = allVals.some((v) => v < 0);
-  const zeroInDomain = scale.min <= 0 && scale.max >= 0;
-
-  const lastPoint = points[points.length - 1];
+  const layout = dualLineChartLayout(useMeasuredWidth(wrapRef, 960));
+  const series = dualLineChartSeries(points, layout);
+  const endLabels = dualLineChartEndLabels(
+    series.lastPoint,
+    points.length,
+    layout,
+    series.x,
+    series.y,
+  );
   const ariaLabel =
     `Saldo no fim de cada mês, real versus simulação — resolução mensal. Real termina em ${fmtBRL(
-      lastPoint?.real_balance_cents ?? 0,
-    )}. Simulação termina em ${fmtBRL(lastPoint?.scenario_balance_cents ?? 0)}.` +
-    (worst
-      ? ` Pior fim de mês da simulação: ${fmtBRL(worst.scenario_balance_cents)} em ${MES[worst.month - 1]}.`
+      series.lastPoint?.real_balance_cents ?? 0,
+    )}. Simulação termina em ${fmtBRL(series.lastPoint?.scenario_balance_cents ?? 0)}.` +
+    (series.worst
+      ? ` Pior fim de mês da simulação: ${fmtBRL(series.worst.scenario_balance_cents)} em ${MES[series.worst.month - 1]}.`
       : "") +
     " O menor saldo diário (buraco do futuro) aparece no veredito e no cartão acima, não nesta linha.";
 
-  let labelX = 0;
-  let realLabelY = 0;
-  let scenarioLabelY = 0;
-  if (lastPoint) {
-    labelX = x(points.length - 1) + 12;
-    // Colocação direction-aware + clamp do PAR (nunca de cada rótulo isolado, que comprimia
-    // o vão de volta perto das bordas) — geometria pura e testada em `scenarioHelpers`.
-    const placed = placeChartEndLabels(
-      y(lastPoint.real_balance_cents),
-      y(lastPoint.scenario_balance_cents),
-      padTop + 8,
-      H - padBottom - 2,
-    );
-    realLabelY = placed.realLabelY;
-    scenarioLabelY = placed.scenarioLabelY;
-  }
-
   // Hover por proximidade horizontal (mesmo gesto do BalanceTrajectory): o índice mais
   // próximo do cursor no espaço do PLOT (não do wrapper — o padLeft dos ticks descontado).
-  const onMove = (e: React.MouseEvent) => {
+  const onMove = (event: React.MouseEvent) => {
     const rect = wrapRef.current?.getBoundingClientRect();
     if (!rect || rect.width === 0 || points.length === 0) return;
-    const fx = ((e.clientX - rect.left) / rect.width) * W;
-    const i = Math.max(
+    const relativeX = ((event.clientX - rect.left) / rect.width) * layout.width;
+    const index = Math.max(
       0,
       Math.min(
         points.length - 1,
-        Math.round(((fx - padLeft) / innerW) * (points.length - 1)),
+        Math.round(
+          ((relativeX - layout.padLeft) / layout.innerWidth) * (points.length - 1),
+        ),
       ),
     );
-    setHover(i);
+    setHover(index);
   };
   const hovered = hover != null ? points[hover] : null;
-  const hoverFrac = hover != null ? x(hover) / W : 0;
+  const hoverFraction = hover != null ? series.x(hover) / layout.width : 0;
 
   return (
     <div>
@@ -2357,18 +2605,7 @@ function DualLineChart({ compare }: { compare: ScenarioCompareDto }) {
         <p className="scn-section-title" style={{ margin: 0 }}>
           Trajetória — saldo no fim de cada mês
         </p>
-        {/* Redundância: a legenda repete cor+traço com texto — nunca só a cor conta a
-            história (regra do DS: status nunca é só cor). */}
-        <div className="scn-dualchart__legend">
-          <span className="scn-dualchart__legend-item">
-            <span className="scn-dualchart__legend-swatch scn-dualchart__legend-swatch--real" />
-            Real
-          </span>
-          <span className="scn-dualchart__legend-item">
-            <span className="scn-dualchart__legend-swatch scn-dualchart__legend-swatch--scenario" />
-            Simulação
-          </span>
-        </div>
+        <DualLineChartLegend />
       </div>
       <div
         ref={wrapRef}
@@ -2376,189 +2613,16 @@ function DualLineChart({ compare }: { compare: ScenarioCompareDto }) {
         onMouseMove={onMove}
         onMouseLeave={() => setHover(null)}
       >
-        <svg
-          className="scn-dualchart"
-          viewBox={`0 0 ${W} ${H}`}
-          role="img"
-          aria-label={ariaLabel}
-        >
-          {/* Grade horizontal + ticks Y: só linhas horizontais (--chart-grid), rótulos em
-              mono micro (--chart-axis) — Y implícito pela grade, sem eixo pesado (DS §8). */}
-          {scale.ticks.map((t) => (
-            <g key={t}>
-              <line
-                className="scn-dualchart__grid"
-                x1={padLeft}
-                x2={W - padRight + 6}
-                y1={y(t)}
-                y2={y(t)}
-              />
-              <text className="scn-dualchart__tick" x={padLeft - 8} y={y(t) + 3.5}>
-                {fmtAxisBRL(t)}
-              </text>
-            </g>
-          ))}
-          {/* Zero como LIMIAR (não baseline): tracejado de perigo quando há mês negativo;
-              com domínio contendo 0 mas tudo no azul, a grade comum já o mostra. */}
-          {zeroInDomain && hasNegative && (
-            <line
-              className="scn-dualchart__zero"
-              x1={padLeft}
-              x2={W - padRight + 6}
-              y1={y(0)}
-              y2={y(0)}
-            />
-          )}
-          {/* Meses no eixo X — âncora das pontas para dentro (mesma regra do DiffSparkline). */}
-          {points.map((p, i) => (
-            <text
-              key={`${p.year}-${p.month}`}
-              className="scn-dualchart__xlabel"
-              x={x(i)}
-              y={H - 8}
-              textAnchor={
-                i === 0 ? "start" : i === points.length - 1 ? "end" : "middle"
-              }
-            >
-              {MES_ABBR[p.month - 1]}
-            </text>
-          ))}
-
-          <polyline className="scn-dualchart__real" points={realPts} />
-          <polyline className="scn-dualchart__scenario" points={scenarioPts} />
-
-          {/* Pontos vazados em cada mês (hollow dots do DS): tornam a resolução mensal
-              legível — a linha é uma interpolação entre 12 fatos, não um contínuo diário. */}
-          {points.map((p, i) => (
-            <g key={`dot-${p.year}-${p.month}`} aria-hidden="true">
-              <circle
-                className="scn-dualchart__dot scn-dualchart__dot--real"
-                cx={x(i)}
-                cy={y(p.real_balance_cents)}
-                r={hover === i ? 4 : 2.75}
-              />
-              <circle
-                className="scn-dualchart__dot scn-dualchart__dot--scenario"
-                cx={x(i)}
-                cy={y(p.scenario_balance_cents)}
-                r={hover === i ? 4 : 2.75}
-              />
-            </g>
-          ))}
-
-          {/* Crosshair do hover */}
-          {hovered && (
-            <line
-              aria-hidden="true"
-              className="scn-dualchart__crosshair"
-              x1={x(hover!)}
-              x2={x(hover!)}
-              y1={padTop}
-              y2={H - padBottom}
-            />
-          )}
-
-          {/* Pior fim de mês da SIMULAÇÃO — valor na resolução do gráfico, cor pela regra
-              de sinal do dinheiro (nunca cor de série para sinal, DS §8). */}
-          {showWorst && worst && (
-            <g aria-hidden="true">
-              <circle
-                cx={x(worstIdx)}
-                cy={y(worst.scenario_balance_cents)}
-                r={3.5}
-                fill={
-                  worst.scenario_balance_cents < 0
-                    ? "var(--danger-400)"
-                    : "var(--text-faint)"
-                }
-              />
-              <text
-                className="scn-dualchart__worst"
-                x={
-                  x(worstIdx) < padLeft + 60
-                    ? x(worstIdx) + 8
-                    : Math.min(W - padRight - 20, x(worstIdx))
-                }
-                y={Math.min(y(worst.scenario_balance_cents) + 18, H - padBottom - 4)}
-                textAnchor={x(worstIdx) < padLeft + 60 ? "start" : "middle"}
-                fill={
-                  worst.scenario_balance_cents < 0
-                    ? "var(--danger-400)"
-                    : "var(--text-muted)"
-                }
-              >
-                {fmtAxisBRL(worst.scenario_balance_cents)}
-              </text>
-            </g>
-          )}
-
-          {lastPoint && (
-            <>
-              {/* Halo (paint-order: stroke) como segunda defesa, MELHOR-ESFORÇO: o suporte a
-                  paint-order em <text> é irregular fora de Chromium/WebView2 (ex.: WebKitGTK) —
-                  a defesa primária é o GUTTER à direita do plot, que vale em qualquer engine. */}
-              <text
-                className="scn-dualchart__label"
-                x={labelX}
-                y={realLabelY}
-                textAnchor="start"
-                fontSize="11"
-                fontWeight="600"
-                fill="var(--primary)"
-                stroke="var(--surface)"
-                strokeWidth={3}
-                paintOrder="stroke"
-              >
-                Real
-              </text>
-              <text
-                className="scn-dualchart__label"
-                x={labelX}
-                y={scenarioLabelY}
-                textAnchor="start"
-                fontSize="11"
-                fontWeight="600"
-                fill="var(--sim-scenario)"
-                stroke="var(--surface)"
-                strokeWidth={3}
-                paintOrder="stroke"
-              >
-                Simulação
-              </text>
-            </>
-          )}
-        </svg>
-
-        {/* Tooltip de hover (HTML sobre o gráfico, mesmo vocabulário do BalanceTrajectory).
-            aria-hidden: leitura exata já está no aria-label do SVG + cards acima. */}
+        <DualLineChartPlot
+          points={points}
+          layout={layout}
+          series={series}
+          endLabels={endLabels}
+          hover={hover}
+          ariaLabel={ariaLabel}
+        />
         {hovered && (
-          <div
-            className="nk-spark__tip"
-            aria-hidden="true"
-            style={{
-              left: `${hoverFrac * 100}%`,
-              transform: `translateX(${hoverFrac > 0.82 ? "-100%" : hoverFrac < 0.18 ? "0" : "-50%"})`,
-            }}
-          >
-            <span className="nk-spark__tip-day">
-              {MES[hovered.month - 1]} {hovered.year}
-            </span>
-            <span className="scn-dualchart__tip-row">
-              <span className="scn-dualchart__legend-swatch scn-dualchart__legend-swatch--real" />
-              <span className="nk-spark__tip-val">
-                {formatBRL(hovered.real_balance_cents)}
-              </span>
-            </span>
-            <span className="scn-dualchart__tip-row">
-              <span className="scn-dualchart__legend-swatch scn-dualchart__legend-swatch--scenario" />
-              <span className="nk-spark__tip-val">
-                {formatBRL(hovered.scenario_balance_cents)}
-              </span>
-            </span>
-            <span className="scn-dualchart__tip-delta">
-              Δ {fmtSigned(hovered.delta_cents)}
-            </span>
-          </div>
+          <DualLineChartTooltip point={hovered} horizontalFraction={hoverFraction} />
         )}
       </div>
     </div>

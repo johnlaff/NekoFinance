@@ -12,6 +12,7 @@ import { FORECAST, mockCommands, mockInvoke } from "../test/commands";
 import type { ScenarioCompareDto } from "../lib/api";
 import { fmtBRL, fmtCompactBRL, saldoBand } from "../lib/nkFormat";
 import { performanceStatus, custoVidaStatus } from "./totaisStatus";
+import { LoanGroupItem } from "./LoanGroupItem";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -987,6 +988,66 @@ describe("HorizonteScreen — side-sheet 'Simular cenário'", () => {
       expect(calls).toHaveLength(1);
     });
     expect(calls[0]).toMatchObject({ scenarioId: "scn-1", loanId: "loan-1" });
+  });
+
+  it("mantém a confirmação aberta e o botão clicável quando a remoção não passa", async () => {
+    const onRemove = vi.fn(() => Promise.resolve(false));
+    const user = userEvent.setup();
+
+    render(
+      <LoanGroupItem
+        group={{
+          loanId: "loan-1",
+          loan: LOAN_ENTITY,
+          principal: {
+            id: "principal-1",
+            type: "income",
+            amount: 1_000_000,
+            description: "Empréstimo do carro",
+            date: "2026-08-05",
+            loan_id: "loan-1",
+            override_id: null,
+          },
+          installments: [
+            {
+              id: "installment-1",
+              type: "expense",
+              amount: 515_000,
+              description: "Empréstimo do carro parcela 1/2",
+              date: "2026-09-05",
+              loan_id: "loan-1",
+              override_id: null,
+            },
+            {
+              id: "installment-2",
+              type: "expense",
+              amount: 515_000,
+              description: "Empréstimo do carro parcela 2/2",
+              date: "2026-10-05",
+              loan_id: "loan-1",
+              override_id: null,
+            },
+          ],
+        }}
+        isNew={false}
+        focusTick={0}
+        isEditing={false}
+        onEdit={vi.fn()}
+        onRemove={onRemove}
+        renderRow={(row, label) => <div key={row.id}>{label ?? row.description}</div>}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Empréstimo do carro/ }));
+    await user.click(screen.getByRole("button", { name: "Remover" }));
+    await user.click(screen.getByRole("button", { name: "Remover empréstimo" }));
+
+    expect(onRemove).toHaveBeenCalledWith("loan-1");
+    // O empréstimo continua no cenário: a confirmação segue de pé e o botão volta a aceitar
+    // clique — a trava de "removendo" não pode barrar a segunda tentativa.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Remover empréstimo" })).toBeEnabled();
+    });
   });
 
   it("editar reabre o formulário pré-preenchido e salvar regenera a série pela mesma identidade", async () => {
