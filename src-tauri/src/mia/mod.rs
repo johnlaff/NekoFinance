@@ -12,6 +12,7 @@ pub(crate) mod catalog;
 pub(crate) mod envelope;
 mod ledger_tools;
 mod method_tools;
+pub(crate) mod provider;
 mod scenario_tools;
 mod state_tools;
 mod time_tools;
