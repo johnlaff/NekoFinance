@@ -3,7 +3,12 @@
     {
       "name": "amazon-bedrock/global",
       "model_id": "anthropic/claude-sonnet-5",
-      "supported_parameters": ["tools", "structured_outputs", "max_tokens", "temperature"]
+      "supported_parameters": [
+        "tools",
+        "structured_outputs",
+        "max_tokens",
+        "temperature"
+      ]
     },
     {
       "name": "azure",
@@ -18,7 +23,12 @@
     {
       "name": "google-vertex/global",
       "model_id": "google/gemini-3.6-flash",
-      "supported_parameters": ["tools", "structured_outputs", "max_tokens", "response_format"]
+      "supported_parameters": [
+        "tools",
+        "structured_outputs",
+        "max_tokens",
+        "response_format"
+      ]
     },
     {
       "name": "xai/zdr",
