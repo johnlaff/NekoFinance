@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NewTransactionForm } from "./NewTransactionForm";
@@ -304,5 +304,52 @@ describe("NewTransactionForm", () => {
 
     // Sem conta reserve/illiquid → toAccountId fica vazio → botão desabilitado.
     expect(screen.getByRole("button", { name: "Lançar" })).toBeDisabled();
+  });
+
+  it.each([
+    ["vazia", ""],
+    ["não numérica", "abc"],
+  ])("mantém as parcelas com entrada %s", async (_descricao, value) => {
+    const user = userEvent.setup();
+    mockCommands({
+      list_tags_cmd: [],
+      list_cards: [
+        {
+          id: "card-001",
+          name: "Cartão demo",
+          institution: null,
+          owner_name: "Pessoa demo",
+          linked_account_id: null,
+          closing_day: 10,
+          due_day: 20,
+          credit_limit_cents: null,
+          aliases: [],
+          open_invoice: null,
+          next_due: null,
+        },
+      ],
+      create_card_series: "series-id",
+    });
+    render(<NewTransactionForm />);
+
+    await user.click(screen.getByRole("button", { name: /Cartão/ }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Cartão")).toHaveValue("card-001"),
+    );
+    await user.click(screen.getByRole("button", { name: "Parcelado em N" }));
+
+    const installments = screen.getByLabelText("Número de parcelas");
+    fireEvent.change(installments, { target: { value: "12" } });
+    fireEvent.change(installments, { target: { value } });
+
+    expect(installments).toHaveValue(12);
+
+    await user.type(screen.getByLabelText("Valor"), "100");
+    await user.click(screen.getByRole("button", { name: "Lançar" }));
+
+    await waitFor(() => {
+      const call = mockInvoke.mock.calls.find((c) => c[0] === "create_card_series");
+      expect(call?.[1]).toMatchObject({ count: 12 });
+    });
   });
 });

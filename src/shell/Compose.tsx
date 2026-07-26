@@ -18,6 +18,7 @@ import { fmtBRL, TYPE_META, type MovementType } from "../lib/nkFormat";
 import type { ComposeOptions } from "./appContext";
 
 interface Part {
+  id: string;
   desc: string;
   amt: string;
 }
@@ -143,7 +144,7 @@ function makeInitialState(options: ComposeOptions): ComposeState {
       options.amountCents != null && options.amountCents > 0
         ? centsToInput(options.amountCents)
         : "",
-    parts: [{ desc: "", amt: "" }],
+    parts: [{ id: crypto.randomUUID(), desc: "", amt: "" }],
     toAccountId: "",
     saving: false,
     loadingItems: false,
@@ -201,43 +202,39 @@ function ComposePartsEditor({
   onRemove,
 }: {
   parts: Part[];
-  onChangePart: (i: number, k: keyof Part, v: string) => void;
+  onChangePart: (i: number, k: "desc" | "amt", v: string) => void;
   onAdd: () => void;
   onRemove: (i: number) => void;
 }) {
   return (
     <div className="cmp-parts">
-      {parts.map((p, i) => {
-        // Stable key: prefer a non-empty field; fall back to positional suffix.
-        const stableKey = p.desc || p.amt ? `${p.desc}-${p.amt}-${i}` : `part-${i}`;
-        return (
-          <div className="cmp-part" key={stableKey}>
-            <input
-              className="cmp-field cmp-field--money cmp-part__amt"
-              inputMode="decimal"
-              placeholder="R$ 0,00"
-              value={p.amt}
-              onChange={(e) => onChangePart(i, "amt", e.target.value)}
-              aria-label={`Valor do item ${i + 1}`}
-            />
-            <input
-              className="cmp-field cmp-part__desc"
-              placeholder="O que é esse item?"
-              value={p.desc}
-              onChange={(e) => onChangePart(i, "desc", e.target.value)}
-              aria-label={`Descrição do item ${i + 1}`}
-            />
-            <button
-              type="button"
-              className="cmp-part__rm"
-              onClick={() => onRemove(i)}
-              aria-label={`Remover item ${i + 1}`}
-            >
-              <X size={15} strokeWidth={1.75} />
-            </button>
-          </div>
-        );
-      })}
+      {parts.map((p, i) => (
+        <div className="cmp-part" key={p.id}>
+          <input
+            className="cmp-field cmp-field--money cmp-part__amt"
+            inputMode="decimal"
+            placeholder="R$ 0,00"
+            value={p.amt}
+            onChange={(e) => onChangePart(i, "amt", e.target.value)}
+            aria-label={`Valor do item ${i + 1}`}
+          />
+          <input
+            className="cmp-field cmp-part__desc"
+            placeholder="O que é esse item?"
+            value={p.desc}
+            onChange={(e) => onChangePart(i, "desc", e.target.value)}
+            aria-label={`Descrição do item ${i + 1}`}
+          />
+          <button
+            type="button"
+            className="cmp-part__rm"
+            onClick={() => onRemove(i)}
+            aria-label={`Remover item ${i + 1}`}
+          >
+            <X size={15} strokeWidth={1.75} />
+          </button>
+        </div>
+      ))}
       <button type="button" className="cmp-add" onClick={onAdd}>
         <Plus size={14} strokeWidth={2} />
         Adicionar item
@@ -309,13 +306,16 @@ function ComposeDrawer({
   const { type, date, desc, composed, single, parts, toAccountId } = state;
   const meta = TYPE_META[type];
 
-  const setPart = (i: number, k: keyof Part, v: string) =>
+  const setPart = (i: number, k: "desc" | "amt", v: string) =>
     dispatch({
       kind: "set_parts",
       parts: parts.map((p, j) => (j === i ? { ...p, [k]: v } : p)),
     });
   const addPart = () =>
-    dispatch({ kind: "set_parts", parts: [...parts, { desc: "", amt: "" }] });
+    dispatch({
+      kind: "set_parts",
+      parts: [...parts, { id: crypto.randomUUID(), desc: "", amt: "" }],
+    });
   const rmPart = (i: number) =>
     dispatch({
       kind: "set_parts",
@@ -540,7 +540,7 @@ export function Compose({
       dispatch({
         kind: "items_loaded",
         composed: false,
-        parts: [{ desc: "", amt: "" }],
+        parts: [{ id: crypto.randomUUID(), desc: "", amt: "" }],
       });
       return getLineItems(options.transactionId!)
         .then((items) => {
@@ -549,6 +549,7 @@ export function Compose({
               .slice()
               .sort((a, b) => a.position - b.position)
               .map((li) => ({
+                id: crypto.randomUUID(),
                 desc: li.description,
                 amt: centsToInput(li.amount_cents),
               }));
@@ -557,7 +558,7 @@ export function Compose({
             dispatch({
               kind: "items_loaded",
               composed: false,
-              parts: [{ desc: "", amt: "" }],
+              parts: [{ id: crypto.randomUUID(), desc: "", amt: "" }],
             });
           }
         })
@@ -565,7 +566,7 @@ export function Compose({
           dispatch({
             kind: "items_loaded",
             composed: false,
-            parts: [{ desc: "", amt: "" }],
+            parts: [{ id: crypto.randomUUID(), desc: "", amt: "" }],
           });
         });
     });
@@ -583,7 +584,9 @@ export function Compose({
     ? parts.filter((p) => (parseBRLToCents(p.amt) ?? 0) > 0)
     : (() => {
         const c = parseBRLToCents(single) ?? 0;
-        return c > 0 ? [{ desc: desc || meta.name, amt: single }] : [];
+        return c > 0
+          ? [{ id: crypto.randomUUID(), desc: desc || meta.name, amt: single }]
+          : [];
       })();
 
   const noteText =

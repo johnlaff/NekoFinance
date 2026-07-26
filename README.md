@@ -71,8 +71,9 @@ sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev
 ```
 
 Optional: connect Google Sheets by setting `VITE_GOOGLE_CLIENT_ID` **and**
-`VITE_GOOGLE_CLIENT_SECRET` in `.env` (see `.env.example`). The client secret is required for
-background token refresh — with only the client ID, the Google connection drops when the first
+`VITE_GOOGLE_DESKTOP_CLIENT_KEY` in `.env` (see `.env.example`). That second value — the
+desktop-client credential Google issues, not confidential by its own definition — is required for
+background token refresh: with only the client ID, the Google connection drops when the first
 access token expires (~1 hour). Without either, the local `.xlsx` import path works out of the box.
 
 ### Windows build

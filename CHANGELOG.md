@@ -74,6 +74,11 @@ for humans, and versions follow [SemVer](https://semver.org/).
 
 ### Changed
 
+- The public build variable that carries the Google desktop-client credential is
+  now `VITE_GOOGLE_DESKTOP_CLIENT_KEY`. A local `.env` that still names it
+  `VITE_GOOGLE_CLIENT_SECRET` silently loses background token refresh — rename the
+  key, the value is unchanged. Anything a `VITE_` prefix inlines into the browser
+  bundle is published, so the name no longer promises a secrecy it cannot keep.
 - "Performance acumulada" is gone from the product. Summing monthly performance
   over a year is not something the method does — once you start setting money
   aside, savings is the number that matters, not the leftover. The yearly

@@ -38,6 +38,7 @@ The public repo must stay source-neutral and data-free. Do not commit private so
 - Do not lower coverage or loosen rules to make a task pass without documenting a concrete reason.
 - For frontend layout or flow changes, run Playwright visual smoke and inspect screenshots or traces.
 - React Doctor gates pull requests (`blocking: warning`, scope `changed`): anything the PR introduces must be fixed, not waived. It is not part of `npm run check`, and no local command reproduces its verdict in full — so a frontend change is only cleared once the PR check is green. `npm run doctor` (whole project) and `npm run doctor:changed` (against the base) run it locally with telemetry disabled, as an early signal rather than proof.
+- A local scan reports FEWER findings than CI, and the gap is structural: the security rules walk the working directory and read at most 2500 files per bucket, while build output and tool caches (`src-tauri/target/`, agent state directories) push a working tree well past that. Files under `src/` fall outside the budget and their security findings never surface locally. To reproduce the CI verdict, scan a clean checkout: `git clone --no-hardlinks . /tmp/nk-scan && cd /tmp/nk-scan && npx react-doctor@<pinned> . --json --json-out /tmp/scan.json`.
 
 ## Agent skills
 

@@ -10,16 +10,22 @@
  * `opacity` (o compositor não a pinta aqui) e `transform: scale()` de 0 num elemento
  * gigante (raster inicial vazio).
  *
- * Cada etapa grava um evento em `nk-motion-log` (localStorage, últimos 8) — o
+ * Cada etapa grava um evento em `nk-motion-log:v1` (localStorage, últimos 8) — o
  * diagnóstico exibe o log para depurar o caminho real sem devtools.
  */
 
 export type Theme = "dark" | "light";
 
-const LOG_KEY = "nk-motion-log";
+const LOG_KEY = "nk-motion-log:v1";
+const LEGACY_LOG_KEY = "nk-motion-log";
+let legacyLogDiscarded = false;
 
 export function logMotion(event: string): void {
   try {
+    if (!legacyLogDiscarded) {
+      legacyLogDiscarded = true;
+      localStorage.removeItem(LEGACY_LOG_KEY);
+    }
     const raw = localStorage.getItem(LOG_KEY);
     const entries: string[] = raw ? (JSON.parse(raw) as string[]) : [];
     entries.push(event);

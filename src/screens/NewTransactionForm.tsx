@@ -577,14 +577,21 @@ function CardPurchaseControls({
             min="2"
             max="120"
             value={installments}
-            onChange={(event) =>
+            onChange={(event) => {
+              // Campo vazio e digitação a meio caminho ("2e", "-") são estados de passagem do
+              // input numérico: preservam o último valor válido em vez de virar 0 ou NaN, que
+              // seguiriam para o lançamento gravado.
+              const rawValue = event.target.value;
+              if (rawValue === "") return;
+              const parsedInstallments = Number(rawValue);
+              if (!Number.isInteger(parsedInstallments)) return;
               dispatch({
                 type: "set",
                 patch: {
-                  installments: Math.min(120, Math.max(2, Number(event.target.value))),
+                  installments: Math.min(120, Math.max(2, parsedInstallments)),
                 },
-              })
-            }
+              });
+            }}
             style={field}
           />
         </div>

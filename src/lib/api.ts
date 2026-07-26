@@ -8,21 +8,21 @@ export const GOOGLE_CLIENT_ID =
   (import.meta.env["VITE_GOOGLE_CLIENT_ID"] as string) ?? "";
 
 /**
- * Client secret do OAuth, repassado ao backend (que já o usa no refresh do token).
+ * Credencial do cliente OAuth, repassada ao backend (que a usa no refresh do token).
  *
  * O client é do tipo "Desktop app" (app instalado). O Google emite um `client_secret` também
  * para esse tipo e o endpoint de token o EXIGE no refresh: sem ele o refresh falha com
  * `client_secret is missing` e a conexão cai em ~1h, forçando reconexão constante. Para apps
- * desktop esse "secret" NÃO é confidencial pela definição do próprio Google — ele acompanha o
- * binário instalado inevitavelmente, e a doc do Google assume isso. Antes passávamos `null`
- * (confiando num env `GOOGLE_CLIENT_SECRET` do processo Rust, que NÃO existe no .exe em
- * runtime) — por isso o refresh nunca funcionava.
+ * desktop esse valor NÃO é confidencial pela definição do próprio Google — ele acompanha o
+ * binário instalado inevitavelmente, e a doc do Google assume isso. Daí o nome público
+ * `VITE_GOOGLE_DESKTOP_CLIENT_KEY`: chamá-lo de segredo prometeria um sigilo que um bundle de
+ * browser não pode cumprir.
  *
- * Agora lemos do build (`VITE_GOOGLE_CLIENT_SECRET`, do `.env` local gitignored) — `null` quando
- * ausente (cai no fallback do backend).
+ * Vem do build (`.env` local gitignored) — `null` quando ausente, e aí o backend cai no valor
+ * que carrega.
  */
 const clientSecretOrNull =
-  (import.meta.env["VITE_GOOGLE_CLIENT_SECRET"] as string) || null;
+  (import.meta.env["VITE_GOOGLE_DESKTOP_CLIENT_KEY"] as string) || null;
 
 export type AuthStatus = "connected" | "expired" | "disconnected" | "loading";
 
