@@ -13,6 +13,19 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 // entrega as saídas concretas de cada resposta.
 
 const app = { navigate: vi.fn(), openCompose: vi.fn() };
+const MIA_CONSENT = {
+  granted: false,
+  needs_renewal: false,
+  granted_at: null,
+  has_key: false,
+  linked: false,
+  text: {
+    headline: "Autorizar a conversa aberta",
+    processors: [],
+    paragraphs: [],
+    checklist: [],
+  },
+};
 
 function renderMia() {
   return render(
@@ -28,7 +41,11 @@ describe("CopilotScreen (Mia)", () => {
     app.navigate.mockReset();
     app.openCompose.mockReset();
     resetSession();
-    mockCommands({ get_dashboard_summary: SUMMARY, get_forecast: FORECAST });
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: FORECAST,
+      get_mia_consent: MIA_CONSENT,
+    });
   });
 
   it("abre na saudação do gato, sem conversa fabricada", async () => {
@@ -77,6 +94,22 @@ describe("CopilotScreen (Mia)", () => {
     const log = screen.getByRole("log");
     expect(within(log).getByText(/ainda não está ligada/)).toBeInTheDocument();
     expect(within(log).queryByText(/Cálculo determinístico/)).not.toBeInTheDocument();
+  });
+
+  it("não oferece ligar a conversa quando o consentimento e a chave já estão ligados", async () => {
+    const user = userEvent.setup();
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: FORECAST,
+      get_mia_consent: { ...MIA_CONSENT, granted: true, has_key: true, linked: true },
+    });
+    renderMia();
+    const input = await screen.findByLabelText("Mensagem para a Mia");
+    await user.type(input, "me conta uma piada{Enter}");
+
+    expect(
+      screen.queryByRole("button", { name: "Ligar a conversa" }),
+    ).not.toBeInTheDocument();
   });
 
   it("a saída de cada recusa é concreta: tela certa ou o gesto de registrar", async () => {

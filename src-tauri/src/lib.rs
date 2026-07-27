@@ -18,6 +18,7 @@ mod os_scheduler;
 mod recurrence;
 mod reminder_task;
 mod scenarios;
+mod secret_file;
 mod splits;
 mod sync_task;
 mod tags;
@@ -66,6 +67,10 @@ pub fn run() {
             commands::apply_economia_write_back,
             commands::get_app_setting,
             commands::set_app_setting,
+            commands::get_mia_consent,
+            commands::grant_mia_consent,
+            commands::revoke_mia_consent,
+            commands::set_mia_api_key,
             commands::upsert_daily_budget,
             commands::upsert_daily_budget_with_categories_cmd,
             commands::get_daily_budget_categories_cmd,

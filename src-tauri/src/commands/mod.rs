@@ -15,6 +15,7 @@ use tauri::State;
 
 pub(crate) mod card_cmds;
 pub(crate) mod forecast_cmds;
+pub(crate) mod mia_cmds;
 pub(crate) mod oauth_cmds;
 pub(crate) mod pockets;
 pub(crate) mod reminder_cmds;
@@ -25,6 +26,7 @@ pub(crate) mod write_back_cmds;
 
 pub use card_cmds::*;
 pub use forecast_cmds::*;
+pub use mia_cmds::*;
 pub use oauth_cmds::*;
 pub use pockets::*;
 pub use reminder_cmds::*;
@@ -1109,6 +1111,30 @@ mod tests {
         assert_eq!(
             app_setting_get(&pool, "onboarding_done").await.unwrap(),
             Some("false".to_string())
+        );
+    }
+
+    // A garantia do consentimento não pode depender de a tela esconder um botão: a porta genérica
+    // de preferências recusa a chave do consentimento, senão bastaria um webview adulterado gravar
+    // o registro para a rodada da conversa ser autorizada.
+    #[tokio::test]
+    async fn a_interface_nao_grava_o_consentimento_da_conversa() {
+        let pool = fixture_pool().await;
+        let forjado = r#"{"fingerprint":"forjado","granted_at":"2026-07-26T12:00:00Z"}"#;
+
+        let recusa = app_setting_set_from_ui(&pool, "mia_consent", forjado)
+            .await
+            .expect_err("a porta da interface recusa a chave do consentimento");
+
+        assert!(recusa.contains("mia_consent"));
+        assert_eq!(app_setting_get(&pool, "mia_consent").await.unwrap(), None);
+        // Uma preferência comum segue passando pela mesma porta.
+        app_setting_set_from_ui(&pool, "onboarding_done", "true")
+            .await
+            .unwrap();
+        assert_eq!(
+            app_setting_get(&pool, "onboarding_done").await.unwrap(),
+            Some("true".to_string())
         );
     }
 

@@ -488,6 +488,16 @@ describe("recusa honesta", () => {
     expect(a.receipt).toBeUndefined();
   });
 
+  it("oferece ligar a conversa só enquanto esse gesto ainda existe", () => {
+    const route = routeQuestion("me conta uma piada");
+
+    expect(answerFor(route, FACTS).cta).toEqual({
+      label: "Autorizar a conversa",
+      target: "config",
+    });
+    expect(answerFor(route, FACTS, true).cta).toBeUndefined();
+  });
+
   it("capacidade não suportada nomeia o caminho certo", () => {
     const registrar = ask("registra R$ 4,50 do café");
     expect(registrar.refusal).toBe("capacidade");

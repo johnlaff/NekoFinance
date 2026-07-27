@@ -432,6 +432,45 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
       db_path: "C:\\Users\\you\\AppData\\Roaming\\app.neko.finance\\neko-finance.db",
     };
 
+    // Conversa desligada: o estado que a tela encontra antes de qualquer gesto, e o único em
+    // que o piso offline responde tudo. O texto é o que o backend serve a partir do pin.
+    const MIA_CONSENT = {
+      granted: false,
+      needs_renewal: false,
+      granted_at: null,
+      has_key: false,
+      linked: false,
+      text: {
+        headline: "Autorizar a conversa aberta",
+        processors: [
+          {
+            name: "OpenRouter",
+            role: "Roteia o pedido e aplica a retenção zero contratada.",
+          },
+          { name: "Amazon Bedrock", role: "Executa o modelo no endpoint pinado." },
+        ],
+        paragraphs: [
+          "Para responder qualquer pergunta, a Mia envia a sua pergunta e os dados necessários para respondê-la a dois processadores: OpenRouter, que roteia o pedido, e Amazon Bedrock, que executa o modelo.",
+          "A conversa lê tudo o que o app mostra: lançamentos completos, com descrições e notas, valores, contas, pessoas e tags. Não existe recorte — o que estiver no seu histórico pode ser enviado para responder a uma pergunta.",
+          "Os pedidos saem com retenção zero e coleta de dados negada, para o endpoint pinado, sem alternativa automática. O app fala só com openrouter.ai e nunca segue redirecionamento.",
+          "A sua chave fica no cofre do sistema — nunca em log, evento, banco ou tela.",
+          "Você pode revogar quando quiser. Revogar apaga o consentimento e a chave, e a conversa volta a responder só o que ela calcula aqui dentro.",
+        ],
+        checklist: [
+          {
+            title: "Desligue o treino com o que você envia",
+            detail:
+              "Na sua conta do provedor, em Privacidade, recuse provedores que treinam com as suas entradas. A requisição do app não controla essa escolha.",
+          },
+          {
+            title: "Desligue a publicação de prompts em endpoints gratuitos",
+            detail:
+              "Ainda em Privacidade, recuse o desconto que publica os seus prompts. Essa escolha também vive só na sua conta.",
+          },
+        ],
+      },
+    };
+
     // Planilha real de 2026 (centavos): renda e performance por mês, economia zerada — o ano
     // que abre o veredito "não guardou nada". Com o relógio em junho, jul–dez são futuros e
     // set–dez reprovam o lastro (saída bem abaixo do gasto típico).
@@ -854,6 +893,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
       get_pockets: POCKETS,
       create_account: "e2e-account-id",
       list_cards: [],
+      get_mia_consent: MIA_CONSENT,
       // Onboarding já concluído nestes cenários — o overlay não cobre o app.
       get_app_setting: "true",
       set_app_setting: null,

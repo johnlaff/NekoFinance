@@ -9,7 +9,9 @@
 //! defesa contra injeção estrutural em vez de censura de conteúdo.
 
 pub(crate) mod catalog;
+pub(crate) mod consent;
 pub(crate) mod envelope;
+pub(crate) mod key_store;
 mod ledger_tools;
 mod method_tools;
 pub(crate) mod provider;

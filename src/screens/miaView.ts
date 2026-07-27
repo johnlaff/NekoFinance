@@ -309,7 +309,7 @@ function teach(key: string): MiaAnswer {
   };
 }
 
-function notLinked(): MiaAnswer {
+function notLinked(linked = false): MiaAnswer {
   return {
     text: [
       t(
@@ -319,6 +319,7 @@ function notLinked(): MiaAnswer {
     provenance: "metodo",
     refusal: "nao_ligada",
     options: SUGGESTIONS.slice(0, 6),
+    ...(linked ? {} : { cta: { label: "Autorizar a conversa", target: "config" } }),
   };
 }
 
@@ -761,8 +762,12 @@ const CALC_INTENTS = new Set<string>([
   "faturas",
 ]);
 
-export function answerFor(route: Route, facts: MiaFacts | null): MiaAnswer {
-  if (route.kind === "unknown") return notLinked();
+export function answerFor(
+  route: Route,
+  facts: MiaFacts | null,
+  linked = false,
+): MiaAnswer {
+  if (route.kind === "unknown") return notLinked(linked);
   if (route.kind === "ambiguous") {
     const options = route.ids.map((id) => INTENT_QUESTION[id]!).slice(0, 2);
     return {

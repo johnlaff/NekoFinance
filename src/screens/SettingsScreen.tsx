@@ -7,6 +7,7 @@ import {
   Landmark,
   Link,
   Lock,
+  MessagesSquare,
   Palette,
   Table2,
   Shield,
@@ -27,14 +28,19 @@ import {
   getAppInfo,
   getAppSetting,
   getDailyBudget,
+  getMiaConsent,
   GOOGLE_CLIENT_ID,
+  grantMiaConsent,
   isTauri,
   lastSyncAt,
   registerOsReminder,
   setAppSetting,
+  setMiaApiKey,
   startOAuthFlow,
   unregisterOsReminder,
   type AuthStatus,
+  type MiaConsentView,
+  revokeMiaConsent,
 } from "../lib/api";
 import {
   motionEnabled,
@@ -47,6 +53,7 @@ import { safeErrorMessage } from "../lib/errors";
 import { syncRecencyLabel } from "../lib/syncRecency";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { Button } from "../design-system/components/Button";
+import { EmptyState } from "../design-system/components/EmptyState";
 import { InfoPopover } from "../design-system/components/InfoPopover";
 import { Money } from "../design-system/components/Money";
 import { Switch } from "../design-system/components/Switch";
@@ -108,6 +115,296 @@ function SecHead({
       <h2 id={id}>{title}</h2>
       {action}
     </header>
+  );
+}
+
+// A promessa de privacidade é uma leitura do estado, não um texto fixo: com a conversa ligada, a
+// linha da Mia deixaria de ser verdadeira se continuasse afirmando que nada sai do aparelho.
+function PrivacySection({
+  dbPath,
+  miaLinked,
+  miaOperator,
+}: {
+  dbPath: string | null;
+  miaLinked: boolean;
+  miaOperator: string;
+}) {
+  return (
+    <section className="config__card" aria-labelledby="config-privacidade">
+      <SecHead icon={Shield} id="config-privacidade" title="Privacidade" />
+      <Line
+        icon={Lock}
+        title="Seus dados"
+        sub="Guardados só neste aparelho — nada de uso é enviado."
+        subExtra={
+          <div className="config__path" title={dbPath ?? undefined}>
+            <code>{dbPath ?? "—"}</code>
+          </div>
+        }
+        right={<span className="config__pill">Local</span>}
+      />
+      <BackupLine />
+      <Line
+        title="A Mia"
+        sub={
+          miaLinked
+            ? `Conversa aberta autorizada — suas perguntas e os lançamentos necessários podem ir para OpenRouter e ${miaOperator}.`
+            : "Responde local. Nada sai deste aparelho."
+        }
+        right={<span className="config__pill">{miaLinked ? "Nuvem" : "Local"}</span>}
+      />
+      <Line
+        title="Conta Google"
+        sub="Token no chaveiro do sistema."
+        right={<span className="config__pill">Local</span>}
+      />
+    </section>
+  );
+}
+
+// O gesto que fala com o backend vive fora do componente porque o compilador do React não otimiza
+// função com `finally` — e devolver o botão ao estado normal aconteça o que acontecer é
+// justamente para o que o `finally` existe aqui.
+async function consentGesture(
+  gesture: () => Promise<MiaConsentView>,
+  fallback: string,
+  setBusy: (busy: boolean) => void,
+  setError: (message: string | null) => void,
+): Promise<MiaConsentView | null> {
+  setBusy(true);
+  setError(null);
+  try {
+    return await gesture();
+  } catch (cause) {
+    setError(safeErrorMessage(cause, fallback));
+    return null;
+  } finally {
+    setBusy(false);
+  }
+}
+
+function ConversationConsent({
+  consent,
+  loading,
+  error,
+  onConsentChange,
+}: {
+  consent: MiaConsentView | null;
+  loading: boolean;
+  error: unknown;
+  onConsentChange: (consent: MiaConsentView) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [apiKey, setApiKey] = useState("");
+  const [replaceKey, setReplaceKey] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  if (loading && !consent) {
+    return (
+      <section className="config__card" aria-labelledby="config-conversa">
+        <SecHead icon={MessagesSquare} id="config-conversa" title="Conversa" />
+        <EmptyState variant="skeleton" skeletonRows={3} />
+      </section>
+    );
+  }
+
+  if (error && !consent) {
+    return (
+      <section className="config__card" aria-labelledby="config-conversa">
+        <SecHead icon={MessagesSquare} id="config-conversa" title="Conversa" />
+        <EmptyState
+          variant="error"
+          title="Não foi possível ler a conversa"
+          description="Tente abrir Configurações de novo para consultar o consentimento."
+        />
+      </section>
+    );
+  }
+
+  if (!consent) return null;
+
+  const operator = consent.text.processors[1]?.name ?? "o provedor";
+  const linked = consent.linked;
+  const needsRenewal = consent.needs_renewal;
+  // O vocabulário é de AUTORIZAÇÃO, não de ligar: o que este gesto faz é abrir a porta, e a
+  // conversa aberta passa a responder quando o app souber usá-la. Chamar isto de "ligada"
+  // contradiria a própria conversa, que continua dizendo que ainda não está.
+  const invitation = needsRenewal
+    ? { sub: "O texto mudou — leia de novo para seguir autorizada.", label: "Rever" }
+    : linked
+      ? { sub: `Autorizada · OpenRouter e ${operator}`, label: "Revogar" }
+      : consent.granted
+        ? {
+            sub: "Falta a chave — guarde a sua chave do provedor para autorizar.",
+            label: "Continuar",
+          }
+        : consent.has_key
+          ? {
+              sub: "Falta o consentimento — leia o que sai do aparelho para autorizar.",
+              label: "Continuar",
+            }
+          : {
+              sub: "Sem autorização — a Mia responde só o que ela calcula aqui dentro.",
+              label: "Autorizar",
+            };
+
+  const canRegister = consent.has_key || apiKey.trim().length > 0;
+
+  async function register() {
+    if (!canRegister || busy) return;
+    const key = apiKey.trim();
+    const consent = await consentGesture(
+      async () => {
+        if (key) await setMiaApiKey(key);
+        return grantMiaConsent();
+      },
+      "Não foi possível registrar o consentimento.",
+      setBusy,
+      setActionError,
+    );
+    if (!consent) return;
+    onConsentChange(consent);
+    invalidateCommands();
+    setApiKey("");
+    setReplaceKey(false);
+  }
+
+  async function revoke() {
+    if (busy) return;
+    const consent = await consentGesture(
+      revokeMiaConsent,
+      "Não foi possível revogar a conversa.",
+      setBusy,
+      setActionError,
+    );
+    if (!consent) return;
+    onConsentChange(consent);
+    invalidateCommands();
+    setOpen(false);
+  }
+
+  return (
+    <section className="config__card" aria-labelledby="config-conversa">
+      <SecHead icon={MessagesSquare} id="config-conversa" title="Conversa" />
+      <Line
+        title="Conversa aberta"
+        sub={invitation.sub}
+        right={
+          <Button
+            variant={linked ? "ghost" : "primary"}
+            size="sm"
+            onClick={() => setOpen((current) => !current)}
+            aria-expanded={open}
+            aria-controls="config-conversa-porta"
+          >
+            {invitation.label}
+          </Button>
+        }
+      />
+      <div
+        className="config__door"
+        id="config-conversa-porta"
+        data-open={open}
+        inert={!open}
+        role="region"
+        aria-label="Consentimento da conversa"
+      >
+        <div className="config__doorin">
+          <div className="config__consent">
+            <h3>{consent.text.headline}</h3>
+            {consent.text.paragraphs.map((paragraph) => (
+              <p key={paragraph}>{paragraph}</p>
+            ))}
+            {/* Os dois grupos são de naturezas diferentes — um é fato, o outro é tarefa — e
+                sem rótulo visível correriam como mais um bloco de texto do consentimento. */}
+            <div className="config__consent-group">
+              <h4 id="config-conversa-processadores">Quem processa</h4>
+              <ul
+                className="config__consent-list"
+                aria-labelledby="config-conversa-processadores"
+              >
+                {consent.text.processors.map((processor) => (
+                  <li key={processor.name}>
+                    <strong>{processor.name}</strong>
+                    <span>{processor.role}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="config__consent-group">
+              <h4 id="config-conversa-optins">
+                Antes de autorizar, na sua conta do provedor
+              </h4>
+              <ul
+                className="config__consent-list"
+                aria-labelledby="config-conversa-optins"
+              >
+                {consent.text.checklist.map((item) => (
+                  <li key={item.title}>
+                    <strong>{item.title}</strong>
+                    <span>{item.detail}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            {linked ? (
+              <div className="config__consent-action">
+                <p>
+                  Revogar apaga o consentimento e a chave, e a conversa volta a
+                  responder só o que ela calcula aqui dentro.
+                </p>
+                <Button variant="danger" onClick={() => void revoke()} disabled={busy}>
+                  Revogar e apagar a chave
+                </Button>
+              </div>
+            ) : (
+              <div className="config__consent-action">
+                {consent.has_key && !replaceKey ? (
+                  <div className="config__consent-key-state">
+                    <span>Chave guardada</span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setReplaceKey(true)}
+                    >
+                      Trocar
+                    </Button>
+                  </div>
+                ) : (
+                  // A ajuda fica FORA do rótulo: dentro dele, o nome acessível do campo
+                  // passaria a ser o rótulo somado à frase inteira da ajuda.
+                  <div className="config__consent-key">
+                    <label htmlFor="mia-api-key">Sua chave do provedor</label>
+                    <input
+                      id="mia-api-key"
+                      type="password"
+                      aria-describedby="mia-api-key-help"
+                      value={apiKey}
+                      onChange={(event) => setApiKey(event.target.value)}
+                      autoComplete="off"
+                    />
+                    <small id="mia-api-key-help">
+                      Fica no cofre do sistema. Você pode apagar quando quiser.
+                    </small>
+                  </div>
+                )}
+                <Button onClick={() => void register()} disabled={busy || !canRegister}>
+                  Registrar consentimento
+                </Button>
+              </div>
+            )}
+            {actionError ? (
+              <EmptyState
+                variant="error"
+                title="Não foi possível concluir"
+                description={actionError}
+              />
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -559,6 +856,7 @@ export function SettingsScreen({
   const appInfo = useCommand("get_app_info", getAppInfo).data ?? null;
   const writeBack = useWriteBackPending();
   const { data: lastSync } = useCommand("last_sync_at", lastSyncAt);
+  const miaConsentQ = useCommand("get_mia_consent", getMiaConsent);
   const { theme, toggleTheme } = useThemeSwitch();
 
   // Persistido em localStorage e refletido em <html data-motion> (src/lib/motion.ts).
@@ -567,6 +865,21 @@ export function SettingsScreen({
   const [accent, setAccent] = useState<Accent>(() => getStoredAccent());
   const [reconnecting, setReconnecting] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
+  // A resposta do gesto vale até o backend ser relido — e nem um instante além. Ela guarda a
+  // leitura que substituiu; quando o comando traz outra, o override caduca sozinho. Um override
+  // permanente sobreviveria a uma revogação vinda de fora, e a tela seguiria dizendo "autorizada"
+  // enquanto o backend já recusa.
+  const [miaConsent, setMiaConsent] = useState<{
+    view: MiaConsentView;
+    replaced: MiaConsentView | undefined;
+  } | null>(null);
+
+  const visibleMiaConsent =
+    miaConsent && miaConsent.replaced === miaConsentQ.data
+      ? miaConsent.view
+      : (miaConsentQ.data ?? null);
+  const miaLinked = visibleMiaConsent?.linked === true;
+  const miaOperator = visibleMiaConsent?.text.processors[1]?.name ?? "o provedor";
 
   const isConnected = authStatus === "connected";
   const greet = greetState(
@@ -675,32 +988,18 @@ export function SettingsScreen({
         </div>
       </section>
 
-      {/* ── Privacidade ────────────────────────────────────────── */}
-      <section className="config__card" aria-labelledby="config-privacidade">
-        <SecHead icon={Shield} id="config-privacidade" title="Privacidade" />
-        <Line
-          icon={Lock}
-          title="Seus dados"
-          sub="Guardados só neste aparelho — nada de uso é enviado."
-          subExtra={
-            <div className="config__path" title={appInfo ? appInfo.db_path : undefined}>
-              <code>{appInfo ? appInfo.db_path : "—"}</code>
-            </div>
-          }
-          right={<span className="config__pill">Local</span>}
-        />
-        <BackupLine />
-        <Line
-          title="A Mia responde local"
-          sub="Sua planilha não vai para a nuvem."
-          right={<span className="config__pill">Local</span>}
-        />
-        <Line
-          title="Conta Google"
-          sub="Token no chaveiro do sistema."
-          right={<span className="config__pill">Local</span>}
-        />
-      </section>
+      <PrivacySection
+        dbPath={appInfo ? appInfo.db_path : null}
+        miaLinked={miaLinked}
+        miaOperator={miaOperator}
+      />
+
+      <ConversationConsent
+        consent={visibleMiaConsent}
+        loading={miaConsentQ.loading === true}
+        error={miaConsentQ.error}
+        onConsentChange={(view) => setMiaConsent({ view, replaced: miaConsentQ.data })}
+      />
 
       {/* ── Bolsos ─────────────────────────────────────────────── */}
       <section className="config__card" aria-labelledby="config-bolsos">

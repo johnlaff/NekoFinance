@@ -228,6 +228,97 @@
   margin-top: var(--space-4);
 }
 
+/* ── Consentimento da conversa ───────────────────────────────── */
+
+.config__consent {
+  display: grid;
+  gap: var(--space-5);
+  color: var(--text-muted);
+  font-size: var(--fs-label);
+  line-height: 1.5;
+}
+.config__consent h3,
+.config__consent p {
+  margin: 0;
+}
+.config__consent h3 {
+  color: var(--text);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.01em;
+}
+.config__consent-group {
+  display: grid;
+  gap: var(--space-4);
+}
+.config__consent-group h4 {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.config__consent-list {
+  display: grid;
+  gap: var(--space-4);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.config__consent-list li {
+  display: grid;
+  gap: var(--space-1);
+}
+.config__consent-list strong {
+  color: var(--text);
+  font-weight: var(--fw-medium);
+}
+.config__consent-list span {
+  color: var(--text-faint);
+}
+.config__consent-action {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-4);
+}
+.config__consent-key {
+  display: grid;
+  width: 100%;
+  gap: var(--space-2);
+  color: var(--text);
+  font-size: var(--fs-label);
+  font-weight: var(--fw-medium);
+}
+.config__consent-key input {
+  width: 100%;
+  min-height: var(--hit-min);
+  box-sizing: border-box;
+  border: var(--bw-hair) solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  color: var(--text);
+  font: inherit;
+  font-weight: var(--fw-normal);
+  padding: 0 var(--space-4);
+}
+.config__consent-key input:focus-visible {
+  border-color: var(--primary);
+  outline: 2px solid color-mix(in srgb, var(--primary) 36%, transparent);
+  outline-offset: 1px;
+}
+.config__consent-key small {
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-normal);
+}
+.config__consent-key-state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--text-muted);
+}
+
 /* ── Aparência ───────────────────────────────────────────────── */
 
 .config__line--block {

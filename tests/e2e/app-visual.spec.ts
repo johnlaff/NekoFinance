@@ -451,6 +451,49 @@ for (const [label, width, height] of [
   });
 }
 
+// O consentimento da conversa nos dois ambientes. O baseline é do painel ABERTO: fechado, a seção
+// é uma linha só, e o que precisa caber na coluna do polegar é o texto inteiro — os processadores
+// nomeados, o checklist da conta do provedor e o campo da chave.
+for (const [label, width, height] of [
+  ["", 1440, 1000],
+  ["mobile-", 390, 844],
+] as const) {
+  test(`Configurações — ${label ? "mobile " : ""}consentimento da conversa`, async ({
+    page,
+  }) => {
+    await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width, height });
+    await mockTauri(page, {
+      list_scenarios_cmd: [],
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [],
+    });
+    await page.goto("/");
+    if (label) {
+      await page.getByRole("button", { name: "Mais telas" }).click();
+      await page.getByRole("button", { name: "Configurações", exact: false }).click();
+    } else {
+      await page
+        .getByRole("button", { name: "Configurações", exact: false })
+        .first()
+        .click();
+    }
+    await page.waitForTimeout(350);
+
+    const card = page.locator('section[aria-labelledby="config-conversa"]');
+    await expect(card.getByText("Sem autorização", { exact: false })).toBeVisible();
+    await page.getByRole("button", { name: "Autorizar" }).click();
+    // A porta abre com transição de altura; o baseline espera o repouso.
+    await page.waitForTimeout(500);
+    await card.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(200);
+    await expect(card).toHaveScreenshot(`${label}config-conversa-dark.png`, {
+      maxDiffPixelRatio: 0.02,
+    });
+  });
+}
+
 // Tags no mobile: veredito como large-title, terceiros e exceções em coluna única,
 // interruptores com alvo expandido — a tela inteira na ergonomia de polegar.
 for (const theme of ["dark", "light"] as const) {

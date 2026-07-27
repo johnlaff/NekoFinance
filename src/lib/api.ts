@@ -26,6 +26,48 @@ const clientSecretOrNull =
 
 export type AuthStatus = "connected" | "expired" | "disconnected" | "loading";
 
+export interface MiaProcessor {
+  name: string;
+  role: string;
+}
+
+export interface MiaChecklistItem {
+  title: string;
+  detail: string;
+}
+
+export interface MiaConsentText {
+  headline: string;
+  processors: MiaProcessor[];
+  paragraphs: string[];
+  checklist: MiaChecklistItem[];
+}
+
+export interface MiaConsentView {
+  granted: boolean;
+  needs_renewal: boolean;
+  granted_at: string | null;
+  has_key: boolean;
+  linked: boolean;
+  text: MiaConsentText;
+}
+
+export function getMiaConsent(): Promise<MiaConsentView> {
+  return invoke("get_mia_consent");
+}
+
+export function grantMiaConsent(): Promise<MiaConsentView> {
+  return invoke("grant_mia_consent");
+}
+
+export function revokeMiaConsent(): Promise<MiaConsentView> {
+  return invoke("revoke_mia_consent");
+}
+
+export function setMiaApiKey(key: string): Promise<MiaConsentView> {
+  return invoke("set_mia_api_key", { key });
+}
+
 export interface UpcomingInvoice {
   account_id: string;
   card_name: string;
