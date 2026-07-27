@@ -16,7 +16,7 @@ use super::envelope::{ErrorCode, ToolError};
 use super::provider::pins::ModelPin;
 use super::provider::request::{RunSpec, ToolDeclaration};
 use super::provider::stream::{ErrorKind, FinishReason, ProviderError, ProviderEvent, Usage};
-use super::{Context, ToolCall, catalog, dispatch, refuse};
+use super::{Context, ToolCall, catalog, consent, dispatch, refuse};
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use std::future::Future;
@@ -135,6 +135,7 @@ pub(crate) struct RunUsage {
 /// Por que a rodada terminou.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StopReason {
+    ConsentMissing,
     Answered,
     TurnCap,
     ToolCallCap,
@@ -157,6 +158,7 @@ pub(crate) struct RunError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RunErrorCode {
+    ConsentMissing,
     ProviderUnavailable,
     RateLimited,
     ProviderRefused,
@@ -524,6 +526,10 @@ fn failure_code(kind: &ErrorKind) -> RunErrorCode {
 
 fn run_error(code: RunErrorCode) -> RunError {
     let (message, fix) = match code {
+        RunErrorCode::ConsentMissing => (
+            "A conversa aberta só roda com o seu consentimento registrado.",
+            "Abra Configurações › Conversa e registre o consentimento.",
+        ),
         RunErrorCode::ProviderUnavailable => (
             "Não foi possível concluir a conversa com o provedor.",
             "Tente de novo em instantes.",
@@ -633,6 +639,37 @@ impl<A: ProviderAdapter> Runner<'_, A> {
     /// Roda a pergunta até a resposta validada — ou até o primeiro teto que fechar.
     pub(crate) async fn run(&self, round: Round<'_>) -> RunOutcome {
         let deadline = Instant::now() + self.limits.max_duration;
+        // O consentimento é a primeira pergunta da rodada, antes do transcript e antes do adapter:
+        // uma verificação feita mais tarde já teria montado o pedido com os dados de quem não
+        // autorizou. Falha de leitura recusa igual — a garantia é fechada, não otimista.
+        if consent::authorize(self.pool, self.pin).await.is_err() {
+            let error = run_error(RunErrorCode::ConsentMissing);
+            let stop = StopReason::ConsentMissing;
+            let trace = vec![TraceEntry {
+                turn: 0,
+                attempt: 0,
+                kind: TraceKind::Stopped,
+                detail: format!("A rodada terminou com {stop:?}."),
+            }];
+            self.emit(RunEvent::Error(error), deadline, EventWindow::Closing)
+                .await;
+            self.emit(
+                RunEvent::RunFinished { stop },
+                deadline,
+                EventWindow::Closing,
+            )
+            .await;
+            return RunOutcome {
+                answer: None,
+                stop,
+                turns: 0,
+                tool_calls: 0,
+                cost_micro_usd: 0,
+                attempts: 0,
+                transcript: vec![],
+                trace,
+            };
+        }
         let mut transcript = round.history.to_vec();
         transcript.push(json!({"role": "user", "content": round.question}));
         let mut facts = grounding::Facts::new();
@@ -678,6 +715,14 @@ impl<A: ProviderAdapter> Runner<'_, A> {
             let mut turn_usage = CollectedUsage::default();
 
             loop {
+                // O consentimento é relido a cada tentativa, não só na abertura: uma rodada dura
+                // até o teto de tempo, e quem revoga no meio dela espera que a conversa PARE de
+                // falar com o provedor — não que termine o que já tinha começado.
+                if consent::authorize(self.pool, self.pin).await.is_err() {
+                    self.cancel.cancel();
+                    terminal_error = Some(run_error(RunErrorCode::ConsentMissing));
+                    break 'conversation StopReason::ConsentMissing;
+                }
                 if self.cancel.is_cancelled() {
                     terminal_error = Some(run_error(RunErrorCode::Cancelled));
                     break 'conversation StopReason::Cancelled;

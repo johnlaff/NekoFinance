@@ -147,6 +147,7 @@ use super::{
 };
 use crate::mia::Context;
 use crate::mia::envelope::Clock;
+use crate::mia::key_store::ApiKey;
 use crate::mia::method_tools::MethodPack;
 use crate::mia::provider::pins::default_pin;
 use crate::mia::provider::request::RunSpec;
@@ -422,6 +423,9 @@ async fn execute_round(
     round: Round<'_>,
 ) -> (super::RunOutcome, Vec<RunEvent>) {
     let pool = pool().await;
+    crate::mia::consent::grant(&pool, default_pin(), "2026-07-25T12:00:00Z")
+        .await
+        .expect("o consentimento do roteiro deve gravar");
     let pack = TestPack::new();
     let ctx = Context {
         clock: clock(),
@@ -445,6 +449,89 @@ async fn execute_round(
     (outcome, published)
 }
 
+async fn execute_sem_consentimento<A: ProviderAdapter>(
+    adapter: &A,
+    limits: RunLimits,
+    cancel: CancelToken,
+) -> (super::RunOutcome, Vec<RunEvent>) {
+    let pool = pool().await;
+    execute_com_pool(&pool, adapter, limits, cancel).await
+}
+
+async fn execute_com_pool<A: ProviderAdapter>(
+    pool: &SqlitePool,
+    adapter: &A,
+    limits: RunLimits,
+    cancel: CancelToken,
+) -> (super::RunOutcome, Vec<RunEvent>) {
+    let pack = TestPack::new();
+    let ctx = Context {
+        clock: clock(),
+        pack: MethodPack::at(pack.path()),
+    };
+    let (events, mut receiver) = mpsc::channel(32);
+    let runner = Runner {
+        pool,
+        ctx: &ctx,
+        adapter,
+        pin: default_pin(),
+        limits,
+        cancel,
+        events,
+    };
+    let outcome = runner.run(round()).await;
+    let mut published = vec![];
+    while let Ok(event) = receiver.try_recv() {
+        published.push(event);
+    }
+    (outcome, published)
+}
+
+struct AdaptadorQueNaoDeveAbrir;
+
+impl ProviderAdapter for AdaptadorQueNaoDeveAbrir {
+    async fn open(
+        &self,
+        _spec: &RunSpec<'_>,
+        _cancel: &CancelToken,
+    ) -> Result<mpsc::Receiver<ProviderEvent>, ProviderError> {
+        panic!("o gate de consentimento não pode abrir o adaptador")
+    }
+}
+
+/// Emula quem revoga com a conversa em curso: o primeiro turno pede uma ferramenta, e a revogação
+/// acontece entre ele e o turno seguinte.
+struct AdaptadorQueRevogaNoPrimeiroTurno {
+    pool: SqlitePool,
+    aberturas: AtomicUsize,
+}
+
+impl ProviderAdapter for AdaptadorQueRevogaNoPrimeiroTurno {
+    async fn open(
+        &self,
+        _spec: &RunSpec<'_>,
+        _cancel: &CancelToken,
+    ) -> Result<mpsc::Receiver<ProviderEvent>, ProviderError> {
+        let aberturas = self.aberturas.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(aberturas, 0, "o segundo turno não pode chegar ao provedor");
+
+        crate::mia::consent::revoke(&self.pool)
+            .await
+            .expect("a revogação deve funcionar");
+
+        let (sender, receiver) = mpsc::channel(8);
+        sender
+            .send(tool_call("call-1", "get_financial_snapshot", "{}"))
+            .await
+            .expect("o canal do roteiro aceita a chamada");
+        sender
+            .send(finished(FinishReason::ToolCalls))
+            .await
+            .expect("o canal do roteiro aceita o fim do turno");
+        Ok(receiver)
+    }
+}
+
 fn event_names(events: &[RunEvent]) -> Vec<&'static str> {
     events
         .iter()
@@ -461,7 +548,112 @@ fn event_names(events: &[RunEvent]) -> Vec<&'static str> {
 }
 
 #[tokio::test]
-async fn complete_round_answers_through_tools() {
+async fn sem_consentimento_a_rodada_nunca_abre_o_adaptador() {
+    let (outcome, events) =
+        execute_sem_consentimento(&AdaptadorQueNaoDeveAbrir, limits(), CancelToken::new()).await;
+
+    assert_eq!(outcome.answer, None);
+    assert_eq!(outcome.stop, StopReason::ConsentMissing);
+    assert_eq!(outcome.turns, 0);
+    assert_eq!(outcome.tool_calls, 0);
+    assert_eq!(outcome.cost_micro_usd, 0);
+    assert_eq!(outcome.attempts, 0);
+    assert!(outcome.transcript.is_empty());
+    assert!(events.iter().any(
+        |event| matches!(event, RunEvent::Error(error) if error.code == RunErrorCode::ConsentMissing)
+    ));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, RunEvent::RunStarted { .. }))
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        RunEvent::RunFinished {
+            stop: StopReason::ConsentMissing
+        }
+    )));
+    assert!(
+        outcome
+            .trace
+            .iter()
+            .any(|entry| entry.kind == TraceKind::Stopped)
+    );
+}
+
+/// Revogar com a conversa em curso precisa PARAR a conversa, não deixá-la terminar o que começou:
+/// entre um turno e o próximo, o consentimento é relido, e o que ele diz agora é o que vale.
+#[tokio::test]
+async fn revogar_no_meio_da_rodada_fecha_antes_do_turno_seguinte() {
+    let pool = pool().await;
+    crate::mia::consent::grant(&pool, default_pin(), "2026-07-25T12:00:00Z")
+        .await
+        .expect("o consentimento deve gravar");
+    let adapter = AdaptadorQueRevogaNoPrimeiroTurno {
+        pool: pool.clone(),
+        aberturas: AtomicUsize::new(0),
+    };
+
+    let (outcome, events) = execute_com_pool(&pool, &adapter, limits(), CancelToken::new()).await;
+
+    assert_eq!(outcome.stop, StopReason::ConsentMissing);
+    assert_eq!(outcome.answer, None);
+    // O que prova a garantia é a contagem de aberturas, não a de turnos: o turno seguinte chega a
+    // abrir no laço e morre no gate, sem nunca alcançar o provedor.
+    assert_eq!(adapter.aberturas.load(Ordering::SeqCst), 1);
+    assert!(events.iter().any(
+        |event| matches!(event, RunEvent::Error(error) if error.code == RunErrorCode::ConsentMissing)
+    ));
+}
+
+#[tokio::test]
+async fn revogar_o_consentimento_volta_a_recusar_a_rodada() {
+    let pool = pool().await;
+    crate::mia::consent::grant(&pool, default_pin(), "2026-07-25T12:00:00Z")
+        .await
+        .expect("o consentimento deve gravar");
+    crate::mia::consent::revoke(&pool)
+        .await
+        .expect("a revogação deve apagar o registro");
+
+    let (outcome, _) = execute_com_pool(
+        &pool,
+        &AdaptadorQueNaoDeveAbrir,
+        limits(),
+        CancelToken::new(),
+    )
+    .await;
+
+    assert_eq!(outcome.stop, StopReason::ConsentMissing);
+    assert_eq!(outcome.turns, 0);
+}
+
+#[tokio::test]
+async fn consentimento_de_versao_anterior_recusa_a_rodada() {
+    let pool = pool().await;
+    sqlx::query("INSERT INTO app_setting (key, value) VALUES (?1, ?2)")
+        .bind("mia_consent")
+        .bind(r#"{"version":0,"granted_at":"2026-07-25T12:00:00Z"}"#)
+        .execute(&pool)
+        .await
+        .expect("o fixture deve gravar");
+
+    let (outcome, events) = execute_com_pool(
+        &pool,
+        &AdaptadorQueNaoDeveAbrir,
+        limits(),
+        CancelToken::new(),
+    )
+    .await;
+
+    assert_eq!(outcome.stop, StopReason::ConsentMissing);
+    assert!(events.iter().any(
+        |event| matches!(event, RunEvent::Error(error) if error.code == RunErrorCode::ConsentMissing)
+    ));
+}
+
+#[tokio::test]
+async fn consentimento_registrado_desbloqueia_a_rodada() {
     let adapter = ScriptedAdapter::new([
         Script::Events(vec![
             tool_call("call-1", "get_financial_snapshot", "{}"),
@@ -521,6 +713,25 @@ async fn credential_never_reaches_events_or_trace() {
     assert!(!trace.contains(secret));
     assert!(!trace.contains("token-1234567890"));
     assert!(trace.contains(REDACTED));
+}
+
+/// A chave guardada no cofre não tem caminho até o laço, e o único jeito de ela reaparecer é o
+/// outro lado devolvê-la num erro que ecoa o cabeçalho enviado. O que se prova aqui é que o
+/// formato da chave que o app guarda é justamente um dos que o redator reconhece: um prefixo novo
+/// que ele não pegasse passaria direto para evento e rastro.
+#[tokio::test]
+async fn a_chave_guardada_no_cofre_sai_redigida_quando_o_provedor_a_ecoa() {
+    let key = ApiKey::new("sk-or-v1-fixture1234567890".to_string());
+    let adapter = ScriptedAdapter::new([Script::OpenError(provider_error(
+        ErrorKind::Permanent,
+        &format!("401 rejeitado. Authorization: Bearer {}", key.expose()),
+    ))]);
+
+    let (outcome, events) = execute(&adapter, limits(), CancelToken::new()).await;
+
+    assert!(!format!("{events:?}").contains(key.expose()));
+    assert!(!format!("{:?}", outcome.trace).contains(key.expose()));
+    assert!(format!("{:?}", outcome.trace).contains(REDACTED));
 }
 
 #[tokio::test]
@@ -764,6 +975,9 @@ async fn time_cap_closes_the_run() {
 async fn cancellation_closes_the_provider_connection() {
     let adapter = ScriptedAdapter::new([Script::Hang]);
     let pool = pool().await;
+    crate::mia::consent::grant(&pool, default_pin(), "2026-07-25T12:00:00Z")
+        .await
+        .expect("o consentimento do roteiro deve gravar");
     let pack = TestPack::new();
     let ctx = Context {
         clock: clock(),
@@ -808,6 +1022,9 @@ async fn event_backpressure_never_outlives_the_time_cap() {
         finished(FinishReason::Stop),
     ])]);
     let pool = pool().await;
+    crate::mia::consent::grant(&pool, default_pin(), "2026-07-25T12:00:00Z")
+        .await
+        .expect("o consentimento do roteiro deve gravar");
     let pack = TestPack::new();
     let ctx = Context {
         clock: clock(),

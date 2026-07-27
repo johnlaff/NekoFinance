@@ -140,3 +140,4 @@ These live in the forecast DTO (`get_forecast`), computed in the Rust core — n
 - Categories are for diagnosis, not planning. The daily_budget is a single number.
 - All writes to Google Sheets require structured diff, validation, and explicit human approval.
 - Local labels may use personal names; public fixtures and docs must use generic names.
+- The conversation runtime refuses a round without a durable consent record (`app_setting.mia_consent`, versioned to the consent text it accepted — a text change invalidates the record). The provider key lives in the OS keychain under its own service and never reaches an event, log, database row, or error payload. Without consent or key, the six local answers still respond offline.

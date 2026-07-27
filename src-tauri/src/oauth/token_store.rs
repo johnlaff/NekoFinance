@@ -1,10 +1,11 @@
-use aes_gcm::{
-    Aes256Gcm, Nonce,
-    aead::{Aead, KeyInit},
-};
+use crate::secret_file;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::path::PathBuf;
+
+#[cfg(test)]
+// `NEKO_INSECURE_FILE_FALLBACK` é um env var de PROCESSO; testes rodam em paralelo. Este mutex
+// serializa os testes que leem/escrevem essa variável para não disputarem entre si.
+pub(crate) static INSECURE_FILE_FALLBACK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 const KEYRING_SERVICE: &str = "neko-finance";
 const KEYRING_USERNAME: &str = "google-oauth";
@@ -23,112 +24,17 @@ fn encrypted_token_path(app_dir: &std::path::Path) -> PathBuf {
     app_dir.join(ENCRYPTED_FILE)
 }
 
-fn salt_path(app_dir: &std::path::Path) -> PathBuf {
-    app_dir.join(SALT_FILE)
-}
-
-/// Chave do fallback de arquivo cifrado. AVISO de segurança: é OFUSCAÇÃO BEST-EFFORT, não proteção
-/// forte — o sal fica em claro ao lado do ciphertext e a chave deriva de machine-id + sal, ambos
-/// legíveis por qualquer processo do mesmo usuário. Só protege contra leitura casual do arquivo, não
-/// contra um atacante local. O caminho preferido é o keychain do SO; este fallback existe para
-/// ambientes sem keychain. O fallback só é usado com NEKO_INSECURE_FILE_FALLBACK=1.
 fn derive_key(app_dir: &std::path::Path) -> Result<[u8; 32], String> {
-    let salt_file = salt_path(app_dir);
-    let salt = if salt_file.exists() {
-        std::fs::read(&salt_file).map_err(|e| format!("read salt: {e}"))?
-    } else {
-        let mut s = [0u8; 16];
-        getrandom::fill(&mut s).map_err(|e| format!("generate salt: {e}"))?;
-        std::fs::write(&salt_file, s).map_err(|e| format!("write salt: {e}"))?;
-        s.to_vec()
-    };
-
-    let machine_id = get_machine_id();
-    let mut hasher = Sha256::new();
-    hasher.update(machine_id.as_bytes());
-    hasher.update(&salt);
-    let result = hasher.finalize();
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&result);
-    Ok(key)
-}
-
-fn get_machine_id() -> String {
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(id) = std::fs::read_to_string("/etc/machine-id") {
-            return id.trim().to_string();
-        }
-        if let Ok(id) = std::fs::read_to_string("/var/lib/dbus/machine-id") {
-            return id.trim().to_string();
-        }
-    }
-    #[cfg(target_os = "macos")]
-    {
-        if let Ok(output) = std::process::Command::new("ioreg")
-            .args(["-rd1", "-c", "IOPlatformExpertDevice"])
-            .output()
-        {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines() {
-                if line.contains("IOPlatformUUID") {
-                    if let Some(uuid) = line.split('"').nth(3) {
-                        return uuid.to_string();
-                    }
-                }
-            }
-        }
-    }
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(output) = std::process::Command::new("wmic")
-            .args(["csproduct", "get", "UUID"])
-            .output()
-        {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines().skip(1) {
-                let trimmed = line.trim();
-                if !trimmed.is_empty() {
-                    return trimmed.to_string();
-                }
-            }
-        }
-    }
-    "neko-finance-default-machine-id".to_string()
+    secret_file::derive_key(app_dir, SALT_FILE)
 }
 
 fn encrypt_token(token: &StoredToken, key: &[u8; 32]) -> Result<Vec<u8>, String> {
-    let cipher =
-        Aes256Gcm::new_from_slice(key).map_err(|_| "cipher key length invalid".to_string())?;
     let json = serde_json::to_vec(token).map_err(|e| format!("serialize: {e}"))?;
-
-    let mut nonce_bytes = [0u8; 12];
-    getrandom::fill(&mut nonce_bytes).map_err(|e| format!("generate nonce: {e}"))?;
-    let nonce = Nonce::from(nonce_bytes);
-
-    let ciphertext = cipher
-        .encrypt(&nonce, json.as_slice())
-        .map_err(|e| format!("encrypt: {e}"))?;
-
-    let mut result = nonce_bytes.to_vec();
-    result.extend_from_slice(&ciphertext);
-    Ok(result)
+    secret_file::seal(&json, key)
 }
 
 fn decrypt_token(data: &[u8], key: &[u8; 32]) -> Result<StoredToken, String> {
-    if data.len() < 12 {
-        return Err("encrypted data too short".to_string());
-    }
-
-    let cipher =
-        Aes256Gcm::new_from_slice(key).map_err(|_| "cipher key length invalid".to_string())?;
-    let nonce = Nonce::try_from(&data[..12]).map_err(|_| "nonce length invalid".to_string())?;
-    let ciphertext = &data[12..];
-
-    let plaintext = cipher
-        .decrypt(&nonce, ciphertext)
-        .map_err(|e| format!("decrypt: {e}"))?;
-
+    let plaintext = secret_file::open(data, key)?;
     serde_json::from_slice(&plaintext).map_err(|e| format!("deserialize: {e}"))
 }
 
@@ -362,11 +268,6 @@ pub async fn ensure_write_scope(
 mod tests {
     use super::*;
     use std::env::temp_dir;
-    use std::sync::Mutex;
-
-    // `NEKO_INSECURE_FILE_FALLBACK` é um env var de PROCESSO; testes rodam em paralelo. Este mutex
-    // serializa os testes que leem/escrevem essa variável para não disputarem entre si.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn temp_app_dir() -> PathBuf {
         let dir = temp_dir().join(format!("neko-test-{}", uuid::Uuid::new_v4()));
@@ -376,7 +277,9 @@ mod tests {
 
     #[test]
     fn test_token_store_roundtrip() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = INSECURE_FILE_FALLBACK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = temp_app_dir();
         let token = StoredToken {
             access_token: "ya29.test".into(),
@@ -386,7 +289,7 @@ mod tests {
         };
         // Permite o fallback de arquivo para o roundtrip ser determinístico tanto com keychain
         // disponível (keyring vence primeiro) quanto sem (ex.: CI headless).
-        // SAFETY: serializado por ENV_LOCK; nenhum outro código de teste roda concorrentemente.
+        // SAFETY: serializado por INSECURE_FILE_FALLBACK_LOCK; nenhum teste concorrente altera o env.
         unsafe { std::env::set_var("NEKO_INSECURE_FILE_FALLBACK", "1") };
         store_token(&dir, &token).unwrap();
         unsafe { std::env::remove_var("NEKO_INSECURE_FILE_FALLBACK") };
@@ -506,9 +409,11 @@ mod tests {
         // escrever o arquivo cifrado. Em uma máquina com keychain funcionando o keyring vence
         // primeiro e store_token retorna Ok — então só asseguramos o invariante: se houve Err,
         // nenhum arquivo foi escrito.
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = INSECURE_FILE_FALLBACK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = temp_app_dir();
-        // SAFETY: serializado por ENV_LOCK.
+        // SAFETY: serializado por INSECURE_FILE_FALLBACK_LOCK.
         unsafe { std::env::remove_var("NEKO_INSECURE_FILE_FALLBACK") };
         let token = StoredToken {
             access_token: "ya29.test".into(),
@@ -536,9 +441,11 @@ mod tests {
     fn test_store_token_file_fallback_when_env_set() {
         // Com NEKO_INSECURE_FILE_FALLBACK=1 e sem keychain, o arquivo DEVE ser escrito. Numa
         // máquina com keychain funcionando o keyring vence primeiro (no-op pass).
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = INSECURE_FILE_FALLBACK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = temp_app_dir();
-        // SAFETY: serializado por ENV_LOCK.
+        // SAFETY: serializado por INSECURE_FILE_FALLBACK_LOCK.
         unsafe { std::env::set_var("NEKO_INSECURE_FILE_FALLBACK", "1") };
         let token = StoredToken {
             access_token: "ya29.test".into(),
@@ -548,7 +455,7 @@ mod tests {
         };
         // Não deve dar Err independentemente de o keychain estar presente.
         assert!(store_token(&dir, &token).is_ok());
-        // SAFETY: serializado por ENV_LOCK.
+        // SAFETY: serializado por INSECURE_FILE_FALLBACK_LOCK.
         unsafe { std::env::remove_var("NEKO_INSECURE_FILE_FALLBACK") };
         std::fs::remove_dir_all(&dir).ok();
     }

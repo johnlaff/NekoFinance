@@ -18,7 +18,11 @@ export function sessionLog(): MiaMessage[] {
 }
 
 /** Registra a pergunta e a resposta como um par, e devolve a conversa nova. */
-export function askInSession(question: string, facts: MiaFacts | null): MiaMessage[] {
+export function askInSession(
+  question: string,
+  facts: MiaFacts | null,
+  linked = false,
+): MiaMessage[] {
   const at = localStamp();
   log = [
     ...log,
@@ -27,7 +31,7 @@ export function askInSession(question: string, facts: MiaFacts | null): MiaMessa
       id: seq++,
       author: "mia",
       atISO: at,
-      answer: answerFor(routeQuestion(question), facts),
+      answer: answerFor(routeQuestion(question), facts, linked),
     },
   ];
   return log;

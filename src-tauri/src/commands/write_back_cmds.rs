@@ -524,6 +524,13 @@ pub(crate) async fn app_setting_get(
     Ok(row.map(|(v,)| v))
 }
 
+/// Chaves que só o backend grava, porque delas depende uma garantia — não uma preferência.
+///
+/// O consentimento da conversa é a primeira: se a porta genérica de preferências pudesse escrevê-lo,
+/// bastaria uma tela adulterada gravar o registro para a rodada ser autorizada, e a garantia de
+/// que a interface não libera a conversa valeria só enquanto a interface fosse a nossa.
+const BACKEND_ONLY_SETTINGS: &[&str] = &["mia_consent"];
+
 /// Grava uma preferência local (KV), sobrescrevendo.
 #[tauri::command]
 pub async fn set_app_setting(
@@ -531,7 +538,21 @@ pub async fn set_app_setting(
     key: String,
     value: String,
 ) -> Result<(), String> {
-    app_setting_set(pool.inner(), &key, &value).await
+    app_setting_set_from_ui(pool.inner(), &key, &value).await
+}
+
+/// A porta que a interface atravessa — distinta da interna justamente para poder recusar.
+pub(crate) async fn app_setting_set_from_ui(
+    pool: &SqlitePool,
+    key: &str,
+    value: &str,
+) -> Result<(), String> {
+    if BACKEND_ONLY_SETTINGS.contains(&key) {
+        return Err(format!(
+            "A preferência \"{key}\" é gravada só pelo backend; use o comando próprio dela."
+        ));
+    }
+    app_setting_set(pool, key, value).await
 }
 
 pub(crate) async fn app_setting_set(

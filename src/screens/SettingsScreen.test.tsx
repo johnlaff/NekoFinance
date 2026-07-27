@@ -6,6 +6,14 @@ import { NekoAppProvider } from "../shell/appContext";
 import { APP_INFO, POCKETS, mockCommands, mockInvoke } from "../test/commands";
 import { invalidateCommands } from "../lib/useCommand";
 import { open } from "@tauri-apps/plugin-dialog";
+import type * as Api from "../lib/api";
+import {
+  getMiaConsent,
+  grantMiaConsent,
+  revokeMiaConsent,
+  setMiaApiKey,
+  type MiaConsentView,
+} from "../lib/api";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -15,7 +23,57 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn(),
 }));
 
+vi.mock("../lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof Api>();
+  return {
+    ...actual,
+    getMiaConsent: vi.fn(),
+    grantMiaConsent: vi.fn(),
+    revokeMiaConsent: vi.fn(),
+    setMiaApiKey: vi.fn(),
+  };
+});
+
 const mockOpen = open as ReturnType<typeof vi.fn>;
+const mockGetMiaConsent = getMiaConsent as ReturnType<typeof vi.fn>;
+const mockGrantMiaConsent = grantMiaConsent as ReturnType<typeof vi.fn>;
+const mockRevokeMiaConsent = revokeMiaConsent as ReturnType<typeof vi.fn>;
+const mockSetMiaApiKey = setMiaApiKey as ReturnType<typeof vi.fn>;
+
+const CONSENT_TEXT = {
+  headline: "Autorizar a conversa aberta",
+  processors: [
+    { name: "OpenRouter", role: "Roteia o pedido ao modelo escolhido." },
+    { name: "Amazon Bedrock", role: "Executa o modelo para responder." },
+  ],
+  paragraphs: [
+    "Suas perguntas podem sair deste aparelho.",
+    "A conversa usa sua chave.",
+  ],
+  checklist: [
+    {
+      title: "Desligue o treino com o que você envia",
+      detail:
+        "Na sua conta do provedor, recuse provedores que treinam com as suas entradas.",
+    },
+    {
+      title: "Desligue a publicação de prompts em endpoints gratuitos",
+      detail: "Essa escolha também vive só na sua conta do provedor.",
+    },
+  ],
+};
+
+function consent(overrides: Partial<MiaConsentView> = {}): MiaConsentView {
+  return {
+    granted: false,
+    needs_renewal: false,
+    granted_at: null,
+    has_key: false,
+    linked: false,
+    text: CONSENT_TEXT,
+    ...overrides,
+  };
+}
 
 const appCtx = { navigate: vi.fn(), openCompose: vi.fn() };
 function renderSettings() {
@@ -30,6 +88,112 @@ describe("SettingsScreen", () => {
   beforeEach(() => {
     mockInvoke.mockReset();
     mockOpen.mockReset();
+    mockGetMiaConsent.mockReset();
+    mockGrantMiaConsent.mockReset();
+    mockRevokeMiaConsent.mockReset();
+    mockSetMiaApiKey.mockReset();
+    mockGetMiaConsent.mockResolvedValue(consent());
+  });
+
+  it("mostra a conversa desligada e revela os processadores e opt-ins ao ligar", async () => {
+    const user = userEvent.setup();
+    mockCommands({ get_app_info: APP_INFO });
+    renderSettings();
+
+    expect(
+      await screen.findByText(
+        "Sem autorização — a Mia responde só o que ela calcula aqui dentro.",
+      ),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Autorizar" }));
+
+    expect(screen.getByText("OpenRouter")).toBeInTheDocument();
+    expect(screen.getByText("Amazon Bedrock")).toBeInTheDocument();
+    expect(
+      screen.getByText("Desligue o treino com o que você envia"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Desligue a publicação de prompts em endpoints gratuitos"),
+    ).toBeInTheDocument();
+  });
+
+  it("guarda a chave antes de registrar e passa a mostrar a conversa ligada", async () => {
+    const user = userEvent.setup();
+    mockCommands({ get_app_info: APP_INFO });
+    mockSetMiaApiKey.mockResolvedValue(consent({ has_key: true }));
+    mockGrantMiaConsent.mockResolvedValue(
+      consent({ granted: true, has_key: true, linked: true }),
+    );
+    renderSettings();
+
+    await user.click(await screen.findByRole("button", { name: "Autorizar" }));
+    await user.type(screen.getByLabelText("Sua chave do provedor"), "chave-de-teste");
+    await user.click(screen.getByRole("button", { name: "Registrar consentimento" }));
+
+    await waitFor(() => {
+      expect(mockSetMiaApiKey).toHaveBeenCalledWith("chave-de-teste");
+      expect(mockGrantMiaConsent).toHaveBeenCalledOnce();
+    });
+    expect(
+      screen.getByText("Autorizada · OpenRouter e Amazon Bedrock"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Conversa aberta autorizada — suas perguntas e os lançamentos necessários podem ir para OpenRouter e Amazon Bedrock.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("Nuvem")).toHaveLength(1);
+  });
+
+  it("revoga o consentimento e devolve a conversa ao estado desligado", async () => {
+    const user = userEvent.setup();
+    mockCommands({ get_app_info: APP_INFO });
+    mockGetMiaConsent.mockResolvedValue(
+      consent({ granted: true, has_key: true, linked: true }),
+    );
+    mockRevokeMiaConsent.mockResolvedValue(consent());
+    renderSettings();
+
+    await user.click(await screen.findByRole("button", { name: "Revogar" }));
+    await user.click(screen.getByRole("button", { name: "Revogar e apagar a chave" }));
+
+    await waitFor(() => expect(mockRevokeMiaConsent).toHaveBeenCalledOnce());
+    expect(
+      screen.getByText(
+        "Sem autorização — a Mia responde só o que ela calcula aqui dentro.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Responde local. Nada sai deste aparelho."),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("Local")).toHaveLength(3);
+  });
+
+  it("pede para rever quando a versão do texto exige renovação", async () => {
+    mockCommands({ get_app_info: APP_INFO });
+    mockGetMiaConsent.mockResolvedValue(
+      consent({ needs_renewal: true, has_key: true }),
+    );
+    renderSettings();
+
+    expect(
+      await screen.findByText("O texto mudou — leia de novo para seguir autorizada."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Rever" })).toBeInTheDocument();
+  });
+
+  it("nunca mostra o valor de uma chave guardada", async () => {
+    const user = userEvent.setup();
+    mockCommands({ get_app_info: APP_INFO });
+    mockGetMiaConsent.mockResolvedValue(consent({ has_key: true }));
+    renderSettings();
+
+    await user.click(await screen.findByRole("button", { name: "Continuar" }));
+    expect(screen.getByText("Chave guardada")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Sua chave do provedor")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Trocar" }));
+    expect(screen.getByLabelText("Sua chave do provedor")).toHaveValue("");
   });
 
   it("troca a paleta de acento pelo seletor e persiste no :root", async () => {

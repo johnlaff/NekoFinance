@@ -593,6 +593,11 @@ fn pins_have_one_default_and_non_empty_endpoints() {
 }
 
 #[test]
+fn todos_os_pins_declararam_um_operador_legivel() {
+    assert!(PINS.iter().all(|pin| !pin.operator.is_empty()));
+}
+
+#[test]
 fn fixture_verifies_all_declared_pins() {
     let catalog: Value = serde_json::from_str(include_str!("fixtures/zdr_endpoints.json")).unwrap();
 

@@ -6,7 +6,7 @@ import { EstimateMark } from "../design-system/components/EstimateMark";
 import { MiaAvatar } from "../design-system/components/MiaAvatar";
 import { Money } from "../design-system/components/Money";
 import { SR_ONLY } from "../design-system/srOnly";
-import { getDashboardSummary, getForecast, isTauri } from "../lib/api";
+import { getDashboardSummary, getForecast, getMiaConsent, isTauri } from "../lib/api";
 import { motionEnabled } from "../lib/motion";
 import { useCommand } from "../lib/useCommand";
 import { useNekoApp } from "../shell/appContext";
@@ -245,6 +245,7 @@ function scrollerOf(el: HTMLElement | null): HTMLElement | null {
 export function CopilotScreen() {
   const summaryQ = useCommand("get_dashboard_summary", getDashboardSummary);
   const forecastQ = useCommand("get_forecast", getForecast);
+  const consentQ = useCommand("get_mia_consent", getMiaConsent);
   const { navigate, openCompose } = useNekoApp();
 
   const [log, setLog] = useState<MiaMessage[]>(sessionLog);
@@ -258,6 +259,7 @@ export function CopilotScreen() {
     summary && forecast ? { summary, forecast, today: forecast.today } : null;
   const loading = summaryQ.loading === true || forecastQ.loading === true;
   const fetchError = summaryQ.error ?? forecastQ.error;
+  const linked = consentQ.data?.linked === true;
 
   // Quem abre a tela da conversa veio conversar: o campo recebe o foco de largada em
   // teclado físico. No polegar não — o autofoco abriria o teclado virtual por cima da
@@ -280,7 +282,7 @@ export function CopilotScreen() {
   function ask(question: string) {
     const trimmed = question.trim();
     if (!trimmed) return;
-    setLog(askInSession(trimmed, facts));
+    setLog(askInSession(trimmed, facts, linked));
     setInput("");
   }
 
