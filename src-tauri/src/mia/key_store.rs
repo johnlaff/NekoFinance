@@ -130,26 +130,33 @@ fn load_from_file(app_dir: &Path) -> Result<Option<ApiKey>, String> {
     Ok(Some(ApiKey::new(key)))
 }
 
-/// Apaga a chave dos dois lugares onde ela pode estar, e responde pelo EFEITO, não pelo mecanismo.
+/// O veredito da revogação: cada armazenamento responde por si.
+///
+/// Reler para verificar o efeito NÃO serve de prova aqui, e essa é a armadilha: [`load`] cai de um
+/// armazenamento para o outro, então um cofre que errou pareceria vazio só porque o arquivo nunca
+/// existiu — e a revogação devolveria sucesso com a credencial intacta lá dentro.
+fn delete_verdict(keyring: Result<(), String>, file: Result<(), String>) -> Result<(), String> {
+    keyring.and(file)
+}
+
+/// Apaga a chave dos dois lugares onde ela pode estar.
 ///
 /// Falha em um dos lados não interrompe o outro — deixar a credencial de pé em um cofre porque o
-/// outro recusou seria o pior dos dois mundos. O veredito vem de reler: um cofre indisponível não é
-/// falha de apagamento, e um apagamento que devolvesse sucesso com a chave ainda legível faria a
-/// interface prometer o que não aconteceu. Não conseguir reler também recusa: sem poder afirmar
-/// que a chave sumiu, prometer que sumiu seria pior que admitir a dúvida.
+/// outro recusou seria o pior dos dois mundos. E nenhuma falha é engolida: "não consegui falar com
+/// o cofre" é exatamente o caso em que a chave PODE ter ficado, e é isso que quem revogou precisa
+/// saber. Prometer um apagamento que talvez não tenha acontecido é a pior das respostas.
 pub(crate) fn delete(app_dir: &Path) -> Result<(), String> {
-    let _ = try_keyring_delete();
+    let keyring = try_keyring_delete();
 
     let path = encrypted_key_path(app_dir);
-    if path.exists() {
-        let _ = std::fs::remove_file(&path);
-    }
+    let file = if path.exists() {
+        std::fs::remove_file(&path)
+            .map_err(|error| redacted_error(format!("delete encrypted: {error}")))
+    } else {
+        Ok(())
+    };
 
-    match load(app_dir) {
-        Ok(None) => Ok(()),
-        Ok(Some(_)) => Err("A chave continua guardada no cofre do sistema.".to_string()),
-        Err(error) => Err(error),
-    }
+    delete_verdict(keyring, file)
 }
 
 pub(crate) fn has_key(app_dir: &Path) -> bool {
@@ -216,6 +223,19 @@ mod tests {
 
         assert!(!error.contains(FIXTURE));
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// Um cofre que recusou apagar não pode virar sucesso. O caminho que isso fecha: reler para
+    /// verificar cairia no armazenamento de arquivo, que nunca teve a chave, e a revogação
+    /// prometeria um apagamento que não aconteceu — com a credencial viva no cofre.
+    #[test]
+    fn a_falha_do_cofre_nunca_vira_revogacao_bem_sucedida() {
+        let recusa = || Err("keyring delete: indisponível".to_string());
+
+        assert!(delete_verdict(recusa(), Ok(())).is_err());
+        assert!(delete_verdict(Ok(()), recusa()).is_err());
+        assert!(delete_verdict(recusa(), recusa()).is_err());
+        assert_eq!(delete_verdict(Ok(()), Ok(())), Ok(()));
     }
 
     #[test]
