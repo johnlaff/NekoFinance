@@ -1,6 +1,7 @@
 //! Suíte da fachada: exercita a PORTA contra pool real com fixtures, nunca a forma interna de
 //! cada ferramenta. O que está sob teste é o envelope que sai no fio.
 
+use super::test_pack::TempPack;
 use super::*;
 use chrono::DateTime;
 use serde_json::{Value, json};
@@ -67,51 +68,6 @@ fn pack_fixture() -> PathBuf {
         root
     })
     .clone()
-}
-
-/// Pack temporário para provar os limites de privacidade sem depender do material privado.
-struct TempPack {
-    root: PathBuf,
-}
-
-impl TempPack {
-    fn new() -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "neko-finance-mia-test-pack-{}",
-            uuid::Uuid::new_v4()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        Self { root }
-    }
-
-    fn absent() -> Self {
-        Self {
-            root: std::env::temp_dir().join(format!(
-                "neko-finance-mia-test-pack-{}",
-                uuid::Uuid::new_v4()
-            )),
-        }
-    }
-
-    fn path(&self) -> &Path {
-        &self.root
-    }
-
-    fn chapter(&self, topic: &str, content: &str) {
-        let chapters = self.root.join("chapters");
-        std::fs::create_dir_all(&chapters).unwrap();
-        std::fs::write(chapters.join(format!("{topic}.md")), content).unwrap();
-    }
-
-    fn root_file(&self, name: &str, content: &str) {
-        std::fs::write(self.root.join(name), content).unwrap();
-    }
-}
-
-impl Drop for TempPack {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
-    }
 }
 
 fn parity_manifest_rows() -> Vec<[String; 4]> {
@@ -3079,6 +3035,82 @@ async fn method_guidance_blocks_a_deny_list_with_a_whitespace_only_entry() {
         err.message
     );
     assert!(err.message.contains("#1"), "message: {}", err.message);
+}
+
+#[tokio::test]
+async fn method_guidance_refuses_a_chapter_that_does_not_fit_the_window() {
+    let p = pool().await;
+    let pack = TempPack::new();
+    pack.chapter("metodo", &"Orientação canônica do método. ".repeat(2_000));
+    pack.root_file("forbidden-extra.txt", "termo-ausente-da-fixture\n");
+
+    let env = call_with_pack(&p, pack.path(), "get_method_guidance", json!({})).await;
+    let err = env.error.expect("capítulo acima do teto deve recusar");
+
+    assert!(!env.ok);
+    assert!(env.data.is_none());
+    assert!(err.message.contains("tokens"), "message: {}", err.message);
+    assert!(err.fix.contains("capítulo"), "fix: {}", err.fix);
+}
+
+#[tokio::test]
+async fn method_guidance_blocks_an_empty_deny_list() {
+    let p = pool().await;
+    let pack = TempPack::new();
+    pack.chapter("metodo", "# Método\n\nOrientação sintética.\n");
+    pack.root_file("forbidden-extra.txt", "");
+
+    let env = call_with_pack(&p, pack.path(), "get_method_guidance", json!({})).await;
+    let err = env
+        .error
+        .expect("deny-list sem padrão deve recusar o capítulo");
+
+    assert!(!env.ok);
+    assert!(env.data.is_none());
+    assert_eq!(err.code, ErrorCode::PrivacyBlocked);
+    assert!(err.message.contains("padrão"), "message: {}", err.message);
+    assert!(err.fix.contains("deny-list"), "fix: {}", err.fix);
+}
+
+#[tokio::test]
+async fn method_guidance_blocks_a_comment_only_deny_list() {
+    let p = pool().await;
+    let pack = TempPack::new();
+    pack.chapter("metodo", "# Método\n\nOrientação sintética.\n");
+    pack.root_file(
+        "forbidden-extra.txt",
+        "# Termos privados desta instalação\n\n# Cada linha ativa bloqueia uma expressão\n",
+    );
+
+    let env = call_with_pack(&p, pack.path(), "get_method_guidance", json!({})).await;
+    let err = env
+        .error
+        .expect("deny-list sem padrão deve recusar o capítulo");
+
+    assert!(!env.ok);
+    assert!(env.data.is_none());
+    assert_eq!(err.code, ErrorCode::PrivacyBlocked);
+    assert!(err.message.contains("padrão"), "message: {}", err.message);
+    assert!(err.fix.contains("deny-list"), "fix: {}", err.fix);
+}
+
+#[tokio::test]
+async fn method_guidance_honors_the_first_entry_of_a_deny_list_with_utf8_bom() {
+    let p = pool().await;
+    let term = "termo-protegido-pelo-bom";
+    let pack = TempPack::new();
+    pack.chapter("metodo", &format!("# Método\n\n{term}\n"));
+    pack.root_file("forbidden-extra.txt", &format!("\u{feff}{term}\n"));
+
+    let env = call_with_pack(&p, pack.path(), "get_method_guidance", json!({})).await;
+    let err = env
+        .error
+        .expect("a primeira entrada da deny-list deve bloquear o capítulo");
+
+    assert!(!env.ok);
+    assert!(env.data.is_none());
+    assert_eq!(err.code, ErrorCode::PrivacyBlocked);
+    assert!(!err.message.contains(term), "message: {}", err.message);
 }
 
 #[tokio::test]

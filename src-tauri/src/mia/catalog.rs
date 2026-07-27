@@ -313,6 +313,14 @@ pub(crate) fn spec(name: &str) -> Option<&'static ToolSpec> {
     CATALOG.iter().find(|t| t.name == name)
 }
 
+/// A única ferramenta da camada de método: ela explica e nunca calcula. É o que separa uma
+/// resposta didática de uma conta sobre os números de quem perguntou.
+pub(crate) const METHOD_LAYER_TOOL: &str = "get_method_guidance";
+
+pub(crate) fn is_method_layer(tool: &str) -> bool {
+    tool == METHOD_LAYER_TOOL
+}
+
 pub(crate) fn tool_names() -> Vec<&'static str> {
     CATALOG.iter().map(|t| t.name).collect()
 }
