@@ -112,12 +112,22 @@ pub(crate) enum RunEvent {
     },
     AnswerReady {
         text: String,
+        provenance: AnswerProvenance,
     },
     Usage(RunUsage),
     Error(RunError),
     RunFinished {
         stop: StopReason,
     },
+}
+
+/// Como a resposta se apresenta: explicação do método ou conta sobre os números da pessoa.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AnswerProvenance {
+    /// A resposta explica o método. Nenhum número dos dados da pessoa a sustenta.
+    Metodo,
+    /// A resposta se apoia em pelo menos um fato lido dos dados da pessoa.
+    Calculo,
 }
 
 /// A linha de transparência da rodada: para onde foi, quanto custou, quantas tentativas.
@@ -198,6 +208,7 @@ pub(crate) enum TraceKind {
 #[derive(Debug)]
 pub(crate) struct RunOutcome {
     pub answer: Option<String>,
+    pub provenance: Option<AnswerProvenance>,
     pub stop: StopReason,
     pub turns: u32,
     pub tool_calls: u32,
@@ -661,6 +672,7 @@ impl<A: ProviderAdapter> Runner<'_, A> {
             .await;
             return RunOutcome {
                 answer: None,
+                provenance: None,
                 stop,
                 turns: 0,
                 tool_calls: 0,
@@ -686,6 +698,7 @@ impl<A: ProviderAdapter> Runner<'_, A> {
         .await;
 
         let mut answer = None;
+        let mut answer_provenance = None;
         let mut trace = vec![];
         let mut turns = 0;
         let mut tool_calls = 0;
@@ -1009,7 +1022,12 @@ impl<A: ProviderAdapter> Runner<'_, A> {
                                 }
                             };
 
-                            facts.absorb_envelope(&envelope);
+                            let origin = if catalog::is_method_layer(&name) {
+                                grounding::FactOrigin::Method
+                            } else {
+                                grounding::FactOrigin::Data
+                            };
+                            facts.absorb_envelope(&envelope, origin);
                             let payload = serde_json::to_string(&envelope)
                                 .expect("o envelope da ferramenta é serializável");
                             transcript.push(json!({
@@ -1025,8 +1043,16 @@ impl<A: ProviderAdapter> Runner<'_, A> {
                                 let text = redaction::credentials(&turn.text);
                                 let orphans = grounding::orphans(&text, &facts);
                                 if orphans.is_empty() {
+                                    let provenance = if grounding::cites_data(&text, &facts) {
+                                        AnswerProvenance::Calculo
+                                    } else {
+                                        AnswerProvenance::Metodo
+                                    };
                                     self.emit(
-                                        RunEvent::AnswerReady { text: text.clone() },
+                                        RunEvent::AnswerReady {
+                                            text: text.clone(),
+                                            provenance,
+                                        },
                                         deadline,
                                         EventWindow::Ordinary,
                                     )
@@ -1044,6 +1070,7 @@ impl<A: ProviderAdapter> Runner<'_, A> {
                                         .last()
                                         .and_then(|message| message["content"].as_str())
                                         .map(str::to_string);
+                                    answer_provenance = answer.as_ref().map(|_| provenance);
                                     break 'conversation StopReason::Answered;
                                 }
 
@@ -1118,6 +1145,7 @@ impl<A: ProviderAdapter> Runner<'_, A> {
 
         RunOutcome {
             answer,
+            provenance: answer_provenance,
             stop,
             turns,
             tool_calls,

@@ -14,10 +14,13 @@ pub(crate) mod envelope;
 pub(crate) mod key_store;
 mod ledger_tools;
 mod method_tools;
+pub(crate) mod prompt;
 pub(crate) mod provider;
 pub(crate) mod run;
 mod scenario_tools;
 mod state_tools;
+#[cfg(test)]
+mod test_pack;
 mod time_tools;
 
 use catalog::ToolSpec;

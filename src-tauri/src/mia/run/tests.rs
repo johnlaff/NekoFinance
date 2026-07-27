@@ -1,6 +1,6 @@
 //! Suíte das invariantes puras do laço da conversa.
 
-use super::grounding::{Facts, orphans};
+use super::grounding::{FactOrigin, Facts, cites_data, orphans};
 use super::redaction::{REDACTED, credentials};
 use crate::mia::envelope::{CURRENCY, Envelope, ErrorCode, MAX_ROWS, Meta, Period, ToolError};
 use serde_json::{Value, json};
@@ -67,7 +67,7 @@ fn redaction_removes_two_credentials_from_a_provider_message() {
 #[test]
 fn grounding_accepts_reais_read_from_cents() {
     let mut facts = Facts::new();
-    facts.absorb_envelope(&envelope(json!({"amount_cents": 810158})));
+    facts.absorb_envelope(&envelope(json!({"amount_cents": 810158})), FactOrigin::Data);
 
     assert!(orphans("Você gastou R$ 8.101,58.", &facts).is_empty());
 }
@@ -75,7 +75,7 @@ fn grounding_accepts_reais_read_from_cents() {
 #[test]
 fn grounding_accepts_percentages_read_from_basis_points() {
     let mut facts = Facts::new();
-    facts.absorb_envelope(&envelope(json!({"savings_bps": 3012})));
+    facts.absorb_envelope(&envelope(json!({"savings_bps": 3012})), FactOrigin::Data);
 
     assert!(orphans("A economia foi de 30,12%, acima dos 30%.", &facts).is_empty());
 }
@@ -83,7 +83,7 @@ fn grounding_accepts_percentages_read_from_basis_points() {
 #[test]
 fn grounding_reports_an_invented_number() {
     let mut facts = Facts::new();
-    facts.absorb_envelope(&envelope(json!({"amount_cents": 810158})));
+    facts.absorb_envelope(&envelope(json!({"amount_cents": 810158})), FactOrigin::Data);
 
     assert_eq!(
         orphans("Você gastou R$ 9.999,99.", &facts),
@@ -102,7 +102,7 @@ fn grounding_ignores_numbers_planted_in_a_tool_error() {
         "Escolha uma ferramenta disponível.",
     ));
     let mut facts = Facts::new();
-    facts.absorb_envelope(&failed);
+    facts.absorb_envelope(&failed, FactOrigin::Data);
 
     assert_eq!(orphans("O valor é 999.", &facts), vec!["999"]);
 }
@@ -118,7 +118,7 @@ fn grounding_accepts_a_number_from_the_method_prefix() {
 #[test]
 fn grounding_accepts_a_date_from_envelope_metadata() {
     let mut facts = Facts::new();
-    facts.absorb_envelope(&envelope(json!({"status": "consultado"})));
+    facts.absorb_envelope(&envelope(json!({"status": "consultado"})), FactOrigin::Data);
 
     assert!(orphans("Os dados são de 2026-07-01.", &facts).is_empty());
 }
@@ -136,16 +136,55 @@ fn grounding_reports_orphans_once_in_appearance_order() {
 #[test]
 fn grounding_reports_scientific_notation_as_an_orphan() {
     let mut facts = Facts::new();
-    facts.absorb_envelope(&envelope(json!({"amount_cents": 300})));
+    facts.absorb_envelope(&envelope(json!({"amount_cents": 300})), FactOrigin::Data);
 
     assert_eq!(orphans("O saldo é R$ 3e3.", &facts), vec!["3e3"]);
 }
 
+#[test]
+fn grounding_cites_a_number_only_data_supports() {
+    let mut facts = Facts::new();
+    facts.absorb_text("A faixa anual recomendada é 20–30%.");
+    facts.absorb_envelope(&envelope(json!({"amount_cents": 810158})), FactOrigin::Data);
+
+    assert!(cites_data("O saldo lido é R$ 8.101,58.", &facts));
+}
+
+#[test]
+fn grounding_does_not_count_a_number_the_method_prefix_also_supports() {
+    let mut facts = Facts::new();
+    facts.absorb_text("A faixa anual recomendada é 30%.");
+    facts.absorb_envelope(&envelope(json!({"amount_cents": 3000})), FactOrigin::Data);
+
+    assert!(!cites_data("A faixa continua em 30%.", &facts));
+}
+
+#[test]
+fn grounding_does_not_count_a_number_the_method_tool_also_supports() {
+    let mut facts = Facts::new();
+    facts.absorb_envelope(
+        &envelope(json!({"recommended_percentage_bps": 3000})),
+        FactOrigin::Method,
+    );
+    facts.absorb_envelope(&envelope(json!({"amount_cents": 3000})), FactOrigin::Data);
+
+    assert!(!cites_data("A faixa continua em 30%.", &facts));
+}
+
+#[test]
+fn grounding_does_not_count_envelope_metadata_as_data() {
+    let mut facts = Facts::new();
+    facts.absorb_envelope(&envelope(json!({"status": "consultado"})), FactOrigin::Data);
+
+    assert!(!cites_data("Os dados são de 2026-07-01.", &facts));
+}
+
 use super::{
-    CancelToken, ProviderAdapter, RetryDecision, Round, RunErrorCode, RunEvent, RunLimits, Runner,
-    StopReason, TraceKind, retry_decision,
+    AnswerProvenance, CancelToken, ProviderAdapter, RetryDecision, Round, RunErrorCode, RunEvent,
+    RunLimits, Runner, StopReason, TraceKind, retry_decision,
 };
 use crate::mia::Context;
+use crate::mia::catalog::{self, METHOD_LAYER_TOOL};
 use crate::mia::envelope::Clock;
 use crate::mia::key_store::ApiKey;
 use crate::mia::method_tools::MethodPack;
@@ -329,6 +368,18 @@ impl TestPack {
         let root =
             std::env::temp_dir().join(format!("neko-finance-run-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("o diretório temporário do pack deve existir");
+        std::fs::create_dir_all(root.join("chapters"))
+            .expect("o diretório de capítulos do pack deve existir");
+        std::fs::write(
+            root.join("chapters/metodo.md"),
+            "# Método\n\nOrientação sintética do método para a suíte.\n",
+        )
+        .expect("o capítulo do método deve existir");
+        std::fs::write(
+            root.join("forbidden-fixture.txt"),
+            "termo-ausente-da-fixture\n",
+        )
+        .expect("a deny-list do pack deve existir");
         Self { root }
     }
 
@@ -547,6 +598,255 @@ fn event_names(events: &[RunEvent]) -> Vec<&'static str> {
         .collect()
 }
 
+#[test]
+fn method_layer_tool_is_declared_in_catalog() {
+    assert!(catalog::is_method_layer(METHOD_LAYER_TOOL));
+    assert!(catalog::spec(METHOD_LAYER_TOOL).is_some());
+}
+
+#[tokio::test]
+async fn answer_without_any_tool_is_method_provenance() {
+    let adapter = ScriptedAdapter::new([Script::Events(vec![
+        ProviderEvent::TextDelta("O método começa pela leitura das réguas.".to_string()),
+        finished(FinishReason::Stop),
+    ])]);
+
+    let (outcome, events) = execute(&adapter, limits(), CancelToken::new()).await;
+
+    assert_eq!(outcome.provenance, Some(AnswerProvenance::Metodo));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        RunEvent::AnswerReady {
+            provenance: AnswerProvenance::Metodo,
+            ..
+        }
+    )));
+}
+
+#[tokio::test]
+async fn answer_after_method_guidance_is_method_provenance() {
+    let adapter = ScriptedAdapter::new([
+        Script::Events(vec![
+            tool_call("call-1", METHOD_LAYER_TOOL, "{}"),
+            finished(FinishReason::ToolCalls),
+        ]),
+        Script::Events(vec![
+            ProviderEvent::TextDelta("A régua mostra o papel de cada movimento.".to_string()),
+            finished(FinishReason::Stop),
+        ]),
+    ]);
+
+    let (outcome, events) = execute(&adapter, limits(), CancelToken::new()).await;
+
+    assert_eq!(outcome.provenance, Some(AnswerProvenance::Metodo));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        RunEvent::ToolFinished {
+            tool,
+            ok: true,
+            ..
+        } if tool == METHOD_LAYER_TOOL
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        RunEvent::AnswerReady {
+            provenance: AnswerProvenance::Metodo,
+            ..
+        }
+    )));
+}
+
+#[tokio::test]
+async fn answer_after_a_data_tool_is_calculation_provenance() {
+    let adapter = ScriptedAdapter::new([
+        Script::Events(vec![
+            tool_call("call-1", "get_financial_snapshot", "{}"),
+            finished(FinishReason::ToolCalls),
+        ]),
+        Script::Events(vec![
+            ProviderEvent::TextDelta("A meta de reserva lida é 6 meses.".to_string()),
+            finished(FinishReason::Stop),
+        ]),
+    ]);
+
+    let (outcome, events) = execute(&adapter, limits(), CancelToken::new()).await;
+
+    assert_eq!(outcome.provenance, Some(AnswerProvenance::Calculo));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        RunEvent::AnswerReady {
+            provenance: AnswerProvenance::Calculo,
+            ..
+        }
+    )));
+}
+
+#[tokio::test]
+async fn an_explanation_after_a_data_tool_is_method_provenance() {
+    let adapter = ScriptedAdapter::new([
+        Script::Events(vec![
+            tool_call("call-1", "get_financial_snapshot", "{}"),
+            finished(FinishReason::ToolCalls),
+        ]),
+        Script::Events(vec![
+            ProviderEvent::TextDelta("A consulta orienta a próxima leitura.".to_string()),
+            finished(FinishReason::Stop),
+        ]),
+    ]);
+
+    let (outcome, events) = execute(&adapter, limits(), CancelToken::new()).await;
+
+    assert_eq!(outcome.provenance, Some(AnswerProvenance::Metodo));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        RunEvent::AnswerReady {
+            provenance: AnswerProvenance::Metodo,
+            ..
+        }
+    )));
+}
+
+#[tokio::test]
+async fn a_failed_data_tool_does_not_turn_an_explanation_into_a_calculation() {
+    let adapter = ScriptedAdapter::new([
+        Script::Events(vec![
+            tool_call(
+                "call-1",
+                "get_financial_snapshot",
+                r#"{"not_declared":"value"}"#,
+            ),
+            finished(FinishReason::ToolCalls),
+        ]),
+        Script::Events(vec![
+            tool_call("call-2", METHOD_LAYER_TOOL, "{}"),
+            finished(FinishReason::ToolCalls),
+        ]),
+        Script::Events(vec![
+            ProviderEvent::TextDelta("A explicação do método continua disponível.".to_string()),
+            finished(FinishReason::Stop),
+        ]),
+    ]);
+
+    let (outcome, events) = execute(&adapter, limits(), CancelToken::new()).await;
+
+    assert_eq!(outcome.provenance, Some(AnswerProvenance::Metodo));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        RunEvent::ToolFinished {
+            tool,
+            ok: false,
+            ..
+        } if tool == "get_financial_snapshot"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        RunEvent::AnswerReady {
+            provenance: AnswerProvenance::Metodo,
+            ..
+        }
+    )));
+}
+
+#[tokio::test]
+async fn a_data_tool_before_the_method_layer_keeps_the_calculation_provenance() {
+    let adapter = ScriptedAdapter::new([
+        Script::Events(vec![
+            tool_call("call-1", "get_financial_snapshot", "{}"),
+            finished(FinishReason::ToolCalls),
+        ]),
+        Script::Events(vec![
+            tool_call("call-2", METHOD_LAYER_TOOL, "{}"),
+            finished(FinishReason::ToolCalls),
+        ]),
+        Script::Events(vec![
+            ProviderEvent::TextDelta(
+                "A meta de reserva lida é 6 meses; a leitura combina fatos e método.".to_string(),
+            ),
+            finished(FinishReason::Stop),
+        ]),
+    ]);
+
+    let (outcome, events) = execute(&adapter, limits(), CancelToken::new()).await;
+
+    assert_eq!(outcome.provenance, Some(AnswerProvenance::Calculo));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        RunEvent::AnswerReady {
+            provenance: AnswerProvenance::Calculo,
+            ..
+        }
+    )));
+}
+
+#[tokio::test]
+async fn a_regenerated_answer_without_data_numbers_is_an_explanation() {
+    let adapter = ScriptedAdapter::new([
+        Script::Events(vec![
+            tool_call("call-1", "get_financial_snapshot", "{}"),
+            finished(FinishReason::ToolCalls),
+        ]),
+        Script::Events(vec![
+            ProviderEvent::TextDelta("O valor é 999.".to_string()),
+            finished(FinishReason::Stop),
+        ]),
+        Script::Events(vec![
+            ProviderEvent::TextDelta("A régua orienta a próxima leitura.".to_string()),
+            finished(FinishReason::Stop),
+        ]),
+    ]);
+
+    let (outcome, events) = execute(&adapter, limits(), CancelToken::new()).await;
+
+    assert_eq!(
+        outcome.answer.as_deref(),
+        Some("A régua orienta a próxima leitura.")
+    );
+    assert_eq!(outcome.provenance, Some(AnswerProvenance::Metodo));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        RunEvent::AnswerReady {
+            provenance: AnswerProvenance::Metodo,
+            ..
+        }
+    )));
+    assert!(
+        outcome
+            .trace
+            .iter()
+            .any(|entry| entry.kind == TraceKind::Regeneration)
+    );
+}
+
+#[tokio::test]
+async fn a_prefix_number_does_not_turn_an_explanation_into_a_calculation() {
+    let adapter = ScriptedAdapter::new([
+        Script::Events(vec![
+            tool_call("call-1", "get_financial_snapshot", "{}"),
+            finished(FinishReason::ToolCalls),
+        ]),
+        Script::Events(vec![
+            ProviderEvent::TextDelta("O limiar didático é 47.".to_string()),
+            finished(FinishReason::Stop),
+        ]),
+    ]);
+    let round = Round {
+        system: "O limiar didático é 47.",
+        history: &[],
+        question: "Como estou?",
+    };
+
+    let (outcome, events) = execute_round(&adapter, limits(), CancelToken::new(), round).await;
+
+    assert_eq!(outcome.provenance, Some(AnswerProvenance::Metodo));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        RunEvent::AnswerReady {
+            provenance: AnswerProvenance::Metodo,
+            ..
+        }
+    )));
+}
+
 #[tokio::test]
 async fn sem_consentimento_a_rodada_nunca_abre_o_adaptador() {
     let (outcome, events) =
@@ -747,7 +1047,7 @@ async fn answer_text_is_redacted_before_publication() {
     let event_text = events
         .iter()
         .find_map(|event| match event {
-            RunEvent::AnswerReady { text } => Some(text),
+            RunEvent::AnswerReady { text, .. } => Some(text),
             _ => None,
         })
         .expect("a resposta redigida deve ser publicada");
@@ -873,6 +1173,7 @@ async fn turn_cap_closes_the_run() {
     let (outcome, events) = execute(&adapter, limits, CancelToken::new()).await;
 
     assert_eq!(outcome.stop, StopReason::TurnCap);
+    assert_eq!(outcome.provenance, None);
     assert_eq!(outcome.turns, 2);
     assert_eq!(adapter.open_calls(), 2);
     assert!(events.iter().any(
@@ -1088,6 +1389,7 @@ async fn partial_arguments_never_run_a_tool() {
     let (outcome, events) = execute(&adapter, limits(), CancelToken::new()).await;
 
     assert_eq!(outcome.tool_calls, 0);
+    assert_eq!(outcome.provenance, Some(AnswerProvenance::Metodo));
     assert!(
         !events
             .iter()
@@ -1204,7 +1506,7 @@ async fn ungrounded_number_is_discarded_and_regenerated() {
     let answers: Vec<&str> = events
         .iter()
         .filter_map(|event| match event {
-            RunEvent::AnswerReady { text } => Some(text.as_str()),
+            RunEvent::AnswerReady { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();
