@@ -1395,16 +1395,17 @@ fn entre_os_que_zeraram_ganha_o_mais_barato() {
         ),
     ];
 
-    let Decision::Adopt {
-        model,
+    let Decision::PendingBlindJudgment {
+        leading_model,
         pending_judgment,
         rationale,
     } = bakeoff::decide(&finalists)
     else {
-        panic!("dois finalistas zerados decidem o default");
+        panic!("com didática pendente, o líder ainda não é default");
     };
-    assert_eq!(model, "google/gemini-3.6-flash");
-    // A decisão mecânica é firme, e o que a máquina não julga sai declarado em vez de omitido.
+    assert_eq!(leading_model, "google/gemini-3.6-flash");
+    // A parte mecânica é firme; o ensino, que a máquina não julga, sai declarado em vez de
+    // omitido — e o campo do default fica vazio até alguém ler as respostas.
     assert_eq!(pending_judgment, 9);
     assert!(rationale.contains("60 de 60"));
 }
@@ -1509,8 +1510,22 @@ async fn o_bakeoff_atravessa_as_duas_fases_e_decide_o_default() {
     // A peneira corre a matriz inteira uma vez por caso; a final, três vezes nos sobreviventes.
     assert_eq!(bakeoff.phase_one.len(), PINS.len());
     assert_eq!(bakeoff.phase_two.len(), 3);
-    assert_eq!(bakeoff.phase_one[0].cases[0].outcomes.len(), 1);
-    assert_eq!(bakeoff.phase_two[0].cases[0].outcomes.len(), 3);
+    // TODAS as corridas, não só a primeira: um finalista abortado no meio passaria despercebido
+    // por uma asserção que olha um índice só.
+    for run in bakeoff.phase_one.iter() {
+        assert!(
+            run.cases
+                .iter()
+                .all(|case| case.outcomes.len() == 1 && !case.aborted)
+        );
+    }
+    for run in bakeoff.phase_two.iter() {
+        assert!(
+            run.cases
+                .iter()
+                .all(|case| case.outcomes.len() == 3 && !case.aborted)
+        );
+    }
     assert!(bakeoff.drifted.is_empty());
 
     // Todos zeram a suíte e custam igual: decide a ordem a priori entre os candidatos.
@@ -1560,7 +1575,20 @@ async fn o_bakeoff_recusa_quando_o_canary_deixa_menos_de_dois_candidatos() {
 
     assert!(error.contains("0 candidato"));
     assert_eq!(lock.spent_micro_usd(), 0);
-    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+    // Nada foi pago e mesmo assim o achado vira arquivo: o que o canary recusou é o resultado
+    // desta execução, e num terminal fechado ele se perderia.
+    let report = std::fs::read_dir(&dir).unwrap().next().unwrap().unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(report.path()).unwrap()).unwrap();
+    assert_eq!(
+        written["canary_drift"].as_array().unwrap().len(),
+        PINS.len()
+    );
+    assert_eq!(
+        written["decision"]["default_model"],
+        serde_json::Value::Null
+    );
+    assert_eq!(written["spent_micro_usd"], 0);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -1602,10 +1630,15 @@ async fn a_peneira_para_na_fatia_dela_e_deixa_dinheiro_para_a_final() {
     assert_eq!(bakeoff.phase_two.len(), 2);
     assert!(bakeoff.phase_two[0].cases.iter().all(|case| !case.aborted));
     assert_eq!(lock.spent_micro_usd(), 100_000);
-    let Decision::Adopt { model, .. } = &bakeoff.decision else {
-        panic!("o finalista que rodou inteiro e zerou decide o default");
+
+    // E aqui está o ponto: o primeiro finalista consumiu o teto e o segundo foi truncado. Adotar
+    // o sobrevivente seria promover por resistência ao orçamento, não por medição — que é a
+    // aposta que o bakeoff existe para não fazer.
+    let Decision::NoWinner { reason } = &bakeoff.decision else {
+        panic!("uma final sem comparação não decide o default");
     };
-    assert_eq!(*model, "anthropic/claude-sonnet-5");
+    assert!(reason.contains("1 finalista(s) por inteiro"));
+    assert!(reason.contains("Suba o teto"));
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -1615,6 +1648,7 @@ async fn a_peneira_para_na_fatia_dela_e_deixa_dinheiro_para_a_final() {
 #[test]
 fn o_resumo_destaca_a_divergencia_do_pin_em_uso() {
     let bakeoff = bakeoff::Bakeoff {
+        catalog: vec!["fn-01".to_string()],
         cap_micro_usd: 5_000_000,
         spent_micro_usd: 0,
         drifted: vec![(default_pin(), "O modelo sumiu do catálogo.".to_string())],
@@ -1817,4 +1851,180 @@ async fn tentativa_que_caiu_sem_gerar_nada_nao_e_lacuna() {
     assert!(run.cases[0].outcomes[0].cost_declared);
     assert!(!run.cost_gap);
     assert_eq!(run.total_cost_micro_usd, 5_000);
+}
+
+/// O bakeoff decide qual modelo conversa com o dinheiro de alguém: um veredito tirado de um
+/// recorte leria, no relatório, igual a um veredito tirado das seis famílias.
+#[test]
+fn o_bakeoff_recusa_qualquer_recorte_do_catalogo() {
+    for (flag, valor) in [("--only", "in-01"), ("--cases-dir", "/tmp/outros-casos")] {
+        let error = cli::parse_args(&args(&["bakeoff", flag, valor])).unwrap_err();
+        assert!(error.contains(flag), "o bakeoff precisa recusar {flag}");
+    }
+
+    // Fora do bakeoff, o recorte é legítimo: a corrida solta não decide default.
+    let solta = cli::parse_args(&args(&["--only", "in-01"])).unwrap();
+    assert_eq!(solta.only.as_deref(), Some("in-01"));
+}
+
+/// O teto do bakeoff é o do critério, não uma preferência: abaixá-lo é escolha de quem roda,
+/// levantá-lo seria contornar a decisão.
+#[test]
+fn o_teto_do_bakeoff_so_pode_ser_abaixado() {
+    let error = cli::parse_args(&args(&["bakeoff", "--max-spend-usd", "5.000001"])).unwrap_err();
+    assert!(error.contains("US$ 5"));
+
+    let barato = cli::parse_args(&args(&["bakeoff", "--max-spend-usd", "1.00"])).unwrap();
+    assert_eq!(barato.max_spend_micro_usd, 1_000_000);
+}
+
+/// A taxa decide por comparação exata, não pelo milésimo truncado. O caso que discrimina é o da
+/// taxa maior sendo a mais CARA: truncadas, as duas empatam, o custo desempata e a pior taxa
+/// vence — a ordenação passaria a premiar preço onde devia premiar acerto.
+#[test]
+fn a_peneira_nao_fabrica_empate_ao_truncar_a_taxa() {
+    let mais_exato_e_caro = Score {
+        mechanical_total: 60,
+        mechanical_passed: 59,
+        cost_micro_usd: 90_000,
+        ..score_of(0, 0, 0)
+    };
+    let menos_exato_e_barato = Score {
+        mechanical_total: 59,
+        mechanical_passed: 58,
+        cost_micro_usd: 10_000,
+        ..score_of(0, 0, 0)
+    };
+    // 59/60 é estritamente maior que 58/59, mas os dois truncam no mesmo milésimo.
+    assert_eq!(
+        mais_exato_e_caro.pass_per_mille(),
+        menos_exato_e_barato.pass_per_mille()
+    );
+
+    let ordem: Vec<&str> = bakeoff::survivors(&[
+        (pinned("openai/gpt-5.6-luna"), menos_exato_e_barato),
+        (pinned("openai/gpt-5.6-terra"), mais_exato_e_caro),
+    ])
+    .iter()
+    .map(|pin| pin.model)
+    .collect();
+
+    assert_eq!(
+        ordem[0], "openai/gpt-5.6-terra",
+        "59/60 vem antes de 58/59, mesmo custando nove vezes mais"
+    );
+}
+
+/// O relatório carrega de qual catálogo saiu a decisão: dois vereditos sobre catálogos diferentes
+/// seriam indistinguíveis, e o veredito passaria a valer pelo nome do arquivo.
+#[tokio::test]
+async fn o_relatorio_do_bakeoff_identifica_o_catalogo_medido() {
+    let dir = reports_dir();
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: zdr_catalog(),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let (_, path) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: bakeoff_cases(),
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(written["catalog"]["cases"], 2);
+    assert_eq!(written["catalog"]["ids"], json!(["caso-1", "caso-2"]));
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Cada pin manda o piso que declarou: mandar "desligado" a um modelo de raciocínio obrigatório é
+/// rodada recusada, não resposta pior — e um teste que só olhasse o default não veria a diferença.
+#[test]
+fn cada_pin_envia_o_piso_de_raciocinio_que_declarou() {
+    use crate::mia::provider::pins::ReasoningFloor;
+    use crate::mia::provider::request::{RunSpec, build};
+
+    for pin in PINS {
+        let request = build(&RunSpec {
+            pin,
+            system: "Sistema local.",
+            messages: &[],
+            tools: &[],
+            max_tokens: 1_024,
+        });
+        let esperado = match pin.reasoning_floor {
+            ReasoningFloor::Off => "none",
+            ReasoningFloor::Minimal => "minimal",
+        };
+        assert_eq!(
+            request
+                .body
+                .pointer("/reasoning/effort")
+                .and_then(serde_json::Value::as_str),
+            Some(esperado),
+            "o pin {} declara {:?}",
+            pin.model,
+            pin.reasoning_floor
+        );
+    }
+
+    // A matriz não é uniforme — se fosse, o campo por pin seria decoração.
+    let pisos: std::collections::BTreeSet<&str> = PINS
+        .iter()
+        .map(|pin| pin.reasoning_floor.effort())
+        .collect();
+    assert_eq!(pisos.len(), 2);
+}
+
+/// Um turno cobrado e declarado, seguido de um turno que gera texto e trava no tempo: o total
+/// fecha positivo e a bancada acharia que contou tudo — o segundo turno some do acumulado.
+#[tokio::test]
+async fn turno_cobrado_seguido_de_travamento_sem_uso_fecha_a_bancada() {
+    let mut body = valid_case_json();
+    body["id"] = json!("caso-1");
+    body["fixture"] = json!("casa_vazia");
+    body["expected"] = json!({ "judgment": "mecanico" });
+    body["verification"] = json!(null);
+    let case = parse("caso-1.json", &body).unwrap();
+
+    let adapter = RoteiroAdapter::new([
+        // Turno 1: chamou ferramenta e o provedor declarou o custo.
+        tool_turn("get_month_analysis", "{\"month\": \"2026-06\"}", 5_000),
+        // Turno 2: gerou texto e pendurou — o teto de tempo fecha a rodada sem linha de uso.
+        vec![ProviderEvent::TextDelta("resposta pela metade".to_string())],
+    ]);
+
+    let temp = TempPack::absent();
+    let config = super::BenchConfig {
+        pin: default_pin(),
+        pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::AsAuthored,
+        limits: RunLimits {
+            max_duration: std::time::Duration::from_millis(150),
+            retry_backoff: std::time::Duration::ZERO,
+            ..RunLimits::default()
+        },
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let run = super::run_catalog(&adapter, vec![case], &config, &mut lock)
+        .await
+        .unwrap();
+
+    // O custo do primeiro turno existe, e é justamente ele que faria a guarda de "custo positivo"
+    // passar — a lacuna do segundo turno é o que fecha a bancada.
+    assert_eq!(run.cases[0].outcomes[0].cost_micro_usd, 5_000);
+    assert!(!run.cases[0].outcomes[0].cost_declared);
+    assert!(run.cost_gap);
 }

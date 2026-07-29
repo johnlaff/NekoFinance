@@ -91,11 +91,12 @@ impl SpendLock {
         !self.cost_gap && self.spent_micro_usd < self.phase_cap_micro_usd
     }
 
-    /// Quanto ainda cabe no teto TOTAL. É o que a rodada seguinte pode gastar no pior caso: a
-    /// trava fecha entre repetições, então sem apertar o teto POR rodada ao que sobra, a última
-    /// repetição do bakeoff estouraria o teto pelo tamanho dela.
+    /// Quanto ainda cabe, pelo MENOR dos dois tetos vigentes. É o que a rodada seguinte pode
+    /// gastar no pior caso: a trava fecha entre repetições, então sem apertar o teto POR rodada a
+    /// última repetição estouraria o teto pelo tamanho dela — e olhar só o teto total deixaria a
+    /// última rodada da peneira comer a reserva da final.
     pub(crate) fn remaining_micro_usd(&self) -> i64 {
-        (self.cap_micro_usd - self.spent_micro_usd).max(0)
+        (self.cap_micro_usd.min(self.phase_cap_micro_usd) - self.spent_micro_usd).max(0)
     }
 
     pub(crate) fn record(&mut self, cost_micro_usd: i64, cost_declared: bool) {

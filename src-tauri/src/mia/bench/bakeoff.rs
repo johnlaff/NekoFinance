@@ -39,17 +39,19 @@ const MAX_FINALISTS: usize = 3;
 /// exatamente a aposta que o bakeoff existe para não fazer.
 const MIN_FINALISTS: usize = 2;
 
-/// A fatia do teto que a peneira pode gastar, na proporção das rodadas que ela tem: seis pins em
-/// uma repetição contra três finalistas em três, ou dois quintos do bakeoff. Sem essa reserva, a
-/// peneira chegaria ao fim do teto e a final — que é quem decide o default — não correria.
-const PHASE_ONE_SHARE: (i64, i64) = (2, 5);
-
-/// O teto da peneira a partir do teto do bakeoff. A conta passa por 128 bits porque multiplicar
-/// antes de dividir estoura em teto alto — e um produto saturado devolveria uma fatia MENOR que a
-/// combinada, apertando a peneira sem nada avisar.
+/// O teto da peneira a partir do teto do bakeoff.
+///
+/// A fatia é DERIVADA da cardinalidade — rodadas da peneira sobre rodadas do bakeoff inteiro —, e
+/// não um par de números escrito à mão: acrescentar um pin à matriz muda a proporção sozinho, e
+/// uma fração congelada apertaria a peneira em silêncio na primeira mudança. Sem a reserva, a
+/// peneira chegaria ao fim do teto e a final, que é quem decide o default, não correria.
+///
+/// A conta passa por 128 bits porque multiplicar antes de dividir estoura em teto alto, e um
+/// produto saturado devolveria uma fatia menor que a combinada sem nada avisar.
 pub(crate) fn phase_one_cap(cap: i64) -> i64 {
-    let (numerator, denominator) = PHASE_ONE_SHARE;
-    ((cap as i128 * numerator as i128) / denominator as i128) as i64
+    let sieve = PINS.len() as i128 * PHASE_ONE_REPETITIONS as i128;
+    let final_round = MAX_FINALISTS as i128 * PHASE_TWO_REPETITIONS as i128;
+    ((cap as i128 * sieve) / (sieve + final_round)) as i64
 }
 
 /// O que uma corrida rendeu, reduzido ao que decide.
@@ -161,12 +163,12 @@ pub(crate) fn survivors(scored: &[(&'static ModelPin, Score)]) -> Vec<&'static M
             pin.role != PinRole::Ceiling && score.complete && score.injection_failed == 0
         })
         .collect();
-    eligible.sort_by_key(|(pin, score)| {
-        (
-            std::cmp::Reverse(score.pass_per_mille()),
-            score.cost_micro_usd,
-            pin.prior_rank,
-        )
+    // A taxa compara por produto cruzado, não pelo milésimo truncado: 58/59 e 59/60 caem no mesmo
+    // milésimo, e um empate fabricado deixaria o custo decidir entre taxas que são diferentes.
+    eligible.sort_by(|(left_pin, left), (right_pin, right)| {
+        cross_rate(right, left)
+            .then(left.cost_micro_usd.cmp(&right.cost_micro_usd))
+            .then(left_pin.prior_rank.cmp(&right_pin.prior_rank))
     });
     eligible
         .into_iter()
@@ -175,15 +177,28 @@ pub(crate) fn survivors(scored: &[(&'static ModelPin, Score)]) -> Vec<&'static M
         .collect()
 }
 
+/// Compara duas taxas de aprovação sem dividir: `passed/total` de um contra o do outro, por
+/// produto cruzado em 128 bits. A ordem devolvida é a natural (menor primeiro).
+fn cross_rate(left: &Score, right: &Score) -> std::cmp::Ordering {
+    let left_side = left.mechanical_passed as i128 * right.mechanical_total as i128;
+    let right_side = right.mechanical_passed as i128 * left.mechanical_total as i128;
+    left_side.cmp(&right_side)
+}
+
 /// O que a medição decidiu sobre o modelo default.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Decision {
+    /// A medição fechou: suíte mecânica zerada, final comparada e nada esperando julgamento.
     Adopt {
         model: &'static str,
         rationale: String,
-        /// Respostas de didática que ainda esperam julgamento cego. A decisão mecânica é firme; o
-        /// ensino é o que a máquina não sabe julgar, e omitir isso venderia como completo um
-        /// veredito que não é.
+    },
+    /// A parte que a máquina julga terminou e apontou um líder; o ensino, que ela não julga,
+    /// ainda espera leitura cega. Não existe default aqui — chamar de default o que ainda não
+    /// passou pelo gate da spec induziria a troca do pin antes da hora.
+    PendingBlindJudgment {
+        leading_model: &'static str,
+        rationale: String,
         pending_judgment: usize,
     },
     NoWinner {
@@ -193,11 +208,27 @@ pub(crate) enum Decision {
 
 /// Decide o default a partir da final.
 ///
-/// Elegível é quem zerou a suíte mecânica na corrida completa: o gate de ligar não admite meio
-/// ponto. Entre os que zeraram, ganha o mais barato — quando a qualidade medida empata, o que
-/// sobra para decidir é quanto cada pergunta vai custar a quem usa o app; empate de custo cai na
-/// ordem a priori.
+/// Duas condições ANTES de olhar quem ganha. A final precisa ter comparado: dois finalistas que
+/// correram inteiros, senão o vencedor venceu por sobrevivência ao teto e não por medição — e é
+/// justamente essa aposta que o bakeoff existe para não fazer. E elegível é quem zerou a suíte
+/// mecânica: o gate de ligar não admite meio ponto.
+///
+/// Entre os que zeraram ganha o mais barato, porque com a qualidade medida empatada o que sobra
+/// para decidir é quanto cada pergunta vai custar a quem usa o app; empate de custo cai na ordem a
+/// priori. O gate da spec ainda pede a didática aprovada em leitura cega, que a máquina não faz —
+/// então o líder só vira default quando não há resposta pendente.
 pub(crate) fn decide(scored: &[(&'static ModelPin, Score)]) -> Decision {
+    let compared = scored.iter().filter(|(_, score)| score.complete).count();
+    if compared < MIN_FINALISTS {
+        return Decision::NoWinner {
+            reason: format!(
+                "A final mediu {compared} finalista(s) por inteiro, e uma decisão exige {MIN_FINALISTS} \
+                 para comparar — o resto foi truncado pela trava de gasto. Suba o teto e rode de \
+                 novo; o relatório mostra onde cada corrida parou."
+            ),
+        };
+    }
+
     let mut eligible: Vec<&(&'static ModelPin, Score)> = scored
         .iter()
         .filter(|(_, score)| score.complete && score.perfect() && score.injection_failed == 0)
@@ -207,20 +238,26 @@ pub(crate) fn decide(scored: &[(&'static ModelPin, Score)]) -> Decision {
     let Some((pin, score)) = eligible.first() else {
         return Decision::NoWinner {
             reason: format!(
-                "Nenhum finalista zerou a suíte mecânica em corrida completa ({} medidos). O \
-                 default segue como está, e o relatório mostra onde cada um caiu.",
-                scored.len()
+                "Nenhum finalista zerou a suíte mecânica em corrida completa ({compared} \
+                 comparados). O default segue como está, e o relatório mostra onde cada um caiu."
             ),
         };
     };
+    let rationale = format!(
+        "{} de {} repetições mecânicas aprovadas, nenhuma isca obedecida, {} micro-USD na final — \
+         o mais barato entre os que zeraram, {compared} finalistas comparados.",
+        score.mechanical_passed, score.mechanical_total, score.cost_micro_usd
+    );
+    if score.pending_judgment > 0 {
+        return Decision::PendingBlindJudgment {
+            leading_model: pin.model,
+            rationale,
+            pending_judgment: score.pending_judgment,
+        };
+    }
     Decision::Adopt {
         model: pin.model,
-        rationale: format!(
-            "{} de {} repetições mecânicas aprovadas, nenhuma isca obedecida, {} micro-USD na \
-             final — o mais barato entre os que zeraram.",
-            score.mechanical_passed, score.mechanical_total, score.cost_micro_usd
-        ),
-        pending_judgment: score.pending_judgment,
+        rationale,
     }
 }
 
@@ -239,6 +276,8 @@ fn rescue(error: String, published: Result<PathBuf, String>) -> String {
 /// Uma execução inteira do bakeoff, na forma que o relatório publica.
 #[derive(Debug)]
 pub(crate) struct Bakeoff {
+    /// Os identificadores dos casos medidos, na ordem em que correram.
+    pub catalog: Vec<String>,
     pub cap_micro_usd: i64,
     pub spent_micro_usd: i64,
     pub drifted: Vec<(&'static ModelPin, String)>,
@@ -272,21 +311,9 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
         .iter()
         .filter(|pin| pin.role != PinRole::Ceiling)
         .count();
-    if competing < 2 {
-        return Err(format!(
-            "O canary liberou {competing} candidato(s) — o bakeoff precisa de pelo menos dois \
-             para comparar. Divergências: {}",
-            verdict
-                .drifted
-                .iter()
-                .map(|(pin, why)| format!("{}: {why}", pin.model))
-                .collect::<Vec<_>>()
-                .join(" · ")
-        ));
-    }
-
     let pack = config.pack_root.as_ref().map(MethodPack::at);
     let mut bakeoff = Bakeoff {
+        catalog: config.cases.iter().map(|case| case.id.clone()).collect(),
         cap_micro_usd: lock.cap_micro_usd(),
         spent_micro_usd: 0,
         drifted: verdict.drifted,
@@ -298,6 +325,34 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
     };
     let base = report::file_name(config.ran_at, "bakeoff");
     let mut path: Option<PathBuf> = None;
+
+    // Nenhuma rodada foi paga, e mesmo assim isto vira arquivo: o que o canary recusou é o
+    // achado da execução, e um achado que só existe no terminal se perde na primeira janela
+    // fechada. O relatório nasce aqui e é reescrito a cada corrida daqui em diante.
+    if competing < MIN_FINALISTS {
+        bakeoff.decision = Decision::NoWinner {
+            reason: format!(
+                "O canary liberou {competing} candidato(s), e o bakeoff precisa de \
+                 {MIN_FINALISTS} para comparar. Troque os pins que divergiram e rode de novo."
+            ),
+        };
+        let published = config
+            .publish(&mut bakeoff, lock, &base, None, pack.as_ref())
+            .await;
+        return Err(rescue(
+            format!(
+                "O canary liberou {competing} candidato(s) — o bakeoff precisa de \
+                 {MIN_FINALISTS} para comparar. Divergências: {}",
+                bakeoff
+                    .drifted
+                    .iter()
+                    .map(|(pin, why)| format!("{}: {why}", pin.model))
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            ),
+            published,
+        ));
+    }
 
     lock.open_phase(phase_one_cap(lock.cap_micro_usd()));
     for pin in verdict.cleared.clone() {
@@ -440,6 +495,12 @@ pub(crate) fn render(bakeoff: &Bakeoff, ran_at: &str) -> Value {
 
     json!({
         "ran_at": ran_at,
+        // De qual catálogo saiu esta decisão. Sem isso, dois relatórios com o mesmo veredito e
+        // catálogos diferentes seriam indistinguíveis, e o veredito valeria pelo nome do arquivo.
+        "catalog": {
+            "cases": bakeoff.catalog.len(),
+            "ids": bakeoff.catalog,
+        },
         "cap_micro_usd": bakeoff.cap_micro_usd,
         "spent_micro_usd": bakeoff.spent_micro_usd,
         "canary_drift": bakeoff.drifted.iter().map(|(pin, why)| json!({
@@ -450,8 +511,16 @@ pub(crate) fn render(bakeoff: &Bakeoff, ran_at: &str) -> Value {
         "phase_one": phase(&bakeoff.phase_one),
         "phase_two": phase(&bakeoff.phase_two),
         "decision": match &bakeoff.decision {
-            Decision::Adopt { model, rationale, pending_judgment } => json!({
+            Decision::Adopt { model, rationale } => json!({
                 "default_model": model,
+                "rationale": rationale,
+                "pending_blind_judgment": 0,
+            }),
+            // Líder não é default: o campo que alguém leria para trocar o pin fica nulo até a
+            // didática passar pela leitura cega que a máquina não sabe fazer.
+            Decision::PendingBlindJudgment { leading_model, rationale, pending_judgment } => json!({
+                "default_model": Value::Null,
+                "leading_model": leading_model,
                 "rationale": rationale,
                 "pending_blind_judgment": pending_judgment,
             }),
@@ -467,14 +536,18 @@ pub(crate) fn render(bakeoff: &Bakeoff, ran_at: &str) -> Value {
 /// diz qual modelo a medição escolheu e onde trocá-lo, e nunca troca sozinho.
 pub(crate) fn summary(bakeoff: &Bakeoff, path: &Path) -> String {
     let decision = match &bakeoff.decision {
-        Decision::Adopt {
-            model,
+        Decision::Adopt { model, rationale } => format!(
+            "Default medido: {model}.\n{rationale}\nPara adotar, mova o papel Default em \
+             src-tauri/src/mia/provider/pins.rs para {model}.",
+        ),
+        Decision::PendingBlindJudgment {
+            leading_model,
             rationale,
             pending_judgment,
         } => format!(
-            "Default medido: {model}.\n{rationale}\n{pending_judgment} resposta(s) de didática \
-             aguardam julgamento cego — leia-as no relatório antes de adotar.\nPara adotar, mova o \
-             papel Default em src-tauri/src/mia/provider/pins.rs para {model}.",
+            "Líder da medição: {leading_model} — ainda NÃO é o default.\n{rationale}\n\
+             {pending_judgment} resposta(s) de didática aguardam julgamento cego: leia-as no \
+             relatório, sem olhar de quem são, antes de trocar qualquer pin.",
         ),
         Decision::NoWinner { reason } => format!("Sem default medido: {reason}"),
     };

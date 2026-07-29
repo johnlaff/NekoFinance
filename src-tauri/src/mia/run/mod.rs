@@ -458,12 +458,22 @@ async fn consume_turn(
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
+            usage.missing_cost |= produced_events && !saw_usage;
             return TurnRead::TimeCap;
         }
 
         tokio::select! {
-            _ = cancel.cancelled() => return TurnRead::Cancelled,
-            _ = tokio::time::sleep(remaining) => return TurnRead::TimeCap,
+            // Parar no meio não desfaz o que o provedor já gerou: se houve conteúdo e a linha de
+            // uso não chegou, o turno consumiu dinheiro que ninguém contou — e um turno anterior
+            // com custo declarado faria o total parecer completo.
+            _ = cancel.cancelled() => {
+                usage.missing_cost |= produced_events && !saw_usage;
+                return TurnRead::Cancelled;
+            }
+            _ = tokio::time::sleep(remaining) => {
+                usage.missing_cost |= produced_events && !saw_usage;
+                return TurnRead::TimeCap;
+            }
             event = receiver.recv() => match event {
                 Some(ProviderEvent::TextDelta(delta)) => {
                     produced_events = true;

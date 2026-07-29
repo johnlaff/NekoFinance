@@ -151,15 +151,25 @@ pub(crate) async fn write_json(
         } else {
             dir.join(format!("{stem}-{}.json", attempt + 1))
         };
-        // O arquivo nasce vazio e exclusivo só para RESERVAR o nome; o conteúdo entra pela mesma
-        // troca atômica das reescritas.
+        // A primeira escrita vai direta no arquivo que ela mesma cria, e não pela troca das
+        // reescritas: reservar o nome com um arquivo vazio para preencher depois abriria uma
+        // janela em que uma queda deixaria em disco um JSON vazio — pior que o arquivo truncado
+        // que a escrita direta pode deixar, porque aqui ainda não há checkpoint a proteger.
         match std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&candidate)
         {
-            Ok(_) => {
-                swap_into(&candidate, &text)?;
+            Ok(mut file) => {
+                use std::io::Write;
+                file.write_all(text.as_bytes())
+                    .and_then(|()| file.sync_all())
+                    .map_err(|error| {
+                        format!(
+                            "O relatório não pôde ser escrito em {}: {error}.",
+                            candidate.display()
+                        )
+                    })?;
                 return Ok(candidate);
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -178,12 +188,21 @@ pub(crate) async fn write_json(
     ))
 }
 
+/// Grava e leva ao disco antes de devolver: sem o `sync`, a troca de nome poderia publicar um
+/// arquivo cujo conteúdo ainda mora em cache.
+fn write_synced(path: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut file = std::fs::File::create(path)?;
+    file.write_all(text.as_bytes())?;
+    file.sync_all()
+}
+
 /// Escreve ao lado e troca o nome. Gravar por cima abriria uma janela em que uma queda no meio da
 /// escrita levaria junto o checkpoint anterior — e o que se perde ali é a evidência de rodadas que
 /// já foram pagas.
 fn swap_into(path: &Path, text: &str) -> Result<(), String> {
     let staging = path.with_extension("json.parcial");
-    std::fs::write(&staging, text.as_bytes())
+    write_synced(&staging, text)
         .and_then(|()| std::fs::rename(&staging, path))
         .map_err(|error| {
             let _ = std::fs::remove_file(&staging);

@@ -8,11 +8,12 @@
 //! de ambiente, nunca a chave do app no cofre, porque a chave da bancada é a que tem limite de
 //! gasto próprio no painel do provedor.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-pub(crate) const USAGE: &str = "Uso: mia-bench [bakeoff] [--model <id do pin>] \
-     [--max-spend-usd <decimal>] [--pack <caminho>] [--only <trecho do id>] \
-     [--cases-dir <caminho>] [--reports-dir <caminho>]";
+pub(crate) const USAGE: &str = "Uso: mia-bench [--model <id do pin>] [--max-spend-usd <decimal>] \
+     [--pack <caminho>] [--only <trecho do id>] [--cases-dir <caminho>] [--reports-dir <caminho>]\n\
+     \x20    mia-bench bakeoff [--max-spend-usd <decimal, teto US$ 5>] [--pack <caminho>] \
+     [--reports-dir <caminho>]";
 
 /// O que a execução vai fazer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +32,9 @@ const SINGLE_CAP_MICRO_USD: i64 = 1_000_000;
 /// repetições nos finalistas, mais o teto de referência, cabem aqui. Quem paga é a chave dedicada,
 /// que tem o próprio limite no painel do provedor.
 const BAKEOFF_CAP_MICRO_USD: i64 = 5_000_000;
+
+/// O catálogo versionado. Sair dele é recorte, e recorte não decide modelo default.
+const DEFAULT_CASES_DIR: &str = "evals/mia/cases";
 
 #[derive(Debug)]
 pub(crate) struct CliArgs {
@@ -61,7 +65,7 @@ pub(crate) fn parse_args(args: &[String]) -> Result<CliArgs, String> {
         max_spend_micro_usd: 0,
         pack_root: None,
         only: None,
-        cases_dir: PathBuf::from("evals/mia/cases"),
+        cases_dir: PathBuf::from(DEFAULT_CASES_DIR),
         reports_dir: PathBuf::from("evals/mia/reports"),
     };
     // O teto pedido fica separado do default até o fim do parse: cada modo tem o seu, e o valor
@@ -86,21 +90,42 @@ pub(crate) fn parse_args(args: &[String]) -> Result<CliArgs, String> {
         }
     }
 
-    // Quem corre no bakeoff é a matriz de pins, na ordem a priori: escolher o modelo à mão seria
-    // pedir uma corrida solta com outro nome, e o relatório sairia decidindo o default por um
-    // recorte que ninguém declarou.
-    if mode == Mode::Bakeoff && parsed.model.is_some() {
-        return Err(
-            "O bakeoff corre a matriz inteira e não aceita --model. Rode sem o modo bakeoff para \
-             medir um modelo só."
-                .to_string(),
-        );
-    }
-
     parsed.max_spend_micro_usd = requested_cap.unwrap_or(match mode {
         Mode::Single => SINGLE_CAP_MICRO_USD,
         Mode::Bakeoff => BAKEOFF_CAP_MICRO_USD,
     });
+
+    // O bakeoff decide qual modelo conversa com o dinheiro de alguém, então ele não aceita recorte
+    // NENHUM: nem escolher o modelo à mão, nem medir um pedaço do catálogo, nem trocar o catálogo
+    // por outro. Um veredito tirado de um caso repetido três vezes leria, no relatório, igual a um
+    // veredito tirado das seis famílias — e é esse relatório que alguém vai consultar para trocar
+    // o pin. Para experimentar, existe a corrida solta, que não decide default.
+    if mode == Mode::Bakeoff {
+        let narrowing = [
+            ("--model", parsed.model.is_some()),
+            ("--only", parsed.only.is_some()),
+            (
+                "--cases-dir",
+                parsed.cases_dir != Path::new(DEFAULT_CASES_DIR),
+            ),
+        ];
+        if let Some((flag, _)) = narrowing.iter().find(|(_, given)| *given) {
+            return Err(format!(
+                "O bakeoff mede a matriz inteira sobre o catálogo inteiro e não aceita {flag}. \
+                 Rode sem o modo bakeoff para medir um recorte — a corrida solta não decide o \
+                 modelo default."
+            ));
+        }
+        // O teto do bakeoff é da spec, e um teto maior passado à mão não é uma preferência: é a
+        // decisão que o critério fixou, contornada por quem estava com pressa.
+        if parsed.max_spend_micro_usd > BAKEOFF_CAP_MICRO_USD {
+            return Err(format!(
+                "O teto do bakeoff é de US$ {}, e --max-spend-usd só pode abaixá-lo.",
+                BAKEOFF_CAP_MICRO_USD / 1_000_000
+            ));
+        }
+    }
+
     Ok(parsed)
 }
 

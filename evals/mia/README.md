@@ -64,12 +64,14 @@ O `read -rs` recebe a chave sem eco e sem deixá-la no histórico do shell — u
 
 Flags disponíveis:
 
-- `--model <id do pin>` (só fora do modo `bakeoff`)
-- `--max-spend-usd <valor>` (padrão: `1.00` numa corrida, `5.00` no bakeoff)
-- `--pack <caminho do pack curado>`
-- `--only <trecho do id>`
-- `--cases-dir`
-- `--reports-dir`
+| Flag                              | Corrida solta | Bakeoff                               |
+| --------------------------------- | ------------- | ------------------------------------- |
+| `--model <id do pin>`             | sim           | recusada — quem corre é a matriz      |
+| `--only <trecho do id>`           | sim           | recusada — recorte não decide default |
+| `--cases-dir <caminho>`           | sim           | recusada — o catálogo é o versionado  |
+| `--max-spend-usd <valor>`         | padrão `1.00` | padrão `5.00`, e só abaixa            |
+| `--pack <caminho do pack curado>` | sim           | sim                                   |
+| `--reports-dir <caminho>`         | sim           | sim                                   |
 
 ## O bakeoff
 
@@ -85,13 +87,17 @@ O bakeoff mede os candidatos e é o resultado — não a intuição — que esco
 
 **A ordem dos candidatos** lê o benchmark de agente bancário acima do índice geral de inteligência, e decide duas coisas pequenas: quem corre primeiro (o dinheiro chega aos mais promissores antes de a trava fechar) e quem ganha empate. O gate é a suíte própria. A ordem vive em `prior_rank`, na matriz de pins.
 
-**A decisão.** Vira default quem zerou a suíte mecânica numa corrida completa; entre os que zeraram, o mais barato. A didática continua pendente de julgamento cego, e o relatório diz quantas respostas esperam por ele. Adotar é gesto manual: o relatório nomeia o modelo, e trocar o papel `Default` em `src-tauri/src/mia/provider/pins.rs` é de quem lê.
+**A decisão** exige que a final tenha comparado: dois finalistas medidos por inteiro. Com um só — porque a trava truncou o resto —, não há default, e o relatório diz para subir o teto e rodar de novo; adotar o sobrevivente seria promover por resistência ao orçamento, não por medição. Entre os que zeraram a suíte mecânica, ganha o mais barato.
+
+Enquanto houver resposta de didática esperando leitura cega, o relatório traz `leading_model` e mantém `default_model` nulo: o gate da spec pede as famílias mecânicas em 100% **e** a didática aprovada em julgamento cego, e chamar de default o que ainda não passou pelo segundo induziria a troca do pin antes da hora. Adotar é sempre gesto manual — trocar o papel `Default` em `src-tauri/src/mia/provider/pins.rs` é de quem lê.
+
+**Nenhum recorte.** No modo bakeoff, `--model`, `--only` e `--cases-dir` são recusados, e `--max-spend-usd` só abaixa o teto. Um veredito tirado de um caso repetido três vezes leria, no relatório, igual a um veredito tirado das seis famílias — e é esse relatório que alguém vai consultar para trocar o pin. Para experimentar, existe a corrida solta, que não decide default. O relatório grava os identificadores dos casos medidos, para que dois vereditos sobre catálogos diferentes nunca sejam indistinguíveis.
 
 ## A trava dupla de gasto
 
 O runner mantém um teto acumulado e fecha antes da próxima repetição; o teto por rodada é apertado ao que sobra no acumulado, de modo que a rodada seja cortada por dentro ao alcançá-lo. O custo só é conhecido depois que o turno fecha, então o estouro residual é de um turno — e é a chave dedicada, com o limite dela no painel, que serve de parada dura.
 
-A trava é uma só e atravessa todas as corridas do bakeoff — uma trava por corrida deixaria o teto ser gasto uma vez por candidato. Dentro dela, a peneira corre sob dois quintos do teto, para que a final encontre dinheiro quando chegar a vez dela.
+A trava é uma só e atravessa todas as corridas do bakeoff — uma trava por corrida deixaria o teto ser gasto uma vez por candidato. Dentro dela, a peneira corre sob uma fatia derivada da cardinalidade da matriz (rodadas da peneira sobre rodadas do bakeoff inteiro, hoje dois quintos), para que a final encontre dinheiro quando chegar a vez dela; acrescentar um pin muda a proporção sozinho.
 
 Custo não declarado pelo provedor fecha a bancada na hora: sem o número, a trava fica cega, e zero no relatório significaria "não medi", nunca "foi de graça".
 
