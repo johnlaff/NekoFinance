@@ -1376,15 +1376,18 @@ fn a_peneira_ordena_por_taxa_custo_e_ordem_a_priori() {
 /// O gate de ligar não admite meio ponto: quem não zerou a suíte mecânica não vira default.
 #[test]
 fn a_decisao_exige_a_suite_mecanica_zerada() {
-    let almost = vec![(pinned("openai/gpt-5.6-terra"), score_of(59, 60, 200_000))];
+    // Dois finalistas COMPLETOS: o quórum passa, e o que reprova é a suíte mecânica. Com um só, a
+    // guarda de quórum responderia antes e o teste não provaria nada sobre o gate de 100%.
+    let almost = vec![
+        (pinned("openai/gpt-5.6-terra"), score_of(59, 60, 200_000)),
+        (pinned("openai/gpt-5.6-luna"), score_of(58, 60, 100_000)),
+    ];
 
     let Decision::NoWinner { reason } = bakeoff::decide(&almost) else {
         panic!("59 de 60 não é a suíte zerada");
     };
-    assert!(
-        reason.contains("1"),
-        "o relatório diz quantos foram medidos"
-    );
+    assert!(reason.contains("zerou a suíte mecânica"));
+    assert!(reason.contains("2 comparados"));
 }
 
 /// Empatados na qualidade medida, decide o que cada pergunta vai custar a quem usa o app.
@@ -1503,6 +1506,7 @@ async fn o_bakeoff_atravessa_as_duas_fases_e_decide_o_default() {
         &adapter,
         bakeoff::BakeoffConfig {
             cases: bakeoff_cases(),
+            execution_id: "execucao-de-teste".to_string(),
             blind_sheet_path: std::cell::OnceCell::new(),
             pack_root: None,
             limits: RunLimits::default(),
@@ -1570,6 +1574,7 @@ async fn o_bakeoff_recusa_quando_o_canary_deixa_menos_de_dois_candidatos() {
         &adapter,
         bakeoff::BakeoffConfig {
             cases: bakeoff_cases(),
+            execution_id: "execucao-de-teste".to_string(),
             blind_sheet_path: std::cell::OnceCell::new(),
             pack_root: None,
             limits: RunLimits::default(),
@@ -1616,6 +1621,7 @@ async fn a_sonda_recusa_quando_nem_uma_rodada_por_modelo_cabe() {
         &adapter,
         bakeoff::BakeoffConfig {
             cases: bakeoff_cases(),
+            execution_id: "execucao-de-teste".to_string(),
             blind_sheet_path: std::cell::OnceCell::new(),
             pack_root: None,
             limits: RunLimits::default(),
@@ -1711,6 +1717,7 @@ async fn a_peneira_truncada_nao_abre_a_final() {
         &adapter,
         bakeoff::BakeoffConfig {
             cases: bakeoff_cases(),
+            execution_id: "execucao-de-teste".to_string(),
             blind_sheet_path: std::cell::OnceCell::new(),
             pack_root: None,
             limits: RunLimits::default(),
@@ -1796,6 +1803,7 @@ async fn o_relatorio_do_bakeoff_identifica_o_catalogo_medido() {
         &adapter,
         bakeoff::BakeoffConfig {
             cases: bakeoff_cases(),
+            execution_id: "execucao-de-teste".to_string(),
             blind_sheet_path: std::cell::OnceCell::new(),
             pack_root: None,
             limits: RunLimits::default(),
@@ -1987,19 +1995,21 @@ async fn o_caderno_do_julgamento_cego_nao_nomeia_o_modelo() {
     };
     let mut lock = super::SpendLock::new(1_000_000);
 
-    // Um caso de didática: a máquina passa nos checks e o veredito fica com a leitura cega.
+    // Um caso de julgamento cego: a máquina passa nos checks e o veredito fica com a leitura
+    // humana. Cego é o que o caso declara, não a família — e assim o teste não precisa do pack
+    // curado, que a didática exigiria.
     let mut body = valid_case_json();
-    body["id"] = json!("di-01");
-    body["family"] = json!("didatica");
+    body["id"] = json!("fn-01");
     body["fixture"] = json!("casa_vazia");
     body["expected"] = json!({ "judgment": "cego" });
     body["verification"] = json!(null);
-    let case = parse("di-01.json", &body).unwrap();
+    let case = parse("fn-01.json", &body).unwrap();
 
     let (bakeoff, path) = bakeoff::run(
         &adapter,
         bakeoff::BakeoffConfig {
             cases: vec![case],
+            execution_id: "execucao-de-teste".to_string(),
             blind_sheet_path: std::cell::OnceCell::new(),
             pack_root: Some(pack.path().to_path_buf()),
             limits: RunLimits::default(),
@@ -2025,7 +2035,7 @@ async fn o_caderno_do_julgamento_cego_nao_nomeia_o_modelo() {
     let caderno: serde_json::Value = serde_json::from_str(&sheet).unwrap();
     let bilhetes = caderno["entries"].as_array().unwrap();
     assert!(!bilhetes.is_empty());
-    assert_eq!(bilhetes[0]["ticket"], "di-01-01");
+    assert_eq!(bilhetes[0]["ticket"], "fn-01-01");
 
     // Seis pins na peneira: seis bilhetes, um por resposta — respostas idênticas não colapsam,
     // senão modelos diferentes dividiriam um bilhete e a chave apontaria para um deles por acaso.
@@ -2074,6 +2084,7 @@ async fn a_sonda_recusa_quando_a_medicao_inteira_nao_cabe() {
         &adapter,
         bakeoff::BakeoffConfig {
             cases,
+            execution_id: "execucao-de-teste".to_string(),
             blind_sheet_path: std::cell::OnceCell::new(),
             pack_root: None,
             limits: RunLimits::default(),
@@ -2343,6 +2354,7 @@ fn o_bakeoff_recusa_qualquer_recorte_do_catalogo() {
 fn o_resumo_destaca_a_divergencia_do_pin_em_uso() {
     let bakeoff = bakeoff::Bakeoff {
         ran_at: "2026-07-29T14:33:05-03:00".to_string(),
+        execution_id: "execucao-de-teste".to_string(),
         blind_sheet_path: None,
         probes: Vec::new(),
         estimate_micro_usd: 0,
@@ -2416,17 +2428,26 @@ fn julgado(finalistas: &[(&str, i64, bool)], bilhetes: &[(&str, &str)]) -> serde
         .iter()
         .map(|(ticket, model)| ((*ticket).to_string(), json!(model)))
         .collect();
+    // O relatório carrega as REPETIÇÕES, que é de onde a decisão julgada refaz as contas — o bloco
+    // score é derivado e não decide nada.
     let phase_two: Vec<serde_json::Value> = finalistas
         .iter()
         .map(|(model, cost, complete)| {
             json!({
-                "score": {
-                    "mechanical_total": 60,
-                    "mechanical_passed": 60,
-                    "injection_failed": 0,
-                    "complete": complete,
+                "score": { "complete": complete },
+                "run": {
+                    "model": model,
+                    "total_cost_micro_usd": cost,
+                    "cost_gap": false,
+                    "cases": [{
+                        "family": "fidelidade_numerica",
+                        "measured": complete,
+                        "repetitions": [
+                            {"verdict": "passed", "budget_truncated": false},
+                            {"verdict": "passed", "budget_truncated": false},
+                        ],
+                    }],
                 },
-                "run": { "model": model, "total_cost_micro_usd": cost },
             })
         })
         .collect();
@@ -2607,4 +2628,360 @@ fn o_modo_julgar_exige_relatorio_e_vereditos() {
         parsed.report,
         Some(std::path::PathBuf::from("relatorio.json"))
     );
+}
+
+/// O bloco `score` do relatório é derivado, e cômodo demais para quem edita: escrever
+/// `complete: true` com um custo baixo fabricaria um default. A decisão julgada recomputa das
+/// repetições e não olha para ele.
+#[test]
+fn a_decisao_julgada_ignora_o_score_derivado_do_relatorio() {
+    let mut report = julgado(
+        &[
+            ("anthropic/claude-sonnet-5", 200_000, true),
+            ("openai/gpt-5.6-terra", 120_000, true),
+        ],
+        &[
+            ("di-01-01", "anthropic/claude-sonnet-5"),
+            ("di-01-02", "openai/gpt-5.6-terra"),
+        ],
+    );
+    // O mais barato tem uma repetição REPROVADA nos dados brutos, e um score derretido para
+    // parecer perfeito.
+    report["phase_two"][1]["run"]["cases"][0]["repetitions"][0]["verdict"] = json!("failed");
+    report["phase_two"][1]["score"] = json!({
+        "complete": true,
+        "mechanical_total": 60,
+        "mechanical_passed": 60,
+        "injection_failed": 0,
+    });
+    let verdicts = vereditos(&[
+        ("di-01-01", bakeoff::Judgment::Approved),
+        ("di-01-02", bakeoff::Judgment::Approved),
+    ]);
+
+    let bakeoff::Decision::Adopt { model, .. } =
+        bakeoff::judged_decision(&report, &verdicts).unwrap()
+    else {
+        panic!("o outro finalista continua elegível");
+    };
+    assert_eq!(
+        model, "anthropic/claude-sonnet-5",
+        "o score derivado não decide; as repetições decidem"
+    );
+}
+
+/// Um mesmo modelo duas vezes na final não faz quórum consigo mesmo.
+#[test]
+fn a_decisao_julgada_recusa_o_mesmo_modelo_duas_vezes() {
+    let report = julgado(
+        &[
+            ("openai/gpt-5.6-terra", 200_000, true),
+            ("openai/gpt-5.6-terra", 120_000, true),
+        ],
+        &[("di-01-01", "openai/gpt-5.6-terra")],
+    );
+    let verdicts = vereditos(&[("di-01-01", bakeoff::Judgment::Approved)]);
+
+    let error = bakeoff::judged_decision(&report, &verdicts).unwrap_err();
+
+    assert!(error.contains("duas vezes"));
+}
+
+/// Campo decisório ausente é recusa, nunca um zero conveniente.
+#[test]
+fn a_decisao_julgada_recusa_relatorio_sem_os_dados_que_decidem() {
+    let base = julgado(
+        &[
+            ("anthropic/claude-sonnet-5", 200_000, true),
+            ("openai/gpt-5.6-terra", 120_000, true),
+        ],
+        &[("di-01-01", "anthropic/claude-sonnet-5")],
+    );
+    let verdicts = vereditos(&[("di-01-01", bakeoff::Judgment::Approved)]);
+
+    for (campo, apagar) in [
+        ("custo", "total_cost_micro_usd"),
+        ("lacuna de custo", "cost_gap"),
+        ("casos", "cases"),
+    ] {
+        let mut report = base.clone();
+        report["phase_two"][0]["run"]
+            .as_object_mut()
+            .unwrap()
+            .remove(apagar);
+        let error = bakeoff::judged_decision(&report, &verdicts).unwrap_err();
+        assert!(
+            error.contains("anthropic/claude-sonnet-5"),
+            "sem {campo}, a recusa nomeia a corrida: {error}"
+        );
+    }
+
+    // E o teto de referência jamais aparece na final.
+    let teto = julgado(
+        &[
+            ("anthropic/claude-opus-5", 100_000, true),
+            ("openai/gpt-5.6-terra", 120_000, true),
+        ],
+        &[("di-01-01", "openai/gpt-5.6-terra")],
+    );
+    let error = bakeoff::judged_decision(&teto, &verdicts).unwrap_err();
+    assert!(error.contains("teto de referência"));
+}
+
+/// Um pack que existe mas não monta o núcleo do método faz a didática medir a recusa da camada
+/// ausente. A recusa vem ANTES do canary — nenhuma chamada, nenhum centavo.
+#[tokio::test]
+async fn pack_sem_nucleo_do_metodo_recusa_antes_de_qualquer_rodada() {
+    let dir = reports_dir();
+    let pack = TempPack::new();
+    pack.root_file("forbidden-bench.txt", "termo-que-nao-aparece\n");
+
+    let mut body = valid_case_json();
+    body["id"] = json!("di-01");
+    body["family"] = json!("didatica");
+    body["fixture"] = json!("casa_vazia");
+    body["expected"] = json!({ "judgment": "cego" });
+    body["verification"] = json!(null);
+    let case = parse("di-01.json", &body).unwrap();
+
+    // O adapter recusaria o catálogo: se ele for consultado, o teste falha por outro motivo.
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: json!({"data": []}),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let error = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: vec![case],
+            execution_id: "execucao-de-teste".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            pack_root: Some(pack.path().to_path_buf()),
+            limits: RunLimits::default(),
+            reports_dir: &dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap_err();
+
+    assert!(error.contains("núcleo do método"));
+    assert_eq!(lock.spent_micro_usd(), 0);
+    // Nem relatório nasceu: a recusa é anterior a tudo.
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// O caderno de outra execução tem os MESMOS bilhetes — eles são determinísticos por construção.
+/// É a identidade da execução que impede um julgamento de decidir a corrida errada.
+#[tokio::test]
+async fn o_julgamento_recusa_o_caderno_de_outra_execucao() {
+    async fn rodada(
+        execution_id: String,
+    ) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+        let dir = reports_dir();
+        let adapter = EcoAdapter {
+            cost_micro_usd: 1_000,
+            catalog: zdr_catalog(),
+        };
+        let mut lock = super::SpendLock::new(1_000_000);
+        let mut body = valid_case_json();
+        body["id"] = json!("fn-01");
+        body["fixture"] = json!("casa_vazia");
+        body["expected"] = json!({ "judgment": "cego" });
+        body["verification"] = json!(null);
+        let case = parse("fn-01.json", &body).unwrap();
+
+        let (bakeoff, path) = bakeoff::run(
+            &adapter,
+            bakeoff::BakeoffConfig {
+                cases: vec![case],
+                execution_id,
+                blind_sheet_path: std::cell::OnceCell::new(),
+                pack_root: None,
+                limits: RunLimits::default(),
+                reports_dir: &dir,
+                ran_at: "2026-07-29T14:33:05-03:00",
+            },
+            &mut lock,
+        )
+        .await
+        .unwrap();
+        (dir, path, bakeoff.blind_sheet_path.clone().unwrap())
+    }
+
+    let (dir_a, report_a, _) = rodada("execucao-a".to_string()).await;
+    let (dir_b, _, sheet_b) = rodada("execucao-b".to_string()).await;
+
+    // Os bilhetes das duas execuções são iguais — o que difere é a identidade.
+    let a: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_a).unwrap()).unwrap();
+    let b: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&sheet_b).unwrap()).unwrap();
+    let bilhetes_a: Vec<&str> = a["blind_judgment_key"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    let bilhetes_b: Vec<&str> = b["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["ticket"].as_str().unwrap())
+        .collect();
+    assert_eq!(bilhetes_a, bilhetes_b, "os bilhetes são determinísticos");
+    assert_ne!(a["execution_id"], b["execution_id"]);
+
+    std::fs::remove_dir_all(&dir_a).unwrap();
+    std::fs::remove_dir_all(&dir_b).unwrap();
+}
+
+/// O ciclo inteiro em disco: o bakeoff escreve relatório e caderno, alguém julga o caderno, e o
+/// comando reescreve o relatório com a decisão — preservando tudo o mais que estava lá.
+#[tokio::test]
+async fn o_julgamento_reescreve_o_relatorio_de_verdade() {
+    let dir = reports_dir();
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: zdr_catalog(),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+    // Um caso mecânico e um cego: sem o mecânico não há suíte a zerar, e sem o cego não há o que
+    // julgar — é a combinação dos dois que produz um líder à espera de leitura.
+    let mut mecanico = valid_case_json();
+    mecanico["id"] = json!("fn-01");
+    mecanico["fixture"] = json!("casa_vazia");
+    mecanico["expected"] = json!({ "judgment": "mecanico" });
+    mecanico["verification"] = json!(null);
+    let mut cego = valid_case_json();
+    cego["id"] = json!("fn-02");
+    cego["fixture"] = json!("casa_vazia");
+    cego["expected"] = json!({ "judgment": "cego" });
+    cego["verification"] = json!(null);
+    let cases = vec![
+        parse("fn-01.json", &mecanico).unwrap(),
+        parse("fn-02.json", &cego).unwrap(),
+    ];
+
+    let (bakeoff, report_path) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases,
+            execution_id: "execucao-de-teste".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+    let sheet_path = bakeoff.blind_sheet_path.clone().unwrap();
+
+    // Antes de julgar: há líder, e nenhum default.
+    let antes: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_path).unwrap()).unwrap();
+    assert_eq!(antes["decision"]["default_model"], serde_json::Value::Null);
+    assert!(antes["decision"]["leading_model"].is_string());
+
+    // A pessoa lê o caderno e aprova cada bilhete.
+    let mut caderno: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&sheet_path).unwrap()).unwrap();
+    for entry in caderno["entries"].as_array_mut().unwrap() {
+        entry["verdict"] = json!("aprovado");
+    }
+    std::fs::write(&sheet_path, caderno.to_string()).unwrap();
+
+    let cli = cli::parse_args(&args(&[
+        "julgar",
+        "--report",
+        report_path.to_str().unwrap(),
+        "--verdicts",
+        sheet_path.to_str().unwrap(),
+    ]))
+    .unwrap();
+    let resumo = super::judge(&cli).await.unwrap();
+
+    assert!(resumo.contains("Default decidido"));
+    assert!(resumo.contains("pins.rs"));
+
+    // Depois: a decisão está no arquivo, e o resto do relatório sobreviveu intacto.
+    let depois: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_path).unwrap()).unwrap();
+    assert_eq!(
+        depois["decision"]["default_model"],
+        antes["decision"]["leading_model"]
+    );
+    assert!(depois["judged_at"].is_string());
+    assert_eq!(depois["execution_id"], antes["execution_id"]);
+    assert_eq!(depois["phase_one"], antes["phase_one"]);
+    assert_eq!(depois["phase_two"], antes["phase_two"]);
+    assert_eq!(depois["probe"], antes["probe"]);
+    assert_eq!(depois["blind_judgment_key"], antes["blind_judgment_key"]);
+
+    // E o caderno de outra execução é recusado, mesmo com os bilhetes idênticos.
+    caderno["execution_id"] = json!("outra-execucao");
+    let intruso = dir.join("caderno-intruso.json");
+    std::fs::write(&intruso, caderno.to_string()).unwrap();
+    let cli = cli::parse_args(&args(&[
+        "julgar",
+        "--report",
+        report_path.to_str().unwrap(),
+        "--verdicts",
+        intruso.to_str().unwrap(),
+    ]))
+    .unwrap();
+    let error = super::judge(&cli).await.unwrap_err();
+    assert!(error.contains("outra-execucao"));
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Bilhete repetido com vereditos conflitantes decidiria pelo último lido, em silêncio.
+#[tokio::test]
+async fn o_julgamento_recusa_bilhete_repetido_no_caderno() {
+    let dir = reports_dir();
+    let report = dir.join("relatorio.json");
+    let caderno = dir.join("caderno.json");
+    std::fs::write(
+        &report,
+        json!({
+            "execution_id": "execucao-de-teste",
+            "blind_judgment_key": {"fn-01-01": "openai/gpt-5.6-terra"},
+            "phase_two": [],
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        &caderno,
+        json!({
+            "execution_id": "execucao-de-teste",
+            "entries": [
+                {"ticket": "fn-01-01", "verdict": "aprovado"},
+                {"ticket": "fn-01-01", "verdict": "reprovado"},
+            ],
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let cli = cli::parse_args(&args(&[
+        "julgar",
+        "--report",
+        report.to_str().unwrap(),
+        "--verdicts",
+        caderno.to_str().unwrap(),
+    ]))
+    .unwrap();
+
+    let error = super::judge(&cli).await.unwrap_err();
+
+    assert!(error.contains("mais de uma vez"));
+    std::fs::remove_dir_all(&dir).unwrap();
 }

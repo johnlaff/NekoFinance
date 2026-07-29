@@ -137,7 +137,11 @@ cargo run --manifest-path src-tauri/Cargo.toml --bin mia-bench -- julgar \
   --verdicts evals/mia/reports/<data>-julgamento-cego.json
 ```
 
-O comando não fala com o provedor, não gasta e não pede chave: é leitura e conta. Ele exige um veredito por bilhete — um bilhete em branco é uma resposta que ninguém leu, e decidir assim pularia o gate que ele existe para fechar — e recusa um caderno de outra execução. Um bilhete reprovado reprova o modelo inteiro: ensinar errado uma vez não se compensa com dois acertos. Entre os que passaram nos dois gates, ganha o mais barato, e `default_model` finalmente deixa de ser nulo no relatório.
+O comando não fala com o provedor, não gasta e não pede chave: é leitura e conta. Ele exige um veredito por bilhete — um bilhete em branco é uma resposta que ninguém leu, e decidir assim pularia o gate que ele existe para fechar — e recusa bilhete repetido.
+
+Caderno e relatório são amarrados por um `execution_id` gravado nos dois: os bilhetes são determinísticos por construção (caso e posição), então duas execuções do mesmo catálogo produzem exatamente os mesmos bilhetes, e sem essa amarra o caderno de uma julgaria a outra sem nada reclamar.
+
+A decisão é **recomputada das repetições brutas** do relatório, nunca do bloco `score` — que é derivado, cômodo para quem lê e cômodo demais para quem edita. Campo decisório ausente é recusa em vez de um zero conveniente; o mesmo modelo duas vezes na final não faz quórum consigo mesmo; e o teto de referência não pode aparecer lá. Um bilhete reprovado reprova o modelo inteiro: ensinar errado uma vez não se compensa com dois acertos. Entre os que passaram nos dois gates, ganha o mais barato, e `default_model` finalmente deixa de ser nulo no relatório.
 
 Adotar continua sendo gesto manual.
 

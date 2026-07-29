@@ -18,6 +18,7 @@ use super::grade::Verdict;
 use super::report;
 use super::{BenchConfig, BenchRun, Repetitions, SpendLock, run_catalog};
 use crate::mia::method_tools::MethodPack;
+use crate::mia::prompt;
 use crate::mia::provider::drift::{ZdrCatalog, verify};
 use crate::mia::provider::pins::{ModelPin, PINS, PinRole};
 use crate::mia::run::{ProviderAdapter, RunLimits};
@@ -332,6 +333,12 @@ fn rescue(error: String, published: Result<PathBuf, String>) -> String {
 #[derive(Debug)]
 pub(crate) struct Bakeoff {
     pub ran_at: String,
+    /// A identidade desta execução, carimbada nos dois artefatos.
+    ///
+    /// Os bilhetes são determinísticos por construção — caso e posição —, então duas execuções do
+    /// mesmo catálogo produzem os MESMOS bilhetes, e o caderno de uma julgaria a outra sem nada
+    /// reclamar. É este identificador que amarra caderno e relatório.
+    pub execution_id: String,
     /// Onde ficou o caderno cego, quando houve o que julgar.
     pub blind_sheet_path: Option<PathBuf>,
     /// O que a sonda de custo mediu, um pin por vez, antes de qualquer fase.
@@ -350,6 +357,9 @@ pub(crate) struct Bakeoff {
 
 pub(crate) struct BakeoffConfig<'a> {
     pub cases: Vec<Case>,
+    /// A identidade desta execução. Entra por parâmetro para que a montagem do relatório siga
+    /// pura: a mesma execução rende sempre o mesmo arquivo.
+    pub execution_id: String,
     /// O caderno cego já aberto nesta execução, para que as reescritas caiam nele em vez de
     /// abrirem um arquivo novo por corrida.
     pub blind_sheet_path: std::cell::OnceCell<PathBuf>,
@@ -370,8 +380,27 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
     lock: &mut SpendLock,
 ) -> Result<(Bakeoff, PathBuf), String> {
     // Antes de qualquer byte no fio e de qualquer centavo: o catálogo que vai correr precisa estar
-    // coberto pela configuração. Descobrir depois da sonda seria pagar por ela à toa.
+    // coberto pela configuração. Descobrir depois da sonda seria pagar por ela à toa — e não basta
+    // o pack EXISTIR: um pack que não monta o núcleo do método faz a didática medir a recusa da
+    // camada ausente, e a leitura cega receberia respostas que nunca tiveram como ensinar.
     super::ensure_pack_covers(&config.cases, config.pack_root.as_deref())?;
+    if let Some(pack_root) = config.pack_root.as_deref() {
+        let assembled = prompt::system_prompt(&MethodPack::at(pack_root))
+            .await
+            .map_err(|error| format!("{} {}", error.message, error.fix))?;
+        if !assembled.method_core
+            && config
+                .cases
+                .iter()
+                .any(|case| case.family == Family::Didatica)
+        {
+            return Err(format!(
+                "O pack em {} não monta o núcleo do método, e a didática mediria a recusa da \
+                 camada ausente. Conserte o pack antes de gastar.",
+                pack_root.display()
+            ));
+        }
+    }
 
     let catalog = adapter.fetch().await?;
     let verdict = canary(&catalog, &contenders());
@@ -383,6 +412,7 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
     let pack = config.pack_root.as_ref().map(MethodPack::at);
     let mut bakeoff = Bakeoff {
         ran_at: config.ran_at.to_string(),
+        execution_id: config.execution_id.clone(),
         blind_sheet_path: None,
         probes: Vec::new(),
         estimate_micro_usd: 0,
@@ -720,6 +750,7 @@ pub(crate) fn render(bakeoff: &Bakeoff, ran_at: &str) -> Value {
 
     json!({
         "ran_at": ran_at,
+        "execution_id": bakeoff.execution_id,
         // De qual catálogo saiu esta decisão. Sem isso, dois relatórios com o mesmo veredito e
         // catálogos diferentes seriam indistinguíveis, e o veredito valeria pelo nome do arquivo.
         "catalog": {
@@ -902,6 +933,7 @@ pub(crate) fn blind_sheet(bakeoff: &Bakeoff) -> Value {
         .collect();
     json!({
         "ran_at": bakeoff.ran_at,
+        "execution_id": bakeoff.execution_id,
         "how_to": "Leia as respostas e julgue cada bilhete sem abrir o relatório principal — é lá \
                    que mora a chave que diz qual modelo escreveu cada uma.",
         "entries": entries,
@@ -1055,31 +1087,8 @@ pub(crate) fn judged_decision(
         .filter_map(|(_, model)| model.as_str())
         .collect();
 
-    let finalists = report["phase_two"]
-        .as_array()
-        .ok_or_else(|| "O relatório não traz a final.".to_string())?;
-    let mut eligible: Vec<(&str, i64)> = Vec::new();
-    let mut measured = 0;
-    for entry in finalists {
-        let score = &entry["score"];
-        let model = entry["run"]["model"]
-            .as_str()
-            .ok_or_else(|| "Uma corrida da final não nomeia o modelo.".to_string())?;
-        if score["complete"].as_bool() == Some(true) {
-            measured += 1;
-        } else {
-            continue;
-        }
-        let perfect = score["mechanical_total"].as_i64().unwrap_or(0) > 0
-            && score["mechanical_total"] == score["mechanical_passed"];
-        if perfect && score["injection_failed"].as_i64() == Some(0) && !rejected.contains(model) {
-            eligible.push((
-                model,
-                entry["run"]["total_cost_micro_usd"].as_i64().unwrap_or(0),
-            ));
-        }
-    }
-
+    let finalists = parse_finalists(report)?;
+    let measured = finalists.iter().filter(|run| run.complete).count();
     if measured < finalists.len() || measured < MIN_FINALISTS {
         return Ok(Decision::NoWinner {
             reason: format!(
@@ -1090,26 +1099,132 @@ pub(crate) fn judged_decision(
         });
     }
 
-    // Empate de qualidade cai no custo, como na decisão mecânica; empate de custo, na ordem em que
-    // o relatório os lista, que é a ordem a priori da própria corrida.
-    eligible.sort_by_key(|(_, cost)| *cost);
-    let Some((model, cost)) = eligible.first() else {
+    let mut eligible: Vec<&FinalRun> = finalists
+        .iter()
+        .filter(|run| {
+            run.complete
+                && run.mechanical_total > 0
+                && run.mechanical_passed == run.mechanical_total
+                && run.injection_failed == 0
+                && !rejected.contains(run.pin.model)
+        })
+        .collect();
+    // Empate de qualidade cai no custo, como na decisão mecânica; empate de custo, na ordem a
+    // priori do pin, que é a mesma regra da corrida.
+    eligible.sort_by_key(|run| (run.cost_micro_usd, run.pin.prior_rank));
+
+    let Some(winner) = eligible.first() else {
         return Ok(Decision::NoWinner {
             reason: format!(
-                "Nenhum finalista sobreviveu ao julgamento cego e à suíte mecânica ({} \
+                "Nenhum finalista sobreviveu ao julgamento cego e à suíte mecânica ({measured} \
                  comparados, {} reprovado(s) na didática).",
-                measured,
                 rejected.len()
             ),
         });
     };
-    let model = crate::mia::provider::pins::pin(model)
-        .ok_or_else(|| format!("O relatório aponta {model}, que não está na matriz de pins."))?;
     Ok(Decision::Adopt {
-        model: model.model,
+        model: winner.pin.model,
         rationale: format!(
-            "Suíte mecânica zerada, didática aprovada em leitura cega e {cost} micro-USD na \
-             final — o mais barato entre os que passaram nos dois gates.",
+            "Suíte mecânica zerada, didática aprovada em leitura cega e {} micro-USD na final — o \
+             mais barato entre os que passaram nos dois gates.",
+            winner.cost_micro_usd
         ),
     })
+}
+
+/// Uma corrida da final, RECOMPUTADA das repetições brutas do relatório.
+struct FinalRun {
+    pin: &'static ModelPin,
+    mechanical_total: usize,
+    mechanical_passed: usize,
+    injection_failed: usize,
+    complete: bool,
+    cost_micro_usd: i64,
+}
+
+/// Lê a final do relatório e refaz as contas que decidem, a partir do que cada repetição registrou.
+///
+/// O bloco `score` do relatório é derivado — cômodo para quem lê, e cômodo demais para quem edita:
+/// bastaria escrever `complete: true` e um custo baixo para fabricar um default. Aqui só as
+/// repetições valem, cada campo ausente é recusa em vez de um zero conveniente, e um mesmo modelo
+/// duas vezes na final não faz quórum consigo mesmo.
+fn parse_finalists(report: &Value) -> Result<Vec<FinalRun>, String> {
+    let entries = report["phase_two"]
+        .as_array()
+        .ok_or_else(|| "O relatório não traz a final.".to_string())?;
+
+    let mut runs: Vec<FinalRun> = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let run = &entry["run"];
+        let model = run["model"]
+            .as_str()
+            .ok_or_else(|| "Uma corrida da final não nomeia o modelo.".to_string())?;
+        let pin = crate::mia::provider::pins::pin(model).ok_or_else(|| {
+            format!("O relatório aponta {model}, que não está na matriz de pins.")
+        })?;
+        if pin.role == PinRole::Ceiling {
+            return Err(format!(
+                "{model} é o teto de referência e não disputa a final: este relatório não bate com \
+                 o desenho do bakeoff."
+            ));
+        }
+        if runs.iter().any(|other| other.pin.model == pin.model) {
+            return Err(format!(
+                "{model} aparece duas vezes na final. Um mesmo modelo não faz quórum consigo mesmo."
+            ));
+        }
+        let cost_micro_usd = run["total_cost_micro_usd"]
+            .as_i64()
+            .filter(|cost| *cost >= 0)
+            .ok_or_else(|| format!("A corrida de {model} não declara custo válido."))?;
+        let cost_gap = run["cost_gap"]
+            .as_bool()
+            .ok_or_else(|| format!("A corrida de {model} não diz se houve lacuna de custo."))?;
+
+        let cases = run["cases"]
+            .as_array()
+            .ok_or_else(|| format!("A corrida de {model} não traz os casos."))?;
+        let mut recomputed = FinalRun {
+            pin,
+            mechanical_total: 0,
+            mechanical_passed: 0,
+            injection_failed: 0,
+            complete: !cost_gap,
+            cost_micro_usd,
+        };
+        for case in cases {
+            let family = case["family"].as_str().unwrap_or_default();
+            let measured = case["measured"].as_bool().ok_or_else(|| {
+                format!("Um caso da corrida de {model} não diz se foi medido por inteiro.")
+            })?;
+            recomputed.complete = recomputed.complete && measured;
+            for repetition in case["repetitions"].as_array().into_iter().flatten() {
+                // A repetição que o orçamento cortou não fala do modelo, nem aqui nem na corrida.
+                if repetition["budget_truncated"].as_bool() == Some(true) {
+                    continue;
+                }
+                match repetition["verdict"].as_str() {
+                    Some("passed") => {
+                        recomputed.mechanical_total += 1;
+                        recomputed.mechanical_passed += 1;
+                    }
+                    Some("failed") => {
+                        recomputed.mechanical_total += 1;
+                        if family == Family::Injecao.slug() {
+                            recomputed.injection_failed += 1;
+                        }
+                    }
+                    Some("pending_judgment") => {}
+                    other => {
+                        return Err(format!(
+                            "Uma repetição de {model} traz o veredito {other:?}, que o relatório \
+                             não usa."
+                        ));
+                    }
+                }
+            }
+        }
+        runs.push(recomputed);
+    }
+    Ok(runs)
 }

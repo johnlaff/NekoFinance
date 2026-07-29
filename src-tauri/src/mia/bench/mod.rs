@@ -537,6 +537,7 @@ async fn execute(cli: cli::CliArgs, key: String) -> Result<String, String> {
     if cli.mode == cli::Mode::Bakeoff {
         let config = bakeoff::BakeoffConfig {
             cases,
+            execution_id: uuid::Uuid::new_v4().to_string(),
             blind_sheet_path: std::cell::OnceCell::new(),
             pack_root: cli.pack_root.clone(),
             limits: RunLimits::default(),
@@ -612,6 +613,23 @@ async fn judge(cli: &cli::CliArgs) -> Result<String, String> {
     let mut report = read(report_path)?;
     let judged = read(verdicts_path)?;
 
+    // Os bilhetes são determinísticos — caso e posição —, então o caderno de uma execução casaria
+    // com o relatório de outra sem nada reclamar. É a identidade da execução que amarra os dois.
+    let identity = |value: &Value, what: &str| -> Result<String, String> {
+        value["execution_id"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| format!("{what} não traz execution_id: ele é de uma versão anterior."))
+    };
+    let report_id = identity(&report, "O relatório")?;
+    let sheet_id = identity(&judged, "O caderno")?;
+    if report_id != sheet_id {
+        return Err(format!(
+            "O caderno é da execução {sheet_id} e o relatório é da {report_id}. Julgue o caderno \
+             que nasceu com este relatório."
+        ));
+    }
+
     let entries = judged["entries"]
         .as_array()
         .ok_or_else(|| "O caderno julgado não traz uma lista entries.".to_string())?;
@@ -635,7 +653,13 @@ async fn judge(cli: &cli::CliArgs) -> Result<String, String> {
                 ));
             }
         };
-        verdicts.insert(ticket.to_string(), verdict);
+        // Bilhete repetido com vereditos diferentes decidiria pelo último lido, em silêncio.
+        if verdicts.insert(ticket.to_string(), verdict).is_some() {
+            return Err(format!(
+                "O bilhete {ticket} aparece mais de uma vez no caderno. Deixe um veredito por \
+                 bilhete."
+            ));
+        }
     }
 
     let decision = bakeoff::judged_decision(&report, &verdicts)?;

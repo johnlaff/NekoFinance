@@ -57,6 +57,7 @@ fn case_json(case_run: &CaseRun) -> Value {
         "fixture": case_run.case.fixture,
         "question": case_run.case.question,
         "aborted": case_run.aborted,
+        "measured": case_run.measured(),
         "repetitions": repetitions,
     })
 }
@@ -78,6 +79,9 @@ fn repetition_json(outcome: &RepetitionOutcome) -> Value {
         "tools_called": outcome.tools_called,
         "cost_micro_usd": outcome.cost_micro_usd,
         "cost_declared": outcome.cost_declared,
+        // Sem este campo no arquivo, quem lê o relatório de volta não distingue a repetição que o
+        // orçamento cortou da que o modelo errou — e recomputaria a decisão sobre outra história.
+        "budget_truncated": outcome.budget_truncated,
         "turns": outcome.turns,
         "attempts": outcome.attempts,
         "answer": outcome.answer,
