@@ -283,12 +283,13 @@ pub(crate) async fn run_repetition<A: ProviderAdapter>(
     // Dreno perdido conta como lacuna: na dúvida entre "não vi custo" e "não houve custo", a
     // trava de gasto precisa do lado fechado.
     let usage_without_cost = drain.await.unwrap_or(true);
-    // Três perguntas, e uma lacuna em qualquer delas fecha: o stream publicou uso sem custo? a
-    // rodada viu uso sem custo em ALGUMA tentativa, inclusive nas que falharam e não publicam
-    // evento? houve turno sem um centavo contado?
-    let cost_declared = !usage_without_cost
-        && outcome.cost_declared
-        && (outcome.turns == 0 || outcome.cost_micro_usd > 0);
+    // Duas perguntas, e uma lacuna em qualquer delas fecha: o stream publicou uso sem custo? a
+    // rodada viu, em ALGUMA tentativa, um stream aberto terminar sem linha de uso — inclusive nas
+    // que falharam e não publicam evento? A recusa ANTES de abrir o stream fica de fora de
+    // propósito: sem stream não houve cobrança, então não há centavo para faltar — a rodada
+    // recusada reprova por si, com o motivo dela, e tratá-la como lacuna fecharia a trava inteira
+    // por erro de configuração de UM pin, levando junto a medição de todos os que correm depois.
+    let cost_declared = !usage_without_cost && outcome.cost_declared;
 
     // Quem cortou a rodada: o teto da conversa ou o dinheiro que sobrava? Só o segundo desqualifica
     // a medição — o primeiro é um resultado legítimo sobre o modelo.

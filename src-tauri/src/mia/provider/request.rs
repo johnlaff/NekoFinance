@@ -36,12 +36,16 @@ pub(crate) fn build(spec: &RunSpec<'_>) -> PreparedRequest {
     messages.push(json!({"role": "system", "content": spec.system}));
     messages.extend(spec.messages.iter().cloned());
 
+    // `parallel_tool_calls` NÃO entra no corpo. Sob `require_parameters`, um campo que os
+    // endpoints não anunciam derruba o roteamento inteiro — quase nenhum anuncia este (verificado
+    // 2026-07), e o pedido volta como "no endpoints found" antes de qualquer rodada existir. A
+    // invariante de uma chamada por turno continua garantida onde ela sempre foi decidida: o laço
+    // fecha a rodada ao ver a segunda chamada, e é isso que o teste dela prova. Pedir ao provedor
+    // era defesa em profundidade; entre perdê-la e não ter bancada, a bancada vence.
     let mut body = json!({
         "model": spec.pin.model,
         "stream": true,
         "usage": {"include": true},
-        "max_tokens": spec.max_tokens,
-        "parallel_tool_calls": false,
         // Raciocínio no piso que ESTE pin aceita. A conversa não deriva número — todo valor
         // material chega pronto da ferramenta —, então raciocínio pago compraria latência e custo
         // sem comprar fidelidade; e o piso vem do pin porque a matriz não é uniforme, e o piso
@@ -61,6 +65,15 @@ pub(crate) fn build(spec: &RunSpec<'_>) -> PreparedRequest {
             "require_parameters": true,
         },
     });
+
+    // O teto de saída entra com o nome que ESTE endpoint anuncia: sob `require_parameters`, o
+    // nome que o endpoint não anuncia é rodada recusada pelo roteador, não teto ignorado.
+    body.as_object_mut()
+        .expect("a requisição é um objeto JSON")
+        .insert(
+            spec.pin.token_cap.field().to_string(),
+            json!(spec.max_tokens),
+        );
 
     if !spec.tools.is_empty() {
         let tools: Vec<Value> = spec

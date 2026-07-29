@@ -38,6 +38,28 @@ impl ReasoningFloor {
     }
 }
 
+/// O nome do teto de saída que o endpoint anuncia.
+///
+/// Toda rodada envia um teto de tokens, mas os endpoints não concordam no nome do campo: parte
+/// anuncia `max_tokens`, parte só `max_completion_tokens`. Sob `require_parameters`, mandar o
+/// nome que o endpoint não anuncia é rodada recusada pelo roteador — não teto ignorado —, então
+/// o nome certo é propriedade do pin, como o piso de raciocínio.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TokenCap {
+    MaxTokens,
+    MaxCompletionTokens,
+}
+
+impl TokenCap {
+    /// Como o corpo da requisição nomeia o campo — e como o catálogo o anuncia.
+    pub(crate) fn field(self) -> &'static str {
+        match self {
+            TokenCap::MaxTokens => "max_tokens",
+            TokenCap::MaxCompletionTokens => "max_completion_tokens",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct ModelPin {
     pub model: &'static str,
@@ -49,6 +71,9 @@ pub(crate) struct ModelPin {
     /// enviar "desligado" a um modelo que exige raciocínio é rodada recusada, e o canary não
     /// alcança isso — o catálogo anuncia o parâmetro, nunca os esforços que ele aceita.
     pub reasoning_floor: ReasoningFloor,
+    /// O nome do teto de saída deste endpoint. O canary confere que o catálogo o anuncia; a
+    /// requisição envia o teto sob este nome e nunca sob o irmão.
+    pub token_cap: TokenCap,
     /// A ordem a priori, de 1 em diante e sem empate. Ela lê o benchmark de agente bancário —
     /// ferramentas, várias etapas, dado financeiro — ACIMA do índice geral de inteligência, que
     /// só desempata: a conversa é um agente que consulta, não um ensaísta.
@@ -71,6 +96,7 @@ pub(crate) const PINS: &[ModelPin] = &[
         role: PinRole::Default,
         beta_headers: STRUCTURED_OUTPUTS_BETA,
         reasoning_floor: ReasoningFloor::Off,
+        token_cap: TokenCap::MaxTokens,
         prior_rank: 2,
     },
     ModelPin {
@@ -80,6 +106,7 @@ pub(crate) const PINS: &[ModelPin] = &[
         role: PinRole::Candidate,
         beta_headers: &[],
         reasoning_floor: ReasoningFloor::Minimal,
+        token_cap: TokenCap::MaxCompletionTokens,
         prior_rank: 3,
     },
     ModelPin {
@@ -89,6 +116,7 @@ pub(crate) const PINS: &[ModelPin] = &[
         role: PinRole::Candidate,
         beta_headers: &[],
         reasoning_floor: ReasoningFloor::Minimal,
+        token_cap: TokenCap::MaxCompletionTokens,
         prior_rank: 4,
     },
     ModelPin {
@@ -97,7 +125,8 @@ pub(crate) const PINS: &[ModelPin] = &[
         operator: "Google Cloud Vertex AI",
         role: PinRole::Candidate,
         beta_headers: &[],
-        reasoning_floor: ReasoningFloor::Off,
+        reasoning_floor: ReasoningFloor::Minimal,
+        token_cap: TokenCap::MaxTokens,
         prior_rank: 5,
     },
     ModelPin {
@@ -106,7 +135,8 @@ pub(crate) const PINS: &[ModelPin] = &[
         operator: "xAI",
         role: PinRole::Candidate,
         beta_headers: &[],
-        reasoning_floor: ReasoningFloor::Off,
+        reasoning_floor: ReasoningFloor::Minimal,
+        token_cap: TokenCap::MaxTokens,
         prior_rank: 6,
     },
     ModelPin {
@@ -116,6 +146,7 @@ pub(crate) const PINS: &[ModelPin] = &[
         role: PinRole::Ceiling,
         beta_headers: STRUCTURED_OUTPUTS_BETA,
         reasoning_floor: ReasoningFloor::Off,
+        token_cap: TokenCap::MaxTokens,
         prior_rank: 1,
     },
 ];

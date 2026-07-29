@@ -5,7 +5,7 @@ use super::case::{self, Family};
 use super::grade::{self, Observed, Verdict};
 use crate::mia::method_tools::MethodPack;
 use crate::mia::provider::pins::default_pin;
-use crate::mia::provider::stream::{FinishReason, ProviderError, ProviderEvent, Usage};
+use crate::mia::provider::stream::{ErrorKind, FinishReason, ProviderError, ProviderEvent, Usage};
 use crate::mia::run::{AnswerProvenance, CancelToken, ProviderAdapter, RunLimits, StopReason};
 use crate::mia::test_pack::TempPack;
 use crate::mia::{Context, consent, prompt};
@@ -742,6 +742,66 @@ async fn custo_nao_declarado_fecha_a_bancada() {
     assert!(!run.cases[0].outcomes[0].cost_declared);
     assert!(run.cases[1].aborted);
     assert!(run.cases[1].outcomes.is_empty());
+}
+
+/// Recusa do provedor ANTES de abrir o stream não cobra nada — e não é lacuna de custo. A rodada
+/// reprova com o motivo dela e a bancada segue medindo: uma lacuna aqui fecharia a trava inteira,
+/// e o erro de configuração de UM pin viraria medição perdida de todos os que correm depois.
+#[tokio::test]
+async fn recusa_do_provedor_reprova_a_rodada_sem_fechar_a_bancada() {
+    struct RecusaAdapter;
+    impl ProviderAdapter for RecusaAdapter {
+        async fn open(
+            &self,
+            _spec: &crate::mia::provider::request::RunSpec<'_>,
+            _cancel: &CancelToken,
+        ) -> Result<mpsc::Receiver<ProviderEvent>, ProviderError> {
+            Err(ProviderError {
+                kind: ErrorKind::Permanent,
+                message: "Reasoning is mandatory for this endpoint and cannot be disabled"
+                    .to_string(),
+            })
+        }
+    }
+
+    let mut cases = Vec::new();
+    for index in 1..=2 {
+        let mut body = valid_case_json();
+        let id = format!("caso-{index}");
+        body["id"] = json!(id);
+        body["fixture"] = json!("casa_vazia");
+        body["expected"] = json!({ "judgment": "mecanico" });
+        body["verification"] = json!(null);
+        cases.push(parse(&format!("{id}.json"), &body).unwrap());
+    }
+
+    let temp = TempPack::absent();
+    let config = super::BenchConfig {
+        pin: default_pin(),
+        pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::AsAuthored,
+        system: None,
+        limits: RunLimits::default(),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let run = super::run_catalog(&RecusaAdapter, cases, &config, &mut lock)
+        .await
+        .unwrap();
+
+    // A rodada recusada reprova por si, com o stop dela — não vira lacuna nem some.
+    let outcome = &run.cases[0].outcomes[0];
+    assert_eq!(outcome.stop, StopReason::Failed);
+    assert!(matches!(outcome.verdict, Verdict::Failed { .. }));
+    assert_eq!(outcome.cost_micro_usd, 0);
+    assert!(outcome.cost_declared, "recusa antes do stream não é lacuna");
+
+    // E a bancada segue: o segundo caso corre, a trava fica aberta para os próximos pins.
+    assert!(!run.cost_gap);
+    assert!(!run.cases[1].aborted);
+    assert_eq!(run.cases[1].outcomes.len(), 1);
+    assert!(lock.may_start(), "a trava segue aberta");
+    assert_eq!(lock.spent_micro_usd(), 0);
 }
 
 /// Sem o pack curado, a didática não tem o que medir: a bancada recusa ANTES de gastar, com o

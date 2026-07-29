@@ -208,17 +208,14 @@ fn request_never_serializes_credentials() {
     }
 }
 
+/// O corpo NÃO pede uma chamada por turno ao provedor: sob parâmetros exigidos, um campo que os
+/// endpoints não anunciam derruba o roteamento e nenhuma rodada acontece. Quem mantém a invariante
+/// é o laço, que fecha a rodada ao ver a segunda chamada.
 #[test]
-fn request_disables_parallel_calls_and_includes_usage() {
+fn request_omits_parallel_tool_calls_and_includes_usage() {
     let request = request_for(default_pin(), vec![]);
 
-    assert_eq!(
-        request
-            .body
-            .get("parallel_tool_calls")
-            .and_then(Value::as_bool),
-        Some(false)
-    );
+    assert!(request.body.get("parallel_tool_calls").is_none());
     assert_eq!(
         request
             .body
@@ -226,6 +223,36 @@ fn request_disables_parallel_calls_and_includes_usage() {
             .and_then(Value::as_bool),
         Some(true)
     );
+}
+
+/// O teto de saída sai com o nome que o endpoint anuncia — os dois nunca juntos: sob
+/// `require_parameters`, o nome que o endpoint não anuncia é rodada recusada pelo roteador.
+#[test]
+fn request_sends_the_token_cap_field_each_pin_declares() {
+    for pin in PINS {
+        let request = request_for(pin, vec![]);
+        let declared = pin.token_cap.field();
+        let other = match declared {
+            "max_tokens" => "max_completion_tokens",
+            _ => "max_tokens",
+        };
+        assert_eq!(
+            request.body.get(declared).and_then(Value::as_u64),
+            Some(700),
+            "o pin {} envia {declared}",
+            pin.model
+        );
+        assert!(
+            request.body.get(other).is_none(),
+            "o pin {} não envia {other}",
+            pin.model
+        );
+    }
+
+    // A matriz não é uniforme — se fosse, o campo por pin seria decoração.
+    let caps: std::collections::BTreeSet<&str> =
+        PINS.iter().map(|pin| pin.token_cap.field()).collect();
+    assert_eq!(caps.len(), 2);
 }
 
 #[test]
@@ -642,8 +669,9 @@ fn drift_reports_a_model_absent_from_the_catalog() {
 #[test]
 fn drift_lists_available_endpoints_when_the_pin_is_absent() {
     let catalog = json!({"data": [{
-        "name": "amazon-bedrock",
+        "name": "Amazon Bedrock | anthropic/claude-sonnet-5-20260630",
         "model_id": default_pin().model,
+        "tag": "amazon-bedrock/us-east-1",
         "supported_parameters": ["tools", "structured_outputs"]
     }]});
     let result = verify(&catalog, default_pin());
@@ -652,16 +680,43 @@ fn drift_lists_available_endpoints_when_the_pin_is_absent() {
         result,
         Err(ref drift) if matches!(
             &drift.drift,
-            Drift::EndpointAbsent { available } if available == &vec!["amazon-bedrock".to_string()]
+            Drift::EndpointAbsent { available } if available == &vec!["amazon-bedrock/us-east-1".to_string()]
         )
+    ));
+}
+
+/// O catálogo traz dois nomes por entrada: `tag`, o slug que roteia — o mesmo que a requisição
+/// fixa em `provider.only` — e `name`, um rótulo de exibição. Casar o pin pelo rótulo aprovaria
+/// ou reprovaria a matriz inteira por um texto que não roteia nada.
+#[test]
+fn drift_matches_the_routing_tag_not_the_display_name() {
+    let pin = default_pin();
+    let by_tag = json!({"data": [{
+        "name": "Amazon Bedrock | anthropic/claude-sonnet-5-20260630",
+        "model_id": pin.model,
+        "tag": pin.endpoint,
+        "supported_parameters": ["tools", "structured_outputs", "max_tokens", "reasoning"]
+    }]});
+    assert!(verify(&by_tag, pin).is_ok());
+
+    // O rótulo coincidindo com o endpoint não vale nada: o slug de roteamento é outro.
+    let by_name_only = json!({"data": [{
+        "name": pin.endpoint,
+        "model_id": pin.model,
+        "tag": "amazon-bedrock/us-east-1",
+        "supported_parameters": ["tools", "structured_outputs", "max_tokens", "reasoning"]
+    }]});
+    assert!(matches!(
+        verify(&by_name_only, pin),
+        Err(ref drift) if matches!(&drift.drift, Drift::EndpointAbsent { .. })
     ));
 }
 
 #[test]
 fn drift_reports_missing_tools_capability() {
     let catalog = json!({"data": [{
-        "name": default_pin().endpoint,
         "model_id": default_pin().model,
+        "tag": default_pin().endpoint,
         "supported_parameters": ["structured_outputs"]
     }]});
     let result = verify(&catalog, default_pin());
@@ -675,8 +730,8 @@ fn drift_reports_missing_tools_capability() {
 #[test]
 fn drift_reports_missing_structured_outputs_capability() {
     let catalog = json!({"data": [{
-        "name": default_pin().endpoint,
         "model_id": default_pin().model,
+        "tag": default_pin().endpoint,
         "supported_parameters": ["tools"]
     }]});
     let result = verify(&catalog, default_pin());
@@ -687,12 +742,14 @@ fn drift_reports_missing_structured_outputs_capability() {
     ));
 }
 
+/// O teto de saída é exigido com o NOME que o pin envia: um endpoint que só anuncia o outro nome
+/// recusaria toda rodada sob `require_parameters`, e anunciar o nome irmão não conserta isso.
 #[test]
 fn drift_reports_a_missing_token_limit_parameter() {
     let catalog = json!({"data": [{
-        "name": default_pin().endpoint,
         "model_id": default_pin().model,
-        "supported_parameters": ["tools", "structured_outputs"]
+        "tag": default_pin().endpoint,
+        "supported_parameters": ["tools", "structured_outputs", "reasoning", "max_completion_tokens"]
     }]});
     let result = verify(&catalog, default_pin());
 
@@ -702,13 +759,39 @@ fn drift_reports_a_missing_token_limit_parameter() {
     ));
 }
 
+/// O espelho do teste acima: o pin que envia `max_completion_tokens` verifica num endpoint que só
+/// anuncia esse nome — e diverge num endpoint que só anuncia `max_tokens`.
+#[test]
+fn drift_requires_the_token_cap_field_the_pin_sends() {
+    let pin = candidate_pin();
+    let announces_completion_cap = json!({"data": [{
+        "model_id": pin.model,
+        "tag": pin.endpoint,
+        "supported_parameters": ["tools", "structured_outputs", "reasoning", "max_completion_tokens"]
+    }]});
+    assert!(verify(&announces_completion_cap, pin).is_ok());
+
+    let announces_max_tokens_only = json!({"data": [{
+        "model_id": pin.model,
+        "tag": pin.endpoint,
+        "supported_parameters": ["tools", "structured_outputs", "reasoning", "max_tokens"]
+    }]});
+    assert!(matches!(
+        verify(&announces_max_tokens_only, pin),
+        Err(ref drift) if matches!(
+            drift.drift,
+            Drift::CapabilityAbsent { parameter: "max_completion_tokens" }
+        )
+    ));
+}
+
 /// O corpo envia `reasoning` sob parâmetros exigidos: um endpoint que não o anuncia recusaria a
 /// rodada no provedor, e a verificação existe para dizer isso antes de a rodada ser paga.
 #[test]
 fn drift_reports_a_missing_reasoning_capability() {
     let catalog = json!({"data": [{
-        "name": default_pin().endpoint,
         "model_id": default_pin().model,
+        "tag": default_pin().endpoint,
         "supported_parameters": ["tools", "structured_outputs", "max_tokens"]
     }]});
     let result = verify(&catalog, default_pin());
