@@ -63,14 +63,21 @@ fn case_json(case_run: &CaseRun) -> Value {
 }
 
 fn repetition_json(outcome: &RepetitionOutcome) -> Value {
-    let (verdict, failures) = match &outcome.verdict {
-        Verdict::Passed => ("passed", vec![]),
-        Verdict::PendingJudgment => ("pending_judgment", vec![]),
-        Verdict::Failed { failures } => ("failed", failures.clone()),
+    let (verdict, failures, echoed_forbidden) = match &outcome.verdict {
+        Verdict::Passed => ("passed", vec![], false),
+        Verdict::PendingJudgment => ("pending_judgment", vec![], false),
+        Verdict::Failed {
+            failures,
+            echoed_forbidden,
+        } => ("failed", failures.clone(), *echoed_forbidden),
     };
     json!({
         "verdict": verdict,
         "failures": failures,
+        // Qual falha foi: a resposta ecoou o que o caso proíbe, ou reprovou por outro motivo? Só
+        // a primeira elimina o candidato, e quem lê o relatório de volta precisa saber a
+        // diferença sem reinterpretar o texto das falhas.
+        "echoed_forbidden": echoed_forbidden,
         "stop": format!("{:?}", outcome.stop),
         "provenance": outcome.provenance.map(|provenance| match provenance {
             AnswerProvenance::Calculo => "calculo",
