@@ -212,17 +212,13 @@ fn request_never_serializes_credentials() {
 /// endpoints não anunciam derruba o roteamento e nenhuma rodada acontece. Quem mantém a invariante
 /// é o laço, que fecha a rodada ao ver a segunda chamada.
 #[test]
-fn request_omits_parallel_tool_calls_and_includes_usage() {
+fn request_omits_the_fields_the_wire_does_not_need() {
     let request = request_for(default_pin(), vec![]);
 
+    // `parallel_tool_calls` derruba o roteamento sob `require_parameters`; `usage` é sem efeito
+    // — a linha de uso vem por padrão no stream (verificado 2026-07, por execução com e sem).
     assert!(request.body.get("parallel_tool_calls").is_none());
-    assert_eq!(
-        request
-            .body
-            .pointer("/usage/include")
-            .and_then(Value::as_bool),
-        Some(true)
-    );
+    assert!(request.body.get("usage").is_none());
 }
 
 /// O teto de saída sai com o nome que o endpoint anuncia — os dois nunca juntos: sob

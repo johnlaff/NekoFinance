@@ -70,8 +70,13 @@ impl Default for RunLimits {
             max_turns: 8,
             // Doze leituras permitem decompor uma pergunta sem virar uma varredura do banco.
             max_tool_calls: 12,
-            // Cinco centavos limitam o custo de uma pergunta sem esconder o gasto acumulado.
-            max_cost_micro_usd: 50_000,
+            // Quinze centavos limitam o custo de uma pergunta sem cortar pergunta legítima. O
+            // número saiu de medição, não de estimativa: uma rodada real custa entre 2,6 e 9,1
+            // centavos conforme o modelo, e o teto anterior caía no meio dessa distribuição —
+            // reprovava por custo metade da matriz, e até o modelo default quando um turno
+            // retentava. Teto que corta pela metade não é trava de segurança, é filtro de modelo
+            // disfarçado. (verificado 2026-07)
+            max_cost_micro_usd: 150_000,
             // Noventa segundos acomodam provedor lento sem prender a interface por tempo aberto.
             max_duration: Duration::from_secs(90),
             // Uma correção dá espaço ao aterramento sem aceitar insistência em número inventado.
@@ -515,6 +520,10 @@ async fn consume_turn(
                             error: ProviderError {
                                 kind: ErrorKind::Transient,
                                 message: "O stream do provedor fechou sem informar como a resposta terminou.".to_string(),
+                                // O stream chegou a abrir: a resposta veio, e o dinheiro deste
+                                // turno já está contabilizado pela linha de uso (ou pela falta
+                                // dela, acima).
+                                responded: true,
                             },
                             produced_events,
                         };
@@ -806,11 +815,16 @@ impl<A: ProviderAdapter> Runner<'_, A> {
                     let open = self.adapter.open(&spec, &self.cancel);
                     tokio::pin!(open);
                     tokio::select! {
+                        // Interromper a abertura em voo deixa dinheiro em dúvida: o pedido pode
+                        // ter chegado ao servidor e gerado, com o custo no stream que nunca
+                        // abriu. Na dúvida, o total desta rodada deixa de valer como completo.
                         _ = self.cancel.cancelled() => {
+                            cost_declared = false;
                             terminal_error = Some(run_error(RunErrorCode::Cancelled));
                             break 'conversation StopReason::Cancelled;
                         }
                         _ = tokio::time::sleep(remaining) => {
+                            cost_declared = false;
                             self.cancel.cancel();
                             terminal_error = Some(run_error(RunErrorCode::TimeCap));
                             break 'conversation StopReason::TimeCap;
@@ -822,6 +836,14 @@ impl<A: ProviderAdapter> Runner<'_, A> {
                 let mut receiver = match opened {
                     Ok(receiver) => receiver,
                     Err(error) => {
+                        // Recusa RESPONDIDA não mexe no dinheiro: com status HTTP na mão, o
+                        // corpo de erro não é stream e nada foi gerado nem cobrado. Falha SEM
+                        // resposta é outra coisa — o estágio que o servidor alcançou é
+                        // desconhecido, e o custo possível ficaria fora do total; a dúvida
+                        // fecha, em qualquer tentativa.
+                        if !error.responded {
+                            cost_declared = false;
+                        }
                         let detail = redaction::credentials(&error.message);
                         let decision = retry_decision(
                             &error.kind,

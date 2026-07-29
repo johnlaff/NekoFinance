@@ -89,12 +89,18 @@ impl ProviderAdapter for HttpAdapter {
             egress::check(prepared.url).map_err(|denied| ProviderError {
                 kind: ErrorKind::Permanent,
                 message: format!("A saída para o provedor foi recusada: {denied:?}."),
+                // O pedido nem saiu — mas este caminho só dispara com invariante do programa
+                // violada, e aí o lado fechado é o único barato.
+                responded: false,
             })?;
 
             let response = request.send().await.map_err(|error| ProviderError {
                 // Falha de envio acontece antes de qualquer evento: retentável por definição.
                 kind: ErrorKind::Transient,
                 message: format!("O pedido ao provedor não pôde ser enviado: {error}."),
+                // Sem resposta não se sabe o estágio que o servidor alcançou: o pedido pode ter
+                // chegado e gerado, com o custo no stream que nunca abriu.
+                responded: false,
             })?;
 
             let status = response.status().as_u16();
@@ -208,7 +214,12 @@ fn refusal(status: u16, retry_after_secs: Option<u64>, body: &str) -> ProviderEr
     } else {
         format!("O provedor recusou a rodada (HTTP {status}): {excerpt}")
     };
-    ProviderError { kind, message }
+    ProviderError {
+        kind,
+        message,
+        // O status chegou: recusa comprovada, corpo de erro em vez de stream, nada gerado.
+        responded: true,
+    }
 }
 
 fn retry_after_secs(response: &reqwest::Response) -> Option<u64> {
@@ -328,6 +339,8 @@ pub(crate) async fn pump<S: ByteSource>(
                     .send(ProviderEvent::Failed(ProviderError {
                         kind: ErrorKind::Transient,
                         message,
+                        // A bomba só corre sobre um stream aberto: a resposta já veio.
+                        responded: true,
                     }))
                     .await;
                 return;
@@ -470,6 +483,9 @@ mod tests {
             ProviderEvent::Failed(ProviderError {
                 kind: ErrorKind::Transient,
                 message,
+                // A bomba corre pós-resposta: a falha dela nunca vira "não sei se cobrou" na
+                // fronteira de abertura.
+                responded: true,
             }) if message.contains("a conexão caiu")
         ));
     }
@@ -502,6 +518,10 @@ mod tests {
         ));
         assert!(matches!(refusal(500, None, "").kind, ErrorKind::Transient));
         assert!(matches!(refusal(401, None, "").kind, ErrorKind::Permanent));
+        // Toda recusa com status é resposta do servidor: comprovadamente nada foi gerado, e é
+        // isso que autoriza a bancada a seguir sem fechar a trava.
+        assert!(refusal(500, None, "").responded);
+        assert!(refusal(404, None, "").responded);
 
         let redirect = refusal(302, None, "");
         assert!(matches!(redirect.kind, ErrorKind::Permanent));

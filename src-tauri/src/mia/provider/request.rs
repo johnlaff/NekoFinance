@@ -42,10 +42,12 @@ pub(crate) fn build(spec: &RunSpec<'_>) -> PreparedRequest {
     // invariante de uma chamada por turno continua garantida onde ela sempre foi decidida: o laço
     // fecha a rodada ao ver a segunda chamada, e é isso que o teste dela prova. Pedir ao provedor
     // era defesa em profundidade; entre perdê-la e não ter bancada, a bancada vence.
+    // `usage` também fica de fora: a linha de uso, com o custo, vem por padrão no último evento
+    // do stream — conferido por execução nas duas formas, com e sem o pedido explícito
+    // (verificado 2026-07). Campo sem efeito no corpo é só superfície.
     let mut body = json!({
         "model": spec.pin.model,
         "stream": true,
-        "usage": {"include": true},
         // Raciocínio no piso que ESTE pin aceita. A conversa não deriva número — todo valor
         // material chega pronto da ferramenta —, então raciocínio pago compraria latência e custo
         // sem comprar fidelidade; e o piso vem do pin porque a matriz não é uniforme, e o piso

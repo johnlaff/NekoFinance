@@ -744,37 +744,49 @@ async fn custo_nao_declarado_fecha_a_bancada() {
     assert!(run.cases[1].outcomes.is_empty());
 }
 
-/// Recusa do provedor ANTES de abrir o stream não cobra nada — e não é lacuna de custo. A rodada
-/// reprova com o motivo dela e a bancada segue medindo: uma lacuna aqui fecharia a trava inteira,
-/// e o erro de configuração de UM pin viraria medição perdida de todos os que correm depois.
+/// Um adapter que falha a abertura sempre do mesmo jeito — o botão é se o servidor respondeu.
+struct AberturaFalhaAdapter {
+    error: fn() -> ProviderError,
+}
+
+impl ProviderAdapter for AberturaFalhaAdapter {
+    async fn open(
+        &self,
+        _spec: &crate::mia::provider::request::RunSpec<'_>,
+        _cancel: &CancelToken,
+    ) -> Result<mpsc::Receiver<ProviderEvent>, ProviderError> {
+        Err((self.error)())
+    }
+}
+
+/// Dois casos mínimos: a falha no primeiro não pode decidir sozinha o destino do segundo.
+fn two_minimal_cases() -> Vec<case::Case> {
+    (1..=2)
+        .map(|index| {
+            let mut body = valid_case_json();
+            let id = format!("caso-{index}");
+            body["id"] = json!(id);
+            body["fixture"] = json!("casa_vazia");
+            body["expected"] = json!({ "judgment": "mecanico" });
+            body["verification"] = json!(null);
+            parse(&format!("{id}.json"), &body).unwrap()
+        })
+        .collect()
+}
+
+/// Recusa RESPONDIDA — status HTTP na mão — não cobra nada e não é lacuna de custo: o corpo de
+/// erro não é stream, nada foi gerado. A rodada reprova com o motivo dela e a bancada segue
+/// medindo: uma lacuna aqui fecharia a trava inteira, e o erro de configuração de UM pin viraria
+/// medição perdida de todos os que correm depois.
 #[tokio::test]
-async fn recusa_do_provedor_reprova_a_rodada_sem_fechar_a_bancada() {
-    struct RecusaAdapter;
-    impl ProviderAdapter for RecusaAdapter {
-        async fn open(
-            &self,
-            _spec: &crate::mia::provider::request::RunSpec<'_>,
-            _cancel: &CancelToken,
-        ) -> Result<mpsc::Receiver<ProviderEvent>, ProviderError> {
-            Err(ProviderError {
-                kind: ErrorKind::Permanent,
-                message: "Reasoning is mandatory for this endpoint and cannot be disabled"
-                    .to_string(),
-            })
-        }
-    }
-
-    let mut cases = Vec::new();
-    for index in 1..=2 {
-        let mut body = valid_case_json();
-        let id = format!("caso-{index}");
-        body["id"] = json!(id);
-        body["fixture"] = json!("casa_vazia");
-        body["expected"] = json!({ "judgment": "mecanico" });
-        body["verification"] = json!(null);
-        cases.push(parse(&format!("{id}.json"), &body).unwrap());
-    }
-
+async fn recusa_respondida_reprova_a_rodada_sem_fechar_a_bancada() {
+    let adapter = AberturaFalhaAdapter {
+        error: || ProviderError {
+            kind: ErrorKind::Permanent,
+            message: "Reasoning is mandatory for this endpoint and cannot be disabled".to_string(),
+            responded: true,
+        },
+    };
     let temp = TempPack::absent();
     let config = super::BenchConfig {
         pin: default_pin(),
@@ -785,7 +797,7 @@ async fn recusa_do_provedor_reprova_a_rodada_sem_fechar_a_bancada() {
     };
     let mut lock = super::SpendLock::new(1_000_000);
 
-    let run = super::run_catalog(&RecusaAdapter, cases, &config, &mut lock)
+    let run = super::run_catalog(&adapter, two_minimal_cases(), &config, &mut lock)
         .await
         .unwrap();
 
@@ -794,7 +806,7 @@ async fn recusa_do_provedor_reprova_a_rodada_sem_fechar_a_bancada() {
     assert_eq!(outcome.stop, StopReason::Failed);
     assert!(matches!(outcome.verdict, Verdict::Failed { .. }));
     assert_eq!(outcome.cost_micro_usd, 0);
-    assert!(outcome.cost_declared, "recusa antes do stream não é lacuna");
+    assert!(outcome.cost_declared, "recusa respondida não é lacuna");
 
     // E a bancada segue: o segundo caso corre, a trava fica aberta para os próximos pins.
     assert!(!run.cost_gap);
@@ -802,6 +814,90 @@ async fn recusa_do_provedor_reprova_a_rodada_sem_fechar_a_bancada() {
     assert_eq!(run.cases[1].outcomes.len(), 1);
     assert!(lock.may_start(), "a trava segue aberta");
     assert_eq!(lock.spent_micro_usd(), 0);
+}
+
+/// Falha SEM resposta é dinheiro em dúvida: o pedido pode ter chegado ao servidor e gerado, com
+/// o custo no stream que nunca abriu. Ausência de resposta no cliente não prova o estágio que o
+/// servidor alcançou — e dúvida sobre dinheiro fecha a trava, como em todo o resto do desenho.
+#[tokio::test]
+async fn falha_sem_resposta_e_lacuna_e_fecha_a_bancada() {
+    let adapter = AberturaFalhaAdapter {
+        error: || ProviderError {
+            kind: ErrorKind::Transient,
+            message: "O pedido ao provedor não pôde ser enviado: transporte caiu.".to_string(),
+            responded: false,
+        },
+    };
+    let temp = TempPack::absent();
+    let config = super::BenchConfig {
+        pin: default_pin(),
+        pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::AsAuthored,
+        system: None,
+        // Sem espera entre tentativas: o que está sob teste é a decisão, não o sono.
+        limits: RunLimits {
+            retry_backoff: std::time::Duration::ZERO,
+            ..RunLimits::default()
+        },
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let run = super::run_catalog(&adapter, two_minimal_cases(), &config, &mut lock)
+        .await
+        .unwrap();
+
+    let outcome = &run.cases[0].outcomes[0];
+    assert_eq!(outcome.stop, StopReason::Failed);
+    assert!(
+        !outcome.cost_declared,
+        "sem resposta não há prova de que nada foi cobrado"
+    );
+    assert!(run.cost_gap);
+    assert!(run.cases[1].aborted, "a dúvida fecha o que vem depois");
+    assert!(!lock.may_start(), "a trava fecha");
+}
+
+/// O teto de tempo estourando com a abertura EM VOO é o mesmo dinheiro em dúvida: o pedido foi
+/// interrompido no cliente, e o que o servidor fez com ele ninguém viu.
+#[tokio::test]
+async fn abertura_interrompida_pelo_tempo_e_lacuna() {
+    struct PendenteAdapter;
+    impl ProviderAdapter for PendenteAdapter {
+        async fn open(
+            &self,
+            _spec: &crate::mia::provider::request::RunSpec<'_>,
+            _cancel: &CancelToken,
+        ) -> Result<mpsc::Receiver<ProviderEvent>, ProviderError> {
+            std::future::pending().await
+        }
+    }
+
+    let temp = TempPack::absent();
+    let config = super::BenchConfig {
+        pin: default_pin(),
+        pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::AsAuthored,
+        system: None,
+        limits: RunLimits {
+            max_duration: std::time::Duration::from_millis(40),
+            retry_backoff: std::time::Duration::ZERO,
+            ..RunLimits::default()
+        },
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let run = super::run_catalog(&PendenteAdapter, two_minimal_cases(), &config, &mut lock)
+        .await
+        .unwrap();
+
+    let outcome = &run.cases[0].outcomes[0];
+    assert_eq!(outcome.stop, StopReason::TimeCap);
+    assert!(
+        !outcome.cost_declared,
+        "abertura em voo interrompida é dúvida"
+    );
+    assert!(run.cost_gap);
+    assert!(!lock.may_start(), "a trava fecha");
 }
 
 /// Sem o pack curado, a didática não tem o que medir: a bancada recusa ANTES de gastar, com o
@@ -2247,6 +2343,7 @@ async fn custo_sem_declaracao_em_tentativa_falha_fecha_a_bancada() {
             ProviderEvent::Failed(ProviderError {
                 kind: crate::mia::provider::stream::ErrorKind::Transient,
                 message: "a conexão caiu.".to_string(),
+                responded: true,
             }),
         ],
         // Segunda tentativa: responde e declara o custo dela.
@@ -2291,6 +2388,7 @@ async fn stream_aberto_que_termina_sem_uso_e_lacuna() {
         vec![ProviderEvent::Failed(ProviderError {
             kind: crate::mia::provider::stream::ErrorKind::Transient,
             message: "a conexão caiu antes do primeiro byte.".to_string(),
+            responded: true,
         })],
         answer_turn("Tudo certo.", 5_000),
     ]);
@@ -2333,6 +2431,7 @@ async fn tentativa_que_gerou_texto_e_caiu_sem_uso_fecha_a_bancada() {
             ProviderEvent::Failed(ProviderError {
                 kind: crate::mia::provider::stream::ErrorKind::Transient,
                 message: "a conexão caiu.".to_string(),
+                responded: true,
             }),
         ],
         answer_turn("Tudo certo.", 5_000),

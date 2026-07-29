@@ -20,6 +20,10 @@ pub(crate) enum PinRole {
 /// mínimo não é o mesmo em toda a matriz, e mandar o piso errado é rodada recusada, não resposta
 /// pior: modelo com raciocínio obrigatório rejeita "desligado", e quem aceita desligar não pode
 /// receber um orçamento mínimo que o teto de tokens do turno não comporta.
+///
+/// Os pisos declarados na matriz foram conferidos por execução real contra cada endpoint pinado —
+/// prova mais forte que o catálogo, que anuncia o parâmetro mas não os esforços que ele aceita
+/// (verificado 2026-07).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ReasoningFloor {
     /// Desligado. O piso de quem pode não raciocinar.
@@ -44,6 +48,9 @@ impl ReasoningFloor {
 /// anuncia `max_tokens`, parte só `max_completion_tokens`. Sob `require_parameters`, mandar o
 /// nome que o endpoint não anuncia é rodada recusada pelo roteador — não teto ignorado —, então
 /// o nome certo é propriedade do pin, como o piso de raciocínio.
+///
+/// Os nomes declarados na matriz batem com o catálogo do provedor e foram conferidos por
+/// execução real contra os endpoints pinados (verificado 2026-07).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TokenCap {
     MaxTokens,
