@@ -83,7 +83,9 @@ O bakeoff mede os candidatos e é o resultado — não a intuição — que esco
 
 **Sonda de custo.** Depois do canary e antes da peneira, uma repetição de um caso em cada pin liberado responde a pergunta que ninguém tinha respondido: a medição inteira cabe no teto? A sonda usa o caso mais caro estruturalmente do catálogo (multi-hop, que decompõe a pergunta em várias leituras) e projeta o desenho completo — a peneira pelo custo de cada pin, a final pelos três candidatos mais caros, porque quem vai passar ainda não se sabe e errar para cima antecipa uma recusa que custa centavos.
 
-Se a projeção passar do teto, a corrida termina ali com o número na mão: "a medição inteira custaria X, o teto é Y". Sem a sonda, descobrir isso custava o teto inteiro — a bancada rodava até truncar. Se a sonda nem completar uma rodada por modelo, a resposta já está dada e nada mais é gasto.
+A projeção inclui o que a própria sonda gastou e leva um quarto de margem: uma amostra por modelo **estima**, não limita. O catálogo é heterogêneo, uma trajetória de recusa ou de regeneração custa mais que a sondada, e o estado do cache de prompt muda entre a sonda e a corrida — a margem não torna a projeção exata, ela desloca o erro para o lado que custa centavos.
+
+Se a projeção passar do teto, a corrida termina ali com o número na mão: "a medição inteira custaria X, o teto é Y". Sem a sonda, descobrir isso custava o teto inteiro — a bancada rodava até truncar. Se a sonda nem completar uma rodada por modelo, a resposta já está dada e nada mais é gasto. Cada rodada da sonda corre sob a cota do que sobra dividido pelos pins que ainda faltam, para que um primeiro modelo caro não coma a vez dos outros.
 
 **Canary ao vivo.** Antes de qualquer rodada paga, cada pin da matriz é conferido contra o catálogo de endpoints de retenção zero do provedor: o endpoint existe, é de retenção zero e anuncia os parâmetros que a requisição envia. Pin que divergiu não corre, e o motivo entra no relatório para quem for trocar o pin à mão. Com menos de dois candidatos liberados, o bakeoff recusa antes de gastar.
 
@@ -109,7 +111,7 @@ Custo não declarado pelo provedor fecha a bancada na hora: sem o número, a tra
 
 **O teto cabe?** A sonda responde antes de gastar. O desenho integral são 336 repetições (6 de sonda, 132 na peneira, 198 na final), o que reserva cerca de 1,5 centavo por repetição sob US$ 5; o relatório publica esse número em `budget_per_repetition_micro_usd` e a projeção da sonda em `probe.estimate_micro_usd`. Quando os dois divergem, quem manda é a sonda — ela mediu, a régua só dividiu.
 
-As fatias das etapas são derivadas da cardinalidade: acrescentar um pin à matriz ou um caso ao catálogo muda as proporções sozinho. A sonda corre sob o teto inteiro, porque é curta por construção e o teto por rodada já a limita; uma fatia proporcional a estrangularia justamente quando o catálogo é grande e ela é mais necessária.
+As fatias das etapas são derivadas da cardinalidade enquanto não há medição — acrescentar um pin à matriz ou um caso ao catálogo muda as proporções sozinho. Depois da sonda, a reserva da peneira passa a sair dos **custos medidos**: contar rodadas só reparte bem com custo uniforme, e um teto de referência cinco vezes mais caro que os candidatos consumiria a fatia da peneira sem que nada tivesse corrido errado.
 
 ## O relatório
 
@@ -124,6 +126,20 @@ Duas varreduras de privacidade cobrem o relatório, e elas são diferentes: com 
 Casos `cego` saem como "pendente de julgamento", e o bakeoff escreve um caderno separado — `<data>-julgamento-cego.json` — com as respostas e nenhum nome de modelo. Cego é propriedade do arquivo, não da disciplina de quem lê: resposta e modelo na mesma página tornam o julgamento impossível de fazer às cegas, por mais boa vontade que alguém tenha.
 
 Cada resposta ganha um bilhete (`di-01-01`), e a ordem é a alfabética da própria resposta dentro de cada caso — a ordem em que os modelos correram entregaria o jogo. Respostas idênticas de modelos diferentes recebem bilhetes diferentes. A chave que liga bilhete a modelo fica no relatório principal, que é o arquivo a abrir **depois** de julgar.
+
+### Fechar o ciclo
+
+Julgar é escrever `"verdict": "aprovado"` ou `"reprovado"` em cada bilhete do caderno, e devolvê-lo:
+
+```sh
+cargo run --manifest-path src-tauri/Cargo.toml --bin mia-bench -- julgar \
+  --report evals/mia/reports/<data>-bakeoff.json \
+  --verdicts evals/mia/reports/<data>-julgamento-cego.json
+```
+
+O comando não fala com o provedor, não gasta e não pede chave: é leitura e conta. Ele exige um veredito por bilhete — um bilhete em branco é uma resposta que ninguém leu, e decidir assim pularia o gate que ele existe para fechar — e recusa um caderno de outra execução. Um bilhete reprovado reprova o modelo inteiro: ensinar errado uma vez não se compensa com dois acertos. Entre os que passaram nos dois gates, ganha o mais barato, e `default_model` finalmente deixa de ser nulo no relatório.
+
+Adotar continua sendo gesto manual.
 
 ## Por que não roda em CI
 

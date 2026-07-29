@@ -187,6 +187,31 @@ pub(crate) struct BenchRun {
     pub cost_gap: bool,
 }
 
+/// A configuração cobre o catálogo que vai correr?
+///
+/// Didática sem o núcleo do método não mede ensino — mede a recusa de capacidade da camada ausente,
+/// e o julgamento cego receberia respostas que nunca tiveram como ensinar. Melhor recusar a bancada
+/// inteira do que pagar por uma família que não vale julgamento. Vive fora do laço porque quem
+/// chama precisa poder perguntar ANTES de qualquer rodada paga: descobrir isso depois da sonda
+/// significa ter pago por ela à toa.
+pub(crate) fn ensure_pack_covers(
+    cases: &[Case],
+    pack_root: Option<&std::path::Path>,
+) -> Result<(), String> {
+    if pack_root.is_none()
+        && cases
+            .iter()
+            .any(|case| case.family == case::Family::Didatica)
+    {
+        return Err(
+            "Os casos de didática exigem o pack curado do método: rode com --pack, ou deixe-os \
+             de fora com --only."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 /// As ferramentas que a rodada chamou, na ordem, lidas do transcript — inclusive as recusadas
 /// pela validação: o gesto de chamar é o que se mede, não o sucesso da chamada.
 pub(crate) fn tools_called(transcript: &[Value]) -> Vec<String> {
@@ -294,20 +319,7 @@ pub(crate) async fn run_catalog<A: ProviderAdapter>(
     config: &BenchConfig,
     lock: &mut SpendLock,
 ) -> Result<BenchRun, String> {
-    // Didática sem o núcleo do método não mede ensino — mede a recusa de capacidade da camada
-    // ausente, e o julgamento cego receberia respostas que nunca tiveram como ensinar. Melhor
-    // recusar a bancada inteira do que pagar por uma família que não vale julgamento.
-    if config.pack_root.is_none()
-        && cases
-            .iter()
-            .any(|case| case.family == case::Family::Didatica)
-    {
-        return Err(
-            "Os casos de didática exigem o pack curado do método: rode com --pack, ou deixe-os \
-             de fora com --only."
-                .to_string(),
-        );
-    }
+    ensure_pack_covers(&cases, config.pack_root.as_deref())?;
 
     // O prefixo é montado uma vez, como na aplicação: ele é o mesmo para toda rodada, e é sobre
     // o texto MONTADO que o gate de privacidade do pack já passou. A ausência de pack usa um
@@ -452,13 +464,19 @@ pub fn main() -> std::process::ExitCode {
         }
     };
 
-    let ci = std::env::var("CI").ok();
-    let key = std::env::var("NEKO_MIA_BENCH_KEY").ok();
-    if let Some(reason) = cli::refuse_reason(ci.as_deref(), key.as_deref()) {
-        eprintln!("{reason}");
-        return std::process::ExitCode::FAILURE;
-    }
-    let key = key.expect("a recusa de ambiente cobre a chave ausente");
+    // O julgamento é leitura e conta: não fala com o provedor, não gasta e não pede chave. As duas
+    // recusas de ambiente valem para quem vai gastar dinheiro.
+    let key = if cli.mode == cli::Mode::Judge {
+        String::new()
+    } else {
+        let ci = std::env::var("CI").ok();
+        let key = std::env::var("NEKO_MIA_BENCH_KEY").ok();
+        if let Some(reason) = cli::refuse_reason(ci.as_deref(), key.as_deref()) {
+            eprintln!("{reason}");
+            return std::process::ExitCode::FAILURE;
+        }
+        key.expect("a recusa de ambiente cobre a chave ausente")
+    };
 
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(runtime) => runtime,
@@ -480,6 +498,10 @@ pub fn main() -> std::process::ExitCode {
 }
 
 async fn execute(cli: cli::CliArgs, key: String) -> Result<String, String> {
+    if cli.mode == cli::Mode::Judge {
+        return judge(&cli).await;
+    }
+
     let mut cases = case::load_catalog(&cli.cases_dir).map_err(|error| error.to_string())?;
     // O filtro corta DEPOIS da carga: o catálogo inteiro continua obrigado a ser válido e a
     // cobrir as seis famílias, mesmo quando só um caso vai rodar.
@@ -513,20 +535,18 @@ async fn execute(cli: cli::CliArgs, key: String) -> Result<String, String> {
     let ran_at = chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
 
     if cli.mode == cli::Mode::Bakeoff {
-        let (bakeoff, path) = bakeoff::run(
-            &adapter,
-            bakeoff::BakeoffConfig {
-                cases,
-                blind_sheet_path: std::cell::OnceCell::new(),
-                pack_root: cli.pack_root.clone(),
-                limits: RunLimits::default(),
-                reports_dir: &cli.reports_dir,
-                ran_at: &ran_at,
-            },
-            &mut lock,
-        )
-        .await?;
-        return Ok(bakeoff::summary(&bakeoff, &path));
+        let config = bakeoff::BakeoffConfig {
+            cases,
+            blind_sheet_path: std::cell::OnceCell::new(),
+            pack_root: cli.pack_root.clone(),
+            limits: RunLimits::default(),
+            reports_dir: &cli.reports_dir,
+            ran_at: &ran_at,
+        };
+        let (bakeoff, path) = bakeoff::run(&adapter, config, &mut lock).await?;
+        // O caminho do caderno cego sai junto: é ele que se abre ANTES do relatório.
+        let sheet = bakeoff.blind_sheet_path.clone();
+        return Ok(bakeoff::summary(&bakeoff, &path, sheet.as_deref()));
     }
 
     let pin = match &cli.model {
@@ -572,4 +592,79 @@ async fn execute(cli: cli::CliArgs, key: String) -> Result<String, String> {
         run.max_spend_micro_usd,
         path.display(),
     ))
+}
+
+/// Fecha o ciclo do julgamento cego: lê o caderno julgado, aplica os vereditos ao relatório e
+/// grava a decisão final.
+///
+/// A decisão passa a existir no arquivo, não na cabeça de quem leu — e continua sendo adotada à
+/// mão, porque trocar o pin é gesto deliberado.
+async fn judge(cli: &cli::CliArgs) -> Result<String, String> {
+    let report_path = cli.report.as_ref().expect("o parse exige --report");
+    let verdicts_path = cli.verdicts.as_ref().expect("o parse exige --verdicts");
+
+    let read = |path: &std::path::Path| -> Result<Value, String> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|error| format!("{} não pôde ser lido: {error}.", path.display()))?;
+        serde_json::from_str(&text)
+            .map_err(|error| format!("{} não parseia como JSON: {error}.", path.display()))
+    };
+    let mut report = read(report_path)?;
+    let judged = read(verdicts_path)?;
+
+    let entries = judged["entries"]
+        .as_array()
+        .ok_or_else(|| "O caderno julgado não traz uma lista entries.".to_string())?;
+    let mut verdicts = std::collections::BTreeMap::new();
+    for entry in entries {
+        let ticket = entry["ticket"]
+            .as_str()
+            .ok_or_else(|| "Um bilhete do caderno não tem identificador.".to_string())?;
+        // Sem veredito, o bilhete simplesmente não entra — e a cobertura reclama dele adiante,
+        // nomeando o que falta ler em vez de decidir por omissão.
+        let Some(verdict) = entry.get("verdict").and_then(Value::as_str) else {
+            continue;
+        };
+        let verdict = match verdict {
+            "aprovado" => bakeoff::Judgment::Approved,
+            "reprovado" => bakeoff::Judgment::Rejected,
+            other => {
+                return Err(format!(
+                    "O bilhete {ticket} traz o veredito \"{other}\": use \"aprovado\" ou \
+                     \"reprovado\"."
+                ));
+            }
+        };
+        verdicts.insert(ticket.to_string(), verdict);
+    }
+
+    let decision = bakeoff::judged_decision(&report, &verdicts)?;
+    report["decision"] = bakeoff::decision_json(&decision);
+    report["judged_at"] =
+        Value::String(chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false));
+
+    let pack = cli.pack_root.as_ref().map(MethodPack::at);
+    report::write_json(
+        report_path.parent().unwrap_or(std::path::Path::new(".")),
+        "",
+        Some(report_path),
+        &report,
+        pack.as_ref(),
+    )
+    .await?;
+
+    Ok(match decision {
+        bakeoff::Decision::Adopt { model, rationale } => format!(
+            "Default decidido: {model}.\n{rationale}\nPara adotar, mova o papel Default em \
+             src-tauri/src/mia/provider/pins.rs para {model}.\nRelatório: {}",
+            report_path.display()
+        ),
+        bakeoff::Decision::PendingBlindJudgment { .. } => {
+            "O relatório segue pendente de julgamento.".to_string()
+        }
+        bakeoff::Decision::NoWinner { reason } => format!(
+            "Sem default: {reason}\nRelatório: {}",
+            report_path.display()
+        ),
+    })
 }

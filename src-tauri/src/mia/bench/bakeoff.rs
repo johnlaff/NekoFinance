@@ -34,6 +34,10 @@ const PHASE_TWO_REPETITIONS: u32 = 3;
 /// Quantos passam à final. Mais de três diluiria o teto entre modelos que a peneira já separou.
 const MAX_FINALISTS: usize = 3;
 
+/// A margem sobre a projeção da sonda: um quarto. Uma amostra por modelo estima, não limita — e a
+/// diferença entre estimar e limitar, aqui, é o teto estourar no meio da medição.
+const ESTIMATE_MARGIN: (i64, i64) = (1, 4);
+
 /// Quantos a final precisa para existir. Com um só, três repetições medem estabilidade e não
 /// comparam nada — e adotar o único sobrevivente seria promover por ausência de adversário, que é
 /// exatamente a aposta que o bakeoff existe para não fazer.
@@ -60,9 +64,37 @@ fn rounds(cases: usize) -> (i64, i64, i64) {
 
 /// O teto acumulado até o fim da peneira, sonda inclusa. Sem essa reserva, a peneira chegaria ao
 /// fim do teto e a final, que é quem decide o default, não correria.
+///
+/// Contar rodadas só funciona com custo uniforme. Um teto de referência cinco vezes mais caro que
+/// os candidatos consome a fatia da peneira sem que nada tenha corrido errado — e a peneira
+/// truncaria com o teto inteiro ainda cabendo. Por isso, quando a sonda já mediu, a reserva sai
+/// dos CUSTOS: o que a peneira precisa, mais a final projetada guardada para depois.
 pub(crate) fn phase_one_cap(cap: i64, cases: usize) -> i64 {
     let (probe, sieve, finals) = rounds(cases);
     share(cap, (probe + sieve, probe + sieve + finals))
+}
+
+/// O teto acumulado até o fim da peneira quando a sonda já disse quanto cada modelo custa: tudo
+/// menos o que a final vai precisar, sem passar do teto.
+pub(crate) fn measured_phase_one_cap(cap: i64, probes: &[Probe], cases: usize) -> i64 {
+    if probes.is_empty() {
+        return phase_one_cap(cap, cases);
+    }
+    let mut candidates: Vec<i64> = probes
+        .iter()
+        .filter(|probe| probe.pin.role != PinRole::Ceiling)
+        .map(|probe| probe.cost_micro_usd)
+        .collect();
+    candidates.sort_unstable_by(|left, right| right.cmp(left));
+    let finals: i64 = candidates
+        .iter()
+        .take(MAX_FINALISTS)
+        .map(|cost| cost.saturating_mul(cases as i64) * PHASE_TWO_REPETITIONS as i64)
+        .sum();
+    // A margem acompanha a reserva: guardar a final pelo valor nominal deixaria a peneira comer
+    // exatamente a folga que a projeção diz ser necessária.
+    let reserved = finals.saturating_add(share(finals, ESTIMATE_MARGIN));
+    (cap - reserved).max(0)
 }
 
 /// O que uma corrida rendeu, reduzido ao que decide.
@@ -300,6 +332,8 @@ fn rescue(error: String, published: Result<PathBuf, String>) -> String {
 #[derive(Debug)]
 pub(crate) struct Bakeoff {
     pub ran_at: String,
+    /// Onde ficou o caderno cego, quando houve o que julgar.
+    pub blind_sheet_path: Option<PathBuf>,
     /// O que a sonda de custo mediu, um pin por vez, antes de qualquer fase.
     pub probes: Vec<Probe>,
     /// O que a medição inteira custaria segundo a sonda. Zero antes de ela correr.
@@ -335,6 +369,10 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
     config: BakeoffConfig<'_>,
     lock: &mut SpendLock,
 ) -> Result<(Bakeoff, PathBuf), String> {
+    // Antes de qualquer byte no fio e de qualquer centavo: o catálogo que vai correr precisa estar
+    // coberto pela configuração. Descobrir depois da sonda seria pagar por ela à toa.
+    super::ensure_pack_covers(&config.cases, config.pack_root.as_deref())?;
+
     let catalog = adapter.fetch().await?;
     let verdict = canary(&catalog, &contenders());
     let competing = verdict
@@ -345,6 +383,7 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
     let pack = config.pack_root.as_ref().map(MethodPack::at);
     let mut bakeoff = Bakeoff {
         ran_at: config.ran_at.to_string(),
+        blind_sheet_path: None,
         probes: Vec::new(),
         estimate_micro_usd: 0,
         catalog: config.cases.iter().map(|case| case.id.clone()).collect(),
@@ -393,16 +432,20 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
     // teto todo — a bancada roda até truncar e o relatório diz quem ficou sem medição. Com ela, o
     // mesmo fato custa uma rodada por modelo, e a recusa vem com o número que falta.
     if let Some(case) = probe_case(&config.cases) {
-        // A sonda corre sob o teto INTEIRO, sem fatia própria. Ela é curta por construção — uma
-        // rodada por pin — e o teto por rodada da conversa já a limita ao pior caso de meia dúzia
-        // de rodadas; uma fatia proporcional a estrangularia justamente quando o catálogo é grande
-        // e ela é mais necessária, e a sonda que não termina não estima nada.
+        // A sonda corre sob o teto INTEIRO, sem fatia fixa: ela é curta por construção — uma
+        // rodada por pin — e uma fatia proporcional a estrangularia justamente quando o catálogo é
+        // grande e ela é mais necessária. O que a limita é a cota por pin abaixo: cada rodada da
+        // sonda pode gastar o que sobra dividido pelos pins que ainda faltam, de modo que um
+        // primeiro modelo caro não coma a vez dos outros.
         lock.open_phase(lock.cap_micro_usd());
-        for pin in verdict.cleared.clone() {
+        let cleared = verdict.cleared.clone();
+        for (index, pin) in cleared.iter().copied().enumerate() {
+            let restantes = (cleared.len() - index) as i64;
+            let cota = lock.remaining_micro_usd() / restantes.max(1);
             let run = match run_catalog(
                 adapter,
                 vec![case.clone()],
-                &config.bench(pin, Repetitions::Fixed(1)),
+                &config.probe_bench(pin, cota),
                 lock,
             )
             .await
@@ -422,6 +465,13 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
                 cost_micro_usd: run.total_cost_micro_usd,
                 cost_declared: !run.cost_gap,
             });
+            // Checkpoint a cada sonda, não ao fim de todas: uma queda na quinta não pode levar as
+            // quatro que já foram pagas.
+            path = Some(
+                config
+                    .publish(&mut bakeoff, lock, &base, path.as_deref(), pack.as_ref())
+                    .await?,
+            );
         }
 
         // Estimativa tirada de um subconjunto não é estimativa: se a sonda não alcançou todo pin
@@ -472,7 +522,11 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
         );
     }
 
-    lock.open_phase(phase_one_cap(lock.cap_micro_usd(), config.cases.len()));
+    lock.open_phase(measured_phase_one_cap(
+        lock.cap_micro_usd(),
+        &bakeoff.probes,
+        config.cases.len(),
+    ));
     for pin in verdict.cleared.clone() {
         let run = match run_catalog(
             adapter,
@@ -589,6 +643,17 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
 }
 
 impl BakeoffConfig<'_> {
+    /// A configuração de UMA rodada de sonda: uma repetição, sob a cota daquele pin.
+    fn probe_bench(&self, pin: &'static ModelPin, quota_micro_usd: i64) -> BenchConfig {
+        BenchConfig {
+            limits: RunLimits {
+                max_cost_micro_usd: self.limits.max_cost_micro_usd.min(quota_micro_usd),
+                ..self.limits.clone()
+            },
+            ..self.bench(pin, Repetitions::Fixed(1))
+        }
+    }
+
     fn bench(&self, pin: &'static ModelPin, repetitions: Repetitions) -> BenchConfig {
         BenchConfig {
             pin,
@@ -614,17 +679,16 @@ impl BakeoffConfig<'_> {
             .as_array()
             .is_some_and(|list| !list.is_empty());
         if pending {
-            report::write_json(
+            let written = report::write_json(
                 self.reports_dir,
                 &report::file_name(self.ran_at, "julgamento-cego"),
                 self.blind_sheet_path.get().map(PathBuf::as_path),
                 &sheet,
                 pack,
             )
-            .await
-            .map(|path| {
-                let _ = self.blind_sheet_path.set(path);
-            })?;
+            .await?;
+            let _ = self.blind_sheet_path.set(written.clone());
+            bakeoff.blind_sheet_path = Some(written);
         }
 
         let value = render(bakeoff, self.ran_at);
@@ -685,25 +749,7 @@ pub(crate) fn render(bakeoff: &Bakeoff, ran_at: &str) -> Value {
         "blind_judgment_key": blind_key(bakeoff),
         "phase_one": phase(&bakeoff.phase_one),
         "phase_two": phase(&bakeoff.phase_two),
-        "decision": match &bakeoff.decision {
-            Decision::Adopt { model, rationale } => json!({
-                "default_model": model,
-                "rationale": rationale,
-                "pending_blind_judgment": 0,
-            }),
-            // Líder não é default: o campo que alguém leria para trocar o pin fica nulo até a
-            // didática passar pela leitura cega que a máquina não sabe fazer.
-            Decision::PendingBlindJudgment { leading_model, rationale, pending_judgment } => json!({
-                "default_model": Value::Null,
-                "leading_model": leading_model,
-                "rationale": rationale,
-                "pending_blind_judgment": pending_judgment,
-            }),
-            Decision::NoWinner { reason } => json!({
-                "default_model": Value::Null,
-                "reason": reason,
-            }),
-        },
+        "decision": decision_json(&bakeoff.decision),
     })
 }
 
@@ -711,10 +757,8 @@ pub(crate) fn render(bakeoff: &Bakeoff, ran_at: &str) -> Value {
 /// os pins mais a final nos finalistas. Serve de régua para quem lê o relatório decidir se o teto
 /// cabe na bancada de hoje — o custo real por rodada só se conhece rodando.
 fn budget_per_repetition(bakeoff: &Bakeoff) -> i64 {
-    let cases = bakeoff.catalog.len() as i64;
-    let sieve = PINS.len() as i64 * PHASE_ONE_REPETITIONS as i64 * cases;
-    let final_round = MAX_FINALISTS as i64 * PHASE_TWO_REPETITIONS as i64 * cases;
-    match sieve + final_round {
+    let (probe, sieve, finals) = rounds(bakeoff.catalog.len());
+    match probe + sieve + finals {
         0 => 0,
         total => bakeoff.cap_micro_usd / total,
     }
@@ -732,12 +776,22 @@ pub(crate) struct Probe {
 
 /// O que a medição inteira custaria, extrapolado da sonda.
 ///
+/// Inclui o que a PRÓPRIA sonda já gastou: ela é parte do desenho, e comparar uma projeção que a
+/// ignora com o teto inteiro aprova, na fronteira, medições que não cabem — o custo sondado volta
+/// como diferença entre o projetado e o cobrado.
+///
 /// A peneira é direta: cada pin roda o catálogo uma vez. A final é estimada pelo pior caso
 /// plausível — os três candidatos mais CAROS —, porque quem vai passar a peneira ainda não se
 /// sabe, e errar para cima só antecipa uma recusa que custa centavos, enquanto errar para baixo
 /// gasta o teto inteiro para descobrir a mesma coisa.
+///
+/// Sobre o todo vai a MARGEM: uma amostra por modelo é estimativa pontual, não limite superior. O
+/// catálogo é heterogêneo, uma trajetória de recusa ou de regeneração custa mais que a sondada, e
+/// o estado do cache de prompt muda entre a sonda e a corrida. A margem não torna a projeção
+/// exata; ela desloca o erro para o lado que custa centavos.
 pub(crate) fn estimate(probes: &[Probe], cases: usize) -> i64 {
     let cases = cases as i64;
+    let probed: i64 = probes.iter().map(|probe| probe.cost_micro_usd).sum();
     let sieve: i64 = probes
         .iter()
         .map(|probe| probe.cost_micro_usd.saturating_mul(cases))
@@ -755,7 +809,8 @@ pub(crate) fn estimate(probes: &[Probe], cases: usize) -> i64 {
         .map(|cost| cost.saturating_mul(cases) * PHASE_TWO_REPETITIONS as i64)
         .sum();
 
-    sieve.saturating_add(finals)
+    let total = probed.saturating_add(sieve).saturating_add(finals);
+    total.saturating_add(share(total, ESTIMATE_MARGIN))
 }
 
 /// O caso que a sonda usa: o mais caro estruturalmente do catálogo — multi-hop decompõe a pergunta
@@ -864,7 +919,7 @@ fn blind_key(bakeoff: &Bakeoff) -> Value {
 
 /// O resumo que a execução imprime. A adoção do default é gesto manual e deliberado — o relatório
 /// diz qual modelo a medição escolheu e onde trocá-lo, e nunca troca sozinho.
-pub(crate) fn summary(bakeoff: &Bakeoff, path: &Path) -> String {
+pub(crate) fn summary(bakeoff: &Bakeoff, path: &Path, blind_sheet: Option<&Path>) -> String {
     let decision = match &bakeoff.decision {
         Decision::Adopt { model, rationale } => format!(
             "Default medido: {model}.\n{rationale}\nPara adotar, mova o papel Default em \
@@ -876,8 +931,12 @@ pub(crate) fn summary(bakeoff: &Bakeoff, path: &Path) -> String {
             pending_judgment,
         } => format!(
             "Líder da medição: {leading_model} — ainda NÃO é o default.\n{rationale}\n\
-             {pending_judgment} resposta(s) de didática aguardam julgamento cego: leia-as no \
-             relatório, sem olhar de quem são, antes de trocar qualquer pin.",
+             {pending_judgment} resposta(s) de didática aguardam julgamento cego. Leia-as no \
+             CADERNO, que não nomeia modelo nenhum:\n  {}\nO relatório abaixo carrega a chave que \
+             liga bilhete a modelo — abra depois de julgar, nunca antes.",
+            blind_sheet
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "(o caderno não foi escrito)".to_string()),
         ),
         Decision::NoWinner { reason } => format!("Sem default medido: {reason}"),
     };
@@ -909,4 +968,148 @@ pub(crate) fn summary(bakeoff: &Bakeoff, path: &Path) -> String {
         bakeoff.cap_micro_usd,
         path.display(),
     )
+}
+
+/// A decisão como o relatório a publica.
+pub(crate) fn decision_json(decision: &Decision) -> Value {
+    match decision {
+        Decision::Adopt { model, rationale } => json!({
+            "default_model": model,
+            "rationale": rationale,
+            "pending_blind_judgment": 0,
+        }),
+        // Líder não é default: o campo que alguém leria para trocar o pin fica nulo até a didática
+        // passar pela leitura cega que a máquina não sabe fazer.
+        Decision::PendingBlindJudgment {
+            leading_model,
+            rationale,
+            pending_judgment,
+        } => json!({
+            "default_model": Value::Null,
+            "leading_model": leading_model,
+            "rationale": rationale,
+            "pending_blind_judgment": pending_judgment,
+        }),
+        Decision::NoWinner { reason } => json!({
+            "default_model": Value::Null,
+            "reason": reason,
+        }),
+    }
+}
+
+/// O veredito humano de um bilhete do caderno cego.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Judgment {
+    Approved,
+    Rejected,
+}
+
+/// Aplica os julgamentos cegos ao relatório e devolve a decisão final.
+///
+/// É aqui que o ciclo fecha. A máquina julga o que dá para julgar sem gosto e para no líder; quem
+/// lê o caderno julga o ensino, que é gosto, e devolve os vereditos por bilhete. Só então existe
+/// um default decidido — e ele continua sendo adotado à mão.
+///
+/// Puro de propósito: relatório e vereditos entram, decisão sai. Nada aqui gasta dinheiro nem
+/// precisa de chave, e a mesma dupla de arquivos sempre rende a mesma decisão.
+pub(crate) fn judged_decision(
+    report: &Value,
+    verdicts: &std::collections::BTreeMap<String, Judgment>,
+) -> Result<Decision, String> {
+    let key = report["blind_judgment_key"]
+        .as_object()
+        .ok_or_else(|| "O relatório não traz a chave do julgamento cego.".to_string())?;
+
+    // Cobertura antes de qualquer conta: um bilhete sem veredito é uma resposta que ninguém leu, e
+    // decidir sem ela seria pular exatamente o gate que este comando existe para fechar.
+    let missing: Vec<&str> = key
+        .keys()
+        .filter(|ticket| !verdicts.contains_key(*ticket))
+        .map(String::as_str)
+        .collect();
+    if !missing.is_empty() {
+        return Err(format!(
+            "Faltam vereditos para {} bilhete(s): {}. Julgue todos antes de decidir.",
+            missing.len(),
+            missing.join(", ")
+        ));
+    }
+    let unknown: Vec<&str> = verdicts
+        .keys()
+        .filter(|ticket| !key.contains_key(*ticket))
+        .map(String::as_str)
+        .collect();
+    if !unknown.is_empty() {
+        return Err(format!(
+            "Estes bilhetes não existem neste relatório: {}. O caderno julgado é de outra \
+             execução.",
+            unknown.join(", ")
+        ));
+    }
+
+    // Reprovar UM bilhete reprova o modelo: a didática é o que a conversa faz o tempo todo, e um
+    // ensino errado não se compensa com dois certos.
+    let rejected: std::collections::BTreeSet<&str> = key
+        .iter()
+        .filter(|(ticket, _)| verdicts.get(*ticket) == Some(&Judgment::Rejected))
+        .filter_map(|(_, model)| model.as_str())
+        .collect();
+
+    let finalists = report["phase_two"]
+        .as_array()
+        .ok_or_else(|| "O relatório não traz a final.".to_string())?;
+    let mut eligible: Vec<(&str, i64)> = Vec::new();
+    let mut measured = 0;
+    for entry in finalists {
+        let score = &entry["score"];
+        let model = entry["run"]["model"]
+            .as_str()
+            .ok_or_else(|| "Uma corrida da final não nomeia o modelo.".to_string())?;
+        if score["complete"].as_bool() == Some(true) {
+            measured += 1;
+        } else {
+            continue;
+        }
+        let perfect = score["mechanical_total"].as_i64().unwrap_or(0) > 0
+            && score["mechanical_total"] == score["mechanical_passed"];
+        if perfect && score["injection_failed"].as_i64() == Some(0) && !rejected.contains(model) {
+            eligible.push((
+                model,
+                entry["run"]["total_cost_micro_usd"].as_i64().unwrap_or(0),
+            ));
+        }
+    }
+
+    if measured < finalists.len() || measured < MIN_FINALISTS {
+        return Ok(Decision::NoWinner {
+            reason: format!(
+                "A final mediu {measured} de {} finalistas por inteiro — a decisão exige todos, no \
+                 mínimo {MIN_FINALISTS}.",
+                finalists.len()
+            ),
+        });
+    }
+
+    // Empate de qualidade cai no custo, como na decisão mecânica; empate de custo, na ordem em que
+    // o relatório os lista, que é a ordem a priori da própria corrida.
+    eligible.sort_by_key(|(_, cost)| *cost);
+    let Some((model, cost)) = eligible.first() else {
+        return Ok(Decision::NoWinner {
+            reason: format!(
+                "Nenhum finalista sobreviveu ao julgamento cego e à suíte mecânica ({} \
+                 comparados, {} reprovado(s) na didática).",
+                measured,
+                rejected.len()
+            ),
+        });
+    };
+    let model = crate::mia::provider::pins::pin(model)
+        .ok_or_else(|| format!("O relatório aponta {model}, que não está na matriz de pins."))?;
+    Ok(Decision::Adopt {
+        model: model.model,
+        rationale: format!(
+            "Suíte mecânica zerada, didática aprovada em leitura cega e {cost} micro-USD na \
+             final — o mais barato entre os que passaram nos dois gates.",
+        ),
+    })
 }

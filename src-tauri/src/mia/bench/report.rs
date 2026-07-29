@@ -164,6 +164,9 @@ pub(crate) async fn write_json(
                 use std::io::Write;
                 file.write_all(text.as_bytes())
                     .and_then(|()| file.sync_all())
+                    // O nome também precisa chegar ao disco: sem isso, uma queda logo depois
+                    // deixaria o diretório sem a entrada de um arquivo que já foi pago.
+                    .and_then(|()| sync_dir(&candidate))
                     .map_err(|error| {
                         format!(
                             "O relatório não pôde ser escrito em {}: {error}.",

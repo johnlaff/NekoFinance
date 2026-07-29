@@ -13,7 +13,8 @@ use std::path::{Path, PathBuf};
 pub(crate) const USAGE: &str = "Uso: mia-bench [--model <id do pin>] [--max-spend-usd <decimal>] \
      [--pack <caminho>] [--only <trecho do id>] [--cases-dir <caminho>] [--reports-dir <caminho>]\n\
      \x20    mia-bench bakeoff [--max-spend-usd <decimal, teto US$ 5>] [--pack <caminho>] \
-     [--reports-dir <caminho>]";
+     [--reports-dir <caminho>]\n\
+     \x20    mia-bench julgar --report <relatório> --verdicts <caderno julgado>";
 
 /// O que a execução vai fazer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,6 +24,9 @@ pub(crate) enum Mode {
     Single,
     /// As duas fases sobre a matriz inteira, terminando na decisão do modelo default.
     Bakeoff,
+    /// Fecha o ciclo: recebe o caderno cego julgado e escreve a decisão final no relatório. Não
+    /// fala com o provedor, não gasta nada e não precisa de chave — é leitura e conta.
+    Judge,
 }
 
 /// Um dólar cobre o catálogo inteiro com folga num modelo só, e não cobre um laço desgovernado.
@@ -41,6 +45,10 @@ const DEFAULT_CASES_DIR: &str = "evals/mia/cases";
 #[derive(Debug)]
 pub(crate) struct CliArgs {
     pub mode: Mode,
+    /// O relatório do bakeoff a finalizar, no modo de julgamento.
+    pub report: Option<PathBuf>,
+    /// O caderno cego com os vereditos preenchidos.
+    pub verdicts: Option<PathBuf>,
     pub model: Option<String>,
     pub max_spend_micro_usd: i64,
     pub pack_root: Option<PathBuf>,
@@ -54,6 +62,7 @@ pub(crate) fn parse_args(args: &[String]) -> Result<CliArgs, String> {
         Some(first) if !first.starts_with("--") => {
             let mode = match first.as_str() {
                 "bakeoff" => Mode::Bakeoff,
+                "julgar" => Mode::Judge,
                 other => return Err(format!("Modo desconhecido: {other}. {USAGE}")),
             };
             (mode, &args[1..])
@@ -63,6 +72,8 @@ pub(crate) fn parse_args(args: &[String]) -> Result<CliArgs, String> {
 
     let mut parsed = CliArgs {
         mode,
+        report: None,
+        verdicts: None,
         model: None,
         max_spend_micro_usd: 0,
         pack_root: None,
@@ -88,6 +99,8 @@ pub(crate) fn parse_args(args: &[String]) -> Result<CliArgs, String> {
             "--only" => parsed.only = Some(value()?),
             "--cases-dir" => parsed.cases_dir = PathBuf::from(value()?),
             "--reports-dir" => parsed.reports_dir = PathBuf::from(value()?),
+            "--report" => parsed.report = Some(PathBuf::from(value()?)),
+            "--verdicts" => parsed.verdicts = Some(PathBuf::from(value()?)),
             other => return Err(format!("Flag desconhecida: {other}. {USAGE}")),
         }
     }
@@ -95,6 +108,8 @@ pub(crate) fn parse_args(args: &[String]) -> Result<CliArgs, String> {
     parsed.max_spend_micro_usd = requested_cap.unwrap_or(match mode {
         Mode::Single => SINGLE_CAP_MICRO_USD,
         Mode::Bakeoff => BAKEOFF_CAP_MICRO_USD,
+        // O julgamento não fala com o provedor: o teto existe no tipo e não tem o que travar.
+        Mode::Judge => 0,
     });
 
     // O bakeoff decide qual modelo conversa com o dinheiro de alguém, então ele não aceita recorte
@@ -126,6 +141,14 @@ pub(crate) fn parse_args(args: &[String]) -> Result<CliArgs, String> {
                 BAKEOFF_CAP_MICRO_USD / 1_000_000
             ));
         }
+    }
+
+    if mode == Mode::Judge && (parsed.report.is_none() || parsed.verdicts.is_none()) {
+        return Err(
+            "O julgamento precisa de --report (o relatório do bakeoff) e --verdicts (o caderno \
+             cego com um veredito por bilhete). {USAGE}"
+                .to_string(),
+        );
     }
 
     Ok(parsed)
