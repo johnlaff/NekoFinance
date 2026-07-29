@@ -64,20 +64,42 @@ O `read -rs` recebe a chave sem eco e sem deixá-la no histórico do shell — u
 
 Flags disponíveis:
 
-- `--model <id do pin>`
-- `--max-spend-usd <valor>` (padrão: `1.00`)
+- `--model <id do pin>` (só fora do modo `bakeoff`)
+- `--max-spend-usd <valor>` (padrão: `1.00` numa corrida, `5.00` no bakeoff)
 - `--pack <caminho do pack curado>`
 - `--only <trecho do id>`
 - `--cases-dir`
 - `--reports-dir`
 
+## O bakeoff
+
+```sh
+cargo run --manifest-path src-tauri/Cargo.toml --bin mia-bench -- bakeoff
+```
+
+O bakeoff mede os candidatos e é o resultado — não a intuição — que escolhe o modelo default.
+
+**Canary ao vivo.** Antes de qualquer rodada paga, cada pin da matriz é conferido contra o catálogo de endpoints de retenção zero do provedor: o endpoint existe, é de retenção zero e anuncia os parâmetros que a requisição envia. Pin que divergiu não corre, e o motivo entra no relatório para quem for trocar o pin à mão. Com menos de dois candidatos liberados, o bakeoff recusa antes de gastar.
+
+**Duas fases.** A peneira dá uma repetição a cada candidato mais o teto de referência; a final dá três aos até três sobreviventes. Cada rodada corre enxuta — prompt de sistema mais a pergunta, sem histórico — e com o raciocínio no piso, que é o que o runtime envia sempre: a conversa não deriva número, todo valor material chega pronto da ferramenta. O piso é declarado por pin (`reasoning_floor`), porque a matriz não é uniforme: quem pode não raciocinar recebe "desligado", e quem tem raciocínio obrigatório recebe o menor esforço que aceita — mandar o piso errado é rodada recusada, não resposta pior. Obedecer isca de injeção elimina na peneira, e corrida truncada pela trava não disputa com corrida inteira. O teto de referência corre só a peneira — ele é a régua de quão longe a suíte alcança, não um concorrente ao default.
+
+**A ordem dos candidatos** lê o benchmark de agente bancário acima do índice geral de inteligência, e decide duas coisas pequenas: quem corre primeiro (o dinheiro chega aos mais promissores antes de a trava fechar) e quem ganha empate. O gate é a suíte própria. A ordem vive em `prior_rank`, na matriz de pins.
+
+**A decisão.** Vira default quem zerou a suíte mecânica numa corrida completa; entre os que zeraram, o mais barato. A didática continua pendente de julgamento cego, e o relatório diz quantas respostas esperam por ele. Adotar é gesto manual: o relatório nomeia o modelo, e trocar o papel `Default` em `src-tauri/src/mia/provider/pins.rs` é de quem lê.
+
 ## A trava dupla de gasto
 
-O runner mantém um teto acumulado e fecha antes da próxima repetição. A chave tem um limite independente no painel. O estouro máximo é uma rodada, presa pelos tetos por rodada.
+O runner mantém um teto acumulado e fecha antes da próxima repetição; o teto por rodada é apertado ao que sobra no acumulado, de modo que a rodada seja cortada por dentro ao alcançá-lo. O custo só é conhecido depois que o turno fecha, então o estouro residual é de um turno — e é a chave dedicada, com o limite dela no painel, que serve de parada dura.
+
+A trava é uma só e atravessa todas as corridas do bakeoff — uma trava por corrida deixaria o teto ser gasto uma vez por candidato. Dentro dela, a peneira corre sob dois quintos do teto, para que a final encontre dinheiro quando chegar a vez dela.
+
+Custo não declarado pelo provedor fecha a bancada na hora: sem o número, a trava fica cega, e zero no relatório significaria "não medi", nunca "foi de graça".
 
 ## O relatório
 
 O relatório nasce datado em `evals/mia/reports/`, carrega modelo, endpoint, operador, resultados por caso e totais, e é versionado em commit. Reexecute a bancada a cada mudança de fachada, prompt ou modelo.
+
+O bakeoff escreve um relatório só, reescrito ao fim de cada corrida: ele dura o que dura e gasta dinheiro de verdade, e uma queda no meio não pode levar embora a evidência do que já foi pago. Dentro dele ficam as duas fases inteiras, o que o canary recusou, o custo acumulado e a decisão.
 
 Duas varreduras de privacidade cobrem o relatório, e elas são diferentes: com `--pack`, o texto montado passa pela deny-list do próprio pack antes de virar arquivo (sem passar, o arquivo não nasce); e o commit passa pela varredura do repositório (`npm run privacy:scan`), que confere `.private-forbidden-patterns`. Uma não substitui a outra.
 

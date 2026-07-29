@@ -213,6 +213,10 @@ pub(crate) struct RunOutcome {
     pub turns: u32,
     pub tool_calls: u32,
     pub cost_micro_usd: i64,
+    /// Todo uso da rodada veio com custo declarado pelo provedor — inclusive o das tentativas que
+    /// falharam. Falso significa que a rodada gastou dinheiro que o total não conta, e é o que
+    /// impede a trava de gasto da bancada de ler um total incompleto como total.
+    pub cost_declared: bool,
     pub attempts: u32,
     /// O transcript já com a pergunta, as chamadas e os envelopes — o que a persistência grava.
     pub transcript: Vec<Value>,
@@ -377,6 +381,10 @@ struct CollectedUsage {
     prompt_tokens: u32,
     completion_tokens: u32,
     cost_micro_usd: Option<i64>,
+    /// Algum uso chegou sem custo declarado. O turno pode terminar com um total conhecido — a
+    /// tentativa seguinte declara o dela — e ainda assim ter consumido dinheiro que ninguém
+    /// contou: o total soma o que sabe, e este bit é o que impede de lê-lo como completo.
+    missing_cost: bool,
 }
 
 impl CollectedUsage {
@@ -385,10 +393,13 @@ impl CollectedUsage {
         self.completion_tokens = self
             .completion_tokens
             .saturating_add(usage.completion_tokens);
-        if let Some(cost) = usage.cost_micro_usd {
-            let accumulated = self.cost_micro_usd.get_or_insert(0);
-            *accumulated = accumulated.saturating_add(cost);
-            *total_cost_micro_usd = total_cost_micro_usd.saturating_add(cost);
+        match usage.cost_micro_usd {
+            Some(cost) => {
+                let accumulated = self.cost_micro_usd.get_or_insert(0);
+                *accumulated = accumulated.saturating_add(cost);
+                *total_cost_micro_usd = total_cost_micro_usd.saturating_add(cost);
+            }
+            None => self.missing_cost = true,
         }
     }
 }
@@ -439,6 +450,10 @@ async fn consume_turn(
     let mut tool_calls = vec![];
     let mut reason = None;
     let mut produced_events = false;
+    // Esta tentativa chegou a receber uma linha de uso? Uma tentativa que gerou conteúdo e caiu
+    // ANTES do uso consumiu tokens que o provedor cobra e ninguém contou — e o total do turno,
+    // fechado pela tentativa seguinte, sairia parecendo completo.
+    let mut saw_usage = false;
 
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -460,6 +475,7 @@ async fn consume_turn(
                 }
                 Some(ProviderEvent::Usage(provider_usage)) => {
                     produced_events = true;
+                    saw_usage = true;
                     usage.absorb(provider_usage, total_cost_micro_usd);
                 }
                 // O motivo final não encerra a leitura: o uso da rodada chega DEPOIS dele, e sair
@@ -470,6 +486,7 @@ async fn consume_turn(
                     reason = Some(finished);
                 }
                 Some(ProviderEvent::Failed(error)) => {
+                    usage.missing_cost |= produced_events && !saw_usage;
                     return TurnRead::ProviderFailure { error, produced_events };
                 }
                 None => match reason {
@@ -478,13 +495,16 @@ async fn consume_turn(
                         tool_calls,
                         reason,
                     }),
-                    None => return TurnRead::ProviderFailure {
-                        error: ProviderError {
-                            kind: ErrorKind::Transient,
-                            message: "O stream do provedor fechou sem informar como a resposta terminou.".to_string(),
-                        },
-                        produced_events,
-                    },
+                    None => {
+                        usage.missing_cost |= produced_events && !saw_usage;
+                        return TurnRead::ProviderFailure {
+                            error: ProviderError {
+                                kind: ErrorKind::Transient,
+                                message: "O stream do provedor fechou sem informar como a resposta terminou.".to_string(),
+                            },
+                            produced_events,
+                        };
+                    }
                 },
             },
         }
@@ -677,6 +697,8 @@ impl<A: ProviderAdapter> Runner<'_, A> {
                 turns: 0,
                 tool_calls: 0,
                 cost_micro_usd: 0,
+                // A rodada recusada não falou com o provedor: não há custo, e não há lacuna.
+                cost_declared: true,
                 attempts: 0,
                 transcript: vec![],
                 trace,
@@ -703,6 +725,7 @@ impl<A: ProviderAdapter> Runner<'_, A> {
         let mut turns = 0;
         let mut tool_calls = 0;
         let mut cost_micro_usd = 0;
+        let mut cost_declared = true;
         let mut attempts = 0;
         let mut regenerations = 0;
         let mut terminal_error = None;
@@ -839,6 +862,9 @@ impl<A: ProviderAdapter> Runner<'_, A> {
                     &mut cost_micro_usd,
                 )
                 .await;
+                // Lido a cada tentativa, não ao fim do turno: a tentativa que falhou some do
+                // caminho de sucesso, e é ela quem pode ter consumido dinheiro sem declarar.
+                cost_declared = cost_declared && !turn_usage.missing_cost;
                 if cost_micro_usd > self.limits.max_cost_micro_usd {
                     self.cancel.cancel();
                     terminal_error = Some(run_error(RunErrorCode::CostCap));
@@ -1150,6 +1176,7 @@ impl<A: ProviderAdapter> Runner<'_, A> {
             turns,
             tool_calls,
             cost_micro_usd,
+            cost_declared,
             attempts,
             transcript,
             trace,

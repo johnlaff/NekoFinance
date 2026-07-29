@@ -10,6 +10,7 @@
 //! com modelo, provedor e resultados, para que qualquer mudança de fachada, prompt ou modelo seja
 //! reavaliada pelo mesmo critério.
 
+pub(crate) mod bakeoff;
 pub(crate) mod case;
 pub(crate) mod cli;
 pub(crate) mod fixtures;
@@ -34,14 +35,91 @@ use tokio::sync::mpsc;
 
 pub(crate) struct BenchConfig {
     pub pin: &'static ModelPin,
-    /// A trava de gasto do runner, em milionésimos de dólar sobre o custo declarado pelo
-    /// provedor. Ela fecha ANTES de abrir a próxima repetição: uma rodada em andamento termina, e
-    /// o estouro máximo é o teto de UMA rodada — que os limites por rodada já prendem.
-    pub max_spend_micro_usd: i64,
     /// Onde está o pack curado do método. Ausente, a bancada roda com o prefixo degradado — a
     /// conversa diz que não tem o método de cor, como na máquina de quem não o instalou.
     pub pack_root: Option<PathBuf>,
+    pub repetitions: Repetitions,
     pub limits: RunLimits,
+}
+
+/// Quantas vezes cada caso corre.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Repetitions {
+    /// Como o arquivo do caso declara: a corrida solta respeita a autoria, porque quem escreveu o
+    /// caso sabe se ele precisa de mais de uma amostra.
+    AsAuthored,
+    /// O mesmo número para todo caso. É assim que as fases do bakeoff comparam candidatos: sobre
+    /// a mesma quantidade de evidência por caso, senão um caso repetido pesaria mais que outro na
+    /// taxa que decide o default.
+    Fixed(u32),
+}
+
+/// A trava de gasto do runner, em milionésimos de dólar sobre o custo declarado pelo provedor.
+///
+/// Ela é UMA e viaja por todas as corridas do bakeoff: uma trava por corrida deixaria o teto ser
+/// gasto uma vez por candidato. Fecha ANTES de abrir a próxima repetição — a rodada em andamento
+/// termina, e o estouro máximo é o teto de UMA rodada, que os limites por rodada já prendem.
+///
+/// O teto da FASE é o segundo botão: a peneira corre sob uma fatia do teto para que a final, que
+/// é quem decide o default, encontre dinheiro sobrando quando chegar a vez dela.
+#[derive(Debug)]
+pub(crate) struct SpendLock {
+    cap_micro_usd: i64,
+    phase_cap_micro_usd: i64,
+    spent_micro_usd: i64,
+    cost_gap: bool,
+}
+
+impl SpendLock {
+    pub(crate) fn new(cap_micro_usd: i64) -> Self {
+        Self {
+            cap_micro_usd,
+            phase_cap_micro_usd: cap_micro_usd,
+            spent_micro_usd: 0,
+            cost_gap: false,
+        }
+    }
+
+    /// Abre uma fase sob o teto pedido, nunca acima do teto total.
+    pub(crate) fn open_phase(&mut self, cap_micro_usd: i64) {
+        self.phase_cap_micro_usd = cap_micro_usd.min(self.cap_micro_usd);
+    }
+
+    /// Uma repetição pode nascer? Custo não declarado fecha tudo: sem o número do provedor a
+    /// trava fica cega, e cega ela não é trava.
+    pub(crate) fn may_start(&self) -> bool {
+        !self.cost_gap && self.spent_micro_usd < self.phase_cap_micro_usd
+    }
+
+    /// Quanto ainda cabe no teto TOTAL. É o que a rodada seguinte pode gastar no pior caso: a
+    /// trava fecha entre repetições, então sem apertar o teto POR rodada ao que sobra, a última
+    /// repetição do bakeoff estouraria o teto pelo tamanho dela.
+    pub(crate) fn remaining_micro_usd(&self) -> i64 {
+        (self.cap_micro_usd - self.spent_micro_usd).max(0)
+    }
+
+    pub(crate) fn record(&mut self, cost_micro_usd: i64, cost_declared: bool) {
+        self.spent_micro_usd = self.spent_micro_usd.saturating_add(cost_micro_usd);
+        if !cost_declared {
+            self.cost_gap = true;
+        }
+    }
+
+    pub(crate) fn spent_micro_usd(&self) -> i64 {
+        self.spent_micro_usd
+    }
+
+    pub(crate) fn cap_micro_usd(&self) -> i64 {
+        self.cap_micro_usd
+    }
+
+    pub(crate) fn phase_cap_micro_usd(&self) -> i64 {
+        self.phase_cap_micro_usd
+    }
+
+    pub(crate) fn cost_gap(&self) -> bool {
+        self.cost_gap
+    }
 }
 
 /// O que uma repetição deixou para o relatório.
@@ -78,8 +156,10 @@ pub(crate) struct BenchRun {
     /// didática só valem julgamento quando o núcleo estava montado.
     pub method_core: bool,
     pub cases: Vec<CaseRun>,
+    /// O custo DESTA corrida — é ele que compara candidatos. O acumulado do bakeoff vive na
+    /// trava, que atravessa todas as corridas.
     pub total_cost_micro_usd: i64,
-    /// A trava vigente na execução, gravada no relatório: um total baixo com trava baixa e um
+    /// A trava vigente na corrida, gravada no relatório: um total baixo com trava baixa e um
     /// total baixo porque tudo passou são histórias diferentes.
     pub max_spend_micro_usd: i64,
     pub spend_lock_hit: bool,
@@ -147,7 +227,12 @@ pub(crate) async fn run_repetition<A: ProviderAdapter>(
     // Dreno perdido conta como lacuna: na dúvida entre "não vi custo" e "não houve custo", a
     // trava de gasto precisa do lado fechado.
     let usage_without_cost = drain.await.unwrap_or(true);
-    let cost_declared = !usage_without_cost && (outcome.turns == 0 || outcome.cost_micro_usd > 0);
+    // Três perguntas, e uma lacuna em qualquer delas fecha: o stream publicou uso sem custo? a
+    // rodada viu uso sem custo em ALGUMA tentativa, inclusive nas que falharam e não publicam
+    // evento? houve turno sem um centavo contado?
+    let cost_declared = !usage_without_cost
+        && outcome.cost_declared
+        && (outcome.turns == 0 || outcome.cost_micro_usd > 0);
 
     let observed = grade::Observed {
         stop: outcome.stop,
@@ -176,6 +261,7 @@ pub(crate) async fn run_catalog<A: ProviderAdapter>(
     adapter: &A,
     cases: Vec<Case>,
     config: &BenchConfig,
+    lock: &mut SpendLock,
 ) -> Result<BenchRun, String> {
     // Didática sem o núcleo do método não mede ensino — mede a recusa de capacidade da camada
     // ausente, e o julgamento cego receberia respostas que nunca tiveram como ensinar. Melhor
@@ -210,19 +296,18 @@ pub(crate) async fn run_catalog<A: ProviderAdapter>(
     let mut runs: Vec<CaseRun> = Vec::with_capacity(cases.len());
     let mut total_cost_micro_usd = 0_i64;
     let mut spend_lock_hit = false;
-    let mut cost_gap = false;
 
     for case in cases {
         let mut outcomes = Vec::new();
         let mut aborted = false;
+        let repetitions = match config.repetitions {
+            Repetitions::AsAuthored => case.repetitions,
+            Repetitions::Fixed(fixed) => fixed,
+        };
 
-        for _ in 0..case.repetitions {
-            if total_cost_micro_usd >= config.max_spend_micro_usd {
-                spend_lock_hit = true;
-                aborted = true;
-                break;
-            }
-            if cost_gap {
+        for _ in 0..repetitions {
+            if !lock.may_start() {
+                spend_lock_hit = !lock.cost_gap();
                 aborted = true;
                 break;
             }
@@ -248,20 +333,28 @@ pub(crate) async fn run_catalog<A: ProviderAdapter>(
                 clock: fixtures::bench_clock(),
                 pack: MethodPack::at(&pack_root),
             };
+            // O teto da rodada é o menor entre o da conversa e o que sobra na trava: assim o teto
+            // acumulado é respeitado pelo corte DENTRO da rodada, e não só pela decisão de não
+            // abrir a próxima.
+            let limits = RunLimits {
+                max_cost_micro_usd: config
+                    .limits
+                    .max_cost_micro_usd
+                    .min(lock.remaining_micro_usd()),
+                ..config.limits.clone()
+            };
             let outcome = run_repetition(
                 &pool,
                 &ctx,
                 adapter,
                 config.pin,
-                config.limits.clone(),
+                limits,
                 &system.text,
                 &case,
             )
             .await;
             total_cost_micro_usd = total_cost_micro_usd.saturating_add(outcome.cost_micro_usd);
-            if !outcome.cost_declared {
-                cost_gap = true;
-            }
+            lock.record(outcome.cost_micro_usd, outcome.cost_declared);
             outcomes.push(outcome);
         }
 
@@ -277,9 +370,9 @@ pub(crate) async fn run_catalog<A: ProviderAdapter>(
         method_core: system.method_core,
         cases: runs,
         total_cost_micro_usd,
-        max_spend_micro_usd: config.max_spend_micro_usd,
+        max_spend_micro_usd: lock.phase_cap_micro_usd(),
         spend_lock_hit,
-        cost_gap,
+        cost_gap: lock.cost_gap(),
     })
 }
 
@@ -338,20 +431,6 @@ async fn execute(cli: cli::CliArgs, key: String) -> Result<String, String> {
         }
     }
 
-    let pin = match &cli.model {
-        Some(model) => crate::mia::provider::pins::pin(model).ok_or_else(|| {
-            format!(
-                "O modelo \"{model}\" não está na matriz de pins. Use um destes: {}.",
-                crate::mia::provider::pins::PINS
-                    .iter()
-                    .map(|pin| pin.model)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        })?,
-        None => crate::mia::provider::pins::default_pin(),
-    };
-
     // O destino do relatório é validado ANTES de qualquer rodada: descobrir o diretório
     // impossível depois do catálogo pago jogaria a bancada fora.
     std::fs::create_dir_all(&cli.reports_dir).map_err(|error| {
@@ -371,15 +450,46 @@ async fn execute(cli: cli::CliArgs, key: String) -> Result<String, String> {
         })?;
 
     let adapter = crate::mia::provider::http::HttpAdapter::new(key)?;
+    let mut lock = SpendLock::new(cli.max_spend_micro_usd);
+    let ran_at = chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
+
+    if cli.mode == cli::Mode::Bakeoff {
+        let (bakeoff, path) = bakeoff::run(
+            &adapter,
+            bakeoff::BakeoffConfig {
+                cases,
+                pack_root: cli.pack_root.clone(),
+                limits: RunLimits::default(),
+                reports_dir: &cli.reports_dir,
+                ran_at: &ran_at,
+            },
+            &mut lock,
+        )
+        .await?;
+        return Ok(bakeoff::summary(&bakeoff, &path));
+    }
+
+    let pin = match &cli.model {
+        Some(model) => crate::mia::provider::pins::pin(model).ok_or_else(|| {
+            format!(
+                "O modelo \"{model}\" não está na matriz de pins. Use um destes: {}.",
+                crate::mia::provider::pins::PINS
+                    .iter()
+                    .map(|pin| pin.model)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })?,
+        None => crate::mia::provider::pins::default_pin(),
+    };
     let config = BenchConfig {
         pin,
-        max_spend_micro_usd: cli.max_spend_micro_usd,
         pack_root: cli.pack_root.clone(),
+        repetitions: Repetitions::AsAuthored,
         limits: RunLimits::default(),
     };
-    let run = run_catalog(&adapter, cases, &config).await?;
+    let run = run_catalog(&adapter, cases, &config, &mut lock).await?;
 
-    let ran_at = chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
     let pack = cli.pack_root.as_ref().map(MethodPack::at);
     let path = report::write(&cli.reports_dir, &run, &ran_at, pack.as_ref()).await?;
 

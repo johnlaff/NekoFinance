@@ -9,13 +9,23 @@
 //! A credencial entra pelo construtor, vira cabeçalho e não existe em mais lugar nenhum: o tipo
 //! não deriva Debug nem Serialize de propósito, para que nenhum formato a carregue por acidente.
 
+use super::drift::ZdrCatalog;
 use super::egress;
 use super::request::RunSpec;
 use super::stream::{ErrorKind, ProviderError, ProviderEvent, StreamParser};
 use crate::mia::run::{CancelToken, ProviderAdapter};
+use serde_json::Value;
 use std::future::Future;
 use std::time::Duration;
 use tokio::sync::mpsc;
+
+/// O catálogo de endpoints de retenção zero do provedor. É o que o canary consulta antes de
+/// confiar num pin: cada presença nesta lista é, por definição, um endpoint de retenção zero.
+const ZDR_CATALOG_URL: &str = "https://openrouter.ai/api/v1/endpoints/zdr";
+
+/// Quanto do catálogo entra na memória. Folgado para a lista inteira do provedor e finito de
+/// propósito: um corpo sem fim viraria memória sem fim.
+const CATALOG_BODY_LIMIT: usize = 8 * 1024 * 1024;
 
 /// Espera máxima pela abertura da conexão. Curta de propósito: falha de conexão é pré-resposta,
 /// o caminho mais barato de retentar.
@@ -101,14 +111,75 @@ impl ProviderAdapter for HttpAdapter {
     }
 }
 
+impl ZdrCatalog for HttpAdapter {
+    /// Busca o catálogo pelo mesmo cliente endurecido e a mesma credencial da rodada. Falha aqui
+    /// nunca é "pin verificado": quem chama trata a ausência de catálogo como recusa.
+    fn fetch(&self) -> impl Future<Output = Result<Value, String>> + Send {
+        let request = self
+            .client
+            .get(ZDR_CATALOG_URL)
+            .header("authorization", format!("Bearer {}", self.api_key));
+
+        async move {
+            egress::check(ZDR_CATALOG_URL)
+                .map_err(|denied| format!("A saída para o catálogo foi recusada: {denied:?}."))?;
+
+            let response = request.send().await.map_err(|error| {
+                format!("O catálogo do provedor não pôde ser buscado: {error}.")
+            })?;
+
+            let status = response.status().as_u16();
+            if !(200..300).contains(&status) {
+                // O corpo é do outro lado e esta mensagem termina no terminal de quem rodou: um
+                // erro que ecoasse o cabeçalho de autorização publicaria a chave. O status
+                // diagnostica a recusa; o corpo não acrescenta nada que valha esse risco.
+                return Err(format!(
+                    "O provedor recusou o catálogo de retenção zero (HTTP {status})."
+                ));
+            }
+
+            let body = read_body(ResponseSource(response), CATALOG_BODY_LIMIT).await?;
+            serde_json::from_slice(&body)
+                .map_err(|error| format!("O catálogo do provedor não parseia como JSON: {error}."))
+        }
+    }
+}
+
+/// Materializa um corpo inteiro até o teto. Estourar o teto é erro, não truncamento: um catálogo
+/// cortado no meio parseia como JSON inválido ou, pior, como catálogo menor do que é.
+pub(crate) async fn read_body<S: ByteSource>(
+    mut source: S,
+    limit: usize,
+) -> Result<Vec<u8>, String> {
+    let mut collected: Vec<u8> = Vec::new();
+    while let Some(bytes) = source.next_chunk().await? {
+        // A conferência vem ANTES da cópia: medir depois de anexar deixaria um pedaço único e
+        // enorme entrar inteiro na memória antes de ser recusado, e o teto não seria teto.
+        if bytes.len() > limit - collected.len() {
+            return Err(format!(
+                "A resposta do provedor passou de {limit} bytes e foi descartada."
+            ));
+        }
+        collected.extend_from_slice(&bytes);
+    }
+    Ok(collected)
+}
+
 /// Lê no máximo o trecho diagnosticável do corpo de um erro e SOLTA o resto: materializar o
 /// corpo inteiro entregaria a um provedor defeituoso o poder de encher a memória da rodada com
 /// uma resposta de erro sem fim.
 async fn error_excerpt<S: ByteSource>(mut source: S) -> String {
+    // Quatro vezes o trecho em bytes cobre o pior caso de caractere multibyte antes do corte.
+    let ceiling = ERROR_BODY_EXCERPT * 4;
     let mut collected: Vec<u8> = Vec::new();
-    while collected.len() < ERROR_BODY_EXCERPT * 4 {
+    while collected.len() < ceiling {
         match source.next_chunk().await {
-            Ok(Some(bytes)) => collected.extend_from_slice(&bytes),
+            // Só o que falta para o trecho é copiado: anexar o pedaço inteiro e conferir depois
+            // deixaria um corpo de erro gigante entrar na memória antes de ser descartado.
+            Ok(Some(bytes)) => {
+                let room = ceiling - collected.len();
+                collected.extend_from_slice(&bytes[..bytes.len().min(room)]);
+            }
             Ok(None) | Err(_) => break,
         }
     }
@@ -435,6 +506,31 @@ mod tests {
         let redirect = refusal(302, None, "");
         assert!(matches!(redirect.kind, ErrorKind::Permanent));
         assert!(redirect.message.contains("redirecionamento"));
+    }
+
+    /// O catálogo chega inteiro, remontado de pedaços que o transporte cortou onde quis.
+    #[tokio::test]
+    async fn o_corpo_do_catalogo_e_remontado_ate_o_teto() {
+        let payload = "{\"data\": []}";
+
+        let body = read_body(Scripted::chunks(payload, 3), 1_024)
+            .await
+            .unwrap();
+
+        assert_eq!(String::from_utf8(body).unwrap(), payload);
+    }
+
+    /// Corpo acima do teto é descartado, nunca truncado: um catálogo cortado no meio parseia
+    /// como catálogo menor do que é, e um pin sumido do catálogo tira um modelo da corrida.
+    #[tokio::test]
+    async fn corpo_acima_do_teto_e_recusado_em_vez_de_cortado() {
+        let payload = "x".repeat(2_048);
+
+        let error = read_body(Scripted::chunks(&payload, 512), 1_024)
+            .await
+            .unwrap_err();
+
+        assert!(error.contains("1024"));
     }
 
     /// O corpo de um erro entra na mensagem só como trecho: diagnóstico sem transporte de lixo.

@@ -42,6 +42,11 @@ pub(crate) fn build(spec: &RunSpec<'_>) -> PreparedRequest {
         "usage": {"include": true},
         "max_tokens": spec.max_tokens,
         "parallel_tool_calls": false,
+        // Raciocínio no piso que ESTE pin aceita. A conversa não deriva número — todo valor
+        // material chega pronto da ferramenta —, então raciocínio pago compraria latência e custo
+        // sem comprar fidelidade; e o piso vem do pin porque a matriz não é uniforme, e o piso
+        // errado é rodada recusada em vez de resposta pior.
+        "reasoning": {"effort": spec.pin.reasoning_floor.effort()},
         "messages": messages,
         "provider": {
             // Impede que a rodada use endpoint fora do catálogo de retenção zero.

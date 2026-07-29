@@ -103,7 +103,7 @@ pub(crate) fn file_name(ran_at: &str, model: &str) -> String {
     format!("{stamp}-{slug}.json")
 }
 
-/// Escreve o relatório datado no diretório. Falha fechado: se a varredura de privacidade
+/// Escreve o relatório datado de uma corrida. Falha fechado: se a varredura de privacidade
 /// bloquear, nenhum arquivo nasce.
 pub(crate) async fn write(
     dir: &Path,
@@ -112,9 +112,26 @@ pub(crate) async fn write(
     pack: Option<&MethodPack>,
 ) -> Result<PathBuf, String> {
     let report = render(run, ran_at);
+    write_json(dir, &file_name(ran_at, run.pin.model), None, &report, pack).await
+}
+
+/// Escreve um relatório em JSON, com a varredura de privacidade antes de qualquer byte tocar o
+/// disco.
+///
+/// `existing` é o arquivo que uma escrita anterior já abriu: sem ele, o nome nasce exclusivo —
+/// duas execuções no mesmo segundo ganham sufixos, nunca o direito de apagar a evidência uma da
+/// outra. Com ele, o mesmo arquivo é reescrito, que é como o bakeoff publica o andamento sem
+/// deixar uma corrida paga fora do disco.
+pub(crate) async fn write_json(
+    dir: &Path,
+    base: &str,
+    existing: Option<&Path>,
+    report: &Value,
+    pack: Option<&MethodPack>,
+) -> Result<PathBuf, String> {
     let text = format!(
         "{}\n",
-        serde_json::to_string_pretty(&report).expect("o relatório da bancada é serializável")
+        serde_json::to_string_pretty(report).expect("o relatório da bancada é serializável")
     );
 
     if let Some(pack) = pack {
@@ -123,29 +140,26 @@ pub(crate) async fn write(
             .map_err(|error| format!("{} {}", error.message, error.fix))?;
     }
 
-    // Escrita exclusiva: duas execuções no mesmo segundo ganham sufixos, nunca o direito de
-    // apagar a evidência uma da outra.
-    let base = file_name(ran_at, run.pin.model);
-    let stem = base.strip_suffix(".json").unwrap_or(&base);
+    if let Some(path) = existing {
+        return swap_into(path, &text).map(|()| path.to_path_buf());
+    }
+
+    let stem = base.strip_suffix(".json").unwrap_or(base);
     for attempt in 0..10 {
         let candidate = if attempt == 0 {
-            dir.join(&base)
+            dir.join(base)
         } else {
             dir.join(format!("{stem}-{}.json", attempt + 1))
         };
+        // O arquivo nasce vazio e exclusivo só para RESERVAR o nome; o conteúdo entra pela mesma
+        // troca atômica das reescritas.
         match std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&candidate)
         {
-            Ok(mut file) => {
-                use std::io::Write;
-                file.write_all(text.as_bytes()).map_err(|error| {
-                    format!(
-                        "O relatório não pôde ser escrito em {}: {error}.",
-                        candidate.display()
-                    )
-                })?;
+            Ok(_) => {
+                swap_into(&candidate, &text)?;
                 return Ok(candidate);
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -162,4 +176,20 @@ pub(crate) async fn write(
          bancada em laço.",
         dir.display()
     ))
+}
+
+/// Escreve ao lado e troca o nome. Gravar por cima abriria uma janela em que uma queda no meio da
+/// escrita levaria junto o checkpoint anterior — e o que se perde ali é a evidência de rodadas que
+/// já foram pagas.
+fn swap_into(path: &Path, text: &str) -> Result<(), String> {
+    let staging = path.with_extension("json.parcial");
+    std::fs::write(&staging, text.as_bytes())
+        .and_then(|()| std::fs::rename(&staging, path))
+        .map_err(|error| {
+            let _ = std::fs::remove_file(&staging);
+            format!(
+                "O relatório não pôde ser escrito em {}: {error}.",
+                path.display()
+            )
+        })
 }

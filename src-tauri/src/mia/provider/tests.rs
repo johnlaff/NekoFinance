@@ -145,6 +145,19 @@ fn request_uses_the_pinned_model_for_default_and_candidate() {
 }
 
 #[test]
+fn request_pins_reasoning_to_the_floor() {
+    let request = request_for(default_pin(), vec![]);
+
+    assert_eq!(
+        request
+            .body
+            .pointer("/reasoning/effort")
+            .and_then(Value::as_str),
+        Some("none")
+    );
+}
+
+#[test]
 fn request_sends_structured_output_beta_only_for_anthropic_pins() {
     let mut pins_with_beta = 0;
     let mut pins_without_beta = 0;
@@ -597,6 +610,20 @@ fn todos_os_pins_declararam_um_operador_legivel() {
     assert!(PINS.iter().all(|pin| !pin.operator.is_empty()));
 }
 
+/// A ordem a priori decide quem corre primeiro no bakeoff e quem ganha empate — com empate na
+/// própria ordem, as duas decisões cairiam na posição do pin dentro do arquivo.
+#[test]
+fn pins_declare_a_total_prior_order() {
+    let mut ranks: Vec<u8> = PINS.iter().map(|pin| pin.prior_rank).collect();
+    ranks.sort_unstable();
+
+    assert_eq!(
+        ranks,
+        (1..=PINS.len() as u8).collect::<Vec<u8>>(),
+        "a ordem a priori é 1..n sem empate nem buraco"
+    );
+}
+
 #[test]
 fn fixture_verifies_all_declared_pins() {
     let catalog: Value = serde_json::from_str(include_str!("fixtures/zdr_endpoints.json")).unwrap();
@@ -672,6 +699,23 @@ fn drift_reports_a_missing_token_limit_parameter() {
     assert!(matches!(
         result,
         Err(ref drift) if matches!(drift.drift, Drift::CapabilityAbsent { parameter: "max_tokens" })
+    ));
+}
+
+/// O corpo envia `reasoning` sob parâmetros exigidos: um endpoint que não o anuncia recusaria a
+/// rodada no provedor, e a verificação existe para dizer isso antes de a rodada ser paga.
+#[test]
+fn drift_reports_a_missing_reasoning_capability() {
+    let catalog = json!({"data": [{
+        "name": default_pin().endpoint,
+        "model_id": default_pin().model,
+        "supported_parameters": ["tools", "structured_outputs", "max_tokens"]
+    }]});
+    let result = verify(&catalog, default_pin());
+
+    assert!(matches!(
+        result,
+        Err(ref drift) if matches!(drift.drift, Drift::CapabilityAbsent { parameter: "reasoning" })
     ));
 }
 

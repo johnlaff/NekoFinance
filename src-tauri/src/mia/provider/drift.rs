@@ -7,6 +7,14 @@
 
 use super::pins::{ModelPin, PINS};
 use serde_json::Value;
+use std::future::Future;
+
+/// De onde o catálogo de endpoints de retenção zero chega. É o corte que deixa a verificação ao
+/// vivo exercitável sem rede: quem abre conexão implementa isto, e a suíte entrega um catálogo
+/// gravado pelo mesmo caminho que o canary usa em produção.
+pub(crate) trait ZdrCatalog {
+    fn fetch(&self) -> impl Future<Output = Result<Value, String>> + Send;
+}
 
 /// Divergência entre um pin e o catálogo de endpoints de retenção zero.
 pub(crate) enum Drift {
@@ -22,6 +30,37 @@ pub(crate) struct PinDrift {
     pub drift: Drift,
 }
 
+impl PinDrift {
+    /// A divergência em uma frase: o que travou e o que fazer. Quem lê é quem troca o pin à mão —
+    /// e a troca precisa ser possível sem abrir o catálogo do provedor para investigar.
+    pub(crate) fn explain(&self) -> String {
+        let Self {
+            model,
+            endpoint,
+            drift,
+        } = self;
+        match drift {
+            Drift::ModelAbsent => format!(
+                "O modelo {model} não aparece no catálogo de retenção zero do provedor. Troque o \
+                 pin para um modelo servido com retenção zero."
+            ),
+            Drift::EndpointAbsent { available } => format!(
+                "O endpoint {endpoint} não serve {model} com retenção zero; o catálogo lista: {}. \
+                 Troque o pin para um endpoint da lista.",
+                available.join(", ")
+            ),
+            Drift::CapabilityAbsent { parameter } => format!(
+                "O endpoint {endpoint} de {model} não anuncia o parâmetro {parameter}, que toda \
+                 rodada envia. Troque o pin para um endpoint que o anuncie."
+            ),
+            Drift::CatalogUnreadable { detail } => format!(
+                "O catálogo de retenção zero não pôde ser lido: {detail} O formato do provedor \
+                 mudou, e a verificação de pin precisa acompanhar."
+            ),
+        }
+    }
+}
+
 struct CatalogEntry<'a> {
     name: &'a str,
     model_id: &'a str,
@@ -30,7 +69,7 @@ struct CatalogEntry<'a> {
 
 // A lista espelha o que a montagem da requisição envia sob parâmetros exigidos; acrescentar um
 // campo ao corpo sem acrescentá-lo aqui é a falha silenciosa que esta verificação existe para pegar.
-const REQUIRED_PARAMETERS: &[&str] = &["tools", "structured_outputs", "max_tokens"];
+const REQUIRED_PARAMETERS: &[&str] = &["tools", "structured_outputs", "max_tokens", "reasoning"];
 
 pub(crate) fn verify(catalog: &Value, pin: &ModelPin) -> Result<(), PinDrift> {
     let entries = parse_catalog(catalog).map_err(|detail| PinDrift {
