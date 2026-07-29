@@ -483,15 +483,21 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
         // grande e ela é mais necessária. O que a limita é a cota por pin abaixo: cada rodada da
         // sonda pode gastar o que sobra dividido pelos pins que ainda faltam, de modo que um
         // primeiro modelo caro não coma a vez dos outros.
-        lock.open_phase(lock.cap_micro_usd());
         let cleared = verdict.cleared.clone();
         for (index, pin) in cleared.iter().copied().enumerate() {
+            // A cota de cada sonda passa pela TRAVA, não pelo teto por rodada. Apertar só os
+            // limites deixaria a rodada ser cortada por falta de dinheiro sem que nada registrasse
+            // isso — o corte viria como se fosse o teto da conversa, e uma sonda cortada no meio
+            // entraria na projeção com custo parcial, subestimando exatamente o que ela existe
+            // para não deixar subestimar.
+            lock.open_phase(lock.cap_micro_usd());
             let restantes = (cleared.len() - index) as i64;
             let cota = lock.remaining_micro_usd() / restantes.max(1);
+            lock.open_phase(lock.spent_micro_usd().saturating_add(cota));
             let run = match run_catalog(
                 adapter,
                 vec![case.clone()],
-                &config.probe_bench(pin, cota, system.as_ref()),
+                &config.bench(pin, Repetitions::Fixed(1), system.as_ref()),
                 lock,
             )
             .await
@@ -700,22 +706,6 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
 }
 
 impl BakeoffConfig<'_> {
-    /// A configuração de UMA rodada de sonda: uma repetição, sob a cota daquele pin.
-    fn probe_bench(
-        &self,
-        pin: &'static ModelPin,
-        quota_micro_usd: i64,
-        system: Option<&std::sync::Arc<prompt::SystemPrompt>>,
-    ) -> BenchConfig {
-        BenchConfig {
-            limits: RunLimits {
-                max_cost_micro_usd: self.limits.max_cost_micro_usd.min(quota_micro_usd),
-                ..self.limits.clone()
-            },
-            ..self.bench(pin, Repetitions::Fixed(1), system)
-        }
-    }
-
     fn bench(
         &self,
         pin: &'static ModelPin,

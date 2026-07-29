@@ -1619,7 +1619,8 @@ async fn a_sonda_recusa_quando_nem_uma_rodada_por_modelo_cabe() {
         cost_micro_usd: 10_000,
         catalog: zdr_catalog(),
     };
-    // Três rodadas cabem; as seis da sonda, não.
+    // Nem a primeira cota — um sexto de 30.000 — cobre uma rodada: cada sonda é cortada, e as
+    // últimas nem abrem.
     let mut lock = super::SpendLock::new(30_000);
 
     let (bakeoff, path) = bakeoff::run(
@@ -1643,7 +1644,7 @@ async fn a_sonda_recusa_quando_nem_uma_rodada_por_modelo_cabe() {
     let Decision::NoWinner { reason } = &bakeoff.decision else {
         panic!("sem sonda completa não há decisão");
     };
-    assert!(reason.contains("3 de 6 modelos"));
+    assert!(reason.contains("0 de 6 modelos"), "recusa: {reason}");
 
     // O teto não foi ultrapassado para descobrir isso, e a sonda ficou no relatório.
     assert!(lock.spent_micro_usd() <= 30_000);
@@ -1657,9 +1658,11 @@ async fn a_sonda_recusa_quando_nem_uma_rodada_por_modelo_cabe() {
 /// Um adapter que fica caro depois das primeiras rodadas: é o mundo em que a sonda mede barato e a
 /// medição de verdade sai mais cara do que ela projetou.
 struct EscaladaAdapter {
-    barato: i64,
-    caro: i64,
-    rodadas_baratas: usize,
+    /// O custo das `primeiras` rodadas.
+    arranque: i64,
+    /// O custo de todas as seguintes.
+    resto: i64,
+    primeiras: usize,
     vistas: Mutex<usize>,
     catalog: serde_json::Value,
 }
@@ -1675,10 +1678,10 @@ impl ProviderAdapter for EscaladaAdapter {
             *contador += 1;
             *contador
         };
-        let custo = if vistas <= self.rodadas_baratas {
-            self.barato
+        let custo = if vistas <= self.primeiras {
+            self.arranque
         } else {
-            self.caro
+            self.resto
         };
         let events = answer_turn("Tudo certo.", custo);
         async move {
@@ -1709,10 +1712,10 @@ impl ZdrCatalog for EscaladaAdapter {
 async fn a_peneira_truncada_nao_abre_a_final() {
     let dir = reports_dir();
     let adapter = EscaladaAdapter {
-        barato: 100,
-        caro: 20_000,
         // As seis rodadas da sonda saem baratas; a peneira, não.
-        rodadas_baratas: PINS.len(),
+        arranque: 100,
+        primeiras: PINS.len(),
+        resto: 20_000,
         vistas: Mutex::new(0),
         catalog: zdr_catalog(),
     };
@@ -3258,16 +3261,24 @@ fn a_decisao_julgada_exige_a_estrutura_das_duas_fases() {
 
 /// A sonda cortada pela própria cota não é sonda: o custo que ela registrou é parcial, e uma
 /// projeção tirada de custo parcial subestima justamente o que a sonda existe para não subestimar.
+///
+/// O caso que discrimina é este: dinheiro SOBRANDO na trava e a rodada cortada mesmo assim, pela
+/// cota do pin. Um teste em que a trava esvazia provaria só o que a contagem de custo zero já
+/// pegava, e passaria igual com a proteção desligada.
 #[tokio::test]
 async fn sonda_truncada_pela_cota_nao_conta_como_medida() {
     let dir = reports_dir();
-    // O teto rebaixado aperta a cota por pin abaixo do custo de uma rodada: cada sonda é cortada
-    // no meio, e nenhuma delas mediu de verdade.
-    let adapter = EcoAdapter {
-        cost_micro_usd: 30_000,
+    // Seis pins dividem 250.000, então a cota fica em ~41.000 — abaixo do teto por rodada da
+    // conversa. A PRIMEIRA sonda custa mais que isso e é cortada; as outras cinco cabem, e por
+    // isso sobra dinheiro na trava no fim.
+    let adapter = EscaladaAdapter {
+        arranque: 45_000,
+        primeiras: 1,
+        resto: 1_000,
+        vistas: Mutex::new(0),
         catalog: zdr_catalog(),
     };
-    let mut lock = super::SpendLock::new(60_000);
+    let mut lock = super::SpendLock::new(250_000);
 
     let (bakeoff, _) = bakeoff::run(
         &adapter,
@@ -3289,10 +3300,28 @@ async fn sonda_truncada_pela_cota_nao_conta_como_medida() {
         bakeoff.phase_one.is_empty(),
         "a peneira não chegou a correr"
     );
+    assert_eq!(bakeoff.probes.len(), PINS.len(), "as seis sondas correram");
+    // A primeira foi cortada pela cota e NÃO conta como medida; as cinco seguintes contam.
+    assert!(
+        !bakeoff.probes[0].cost_declared,
+        "a sonda cortada pela cota não é sonda"
+    );
+    assert_eq!(
+        bakeoff.probes.iter().filter(|p| p.cost_declared).count(),
+        PINS.len() - 1
+    );
+
+    // E sobrou dinheiro na trava: a recusa não veio de o teto ter acabado.
+    assert!(
+        lock.spent_micro_usd() < lock.cap_micro_usd(),
+        "gastou {} de {}",
+        lock.spent_micro_usd(),
+        lock.cap_micro_usd()
+    );
     let Decision::NoWinner { reason } = &bakeoff.decision else {
         panic!("sem sonda medida não há projeção, e sem projeção não há decisão");
     };
-    assert!(reason.contains("de 6 modelos"), "recusa: {reason}");
+    assert!(reason.contains("5 de 6 modelos"), "recusa: {reason}");
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
