@@ -515,10 +515,8 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
             bakeoff.probes.push(Probe {
                 pin,
                 cost_micro_usd: run.total_cost_micro_usd,
-                // A sonda vale como medida quando a rodada dela terminou: cortada pela cota, o
-                // custo que ela registrou é parcial, e uma projeção tirada de custo parcial
-                // subestima justamente o que a sonda existe para não deixar subestimar.
-                cost_declared: !run.cost_gap && run.cases.iter().all(CaseRun::measured),
+                cost_declared: !run.cost_gap,
+                complete: run.cases.iter().all(CaseRun::measured),
             });
             // Checkpoint a cada sonda, não ao fim de todas: uma queda na quinta não pode levar as
             // quatro que já foram pagas.
@@ -534,7 +532,7 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
         let probed: Vec<&str> = bakeoff
             .probes
             .iter()
-            .filter(|probe| probe.cost_declared && probe.cost_micro_usd > 0)
+            .filter(|probe| probe.cost_declared && probe.complete && probe.cost_micro_usd > 0)
             .map(|probe| probe.pin.model)
             .collect();
         if probed.len() < verdict.cleared.len() {
@@ -798,6 +796,7 @@ pub(crate) fn render(bakeoff: &Bakeoff, ran_at: &str) -> Value {
                 "model": probe.pin.model,
                 "cost_micro_usd": probe.cost_micro_usd,
                 "cost_declared": probe.cost_declared,
+                "complete": probe.complete,
             })).collect::<Vec<Value>>(),
         },
         "canary_drift": bakeoff.drifted.iter().map(|(pin, why)| json!({
@@ -827,10 +826,17 @@ fn budget_per_repetition(bakeoff: &Bakeoff) -> i64 {
 #[derive(Debug)]
 pub(crate) struct Probe {
     pub pin: &'static ModelPin,
-    /// O custo de UMA repetição do caso-sonda. Zero quando a rodada não chegou a declarar custo —
-    /// e aí a estimativa não vale, porque a trava já estará cega.
+    /// O custo de UMA repetição do caso-sonda.
     pub cost_micro_usd: i64,
+    /// O provedor disse quanto cobrou. Falso deixa a trava cega, e a estimativa não vale.
     pub cost_declared: bool,
+    /// A rodada da sonda foi até o fim. Falsa quando a cota do pin a cortou no meio: o custo
+    /// acima é parcial, e projetar dele subestimaria justamente o que a sonda existe para não
+    /// deixar subestimar.
+    ///
+    /// Separado de `cost_declared` porque são fatos diferentes — juntá-los publicaria custo
+    /// positivo ao lado de "custo não declarado", que se contradiz na cara de quem lê.
+    pub complete: bool,
 }
 
 /// O que a medição inteira custaria, extrapolado da sonda.

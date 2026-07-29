@@ -2140,6 +2140,7 @@ fn a_projecao_da_final_assume_os_candidatos_mais_caros() {
         pin: pinned(model),
         cost_micro_usd: cost,
         cost_declared: true,
+        complete: true,
     };
     let probes = vec![
         probe("anthropic/claude-sonnet-5", 1_000),
@@ -2408,6 +2409,7 @@ fn a_reserva_da_peneira_segue_os_custos_medidos_e_nao_a_contagem() {
         pin: pinned(model),
         cost_micro_usd: cost,
         cost_declared: true,
+        complete: true,
     };
     // Cinco candidatos baratos e um teto de referência cinco vezes mais caro.
     let probes = vec![
@@ -3303,11 +3305,15 @@ async fn sonda_truncada_pela_cota_nao_conta_como_medida() {
     assert_eq!(bakeoff.probes.len(), PINS.len(), "as seis sondas correram");
     // A primeira foi cortada pela cota e NÃO conta como medida; as cinco seguintes contam.
     assert!(
-        !bakeoff.probes[0].cost_declared,
+        !bakeoff.probes[0].complete,
         "a sonda cortada pela cota não é sonda"
     );
+    // O custo dela é positivo e declarado — o que falta é a rodada ter terminado. Confundir os
+    // dois publicaria custo ao lado de "custo não declarado".
+    assert!(bakeoff.probes[0].cost_declared);
+    assert!(bakeoff.probes[0].cost_micro_usd > 0);
     assert_eq!(
-        bakeoff.probes.iter().filter(|p| p.cost_declared).count(),
+        bakeoff.probes.iter().filter(|p| p.complete).count(),
         PINS.len() - 1
     );
 
