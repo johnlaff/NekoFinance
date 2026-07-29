@@ -916,6 +916,12 @@ pub(crate) fn blind_entries(bakeoff: &Bakeoff) -> Vec<BlindEntry> {
     }
     // Ordena por caso e resposta; o modelo entra na chave de ordenação por último, só para que
     // respostas idênticas tenham ordem estável entre execuções.
+    number_blind(pending)
+}
+
+/// Numera as pendências na ordem cega. Uma função só, porque a numeração é o contrato entre o
+/// caderno que sai e a conferência que volta: duas cópias divergiriam no dia em que uma mudasse.
+fn number_blind(mut pending: Vec<(String, String, String, &'static str)>) -> Vec<BlindEntry> {
     pending.sort();
 
     let mut numbered = Vec::with_capacity(pending.len());
@@ -1077,7 +1083,10 @@ pub(crate) fn judged_decision(
     // A chave declarada é dado derivado como qualquer outro: esvaziá-la pularia a aprovação
     // didática inteira, e remapear um bilhete mudaria quem a reprovação elimina. Ela é refeita das
     // respostas pendentes e só vale se bater exatamente com a que o arquivo traz.
-    let rebuilt = rebuild_blind_key(report)?;
+    let rebuilt: std::collections::BTreeMap<String, &'static str> = rebuild_blind_entries(report)?
+        .into_iter()
+        .map(|entry| (entry.ticket, entry.model))
+        .collect();
     let declared = report["blind_judgment_key"]
         .as_object()
         .ok_or_else(|| "O relatório não traz a chave do julgamento cego.".to_string())?;
@@ -1179,17 +1188,17 @@ pub(crate) fn judged_decision(
     })
 }
 
-/// Refaz a chave bilhete → modelo a partir das respostas pendentes registradas no relatório, na
-/// mesma ordem cega que o caderno usou.
+/// Refaz as pendências cegas a partir do que o relatório registrou, na mesma ordem do caderno.
 ///
-/// Sem isto, a chave seria a única parte do arquivo que o julgamento aceita de olhos fechados — e é
-/// justamente ela que diz quem a reprovação elimina.
-fn rebuild_blind_key(
-    report: &Value,
-) -> Result<std::collections::BTreeMap<String, &'static str>, String> {
-    let mut pending: Vec<(String, String, &'static str)> = Vec::new();
+/// Sem isto, a chave — e o próprio texto que a pessoa julgou — seriam as únicas partes do arquivo
+/// aceitas de olhos fechados, e são justamente elas que dizem quem a reprovação elimina.
+fn rebuild_blind_entries(report: &Value) -> Result<Vec<BlindEntry>, String> {
+    let mut pending: Vec<(String, String, String, &'static str)> = Vec::new();
     for phase in ["phase_one", "phase_two"] {
-        for entry in report[phase].as_array().into_iter().flatten() {
+        let runs = report[phase]
+            .as_array()
+            .ok_or_else(|| format!("O relatório não traz {phase}."))?;
+        for entry in runs {
             let run = &entry["run"];
             let model = run["model"]
                 .as_str()
@@ -1201,6 +1210,7 @@ fn rebuild_blind_key(
                 let case_id = case["id"]
                     .as_str()
                     .ok_or_else(|| format!("Um caso de {model} não tem identificador."))?;
+                let question = case["question"].as_str().unwrap_or_default();
                 for repetition in case["repetitions"].as_array().into_iter().flatten() {
                     if repetition["verdict"].as_str() != Some("pending_judgment") {
                         continue;
@@ -1208,25 +1218,56 @@ fn rebuild_blind_key(
                     let answer = repetition["answer"].as_str().ok_or_else(|| {
                         format!("Uma resposta pendente de {model} não está no relatório.")
                     })?;
-                    pending.push((case_id.to_string(), answer.to_string(), pin.model));
+                    pending.push((
+                        case_id.to_string(),
+                        answer.to_string(),
+                        question.to_string(),
+                        pin.model,
+                    ));
                 }
             }
         }
     }
-    pending.sort();
+    Ok(number_blind(pending))
+}
 
-    let mut key = std::collections::BTreeMap::new();
-    let mut seen_in_case = 0;
-    let mut current_case = String::new();
-    for (case_id, _, model) in pending {
-        if case_id != current_case {
-            current_case = case_id.clone();
-            seen_in_case = 0;
-        }
-        seen_in_case += 1;
-        key.insert(format!("{case_id}-{seen_in_case:02}"), model);
+/// Confere que o caderno julgado descreve as MESMAS respostas do relatório.
+///
+/// O veredito é sobre um texto: se o caderno trouxer outro texto sob o mesmo bilhete, a pessoa
+/// julga uma coisa e o comando aplica o julgamento a outra. Bilhete, caso e resposta precisam
+/// bater — a pergunta não, porque ela é conveniência de leitura.
+pub(crate) fn ensure_sheet_matches(report: &Value, sheet: &Value) -> Result<(), String> {
+    let expected = rebuild_blind_entries(report)?;
+    let entries = sheet["entries"]
+        .as_array()
+        .ok_or_else(|| "O caderno julgado não traz uma lista entries.".to_string())?;
+    if entries.len() != expected.len() {
+        return Err(format!(
+            "O caderno traz {} bilhete(s) e o relatório tem {} resposta(s) pendente(s).",
+            entries.len(),
+            expected.len()
+        ));
     }
-    Ok(key)
+    for entry in entries {
+        let ticket = entry["ticket"]
+            .as_str()
+            .ok_or_else(|| "Um bilhete do caderno não tem identificador.".to_string())?;
+        let Some(original) = expected.iter().find(|candidate| candidate.ticket == ticket) else {
+            return Err(format!(
+                "O bilhete {ticket} não existe neste relatório. O caderno julgado é de outra \
+                 execução."
+            ));
+        };
+        if entry["case_id"].as_str() != Some(original.case_id.as_str())
+            || entry["answer"].as_str() != Some(original.answer.as_str())
+        {
+            return Err(format!(
+                "O bilhete {ticket} descreve uma resposta diferente da que está no relatório. O \
+                 veredito seria dado sobre um texto e aplicado a outro."
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Uma corrida da final, RECOMPUTADA das repetições brutas do relatório.
@@ -1247,9 +1288,23 @@ struct FinalRun {
 /// repetições; e a final precisa cobrir o mesmo catálogo que o relatório diz ter medido — apagar
 /// uma repetição reprovada faria o resto parecer uma suíte perfeita.
 fn parse_finalists(report: &Value) -> Result<Vec<FinalRun>, String> {
+    let sieve = report["phase_one"]
+        .as_array()
+        .filter(|runs| !runs.is_empty())
+        .ok_or_else(|| "O relatório não traz a peneira.".to_string())?;
+    let sieved: std::collections::BTreeSet<&str> = sieve
+        .iter()
+        .filter_map(|entry| entry["run"]["model"].as_str())
+        .collect();
     let entries = report["phase_two"]
         .as_array()
         .ok_or_else(|| "O relatório não traz a final.".to_string())?;
+    if entries.len() < MIN_FINALISTS || entries.len() > MAX_FINALISTS {
+        return Err(format!(
+            "A final tem {} corrida(s); o desenho manda de {MIN_FINALISTS} a {MAX_FINALISTS}.",
+            entries.len()
+        ));
+    }
     let catalog: Vec<&str> = report["catalog"]["ids"]
         .as_array()
         .ok_or_else(|| "O relatório não diz qual catálogo mediu.".to_string())?
@@ -1279,6 +1334,14 @@ fn parse_finalists(report: &Value) -> Result<Vec<FinalRun>, String> {
         if runs.iter().any(|other| other.pin.model == pin.model) {
             return Err(format!(
                 "{model} aparece duas vezes na final. Um mesmo modelo não faz quórum consigo mesmo."
+            ));
+        }
+        // Quem chega à final saiu da peneira: um finalista que não a correu não foi comparado com
+        // ninguém antes de chegar lá.
+        if !sieved.contains(pin.model) {
+            return Err(format!(
+                "{model} está na final e não aparece na peneira: este relatório não bate com o \
+                 desenho do bakeoff."
             ));
         }
         let declared_cost = required_i64(run, "total_cost_micro_usd", model)?;
@@ -1335,9 +1398,15 @@ fn parse_finalists(report: &Value) -> Result<Vec<FinalRun>, String> {
             for repetition in repetitions {
                 summed_cost =
                     summed_cost.saturating_add(required_i64(repetition, "cost_micro_usd", model)?);
-                required_bool(repetition, "cost_declared", model)?;
-                // A repetição que o orçamento cortou não fala do modelo, nem aqui nem na corrida.
+                // Os dois booleanos não são formulário: custo não declarado cega a trava, e
+                // repetição cortada pelo orçamento é medição que não houve. Lê-los e ignorá-los
+                // deixaria um relatório contraditório — repetições truncadas dentro de um caso
+                // dito medido — fabricar um finalista perfeito.
+                if !required_bool(repetition, "cost_declared", model)? {
+                    recomputed.complete = false;
+                }
                 if required_bool(repetition, "budget_truncated", model)? {
+                    recomputed.complete = false;
                     continue;
                 }
                 match repetition["verdict"].as_str() {

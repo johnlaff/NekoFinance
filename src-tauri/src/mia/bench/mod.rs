@@ -643,6 +643,10 @@ async fn judge(cli: &cli::CliArgs) -> Result<String, String> {
         ));
     }
 
+    // O veredito é sobre um TEXTO: um caderno com a resposta trocada faria a pessoa julgar uma
+    // coisa e o comando aplicar o julgamento a outra.
+    bakeoff::ensure_sheet_matches(&report, &judged)?;
+
     let entries = judged["entries"]
         .as_array()
         .ok_or_else(|| "O caderno julgado não traz uma lista entries.".to_string())?;

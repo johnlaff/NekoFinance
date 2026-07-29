@@ -2434,83 +2434,100 @@ fn a_reserva_da_peneira_segue_os_custos_medidos_e_nao_a_contagem() {
 
 // --- O julgamento cego que fecha o ciclo -------------------------------------------------
 
-/// Um relatório de bakeoff COMPLETO e consistente, como o arquivo real: catálogo declarado, três
-/// repetições por caso, custo agregado igual à soma das repetições e chave cega derivada das
-/// respostas pendentes. A leitura do julgamento é estrita, e uma fixture frouxa provaria menos do
-/// que promete.
+/// Um relatório de bakeoff COMPLETO e consistente, como o arquivo real: as duas fases, catálogo
+/// declarado, repetições na quantidade que cada fase mede, custo agregado igual à soma das
+/// repetições e chave cega derivada das respostas pendentes das duas. A leitura do julgamento é
+/// estrita, e uma fixture frouxa provaria menos do que promete.
 fn julgado(finalistas: &[(&str, i64, bool)], reprovadas: &[(&str, usize)]) -> serde_json::Value {
+    let corrida = |model: &str, cost: i64, complete: bool, repeticoes: usize| {
+        let total = repeticoes * 2;
+        let por_repeticao = cost / total as i64;
+        let sobra = cost - por_repeticao * total as i64;
+        let repeticao = |indice: usize, verdict: &str, answer: Option<String>| {
+            json!({
+                "verdict": verdict,
+                "answer": answer,
+                "cost_micro_usd": por_repeticao + if indice == 0 { sobra } else { 0 },
+                "cost_declared": true,
+                "budget_truncated": false,
+            })
+        };
+        let reprovadas_desta: usize = reprovadas
+            .iter()
+            .filter(|(alvo, _)| *alvo == model)
+            .map(|(_, quantas)| *quantas)
+            .sum();
+        let mecanicas: Vec<serde_json::Value> = (0..repeticoes)
+            .map(|indice| {
+                let verdict = if indice < reprovadas_desta {
+                    "failed"
+                } else {
+                    "passed"
+                };
+                repeticao(indice, verdict, None)
+            })
+            .collect();
+        let cegas: Vec<serde_json::Value> = (0..repeticoes)
+            .map(|indice| {
+                repeticao(
+                    indice + repeticoes,
+                    "pending_judgment",
+                    Some(format!("resposta {indice} de {model} em {repeticoes}x")),
+                )
+            })
+            .collect();
+        json!({
+            "score": { "complete": complete },
+            "run": {
+                "model": model,
+                "total_cost_micro_usd": cost,
+                "cost_gap": false,
+                "cases": [
+                    {
+                        "id": "fn-01",
+                        "family": "fidelidade_numerica",
+                        "question": "Quanto entrou em junho de 2026?",
+                        "measured": complete,
+                        "aborted": !complete,
+                        "repetitions": mecanicas,
+                    },
+                    {
+                        "id": "di-01",
+                        "family": "didatica",
+                        "question": "O que é o Diário?",
+                        "measured": complete,
+                        "aborted": !complete,
+                        "repetitions": cegas,
+                    },
+                ],
+            },
+        })
+    };
+
+    // A peneira correu a matriz inteira com uma repetição; a final, os finalistas com três.
+    let phase_one: Vec<serde_json::Value> = PINS
+        .iter()
+        .map(|pin| corrida(pin.model, 6_000, true, 1))
+        .collect();
     let phase_two: Vec<serde_json::Value> = finalistas
         .iter()
-        .map(|(model, cost, complete)| {
-            let por_repeticao = cost / 6;
-            let sobra = cost - por_repeticao * 6;
-            let repeticao = |indice: usize, verdict: &str, answer: Option<String>| {
-                json!({
-                    "verdict": verdict,
-                    "answer": answer,
-                    "cost_micro_usd": por_repeticao + if indice == 0 { sobra } else { 0 },
-                    "cost_declared": true,
-                    "budget_truncated": false,
-                })
-            };
-            let reprovadas_deste: usize = reprovadas
-                .iter()
-                .filter(|(alvo, _)| alvo == model)
-                .map(|(_, quantas)| *quantas)
-                .sum();
-            let mecanicas: Vec<serde_json::Value> = (0..3)
-                .map(|indice| {
-                    let verdict = if indice < reprovadas_deste {
-                        "failed"
-                    } else {
-                        "passed"
-                    };
-                    repeticao(indice, verdict, None)
-                })
-                .collect();
-            let cegas: Vec<serde_json::Value> = (0..3)
-                .map(|indice| {
-                    repeticao(
-                        indice + 3,
-                        "pending_judgment",
-                        Some(format!("resposta {indice} de {model}")),
-                    )
-                })
-                .collect();
-            json!({
-                "score": { "complete": complete },
-                "run": {
-                    "model": model,
-                    "total_cost_micro_usd": cost,
-                    "cost_gap": false,
-                    "cases": [
-                        {
-                            "id": "fn-01",
-                            "family": "fidelidade_numerica",
-                            "measured": complete,
-                            "aborted": !complete,
-                            "repetitions": mecanicas,
-                        },
-                        {
-                            "id": "di-01",
-                            "family": "didatica",
-                            "measured": complete,
-                            "aborted": !complete,
-                            "repetitions": cegas,
-                        },
-                    ],
-                },
-            })
-        })
+        .map(|(model, cost, complete)| corrida(model, *cost, *complete, 3))
         .collect();
 
     // A chave cega, derivada como o caderno a deriva: por caso, ordenada pela própria resposta.
     let mut pendentes: Vec<(String, String, String)> = Vec::new();
+    for pin in PINS {
+        pendentes.push((
+            "di-01".to_string(),
+            format!("resposta 0 de {} em 1x", pin.model),
+            pin.model.to_string(),
+        ));
+    }
     for (model, _, _) in finalistas {
         for indice in 0..3 {
             pendentes.push((
                 "di-01".to_string(),
-                format!("resposta {indice} de {model}"),
+                format!("resposta {indice} de {model} em 3x"),
                 (*model).to_string(),
             ));
         }
@@ -2523,10 +2540,49 @@ fn julgado(finalistas: &[(&str, i64, bool)], reprovadas: &[(&str, usize)]) -> se
         .collect();
 
     json!({
+        "execution_id": "execucao-de-teste",
         "catalog": { "ids": ["fn-01", "di-01"] },
         "blind_judgment_key": key,
+        "phase_one": phase_one,
         "phase_two": phase_two,
     })
+}
+
+/// O caderno cego que este relatório produziria, com todos os bilhetes aprovados.
+fn caderno_de(report: &serde_json::Value, verdict: &str) -> serde_json::Value {
+    let entries: Vec<serde_json::Value> = report["blind_judgment_key"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(|ticket| {
+            let (case_id, indice) = ticket.rsplit_once('-').unwrap();
+            let posicao: usize = indice.parse().unwrap();
+            // A resposta do bilhete é a que está na mesma posição da ordem cega.
+            let mut respostas: Vec<String> = Vec::new();
+            for phase in ["phase_one", "phase_two"] {
+                for entry in report[phase].as_array().unwrap() {
+                    for case in entry["run"]["cases"].as_array().unwrap() {
+                        if case["id"].as_str() != Some(case_id) {
+                            continue;
+                        }
+                        for repetition in case["repetitions"].as_array().unwrap() {
+                            if repetition["verdict"].as_str() == Some("pending_judgment") {
+                                respostas.push(repetition["answer"].as_str().unwrap().to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            respostas.sort();
+            json!({
+                "ticket": ticket,
+                "case_id": case_id,
+                "answer": respostas[posicao - 1],
+                "verdict": verdict,
+            })
+        })
+        .collect();
+    json!({ "execution_id": report["execution_id"], "entries": entries })
 }
 
 /// Todos os bilhetes do relatório, aprovados.
@@ -2667,7 +2723,8 @@ fn didatica_reprovada_em_todos_nao_decide_default() {
     else {
         panic!("sem ninguém aprovado não há default");
     };
-    assert!(reason.contains("2 reprovado(s) na didática"));
+    // Todos os modelos que responderam — peneira e final — reprovaram.
+    assert!(reason.contains(&format!("{} reprovado(s) na didática", PINS.len())));
 }
 
 /// O quórum vale também depois do julgamento: um finalista truncado invalida a comparação.
@@ -3059,46 +3116,136 @@ async fn o_julgamento_reescreve_o_relatorio_de_verdade() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// Bilhete repetido com vereditos conflitantes decidiria pelo último lido, em silêncio.
+/// Bilhete repetido com vereditos conflitantes decidiria pelo último lido, em silêncio — e a
+/// duplicata precisa ser vista mesmo quando a primeira ocorrência está em branco.
 #[tokio::test]
 async fn o_julgamento_recusa_bilhete_repetido_no_caderno() {
     let dir = reports_dir();
-    let report = dir.join("relatorio.json");
-    let caderno = dir.join("caderno.json");
-    std::fs::write(
-        &report,
-        json!({
-            "execution_id": "execucao-de-teste",
-            "blind_judgment_key": {"fn-01-01": "openai/gpt-5.6-terra"},
-            "phase_two": [],
-        })
-        .to_string(),
-    )
-    .unwrap();
-    std::fs::write(
-        &caderno,
-        json!({
-            "execution_id": "execucao-de-teste",
-            "entries": [
-                {"ticket": "fn-01-01", "verdict": "aprovado"},
-                {"ticket": "fn-01-01", "verdict": "reprovado"},
-            ],
-        })
-        .to_string(),
-    )
-    .unwrap();
+    let report_path = dir.join("relatorio.json");
+    let caderno_path = dir.join("caderno.json");
+    let report = julgado(
+        &[
+            ("anthropic/claude-sonnet-5", 200_000, true),
+            ("openai/gpt-5.6-terra", 120_000, true),
+        ],
+        &[],
+    );
+    std::fs::write(&report_path, report.to_string()).unwrap();
+
+    // O caderno correto, com o último bilhete substituído por uma cópia do primeiro EM BRANCO
+    // seguida do primeiro preenchido: a contagem bate, e a duplicata só aparece se a checagem vier
+    // antes de a entrada sem veredito ser descartada.
+    let mut caderno = caderno_de(&report, "aprovado");
+    let primeiro = caderno["entries"][0].clone();
+    let ultimo = caderno["entries"].as_array().unwrap().len() - 1;
+    let mut branco = primeiro.clone();
+    branco["verdict"] = serde_json::Value::Null;
+    caderno["entries"][ultimo] = branco;
+    let entradas = caderno["entries"].as_array_mut().unwrap();
+    entradas.swap(0, ultimo);
+    entradas[ultimo] = primeiro;
+    std::fs::write(&caderno_path, caderno.to_string()).unwrap();
 
     let cli = cli::parse_args(&args(&[
         "julgar",
         "--report",
-        report.to_str().unwrap(),
+        report_path.to_str().unwrap(),
         "--verdicts",
-        caderno.to_str().unwrap(),
+        caderno_path.to_str().unwrap(),
     ]))
     .unwrap();
 
     let error = super::judge(&cli).await.unwrap_err();
 
-    assert!(error.contains("mais de uma vez"));
+    assert!(error.contains("mais de uma vez"), "recusa: {error}");
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// O veredito é sobre um TEXTO. Um caderno com a resposta trocada faria a pessoa julgar uma coisa
+/// e o comando aplicar o julgamento a outra.
+#[test]
+fn o_caderno_com_resposta_trocada_e_recusado() {
+    let report = julgado(
+        &[
+            ("anthropic/claude-sonnet-5", 200_000, true),
+            ("openai/gpt-5.6-terra", 120_000, true),
+        ],
+        &[],
+    );
+    let mut caderno = caderno_de(&report, "aprovado");
+    caderno["entries"][0]["answer"] = json!("uma resposta que ninguém escreveu");
+
+    let error = bakeoff::ensure_sheet_matches(&report, &caderno).unwrap_err();
+
+    assert!(error.contains("resposta diferente"));
+
+    // E o caderno íntegro passa.
+    let integro = caderno_de(&report, "aprovado");
+    assert!(bakeoff::ensure_sheet_matches(&report, &integro).is_ok());
+}
+
+/// Relatório contraditório — repetições cortadas pelo orçamento, ou sem custo declarado, dentro de
+/// um caso que se diz medido — não fabrica finalista perfeito.
+#[test]
+fn a_decisao_julgada_recusa_booleanos_contraditorios() {
+    let base = julgado(
+        &[
+            ("anthropic/claude-sonnet-5", 200_000, true),
+            ("openai/gpt-5.6-terra", 120_000, true),
+        ],
+        &[],
+    );
+
+    for campo in ["budget_truncated", "cost_declared"] {
+        let mut report = base.clone();
+        // O mais barato ganha a contradição: sem a checagem, ele venceria.
+        report["phase_two"][1]["run"]["cases"][0]["repetitions"][0][campo] =
+            json!(campo == "budget_truncated");
+
+        let bakeoff::Decision::NoWinner { reason } =
+            bakeoff::judged_decision(&report, &aprovando(&base)).unwrap()
+        else {
+            panic!("uma corrida contraditória em {campo} não é corrida medida");
+        };
+        assert!(reason.contains("1 de 2 finalistas"), "{campo}: {reason}");
+    }
+}
+
+/// A final precisa ter saído da peneira, e ter o tamanho que o desenho manda.
+#[test]
+fn a_decisao_julgada_exige_a_estrutura_das_duas_fases() {
+    let base = julgado(
+        &[
+            ("anthropic/claude-sonnet-5", 200_000, true),
+            ("openai/gpt-5.6-terra", 120_000, true),
+        ],
+        &[],
+    );
+    let verdicts = aprovando(&base);
+
+    // Sem peneira não há de onde a final ter saído.
+    let mut sem_peneira = base.clone();
+    sem_peneira["phase_one"] = json!([]);
+    let error = bakeoff::judged_decision(&sem_peneira, &verdicts).unwrap_err();
+    assert!(error.contains("não corresponde") || error.contains("peneira"));
+
+    // Um finalista que não aparece na peneira não foi comparado com ninguém antes de chegar lá.
+    let mut intruso = base.clone();
+    intruso["phase_one"] = json!(
+        intruso["phase_one"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|entry| entry["run"]["model"] != "openai/gpt-5.6-terra")
+            .cloned()
+            .collect::<Vec<serde_json::Value>>()
+    );
+    let error = bakeoff::judged_decision(&intruso, &verdicts).unwrap_err();
+    assert!(error.contains("não corresponde") || error.contains("não aparece na peneira"));
+
+    // E a final tem o tamanho do desenho.
+    let mut sozinho = base.clone();
+    sozinho["phase_two"] = json!([sozinho["phase_two"][0].clone()]);
+    let error = bakeoff::judged_decision(&sozinho, &verdicts).unwrap_err();
+    assert!(error.contains("não corresponde") || error.contains("corrida(s)"));
 }
