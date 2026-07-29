@@ -2886,6 +2886,10 @@ fn a_decisao_julgada_recusa_relatorio_sem_os_dados_que_decidem() {
 fn o_modo_julgar_exige_relatorio_e_vereditos() {
     let error = cli::parse_args(&args(&["julgar"])).unwrap_err();
     assert!(error.contains("--report"));
+    // A recusa mostra o uso de verdade, não o nome do marcador: um assert que só olhasse
+    // "--report" deixaria passar um texto com o placeholder cru.
+    assert!(error.contains("mia-bench julgar"));
+    assert!(!error.contains("{USAGE}"));
 
     let parsed = cli::parse_args(&args(&[
         "julgar",
@@ -3248,4 +3252,45 @@ fn a_decisao_julgada_exige_a_estrutura_das_duas_fases() {
     sozinho["phase_two"] = json!([sozinho["phase_two"][0].clone()]);
     let error = bakeoff::judged_decision(&sozinho, &verdicts).unwrap_err();
     assert!(error.contains("não corresponde") || error.contains("corrida(s)"));
+}
+
+/// A sonda cortada pela própria cota não é sonda: o custo que ela registrou é parcial, e uma
+/// projeção tirada de custo parcial subestima justamente o que a sonda existe para não subestimar.
+#[tokio::test]
+async fn sonda_truncada_pela_cota_nao_conta_como_medida() {
+    let dir = reports_dir();
+    // O teto rebaixado aperta a cota por pin abaixo do custo de uma rodada: cada sonda é cortada
+    // no meio, e nenhuma delas mediu de verdade.
+    let adapter = EcoAdapter {
+        cost_micro_usd: 30_000,
+        catalog: zdr_catalog(),
+    };
+    let mut lock = super::SpendLock::new(60_000);
+
+    let (bakeoff, _) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: bakeoff_cases(),
+            execution_id: "execucao-de-teste".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        bakeoff.phase_one.is_empty(),
+        "a peneira não chegou a correr"
+    );
+    let Decision::NoWinner { reason } = &bakeoff.decision else {
+        panic!("sem sonda medida não há projeção, e sem projeção não há decisão");
+    };
+    assert!(reason.contains("de 6 modelos"), "recusa: {reason}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
 }

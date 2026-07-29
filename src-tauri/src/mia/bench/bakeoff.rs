@@ -16,7 +16,7 @@
 use super::case::{Case, Family};
 use super::grade::Verdict;
 use super::report;
-use super::{BenchConfig, BenchRun, Repetitions, SpendLock, run_catalog};
+use super::{BenchConfig, BenchRun, CaseRun, Repetitions, SpendLock, run_catalog};
 use crate::mia::method_tools::MethodPack;
 use crate::mia::prompt;
 use crate::mia::provider::drift::{ZdrCatalog, verify};
@@ -500,7 +500,10 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
             bakeoff.probes.push(Probe {
                 pin,
                 cost_micro_usd: run.total_cost_micro_usd,
-                cost_declared: !run.cost_gap,
+                // A sonda vale como medida quando a rodada dela terminou: cortada pela cota, o
+                // custo que ela registrou é parcial, e uma projeção tirada de custo parcial
+                // subestima justamente o que a sonda existe para não deixar subestimar.
+                cost_declared: !run.cost_gap && run.cases.iter().all(CaseRun::measured),
             });
             // Checkpoint a cada sonda, não ao fim de todas: uma queda na quinta não pode levar as
             // quatro que já foram pagas.

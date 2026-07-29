@@ -144,11 +144,10 @@ pub(crate) fn parse_args(args: &[String]) -> Result<CliArgs, String> {
     }
 
     if mode == Mode::Judge && (parsed.report.is_none() || parsed.verdicts.is_none()) {
-        return Err(
+        return Err(format!(
             "O julgamento precisa de --report (o relatório do bakeoff) e --verdicts (o caderno \
              cego com um veredito por bilhete). {USAGE}"
-                .to_string(),
-        );
+        ));
     }
 
     Ok(parsed)
