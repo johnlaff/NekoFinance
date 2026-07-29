@@ -584,6 +584,7 @@ async fn a_trava_de_gasto_aborta_os_casos_restantes() {
         pin: default_pin(),
         pack_root: Some(temp.path().to_path_buf()),
         repetitions: super::Repetitions::AsAuthored,
+        system: None,
         // O teto POR RODADA sobe para não disparar antes da trava DA BANCADA — é a trava que
         // está sob teste, e as duas se sobrepõem de propósito na configuração default.
         limits: RunLimits {
@@ -626,6 +627,7 @@ async fn a_trava_de_gasto_atravessa_duas_corridas() {
         pin: default_pin(),
         pack_root: Some(temp.path().to_path_buf()),
         repetitions: super::Repetitions::AsAuthored,
+        system: None,
         limits: RunLimits {
             max_cost_micro_usd: 200_000,
             ..RunLimits::default()
@@ -682,6 +684,7 @@ async fn as_repeticoes_da_fase_sobrepoem_a_autoria_do_caso() {
         pin: default_pin(),
         pack_root: Some(temp.path().to_path_buf()),
         repetitions: super::Repetitions::Fixed(3),
+        system: None,
         limits: RunLimits::default(),
     };
     let mut lock = super::SpendLock::new(1_000_000);
@@ -726,6 +729,7 @@ async fn custo_nao_declarado_fecha_a_bancada() {
         pin: default_pin(),
         pack_root: Some(temp.path().to_path_buf()),
         repetitions: super::Repetitions::AsAuthored,
+        system: None,
         limits: RunLimits::default(),
     };
     let mut lock = super::SpendLock::new(1_000_000);
@@ -756,6 +760,7 @@ async fn didatica_sem_pack_recusa_a_bancada() {
         pin: default_pin(),
         pack_root: None,
         repetitions: super::Repetitions::AsAuthored,
+        system: None,
         limits: RunLimits::default(),
     };
     let mut lock = super::SpendLock::new(1_000_000);
@@ -1885,6 +1890,7 @@ async fn turno_cobrado_seguido_de_travamento_sem_uso_fecha_a_bancada() {
         pin: default_pin(),
         pack_root: Some(temp.path().to_path_buf()),
         repetitions: super::Repetitions::AsAuthored,
+        system: None,
         limits: RunLimits {
             max_duration: std::time::Duration::from_millis(150),
             retry_backoff: std::time::Duration::ZERO,
@@ -1927,6 +1933,7 @@ async fn rodada_cortada_pelo_orcamento_nao_conta_como_erro_nem_como_medida() {
         pin: default_pin(),
         pack_root: Some(temp.path().to_path_buf()),
         repetitions: super::Repetitions::AsAuthored,
+        system: None,
         limits: RunLimits::default(),
     };
     let mut lock = super::SpendLock::new(20_000);
@@ -1967,6 +1974,7 @@ async fn falha_no_meio_preserva_o_que_a_corrida_ja_pagou() {
         pin: default_pin(),
         pack_root: Some(temp.path().to_path_buf()),
         repetitions: super::Repetitions::AsAuthored,
+        system: None,
         limits: RunLimits::default(),
     };
     let mut lock = super::SpendLock::new(1_000_000);
@@ -2186,6 +2194,7 @@ async fn custo_sem_declaracao_em_tentativa_falha_fecha_a_bancada() {
         pin: default_pin(),
         pack_root: Some(temp.path().to_path_buf()),
         repetitions: super::Repetitions::AsAuthored,
+        system: None,
         limits: RunLimits {
             retry_backoff: std::time::Duration::ZERO,
             ..RunLimits::default()
@@ -2227,6 +2236,7 @@ async fn stream_aberto_que_termina_sem_uso_e_lacuna() {
         pin: default_pin(),
         pack_root: Some(temp.path().to_path_buf()),
         repetitions: super::Repetitions::AsAuthored,
+        system: None,
         limits: RunLimits {
             retry_backoff: std::time::Duration::ZERO,
             ..RunLimits::default()
@@ -2269,6 +2279,7 @@ async fn tentativa_que_gerou_texto_e_caiu_sem_uso_fecha_a_bancada() {
         pin: default_pin(),
         pack_root: Some(temp.path().to_path_buf()),
         repetitions: super::Repetitions::AsAuthored,
+        system: None,
         limits: RunLimits {
             retry_backoff: std::time::Duration::ZERO,
             ..RunLimits::default()
@@ -2423,35 +2434,120 @@ fn a_reserva_da_peneira_segue_os_custos_medidos_e_nao_a_contagem() {
 
 // --- O julgamento cego que fecha o ciclo -------------------------------------------------
 
-fn julgado(finalistas: &[(&str, i64, bool)], bilhetes: &[(&str, &str)]) -> serde_json::Value {
-    let key: serde_json::Map<String, serde_json::Value> = bilhetes
-        .iter()
-        .map(|(ticket, model)| ((*ticket).to_string(), json!(model)))
-        .collect();
-    // O relatório carrega as REPETIÇÕES, que é de onde a decisão julgada refaz as contas — o bloco
-    // score é derivado e não decide nada.
+/// Um relatório de bakeoff COMPLETO e consistente, como o arquivo real: catálogo declarado, três
+/// repetições por caso, custo agregado igual à soma das repetições e chave cega derivada das
+/// respostas pendentes. A leitura do julgamento é estrita, e uma fixture frouxa provaria menos do
+/// que promete.
+fn julgado(finalistas: &[(&str, i64, bool)], reprovadas: &[(&str, usize)]) -> serde_json::Value {
     let phase_two: Vec<serde_json::Value> = finalistas
         .iter()
         .map(|(model, cost, complete)| {
+            let por_repeticao = cost / 6;
+            let sobra = cost - por_repeticao * 6;
+            let repeticao = |indice: usize, verdict: &str, answer: Option<String>| {
+                json!({
+                    "verdict": verdict,
+                    "answer": answer,
+                    "cost_micro_usd": por_repeticao + if indice == 0 { sobra } else { 0 },
+                    "cost_declared": true,
+                    "budget_truncated": false,
+                })
+            };
+            let reprovadas_deste: usize = reprovadas
+                .iter()
+                .filter(|(alvo, _)| alvo == model)
+                .map(|(_, quantas)| *quantas)
+                .sum();
+            let mecanicas: Vec<serde_json::Value> = (0..3)
+                .map(|indice| {
+                    let verdict = if indice < reprovadas_deste {
+                        "failed"
+                    } else {
+                        "passed"
+                    };
+                    repeticao(indice, verdict, None)
+                })
+                .collect();
+            let cegas: Vec<serde_json::Value> = (0..3)
+                .map(|indice| {
+                    repeticao(
+                        indice + 3,
+                        "pending_judgment",
+                        Some(format!("resposta {indice} de {model}")),
+                    )
+                })
+                .collect();
             json!({
                 "score": { "complete": complete },
                 "run": {
                     "model": model,
                     "total_cost_micro_usd": cost,
                     "cost_gap": false,
-                    "cases": [{
-                        "family": "fidelidade_numerica",
-                        "measured": complete,
-                        "repetitions": [
-                            {"verdict": "passed", "budget_truncated": false},
-                            {"verdict": "passed", "budget_truncated": false},
-                        ],
-                    }],
+                    "cases": [
+                        {
+                            "id": "fn-01",
+                            "family": "fidelidade_numerica",
+                            "measured": complete,
+                            "aborted": !complete,
+                            "repetitions": mecanicas,
+                        },
+                        {
+                            "id": "di-01",
+                            "family": "didatica",
+                            "measured": complete,
+                            "aborted": !complete,
+                            "repetitions": cegas,
+                        },
+                    ],
                 },
             })
         })
         .collect();
-    json!({ "blind_judgment_key": key, "phase_two": phase_two })
+
+    // A chave cega, derivada como o caderno a deriva: por caso, ordenada pela própria resposta.
+    let mut pendentes: Vec<(String, String, String)> = Vec::new();
+    for (model, _, _) in finalistas {
+        for indice in 0..3 {
+            pendentes.push((
+                "di-01".to_string(),
+                format!("resposta {indice} de {model}"),
+                (*model).to_string(),
+            ));
+        }
+    }
+    pendentes.sort();
+    let key: serde_json::Map<String, serde_json::Value> = pendentes
+        .iter()
+        .enumerate()
+        .map(|(indice, (case_id, _, model))| (format!("{case_id}-{:02}", indice + 1), json!(model)))
+        .collect();
+
+    json!({
+        "catalog": { "ids": ["fn-01", "di-01"] },
+        "blind_judgment_key": key,
+        "phase_two": phase_two,
+    })
+}
+
+/// Todos os bilhetes do relatório, aprovados.
+fn aprovando(report: &serde_json::Value) -> std::collections::BTreeMap<String, bakeoff::Judgment> {
+    report["blind_judgment_key"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(|ticket| (ticket.clone(), bakeoff::Judgment::Approved))
+        .collect()
+}
+
+/// Os bilhetes de um modelo específico, para reprovar quem se quer reprovar.
+fn bilhetes_de(report: &serde_json::Value, model: &str) -> Vec<String> {
+    report["blind_judgment_key"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .filter(|(_, dono)| dono.as_str() == Some(model))
+        .map(|(ticket, _)| ticket.clone())
+        .collect()
 }
 
 fn vereditos(
@@ -2472,18 +2568,11 @@ fn o_julgamento_aprovado_fecha_a_decisao() {
             ("anthropic/claude-sonnet-5", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
-        &[
-            ("di-01-01", "anthropic/claude-sonnet-5"),
-            ("di-01-02", "openai/gpt-5.6-terra"),
-        ],
+        &[],
     );
-    let verdicts = vereditos(&[
-        ("di-01-01", bakeoff::Judgment::Approved),
-        ("di-01-02", bakeoff::Judgment::Approved),
-    ]);
 
     let bakeoff::Decision::Adopt { model, rationale } =
-        bakeoff::judged_decision(&report, &verdicts).unwrap()
+        bakeoff::judged_decision(&report, &aprovando(&report)).unwrap()
     else {
         panic!("dois finalistas aprovados decidem o default");
     };
@@ -2500,18 +2589,12 @@ fn um_bilhete_reprovado_tira_o_modelo_da_decisao() {
             ("anthropic/claude-sonnet-5", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
-        &[
-            ("di-01-01", "anthropic/claude-sonnet-5"),
-            ("di-01-02", "openai/gpt-5.6-terra"),
-            ("di-02-01", "openai/gpt-5.6-terra"),
-        ],
+        &[],
     );
-    let verdicts = vereditos(&[
-        ("di-01-01", bakeoff::Judgment::Approved),
-        ("di-01-02", bakeoff::Judgment::Approved),
-        // O mais barato ensinou errado num caso.
-        ("di-02-01", bakeoff::Judgment::Rejected),
-    ]);
+    let mut verdicts = aprovando(&report);
+    // O mais barato ensinou errado numa resposta.
+    let alvo = bilhetes_de(&report, "openai/gpt-5.6-terra")[0].clone();
+    verdicts.insert(alvo, bakeoff::Judgment::Rejected);
 
     let bakeoff::Decision::Adopt { model, .. } =
         bakeoff::judged_decision(&report, &verdicts).unwrap()
@@ -2530,16 +2613,15 @@ fn a_decisao_julgada_exige_todos_os_bilhetes_lidos() {
             ("anthropic/claude-sonnet-5", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
-        &[
-            ("di-01-01", "anthropic/claude-sonnet-5"),
-            ("di-01-02", "openai/gpt-5.6-terra"),
-        ],
+        &[],
     );
-    let verdicts = vereditos(&[("di-01-01", bakeoff::Judgment::Approved)]);
+    let mut verdicts = aprovando(&report);
+    let faltando = verdicts.keys().next().unwrap().clone();
+    verdicts.remove(&faltando);
 
     let error = bakeoff::judged_decision(&report, &verdicts).unwrap_err();
 
-    assert!(error.contains("di-01-02"));
+    assert!(error.contains(&faltando));
     assert!(error.contains("Julgue todos"));
 }
 
@@ -2551,12 +2633,10 @@ fn a_decisao_julgada_recusa_bilhete_de_outra_execucao() {
             ("anthropic/claude-sonnet-5", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
-        &[("di-01-01", "anthropic/claude-sonnet-5")],
+        &[],
     );
-    let verdicts = vereditos(&[
-        ("di-01-01", bakeoff::Judgment::Approved),
-        ("fn-09-03", bakeoff::Judgment::Approved),
-    ]);
+    let mut verdicts = aprovando(&report);
+    verdicts.insert("fn-09-03".to_string(), bakeoff::Judgment::Approved);
 
     let error = bakeoff::judged_decision(&report, &verdicts).unwrap_err();
 
@@ -2572,15 +2652,15 @@ fn didatica_reprovada_em_todos_nao_decide_default() {
             ("anthropic/claude-sonnet-5", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
-        &[
-            ("di-01-01", "anthropic/claude-sonnet-5"),
-            ("di-01-02", "openai/gpt-5.6-terra"),
-        ],
+        &[],
     );
-    let verdicts = vereditos(&[
-        ("di-01-01", bakeoff::Judgment::Rejected),
-        ("di-01-02", bakeoff::Judgment::Rejected),
-    ]);
+    let verdicts: std::collections::BTreeMap<String, bakeoff::Judgment> =
+        report["blind_judgment_key"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|ticket| (ticket.clone(), bakeoff::Judgment::Rejected))
+            .collect();
 
     let bakeoff::Decision::NoWinner { reason } =
         bakeoff::judged_decision(&report, &verdicts).unwrap()
@@ -2598,16 +2678,151 @@ fn a_decisao_julgada_mantem_o_quorum_da_final() {
             ("anthropic/claude-sonnet-5", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, false),
         ],
-        &[("di-01-01", "anthropic/claude-sonnet-5")],
+        &[],
     );
-    let verdicts = vereditos(&[("di-01-01", bakeoff::Judgment::Approved)]);
 
     let bakeoff::Decision::NoWinner { reason } =
-        bakeoff::judged_decision(&report, &verdicts).unwrap()
+        bakeoff::judged_decision(&report, &aprovando(&report)).unwrap()
     else {
         panic!("um finalista truncado não decide");
     };
     assert!(reason.contains("1 de 2 finalistas"));
+}
+
+/// O bloco `score` do relatório é derivado, e cômodo demais para quem edita. A decisão julgada
+/// recomputa das repetições e não olha para ele.
+#[test]
+fn a_decisao_julgada_ignora_o_score_derivado_do_relatorio() {
+    let mut report = julgado(
+        &[
+            ("anthropic/claude-sonnet-5", 200_000, true),
+            // O mais barato tem uma repetição REPROVADA nos dados brutos.
+            ("openai/gpt-5.6-terra", 120_000, true),
+        ],
+        &[("openai/gpt-5.6-terra", 1)],
+    );
+    // ...e um score derretido para parecer perfeito.
+    report["phase_two"][1]["score"] = json!({
+        "complete": true,
+        "mechanical_total": 60,
+        "mechanical_passed": 60,
+        "injection_failed": 0,
+    });
+
+    let bakeoff::Decision::Adopt { model, .. } =
+        bakeoff::judged_decision(&report, &aprovando(&report)).unwrap()
+    else {
+        panic!("o outro finalista continua elegível");
+    };
+    assert_eq!(
+        model, "anthropic/claude-sonnet-5",
+        "o score derivado não decide; as repetições decidem"
+    );
+}
+
+/// A chave cega também é dado derivado: esvaziá-la pularia a aprovação didática inteira, e
+/// remapear um bilhete mudaria quem a reprovação elimina.
+#[test]
+fn a_decisao_julgada_recusa_chave_cega_adulterada() {
+    let base = julgado(
+        &[
+            ("anthropic/claude-sonnet-5", 200_000, true),
+            ("openai/gpt-5.6-terra", 120_000, true),
+        ],
+        &[],
+    );
+
+    // Esvaziar a chave: sem bilhetes, não haveria didática a julgar.
+    let mut vazia = base.clone();
+    vazia["blind_judgment_key"] = json!({});
+    let error = bakeoff::judged_decision(&vazia, &Default::default()).unwrap_err();
+    assert!(error.contains("não corresponde"));
+
+    // Remapear um bilhete para o outro modelo: a reprovação cairia sobre quem não a mereceu.
+    let mut trocada = base.clone();
+    let alvo = bilhetes_de(&base, "openai/gpt-5.6-terra")[0].clone();
+    trocada["blind_judgment_key"][&alvo] = json!("anthropic/claude-sonnet-5");
+    let error = bakeoff::judged_decision(&trocada, &aprovando(&base)).unwrap_err();
+    assert!(error.contains("editado depois de escrito"));
+}
+
+/// Um mesmo modelo duas vezes na final não faz quórum consigo mesmo.
+#[test]
+fn a_decisao_julgada_recusa_o_mesmo_modelo_duas_vezes() {
+    let report = julgado(
+        &[
+            ("openai/gpt-5.6-terra", 200_000, true),
+            ("openai/gpt-5.6-terra", 120_000, true),
+        ],
+        &[],
+    );
+
+    let error = bakeoff::judged_decision(&report, &aprovando(&report)).unwrap_err();
+
+    assert!(error.contains("duas vezes"));
+}
+
+/// Campo decisório ausente é recusa, nunca um zero conveniente — e apagar uma repetição reprovada
+/// faria o resto parecer uma suíte perfeita.
+#[test]
+fn a_decisao_julgada_recusa_relatorio_sem_os_dados_que_decidem() {
+    let base = julgado(
+        &[
+            ("anthropic/claude-sonnet-5", 200_000, true),
+            ("openai/gpt-5.6-terra", 120_000, true),
+        ],
+        &[],
+    );
+    let verdicts = aprovando(&base);
+
+    for apagar in ["total_cost_micro_usd", "cost_gap"] {
+        let mut report = base.clone();
+        report["phase_two"][0]["run"]
+            .as_object_mut()
+            .unwrap()
+            .remove(apagar);
+        let error = bakeoff::judged_decision(&report, &verdicts).unwrap_err();
+        assert!(
+            error.contains("anthropic/claude-sonnet-5"),
+            "sem {apagar}, a recusa nomeia a corrida: {error}"
+        );
+    }
+
+    // Apagar os casos derruba antes: sem eles não há respostas pendentes, e a chave declarada
+    // deixa de corresponder ao próprio relatório.
+    let mut sem_casos = base.clone();
+    sem_casos["phase_two"][0]["run"]
+        .as_object_mut()
+        .unwrap()
+        .remove("cases");
+    let error = bakeoff::judged_decision(&sem_casos, &verdicts).unwrap_err();
+    assert!(error.contains("não corresponde"));
+
+    // Uma repetição a menos num caso medido: o que sobra parece perfeito.
+    let mut podado = base.clone();
+    podado["phase_two"][0]["run"]["cases"][0]["repetitions"]
+        .as_array_mut()
+        .unwrap()
+        .pop();
+    let error = bakeoff::judged_decision(&podado, &verdicts).unwrap_err();
+    assert!(error.contains("repetição(ões)"));
+
+    // Custo agregado menor que a soma das repetições escolheria o vencedor sem tocar nelas.
+    let mut barateado = base.clone();
+    barateado["phase_two"][0]["run"]["total_cost_micro_usd"] = json!(1);
+    let error = bakeoff::judged_decision(&barateado, &verdicts).unwrap_err();
+    assert!(error.contains("somam"));
+
+    // E o teto de referência jamais aparece na final.
+    let teto = julgado(
+        &[
+            ("anthropic/claude-opus-5", 100_000, true),
+            ("openai/gpt-5.6-terra", 120_000, true),
+        ],
+        &[],
+    );
+    let error = bakeoff::judged_decision(&teto, &aprovando(&teto)).unwrap_err();
+    assert!(error.contains("teto de referência"));
 }
 
 #[test]
@@ -2628,104 +2843,6 @@ fn o_modo_julgar_exige_relatorio_e_vereditos() {
         parsed.report,
         Some(std::path::PathBuf::from("relatorio.json"))
     );
-}
-
-/// O bloco `score` do relatório é derivado, e cômodo demais para quem edita: escrever
-/// `complete: true` com um custo baixo fabricaria um default. A decisão julgada recomputa das
-/// repetições e não olha para ele.
-#[test]
-fn a_decisao_julgada_ignora_o_score_derivado_do_relatorio() {
-    let mut report = julgado(
-        &[
-            ("anthropic/claude-sonnet-5", 200_000, true),
-            ("openai/gpt-5.6-terra", 120_000, true),
-        ],
-        &[
-            ("di-01-01", "anthropic/claude-sonnet-5"),
-            ("di-01-02", "openai/gpt-5.6-terra"),
-        ],
-    );
-    // O mais barato tem uma repetição REPROVADA nos dados brutos, e um score derretido para
-    // parecer perfeito.
-    report["phase_two"][1]["run"]["cases"][0]["repetitions"][0]["verdict"] = json!("failed");
-    report["phase_two"][1]["score"] = json!({
-        "complete": true,
-        "mechanical_total": 60,
-        "mechanical_passed": 60,
-        "injection_failed": 0,
-    });
-    let verdicts = vereditos(&[
-        ("di-01-01", bakeoff::Judgment::Approved),
-        ("di-01-02", bakeoff::Judgment::Approved),
-    ]);
-
-    let bakeoff::Decision::Adopt { model, .. } =
-        bakeoff::judged_decision(&report, &verdicts).unwrap()
-    else {
-        panic!("o outro finalista continua elegível");
-    };
-    assert_eq!(
-        model, "anthropic/claude-sonnet-5",
-        "o score derivado não decide; as repetições decidem"
-    );
-}
-
-/// Um mesmo modelo duas vezes na final não faz quórum consigo mesmo.
-#[test]
-fn a_decisao_julgada_recusa_o_mesmo_modelo_duas_vezes() {
-    let report = julgado(
-        &[
-            ("openai/gpt-5.6-terra", 200_000, true),
-            ("openai/gpt-5.6-terra", 120_000, true),
-        ],
-        &[("di-01-01", "openai/gpt-5.6-terra")],
-    );
-    let verdicts = vereditos(&[("di-01-01", bakeoff::Judgment::Approved)]);
-
-    let error = bakeoff::judged_decision(&report, &verdicts).unwrap_err();
-
-    assert!(error.contains("duas vezes"));
-}
-
-/// Campo decisório ausente é recusa, nunca um zero conveniente.
-#[test]
-fn a_decisao_julgada_recusa_relatorio_sem_os_dados_que_decidem() {
-    let base = julgado(
-        &[
-            ("anthropic/claude-sonnet-5", 200_000, true),
-            ("openai/gpt-5.6-terra", 120_000, true),
-        ],
-        &[("di-01-01", "anthropic/claude-sonnet-5")],
-    );
-    let verdicts = vereditos(&[("di-01-01", bakeoff::Judgment::Approved)]);
-
-    for (campo, apagar) in [
-        ("custo", "total_cost_micro_usd"),
-        ("lacuna de custo", "cost_gap"),
-        ("casos", "cases"),
-    ] {
-        let mut report = base.clone();
-        report["phase_two"][0]["run"]
-            .as_object_mut()
-            .unwrap()
-            .remove(apagar);
-        let error = bakeoff::judged_decision(&report, &verdicts).unwrap_err();
-        assert!(
-            error.contains("anthropic/claude-sonnet-5"),
-            "sem {campo}, a recusa nomeia a corrida: {error}"
-        );
-    }
-
-    // E o teto de referência jamais aparece na final.
-    let teto = julgado(
-        &[
-            ("anthropic/claude-opus-5", 100_000, true),
-            ("openai/gpt-5.6-terra", 120_000, true),
-        ],
-        &[("di-01-01", "openai/gpt-5.6-terra")],
-    );
-    let error = bakeoff::judged_decision(&teto, &verdicts).unwrap_err();
-    assert!(error.contains("teto de referência"));
 }
 
 /// Um pack que existe mas não monta o núcleo do método faz a didática medir a recusa da camada

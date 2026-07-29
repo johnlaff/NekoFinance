@@ -39,6 +39,11 @@ pub(crate) struct BenchConfig {
     /// conversa diz que não tem o método de cor, como na máquina de quem não o instalou.
     pub pack_root: Option<PathBuf>,
     pub repetitions: Repetitions,
+    /// O prefixo de sistema JÁ montado, quando quem chama quer que todas as corridas leiam o
+    /// mesmo pack. Ausente, cada corrida monta o seu — que é o certo para a corrida solta e
+    /// errado para o bakeoff, onde um pack editado no meio daria prompts diferentes a candidatos
+    /// que precisam ser comparáveis.
+    pub system: Option<std::sync::Arc<prompt::SystemPrompt>>,
     pub limits: RunLimits,
 }
 
@@ -332,9 +337,14 @@ pub(crate) async fn run_catalog<A: ProviderAdapter>(
             uuid::Uuid::new_v4()
         ))
     });
-    let system = prompt::system_prompt(&MethodPack::at(&pack_root))
-        .await
-        .map_err(|error| format!("{} {}", error.message, error.fix))?;
+    let system = match &config.system {
+        Some(snapshot) => std::sync::Arc::clone(snapshot),
+        None => std::sync::Arc::new(
+            prompt::system_prompt(&MethodPack::at(&pack_root))
+                .await
+                .map_err(|error| format!("{} {}", error.message, error.fix))?,
+        ),
+    };
 
     let mut runs: Vec<CaseRun> = Vec::with_capacity(cases.len());
     let mut total_cost_micro_usd = 0_i64;
@@ -567,6 +577,9 @@ async fn execute(cli: cli::CliArgs, key: String) -> Result<String, String> {
         pin,
         pack_root: cli.pack_root.clone(),
         repetitions: Repetitions::AsAuthored,
+        // A corrida solta monta o prefixo dela: é uma corrida só, e não há comparabilidade a
+        // proteger entre candidatos.
+        system: None,
         limits: RunLimits::default(),
     };
     let run = run_catalog(&adapter, cases, &config, &mut lock).await?;
@@ -634,10 +647,19 @@ async fn judge(cli: &cli::CliArgs) -> Result<String, String> {
         .as_array()
         .ok_or_else(|| "O caderno julgado não traz uma lista entries.".to_string())?;
     let mut verdicts = std::collections::BTreeMap::new();
+    let mut seen = std::collections::BTreeSet::new();
     for entry in entries {
         let ticket = entry["ticket"]
             .as_str()
             .ok_or_else(|| "Um bilhete do caderno não tem identificador.".to_string())?;
+        // A repetição é conferida ANTES do veredito: um bilhete em branco seguido do mesmo
+        // bilhete preenchido passaria despercebido se a checagem viesse depois.
+        if !seen.insert(ticket.to_string()) {
+            return Err(format!(
+                "O bilhete {ticket} aparece mais de uma vez no caderno. Deixe um veredito por \
+                 bilhete."
+            ));
+        }
         // Sem veredito, o bilhete simplesmente não entra — e a cobertura reclama dele adiante,
         // nomeando o que falta ler em vez de decidir por omissão.
         let Some(verdict) = entry.get("verdict").and_then(Value::as_str) else {
@@ -653,13 +675,7 @@ async fn judge(cli: &cli::CliArgs) -> Result<String, String> {
                 ));
             }
         };
-        // Bilhete repetido com vereditos diferentes decidiria pelo último lido, em silêncio.
-        if verdicts.insert(ticket.to_string(), verdict).is_some() {
-            return Err(format!(
-                "O bilhete {ticket} aparece mais de uma vez no caderno. Deixe um veredito por \
-                 bilhete."
-            ));
-        }
+        verdicts.insert(ticket.to_string(), verdict);
     }
 
     let decision = bakeoff::judged_decision(&report, &verdicts)?;

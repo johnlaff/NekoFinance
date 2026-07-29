@@ -384,23 +384,30 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
     // o pack EXISTIR: um pack que não monta o núcleo do método faz a didática medir a recusa da
     // camada ausente, e a leitura cega receberia respostas que nunca tiveram como ensinar.
     super::ensure_pack_covers(&config.cases, config.pack_root.as_deref())?;
-    if let Some(pack_root) = config.pack_root.as_deref() {
-        let assembled = prompt::system_prompt(&MethodPack::at(pack_root))
-            .await
-            .map_err(|error| format!("{} {}", error.message, error.fix))?;
-        if !assembled.method_core
-            && config
-                .cases
-                .iter()
-                .any(|case| case.family == Family::Didatica)
-        {
-            return Err(format!(
-                "O pack em {} não monta o núcleo do método, e a didática mediria a recusa da \
-                 camada ausente. Conserte o pack antes de gastar.",
-                pack_root.display()
-            ));
+    // O prefixo é montado UMA vez e vale para todas as corridas: relê-lo por corrida deixaria um
+    // pack editado no meio do bakeoff dar prompts diferentes a candidatos que precisam ser
+    // comparáveis — e a validação de agora não diria nada sobre o que a corrida seguinte leria.
+    let system = match config.pack_root.as_deref() {
+        Some(pack_root) => {
+            let assembled = prompt::system_prompt(&MethodPack::at(pack_root))
+                .await
+                .map_err(|error| format!("{} {}", error.message, error.fix))?;
+            if !assembled.method_core
+                && config
+                    .cases
+                    .iter()
+                    .any(|case| case.family == Family::Didatica)
+            {
+                return Err(format!(
+                    "O pack em {} não monta o núcleo do método, e a didática mediria a recusa da \
+                     camada ausente. Conserte o pack antes de gastar.",
+                    pack_root.display()
+                ));
+            }
+            Some(std::sync::Arc::new(assembled))
         }
-    }
+        None => None,
+    };
 
     let catalog = adapter.fetch().await?;
     let verdict = canary(&catalog, &contenders());
@@ -475,7 +482,7 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
             let run = match run_catalog(
                 adapter,
                 vec![case.clone()],
-                &config.probe_bench(pin, cota),
+                &config.probe_bench(pin, cota, system.as_ref()),
                 lock,
             )
             .await
@@ -561,7 +568,11 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
         let run = match run_catalog(
             adapter,
             config.cases.clone(),
-            &config.bench(pin, Repetitions::Fixed(PHASE_ONE_REPETITIONS)),
+            &config.bench(
+                pin,
+                Repetitions::Fixed(PHASE_ONE_REPETITIONS),
+                system.as_ref(),
+            ),
             lock,
         )
         .await
@@ -637,7 +648,11 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
         let run = match run_catalog(
             adapter,
             config.cases.clone(),
-            &config.bench(pin, Repetitions::Fixed(PHASE_TWO_REPETITIONS)),
+            &config.bench(
+                pin,
+                Repetitions::Fixed(PHASE_TWO_REPETITIONS),
+                system.as_ref(),
+            ),
             lock,
         )
         .await
@@ -674,21 +689,32 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
 
 impl BakeoffConfig<'_> {
     /// A configuração de UMA rodada de sonda: uma repetição, sob a cota daquele pin.
-    fn probe_bench(&self, pin: &'static ModelPin, quota_micro_usd: i64) -> BenchConfig {
+    fn probe_bench(
+        &self,
+        pin: &'static ModelPin,
+        quota_micro_usd: i64,
+        system: Option<&std::sync::Arc<prompt::SystemPrompt>>,
+    ) -> BenchConfig {
         BenchConfig {
             limits: RunLimits {
                 max_cost_micro_usd: self.limits.max_cost_micro_usd.min(quota_micro_usd),
                 ..self.limits.clone()
             },
-            ..self.bench(pin, Repetitions::Fixed(1))
+            ..self.bench(pin, Repetitions::Fixed(1), system)
         }
     }
 
-    fn bench(&self, pin: &'static ModelPin, repetitions: Repetitions) -> BenchConfig {
+    fn bench(
+        &self,
+        pin: &'static ModelPin,
+        repetitions: Repetitions,
+        system: Option<&std::sync::Arc<prompt::SystemPrompt>>,
+    ) -> BenchConfig {
         BenchConfig {
             pin,
             pack_root: self.pack_root.clone(),
             repetitions,
+            system: system.map(std::sync::Arc::clone),
             limits: self.limits.clone(),
         }
     }
@@ -1048,9 +1074,30 @@ pub(crate) fn judged_decision(
     report: &Value,
     verdicts: &std::collections::BTreeMap<String, Judgment>,
 ) -> Result<Decision, String> {
-    let key = report["blind_judgment_key"]
+    // A chave declarada é dado derivado como qualquer outro: esvaziá-la pularia a aprovação
+    // didática inteira, e remapear um bilhete mudaria quem a reprovação elimina. Ela é refeita das
+    // respostas pendentes e só vale se bater exatamente com a que o arquivo traz.
+    let rebuilt = rebuild_blind_key(report)?;
+    let declared = report["blind_judgment_key"]
         .as_object()
         .ok_or_else(|| "O relatório não traz a chave do julgamento cego.".to_string())?;
+    let declared: std::collections::BTreeMap<String, &str> = declared
+        .iter()
+        .map(|(ticket, model)| {
+            model
+                .as_str()
+                .map(|model| (ticket.clone(), model))
+                .ok_or_else(|| format!("O bilhete {ticket} não nomeia um modelo."))
+        })
+        .collect::<Result<_, _>>()?;
+    if declared != rebuilt {
+        return Err(
+            "A chave do julgamento cego não corresponde às respostas pendentes do próprio \
+             relatório. O arquivo foi editado depois de escrito."
+                .to_string(),
+        );
+    }
+    let key = rebuilt;
 
     // Cobertura antes de qualquer conta: um bilhete sem veredito é uma resposta que ninguém leu, e
     // decidir sem ela seria pular exatamente o gate que este comando existe para fechar.
@@ -1084,7 +1131,7 @@ pub(crate) fn judged_decision(
     let rejected: std::collections::BTreeSet<&str> = key
         .iter()
         .filter(|(ticket, _)| verdicts.get(*ticket) == Some(&Judgment::Rejected))
-        .filter_map(|(_, model)| model.as_str())
+        .map(|(_, model)| *model)
         .collect();
 
     let finalists = parse_finalists(report)?;
@@ -1132,6 +1179,56 @@ pub(crate) fn judged_decision(
     })
 }
 
+/// Refaz a chave bilhete → modelo a partir das respostas pendentes registradas no relatório, na
+/// mesma ordem cega que o caderno usou.
+///
+/// Sem isto, a chave seria a única parte do arquivo que o julgamento aceita de olhos fechados — e é
+/// justamente ela que diz quem a reprovação elimina.
+fn rebuild_blind_key(
+    report: &Value,
+) -> Result<std::collections::BTreeMap<String, &'static str>, String> {
+    let mut pending: Vec<(String, String, &'static str)> = Vec::new();
+    for phase in ["phase_one", "phase_two"] {
+        for entry in report[phase].as_array().into_iter().flatten() {
+            let run = &entry["run"];
+            let model = run["model"]
+                .as_str()
+                .ok_or_else(|| format!("Uma corrida de {phase} não nomeia o modelo."))?;
+            let pin = crate::mia::provider::pins::pin(model).ok_or_else(|| {
+                format!("O relatório aponta {model}, que não está na matriz de pins.")
+            })?;
+            for case in run["cases"].as_array().into_iter().flatten() {
+                let case_id = case["id"]
+                    .as_str()
+                    .ok_or_else(|| format!("Um caso de {model} não tem identificador."))?;
+                for repetition in case["repetitions"].as_array().into_iter().flatten() {
+                    if repetition["verdict"].as_str() != Some("pending_judgment") {
+                        continue;
+                    }
+                    let answer = repetition["answer"].as_str().ok_or_else(|| {
+                        format!("Uma resposta pendente de {model} não está no relatório.")
+                    })?;
+                    pending.push((case_id.to_string(), answer.to_string(), pin.model));
+                }
+            }
+        }
+    }
+    pending.sort();
+
+    let mut key = std::collections::BTreeMap::new();
+    let mut seen_in_case = 0;
+    let mut current_case = String::new();
+    for (case_id, _, model) in pending {
+        if case_id != current_case {
+            current_case = case_id.clone();
+            seen_in_case = 0;
+        }
+        seen_in_case += 1;
+        key.insert(format!("{case_id}-{seen_in_case:02}"), model);
+    }
+    Ok(key)
+}
+
 /// Uma corrida da final, RECOMPUTADA das repetições brutas do relatório.
 struct FinalRun {
     pin: &'static ModelPin,
@@ -1144,14 +1241,25 @@ struct FinalRun {
 
 /// Lê a final do relatório e refaz as contas que decidem, a partir do que cada repetição registrou.
 ///
-/// O bloco `score` do relatório é derivado — cômodo para quem lê, e cômodo demais para quem edita:
-/// bastaria escrever `complete: true` e um custo baixo para fabricar um default. Aqui só as
-/// repetições valem, cada campo ausente é recusa em vez de um zero conveniente, e um mesmo modelo
-/// duas vezes na final não faz quórum consigo mesmo.
+/// Estrita por princípio: este é um arquivo de fronteira, e o que decide qual modelo conversa com o
+/// dinheiro de alguém não pode sair de um campo cômodo. O bloco `score` não é lido; campo ausente é
+/// recusa em vez de zero conveniente; os agregados declarados são CONFERIDOS contra a soma das
+/// repetições; e a final precisa cobrir o mesmo catálogo que o relatório diz ter medido — apagar
+/// uma repetição reprovada faria o resto parecer uma suíte perfeita.
 fn parse_finalists(report: &Value) -> Result<Vec<FinalRun>, String> {
     let entries = report["phase_two"]
         .as_array()
         .ok_or_else(|| "O relatório não traz a final.".to_string())?;
+    let catalog: Vec<&str> = report["catalog"]["ids"]
+        .as_array()
+        .ok_or_else(|| "O relatório não diz qual catálogo mediu.".to_string())?
+        .iter()
+        .map(|id| {
+            id.as_str().ok_or_else(|| {
+                "O catálogo do relatório tem um identificador não textual.".to_string()
+            })
+        })
+        .collect::<Result<_, _>>()?;
 
     let mut runs: Vec<FinalRun> = Vec::with_capacity(entries.len());
     for entry in entries {
@@ -1173,34 +1281,63 @@ fn parse_finalists(report: &Value) -> Result<Vec<FinalRun>, String> {
                 "{model} aparece duas vezes na final. Um mesmo modelo não faz quórum consigo mesmo."
             ));
         }
-        let cost_micro_usd = run["total_cost_micro_usd"]
-            .as_i64()
-            .filter(|cost| *cost >= 0)
-            .ok_or_else(|| format!("A corrida de {model} não declara custo válido."))?;
-        let cost_gap = run["cost_gap"]
-            .as_bool()
-            .ok_or_else(|| format!("A corrida de {model} não diz se houve lacuna de custo."))?;
+        let declared_cost = required_i64(run, "total_cost_micro_usd", model)?;
+        let cost_gap = required_bool(run, "cost_gap", model)?;
 
         let cases = run["cases"]
             .as_array()
             .ok_or_else(|| format!("A corrida de {model} não traz os casos."))?;
+        let measured_ids: Vec<&str> = cases
+            .iter()
+            .map(|case| {
+                case["id"]
+                    .as_str()
+                    .ok_or_else(|| format!("Um caso da corrida de {model} não tem identificador."))
+            })
+            .collect::<Result<_, _>>()?;
+        if measured_ids != catalog {
+            return Err(format!(
+                "A corrida de {model} mediu {:?}, e o relatório diz que o catálogo é {catalog:?}.",
+                measured_ids
+            ));
+        }
+
         let mut recomputed = FinalRun {
             pin,
             mechanical_total: 0,
             mechanical_passed: 0,
             injection_failed: 0,
             complete: !cost_gap,
-            cost_micro_usd,
+            cost_micro_usd: declared_cost,
         };
+        let mut summed_cost = 0_i64;
         for case in cases {
-            let family = case["family"].as_str().unwrap_or_default();
-            let measured = case["measured"].as_bool().ok_or_else(|| {
-                format!("Um caso da corrida de {model} não diz se foi medido por inteiro.")
+            let case_id = case["id"].as_str().unwrap_or_default();
+            let family = case["family"]
+                .as_str()
+                .ok_or_else(|| format!("O caso {case_id} de {model} não declara a família."))?;
+            let measured = required_bool(case, "measured", model)?;
+            let aborted = required_bool(case, "aborted", model)?;
+            recomputed.complete = recomputed.complete && measured && !aborted;
+
+            let repetitions = case["repetitions"].as_array().ok_or_else(|| {
+                format!("O caso {case_id} de {model} não traz a lista de repetições.")
             })?;
-            recomputed.complete = recomputed.complete && measured;
-            for repetition in case["repetitions"].as_array().into_iter().flatten() {
+            // Uma repetição apagada faria o resto parecer perfeito: um caso medido tem exatamente
+            // as repetições que a fase determina.
+            if measured && repetitions.len() != PHASE_TWO_REPETITIONS as usize {
+                return Err(format!(
+                    "O caso {case_id} de {model} diz ter sido medido e traz {} repetição(ões); a \
+                     final mede {PHASE_TWO_REPETITIONS}.",
+                    repetitions.len()
+                ));
+            }
+            for repetition in repetitions {
+                summed_cost =
+                    summed_cost.saturating_add(required_i64(repetition, "cost_micro_usd", model)?);
+                required_bool(repetition, "cost_declared", model)?;
                 // A repetição que o orçamento cortou não fala do modelo, nem aqui nem na corrida.
-                if repetition["budget_truncated"].as_bool() == Some(true) {
+                if required_bool(repetition, "budget_truncated", model)? {
                     continue;
                 }
                 match repetition["verdict"].as_str() {
@@ -1224,7 +1361,30 @@ fn parse_finalists(report: &Value) -> Result<Vec<FinalRun>, String> {
                 }
             }
         }
+        // O custo agregado é o desempate da decisão: baixá-lo à mão escolheria o vencedor sem
+        // tocar em nenhuma repetição.
+        if summed_cost != declared_cost {
+            return Err(format!(
+                "A corrida de {model} declara {declared_cost} micro-USD e as repetições somam \
+                 {summed_cost}."
+            ));
+        }
         runs.push(recomputed);
     }
     Ok(runs)
+}
+
+/// Um inteiro não negativo que precisa existir: ausente é recusa, nunca zero.
+fn required_i64(value: &Value, field: &str, model: &str) -> Result<i64, String> {
+    value[field]
+        .as_i64()
+        .filter(|number| *number >= 0)
+        .ok_or_else(|| format!("A corrida de {model} não declara {field} válido."))
+}
+
+/// Um booleano que precisa existir: ausente é recusa, nunca falso.
+fn required_bool(value: &Value, field: &str, model: &str) -> Result<bool, String> {
+    value[field]
+        .as_bool()
+        .ok_or_else(|| format!("A corrida de {model} não declara {field}."))
 }
