@@ -28,9 +28,11 @@ pub(crate) enum Mode {
 /// Um dólar cobre o catálogo inteiro com folga num modelo só, e não cobre um laço desgovernado.
 const SINGLE_CAP_MICRO_USD: i64 = 1_000_000;
 
-/// O teto do bakeoff, decidido junto da spec: cinco candidatos em uma repetição, mais três
-/// repetições nos finalistas, mais o teto de referência, cabem aqui. Quem paga é a chave dedicada,
-/// que tem o próprio limite no painel do provedor.
+/// O teto do bakeoff, fixado pela spec. Ele NÃO é uma medição: o desenho integral são 330
+/// repetições, o que dá cerca de 1,5 centavo por repetição, e ninguém provou ainda que uma rodada
+/// desta bancada cabe nisso. Se não couber, a corrida termina sem decisão dizendo quem não foi
+/// medido — que é a resposta honesta —, e o teto volta à mesa como decisão de spec, nunca como
+/// flag de quem está com pressa. Quem paga é a chave dedicada, com o próprio limite no painel.
 const BAKEOFF_CAP_MICRO_USD: i64 = 5_000_000;
 
 /// O catálogo versionado. Sair dele é recorte, e recorte não decide modelo default.

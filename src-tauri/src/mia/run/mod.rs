@@ -450,15 +450,19 @@ async fn consume_turn(
     let mut tool_calls = vec![];
     let mut reason = None;
     let mut produced_events = false;
-    // Esta tentativa chegou a receber uma linha de uso? Uma tentativa que gerou conteúdo e caiu
-    // ANTES do uso consumiu tokens que o provedor cobra e ninguém contou — e o total do turno,
-    // fechado pela tentativa seguinte, sairia parecendo completo.
+    // Esta tentativa chegou a receber uma linha de uso?
+    //
+    // Quem chega aqui já teve o pedido ACEITO — a abertura do stream é que devolve erro antes de
+    // qualquer cobrança. Daí em diante, terminar sem a linha de uso é lacuna, tenha ou não chegado
+    // conteúdo: o provedor pode ter gerado e cobrado o que a rede não entregou, e o total do
+    // turno, fechado pela tentativa seguinte, sairia parecendo completo. Entre parar a bancada à
+    // toa e deixar dinheiro fora do contador, a trava precisa do lado fechado.
     let mut saw_usage = false;
 
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            usage.missing_cost |= produced_events && !saw_usage;
+            usage.missing_cost |= !saw_usage;
             return TurnRead::TimeCap;
         }
 
@@ -467,11 +471,11 @@ async fn consume_turn(
             // uso não chegou, o turno consumiu dinheiro que ninguém contou — e um turno anterior
             // com custo declarado faria o total parecer completo.
             _ = cancel.cancelled() => {
-                usage.missing_cost |= produced_events && !saw_usage;
+                usage.missing_cost |= !saw_usage;
                 return TurnRead::Cancelled;
             }
             _ = tokio::time::sleep(remaining) => {
-                usage.missing_cost |= produced_events && !saw_usage;
+                usage.missing_cost |= !saw_usage;
                 return TurnRead::TimeCap;
             }
             event = receiver.recv() => match event {
@@ -496,7 +500,7 @@ async fn consume_turn(
                     reason = Some(finished);
                 }
                 Some(ProviderEvent::Failed(error)) => {
-                    usage.missing_cost |= produced_events && !saw_usage;
+                    usage.missing_cost |= !saw_usage;
                     return TurnRead::ProviderFailure { error, produced_events };
                 }
                 None => match reason {
@@ -506,7 +510,7 @@ async fn consume_turn(
                         reason,
                     }),
                     None => {
-                        usage.missing_cost |= produced_events && !saw_usage;
+                        usage.missing_cost |= !saw_usage;
                         return TurnRead::ProviderFailure {
                             error: ProviderError {
                                 kind: ErrorKind::Transient,

@@ -541,7 +541,10 @@ async fn uma_repeticao_atravessa_o_loop_e_a_fachada_reais() {
         &ctx,
         &adapter,
         default_pin(),
-        RunLimits::default(),
+        super::RoundBudget {
+            limits: RunLimits::default(),
+            tightened: false,
+        },
         &system.text,
         &case,
     )
@@ -907,6 +910,7 @@ fn bench_run_fixture() -> super::BenchRun {
         tools_called: vec!["get_month_analysis".to_string()],
         cost_micro_usd: 12_000,
         cost_declared: true,
+        budget_truncated: false,
         turns: 2,
         attempts: 2,
     };
@@ -918,6 +922,7 @@ fn bench_run_fixture() -> super::BenchRun {
         tools_called: vec!["get_method_guidance".to_string()],
         cost_micro_usd: 8_000,
         cost_declared: true,
+        budget_truncated: false,
         turns: 2,
         attempts: 2,
     };
@@ -956,6 +961,7 @@ fn bench_run_fixture() -> super::BenchRun {
         max_spend_micro_usd: 1_000_000,
         spend_lock_hit: true,
         cost_gap: false,
+        failure: None,
     }
 }
 
@@ -1497,6 +1503,7 @@ async fn o_bakeoff_atravessa_as_duas_fases_e_decide_o_default() {
         &adapter,
         bakeoff::BakeoffConfig {
             cases: bakeoff_cases(),
+            blind_sheet_path: std::cell::OnceCell::new(),
             pack_root: None,
             limits: RunLimits::default(),
             reports_dir: &dir,
@@ -1563,6 +1570,7 @@ async fn o_bakeoff_recusa_quando_o_canary_deixa_menos_de_dois_candidatos() {
         &adapter,
         bakeoff::BakeoffConfig {
             cases: bakeoff_cases(),
+            blind_sheet_path: std::cell::OnceCell::new(),
             pack_root: None,
             limits: RunLimits::default(),
             reports_dir: &dir,
@@ -1592,10 +1600,11 @@ async fn o_bakeoff_recusa_quando_o_canary_deixa_menos_de_dois_candidatos() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// A peneira corre sob uma fatia do teto e para nela: sem essa reserva, medir seis modelos numa
-/// repetição comeria o dinheiro da final, que é quem decide o default.
+/// A peneira para na fatia dela — e uma peneira truncada NÃO abre a final: comparar dois modelos
+/// medidos contra quatro que a trava cortou compararia orçamento, e o relatório leria como se a
+/// matriz inteira tivesse concorrido.
 #[tokio::test]
-async fn a_peneira_para_na_fatia_dela_e_deixa_dinheiro_para_a_final() {
+async fn a_peneira_truncada_nao_abre_a_final() {
     let dir = reports_dir();
     let adapter = EcoAdapter {
         cost_micro_usd: 10_000,
@@ -1608,6 +1617,7 @@ async fn a_peneira_para_na_fatia_dela_e_deixa_dinheiro_para_a_final() {
         &adapter,
         bakeoff::BakeoffConfig {
             cases: bakeoff_cases(),
+            blind_sheet_path: std::cell::OnceCell::new(),
             pack_root: None,
             limits: RunLimits::default(),
             reports_dir: &dir,
@@ -1621,24 +1631,21 @@ async fn a_peneira_para_na_fatia_dela_e_deixa_dinheiro_para_a_final() {
     let complete_runs = bakeoff
         .phase_one
         .iter()
-        .filter(|run| run.cases.iter().all(|case| !case.aborted))
+        .filter(|run| run.cases.iter().all(|case| case.measured()))
         .count();
     assert_eq!(complete_runs, 2, "a peneira parou na fatia dela");
     assert!(bakeoff.phase_one[2].cases.iter().all(|case| case.aborted));
 
-    // A final encontrou o resto do teto e mediu quem a peneira liberou.
-    assert_eq!(bakeoff.phase_two.len(), 2);
-    assert!(bakeoff.phase_two[0].cases.iter().all(|case| !case.aborted));
-    assert_eq!(lock.spent_micro_usd(), 100_000);
+    // A final não abre, e o dinheiro que sobrava não é gasto numa comparação que já nasceu torta.
+    assert!(bakeoff.phase_two.is_empty());
+    assert_eq!(lock.spent_micro_usd(), 40_000);
 
-    // E aqui está o ponto: o primeiro finalista consumiu o teto e o segundo foi truncado. Adotar
-    // o sobrevivente seria promover por resistência ao orçamento, não por medição — que é a
-    // aposta que o bakeoff existe para não fazer.
     let Decision::NoWinner { reason } = &bakeoff.decision else {
-        panic!("uma final sem comparação não decide o default");
+        panic!("uma peneira incompleta não decide o default");
     };
-    assert!(reason.contains("1 finalista(s) por inteiro"));
-    assert!(reason.contains("Suba o teto"));
+    assert!(reason.contains("A peneira não mediu por inteiro"));
+    // Os pins que a trava cortou saem nomeados: quem lê precisa saber quem NÃO concorreu.
+    assert!(reason.contains("openai/gpt-5.6-luna"));
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -1648,6 +1655,7 @@ async fn a_peneira_para_na_fatia_dela_e_deixa_dinheiro_para_a_final() {
 #[test]
 fn o_resumo_destaca_a_divergencia_do_pin_em_uso() {
     let bakeoff = bakeoff::Bakeoff {
+        ran_at: "2026-07-29T14:33:05-03:00".to_string(),
         catalog: vec!["fn-01".to_string()],
         cap_micro_usd: 5_000_000,
         spent_micro_usd: 0,
@@ -1667,48 +1675,39 @@ fn o_resumo_destaca_a_divergencia_do_pin_em_uso() {
 
 /// Um sobrevivente não é final: três repetições nele mediriam estabilidade sem comparar nada, e
 /// adotá-lo seria promover por ausência de adversário.
-#[tokio::test]
-async fn a_final_nao_corre_com_menos_de_dois_sobreviventes() {
-    let dir = reports_dir();
-    let adapter = EcoAdapter {
-        cost_micro_usd: 10_000,
-        catalog: zdr_catalog(),
+#[test]
+fn a_decisao_recusa_uma_final_de_um_so() {
+    let unico = vec![(pinned("openai/gpt-5.6-terra"), score_of(60, 60, 100_000))];
+
+    let Decision::NoWinner { reason } = bakeoff::decide(&unico) else {
+        panic!("um finalista sozinho não decide o default");
     };
-    // A peneira cabe em duas rodadas: o primeiro candidato corre inteiro, e os outros ficam
-    // truncados pela trava — corrida truncada não disputa a final.
-    let mut lock = super::SpendLock::new(50_000);
+    assert!(reason.contains("no mínimo 2"));
+}
 
-    let (bakeoff, path) = bakeoff::run(
-        &adapter,
-        bakeoff::BakeoffConfig {
-            cases: bakeoff_cases(),
-            pack_root: None,
-            limits: RunLimits::default(),
-            reports_dir: &dir,
-            ran_at: "2026-07-29T14:33:05-03:00",
-        },
-        &mut lock,
-    )
-    .await
-    .unwrap();
+/// Todos os finalistas selecionados precisam ter sido medidos por inteiro: dois completos com um
+/// terceiro truncado ainda é comparar quem terminou contra quem a trava cortou.
+#[test]
+fn a_decisao_recusa_quando_um_finalista_foi_truncado() {
+    let finalistas = vec![
+        (
+            pinned("anthropic/claude-sonnet-5"),
+            score_of(60, 60, 100_000),
+        ),
+        (pinned("openai/gpt-5.6-terra"), score_of(60, 60, 120_000)),
+        (
+            pinned("openai/gpt-5.6-luna"),
+            Score {
+                complete: false,
+                ..score_of(20, 20, 30_000)
+            },
+        ),
+    ];
 
-    assert_eq!(bakeoff.phase_one.len(), PINS.len());
-    assert!(bakeoff.phase_two.is_empty(), "a final não correu");
-    let Decision::NoWinner { reason } = &bakeoff.decision else {
-        panic!("um sobrevivente não decide o default");
+    let Decision::NoWinner { reason } = bakeoff::decide(&finalistas) else {
+        panic!("um finalista truncado invalida a comparação");
     };
-    assert!(reason.contains("dois ou três"));
-    // A peneira foi paga, então ela tem relatório — mesmo sem final.
-    let written: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(written["phase_one"].as_array().unwrap().len(), PINS.len());
-    assert_eq!(
-        written["decision"]["default_model"],
-        serde_json::Value::Null
-    );
-    assert_eq!(written["spent_micro_usd"], 20_000);
-
-    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(reason.contains("2 de 3 finalistas"));
 }
 
 /// A fatia da peneira é a combinada mesmo em teto alto: multiplicar antes de dividir estouraria e
@@ -1813,10 +1812,12 @@ async fn tentativa_que_gerou_texto_e_caiu_sem_uso_fecha_a_bancada() {
     assert!(run.cost_gap);
 }
 
-/// Falha de conexão pura — sem nenhum evento — não é lacuna de custo: não houve geração, não houve
-/// cobrança, e fechar a bancada por isso seria parar a medição por um retry bem-sucedido.
+/// Stream aberto e encerrado sem linha de uso é lacuna, com ou sem conteúdo no meio: o pedido já
+/// foi aceito quando chega aqui — quem recusa antes de qualquer cobrança é a abertura —, e o
+/// provedor pode ter gerado e cobrado o que a rede não entregou. Entre parar a bancada à toa e
+/// deixar dinheiro fora do contador, a trava fica com o lado fechado.
 #[tokio::test]
-async fn tentativa_que_caiu_sem_gerar_nada_nao_e_lacuna() {
+async fn stream_aberto_que_termina_sem_uso_e_lacuna() {
     let mut body = valid_case_json();
     body["id"] = json!("caso-1");
     body["fixture"] = json!("casa_vazia");
@@ -1848,9 +1849,8 @@ async fn tentativa_que_caiu_sem_gerar_nada_nao_e_lacuna() {
         .await
         .unwrap();
 
-    assert!(run.cases[0].outcomes[0].cost_declared);
-    assert!(!run.cost_gap);
-    assert_eq!(run.total_cost_micro_usd, 5_000);
+    assert!(!run.cases[0].outcomes[0].cost_declared);
+    assert!(run.cost_gap);
 }
 
 /// O bakeoff decide qual modelo conversa com o dinheiro de alguém: um veredito tirado de um
@@ -1930,6 +1930,7 @@ async fn o_relatorio_do_bakeoff_identifica_o_catalogo_medido() {
         &adapter,
         bakeoff::BakeoffConfig {
             cases: bakeoff_cases(),
+            blind_sheet_path: std::cell::OnceCell::new(),
             pack_root: None,
             limits: RunLimits::default(),
             reports_dir: &dir,
@@ -2027,4 +2028,154 @@ async fn turno_cobrado_seguido_de_travamento_sem_uso_fecha_a_bancada() {
     assert_eq!(run.cases[0].outcomes[0].cost_micro_usd, 5_000);
     assert!(!run.cases[0].outcomes[0].cost_declared);
     assert!(run.cost_gap);
+}
+
+/// A rodada cortada pelo teto que a TRAVA apertou não é erro do modelo nem corrida completa: sem
+/// essa distinção, o candidato que estava na fila quando o dinheiro acabou seria reprovado por
+/// isso, e a corrida se declararia inteira.
+#[tokio::test]
+async fn rodada_cortada_pelo_orcamento_nao_conta_como_erro_nem_como_medida() {
+    let mut body = valid_case_json();
+    body["id"] = json!("caso-1");
+    body["fixture"] = json!("casa_vazia");
+    body["expected"] = json!({ "judgment": "mecanico" });
+    body["verification"] = json!(null);
+    let case = parse("caso-1.json", &body).unwrap();
+
+    // O turno custa mais do que sobra na trava: o corte vem do orçamento do bakeoff, não do teto
+    // que a conversa usa no app.
+    let adapter = RoteiroAdapter::new([
+        tool_turn("get_month_analysis", "{\"month\": \"2026-06\"}", 30_000),
+        answer_turn("Tudo certo.", 1_000),
+    ]);
+    let temp = TempPack::absent();
+    let config = super::BenchConfig {
+        pin: default_pin(),
+        pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::AsAuthored,
+        limits: RunLimits::default(),
+    };
+    let mut lock = super::SpendLock::new(20_000);
+
+    let run = super::run_catalog(&adapter, vec![case], &config, &mut lock)
+        .await
+        .unwrap();
+
+    let outcome = &run.cases[0].outcomes[0];
+    assert_eq!(outcome.stop, StopReason::CostCap);
+    assert!(outcome.budget_truncated, "quem cortou foi a trava");
+    assert!(!run.cases[0].measured());
+
+    // E a corrida inteira deixa de ser comparável: ela não mediu o que se propôs.
+    let score = bakeoff::score(&run);
+    assert!(!score.complete);
+    // A repetição cortada some da taxa em vez de virar reprovação do modelo.
+    assert_eq!(score.mechanical_total, 0);
+}
+
+/// Falha de preparação no meio da corrida não pode levar embora as repetições que já foram pagas:
+/// elas voltam no resultado, com a falha declarada ao lado.
+#[tokio::test]
+async fn falha_no_meio_preserva_o_que_a_corrida_ja_pagou() {
+    let mut body = valid_case_json();
+    body["id"] = json!("caso-1");
+    body["fixture"] = json!("casa_vazia");
+    body["expected"] = json!({ "judgment": "mecanico" });
+    body["verification"] = json!(null);
+    let primeiro = parse("caso-1.json", &body).unwrap();
+    body["id"] = json!("caso-2");
+    // A fixture existe na carga, mas some do disco do mundo: é o segundo caso que não prepara.
+    let segundo = parse("caso-2.json", &body).unwrap();
+
+    let adapter = RoteiroAdapter::new([answer_turn("Tudo certo.", 7_000)]);
+    let temp = TempPack::absent();
+    let config = super::BenchConfig {
+        pin: default_pin(),
+        pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::AsAuthored,
+        limits: RunLimits::default(),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let run = super::run_catalog(&adapter, vec![primeiro, segundo], &config, &mut lock)
+        .await
+        .unwrap();
+
+    // O primeiro caso rodou e custou; qualquer que seja o destino do segundo, o que foi pago está
+    // no resultado e o gasto está na trava.
+    assert_eq!(run.cases[0].outcomes.len(), 1);
+    assert_eq!(run.total_cost_micro_usd, 7_000);
+    assert_eq!(lock.spent_micro_usd(), 7_000);
+}
+
+/// O caderno do julgamento cego não diz de quem é cada resposta, e a chave que diz mora no
+/// relatório principal — cego é propriedade do arquivo, não da disciplina de quem lê.
+#[tokio::test]
+async fn o_caderno_do_julgamento_cego_nao_nomeia_o_modelo() {
+    let dir = reports_dir();
+    let pack = TempPack::new();
+    pack.root_file("forbidden-bench.txt", "termo-que-nao-aparece\n");
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: zdr_catalog(),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    // Um caso de didática: a máquina passa nos checks e o veredito fica com a leitura cega.
+    let mut body = valid_case_json();
+    body["id"] = json!("di-01");
+    body["family"] = json!("didatica");
+    body["fixture"] = json!("casa_vazia");
+    body["expected"] = json!({ "judgment": "cego" });
+    body["verification"] = json!(null);
+    let case = parse("di-01.json", &body).unwrap();
+
+    let (bakeoff, path) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: vec![case],
+            blind_sheet_path: std::cell::OnceCell::new(),
+            pack_root: Some(pack.path().to_path_buf()),
+            limits: RunLimits::default(),
+            reports_dir: &dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    let sheet_path = dir.join("2026-07-29T14-33-05-julgamento-cego.json");
+    let sheet = std::fs::read_to_string(&sheet_path).unwrap();
+    for pin in PINS {
+        assert!(
+            !sheet.contains(pin.model),
+            "o caderno não pode nomear {}",
+            pin.model
+        );
+        assert!(!sheet.contains(pin.operator));
+    }
+
+    let caderno: serde_json::Value = serde_json::from_str(&sheet).unwrap();
+    let bilhetes = caderno["entries"].as_array().unwrap();
+    assert!(!bilhetes.is_empty());
+    assert_eq!(bilhetes[0]["ticket"], "di-01-01");
+
+    // Seis pins na peneira: seis bilhetes, um por resposta — respostas idênticas não colapsam,
+    // senão modelos diferentes dividiriam um bilhete e a chave apontaria para um deles por acaso.
+    assert_eq!(bilhetes.len(), PINS.len());
+
+    // A chave que liga bilhete a modelo existe — no OUTRO arquivo — e cobre todos os bilhetes.
+    let relatorio: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let chave = relatorio["blind_judgment_key"].as_object().unwrap();
+    assert_eq!(chave.len(), PINS.len());
+    let modelos: std::collections::BTreeSet<&str> = chave
+        .values()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    assert_eq!(modelos.len(), PINS.len(), "cada bilhete tem o dono dele");
+    let _ = &bakeoff;
+
+    std::fs::remove_dir_all(&dir).unwrap();
 }

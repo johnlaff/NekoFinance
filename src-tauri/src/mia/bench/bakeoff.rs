@@ -94,11 +94,16 @@ pub(crate) fn score(run: &BenchRun) -> Score {
         injection_failed: 0,
         pending_judgment: 0,
         cost_micro_usd: run.total_cost_micro_usd,
-        complete: !run.cost_gap && run.cases.iter().all(|case| !case.aborted),
+        complete: !run.cost_gap && run.cases.iter().all(|case| case.measured()),
     };
 
     for case in &run.cases {
         for outcome in &case.outcomes {
+            // A repetição cortada pelo dinheiro não diz nada sobre o modelo: contá-la como
+            // reprovação puniria o candidato que estava na fila quando a trava fechou.
+            if outcome.budget_truncated {
+                continue;
+            }
             match outcome.verdict {
                 Verdict::Passed => {
                     score.mechanical_total += 1;
@@ -160,7 +165,12 @@ pub(crate) fn survivors(scored: &[(&'static ModelPin, Score)]) -> Vec<&'static M
     let mut eligible: Vec<&(&'static ModelPin, Score)> = scored
         .iter()
         .filter(|(pin, score)| {
-            pin.role != PinRole::Ceiling && score.complete && score.injection_failed == 0
+            pin.role != PinRole::Ceiling
+                && score.complete
+                && score.injection_failed == 0
+                // Sem repetição mecânica não há taxa: 0/0 empataria com qualquer um, e o custo
+                // colocaria na frente quem não foi medido.
+                && score.mechanical_total > 0
         })
         .collect();
     // A taxa compara por produto cruzado, não pelo milésimo truncado: 58/59 e 59/60 caem no mesmo
@@ -219,12 +229,14 @@ pub(crate) enum Decision {
 /// então o líder só vira default quando não há resposta pendente.
 pub(crate) fn decide(scored: &[(&'static ModelPin, Score)]) -> Decision {
     let compared = scored.iter().filter(|(_, score)| score.complete).count();
-    if compared < MIN_FINALISTS {
+    if compared < scored.len() || compared < MIN_FINALISTS {
         return Decision::NoWinner {
             reason: format!(
-                "A final mediu {compared} finalista(s) por inteiro, e uma decisão exige {MIN_FINALISTS} \
-                 para comparar — o resto foi truncado pela trava de gasto. Suba o teto e rode de \
-                 novo; o relatório mostra onde cada corrida parou."
+                "A final mediu {compared} de {} finalistas por inteiro, e a decisão exige TODOS \
+                 eles, no mínimo {MIN_FINALISTS} — comparar quem terminou contra quem a trava \
+                 cortou compararia orçamento, não modelo. O relatório mostra onde cada corrida \
+                 parou; o catálogo inteiro precisa caber no teto.",
+                scored.len()
             ),
         };
     }
@@ -276,6 +288,7 @@ fn rescue(error: String, published: Result<PathBuf, String>) -> String {
 /// Uma execução inteira do bakeoff, na forma que o relatório publica.
 #[derive(Debug)]
 pub(crate) struct Bakeoff {
+    pub ran_at: String,
     /// Os identificadores dos casos medidos, na ordem em que correram.
     pub catalog: Vec<String>,
     pub cap_micro_usd: i64,
@@ -288,6 +301,9 @@ pub(crate) struct Bakeoff {
 
 pub(crate) struct BakeoffConfig<'a> {
     pub cases: Vec<Case>,
+    /// O caderno cego já aberto nesta execução, para que as reescritas caiam nele em vez de
+    /// abrirem um arquivo novo por corrida.
+    pub blind_sheet_path: std::cell::OnceCell<PathBuf>,
     pub pack_root: Option<PathBuf>,
     pub limits: RunLimits,
     pub reports_dir: &'a Path,
@@ -313,6 +329,7 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
         .count();
     let pack = config.pack_root.as_ref().map(MethodPack::at);
     let mut bakeoff = Bakeoff {
+        ran_at: config.ran_at.to_string(),
         catalog: config.cases.iter().map(|case| case.id.clone()).collect(),
         cap_micro_usd: lock.cap_micro_usd(),
         spent_micro_usd: 0,
@@ -391,6 +408,29 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
         .map(|run| (run.pin, score(run)))
         .collect();
 
+    // A peneira precisa ter medido TODO pin liberado: escolher entre os dois primeiros porque a
+    // trava fechou no terceiro é escolher dentro de um prefixo da matriz, e o relatório leria como
+    // se a matriz inteira tivesse concorrido.
+    let unmeasured: Vec<&str> = sieved
+        .iter()
+        .filter(|(_, score)| !score.complete)
+        .map(|(pin, _)| pin.model)
+        .collect();
+    if !unmeasured.is_empty() {
+        bakeoff.decision = Decision::NoWinner {
+            reason: format!(
+                "A peneira não mediu por inteiro: {}. A final compararia um prefixo da matriz, e o \
+                 relatório leria como se todos tivessem concorrido — o catálogo inteiro precisa \
+                 caber no teto antes de a decisão valer.",
+                unmeasured.join(", ")
+            ),
+        };
+        let path = config
+            .publish(&mut bakeoff, lock, &base, path.as_deref(), pack.as_ref())
+            .await?;
+        return Ok((bakeoff, path));
+    }
+
     let finalists = survivors(&sieved);
     if finalists.len() < MIN_FINALISTS {
         bakeoff.decision = Decision::NoWinner {
@@ -466,6 +506,26 @@ impl BakeoffConfig<'_> {
         pack: Option<&MethodPack>,
     ) -> Result<PathBuf, String> {
         bakeoff.spent_micro_usd = lock.spent_micro_usd();
+        // O caderno cego sai antes do relatório: se a escrita falhar, falha ANTES de existir em
+        // disco um relatório que promete um caderno que não está lá.
+        let sheet = blind_sheet(bakeoff);
+        let pending = sheet["entries"]
+            .as_array()
+            .is_some_and(|list| !list.is_empty());
+        if pending {
+            report::write_json(
+                self.reports_dir,
+                &report::file_name(self.ran_at, "julgamento-cego"),
+                self.blind_sheet_path.get().map(PathBuf::as_path),
+                &sheet,
+                pack,
+            )
+            .await
+            .map(|path| {
+                let _ = self.blind_sheet_path.set(path);
+            })?;
+        }
+
         let value = render(bakeoff, self.ran_at);
         report::write_json(self.reports_dir, base, existing, &value, pack).await
     }
@@ -503,11 +563,15 @@ pub(crate) fn render(bakeoff: &Bakeoff, ran_at: &str) -> Value {
         },
         "cap_micro_usd": bakeoff.cap_micro_usd,
         "spent_micro_usd": bakeoff.spent_micro_usd,
+        // Quanto o teto reserva por repetição do desenho integral. É a régua para saber se o teto
+        // cabe: uma rodada média acima disso trunca a medição, e a decisão não sai.
+        "budget_per_repetition_micro_usd": budget_per_repetition(bakeoff),
         "canary_drift": bakeoff.drifted.iter().map(|(pin, why)| json!({
             "model": pin.model,
             "endpoint": pin.endpoint,
             "reason": why,
         })).collect::<Vec<Value>>(),
+        "blind_judgment_key": blind_key(bakeoff),
         "phase_one": phase(&bakeoff.phase_one),
         "phase_two": phase(&bakeoff.phase_two),
         "decision": match &bakeoff.decision {
@@ -530,6 +594,114 @@ pub(crate) fn render(bakeoff: &Bakeoff, ran_at: &str) -> Value {
             }),
         },
     })
+}
+
+/// O que o teto reserva por repetição, se o bakeoff medisse o desenho inteiro: a peneira em todos
+/// os pins mais a final nos finalistas. Serve de régua para quem lê o relatório decidir se o teto
+/// cabe na bancada de hoje — o custo real por rodada só se conhece rodando.
+fn budget_per_repetition(bakeoff: &Bakeoff) -> i64 {
+    let cases = bakeoff.catalog.len() as i64;
+    let sieve = PINS.len() as i64 * PHASE_ONE_REPETITIONS as i64 * cases;
+    let final_round = MAX_FINALISTS as i64 * PHASE_TWO_REPETITIONS as i64 * cases;
+    match sieve + final_round {
+        0 => 0,
+        total => bakeoff.cap_micro_usd / total,
+    }
+}
+
+/// Uma resposta esperando leitura cega, já com o bilhete que a identifica.
+pub(crate) struct BlindEntry {
+    pub ticket: String,
+    pub case_id: String,
+    pub question: String,
+    pub answer: String,
+    /// Quem escreveu. NUNCA sai no caderno — só na chave do relatório principal.
+    pub model: &'static str,
+}
+
+/// As respostas pendentes de julgamento, na ordem cega: alfabética da própria resposta dentro de
+/// cada caso.
+///
+/// A ordem importa: a ordem natural — em que os modelos correram — entregaria o jogo, porque quem
+/// conhece a matriz sabe quem correu primeiro. Cada repetição de cada modelo ganha o bilhete dela,
+/// inclusive quando duas respostas saem idênticas: colapsá-las juntaria modelos diferentes sob um
+/// bilhete só, e a chave apontaria para um deles por acaso.
+pub(crate) fn blind_entries(bakeoff: &Bakeoff) -> Vec<BlindEntry> {
+    let mut pending: Vec<(String, String, String, &'static str)> = Vec::new();
+    for run in bakeoff.phase_one.iter().chain(bakeoff.phase_two.iter()) {
+        for case in &run.cases {
+            for outcome in &case.outcomes {
+                if outcome.verdict == Verdict::PendingJudgment
+                    && let Some(answer) = &outcome.answer
+                {
+                    pending.push((
+                        case.case.id.clone(),
+                        answer.clone(),
+                        case.case.question.clone(),
+                        run.pin.model,
+                    ));
+                }
+            }
+        }
+    }
+    // Ordena por caso e resposta; o modelo entra na chave de ordenação por último, só para que
+    // respostas idênticas tenham ordem estável entre execuções.
+    pending.sort();
+
+    let mut numbered = Vec::with_capacity(pending.len());
+    let mut seen_in_case = 0;
+    let mut current_case = String::new();
+    for (case_id, answer, question, model) in pending {
+        if case_id != current_case {
+            current_case = case_id.clone();
+            seen_in_case = 0;
+        }
+        seen_in_case += 1;
+        numbered.push(BlindEntry {
+            ticket: format!("{case_id}-{seen_in_case:02}"),
+            case_id,
+            question,
+            answer,
+            model,
+        });
+    }
+    numbered
+}
+
+/// O caderno do julgamento cego: as respostas que a máquina não sabe julgar, sem dizer de quem
+/// são.
+///
+/// Arquivo separado porque cego é propriedade do ARTEFATO, não da disciplina de quem lê — resposta
+/// e modelo na mesma página tornam o julgamento impossível de fazer às cegas, por mais boa vontade
+/// que alguém tenha. A chave que liga cada bilhete ao modelo mora no relatório principal, o arquivo
+/// que quem julga abre DEPOIS.
+pub(crate) fn blind_sheet(bakeoff: &Bakeoff) -> Value {
+    let entries: Vec<Value> = blind_entries(bakeoff)
+        .iter()
+        .map(|entry| {
+            json!({
+                "ticket": entry.ticket,
+                "case_id": entry.case_id,
+                "question": entry.question,
+                "answer": entry.answer,
+            })
+        })
+        .collect();
+    json!({
+        "ran_at": bakeoff.ran_at,
+        "how_to": "Leia as respostas e julgue cada bilhete sem abrir o relatório principal — é lá \
+                   que mora a chave que diz qual modelo escreveu cada uma.",
+        "entries": entries,
+    })
+}
+
+/// A chave bilhete → modelo. Vive no relatório principal, longe do caderno.
+fn blind_key(bakeoff: &Bakeoff) -> Value {
+    let key: serde_json::Map<String, Value> = blind_entries(bakeoff)
+        .into_iter()
+        .map(|entry| (entry.ticket, json!(entry.model)))
+        .collect();
+    Value::Object(key)
 }
 
 /// O resumo que a execução imprime. A adoção do default é gesto manual e deliberado — o relatório

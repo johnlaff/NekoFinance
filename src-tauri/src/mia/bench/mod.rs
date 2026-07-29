@@ -137,6 +137,11 @@ pub(crate) struct RepetitionOutcome {
     /// Falso quando algum turno terminou sem custo declarado pelo provedor — a repetição custou
     /// dinheiro que o contador não viu, e a trava do runner deixa de ser confiável.
     pub cost_declared: bool,
+    /// A rodada foi cortada pelo teto que a TRAVA apertou, não pelo teto da conversa. É outra
+    /// coisa que uma resposta ruim: o modelo não terminou de responder porque o dinheiro do
+    /// bakeoff acabou, e contar isso como erro dele — ou a corrida como completa — inventaria um
+    /// resultado que ninguém mediu.
+    pub budget_truncated: bool,
     pub turns: u32,
     pub attempts: u32,
 }
@@ -148,6 +153,14 @@ pub(crate) struct CaseRun {
     /// A trava de gasto fechou antes de este caso terminar as repetições. Abortado é estado
     /// declarado, nunca linha que some: o relatório diz o que NÃO foi medido.
     pub aborted: bool,
+}
+
+impl CaseRun {
+    /// O caso foi medido inteiro: nem faltaram repetições, nem alguma delas parou no meio porque
+    /// o dinheiro acabou.
+    pub(crate) fn measured(&self) -> bool {
+        !self.aborted && !self.outcomes.iter().any(|outcome| outcome.budget_truncated)
+    }
 }
 
 #[derive(Debug)]
@@ -164,6 +177,10 @@ pub(crate) struct BenchRun {
     /// total baixo porque tudo passou são histórias diferentes.
     pub max_spend_micro_usd: i64,
     pub spend_lock_hit: bool,
+    /// A corrida parou por falha operacional — pool, migração, fixture, consentimento. O que ela
+    /// já mediu (e já pagou) fica aqui: um erro que levasse embora os outcomes deixaria dinheiro
+    /// gasto fora do relatório.
+    pub failure: Option<String>,
     /// O provedor deixou de declarar custo em alguma repetição. A bancada fecha na hora — sem
     /// custo declarado a trava do runner é cega, e "custo zero" no relatório significaria "não
     /// medi", nunca "foi de graça".
@@ -181,13 +198,21 @@ pub(crate) fn tools_called(transcript: &[Value]) -> Vec<String> {
         .collect()
 }
 
+/// O teto de custo vigente numa repetição, e de onde ele veio.
+pub(crate) struct RoundBudget {
+    pub limits: RunLimits,
+    /// O teto foi reduzido pelo que sobrava na trava, e já não é o teto que a conversa usa no app.
+    /// É o que distingue "o modelo gastou demais" de "acabou o dinheiro do bakeoff".
+    pub tightened: bool,
+}
+
 /// Roda UMA repetição de um caso num pool já semeado, atravessando o loop real.
 pub(crate) async fn run_repetition<A: ProviderAdapter>(
     pool: &SqlitePool,
     ctx: &Context,
     adapter: &A,
     pin: &'static ModelPin,
-    limits: RunLimits,
+    budget: RoundBudget,
     system: &str,
     case: &Case,
 ) -> RepetitionOutcome {
@@ -213,7 +238,7 @@ pub(crate) async fn run_repetition<A: ProviderAdapter>(
         ctx,
         adapter,
         pin,
-        limits,
+        limits: budget.limits,
         cancel: CancelToken::new(),
         events,
     };
@@ -235,6 +260,10 @@ pub(crate) async fn run_repetition<A: ProviderAdapter>(
         && outcome.cost_declared
         && (outcome.turns == 0 || outcome.cost_micro_usd > 0);
 
+    // Quem cortou a rodada: o teto da conversa ou o dinheiro que sobrava? Só o segundo desqualifica
+    // a medição — o primeiro é um resultado legítimo sobre o modelo.
+    let budget_truncated = outcome.stop == StopReason::CostCap && budget.tightened;
+
     let observed = grade::Observed {
         stop: outcome.stop,
         answer: outcome.answer.clone(),
@@ -251,6 +280,7 @@ pub(crate) async fn run_repetition<A: ProviderAdapter>(
         tools_called: observed.tools_called,
         cost_micro_usd: outcome.cost_micro_usd,
         cost_declared,
+        budget_truncated,
         turns: outcome.turns,
         attempts: outcome.attempts,
     }
@@ -297,10 +327,19 @@ pub(crate) async fn run_catalog<A: ProviderAdapter>(
     let mut runs: Vec<CaseRun> = Vec::with_capacity(cases.len());
     let mut total_cost_micro_usd = 0_i64;
     let mut spend_lock_hit = false;
+    let mut failure: Option<String> = None;
 
     for case in cases {
         let mut outcomes = Vec::new();
         let mut aborted = false;
+        if failure.is_some() {
+            runs.push(CaseRun {
+                case,
+                outcomes,
+                aborted: true,
+            });
+            continue;
+        }
         let repetitions = match config.repetitions {
             Repetitions::AsAuthored => case.repetitions,
             Repetitions::Fixed(fixed) => fixed,
@@ -313,22 +352,17 @@ pub(crate) async fn run_catalog<A: ProviderAdapter>(
                 break;
             }
 
-            let pool = SqlitePoolOptions::new()
-                // Uma conexão, como a de produção: pool folgado esconderia deadlock de transação.
-                .max_connections(1)
-                .connect("sqlite::memory:")
-                .await
-                .map_err(|error| format!("O pool da bancada não abriu: {error}."))?;
-            sqlx::migrate!("./migrations")
-                .run(&pool)
-                .await
-                .map_err(|error| format!("As migrações da bancada falharam: {error}."))?;
-            fixtures::seed(&pool, &case.fixture).await?;
-            // O consentimento é semeado porque quem roda a bancada JÁ consentiu — a chave
-            // dedicada é dela — e o loop recusa rodada sem registro, na bancada como no app.
-            consent::grant(&pool, config.pin, &fixtures::bench_clock().as_of())
-                .await
-                .map_err(|error| format!("O consentimento da bancada não gravou: {error}."))?;
+            // A preparação da repetição é falível, e falhar aqui NÃO pode descartar o que as
+            // repetições anteriores já pagaram: a falha vira estado da corrida e o laço para.
+            let prepared = prepare(config, &case.fixture).await;
+            let pool = match prepared {
+                Ok(pool) => pool,
+                Err(error) => {
+                    failure = Some(error);
+                    aborted = true;
+                    break;
+                }
+            };
 
             let ctx = Context {
                 clock: fixtures::bench_clock(),
@@ -337,19 +371,20 @@ pub(crate) async fn run_catalog<A: ProviderAdapter>(
             // O teto da rodada é o menor entre o da conversa e o que sobra na trava: assim o teto
             // acumulado é respeitado pelo corte DENTRO da rodada, e não só pela decisão de não
             // abrir a próxima.
-            let limits = RunLimits {
-                max_cost_micro_usd: config
-                    .limits
-                    .max_cost_micro_usd
-                    .min(lock.remaining_micro_usd()),
-                ..config.limits.clone()
+            let remaining = lock.remaining_micro_usd();
+            let budget = RoundBudget {
+                tightened: remaining < config.limits.max_cost_micro_usd,
+                limits: RunLimits {
+                    max_cost_micro_usd: config.limits.max_cost_micro_usd.min(remaining),
+                    ..config.limits.clone()
+                },
             };
             let outcome = run_repetition(
                 &pool,
                 &ctx,
                 adapter,
                 config.pin,
-                limits,
+                budget,
                 &system.text,
                 &case,
             )
@@ -374,7 +409,30 @@ pub(crate) async fn run_catalog<A: ProviderAdapter>(
         max_spend_micro_usd: lock.phase_cap_micro_usd(),
         spend_lock_hit,
         cost_gap: lock.cost_gap(),
+        failure,
     })
+}
+
+/// Monta o mundo de UMA repetição: pool novo, migrado, semeado e consentido. Cada repetição mede o
+/// modelo sobre o mesmo mundo, nunca sobre o rastro da anterior.
+async fn prepare(config: &BenchConfig, fixture: &str) -> Result<SqlitePool, String> {
+    let pool = SqlitePoolOptions::new()
+        // Uma conexão, como a de produção: pool folgado esconderia deadlock de transação.
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .map_err(|error| format!("O pool da bancada não abriu: {error}."))?;
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .map_err(|error| format!("As migrações da bancada falharam: {error}."))?;
+    fixtures::seed(&pool, fixture).await?;
+    // O consentimento é semeado porque quem roda a bancada JÁ consentiu — a chave dedicada é dela
+    // — e o loop recusa rodada sem registro, na bancada como no app.
+    consent::grant(&pool, config.pin, &fixtures::bench_clock().as_of())
+        .await
+        .map_err(|error| format!("O consentimento da bancada não gravou: {error}."))?;
+    Ok(pool)
 }
 
 /// A porta do binário. Vive no lib para que a bancada inteira seja exercitável pela suíte; o
@@ -459,6 +517,7 @@ async fn execute(cli: cli::CliArgs, key: String) -> Result<String, String> {
             &adapter,
             bakeoff::BakeoffConfig {
                 cases,
+                blind_sheet_path: std::cell::OnceCell::new(),
                 pack_root: cli.pack_root.clone(),
                 limits: RunLimits::default(),
                 reports_dir: &cli.reports_dir,

@@ -87,7 +87,9 @@ O bakeoff mede os candidatos e é o resultado — não a intuição — que esco
 
 **A ordem dos candidatos** lê o benchmark de agente bancário acima do índice geral de inteligência, e decide duas coisas pequenas: quem corre primeiro (o dinheiro chega aos mais promissores antes de a trava fechar) e quem ganha empate. O gate é a suíte própria. A ordem vive em `prior_rank`, na matriz de pins.
 
-**A decisão** exige que a final tenha comparado: dois finalistas medidos por inteiro. Com um só — porque a trava truncou o resto —, não há default, e o relatório diz para subir o teto e rodar de novo; adotar o sobrevivente seria promover por resistência ao orçamento, não por medição. Entre os que zeraram a suíte mecânica, ganha o mais barato.
+**A decisão** exige que a medição tenha sido inteira. A peneira precisa ter medido todo pin liberado — comparar dois modelos contra quatro que a trava cortou compararia orçamento, e o relatório leria como se a matriz inteira tivesse concorrido. A final precisa ter medido todos os finalistas selecionados, no mínimo dois. Faltando qualquer um, não há default: o relatório nomeia quem ficou de fora. Entre os que zeraram a suíte mecânica, ganha o mais barato.
+
+Uma repetição cortada pelo teto que a trava apertou não conta como erro do modelo nem como medição: quem estava na fila quando o dinheiro acabou não é reprovado por isso, e a corrida deixa de ser comparável.
 
 Enquanto houver resposta de didática esperando leitura cega, o relatório traz `leading_model` e mantém `default_model` nulo: o gate da spec pede as famílias mecânicas em 100% **e** a didática aprovada em julgamento cego, e chamar de default o que ainda não passou pelo segundo induziria a troca do pin antes da hora. Adotar é sempre gesto manual — trocar o papel `Default` em `src-tauri/src/mia/provider/pins.rs` é de quem lê.
 
@@ -95,11 +97,13 @@ Enquanto houver resposta de didática esperando leitura cega, o relatório traz 
 
 ## A trava dupla de gasto
 
-O runner mantém um teto acumulado e fecha antes da próxima repetição; o teto por rodada é apertado ao que sobra no acumulado, de modo que a rodada seja cortada por dentro ao alcançá-lo. O custo só é conhecido depois que o turno fecha, então o estouro residual é de um turno — e é a chave dedicada, com o limite dela no painel, que serve de parada dura.
+O runner mantém um teto acumulado e fecha antes da próxima repetição; o teto por rodada é apertado ao menor entre o teto da conversa, o que sobra no acumulado e o que sobra na fase, de modo que a rodada seja cortada por dentro ao alcançá-lo. O custo só é conhecido depois que o turno fecha, então o estouro residual é de um turno — e é a chave dedicada, com o limite dela no painel, que serve de parada dura.
 
 A trava é uma só e atravessa todas as corridas do bakeoff — uma trava por corrida deixaria o teto ser gasto uma vez por candidato. Dentro dela, a peneira corre sob uma fatia derivada da cardinalidade da matriz (rodadas da peneira sobre rodadas do bakeoff inteiro, hoje dois quintos), para que a final encontre dinheiro quando chegar a vez dela; acrescentar um pin muda a proporção sozinho.
 
-Custo não declarado pelo provedor fecha a bancada na hora: sem o número, a trava fica cega, e zero no relatório significaria "não medi", nunca "foi de graça".
+Custo não declarado pelo provedor fecha a bancada na hora: sem o número, a trava fica cega, e zero no relatório significaria "não medi", nunca "foi de graça". Vale para todo turno cujo stream abriu e terminou sem a linha de uso — inclusive nas tentativas que falharam e não publicam evento. O pedido já foi aceito quando o stream abre, e o provedor pode ter gerado e cobrado o que a rede não entregou.
+
+**O teto cabe?** Ninguém mediu ainda. O desenho integral são 330 repetições (6 pins × 22 casos na peneira, 3 × 22 × 3 na final), o que reserva cerca de 1,5 centavo por repetição sob US$ 5. O relatório publica esse número em `budget_per_repetition_micro_usd`. Se o custo real por rodada ficar acima disso, a medição trunca e a decisão não sai — a resposta honesta, e o sinal de que o teto precisa voltar à mesa como decisão de spec.
 
 ## O relatório
 
@@ -111,7 +115,9 @@ Duas varreduras de privacidade cobrem o relatório, e elas são diferentes: com 
 
 ## Julgamento cego
 
-Casos `cego` saem como “pendente de julgamento”. A pessoa julga lendo as respostas no relatório sem olhar qual modelo as produziu.
+Casos `cego` saem como "pendente de julgamento", e o bakeoff escreve um caderno separado — `<data>-julgamento-cego.json` — com as respostas e nenhum nome de modelo. Cego é propriedade do arquivo, não da disciplina de quem lê: resposta e modelo na mesma página tornam o julgamento impossível de fazer às cegas, por mais boa vontade que alguém tenha.
+
+Cada resposta ganha um bilhete (`di-01-01`), e a ordem é a alfabética da própria resposta dentro de cada caso — a ordem em que os modelos correram entregaria o jogo. Respostas idênticas de modelos diferentes recebem bilhetes diferentes. A chave que liga bilhete a modelo fica no relatório principal, que é o arquivo a abrir **depois** de julgar.
 
 ## Por que não roda em CI
 

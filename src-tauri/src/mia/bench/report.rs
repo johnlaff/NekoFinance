@@ -204,6 +204,10 @@ fn swap_into(path: &Path, text: &str) -> Result<(), String> {
     let staging = path.with_extension("json.parcial");
     write_synced(&staging, text)
         .and_then(|()| std::fs::rename(&staging, path))
+        // Sincronizar o arquivo não publica o NOME: a entrada nova do diretório também precisa
+        // chegar ao disco, ou uma queda logo depois da troca deixaria o diretório apontando para
+        // o arquivo antigo.
+        .and_then(|()| sync_dir(path))
         .map_err(|error| {
             let _ = std::fs::remove_file(&staging);
             format!(
@@ -211,4 +215,16 @@ fn swap_into(path: &Path, text: &str) -> Result<(), String> {
                 path.display()
             )
         })
+}
+
+/// Leva a entrada de diretório ao disco. Sem efeito onde o sistema não permite abrir diretório
+/// como arquivo — o que não é regressão: é o mesmo que se tinha antes.
+fn sync_dir(path: &Path) -> std::io::Result<()> {
+    let Some(dir) = path.parent() else {
+        return Ok(());
+    };
+    match std::fs::File::open(dir) {
+        Ok(handle) => handle.sync_all(),
+        Err(_) => Ok(()),
+    }
 }
