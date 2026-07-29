@@ -225,9 +225,15 @@ As defesas de injeção são estruturais, não censura de dado: ferramentas 100%
 
 - Binário `mia-bench` no mesmo crate, compartilhando o código de adapter e loop com a aplicação.
 - Catálogo em `evals/mia/`, um arquivo por caso: identificador, família, pergunta, fixture, esperado, repetições. Seis famílias: seleção de ferramenta, multi-hop, fidelidade numérica, didática, injeção, recusa honesta com proposta. Fixtures sintéticas e método-neutras — o catálogo é público.
-- Duas fases: peneira com uma repetição em todos os candidatos, final com três repetições nos dois ou três sobreviventes. Prompts enxutos, raciocínio no piso. Teto de US$ 5, com trava dupla: teto no runner por custo acumulado e chave dedicada com limite no painel do provedor.
+- Sonda de custo antes das fases: uma repetição de um caso em cada pin liberado, projetando o desenho inteiro. Projeção acima do teto encerra a corrida ali, com o número em vez do palpite — sem ela, descobrir que a medição não cabe custa o teto todo.
+- Duas fases: peneira com uma repetição em todos os candidatos, final com três repetições nos dois ou três sobreviventes. Prompts enxutos, raciocínio no piso. Nada é decidido sobre medição parcial: a peneira precisa cobrir todo pin liberado e a final, todo finalista selecionado.
+- Teto de US$ 5, com trava dupla: teto no runner por custo acumulado e chave dedicada com limite no painel do provedor.
+
+  **O teto do runner é soft, e isso é decisão ratificada, não lacuna.** O custo de uma rodada só é conhecido depois que o turno fecha, então o acumulado pode fechar em teto mais o custo de um turno. As cotas se recalculam do que sobrou de verdade, de modo que só a última rodada alcança esse limite; a parada dura é o limite da chave dedicada no painel do provedor. Um teto local duro exigiria pré-autorização de custo, que a API do provedor não oferece.
+
 - Ordenação dos candidatos lê o benchmark de agente bancário acima do índice geral de inteligência; o gate real é a suíte própria.
 - **Gate para ligar**: famílias mecânicas em 100%, didática aprovada em julgamento cego. Reexecução obrigatória a cada mudança de fachada, prompt de sistema ou modelo. O runner não roda em CI (custo e segredo); cada execução versiona relatório datado com modelo, provedor e resultados.
+- O julgamento cego tem caderno próprio, sem nome de modelo em lugar nenhum — cego é propriedade do arquivo, não da disciplina de quem lê. A chave que liga bilhete a modelo fica no relatório, aberto depois. Um comando offline recebe o caderno julgado e escreve a decisão final; enquanto houver resposta por ler, o relatório publica o líder e mantém o default vazio. Adotar o pin é sempre gesto manual.
 
 ### 10. Sequenciamento
 
