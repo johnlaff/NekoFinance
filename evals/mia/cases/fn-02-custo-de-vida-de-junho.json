@@ -1,0 +1,21 @@
+{
+  "id": "fn-02-custo-de-vida-de-junho",
+  "family": "fidelidade_numerica",
+  "question": "Qual foi o meu custo de vida em junho de 2026?",
+  "fixture": "casa_basica",
+  "repetitions": 1,
+  "expected": {
+    "judgment": "mecanico",
+    "provenance": "calculo",
+    "tools": {
+      "must_call": ["get_month_analysis"]
+    },
+    "answer": {
+      "must_contain": ["3.204,32"]
+    }
+  },
+  "verification": {
+    "tool": "get_month_analysis",
+    "arguments": { "month": "2026-06" }
+  }
+}

@@ -14,6 +14,12 @@ edition = "2024"
 name = "neko_finance_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# Bancada de evals da conversa: roda o catálogo contra o loop real, com trava de gasto.
+# Compila sempre e nunca roda em CI — custo real e chave dedicada são pré-condições de execução.
+[[bin]]
+name = "mia-bench"
+path = "src/bin/mia_bench.rs"
+
 [build-dependencies]
 tauri-build = { version = "=2.6.3", features = [] }
 

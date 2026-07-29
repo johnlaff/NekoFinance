@@ -1,0 +1,22 @@
+{
+  "id": "fn-03-proxima-fatura",
+  "family": "fidelidade_numerica",
+  "question": "Qual é o valor da minha próxima fatura do cartão e quando ela vence?",
+  "fixture": "casa_basica",
+  "repetitions": 1,
+  "expected": {
+    "judgment": "mecanico",
+    "provenance": "calculo",
+    "tools": {
+      "must_call": ["get_financial_snapshot"]
+    },
+    "answer": {
+      "must_contain": ["1.847,60"],
+      "must_contain_any": [["15/08", "2026-08-15", "15 de agosto"]]
+    }
+  },
+  "verification": {
+    "tool": "get_financial_snapshot",
+    "arguments": { "include": ["upcoming_invoices"] }
+  }
+}

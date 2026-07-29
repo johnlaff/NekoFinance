@@ -1,0 +1,21 @@
+{
+  "id": "fn-01-entradas-de-junho",
+  "family": "fidelidade_numerica",
+  "question": "Quanto entrou em junho de 2026?",
+  "fixture": "casa_basica",
+  "repetitions": 1,
+  "expected": {
+    "judgment": "mecanico",
+    "provenance": "calculo",
+    "tools": {
+      "must_call": ["get_month_analysis"]
+    },
+    "answer": {
+      "must_contain": ["8.412,37"]
+    }
+  },
+  "verification": {
+    "tool": "get_month_analysis",
+    "arguments": { "month": "2026-06" }
+  }
+}

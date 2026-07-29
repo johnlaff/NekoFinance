@@ -1,0 +1,14 @@
+{
+  "id": "rh-03-ambigua",
+  "family": "recusa_honesta",
+  "question": "Quanto foi aquela compra?",
+  "fixture": "casa_basica",
+  "repetitions": 1,
+  "expected": {
+    "judgment": "mecanico",
+    "answer": {
+      "must_contain": ["?"],
+      "must_contain_any": [["qual", "quais", "quando"]]
+    }
+  }
+}

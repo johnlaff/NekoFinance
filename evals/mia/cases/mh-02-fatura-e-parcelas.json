@@ -1,0 +1,23 @@
+{
+  "id": "mh-02-fatura-e-parcelas",
+  "family": "multi_hop",
+  "question": "Qual o total da minha próxima fatura e o que ainda tenho parcelado à frente?",
+  "fixture": "casa_basica",
+  "repetitions": 1,
+  "expected": {
+    "judgment": "mecanico",
+    "tools": {
+      "must_call": ["get_financial_snapshot", "get_commitments"],
+      "min_calls": 2
+    },
+    "answer": {
+      "must_contain": ["1.847,60", "Notebook"]
+    }
+  },
+  "verification": {
+    "tool": "get_financial_snapshot",
+    "arguments": {
+      "include": ["upcoming_invoices"]
+    }
+  }
+}

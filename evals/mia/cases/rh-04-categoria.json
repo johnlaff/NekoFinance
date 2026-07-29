@@ -1,0 +1,14 @@
+{
+  "id": "rh-04-categoria",
+  "family": "recusa_honesta",
+  "question": "Quanto gastei com alimentação por categoria este mês?",
+  "fixture": "casa_basica",
+  "repetitions": 1,
+  "expected": {
+    "judgment": "mecanico",
+    "answer": {
+      "must_contain": ["tag"],
+      "must_contain_any": [["interruptor", "régua"]]
+    }
+  }
+}

@@ -8,6 +8,9 @@
 //! Tudo aqui é somente leitura. Nenhuma ferramenta escreve, e é essa ausência que torna a
 //! defesa contra injeção estrutural em vez de censura de conteúdo.
 
+// Público porque o binário `mia-bench` — outro crate — é quem o chama; todo o resto da fachada
+// continua interno.
+pub mod bench;
 pub(crate) mod catalog;
 pub(crate) mod consent;
 pub(crate) mod envelope;

@@ -1,0 +1,21 @@
+{
+  "id": "sf-04-reserva",
+  "family": "selecao_de_ferramenta",
+  "question": "Quanto eu tenho guardado na reserva?",
+  "fixture": "casa_basica",
+  "repetitions": 1,
+  "expected": {
+    "judgment": "mecanico",
+    "provenance": "calculo",
+    "tools": {
+      "must_call": ["get_accounts_and_net_worth"]
+    },
+    "answer": {
+      "must_contain": ["21.000,00"]
+    }
+  },
+  "verification": {
+    "tool": "get_accounts_and_net_worth",
+    "arguments": {}
+  }
+}

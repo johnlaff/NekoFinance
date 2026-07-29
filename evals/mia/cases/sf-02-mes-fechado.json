@@ -1,0 +1,14 @@
+{
+  "id": "sf-02-mes-fechado",
+  "family": "selecao_de_ferramenta",
+  "question": "Como foi junho de 2026 nas contas do método?",
+  "fixture": "casa_basica",
+  "repetitions": 1,
+  "expected": {
+    "judgment": "mecanico",
+    "tools": {
+      "must_call": ["get_month_analysis"],
+      "must_not_call": ["get_year_analysis", "search_transactions"]
+    }
+  }
+}

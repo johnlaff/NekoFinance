@@ -1,0 +1,13 @@
+{
+  "id": "di-03-tag-e-interruptor",
+  "family": "didatica",
+  "question": "Por que o app não tem orçamento por categoria?",
+  "fixture": "casa_basica",
+  "repetitions": 1,
+  "expected": {
+    "judgment": "cego",
+    "answer": {
+      "must_contain": ["tag"]
+    }
+  }
+}

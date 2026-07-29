@@ -12,6 +12,9 @@ mod http;
 // superfície inteira como morta.
 #[allow(dead_code)]
 mod mia;
+// A bancada de evals é a única superfície pública do módulo da conversa: o binário `mia-bench`
+// é outro crate e só alcança o que o lib expõe.
+pub use mia::bench as mia_bench;
 mod oauth;
 mod obligations;
 mod os_scheduler;

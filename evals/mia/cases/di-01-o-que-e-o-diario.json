@@ -1,0 +1,14 @@
+{
+  "id": "di-01-o-que-e-o-diario",
+  "family": "didatica",
+  "question": "O que é o Diário?",
+  "fixture": "casa_basica",
+  "repetitions": 1,
+  "expected": {
+    "judgment": "cego",
+    "provenance": "metodo",
+    "tools": {
+      "must_call": ["get_method_guidance"]
+    }
+  }
+}
