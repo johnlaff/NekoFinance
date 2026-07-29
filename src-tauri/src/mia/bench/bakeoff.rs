@@ -39,19 +39,30 @@ const MAX_FINALISTS: usize = 3;
 /// exatamente a aposta que o bakeoff existe para não fazer.
 const MIN_FINALISTS: usize = 2;
 
-/// O teto da peneira a partir do teto do bakeoff.
+/// Uma fatia do teto. A conta passa por 128 bits porque multiplicar antes de dividir estoura em
+/// teto alto, e um produto saturado devolveria uma fatia MENOR que a combinada sem nada avisar.
+pub(crate) fn share(cap: i64, (numerator, denominator): (i64, i64)) -> i64 {
+    ((cap as i128 * numerator as i128) / denominator as i128) as i64
+}
+
+/// Quantas rodadas cada etapa tem, dado o tamanho do catálogo: sonda, peneira e final.
 ///
-/// A fatia é DERIVADA da cardinalidade — rodadas da peneira sobre rodadas do bakeoff inteiro —, e
-/// não um par de números escrito à mão: acrescentar um pin à matriz muda a proporção sozinho, e
-/// uma fração congelada apertaria a peneira em silêncio na primeira mudança. Sem a reserva, a
-/// peneira chegaria ao fim do teto e a final, que é quem decide o default, não correria.
-///
-/// A conta passa por 128 bits porque multiplicar antes de dividir estoura em teto alto, e um
-/// produto saturado devolveria uma fatia menor que a combinada sem nada avisar.
-pub(crate) fn phase_one_cap(cap: i64) -> i64 {
-    let sieve = PINS.len() as i128 * PHASE_ONE_REPETITIONS as i128;
-    let final_round = MAX_FINALISTS as i128 * PHASE_TWO_REPETITIONS as i128;
-    ((cap as i128 * sieve) / (sieve + final_round)) as i64
+/// É daqui que saem as fatias do teto. Elas são DERIVADAS da cardinalidade, e não pares de números
+/// escritos à mão: acrescentar um pin à matriz ou um caso ao catálogo muda as proporções sozinho, e
+/// uma fração congelada apertaria uma etapa em silêncio na primeira mudança.
+fn rounds(cases: usize) -> (i64, i64, i64) {
+    let cases = cases as i64;
+    let probe = PINS.len() as i64;
+    let sieve = PINS.len() as i64 * PHASE_ONE_REPETITIONS as i64 * cases;
+    let finals = MAX_FINALISTS as i64 * PHASE_TWO_REPETITIONS as i64 * cases;
+    (probe, sieve, finals)
+}
+
+/// O teto acumulado até o fim da peneira, sonda inclusa. Sem essa reserva, a peneira chegaria ao
+/// fim do teto e a final, que é quem decide o default, não correria.
+pub(crate) fn phase_one_cap(cap: i64, cases: usize) -> i64 {
+    let (probe, sieve, finals) = rounds(cases);
+    share(cap, (probe + sieve, probe + sieve + finals))
 }
 
 /// O que uma corrida rendeu, reduzido ao que decide.
@@ -289,6 +300,10 @@ fn rescue(error: String, published: Result<PathBuf, String>) -> String {
 #[derive(Debug)]
 pub(crate) struct Bakeoff {
     pub ran_at: String,
+    /// O que a sonda de custo mediu, um pin por vez, antes de qualquer fase.
+    pub probes: Vec<Probe>,
+    /// O que a medição inteira custaria segundo a sonda. Zero antes de ela correr.
+    pub estimate_micro_usd: i64,
     /// Os identificadores dos casos medidos, na ordem em que correram.
     pub catalog: Vec<String>,
     pub cap_micro_usd: i64,
@@ -330,6 +345,8 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
     let pack = config.pack_root.as_ref().map(MethodPack::at);
     let mut bakeoff = Bakeoff {
         ran_at: config.ran_at.to_string(),
+        probes: Vec::new(),
+        estimate_micro_usd: 0,
         catalog: config.cases.iter().map(|case| case.id.clone()).collect(),
         cap_micro_usd: lock.cap_micro_usd(),
         spent_micro_usd: 0,
@@ -371,7 +388,91 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
         ));
     }
 
-    lock.open_phase(phase_one_cap(lock.cap_micro_usd()));
+    // A SONDA, antes de qualquer fase: uma repetição de um caso em cada pin liberado, para saber
+    // se a medição inteira cabe no teto ANTES de gastá-lo. Sem ela, descobrir que não cabe custa o
+    // teto todo — a bancada roda até truncar e o relatório diz quem ficou sem medição. Com ela, o
+    // mesmo fato custa uma rodada por modelo, e a recusa vem com o número que falta.
+    if let Some(case) = probe_case(&config.cases) {
+        // A sonda corre sob o teto INTEIRO, sem fatia própria. Ela é curta por construção — uma
+        // rodada por pin — e o teto por rodada da conversa já a limita ao pior caso de meia dúzia
+        // de rodadas; uma fatia proporcional a estrangularia justamente quando o catálogo é grande
+        // e ela é mais necessária, e a sonda que não termina não estima nada.
+        lock.open_phase(lock.cap_micro_usd());
+        for pin in verdict.cleared.clone() {
+            let run = match run_catalog(
+                adapter,
+                vec![case.clone()],
+                &config.bench(pin, Repetitions::Fixed(1)),
+                lock,
+            )
+            .await
+            {
+                Ok(run) => run,
+                Err(error) => {
+                    return Err(rescue(
+                        error,
+                        config
+                            .publish(&mut bakeoff, lock, &base, path.as_deref(), pack.as_ref())
+                            .await,
+                    ));
+                }
+            };
+            bakeoff.probes.push(Probe {
+                pin,
+                cost_micro_usd: run.total_cost_micro_usd,
+                cost_declared: !run.cost_gap,
+            });
+        }
+
+        // Estimativa tirada de um subconjunto não é estimativa: se a sonda não alcançou todo pin
+        // liberado, o que ela mediu já mostra que o teto não cobre o desenho.
+        let probed: Vec<&str> = bakeoff
+            .probes
+            .iter()
+            .filter(|probe| probe.cost_declared && probe.cost_micro_usd > 0)
+            .map(|probe| probe.pin.model)
+            .collect();
+        if probed.len() < verdict.cleared.len() {
+            bakeoff.decision = Decision::NoWinner {
+                reason: format!(
+                    "A sonda mediu {} de {} modelos antes de a trava fechar: nem uma rodada por \
+                     modelo cabe no teto, então a medição inteira não cabe. O teto precisa dizer, \
+                     na spec, quanto esta bancada custa.",
+                    probed.len(),
+                    verdict.cleared.len()
+                ),
+            };
+            let path = config
+                .publish(&mut bakeoff, lock, &base, path.as_deref(), pack.as_ref())
+                .await?;
+            return Ok((bakeoff, path));
+        }
+
+        bakeoff.estimate_micro_usd = estimate(&bakeoff.probes, config.cases.len());
+        if bakeoff.estimate_micro_usd > lock.cap_micro_usd() {
+            bakeoff.decision = Decision::NoWinner {
+                reason: format!(
+                    "A sonda mediu uma rodada em cada modelo e a medição inteira custaria cerca de \
+                     {} micro-USD — o teto é {}. Nada mais foi gasto: o catálogo inteiro precisa \
+                     caber no teto para a decisão valer, e é o teto, na spec, que precisa dizer \
+                     quanto esta bancada custa.",
+                    bakeoff.estimate_micro_usd,
+                    lock.cap_micro_usd()
+                ),
+            };
+            let path = config
+                .publish(&mut bakeoff, lock, &base, path.as_deref(), pack.as_ref())
+                .await?;
+            return Ok((bakeoff, path));
+        }
+        path = Some(
+            config
+                .publish(&mut bakeoff, lock, &base, path.as_deref(), pack.as_ref())
+                .await?,
+        );
+    }
+
+    lock.open_phase(phase_one_cap(lock.cap_micro_usd(), config.cases.len()));
     for pin in verdict.cleared.clone() {
         let run = match run_catalog(
             adapter,
@@ -566,6 +667,16 @@ pub(crate) fn render(bakeoff: &Bakeoff, ran_at: &str) -> Value {
         // Quanto o teto reserva por repetição do desenho integral. É a régua para saber se o teto
         // cabe: uma rodada média acima disso trunca a medição, e a decisão não sai.
         "budget_per_repetition_micro_usd": budget_per_repetition(bakeoff),
+        // A sonda: uma rodada por modelo e o que ela projeta para a medição inteira. É o número
+        // que diz, antes de gastar, se o teto cobre o desenho.
+        "probe": {
+            "estimate_micro_usd": bakeoff.estimate_micro_usd,
+            "rounds": bakeoff.probes.iter().map(|probe| json!({
+                "model": probe.pin.model,
+                "cost_micro_usd": probe.cost_micro_usd,
+                "cost_declared": probe.cost_declared,
+            })).collect::<Vec<Value>>(),
+        },
         "canary_drift": bakeoff.drifted.iter().map(|(pin, why)| json!({
             "model": pin.model,
             "endpoint": pin.endpoint,
@@ -607,6 +718,53 @@ fn budget_per_repetition(bakeoff: &Bakeoff) -> i64 {
         0 => 0,
         total => bakeoff.cap_micro_usd / total,
     }
+}
+
+/// O que a sonda de custo mediu num pin.
+#[derive(Debug)]
+pub(crate) struct Probe {
+    pub pin: &'static ModelPin,
+    /// O custo de UMA repetição do caso-sonda. Zero quando a rodada não chegou a declarar custo —
+    /// e aí a estimativa não vale, porque a trava já estará cega.
+    pub cost_micro_usd: i64,
+    pub cost_declared: bool,
+}
+
+/// O que a medição inteira custaria, extrapolado da sonda.
+///
+/// A peneira é direta: cada pin roda o catálogo uma vez. A final é estimada pelo pior caso
+/// plausível — os três candidatos mais CAROS —, porque quem vai passar a peneira ainda não se
+/// sabe, e errar para cima só antecipa uma recusa que custa centavos, enquanto errar para baixo
+/// gasta o teto inteiro para descobrir a mesma coisa.
+pub(crate) fn estimate(probes: &[Probe], cases: usize) -> i64 {
+    let cases = cases as i64;
+    let sieve: i64 = probes
+        .iter()
+        .map(|probe| probe.cost_micro_usd.saturating_mul(cases))
+        .sum();
+
+    let mut candidates: Vec<i64> = probes
+        .iter()
+        .filter(|probe| probe.pin.role != PinRole::Ceiling)
+        .map(|probe| probe.cost_micro_usd)
+        .collect();
+    candidates.sort_unstable_by(|left, right| right.cmp(left));
+    let finals: i64 = candidates
+        .iter()
+        .take(MAX_FINALISTS)
+        .map(|cost| cost.saturating_mul(cases) * PHASE_TWO_REPETITIONS as i64)
+        .sum();
+
+    sieve.saturating_add(finals)
+}
+
+/// O caso que a sonda usa: o mais caro estruturalmente do catálogo — multi-hop decompõe a pergunta
+/// em várias leituras, e é o formato que mais gasta. Sem ele, o primeiro caso serve.
+pub(crate) fn probe_case(cases: &[Case]) -> Option<&Case> {
+    cases
+        .iter()
+        .find(|case| case.family == Family::MultiHop)
+        .or_else(|| cases.first())
 }
 
 /// Uma resposta esperando leitura cega, já com o bilhete que a identifica.
@@ -732,8 +890,17 @@ pub(crate) fn summary(bakeoff: &Bakeoff, path: &Path) -> String {
         .filter(|(pin, _)| pin.role == PinRole::Default)
         .map(|(_, why)| format!("\nATENÇÃO — o pin em uso divergiu do catálogo: {why}"))
         .collect();
+    let probe = if bakeoff.probes.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\nSonda: {} rodada(s) medida(s); a medição inteira sai por cerca de {} micro-USD.",
+            bakeoff.probes.len(),
+            bakeoff.estimate_micro_usd
+        )
+    };
     format!(
-        "Peneira: {} candidato(s). Final: {} finalista(s). Recusados pelo canary: {}.{default_drift}\nCusto \
+        "Peneira: {} candidato(s). Final: {} finalista(s). Recusados pelo canary: {}.{default_drift}{probe}\nCusto \
          declarado: {} micro-USD (teto de {}).\n{decision}\nRelatório: {}",
         bakeoff.phase_one.len(),
         bakeoff.phase_two.len(),

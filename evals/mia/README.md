@@ -81,6 +81,10 @@ cargo run --manifest-path src-tauri/Cargo.toml --bin mia-bench -- bakeoff
 
 O bakeoff mede os candidatos e é o resultado — não a intuição — que escolhe o modelo default.
 
+**Sonda de custo.** Depois do canary e antes da peneira, uma repetição de um caso em cada pin liberado responde a pergunta que ninguém tinha respondido: a medição inteira cabe no teto? A sonda usa o caso mais caro estruturalmente do catálogo (multi-hop, que decompõe a pergunta em várias leituras) e projeta o desenho completo — a peneira pelo custo de cada pin, a final pelos três candidatos mais caros, porque quem vai passar ainda não se sabe e errar para cima antecipa uma recusa que custa centavos.
+
+Se a projeção passar do teto, a corrida termina ali com o número na mão: "a medição inteira custaria X, o teto é Y". Sem a sonda, descobrir isso custava o teto inteiro — a bancada rodava até truncar. Se a sonda nem completar uma rodada por modelo, a resposta já está dada e nada mais é gasto.
+
 **Canary ao vivo.** Antes de qualquer rodada paga, cada pin da matriz é conferido contra o catálogo de endpoints de retenção zero do provedor: o endpoint existe, é de retenção zero e anuncia os parâmetros que a requisição envia. Pin que divergiu não corre, e o motivo entra no relatório para quem for trocar o pin à mão. Com menos de dois candidatos liberados, o bakeoff recusa antes de gastar.
 
 **Duas fases.** A peneira dá uma repetição a cada candidato mais o teto de referência; a final dá três aos até três sobreviventes. Cada rodada corre enxuta — prompt de sistema mais a pergunta, sem histórico — e com o raciocínio no piso, que é o que o runtime envia sempre: a conversa não deriva número, todo valor material chega pronto da ferramenta. O piso é declarado por pin (`reasoning_floor`), porque a matriz não é uniforme: quem pode não raciocinar recebe "desligado", e quem tem raciocínio obrigatório recebe o menor esforço que aceita — mandar o piso errado é rodada recusada, não resposta pior. Obedecer isca de injeção elimina na peneira, e corrida truncada pela trava não disputa com corrida inteira. O teto de referência corre só a peneira — ele é a régua de quão longe a suíte alcança, não um concorrente ao default.
@@ -103,7 +107,9 @@ A trava é uma só e atravessa todas as corridas do bakeoff — uma trava por co
 
 Custo não declarado pelo provedor fecha a bancada na hora: sem o número, a trava fica cega, e zero no relatório significaria "não medi", nunca "foi de graça". Vale para todo turno cujo stream abriu e terminou sem a linha de uso — inclusive nas tentativas que falharam e não publicam evento. O pedido já foi aceito quando o stream abre, e o provedor pode ter gerado e cobrado o que a rede não entregou.
 
-**O teto cabe?** Ninguém mediu ainda. O desenho integral são 330 repetições (6 pins × 22 casos na peneira, 3 × 22 × 3 na final), o que reserva cerca de 1,5 centavo por repetição sob US$ 5. O relatório publica esse número em `budget_per_repetition_micro_usd`. Se o custo real por rodada ficar acima disso, a medição trunca e a decisão não sai — a resposta honesta, e o sinal de que o teto precisa voltar à mesa como decisão de spec.
+**O teto cabe?** A sonda responde antes de gastar. O desenho integral são 336 repetições (6 de sonda, 132 na peneira, 198 na final), o que reserva cerca de 1,5 centavo por repetição sob US$ 5; o relatório publica esse número em `budget_per_repetition_micro_usd` e a projeção da sonda em `probe.estimate_micro_usd`. Quando os dois divergem, quem manda é a sonda — ela mediu, a régua só dividiu.
+
+As fatias das etapas são derivadas da cardinalidade: acrescentar um pin à matriz ou um caso ao catálogo muda as proporções sozinho. A sonda corre sob o teto inteiro, porque é curta por construção e o teto por rodada já a limita; uma fatia proporcional a estrangularia justamente quando o catálogo é grande e ela é mais necessária.
 
 ## O relatório
 

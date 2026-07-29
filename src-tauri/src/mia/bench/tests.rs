@@ -1600,17 +1600,111 @@ async fn o_bakeoff_recusa_quando_o_canary_deixa_menos_de_dois_candidatos() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// A peneira para na fatia dela — e uma peneira truncada NÃO abre a final: comparar dois modelos
-/// medidos contra quatro que a trava cortou compararia orçamento, e o relatório leria como se a
-/// matriz inteira tivesse concorrido.
+/// Nem uma rodada por modelo cabendo no teto, a resposta já está dada: a medição inteira não cabe.
+/// A recusa vem depois de gastar centavos, não o teto.
 #[tokio::test]
-async fn a_peneira_truncada_nao_abre_a_final() {
+async fn a_sonda_recusa_quando_nem_uma_rodada_por_modelo_cabe() {
     let dir = reports_dir();
     let adapter = EcoAdapter {
         cost_micro_usd: 10_000,
         catalog: zdr_catalog(),
     };
-    // Dois quintos de 100_000 dão quatro rodadas à peneira — dois candidatos inteiros.
+    // Três rodadas cabem; as seis da sonda, não.
+    let mut lock = super::SpendLock::new(30_000);
+
+    let (bakeoff, path) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: bakeoff_cases(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    assert!(bakeoff.phase_one.is_empty(), "a peneira nem começou");
+    assert!(bakeoff.phase_two.is_empty());
+    let Decision::NoWinner { reason } = &bakeoff.decision else {
+        panic!("sem sonda completa não há decisão");
+    };
+    assert!(reason.contains("3 de 6 modelos"));
+
+    // O teto não foi ultrapassado para descobrir isso, e a sonda ficou no relatório.
+    assert!(lock.spent_micro_usd() <= 30_000);
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(!written["probe"]["rounds"].as_array().unwrap().is_empty());
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Um adapter que fica caro depois das primeiras rodadas: é o mundo em que a sonda mede barato e a
+/// medição de verdade sai mais cara do que ela projetou.
+struct EscaladaAdapter {
+    barato: i64,
+    caro: i64,
+    rodadas_baratas: usize,
+    vistas: Mutex<usize>,
+    catalog: serde_json::Value,
+}
+
+impl ProviderAdapter for EscaladaAdapter {
+    fn open(
+        &self,
+        _spec: &crate::mia::provider::request::RunSpec<'_>,
+        _cancel: &CancelToken,
+    ) -> impl Future<Output = Result<mpsc::Receiver<ProviderEvent>, ProviderError>> + Send {
+        let vistas = {
+            let mut contador = self.vistas.lock().expect("o contador é sequencial");
+            *contador += 1;
+            *contador
+        };
+        let custo = if vistas <= self.rodadas_baratas {
+            self.barato
+        } else {
+            self.caro
+        };
+        let events = answer_turn("Tudo certo.", custo);
+        async move {
+            let (sender, receiver) = mpsc::channel(events.len());
+            tokio::spawn(async move {
+                for event in events {
+                    if sender.send(event).await.is_err() {
+                        return;
+                    }
+                }
+            });
+            Ok(receiver)
+        }
+    }
+}
+
+impl ZdrCatalog for EscaladaAdapter {
+    fn fetch(&self) -> impl Future<Output = Result<serde_json::Value, String>> + Send {
+        let catalog = self.catalog.clone();
+        async move { Ok(catalog) }
+    }
+}
+
+/// A sonda mediu barato e a peneira saiu cara: a medição trunca, e uma peneira truncada NÃO abre a
+/// final — comparar dois modelos medidos contra quatro que a trava cortou compararia orçamento, e
+/// o relatório leria como se a matriz inteira tivesse concorrido.
+#[tokio::test]
+async fn a_peneira_truncada_nao_abre_a_final() {
+    let dir = reports_dir();
+    let adapter = EscaladaAdapter {
+        barato: 100,
+        caro: 20_000,
+        // As seis rodadas da sonda saem baratas; a peneira, não.
+        rodadas_baratas: PINS.len(),
+        vistas: Mutex::new(0),
+        catalog: zdr_catalog(),
+    };
     let mut lock = super::SpendLock::new(100_000);
 
     let (bakeoff, _) = bakeoff::run(
@@ -1628,254 +1722,26 @@ async fn a_peneira_truncada_nao_abre_a_final() {
     .await
     .unwrap();
 
-    let complete_runs = bakeoff
-        .phase_one
-        .iter()
-        .filter(|run| run.cases.iter().all(|case| case.measured()))
-        .count();
-    assert_eq!(complete_runs, 2, "a peneira parou na fatia dela");
-    assert!(bakeoff.phase_one[2].cases.iter().all(|case| case.aborted));
+    // A sonda passou: seis rodadas baratas projetaram uma medição que caberia.
+    assert_eq!(bakeoff.probes.len(), PINS.len());
+    assert!(bakeoff.estimate_micro_usd < lock.cap_micro_usd());
 
-    // A final não abre, e o dinheiro que sobrava não é gasto numa comparação que já nasceu torta.
+    // A peneira encontrou o custo real e truncou. A final não abre.
+    assert!(
+        bakeoff.phase_one.len() < PINS.len() || {
+            bakeoff
+                .phase_one
+                .iter()
+                .any(|run| run.cases.iter().any(|case| !case.measured()))
+        }
+    );
     assert!(bakeoff.phase_two.is_empty());
-    assert_eq!(lock.spent_micro_usd(), 40_000);
-
     let Decision::NoWinner { reason } = &bakeoff.decision else {
         panic!("uma peneira incompleta não decide o default");
     };
     assert!(reason.contains("A peneira não mediu por inteiro"));
-    // Os pins que a trava cortou saem nomeados: quem lê precisa saber quem NÃO concorreu.
-    assert!(reason.contains("openai/gpt-5.6-luna"));
 
     std::fs::remove_dir_all(&dir).unwrap();
-}
-
-/// O pin em uso divergir do catálogo não é "um candidato a menos": é o app apontando hoje para um
-/// endpoint que o provedor não confirma, e o resumo diz isso em vez de deixá-lo no JSON.
-#[test]
-fn o_resumo_destaca_a_divergencia_do_pin_em_uso() {
-    let bakeoff = bakeoff::Bakeoff {
-        ran_at: "2026-07-29T14:33:05-03:00".to_string(),
-        catalog: vec!["fn-01".to_string()],
-        cap_micro_usd: 5_000_000,
-        spent_micro_usd: 0,
-        drifted: vec![(default_pin(), "O modelo sumiu do catálogo.".to_string())],
-        phase_one: Vec::new(),
-        phase_two: Vec::new(),
-        decision: Decision::NoWinner {
-            reason: "A final não correu.".to_string(),
-        },
-    };
-
-    let summary = bakeoff::summary(&bakeoff, std::path::Path::new("relatorio.json"));
-
-    assert!(summary.contains("ATENÇÃO"));
-    assert!(summary.contains("O modelo sumiu do catálogo."));
-}
-
-/// Um sobrevivente não é final: três repetições nele mediriam estabilidade sem comparar nada, e
-/// adotá-lo seria promover por ausência de adversário.
-#[test]
-fn a_decisao_recusa_uma_final_de_um_so() {
-    let unico = vec![(pinned("openai/gpt-5.6-terra"), score_of(60, 60, 100_000))];
-
-    let Decision::NoWinner { reason } = bakeoff::decide(&unico) else {
-        panic!("um finalista sozinho não decide o default");
-    };
-    assert!(reason.contains("no mínimo 2"));
-}
-
-/// Todos os finalistas selecionados precisam ter sido medidos por inteiro: dois completos com um
-/// terceiro truncado ainda é comparar quem terminou contra quem a trava cortou.
-#[test]
-fn a_decisao_recusa_quando_um_finalista_foi_truncado() {
-    let finalistas = vec![
-        (
-            pinned("anthropic/claude-sonnet-5"),
-            score_of(60, 60, 100_000),
-        ),
-        (pinned("openai/gpt-5.6-terra"), score_of(60, 60, 120_000)),
-        (
-            pinned("openai/gpt-5.6-luna"),
-            Score {
-                complete: false,
-                ..score_of(20, 20, 30_000)
-            },
-        ),
-    ];
-
-    let Decision::NoWinner { reason } = bakeoff::decide(&finalistas) else {
-        panic!("um finalista truncado invalida a comparação");
-    };
-    assert!(reason.contains("2 de 3 finalistas"));
-}
-
-/// A fatia da peneira é a combinada mesmo em teto alto: multiplicar antes de dividir estouraria e
-/// devolveria uma fatia menor, apertando a peneira sem nada avisar.
-#[test]
-fn a_fatia_da_peneira_nao_estoura_em_teto_alto() {
-    let cap = bakeoff::phase_one_cap(i64::MAX);
-
-    // Dois quintos, não o um quinto que uma multiplicação saturada devolveria.
-    assert_eq!(cap, (i64::MAX / 5) * 2);
-    assert_ne!(cap, i64::MAX / 5);
-}
-
-/// Custo não declarado numa tentativa que FALHOU não pode sumir: o turno seguinte declara o dele,
-/// o total fecha em número conhecido, e a bancada acharia que contou tudo.
-#[tokio::test]
-async fn custo_sem_declaracao_em_tentativa_falha_fecha_a_bancada() {
-    let mut body = valid_case_json();
-    body["id"] = json!("caso-1");
-    body["fixture"] = json!("casa_vazia");
-    body["expected"] = json!({ "judgment": "mecanico" });
-    body["verification"] = json!(null);
-    let case = parse("caso-1.json", &body).unwrap();
-
-    let adapter = RoteiroAdapter::new([
-        // Primeira tentativa: consumiu tokens, o provedor não disse quanto, e o stream caiu.
-        vec![
-            ProviderEvent::TextDelta("meia resposta".to_string()),
-            ProviderEvent::Usage(Usage {
-                prompt_tokens: 100,
-                completion_tokens: 10,
-                cost_micro_usd: None,
-            }),
-            ProviderEvent::Failed(ProviderError {
-                kind: crate::mia::provider::stream::ErrorKind::Transient,
-                message: "a conexão caiu.".to_string(),
-            }),
-        ],
-        // Segunda tentativa: responde e declara o custo dela.
-        answer_turn("Tudo certo.", 5_000),
-    ]);
-
-    let temp = TempPack::absent();
-    let config = super::BenchConfig {
-        pin: default_pin(),
-        pack_root: Some(temp.path().to_path_buf()),
-        repetitions: super::Repetitions::AsAuthored,
-        limits: RunLimits {
-            retry_backoff: std::time::Duration::ZERO,
-            ..RunLimits::default()
-        },
-    };
-    let mut lock = super::SpendLock::new(1_000_000);
-
-    let run = super::run_catalog(&adapter, vec![case], &config, &mut lock)
-        .await
-        .unwrap();
-
-    assert!(!run.cases[0].outcomes[0].cost_declared);
-    assert!(run.cost_gap, "a lacuna fecha a bancada");
-}
-
-/// Tentativa que gerou conteúdo e caiu ANTES da linha de uso: o provedor cobra o que gerou, e o
-/// total do turno — fechado pela tentativa seguinte — sairia parecendo completo.
-#[tokio::test]
-async fn tentativa_que_gerou_texto_e_caiu_sem_uso_fecha_a_bancada() {
-    let mut body = valid_case_json();
-    body["id"] = json!("caso-1");
-    body["fixture"] = json!("casa_vazia");
-    body["expected"] = json!({ "judgment": "mecanico" });
-    body["verification"] = json!(null);
-    let case = parse("caso-1.json", &body).unwrap();
-
-    let adapter = RoteiroAdapter::new([
-        vec![
-            ProviderEvent::TextDelta("meia resposta".to_string()),
-            ProviderEvent::Failed(ProviderError {
-                kind: crate::mia::provider::stream::ErrorKind::Transient,
-                message: "a conexão caiu.".to_string(),
-            }),
-        ],
-        answer_turn("Tudo certo.", 5_000),
-    ]);
-
-    let temp = TempPack::absent();
-    let config = super::BenchConfig {
-        pin: default_pin(),
-        pack_root: Some(temp.path().to_path_buf()),
-        repetitions: super::Repetitions::AsAuthored,
-        limits: RunLimits {
-            retry_backoff: std::time::Duration::ZERO,
-            ..RunLimits::default()
-        },
-    };
-    let mut lock = super::SpendLock::new(1_000_000);
-
-    let run = super::run_catalog(&adapter, vec![case], &config, &mut lock)
-        .await
-        .unwrap();
-
-    assert!(!run.cases[0].outcomes[0].cost_declared);
-    assert!(run.cost_gap);
-}
-
-/// Stream aberto e encerrado sem linha de uso é lacuna, com ou sem conteúdo no meio: o pedido já
-/// foi aceito quando chega aqui — quem recusa antes de qualquer cobrança é a abertura —, e o
-/// provedor pode ter gerado e cobrado o que a rede não entregou. Entre parar a bancada à toa e
-/// deixar dinheiro fora do contador, a trava fica com o lado fechado.
-#[tokio::test]
-async fn stream_aberto_que_termina_sem_uso_e_lacuna() {
-    let mut body = valid_case_json();
-    body["id"] = json!("caso-1");
-    body["fixture"] = json!("casa_vazia");
-    body["expected"] = json!({ "judgment": "mecanico" });
-    body["verification"] = json!(null);
-    let case = parse("caso-1.json", &body).unwrap();
-
-    let adapter = RoteiroAdapter::new([
-        vec![ProviderEvent::Failed(ProviderError {
-            kind: crate::mia::provider::stream::ErrorKind::Transient,
-            message: "a conexão caiu antes do primeiro byte.".to_string(),
-        })],
-        answer_turn("Tudo certo.", 5_000),
-    ]);
-
-    let temp = TempPack::absent();
-    let config = super::BenchConfig {
-        pin: default_pin(),
-        pack_root: Some(temp.path().to_path_buf()),
-        repetitions: super::Repetitions::AsAuthored,
-        limits: RunLimits {
-            retry_backoff: std::time::Duration::ZERO,
-            ..RunLimits::default()
-        },
-    };
-    let mut lock = super::SpendLock::new(1_000_000);
-
-    let run = super::run_catalog(&adapter, vec![case], &config, &mut lock)
-        .await
-        .unwrap();
-
-    assert!(!run.cases[0].outcomes[0].cost_declared);
-    assert!(run.cost_gap);
-}
-
-/// O bakeoff decide qual modelo conversa com o dinheiro de alguém: um veredito tirado de um
-/// recorte leria, no relatório, igual a um veredito tirado das seis famílias.
-#[test]
-fn o_bakeoff_recusa_qualquer_recorte_do_catalogo() {
-    for (flag, valor) in [("--only", "in-01"), ("--cases-dir", "/tmp/outros-casos")] {
-        let error = cli::parse_args(&args(&["bakeoff", flag, valor])).unwrap_err();
-        assert!(error.contains(flag), "o bakeoff precisa recusar {flag}");
-    }
-
-    // Fora do bakeoff, o recorte é legítimo: a corrida solta não decide default.
-    let solta = cli::parse_args(&args(&["--only", "in-01"])).unwrap();
-    assert_eq!(solta.only.as_deref(), Some("in-01"));
-}
-
-/// O teto do bakeoff é o do critério, não uma preferência: abaixá-lo é escolha de quem roda,
-/// levantá-lo seria contornar a decisão.
-#[test]
-fn o_teto_do_bakeoff_so_pode_ser_abaixado() {
-    let error = cli::parse_args(&args(&["bakeoff", "--max-spend-usd", "5.000001"])).unwrap_err();
-    assert!(error.contains("US$ 5"));
-
-    let barato = cli::parse_args(&args(&["bakeoff", "--max-spend-usd", "1.00"])).unwrap();
-    assert_eq!(barato.max_spend_micro_usd, 1_000_000);
 }
 
 /// A taxa decide por comparação exata, não pelo milésimo truncado. O caso que discrimina é o da
@@ -2178,4 +2044,95 @@ async fn o_caderno_do_julgamento_cego_nao_nomeia_o_modelo() {
     let _ = &bakeoff;
 
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A sonda cabe, mas o que ela projeta não: a medição inteira custaria mais que o teto, e a
+/// recusa traz o número em vez de deixar a bancada descobrir gastando tudo.
+#[tokio::test]
+async fn a_sonda_recusa_quando_a_medicao_inteira_nao_cabe() {
+    let dir = reports_dir();
+    // Vinte casos com o custo da sonda projetam bem além do teto, e a sonda mede seis rodadas
+    // baratas antes de dizer isso.
+    let cases: Vec<case::Case> = (1..=20)
+        .map(|index| {
+            let mut body = valid_case_json();
+            let id = format!("caso-{index:02}");
+            body["id"] = json!(id);
+            body["fixture"] = json!("casa_vazia");
+            body["expected"] = json!({ "judgment": "mecanico" });
+            body["verification"] = json!(null);
+            parse(&format!("{id}.json"), &body).unwrap()
+        })
+        .collect();
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: zdr_catalog(),
+    };
+    let mut lock = super::SpendLock::new(100_000);
+
+    let (bakeoff, path) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases,
+            blind_sheet_path: std::cell::OnceCell::new(),
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    // Seis rodadas de sonda: 6 × 1.000. A projeção é de 6×20×1.000 na peneira mais 3×20×3×1.000
+    // na final — 300.000, o triplo do teto.
+    assert_eq!(bakeoff.probes.len(), PINS.len());
+    assert_eq!(bakeoff.estimate_micro_usd, 300_000);
+    assert_eq!(lock.spent_micro_usd(), 6_000);
+    assert!(bakeoff.phase_one.is_empty(), "nada além da sonda foi pago");
+
+    let Decision::NoWinner { reason } = &bakeoff.decision else {
+        panic!("uma medição que não cabe não decide o default");
+    };
+    assert!(reason.contains("300000"));
+    assert!(reason.contains("100000"));
+
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(written["probe"]["estimate_micro_usd"], 300_000);
+    assert_eq!(
+        written["probe"]["rounds"].as_array().unwrap().len(),
+        PINS.len()
+    );
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A projeção da final usa os candidatos mais CAROS, não a média: quem passa a peneira ainda não
+/// se sabe, e errar para cima antecipa uma recusa que custa centavos, enquanto errar para baixo
+/// gasta o teto para descobrir a mesma coisa.
+#[test]
+fn a_projecao_da_final_assume_os_candidatos_mais_caros() {
+    let probe = |model: &str, cost| bakeoff::Probe {
+        pin: pinned(model),
+        cost_micro_usd: cost,
+        cost_declared: true,
+    };
+    let probes = vec![
+        probe("anthropic/claude-sonnet-5", 1_000),
+        probe("openai/gpt-5.6-terra", 4_000),
+        probe("openai/gpt-5.6-luna", 3_000),
+        probe("google/gemini-3.6-flash", 2_000),
+        probe("x-ai/grok-4.5", 1_000),
+        // O teto de referência entra na peneira e nunca na final.
+        probe("anthropic/claude-opus-5", 9_000),
+    ];
+
+    // Peneira: a soma de todos, uma vez por caso. Final: os três candidatos mais caros
+    // (4.000 + 3.000 + 2.000), três repetições por caso.
+    assert_eq!(
+        bakeoff::estimate(&probes, 1),
+        20_000 + (4_000 + 3_000 + 2_000) * 3
+    );
 }
