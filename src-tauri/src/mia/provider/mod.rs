@@ -10,6 +10,7 @@
 
 pub(crate) mod drift;
 pub(crate) mod egress;
+pub(crate) mod http;
 pub(crate) mod pins;
 pub(crate) mod request;
 pub(crate) mod stream;

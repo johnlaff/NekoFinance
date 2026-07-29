@@ -1,0 +1,14 @@
+{
+  "id": "di-02-faixa-anual",
+  "family": "didatica",
+  "question": "Por que a faixa de economia é medida no ano, e não no mês?",
+  "fixture": "casa_basica",
+  "repetitions": 1,
+  "expected": {
+    "judgment": "cego",
+    "provenance": "metodo",
+    "tools": {
+      "must_call": ["get_method_guidance"]
+    }
+  }
+}

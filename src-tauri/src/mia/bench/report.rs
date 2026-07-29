@@ -1,0 +1,165 @@
+//! O relatório datado de uma execução da bancada.
+//!
+//! O relatório é o artefato que se versiona: modelo, endpoint, operador, o veredito de cada
+//! repetição e o custo total, num JSON que o bakeoff compara e uma pessoa lê. As respostas
+//! entram inteiras — é delas que o julgamento cego da didática precisa, e são elas a evidência
+//! quando um caso mecânico reprova.
+//!
+//! Antes de virar arquivo, o texto MONTADO passa pela mesma varredura de privacidade que o
+//! conteúdo servido do pack, quando o pack está presente: uma resposta que ecoasse termo privado
+//! não pode virar arquivo versionável. Sem pack não há deny-list — e também não houve núcleo do
+//! método na rodada; o gate de privacidade do repositório segue valendo no commit.
+
+use super::grade::Verdict;
+use super::{BenchRun, CaseRun, RepetitionOutcome};
+use crate::mia::method_tools::{self, MethodPack};
+use crate::mia::run::AnswerProvenance;
+use serde_json::{Value, json};
+use std::path::{Path, PathBuf};
+
+/// Monta o relatório. Pura: o instante da execução entra por parâmetro, e a mesma execução
+/// rende sempre o mesmo relatório.
+pub(crate) fn render(run: &BenchRun, ran_at: &str) -> Value {
+    let cases: Vec<Value> = run.cases.iter().map(case_json).collect();
+
+    let all = || run.cases.iter().flat_map(|case| case.outcomes.iter());
+    let verdicts = |wanted: fn(&Verdict) -> bool| -> usize {
+        all().filter(|outcome| wanted(&outcome.verdict)).count()
+    };
+
+    json!({
+        "ran_at": ran_at,
+        "model": run.pin.model,
+        "endpoint": run.pin.endpoint,
+        "operator": run.pin.operator,
+        "method_core": run.method_core,
+        "max_spend_micro_usd": run.max_spend_micro_usd,
+        "total_cost_micro_usd": run.total_cost_micro_usd,
+        "spend_lock_hit": run.spend_lock_hit,
+        "cost_gap": run.cost_gap,
+        "totals": {
+            "cases": run.cases.len(),
+            "repetitions": all().count(),
+            "passed": verdicts(|verdict| matches!(verdict, Verdict::Passed)),
+            "failed": verdicts(|verdict| matches!(verdict, Verdict::Failed { .. })),
+            "pending_judgment": verdicts(|verdict| matches!(verdict, Verdict::PendingJudgment)),
+            "aborted_cases": run.cases.iter().filter(|case| case.aborted).count(),
+        },
+        "cases": cases,
+    })
+}
+
+fn case_json(case_run: &CaseRun) -> Value {
+    let repetitions: Vec<Value> = case_run.outcomes.iter().map(repetition_json).collect();
+    json!({
+        "id": case_run.case.id,
+        "family": case_run.case.family.slug(),
+        "fixture": case_run.case.fixture,
+        "question": case_run.case.question,
+        "aborted": case_run.aborted,
+        "repetitions": repetitions,
+    })
+}
+
+fn repetition_json(outcome: &RepetitionOutcome) -> Value {
+    let (verdict, failures) = match &outcome.verdict {
+        Verdict::Passed => ("passed", vec![]),
+        Verdict::PendingJudgment => ("pending_judgment", vec![]),
+        Verdict::Failed { failures } => ("failed", failures.clone()),
+    };
+    json!({
+        "verdict": verdict,
+        "failures": failures,
+        "stop": format!("{:?}", outcome.stop),
+        "provenance": outcome.provenance.map(|provenance| match provenance {
+            AnswerProvenance::Calculo => "calculo",
+            AnswerProvenance::Metodo => "metodo",
+        }),
+        "tools_called": outcome.tools_called,
+        "cost_micro_usd": outcome.cost_micro_usd,
+        "cost_declared": outcome.cost_declared,
+        "turns": outcome.turns,
+        "attempts": outcome.attempts,
+        "answer": outcome.answer,
+    })
+}
+
+/// O nome do arquivo: instante da execução (até o segundo, com `:` trocado por `-` para valer
+/// em qualquer sistema de arquivos) mais o modelo. Dois relatórios nunca disputam o mesmo nome,
+/// e o diretório lista a história em ordem.
+pub(crate) fn file_name(ran_at: &str, model: &str) -> String {
+    let stamp: String = ran_at
+        .chars()
+        .take("2026-07-29T14:33:05".len())
+        .map(|character| if character == ':' { '-' } else { character })
+        .collect();
+    let slug: String = model
+        .chars()
+        .map(|character| match character {
+            '/' | '.' => '-',
+            other => other,
+        })
+        .collect();
+    format!("{stamp}-{slug}.json")
+}
+
+/// Escreve o relatório datado no diretório. Falha fechado: se a varredura de privacidade
+/// bloquear, nenhum arquivo nasce.
+pub(crate) async fn write(
+    dir: &Path,
+    run: &BenchRun,
+    ran_at: &str,
+    pack: Option<&MethodPack>,
+) -> Result<PathBuf, String> {
+    let report = render(run, ran_at);
+    let text = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&report).expect("o relatório da bancada é serializável")
+    );
+
+    if let Some(pack) = pack {
+        method_tools::privacy_scan(pack, "o relatório da bancada", &text)
+            .await
+            .map_err(|error| format!("{} {}", error.message, error.fix))?;
+    }
+
+    // Escrita exclusiva: duas execuções no mesmo segundo ganham sufixos, nunca o direito de
+    // apagar a evidência uma da outra.
+    let base = file_name(ran_at, run.pin.model);
+    let stem = base.strip_suffix(".json").unwrap_or(&base);
+    for attempt in 0..10 {
+        let candidate = if attempt == 0 {
+            dir.join(&base)
+        } else {
+            dir.join(format!("{stem}-{}.json", attempt + 1))
+        };
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(mut file) => {
+                use std::io::Write;
+                file.write_all(text.as_bytes()).map_err(|error| {
+                    format!(
+                        "O relatório não pôde ser escrito em {}: {error}.",
+                        candidate.display()
+                    )
+                })?;
+                return Ok(candidate);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "O relatório não pôde ser escrito em {}: {error}.",
+                    candidate.display()
+                ));
+            }
+        }
+    }
+    Err(format!(
+        "Dez relatórios com o mesmo instante já existem em {} — algo está reexecutando a \
+         bancada em laço.",
+        dir.display()
+    ))
+}

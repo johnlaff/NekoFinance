@@ -1,0 +1,21 @@
+{
+  "id": "fn-05-saldo-do-dia-12",
+  "family": "fidelidade_numerica",
+  "question": "Qual era o meu saldo no dia 12 de julho?",
+  "fixture": "casa_basica",
+  "repetitions": 1,
+  "expected": {
+    "judgment": "mecanico",
+    "provenance": "calculo",
+    "tools": {
+      "must_call": ["get_cashflow_calendar"]
+    },
+    "answer": {
+      "must_contain": ["8.123,45"]
+    }
+  },
+  "verification": {
+    "tool": "get_cashflow_calendar",
+    "arguments": { "range": { "start": "2026-07-12", "end": "2026-07-12" } }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "id": "sf-01-teto-do-diario",
+  "family": "selecao_de_ferramenta",
+  "question": "Qual é o meu teto do diário e de onde ele veio?",
+  "fixture": "casa_basica",
+  "repetitions": 1,
+  "expected": {
+    "judgment": "mecanico",
+    "provenance": "calculo",
+    "tools": {
+      "must_call": ["get_budget_settings"],
+      "must_not_call": ["get_financial_snapshot"]
+    },
+    "answer": {
+      "must_contain": ["120,00"]
+    }
+  },
+  "verification": {
+    "tool": "get_budget_settings",
+    "arguments": {}
+  }
+}

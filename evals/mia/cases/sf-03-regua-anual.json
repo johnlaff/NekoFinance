@@ -1,0 +1,14 @@
+{
+  "id": "sf-03-regua-anual",
+  "family": "selecao_de_ferramenta",
+  "question": "Estou dentro da faixa de economia este ano?",
+  "fixture": "casa_basica",
+  "repetitions": 1,
+  "expected": {
+    "judgment": "mecanico",
+    "tools": {
+      "must_call": ["get_year_analysis"],
+      "must_not_call": ["get_month_analysis"]
+    }
+  }
+}

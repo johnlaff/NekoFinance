@@ -13,6 +13,7 @@ pub(crate) enum PinRole {
     Ceiling,
 }
 
+#[derive(Debug)]
 pub(crate) struct ModelPin {
     pub model: &'static str,
     pub endpoint: &'static str,
