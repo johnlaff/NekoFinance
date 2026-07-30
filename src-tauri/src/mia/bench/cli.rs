@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 pub(crate) const USAGE: &str = "Uso: mia-bench [--model <id do pin>] [--max-spend-usd <decimal>] \
      [--pack <caminho>] [--only <trecho do id>] [--cases-dir <caminho>] [--reports-dir <caminho>]\n\
      \x20    mia-bench bakeoff [--max-spend-usd <decimal, teto US$ 20>] [--pack <caminho>] \
-     [--reports-dir <caminho>]\n\
+     [--reports-dir <caminho>] [--resume <relatório>] [--assume-pin-identity]\n\
      \x20    mia-bench julgar --report <relatório> --verdicts <caderno julgado>";
 
 /// O que a execução vai fazer.
@@ -34,8 +34,12 @@ const SINGLE_CAP_MICRO_USD: i64 = 1_000_000;
 
 /// O teto do bakeoff, fixado pela spec a partir de MEDIÇÃO: com o custo por rodada sondado em
 /// cada pin, o desenho integral — sonda, peneira com o recorte da régua e final — projeta cerca
-/// de US$ 17 (verificado 2026-07), e o teto o cobre com folga sem alcançar o limite da chave
-/// dedicada no painel do provedor, que é a parada dura. Se a projeção passar do teto, a corrida
+/// de US$ 17 (verificado 2026-07-30, aos preços cobrados naquela medição), e o teto o cobre com
+/// folga sem alcançar o limite da chave dedicada no painel do provedor, que é a parada dura. O
+/// número envelhece com a tabela do provedor e a bancada não o consulta: a sonda mede o custo por
+/// rodada na corrida do zero — uma queda de preço aparece como folga maior, e uma alta aparece na
+/// recusa antes de qualquer fase paga. A retomada não sonda de novo: ela herda a sonda da execução
+/// anterior, com os preços daquela data, porque o que ela ainda tem a pagar é a final que falta. Se a projeção passar do teto, a corrida
 /// termina sem decisão dizendo o número que falta — que é a resposta honesta —, e o teto volta à
 /// mesa como decisão de spec, nunca como flag de quem está com pressa.
 const BAKEOFF_CAP_MICRO_USD: i64 = 20_000_000;
@@ -50,6 +54,10 @@ pub(crate) struct CliArgs {
     pub report: Option<PathBuf>,
     /// O caderno cego com os vereditos preenchidos.
     pub verdicts: Option<PathBuf>,
+    /// O relatório de uma execução anterior cuja peneira será reaproveitada.
+    pub resume: Option<PathBuf>,
+    /// Quem invoca responde pela identidade dos pins que o relatório retomado não registra.
+    pub assume_pin_identity: bool,
     pub model: Option<String>,
     pub max_spend_micro_usd: i64,
     pub pack_root: Option<PathBuf>,
@@ -75,6 +83,8 @@ pub(crate) fn parse_args(args: &[String]) -> Result<CliArgs, String> {
         mode,
         report: None,
         verdicts: None,
+        resume: None,
+        assume_pin_identity: false,
         model: None,
         max_spend_micro_usd: 0,
         pack_root: None,
@@ -102,6 +112,8 @@ pub(crate) fn parse_args(args: &[String]) -> Result<CliArgs, String> {
             "--reports-dir" => parsed.reports_dir = PathBuf::from(value()?),
             "--report" => parsed.report = Some(PathBuf::from(value()?)),
             "--verdicts" => parsed.verdicts = Some(PathBuf::from(value()?)),
+            "--resume" => parsed.resume = Some(PathBuf::from(value()?)),
+            "--assume-pin-identity" => parsed.assume_pin_identity = true,
             other => return Err(format!("Flag desconhecida: {other}. {USAGE}")),
         }
     }
@@ -142,6 +154,23 @@ pub(crate) fn parse_args(args: &[String]) -> Result<CliArgs, String> {
                 BAKEOFF_CAP_MICRO_USD / 1_000_000
             ));
         }
+    }
+
+    // Retomar é reaproveitar a peneira de uma execução do bakeoff; fora dele não existe peneira
+    // para herdar, e aceitar a flag ali prometeria uma economia que não aconteceria.
+    if parsed.resume.is_some() && mode != Mode::Bakeoff {
+        return Err(format!(
+            "--resume só vale no modo bakeoff: é a peneira dele que se reaproveita. {USAGE}"
+        ));
+    }
+
+    // Reconhecer a identidade dos pins é um gesto sobre a evidência HERDADA: fora de uma retomada
+    // não há relatório antigo para responder por, e a flag prometeria uma garantia sobre nada.
+    if parsed.assume_pin_identity && parsed.resume.is_none() {
+        return Err(format!(
+            "--assume-pin-identity só vale junto de --resume: é a identidade dos pins do relatório \
+             retomado que ela reconhece. {USAGE}"
+        ));
     }
 
     if mode == Mode::Judge && (parsed.report.is_none() || parsed.verdicts.is_none()) {

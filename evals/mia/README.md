@@ -76,6 +76,8 @@ Flags disponíveis:
 | `--max-spend-usd <valor>`         | padrão `1.00` | padrão `20.00`, e só abaixa           |
 | `--pack <caminho do pack curado>` | sim           | sim                                   |
 | `--reports-dir <caminho>`         | sim           | sim                                   |
+| `--resume <relatório>`            | recusada      | reaproveita a peneira já paga         |
+| `--assume-pin-identity`           | recusada      | só com `--resume`                     |
 
 ## O bakeoff
 
@@ -97,13 +99,33 @@ Se a projeção passar do teto, a corrida termina ali com o número na mão: "a 
 
 **A ordem dos candidatos** lê o benchmark de agente bancário acima do índice geral de inteligência, e decide duas coisas pequenas: quem corre primeiro (o dinheiro chega aos mais promissores antes de a trava fechar) e quem ganha empate. O gate é a suíte própria. A ordem vive em `prior_rank`, na matriz de pins.
 
-**A decisão** exige que a medição tenha sido inteira. A peneira precisa ter medido todo pin liberado — comparar dois modelos contra quatro que a trava cortou compararia orçamento, e o relatório leria como se a matriz inteira tivesse concorrido. A final precisa ter medido todos os finalistas selecionados, no mínimo dois. Faltando qualquer um, não há default: o relatório nomeia quem ficou de fora. Entre os que zeraram a suíte mecânica, ganha o mais barato.
+**A decisão** exige que a medição tenha sido inteira. A peneira precisa ter medido todo pin liberado — comparar dois modelos contra quatro que a trava cortou compararia orçamento, e o relatório leria como se a matriz inteira tivesse concorrido. A final precisa ter medido todos os finalistas selecionados, no mínimo dois. Faltando qualquer um, não há default: o relatório nomeia quem ficou de fora. Entre os que zeraram a suíte mecânica, ganha o de menor custo registrado.
+
+**A ressalva do medidor quebrado.** "Nada se decide sobre medição parcial" vale para o que o candidato deixou de medir — não para o que o provedor impediu de medir. Corrida encerrada por `cost_meter_broken` (duas rodadas sem custo declarado do mesmo pin) sai da comparação: o instrumento falhou, e cobrar do modelo o resultado que ele não teve como produzir deixaria a decisão inteira refém de uma falha que não é de modelo nenhum. Com alguém fora por esse motivo, o quórum da final cai para um, e quem sobrou pode vencer por **W.O.** O racional publicado nomeia o excluído, diz o motivo e, quando a vitória é por W.O., diz isso por extenso — vender W.O. como comparação seria mentir sobre a base. O W.O. dispensa o oponente e **nada mais**: o vencedor solitário passa exatamente pelos mesmos gates de um vencedor comparado — corrida completa, suíte mecânica zerada, nenhuma isca obedecida e nenhum bilhete reprovado na leitura cega. As outras paradas continuam vetando a decisão: teto de gasto e falha operacional são medição que faltou, e comparar quem terminou contra quem o orçamento cortou compararia orçamento, não modelo.
 
 Uma repetição cortada pelo teto que a trava apertou não conta como erro do modelo nem como medição: quem estava na fila quando o dinheiro acabou não é reprovado por isso, e a corrida deixa de ser comparável.
 
 Enquanto houver resposta de didática esperando leitura cega, o relatório traz `leading_model` e mantém `default_model` nulo: o gate da spec pede as famílias mecânicas em 100% **e** a didática aprovada em julgamento cego, e chamar de default o que ainda não passou pelo segundo induziria a troca do pin antes da hora. Adotar é sempre gesto manual — trocar o papel `Default` em `src-tauri/src/mia/provider/pins.rs` é de quem lê.
 
 **Nenhum recorte.** No modo bakeoff, `--model`, `--only` e `--cases-dir` são recusados, e `--max-spend-usd` só abaixa o teto. Um veredito tirado de um caso repetido três vezes leria, no relatório, igual a um veredito tirado das seis famílias — e é esse relatório que alguém vai consultar para trocar o pin. Para experimentar, existe a corrida solta, que não decide default. O relatório grava os identificadores dos casos medidos, para que dois vereditos sobre catálogos diferentes nunca sejam indistinguíveis.
+
+## Retomar uma corrida interrompida
+
+A peneira mede a matriz inteira e custa dinheiro de verdade. Quando uma execução cai depois dela — na final, na rede, na máquina —, o relatório em disco já tem a peneira completa, e refazê-la seria pagar duas vezes pela mesma medição:
+
+```sh
+cargo run --manifest-path src-tauri/Cargo.toml --bin mia-bench -- bakeoff \
+  --pack .methodology-pack \
+  --resume evals/mia/reports/<data>-bakeoff.json
+```
+
+A leitura é estrita, porque é dela que sai quem disputa a final: nada vem do bloco `score` do arquivo — cada corrida é reconferida repetição por repetição, com a mesma régua da corrida ao vivo. Catálogo, recorte da régua, famílias dos casos, matriz de pins (nomes e ordem) e a identidade de cada pin (modelo, endpoint, operador, cabeçalhos beta, piso de raciocínio, nome do teto de saída) precisam ser os de hoje; a sonda precisa ter medido a matriz inteira, com custo declarado e sem falha, porque é a única projeção que a final retomada tem; e o gasto declarado precisa cobrir sonda mais corridas.
+
+A **peneira** é tudo ou nada: incompleta, recusa a retomada inteira — a final compararia um prefixo da matriz. Na **final**, cada corrida responde só pelo pin dela: a que passa na conferência inteira e pertence aos sobreviventes recomputados é reaproveitada; qualquer dúvida devolve aquele pin para a fila de correr de novo. O erro barato é gastar outra vez; o caro é decidir o default sobre corrida que ninguém conferiu.
+
+O dinheiro herdado **não** conta contra a trava da nova execução — ela protege gasto novo. O relatório publica `spent_micro_usd` (esta execução), `inherited_micro_usd` e a soma em `total_cost_micro_usd`, e cada corrida herdada sai verbatim, com `inherited_from` e o instante em que ela correu de verdade.
+
+Relatórios de formato anterior não registram a configuração da requisição (`beta_headers`, `reasoning_floor`, `token_cap`). A prova de identidade fica então fora do arquivo, e `--assume-pin-identity` transfere essa responsabilidade a quem invoca: ela supre a AUSÊNCIA e nada mais — campo registrado que diverge continua recusando —, e o relatório sai com `pin_identity_assumed: true`, para a decisão não esconder em que ela se apoia.
 
 ## A trava dupla de gasto
 
@@ -122,6 +144,12 @@ As fatias das etapas são derivadas da cardinalidade enquanto não há medição
 O relatório nasce datado em `evals/mia/reports/`, carrega modelo, endpoint, operador, resultados por caso e totais, e é versionado em commit. Reexecute a bancada a cada mudança de fachada, prompt ou modelo.
 
 O bakeoff escreve um relatório só, reescrito ao fim de cada corrida: ele dura o que dura e gasta dinheiro de verdade, e uma queda no meio não pode levar embora a evidência do que já foi pago. Dentro dele ficam as duas fases inteiras, o que o canary recusou, o custo acumulado e a decisão.
+
+**A comparação de custo é datada.** Entre finalistas que zeraram a suíte, ganha o de menor custo registrado — mas numa corrida retomada esse custo pode vir de datas diferentes: a corrida herdada foi cobrada pela tarifa do dia dela, a nova pela de hoje. O bakeoff não tem tabela de preços (e não deve ter: o número que vale é o que o provedor cobrou), então ele não converte uma tarifa na outra nem finge que são a mesma. O desempate continua determinístico, e o racional publicado **declara a mistura**: nomeia cada pin com a data do custo dele e diz que o desempate por custo é base frágil, em vez de afirmar "o mais barato". Com um elegível só, ou com todos da mesma data, não há o que qualificar e o racional afirma o que mediu. A mesma regra vale na decisão que fecha o julgamento cego, que é onde o default é escrito.
+
+A régua é **salvaguarda, não correção**: ela vale igual quando a tarifa não mudou entre as duas datas. O arquivo não sabe dizer se mudou — nem o código, que não guarda tabela de preços —, e é justamente por não saber que ele qualifica em vez de afirmar. Uma ressalva no racional não é sinal de que houve distorção; é o que sobra de honesto quando a comparação atravessa duas datas.
+
+Todo custo no relatório é o **cobrado no momento da medição**: ele sai do que o provedor declarou naquela rodada, nunca de uma tabela de preços no código. Numa corrida retomada, o custo herdado é o preço da época — reconciliá-lo com a tabela vigente do provedor mostra a diferença de preço entre as duas datas — se houver alguma —, nunca um erro de conta.
 
 Duas varreduras de privacidade cobrem o relatório, e elas são diferentes: com `--pack`, o texto montado passa pela deny-list do próprio pack antes de virar arquivo (sem passar, o arquivo não nasce); e o commit passa pela varredura do repositório (`npm run privacy:scan`), que confere `.private-forbidden-patterns`. Uma não substitui a outra.
 
@@ -145,7 +173,7 @@ O comando não fala com o provedor, não gasta e não pede chave: é leitura e c
 
 Caderno e relatório são amarrados por um `execution_id` gravado nos dois: os bilhetes são determinísticos por construção (caso e posição), então duas execuções do mesmo catálogo produzem exatamente os mesmos bilhetes, e sem essa amarra o caderno de uma julgaria a outra sem nada reclamar.
 
-A decisão é **recomputada das repetições brutas** do relatório, nunca do bloco `score` — que é derivado, cômodo para quem lê e cômodo demais para quem edita. Campo decisório ausente é recusa em vez de um zero conveniente; o mesmo modelo duas vezes na final não faz quórum consigo mesmo; e o teto de referência não pode aparecer lá. Um bilhete reprovado reprova o modelo inteiro: ensinar errado uma vez não se compensa com dois acertos. Entre os que passaram nos dois gates, ganha o mais barato, e `default_model` finalmente deixa de ser nulo no relatório.
+A decisão é **recomputada das repetições brutas** do relatório, nunca do bloco `score` — que é derivado, cômodo para quem lê e cômodo demais para quem edita. Campo decisório ausente é recusa em vez de um zero conveniente; o mesmo modelo duas vezes na final não faz quórum consigo mesmo; e o teto de referência não pode aparecer lá. Um bilhete reprovado reprova o modelo inteiro: ensinar errado uma vez não se compensa com dois acertos. Entre os que passaram nos dois gates, ganha o de menor custo registrado, e `default_model` finalmente deixa de ser nulo no relatório.
 
 Adotar continua sendo gesto manual.
 

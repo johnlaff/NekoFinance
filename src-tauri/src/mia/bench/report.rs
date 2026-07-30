@@ -29,9 +29,16 @@ pub(crate) fn render(run: &BenchRun, ran_at: &str) -> Value {
 
     json!({
         "ran_at": ran_at,
+        // A identidade do pin sai INTEIRA: modelo e endpoint dizem de onde veio a resposta, e a
+        // configuração da requisição diz sob que regras ela foi produzida. Sem os três últimos, uma
+        // corrida guardada não prova ter nascido da configuração que a matriz declara hoje — e é
+        // sobre essa prova que a retomada decide reaproveitar em vez de pagar de novo.
         "model": run.pin.model,
         "endpoint": run.pin.endpoint,
         "operator": run.pin.operator,
+        "beta_headers": run.pin.beta_headers,
+        "reasoning_floor": run.pin.reasoning_floor.effort(),
+        "token_cap": run.pin.token_cap.field(),
         "method_core": run.method_core,
         "max_spend_micro_usd": run.max_spend_micro_usd,
         "total_cost_micro_usd": run.total_cost_micro_usd,

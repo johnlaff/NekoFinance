@@ -16,6 +16,7 @@ pub(crate) mod cli;
 pub(crate) mod fixtures;
 pub(crate) mod grade;
 pub(crate) mod report;
+pub(crate) mod resume;
 
 #[cfg(test)]
 mod tests;
@@ -185,6 +186,17 @@ pub(crate) enum Halt {
 }
 
 impl Halt {
+    /// A parada que o relatório nomeia, lida de volta. Desconhecida é recusa: um motivo que esta
+    /// versão não conhece pode ser exatamente o que muda quem entra na decisão.
+    pub(crate) fn from_slug(slug: &str) -> Option<Halt> {
+        match slug {
+            "spend_ceiling" => Some(Halt::SpendCeiling),
+            "cost_meter_broken" => Some(Halt::CostMeterBroken),
+            "operational" => Some(Halt::Operational),
+            _ => None,
+        }
+    }
+
     /// O nome que o relatório publica.
     pub(crate) fn slug(self) -> &'static str {
         match self {
@@ -628,8 +640,27 @@ async fn execute(cli: cli::CliArgs, key: String) -> Result<String, String> {
     let ran_at = chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
 
     if cli.mode == cli::Mode::Bakeoff {
+        // A retomada é lida ANTES de qualquer rodada: um relatório incompatível com a matriz de
+        // hoje precisa recusar antes de gastar, não depois.
+        let resumed = match &cli.resume {
+            None => None,
+            Some(path) => {
+                let text = std::fs::read_to_string(path)
+                    .map_err(|error| format!("{} não pôde ser lido: {error}.", path.display()))?;
+                let report: Value = serde_json::from_str(&text).map_err(|error| {
+                    format!("{} não parseia como JSON: {error}.", path.display())
+                })?;
+                Some(resume::parse(
+                    &report,
+                    &cases,
+                    path.clone(),
+                    cli.assume_pin_identity,
+                )?)
+            }
+        };
         let config = bakeoff::BakeoffConfig {
             cases,
+            resumed,
             execution_id: uuid::Uuid::new_v4().to_string(),
             blind_sheet_path: std::cell::OnceCell::new(),
             pack_root: cli.pack_root.clone(),

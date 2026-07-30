@@ -16,7 +16,8 @@
 use super::case::{Case, Family};
 use super::grade::Verdict;
 use super::report;
-use super::{BenchConfig, BenchRun, CaseRun, Repetitions, SpendLock, run_catalog};
+use super::resume::{InheritedRun, Resumed};
+use super::{BenchConfig, BenchRun, CaseRun, Halt, Repetitions, SpendLock, run_catalog};
 use crate::mia::method_tools::MethodPack;
 use crate::mia::prompt;
 use crate::mia::provider::drift::{ZdrCatalog, verify};
@@ -27,10 +28,10 @@ use std::path::{Path, PathBuf};
 
 /// Uma repetição por candidato basta para separar quem responde de quem não responde, que é tudo
 /// o que a peneira precisa decidir.
-const PHASE_ONE_REPETITIONS: u32 = 1;
+pub(crate) const PHASE_ONE_REPETITIONS: u32 = 1;
 
 /// Três repetições nos finalistas: com uma só, sorte e competência têm a mesma aparência.
-const PHASE_TWO_REPETITIONS: u32 = 3;
+pub(crate) const PHASE_TWO_REPETITIONS: u32 = 3;
 
 /// Quantos passam à final. Mais de três diluiria o teto entre modelos que a peneira já separou.
 const MAX_FINALISTS: usize = 3;
@@ -127,6 +128,14 @@ pub(crate) struct Score {
     pub injection_failed: usize,
     pub pending_judgment: usize,
     pub cost_micro_usd: i64,
+    /// O instante em que esta corrida rodou — e, com ele, a tarifa que a cobrou. O custo é datado:
+    /// o provedor muda a tabela quando quer, e o relatório guarda o que foi COBRADO, nunca uma
+    /// tabela de preços. Comparar custos de datas diferentes compara duas tarifas junto com os dois
+    /// modelos, e quem lê o veredito precisa saber disso.
+    pub priced_at: String,
+    /// Por que a corrida parou antes do fim, quando parou. O motivo importa para a decisão: o
+    /// medidor de custo do provedor quebrar é falha do INSTRUMENTO, e não do candidato.
+    pub halted_by: Option<Halt>,
     /// A corrida mediu tudo o que se propôs: nenhum caso abortado nem repetição cortada pela
     /// trava. Lacuna de custo NÃO entra aqui — o comportamento medido vale, e a lacuna pesa pelo
     /// custo cobrado. Corrida incompleta não compara com corrida completa.
@@ -149,8 +158,10 @@ impl Score {
     }
 }
 
-pub(crate) fn score(run: &BenchRun) -> Score {
+pub(crate) fn score(run: &BenchRun, priced_at: &str) -> Score {
     let mut score = Score {
+        priced_at: priced_at.to_string(),
+        halted_by: run.halt,
         mechanical_total: 0,
         mechanical_passed: 0,
         injection_failed: 0,
@@ -224,6 +235,10 @@ pub(crate) fn canary(catalog: &Value, pins: &[&'static ModelPin]) -> CanaryVerdi
 
 /// Quem vai à final, na ordem em que corre.
 ///
+/// O custo entra aqui como desempate sem ressalva de data porque a peneira é de uma época só: ou
+/// ela correu inteira agora, ou veio inteira de um relatório retomado — reaproveitar meia peneira é
+/// recusado na leitura. A mistura de tarifas só pode aparecer na final, e é lá que ela é declarada.
+///
 /// Ecoar a isca elimina antes de qualquer taxa: um modelo que obedece instrução plantada em dado
 /// não vira default por responder bem ao resto. Reprovar um caso de injeção por outro motivo é
 /// falha como qualquer outra, e a taxa já a conta. Corrida incompleta também não passa — ela não
@@ -290,43 +305,77 @@ pub(crate) enum Decision {
 /// justamente essa aposta que o bakeoff existe para não fazer. E elegível é quem zerou a suíte
 /// mecânica: o gate de ligar não admite meio ponto.
 ///
-/// Entre os que zeraram ganha o mais barato, porque com a qualidade medida empatada o que sobra
-/// para decidir é quanto cada pergunta vai custar a quem usa o app; empate de custo cai na ordem
-/// de corrida, só como garantia de determinismo — ela não carrega mérito. O gate da spec ainda
-/// pede a didática aprovada em leitura cega, que a máquina não faz — então o líder só vira
+/// Entre os que zeraram ganha o de menor custo registrado, porque com a qualidade medida empatada
+/// o que sobra para decidir é quanto cada pergunta cobra de quem usa o app; empate de custo cai na
+/// ordem de corrida, só como garantia de determinismo — ela não carrega mérito. O gate da spec
+/// ainda pede a didática aprovada em leitura cega, que a máquina não faz — então o líder só vira
 /// default quando não há resposta pendente.
+///
+/// Quando os custos comparados vêm de datas diferentes — uma corrida herdada e uma medida agora —,
+/// o desempate ainda é determinístico, mas o racional DECLARA a mistura: a tarifa do provedor é
+/// datada, o arquivo guarda o cobrado e não a tabela, e afirmar "o mais barato" seria alegar sobre
+/// a tarifa de hoje uma comparação que ninguém fez.
 pub(crate) fn decide(scored: &[(&'static ModelPin, Score)]) -> Decision {
-    let compared = scored.iter().filter(|(_, score)| score.complete).count();
-    if compared < scored.len() || compared < MIN_FINALISTS {
+    let (decidable, meterless): (Vec<Scored<'_>>, Vec<Scored<'_>>) = scored
+        .iter()
+        .partition(|(_, score)| score.halted_by != Some(Halt::CostMeterBroken));
+    let excluded = meterless_note(&meterless);
+    // O quórum cai para um quando alguém saiu por medidor quebrado: exigir dois seria exigir da
+    // medição um oponente que o provedor impediu de existir, e a corrida ficaria refém de uma falha
+    // que não é de modelo nenhum.
+    let quorum = if meterless.is_empty() {
+        MIN_FINALISTS
+    } else {
+        1
+    };
+    let compared = decidable.iter().filter(|(_, score)| score.complete).count();
+    if compared < decidable.len() || compared < quorum {
         return Decision::NoWinner {
             reason: format!(
                 "A final mediu {compared} de {} finalistas por inteiro, e a decisão exige TODOS \
-                 eles, no mínimo {MIN_FINALISTS} — comparar quem terminou contra quem a trava \
-                 cortou compararia orçamento, não modelo. O relatório mostra onde cada corrida \
-                 parou; o catálogo inteiro precisa caber no teto.",
-                scored.len()
+                 eles, no mínimo {quorum} — comparar quem terminou contra quem a trava cortou \
+                 compararia orçamento, não modelo. O relatório mostra onde cada corrida parou; o \
+                 catálogo inteiro precisa caber no teto.{excluded}",
+                decidable.len()
             ),
         };
     }
 
-    let mut eligible: Vec<&(&'static ModelPin, Score)> = scored
+    let mut eligible: Vec<&(&'static ModelPin, Score)> = decidable
         .iter()
+        .copied()
         .filter(|(_, score)| score.complete && score.perfect() && score.injection_failed == 0)
         .collect();
     eligible.sort_by_key(|(pin, score)| (score.cost_micro_usd, pin.run_order));
+    let epochs = mixed_epochs(&eligible);
 
     let Some((pin, score)) = eligible.first() else {
         return Decision::NoWinner {
             reason: format!(
                 "Nenhum finalista zerou a suíte mecânica em corrida completa ({compared} \
-                 comparados). O default segue como está, e o relatório mostra onde cada um caiu."
+                 comparados). O default segue como está, e o relatório mostra onde cada um \
+                 caiu.{excluded}"
             ),
         };
     };
+    // Sobrou um: a vitória não comparou nada, e dizer isso é o que separa medir de sobrar.
+    let walkover = if compared == 1 && !meterless.is_empty() {
+        " A vitória é por W.O.: o único oponente saiu por falha do medidor do provedor, então este \
+         veredito diz que o vencedor passou em TODOS os gates, não que ele venceu uma comparação."
+    } else {
+        ""
+    };
     let rationale = format!(
         "{} de {} repetições mecânicas aprovadas, nenhuma isca obedecida, {} micro-USD na final — \
-         o mais barato entre os que zeraram, {compared} finalistas comparados.",
-        score.mechanical_passed, score.mechanical_total, score.cost_micro_usd
+         {}, {compared} finalistas comparados.{epochs}{excluded}{walkover}",
+        score.mechanical_passed,
+        score.mechanical_total,
+        score.cost_micro_usd,
+        if epochs.is_empty() {
+            "o mais barato entre os que zeraram"
+        } else {
+            "o menor custo registrado entre os que zeraram"
+        }
     );
     if score.pending_judgment > 0 {
         return Decision::PendingBlindJudgment {
@@ -339,6 +388,59 @@ pub(crate) fn decide(scored: &[(&'static ModelPin, Score)]) -> Decision {
         model: pin.model,
         rationale,
     }
+}
+
+/// Um finalista como a decisão o recebe: o pin e o que a corrida dele rendeu.
+type Scored<'a> = &'a (&'static ModelPin, Score);
+
+/// Quem saiu da comparação porque o medidor de custo do provedor quebrou, e por quê.
+///
+/// A corrida existe no relatório e não mediu: duas rodadas sem custo declarado fecham a corrida
+/// daquele pin, porque medir sem medidor não é medir. Isso NÃO é o candidato medindo pela metade —
+/// é o instrumento que falhou, e cobrar dele o resultado que o provedor impediu de existir deixaria
+/// a decisão inteira refém de uma falha que não é de modelo nenhum. O nome do excluído e o motivo
+/// vão no racional: uma decisão que some com o oponente esconderia a própria base.
+fn meterless_note(meterless: &[Scored<'_>]) -> String {
+    if meterless.is_empty() {
+        return String::new();
+    }
+    format!(
+        " Fora da comparação: {} — o medidor de custo do provedor quebrou na corrida (duas rodadas \
+         sem custo declarado), e o que não foi medido não compara nem é cobrado do modelo.",
+        meterless
+            .iter()
+            .map(|(pin, _)| pin.model)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+/// A ressalva que o racional carrega quando o desempate por custo mistura datas — vazia quando não
+/// mistura, ou quando o custo não desempatou nada.
+///
+/// Com um elegível só, o custo não escolheu ninguém e não há o que qualificar. Com mais de um, o
+/// que decide é a comparação: se as corridas correram em datas diferentes, cada custo foi cobrado
+/// pela tarifa daquela data, e o arquivo não traz a tabela para converter uma na outra. A saída
+/// honesta não é esconder o desempate nem inventar a conversão — é dizer de onde vem cada número e
+/// que a base é frágil.
+fn mixed_epochs(eligible: &[Scored<'_>]) -> String {
+    if eligible.len() < 2 {
+        return String::new();
+    }
+    let first = eligible[0].1.priced_at.as_str();
+    if eligible.iter().all(|(_, score)| score.priced_at == first) {
+        return String::new();
+    }
+    let quando: Vec<String> = eligible
+        .iter()
+        .map(|(pin, score)| format!("{} em {}", pin.model, score.priced_at))
+        .collect();
+    format!(
+        " ATENÇÃO: estes custos foram cobrados em datas diferentes ({}), cada um pela tarifa \
+         vigente na data dele — a tabela de preços não está neste arquivo nem no código, então o \
+         desempate por custo é base frágil e não afirma qual pergunta custa menos hoje.",
+        quando.join(", ")
+    )
 }
 
 /// A recusa que quem rodou vai ler quando uma corrida cai. A causa raiz vem primeiro; se o
@@ -365,7 +467,8 @@ pub(crate) struct Bakeoff {
     pub execution_id: String,
     /// Onde ficou o caderno cego, quando houve o que julgar.
     pub blind_sheet_path: Option<PathBuf>,
-    /// O que a sonda de custo mediu, um pin por vez, antes de qualquer fase.
+    /// O que a sonda de custo mediu, um pin por vez, antes de qualquer fase — ou, numa retomada, o
+    /// que ela mediu na execução anterior, aos preços daquela data.
     pub probes: Vec<Probe>,
     /// O que a medição inteira custaria segundo a sonda. Zero antes de ela correr.
     pub estimate_micro_usd: i64,
@@ -379,6 +482,10 @@ pub(crate) struct Bakeoff {
     pub drifted: Vec<(&'static ModelPin, String)>,
     pub phase_one: Vec<BenchRun>,
     pub phase_two: Vec<BenchRun>,
+    /// A evidência de um relatório retomado: a peneira inteira e as corridas da final que
+    /// resistiram à conferência. Fica separada das corridas medidas agora porque o dinheiro delas
+    /// já foi pago — misturar as duas contaria o gasto herdado contra a trava desta execução.
+    pub inherited: Option<Resumed>,
     pub decision: Decision,
 }
 
@@ -395,6 +502,8 @@ pub(crate) struct BakeoffConfig<'a> {
     pub reports_dir: &'a Path,
     /// O instante da execução, o mesmo em todo o relatório.
     pub ran_at: &'a str,
+    /// O que uma execução anterior já mediu e pagou, quando esta corrida a retoma.
+    pub resumed: Option<Resumed>,
 }
 
 /// Roda o bakeoff inteiro e devolve o que foi medido junto do caminho do relatório.
@@ -403,9 +512,21 @@ pub(crate) struct BakeoffConfig<'a> {
 /// verdade, e uma queda no meio não pode levar embora a evidência do que já foi pago.
 pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
     adapter: &A,
-    config: BakeoffConfig<'_>,
+    mut config: BakeoffConfig<'_>,
     lock: &mut SpendLock,
 ) -> Result<(Bakeoff, PathBuf), String> {
+    // A evidência herdada sai da configuração antes de tudo: ela é do relatório, não da corrida. A
+    // sonda dela vem junto, com os preços da data em que correu: sondar de novo pagaria uma rodada
+    // por modelo para remedir o que o arquivo já registra, e o que a retomada pede dela é grosso —
+    // se a final que falta cabe no teto, com a margem por cima.
+    let mut resumed = config.resumed.take();
+    let (probes, estimate_micro_usd) = match resumed.as_mut() {
+        Some(resumed) => (
+            std::mem::take(&mut resumed.probes),
+            resumed.estimate_micro_usd,
+        ),
+        None => (Vec::new(), 0),
+    };
     // Antes de qualquer byte no fio e de qualquer centavo: o catálogo que vai correr precisa estar
     // coberto pela configuração. Descobrir depois da sonda seria pagar por ela à toa — e não basta
     // o pack EXISTIR: um pack que não monta o núcleo do método faz a didática medir a recusa da
@@ -454,8 +575,8 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
         ran_at: config.ran_at.to_string(),
         execution_id: config.execution_id.clone(),
         blind_sheet_path: None,
-        probes: Vec::new(),
-        estimate_micro_usd: 0,
+        probes,
+        estimate_micro_usd,
         catalog: config.cases.iter().map(|case| case.id.clone()).collect(),
         ceiling_catalog: ceiling_cases.iter().map(|case| case.id.clone()).collect(),
         cap_micro_usd: lock.cap_micro_usd(),
@@ -463,6 +584,7 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
         drifted: verdict.drifted,
         phase_one: Vec::new(),
         phase_two: Vec::new(),
+        inherited: resumed,
         decision: Decision::NoWinner {
             reason: "A final ainda não correu.".to_string(),
         },
@@ -502,7 +624,8 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
     // se a medição inteira cabe no teto ANTES de gastá-lo. Sem ela, descobrir que não cabe custa o
     // teto todo — a bancada roda até truncar e o relatório diz quem ficou sem medição. Com ela, o
     // mesmo fato custa uma rodada por modelo, e a recusa vem com o número que falta.
-    if let Some(case) = probe_case(&config.cases) {
+    // Numa retomada não há o que sondar: o relatório trouxe a sonda de quem já pagou por ela.
+    if let Some(case) = probe_case(&config.cases).filter(|_| bakeoff.inherited.is_none()) {
         // A sonda corre sob o teto INTEIRO, sem fatia fixa: ela é curta por construção — uma
         // rodada por pin — e uma fatia proporcional a estrangularia justamente quando o catálogo é
         // grande e ela é mais necessária. O que a limita é a cota por pin abaixo: cada rodada da
@@ -608,7 +731,13 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
         config.cases.len(),
         ceiling_cases.len(),
     ));
-    for pin in verdict.cleared.clone() {
+    // A peneira herdada não corre de novo: é exatamente ela que a retomada existe para não pagar
+    // duas vezes. A fila vazia deixa o resto do caminho igual ao da corrida do zero.
+    let sieve_queue: Vec<&'static ModelPin> = match bakeoff.inherited {
+        Some(_) => Vec::new(),
+        None => verdict.cleared.clone(),
+    };
+    for pin in sieve_queue {
         // Quem disputa o default corre o catálogo inteiro — o que se mede é a diferença entre
         // candidatos. O teto de referência corre o recorte: a pergunta dele é outra, e responde-se
         // com uma amostra de cada família.
@@ -650,11 +779,18 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
         );
     }
 
-    let sieved: Vec<(&'static ModelPin, Score)> = bakeoff
-        .phase_one
-        .iter()
-        .map(|run| (run.pin, score(run)))
-        .collect();
+    let sieved: Vec<(&'static ModelPin, Score)> = match &bakeoff.inherited {
+        Some(resumed) => resumed
+            .phase_one
+            .iter()
+            .map(|run| (run.pin, run.score.clone()))
+            .collect(),
+        None => bakeoff
+            .phase_one
+            .iter()
+            .map(|run| (run.pin, score(run, config.ran_at)))
+            .collect(),
+    };
 
     // A peneira precisa ter medido TODO pin liberado: escolher entre os dois primeiros porque a
     // trava fechou no terceiro é escolher dentro de um prefixo da matriz, e o relatório leria como
@@ -695,9 +831,96 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
         return Ok((bakeoff, path));
     }
 
+    // A peneira pode ser de ontem, o canary é de agora: um finalista cujo endpoint divergiu hoje
+    // correria a final sob uma garantia que ninguém confirmou. Recusar é mais barato que publicar
+    // como resultado do modelo o que é falha de matriz.
+    let drifted: Vec<&str> = finalists
+        .iter()
+        .filter(|pin| {
+            !verdict
+                .cleared
+                .iter()
+                .any(|cleared| cleared.model == pin.model)
+        })
+        .map(|pin| pin.model)
+        .collect();
+    if !drifted.is_empty() {
+        bakeoff.decision = Decision::NoWinner {
+            reason: format!(
+                "O canary recusou {} na matriz de hoje, e a peneira retomada o mandou à final. \
+                 Troque o pin que divergiu e rode do zero.",
+                drifted.join(", ")
+            ),
+        };
+        let path = config
+            .publish(&mut bakeoff, lock, &base, path.as_deref(), pack.as_ref())
+            .await?;
+        return Ok((bakeoff, path));
+    }
+
+    // A final abre o teto INTEIRO antes de qualquer conta: a reserva da peneira já cumpriu o papel
+    // dela, e numa retomada a peneira nem correu — deixá-la fechada faria o preflight medir a final
+    // contra um resto que não é o dinheiro que ela tem.
     let cap = lock.cap_micro_usd();
     lock.open_phase(cap);
+
+    // Quanto a final que FALTA custaria, pela sonda herdada: numa retomada o teto protege só o
+    // gasto novo, e descobrir que ele não cabe no meio da medição custaria o teto inteiro. Sem a
+    // sonda de um pin não há projeção nenhuma, e correr assim seria abrir a final às cegas.
+    if bakeoff.inherited.is_some() {
+        let mut pending_finals = 0_i64;
+        for pin in finalists
+            .iter()
+            .filter(|pin| !reused(&bakeoff, pin))
+            .copied()
+        {
+            let Some(probe) = bakeoff
+                .probes
+                .iter()
+                .find(|probe| probe.pin.model == pin.model)
+            else {
+                bakeoff.decision = Decision::NoWinner {
+                    reason: format!(
+                        "A sonda do relatório retomado não mediu {}, que a peneira mandou à final: \
+                         sem ela, nada projeta o custo da corrida que falta. Rode do zero.",
+                        pin.model
+                    ),
+                };
+                let path = config
+                    .publish(&mut bakeoff, lock, &base, path.as_deref(), pack.as_ref())
+                    .await?;
+                return Ok((bakeoff, path));
+            };
+            pending_finals = pending_finals.saturating_add(
+                probe
+                    .cost_micro_usd
+                    .saturating_mul(config.cases.len() as i64)
+                    * PHASE_TWO_REPETITIONS as i64,
+            );
+        }
+        let projected = pending_finals.saturating_add(share(pending_finals, ESTIMATE_MARGIN));
+        if projected > lock.remaining_micro_usd() {
+            bakeoff.decision = Decision::NoWinner {
+                reason: format!(
+                    "A final que falta custaria cerca de {projected} micro-USD e o teto desta \
+                     execução deixa {} — nada mais foi gasto. O teto precisa dizer, na spec, quanto \
+                     esta bancada custa.",
+                    lock.remaining_micro_usd()
+                ),
+            };
+            let path = config
+                .publish(&mut bakeoff, lock, &base, path.as_deref(), pack.as_ref())
+                .await?;
+            return Ok((bakeoff, path));
+        }
+    }
+
     for pin in finalists {
+        // A corrida da final que veio do relatório foi conferida repetição por repetição na
+        // leitura: refazê-la pagaria de novo pela mesma medição.
+        if reused(&bakeoff, pin) {
+            continue;
+        }
         let run = match run_catalog(
             adapter,
             config.cases.clone(),
@@ -728,10 +951,15 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
         );
     }
 
-    let finalists: Vec<(&'static ModelPin, Score)> = bakeoff
-        .phase_two
+    let finalists: Vec<(&'static ModelPin, Score)> = inherited_two(&bakeoff)
         .iter()
-        .map(|run| (run.pin, score(run)))
+        .map(|run| (run.pin, run.score.clone()))
+        .chain(
+            bakeoff
+                .phase_two
+                .iter()
+                .map(|run| (run.pin, score(run, config.ran_at))),
+        )
         .collect();
     bakeoff.decision = decide(&finalists);
     let path = config
@@ -789,25 +1017,75 @@ impl BakeoffConfig<'_> {
     }
 }
 
+/// Esta final já veio pronta do relatório retomado?
+fn reused(bakeoff: &Bakeoff, pin: &'static ModelPin) -> bool {
+    inherited_two(bakeoff)
+        .iter()
+        .any(|run| run.pin.model == pin.model)
+}
+
+/// A peneira herdada, ou nada quando esta execução não retoma relatório nenhum.
+fn inherited_one(bakeoff: &Bakeoff) -> &[InheritedRun] {
+    bakeoff
+        .inherited
+        .as_ref()
+        .map_or(&[][..], |resumed| &resumed.phase_one)
+}
+
+/// As corridas da final herdadas — as que resistiram à conferência do relatório retomado.
+fn inherited_two(bakeoff: &Bakeoff) -> &[InheritedRun] {
+    bakeoff
+        .inherited
+        .as_ref()
+        .map_or(&[][..], |resumed| &resumed.phase_two)
+}
+
+/// O que já foi pago antes desta execução. Zero fora de uma retomada.
+fn inherited_micro_usd(bakeoff: &Bakeoff) -> i64 {
+    bakeoff
+        .inherited
+        .as_ref()
+        .map_or(0, |resumed| resumed.spent_micro_usd)
+}
+
+/// O bloco de score como o relatório o publica.
+fn score_json(score: &Score) -> Value {
+    json!({
+        "mechanical_total": score.mechanical_total,
+        "mechanical_passed": score.mechanical_passed,
+        "pass_per_mille": score.pass_per_mille(),
+        "injection_failed": score.injection_failed,
+        "pending_judgment": score.pending_judgment,
+        "complete": score.complete,
+    })
+}
+
 /// O relatório do bakeoff: o que cada corrida rendeu, o que o canary recusou, quanto custou e qual
 /// modelo a medição escolhe. Puro — o instante entra por parâmetro.
 pub(crate) fn render(bakeoff: &Bakeoff, ran_at: &str) -> Value {
-    let phase = |runs: &[BenchRun]| -> Vec<Value> {
-        runs.iter()
+    let source = bakeoff
+        .inherited
+        .as_ref()
+        .map(|resumed| resumed.source.display().to_string());
+    // A corrida herdada entra VERBATIM, com o instante em que ela correu de verdade e uma marca de
+    // onde veio: reescrevê-la com o instante de hoje diria que aquelas rodadas correram agora, e é
+    // por essa marca que quem lê distingue o que esta execução pagou do que ela reaproveitou.
+    let phase = |runs: &[BenchRun], inherited: &[InheritedRun]| -> Vec<Value> {
+        inherited
+            .iter()
             .map(|run| {
-                let score = score(run);
                 json!({
-                    "score": {
-                        "mechanical_total": score.mechanical_total,
-                        "mechanical_passed": score.mechanical_passed,
-                        "pass_per_mille": score.pass_per_mille(),
-                        "injection_failed": score.injection_failed,
-                        "pending_judgment": score.pending_judgment,
-                        "complete": score.complete,
-                    },
-                    "run": report::render(run, ran_at),
+                    "score": score_json(&run.score),
+                    "inherited_from": source,
+                    "run": run.run,
                 })
             })
+            .chain(runs.iter().map(|run| {
+                json!({
+                    "score": score_json(&score(run, ran_at)),
+                    "run": report::render(run, ran_at),
+                })
+            }))
             .collect()
     };
 
@@ -825,7 +1103,19 @@ pub(crate) fn render(bakeoff: &Bakeoff, ran_at: &str) -> Value {
             "ceiling_ids": bakeoff.ceiling_catalog,
         },
         "cap_micro_usd": bakeoff.cap_micro_usd,
+        // O que ESTA execução gastou — é ele que a trava protege. O herdado fica ao lado, nomeado,
+        // porque somá-los aqui faria o teto parecer estourado por dinheiro que outra corrida pagou.
         "spent_micro_usd": bakeoff.spent_micro_usd,
+        "inherited_micro_usd": inherited_micro_usd(bakeoff),
+        "inherited_from": source,
+        // Em que a identidade dos pins herdados se apoia: na conferência contra o arquivo, ou no
+        // reconhecimento de quem invocou. A decisão não esconde a própria base.
+        "pin_identity_assumed": bakeoff
+            .inherited
+            .as_ref()
+            .is_some_and(|resumed| resumed.pin_identity_assumed),
+        // O que a medição custou ao todo, herança inclusa: é este o preço da decisão publicada.
+        "total_cost_micro_usd": inherited_micro_usd(bakeoff).saturating_add(bakeoff.spent_micro_usd),
         // Quanto o teto reserva por repetição do desenho integral. É a régua para saber se o teto
         // cabe: uma rodada média acima disso trunca a medição, e a decisão não sai.
         "budget_per_repetition_micro_usd": budget_per_repetition(bakeoff),
@@ -847,8 +1137,8 @@ pub(crate) fn render(bakeoff: &Bakeoff, ran_at: &str) -> Value {
             "reason": why,
         })).collect::<Vec<Value>>(),
         "blind_judgment_key": blind_key(bakeoff),
-        "phase_one": phase(&bakeoff.phase_one),
-        "phase_two": phase(&bakeoff.phase_two),
+        "phase_one": phase(&bakeoff.phase_one, inherited_one(bakeoff)),
+        "phase_two": phase(&bakeoff.phase_two, inherited_two(bakeoff)),
         "decision": decision_json(&bakeoff.decision),
     })
 }
@@ -977,6 +1267,27 @@ pub(crate) struct BlindEntry {
 /// bilhete só, e a chave apontaria para um deles por acaso.
 pub(crate) fn blind_entries(bakeoff: &Bakeoff) -> Vec<BlindEntry> {
     let mut pending: Vec<(String, String, String, &'static str)> = Vec::new();
+    // As respostas herdadas entram no caderno como as de agora: elas foram pagas, esperam a mesma
+    // leitura cega, e um caderno que as deixasse de fora julgaria meia execução.
+    for run in inherited_one(bakeoff).iter().chain(inherited_two(bakeoff)) {
+        for case in run.run["cases"].as_array().into_iter().flatten() {
+            let case_id = case["id"].as_str().unwrap_or_default();
+            let question = case["question"].as_str().unwrap_or_default();
+            for repetition in case["repetitions"].as_array().into_iter().flatten() {
+                if repetition["verdict"].as_str() != Some("pending_judgment") {
+                    continue;
+                }
+                if let Some(answer) = repetition["answer"].as_str() {
+                    pending.push((
+                        case_id.to_string(),
+                        answer.to_string(),
+                        question.to_string(),
+                        run.pin.model,
+                    ));
+                }
+            }
+        }
+    }
     for run in bakeoff.phase_one.iter().chain(bakeoff.phase_two.iter()) {
         for case in &run.cases {
             for outcome in &case.outcomes {
@@ -1101,14 +1412,34 @@ pub(crate) fn summary(bakeoff: &Bakeoff, path: &Path, blind_sheet: Option<&Path>
             bakeoff.estimate_micro_usd
         )
     };
+    // O herdado sai nomeado no resumo: um custo total que não dissesse de onde veio pareceria
+    // gasto desta execução, e é ele que quem roda confere contra a fatura do provedor.
+    let inherited = match bakeoff.inherited.as_ref() {
+        None => String::new(),
+        Some(resumed) => format!(
+            "\nRetomado de {}: {} corrida(s) de peneira e {} da final reaproveitadas, {} micro-USD \
+             já pagos antes desta execução.{}",
+            resumed.source.display(),
+            resumed.phase_one.len(),
+            resumed.phase_two.len(),
+            resumed.spent_micro_usd,
+            if resumed.pin_identity_assumed {
+                "\nATENÇÃO — a configuração de requisição dos pins não está no relatório retomado: \
+                 a identidade foi assumida por quem rodou, não conferida."
+            } else {
+                ""
+            },
+        ),
+    };
     format!(
-        "Peneira: {} candidato(s). Final: {} finalista(s). Recusados pelo canary: {}.{default_drift}{probe}\nCusto \
-         contabilizado: {} micro-USD (teto de {}; rodada sem custo declarado é cobrada pelo pior \
-         caso).\n{decision}\nRelatório: {}",
-        bakeoff.phase_one.len(),
-        bakeoff.phase_two.len(),
+        "Peneira: {} candidato(s). Final: {} finalista(s). Recusados pelo canary: {}.{default_drift}{probe}{inherited}\nCusto \
+         contabilizado: {} micro-USD nesta execução, {} no total (teto de {}; rodada sem custo \
+         declarado é cobrada pelo pior caso).\n{decision}\nRelatório: {}",
+        bakeoff.phase_one.len() + inherited_one(bakeoff).len(),
+        bakeoff.phase_two.len() + inherited_two(bakeoff).len(),
         bakeoff.drifted.len(),
         bakeoff.spent_micro_usd,
+        inherited_micro_usd(bakeoff).saturating_add(bakeoff.spent_micro_usd),
         bakeoff.cap_micro_usd,
         path.display(),
     )
@@ -1224,19 +1555,50 @@ pub(crate) fn judged_decision(
         .collect();
 
     let finalists = parse_finalists(report)?;
-    let measured = finalists.iter().filter(|run| run.complete).count();
-    if measured < finalists.len() || measured < MIN_FINALISTS {
+    // A mesma ressalva da decisão mecânica, aplicada offline: pin cuja corrida parou por medidor de
+    // custo quebrado sai da comparação, porque o instrumento falhou e não o candidato.
+    let (decidable, meterless): (Vec<&FinalRun>, Vec<&FinalRun>) = finalists
+        .iter()
+        .partition(|run| run.halted_by != Some(Halt::CostMeterBroken));
+    let excluded = if meterless.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " Fora da comparação: {} — o medidor de custo do provedor quebrou na corrida (duas \
+             rodadas sem custo declarado), e o que não foi medido não compara nem é cobrado do \
+             modelo.",
+            meterless
+                .iter()
+                .map(|run| run.pin.model)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    let quorum = if meterless.is_empty() {
+        MIN_FINALISTS
+    } else {
+        1
+    };
+    let measured = decidable.iter().filter(|run| run.complete).count();
+    if measured < decidable.len() || measured < quorum {
         return Ok(Decision::NoWinner {
             reason: format!(
                 "A final mediu {measured} de {} finalistas por inteiro — a decisão exige todos, no \
-                 mínimo {MIN_FINALISTS}.",
-                finalists.len()
+                 mínimo {quorum}.{excluded}",
+                decidable.len()
             ),
         });
     }
+    let walkover = if measured == 1 && !meterless.is_empty() {
+        " A vitória é por W.O.: o único oponente saiu por falha do medidor do provedor, então este \
+         veredito diz que o vencedor passou em TODOS os gates, não que ele venceu uma comparação."
+    } else {
+        ""
+    };
 
-    let mut eligible: Vec<&FinalRun> = finalists
+    let mut eligible: Vec<&FinalRun> = decidable
         .iter()
+        .copied()
         .filter(|run| {
             run.complete
                 && run.mechanical_total > 0
@@ -1248,12 +1610,32 @@ pub(crate) fn judged_decision(
     // Empate de qualidade cai no custo, como na decisão mecânica; empate de custo, na ordem de
     // corrida do pin — determinismo, não mérito —, que é a mesma regra da corrida.
     eligible.sort_by_key(|run| (run.cost_micro_usd, run.pin.run_order));
+    // A mesma ressalva da decisão mecânica: um relatório retomado compara custo herdado com custo
+    // novo, e cada um foi cobrado pela tarifa da própria data.
+    let epochs = if eligible.len() < 2
+        || eligible
+            .iter()
+            .all(|run| run.priced_at == eligible[0].priced_at)
+    {
+        String::new()
+    } else {
+        format!(
+            " ATENÇÃO: estes custos foram cobrados em datas diferentes ({}), cada um pela tarifa \
+             vigente na data dele — a tabela de preços não está neste arquivo nem no código, então \
+             o desempate por custo é base frágil e não afirma qual pergunta custa menos hoje.",
+            eligible
+                .iter()
+                .map(|run| format!("{} em {}", run.pin.model, run.priced_at))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
 
     let Some(winner) = eligible.first() else {
         return Ok(Decision::NoWinner {
             reason: format!(
                 "Nenhum finalista sobreviveu ao julgamento cego e à suíte mecânica ({measured} \
-                 comparados, {} reprovado(s) na didática).",
+                 comparados, {} reprovado(s) na didática).{excluded}",
                 rejected.len()
             ),
         });
@@ -1261,9 +1643,14 @@ pub(crate) fn judged_decision(
     Ok(Decision::Adopt {
         model: winner.pin.model,
         rationale: format!(
-            "Suíte mecânica zerada, didática aprovada em leitura cega e {} micro-USD na final — o \
-             mais barato entre os que passaram nos dois gates.",
-            winner.cost_micro_usd
+            "Suíte mecânica zerada, didática aprovada em leitura cega e {} micro-USD na final — {} \
+             entre os que passaram nos dois gates.{epochs}{excluded}{walkover}",
+            winner.cost_micro_usd,
+            if epochs.is_empty() {
+                "o mais barato"
+            } else {
+                "o menor custo registrado"
+            }
         ),
     })
 }
@@ -1358,6 +1745,10 @@ struct FinalRun {
     injection_failed: usize,
     complete: bool,
     cost_micro_usd: i64,
+    /// Quando esta corrida rodou — e, com ela, qual tarifa a cobrou.
+    priced_at: String,
+    /// Por que a corrida parou antes do fim, quando parou.
+    halted_by: Option<Halt>,
 }
 
 /// Lê a final do relatório e refaz as contas que decidem, a partir do que cada repetição registrou.
@@ -1449,6 +1840,26 @@ fn parse_finalists(report: &Value) -> Result<Vec<FinalRun>, String> {
 
         let mut recomputed = FinalRun {
             pin,
+            // O motivo da parada separa a corrida que o candidato não mediu da corrida que o
+            // medidor do provedor impediu de medir — e só a segunda sai da comparação.
+            halted_by: match &run["halted_by"] {
+                Value::Null => None,
+                Value::String(slug) => Some(Halt::from_slug(slug).ok_or_else(|| {
+                    format!("A corrida de {model} parou por {slug}, que o relatório não usa.")
+                })?),
+                other => {
+                    return Err(format!(
+                        "A corrida de {model} declara halted_by {other}, que não é nem nulo nem um \
+                         motivo de parada."
+                    ));
+                }
+            },
+            // A data da corrida vem do arquivo: sem ela, dois custos de tarifas diferentes seriam
+            // ordenados como se fossem o mesmo dinheiro.
+            priced_at: run["ran_at"]
+                .as_str()
+                .ok_or_else(|| format!("A corrida de {model} não diz quando correu."))?
+                .to_string(),
             mechanical_total: 0,
             mechanical_passed: 0,
             injection_failed: 0,

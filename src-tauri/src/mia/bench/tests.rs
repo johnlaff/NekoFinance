@@ -1741,6 +1741,8 @@ fn zdr_catalog() -> serde_json::Value {
 
 fn score_of(passed: usize, total: usize, cost_micro_usd: i64) -> Score {
     Score {
+        priced_at: "2026-07-29T14:33:05-03:00".to_string(),
+        halted_by: None,
         mechanical_total: total,
         mechanical_passed: passed,
         injection_failed: 0,
@@ -1926,7 +1928,7 @@ fn entre_os_que_zeraram_ganha_o_mais_barato() {
 fn o_score_separa_injecao_julgamento_cego_e_truncamento() {
     let run = bench_run_fixture();
 
-    let score = bakeoff::score(&run);
+    let score = bakeoff::score(&run, "2026-07-29T14:33:05-03:00");
 
     assert_eq!(score.mechanical_total, 1);
     assert_eq!(score.mechanical_passed, 1);
@@ -2009,6 +2011,7 @@ async fn o_bakeoff_atravessa_as_duas_fases_e_decide_o_default() {
             cases: bakeoff_cases(),
             execution_id: "execucao-de-teste".to_string(),
             blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
             pack_root: None,
             limits: RunLimits::default(),
             reports_dir: &dir,
@@ -2078,6 +2081,7 @@ async fn o_bakeoff_recusa_quando_o_canary_deixa_menos_de_dois_candidatos() {
             cases: bakeoff_cases(),
             execution_id: "execucao-de-teste".to_string(),
             blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
             pack_root: None,
             limits: RunLimits::default(),
             reports_dir: &dir,
@@ -2126,6 +2130,7 @@ async fn a_sonda_recusa_quando_nem_uma_rodada_por_modelo_cabe() {
             cases: bakeoff_cases(),
             execution_id: "execucao-de-teste".to_string(),
             blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
             pack_root: None,
             limits: RunLimits::default(),
             reports_dir: &dir,
@@ -2179,6 +2184,7 @@ async fn a_sonda_publica_a_falha_de_preparacao() {
             cases,
             execution_id: "execucao-de-teste".to_string(),
             blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
             pack_root: None,
             limits: RunLimits::default(),
             reports_dir: &dir,
@@ -2277,6 +2283,7 @@ async fn a_peneira_truncada_nao_abre_a_final() {
             cases: bakeoff_cases(),
             execution_id: "execucao-de-teste".to_string(),
             blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
             pack_root: None,
             limits: RunLimits::default(),
             reports_dir: &dir,
@@ -2363,6 +2370,7 @@ async fn o_relatorio_do_bakeoff_identifica_o_catalogo_medido() {
             cases: bakeoff_cases(),
             execution_id: "execucao-de-teste".to_string(),
             blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
             pack_root: None,
             limits: RunLimits::default(),
             reports_dir: &dir,
@@ -2440,6 +2448,7 @@ async fn o_teto_de_referencia_corre_o_recorte_na_peneira() {
             cases,
             execution_id: "execucao-de-teste".to_string(),
             blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
             pack_root: None,
             limits: RunLimits::default(),
             reports_dir: &dir,
@@ -2624,7 +2633,7 @@ async fn rodada_cortada_pelo_orcamento_nao_conta_como_erro_nem_como_medida() {
     assert!(!run.cases[0].measured());
 
     // E a corrida inteira deixa de ser comparável: ela não mediu o que se propôs.
-    let score = bakeoff::score(&run);
+    let score = bakeoff::score(&run, "2026-07-29T14:33:05-03:00");
     assert!(!score.complete);
     // A repetição cortada some da taxa em vez de virar reprovação do modelo.
     assert_eq!(score.mechanical_total, 0);
@@ -2699,6 +2708,7 @@ async fn o_caderno_do_julgamento_cego_nao_nomeia_o_modelo() {
             cases: vec![case],
             execution_id: "execucao-de-teste".to_string(),
             blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
             pack_root: Some(pack.path().to_path_buf()),
             limits: RunLimits::default(),
             reports_dir: &dir,
@@ -2774,6 +2784,7 @@ async fn a_sonda_recusa_quando_a_medicao_inteira_nao_cabe() {
             cases,
             execution_id: "execucao-de-teste".to_string(),
             blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
             pack_root: None,
             limits: RunLimits::default(),
             reports_dir: &dir,
@@ -3060,6 +3071,7 @@ fn o_resumo_destaca_a_divergencia_do_pin_em_uso() {
         drifted: vec![(default_pin(), "O modelo sumiu do catálogo.".to_string())],
         phase_one: Vec::new(),
         phase_two: Vec::new(),
+        inherited: None,
         decision: Decision::NoWinner {
             reason: "A final não correu.".to_string(),
         },
@@ -3175,6 +3187,7 @@ fn julgado(finalistas: &[(&str, i64, bool)], reprovadas: &[(&str, usize)]) -> se
             "score": { "complete": complete },
             "run": {
                 "model": model,
+                "ran_at": "2026-07-29T14:33:05-03:00",
                 "total_cost_micro_usd": cost,
                 "cost_gap": false,
                 "cases": [
@@ -3630,6 +3643,7 @@ async fn pack_sem_nucleo_do_metodo_recusa_antes_de_qualquer_rodada() {
             cases: vec![case],
             execution_id: "execucao-de-teste".to_string(),
             blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
             pack_root: Some(pack.path().to_path_buf()),
             limits: RunLimits::default(),
             reports_dir: &dir,
@@ -3673,6 +3687,7 @@ async fn o_julgamento_recusa_o_caderno_de_outra_execucao() {
                 cases: vec![case],
                 execution_id,
                 blind_sheet_path: std::cell::OnceCell::new(),
+                resumed: None,
                 pack_root: None,
                 limits: RunLimits::default(),
                 reports_dir: &dir,
@@ -3745,6 +3760,7 @@ async fn o_julgamento_reescreve_o_relatorio_de_verdade() {
             cases,
             execution_id: "execucao-de-teste".to_string(),
             blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
             pack_root: None,
             limits: RunLimits::default(),
             reports_dir: &dir,
@@ -3979,6 +3995,7 @@ async fn sonda_truncada_pela_cota_nao_conta_como_medida() {
             cases: bakeoff_cases(),
             execution_id: "execucao-de-teste".to_string(),
             blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
             pack_root: None,
             limits: RunLimits::default(),
             reports_dir: &dir,
@@ -4099,4 +4116,977 @@ fn quem_travou_num_caso_de_injecao_continua_na_disputa() {
         vec!["openai/gpt-5.6-terra"],
         "quem ecoou a isca sai; quem só reprovou continua"
     );
+}
+
+// A retomada: o que uma execução anterior já pagou volta como evidência, e o dinheiro novo é o
+// único que a trava desta corrida protege.
+
+use super::resume;
+
+/// O catálogo da retomada: um caso mecânico, que decide a peneira, e um caso de julgamento cego,
+/// que deixa respostas pendentes para o caderno herdar. Os dois na mesma família, para que o
+/// recorte da régua fique menor que o catálogo — é assim que o teto de referência corre.
+fn resume_cases() -> Vec<case::Case> {
+    let mut mecanico = valid_case_json();
+    mecanico["id"] = json!("caso-1");
+    mecanico["fixture"] = json!("casa_vazia");
+    mecanico["expected"] = json!({ "judgment": "mecanico" });
+    mecanico["verification"] = json!(null);
+    let mut cego = mecanico.clone();
+    cego["id"] = json!("caso-2");
+    cego["expected"] = json!({ "judgment": "cego" });
+    vec![
+        parse("caso-1.json", &mecanico).unwrap(),
+        parse("caso-2.json", &cego).unwrap(),
+    ]
+}
+
+/// Uma execução inteira do bakeoff em disco, para servir de relatório retomado.
+async fn bakeoff_gravado(dir: &std::path::Path) -> (serde_json::Value, i64) {
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: zdr_catalog(),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+    let (_, path) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: resume_cases(),
+            execution_id: "execucao-anterior".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    (report, lock.spent_micro_usd())
+}
+
+/// A peneira do relatório volta inteira, com as contas REFEITAS das repetições brutas — e o gasto
+/// que ela custou vem junto, para o relatório novo dizer o que herdou.
+#[tokio::test]
+async fn a_retomada_reaproveita_a_peneira_inteira_do_relatorio() {
+    let dir = reports_dir();
+    let (report, gasto) = bakeoff_gravado(&dir).await;
+
+    let resumed = resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap();
+
+    assert_eq!(resumed.phase_one.len(), PINS.len());
+    assert!(resumed.phase_one.iter().all(|run| run.score.complete));
+    // O teto de referência corre o recorte da régua, não o catálogo: a leitura cobra de cada pin a
+    // cobertura DELE, senão desenho leria como truncamento.
+    let ceiling = resumed
+        .phase_one
+        .iter()
+        .find(|run| run.pin.role == PinRole::Ceiling)
+        .unwrap();
+    assert_eq!(ceiling.run["cases"].as_array().unwrap().len(), 1);
+    // A sonda herdada evita pagar de novo uma rodada por modelo só para reaprender o custo.
+    assert_eq!(resumed.probes.len(), PINS.len());
+    assert_eq!(resumed.spent_micro_usd, gasto);
+    // A final daquela execução correu inteira e volta reaproveitada.
+    assert_eq!(resumed.phase_two.len(), 3);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Retomar contra outra matriz de pins compararia candidatos que a matriz de hoje não tem — e a
+/// recusa diz o que fazer.
+#[tokio::test]
+async fn a_retomada_recusa_um_relatorio_de_outra_matriz() {
+    let dir = reports_dir();
+    let (mut report, _) = bakeoff_gravado(&dir).await;
+    report["phase_one"].as_array_mut().unwrap().remove(1);
+
+    let error =
+        resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap_err();
+
+    assert!(error.contains("matriz de hoje"), "{error}");
+    assert!(error.contains("sem --resume"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Peneira pela metade não se reaproveita: a final compararia um prefixo da matriz, e o relatório
+/// leria como se todos tivessem concorrido.
+#[tokio::test]
+async fn a_retomada_recusa_uma_peneira_incompleta() {
+    let dir = reports_dir();
+    let (mut report, _) = bakeoff_gravado(&dir).await;
+    report["phase_one"][2]["run"]["cases"][0]["measured"] = json!(false);
+
+    let error =
+        resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap_err();
+
+    assert!(error.contains("por inteiro"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Outro catálogo, outra medição: a peneira de um catálogo não compara com a final de outro.
+#[tokio::test]
+async fn a_retomada_recusa_um_relatorio_de_outro_catalogo() {
+    let dir = reports_dir();
+    let (mut report, _) = bakeoff_gravado(&dir).await;
+    report["catalog"]["ids"] = json!(["caso-1"]);
+
+    let error =
+        resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap_err();
+
+    assert!(error.contains("outro catálogo"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Na final a dúvida devolve o pin para a fila, e só ele: a corrida com uma repetição a menos é
+/// descartada, as outras continuam valendo.
+#[tokio::test]
+async fn a_retomada_descarta_a_corrida_da_final_que_nao_fecha() {
+    let dir = reports_dir();
+    let (mut report, _) = bakeoff_gravado(&dir).await;
+    // Uma repetição apagada faria o resto parecer uma suíte perfeita — e o custo declarado deixa
+    // de fechar com a soma.
+    report["phase_two"][0]["run"]["cases"][0]["repetitions"]
+        .as_array_mut()
+        .unwrap()
+        .pop();
+
+    let resumed = resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap();
+
+    assert_eq!(resumed.phase_two.len(), 2);
+    assert_eq!(resumed.phase_one.len(), PINS.len());
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// O caminho inteiro da retomada: a peneira não corre de novo, a final que falta corre, o gasto
+/// herdado NÃO conta contra a trava desta execução e o relatório novo soma os dois separadamente.
+#[tokio::test]
+async fn a_retomada_paga_so_a_final_que_falta_e_soma_o_herdado_a_parte() {
+    let dir = reports_dir();
+    let (mut report, gasto_anterior) = bakeoff_gravado(&dir).await;
+    // A execução anterior caiu depois do primeiro finalista: a final tem uma corrida só.
+    report["phase_two"].as_array_mut().unwrap().truncate(1);
+
+    let resumed = resume::parse(&report, &resume_cases(), "anterior.json".into(), false).unwrap();
+    let herdado = resumed.spent_micro_usd;
+    let novo_dir = reports_dir();
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: zdr_catalog(),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let (retomado, path) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: resume_cases(),
+            execution_id: "execucao-retomada".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: Some(resumed),
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &novo_dir,
+            ran_at: "2026-07-30T10:00:00-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    // Nenhuma corrida de peneira foi paga agora, e só os dois finalistas que faltavam correram.
+    assert!(retomado.phase_one.is_empty());
+    assert_eq!(retomado.phase_two.len(), 2);
+    // A trava desta execução conta só o dinheiro novo; o herdado vive ao lado, nomeado.
+    assert_eq!(retomado.spent_micro_usd, lock.spent_micro_usd());
+    assert!(retomado.spent_micro_usd < gasto_anterior);
+
+    let escrito: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(escrito["spent_micro_usd"], lock.spent_micro_usd());
+    assert_eq!(escrito["inherited_micro_usd"], herdado);
+    assert_eq!(
+        escrito["total_cost_micro_usd"],
+        herdado + lock.spent_micro_usd()
+    );
+    assert_eq!(escrito["inherited_from"], "anterior.json");
+    // O relatório novo publica a peneira herdada por inteiro, marcada, e com o instante em que ela
+    // correu de verdade.
+    let peneira = escrito["phase_one"].as_array().unwrap();
+    assert_eq!(peneira.len(), PINS.len());
+    assert_eq!(peneira[0]["inherited_from"], "anterior.json");
+    assert_eq!(peneira[0]["run"]["ran_at"], "2026-07-29T14:33:05-03:00");
+    // A final traz a corrida herdada e as duas medidas agora.
+    assert_eq!(escrito["phase_two"].as_array().unwrap().len(), 3);
+    assert!(escrito["decision"]["default_model"].is_null());
+
+    // O caderno cego inclui os casos herdados: eles foram pagos e esperam a mesma leitura.
+    let caderno: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(retomado.blind_sheet_path.as_ref().unwrap()).unwrap(),
+    )
+    .unwrap();
+    let bilhetes = caderno["entries"].as_array().unwrap();
+    // Cinco respostas da peneira herdada — o teto de referência corre o recorte, que não inclui o
+    // caso cego — mais três de cada corrida da final: a herdada e as duas medidas agora.
+    assert_eq!(bilhetes.len(), 5 + 9);
+    for pin in PINS {
+        assert!(!caderno.to_string().contains(pin.model));
+    }
+    // A sequência exata, não só a contagem: a numeração é o contrato entre o caderno que sai e a
+    // conferência que volta, e um deslocamento de um bilhete julgaria a resposta do vizinho.
+    let sequencia: Vec<&str> = bilhetes
+        .iter()
+        .map(|entry| entry["ticket"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        sequencia,
+        vec![
+            "caso-2-01",
+            "caso-2-02",
+            "caso-2-03",
+            "caso-2-04",
+            "caso-2-05",
+            "caso-2-06",
+            "caso-2-07",
+            "caso-2-08",
+            "caso-2-09",
+            "caso-2-10",
+            "caso-2-11",
+            "caso-2-12",
+            "caso-2-13",
+            "caso-2-14",
+        ]
+    );
+    assert_eq!(
+        escrito["blind_judgment_key"].as_object().unwrap().len(),
+        bilhetes.len()
+    );
+    assert!(bakeoff::summary(&retomado, &path, None).contains("Retomado de anterior.json"));
+    // A final compara uma corrida herdada com duas medidas agora: o racional publicado declara que
+    // os custos vêm de datas diferentes, em vez de eleger "o mais barato" entre duas tarifas.
+    let racional = escrito["decision"]["rationale"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(racional.contains("datas diferentes"), "{racional}");
+    assert!(!racional.contains("o mais barato"), "{racional}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::remove_dir_all(&novo_dir).unwrap();
+}
+
+/// A flag de retomada é do bakeoff: fora dele não existe peneira para herdar.
+#[test]
+fn a_flag_de_retomada_so_vale_no_bakeoff() {
+    let retomada = cli::parse_args(&args(&["bakeoff", "--resume", "relatorio.json"])).unwrap();
+    assert_eq!(
+        retomada.resume.as_deref(),
+        Some(std::path::Path::new("relatorio.json"))
+    );
+
+    let error = cli::parse_args(&args(&["--resume", "relatorio.json"])).unwrap_err();
+    assert!(error.contains("só vale no modo bakeoff"), "{error}");
+}
+
+/// A sonda é a única projeção de custo que a retomada tem: sem ela, a final abriria sob o teto
+/// inteiro sem ninguém ter estimado o que ela custa.
+#[tokio::test]
+async fn a_retomada_recusa_um_relatorio_sem_sonda() {
+    let dir = reports_dir();
+    let (mut report, _) = bakeoff_gravado(&dir).await;
+    report["probe"]["rounds"] = json!(null);
+
+    let error =
+        resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap_err();
+
+    assert!(error.contains("sonda"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Sonda cortada no meio, sem custo declarado ou com um pin medido duas vezes não projeta nada: o
+/// número que ela produziria seria menor que o real, que é o erro que gasta o teto.
+#[tokio::test]
+async fn a_retomada_recusa_uma_sonda_que_nao_mediu_a_matriz() {
+    let dir = reports_dir();
+    let (report, _) = bakeoff_gravado(&dir).await;
+
+    let mut truncada = report.clone();
+    truncada["probe"]["rounds"].as_array_mut().unwrap().pop();
+    let error = resume::parse(&truncada, &resume_cases(), "r.json".into(), false).unwrap_err();
+    assert!(error.contains("sonda"), "{error}");
+
+    let mut incompleta = report.clone();
+    incompleta["probe"]["rounds"][2]["complete"] = json!(false);
+    let error = resume::parse(&incompleta, &resume_cases(), "r.json".into(), false).unwrap_err();
+    assert!(error.contains("sonda"), "{error}");
+
+    let mut cega = report.clone();
+    cega["probe"]["rounds"][1]["cost_declared"] = json!(false);
+    let error = resume::parse(&cega, &resume_cases(), "r.json".into(), false).unwrap_err();
+    assert!(error.contains("sonda"), "{error}");
+
+    let mut duplicada = report.clone();
+    let primeira = duplicada["probe"]["rounds"][0].clone();
+    duplicada["probe"]["rounds"][1] = primeira;
+    let error = resume::parse(&duplicada, &resume_cases(), "r.json".into(), false).unwrap_err();
+    assert!(error.contains("sonda"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// O pin é por ENDPOINT: o mesmo nome de modelo servido de outro lugar é outro candidato, e a
+/// evidência herdada precisa ter vindo do pin que a matriz declara hoje.
+#[tokio::test]
+async fn a_retomada_recusa_o_mesmo_modelo_servido_de_outro_endpoint() {
+    let dir = reports_dir();
+    let (mut report, _) = bakeoff_gravado(&dir).await;
+    report["phase_one"][0]["run"]["endpoint"] = json!("outro-endpoint");
+
+    let error =
+        resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap_err();
+
+    assert!(error.contains("endpoint"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A família decide o que elimina: trocá-la no arquivo faria uma isca obedecida deixar de eliminar
+/// o candidato. Ela vem do catálogo de hoje, caso a caso.
+#[tokio::test]
+async fn a_retomada_recusa_uma_familia_que_nao_e_a_do_catalogo() {
+    let dir = reports_dir();
+    let (mut report, _) = bakeoff_gravado(&dir).await;
+    report["phase_one"][0]["run"]["cases"][0]["family"] = json!("injecao");
+
+    let error =
+        resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap_err();
+
+    assert!(error.contains("família"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Pendente sem resposta é bilhete que ninguém pode julgar: o relatório sairia infinalizável, e o
+/// `julgar` recusaria depois de a final já ter sido paga.
+#[tokio::test]
+async fn a_retomada_recusa_uma_pendencia_sem_resposta() {
+    let dir = reports_dir();
+    let (mut report, _) = bakeoff_gravado(&dir).await;
+    report["phase_one"][0]["run"]["cases"][1]["repetitions"][0]["answer"] = json!(null);
+
+    let error =
+        resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap_err();
+
+    assert!(error.contains("resposta"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Quem a peneira eliminou não volta pela final herdada: um candidato fora dos sobreviventes
+/// mudaria o quórum da decisão, ou venceria sem ter passado por ela.
+#[tokio::test]
+async fn a_retomada_descarta_a_final_de_quem_a_peneira_eliminou() {
+    let dir = reports_dir();
+    let (mut report, _) = bakeoff_gravado(&dir).await;
+    // A corrida continua íntegra e conferível — só é de um pin que a peneira não mandou à final.
+    let intruso = pinned("moonshotai/kimi-k3");
+    report["phase_two"][2]["run"]["model"] = json!(intruso.model);
+    report["phase_two"][2]["run"]["endpoint"] = json!(intruso.endpoint);
+    report["phase_two"][2]["run"]["operator"] = json!(intruso.operator);
+
+    let resumed = resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap();
+
+    assert_eq!(resumed.phase_two.len(), 2);
+    assert!(
+        resumed
+            .phase_two
+            .iter()
+            .all(|run| run.pin.model != intruso.model)
+    );
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// O gasto declarado precisa fechar com o que o próprio relatório registra — sonda mais corridas.
+#[tokio::test]
+async fn a_retomada_recusa_um_gasto_que_nao_fecha_com_as_corridas() {
+    let dir = reports_dir();
+    let (mut report, gasto) = bakeoff_gravado(&dir).await;
+    report["spent_micro_usd"] = json!(gasto - 1_000);
+
+    let error =
+        resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap_err();
+
+    assert!(error.contains("não fecha"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Retomar a retomada: o custo acumulado atravessa as três execuções, e a segunda herança carrega
+/// o que a primeira já tinha herdado.
+#[tokio::test]
+async fn a_retomada_encadeada_carrega_o_gasto_de_todas_as_execucoes() {
+    let dir = reports_dir();
+    let (mut primeiro, gasto_original) = bakeoff_gravado(&dir).await;
+    primeiro["phase_two"].as_array_mut().unwrap().truncate(1);
+
+    let segundo_dir = reports_dir();
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: zdr_catalog(),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+    let (_, path) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: resume_cases(),
+            execution_id: "segunda".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: Some(
+                resume::parse(&primeiro, &resume_cases(), "primeiro.json".into(), false).unwrap(),
+            ),
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &segundo_dir,
+            ran_at: "2026-07-30T10:00:00-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+    let gasto_novo = lock.spent_micro_usd();
+
+    let segundo: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let encadeado = resume::parse(&segundo, &resume_cases(), "segundo.json".into(), false).unwrap();
+
+    // A terceira execução herda o que as duas anteriores pagaram, não só a última.
+    assert_eq!(encadeado.spent_micro_usd, gasto_original + gasto_novo);
+    assert_eq!(encadeado.phase_one.len(), PINS.len());
+    assert_eq!(encadeado.phase_two.len(), 3);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::remove_dir_all(&segundo_dir).unwrap();
+}
+
+/// O teto desta execução é o que a final tem para gastar: a reserva que a peneira exigiria não vale
+/// numa retomada — a peneira já foi paga, e mantê-la reservada recusaria uma final que cabe.
+#[tokio::test]
+async fn o_preflight_da_final_mede_contra_o_teto_desta_execucao() {
+    let dir = reports_dir();
+    let (mut report, _) = bakeoff_gravado(&dir).await;
+    report["phase_two"].as_array_mut().unwrap().truncate(1);
+
+    let novo_dir = reports_dir();
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: zdr_catalog(),
+    };
+    // As duas finais que faltam custam 12.000 e projetam 15.000 com a margem: cabem no teto, e só a
+    // reserva de uma peneira que não vai correr as deixaria de fora.
+    let mut lock = super::SpendLock::new(16_000);
+
+    let (retomado, _) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: resume_cases(),
+            execution_id: "retomada-apertada".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: Some(
+                resume::parse(&report, &resume_cases(), "anterior.json".into(), false).unwrap(),
+            ),
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &novo_dir,
+            ran_at: "2026-07-30T11:00:00-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        retomado.phase_two.len(),
+        2,
+        "a final que cabe no teto corre"
+    );
+    assert_eq!(lock.spent_micro_usd(), 12_000);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::remove_dir_all(&novo_dir).unwrap();
+}
+
+/// `failure` é `null` ou o texto da falha, e mais nada: um tipo estranho não pode virar "não houve
+/// falha" — é assim que uma sonda quebrada passaria por sonda boa e autorizaria gasto.
+#[tokio::test]
+async fn a_retomada_recusa_uma_sonda_com_falha_de_tipo_estranho() {
+    let dir = reports_dir();
+    let (report, _) = bakeoff_gravado(&dir).await;
+
+    for estranho in [json!(true), json!(7), json!([]), json!({})] {
+        let mut adulterado = report.clone();
+        adulterado["probe"]["rounds"][0]["failure"] = estranho.clone();
+        let error =
+            resume::parse(&adulterado, &resume_cases(), "r.json".into(), false).unwrap_err();
+        assert!(error.contains("failure"), "{estranho}: {error}");
+    }
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Campo ausente e campo nulo não são a mesma coisa: sem `halted_by` ou `failure`, o arquivo não
+/// diz como a corrida terminou, e uma corrida assim não é evidência de nada.
+#[tokio::test]
+async fn a_retomada_recusa_uma_corrida_que_nao_diz_como_terminou() {
+    let dir = reports_dir();
+    let (report, _) = bakeoff_gravado(&dir).await;
+
+    for campo in ["halted_by", "failure"] {
+        let mut adulterado = report.clone();
+        adulterado["phase_one"][0]["run"]
+            .as_object_mut()
+            .unwrap()
+            .remove(campo);
+        let error =
+            resume::parse(&adulterado, &resume_cases(), "r.json".into(), false).unwrap_err();
+        assert!(error.contains(campo), "{campo}: {error}");
+    }
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A identidade do pin é a configuração INTEIRA da requisição: sob o mesmo endpoint, outro cabeçalho
+/// beta, outro piso de raciocínio ou outro nome de teto de saída produzem outra corrida.
+#[tokio::test]
+async fn a_retomada_recusa_outra_configuracao_de_requisicao_no_mesmo_endpoint() {
+    let dir = reports_dir();
+    let (report, _) = bakeoff_gravado(&dir).await;
+
+    for (campo, valor) in [
+        ("beta_headers", json!(["um-beta-qualquer"])),
+        ("reasoning_floor", json!("none")),
+        ("token_cap", json!("max_tokens")),
+    ] {
+        let mut adulterado = report.clone();
+        adulterado["phase_one"][0]["run"][campo] = valor;
+        let error =
+            resume::parse(&adulterado, &resume_cases(), "r.json".into(), false).unwrap_err();
+        assert!(error.contains(campo), "{campo}: {error}");
+    }
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// O total publicado é derivado dos dois componentes: se ele os contradiz, o arquivo não fecha
+/// consigo mesmo e não se sabe qual dos números é o gasto real.
+#[tokio::test]
+async fn a_retomada_recusa_um_total_que_contradiz_os_componentes() {
+    let dir = reports_dir();
+    let (mut report, gasto) = bakeoff_gravado(&dir).await;
+    report["total_cost_micro_usd"] = json!(gasto + 1);
+
+    let error = resume::parse(&report, &resume_cases(), "r.json".into(), false).unwrap_err();
+
+    assert!(error.contains("total_cost_micro_usd"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Um relatório de formato anterior, que não registra a configuração da requisição.
+fn sem_configuracao(report: &serde_json::Value) -> serde_json::Value {
+    let mut sem = report.clone();
+    for phase in ["phase_one", "phase_two"] {
+        for entry in sem[phase].as_array_mut().unwrap() {
+            let run = entry["run"].as_object_mut().unwrap();
+            for campo in ["beta_headers", "reasoning_floor", "token_cap"] {
+                run.remove(campo);
+            }
+        }
+    }
+    sem
+}
+
+/// Sem a configuração no arquivo, a prova de identidade mora fora dele: a retomada recusa e diz
+/// qual é a saída, em vez de decidir sozinha assumir o que não pode conferir.
+#[tokio::test]
+async fn a_retomada_de_formato_anterior_recusa_e_aponta_o_reconhecimento() {
+    let dir = reports_dir();
+    let (report, _) = bakeoff_gravado(&dir).await;
+
+    let error = resume::parse(
+        &sem_configuracao(&report),
+        &resume_cases(),
+        "r.json".into(),
+        false,
+    )
+    .unwrap_err();
+
+    assert!(error.contains("beta_headers"), "{error}");
+    assert!(error.contains("--assume-pin-identity"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Com o reconhecimento explícito, a ausência é suprida por quem invoca — e o relatório novo diz
+/// que a identidade foi assumida, para a decisão não esconder em que ela se apoia.
+#[tokio::test]
+async fn o_reconhecimento_supre_a_ausencia_e_fica_registrado() {
+    let dir = reports_dir();
+    let (report, _) = bakeoff_gravado(&dir).await;
+    let antigo = sem_configuracao(&report);
+
+    let resumed = resume::parse(&antigo, &resume_cases(), "anterior.json".into(), true).unwrap();
+
+    assert!(resumed.pin_identity_assumed);
+    assert_eq!(resumed.phase_one.len(), PINS.len());
+
+    let novo_dir = reports_dir();
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: zdr_catalog(),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+    let (retomado, path) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: resume_cases(),
+            execution_id: "retomada-reconhecida".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: Some(resumed),
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &novo_dir,
+            ran_at: "2026-07-30T12:00:00-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    let escrito: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(escrito["pin_identity_assumed"], true);
+    assert!(bakeoff::summary(&retomado, &path, None).contains("assumida"));
+
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::remove_dir_all(&novo_dir).unwrap();
+}
+
+/// O reconhecimento supre ausência, nunca sobrepõe divergência: um campo que ESTÁ no arquivo e não
+/// bate com a matriz continua recusando, com ou sem flag.
+#[tokio::test]
+async fn o_reconhecimento_nao_encobre_uma_divergencia_registrada() {
+    let dir = reports_dir();
+    let (report, _) = bakeoff_gravado(&dir).await;
+    let mut antigo = sem_configuracao(&report);
+    antigo["phase_one"][0]["run"]["token_cap"] = json!("max_tokens");
+
+    let error = resume::parse(&antigo, &resume_cases(), "r.json".into(), true).unwrap_err();
+
+    assert!(error.contains("token_cap"), "{error}");
+
+    // E o endpoint segue conferido sempre, mesmo no formato anterior.
+    let mut outro = sem_configuracao(&report);
+    outro["phase_one"][0]["run"]["endpoint"] = json!("outro-endpoint");
+    let error = resume::parse(&outro, &resume_cases(), "r.json".into(), true).unwrap_err();
+    assert!(error.contains("endpoint"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Reconhecer a identidade só faz sentido sobre um relatório retomado.
+#[test]
+fn o_reconhecimento_de_identidade_exige_a_retomada() {
+    let com_retomada = cli::parse_args(&args(&[
+        "bakeoff",
+        "--resume",
+        "r.json",
+        "--assume-pin-identity",
+    ]))
+    .unwrap();
+    assert!(com_retomada.assume_pin_identity);
+
+    let error = cli::parse_args(&args(&["bakeoff", "--assume-pin-identity"])).unwrap_err();
+    assert!(error.contains("--resume"), "{error}");
+}
+
+/// O custo é datado: a tarifa do provedor muda, e o arquivo guarda o que foi COBRADO em cada data.
+/// Quando o desempate por custo compara corridas de datas diferentes, o racional diz isso — o
+/// vencedor sai determinístico, mas nenhuma frase publicada alega que ele é o mais barato hoje.
+#[test]
+fn o_racional_declara_quando_o_custo_compara_datas_diferentes() {
+    let herdada = Score {
+        priced_at: "2026-07-29T14:33:05-03:00".to_string(),
+        ..score_of(60, 60, 100_000)
+    };
+    let nova = Score {
+        priced_at: "2026-07-30T10:00:00-03:00".to_string(),
+        ..score_of(60, 60, 120_000)
+    };
+
+    let Decision::Adopt { model, rationale } = bakeoff::decide(&[
+        (pinned("openai/gpt-5.6-terra"), herdada),
+        (pinned("openai/gpt-5.6-luna"), nova),
+    ]) else {
+        panic!("dois finalistas zerados decidem o default");
+    };
+
+    assert_eq!(model, "openai/gpt-5.6-terra");
+    assert!(rationale.contains("datas diferentes"), "{rationale}");
+    assert!(
+        rationale.contains("2026-07-29T14:33:05-03:00"),
+        "{rationale}"
+    );
+    assert!(
+        rationale.contains("2026-07-30T10:00:00-03:00"),
+        "{rationale}"
+    );
+    assert!(
+        !rationale.contains("o mais barato"),
+        "não se afirma o mais barato entre tarifas de datas diferentes: {rationale}"
+    );
+}
+
+/// Mesma data, mesma tarifa: aí o custo compara de verdade, e o racional afirma o que mediu.
+#[test]
+fn o_racional_afirma_o_mais_barato_quando_a_data_e_a_mesma() {
+    let mesma = |cost| Score {
+        priced_at: "2026-07-30T10:00:00-03:00".to_string(),
+        ..score_of(60, 60, cost)
+    };
+
+    let Decision::Adopt { rationale, .. } = bakeoff::decide(&[
+        (pinned("openai/gpt-5.6-terra"), mesma(120_000)),
+        (pinned("openai/gpt-5.6-luna"), mesma(100_000)),
+    ]) else {
+        panic!("dois finalistas zerados decidem o default");
+    };
+
+    assert!(rationale.contains("o mais barato"), "{rationale}");
+    assert!(!rationale.contains("datas diferentes"), "{rationale}");
+}
+
+/// Com um elegível só, o custo não desempatou nada: não há comparação de datas a qualificar.
+#[test]
+fn um_elegivel_unico_nao_qualifica_o_custo() {
+    let vencedora = Score {
+        priced_at: "2026-07-29T14:33:05-03:00".to_string(),
+        ..score_of(60, 60, 100_000)
+    };
+    let reprovada = Score {
+        priced_at: "2026-07-30T10:00:00-03:00".to_string(),
+        ..score_of(59, 60, 10_000)
+    };
+
+    let Decision::Adopt { rationale, .. } = bakeoff::decide(&[
+        (pinned("openai/gpt-5.6-terra"), vencedora),
+        (pinned("openai/gpt-5.6-luna"), reprovada),
+    ]) else {
+        panic!("um finalista zerado em final completa decide o default");
+    };
+
+    assert!(!rationale.contains("datas diferentes"), "{rationale}");
+}
+
+/// A ressalva das datas atravessa o julgamento cego: é lá que a decisão final é escrita, e ela não
+/// pode alegar sobre a tarifa de hoje uma comparação entre custos de dias diferentes.
+#[test]
+fn a_decisao_julgada_declara_o_custo_de_datas_diferentes() {
+    let mut report = julgado(
+        &[
+            ("openai/gpt-5.6-terra", 90_000, true),
+            ("openai/gpt-5.6-luna", 120_000, true),
+        ],
+        &[],
+    );
+    // A corrida de terra veio de um relatório retomado: ela correu antes, sob a tarifa daquele dia.
+    report["phase_two"][0]["run"]["ran_at"] = json!("2026-07-28T09:00:00-03:00");
+
+    let bakeoff::Decision::Adopt { model, rationale } =
+        bakeoff::judged_decision(&report, &aprovando(&report)).unwrap()
+    else {
+        panic!("com tudo aprovado, a decisão sai");
+    };
+
+    assert_eq!(model, "openai/gpt-5.6-terra");
+    assert!(rationale.contains("datas diferentes"), "{rationale}");
+    assert!(
+        rationale.contains("2026-07-28T09:00:00-03:00"),
+        "{rationale}"
+    );
+    assert!(!rationale.contains("o mais barato"), "{rationale}");
+}
+
+/// O medidor de custo do provedor quebrar não é medição parcial do candidato: é o instrumento que
+/// falhou. O pin sai da comparação e a decisão segue com quem mediu — inclusive quando sobra um só.
+#[test]
+fn o_medidor_quebrado_tira_o_pin_da_comparacao_e_a_decisao_segue() {
+    let inteiro = Score {
+        priced_at: "2026-07-30T09:59:34-03:00".to_string(),
+        ..score_of(57, 57, 761_708)
+    };
+    let quebrado = Score {
+        priced_at: "2026-07-30T15:14:23-03:00".to_string(),
+        halted_by: Some(super::Halt::CostMeterBroken),
+        complete: false,
+        ..score_of(0, 1, 349_833)
+    };
+
+    let Decision::Adopt { model, rationale } = bakeoff::decide(&[
+        (pinned("openai/gpt-5.6-terra"), inteiro),
+        (pinned("moonshotai/kimi-k3"), quebrado),
+    ]) else {
+        panic!("com o oponente fora da comparação, o finalista medido decide o default");
+    };
+
+    assert_eq!(model, "openai/gpt-5.6-terra");
+    assert!(rationale.contains("moonshotai/kimi-k3"), "{rationale}");
+    assert!(rationale.contains("medidor de custo"), "{rationale}");
+    // Vitória por W.O. é dita por extenso: vendê-la como comparação seria mentir sobre a base.
+    assert!(rationale.contains("W.O."), "{rationale}");
+}
+
+/// A ressalva é do medidor, e só dele: quem a trava de gasto cortou continua vetando a decisão —
+/// comparar quem terminou contra quem o orçamento cortou compararia orçamento, não modelo.
+#[test]
+fn a_trava_de_gasto_continua_vetando_a_decisao() {
+    let inteiro = score_of(57, 57, 700_000);
+    let cortado = Score {
+        halted_by: Some(super::Halt::SpendCeiling),
+        complete: false,
+        ..score_of(20, 20, 100_000)
+    };
+
+    let Decision::NoWinner { reason } = bakeoff::decide(&[
+        (pinned("openai/gpt-5.6-terra"), inteiro),
+        (pinned("moonshotai/kimi-k3"), cortado),
+    ]) else {
+        panic!("corrida cortada pelo orçamento não decide default");
+    };
+
+    assert!(reason.contains("1 de 2"), "{reason}");
+}
+
+/// Falha operacional é medição que faltou, como a trava de gasto: o pin continua no quórum e a
+/// corrida incompleta dele veta a decisão — só o medidor do provedor tira alguém da comparação.
+#[test]
+fn a_falha_operacional_continua_vetando_a_decisao() {
+    let inteiro = score_of(57, 57, 700_000);
+    let caido = Score {
+        halted_by: Some(super::Halt::Operational),
+        complete: false,
+        ..score_of(20, 20, 100_000)
+    };
+
+    let Decision::NoWinner { reason } = bakeoff::decide(&[
+        (pinned("openai/gpt-5.6-terra"), inteiro),
+        (pinned("moonshotai/kimi-k3"), caido),
+    ]) else {
+        panic!("corrida caída por falha operacional não decide default");
+    };
+
+    assert!(reason.contains("1 de 2"), "{reason}");
+    // Sem menção de exclusão: quem caiu continua sendo cobrado da própria corrida.
+    assert!(!reason.contains("Fora da comparação"), "{reason}");
+}
+
+/// A mesma fronteira, offline: o julgamento só dispensa o oponente cujo medidor quebrou, e uma
+/// final caída por falha operacional continua sem quórum mesmo com o caderno inteiro aprovado.
+#[test]
+fn o_julgamento_nao_dispensa_o_oponente_que_caiu_por_falha_operacional() {
+    let mut report = julgado(
+        &[
+            ("openai/gpt-5.6-terra", 90_000, true),
+            ("moonshotai/kimi-k3", 40_000, false),
+        ],
+        &[],
+    );
+    report["phase_two"][1]["run"]["halted_by"] = json!("operational");
+
+    let bakeoff::Decision::NoWinner { reason } =
+        bakeoff::judged_decision(&report, &aprovando(&report)).unwrap()
+    else {
+        panic!("falha operacional não abre W.O.");
+    };
+
+    assert!(reason.contains("1 de 2"), "{reason}");
+    assert!(!reason.contains("W.O."), "{reason}");
+}
+
+/// O W.O. dispensa o oponente, nunca os gates de qualidade: o vencedor solitário passa pelos mesmos
+/// filtros de sempre, e reprovar neles é ficar sem default.
+#[test]
+fn o_wo_nao_afrouxa_os_gates_de_qualidade() {
+    let falho = score_of(56, 57, 700_000);
+    let quebrado = Score {
+        halted_by: Some(super::Halt::CostMeterBroken),
+        complete: false,
+        ..score_of(0, 1, 349_833)
+    };
+
+    let Decision::NoWinner { reason } = bakeoff::decide(&[
+        (pinned("openai/gpt-5.6-terra"), falho),
+        (pinned("moonshotai/kimi-k3"), quebrado),
+    ]) else {
+        panic!("quem não zerou a suíte não vira default nem sem oponente");
+    };
+
+    assert!(reason.contains("zerou a suíte"), "{reason}");
+}
+
+/// O julgamento cego aplica a mesma ressalva, offline: é lá que o default é escrito, e um relatório
+/// parado por medidor quebrado fecha com o finalista que mediu.
+#[test]
+fn o_julgamento_fecha_por_wo_quando_o_medidor_do_outro_quebrou() {
+    let mut report = julgado(
+        &[
+            ("openai/gpt-5.6-terra", 90_000, true),
+            ("moonshotai/kimi-k3", 40_000, false),
+        ],
+        &[],
+    );
+    report["phase_two"][1]["run"]["halted_by"] = json!("cost_meter_broken");
+
+    let bakeoff::Decision::Adopt { model, rationale } =
+        bakeoff::judged_decision(&report, &aprovando(&report)).unwrap()
+    else {
+        panic!("com o caderno aprovado e o oponente fora, o default sai");
+    };
+
+    assert_eq!(model, "openai/gpt-5.6-terra");
+    assert!(rationale.contains("moonshotai/kimi-k3"), "{rationale}");
+    assert!(rationale.contains("W.O."), "{rationale}");
+}
+
+/// O W.O. não atravessa a leitura cega: um bilhete reprovado tira o vencedor solitário, e a corrida
+/// termina sem default.
+#[test]
+fn o_wo_nao_sobrevive_a_um_bilhete_reprovado() {
+    let mut report = julgado(
+        &[
+            ("openai/gpt-5.6-terra", 90_000, true),
+            ("moonshotai/kimi-k3", 40_000, false),
+        ],
+        &[],
+    );
+    report["phase_two"][1]["run"]["halted_by"] = json!("cost_meter_broken");
+    let mut verdicts = aprovando(&report);
+    for ticket in bilhetes_de(&report, "openai/gpt-5.6-terra") {
+        verdicts.insert(ticket, bakeoff::Judgment::Rejected);
+    }
+
+    let bakeoff::Decision::NoWinner { reason } =
+        bakeoff::judged_decision(&report, &verdicts).unwrap()
+    else {
+        panic!("didática reprovada não vira default nem por W.O.");
+    };
+
+    assert!(reason.contains("julgamento cego"), "{reason}");
 }
