@@ -7,7 +7,7 @@ use super::stream::{ErrorKind, ProviderEvent, StreamParser};
 use serde_json::{Value, json};
 
 fn candidate_pin() -> &'static super::pins::ModelPin {
-    pin("openai/gpt-5.6-terra").expect("pin candidato declarado")
+    pin("x-ai/grok-4.5").expect("pin candidato declarado")
 }
 
 fn request_for(
@@ -153,42 +153,29 @@ fn request_pins_reasoning_to_the_floor() {
             .body
             .pointer("/reasoning/effort")
             .and_then(Value::as_str),
-        Some("none")
+        Some("minimal")
     );
 }
 
+/// Nenhum pin da matriz declara beta header, e o cabeçalho só existe quando declarado: um beta
+/// enviado sem dono seria parâmetro fantasma — o mecanismo fica, por pin, para o endpoint que
+/// vier a exigir um.
 #[test]
-fn request_sends_structured_output_beta_only_for_anthropic_pins() {
-    let mut pins_with_beta = 0;
-    let mut pins_without_beta = 0;
-
+fn request_sends_beta_headers_only_when_the_pin_declares() {
     for pin in PINS {
+        assert!(
+            pin.beta_headers.is_empty(),
+            "o pin {} declara beta",
+            pin.model
+        );
         let request = request_for(pin, vec![]);
-        if pin.beta_headers.is_empty() {
-            pins_without_beta += 1;
-            assert_eq!(
-                header(&request, "x-anthropic-beta"),
-                None,
-                "o pin {} não declara beta",
-                pin.model
-            );
-        } else {
-            pins_with_beta += 1;
-            let expected = pin.beta_headers.join(",");
-            assert_eq!(
-                header(&request, "x-anthropic-beta"),
-                Some(expected.as_str()),
-                "o pin {} declara beta",
-                pin.model
-            );
-        }
+        assert_eq!(
+            header(&request, "x-anthropic-beta"),
+            None,
+            "o pin {} não declara beta e o cabeçalho não sai",
+            pin.model
+        );
     }
-
-    assert!(pins_with_beta > 0, "a matriz declara pelo menos um beta");
-    assert!(
-        pins_without_beta > 0,
-        "a matriz declara pelo menos um pin sem beta"
-    );
 }
 
 #[test]
@@ -633,17 +620,17 @@ fn todos_os_pins_declararam_um_operador_legivel() {
     assert!(PINS.iter().all(|pin| !pin.operator.is_empty()));
 }
 
-/// A ordem a priori decide quem corre primeiro no bakeoff e quem ganha empate — com empate na
-/// própria ordem, as duas decisões cairiam na posição do pin dentro do arquivo.
+/// A ordem de corrida decide quem corre primeiro no bakeoff e é o último desempate da final —
+/// com empate na própria ordem, as duas decisões cairiam na posição do pin dentro do arquivo.
 #[test]
-fn pins_declare_a_total_prior_order() {
-    let mut ranks: Vec<u8> = PINS.iter().map(|pin| pin.prior_rank).collect();
+fn pins_declare_a_total_run_order() {
+    let mut ranks: Vec<u8> = PINS.iter().map(|pin| pin.run_order).collect();
     ranks.sort_unstable();
 
     assert_eq!(
         ranks,
         (1..=PINS.len() as u8).collect::<Vec<u8>>(),
-        "a ordem a priori é 1..n sem empate nem buraco"
+        "a ordem de corrida é 1..n sem empate nem buraco"
     );
 }
 
@@ -665,9 +652,9 @@ fn drift_reports_a_model_absent_from_the_catalog() {
 #[test]
 fn drift_lists_available_endpoints_when_the_pin_is_absent() {
     let catalog = json!({"data": [{
-        "name": "Amazon Bedrock | anthropic/claude-sonnet-5-20260630",
+        "name": "Azure | openai/gpt-5.6-terra-20260709",
         "model_id": default_pin().model,
-        "tag": "amazon-bedrock/us-east-1",
+        "tag": "azure/eu",
         "supported_parameters": ["tools", "structured_outputs"]
     }]});
     let result = verify(&catalog, default_pin());
@@ -676,7 +663,7 @@ fn drift_lists_available_endpoints_when_the_pin_is_absent() {
         result,
         Err(ref drift) if matches!(
             &drift.drift,
-            Drift::EndpointAbsent { available } if available == &vec!["amazon-bedrock/us-east-1".to_string()]
+            Drift::EndpointAbsent { available } if available == &vec!["azure/eu".to_string()]
         )
     ));
 }
@@ -688,10 +675,10 @@ fn drift_lists_available_endpoints_when_the_pin_is_absent() {
 fn drift_matches_the_routing_tag_not_the_display_name() {
     let pin = default_pin();
     let by_tag = json!({"data": [{
-        "name": "Amazon Bedrock | anthropic/claude-sonnet-5-20260630",
+        "name": "Azure | openai/gpt-5.6-terra-20260709",
         "model_id": pin.model,
         "tag": pin.endpoint,
-        "supported_parameters": ["tools", "structured_outputs", "max_tokens", "reasoning"]
+        "supported_parameters": ["tools", "structured_outputs", "max_completion_tokens", "reasoning"]
     }]});
     assert!(verify(&by_tag, pin).is_ok());
 
@@ -699,8 +686,8 @@ fn drift_matches_the_routing_tag_not_the_display_name() {
     let by_name_only = json!({"data": [{
         "name": pin.endpoint,
         "model_id": pin.model,
-        "tag": "amazon-bedrock/us-east-1",
-        "supported_parameters": ["tools", "structured_outputs", "max_tokens", "reasoning"]
+        "tag": "azure/eu",
+        "supported_parameters": ["tools", "structured_outputs", "max_completion_tokens", "reasoning"]
     }]});
     assert!(matches!(
         verify(&by_name_only, pin),
@@ -745,38 +732,38 @@ fn drift_reports_a_missing_token_limit_parameter() {
     let catalog = json!({"data": [{
         "model_id": default_pin().model,
         "tag": default_pin().endpoint,
-        "supported_parameters": ["tools", "structured_outputs", "reasoning", "max_completion_tokens"]
+        "supported_parameters": ["tools", "structured_outputs", "reasoning", "max_tokens"]
     }]});
     let result = verify(&catalog, default_pin());
 
     assert!(matches!(
         result,
-        Err(ref drift) if matches!(drift.drift, Drift::CapabilityAbsent { parameter: "max_tokens" })
+        Err(ref drift) if matches!(drift.drift, Drift::CapabilityAbsent { parameter: "max_completion_tokens" })
     ));
 }
 
-/// O espelho do teste acima: o pin que envia `max_completion_tokens` verifica num endpoint que só
-/// anuncia esse nome — e diverge num endpoint que só anuncia `max_tokens`.
+/// O espelho do teste acima: o pin que envia `max_tokens` verifica num endpoint que anuncia esse
+/// nome — e diverge num endpoint que só anuncia o irmão.
 #[test]
 fn drift_requires_the_token_cap_field_the_pin_sends() {
     let pin = candidate_pin();
-    let announces_completion_cap = json!({"data": [{
-        "model_id": pin.model,
-        "tag": pin.endpoint,
-        "supported_parameters": ["tools", "structured_outputs", "reasoning", "max_completion_tokens"]
-    }]});
-    assert!(verify(&announces_completion_cap, pin).is_ok());
-
-    let announces_max_tokens_only = json!({"data": [{
+    let announces_the_pins_cap = json!({"data": [{
         "model_id": pin.model,
         "tag": pin.endpoint,
         "supported_parameters": ["tools", "structured_outputs", "reasoning", "max_tokens"]
     }]});
+    assert!(verify(&announces_the_pins_cap, pin).is_ok());
+
+    let announces_the_sibling_only = json!({"data": [{
+        "model_id": pin.model,
+        "tag": pin.endpoint,
+        "supported_parameters": ["tools", "structured_outputs", "reasoning", "max_completion_tokens"]
+    }]});
     assert!(matches!(
-        verify(&announces_max_tokens_only, pin),
+        verify(&announces_the_sibling_only, pin),
         Err(ref drift) if matches!(
             drift.drift,
-            Drift::CapabilityAbsent { parameter: "max_completion_tokens" }
+            Drift::CapabilityAbsent { parameter: "max_tokens" }
         )
     ));
 }
@@ -788,7 +775,7 @@ fn drift_reports_a_missing_reasoning_capability() {
     let catalog = json!({"data": [{
         "model_id": default_pin().model,
         "tag": default_pin().endpoint,
-        "supported_parameters": ["tools", "structured_outputs", "max_tokens"]
+        "supported_parameters": ["tools", "structured_outputs", "max_completion_tokens"]
     }]});
     let result = verify(&catalog, default_pin());
 

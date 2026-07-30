@@ -310,6 +310,42 @@
         "verbosity",
         "reasoning_effort"
       ]
+    },
+    {
+      "name": "Azure | openai/gpt-5.6-sol-20260709",
+      "model_id": "openai/gpt-5.6-sol",
+      "provider_name": "Azure",
+      "tag": "azure",
+      "supported_parameters": [
+        "max_completion_tokens",
+        "reasoning",
+        "include_reasoning",
+        "seed",
+        "response_format",
+        "structured_outputs",
+        "tools",
+        "tool_choice",
+        "reasoning_effort"
+      ]
+    },
+    {
+      "name": "Moonshot AI | moonshotai/kimi-k3-20260715",
+      "model_id": "moonshotai/kimi-k3",
+      "provider_name": "Moonshot AI",
+      "tag": "moonshotai/mxfp4",
+      "supported_parameters": [
+        "reasoning",
+        "include_reasoning",
+        "max_tokens",
+        "stop",
+        "frequency_penalty",
+        "presence_penalty",
+        "structured_outputs",
+        "response_format",
+        "tool_choice",
+        "tools",
+        "reasoning_effort"
+      ]
     }
   ]
 }

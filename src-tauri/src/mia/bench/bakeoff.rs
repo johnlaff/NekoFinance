@@ -187,12 +187,12 @@ pub(crate) fn score(run: &BenchRun) -> Score {
 
 /// Quem corre a peneira, na ordem em que corre.
 ///
-/// Os candidatos vêm na ordem a priori — o dinheiro chega aos mais promissores antes de a trava
-/// fechar — e o teto de referência vai por último: ele informa a régua, não decide o default, e
-/// perdê-lo para a trava custa menos que perder um candidato.
+/// Os candidatos vêm na ordem de corrida declarada na matriz — determinismo, não mérito — e o
+/// teto de referência vai por último: ele informa a régua, não decide o default, e perdê-lo para
+/// a trava custa menos que perder um candidato.
 pub(crate) fn contenders() -> Vec<&'static ModelPin> {
     let mut pins: Vec<&'static ModelPin> = PINS.iter().collect();
-    pins.sort_by_key(|pin| (pin.role == PinRole::Ceiling, pin.prior_rank));
+    pins.sort_by_key(|pin| (pin.role == PinRole::Ceiling, pin.run_order));
     pins
 }
 
@@ -242,7 +242,7 @@ pub(crate) fn survivors(scored: &[(&'static ModelPin, Score)]) -> Vec<&'static M
     eligible.sort_by(|(left_pin, left), (right_pin, right)| {
         cross_rate(right, left)
             .then(left.cost_micro_usd.cmp(&right.cost_micro_usd))
-            .then(left_pin.prior_rank.cmp(&right_pin.prior_rank))
+            .then(left_pin.run_order.cmp(&right_pin.run_order))
     });
     eligible
         .into_iter()
@@ -288,9 +288,10 @@ pub(crate) enum Decision {
 /// mecânica: o gate de ligar não admite meio ponto.
 ///
 /// Entre os que zeraram ganha o mais barato, porque com a qualidade medida empatada o que sobra
-/// para decidir é quanto cada pergunta vai custar a quem usa o app; empate de custo cai na ordem a
-/// priori. O gate da spec ainda pede a didática aprovada em leitura cega, que a máquina não faz —
-/// então o líder só vira default quando não há resposta pendente.
+/// para decidir é quanto cada pergunta vai custar a quem usa o app; empate de custo cai na ordem
+/// de corrida, só como garantia de determinismo — ela não carrega mérito. O gate da spec ainda
+/// pede a didática aprovada em leitura cega, que a máquina não faz — então o líder só vira
+/// default quando não há resposta pendente.
 pub(crate) fn decide(scored: &[(&'static ModelPin, Score)]) -> Decision {
     let compared = scored.iter().filter(|(_, score)| score.complete).count();
     if compared < scored.len() || compared < MIN_FINALISTS {
@@ -309,7 +310,7 @@ pub(crate) fn decide(scored: &[(&'static ModelPin, Score)]) -> Decision {
         .iter()
         .filter(|(_, score)| score.complete && score.perfect() && score.injection_failed == 0)
         .collect();
-    eligible.sort_by_key(|(pin, score)| (score.cost_micro_usd, pin.prior_rank));
+    eligible.sort_by_key(|(pin, score)| (score.cost_micro_usd, pin.run_order));
 
     let Some((pin, score)) = eligible.first() else {
         return Decision::NoWinner {
@@ -1235,9 +1236,9 @@ pub(crate) fn judged_decision(
                 && !rejected.contains(run.pin.model)
         })
         .collect();
-    // Empate de qualidade cai no custo, como na decisão mecânica; empate de custo, na ordem a
-    // priori do pin, que é a mesma regra da corrida.
-    eligible.sort_by_key(|run| (run.cost_micro_usd, run.pin.prior_rank));
+    // Empate de qualidade cai no custo, como na decisão mecânica; empate de custo, na ordem de
+    // corrida do pin — determinismo, não mérito —, que é a mesma regra da corrida.
+    eligible.sort_by_key(|run| (run.cost_micro_usd, run.pin.run_order));
 
     let Some(winner) = eligible.first() else {
         return Ok(Decision::NoWinner {

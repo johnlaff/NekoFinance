@@ -1269,8 +1269,8 @@ fn o_relatorio_carrega_modelo_provedor_e_totais() {
 #[test]
 fn o_nome_do_relatorio_e_datado_e_nomeia_o_modelo() {
     assert_eq!(
-        super::report::file_name("2026-07-29T14:33:05-03:00", "anthropic/claude-sonnet-5"),
-        "2026-07-29T14-33-05-anthropic-claude-sonnet-5.json"
+        super::report::file_name("2026-07-29T14:33:05-03:00", "moonshotai/kimi-k3"),
+        "2026-07-29T14-33-05-moonshotai-kimi-k3.json"
     );
 }
 
@@ -1525,7 +1525,7 @@ fn a_peneira_corre_os_candidatos_antes_do_teto_de_referencia() {
     let ranks: Vec<u8> = order
         .iter()
         .filter(|pin| pin.role != PinRole::Ceiling)
-        .map(|pin| pin.prior_rank)
+        .map(|pin| pin.run_order)
         .collect();
     let mut sorted = ranks.clone();
     sorted.sort_unstable();
@@ -1606,18 +1606,15 @@ fn a_peneira_elimina_a_corrida_incompleta() {
     assert_eq!(finalists[0].model, "openai/gpt-5.6-luna");
 }
 
-/// A ordem é taxa, depois custo, depois a ordem a priori — e o teto de referência nunca disputa.
+/// A ordem é taxa, depois custo, depois a ordem de corrida — e o teto de referência nunca disputa.
 #[test]
-fn a_peneira_ordena_por_taxa_custo_e_ordem_a_priori() {
+fn a_peneira_ordena_por_taxa_custo_e_ordem_de_corrida() {
     let scored = vec![
         (pinned("x-ai/grok-4.5"), score_of(18, 20, 5_000)),
         (pinned("openai/gpt-5.6-luna"), score_of(20, 20, 90_000)),
         (pinned("google/gemini-3.6-flash"), score_of(20, 20, 30_000)),
-        (
-            pinned("anthropic/claude-sonnet-5"),
-            score_of(20, 20, 30_000),
-        ),
-        (pinned("anthropic/claude-opus-5"), score_of(20, 20, 1_000)),
+        (pinned("openai/gpt-5.6-terra"), score_of(20, 20, 30_000)),
+        (pinned("openai/gpt-5.6-sol"), score_of(20, 20, 1_000)),
     ];
 
     let finalists: Vec<&str> = bakeoff::survivors(&scored)
@@ -1628,8 +1625,8 @@ fn a_peneira_ordena_por_taxa_custo_e_ordem_a_priori() {
     assert_eq!(
         finalists,
         vec![
-            // Empate de taxa e de custo: decide a ordem a priori.
-            "anthropic/claude-sonnet-5",
+            // Empate de taxa e de custo: decide a ordem de corrida, como determinismo.
+            "openai/gpt-5.6-terra",
             "google/gemini-3.6-flash",
             "openai/gpt-5.6-luna",
         ],
@@ -1803,11 +1800,12 @@ async fn o_bakeoff_atravessa_as_duas_fases_e_decide_o_default() {
     }
     assert!(bakeoff.drifted.is_empty());
 
-    // Todos zeram a suíte e custam igual: decide a ordem a priori entre os candidatos.
+    // Todos zeram a suíte e custam igual: decide a ordem de corrida entre os candidatos, como
+    // garantia de determinismo.
     let Decision::Adopt { model, .. } = &bakeoff.decision else {
         panic!("a final zerada decide o default");
     };
-    assert_eq!(*model, "anthropic/claude-sonnet-5");
+    assert_eq!(*model, "openai/gpt-5.6-terra");
 
     // Um relatório só, reescrito a cada corrida, com as duas fases e a decisão dentro.
     assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
@@ -2192,12 +2190,12 @@ fn a_projecao_reflete_o_recorte_da_regua() {
         complete: true,
     };
     let probes = vec![
-        probe("anthropic/claude-sonnet-5", 1_000),
         probe("openai/gpt-5.6-terra", 1_000),
         probe("openai/gpt-5.6-luna", 1_000),
         probe("google/gemini-3.6-flash", 1_000),
         probe("x-ai/grok-4.5", 1_000),
-        probe("anthropic/claude-opus-5", 10_000),
+        probe("moonshotai/kimi-k3", 1_000),
+        probe("openai/gpt-5.6-sol", 10_000),
     ];
 
     // Sonda 15.000 + peneira (5×10×1.000 + 10.000×2) + final (3×1.000×10×3) = 175.000, e um
@@ -2241,12 +2239,14 @@ fn cada_pin_envia_o_piso_de_raciocinio_que_declarou() {
         );
     }
 
-    // A matriz não é uniforme — se fosse, o campo por pin seria decoração.
+    // A matriz vigente é uniforme em "minimal" — o campo continua por pin porque o piso é fato
+    // do ENDPOINT: o estreante entra com palpite declarado e a sonda o confirma, e um endpoint
+    // que aceite desligar volta a diferenciar a matriz sem mexer em nada além do próprio pin.
     let pisos: std::collections::BTreeSet<&str> = PINS
         .iter()
         .map(|pin| pin.reasoning_floor.effort())
         .collect();
-    assert_eq!(pisos.len(), 2);
+    assert_eq!(pisos, std::collections::BTreeSet::from(["minimal"]));
 }
 
 /// Um turno cobrado e declarado, seguido de um turno que gera texto e trava no tempo: o total
@@ -2523,13 +2523,13 @@ fn a_projecao_da_final_assume_os_candidatos_mais_caros() {
         complete: true,
     };
     let probes = vec![
-        probe("anthropic/claude-sonnet-5", 1_000),
+        probe("moonshotai/kimi-k3", 1_000),
         probe("openai/gpt-5.6-terra", 4_000),
         probe("openai/gpt-5.6-luna", 3_000),
         probe("google/gemini-3.6-flash", 2_000),
         probe("x-ai/grok-4.5", 1_000),
         // O teto de referência entra na peneira e nunca na final.
-        probe("anthropic/claude-opus-5", 9_000),
+        probe("openai/gpt-5.6-sol", 9_000),
     ];
 
     // O que a sonda gastou (20.000) + a peneira (a soma de todos, uma vez por caso) + a final
@@ -2687,10 +2687,7 @@ async fn tentativa_que_gerou_texto_e_caiu_sem_uso_fecha_a_bancada() {
 #[test]
 fn a_decisao_recusa_quando_um_finalista_foi_truncado() {
     let finalistas = vec![
-        (
-            pinned("anthropic/claude-sonnet-5"),
-            score_of(60, 60, 100_000),
-        ),
+        (pinned("moonshotai/kimi-k3"), score_of(60, 60, 100_000)),
         (pinned("openai/gpt-5.6-terra"), score_of(60, 60, 120_000)),
         (
             pinned("openai/gpt-5.6-luna"),
@@ -2798,12 +2795,12 @@ fn a_reserva_da_peneira_segue_os_custos_medidos_e_nao_a_contagem() {
     };
     // Cinco candidatos baratos e um teto de referência cinco vezes mais caro.
     let probes = vec![
-        probe("anthropic/claude-sonnet-5", 10_000),
         probe("openai/gpt-5.6-terra", 10_000),
         probe("openai/gpt-5.6-luna", 10_000),
         probe("google/gemini-3.6-flash", 10_000),
         probe("x-ai/grok-4.5", 10_000),
-        probe("anthropic/claude-opus-5", 50_000),
+        probe("moonshotai/kimi-k3", 10_000),
+        probe("openai/gpt-5.6-sol", 50_000),
     ];
     let cap = 5_000_000;
 
@@ -3016,7 +3013,7 @@ fn vereditos(
 fn o_julgamento_aprovado_fecha_a_decisao() {
     let report = julgado(
         &[
-            ("anthropic/claude-sonnet-5", 200_000, true),
+            ("x-ai/grok-4.5", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
         &[],
@@ -3037,7 +3034,7 @@ fn o_julgamento_aprovado_fecha_a_decisao() {
 fn um_bilhete_reprovado_tira_o_modelo_da_decisao() {
     let report = julgado(
         &[
-            ("anthropic/claude-sonnet-5", 200_000, true),
+            ("x-ai/grok-4.5", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
         &[],
@@ -3052,7 +3049,7 @@ fn um_bilhete_reprovado_tira_o_modelo_da_decisao() {
     else {
         panic!("o outro finalista ainda decide");
     };
-    assert_eq!(model, "anthropic/claude-sonnet-5");
+    assert_eq!(model, "x-ai/grok-4.5");
 }
 
 /// Bilhete sem veredito é resposta que ninguém leu: decidir assim pularia o gate que este comando
@@ -3061,7 +3058,7 @@ fn um_bilhete_reprovado_tira_o_modelo_da_decisao() {
 fn a_decisao_julgada_exige_todos_os_bilhetes_lidos() {
     let report = julgado(
         &[
-            ("anthropic/claude-sonnet-5", 200_000, true),
+            ("x-ai/grok-4.5", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
         &[],
@@ -3081,7 +3078,7 @@ fn a_decisao_julgada_exige_todos_os_bilhetes_lidos() {
 fn a_decisao_julgada_recusa_bilhete_de_outra_execucao() {
     let report = julgado(
         &[
-            ("anthropic/claude-sonnet-5", 200_000, true),
+            ("x-ai/grok-4.5", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
         &[],
@@ -3100,7 +3097,7 @@ fn a_decisao_julgada_recusa_bilhete_de_outra_execucao() {
 fn didatica_reprovada_em_todos_nao_decide_default() {
     let report = julgado(
         &[
-            ("anthropic/claude-sonnet-5", 200_000, true),
+            ("x-ai/grok-4.5", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
         &[],
@@ -3127,7 +3124,7 @@ fn didatica_reprovada_em_todos_nao_decide_default() {
 fn a_decisao_julgada_mantem_o_quorum_da_final() {
     let report = julgado(
         &[
-            ("anthropic/claude-sonnet-5", 200_000, true),
+            ("x-ai/grok-4.5", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, false),
         ],
         &[],
@@ -3147,7 +3144,7 @@ fn a_decisao_julgada_mantem_o_quorum_da_final() {
 fn a_decisao_julgada_ignora_o_score_derivado_do_relatorio() {
     let mut report = julgado(
         &[
-            ("anthropic/claude-sonnet-5", 200_000, true),
+            ("x-ai/grok-4.5", 200_000, true),
             // O mais barato tem uma repetição REPROVADA nos dados brutos.
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
@@ -3167,7 +3164,7 @@ fn a_decisao_julgada_ignora_o_score_derivado_do_relatorio() {
         panic!("o outro finalista continua elegível");
     };
     assert_eq!(
-        model, "anthropic/claude-sonnet-5",
+        model, "x-ai/grok-4.5",
         "o score derivado não decide; as repetições decidem"
     );
 }
@@ -3178,7 +3175,7 @@ fn a_decisao_julgada_ignora_o_score_derivado_do_relatorio() {
 fn a_decisao_julgada_recusa_chave_cega_adulterada() {
     let base = julgado(
         &[
-            ("anthropic/claude-sonnet-5", 200_000, true),
+            ("x-ai/grok-4.5", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
         &[],
@@ -3193,7 +3190,7 @@ fn a_decisao_julgada_recusa_chave_cega_adulterada() {
     // Remapear um bilhete para o outro modelo: a reprovação cairia sobre quem não a mereceu.
     let mut trocada = base.clone();
     let alvo = bilhetes_de(&base, "openai/gpt-5.6-terra")[0].clone();
-    trocada["blind_judgment_key"][&alvo] = json!("anthropic/claude-sonnet-5");
+    trocada["blind_judgment_key"][&alvo] = json!("openai/gpt-5.6-luna");
     let error = bakeoff::judged_decision(&trocada, &aprovando(&base)).unwrap_err();
     assert!(error.contains("editado depois de escrito"));
 }
@@ -3220,7 +3217,7 @@ fn a_decisao_julgada_recusa_o_mesmo_modelo_duas_vezes() {
 fn a_decisao_julgada_recusa_relatorio_sem_os_dados_que_decidem() {
     let base = julgado(
         &[
-            ("anthropic/claude-sonnet-5", 200_000, true),
+            ("x-ai/grok-4.5", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
         &[],
@@ -3235,7 +3232,7 @@ fn a_decisao_julgada_recusa_relatorio_sem_os_dados_que_decidem() {
             .remove(apagar);
         let error = bakeoff::judged_decision(&report, &verdicts).unwrap_err();
         assert!(
-            error.contains("anthropic/claude-sonnet-5"),
+            error.contains("x-ai/grok-4.5"),
             "sem {apagar}, a recusa nomeia a corrida: {error}"
         );
     }
@@ -3268,7 +3265,7 @@ fn a_decisao_julgada_recusa_relatorio_sem_os_dados_que_decidem() {
     // E o teto de referência jamais aparece na final.
     let teto = julgado(
         &[
-            ("anthropic/claude-opus-5", 100_000, true),
+            ("openai/gpt-5.6-sol", 100_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
         &[],
@@ -3524,7 +3521,7 @@ async fn o_julgamento_recusa_bilhete_repetido_no_caderno() {
     let caderno_path = dir.join("caderno.json");
     let report = julgado(
         &[
-            ("anthropic/claude-sonnet-5", 200_000, true),
+            ("x-ai/grok-4.5", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
         &[],
@@ -3566,7 +3563,7 @@ async fn o_julgamento_recusa_bilhete_repetido_no_caderno() {
 fn o_caderno_com_resposta_trocada_e_recusado() {
     let report = julgado(
         &[
-            ("anthropic/claude-sonnet-5", 200_000, true),
+            ("x-ai/grok-4.5", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
         &[],
@@ -3589,7 +3586,7 @@ fn o_caderno_com_resposta_trocada_e_recusado() {
 fn a_decisao_julgada_recusa_booleanos_contraditorios() {
     let base = julgado(
         &[
-            ("anthropic/claude-sonnet-5", 200_000, true),
+            ("x-ai/grok-4.5", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
         &[],
@@ -3615,7 +3612,7 @@ fn a_decisao_julgada_recusa_booleanos_contraditorios() {
 fn a_decisao_julgada_exige_a_estrutura_das_duas_fases() {
     let base = julgado(
         &[
-            ("anthropic/claude-sonnet-5", 200_000, true),
+            ("x-ai/grok-4.5", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
         &[],

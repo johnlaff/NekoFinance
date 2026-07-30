@@ -4,6 +4,11 @@
 //! parâmetros diferentes, e é o endpoint que responde por retenção zero. A troca de pin é gesto
 //! manual e deliberado — não existe alternativa automática, porque cair para outro endpoint sem
 //! ninguém decidir trocaria a garantia de privacidade por disponibilidade.
+//!
+//! Para modelo de peso aberto, o endpoint carrega também a PRECISÃO servida — a tag nomeia a
+//! quantização, e ela é parte da identidade do pin: outro endpoint com outra precisão é outro
+//! candidato, ainda que o nome do modelo seja o mesmo. Só entra na matriz precisão declarada
+//! pelo catálogo; "unknown" não identifica o que se está medindo.
 
 /// Papel do pin na seleção manual do provedor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,12 +26,15 @@ pub(crate) enum PinRole {
 /// pior: modelo com raciocínio obrigatório rejeita "desligado", e quem aceita desligar não pode
 /// receber um orçamento mínimo que o teto de tokens do turno não comporta.
 ///
-/// Os pisos declarados na matriz foram conferidos por execução real contra cada endpoint pinado —
-/// prova mais forte que o catálogo, que anuncia o parâmetro mas não os esforços que ele aceita
-/// (verificado 2026-07).
+/// Os pisos dos veteranos da matriz foram conferidos por execução real contra cada endpoint
+/// pinado — prova mais forte que o catálogo, que anuncia o parâmetro mas não os esforços que ele
+/// aceita (verificado 2026-07). Estreante entra com o piso mais provável declarado, e a sonda do
+/// bakeoff o confirma antes de qualquer fase paga.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ReasoningFloor {
-    /// Desligado. O piso de quem pode não raciocinar.
+    /// Desligado. O piso de quem pode não raciocinar — nenhum endpoint da matriz vigente aceita
+    /// desligar, e o variante fica porque o piso é fato do endpoint, não da matriz.
+    #[allow(dead_code)]
     Off,
     /// O menor esforço que o modelo aceita, para quem não pode desligar.
     Minimal,
@@ -81,40 +89,27 @@ pub(crate) struct ModelPin {
     /// O nome do teto de saída deste endpoint. O canary confere que o catálogo o anuncia; a
     /// requisição envia o teto sob este nome e nunca sob o irmão.
     pub token_cap: TokenCap,
-    /// A ordem a priori, de 1 em diante e sem empate. Ela lê o benchmark de agente bancário —
-    /// ferramentas, várias etapas, dado financeiro — ACIMA do índice geral de inteligência, que
-    /// só desempata: a conversa é um agente que consulta, não um ensaísta.
+    /// A ordem em que os candidatos correm no bakeoff, de 1 em diante e sem empate. Ela existe
+    /// para que o dinheiro alcance a matriz inteira antes de a trava fechar — e diz quem corre
+    /// primeiro se ela fechar antes. Sem alegação de mérito: mérito é o que a corrida mede.
     ///
-    /// Ela decide duas coisas pequenas e nenhuma grande: quem corre primeiro no bakeoff, para que
-    /// o dinheiro chegue aos mais promissores antes de a trava fechar, e quem ganha empate na
-    /// final. O gate é a suíte própria. (verificado 2026-07)
-    pub prior_rank: u8,
+    /// No desempate da final ela é o ÚLTIMO critério, atrás do custo real publicado — entra só
+    /// como garantia de determinismo quando tudo o mais empata.
+    pub run_order: u8,
 }
 
-// Sem este beta declarado, `strict` é removido em silêncio das ferramentas e o modo estrito não
-// vale; como a falha é silenciosa, o cabeçalho é gate, não conveniência.
-const STRUCTURED_OUTPUTS_BETA: &[&str] = &["structured-outputs-2025-11-13"];
-
 pub(crate) const PINS: &[ModelPin] = &[
-    ModelPin {
-        model: "anthropic/claude-sonnet-5",
-        endpoint: "amazon-bedrock/global",
-        operator: "Amazon Bedrock",
-        role: PinRole::Default,
-        beta_headers: STRUCTURED_OUTPUTS_BETA,
-        reasoning_floor: ReasoningFloor::Off,
-        token_cap: TokenCap::MaxTokens,
-        prior_rank: 2,
-    },
     ModelPin {
         model: "openai/gpt-5.6-terra",
         endpoint: "azure",
         operator: "Microsoft Azure",
-        role: PinRole::Candidate,
+        // Default por necessidade técnica — o runtime exige um pin neste papel —, não por
+        // vitória: o bakeoff ainda não fechou uma decisão, e é a corrida quem promove ou rebaixa.
+        role: PinRole::Default,
         beta_headers: &[],
         reasoning_floor: ReasoningFloor::Minimal,
         token_cap: TokenCap::MaxCompletionTokens,
-        prior_rank: 3,
+        run_order: 1,
     },
     ModelPin {
         model: "openai/gpt-5.6-luna",
@@ -124,7 +119,7 @@ pub(crate) const PINS: &[ModelPin] = &[
         beta_headers: &[],
         reasoning_floor: ReasoningFloor::Minimal,
         token_cap: TokenCap::MaxCompletionTokens,
-        prior_rank: 4,
+        run_order: 2,
     },
     ModelPin {
         model: "google/gemini-3.6-flash",
@@ -134,7 +129,7 @@ pub(crate) const PINS: &[ModelPin] = &[
         beta_headers: &[],
         reasoning_floor: ReasoningFloor::Minimal,
         token_cap: TokenCap::MaxTokens,
-        prior_rank: 5,
+        run_order: 3,
     },
     ModelPin {
         model: "x-ai/grok-4.5",
@@ -144,17 +139,31 @@ pub(crate) const PINS: &[ModelPin] = &[
         beta_headers: &[],
         reasoning_floor: ReasoningFloor::Minimal,
         token_cap: TokenCap::MaxTokens,
-        prior_rank: 6,
+        run_order: 4,
     },
     ModelPin {
-        model: "anthropic/claude-opus-5",
-        endpoint: "amazon-bedrock",
-        operator: "Amazon Bedrock",
-        role: PinRole::Ceiling,
-        beta_headers: STRUCTURED_OUTPUTS_BETA,
-        reasoning_floor: ReasoningFloor::Off,
+        // O endpoint do próprio fabricante, com a precisão na tag: mxfp4 é a precisão de
+        // referência do serviço, e trocá-la é trocar de candidato.
+        model: "moonshotai/kimi-k3",
+        endpoint: "moonshotai/mxfp4",
+        operator: "Moonshot AI",
+        role: PinRole::Candidate,
+        beta_headers: &[],
+        // O piso mais provável do estreante — o catálogo anuncia `reasoning`, não os esforços
+        // que o endpoint aceita; a sonda do bakeoff confirma antes de qualquer fase paga.
+        reasoning_floor: ReasoningFloor::Minimal,
         token_cap: TokenCap::MaxTokens,
-        prior_rank: 1,
+        run_order: 5,
+    },
+    ModelPin {
+        model: "openai/gpt-5.6-sol",
+        endpoint: "azure",
+        operator: "Microsoft Azure",
+        role: PinRole::Ceiling,
+        beta_headers: &[],
+        reasoning_floor: ReasoningFloor::Minimal,
+        token_cap: TokenCap::MaxCompletionTokens,
+        run_order: 6,
     },
 ];
 
