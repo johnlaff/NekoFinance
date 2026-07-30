@@ -1,0 +1,115 @@
+{
+  "entries": [
+    {
+      "answer": "O **Diário** é a previsão e o registro do seu gasto variável do dia a dia: mercado, transporte, lanche, farmácia, lazer e pequenas compras pagas no débito, Pix ou dinheiro.\n\nNo método, ele funciona como um **velocímetro**:\n- você projeta uma média diária com base no seu padrão real;\n- quando o dia passa, troca a previsão pelo que realmente gastou;\n- o saldo projetado mostra se dá para seguir no ritmo ou se é hora de desacelerar.\n\nEle não é uma meta moral nem um percentual da renda. É uma referência honesta do seu ritmo de vida.\n\nDuas regras importantes:\n- compra no **crédito** não entra no Diário; ela vai para a fatura futura;\n- não reduza os próximos dias só porque pretende gastar menos. Deixe a projeção e vença os dias um a um, registrando o real.",
+      "case_id": "di-01-o-que-e-o-diario",
+      "question": "O que é o Diário?",
+      "ticket": "di-01-o-que-e-o-diario-01"
+    },
+    {
+      "answer": "O **Diário** é a verba dos gastos variáveis do dia a dia: mercado, transporte, lanche, farmácia, lazer e pequenas compras.\n\nNo método, ele funciona como um **velocímetro**: projeta uma média diária para mostrar o efeito desses gastos no seu saldo futuro. Conforme cada dia passa, você troca a previsão pelo que gastou de verdade no **débito, Pix ou dinheiro**.\n\nRegras principais:\n\n- Ele nasce da média do seu padrão real de gasto, não de um percentual da renda.\n- Dias futuros ficam projetados; só zere um dia depois que ele passou sem gasto.\n- Uma compra alta hoje não autoriza apagar a previsão dos próximos dias. A compensação vem vivendo dias mais baratos.\n- Compra no **cartão** não entra no Diário: ela vai para a fatura do vencimento.\n- A média é uma referência, não uma mesada rígida. O importante é o saldo projetado do mês.\n\nEm resumo: o Diário não julga o gasto; ele deixa visível, todos os dias, a velocidade com que ele afeta seu fluxo.",
+      "case_id": "di-01-o-que-e-o-diario",
+      "question": "O que é o Diário?",
+      "ticket": "di-01-o-que-e-o-diario-02"
+    },
+    {
+      "answer": "O **Diário** é a verba variável do seu dia a dia: mercado, transporte, lanches, farmácia, lazer e pequenas compras pagas no débito, Pix ou dinheiro.\n\nNo método, ele funciona como um **velocímetro**:\n\n- você projeta uma média diária com base no seu padrão real de gastos;\n- cada dia que passa, troca a previsão pelo que realmente gastou;\n- assim, o saldo projetado mostra cedo se é hora de acelerar, desacelerar ou esperar.\n\nEle **não é uma porcentagem da renda** nem um limite moral. É uma referência realista do seu ritmo de gastos.\n\nImportante: compra no **cartão de crédito não entra no Diário** — ela vai para a fatura no vencimento. E não vale zerar dias futuros só porque pretende gastar menos: deixe a projeção e vença os dias um a um, registrando o real.",
+      "case_id": "di-01-o-que-e-o-diario",
+      "question": "O que é o Diário?",
+      "ticket": "di-01-o-que-e-o-diario-03"
+    },
+    {
+      "answer": "O **Diário** é a verba variável do seu dia a dia: mercado, transporte, lanches, farmácia, lazer e pequenas compras pagas no débito, Pix ou dinheiro.\n\nNo método, ele funciona como um **velocímetro**: você projeta uma média diária para os próximos dias e, quando cada dia passa, troca a previsão pelo que realmente gastou. Assim, o saldo futuro mostra se dá para seguir no ritmo, desacelerar ou esperar.\n\nComo usar:\n- Estime pela média dos gastos variáveis dos últimos 2–3 meses.\n- Divida pelos dias do mês e arredonde para cima.\n- Lance essa média nos dias futuros.\n- Depois de viver o dia, registre o gasto real — inclusive R$ 0 se não gastou nada.\n- Não reduza dias futuros só porque pretende gastar menos; a mudança aparece ao viver dias mais baratos.\n\nCompras no **crédito não entram no Diário**: elas vão para a fatura no vencimento. O Diário é só o que sai da conta na hora.\n\nEle não é uma meta moral nem um percentual da renda. É um retrato honesto do seu ritmo de gastos, para que você enxergue o efeito dele no fluxo.",
+      "case_id": "di-01-o-que-e-o-diario",
+      "question": "O que é o Diário?",
+      "ticket": "di-01-o-que-e-o-diario-04"
+    },
+    {
+      "answer": "Porque a economia não acontece de forma igual todo mês. O método mede a **média anual** para acomodar meses com despesas necessárias, compras pontuais ou variações de renda sem transformar cada oscilação em fracasso.\n\nA régua é guardar **20% a 30% das entradas no ano**. Um mês pode ficar abaixo — ou até sem aporte — e outro acima; o importante é a média anual fechar na faixa.\n\nA conta mensal é:\n\n**% do mês = Economia ÷ Entradas**\n\nE a leitura anual consolida essas entradas e economias do período. Para planejar, o método usa **25%** como alvo, deixando folga até o piso anual de 20%.\n\nAssim, você preserva o equilíbrio: não precisa forçar um aporte num mês apertado, mas também não usa meses bons como desculpa para deixar de construir reserva e patrimônio.",
+      "case_id": "di-02-faixa-anual",
+      "question": "Por que a faixa de economia é medida no ano, e não no mês?",
+      "ticket": "di-02-faixa-anual-01"
+    },
+    {
+      "answer": "Porque a vida financeira não é uniforme mês a mês. A régua anual mede a **capacidade estrutural de guardar**, sem transformar cada mês em uma prova isolada.\n\nUm mês pode ter:\n\n- uma compra necessária;\n- uma despesa anual;\n- uma renda mais baixa;\n- uma emergência;\n- ou, ao contrário, uma entrada maior e mais economia.\n\nO que importa é o equilíbrio do conjunto: **a média anual de economia deve ficar entre 20% e 30% das entradas**. Assim, um mês abaixo da faixa pode ser compensado por outro acima dela, sem exigir austeridade artificial ou cortes feitos só para “fechar” o mês.\n\nA leitura mensal continua existindo:\n\n**% economizado no mês = Economia ÷ Entradas**\n\nMas ela é um acompanhamento, não o veredito principal. Depois que o fluxo está organizado, a régua central passa a ser a anual. O método usa **25% como alvo de planejamento**, deixando uma folga de 5 pontos sobre o piso de 20%.\n\nEm resumo: o mês mostra o episódio; o ano mostra o padrão.",
+      "case_id": "di-02-faixa-anual",
+      "question": "Por que a faixa de economia é medida no ano, e não no mês?",
+      "ticket": "di-02-faixa-anual-02"
+    },
+    {
+      "answer": "Porque a vida financeira não é uniforme mês a mês. Um mês pode ter uma compra necessária, férias ou uma despesa anual; outro pode sobrar mais. Medir apenas um mês transforma uma oscilação normal em julgamento — ou incentiva a guardar à força e quebrar o fluxo.\n\nO método usa a **média anual** para medir a continuidade da capacidade de guardar:\n\n- **Piso:** 20% da renda no ano.\n- **Alvo de planejamento:** 25%, com folga.\n- **Teto saudável:** 30%.\n\nAssim, um mês abaixo da faixa pode ser compensado por outro acima, desde que o ano termine entre 20% e 30%. A régua mensal continua existindo como acompanhamento — **Economia ÷ Entradas** —, mas o veredito é anual.",
+      "case_id": "di-02-faixa-anual",
+      "question": "Por que a faixa de economia é medida no ano, e não no mês?",
+      "ticket": "di-02-faixa-anual-03"
+    },
+    {
+      "answer": "Porque a vida financeira não é uniforme mês a mês. Um mês pode ter uma compra necessária, uma despesa anual ou uma renda menor; outro pode compensar isso com mais sobra.\n\nA régua anual mede a **continuidade da capacidade de guardar**, sem transformar cada mês em uma prova isolada:\n\n- **Meta do método:** economizar, em média anual, entre **20% e 30% das entradas**.\n- **Referência para planejar:** **25%**.\n- Um mês abaixo da faixa não é, sozinho, um problema — desde que o conjunto do ano permaneça saudável.\n- Um mês acima também não precisa virar obrigação permanente.\n\nA porcentagem mensal continua existindo como acompanhamento: **Economia ÷ Entradas**. Mas o veredito é anual, porque ele suaviza oscilações e considera o fluxo real da vida. A ideia é equilíbrio, não austeridade: guardar com consistência sem se punir por um mês atípico.",
+      "case_id": "di-02-faixa-anual",
+      "question": "Por que a faixa de economia é medida no ano, e não no mês?",
+      "ticket": "di-02-faixa-anual-04"
+    },
+    {
+      "answer": "Porque o método busca **consistência**, não perfeição em cada mês.\n\nA renda e os gastos variam: pode haver um mês com compra necessária, manutenção, viagem ou menos entradas, seguido de outro com mais folga. Por isso, ficar abaixo da faixa em um mês não significa que o plano falhou — outro mês pode compensar.\n\nA conta mensal é:\n\n**% do mês = Economia ÷ Entradas**\n\nMas o veredito usa a **média anual**, mirando a faixa de **20% a 30%** das entradas. Assim, você consegue guardar quando o fluxo está verde sem transformar cada mês em uma obrigação rígida.\n\nNa prática: o mês mostra o ritmo; o ano mostra se a estrutura está funcionando.",
+      "case_id": "di-02-faixa-anual",
+      "question": "Por que a faixa de economia é medida no ano, e não no mês?",
+      "ticket": "di-02-faixa-anual-05"
+    },
+    {
+      "answer": "Porque o método mede **consistência**, não perfeição em cada mês.\n\nUm mês pode ter compra necessária, renda em data diferente ou uma retirada menor para preservar o fluxo. Em outro, você pode guardar mais. A faixa continua saudável se a **média do ano** ficar entre **20% e 30% das entradas**.\n\nA conta mensal é:\n\n**Economia do mês ÷ Entradas do mês = % do mês**\n\nE a régua olha o acumulado anual dessas entradas e economias. Assim, um mês abaixo de 20% não vira fracasso automático — ele pode ser compensado por meses mais fortes sem forçar uma economia que deixaria o fluxo vermelho.\n\nPara planejar, o método usa **25%** como alvo, deixando folga até o piso anual de 20%. O objetivo é equilíbrio: guardar de forma contínua, sem travar a vida por causa de uma meta mensal rígida.",
+      "case_id": "di-02-faixa-anual",
+      "question": "Por que a faixa de economia é medida no ano, e não no mês?",
+      "ticket": "di-02-faixa-anual-06"
+    },
+    {
+      "answer": "Porque o mês é volátil; o ano mostra o hábito real.\n\nPelo método, a faixa de economia é **20–30% das entradas na média anual**. Um mês pode ficar abaixo por uma compra necessária, uma despesa concentrada ou uma renda menor — e outro pode compensar ficando acima. O veredito vem do conjunto, não de um mês isolado.\n\nA conta mensal é:\n\n**Economia do mês ÷ Entradas do mês = % do mês**\n\nA leitura anual usa a média desses resultados ao longo do ano. Assim, você não precisa forçar uma retirada todo mês só para “bater meta” e prejudicar o fluxo. Primeiro, a economia só sai de uma faixa de saldo projetado verde; depois, o ano mostra se a capacidade de guardar se sustentou.\n\nA faixa existe para equilíbrio: abaixo de **20%** na média anual, o método sugere rever gastos ou renda; acima de **30%**, pode haver margem para viver mais, desde que a reserva esteja em ordem.",
+      "case_id": "di-02-faixa-anual",
+      "question": "Por que a faixa de economia é medida no ano, e não no mês?",
+      "ticket": "di-02-faixa-anual-07"
+    },
+    {
+      "answer": "Porque um mês isolado pode distorcer a leitura. A renda e os gastos não são perfeitamente uniformes: há meses com compras necessárias, despesas sazonais ou entradas extraordinárias. Um mês abaixo da meta não significa, sozinho, que o plano falhou — outro mês pode compensar.\n\nPor isso, o método mede a **média anual**:\n\n- **Piso:** 20% da renda.\n- **Alvo de planejamento:** 25%, com margem.\n- **Teto saudável:** 30%.\n\nA conta mensal continua existindo — **Economia ÷ Entradas** —, mas serve para alimentar a média do ano. Assim, a régua avalia a continuidade de guardar dinheiro, e não exige uma austeridade artificial todos os meses. O objetivo é equilíbrio: manter a média entre 20% e 30% sem travar a vida.",
+      "case_id": "di-02-faixa-anual",
+      "question": "Por que a faixa de economia é medida no ano, e não no mês?",
+      "ticket": "di-02-faixa-anual-08"
+    },
+    {
+      "answer": "Porque o método não tenta controlar a vida por categorias — ele controla o **fluxo de caixa**.\n\nCategorias como lazer, mercado ou transporte ajudam a descrever o passado, mas não respondem à pergunta principal: **o saldo futuro aguenta as decisões já tomadas?**\n\nNo método:\n\n- gastos fixos ficam em **Saídas**;\n- gastos variáveis ficam no **Diário**, uma verba única administrada dia a dia;\n- compras no crédito vão para a **fatura futura**;\n- o saldo projetado mostra quando o dinheiro entra, quando sai e o que sobra.\n\nA tag não funciona como um envelope de orçamento. Ela é um **interruptor de contabilidade**: define em quais réguas um lançamento conta, sem criar limites artificiais por categoria.\n\nAssim, em vez de tentar cumprir “R$ X para restaurantes”, o método olha para o conjunto: **o custo de vida cabe no fluxo e o saldo continua saudável?**",
+      "case_id": "di-03-tag-e-interruptor",
+      "question": "Por que o app não tem orçamento por categoria?",
+      "ticket": "di-03-tag-e-interruptor-01"
+    },
+    {
+      "answer": "Porque o método não tenta controlar cada categoria — ele tenta manter o **fluxo de caixa previsível**.\n\nO orçamento por categoria costuma transformar o mês em vários envelopes: lazer, mercado, transporte, restaurantes. Isso pode dar uma sensação de controle, mas não mostra bem **quando** o dinheiro sai nem o efeito de uma decisão no saldo futuro.\n\nAqui, o método separa o que importa para o fluxo:\n\n- **Saídas:** gastos fixos do estilo de vida;\n- **Diário:** gastos variáveis do dia a dia;\n- **Cartão:** compras que vão consumir renda futura;\n- **Economia:** dinheiro destinado à reserva ou ao patrimônio.\n\nAs tags continuam existindo, mas como **interruptores de contabilidade**, não como limites de gasto. Elas ajudam a identificar o que movimentou o mês e a separar exceções, reembolsos ou dinheiro de terceiros — sem criar envelopes por categoria.\n\nA pergunta principal deixa de ser “quanto ainda posso gastar em restaurantes?” e passa a ser: **“o que esta escolha faz com meu saldo projetado?”**",
+      "case_id": "di-03-tag-e-interruptor",
+      "question": "Por que o app não tem orçamento por categoria?",
+      "ticket": "di-03-tag-e-interruptor-02"
+    },
+    {
+      "answer": "Porque o método não tenta controlar cada categoria; ele quer mostrar **o efeito das decisões no seu saldo futuro**.\n\nEm vez de separar tetos para mercado, lazer, transporte e assim por diante, ele organiza o fluxo em:\n\n- **Saídas**: compromissos fixos;\n- **Diário**: gasto variável do dia a dia;\n- **Cartão**: faturas futuras;\n- **Economia**: dinheiro que vai para a reserva ou patrimônio.\n\nA pergunta central deixa de ser “ainda tenho verba em lazer?” e passa a ser: **“se eu gastar isso, meu saldo projetado continua saudável até as próximas entradas?”**\n\nCategorias podem ajudar a entender hábitos passados. Já as tags servem como rótulos flexíveis — por exemplo, para assinaturas, moradia, reembolsos ou contas a dividir — mas não viram envelopes de gasto.\n\nÉ uma explicação do método: o app funciona como um espelho do fluxo de caixa, não como uma lista de permissões por categoria.",
+      "case_id": "di-03-tag-e-interruptor",
+      "question": "Por que o app não tem orçamento por categoria?",
+      "ticket": "di-03-tag-e-interruptor-03"
+    },
+    {
+      "answer": "Porque o método não usa categorias como envelopes de gasto.\n\nEle organiza o fluxo em duas grandes famílias:\n\n- **Saídas:** custos fixos, como aluguel, contas, assinaturas e parcelas.\n- **Diário:** gastos variáveis do dia a dia, como mercado, transporte, lazer e farmácia.\n\nA categoria pode ajudar a entender o passado, mas não deve virar um limite artificial para cada tipo de gasto. O que importa é:\n\n1. **quanto o seu estilo de vida custa no total;**\n2. **quanto você pode gastar por dia;**\n3. **como cada escolha afeta o saldo projetado;**\n4. **se ainda há espaço para economizar e manter a reserva.**\n\nPor isso, as tags do app não são categorias de orçamento. Elas funcionam como interruptores de contabilidade: indicam em quais réguas um lançamento entra, sem criar uma “caixinha” ou um teto próprio para mercado, lazer ou transporte.\n\nO objetivo é trocar a pergunta “quanto ainda posso gastar nesta categoria?” por “o que esse gasto faz com meu saldo futuro?”.",
+      "case_id": "di-03-tag-e-interruptor",
+      "question": "Por que o app não tem orçamento por categoria?",
+      "ticket": "di-03-tag-e-interruptor-04"
+    },
+    {
+      "answer": "Porque o método não usa categorias como limites de gasto. Ele organiza o fluxo em duas frentes: **Saídas** fixas e **Diário** variável.\n\nCategorias podem ajudar a entender hábitos passados, mas não viram “envelopes” de restaurante, transporte ou lazer. O controle acontece pelo efeito de cada gasto no **saldo projetado** e pelo valor diário baseado no seu padrão real.\n\nA ideia é evitar a falsa segurança de sobrar numa categoria enquanto o caixa futuro já está apertado. Em vez de perguntar “ainda tenho verba de lazer?”, a pergunta é: **“essa compra mantém meu fluxo saudável até as próximas entradas?”**\n\nAs tags existem para dar contexto e definir em quais réguas cada lançamento conta — não para criar tetos separados por categoria.",
+      "case_id": "di-03-tag-e-interruptor",
+      "question": "Por que o app não tem orçamento por categoria?",
+      "ticket": "di-03-tag-e-interruptor-05"
+    },
+    {
+      "answer": "Porque o método que seguimos não usa categorias como envelopes de gasto.\n\nEle separa o dinheiro em duas réguas que realmente mudam o fluxo:\n\n- **Saídas:** custos fixos do estilo de vida.\n- **Diário:** gastos variáveis do dia a dia, administrados como uma verba diária.\n\nCategorias como mercado, lazer ou transporte ajudam a enxergar hábitos passados, mas não dizem, sozinhas, se o saldo futuro vai aguentar. O app prioriza o **fluxo de caixa projetado**: quando cada dinheiro entra ou sai e qual saldo isso deixa nos próximos dias.\n\nPor isso, as tags não são categorias nem limites. Elas funcionam como **interruptores de contabilidade**, indicando em quais réguas um lançamento deve contar — por exemplo, se é custo de vida, economia ou dinheiro de terceiros.\n\nA pergunta central deixa de ser “quanto ainda posso gastar em lazer?” e passa a ser: **“o que essa decisão faz com meu saldo projetado?”**",
+      "case_id": "di-03-tag-e-interruptor",
+      "question": "Por que o app não tem orçamento por categoria?",
+      "ticket": "di-03-tag-e-interruptor-06"
+    }
+  ],
+  "execution_id": "fd7fe4a0-69d9-4465-96df-65e3070135b9",
+  "how_to": "Leia as respostas e julgue cada bilhete sem abrir o relatório principal — é lá que mora a chave que diz qual modelo escreveu cada uma.",
+  "ran_at": "2026-07-30T20:13:15-03:00"
+}
