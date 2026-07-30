@@ -71,11 +71,10 @@ impl Default for RunLimits {
             // Doze leituras permitem decompor uma pergunta sem virar uma varredura do banco.
             max_tool_calls: 12,
             // Quinze centavos limitam o custo de uma pergunta sem cortar pergunta legítima. O
-            // número saiu de medição, não de estimativa: uma rodada real custa entre 2,6 e 9,1
-            // centavos conforme o modelo, e o teto anterior caía no meio dessa distribuição —
-            // reprovava por custo metade da matriz, e até o modelo default quando um turno
-            // retentava. Teto que corta pela metade não é trava de segurança, é filtro de modelo
-            // disfarçado. (verificado 2026-07)
+            // número vem de medição: uma rodada real custa entre 2,6 e 9,1 centavos conforme o
+            // modelo, e um teto dentro dessa faixa reprovaria por custo metade da matriz —
+            // inclusive o modelo default quando um turno retenta. Teto que corta pela metade não é
+            // trava de segurança, é filtro de modelo disfarçado. (verificado 2026-07)
             max_cost_micro_usd: 150_000,
             // Noventa segundos acomodam provedor lento sem prender a interface por tempo aberto.
             max_duration: Duration::from_secs(90),
