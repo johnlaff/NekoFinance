@@ -12,7 +12,7 @@
       "must_not_call": ["get_financial_snapshot"]
     },
     "answer": {
-      "must_contain": ["120,00"]
+      "must_contain": ["137,00"]
     }
   },
   "verification": {

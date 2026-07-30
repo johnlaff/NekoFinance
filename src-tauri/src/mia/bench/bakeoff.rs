@@ -20,8 +20,8 @@ use super::resume::{InheritedRun, Resumed};
 use super::{BenchConfig, BenchRun, CaseRun, Halt, Repetitions, SpendLock, run_catalog};
 use crate::mia::method_tools::MethodPack;
 use crate::mia::prompt;
-use crate::mia::provider::drift::{ZdrCatalog, verify};
-use crate::mia::provider::pins::{ModelPin, PINS, PinRole};
+use crate::mia::provider::drift::{EndpointsCatalog, ZdrCatalog, catalog_for, verify};
+use crate::mia::provider::pins::{ModelPin, PINS, PinRole, Retention};
 use crate::mia::run::{ProviderAdapter, RunLimits};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -210,6 +210,28 @@ pub(crate) fn contenders() -> Vec<&'static ModelPin> {
     pins
 }
 
+/// Junta o catálogo geral de endpoints de cada modelo em opt-out — um pedido por modelo, nunca
+/// por pin: dois pins do mesmo modelo pediriam o mesmo catálogo duas vezes à toa. Quem não optou
+/// por fora não gera pedido nenhum aqui — o caminho dele é o catálogo de retenção zero.
+async fn general_catalog_for<A: EndpointsCatalog>(
+    pins: &[&'static ModelPin],
+    adapter: &A,
+) -> Result<Value, String> {
+    let mut entries = Vec::new();
+    let mut fetched: Vec<&str> = Vec::new();
+    for pin in pins {
+        if pin.retention != Retention::ProviderPolicy || fetched.contains(&pin.model) {
+            continue;
+        }
+        fetched.push(pin.model);
+        let fetched_catalog = adapter.fetch(pin.model).await?;
+        if let Some(data) = fetched_catalog.get("data").and_then(Value::as_array) {
+            entries.extend(data.iter().cloned());
+        }
+    }
+    Ok(json!({ "data": entries }))
+}
+
 /// O que o canary decidiu sobre a matriz.
 pub(crate) struct CanaryVerdict {
     pub cleared: Vec<&'static ModelPin>,
@@ -217,15 +239,21 @@ pub(crate) struct CanaryVerdict {
     pub drifted: Vec<(&'static ModelPin, String)>,
 }
 
-/// Confere cada pin contra o catálogo de retenção zero. O que divergiu sai da corrida com o
-/// motivo escrito — nunca é substituído por outro endpoint, porque trocar pin é gesto deliberado.
-pub(crate) fn canary(catalog: &Value, pins: &[&'static ModelPin]) -> CanaryVerdict {
+/// Confere cada pin contra o catálogo que prova o caminho de retenção DELE — o de retenção zero
+/// para quem não optou por fora, o geral de endpoints para quem optou. O que divergiu sai da
+/// corrida com o motivo escrito — nunca é substituído por outro endpoint, porque trocar pin é
+/// gesto deliberado.
+pub(crate) fn canary(
+    zdr_catalog: &Value,
+    general_catalog: &Value,
+    pins: &[&'static ModelPin],
+) -> CanaryVerdict {
     let mut verdict = CanaryVerdict {
         cleared: Vec::new(),
         drifted: Vec::new(),
     };
     for pin in pins {
-        match verify(catalog, pin) {
+        match verify(catalog_for(pin, zdr_catalog, general_catalog), pin) {
             Ok(()) => verdict.cleared.push(*pin),
             Err(drift) => verdict.drifted.push((*pin, drift.explain())),
         }
@@ -510,7 +538,7 @@ pub(crate) struct BakeoffConfig<'a> {
 ///
 /// O relatório é reescrito ao fim de CADA corrida: o bakeoff dura o que dura e gasta dinheiro de
 /// verdade, e uma queda no meio não pode levar embora a evidência do que já foi pago.
-pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
+pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog + EndpointsCatalog>(
     adapter: &A,
     mut config: BakeoffConfig<'_>,
     lock: &mut SpendLock,
@@ -562,8 +590,37 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
         None => None,
     };
 
-    let catalog = adapter.fetch().await?;
-    let verdict = canary(&catalog, &contenders());
+    // Valor esperado que o prefixo do método também escreve não tem como provar proveniência de
+    // dado: o classificador desconta número sombreado, e um caso que exige prova de cálculo
+    // reprovaria TODO candidato — defeito do instrumento cobrado como se fosse do modelo. A
+    // recusa vem antes de qualquer centavo e nomeia caso e valor, porque o conserto é trocar o
+    // valor da fixture ou o exemplo do núcleo curado.
+    if let Some(system) = system.as_deref() {
+        let mut prefix = crate::mia::run::grounding::Facts::new();
+        prefix.absorb_text(&system.text);
+        for case in &config.cases {
+            if case.expected.provenance != Some(super::case::ExpectedProvenance::Calculo) {
+                continue;
+            }
+            for expected in &case.expected.answer.must_contain {
+                if super::case::money_cents(expected).is_some()
+                    && crate::mia::run::grounding::method_shadows(&prefix, expected)
+                {
+                    return Err(format!(
+                        "O caso {} espera \"{expected}\" com prova de cálculo, mas o prefixo do \
+                         método também escreve esse número — sombreado, ele nunca prova \
+                         proveniência de dado. Troque o valor da fixture ou o exemplo do núcleo \
+                         antes de gastar.",
+                        case.id
+                    ));
+                }
+            }
+        }
+    }
+
+    let zdr_catalog = ZdrCatalog::fetch(adapter).await?;
+    let general_catalog = general_catalog_for(&contenders(), adapter).await?;
+    let verdict = canary(&zdr_catalog, &general_catalog, &contenders());
     let competing = verdict
         .cleared
         .iter()

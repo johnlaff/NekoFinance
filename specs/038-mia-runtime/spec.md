@@ -164,20 +164,19 @@ Regras transversais do envelope:
 
 ### 3. Provedor — OpenRouter único, gates fail-closed no código
 
-Os gates são contrato, não configuração: `provider.zdr: true` · `data_collection: "deny"` · `only` com o endpoint pinado · `allow_fallbacks: false` · `require_parameters: true` · cache de resposta da borda desligado (o cache de prompt do provedor, que é a economia real do loop, fica intacto) · modelo pinado, nunca roteamento automático. Beta header é propriedade do pin e só sai quando o pin o declara.
+Os gates são contrato, não configuração: `data_collection: "deny"` · `only` com o endpoint pinado · `allow_fallbacks: false` · `require_parameters: true` · cache de resposta da borda desligado (o cache de prompt do provedor, que é a economia real do loop, fica intacto) · modelo pinado, nunca roteamento automático. Beta header é propriedade do pin e só sai quando o pin o declara.
+
+**Retenção é propriedade do pin.** O padrão é retenção zero: o pin envia `provider.zdr: true` e a prova é a presença no catálogo de retenção zero do provedor. Um pin pode optar por fora de forma DELIBERADA (`Retention::ProviderPolicy`, decisão do dono registrada no próprio pin) quando o desconto do endpoint compensa trocar a prova do catálogo pela política declarada do operador (treino desligado, retenção de log limitada); esse pin não envia `zdr`, e todos os demais gates permanecem. A troca nunca é automática nem silenciosa — é edição manual da matriz, visível no diff.
 
 **Pins são por endpoint, não por provedor** — a matriz que decide é endpoint × parâmetro suportado. Para modelo de peso aberto, o endpoint carrega também a precisão servida: a tag nomeia a quantização, e ela é parte da identidade do candidato — outro endpoint com outra precisão é outro candidato. Só entra precisão que o catálogo declara; `unknown` não identifica o que se mede.
 
-| Modelo                    | Endpoint pinado        | Papel                                             |
-| ------------------------- | ---------------------- | ------------------------------------------------- |
-| `openai/gpt-5.6-terra`    | `azure`                | default provisório (a corrida promove ou rebaixa) |
-| `openai/gpt-5.6-luna`     | `azure`                | candidato                                         |
-| `google/gemini-3.6-flash` | `google-vertex/global` | candidato                                         |
-| `x-ai/grok-4.5`           | `xai/zdr`              | candidato                                         |
-| `moonshotai/kimi-k3`      | `moonshotai/mxfp4`     | candidato (peso aberto, precisão first-party)     |
-| `openai/gpt-5.6-sol`      | `azure`                | teto de referência (fase 1)                       |
+| Modelo                 | Endpoint pinado | Retenção                    | Papel                                             |
+| ---------------------- | --------------- | --------------------------- | ------------------------------------------------- |
+| `openai/gpt-5.6-terra` | `openai`        | opt-out (política OpenAI)   | default provisório (a corrida promove ou rebaixa) |
+| `openai/gpt-5.6-luna`  | `openai`        | opt-out (política OpenAI)   | candidato                                         |
+| `openai/gpt-5.6-sol`   | `azure`         | zero (catálogo do provedor) | teto de referência (fase 1)                       |
 
-**Verificação de drift**: antes de confiar no pin, o adapter consulta o catálogo de endpoints de retenção zero do provedor e afirma três coisas — o endpoint existe, é de retenção zero, e anuncia os parâmetros que a rodada envia (`tools`, `structured_outputs`, `reasoning` e o teto de saída com o nome que o pin declara). Roda como teste do adapter (contra fixture gravada) e como passo do canary do bakeoff (ao vivo).
+**Verificação de drift**: antes de confiar no pin, o adapter consulta o catálogo que prova o caminho de retenção dele — o de retenção zero para pin em `Retention::Zero`, o catálogo geral de endpoints do modelo para pin em opt-out — e afirma três coisas: o endpoint existe, pertence ao catálogo que prova o pin, e anuncia os parâmetros que a rodada envia (`tools`, `structured_outputs`, `reasoning` e o teto de saída com o nome que o pin declara). Roda como teste do adapter (contra fixture gravada) e como passo do canary do bakeoff (ao vivo).
 
 ### 4. Streaming — eventos tipados, resposta atômica
 
