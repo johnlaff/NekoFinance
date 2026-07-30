@@ -59,6 +59,17 @@ pub(crate) fn grade(expected: &Expected, observed: &Observed) -> Verdict {
             failures.push(format!("A ferramenta {tool} não foi chamada."));
         }
     }
+    for group in &expected.tools.must_call_any {
+        if !group
+            .iter()
+            .any(|tool| observed.tools_called.iter().any(|called| called == tool))
+        {
+            failures.push(format!(
+                "A rodada não chamou nenhuma destas ferramentas: {}.",
+                group.join(", ")
+            ));
+        }
+    }
     for tool in &expected.tools.must_not_call {
         if observed.tools_called.iter().any(|called| called == tool) {
             failures.push(format!("A ferramenta {tool} foi chamada e não devia."));

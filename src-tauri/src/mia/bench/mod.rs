@@ -342,7 +342,9 @@ pub(crate) async fn run_catalog<A: ProviderAdapter>(
     let system = match &config.system {
         Some(snapshot) => std::sync::Arc::clone(snapshot),
         None => std::sync::Arc::new(
-            prompt::system_prompt(&MethodPack::at(&pack_root))
+            // O hoje do prefixo e o relógio das repetições são o MESMO relógio da bancada: o
+            // dia que o modelo lê é o dia em que as fixtures vivem.
+            prompt::system_prompt(&MethodPack::at(&pack_root), fixtures::bench_clock().today())
                 .await
                 .map_err(|error| format!("{} {}", error.message, error.fix))?,
         ),

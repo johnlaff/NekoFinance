@@ -1,0 +1,47 @@
+{
+  "cases": [
+    {
+      "aborted": false,
+      "family": "fidelidade_numerica",
+      "fixture": "casa_basica",
+      "id": "fn-01-entradas-de-junho",
+      "measured": true,
+      "question": "Quanto entrou em junho de 2026?",
+      "repetitions": [
+        {
+          "answer": "Em junho de 2026, entraram **R$ 8.412,37** (entradas registradas).\n\nPara contexto das suas contas nesse mês:\n* **Entradas:** R$ 8.412,37\n* **Custo de vida (Saídas + Diário + Cartão):** R$ 3.204,32\n* **Economia:** R$ 1.200,00\n* **Performance do mês:** +R$ 4.008,05",
+          "attempts": 2,
+          "budget_truncated": false,
+          "cost_declared": true,
+          "cost_micro_usd": 34015,
+          "echoed_forbidden": false,
+          "failures": [],
+          "provenance": "calculo",
+          "stop": "Answered",
+          "tools_called": [
+            "get_month_analysis"
+          ],
+          "turns": 2,
+          "verdict": "passed"
+        }
+      ]
+    }
+  ],
+  "cost_gap": false,
+  "endpoint": "google-vertex/global",
+  "max_spend_micro_usd": 100000,
+  "method_core": true,
+  "model": "google/gemini-3.6-flash",
+  "operator": "Google Cloud Vertex AI",
+  "ran_at": "2026-07-29T20:33:09-03:00",
+  "spend_lock_hit": false,
+  "total_cost_micro_usd": 34015,
+  "totals": {
+    "aborted_cases": 0,
+    "cases": 1,
+    "failed": 0,
+    "passed": 1,
+    "pending_judgment": 0,
+    "repetitions": 1
+  }
+}

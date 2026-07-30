@@ -412,9 +412,14 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
     // comparáveis — e a validação de agora não diria nada sobre o que a corrida seguinte leria.
     let system = match config.pack_root.as_deref() {
         Some(pack_root) => {
-            let assembled = prompt::system_prompt(&MethodPack::at(pack_root))
-                .await
-                .map_err(|error| format!("{} {}", error.message, error.fix))?;
+            // O hoje do prefixo sai do relógio da bancada — o mesmo que semeia as fixtures e o
+            // consentimento. Um relógio só: o dia que o modelo lê é o dia em que o dado vive.
+            let assembled = prompt::system_prompt(
+                &MethodPack::at(pack_root),
+                super::fixtures::bench_clock().today(),
+            )
+            .await
+            .map_err(|error| format!("{} {}", error.message, error.fix))?;
             if !assembled.method_core
                 && config
                     .cases

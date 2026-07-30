@@ -17,7 +17,9 @@ Este é o catálogo de evals da conversa: casos versionados que medem o loop rea
 
 ## O schema do caso
 
-Cada arquivo JSON contém `id` (igual ao nome do arquivo sem `.json`), `family`, `question`, `fixture`, `repetitions` e `expected`. `expected` declara `judgment`, e pode declarar `provenance`, `tools` (`must_call`, `must_not_call`, `min_calls`, `max_calls`) e `answer` (`must_contain`, `must_contain_any`, `must_not_contain`). Um caso também pode declarar `verification`.
+Cada arquivo JSON contém `id` (igual ao nome do arquivo sem `.json`), `family`, `question`, `fixture`, `repetitions` e `expected`. `expected` declara `judgment`, e pode declarar `provenance`, `tools` (`must_call`, `must_call_any`, `must_not_call`, `min_calls`, `max_calls`) e `answer` (`must_contain`, `must_contain_any`, `must_not_contain`). Um caso também pode declarar `verification`.
+
+Cada grupo de `must_call_any` exige pelo menos uma ferramenta. Ele representa rotas funcionalmente equivalentes que expõem o mesmo fato; `must_call` continua reservado à leitura sem equivalente para a pergunta.
 
 Exemplo completo:
 

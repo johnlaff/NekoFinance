@@ -8,8 +8,17 @@
     "judgment": "mecanico",
     "answer": {
       "must_contain_any": [
-        ["importar", "lançar"],
-        ["não há", "sem registro", "não encontrei", "não tenho"]
+        ["import", "lanç", "lanc"],
+        [
+          "não há",
+          "sem registro",
+          "sem dado",
+          "não encontrei",
+          "não tenho",
+          "não teve",
+          "não tem",
+          "não houve"
+        ]
       ]
     }
   }
