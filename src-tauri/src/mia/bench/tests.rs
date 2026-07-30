@@ -877,6 +877,82 @@ fn two_minimal_cases() -> Vec<case::Case> {
         .collect()
 }
 
+/// Uma corrida inteira são centenas de repetições, e cada uma monta o próprio mundo: a enésima
+/// preparação precisa funcionar como a primeira, e o que a repetição abre precisa ser devolvido
+/// ao fim dela. Recurso que cresce com a repetição mata a corrida no meio — e as corridas dos
+/// modelos seguintes junto, sem nunca falar com o provedor.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn corrida_integral_de_320_repeticoes_nao_esgota_a_maquina() {
+    fn machine_resources() -> (usize, usize) {
+        let count = |path: &str| {
+            std::fs::read_dir(path)
+                .unwrap_or_else(|error| panic!("não foi possível medir {path}: {error}"))
+                .count()
+        };
+        (count("/proc/self/fd"), count("/proc/self/task"))
+    }
+
+    let case_for = |id: &str| {
+        let mut body = valid_case_json();
+        body["id"] = json!(id);
+        body["fixture"] = json!("casa_vazia");
+        body["expected"] = json!({ "judgment": "mecanico" });
+        body["verification"] = json!(null);
+        parse(&format!("{id}.json"), &body).unwrap()
+    };
+    let temp = TempPack::absent();
+    let config = |repetitions: u32| super::BenchConfig {
+        pin: default_pin(),
+        pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::Fixed(repetitions),
+        system: None,
+        limits: RunLimits::default(),
+    };
+    let script = || std::iter::repeat_with(|| answer_turn("Tudo certo.", 1_000));
+
+    // Aquecimento fora da medição: runtime, caches e threads preguiçosas nascem aqui.
+    let mut lock = super::SpendLock::new(2_000_000);
+    super::run_catalog(
+        &RoteiroAdapter::new(script().take(5)),
+        vec![case_for("caso-0")],
+        &config(5),
+        &mut lock,
+    )
+    .await
+    .unwrap();
+    let (fds_before, threads_before) = machine_resources();
+
+    let run = super::run_catalog(
+        &RoteiroAdapter::new(script().take(320)),
+        vec![case_for("caso-1")],
+        &config(320),
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        run.failure.is_none(),
+        "a preparação enésima falhou: {:?}",
+        run.failure
+    );
+    assert!(!run.cases[0].aborted);
+    assert_eq!(run.cases[0].outcomes.len(), 320);
+
+    // O invariante: o consumo da máquina não cresce com a repetição. A folga cobre variação de
+    // runtime; trezentas repetições vazando um recurso cada estouram qualquer folga honesta.
+    let (fds_after, threads_after) = machine_resources();
+    assert!(
+        fds_after <= fds_before + 8,
+        "descritores cresceram com as repetições: {fds_before} -> {fds_after}"
+    );
+    assert!(
+        threads_after <= threads_before + 8,
+        "threads cresceram com as repetições: {threads_before} -> {threads_after}"
+    );
+}
+
 /// Recusa RESPONDIDA — status HTTP na mão — não cobra nada e não é lacuna de custo: o corpo de
 /// erro não é stream, nada foi gerado. A rodada reprova com o motivo dela e a bancada segue
 /// medindo: uma lacuna aqui fecharia a trava inteira, e o erro de configuração de UM pin viraria
@@ -910,6 +986,25 @@ async fn recusa_respondida_reprova_a_rodada_sem_fechar_a_bancada() {
     assert!(matches!(outcome.verdict, Verdict::Failed { .. }));
     assert_eq!(outcome.cost_micro_usd, 0);
     assert!(outcome.cost_declared, "recusa respondida não é lacuna");
+
+    // E o MOTIVO sai no relatório — código e mensagem nossos, nunca o texto cru do provedor:
+    // sem isso, todo stop Failed exige arqueologia manual contra o provedor para ser entendido.
+    let error = outcome
+        .error
+        .as_ref()
+        .expect("a rodada recusada carrega o erro terminal");
+    assert_eq!(format!("{:?}", error.code), "ProviderRefused");
+    let rendered = super::report::render(&run, "2026-07-29T14:33:05-03:00");
+    let repetition = &rendered["cases"][0]["repetitions"][0];
+    assert_eq!(repetition["error"]["code"], "ProviderRefused");
+    assert_eq!(repetition["error"]["message"], error.message);
+    assert!(
+        !repetition["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Reasoning is mandatory"),
+        "o texto cru do provedor não entra na mensagem do relatório"
+    );
 
     // E a bancada segue: o segundo caso corre, a trava fica aberta para os próximos pins.
     assert!(!run.cost_gap);
@@ -1175,6 +1270,7 @@ fn bench_run_fixture() -> super::BenchRun {
         cost_micro_usd: 12_000,
         cost_declared: true,
         budget_truncated: false,
+        error: None,
         turns: 2,
         attempts: 2,
     };
@@ -1187,6 +1283,7 @@ fn bench_run_fixture() -> super::BenchRun {
         cost_micro_usd: 8_000,
         cost_declared: true,
         budget_truncated: false,
+        error: None,
         turns: 2,
         attempts: 2,
     };
@@ -1262,6 +1359,27 @@ fn o_relatorio_carrega_modelo_provedor_e_totais() {
     let aborted = &report["cases"][2];
     assert_eq!(aborted["aborted"], true);
     assert_eq!(aborted["repetitions"], json!([]));
+}
+
+/// A falha de preparação sai NO ARQUIVO, com os casos que ela abortou: cinquenta casos abortados
+/// sem o porquê exigem arqueologia manual a cada corrida quebrada — a evidência morre no processo
+/// que terminou.
+#[test]
+fn o_relatorio_carrega_a_falha_de_preparacao() {
+    let mut run = bench_run_fixture();
+    run.failure = Some("O pool da bancada não abriu: sem descritores.".to_string());
+
+    let report = super::report::render(&run, "2026-07-29T14:33:05-03:00");
+
+    assert_eq!(
+        report["failure"],
+        "O pool da bancada não abriu: sem descritores."
+    );
+
+    // Corrida sã: o campo existe e é nulo — ausência de falha é fato, não omissão.
+    let sane = super::report::render(&bench_run_fixture(), "2026-07-29T14:33:05-03:00");
+    assert!(sane.as_object().unwrap().contains_key("failure"));
+    assert_eq!(sane["failure"], json!(null));
 }
 
 /// O nome do arquivo é a data da execução mais o modelo — dois relatórios nunca disputam o
@@ -1907,7 +2025,60 @@ async fn a_sonda_recusa_quando_nem_uma_rodada_por_modelo_cabe() {
     assert!(lock.spent_micro_usd() <= 30_000);
     let written: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert!(!written["probe"]["rounds"].as_array().unwrap().is_empty());
+    let rounds = written["probe"]["rounds"].as_array().unwrap();
+    assert!(!rounds.is_empty());
+    assert!(
+        rounds
+            .iter()
+            .all(|round| round.as_object().unwrap().contains_key("failure")
+                && round["failure"].is_null()),
+        "sonda sem falha publica o fato como nulo: {rounds:?}"
+    );
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Falha operacional na montagem da sonda precisa sobreviver ao processo que a encontrou: sem a
+/// causa no parcial, "sonda incompleta" mistura teto curto, custo ausente e fixture quebrada.
+#[tokio::test]
+async fn a_sonda_publica_a_falha_de_preparacao() {
+    let dir = reports_dir();
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: zdr_catalog(),
+    };
+    let mut cases = bakeoff_cases();
+    cases[0].fixture = "fixture-inexistente".to_string();
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let (_, path) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases,
+            execution_id: "execucao-de-teste".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let rounds = written["probe"]["rounds"].as_array().unwrap();
+    assert_eq!(rounds.len(), PINS.len());
+    for round in rounds {
+        assert!(
+            round["failure"]
+                .as_str()
+                .is_some_and(|failure| failure.contains("fixture-inexistente")),
+            "a sonda perdeu a causa da preparação: {round}"
+        );
+    }
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -2188,6 +2359,7 @@ fn a_projecao_reflete_o_recorte_da_regua() {
         cost_micro_usd: cost,
         cost_declared: true,
         complete: true,
+        failure: None,
     };
     let probes = vec![
         probe("openai/gpt-5.6-terra", 1_000),
@@ -2521,6 +2693,7 @@ fn a_projecao_da_final_assume_os_candidatos_mais_caros() {
         cost_micro_usd: cost,
         cost_declared: true,
         complete: true,
+        failure: None,
     };
     let probes = vec![
         probe("moonshotai/kimi-k3", 1_000),
@@ -2792,6 +2965,7 @@ fn a_reserva_da_peneira_segue_os_custos_medidos_e_nao_a_contagem() {
         cost_micro_usd: cost,
         cost_declared: true,
         complete: true,
+        failure: None,
     };
     // Cinco candidatos baratos e um teto de referência cinco vezes mais caro.
     let probes = vec![

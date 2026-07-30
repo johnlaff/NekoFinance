@@ -539,6 +539,7 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
                 cost_micro_usd: run.total_cost_micro_usd,
                 cost_declared: !run.cost_gap,
                 complete: run.cases.iter().all(CaseRun::measured),
+                failure: run.failure,
             });
             // Checkpoint a cada sonda, não ao fim de todas: uma queda na quinta não pode levar as
             // quatro que já foram pagas.
@@ -834,6 +835,7 @@ pub(crate) fn render(bakeoff: &Bakeoff, ran_at: &str) -> Value {
                 "cost_micro_usd": probe.cost_micro_usd,
                 "cost_declared": probe.cost_declared,
                 "complete": probe.complete,
+                "failure": probe.failure,
             })).collect::<Vec<Value>>(),
         },
         "canary_drift": bakeoff.drifted.iter().map(|(pin, why)| json!({
@@ -874,6 +876,8 @@ pub(crate) struct Probe {
     /// Separado de `cost_declared` porque são fatos diferentes — juntá-los publicaria custo
     /// positivo ao lado de "custo não declarado", que se contradiz na cara de quem lê.
     pub complete: bool,
+    /// A causa operacional que impediu a preparação, quando a sonda nem chegou ao provedor.
+    pub failure: Option<String>,
 }
 
 /// O que a medição inteira custaria, extrapolado da sonda.

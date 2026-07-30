@@ -37,6 +37,9 @@ pub(crate) fn render(run: &BenchRun, ran_at: &str) -> Value {
         "total_cost_micro_usd": run.total_cost_micro_usd,
         "spend_lock_hit": run.spend_lock_hit,
         "cost_gap": run.cost_gap,
+        // A falha operacional que abortou a corrida sai no arquivo: ela explica os casos
+        // abortados, e a evidência que só existe no processo morre com ele.
+        "failure": run.failure,
         "totals": {
             "cases": run.cases.len(),
             "repetitions": all().count(),
@@ -89,6 +92,14 @@ fn repetition_json(outcome: &RepetitionOutcome) -> Value {
         // Sem este campo no arquivo, quem lê o relatório de volta não distingue a repetição que o
         // orçamento cortou da que o modelo errou — e recomputaria a decisão sobre outra história.
         "budget_truncated": outcome.budget_truncated,
+        // O erro terminal, quando houve: código e mensagem NOSSOS — o texto cru do provedor é
+        // dado não confiável e fica no rastro, nunca no arquivo. É o que explica um stop Failed
+        // sem exigir arqueologia manual contra o provedor.
+        "error": outcome.error.as_ref().map(|error| json!({
+            "code": format!("{:?}", error.code),
+            "message": error.message,
+            "fix": error.fix,
+        })),
         "turns": outcome.turns,
         "attempts": outcome.attempts,
         "answer": outcome.answer,

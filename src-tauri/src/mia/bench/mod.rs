@@ -147,6 +147,10 @@ pub(crate) struct RepetitionOutcome {
     /// bakeoff acabou, e contar isso como erro dele — ou a corrida como completa — inventaria um
     /// resultado que ninguém mediu.
     pub budget_truncated: bool,
+    /// O erro terminal da rodada, quando houve — código e mensagem NOSSOS, nunca o texto cru do
+    /// provedor. Sem ele no relatório, todo `stop: Failed` exige arqueologia manual: descobrir
+    /// por que um modelo morreu custaria de novo o curl que já custou uma vez.
+    pub error: Option<crate::mia::run::RunError>,
     pub turns: u32,
     pub attempts: u32,
 }
@@ -249,18 +253,22 @@ pub(crate) async fn run_repetition<A: ProviderAdapter>(
     let (events, mut receiver) = mpsc::channel(64);
     // A bancada lê o resultado consolidado, não o stream; o dreno existe para que a publicação
     // de eventos nunca prenda a rodada esperando por uma interface que não está aqui. No
-    // caminho, ele guarda o único fato que o resultado consolidado apaga: se algum turno chegou
-    // sem custo declarado.
+    // caminho, ele guarda os dois fatos que o resultado consolidado apaga: se algum turno chegou
+    // sem custo declarado, e o erro terminal — código e mensagem NOSSOS — que explica um stop
+    // Failed no relatório sem exigir arqueologia contra o provedor.
     let drain = tokio::spawn(async move {
         let mut usage_without_cost = false;
+        let mut terminal_error = None;
         while let Some(event) = receiver.recv().await {
-            if let RunEvent::Usage(usage) = &event
-                && usage.cost_micro_usd.is_none()
-            {
-                usage_without_cost = true;
+            match &event {
+                RunEvent::Usage(usage) if usage.cost_micro_usd.is_none() => {
+                    usage_without_cost = true;
+                }
+                RunEvent::Error(error) => terminal_error = Some(error.clone()),
+                _ => {}
             }
         }
-        usage_without_cost
+        (usage_without_cost, terminal_error)
     });
 
     let runner = Runner {
@@ -282,7 +290,7 @@ pub(crate) async fn run_repetition<A: ProviderAdapter>(
     drop(runner);
     // Dreno perdido conta como lacuna: na dúvida entre "não vi custo" e "não houve custo", a
     // trava de gasto precisa do lado fechado.
-    let usage_without_cost = drain.await.unwrap_or(true);
+    let (usage_without_cost, terminal_error) = drain.await.unwrap_or((true, None));
     // Duas perguntas, e uma lacuna em qualquer delas fecha: o stream publicou uso sem custo? o
     // runner viu dinheiro em dúvida em ALGUMA tentativa — stream aberto que terminou sem linha
     // de uso, ou abertura que acabou sem resposta do servidor (transporte, timeout,
@@ -313,6 +321,7 @@ pub(crate) async fn run_repetition<A: ProviderAdapter>(
         cost_micro_usd: outcome.cost_micro_usd,
         cost_declared,
         budget_truncated,
+        error: terminal_error,
         turns: outcome.turns,
         attempts: outcome.attempts,
     }
@@ -418,6 +427,10 @@ pub(crate) async fn run_catalog<A: ProviderAdapter>(
             total_cost_micro_usd = total_cost_micro_usd.saturating_add(outcome.cost_micro_usd);
             lock.record(outcome.cost_micro_usd, outcome.cost_declared);
             outcomes.push(outcome);
+            // O mundo da repetição fecha no fim dela, em ponto determinístico: o Drop do sqlx
+            // devolve a conexão de forma assíncrona, no ritmo do runtime — e uma corrida são
+            // centenas de repetições cujo saldo de recursos não pode depender desse ritmo.
+            pool.close().await;
         }
 
         runs.push(CaseRun {
@@ -440,7 +453,9 @@ pub(crate) async fn run_catalog<A: ProviderAdapter>(
 }
 
 /// Monta o mundo de UMA repetição: pool novo, migrado, semeado e consentido. Cada repetição mede o
-/// modelo sobre o mesmo mundo, nunca sobre o rastro da anterior.
+/// modelo sobre o mesmo mundo, nunca sobre o rastro da anterior. Quem recebe o pool o fecha ao fim
+/// da repetição; falha no meio da montagem fecha aqui — conexão de um mundo que não vai ser medido
+/// não fica esperando o Drop.
 async fn prepare(config: &BenchConfig, fixture: &str) -> Result<SqlitePool, String> {
     let pool = SqlitePoolOptions::new()
         // Uma conexão, como a de produção: pool folgado esconderia deadlock de transação.
@@ -448,17 +463,27 @@ async fn prepare(config: &BenchConfig, fixture: &str) -> Result<SqlitePool, Stri
         .connect("sqlite::memory:")
         .await
         .map_err(|error| format!("O pool da bancada não abriu: {error}."))?;
+    if let Err(error) = furnish(&pool, config, fixture).await {
+        pool.close().await;
+        return Err(error);
+    }
+    Ok(pool)
+}
+
+/// Migra, semeia e consente sobre um pool já aberto — o pedaço falível da montagem, separado para
+/// que a falha em qualquer passo devolva a conexão em vez de vazá-la.
+async fn furnish(pool: &SqlitePool, config: &BenchConfig, fixture: &str) -> Result<(), String> {
     sqlx::migrate!("./migrations")
-        .run(&pool)
+        .run(pool)
         .await
         .map_err(|error| format!("As migrações da bancada falharam: {error}."))?;
-    fixtures::seed(&pool, fixture).await?;
+    fixtures::seed(pool, fixture).await?;
     // O consentimento é semeado porque quem roda a bancada JÁ consentiu — a chave dedicada é dela
     // — e o loop recusa rodada sem registro, na bancada como no app.
-    consent::grant(&pool, config.pin, &fixtures::bench_clock().as_of())
+    consent::grant(pool, config.pin, &fixtures::bench_clock().as_of())
         .await
         .map_err(|error| format!("O consentimento da bancada não gravou: {error}."))?;
-    Ok(pool)
+    Ok(())
 }
 
 /// A porta do binário. Vive no lib para que a bancada inteira seja exercitável pela suíte; o
