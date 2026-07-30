@@ -9,6 +9,11 @@
 //! quantização, e ela é parte da identidade do pin: outro endpoint com outra precisão é outro
 //! candidato, ainda que o nome do modelo seja o mesmo. Só entra na matriz precisão declarada
 //! pelo catálogo; "unknown" não identifica o que se está medindo.
+//!
+//! Retenção zero é o padrão, provado por presença no catálogo do provedor — mas [`Retention`]
+//! deixa o opt-out ser propriedade do PIN, não regra fixa do módulo: o dono pode trocar a prova do
+//! catálogo pela política declarada do operador quando o desconto justifica, e essa troca precisa
+//! ficar tão visível quanto o endpoint em si, nunca implícita num "todo pin é ZDR".
 
 /// Papel do pin na seleção manual do provedor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,6 +80,21 @@ impl TokenCap {
     }
 }
 
+/// De onde vem a prova de que a rodada não fica retida no provedor.
+///
+/// O padrão é `Zero`: o catálogo de retenção zero prova a garantia por presença, sem depender de
+/// ninguém ler política nenhuma. `ProviderPolicy` é opt-out DELIBERADO — o dono decidiu que o
+/// desconto do endpoint compensa trocar a prova do catálogo pela política declarada do operador
+/// (treino desligado, retenção de log limitada). A troca nunca é automática nem silenciosa: ela é
+/// visível no pin, como o endpoint e o token_cap, e o canary verifica cada caminho contra o
+/// catálogo que prova aquele caminho — o geral para quem optou por fora, o de retenção zero para
+/// quem não optou.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Retention {
+    Zero,
+    ProviderPolicy,
+}
+
 #[derive(Debug)]
 pub(crate) struct ModelPin {
     pub model: &'static str,
@@ -89,6 +109,8 @@ pub(crate) struct ModelPin {
     /// O nome do teto de saída deste endpoint. O canary confere que o catálogo o anuncia; a
     /// requisição envia o teto sob este nome e nunca sob o irmão.
     pub token_cap: TokenCap,
+    /// De onde vem a prova de retenção zero deste pin — ver [`Retention`].
+    pub retention: Retention,
     /// A ordem em que os candidatos correm no bakeoff, de 1 em diante e sem empate. Ela existe
     /// para que o dinheiro alcance a matriz inteira antes de a trava fechar — e diz quem corre
     /// primeiro se ela fechar antes. Sem alegação de mérito: mérito é o que a corrida mede.
@@ -101,59 +123,35 @@ pub(crate) struct ModelPin {
 pub(crate) const PINS: &[ModelPin] = &[
     ModelPin {
         model: "openai/gpt-5.6-terra",
-        endpoint: "azure",
-        operator: "Microsoft Azure",
+        endpoint: "openai",
+        operator: "OpenAI",
         // Default por necessidade técnica — o runtime exige um pin neste papel —, não por
         // vitória: o bakeoff ainda não fechou uma decisão, e é a corrida quem promove ou rebaixa.
         role: PinRole::Default,
         beta_headers: &[],
         reasoning_floor: ReasoningFloor::Minimal,
-        token_cap: TokenCap::MaxCompletionTokens,
+        // O endpoint do próprio fabricante anuncia `max_tokens`, não o irmão que o azure usa.
+        token_cap: TokenCap::MaxTokens,
+        // Opt-out deliberado: $1/$6 no endpoint do fabricante contra $2,5/$15 no azure — quase um
+        // quarto do preço — pela política de retenção do OPERADOR (sem treino, log limitado) em
+        // vez da prova do catálogo de retenção zero (verificado 2026-07-30). O ganho de custo é
+        // por isso que o pin sai do azure; sol não segue porque lá o preço é igual nos dois
+        // endpoints, sem ganho para pagar a troca da garantia.
+        retention: Retention::ProviderPolicy,
         run_order: 1,
     },
     ModelPin {
         model: "openai/gpt-5.6-luna",
-        endpoint: "azure",
-        operator: "Microsoft Azure",
+        endpoint: "openai",
+        operator: "OpenAI",
         role: PinRole::Candidate,
         beta_headers: &[],
         reasoning_floor: ReasoningFloor::Minimal,
-        token_cap: TokenCap::MaxCompletionTokens,
+        token_cap: TokenCap::MaxTokens,
+        // Mesmo racional do terra: $0,10/$0,60 no fabricante contra $1/$6 no azure (verificado
+        // 2026-07-30).
+        retention: Retention::ProviderPolicy,
         run_order: 2,
-    },
-    ModelPin {
-        model: "google/gemini-3.6-flash",
-        endpoint: "google-vertex/global",
-        operator: "Google Cloud Vertex AI",
-        role: PinRole::Candidate,
-        beta_headers: &[],
-        reasoning_floor: ReasoningFloor::Minimal,
-        token_cap: TokenCap::MaxTokens,
-        run_order: 3,
-    },
-    ModelPin {
-        model: "x-ai/grok-4.5",
-        endpoint: "xai/zdr",
-        operator: "xAI",
-        role: PinRole::Candidate,
-        beta_headers: &[],
-        reasoning_floor: ReasoningFloor::Minimal,
-        token_cap: TokenCap::MaxTokens,
-        run_order: 4,
-    },
-    ModelPin {
-        // O endpoint do próprio fabricante, com a precisão na tag: mxfp4 é a precisão de
-        // referência do serviço, e trocá-la é trocar de candidato.
-        model: "moonshotai/kimi-k3",
-        endpoint: "moonshotai/mxfp4",
-        operator: "Moonshot AI",
-        role: PinRole::Candidate,
-        beta_headers: &[],
-        // O piso mais provável do estreante — o catálogo anuncia `reasoning`, não os esforços
-        // que o endpoint aceita; a sonda do bakeoff confirma antes de qualquer fase paga.
-        reasoning_floor: ReasoningFloor::Minimal,
-        token_cap: TokenCap::MaxTokens,
-        run_order: 5,
     },
     ModelPin {
         model: "openai/gpt-5.6-sol",
@@ -163,7 +161,10 @@ pub(crate) const PINS: &[ModelPin] = &[
         beta_headers: &[],
         reasoning_floor: ReasoningFloor::Minimal,
         token_cap: TokenCap::MaxCompletionTokens,
-        run_order: 6,
+        // Sem desconto para pagar a troca ($5/$30 nos dois endpoints, verificado 2026-07-30) e
+        // uptime pior no fabricante — o azure segue provando a garantia pelo catálogo.
+        retention: Retention::Zero,
+        run_order: 3,
     },
 ];
 

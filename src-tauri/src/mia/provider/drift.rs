@@ -1,13 +1,19 @@
-//! Verificação dos pins contra o catálogo de endpoints de retenção zero.
+//! Verificação dos pins contra o catálogo que prova a retenção deles.
 //!
-//! O catálogo é exclusivamente de retenção zero, portanto cada presença prova essa condição.
-//! O pin casa com o `tag` da entrada — o slug de roteamento, o mesmo que a requisição fixa em
-//! `provider.only`; o `name` do catálogo é rótulo de exibição e não roteia nada. A verificação
-//! separa modelo, endpoint e capacidade ausentes para que a troca manual do pin seja possível
-//! sem investigação adicional; não há fallback automático porque a troca é deliberada. Forma
-//! inválida vira erro diagnosticável, nunca a falsa conclusão de que sumiu.
+//! `verify` é agnóstico à origem do catálogo: casa `model_id` e `tag` — o slug de roteamento, o
+//! mesmo que a requisição fixa em `provider.only`; o `name` é rótulo de exibição e não roteia
+//! nada — e confere as capacidades exigidas, qualquer que seja a lista de entradas recebida. Quem
+//! decide QUAL catálogo prova qual pin é o chamador: um pin de retenção zero
+//! ([`super::pins::Retention::Zero`]) só é provado pelo catálogo de retenção zero do provedor;
+//! um pin em opt-out deliberado ([`super::pins::Retention::ProviderPolicy`]) troca essa prova pela
+//! do catálogo geral de endpoints do próprio modelo — a garantia dele é a política do operador, e
+//! o catálogo geral é onde ela aparece por presença do endpoint, não por uma bandeira de retenção
+//! zero que ele nunca teve. A verificação separa modelo, endpoint e capacidade ausentes para que a
+//! troca manual do pin seja possível sem investigação adicional; não há fallback automático porque
+//! a troca é deliberada. Forma inválida vira erro diagnosticável, nunca a falsa conclusão de que
+//! sumiu.
 
-use super::pins::{ModelPin, PINS};
+use super::pins::{ModelPin, PINS, Retention};
 use serde_json::Value;
 use std::future::Future;
 
@@ -16,6 +22,14 @@ use std::future::Future;
 /// gravado pelo mesmo caminho que o canary usa em produção.
 pub(crate) trait ZdrCatalog {
     fn fetch(&self) -> impl Future<Output = Result<Value, String>> + Send;
+}
+
+/// De onde o catálogo GERAL de endpoints de um modelo chega — a fonte que prova um pin em opt-out
+/// deliberado. Ao contrário do catálogo de retenção zero, que é global, este é por modelo: o
+/// provedor não publica um catálogo geral único, e pedir o de um modelo que ninguém pinou seria
+/// rede gasta sem pin para verificar.
+pub(crate) trait EndpointsCatalog {
+    fn fetch(&self, model: &str) -> impl Future<Output = Result<Value, String>> + Send;
 }
 
 /// Divergência entre um pin e o catálogo de endpoints de retenção zero.
@@ -127,10 +141,24 @@ pub(crate) fn verify(catalog: &Value, pin: &ModelPin) -> Result<(), PinDrift> {
     Ok(())
 }
 
-pub(crate) fn verify_all(catalog: &Value) -> Vec<PinDrift> {
+/// Verifica cada pin contra o catálogo que prova o caminho de retenção DELE — zero para quem não
+/// optou por fora, geral para quem optou.
+pub(crate) fn verify_all(zdr_catalog: &Value, general_catalog: &Value) -> Vec<PinDrift> {
     PINS.iter()
-        .filter_map(|pin| verify(catalog, pin).err())
+        .filter_map(|pin| verify(catalog_for(pin, zdr_catalog, general_catalog), pin).err())
         .collect()
+}
+
+/// Qual catálogo prova este pin — ver o porquê no doc do módulo.
+pub(crate) fn catalog_for<'a>(
+    pin: &ModelPin,
+    zdr_catalog: &'a Value,
+    general_catalog: &'a Value,
+) -> &'a Value {
+    match pin.retention {
+        Retention::Zero => zdr_catalog,
+        Retention::ProviderPolicy => general_catalog,
+    }
 }
 
 fn parse_catalog(catalog: &Value) -> Result<Vec<CatalogEntry<'_>>, String> {

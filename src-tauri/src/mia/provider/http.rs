@@ -9,7 +9,7 @@
 //! A credencial entra pelo construtor, vira cabeçalho e não existe em mais lugar nenhum: o tipo
 //! não deriva Debug nem Serialize de propósito, para que nenhum formato a carregue por acidente.
 
-use super::drift::ZdrCatalog;
+use super::drift::{EndpointsCatalog, ZdrCatalog};
 use super::egress;
 use super::request::RunSpec;
 use super::stream::{ErrorKind, ProviderError, ProviderEvent, StreamParser};
@@ -149,6 +149,74 @@ impl ZdrCatalog for HttpAdapter {
                 .map_err(|error| format!("O catálogo do provedor não parseia como JSON: {error}."))
         }
     }
+}
+
+/// O catálogo geral de endpoints de UM modelo — a fonte que prova um pin em opt-out deliberado
+/// ([`super::pins::Retention::ProviderPolicy`]), ao contrário do catálogo de retenção zero, que é
+/// global. O provedor não publica isto por modelo escaneado de antemão; é um pedido por modelo.
+const MODEL_ENDPOINTS_URL: &str = "https://openrouter.ai/api/v1/models";
+
+impl EndpointsCatalog for HttpAdapter {
+    /// Busca e ACHATA a resposta para a mesma forma que [`super::drift::verify`] já lê do
+    /// catálogo de retenção zero — `{"data": [{tag, model_id, supported_parameters}, ...]}`. A
+    /// resposta por modelo aninha os endpoints sob `data.endpoints` e não repete o `model_id` em
+    /// cada um; achatar aqui, na borda, evita que a verificação de drift precise conhecer uma
+    /// segunda forma de catálogo.
+    fn fetch(&self, model: &str) -> impl Future<Output = Result<Value, String>> + Send {
+        let url = format!("{MODEL_ENDPOINTS_URL}/{model}/endpoints");
+        let request = self
+            .client
+            .get(&url)
+            .header("authorization", format!("Bearer {}", self.api_key));
+        let model = model.to_string();
+
+        async move {
+            egress::check(&url).map_err(|denied| {
+                format!("A saída para o catálogo de endpoints foi recusada: {denied:?}.")
+            })?;
+
+            let response = request.send().await.map_err(|error| {
+                format!("O catálogo de endpoints de {model} não pôde ser buscado: {error}.")
+            })?;
+
+            let status = response.status().as_u16();
+            if !(200..300).contains(&status) {
+                // O corpo é do outro lado, como na busca do catálogo de retenção zero: o status
+                // diagnostica a recusa sem arriscar publicar o cabeçalho de autorização.
+                return Err(format!(
+                    "O provedor recusou o catálogo de endpoints de {model} (HTTP {status})."
+                ));
+            }
+
+            let body = read_body(ResponseSource(response), CATALOG_BODY_LIMIT).await?;
+            let raw: Value = serde_json::from_slice(&body).map_err(|error| {
+                format!("O catálogo de endpoints de {model} não parseia como JSON: {error}.")
+            })?;
+            flatten_model_endpoints(&raw, &model)
+        }
+    }
+}
+
+/// Achata `{"data": {"endpoints": [...]}}` em `{"data": [{tag, model_id, supported_parameters,
+/// ...}, ...]}`, injetando o `model_id` que a resposta por modelo omite em cada entrada.
+fn flatten_model_endpoints(raw: &Value, model: &str) -> Result<Value, String> {
+    let endpoints = raw
+        .pointer("/data/endpoints")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            format!("O catálogo de endpoints de {model} não contém data.endpoints em lista.")
+        })?;
+    let flattened: Vec<Value> = endpoints
+        .iter()
+        .map(|endpoint| {
+            let mut entry = endpoint.clone();
+            if let Value::Object(map) = &mut entry {
+                map.insert("model_id".to_string(), Value::String(model.to_string()));
+            }
+            entry
+        })
+        .collect();
+    Ok(serde_json::json!({ "data": flattened }))
 }
 
 /// Materializa um corpo inteiro até o teto. Estourar o teto é erro, não truncamento: um catálogo

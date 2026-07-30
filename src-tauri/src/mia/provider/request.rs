@@ -4,7 +4,7 @@
 //! importa: uma preferência marcada no painel do provedor vale enquanto ninguém a desmarca, e
 //! ninguém percebe quando ela cai; um campo ausente do corpo é teste vermelho.
 
-use super::pins::ModelPin;
+use super::pins::{ModelPin, Retention};
 use serde_json::{Value, json};
 
 /// Uma ferramenta como o provedor a declara. `strict` só tem efeito com o beta do pin junto.
@@ -55,9 +55,8 @@ pub(crate) fn build(spec: &RunSpec<'_>) -> PreparedRequest {
         "reasoning": {"effort": spec.pin.reasoning_floor.effort()},
         "messages": messages,
         "provider": {
-            // Impede que a rodada use endpoint fora do catálogo de retenção zero.
-            "zdr": true,
-            // Impede a coleta do conteúdo da rodada pelo provedor.
+            // Impede a coleta do conteúdo da rodada pelo provedor — vale para todo pin, ZDR ou
+            // opt-out: a política do operador cobre retenção, nunca coleta para treino.
             "data_collection": "deny",
             // Impede que o roteador escolha um endpoint diferente do pin.
             "only": [spec.pin.endpoint],
@@ -67,6 +66,14 @@ pub(crate) fn build(spec: &RunSpec<'_>) -> PreparedRequest {
             "require_parameters": true,
         },
     });
+
+    // `zdr` só sai para o pin que prova a garantia pelo catálogo de retenção zero. Mandá-lo para
+    // um pin em opt-out deliberado ([`Retention::ProviderPolicy`]) excluiria do roteamento o
+    // próprio endpoint que o pin escolheu — a garantia dele vem da política do operador, que o
+    // roteador não lê por este campo.
+    if spec.pin.retention == Retention::Zero {
+        body["provider"]["zdr"] = json!(true);
+    }
 
     // O teto de saída entra com o nome que ESTE endpoint anuncia: sob `require_parameters`, o
     // nome que o endpoint não anuncia é rodada recusada pelo roteador, não teto ignorado.

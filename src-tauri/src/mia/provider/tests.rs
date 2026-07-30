@@ -7,7 +7,7 @@ use super::stream::{ErrorKind, ProviderEvent, StreamParser};
 use serde_json::{Value, json};
 
 fn candidate_pin() -> &'static super::pins::ModelPin {
-    pin("x-ai/grok-4.5").expect("pin candidato declarado")
+    pin("openai/gpt-5.6-luna").expect("pin candidato declarado")
 }
 
 fn request_for(
@@ -60,9 +60,12 @@ fn finish_chunk(reason: &str) -> String {
     sse(json!({"choices": [{"finish_reason": reason}]}))
 }
 
+/// `zdr` só sai para o pin que prova a garantia pelo catálogo de retenção zero — o teto de
+/// referência, na matriz vigente.
 #[test]
-fn request_requires_zero_data_retention() {
-    let request = request_for(default_pin(), vec![]);
+fn request_requires_zero_data_retention_for_a_zero_retention_pin() {
+    let zero_retention_pin = pin("openai/gpt-5.6-sol").expect("pin de retenção zero declarado");
+    let request = request_for(zero_retention_pin, vec![]);
 
     assert_eq!(
         request
@@ -71,6 +74,16 @@ fn request_requires_zero_data_retention() {
             .and_then(Value::as_bool),
         Some(true)
     );
+}
+
+/// Um pin em opt-out deliberado ([`super::pins::Retention::ProviderPolicy`]) troca a prova do
+/// catálogo pela política do operador — mandar `zdr` mesmo assim excluiria do roteamento o próprio
+/// endpoint que o pin escolheu, que não está nesse catálogo.
+#[test]
+fn request_omits_zdr_for_a_provider_policy_opt_out_pin() {
+    let request = request_for(default_pin(), vec![]);
+
+    assert_eq!(request.body.pointer("/provider/zdr"), None);
 }
 
 #[test]
@@ -634,11 +647,20 @@ fn pins_declare_a_total_run_order() {
     );
 }
 
+/// As fixtures espelham os dois pedidos que a produção faz: o catálogo de retenção zero e o
+/// geral dos pins em opt-out. Elas divergem de propósito — o endpoint geral não aparece na
+/// fixture de retenção zero, como no provedor —, então a matriz só fecha limpa se cada pin for
+/// provado pelo catálogo do caminho DELE.
 #[test]
 fn fixture_verifies_all_declared_pins() {
-    let catalog: Value = serde_json::from_str(include_str!("fixtures/zdr_endpoints.json")).unwrap();
+    let zdr: Value = serde_json::from_str(include_str!("fixtures/zdr_endpoints.json")).unwrap();
+    let general: Value =
+        serde_json::from_str(include_str!("fixtures/general_endpoints.json")).unwrap();
 
-    assert!(verify_all(&catalog).is_empty());
+    assert!(verify_all(&zdr, &general).is_empty());
+    // O caminho trocado divergiria: a prova de um pin em opt-out não vive no catálogo de
+    // retenção zero. É a assimetria que uma fixture única esconderia.
+    assert!(!verify_all(&general, &zdr).is_empty());
 }
 
 #[test]
@@ -675,10 +697,10 @@ fn drift_lists_available_endpoints_when_the_pin_is_absent() {
 fn drift_matches_the_routing_tag_not_the_display_name() {
     let pin = default_pin();
     let by_tag = json!({"data": [{
-        "name": "Azure | openai/gpt-5.6-terra-20260709",
+        "name": "OpenAI | openai/gpt-5.6-terra-20260709",
         "model_id": pin.model,
         "tag": pin.endpoint,
-        "supported_parameters": ["tools", "structured_outputs", "max_completion_tokens", "reasoning"]
+        "supported_parameters": ["tools", "structured_outputs", "max_tokens", "reasoning"]
     }]});
     assert!(verify(&by_tag, pin).is_ok());
 
@@ -687,7 +709,7 @@ fn drift_matches_the_routing_tag_not_the_display_name() {
         "name": pin.endpoint,
         "model_id": pin.model,
         "tag": "azure/eu",
-        "supported_parameters": ["tools", "structured_outputs", "max_completion_tokens", "reasoning"]
+        "supported_parameters": ["tools", "structured_outputs", "max_tokens", "reasoning"]
     }]});
     assert!(matches!(
         verify(&by_name_only, pin),
@@ -732,13 +754,13 @@ fn drift_reports_a_missing_token_limit_parameter() {
     let catalog = json!({"data": [{
         "model_id": default_pin().model,
         "tag": default_pin().endpoint,
-        "supported_parameters": ["tools", "structured_outputs", "reasoning", "max_tokens"]
+        "supported_parameters": ["tools", "structured_outputs", "reasoning", "max_completion_tokens"]
     }]});
     let result = verify(&catalog, default_pin());
 
     assert!(matches!(
         result,
-        Err(ref drift) if matches!(drift.drift, Drift::CapabilityAbsent { parameter: "max_completion_tokens" })
+        Err(ref drift) if matches!(drift.drift, Drift::CapabilityAbsent { parameter: "max_tokens" })
     ));
 }
 
@@ -782,6 +804,48 @@ fn drift_reports_a_missing_reasoning_capability() {
     assert!(matches!(
         result,
         Err(ref drift) if matches!(drift.drift, Drift::CapabilityAbsent { parameter: "reasoning" })
+    ));
+}
+
+/// Um pin em opt-out deliberado ([`super::pins::Retention::ProviderPolicy`]) verifica contra o
+/// catálogo GERAL de endpoints do modelo — nunca contra o de retenção zero, que ele nunca esteve
+/// para provar. `catalog_for` é quem roteia, e as três divergências continuam valendo neste
+/// caminho, como no de retenção zero.
+#[test]
+fn drift_verifies_a_provider_policy_pin_against_the_general_endpoints_catalog() {
+    let opt_out_pin = default_pin();
+    assert_eq!(
+        opt_out_pin.retention,
+        super::pins::Retention::ProviderPolicy,
+        "o default vigente é o pin em opt-out — ajuste este teste se isso mudar"
+    );
+
+    let general_catalog = json!({"data": [{
+        "model_id": opt_out_pin.model,
+        "tag": opt_out_pin.endpoint,
+        "supported_parameters": ["tools", "structured_outputs", "reasoning", "max_tokens"]
+    }]});
+    assert!(verify(&general_catalog, opt_out_pin).is_ok());
+
+    // Ausente do catálogo geral: ModelAbsent — o mesmo diagnóstico de quem verifica por retenção
+    // zero, sobre o catálogo certo.
+    let empty_general_catalog = json!({"data": []});
+    assert!(matches!(
+        verify(&empty_general_catalog, opt_out_pin),
+        Err(ref drift) if matches!(drift.drift, Drift::ModelAbsent)
+    ));
+
+    // `catalog_for` escolhe o catálogo geral para este pin e o de retenção zero para quem não
+    // optou por fora — nunca o inverso.
+    let zdr_catalog = json!({"data": []});
+    assert!(std::ptr::eq(
+        super::drift::catalog_for(opt_out_pin, &zdr_catalog, &general_catalog),
+        &general_catalog
+    ));
+    let zero_retention_pin = pin("openai/gpt-5.6-sol").expect("pin de retenção zero declarado");
+    assert!(std::ptr::eq(
+        super::drift::catalog_for(zero_retention_pin, &zdr_catalog, &general_catalog),
+        &zdr_catalog
     ));
 }
 

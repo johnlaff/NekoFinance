@@ -1732,11 +1732,35 @@ async fn os_numeros_esperados_existem_no_envelope_da_fachada() {
 // --- O bakeoff --------------------------------------------------------------------------
 
 use super::bakeoff::{self, Decision, Score};
-use crate::mia::provider::drift::ZdrCatalog;
-use crate::mia::provider::pins::{ModelPin, PINS, PinRole, pin};
+use crate::mia::provider::drift::{EndpointsCatalog, ZdrCatalog};
+use crate::mia::provider::pins::{
+    ModelPin, PINS, PinRole, ReasoningFloor, Retention, TokenCap, pin,
+};
 
 fn zdr_catalog() -> serde_json::Value {
     serde_json::from_str(include_str!("../provider/fixtures/zdr_endpoints.json")).unwrap()
+}
+
+/// O catálogo geral gravado — a prova dos pins em opt-out. Fixture separada da de retenção zero
+/// porque no provedor os dois catálogos são pedidos distintos e NÃO concordam: o endpoint geral
+/// dos pins em opt-out não aparece no catálogo de retenção zero, e uma fixture única esconderia
+/// exatamente a divergência que o canary existe para pegar.
+fn general_catalog() -> serde_json::Value {
+    serde_json::from_str(include_str!("../provider/fixtures/general_endpoints.json")).unwrap()
+}
+
+/// A união dos dois catálogos gravados, para o adapter que dirige um bakeoff inteiro: o caminho
+/// de retenção zero lê o valor cheio e o geral filtra por modelo, então a união serve os dois
+/// sem afrouxar nada — quem prova a assimetria entre as fixtures são os testes do canary e do
+/// drift, que as recebem separadas.
+fn recorded_catalogs() -> serde_json::Value {
+    let mut union = zdr_catalog();
+    let general = general_catalog();
+    union["data"]
+        .as_array_mut()
+        .unwrap()
+        .extend(general["data"].as_array().unwrap().iter().cloned());
+    union
 }
 
 fn score_of(passed: usize, total: usize, cost_micro_usd: i64) -> Score {
@@ -1754,6 +1778,23 @@ fn score_of(passed: usize, total: usize, cost_micro_usd: i64) -> Score {
 
 fn pinned(model: &str) -> &'static ModelPin {
     pin(model).expect("modelo na matriz de pins")
+}
+
+/// Um pin que não está na matriz real, só para exercitar a ordenação da peneira/final com mais
+/// candidatos do que a matriz vigente tem — o comportamento sob teste é o desempate por taxa,
+/// custo e ordem de corrida, não a identidade de quem participa.
+fn fictional_pin(model: &'static str, run_order: u8) -> &'static ModelPin {
+    Box::leak(Box::new(ModelPin {
+        model,
+        endpoint: "test/endpoint",
+        operator: "Teste",
+        role: PinRole::Candidate,
+        beta_headers: &[],
+        reasoning_floor: ReasoningFloor::Minimal,
+        token_cap: TokenCap::MaxCompletionTokens,
+        retention: Retention::Zero,
+        run_order,
+    }))
 }
 
 /// Os candidatos correm antes do teto de referência: se a trava fechar no meio, o que se perde é
@@ -1776,7 +1817,7 @@ fn a_peneira_corre_os_candidatos_antes_do_teto_de_referencia() {
 
 #[test]
 fn o_canary_libera_a_matriz_inteira_contra_o_catalogo_gravado() {
-    let verdict = bakeoff::canary(&zdr_catalog(), &bakeoff::contenders());
+    let verdict = bakeoff::canary(&zdr_catalog(), &general_catalog(), &bakeoff::contenders());
 
     assert_eq!(verdict.cleared.len(), PINS.len());
     assert!(verdict.drifted.is_empty());
@@ -1787,7 +1828,9 @@ fn o_canary_libera_a_matriz_inteira_contra_o_catalogo_gravado() {
 #[test]
 fn o_canary_tira_da_corrida_o_pin_que_divergiu() {
     let mut catalog = zdr_catalog();
-    let target = pinned("x-ai/grok-4.5");
+    // O teto de referência é o único pin de retenção zero da matriz vigente: só ele some do
+    // catálogo de retenção zero sem que a troca precise tocar o catálogo geral.
+    let target = pinned("openai/gpt-5.6-sol");
     catalog["data"] = serde_json::Value::Array(
         catalog["data"]
             .as_array()
@@ -1798,7 +1841,7 @@ fn o_canary_tira_da_corrida_o_pin_que_divergiu() {
             .collect(),
     );
 
-    let verdict = bakeoff::canary(&catalog, &bakeoff::contenders());
+    let verdict = bakeoff::canary(&catalog, &general_catalog(), &bakeoff::contenders());
 
     assert_eq!(verdict.cleared.len(), PINS.len() - 1);
     assert!(!verdict.cleared.iter().any(|pin| pin.model == target.model));
@@ -1851,10 +1894,14 @@ fn a_peneira_elimina_a_corrida_incompleta() {
 /// A ordem é taxa, depois custo, depois a ordem de corrida — e o teto de referência nunca disputa.
 #[test]
 fn a_peneira_ordena_por_taxa_custo_e_ordem_de_corrida() {
+    // A matriz vigente tem só dois candidatos: um terceiro, fora dela, prova que o desempate
+    // continua funcionando com mais de dois — o que está sob teste é a ordenação, não a matriz.
+    let quarto_candidato = fictional_pin("test/quarto-candidato", 90);
+    let baixa_taxa = fictional_pin("test/baixa-taxa", 91);
     let scored = vec![
-        (pinned("x-ai/grok-4.5"), score_of(18, 20, 5_000)),
+        (baixa_taxa, score_of(18, 20, 5_000)),
         (pinned("openai/gpt-5.6-luna"), score_of(20, 20, 90_000)),
-        (pinned("google/gemini-3.6-flash"), score_of(20, 20, 30_000)),
+        (quarto_candidato, score_of(20, 20, 30_000)),
         (pinned("openai/gpt-5.6-terra"), score_of(20, 20, 30_000)),
         (pinned("openai/gpt-5.6-sol"), score_of(20, 20, 1_000)),
     ];
@@ -1869,7 +1916,7 @@ fn a_peneira_ordena_por_taxa_custo_e_ordem_de_corrida() {
         vec![
             // Empate de taxa e de custo: decide a ordem de corrida, como determinismo.
             "openai/gpt-5.6-terra",
-            "google/gemini-3.6-flash",
+            "test/quarto-candidato",
             "openai/gpt-5.6-luna",
         ],
         "o teto de referência não disputa, e a peneira leva no máximo três"
@@ -1899,7 +1946,7 @@ fn entre_os_que_zeraram_ganha_o_mais_barato() {
     let finalists = vec![
         (pinned("openai/gpt-5.6-terra"), score_of(60, 60, 900_000)),
         (
-            pinned("google/gemini-3.6-flash"),
+            pinned("openai/gpt-5.6-sol"),
             Score {
                 pending_judgment: 9,
                 ..score_of(60, 60, 120_000)
@@ -1915,7 +1962,7 @@ fn entre_os_que_zeraram_ganha_o_mais_barato() {
     else {
         panic!("com didática pendente, o líder ainda não é default");
     };
-    assert_eq!(leading_model, "google/gemini-3.6-flash");
+    assert_eq!(leading_model, "openai/gpt-5.6-sol");
     // A parte mecânica é firme; o ensino, que a máquina não julga, sai declarado em vez de
     // omitido — e o campo do default fica vazio até alguém ler as respostas.
     assert_eq!(pending_judgment, 9);
@@ -1974,6 +2021,27 @@ impl ZdrCatalog for EcoAdapter {
     }
 }
 
+impl EndpointsCatalog for EcoAdapter {
+    fn fetch(&self, model: &str) -> impl Future<Output = Result<serde_json::Value, String>> + Send {
+        let filtered = entries_for_model(&self.catalog, model);
+        async move { Ok(filtered) }
+    }
+}
+
+/// As entradas do catálogo geral gravado que pertencem a um modelo — a mesma forma achatada que a
+/// borda HTTP entrega ao canary em produção.
+fn entries_for_model(catalog: &serde_json::Value, model: &str) -> serde_json::Value {
+    let entries: Vec<serde_json::Value> = catalog
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|entry| entry.get("model_id").and_then(serde_json::Value::as_str) == Some(model))
+        .cloned()
+        .collect();
+    json!({ "data": entries })
+}
+
 fn bakeoff_cases() -> Vec<case::Case> {
     (1..=2)
         .map(|index| {
@@ -2001,7 +2069,7 @@ async fn o_bakeoff_atravessa_as_duas_fases_e_decide_o_default() {
     let dir = reports_dir();
     let adapter = EcoAdapter {
         cost_micro_usd: 1_000,
-        catalog: zdr_catalog(),
+        catalog: recorded_catalogs(),
     };
     let mut lock = super::SpendLock::new(1_000_000);
 
@@ -2024,7 +2092,7 @@ async fn o_bakeoff_atravessa_as_duas_fases_e_decide_o_default() {
 
     // A peneira corre a matriz inteira uma vez por caso; a final, três vezes nos sobreviventes.
     assert_eq!(bakeoff.phase_one.len(), PINS.len());
-    assert_eq!(bakeoff.phase_two.len(), 3);
+    assert_eq!(bakeoff.phase_two.len(), 2);
     // TODAS as corridas, não só a primeira: um finalista abortado no meio passaria despercebido
     // por uma asserção que olha um índice só.
     for run in bakeoff.phase_one.iter() {
@@ -2056,7 +2124,7 @@ async fn o_bakeoff_atravessa_as_duas_fases_e_decide_o_default() {
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(written["decision"]["default_model"], *model);
     assert_eq!(written["phase_one"].as_array().unwrap().len(), PINS.len());
-    assert_eq!(written["phase_two"].as_array().unwrap().len(), 3);
+    assert_eq!(written["phase_two"].as_array().unwrap().len(), 2);
     assert_eq!(written["phase_one"][0]["score"]["pass_per_mille"], 1_000);
     assert_eq!(written["spent_micro_usd"], lock.spent_micro_usd());
     assert!(bakeoff::summary(&bakeoff, &path, None).contains("pins.rs"));
@@ -2118,11 +2186,13 @@ async fn a_sonda_recusa_quando_nem_uma_rodada_por_modelo_cabe() {
     let dir = reports_dir();
     let adapter = EcoAdapter {
         cost_micro_usd: 10_000,
-        catalog: zdr_catalog(),
+        catalog: recorded_catalogs(),
     };
-    // Nem a primeira cota — um sexto de 30.000 — cobre uma rodada: cada sonda é cortada, e as
-    // últimas nem abrem.
-    let mut lock = super::SpendLock::new(30_000);
+    // Nem a primeira cota — um terço de 10.000 — cobre uma rodada: a primeira sonda é cortada já
+    // tendo pago o custo dela, o que esgota o teto, e as demais nem abrem. A trava fecha ENTRE
+    // rodadas: por isso o teto do cenário é o custo de uma rodada exata — é o maior teto em que o
+    // gasto real ainda não o ultrapassa.
+    let mut lock = super::SpendLock::new(10_000);
 
     let (bakeoff, path) = bakeoff::run(
         &adapter,
@@ -2146,10 +2216,10 @@ async fn a_sonda_recusa_quando_nem_uma_rodada_por_modelo_cabe() {
     let Decision::NoWinner { reason } = &bakeoff.decision else {
         panic!("sem sonda completa não há decisão");
     };
-    assert!(reason.contains("0 de 6 modelos"), "recusa: {reason}");
+    assert!(reason.contains("0 de 3 modelos"), "recusa: {reason}");
 
     // O teto não foi ultrapassado para descobrir isso, e a sonda ficou no relatório.
-    assert!(lock.spent_micro_usd() <= 30_000);
+    assert!(lock.spent_micro_usd() <= 10_000);
     let written: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     let rounds = written["probe"]["rounds"].as_array().unwrap();
@@ -2172,7 +2242,7 @@ async fn a_sonda_publica_a_falha_de_preparacao() {
     let dir = reports_dir();
     let adapter = EcoAdapter {
         cost_micro_usd: 1_000,
-        catalog: zdr_catalog(),
+        catalog: recorded_catalogs(),
     };
     let mut cases = bakeoff_cases();
     cases[0].fixture = "fixture-inexistente".to_string();
@@ -2261,6 +2331,13 @@ impl ZdrCatalog for EscaladaAdapter {
     }
 }
 
+impl EndpointsCatalog for EscaladaAdapter {
+    fn fetch(&self, model: &str) -> impl Future<Output = Result<serde_json::Value, String>> + Send {
+        let filtered = entries_for_model(&self.catalog, model);
+        async move { Ok(filtered) }
+    }
+}
+
 /// A sonda mediu barato e a peneira saiu cara: a medição trunca, e uma peneira truncada NÃO abre a
 /// final — comparar dois modelos medidos contra quatro que a trava cortou compararia orçamento, e
 /// o relatório leria como se a matriz inteira tivesse concorrido.
@@ -2273,7 +2350,7 @@ async fn a_peneira_truncada_nao_abre_a_final() {
         primeiras: PINS.len(),
         resto: 20_000,
         vistas: Mutex::new(0),
-        catalog: zdr_catalog(),
+        catalog: recorded_catalogs(),
     };
     let mut lock = super::SpendLock::new(100_000);
 
@@ -2360,7 +2437,7 @@ async fn o_relatorio_do_bakeoff_identifica_o_catalogo_medido() {
     let dir = reports_dir();
     let adapter = EcoAdapter {
         cost_micro_usd: 1_000,
-        catalog: zdr_catalog(),
+        catalog: recorded_catalogs(),
     };
     let mut lock = super::SpendLock::new(1_000_000);
 
@@ -2438,7 +2515,7 @@ async fn o_teto_de_referencia_corre_o_recorte_na_peneira() {
 
     let adapter = EcoAdapter {
         cost_micro_usd: 1_000,
-        catalog: zdr_catalog(),
+        catalog: recorded_catalogs(),
     };
     let mut lock = super::SpendLock::new(1_000_000);
 
@@ -2495,15 +2572,12 @@ fn a_projecao_reflete_o_recorte_da_regua() {
     let probes = vec![
         probe("openai/gpt-5.6-terra", 1_000),
         probe("openai/gpt-5.6-luna", 1_000),
-        probe("google/gemini-3.6-flash", 1_000),
-        probe("x-ai/grok-4.5", 1_000),
-        probe("moonshotai/kimi-k3", 1_000),
         probe("openai/gpt-5.6-sol", 10_000),
     ];
 
-    // Sonda 15.000 + peneira (5×10×1.000 + 10.000×2) + final (3×1.000×10×3) = 175.000, e um
+    // Sonda 12.000 + peneira (2×10×1.000 + 10.000×2) + final (2×1.000×10×3) = 112.000, e um
     // quarto de margem sobre o todo.
-    let integral = 15_000 + 70_000 + 90_000;
+    let integral = 12_000 + 40_000 + 60_000;
     assert_eq!(bakeoff::estimate(&probes, 10, 2), integral + integral / 4);
 
     // A régua correndo o catálogo inteiro projetaria mais caro: é essa a diferença que o recorte
@@ -2688,7 +2762,7 @@ async fn o_caderno_do_julgamento_cego_nao_nomeia_o_modelo() {
     pack.root_file("forbidden-bench.txt", "termo-que-nao-aparece\n");
     let adapter = EcoAdapter {
         cost_micro_usd: 1_000,
-        catalog: zdr_catalog(),
+        catalog: recorded_catalogs(),
     };
     let mut lock = super::SpendLock::new(1_000_000);
 
@@ -2774,7 +2848,7 @@ async fn a_sonda_recusa_quando_a_medicao_inteira_nao_cabe() {
         .collect();
     let adapter = EcoAdapter {
         cost_micro_usd: 1_000,
-        catalog: zdr_catalog(),
+        catalog: recorded_catalogs(),
     };
     let mut lock = super::SpendLock::new(100_000);
 
@@ -2795,23 +2869,23 @@ async fn a_sonda_recusa_quando_a_medicao_inteira_nao_cabe() {
     .await
     .unwrap();
 
-    // Seis rodadas de sonda (6.000), mais 5×20×1.000 + 1×1×1.000 na peneira (a régua corre o
-    // recorte, aqui um caso) e 3×20×3×1.000 na final — 287.000, e 358.750 com a margem de um
+    // Três rodadas de sonda (3.000), mais 2×20×1.000 + 1×1×1.000 na peneira (a régua corre o
+    // recorte, aqui um caso) e 2×20×3×1.000 na final — 164.000, e 205.000 com a margem de um
     // quarto. Muito além do teto.
     assert_eq!(bakeoff.probes.len(), PINS.len());
-    assert_eq!(bakeoff.estimate_micro_usd, 358_750);
-    assert_eq!(lock.spent_micro_usd(), 6_000);
+    assert_eq!(bakeoff.estimate_micro_usd, 205_000);
+    assert_eq!(lock.spent_micro_usd(), 3_000);
     assert!(bakeoff.phase_one.is_empty(), "nada além da sonda foi pago");
 
     let Decision::NoWinner { reason } = &bakeoff.decision else {
         panic!("uma medição que não cabe não decide o default");
     };
-    assert!(reason.contains("358750"));
+    assert!(reason.contains("205000"));
     assert!(reason.contains("100000"));
 
     let written: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(written["probe"]["estimate_micro_usd"], 358_750);
+    assert_eq!(written["probe"]["estimate_micro_usd"], 205_000);
     assert_eq!(
         written["probe"]["rounds"].as_array().unwrap().len(),
         PINS.len()
@@ -2833,23 +2907,20 @@ fn a_projecao_da_final_assume_os_candidatos_mais_caros() {
         failure: None,
     };
     let probes = vec![
-        probe("moonshotai/kimi-k3", 1_000),
         probe("openai/gpt-5.6-terra", 4_000),
         probe("openai/gpt-5.6-luna", 3_000),
-        probe("google/gemini-3.6-flash", 2_000),
-        probe("x-ai/grok-4.5", 1_000),
         // O teto de referência entra na peneira e nunca na final.
         probe("openai/gpt-5.6-sol", 9_000),
     ];
 
-    // O que a sonda gastou (20.000) + a peneira (a soma de todos, uma vez por caso) + a final
-    // (os três candidatos mais caros, três repetições por caso), e um quarto de margem sobre o
-    // todo — uma amostra por modelo estima, não limita.
-    let integral = 20_000 + 20_000 + (4_000 + 3_000 + 2_000) * 3;
+    // O que a sonda gastou (16.000) + a peneira (a soma de todos, uma vez por caso) + a final
+    // (os dois candidatos, três repetições por caso), e um quarto de margem sobre o todo — uma
+    // amostra por modelo estima, não limita.
+    let integral = 16_000 + 16_000 + (4_000 + 3_000) * 3;
     assert_eq!(bakeoff::estimate(&probes, 1, 1), integral + integral / 4);
 
     // A sonda entra na conta: ignorá-la aprovaria, na fronteira, medições que não cabem.
-    assert!(bakeoff::estimate(&probes, 1, 1) > 20_000 + (4_000 + 3_000 + 2_000) * 3);
+    assert!(bakeoff::estimate(&probes, 1, 1) > 16_000 + (4_000 + 3_000) * 3);
 }
 
 // --- Regressões restauradas ---------------------------------------------------------------
@@ -2997,7 +3068,7 @@ async fn tentativa_que_gerou_texto_e_caiu_sem_uso_e_lacuna_cobrada() {
 #[test]
 fn a_decisao_recusa_quando_um_finalista_foi_truncado() {
     let finalistas = vec![
-        (pinned("moonshotai/kimi-k3"), score_of(60, 60, 100_000)),
+        (pinned("openai/gpt-5.6-sol"), score_of(60, 60, 100_000)),
         (pinned("openai/gpt-5.6-terra"), score_of(60, 60, 120_000)),
         (
             pinned("openai/gpt-5.6-luna"),
@@ -3030,14 +3101,13 @@ fn a_decisao_recusa_uma_final_de_um_so() {
 /// devolveria uma fatia menor, apertando a peneira sem nada avisar.
 #[test]
 fn a_fatia_da_peneira_nao_estoura_em_teto_alto() {
-    // Com 22 casos e recorte de 6: 6 rodadas de sonda, 116 de peneira (cinco candidatos
-    // correm 22, a régua corre 6) e 198 de final — 320 no total, e a fase um acumula as 122
-    // primeiras.
+    // Com 22 casos e recorte de 6: 3 rodadas de sonda, 50 de peneira (dois candidatos correm
+    // 22, a régua corre 6) e 198 de final — 251 no total, e a fase um acumula as 53 primeiras.
     let cap = bakeoff::phase_one_cap(i64::MAX, 22, 6);
 
-    assert_eq!(cap, ((i64::MAX as i128 * 122) / 320) as i64);
+    assert_eq!(cap, ((i64::MAX as i128 * 53) / 251) as i64);
     // O que uma multiplicação saturada devolveria, apertando a peneira em silêncio.
-    assert_ne!(cap, i64::MAX / 320);
+    assert_ne!(cap, i64::MAX / 251);
 }
 
 /// O bakeoff decide qual modelo conversa com o dinheiro de alguém: um veredito tirado de um
@@ -3105,13 +3175,10 @@ fn a_reserva_da_peneira_segue_os_custos_medidos_e_nao_a_contagem() {
         complete: true,
         failure: None,
     };
-    // Cinco candidatos baratos e um teto de referência cinco vezes mais caro.
+    // Dois candidatos baratos e um teto de referência cinco vezes mais caro.
     let probes = vec![
         probe("openai/gpt-5.6-terra", 10_000),
         probe("openai/gpt-5.6-luna", 10_000),
-        probe("google/gemini-3.6-flash", 10_000),
-        probe("x-ai/grok-4.5", 10_000),
-        probe("moonshotai/kimi-k3", 10_000),
         probe("openai/gpt-5.6-sol", 50_000),
     ];
     let cap = 5_000_000;
@@ -3119,9 +3186,9 @@ fn a_reserva_da_peneira_segue_os_custos_medidos_e_nao_a_contagem() {
     let por_contagem = bakeoff::phase_one_cap(cap, 22, 6);
     let por_custo = bakeoff::measured_phase_one_cap(cap, &probes, 22, 6);
 
-    // A final projetada são três candidatos a 10.000 × 22 casos × 3 repetições, mais margem:
-    // 1.980.000 + 495.000. O resto é da peneira — bem mais que a fatia por contagem.
-    assert_eq!(por_custo, cap - (1_980_000 + 495_000));
+    // A final projetada são os dois candidatos a 10.000 × 22 casos × 3 repetições, mais margem:
+    // 1.320.000 + 330.000. O resto é da peneira — bem mais que a fatia por contagem.
+    assert_eq!(por_custo, cap - (1_320_000 + 330_000));
     assert!(
         por_custo > por_contagem,
         "a contagem reserva {por_contagem} e os custos liberam {por_custo}"
@@ -3329,7 +3396,7 @@ fn vereditos(
 fn o_julgamento_aprovado_fecha_a_decisao() {
     let report = julgado(
         &[
-            ("x-ai/grok-4.5", 200_000, true),
+            ("openai/gpt-5.6-luna", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
         &[],
@@ -3350,7 +3417,7 @@ fn o_julgamento_aprovado_fecha_a_decisao() {
 fn um_bilhete_reprovado_tira_o_modelo_da_decisao() {
     let report = julgado(
         &[
-            ("x-ai/grok-4.5", 200_000, true),
+            ("openai/gpt-5.6-luna", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
         &[],
@@ -3365,7 +3432,7 @@ fn um_bilhete_reprovado_tira_o_modelo_da_decisao() {
     else {
         panic!("o outro finalista ainda decide");
     };
-    assert_eq!(model, "x-ai/grok-4.5");
+    assert_eq!(model, "openai/gpt-5.6-luna");
 }
 
 /// Bilhete sem veredito é resposta que ninguém leu: decidir assim pularia o gate que este comando
@@ -3374,7 +3441,7 @@ fn um_bilhete_reprovado_tira_o_modelo_da_decisao() {
 fn a_decisao_julgada_exige_todos_os_bilhetes_lidos() {
     let report = julgado(
         &[
-            ("x-ai/grok-4.5", 200_000, true),
+            ("openai/gpt-5.6-luna", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
         &[],
@@ -3394,7 +3461,7 @@ fn a_decisao_julgada_exige_todos_os_bilhetes_lidos() {
 fn a_decisao_julgada_recusa_bilhete_de_outra_execucao() {
     let report = julgado(
         &[
-            ("x-ai/grok-4.5", 200_000, true),
+            ("openai/gpt-5.6-luna", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
         &[],
@@ -3413,7 +3480,7 @@ fn a_decisao_julgada_recusa_bilhete_de_outra_execucao() {
 fn didatica_reprovada_em_todos_nao_decide_default() {
     let report = julgado(
         &[
-            ("x-ai/grok-4.5", 200_000, true),
+            ("openai/gpt-5.6-luna", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
         &[],
@@ -3440,7 +3507,7 @@ fn didatica_reprovada_em_todos_nao_decide_default() {
 fn a_decisao_julgada_mantem_o_quorum_da_final() {
     let report = julgado(
         &[
-            ("x-ai/grok-4.5", 200_000, true),
+            ("openai/gpt-5.6-luna", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, false),
         ],
         &[],
@@ -3460,7 +3527,7 @@ fn a_decisao_julgada_mantem_o_quorum_da_final() {
 fn a_decisao_julgada_ignora_o_score_derivado_do_relatorio() {
     let mut report = julgado(
         &[
-            ("x-ai/grok-4.5", 200_000, true),
+            ("openai/gpt-5.6-luna", 200_000, true),
             // O mais barato tem uma repetição REPROVADA nos dados brutos.
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
@@ -3480,7 +3547,7 @@ fn a_decisao_julgada_ignora_o_score_derivado_do_relatorio() {
         panic!("o outro finalista continua elegível");
     };
     assert_eq!(
-        model, "x-ai/grok-4.5",
+        model, "openai/gpt-5.6-luna",
         "o score derivado não decide; as repetições decidem"
     );
 }
@@ -3491,7 +3558,7 @@ fn a_decisao_julgada_ignora_o_score_derivado_do_relatorio() {
 fn a_decisao_julgada_recusa_chave_cega_adulterada() {
     let base = julgado(
         &[
-            ("x-ai/grok-4.5", 200_000, true),
+            ("openai/gpt-5.6-luna", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
         &[],
@@ -3533,7 +3600,7 @@ fn a_decisao_julgada_recusa_o_mesmo_modelo_duas_vezes() {
 fn a_decisao_julgada_recusa_relatorio_sem_os_dados_que_decidem() {
     let base = julgado(
         &[
-            ("x-ai/grok-4.5", 200_000, true),
+            ("openai/gpt-5.6-luna", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
         &[],
@@ -3548,7 +3615,7 @@ fn a_decisao_julgada_recusa_relatorio_sem_os_dados_que_decidem() {
             .remove(apagar);
         let error = bakeoff::judged_decision(&report, &verdicts).unwrap_err();
         assert!(
-            error.contains("x-ai/grok-4.5"),
+            error.contains("openai/gpt-5.6-luna"),
             "sem {apagar}, a recusa nomeia a corrida: {error}"
         );
     }
@@ -3671,7 +3738,7 @@ async fn o_julgamento_recusa_o_caderno_de_outra_execucao() {
         let dir = reports_dir();
         let adapter = EcoAdapter {
             cost_micro_usd: 1_000,
-            catalog: zdr_catalog(),
+            catalog: recorded_catalogs(),
         };
         let mut lock = super::SpendLock::new(1_000_000);
         let mut body = valid_case_json();
@@ -3734,7 +3801,7 @@ async fn o_julgamento_reescreve_o_relatorio_de_verdade() {
     let dir = reports_dir();
     let adapter = EcoAdapter {
         cost_micro_usd: 1_000,
-        catalog: zdr_catalog(),
+        catalog: recorded_catalogs(),
     };
     let mut lock = super::SpendLock::new(1_000_000);
     // Um caso mecânico e um cego: sem o mecânico não há suíte a zerar, e sem o cego não há o que
@@ -3840,7 +3907,7 @@ async fn o_julgamento_recusa_bilhete_repetido_no_caderno() {
     let caderno_path = dir.join("caderno.json");
     let report = julgado(
         &[
-            ("x-ai/grok-4.5", 200_000, true),
+            ("openai/gpt-5.6-luna", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
         &[],
@@ -3882,7 +3949,7 @@ async fn o_julgamento_recusa_bilhete_repetido_no_caderno() {
 fn o_caderno_com_resposta_trocada_e_recusado() {
     let report = julgado(
         &[
-            ("x-ai/grok-4.5", 200_000, true),
+            ("openai/gpt-5.6-luna", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
         &[],
@@ -3905,7 +3972,7 @@ fn o_caderno_com_resposta_trocada_e_recusado() {
 fn a_decisao_julgada_recusa_booleanos_contraditorios() {
     let base = julgado(
         &[
-            ("x-ai/grok-4.5", 200_000, true),
+            ("openai/gpt-5.6-luna", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
         &[],
@@ -3934,7 +4001,7 @@ fn a_decisao_julgada_recusa_booleanos_contraditorios() {
 fn a_decisao_julgada_exige_a_estrutura_das_duas_fases() {
     let base = julgado(
         &[
-            ("x-ai/grok-4.5", 200_000, true),
+            ("openai/gpt-5.6-luna", 200_000, true),
             ("openai/gpt-5.6-terra", 120_000, true),
         ],
         &[],
@@ -3977,17 +4044,17 @@ fn a_decisao_julgada_exige_a_estrutura_das_duas_fases() {
 #[tokio::test]
 async fn sonda_truncada_pela_cota_nao_conta_como_medida() {
     let dir = reports_dir();
-    // Seis pins dividem 250.000, então a cota fica em ~41.000 — abaixo do teto por rodada da
-    // conversa. A PRIMEIRA sonda custa mais que isso e é cortada; as outras cinco cabem, e por
+    // Três pins dividem 90.000, então a cota fica em 30.000 — abaixo do custo da primeira
+    // arrancada. A PRIMEIRA sonda custa mais que isso e é cortada; as outras duas cabem, e por
     // isso sobra dinheiro na trava no fim.
     let adapter = EscaladaAdapter {
         arranque: 45_000,
         primeiras: 1,
         resto: 1_000,
         vistas: Mutex::new(0),
-        catalog: zdr_catalog(),
+        catalog: recorded_catalogs(),
     };
-    let mut lock = super::SpendLock::new(250_000);
+    let mut lock = super::SpendLock::new(90_000);
 
     let (bakeoff, _) = bakeoff::run(
         &adapter,
@@ -4010,8 +4077,8 @@ async fn sonda_truncada_pela_cota_nao_conta_como_medida() {
         bakeoff.phase_one.is_empty(),
         "a peneira não chegou a correr"
     );
-    assert_eq!(bakeoff.probes.len(), PINS.len(), "as seis sondas correram");
-    // A primeira foi cortada pela cota e NÃO conta como medida; as cinco seguintes contam.
+    assert_eq!(bakeoff.probes.len(), PINS.len(), "as três sondas correram");
+    // A primeira foi cortada pela cota e NÃO conta como medida; as duas seguintes contam.
     assert!(
         !bakeoff.probes[0].complete,
         "a sonda cortada pela cota não é sonda"
@@ -4035,7 +4102,7 @@ async fn sonda_truncada_pela_cota_nao_conta_como_medida() {
     let Decision::NoWinner { reason } = &bakeoff.decision else {
         panic!("sem sonda medida não há projeção, e sem projeção não há decisão");
     };
-    assert!(reason.contains("5 de 6 modelos"), "recusa: {reason}");
+    assert!(reason.contains("2 de 3 modelos"), "recusa: {reason}");
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -4145,7 +4212,7 @@ fn resume_cases() -> Vec<case::Case> {
 async fn bakeoff_gravado(dir: &std::path::Path) -> (serde_json::Value, i64) {
     let adapter = EcoAdapter {
         cost_micro_usd: 1_000,
-        catalog: zdr_catalog(),
+        catalog: recorded_catalogs(),
     };
     let mut lock = super::SpendLock::new(1_000_000);
     let (_, path) = bakeoff::run(
@@ -4191,8 +4258,9 @@ async fn a_retomada_reaproveita_a_peneira_inteira_do_relatorio() {
     // A sonda herdada evita pagar de novo uma rodada por modelo só para reaprender o custo.
     assert_eq!(resumed.probes.len(), PINS.len());
     assert_eq!(resumed.spent_micro_usd, gasto);
-    // A final daquela execução correu inteira e volta reaproveitada.
-    assert_eq!(resumed.phase_two.len(), 3);
+    // A final daquela execução correu inteira e volta reaproveitada — os dois candidatos da
+    // matriz vigente, o teto de referência nunca disputa.
+    assert_eq!(resumed.phase_two.len(), 2);
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -4260,7 +4328,8 @@ async fn a_retomada_descarta_a_corrida_da_final_que_nao_fecha() {
 
     let resumed = resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap();
 
-    assert_eq!(resumed.phase_two.len(), 2);
+    // A matriz vigente tem só dois candidatos na final; descartar um deixa o outro sozinho.
+    assert_eq!(resumed.phase_two.len(), 1);
     assert_eq!(resumed.phase_one.len(), PINS.len());
 
     std::fs::remove_dir_all(&dir).unwrap();
@@ -4280,7 +4349,7 @@ async fn a_retomada_paga_so_a_final_que_falta_e_soma_o_herdado_a_parte() {
     let novo_dir = reports_dir();
     let adapter = EcoAdapter {
         cost_micro_usd: 1_000,
-        catalog: zdr_catalog(),
+        catalog: recorded_catalogs(),
     };
     let mut lock = super::SpendLock::new(1_000_000);
 
@@ -4301,9 +4370,10 @@ async fn a_retomada_paga_so_a_final_que_falta_e_soma_o_herdado_a_parte() {
     .await
     .unwrap();
 
-    // Nenhuma corrida de peneira foi paga agora, e só os dois finalistas que faltavam correram.
+    // Nenhuma corrida de peneira foi paga agora, e só o finalista que faltava correu — a matriz
+    // vigente tem dois candidatos, um herdado e um a medir.
     assert!(retomado.phase_one.is_empty());
-    assert_eq!(retomado.phase_two.len(), 2);
+    assert_eq!(retomado.phase_two.len(), 1);
     // A trava desta execução conta só o dinheiro novo; o herdado vive ao lado, nomeado.
     assert_eq!(retomado.spent_micro_usd, lock.spent_micro_usd());
     assert!(retomado.spent_micro_usd < gasto_anterior);
@@ -4323,8 +4393,8 @@ async fn a_retomada_paga_so_a_final_que_falta_e_soma_o_herdado_a_parte() {
     assert_eq!(peneira.len(), PINS.len());
     assert_eq!(peneira[0]["inherited_from"], "anterior.json");
     assert_eq!(peneira[0]["run"]["ran_at"], "2026-07-29T14:33:05-03:00");
-    // A final traz a corrida herdada e as duas medidas agora.
-    assert_eq!(escrito["phase_two"].as_array().unwrap().len(), 3);
+    // A final traz a corrida herdada e a medida agora.
+    assert_eq!(escrito["phase_two"].as_array().unwrap().len(), 2);
     assert!(escrito["decision"]["default_model"].is_null());
 
     // O caderno cego inclui os casos herdados: eles foram pagos e esperam a mesma leitura.
@@ -4333,9 +4403,9 @@ async fn a_retomada_paga_so_a_final_que_falta_e_soma_o_herdado_a_parte() {
     )
     .unwrap();
     let bilhetes = caderno["entries"].as_array().unwrap();
-    // Cinco respostas da peneira herdada — o teto de referência corre o recorte, que não inclui o
-    // caso cego — mais três de cada corrida da final: a herdada e as duas medidas agora.
-    assert_eq!(bilhetes.len(), 5 + 9);
+    // Duas respostas da peneira herdada — o teto de referência corre o recorte, que não inclui o
+    // caso cego — mais três de cada corrida da final: a herdada e a medida agora.
+    assert_eq!(bilhetes.len(), 2 + 6);
     for pin in PINS {
         assert!(!caderno.to_string().contains(pin.model));
     }
@@ -4356,12 +4426,6 @@ async fn a_retomada_paga_so_a_final_que_falta_e_soma_o_herdado_a_parte() {
             "caso-2-06",
             "caso-2-07",
             "caso-2-08",
-            "caso-2-09",
-            "caso-2-10",
-            "caso-2-11",
-            "caso-2-12",
-            "caso-2-13",
-            "caso-2-14",
         ]
     );
     assert_eq!(
@@ -4495,15 +4559,17 @@ async fn a_retomada_recusa_uma_pendencia_sem_resposta() {
 async fn a_retomada_descarta_a_final_de_quem_a_peneira_eliminou() {
     let dir = reports_dir();
     let (mut report, _) = bakeoff_gravado(&dir).await;
-    // A corrida continua íntegra e conferível — só é de um pin que a peneira não mandou à final.
-    let intruso = pinned("moonshotai/kimi-k3");
-    report["phase_two"][2]["run"]["model"] = json!(intruso.model);
-    report["phase_two"][2]["run"]["endpoint"] = json!(intruso.endpoint);
-    report["phase_two"][2]["run"]["operator"] = json!(intruso.operator);
+    // A corrida continua íntegra e conferível — só é de um pin que a peneira não mandou à final:
+    // o teto de referência nunca disputa, então ele nunca é sobrevivente legítimo.
+    let intruso = pinned("openai/gpt-5.6-sol");
+    report["phase_two"][1]["run"]["model"] = json!(intruso.model);
+    report["phase_two"][1]["run"]["endpoint"] = json!(intruso.endpoint);
+    report["phase_two"][1]["run"]["operator"] = json!(intruso.operator);
 
     let resumed = resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap();
 
-    assert_eq!(resumed.phase_two.len(), 2);
+    // A matriz vigente tem só dois candidatos na final; tirar o intruso deixa o outro sozinho.
+    assert_eq!(resumed.phase_two.len(), 1);
     assert!(
         resumed
             .phase_two
@@ -4540,7 +4606,7 @@ async fn a_retomada_encadeada_carrega_o_gasto_de_todas_as_execucoes() {
     let segundo_dir = reports_dir();
     let adapter = EcoAdapter {
         cost_micro_usd: 1_000,
-        catalog: zdr_catalog(),
+        catalog: recorded_catalogs(),
     };
     let mut lock = super::SpendLock::new(1_000_000);
     let (_, path) = bakeoff::run(
@@ -4570,7 +4636,7 @@ async fn a_retomada_encadeada_carrega_o_gasto_de_todas_as_execucoes() {
     // A terceira execução herda o que as duas anteriores pagaram, não só a última.
     assert_eq!(encadeado.spent_micro_usd, gasto_original + gasto_novo);
     assert_eq!(encadeado.phase_one.len(), PINS.len());
-    assert_eq!(encadeado.phase_two.len(), 3);
+    assert_eq!(encadeado.phase_two.len(), 2);
 
     std::fs::remove_dir_all(&dir).unwrap();
     std::fs::remove_dir_all(&segundo_dir).unwrap();
@@ -4587,11 +4653,11 @@ async fn o_preflight_da_final_mede_contra_o_teto_desta_execucao() {
     let novo_dir = reports_dir();
     let adapter = EcoAdapter {
         cost_micro_usd: 1_000,
-        catalog: zdr_catalog(),
+        catalog: recorded_catalogs(),
     };
-    // As duas finais que faltam custam 12.000 e projetam 15.000 com a margem: cabem no teto, e só a
-    // reserva de uma peneira que não vai correr as deixaria de fora.
-    let mut lock = super::SpendLock::new(16_000);
+    // A final que falta custa 6.000 e projeta 7.500 com a margem: cabe no teto, e só a reserva de
+    // uma peneira que não vai correr a deixaria de fora.
+    let mut lock = super::SpendLock::new(8_000);
 
     let (retomado, _) = bakeoff::run(
         &adapter,
@@ -4614,10 +4680,10 @@ async fn o_preflight_da_final_mede_contra_o_teto_desta_execucao() {
 
     assert_eq!(
         retomado.phase_two.len(),
-        2,
+        1,
         "a final que cabe no teto corre"
     );
-    assert_eq!(lock.spent_micro_usd(), 12_000);
+    assert_eq!(lock.spent_micro_usd(), 6_000);
 
     std::fs::remove_dir_all(&dir).unwrap();
     std::fs::remove_dir_all(&novo_dir).unwrap();
@@ -4672,7 +4738,7 @@ async fn a_retomada_recusa_outra_configuracao_de_requisicao_no_mesmo_endpoint() 
     for (campo, valor) in [
         ("beta_headers", json!(["um-beta-qualquer"])),
         ("reasoning_floor", json!("none")),
-        ("token_cap", json!("max_tokens")),
+        ("token_cap", json!("max_completion_tokens")),
     ] {
         let mut adulterado = report.clone();
         adulterado["phase_one"][0]["run"][campo] = valor;
@@ -4750,7 +4816,7 @@ async fn o_reconhecimento_supre_a_ausencia_e_fica_registrado() {
     let novo_dir = reports_dir();
     let adapter = EcoAdapter {
         cost_micro_usd: 1_000,
-        catalog: zdr_catalog(),
+        catalog: recorded_catalogs(),
     };
     let mut lock = super::SpendLock::new(1_000_000);
     let (retomado, path) = bakeoff::run(
@@ -4786,7 +4852,7 @@ async fn o_reconhecimento_nao_encobre_uma_divergencia_registrada() {
     let dir = reports_dir();
     let (report, _) = bakeoff_gravado(&dir).await;
     let mut antigo = sem_configuracao(&report);
-    antigo["phase_one"][0]["run"]["token_cap"] = json!("max_tokens");
+    antigo["phase_one"][0]["run"]["token_cap"] = json!("max_completion_tokens");
 
     let error = resume::parse(&antigo, &resume_cases(), "r.json".into(), true).unwrap_err();
 
@@ -4941,13 +5007,13 @@ fn o_medidor_quebrado_tira_o_pin_da_comparacao_e_a_decisao_segue() {
 
     let Decision::Adopt { model, rationale } = bakeoff::decide(&[
         (pinned("openai/gpt-5.6-terra"), inteiro),
-        (pinned("moonshotai/kimi-k3"), quebrado),
+        (pinned("openai/gpt-5.6-luna"), quebrado),
     ]) else {
         panic!("com o oponente fora da comparação, o finalista medido decide o default");
     };
 
     assert_eq!(model, "openai/gpt-5.6-terra");
-    assert!(rationale.contains("moonshotai/kimi-k3"), "{rationale}");
+    assert!(rationale.contains("openai/gpt-5.6-luna"), "{rationale}");
     assert!(rationale.contains("medidor de custo"), "{rationale}");
     // Vitória por W.O. é dita por extenso: vendê-la como comparação seria mentir sobre a base.
     assert!(rationale.contains("W.O."), "{rationale}");
@@ -4966,7 +5032,7 @@ fn a_trava_de_gasto_continua_vetando_a_decisao() {
 
     let Decision::NoWinner { reason } = bakeoff::decide(&[
         (pinned("openai/gpt-5.6-terra"), inteiro),
-        (pinned("moonshotai/kimi-k3"), cortado),
+        (pinned("openai/gpt-5.6-luna"), cortado),
     ]) else {
         panic!("corrida cortada pelo orçamento não decide default");
     };
@@ -4987,7 +5053,7 @@ fn a_falha_operacional_continua_vetando_a_decisao() {
 
     let Decision::NoWinner { reason } = bakeoff::decide(&[
         (pinned("openai/gpt-5.6-terra"), inteiro),
-        (pinned("moonshotai/kimi-k3"), caido),
+        (pinned("openai/gpt-5.6-luna"), caido),
     ]) else {
         panic!("corrida caída por falha operacional não decide default");
     };
@@ -5004,7 +5070,7 @@ fn o_julgamento_nao_dispensa_o_oponente_que_caiu_por_falha_operacional() {
     let mut report = julgado(
         &[
             ("openai/gpt-5.6-terra", 90_000, true),
-            ("moonshotai/kimi-k3", 40_000, false),
+            ("openai/gpt-5.6-luna", 40_000, false),
         ],
         &[],
     );
@@ -5033,7 +5099,7 @@ fn o_wo_nao_afrouxa_os_gates_de_qualidade() {
 
     let Decision::NoWinner { reason } = bakeoff::decide(&[
         (pinned("openai/gpt-5.6-terra"), falho),
-        (pinned("moonshotai/kimi-k3"), quebrado),
+        (pinned("openai/gpt-5.6-luna"), quebrado),
     ]) else {
         panic!("quem não zerou a suíte não vira default nem sem oponente");
     };
@@ -5048,7 +5114,7 @@ fn o_julgamento_fecha_por_wo_quando_o_medidor_do_outro_quebrou() {
     let mut report = julgado(
         &[
             ("openai/gpt-5.6-terra", 90_000, true),
-            ("moonshotai/kimi-k3", 40_000, false),
+            ("openai/gpt-5.6-luna", 40_000, false),
         ],
         &[],
     );
@@ -5061,7 +5127,7 @@ fn o_julgamento_fecha_por_wo_quando_o_medidor_do_outro_quebrou() {
     };
 
     assert_eq!(model, "openai/gpt-5.6-terra");
-    assert!(rationale.contains("moonshotai/kimi-k3"), "{rationale}");
+    assert!(rationale.contains("openai/gpt-5.6-luna"), "{rationale}");
     assert!(rationale.contains("W.O."), "{rationale}");
 }
 
@@ -5072,7 +5138,7 @@ fn o_wo_nao_sobrevive_a_um_bilhete_reprovado() {
     let mut report = julgado(
         &[
             ("openai/gpt-5.6-terra", 90_000, true),
-            ("moonshotai/kimi-k3", 40_000, false),
+            ("openai/gpt-5.6-luna", 40_000, false),
         ],
         &[],
     );
