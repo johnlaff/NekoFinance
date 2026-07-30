@@ -295,6 +295,7 @@ impl ProviderAdapter for ScriptedAdapter {
                 Script::OpenError(ProviderError {
                     kind: ErrorKind::Permanent,
                     message: "Não há roteiro para este turno.".to_string(),
+                    responded: true,
                 })
             });
         let cancel = cancel.clone();
@@ -452,10 +453,13 @@ fn tool_call(id: &str, name: &str, arguments: &str) -> ProviderEvent {
     }
 }
 
+/// Erro COM resposta do servidor — o caso que não mexe na contagem de dinheiro. Falha sem
+/// resposta se constrói explícita no teste que a exercita.
 fn provider_error(kind: ErrorKind, message: &str) -> ProviderError {
     ProviderError {
         kind,
         message: message.to_string(),
+        responded: true,
     }
 }
 

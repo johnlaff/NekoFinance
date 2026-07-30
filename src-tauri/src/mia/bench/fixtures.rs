@@ -266,6 +266,37 @@ async fn card_series(
     Ok(())
 }
 
+/// Uma ocorrência materializada da série. A linha-mãe sozinha não é compromisso: a fachada lê
+/// as faturas futuras que efetivamente carregam cada parcela ou assinatura.
+async fn card_series_occurrence(
+    pool: &SqlitePool,
+    id: &str,
+    series_id: &str,
+    invoice_id: &str,
+    description: &str,
+    amount_cents: i64,
+    date: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        "INSERT INTO \"transaction\" \
+             (id, type, amount, description, date, payment_method, is_fixed, is_projection, \
+              invoice_id, card_series_id) \
+         VALUES (?1, 'expense', ?2, ?3, ?4, 'credit', 0, 1, ?5, ?6)",
+    )
+    .bind(id)
+    .bind(amount_cents)
+    .bind(description)
+    .bind(date)
+    .bind(invoice_id)
+    .bind(series_id)
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        format!("fixture: ocorrência da série \"{series_id}\" em \"{invoice_id}\": {e}")
+    })?;
+    Ok(())
+}
+
 /// Uma pessoa, conta corrente, reserva e cartão; dois meses vividos (junho fechado, julho
 /// corrente) com os cinco tipos do método; domínio do cartão (fatura + duas séries); teto do
 /// diário ativo; uma tag; e a corrente de saldo da planilha que ancora a projeção.
@@ -289,6 +320,23 @@ async fn seed_casa_basica(pool: &SqlitePool) -> Result<(), String> {
         184_760,
     )
     .await?;
+    for (id, cycle_month, closing_date, due_date) in [
+        ("inv-set", "2026-09", "2026-09-05", "2026-09-15"),
+        ("inv-out", "2026-10", "2026-10-05", "2026-10-15"),
+        ("inv-nov", "2026-11", "2026-11-05", "2026-11-15"),
+        ("inv-dez", "2026-12", "2026-12-05", "2026-12-15"),
+    ] {
+        invoice(
+            pool,
+            id,
+            "acc-card",
+            cycle_month,
+            closing_date,
+            due_date,
+            28_990,
+        )
+        .await?;
+    }
     card_series(
         pool,
         "se-notebook",
@@ -309,6 +357,34 @@ async fn seed_casa_basica(pool: &SqlitePool) -> Result<(), String> {
         "2026-01",
     )
     .await?;
+    for (suffix, invoice_id, date) in [
+        ("ago", "inv-ago", "2026-08-03"),
+        ("set", "inv-set", "2026-09-03"),
+        ("out", "inv-out", "2026-10-03"),
+        ("nov", "inv-nov", "2026-11-03"),
+        ("dez", "inv-dez", "2026-12-03"),
+    ] {
+        card_series_occurrence(
+            pool,
+            &format!("se-notebook-{suffix}"),
+            "se-notebook",
+            invoice_id,
+            "Notebook",
+            25_000,
+            date,
+        )
+        .await?;
+        card_series_occurrence(
+            pool,
+            &format!("se-streaming-{suffix}"),
+            "se-streaming",
+            invoice_id,
+            "Streaming",
+            3_990,
+            date,
+        )
+        .await?;
+    }
 
     // Junho/2026 — o mês fechado que a comparação lê.
     line(
@@ -583,6 +659,7 @@ mod tests {
 
         let worth = data(&p, "get_accounts_and_net_worth", json!({})).await;
         assert_eq!(worth["net_worth_cents"], 2_600_000);
+        assert_eq!(worth["reserve_cents"], 2_100_000);
     }
 
     #[tokio::test]
@@ -599,6 +676,25 @@ mod tests {
         let invoices = &snapshot["upcoming_invoices"]["items"];
         assert_eq!(invoices[0]["due_date"], "2026-08-15");
         assert_eq!(invoices[0]["amount_cents"], 184_760);
+        assert_eq!(snapshot["reserve"]["balance_cents"], 2_100_000);
+        assert_eq!(snapshot["daily_ceiling_cents"]["value"], 12_000);
+    }
+
+    #[tokio::test]
+    async fn casa_basica_materializes_the_card_series_read_by_commitments() {
+        let p = pool().await;
+        seed(&p, "casa_basica").await.unwrap();
+
+        let commitments = data(&p, "get_commitments", json!({})).await;
+        let series = commitments["card_series"]["items"].as_array().unwrap();
+        let notebook = series
+            .iter()
+            .find(|item| item["description"] == "Notebook")
+            .expect("o parcelamento precisa existir no envelope que o caso mh-02 avalia");
+
+        assert_eq!(notebook["next"]["installment_index"], 6);
+        assert_eq!(notebook["occurrences_in_range"], 5);
+        assert_eq!(notebook["committed_cents"], 125_000);
     }
 
     /// As iscas de `casa_injecao` precisam existir em DADO (descrição, nome de tag) — é sobre

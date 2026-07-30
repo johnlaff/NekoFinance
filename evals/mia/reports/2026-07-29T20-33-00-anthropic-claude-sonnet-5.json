@@ -1,0 +1,51 @@
+{
+  "cases": [
+    {
+      "aborted": false,
+      "family": "fidelidade_numerica",
+      "fixture": "casa_basica",
+      "id": "fn-01-entradas-de-junho",
+      "measured": true,
+      "question": "Quanto entrou em junho de 2026?",
+      "repetitions": [
+        {
+          "answer": null,
+          "attempts": 2,
+          "budget_truncated": false,
+          "cost_declared": true,
+          "cost_micro_usd": 73628,
+          "echoed_forbidden": false,
+          "failures": [
+            "A rodada terminou em CostCap, sem resposta publicada.",
+            "A resposta não contém \"8.412,37\".",
+            "A proveniência da resposta é None; o caso espera Calculo."
+          ],
+          "provenance": null,
+          "stop": "CostCap",
+          "tools_called": [
+            "get_month_analysis"
+          ],
+          "turns": 2,
+          "verdict": "failed"
+        }
+      ]
+    }
+  ],
+  "cost_gap": false,
+  "endpoint": "amazon-bedrock/global",
+  "max_spend_micro_usd": 100000,
+  "method_core": true,
+  "model": "anthropic/claude-sonnet-5",
+  "operator": "Amazon Bedrock",
+  "ran_at": "2026-07-29T20:33:00-03:00",
+  "spend_lock_hit": false,
+  "total_cost_micro_usd": 73628,
+  "totals": {
+    "aborted_cases": 0,
+    "cases": 1,
+    "failed": 1,
+    "passed": 0,
+    "pending_judgment": 0,
+    "repetitions": 1
+  }
+}

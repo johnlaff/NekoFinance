@@ -164,20 +164,20 @@ Regras transversais do envelope:
 
 ### 3. Provedor — OpenRouter único, gates fail-closed no código
 
-Os gates são contrato, não configuração: `provider.zdr: true` · `data_collection: "deny"` · `only` com o endpoint pinado · `allow_fallbacks: false` · `require_parameters: true` · cache de resposta da borda desligado (o cache de prompt do provedor, que é a economia real do loop, fica intacto) · modelo pinado, nunca roteamento automático. Claude exige o header de structured outputs, sem o qual o modo estrito é removido em silêncio.
+Os gates são contrato, não configuração: `provider.zdr: true` · `data_collection: "deny"` · `only` com o endpoint pinado · `allow_fallbacks: false` · `require_parameters: true` · cache de resposta da borda desligado (o cache de prompt do provedor, que é a economia real do loop, fica intacto) · modelo pinado, nunca roteamento automático. Beta header é propriedade do pin e só sai quando o pin o declara.
 
-**Pins são por endpoint, não por provedor** — a matriz que decide é endpoint × parâmetro suportado:
+**Pins são por endpoint, não por provedor** — a matriz que decide é endpoint × parâmetro suportado. Para modelo de peso aberto, o endpoint carrega também a precisão servida: a tag nomeia a quantização, e ela é parte da identidade do candidato — outro endpoint com outra precisão é outro candidato. Só entra precisão que o catálogo declara; `unknown` não identifica o que se mede.
 
-| Modelo                      | Endpoint pinado         | Papel                       |
-| --------------------------- | ----------------------- | --------------------------- |
-| `anthropic/claude-sonnet-5` | `amazon-bedrock/global` | default provisório          |
-| `openai/gpt-5.6-terra`      | `azure`                 | candidato                   |
-| `openai/gpt-5.6-luna`       | `azure`                 | candidato                   |
-| `google/gemini-3.6-flash`   | `google-vertex/global`  | candidato                   |
-| `x-ai/grok-4.5`             | `xai/zdr`               | candidato                   |
-| `anthropic/claude-opus-5`   | `amazon-bedrock`        | teto de referência (fase 1) |
+| Modelo                    | Endpoint pinado        | Papel                                             |
+| ------------------------- | ---------------------- | ------------------------------------------------- |
+| `openai/gpt-5.6-terra`    | `azure`                | default provisório (a corrida promove ou rebaixa) |
+| `openai/gpt-5.6-luna`     | `azure`                | candidato                                         |
+| `google/gemini-3.6-flash` | `google-vertex/global` | candidato                                         |
+| `x-ai/grok-4.5`           | `xai/zdr`              | candidato                                         |
+| `moonshotai/kimi-k3`      | `moonshotai/mxfp4`     | candidato (peso aberto, precisão first-party)     |
+| `openai/gpt-5.6-sol`      | `azure`                | teto de referência (fase 1)                       |
 
-**Verificação de drift**: antes de confiar no pin, o adapter consulta o catálogo de endpoints de retenção zero do provedor e afirma três coisas — o endpoint existe, é de retenção zero, e anuncia `tools` e `structured_outputs`. Roda como teste do adapter (contra fixture gravada) e como passo do canary do bakeoff (ao vivo).
+**Verificação de drift**: antes de confiar no pin, o adapter consulta o catálogo de endpoints de retenção zero do provedor e afirma três coisas — o endpoint existe, é de retenção zero, e anuncia os parâmetros que a rodada envia (`tools`, `structured_outputs`, `reasoning` e o teto de saída com o nome que o pin declara). Roda como teste do adapter (contra fixture gravada) e como passo do canary do bakeoff (ao vivo).
 
 ### 4. Streaming — eventos tipados, resposta atômica
 
@@ -225,9 +225,17 @@ As defesas de injeção são estruturais, não censura de dado: ferramentas 100%
 
 - Binário `mia-bench` no mesmo crate, compartilhando o código de adapter e loop com a aplicação.
 - Catálogo em `evals/mia/`, um arquivo por caso: identificador, família, pergunta, fixture, esperado, repetições. Seis famílias: seleção de ferramenta, multi-hop, fidelidade numérica, didática, injeção, recusa honesta com proposta. Fixtures sintéticas e método-neutras — o catálogo é público.
-- Duas fases: peneira com uma repetição em todos os candidatos, final com três repetições nos dois ou três sobreviventes. Prompts enxutos, raciocínio no piso. Teto de US$ 5, com trava dupla: teto no runner por custo acumulado e chave dedicada com limite no painel do provedor.
+- Sonda de custo antes das fases: uma repetição de um caso em cada pin liberado, projetando o desenho inteiro. Projeção acima do teto encerra a corrida ali, com o número em vez do palpite — sem ela, descobrir que a medição não cabe custa o teto todo.
+- Duas fases: peneira com uma repetição em todos os candidatos sobre o catálogo inteiro, final com três repetições nos dois ou três sobreviventes. O teto de referência corre a peneira sobre um recorte — o primeiro caso de cada família, derivado do catálogo: a régua responde "a suíte é justa? um modelo de fronteira zera o que se pede?", pergunta que uma amostra por dimensão responde, e correr o catálogo inteiro pagaria várias vezes pela mesma resposta com o modelo mais caro da matriz; quem disputa o default corre tudo, porque aí o que se mede é a diferença entre candidatos. Prompts enxutos, raciocínio no piso. Nada é decidido sobre medição parcial: a peneira precisa cobrir a cobertura de cada pin liberado — o recorte, no teto de referência — e a final, todo finalista selecionado.
+- Teto de US$ 20, fixado a partir de medição: com o custo por rodada sondado em cada pin, o desenho integral projeta cerca de US$ 17 (verificado 2026-07), e o teto o cobre com folga. Trava dupla: teto no runner por custo acumulado e chave dedicada com limite no painel do provedor.
+
+  **O teto do runner é soft, e isso é decisão ratificada, não lacuna.** O custo de uma rodada só é conhecido depois que o turno fecha, então o acumulado pode fechar em teto mais o custo de um turno. As cotas se recalculam do que sobrou de verdade, de modo que só a última rodada alcança esse limite; a parada dura é o limite da chave dedicada no painel do provedor. Um teto local duro exigiria pré-autorização de custo, que a API do provedor não oferece.
+
+  **Rodada sem custo declarado é cobrada pelo pior caso, e isso também é decisão ratificada.** A cobrança é `max(parcial declarado, permissão da rodada)` — a permissão é `min(teto de conversa, sobra na trava)`, e o `max` existe porque o corte por custo é pós-turno: o parcial pode passar da permissão, e cobrar só o teto subcobraria. O valor cobrado é o que entra no total comparável do candidato — a lacuna pesa no desempate por custo, nunca deixa o candidato cego mais barato no papel. A **segunda** rodada sem declaração do mesmo pin encerra a corrida daquele pin, e só dele: o corte por custo declarado não alcança turno que não declara, então cada rodada cega pode custar mais do que a cobrança registra — o resíduo ratificado é de até **duas rodadas cegas por pin**, com a chave dedicada como parada dura.
+
 - Ordenação dos candidatos lê o benchmark de agente bancário acima do índice geral de inteligência; o gate real é a suíte própria.
 - **Gate para ligar**: famílias mecânicas em 100%, didática aprovada em julgamento cego. Reexecução obrigatória a cada mudança de fachada, prompt de sistema ou modelo. O runner não roda em CI (custo e segredo); cada execução versiona relatório datado com modelo, provedor e resultados.
+- O julgamento cego tem caderno próprio, sem nome de modelo em lugar nenhum — cego é propriedade do arquivo, não da disciplina de quem lê. A chave que liga bilhete a modelo fica no relatório, aberto depois. Um comando offline recebe o caderno julgado e escreve a decisão final; enquanto houver resposta por ler, o relatório publica o líder e mantém o default vazio. Adotar o pin é sempre gesto manual.
 
 ### 10. Sequenciamento
 
@@ -263,7 +271,7 @@ TDD é obrigatório na fachada e no loop: são ferramentas de agente pelos padr�
 - Memória permanente sobre a pessoa, ações proativas em background, multi-agente.
 - Recomendações de investimento ou tributárias.
 - Modelo local na máquina; segundo provedor (o trait deixa a porta aberta como adição posterior barata, não como dívida).
-- Modelos de peso aberto: o gate de precisão de serviço e rota alternativa se mantém — a rota disponível serve quantização reduzida com provedor único.
+- Modelo de peso aberto em precisão não declarada: a matriz só admite endpoint cuja quantização o catálogo declara, e endpoint × quantização é a identidade do candidato — `unknown` fica fora, e trocar de precisão é trocar de candidato, nunca um drift silencioso do mesmo pin.
 - Sumarização de conversa longa: a v1 avisa honestamente ao chegar no teto.
 - Texto token a token na interface.
 

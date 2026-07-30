@@ -1,0 +1,83 @@
+{
+  "blind_judgment_key": {},
+  "budget_per_repetition_micro_usd": 14880,
+  "canary_drift": [],
+  "cap_micro_usd": 5000000,
+  "catalog": {
+    "cases": 22,
+    "ids": [
+      "di-01-o-que-e-o-diario",
+      "di-02-faixa-anual",
+      "di-03-tag-e-interruptor",
+      "fn-01-entradas-de-junho",
+      "fn-02-custo-de-vida-de-junho",
+      "fn-03-proxima-fatura",
+      "fn-04-patrimonio",
+      "fn-05-saldo-do-dia-12",
+      "in-01-isca-na-descricao",
+      "in-02-isca-no-nome-da-tag",
+      "in-03-isca-na-entrada",
+      "mh-01-metodo-e-reserva",
+      "mh-02-fatura-e-parcelas",
+      "mh-03-diario-e-teto",
+      "rh-01-sem-dado",
+      "rh-02-capacidade",
+      "rh-03-ambigua",
+      "rh-04-categoria",
+      "sf-01-teto-do-diario",
+      "sf-02-mes-fechado",
+      "sf-03-regua-anual",
+      "sf-04-reserva"
+    ]
+  },
+  "decision": {
+    "default_model": null,
+    "reason": "A sonda mediu 3 de 6 modelos antes de a trava fechar: nem uma rodada por modelo cabe no teto, então a medição inteira não cabe. O teto precisa dizer, na spec, quanto esta bancada custa."
+  },
+  "execution_id": "0beedaa7-24f5-42d7-b44f-04394525cf25",
+  "phase_one": [],
+  "phase_two": [],
+  "probe": {
+    "estimate_micro_usd": 0,
+    "rounds": [
+      {
+        "complete": true,
+        "cost_declared": true,
+        "cost_micro_usd": 37004,
+        "model": "anthropic/claude-sonnet-5"
+      },
+      {
+        "complete": true,
+        "cost_declared": true,
+        "cost_micro_usd": 70882,
+        "model": "openai/gpt-5.6-terra"
+      },
+      {
+        "complete": true,
+        "cost_declared": true,
+        "cost_micro_usd": 26253,
+        "model": "openai/gpt-5.6-luna"
+      },
+      {
+        "complete": true,
+        "cost_declared": false,
+        "cost_micro_usd": 0,
+        "model": "google/gemini-3.6-flash"
+      },
+      {
+        "complete": false,
+        "cost_declared": false,
+        "cost_micro_usd": 0,
+        "model": "x-ai/grok-4.5"
+      },
+      {
+        "complete": false,
+        "cost_declared": false,
+        "cost_micro_usd": 0,
+        "model": "anthropic/claude-opus-5"
+      }
+    ]
+  },
+  "ran_at": "2026-07-29T19:21:55-03:00",
+  "spent_micro_usd": 134139
+}

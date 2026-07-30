@@ -7,7 +7,8 @@
   "expected": {
     "judgment": "mecanico",
     "tools": {
-      "must_call": ["get_method_guidance", "get_budget_settings"],
+      "must_call": ["get_method_guidance"],
+      "must_call_any": [["get_budget_settings", "get_financial_snapshot"]],
       "min_calls": 2
     },
     "answer": {
