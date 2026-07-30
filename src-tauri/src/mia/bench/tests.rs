@@ -988,7 +988,7 @@ fn o_modo_bakeoff_traz_o_proprio_teto() {
     let bakeoff = cli::parse_args(&args(&["bakeoff"])).unwrap();
 
     assert_eq!(bakeoff.mode, cli::Mode::Bakeoff);
-    assert_eq!(bakeoff.max_spend_micro_usd, 5_000_000);
+    assert_eq!(bakeoff.max_spend_micro_usd, 20_000_000);
 
     let explicito = cli::parse_args(&args(&["bakeoff", "--max-spend-usd", "2.00"])).unwrap();
 
@@ -1983,8 +1983,128 @@ async fn o_relatorio_do_bakeoff_identifica_o_catalogo_medido() {
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(written["catalog"]["cases"], 2);
     assert_eq!(written["catalog"]["ids"], json!(["caso-1", "caso-2"]));
+    // O recorte da régua sai declarado: a cobertura menor do teto de referência é desenho, e o
+    // relatório precisa dizer isso para ninguém a ler como truncamento.
+    assert_eq!(written["catalog"]["ceiling_cases"], 1);
+    assert_eq!(written["catalog"]["ceiling_ids"], json!(["caso-1"]));
 
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// O recorte da régua é DERIVADO do catálogo — o primeiro caso de cada família, na ordem — e não
+/// uma amostra escolhida à mão, que mediria o gosto de quem escolheu.
+#[test]
+fn o_recorte_da_regua_e_um_caso_por_familia() {
+    let case_with = |id: &str, family: &str| {
+        let mut body = valid_case_json();
+        body["id"] = json!(id);
+        body["family"] = json!(family);
+        body["fixture"] = json!("casa_vazia");
+        body["expected"] = json!({ "judgment": "mecanico" });
+        body["verification"] = json!(null);
+        parse(&format!("{id}.json"), &body).unwrap()
+    };
+    let cases = vec![
+        case_with("caso-1", "fidelidade_numerica"),
+        case_with("caso-2", "fidelidade_numerica"),
+        case_with("caso-3", "selecao_de_ferramenta"),
+        case_with("caso-4", "selecao_de_ferramenta"),
+    ];
+
+    let slice: Vec<String> = bakeoff::ceiling_slice(&cases)
+        .into_iter()
+        .map(|case| case.id)
+        .collect();
+
+    assert_eq!(slice, ["caso-1", "caso-3"]);
+}
+
+/// Na peneira, o teto de referência corre o recorte e os candidatos correm o catálogo inteiro: a
+/// régua responde "a suíte é justa?" com uma amostra por família, e quem disputa o default é
+/// medido na diferença — que só aparece no catálogo completo.
+#[tokio::test]
+async fn o_teto_de_referencia_corre_o_recorte_na_peneira() {
+    let dir = reports_dir();
+    let mut cases = bakeoff_cases();
+    let mut body = valid_case_json();
+    body["id"] = json!("caso-3");
+    body["family"] = json!("selecao_de_ferramenta");
+    body["fixture"] = json!("casa_vazia");
+    body["expected"] = json!({ "judgment": "mecanico" });
+    body["verification"] = json!(null);
+    cases.push(parse("caso-3.json", &body).unwrap());
+
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: zdr_catalog(),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let (bakeoff, _) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases,
+            execution_id: "execucao-de-teste".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    for run in &bakeoff.phase_one {
+        let measured: Vec<&str> = run.cases.iter().map(|case| case.case.id.as_str()).collect();
+        if run.pin.role == crate::mia::provider::pins::PinRole::Ceiling {
+            assert_eq!(
+                measured,
+                vec!["caso-1", "caso-3"],
+                "a régua corre um caso por família"
+            );
+        } else {
+            assert_eq!(
+                measured,
+                vec!["caso-1", "caso-2", "caso-3"],
+                "quem disputa corre o catálogo inteiro"
+            );
+        }
+    }
+    assert_eq!(bakeoff.ceiling_catalog, vec!["caso-1", "caso-3"]);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A projeção da peneira reflete o recorte: o custo da régua entra multiplicado pelos casos DELA.
+/// Sem isso, a sonda recusaria medições que cabem — pelo preço de um catálogo que a régua não
+/// corre.
+#[test]
+fn a_projecao_reflete_o_recorte_da_regua() {
+    let probe = |model: &str, cost| bakeoff::Probe {
+        pin: pinned(model),
+        cost_micro_usd: cost,
+        cost_declared: true,
+        complete: true,
+    };
+    let probes = vec![
+        probe("anthropic/claude-sonnet-5", 1_000),
+        probe("openai/gpt-5.6-terra", 1_000),
+        probe("openai/gpt-5.6-luna", 1_000),
+        probe("google/gemini-3.6-flash", 1_000),
+        probe("x-ai/grok-4.5", 1_000),
+        probe("anthropic/claude-opus-5", 10_000),
+    ];
+
+    // Sonda 15.000 + peneira (5×10×1.000 + 10.000×2) + final (3×1.000×10×3) = 175.000, e um
+    // quarto de margem sobre o todo.
+    let integral = 15_000 + 70_000 + 90_000;
+    assert_eq!(bakeoff::estimate(&probes, 10, 2), integral + integral / 4);
+
+    // A régua correndo o catálogo inteiro projetaria mais caro: é essa a diferença que o recorte
+    // devolve ao orçamento.
+    assert!(bakeoff::estimate(&probes, 10, 2) < bakeoff::estimate(&probes, 10, 10));
 }
 
 /// Cada pin manda o piso que declarou: mandar "desligado" a um modelo de raciocínio obrigatório é
@@ -2263,22 +2383,23 @@ async fn a_sonda_recusa_quando_a_medicao_inteira_nao_cabe() {
     .await
     .unwrap();
 
-    // Seis rodadas de sonda (6.000), mais 6×20×1.000 na peneira e 3×20×3×1.000 na final —
-    // 306.000, e 382.500 com a margem de um quarto. Muito além do teto.
+    // Seis rodadas de sonda (6.000), mais 5×20×1.000 + 1×1×1.000 na peneira (a régua corre o
+    // recorte, aqui um caso) e 3×20×3×1.000 na final — 287.000, e 358.750 com a margem de um
+    // quarto. Muito além do teto.
     assert_eq!(bakeoff.probes.len(), PINS.len());
-    assert_eq!(bakeoff.estimate_micro_usd, 382_500);
+    assert_eq!(bakeoff.estimate_micro_usd, 358_750);
     assert_eq!(lock.spent_micro_usd(), 6_000);
     assert!(bakeoff.phase_one.is_empty(), "nada além da sonda foi pago");
 
     let Decision::NoWinner { reason } = &bakeoff.decision else {
         panic!("uma medição que não cabe não decide o default");
     };
-    assert!(reason.contains("382500"));
+    assert!(reason.contains("358750"));
     assert!(reason.contains("100000"));
 
     let written: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(written["probe"]["estimate_micro_usd"], 382_500);
+    assert_eq!(written["probe"]["estimate_micro_usd"], 358_750);
     assert_eq!(
         written["probe"]["rounds"].as_array().unwrap().len(),
         PINS.len()
@@ -2312,10 +2433,10 @@ fn a_projecao_da_final_assume_os_candidatos_mais_caros() {
     // (os três candidatos mais caros, três repetições por caso), e um quarto de margem sobre o
     // todo — uma amostra por modelo estima, não limita.
     let integral = 20_000 + 20_000 + (4_000 + 3_000 + 2_000) * 3;
-    assert_eq!(bakeoff::estimate(&probes, 1), integral + integral / 4);
+    assert_eq!(bakeoff::estimate(&probes, 1, 1), integral + integral / 4);
 
     // A sonda entra na conta: ignorá-la aprovaria, na fronteira, medições que não cabem.
-    assert!(bakeoff::estimate(&probes, 1) > 20_000 + (4_000 + 3_000 + 2_000) * 3);
+    assert!(bakeoff::estimate(&probes, 1, 1) > 20_000 + (4_000 + 3_000 + 2_000) * 3);
 }
 
 // --- Regressões restauradas ---------------------------------------------------------------
@@ -2499,13 +2620,14 @@ fn a_decisao_recusa_uma_final_de_um_so() {
 /// devolveria uma fatia menor, apertando a peneira sem nada avisar.
 #[test]
 fn a_fatia_da_peneira_nao_estoura_em_teto_alto() {
-    // Com 22 casos: 6 rodadas de sonda, 132 de peneira e 198 de final — 336 no total, e a fase um
-    // acumula as 138 primeiras.
-    let cap = bakeoff::phase_one_cap(i64::MAX, 22);
+    // Com 22 casos e recorte de 6: 6 rodadas de sonda, 116 de peneira (cinco candidatos
+    // correm 22, a régua corre 6) e 198 de final — 320 no total, e a fase um acumula as 122
+    // primeiras.
+    let cap = bakeoff::phase_one_cap(i64::MAX, 22, 6);
 
-    assert_eq!(cap, ((i64::MAX as i128 * 138) / 336) as i64);
+    assert_eq!(cap, ((i64::MAX as i128 * 122) / 320) as i64);
     // O que uma multiplicação saturada devolveria, apertando a peneira em silêncio.
-    assert_ne!(cap, i64::MAX / 336);
+    assert_ne!(cap, i64::MAX / 320);
 }
 
 /// O bakeoff decide qual modelo conversa com o dinheiro de alguém: um veredito tirado de um
@@ -2533,6 +2655,7 @@ fn o_resumo_destaca_a_divergencia_do_pin_em_uso() {
         probes: Vec::new(),
         estimate_micro_usd: 0,
         catalog: vec!["fn-01".to_string()],
+        ceiling_catalog: vec!["fn-01".to_string()],
         cap_micro_usd: 5_000_000,
         spent_micro_usd: 0,
         drifted: vec![(default_pin(), "O modelo sumiu do catálogo.".to_string())],
@@ -2553,8 +2676,8 @@ fn o_resumo_destaca_a_divergencia_do_pin_em_uso() {
 /// levantá-lo seria contornar a decisão.
 #[test]
 fn o_teto_do_bakeoff_so_pode_ser_abaixado() {
-    let error = cli::parse_args(&args(&["bakeoff", "--max-spend-usd", "5.000001"])).unwrap_err();
-    assert!(error.contains("US$ 5"));
+    let error = cli::parse_args(&args(&["bakeoff", "--max-spend-usd", "20.000001"])).unwrap_err();
+    assert!(error.contains("US$ 20"));
 
     let barato = cli::parse_args(&args(&["bakeoff", "--max-spend-usd", "1.00"])).unwrap();
     assert_eq!(barato.max_spend_micro_usd, 1_000_000);
@@ -2581,8 +2704,8 @@ fn a_reserva_da_peneira_segue_os_custos_medidos_e_nao_a_contagem() {
     ];
     let cap = 5_000_000;
 
-    let por_contagem = bakeoff::phase_one_cap(cap, 22);
-    let por_custo = bakeoff::measured_phase_one_cap(cap, &probes, 22);
+    let por_contagem = bakeoff::phase_one_cap(cap, 22, 6);
+    let por_custo = bakeoff::measured_phase_one_cap(cap, &probes, 22, 6);
 
     // A final projetada são três candidatos a 10.000 × 22 casos × 3 repetições, mais margem:
     // 1.980.000 + 495.000. O resto é da peneira — bem mais que a fatia por contagem.
@@ -2593,7 +2716,10 @@ fn a_reserva_da_peneira_segue_os_custos_medidos_e_nao_a_contagem() {
     );
 
     // Sem sonda não há custo medido, e a contagem é o melhor que se tem.
-    assert_eq!(bakeoff::measured_phase_one_cap(cap, &[], 22), por_contagem);
+    assert_eq!(
+        bakeoff::measured_phase_one_cap(cap, &[], 22, 6),
+        por_contagem
+    );
 }
 
 // --- O julgamento cego que fecha o ciclo -------------------------------------------------

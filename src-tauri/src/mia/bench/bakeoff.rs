@@ -50,16 +50,22 @@ pub(crate) fn share(cap: i64, (numerator, denominator): (i64, i64)) -> i64 {
     ((cap as i128 * numerator as i128) / denominator as i128) as i64
 }
 
-/// Quantas rodadas cada etapa tem, dado o tamanho do catálogo: sonda, peneira e final.
+/// Quantas rodadas cada etapa tem, dados o catálogo e o recorte da régua: sonda, peneira e final.
 ///
 /// É daqui que saem as fatias do teto. Elas são DERIVADAS da cardinalidade, e não pares de números
 /// escritos à mão: acrescentar um pin à matriz ou um caso ao catálogo muda as proporções sozinho, e
-/// uma fração congelada apertaria uma etapa em silêncio na primeira mudança.
-fn rounds(cases: usize) -> (i64, i64, i64) {
-    let cases = cases as i64;
+/// uma fração congelada apertaria uma etapa em silêncio na primeira mudança. Na peneira, quem
+/// disputa corre o catálogo inteiro; o teto de referência corre só o recorte dele.
+fn rounds(cases: usize, ceiling_cases: usize) -> (i64, i64, i64) {
+    let candidates = PINS
+        .iter()
+        .filter(|pin| pin.role != PinRole::Ceiling)
+        .count() as i64;
+    let ceilings = PINS.len() as i64 - candidates;
     let probe = PINS.len() as i64;
-    let sieve = PINS.len() as i64 * PHASE_ONE_REPETITIONS as i64 * cases;
-    let finals = MAX_FINALISTS as i64 * PHASE_TWO_REPETITIONS as i64 * cases;
+    let sieve = PHASE_ONE_REPETITIONS as i64
+        * (candidates * cases as i64 + ceilings * ceiling_cases as i64);
+    let finals = MAX_FINALISTS as i64 * PHASE_TWO_REPETITIONS as i64 * cases as i64;
     (probe, sieve, finals)
 }
 
@@ -70,16 +76,21 @@ fn rounds(cases: usize) -> (i64, i64, i64) {
 /// os candidatos consome a fatia da peneira sem que nada tenha corrido errado — e a peneira
 /// truncaria com o teto inteiro ainda cabendo. Por isso, quando a sonda já mediu, a reserva sai
 /// dos CUSTOS: o que a peneira precisa, mais a final projetada guardada para depois.
-pub(crate) fn phase_one_cap(cap: i64, cases: usize) -> i64 {
-    let (probe, sieve, finals) = rounds(cases);
+pub(crate) fn phase_one_cap(cap: i64, cases: usize, ceiling_cases: usize) -> i64 {
+    let (probe, sieve, finals) = rounds(cases, ceiling_cases);
     share(cap, (probe + sieve, probe + sieve + finals))
 }
 
 /// O teto acumulado até o fim da peneira quando a sonda já disse quanto cada modelo custa: tudo
 /// menos o que a final vai precisar, sem passar do teto.
-pub(crate) fn measured_phase_one_cap(cap: i64, probes: &[Probe], cases: usize) -> i64 {
+pub(crate) fn measured_phase_one_cap(
+    cap: i64,
+    probes: &[Probe],
+    cases: usize,
+    ceiling_cases: usize,
+) -> i64 {
     if probes.is_empty() {
-        return phase_one_cap(cap, cases);
+        return phase_one_cap(cap, cases, ceiling_cases);
     }
     let mut candidates: Vec<i64> = probes
         .iter()
@@ -356,6 +367,9 @@ pub(crate) struct Bakeoff {
     pub estimate_micro_usd: i64,
     /// Os identificadores dos casos medidos, na ordem em que correram.
     pub catalog: Vec<String>,
+    /// O recorte da régua: os casos que o teto de referência corre na peneira, um por família.
+    /// Publicado para que ninguém leia a cobertura menor como truncamento.
+    pub ceiling_catalog: Vec<String>,
     pub cap_micro_usd: i64,
     pub spent_micro_usd: i64,
     pub drifted: Vec<(&'static ModelPin, String)>,
@@ -425,6 +439,7 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
         .iter()
         .filter(|pin| pin.role != PinRole::Ceiling)
         .count();
+    let ceiling_cases = ceiling_slice(&config.cases);
     let pack = config.pack_root.as_ref().map(MethodPack::at);
     let mut bakeoff = Bakeoff {
         ran_at: config.ran_at.to_string(),
@@ -433,6 +448,7 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
         probes: Vec::new(),
         estimate_micro_usd: 0,
         catalog: config.cases.iter().map(|case| case.id.clone()).collect(),
+        ceiling_catalog: ceiling_cases.iter().map(|case| case.id.clone()).collect(),
         cap_micro_usd: lock.cap_micro_usd(),
         spent_micro_usd: 0,
         drifted: verdict.drifted,
@@ -551,7 +567,8 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
             return Ok((bakeoff, path));
         }
 
-        bakeoff.estimate_micro_usd = estimate(&bakeoff.probes, config.cases.len());
+        bakeoff.estimate_micro_usd =
+            estimate(&bakeoff.probes, config.cases.len(), ceiling_cases.len());
         if bakeoff.estimate_micro_usd > lock.cap_micro_usd() {
             bakeoff.decision = Decision::NoWinner {
                 reason: format!(
@@ -579,11 +596,20 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
         lock.cap_micro_usd(),
         &bakeoff.probes,
         config.cases.len(),
+        ceiling_cases.len(),
     ));
     for pin in verdict.cleared.clone() {
+        // Quem disputa o default corre o catálogo inteiro — o que se mede é a diferença entre
+        // candidatos. O teto de referência corre o recorte: a pergunta dele é outra, e responde-se
+        // com uma amostra de cada família.
+        let coverage = if pin.role == PinRole::Ceiling {
+            ceiling_cases.clone()
+        } else {
+            config.cases.clone()
+        };
         let run = match run_catalog(
             adapter,
-            config.cases.clone(),
+            coverage,
             &config.bench(
                 pin,
                 Repetitions::Fixed(PHASE_ONE_REPETITIONS),
@@ -622,7 +648,8 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog>(
 
     // A peneira precisa ter medido TODO pin liberado: escolher entre os dois primeiros porque a
     // trava fechou no terceiro é escolher dentro de um prefixo da matriz, e o relatório leria como
-    // se a matriz inteira tivesse concorrido.
+    // se a matriz inteira tivesse concorrido. Cada corrida responde pelos casos DELA — o teto de
+    // referência precisa ter medido o recorte por inteiro, que é desenho, não truncamento.
     let unmeasured: Vec<&str> = sieved
         .iter()
         .filter(|(_, score)| !score.complete)
@@ -782,6 +809,10 @@ pub(crate) fn render(bakeoff: &Bakeoff, ran_at: &str) -> Value {
         "catalog": {
             "cases": bakeoff.catalog.len(),
             "ids": bakeoff.catalog,
+            // O recorte da régua sai declarado: sem ele, a corrida menor do teto de referência
+            // leria como truncamento, e truncamento invalida decisão.
+            "ceiling_cases": bakeoff.ceiling_catalog.len(),
+            "ceiling_ids": bakeoff.ceiling_catalog,
         },
         "cap_micro_usd": bakeoff.cap_micro_usd,
         "spent_micro_usd": bakeoff.spent_micro_usd,
@@ -815,7 +846,7 @@ pub(crate) fn render(bakeoff: &Bakeoff, ran_at: &str) -> Value {
 /// os pins mais a final nos finalistas. Serve de régua para quem lê o relatório decidir se o teto
 /// cabe na bancada de hoje — o custo real por rodada só se conhece rodando.
 fn budget_per_repetition(bakeoff: &Bakeoff) -> i64 {
-    let (probe, sieve, finals) = rounds(bakeoff.catalog.len());
+    let (probe, sieve, finals) = rounds(bakeoff.catalog.len(), bakeoff.ceiling_catalog.len());
     match probe + sieve + finals {
         0 => 0,
         total => bakeoff.cap_micro_usd / total,
@@ -845,21 +876,29 @@ pub(crate) struct Probe {
 /// ignora com o teto inteiro aprova, na fronteira, medições que não cabem — o custo sondado volta
 /// como diferença entre o projetado e o cobrado.
 ///
-/// A peneira é direta: cada pin roda o catálogo uma vez. A final é estimada pelo pior caso
-/// plausível — os três candidatos mais CAROS —, porque quem vai passar a peneira ainda não se
-/// sabe, e errar para cima só antecipa uma recusa que custa centavos, enquanto errar para baixo
-/// gasta o teto inteiro para descobrir a mesma coisa.
+/// A peneira é direta: cada candidato roda o catálogo uma vez, e o teto de referência roda o
+/// recorte dele. A final é estimada pelo pior caso plausível — os três candidatos mais CAROS —,
+/// porque quem vai passar a peneira ainda não se sabe, e errar para cima só antecipa uma recusa
+/// que custa centavos, enquanto errar para baixo gasta o teto inteiro para descobrir a mesma
+/// coisa.
 ///
 /// Sobre o todo vai a MARGEM: uma amostra por modelo é estimativa pontual, não limite superior. O
 /// catálogo é heterogêneo, uma trajetória de recusa ou de regeneração custa mais que a sondada, e
 /// o estado do cache de prompt muda entre a sonda e a corrida. A margem não torna a projeção
 /// exata; ela desloca o erro para o lado que custa centavos.
-pub(crate) fn estimate(probes: &[Probe], cases: usize) -> i64 {
+pub(crate) fn estimate(probes: &[Probe], cases: usize, ceiling_cases: usize) -> i64 {
     let cases = cases as i64;
     let probed: i64 = probes.iter().map(|probe| probe.cost_micro_usd).sum();
     let sieve: i64 = probes
         .iter()
-        .map(|probe| probe.cost_micro_usd.saturating_mul(cases))
+        .map(|probe| {
+            let coverage = if probe.pin.role == PinRole::Ceiling {
+                ceiling_cases as i64
+            } else {
+                cases
+            };
+            probe.cost_micro_usd.saturating_mul(coverage)
+        })
         .sum();
 
     let mut candidates: Vec<i64> = probes
@@ -876,6 +915,24 @@ pub(crate) fn estimate(probes: &[Probe], cases: usize) -> i64 {
 
     let total = probed.saturating_add(sieve).saturating_add(finals);
     total.saturating_add(share(total, ESTIMATE_MARGIN))
+}
+
+/// O recorte que o teto de referência corre na peneira: o primeiro caso de cada família, na ordem
+/// do catálogo.
+///
+/// A régua responde uma pergunta só — a suíte é justa? um modelo de fronteira zera o que se pede?
+/// — e uma amostra de cada dimensão a responde; correr o catálogo inteiro pagaria várias vezes
+/// pela mesma resposta, com o modelo mais caro da matriz. Quem disputa o default corre tudo,
+/// porque lá o que se mede é a diferença entre candidatos. O primeiro de cada família porque o
+/// recorte precisa ser DERIVADO do catálogo: uma amostra escolhida à mão mediria o gosto de quem
+/// escolheu.
+pub(crate) fn ceiling_slice(cases: &[Case]) -> Vec<Case> {
+    let mut seen = std::collections::BTreeSet::new();
+    cases
+        .iter()
+        .filter(|case| seen.insert(case.family))
+        .cloned()
+        .collect()
 }
 
 /// O caso que a sonda usa: o mais caro estruturalmente do catálogo — multi-hop decompõe a pergunta

@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 pub(crate) const USAGE: &str = "Uso: mia-bench [--model <id do pin>] [--max-spend-usd <decimal>] \
      [--pack <caminho>] [--only <trecho do id>] [--cases-dir <caminho>] [--reports-dir <caminho>]\n\
-     \x20    mia-bench bakeoff [--max-spend-usd <decimal, teto US$ 5>] [--pack <caminho>] \
+     \x20    mia-bench bakeoff [--max-spend-usd <decimal, teto US$ 20>] [--pack <caminho>] \
      [--reports-dir <caminho>]\n\
      \x20    mia-bench julgar --report <relatório> --verdicts <caderno julgado>";
 
@@ -32,12 +32,13 @@ pub(crate) enum Mode {
 /// Um dólar cobre o catálogo inteiro com folga num modelo só, e não cobre um laço desgovernado.
 const SINGLE_CAP_MICRO_USD: i64 = 1_000_000;
 
-/// O teto do bakeoff, fixado pela spec. Ele NÃO é uma medição: o desenho integral são 336
-/// repetições — seis de sonda, 132 de peneira, 198 de final —, o que dá cerca de 1,5 centavo por
-/// repetição, e ninguém provou ainda que uma rodada desta bancada cabe nisso. Se não couber, a corrida termina sem decisão dizendo quem não foi
-/// medido — que é a resposta honesta —, e o teto volta à mesa como decisão de spec, nunca como
-/// flag de quem está com pressa. Quem paga é a chave dedicada, com o próprio limite no painel.
-const BAKEOFF_CAP_MICRO_USD: i64 = 5_000_000;
+/// O teto do bakeoff, fixado pela spec a partir de MEDIÇÃO: com o custo por rodada sondado em
+/// cada pin, o desenho integral — sonda, peneira com o recorte da régua e final — projeta cerca
+/// de US$ 17 (verificado 2026-07), e o teto o cobre com folga sem alcançar o limite da chave
+/// dedicada no painel do provedor, que é a parada dura. Se a projeção passar do teto, a corrida
+/// termina sem decisão dizendo o número que falta — que é a resposta honesta —, e o teto volta à
+/// mesa como decisão de spec, nunca como flag de quem está com pressa.
+const BAKEOFF_CAP_MICRO_USD: i64 = 20_000_000;
 
 /// O catálogo versionado. Sair dele é recorte, e recorte não decide modelo default.
 const DEFAULT_CASES_DIR: &str = "evals/mia/cases";
