@@ -3728,6 +3728,58 @@ async fn pack_sem_nucleo_do_metodo_recusa_antes_de_qualquer_rodada() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Valor esperado que o prefixo do método também escreve nunca prova proveniência de dado: o
+/// classificador desconta número sombreado, e o caso que exige prova de cálculo falharia em TODO
+/// modelo, por defeito do instrumento. A bancada recusa antes de pagar, nomeando caso e valor —
+/// senão a colisão volta silenciosa na próxima edição do núcleo curado.
+#[tokio::test]
+async fn valor_esperado_sombreado_pelo_prefixo_recusa_antes_de_qualquer_rodada() {
+    let dir = reports_dir();
+    let pack = TempPack::new();
+    pack.core("# Núcleo\n\nAtualiza a fatura (R$ 100 + compra de R$ 20 → R$ 120).\n");
+    pack.root_file("forbidden-bench.txt", "termo-que-nao-aparece\n");
+
+    let mut body = valid_case_json();
+    body["id"] = json!("sf-99-teto-sintetico");
+    body["expected"] = json!({
+        "judgment": "mecanico",
+        "provenance": "calculo",
+        "answer": { "must_contain": ["120,00"] }
+    });
+    body["verification"] = json!({ "tool": "get_budget_settings", "arguments": {} });
+    let case = parse("sf-99-teto-sintetico.json", &body).unwrap();
+
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: json!({"data": []}),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let error = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: vec![case],
+            execution_id: "execucao-de-teste".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
+            pack_root: Some(pack.path().to_path_buf()),
+            limits: RunLimits::default(),
+            reports_dir: &dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap_err();
+
+    assert!(
+        error.contains("sf-99-teto-sintetico") && error.contains("120,00"),
+        "recusa: {error}"
+    );
+    assert_eq!(lock.spent_micro_usd(), 0);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// O caderno de outra execução tem os MESMOS bilhetes — eles são determinísticos por construção.
 /// É a identidade da execução que impede um julgamento de decidir a corrida errada.
 #[tokio::test]

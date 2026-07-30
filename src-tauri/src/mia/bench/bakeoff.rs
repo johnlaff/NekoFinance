@@ -590,6 +590,34 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog + EndpointsCatalog>(
         None => None,
     };
 
+    // Valor esperado que o prefixo do método também escreve não tem como provar proveniência de
+    // dado: o classificador desconta número sombreado, e um caso que exige prova de cálculo
+    // reprovaria TODO candidato — defeito do instrumento cobrado como se fosse do modelo. A
+    // recusa vem antes de qualquer centavo e nomeia caso e valor, porque o conserto é trocar o
+    // valor da fixture ou o exemplo do núcleo curado.
+    if let Some(system) = system.as_deref() {
+        let mut prefix = crate::mia::run::grounding::Facts::new();
+        prefix.absorb_text(&system.text);
+        for case in &config.cases {
+            if case.expected.provenance != Some(super::case::ExpectedProvenance::Calculo) {
+                continue;
+            }
+            for expected in &case.expected.answer.must_contain {
+                if super::case::money_cents(expected).is_some()
+                    && crate::mia::run::grounding::method_shadows(&prefix, expected)
+                {
+                    return Err(format!(
+                        "O caso {} espera \"{expected}\" com prova de cálculo, mas o prefixo do \
+                         método também escreve esse número — sombreado, ele nunca prova \
+                         proveniência de dado. Troque o valor da fixture ou o exemplo do núcleo \
+                         antes de gastar.",
+                        case.id
+                    ));
+                }
+            }
+        }
+    }
+
     let zdr_catalog = ZdrCatalog::fetch(adapter).await?;
     let general_catalog = general_catalog_for(&contenders(), adapter).await?;
     let verdict = canary(&zdr_catalog, &general_catalog, &contenders());

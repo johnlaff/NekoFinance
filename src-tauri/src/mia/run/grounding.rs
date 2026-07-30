@@ -151,6 +151,14 @@ pub(crate) fn orphans(answer: &str, facts: &Facts) -> Vec<String> {
 ///
 /// Número que o método também sustenta — uma faixa, um limiar — não transforma explicação em
 /// conta: o que transforma é um número que só existe porque uma leitura o trouxe.
+/// O conjunto de método escreve este número? É a pergunta que a bancada faz ANTES de pagar uma
+/// corrida: valor esperado que o prefixo do método também escreve nunca prova proveniência de
+/// dado — [`cites_data`] desconta número sombreado —, e um caso que exige prova de cálculo
+/// reprovaria todo candidato por defeito do instrumento, não do modelo.
+pub(crate) fn method_shadows(facts: &Facts, token: &str) -> bool {
+    facts.method_numbers.contains(&canonical_token(token))
+}
+
 pub(crate) fn cites_data(answer: &str, facts: &Facts) -> bool {
     numeric_tokens(answer).into_iter().any(|token| match token {
         NumericToken::Supported(token) => {

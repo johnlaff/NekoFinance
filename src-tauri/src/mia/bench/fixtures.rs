@@ -528,7 +528,7 @@ async fn seed_casa_basica(pool: &SqlitePool) -> Result<(), String> {
     )
     .await?;
 
-    daily_budget(pool, 12_000).await?;
+    daily_budget(pool, 13_700).await?;
 
     sheet_balance(pool, "2026-07-01", 900_000).await?;
     sheet_balance(pool, "2026-07-05", 700_000).await?;
@@ -677,7 +677,7 @@ mod tests {
         assert_eq!(invoices[0]["due_date"], "2026-08-15");
         assert_eq!(invoices[0]["amount_cents"], 184_760);
         assert_eq!(snapshot["reserve"]["balance_cents"], 2_100_000);
-        assert_eq!(snapshot["daily_ceiling_cents"]["value"], 12_000);
+        assert_eq!(snapshot["daily_ceiling_cents"]["value"], 13_700);
     }
 
     #[tokio::test]

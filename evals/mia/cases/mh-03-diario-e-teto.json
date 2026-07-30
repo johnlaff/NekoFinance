@@ -12,7 +12,7 @@
       "min_calls": 2
     },
     "answer": {
-      "must_contain": ["120,00"]
+      "must_contain": ["137,00"]
     }
   },
   "verification": {
