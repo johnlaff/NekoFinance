@@ -59,7 +59,9 @@ pub(crate) enum Repetitions {
     Fixed(u32),
 }
 
-/// A trava de gasto do runner, em milionésimos de dólar sobre o custo declarado pelo provedor.
+/// A trava de gasto do runner, em milionésimos de dólar sobre o custo COBRADO de cada rodada — o
+/// declarado pelo provedor ou, na rodada sem declaração, o pior caso que ela tinha permissão de
+/// gastar. A trava erra para cima, nunca segue sem saber.
 ///
 /// Ela é UMA e viaja por todas as corridas do bakeoff: uma trava por corrida deixaria o teto ser
 /// gasto uma vez por candidato. Fecha ANTES de abrir a próxima repetição — a rodada em andamento
@@ -72,7 +74,6 @@ pub(crate) struct SpendLock {
     cap_micro_usd: i64,
     phase_cap_micro_usd: i64,
     spent_micro_usd: i64,
-    cost_gap: bool,
 }
 
 impl SpendLock {
@@ -81,7 +82,6 @@ impl SpendLock {
             cap_micro_usd,
             phase_cap_micro_usd: cap_micro_usd,
             spent_micro_usd: 0,
-            cost_gap: false,
         }
     }
 
@@ -90,10 +90,11 @@ impl SpendLock {
         self.phase_cap_micro_usd = cap_micro_usd.min(self.cap_micro_usd);
     }
 
-    /// Uma repetição pode nascer? Custo não declarado fecha tudo: sem o número do provedor a
-    /// trava fica cega, e cega ela não é trava.
+    /// Uma repetição pode nascer? Só o dinheiro decide: a lacuna de custo não fecha a trava — ela
+    /// é cobrada pelo pior caso na conta, e quem a repete perde a própria corrida, nunca a dos
+    /// outros.
     pub(crate) fn may_start(&self) -> bool {
-        !self.cost_gap && self.spent_micro_usd < self.phase_cap_micro_usd
+        self.spent_micro_usd < self.phase_cap_micro_usd
     }
 
     /// Quanto ainda cabe, pelo MENOR dos dois tetos vigentes. É o que a rodada seguinte pode
@@ -104,11 +105,8 @@ impl SpendLock {
         (self.cap_micro_usd.min(self.phase_cap_micro_usd) - self.spent_micro_usd).max(0)
     }
 
-    pub(crate) fn record(&mut self, cost_micro_usd: i64, cost_declared: bool) {
-        self.spent_micro_usd = self.spent_micro_usd.saturating_add(cost_micro_usd);
-        if !cost_declared {
-            self.cost_gap = true;
-        }
+    pub(crate) fn record(&mut self, charged_micro_usd: i64) {
+        self.spent_micro_usd = self.spent_micro_usd.saturating_add(charged_micro_usd);
     }
 
     pub(crate) fn spent_micro_usd(&self) -> i64 {
@@ -121,10 +119,6 @@ impl SpendLock {
 
     pub(crate) fn phase_cap_micro_usd(&self) -> i64 {
         self.phase_cap_micro_usd
-    }
-
-    pub(crate) fn cost_gap(&self) -> bool {
-        self.cost_gap
     }
 }
 
@@ -139,8 +133,13 @@ pub(crate) struct RepetitionOutcome {
     pub answer: Option<String>,
     pub tools_called: Vec<String>,
     pub cost_micro_usd: i64,
+    /// O que a trava descontou por esta repetição: o custo declarado — ou, quando o provedor não
+    /// declarou, o pior caso `max(parcial declarado, permissão da rodada)`. É também o número que
+    /// compara candidatos: quem não sabe dizer quanto custou conta pelo máximo, senão a lacuna
+    /// deixaria o candidato cego mais barato no papel.
+    pub charged_micro_usd: i64,
     /// Falso quando algum turno terminou sem custo declarado pelo provedor — a repetição custou
-    /// dinheiro que o contador não viu, e a trava do runner deixa de ser confiável.
+    /// dinheiro que o contador não viu, e é cobrada pelo pior caso.
     pub cost_declared: bool,
     /// A rodada foi cortada pelo teto que a TRAVA apertou, não pelo teto da conversa. É outra
     /// coisa que uma resposta ruim: o modelo não terminou de responder porque o dinheiro do
@@ -172,6 +171,30 @@ impl CaseRun {
     }
 }
 
+/// Por que a corrida parou antes de medir tudo — quando parou. Um valor por motivo, serializado
+/// por extenso: quem abre o relatório precisa entender a parada sem ler este código.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Halt {
+    /// A trava de gasto fechou no teto: o dinheiro da fase acabou.
+    SpendCeiling,
+    /// Segunda rodada sem custo declarado do MESMO pin: o medidor do provedor está quebrado, e
+    /// medir sem medidor não é medir. Fecha só esta corrida; as dos outros pins seguem.
+    CostMeterBroken,
+    /// Falha operacional — pool, migração, fixture, consentimento. O detalhe vive em `failure`.
+    Operational,
+}
+
+impl Halt {
+    /// O nome que o relatório publica.
+    pub(crate) fn slug(self) -> &'static str {
+        match self {
+            Halt::SpendCeiling => "spend_ceiling",
+            Halt::CostMeterBroken => "cost_meter_broken",
+            Halt::Operational => "operational",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct BenchRun {
     pub pin: &'static ModelPin,
@@ -179,20 +202,21 @@ pub(crate) struct BenchRun {
     /// didática só valem julgamento quando o núcleo estava montado.
     pub method_core: bool,
     pub cases: Vec<CaseRun>,
-    /// O custo DESTA corrida — é ele que compara candidatos. O acumulado do bakeoff vive na
-    /// trava, que atravessa todas as corridas.
+    /// O custo COBRADO desta corrida — declarado, ou pior caso onde faltou declaração. É ele que
+    /// compara candidatos; o acumulado do bakeoff vive na trava, que atravessa todas as corridas.
     pub total_cost_micro_usd: i64,
     /// A trava vigente na corrida, gravada no relatório: um total baixo com trava baixa e um
     /// total baixo porque tudo passou são histórias diferentes.
     pub max_spend_micro_usd: i64,
-    pub spend_lock_hit: bool,
+    /// Por que a corrida parou antes do fim — ou nada, quando mediu tudo.
+    pub halt: Option<Halt>,
     /// A corrida parou por falha operacional — pool, migração, fixture, consentimento. O que ela
     /// já mediu (e já pagou) fica aqui: um erro que levasse embora os outcomes deixaria dinheiro
     /// gasto fora do relatório.
     pub failure: Option<String>,
-    /// O provedor deixou de declarar custo em alguma repetição. A bancada fecha na hora — sem
-    /// custo declarado a trava do runner é cega, e "custo zero" no relatório significaria "não
-    /// medi", nunca "foi de graça".
+    /// O provedor deixou de declarar custo em alguma repetição DESTA corrida. Não para nada por
+    /// si: a rodada cega é cobrada pelo pior caso e pesa no custo comparável; a segunda lacuna
+    /// fecha a corrida deste pin.
     pub cost_gap: bool,
 }
 
@@ -250,6 +274,9 @@ pub(crate) async fn run_repetition<A: ProviderAdapter>(
     system: &str,
     case: &Case,
 ) -> RepetitionOutcome {
+    // A permissão de gasto desta rodada, guardada antes de os limites viajarem para o runner: é
+    // ela o pior caso que a cobrança usa quando o provedor não declara o custo.
+    let allowance_micro_usd = budget.limits.max_cost_micro_usd;
     let (events, mut receiver) = mpsc::channel(64);
     // A bancada lê o resultado consolidado, não o stream; o dreno existe para que a publicação
     // de eventos nunca prenda a rodada esperando por uma interface que não está aqui. No
@@ -291,14 +318,21 @@ pub(crate) async fn run_repetition<A: ProviderAdapter>(
     // Dreno perdido conta como lacuna: na dúvida entre "não vi custo" e "não houve custo", a
     // trava de gasto precisa do lado fechado.
     let (usage_without_cost, terminal_error) = drain.await.unwrap_or((true, None));
-    // Duas perguntas, e uma lacuna em qualquer delas fecha: o stream publicou uso sem custo? o
-    // runner viu dinheiro em dúvida em ALGUMA tentativa — stream aberto que terminou sem linha
-    // de uso, ou abertura que acabou sem resposta do servidor (transporte, timeout,
-    // interrupção)? Só a recusa RESPONDIDA fica de fora, e de propósito: com status HTTP na
-    // mão, o corpo de erro não é stream e nada foi gerado nem cobrado — a rodada recusada
-    // reprova por si, com o motivo dela, e tratá-la como lacuna fecharia a trava inteira por
-    // erro de configuração de UM pin, levando junto a medição de todos os que correm depois.
+    // Duas perguntas, e uma lacuna em qualquer delas marca a rodada: o stream publicou uso sem
+    // custo? o runner viu dinheiro em dúvida em ALGUMA tentativa — stream aberto que terminou sem
+    // linha de uso, ou abertura que acabou sem resposta do servidor (transporte, timeout,
+    // interrupção)? Só a recusa RESPONDIDA fica de fora, e de propósito: com status HTTP na mão,
+    // o corpo de erro não é stream e nada foi gerado nem cobrado.
     let cost_declared = !usage_without_cost && outcome.cost_declared;
+    // A cobrança da lacuna: o pior caso é o MAIOR entre o parcial declarado e a permissão da
+    // rodada — o corte por custo é pós-turno, então o parcial pode passar da permissão, e cobrar
+    // "só o teto" subcobraria uma rodada que provadamente gastou mais. A trava erra para cima,
+    // nunca segue sem saber.
+    let charged_micro_usd = if cost_declared {
+        outcome.cost_micro_usd
+    } else {
+        outcome.cost_micro_usd.max(allowance_micro_usd)
+    };
 
     // Quem cortou a rodada: o teto da conversa ou o dinheiro que sobrava? Só o segundo desqualifica
     // a medição — o primeiro é um resultado legítimo sobre o modelo.
@@ -319,6 +353,7 @@ pub(crate) async fn run_repetition<A: ProviderAdapter>(
         answer: outcome.answer,
         tools_called: observed.tools_called,
         cost_micro_usd: outcome.cost_micro_usd,
+        charged_micro_usd,
         cost_declared,
         budget_truncated,
         error: terminal_error,
@@ -361,13 +396,14 @@ pub(crate) async fn run_catalog<A: ProviderAdapter>(
 
     let mut runs: Vec<CaseRun> = Vec::with_capacity(cases.len());
     let mut total_cost_micro_usd = 0_i64;
-    let mut spend_lock_hit = false;
+    let mut halt: Option<Halt> = None;
     let mut failure: Option<String> = None;
+    let mut undeclared_rounds = 0_u32;
 
     for case in cases {
         let mut outcomes = Vec::new();
         let mut aborted = false;
-        if failure.is_some() {
+        if halt.is_some() {
             runs.push(CaseRun {
                 case,
                 outcomes,
@@ -380,9 +416,9 @@ pub(crate) async fn run_catalog<A: ProviderAdapter>(
             Repetitions::Fixed(fixed) => fixed,
         };
 
-        for _ in 0..repetitions {
+        for repetition in 0..repetitions {
             if !lock.may_start() {
-                spend_lock_hit = !lock.cost_gap();
+                halt = Some(Halt::SpendCeiling);
                 aborted = true;
                 break;
             }
@@ -394,6 +430,7 @@ pub(crate) async fn run_catalog<A: ProviderAdapter>(
                 Ok(pool) => pool,
                 Err(error) => {
                     failure = Some(error);
+                    halt = Some(Halt::Operational);
                     aborted = true;
                     break;
                 }
@@ -424,13 +461,27 @@ pub(crate) async fn run_catalog<A: ProviderAdapter>(
                 &case,
             )
             .await;
-            total_cost_micro_usd = total_cost_micro_usd.saturating_add(outcome.cost_micro_usd);
-            lock.record(outcome.cost_micro_usd, outcome.cost_declared);
+            // O total e a trava andam pelo COBRADO: declarado, ou pior caso onde faltou
+            // declaração — a lacuna pesa no candidato em vez de deixá-lo mais barato no papel.
+            total_cost_micro_usd = total_cost_micro_usd.saturating_add(outcome.charged_micro_usd);
+            lock.record(outcome.charged_micro_usd);
+            if !outcome.cost_declared {
+                undeclared_rounds += 1;
+            }
             outcomes.push(outcome);
             // O mundo da repetição fecha no fim dela, em ponto determinístico: o Drop do sqlx
             // devolve a conexão de forma assíncrona, no ritmo do runtime — e uma corrida são
             // centenas de repetições cujo saldo de recursos não pode depender desse ritmo.
             pool.close().await;
+            // Uma lacuna é soluço, cobrado pelo pior caso; a SEGUNDA é o medidor do provedor
+            // quebrado, e medir sem medidor não é medir. Fecha a corrida DESTE pin — o resíduo
+            // ratificado é de até duas rodadas cegas por pin — e a bancada segue para os outros.
+            // Repetição que ficou por correr deixa o caso abortado: caso pela metade não é medido.
+            if undeclared_rounds >= 2 {
+                halt = Some(Halt::CostMeterBroken);
+                aborted = repetition + 1 < repetitions;
+                break;
+            }
         }
 
         runs.push(CaseRun {
@@ -440,14 +491,17 @@ pub(crate) async fn run_catalog<A: ProviderAdapter>(
         });
     }
 
+    let cost_gap = runs
+        .iter()
+        .any(|run| run.outcomes.iter().any(|outcome| !outcome.cost_declared));
     Ok(BenchRun {
         pin: config.pin,
         method_core: system.method_core,
         cases: runs,
         total_cost_micro_usd,
         max_spend_micro_usd: lock.phase_cap_micro_usd(),
-        spend_lock_hit,
-        cost_gap: lock.cost_gap(),
+        halt,
+        cost_gap,
         failure,
     })
 }
@@ -618,7 +672,7 @@ async fn execute(cli: cli::CliArgs, key: String) -> Result<String, String> {
 
     let outcomes = || run.cases.iter().flat_map(|case| case.outcomes.iter());
     Ok(format!(
-        "{} casos, {} repetições: {} aprovadas, {} reprovadas, {} pendentes de julgamento, {} casos abortados pela trava.\nCusto declarado: {} micro-USD (trava em {}).\nRelatório: {}",
+        "{} casos, {} repetições: {} aprovadas, {} reprovadas, {} pendentes de julgamento, {} casos abortados pela trava.\nCusto contabilizado: {} micro-USD (trava em {}; rodada sem custo declarado é cobrada pelo pior caso).\nRelatório: {}",
         run.cases.len(),
         outcomes().count(),
         outcomes()

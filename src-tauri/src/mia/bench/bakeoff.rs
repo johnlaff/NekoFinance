@@ -127,8 +127,9 @@ pub(crate) struct Score {
     pub injection_failed: usize,
     pub pending_judgment: usize,
     pub cost_micro_usd: i64,
-    /// A corrida mediu tudo o que se propôs: nenhum caso abortado pela trava e nenhuma lacuna de
-    /// custo. Corrida incompleta não compara com corrida completa.
+    /// A corrida mediu tudo o que se propôs: nenhum caso abortado nem repetição cortada pela
+    /// trava. Lacuna de custo NÃO entra aqui — o comportamento medido vale, e a lacuna pesa pelo
+    /// custo cobrado. Corrida incompleta não compara com corrida completa.
     pub complete: bool,
 }
 
@@ -155,7 +156,9 @@ pub(crate) fn score(run: &BenchRun) -> Score {
         injection_failed: 0,
         pending_judgment: 0,
         cost_micro_usd: run.total_cost_micro_usd,
-        complete: !run.cost_gap && run.cases.iter().all(|case| case.measured()),
+        // A lacuna de custo NÃO entra aqui: o comportamento medido continua válido — o que
+        // degradou foi a confiança no custo, e ela pesa pelo custo cobrado, não pela completude.
+        complete: run.cases.iter().all(|case| case.measured()),
     };
 
     for case in &run.cases {
@@ -867,7 +870,8 @@ pub(crate) struct Probe {
     pub pin: &'static ModelPin,
     /// O custo de UMA repetição do caso-sonda.
     pub cost_micro_usd: i64,
-    /// O provedor disse quanto cobrou. Falso deixa a trava cega, e a estimativa não vale.
+    /// O provedor disse quanto cobrou. Falso e a estimativa não vale: sonda sem preço não
+    /// projeta nada, e a corrida recusa antes de gastar o teto.
     pub cost_declared: bool,
     /// A rodada da sonda foi até o fim. Falsa quando a cota do pin a cortou no meio: o custo
     /// acima é parcial, e projetar dele subestimaria justamente o que a sonda existe para não
@@ -1099,7 +1103,8 @@ pub(crate) fn summary(bakeoff: &Bakeoff, path: &Path, blind_sheet: Option<&Path>
     };
     format!(
         "Peneira: {} candidato(s). Final: {} finalista(s). Recusados pelo canary: {}.{default_drift}{probe}\nCusto \
-         declarado: {} micro-USD (teto de {}).\n{decision}\nRelatório: {}",
+         contabilizado: {} micro-USD (teto de {}; rodada sem custo declarado é cobrada pelo pior \
+         caso).\n{decision}\nRelatório: {}",
         bakeoff.phase_one.len(),
         bakeoff.phase_two.len(),
         bakeoff.drifted.len(),
@@ -1420,7 +1425,9 @@ fn parse_finalists(report: &Value) -> Result<Vec<FinalRun>, String> {
             ));
         }
         let declared_cost = required_i64(run, "total_cost_micro_usd", model)?;
-        let cost_gap = required_bool(run, "cost_gap", model)?;
+        // A lacuna é fato exigido do arquivo, mas não decide completude: ela pesa pelo custo
+        // cobrado, que as repetições somam abaixo.
+        let _ = required_bool(run, "cost_gap", model)?;
 
         let cases = run["cases"]
             .as_array()
@@ -1445,7 +1452,7 @@ fn parse_finalists(report: &Value) -> Result<Vec<FinalRun>, String> {
             mechanical_total: 0,
             mechanical_passed: 0,
             injection_failed: 0,
-            complete: !cost_gap,
+            complete: true,
             cost_micro_usd: declared_cost,
         };
         let mut summed_cost = 0_i64;
@@ -1471,15 +1478,24 @@ fn parse_finalists(report: &Value) -> Result<Vec<FinalRun>, String> {
                 ));
             }
             for repetition in repetitions {
-                summed_cost =
-                    summed_cost.saturating_add(required_i64(repetition, "cost_micro_usd", model)?);
-                // Os dois booleanos não são formulário: custo não declarado cega a trava, e
-                // repetição cortada pelo orçamento é medição que não houve. Lê-los e ignorá-los
-                // deixaria um relatório contraditório — repetições truncadas dentro de um caso
-                // dito medido — fabricar um finalista perfeito.
-                if !required_bool(repetition, "cost_declared", model)? {
-                    recomputed.complete = false;
+                // A soma que fecha com o total é a do COBRADO: é ele que compara candidatos, e é
+                // nele que a lacuna pesa. O parcial declarado continua exigido — é o fato bruto —
+                // e o cobrado nunca fica abaixo dele: um cobrado menor que o parcial subcobraria
+                // a rodada que provadamente gastou mais.
+                let declared = required_i64(repetition, "cost_micro_usd", model)?;
+                let charged = required_i64(repetition, "charged_micro_usd", model)?;
+                if charged < declared {
+                    return Err(format!(
+                        "Uma repetição de {model} cobra {charged} micro-USD abaixo do parcial \
+                         declarado de {declared}."
+                    ));
                 }
+                summed_cost = summed_cost.saturating_add(charged);
+                // A lacuna de custo é fato exigido, não completude: a rodada cega foi cobrada
+                // pelo pior caso e pesa no custo. Repetição cortada pelo orçamento é outra coisa
+                // — medição que não houve — e um caso dito medido com repetição truncada dentro
+                // fabricaria um finalista perfeito.
+                let _ = required_bool(repetition, "cost_declared", model)?;
                 if required_bool(repetition, "budget_truncated", model)? {
                     recomputed.complete = false;
                     continue;

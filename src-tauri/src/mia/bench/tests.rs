@@ -702,7 +702,7 @@ async fn a_trava_de_gasto_aborta_os_casos_restantes() {
         .unwrap();
 
     assert_eq!(run.total_cost_micro_usd, 120_000);
-    assert!(run.spend_lock_hit);
+    assert_eq!(run.halt, Some(super::Halt::SpendCeiling));
     assert!(!run.cost_gap);
     assert_eq!(run.cases.len(), 3);
     assert!(!run.cases[0].aborted);
@@ -756,10 +756,10 @@ async fn a_trava_de_gasto_atravessa_duas_corridas() {
     .unwrap();
 
     assert_eq!(primeira.total_cost_micro_usd, 100_000);
-    assert!(!primeira.spend_lock_hit);
+    assert!(primeira.halt.is_none());
     // A segunda corrida abre com o teto já consumido pela primeira: nenhuma rodada nasce.
     assert_eq!(segunda.total_cost_micro_usd, 0);
-    assert!(segunda.spend_lock_hit);
+    assert_eq!(segunda.halt, Some(super::Halt::SpendCeiling));
     assert!(segunda.cases[0].aborted);
     assert_eq!(lock.spent_micro_usd(), 100_000);
 }
@@ -799,22 +799,9 @@ async fn as_repeticoes_da_fase_sobrepoem_a_autoria_do_caso() {
     assert_eq!(run.cases[0].outcomes.len(), 3);
 }
 
-/// Custo não declarado NÃO é custo zero: sem o número do provedor a trava do runner fica cega,
-/// e a bancada fecha na hora — sobra a segunda trava, a da chave, e o relatório diz o porquê.
-#[tokio::test]
-async fn custo_nao_declarado_fecha_a_bancada() {
-    let mut cases = Vec::new();
-    for index in 1..=2 {
-        let mut body = valid_case_json();
-        let id = format!("caso-{index}");
-        body["id"] = json!(id);
-        body["fixture"] = json!("casa_vazia");
-        body["expected"] = json!({ "judgment": "mecanico" });
-        body["verification"] = json!(null);
-        cases.push(parse(&format!("{id}.json"), &body).unwrap());
-    }
-
-    let adapter = RoteiroAdapter::new([vec![
+/// Um turno que fecha sem declarar custo: a lacuna que a política de cobrança precisa precificar.
+fn gap_turn() -> Vec<ProviderEvent> {
+    vec![
         ProviderEvent::TextDelta("Tudo certo.".to_string()),
         ProviderEvent::Usage(Usage {
             prompt_tokens: 10,
@@ -825,26 +812,150 @@ async fn custo_nao_declarado_fecha_a_bancada() {
             reason: FinishReason::Stop,
             native: None,
         },
-    ]]);
+    ]
+}
 
+/// Casos mínimos numerados, para os testes de trava que precisam de mais de um.
+fn minimal_cases(quantos: usize) -> Vec<case::Case> {
+    (1..=quantos)
+        .map(|index| {
+            let mut body = valid_case_json();
+            let id = format!("caso-{index}");
+            body["id"] = json!(id);
+            body["fixture"] = json!("casa_vazia");
+            body["expected"] = json!({ "judgment": "mecanico" });
+            body["verification"] = json!(null);
+            parse(&format!("{id}.json"), &body).unwrap()
+        })
+        .collect()
+}
+
+/// Custo não declarado NÃO é custo zero nem parada geral: a rodada é cobrada pelo pior caso — a
+/// permissão que ela tinha para gastar — e a corrida segue medindo. A trava continua prometendo
+/// teto porque erra para cima; o que ela não faz é punir os casos seguintes por uma lacuna que já
+/// foi precificada.
+#[tokio::test]
+async fn a_primeira_lacuna_cobra_o_pior_caso_e_a_corrida_segue() {
+    let adapter = RoteiroAdapter::new([gap_turn(), answer_turn("Tudo certo.", 5_000)]);
     let temp = TempPack::absent();
     let config = super::BenchConfig {
         pin: default_pin(),
         pack_root: Some(temp.path().to_path_buf()),
         repetitions: super::Repetitions::AsAuthored,
         system: None,
-        limits: RunLimits::default(),
+        // Permissão por rodada apertada, para o pior caso ter um número nítido.
+        limits: RunLimits {
+            max_cost_micro_usd: 40_000,
+            ..RunLimits::default()
+        },
     };
     let mut lock = super::SpendLock::new(1_000_000);
 
-    let run = super::run_catalog(&adapter, cases, &config, &mut lock)
+    let run = super::run_catalog(&adapter, minimal_cases(2), &config, &mut lock)
         .await
         .unwrap();
 
+    // A lacuna é fato registrado e precificado: parcial 0, cobrado a permissão inteira.
+    let outcome = &run.cases[0].outcomes[0];
+    assert!(!outcome.cost_declared);
+    assert_eq!(outcome.cost_micro_usd, 0);
+    assert_eq!(outcome.charged_micro_usd, 40_000);
     assert!(run.cost_gap);
-    assert!(!run.cases[0].outcomes[0].cost_declared);
-    assert!(run.cases[1].aborted);
-    assert!(run.cases[1].outcomes.is_empty());
+
+    // E a corrida segue: o caso seguinte mede, a trava só desconta o cobrado.
+    assert!(!run.cases[1].aborted);
+    assert_eq!(run.cases[1].outcomes.len(), 1);
+    assert_eq!(run.cases[1].outcomes[0].charged_micro_usd, 5_000);
+    assert_eq!(run.total_cost_micro_usd, 45_000);
+    assert_eq!(lock.spent_micro_usd(), 45_000);
+    assert!(run.halt.is_none());
+}
+
+/// O `max` da cobrança não é decorativo: quando o parcial declarado passa da permissão — o corte
+/// por custo é pós-turno —, cobrar "só o teto" subcobraria uma rodada que provadamente gastou
+/// mais.
+#[tokio::test]
+async fn a_lacuna_cobra_o_parcial_quando_ele_passa_da_permissao() {
+    // Turno 1 chama ferramenta SEM declarar custo (a lacuna) e o turno 2 declara 60.000 — acima
+    // da permissão de 40.000, possível porque o corte por custo é pós-turno: a rodada fecha como
+    // lacuna COM parcial conhecido acima do teto dela.
+    let gap_tool_turn = vec![
+        ProviderEvent::ToolCallComplete {
+            id: "call-get_month_analysis".to_string(),
+            name: "get_month_analysis".to_string(),
+            arguments: "{\"month\": \"2026-06\"}".to_string(),
+        },
+        ProviderEvent::Usage(Usage {
+            prompt_tokens: 100,
+            completion_tokens: 10,
+            cost_micro_usd: None,
+        }),
+        ProviderEvent::Finished {
+            reason: FinishReason::ToolCalls,
+            native: None,
+        },
+    ];
+    let adapter = RoteiroAdapter::new([gap_tool_turn, answer_turn("Tudo certo.", 60_000)]);
+    let temp = TempPack::absent();
+    let config = super::BenchConfig {
+        pin: default_pin(),
+        pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::AsAuthored,
+        system: None,
+        limits: RunLimits {
+            max_cost_micro_usd: 40_000,
+            ..RunLimits::default()
+        },
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let run = super::run_catalog(&adapter, minimal_cases(1), &config, &mut lock)
+        .await
+        .unwrap();
+
+    let outcome = &run.cases[0].outcomes[0];
+    assert!(!outcome.cost_declared);
+    assert_eq!(outcome.cost_micro_usd, 60_000);
+    assert_eq!(
+        outcome.charged_micro_usd, 60_000,
+        "o parcial acima da permissão é o pior caso"
+    );
+    assert_eq!(lock.spent_micro_usd(), 60_000);
+}
+
+/// A segunda lacuna do MESMO pin fecha a corrida daquele pin — só dele. Duas rodadas sem custo
+/// declarado é o medidor do provedor quebrado, e medir sem medidor não é medir; mas a bancada
+/// segue aberta para os outros candidatos, e o relatório diz por que este parou.
+#[tokio::test]
+async fn a_segunda_lacuna_fecha_a_corrida_do_pin_e_so_dele() {
+    let adapter = RoteiroAdapter::new([gap_turn(), gap_turn(), answer_turn("Tudo certo.", 1_000)]);
+    let temp = TempPack::absent();
+    let config = super::BenchConfig {
+        pin: default_pin(),
+        pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::AsAuthored,
+        system: None,
+        limits: RunLimits {
+            max_cost_micro_usd: 40_000,
+            ..RunLimits::default()
+        },
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let run = super::run_catalog(&adapter, minimal_cases(3), &config, &mut lock)
+        .await
+        .unwrap();
+
+    // As duas lacunas foram medidas e cobradas; o terceiro caso não corre com o medidor quebrado.
+    assert_eq!(run.cases[0].outcomes.len(), 1);
+    assert_eq!(run.cases[1].outcomes.len(), 1);
+    assert!(run.cases[2].aborted);
+    assert!(run.cases[2].outcomes.is_empty());
+    assert_eq!(run.halt, Some(super::Halt::CostMeterBroken));
+    assert_eq!(lock.spent_micro_usd(), 80_000);
+
+    // Só a corrida DESTE pin fecha: a trava segue aberta para os próximos candidatos.
+    assert!(lock.may_start(), "a bancada segue para os outros pins");
 }
 
 /// Um adapter que falha a abertura sempre do mesmo jeito — o botão é se o servidor respondeu.
@@ -1015,10 +1126,10 @@ async fn recusa_respondida_reprova_a_rodada_sem_fechar_a_bancada() {
 }
 
 /// Falha SEM resposta é dinheiro em dúvida: o pedido pode ter chegado ao servidor e gerado, com
-/// o custo no stream que nunca abriu. Ausência de resposta no cliente não prova o estágio que o
-/// servidor alcançou — e dúvida sobre dinheiro fecha a trava, como em todo o resto do desenho.
+/// o custo no stream que nunca abriu. A dúvida é COBRADA — o pior caso da rodada entra na conta —
+/// e a segunda rodada cega do mesmo pin fecha a corrida dele, nunca a bancada.
 #[tokio::test]
-async fn falha_sem_resposta_e_lacuna_e_fecha_a_bancada() {
+async fn falha_sem_resposta_e_cobrada_e_a_segunda_fecha_o_pin() {
     let adapter = AberturaFalhaAdapter {
         error: || ProviderError {
             kind: ErrorKind::Transient,
@@ -1034,6 +1145,7 @@ async fn falha_sem_resposta_e_lacuna_e_fecha_a_bancada() {
         system: None,
         // Sem espera entre tentativas: o que está sob teste é a decisão, não o sono.
         limits: RunLimits {
+            max_cost_micro_usd: 40_000,
             retry_backoff: std::time::Duration::ZERO,
             ..RunLimits::default()
         },
@@ -1050,15 +1162,21 @@ async fn falha_sem_resposta_e_lacuna_e_fecha_a_bancada() {
         !outcome.cost_declared,
         "sem resposta não há prova de que nada foi cobrado"
     );
+    assert_eq!(outcome.charged_micro_usd, 40_000, "a dúvida é cobrada");
     assert!(run.cost_gap);
-    assert!(run.cases[1].aborted, "a dúvida fecha o que vem depois");
-    assert!(!lock.may_start(), "a trava fecha");
+
+    // A segunda rodada cega fecha a corrida DESTE pin; a trava segue aberta para os outros.
+    assert_eq!(run.cases[1].outcomes[0].charged_micro_usd, 40_000);
+    assert_eq!(run.halt, Some(super::Halt::CostMeterBroken));
+    assert_eq!(lock.spent_micro_usd(), 80_000);
+    assert!(lock.may_start(), "a bancada segue para os outros pins");
 }
 
 /// O teto de tempo estourando com a abertura EM VOO é o mesmo dinheiro em dúvida: o pedido foi
-/// interrompido no cliente, e o que o servidor fez com ele ninguém viu.
+/// interrompido no cliente, e o que o servidor fez com ele ninguém viu. A dúvida é cobrada pelo
+/// pior caso da rodada.
 #[tokio::test]
-async fn abertura_interrompida_pelo_tempo_e_lacuna() {
+async fn abertura_interrompida_pelo_tempo_e_lacuna_cobrada() {
     struct PendenteAdapter;
     impl ProviderAdapter for PendenteAdapter {
         async fn open(
@@ -1077,6 +1195,7 @@ async fn abertura_interrompida_pelo_tempo_e_lacuna() {
         repetitions: super::Repetitions::AsAuthored,
         system: None,
         limits: RunLimits {
+            max_cost_micro_usd: 40_000,
             max_duration: std::time::Duration::from_millis(40),
             retry_backoff: std::time::Duration::ZERO,
             ..RunLimits::default()
@@ -1094,8 +1213,9 @@ async fn abertura_interrompida_pelo_tempo_e_lacuna() {
         !outcome.cost_declared,
         "abertura em voo interrompida é dúvida"
     );
+    assert_eq!(outcome.charged_micro_usd, 40_000, "a dúvida é cobrada");
     assert!(run.cost_gap);
-    assert!(!lock.may_start(), "a trava fecha");
+    assert!(lock.may_start(), "a bancada segue para os outros pins");
 }
 
 /// Sem o pack curado, a didática não tem o que medir: a bancada recusa ANTES de gastar, com o
@@ -1268,6 +1388,7 @@ fn bench_run_fixture() -> super::BenchRun {
         answer: Some("Entrou R$ 8.412,37 em junho.".to_string()),
         tools_called: vec!["get_month_analysis".to_string()],
         cost_micro_usd: 12_000,
+        charged_micro_usd: 12_000,
         cost_declared: true,
         budget_truncated: false,
         error: None,
@@ -1281,6 +1402,7 @@ fn bench_run_fixture() -> super::BenchRun {
         answer: Some("O método explica o Diário assim…".to_string()),
         tools_called: vec!["get_method_guidance".to_string()],
         cost_micro_usd: 8_000,
+        charged_micro_usd: 8_000,
         cost_declared: true,
         budget_truncated: false,
         error: None,
@@ -1320,7 +1442,7 @@ fn bench_run_fixture() -> super::BenchRun {
         ],
         total_cost_micro_usd: 20_000,
         max_spend_micro_usd: 1_000_000,
-        spend_lock_hit: true,
+        halt: Some(super::Halt::SpendCeiling),
         cost_gap: false,
         failure: None,
     }
@@ -1336,7 +1458,7 @@ fn o_relatorio_carrega_modelo_provedor_e_totais() {
     assert_eq!(report["operator"], default_pin().operator);
     assert_eq!(report["method_core"], false);
     assert_eq!(report["total_cost_micro_usd"], 20_000);
-    assert_eq!(report["spend_lock_hit"], true);
+    assert_eq!(report["halted_by"], "spend_ceiling");
     assert_eq!(report["cost_gap"], false);
     assert_eq!(report["cases"][0]["repetitions"][0]["cost_declared"], true);
     assert_eq!(report["totals"]["cases"], 3);
@@ -2424,7 +2546,7 @@ fn cada_pin_envia_o_piso_de_raciocinio_que_declarou() {
 /// Um turno cobrado e declarado, seguido de um turno que gera texto e trava no tempo: o total
 /// fecha positivo e a bancada acharia que contou tudo — o segundo turno some do acumulado.
 #[tokio::test]
-async fn turno_cobrado_seguido_de_travamento_sem_uso_fecha_a_bancada() {
+async fn turno_cobrado_seguido_de_travamento_sem_uso_e_lacuna_cobrada() {
     let mut body = valid_case_json();
     body["id"] = json!("caso-1");
     body["fixture"] = json!("casa_vazia");
@@ -2458,7 +2580,7 @@ async fn turno_cobrado_seguido_de_travamento_sem_uso_fecha_a_bancada() {
         .unwrap();
 
     // O custo do primeiro turno existe, e é justamente ele que faria a guarda de "custo positivo"
-    // passar — a lacuna do segundo turno é o que fecha a bancada.
+    // passar — a lacuna do segundo turno é o que marca a rodada como cega.
     assert_eq!(run.cases[0].outcomes[0].cost_micro_usd, 5_000);
     assert!(!run.cases[0].outcomes[0].cost_declared);
     assert!(run.cost_gap);
@@ -2537,11 +2659,15 @@ async fn falha_no_meio_preserva_o_que_a_corrida_ja_pagou() {
         .await
         .unwrap();
 
-    // O primeiro caso rodou e custou; qualquer que seja o destino do segundo, o que foi pago está
-    // no resultado e o gasto está na trava.
+    // O primeiro caso rodou e custou; o segundo virou rodada cega (o roteiro acabou) e foi
+    // cobrado pelo pior caso — o que foi pago E o que ficou em dúvida estão no resultado e na
+    // trava, nada some.
     assert_eq!(run.cases[0].outcomes.len(), 1);
-    assert_eq!(run.total_cost_micro_usd, 7_000);
-    assert_eq!(lock.spent_micro_usd(), 7_000);
+    assert_eq!(run.cases[0].outcomes[0].charged_micro_usd, 7_000);
+    assert!(!run.cases[1].outcomes[0].cost_declared);
+    assert_eq!(run.cases[1].outcomes[0].charged_micro_usd, 150_000);
+    assert_eq!(run.total_cost_micro_usd, 157_000);
+    assert_eq!(lock.spent_micro_usd(), 157_000);
 }
 
 /// O caderno do julgamento cego não diz de quem é cada resposta, e a chave que diz mora no
@@ -2720,7 +2846,7 @@ fn a_projecao_da_final_assume_os_candidatos_mais_caros() {
 /// Custo não declarado numa tentativa que FALHOU não pode sumir: o turno seguinte declara o dele,
 /// o total fecha em número conhecido, e a bancada acharia que contou tudo.
 #[tokio::test]
-async fn custo_sem_declaracao_em_tentativa_falha_fecha_a_bancada() {
+async fn custo_sem_declaracao_em_tentativa_falha_e_lacuna_cobrada() {
     let mut body = valid_case_json();
     body["id"] = json!("caso-1");
     body["fixture"] = json!("casa_vazia");
@@ -2765,7 +2891,7 @@ async fn custo_sem_declaracao_em_tentativa_falha_fecha_a_bancada() {
         .unwrap();
 
     assert!(!run.cases[0].outcomes[0].cost_declared);
-    assert!(run.cost_gap, "a lacuna fecha a bancada");
+    assert!(run.cost_gap, "a lacuna é fato da corrida");
 }
 
 /// Stream aberto e encerrado sem linha de uso é lacuna, com ou sem conteúdo no meio: o pedido já
@@ -2814,7 +2940,7 @@ async fn stream_aberto_que_termina_sem_uso_e_lacuna() {
 /// Tentativa que gerou conteúdo e caiu ANTES da linha de uso: o provedor cobra o que gerou, e o
 /// total do turno — fechado pela tentativa seguinte — sairia parecendo completo.
 #[tokio::test]
-async fn tentativa_que_gerou_texto_e_caiu_sem_uso_fecha_a_bancada() {
+async fn tentativa_que_gerou_texto_e_caiu_sem_uso_e_lacuna_cobrada() {
     let mut body = valid_case_json();
     body["id"] = json!("caso-1");
     body["fixture"] = json!("casa_vazia");
@@ -3014,6 +3140,9 @@ fn julgado(finalistas: &[(&str, i64, bool)], reprovadas: &[(&str, usize)]) -> se
                 // Estas reprovações são mecânicas, não iscas ecoadas.
                 "echoed_forbidden": false,
                 "cost_micro_usd": por_repeticao + if indice == 0 { sobra } else { 0 },
+                // Sem lacuna, o cobrado é o declarado — e é a soma dos cobrados que fecha com o
+                // total da corrida.
+                "charged_micro_usd": por_repeticao + if indice == 0 { sobra } else { 0 },
                 "cost_declared": true,
                 "budget_truncated": false,
             })
@@ -3766,19 +3895,22 @@ fn a_decisao_julgada_recusa_booleanos_contraditorios() {
         &[],
     );
 
-    for campo in ["budget_truncated", "cost_declared"] {
-        let mut report = base.clone();
-        // O mais barato ganha a contradição: sem a checagem, ele venceria.
-        report["phase_two"][1]["run"]["cases"][0]["repetitions"][0][campo] =
-            json!(campo == "budget_truncated");
+    // Repetição truncada dentro de caso dito medido: o mais barato ganharia a contradição.
+    let mut report = base.clone();
+    report["phase_two"][1]["run"]["cases"][0]["repetitions"][0]["budget_truncated"] = json!(true);
+    let bakeoff::Decision::NoWinner { reason } =
+        bakeoff::judged_decision(&report, &aprovando(&base)).unwrap()
+    else {
+        panic!("uma corrida contraditória em budget_truncated não é corrida medida");
+    };
+    assert!(reason.contains("1 de 2 finalistas"), "{reason}");
 
-        let bakeoff::Decision::NoWinner { reason } =
-            bakeoff::judged_decision(&report, &aprovando(&base)).unwrap()
-        else {
-            panic!("uma corrida contraditória em {campo} não é corrida medida");
-        };
-        assert!(reason.contains("1 de 2 finalistas"), "{campo}: {reason}");
-    }
+    // Cobrado abaixo do parcial declarado: baratear a lacuna à mão escolheria o vencedor sem
+    // tocar em nenhuma repetição — a rodada cega conta pelo pior caso, nunca por menos.
+    let mut subcobrada = base.clone();
+    subcobrada["phase_two"][1]["run"]["cases"][0]["repetitions"][0]["charged_micro_usd"] = json!(1);
+    let error = bakeoff::judged_decision(&subcobrada, &aprovando(&base)).unwrap_err();
+    assert!(error.contains("abaixo do parcial declarado"), "{error}");
 }
 
 /// A final precisa ter saído da peneira, e ter o tamanho que o desenho manda.

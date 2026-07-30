@@ -11,7 +11,7 @@
 //! método na rodada; o gate de privacidade do repositório segue valendo no commit.
 
 use super::grade::Verdict;
-use super::{BenchRun, CaseRun, RepetitionOutcome};
+use super::{BenchRun, CaseRun, Halt, RepetitionOutcome};
 use crate::mia::method_tools::{self, MethodPack};
 use crate::mia::run::AnswerProvenance;
 use serde_json::{Value, json};
@@ -35,7 +35,10 @@ pub(crate) fn render(run: &BenchRun, ran_at: &str) -> Value {
         "method_core": run.method_core,
         "max_spend_micro_usd": run.max_spend_micro_usd,
         "total_cost_micro_usd": run.total_cost_micro_usd,
-        "spend_lock_hit": run.spend_lock_hit,
+        // Por que a corrida parou, por extenso — "spend_ceiling", "cost_meter_broken" ou
+        // "operational" — e nulo quando mediu tudo: quem abre o arquivo entende a parada sem ler
+        // o código da bancada.
+        "halted_by": run.halt.map(Halt::slug),
         "cost_gap": run.cost_gap,
         // A falha operacional que abortou a corrida sai no arquivo: ela explica os casos
         // abortados, e a evidência que só existe no processo morre com ele.
@@ -88,6 +91,9 @@ fn repetition_json(outcome: &RepetitionOutcome) -> Value {
         }),
         "tools_called": outcome.tools_called,
         "cost_micro_usd": outcome.cost_micro_usd,
+        // O que a trava descontou: o declarado, ou o pior caso da rodada sem declaração. É a
+        // parcela desta repetição no total comparável — a soma delas fecha com o total da corrida.
+        "charged_micro_usd": outcome.charged_micro_usd,
         "cost_declared": outcome.cost_declared,
         // Sem este campo no arquivo, quem lê o relatório de volta não distingue a repetição que o
         // orçamento cortou da que o modelo errou — e recomputaria a decisão sobre outra história.
