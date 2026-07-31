@@ -519,3 +519,46 @@ describe("DailyReminderSection", () => {
     );
   });
 });
+
+describe("ShowReceiptLine", () => {
+  beforeEach(() => {
+    mockInvoke.mockReset();
+  });
+
+  function mockSettings(values: Record<string, string | null>) {
+    invalidateCommands();
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === "get_app_info") return Promise.resolve(APP_INFO);
+      if (cmd === "get_app_setting") {
+        const key = String(args?.["key"]);
+        return Promise.resolve(key in values ? values[key] : null);
+      }
+      if (cmd === "set_app_setting") return Promise.resolve(undefined);
+      return Promise.reject(new Error(`unmocked command: ${cmd}`));
+    });
+  }
+
+  it("shows the receipt toggle in the default ON state when the key is absent", async () => {
+    mockSettings({}); // chave ausente → ligado por padrão
+    renderSettings();
+
+    const toggle = await screen.findByRole("switch", { name: "Conta sempre à mostra" });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("persists the toggle off", async () => {
+    const user = userEvent.setup();
+    mockSettings({});
+    renderSettings();
+
+    const toggle = await screen.findByRole("switch", { name: "Conta sempre à mostra" });
+    await user.click(toggle);
+
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith("set_app_setting", {
+        key: "mia_show_receipt",
+        value: "false",
+      }),
+    );
+  });
+});

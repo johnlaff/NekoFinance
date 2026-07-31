@@ -271,6 +271,75 @@
   color: var(--danger-400);
 }
 
+/* ---- Recibo recolhido: o resultado fica, a conta abre sob pedido ---- */
+
+/* Fechada, a moldura tracejada prometeria uma conta que não está à vista: sem operandos, o
+   resultado é uma linha de dado, e a caixa se desenha quando a conta abre. */
+.mia__receipt[data-open="false"] {
+  padding: 0;
+  border-color: transparent;
+}
+.mia__receipt-lines {
+  margin: 0;
+}
+/* Sem operando à vista, o resultado é a única linha: a régua que o separava não separa nada. */
+.mia__receipt-fold:not([data-open="true"]) + .mia__receipt-lines .mia__rl--result {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+/* O alvo cresce por dentro (padding + margem negativa) para alcançar os 44px do polegar sem
+   inflar o espaço que o gesto ocupa na bolha. */
+.mia__receipt-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  margin: calc(var(--space-4) * -1) calc(var(--space-4) * -1) calc(var(--space-4) * -1);
+  padding: 0 var(--space-4);
+  border: none;
+  background: none;
+  font-size: var(--fs-label);
+  font-weight: var(--fw-medium);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.mia__receipt[data-open="false"] .mia__receipt-toggle {
+  margin-inline: 0;
+  padding-inline: 0;
+}
+.mia__receipt-toggle:hover,
+.mia__receipt-toggle:focus-visible {
+  color: var(--text);
+}
+.mia__receipt-toggle svg {
+  transition: transform var(--dur-base) var(--ease-standard);
+}
+.mia__receipt-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+.mia__receipt-fold {
+  display: grid;
+  grid-template-rows: 0fr;
+  /* Fechado, a linha vale zero — mas a borda do recibo ainda desenharia uma faixa vazia:
+     `visibility` a apaga, e o atraso segura o sumiço até a altura terminar de colapsar. */
+  visibility: hidden;
+  transition:
+    grid-template-rows var(--dur-base) var(--ease-standard),
+    visibility 0s linear var(--dur-base);
+}
+.mia__receipt-fold[data-open="true"] {
+  grid-template-rows: 1fr;
+  visibility: visible;
+  transition:
+    grid-template-rows var(--dur-base) var(--ease-standard),
+    visibility 0s;
+}
+.mia__receipt-fold > .mia__receipt-lines {
+  overflow: hidden;
+  min-height: 0;
+}
+
 /* ---- Saídas de uma resposta: opções e o caminho concreto ---- */
 
 .mia__opts {

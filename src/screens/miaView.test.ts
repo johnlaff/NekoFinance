@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { GLOSSARY } from "../design-system/glossary";
 import {
   answerFor,
   buildTimeline,
@@ -7,6 +8,7 @@ import {
   localStamp,
   plainText as rawPlainText,
   routeQuestion,
+  SUGGESTIONS,
   timeLabel,
   type MiaFacts,
   type Span,
@@ -103,6 +105,16 @@ function plainText(spans: Span[]): string {
 
 function ask(question: string, facts: MiaFacts | null = FACTS) {
   return answerFor(routeQuestion(question), facts);
+}
+
+/** Os números marcados como estimativa na frase, com o termo que abre a didática. */
+function markedSpans(answer: { text: Span[] }) {
+  return answer.text
+    .filter((span) => span.t !== "text" && span.mark)
+    .map((span) => ({
+      value: span.t === "money" ? span.cents : span.t === "strong" ? span.s : "",
+      term: span.t === "text" ? undefined : span.mark?.term.title,
+    }));
 }
 
 /** Texto corrido da resposta (parágrafo + nota) para asserções de copy. */
@@ -336,7 +348,9 @@ describe("economia do ano", () => {
     });
     expect(a.refusal).toBe("sem_dado");
     expect(plainText(a.text)).toContain("R$ 3.000,00");
-    expect(a.receipt?.some((l) => l.mark?.kind === "estimate")).toBe(true);
+    expect(markedSpans(a)).toEqual([
+      { value: 300000, term: GLOSSARY["colchao"]!.title },
+    ]);
     // Zero fabricado é proibido: não existe "0%" como veredito aqui.
     expect(plainText(a.text)).not.toContain("0%");
   });
@@ -352,13 +366,20 @@ describe("reserva", () => {
     expect(plainText(a.text)).toContain("4,5 meses");
   });
 
-  it("retrato vivo entra marcado como estimativa", () => {
+  it("retrato vivo marca o número da frase, não a linha do recibo", () => {
     const a = ask("Como está a reserva?", {
       ...FACTS,
       summary: { ...SUMMARY, reserve_state: "estimate", reserve_basis_months: 2 },
     });
-    expect(a.receipt?.some((l) => l.mark?.kind === "estimate")).toBe(true);
+    // O selo mora colado ao número que ele qualifica — assim ele sobrevive ao recolhimento
+    // da conta sem deixar dúvida sobre a qual valor se refere.
+    expect(markedSpans(a)).toEqual([{ value: "4,5 meses", term: "Retrato vivo" }]);
+    expect(a.receipt?.some((l) => l.mark)).toBe(false);
     expect(plainText(a.text)).toContain("estimativa");
+  });
+
+  it("veredito fechado não marca nada", () => {
+    expect(markedSpans(ask("Como está a reserva?"))).toEqual([]);
   });
 
   it("sem bolso de reserva mapeado, recusa com o caminho de registro", () => {
@@ -379,6 +400,16 @@ describe("reserva", () => {
     });
     expect(plainText(a.text)).toContain("Sem reserva");
     expect(a.refusal).toBeUndefined();
+  });
+
+  it("resposta que já entrega o veredito não empurra Configurações", () => {
+    expect(ask("Como está a reserva?").cta).toBeUndefined();
+    expect(
+      ask("Como está a reserva?", {
+        ...FACTS,
+        summary: { ...SUMMARY, reserve_state: "zero", reserve_months: 0 },
+      }).cta,
+    ).toBeUndefined();
   });
 });
 
@@ -620,5 +651,18 @@ describe("os números por trás", () => {
 
   it("sem dados, o painel não existe", () => {
     expect(contextFacts(null)).toEqual([]);
+  });
+});
+
+// ---- selo epistêmico da resposta -------------------------------------------
+
+describe("selo epistêmico", () => {
+  it("nenhuma resposta do repertório marca a linha de resultado", () => {
+    // A linha do recibo guarda o selo só para operando estimado entre operandos vividos; o
+    // número que a resposta afirma leva o selo na frase.
+    for (const question of SUGGESTIONS) {
+      const marked = ask(question).receipt?.filter((l) => l.mark && l.result) ?? [];
+      expect(marked).toEqual([]);
+    }
   });
 });
