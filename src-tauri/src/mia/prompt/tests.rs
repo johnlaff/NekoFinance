@@ -122,6 +122,8 @@ async fn the_prefix_teaches_the_tag_switch_and_the_register_offer() {
         // A recusa por capacidade fecha oferecendo o gesto do app por nome: mover dinheiro é do
         // banco, registrar o lançamento é do app.
         "lançamento é do app",
+        // Tag mencionada é tag explicada: a frase diz o que ela decide, sempre.
+        "Tag mencionada é tag explicada",
     ] {
         assert!(
             prompt.text.contains(expected),
