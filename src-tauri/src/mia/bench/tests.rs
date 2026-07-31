@@ -1734,7 +1734,7 @@ async fn os_numeros_esperados_existem_no_envelope_da_fachada() {
 use super::bakeoff::{self, Decision, Score};
 use crate::mia::provider::drift::{EndpointsCatalog, ZdrCatalog};
 use crate::mia::provider::pins::{
-    ModelPin, PINS, PinRole, ReasoningFloor, Retention, TokenCap, pin,
+    ModelPin, PINS, PinRole, ReasoningEffort, Retention, TokenCap, pin,
 };
 
 fn zdr_catalog() -> serde_json::Value {
@@ -1790,7 +1790,7 @@ fn fictional_pin(model: &'static str, run_order: u8) -> &'static ModelPin {
         operator: "Teste",
         role: PinRole::Candidate,
         beta_headers: &[],
-        reasoning_floor: ReasoningFloor::Minimal,
+        reasoning_effort: ReasoningEffort::Medium,
         token_cap: TokenCap::MaxCompletionTokens,
         retention: Retention::Zero,
         run_order,
@@ -2585,11 +2585,11 @@ fn a_projecao_reflete_o_recorte_da_regua() {
     assert!(bakeoff::estimate(&probes, 10, 2) < bakeoff::estimate(&probes, 10, 10));
 }
 
-/// Cada pin manda o piso que declarou: mandar "desligado" a um modelo de raciocínio obrigatório é
-/// rodada recusada, não resposta pior — e um teste que só olhasse o default não veria a diferença.
+/// Cada pin manda o esforço que declarou, no vocabulário oficial do modelo: mandar "desligado" a
+/// um modelo de raciocínio obrigatório é rodada recusada, não resposta pior — e um teste que só
+/// olhasse o default não veria a diferença.
 #[test]
-fn cada_pin_envia_o_piso_de_raciocinio_que_declarou() {
-    use crate::mia::provider::pins::ReasoningFloor;
+fn cada_pin_envia_o_esforco_de_raciocinio_que_declarou() {
     use crate::mia::provider::request::{RunSpec, build};
 
     for pin in PINS {
@@ -2600,30 +2600,44 @@ fn cada_pin_envia_o_piso_de_raciocinio_que_declarou() {
             tools: &[],
             max_tokens: 1_024,
         });
-        let esperado = match pin.reasoning_floor {
-            ReasoningFloor::Off => "none",
-            ReasoningFloor::Minimal => "minimal",
-        };
         assert_eq!(
             request
                 .body
                 .pointer("/reasoning/effort")
                 .and_then(serde_json::Value::as_str),
-            Some(esperado),
+            Some(pin.reasoning_effort.wire()),
             "o pin {} declara {:?}",
             pin.model,
-            pin.reasoning_floor
+            pin.reasoning_effort
         );
     }
 
-    // A matriz vigente é uniforme em "minimal" — o campo continua por pin porque o piso é fato
-    // do ENDPOINT: o estreante entra com palpite declarado e a sonda o confirma, e um endpoint
-    // que aceite desligar volta a diferenciar a matriz sem mexer em nada além do próprio pin.
-    let pisos: std::collections::BTreeSet<&str> = PINS
-        .iter()
-        .map(|pin| pin.reasoning_floor.effort())
-        .collect();
-    assert_eq!(pisos, std::collections::BTreeSet::from(["minimal"]));
+    // A matriz vigente é uniforme em "medium" — o campo continua por pin porque o esforço é
+    // propriedade do CANDIDATO: outro esforço no mesmo endpoint é outro candidato, e um pin pode
+    // divergir da matriz sem mexer em nada além dele próprio.
+    let esforcos: std::collections::BTreeSet<&str> =
+        PINS.iter().map(|pin| pin.reasoning_effort.wire()).collect();
+    assert_eq!(esforcos, std::collections::BTreeSet::from(["medium"]));
+}
+
+/// O vocabulário de esforço é o oficial do modelo, nível a nível: um nome fora dele passa no
+/// endpoint por tolerância, não por contrato — e o que se mede deixa de ser o que se declarou.
+#[test]
+fn o_esforco_fala_o_vocabulario_oficial() {
+    use crate::mia::provider::pins::ReasoningEffort;
+
+    let niveis: Vec<&str> = [
+        ReasoningEffort::None,
+        ReasoningEffort::Low,
+        ReasoningEffort::Medium,
+        ReasoningEffort::High,
+        ReasoningEffort::Xhigh,
+        ReasoningEffort::Max,
+    ]
+    .into_iter()
+    .map(ReasoningEffort::wire)
+    .collect();
+    assert_eq!(niveis, ["none", "low", "medium", "high", "xhigh", "max"]);
 }
 
 /// Um turno cobrado e declarado, seguido de um turno que gera texto e trava no tempo: o total
@@ -4781,7 +4795,7 @@ async fn a_retomada_recusa_uma_corrida_que_nao_diz_como_terminou() {
 }
 
 /// A identidade do pin é a configuração INTEIRA da requisição: sob o mesmo endpoint, outro cabeçalho
-/// beta, outro piso de raciocínio ou outro nome de teto de saída produzem outra corrida.
+/// beta, outro esforço de raciocínio ou outro nome de teto de saída produzem outra corrida.
 #[tokio::test]
 async fn a_retomada_recusa_outra_configuracao_de_requisicao_no_mesmo_endpoint() {
     let dir = reports_dir();
@@ -4789,7 +4803,7 @@ async fn a_retomada_recusa_outra_configuracao_de_requisicao_no_mesmo_endpoint() 
 
     for (campo, valor) in [
         ("beta_headers", json!(["um-beta-qualquer"])),
-        ("reasoning_floor", json!("none")),
+        ("reasoning_effort", json!("none")),
         ("token_cap", json!("max_completion_tokens")),
     ] {
         let mut adulterado = report.clone();
@@ -4797,6 +4811,30 @@ async fn a_retomada_recusa_outra_configuracao_de_requisicao_no_mesmo_endpoint() 
         let error =
             resume::parse(&adulterado, &resume_cases(), "r.json".into(), false).unwrap_err();
         assert!(error.contains(campo), "{campo}: {error}");
+    }
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Relatório que registra o esforço sob o modelo de PISO (`reasoning_floor`) nasceu de outra
+/// configuração de requisição — a divergência está provada no próprio arquivo, então nem o
+/// reconhecimento de identidade a cobre: recusa seca, nos dois modos.
+#[tokio::test]
+async fn a_retomada_recusa_relatorio_que_registra_o_modelo_de_piso() {
+    let dir = reports_dir();
+    let (report, _) = bakeoff_gravado(&dir).await;
+
+    let mut legado = report.clone();
+    let run = legado["phase_one"][0]["run"].as_object_mut().unwrap();
+    run.remove("reasoning_effort");
+    run.insert("reasoning_floor".into(), json!("minimal"));
+
+    for assume in [false, true] {
+        let error = resume::parse(&legado, &resume_cases(), "r.json".into(), assume).unwrap_err();
+        assert!(
+            error.contains("reasoning_floor"),
+            "assume={assume}: {error}"
+        );
     }
 
     std::fs::remove_dir_all(&dir).unwrap();
@@ -4823,7 +4861,7 @@ fn sem_configuracao(report: &serde_json::Value) -> serde_json::Value {
     for phase in ["phase_one", "phase_two"] {
         for entry in sem[phase].as_array_mut().unwrap() {
             let run = entry["run"].as_object_mut().unwrap();
-            for campo in ["beta_headers", "reasoning_floor", "token_cap"] {
+            for campo in ["beta_headers", "reasoning_effort", "token_cap"] {
                 run.remove(campo);
             }
         }

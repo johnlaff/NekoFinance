@@ -23,34 +23,40 @@ pub(crate) enum PinRole {
     Ceiling,
 }
 
-/// O piso de raciocínio que o endpoint aceita.
+/// O esforço de raciocínio que a rodada pede, no vocabulário oficial do modelo.
 ///
-/// A conversa quer o mínimo em todos: ela não deriva número — todo valor material chega pronto da
-/// ferramenta —, e raciocínio pago compraria latência e custo sem comprar fidelidade. Só que o
-/// mínimo não é o mesmo em toda a matriz, e mandar o piso errado é rodada recusada, não resposta
-/// pior: modelo com raciocínio obrigatório rejeita "desligado", e quem aceita desligar não pode
-/// receber um orçamento mínimo que o teto de tokens do turno não comporta.
+/// O esforço é propriedade do PIN, não regra do módulo: ele muda o objeto medido — o mesmo modelo
+/// no mesmo endpoint sob outro esforço é outro candidato —, e a matriz só é comparável quando os
+/// pins declaram o mesmo nível. A conversa não deriva número (todo valor material chega pronto da
+/// ferramenta), mas a SELEÇÃO de ferramenta é raciocínio, e esforço de menos compra falha de
+/// consistência: o modelo acerta a conta e erra qual conta fazer.
 ///
-/// Os pisos dos veteranos da matriz foram conferidos por execução real contra cada endpoint
-/// pinado — prova mais forte que o catálogo, que anuncia o parâmetro mas não os esforços que ele
-/// aceita (verificado 2026-07). Estreante entra com o piso mais provável declarado, e a sonda do
-/// bakeoff o confirma antes de qualquer fase paga.
+/// Os seis níveis são os que o fabricante documenta para a família pinada (verificado 2026-07-31,
+/// developers.openai.com/api/docs/guides/reasoning). Nome fora desse vocabulário pode passar no
+/// endpoint por tolerância — aí o que se mede deixa de ser o que se declarou.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ReasoningFloor {
-    /// Desligado. O piso de quem pode não raciocinar — nenhum endpoint da matriz vigente aceita
-    /// desligar, e o variante fica porque o piso é fato do endpoint, não da matriz.
-    #[allow(dead_code)]
-    Off,
-    /// O menor esforço que o modelo aceita, para quem não pode desligar.
-    Minimal,
+#[allow(dead_code)]
+pub(crate) enum ReasoningEffort {
+    /// Desligado — só para modelo que aceita não raciocinar.
+    None,
+    Low,
+    /// O default recomendado pelo fabricante para trabalho agentic com ferramentas.
+    Medium,
+    High,
+    Xhigh,
+    Max,
 }
 
-impl ReasoningFloor {
-    /// Como o provedor nomeia o esforço.
-    pub(crate) fn effort(self) -> &'static str {
+impl ReasoningEffort {
+    /// Como o corpo da requisição nomeia o nível.
+    pub(crate) fn wire(self) -> &'static str {
         match self {
-            ReasoningFloor::Off => "none",
-            ReasoningFloor::Minimal => "minimal",
+            ReasoningEffort::None => "none",
+            ReasoningEffort::Low => "low",
+            ReasoningEffort::Medium => "medium",
+            ReasoningEffort::High => "high",
+            ReasoningEffort::Xhigh => "xhigh",
+            ReasoningEffort::Max => "max",
         }
     }
 }
@@ -60,7 +66,7 @@ impl ReasoningFloor {
 /// Toda rodada envia um teto de tokens, mas os endpoints não concordam no nome do campo: parte
 /// anuncia `max_tokens`, parte só `max_completion_tokens`. Sob `require_parameters`, mandar o
 /// nome que o endpoint não anuncia é rodada recusada pelo roteador — não teto ignorado —, então
-/// o nome certo é propriedade do pin, como o piso de raciocínio.
+/// o nome certo é propriedade do pin, como o esforço de raciocínio.
 ///
 /// Os nomes declarados na matriz batem com o catálogo do provedor e foram conferidos por
 /// execução real contra os endpoints pinados (verificado 2026-07).
@@ -102,10 +108,10 @@ pub(crate) struct ModelPin {
     pub operator: &'static str,
     pub role: PinRole,
     pub beta_headers: &'static [&'static str],
-    /// O piso de raciocínio deste endpoint. Declarado por pin porque a matriz não é uniforme:
-    /// enviar "desligado" a um modelo que exige raciocínio é rodada recusada, e o canary não
-    /// alcança isso — o catálogo anuncia o parâmetro, nunca os esforços que ele aceita.
-    pub reasoning_floor: ReasoningFloor,
+    /// O esforço de raciocínio deste candidato. Declarado por pin porque muda o objeto medido:
+    /// outro esforço é outro candidato, e enviar "desligado" a um modelo que exige raciocínio é
+    /// rodada recusada — o catálogo anuncia o parâmetro, nunca os níveis que ele aceita.
+    pub reasoning_effort: ReasoningEffort,
     /// O nome do teto de saída deste endpoint. O canary confere que o catálogo o anuncia; a
     /// requisição envia o teto sob este nome e nunca sob o irmão.
     pub token_cap: TokenCap,
@@ -129,7 +135,7 @@ pub(crate) const PINS: &[ModelPin] = &[
         // vitória: o bakeoff ainda não fechou uma decisão, e é a corrida quem promove ou rebaixa.
         role: PinRole::Default,
         beta_headers: &[],
-        reasoning_floor: ReasoningFloor::Minimal,
+        reasoning_effort: ReasoningEffort::Medium,
         // O endpoint do próprio fabricante anuncia `max_tokens`, não o irmão que o azure usa.
         token_cap: TokenCap::MaxTokens,
         // Opt-out deliberado: $1/$6 no endpoint do fabricante contra $2,5/$15 no azure — quase um
@@ -146,7 +152,7 @@ pub(crate) const PINS: &[ModelPin] = &[
         operator: "OpenAI",
         role: PinRole::Candidate,
         beta_headers: &[],
-        reasoning_floor: ReasoningFloor::Minimal,
+        reasoning_effort: ReasoningEffort::Medium,
         token_cap: TokenCap::MaxTokens,
         // Mesmo racional do terra: $0,10/$0,60 no fabricante contra $1/$6 no azure (verificado
         // 2026-07-30).
@@ -159,7 +165,7 @@ pub(crate) const PINS: &[ModelPin] = &[
         operator: "Microsoft Azure",
         role: PinRole::Ceiling,
         beta_headers: &[],
-        reasoning_floor: ReasoningFloor::Minimal,
+        reasoning_effort: ReasoningEffort::Medium,
         token_cap: TokenCap::MaxCompletionTokens,
         // Sem desconto para pagar a troca ($5/$30 nos dois endpoints, verificado 2026-07-30) e
         // uptime pior no fabricante — o azure segue provando a garantia pelo catálogo.

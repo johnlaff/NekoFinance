@@ -330,7 +330,7 @@ fn parse_run(
     let pin = pin(model)
         .ok_or_else(|| format!("O relatório aponta {model}, que não está na matriz. {FIX}"))?;
     // O pin é por ENDPOINT e pela configuração da requisição, não por nome de modelo: o mesmo
-    // modelo servido de outro lugar — ou pedido com outro cabeçalho beta, outro piso de raciocínio
+    // modelo servido de outro lugar — ou pedido com outro cabeçalho beta, outro esforço de raciocínio
     // ou outro nome de teto de saída — responde outra coisa, e é outro candidato. O canary prova que
     // o pin de HOJE está limpo; é esta conferência que prova que a evidência herdada nasceu dele.
     let refuse = |field: &str, recorded: &Value, current: &Value| {
@@ -352,10 +352,20 @@ fn parse_run(
     // identidade fica FORA do arquivo, e reconhecê-la transfere a responsabilidade para quem
     // invoca. O reconhecimento supre a ausência e nada mais — campo registrado que diverge continua
     // recusando, porque aí a divergência está provada e nenhuma afirmação de fora a desfaz.
+    // Relatório que registra o esforço sob o modelo de PISO nasceu de outra configuração de
+    // requisição — a divergência está provada no próprio arquivo, então o reconhecimento de
+    // identidade não a cobre: ele supre ausência, nunca desfaz prova.
+    if run.get("reasoning_floor").is_some() {
+        return Err(refuse(
+            "reasoning_floor",
+            &run["reasoning_floor"],
+            &json!(pin.reasoning_effort.wire()),
+        ));
+    }
     let mut identity_assumed = false;
     for (field, current) in [
         ("beta_headers", json!(pin.beta_headers)),
-        ("reasoning_floor", json!(pin.reasoning_floor.effort())),
+        ("reasoning_effort", json!(pin.reasoning_effort.wire())),
         ("token_cap", json!(pin.token_cap.field())),
     ] {
         match run.get(field) {

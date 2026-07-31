@@ -37,7 +37,7 @@ pub(crate) fn render(run: &BenchRun, ran_at: &str) -> Value {
         "endpoint": run.pin.endpoint,
         "operator": run.pin.operator,
         "beta_headers": run.pin.beta_headers,
-        "reasoning_floor": run.pin.reasoning_floor.effort(),
+        "reasoning_effort": run.pin.reasoning_effort.wire(),
         "token_cap": run.pin.token_cap.field(),
         "method_core": run.method_core,
         "max_spend_micro_usd": run.max_spend_micro_usd,

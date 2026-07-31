@@ -158,7 +158,7 @@ fn request_uses_the_pinned_model_for_default_and_candidate() {
 }
 
 #[test]
-fn request_pins_reasoning_to_the_floor() {
+fn request_sends_the_pins_declared_reasoning_effort() {
     let request = request_for(default_pin(), vec![]);
 
     assert_eq!(
@@ -166,7 +166,7 @@ fn request_pins_reasoning_to_the_floor() {
             .body
             .pointer("/reasoning/effort")
             .and_then(Value::as_str),
-        Some("minimal")
+        Some("medium")
     );
 }
 
