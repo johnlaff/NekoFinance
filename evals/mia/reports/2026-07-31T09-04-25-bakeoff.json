@@ -73,11 +73,12 @@
   },
   "decision": {
     "default_model": null,
-    "reason": "Nenhum finalista zerou a suíte mecânica em corrida completa (3 comparados). O default segue como está, e o relatório mostra onde cada um caiu."
+    "reason": "Nenhum finalista sobreviveu ao julgamento cego e à suíte mecânica (3 comparados, 2 reprovado(s) na didática)."
   },
   "execution_id": "14e0b2c8-5159-4475-bde2-8c777982b904",
   "inherited_from": null,
   "inherited_micro_usd": 0,
+  "judged_at": "2026-07-31T10:08:22-03:00",
   "phase_one": [
     {
       "run": {
