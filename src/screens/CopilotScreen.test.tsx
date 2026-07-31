@@ -140,6 +140,130 @@ describe("CopilotScreen (Mia)", () => {
     ).toBeInTheDocument();
   });
 
+  describe("mia_show_receipt", () => {
+    it("ausente (default ligado): recibo inteiro visível, com o selo colado ao número", async () => {
+      const user = userEvent.setup();
+      renderMia();
+      await user.click(
+        await screen.findByRole("button", { name: "Como está a reserva?" }),
+      );
+
+      const log = screen.getByRole("log");
+      expect(within(log).getByText("Meta do método")).toBeInTheDocument();
+      expect(within(log).getByText("Reserva de hoje")).toBeInTheDocument();
+      expect(within(log).getAllByText("Estimativa")).toHaveLength(1);
+      expect(
+        within(log).queryByRole("button", { name: "Ver a conta" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("desligada: recolhe a conta, mantém o resultado e o selo, e expande sob pedido", async () => {
+      const user = userEvent.setup();
+      mockCommands({
+        get_dashboard_summary: SUMMARY,
+        get_forecast: FORECAST,
+        get_mia_consent: MIA_CONSENT,
+        get_app_setting: (args) =>
+          (args as { key: string }).key === "mia_show_receipt" ? "false" : null,
+      });
+      renderMia();
+      await user.click(
+        await screen.findByRole("button", { name: "Como está a reserva?" }),
+      );
+
+      const log = screen.getByRole("log");
+      // O resultado sobrevive ao recolhimento; o operando fica inerte até o gesto de abrir.
+      expect(within(log).getByText("Reserva de hoje")).toBeInTheDocument();
+      // A chave esconde aritmética, nunca estado do dado: o selo segue colado ao número.
+      expect(within(log).getAllByText("Estimativa")).toHaveLength(1);
+      const fold = within(log)
+        .getByText("Meta do método")
+        .closest(".mia__receipt-fold");
+      expect(fold).toHaveAttribute("inert");
+
+      const toggle = within(log).getByRole("button", { name: "Ver a conta" });
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+      await user.click(toggle);
+      expect(fold).not.toHaveAttribute("inert");
+      expect(
+        within(log).getByRole("button", { name: "Ocultar a conta" }),
+      ).toHaveAttribute("aria-expanded", "true");
+    });
+
+    it("operando estimado entre operandos vividos guarda o selo na própria linha", async () => {
+      // O selo da frase qualifica o número que a resposta afirma. Quando é um operando que
+      // está estimado, ele fica na linha da conta — a chave esconde aritmética, nunca o
+      // estado do dado, e os dois selos convivem sem se confundir.
+      const answer = {
+        text: [{ t: "text", s: "A reserva cobre 4,5 meses do seu custo de vida." }],
+        receipt: [
+          {
+            label: "Gasto típico",
+            cents: 900_000,
+            mark: {
+              kind: "estimate",
+              term: { title: "Retrato vivo", body: "Ainda é média." },
+            },
+          },
+          { label: "Reserva de hoje", text: "4,5 meses", result: true },
+        ],
+        provenance: "calculo",
+      };
+      mockCommands({
+        get_dashboard_summary: SUMMARY,
+        get_forecast: FORECAST,
+        get_mia_consent: MIA_CONSENT,
+        load_mia_conversation: [
+          {
+            author: "voce",
+            question: "Como está a reserva?",
+            answer: null,
+            at_iso: "2026-07-15T12:00",
+          },
+          { author: "mia", question: null, answer, at_iso: "2026-07-15T12:00" },
+        ],
+        get_app_setting: (args) =>
+          (args as { key: string }).key === "mia_show_receipt" ? "false" : null,
+      });
+      renderMia();
+
+      const log = await screen.findByRole("log");
+      // Recolhida, o operando e o selo dele ficam inertes junto com o resto da conta.
+      const fold = within(log).getByText("Gasto típico").closest(".mia__receipt-fold");
+      expect(fold).toHaveAttribute("inert");
+      expect(within(fold as HTMLElement).getByText("Estimativa")).toBeInTheDocument();
+
+      await userEvent
+        .setup()
+        .click(within(log).getByRole("button", { name: "Ver a conta" }));
+      expect(fold).not.toHaveAttribute("inert");
+      expect(within(log).getAllByText("Estimativa")).toHaveLength(1);
+    });
+
+    it("desligada: recusa não tem recibo e não muda", async () => {
+      const user = userEvent.setup();
+      mockCommands({
+        get_dashboard_summary: SUMMARY,
+        get_forecast: FORECAST,
+        get_mia_consent: MIA_CONSENT,
+        get_app_setting: (args) =>
+          (args as { key: string }).key === "mia_show_receipt" ? "false" : null,
+      });
+      renderMia();
+      const input = await screen.findByLabelText("Mensagem para a Mia");
+      await user.type(input, "onde gastei mais?{Enter}");
+
+      const log = screen.getByRole("log");
+      expect(
+        within(log).queryByRole("button", { name: "Ver a conta" }),
+      ).not.toBeInTheDocument();
+      expect(
+        await within(log).findByRole("button", { name: "Abrir Tags" }),
+      ).toBeInTheDocument();
+    });
+  });
+
   describe("apagar conversa", () => {
     it("o botão só aparece quando há mensagens", async () => {
       renderMia();

@@ -14,9 +14,19 @@ import type { Screen } from "../shell/screens";
 
 // ------------------------------------------------------------------- tipos --
 
+/** Selo epistêmico: número derivado sai marcado, com a didática do ritual que o tornaria
+ *  veredito. Vive colado ao número que qualifica — na frase, quando o número é o veredito da
+ *  resposta; na linha do recibo, quando é um operando estimado entre operandos vividos. */
+export interface EpistemicMark {
+  kind: "estimate";
+  term: { title?: string; body: string };
+}
+
 /** Trecho de texto de uma resposta: prosa, ênfase ou dinheiro (que rende tabular). */
 export type Span =
-  { t: "text"; s: string } | { t: "strong"; s: string } | { t: "money"; cents: number };
+  | { t: "text"; s: string }
+  | { t: "strong"; s: string; mark?: EpistemicMark }
+  | { t: "money"; cents: number; mark?: EpistemicMark };
 
 /** Operação impressa entre os operandos do recibo. */
 export type ReceiptOp = "min" | "minus" | "div" | "eq";
@@ -32,9 +42,7 @@ export interface ReceiptLine {
   op?: ReceiptOp;
   result?: boolean;
   tone?: Tone;
-  /** Selo epistêmico: número derivado sai marcado, com a didática do ritual que o
-   *  tornaria veredito. */
-  mark?: { kind: "estimate"; term: { title?: string; body: string } };
+  mark?: EpistemicMark;
 }
 
 /**
@@ -257,8 +265,16 @@ export function routeQuestion(question: string): Route {
 // ------------------------------------------------------------- formatadores --
 
 const t = (s: string): Span => ({ t: "text", s });
-const b = (s: string): Span => ({ t: "strong", s });
-const m = (cents: number): Span => ({ t: "money", cents });
+const b = (s: string, mark?: EpistemicMark): Span => ({
+  t: "strong",
+  s,
+  ...(mark ? { mark } : {}),
+});
+const m = (cents: number, mark?: EpistemicMark): Span => ({
+  t: "money",
+  cents,
+  ...(mark ? { mark } : {}),
+});
 
 /** Texto corrido de uma resposta — a base do `aria-label` e das asserções de copy. */
 export function plainText(spans: Span[]): string {
@@ -485,14 +501,13 @@ function economiaAno(facts: MiaFacts): MiaAnswer {
         t(
           "A planilha ainda não registra Economia neste ano, então não há Economizado para julgar. O que dá para ver é o colchão — a sobra que ficou em conta: ",
         ),
-        m(a.realized_savings_cents),
+        m(a.realized_savings_cents, { kind: "estimate", term: GLOSSARY["colchao"]! }),
         t("."),
       ],
       receipt: [
         {
           label: "Colchão do ano",
           cents: a.realized_savings_cents,
-          mark: { kind: "estimate", term: GLOSSARY["colchao"]! },
           result: true,
         },
       ],
@@ -573,7 +588,6 @@ function reservaAnswer(facts: MiaFacts): MiaAnswer {
         { label: "Reserva de hoje", text: monthsLabel(0), result: true, tone: "warn" },
       ],
       provenance: "calculo",
-      cta: { label: "Abrir Configurações", target: "config" },
     };
   }
   const months = s.reserve_months;
@@ -585,7 +599,7 @@ function reservaAnswer(facts: MiaFacts): MiaAnswer {
           t("Com "),
           t(monthsLabel(s.reserve_basis_months)),
           t(" de custo de vida vividos, o retrato de agora aponta "),
-          b(monthsLabel(months)),
+          b(monthsLabel(months), { kind: "estimate", term: LIVE_PORTRAIT }),
           t(
             " de reserva — ainda é uma estimativa: a régua pede 6 meses completos para virar veredito.",
           ),
@@ -602,13 +616,9 @@ function reservaAnswer(facts: MiaFacts): MiaAnswer {
         text: monthsLabel(months),
         result: true,
         tone,
-        ...(estimate
-          ? { mark: { kind: "estimate" as const, term: LIVE_PORTRAIT } }
-          : {}),
       },
     ],
     provenance: "calculo",
-    cta: { label: "Abrir Configurações", target: "config" },
   };
 }
 

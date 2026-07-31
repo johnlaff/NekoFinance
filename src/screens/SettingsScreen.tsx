@@ -9,6 +9,7 @@ import {
   Lock,
   MessagesSquare,
   Palette,
+  Receipt,
   Table2,
   Shield,
 } from "lucide-react";
@@ -27,6 +28,8 @@ import {
   checkAuthStatus,
   getAppInfo,
   getAppSetting,
+  getFlagSetting,
+  MIA_SHOW_RECEIPT,
   getDailyBudget,
   getMiaConsent,
   GOOGLE_CLIENT_ID,
@@ -287,6 +290,7 @@ function ConversationConsent({
   return (
     <section className="config__card" aria-labelledby="config-conversa">
       <SecHead icon={MessagesSquare} id="config-conversa" title="Conversa" />
+      <ShowReceiptLine />
       <Line
         title="Conversa aberta"
         sub={invitation.sub}
@@ -611,6 +615,55 @@ function MotionDiagnostics() {
         </div>
       </div>
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Conta sempre à mostra — a preferência de exibição do recibo na conversa
+// ---------------------------------------------------------------------------
+
+function ShowReceiptLine() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!isTauri) return;
+    void (async () => {
+      try {
+        setEnabled(await getFlagSetting(MIA_SHOW_RECEIPT, true));
+      } catch {
+        setEnabled(true);
+      }
+    })();
+  }, []);
+
+  async function handleToggle(next: boolean) {
+    setEnabled(next);
+    setSaving(true);
+    try {
+      await setAppSetting(MIA_SHOW_RECEIPT, next ? "true" : "false");
+      setSaving(false);
+    } catch {
+      setSaving(false);
+    }
+  }
+
+  if (!isTauri || enabled === null) return null;
+
+  return (
+    <Line
+      icon={Receipt}
+      title="Conta sempre à mostra"
+      sub="Desligada, a resposta traz só o resultado, e a conta abre em cada bolha sob demanda."
+      right={
+        <Switch
+          on={enabled}
+          onChange={(next) => void handleToggle(next)}
+          label="Conta sempre à mostra"
+          disabled={saving}
+        />
+      }
+    />
   );
 }
 

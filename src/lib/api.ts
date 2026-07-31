@@ -820,6 +820,18 @@ export function setAppSetting(key: string, value: string): Promise<void> {
   return invoke("set_app_setting", { key, value });
 }
 
+/** Chave da preferência de exibição do recibo na conversa. */
+export const MIA_SHOW_RECEIPT = "mia_show_receipt";
+
+/**
+ * Lê uma preferência de liga/desliga. O default mora aqui, e não em cada tela que consulta a
+ * chave: quem lê e quem escreve precisam concordar sobre o que "nunca gravada" significa.
+ */
+export async function getFlagSetting(key: string, fallback: boolean): Promise<boolean> {
+  const value = await getAppSetting(key);
+  return value === null ? fallback : value !== "false";
+}
+
 /**
  * Grava o teto de gasto Diário por dia configurado pelo dono.
  * `amountCents = 0` desativa o teto explícito — o engine usa o fallback de média.
