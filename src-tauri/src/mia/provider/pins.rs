@@ -121,6 +121,11 @@ pub(crate) struct ModelPin {
     /// O nome do teto de saída deste endpoint. O canary confere que o catálogo o anuncia; a
     /// requisição envia o teto sob este nome e nunca sob o irmão.
     pub token_cap: TokenCap,
+    /// O teto de tokens de cada turno deste candidato. Raciocínio pago sai do MESMO orçamento da
+    /// resposta: esforço alto sob teto de conversa é recusa do provedor, não resposta pior — o
+    /// candidato de esforço máximo abre o teto até a saída máxima do modelo, e os demais correm no
+    /// orçamento de conversa, que é parte do objeto que a régua comparável mede.
+    pub turn_max_tokens: u32,
     /// De onde vem a prova de retenção zero deste pin — ver [`Retention`].
     pub retention: Retention,
     /// A ordem em que os candidatos correm no bakeoff, de 1 em diante e sem empate. Ela existe
@@ -145,6 +150,7 @@ pub(crate) const PINS: &[ModelPin] = &[
         reasoning_effort: ReasoningEffort::Medium,
         // O endpoint do próprio fabricante anuncia `max_tokens`, não o irmão que o azure usa.
         token_cap: TokenCap::MaxTokens,
+        turn_max_tokens: 1_024,
         // Opt-out deliberado: $1/$6 no endpoint do fabricante contra $2,5/$15 no azure — quase um
         // quarto do preço — pela política de retenção do OPERADOR (sem treino, log limitado) em
         // vez da prova do catálogo de retenção zero (verificado 2026-07-30). O ganho de custo é
@@ -162,6 +168,7 @@ pub(crate) const PINS: &[ModelPin] = &[
         beta_headers: &[],
         reasoning_effort: ReasoningEffort::Medium,
         token_cap: TokenCap::MaxTokens,
+        turn_max_tokens: 1_024,
         // Mesmo racional do terra: $0,10/$0,60 no fabricante contra $1/$6 no azure (verificado
         // 2026-07-30).
         retention: Retention::ProviderPolicy,
@@ -179,6 +186,9 @@ pub(crate) const PINS: &[ModelPin] = &[
         beta_headers: &[],
         reasoning_effort: ReasoningEffort::Max,
         token_cap: TokenCap::MaxTokens,
+        // A saída máxima do modelo: o raciocínio em max consome o que precisar e ainda sobra
+        // espaço para a resposta — teto menor devolve recusa do provedor em vez de medição.
+        turn_max_tokens: 128_000,
         retention: Retention::ProviderPolicy,
         run_order: 3,
     },
@@ -191,6 +201,7 @@ pub(crate) const PINS: &[ModelPin] = &[
         beta_headers: &[],
         reasoning_effort: ReasoningEffort::Medium,
         token_cap: TokenCap::MaxCompletionTokens,
+        turn_max_tokens: 1_024,
         // Sem desconto para pagar a troca ($5/$30 nos dois endpoints, verificado 2026-07-30) e
         // uptime pior no fabricante — o azure segue provando a garantia pelo catálogo.
         retention: Retention::Zero,

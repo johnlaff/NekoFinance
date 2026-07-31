@@ -25,9 +25,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{Notify, mpsc};
 
-/// Resposta concisa preserva espaço para fatos e envelopes sem induzir texto financeiro longo.
-const MAX_TOKENS_PER_TURN: u32 = 1_024;
-
 /// O provedor visto pelo laço: uma rodada aberta, um canal de eventos do domínio.
 ///
 /// A credencial não atravessa este trait. Quem a carrega é a implementação de rede, que a lê do
@@ -808,7 +805,7 @@ impl<A: ProviderAdapter> Runner<'_, A> {
                         system: round.system,
                         messages: &transcript,
                         tools: &tools,
-                        max_tokens: MAX_TOKENS_PER_TURN,
+                        max_tokens: self.pin.turn_max_tokens,
                     };
                     let remaining = deadline.saturating_duration_since(Instant::now());
                     let open = self.adapter.open(&spec, &self.cancel);

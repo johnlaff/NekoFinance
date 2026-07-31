@@ -40,6 +40,7 @@ pub(crate) fn render(run: &BenchRun, ran_at: &str) -> Value {
         "beta_headers": run.pin.beta_headers,
         "reasoning_effort": run.pin.reasoning_effort.wire(),
         "token_cap": run.pin.token_cap.field(),
+        "turn_max_tokens": run.pin.turn_max_tokens,
         "method_core": run.method_core,
         "max_spend_micro_usd": run.max_spend_micro_usd,
         "total_cost_micro_usd": run.total_cost_micro_usd,

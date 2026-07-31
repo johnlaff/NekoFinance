@@ -429,6 +429,7 @@ fn parse_run(
         ("beta_headers", json!(pin.beta_headers)),
         ("reasoning_effort", json!(pin.reasoning_effort.wire())),
         ("token_cap", json!(pin.token_cap.field())),
+        ("turn_max_tokens", json!(pin.turn_max_tokens)),
     ] {
         match run.get(field) {
             Some(recorded) if *recorded != current => {

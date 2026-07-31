@@ -1795,6 +1795,7 @@ fn fictional_pin(model: &'static str, run_order: u8) -> &'static ModelPin {
         beta_headers: &[],
         reasoning_effort: ReasoningEffort::Medium,
         token_cap: TokenCap::MaxCompletionTokens,
+        turn_max_tokens: 1_024,
         retention: Retention::Zero,
         run_order,
     }))
@@ -2664,6 +2665,40 @@ fn cada_pin_envia_o_esforco_de_raciocinio_que_declarou() {
             ("openai/gpt-5.6-sol@medium", "medium"),
         ]
     );
+}
+
+/// O teto de tokens do turno é propriedade do pin: raciocínio pago sai do mesmo orçamento da
+/// resposta, e um esforço alto sob teto de conversa produz recusa do provedor, não resposta pior.
+/// Só o candidato de esforço máximo abre o teto — os demais seguem no orçamento de conversa, que
+/// é parte do objeto que a régua comparável mede.
+#[test]
+fn o_teto_de_turno_acompanha_o_esforco_do_pin() {
+    use crate::mia::provider::request::{RunSpec, build};
+
+    for pin in PINS {
+        let esperado = match pin.reasoning_effort {
+            ReasoningEffort::Max => 128_000,
+            _ => 1_024,
+        };
+        assert_eq!(pin.turn_max_tokens, esperado, "{}", pin.label);
+
+        let request = build(&RunSpec {
+            pin,
+            system: "Sistema local.",
+            messages: &[],
+            tools: &[],
+            max_tokens: pin.turn_max_tokens,
+        });
+        assert_eq!(
+            request
+                .body
+                .get(pin.token_cap.field())
+                .and_then(serde_json::Value::as_u64),
+            Some(u64::from(pin.turn_max_tokens)),
+            "{}",
+            pin.label
+        );
+    }
 }
 
 /// O rótulo é a identidade do candidato — modelo mais esforço — e não admite empate: dois pins
@@ -4918,6 +4953,7 @@ async fn a_retomada_recusa_outra_configuracao_de_requisicao_no_mesmo_endpoint() 
         ("beta_headers", json!(["um-beta-qualquer"])),
         ("reasoning_effort", json!("none")),
         ("token_cap", json!("max_completion_tokens")),
+        ("turn_max_tokens", json!(9)),
     ] {
         let mut adulterado = report.clone();
         adulterado["phase_one"][0]["run"][campo] = valor;
@@ -4974,7 +5010,12 @@ fn sem_configuracao(report: &serde_json::Value) -> serde_json::Value {
     for phase in ["phase_one", "phase_two"] {
         for entry in sem[phase].as_array_mut().unwrap() {
             let run = entry["run"].as_object_mut().unwrap();
-            for campo in ["beta_headers", "reasoning_effort", "token_cap"] {
+            for campo in [
+                "beta_headers",
+                "reasoning_effort",
+                "token_cap",
+                "turn_max_tokens",
+            ] {
                 run.remove(campo);
             }
         }
