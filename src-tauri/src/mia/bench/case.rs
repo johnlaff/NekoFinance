@@ -124,6 +124,9 @@ pub(crate) struct Expected {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Verification {
     pub tool: String,
+    // A chamada esperada é lida pela graduação dos casos de fidelidade, que corre no binário da
+    // bancada; o app nunca a consome.
+    #[allow(dead_code)]
     pub arguments: Value,
 }
 

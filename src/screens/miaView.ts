@@ -37,11 +37,17 @@ export interface ReceiptLine {
   mark?: { kind: "estimate"; term: { title?: string; body: string } };
 }
 
-/** De onde a resposta vem — a linha de proveniência do pé da bolha. */
-export type Provenance = "calculo" | "metodo";
+/**
+ * De onde a resposta vem — a linha de proveniência do pé da bolha. `runtime` é a rodada ligada:
+ * nunca imprime "Responde local", porque a resposta saiu de um provedor externo; a linha de
+ * transparência da rodada (proveniência, modelo, custo) vai em `MiaAnswer.transparency`.
+ */
+export type Provenance = "calculo" | "metodo" | "runtime";
 
-/** Motivo da recusa (taxonomia do contrato do copiloto). */
-export type Refusal = "sem_dado" | "capacidade" | "ambigua" | "nao_ligada";
+/** Motivo da recusa (taxonomia do contrato do copiloto). `execucao` é a recusa do runtime — o
+ *  laço fechou uma das portas do contrato (consentimento, provedor, teto, cancelamento) e a
+ *  mensagem+saída concreta vêm prontas do evento `error`. */
+export type Refusal = "sem_dado" | "capacidade" | "ambigua" | "nao_ligada" | "execucao";
 
 export interface AnswerCta {
   label: string;
@@ -59,6 +65,16 @@ export interface MiaAnswer {
   cta?: AnswerCta;
   /** Perguntas oferecidas (recusa ambígua e conversa ainda não ligada). */
   options?: string[];
+  /**
+   * Linha de transparência da rodada (`provenance: "runtime"`): provedor efetivo, modelo e
+   * custo, do evento `usage`. Ausente enquanto a rodada ainda não fechou a conta.
+   */
+  transparency?: string;
+  /**
+   * Resposta do runtime que veio da camada de método — explicação, nunca cálculo sobre os
+   * números da pessoa. O rodapé marca a natureza para ela não se disfarçar de conta.
+   */
+  explanation?: boolean;
 }
 
 export interface MiaFacts {

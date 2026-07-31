@@ -143,6 +143,9 @@ pub(crate) fn verify(catalog: &Value, pin: &ModelPin) -> Result<(), PinDrift> {
 
 /// Verifica cada pin contra o catálogo que prova o caminho de retenção DELE — zero para quem não
 /// optou por fora, geral para quem optou.
+// A varredura da matriz inteira é do canary da bancada; a rodada do app verifica só o pin que vai
+// usar.
+#[allow(dead_code)]
 pub(crate) fn verify_all(zdr_catalog: &Value, general_catalog: &Value) -> Vec<PinDrift> {
     PINS.iter()
         .filter_map(|pin| verify(catalog_for(pin, zdr_catalog, general_catalog), pin).err())

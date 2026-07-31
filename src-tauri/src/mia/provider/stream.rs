@@ -19,6 +19,9 @@ pub(crate) enum ProviderEvent {
     Usage(Usage),
     Finished {
         reason: FinishReason,
+        // O motivo no vocabulário do provedor, preservado como o transcript nativo manda; quem
+        // decide o rumo da rodada é `reason`, traduzido.
+        #[allow(dead_code)]
         native: Option<String>,
     },
     Failed(ProviderError),

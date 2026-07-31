@@ -68,7 +68,6 @@ pub(crate) struct SystemPrompt {
 /// O dia entra por parâmetro e vem do MESMO relógio que carimba o `as_of` dos envelopes — o
 /// `Clock` do contexto da rodada. Dois relógios dariam ao prefixo um hoje e ao dado outro, e o
 /// modelo não teria como saber em qual acreditar.
-#[allow(dead_code)] // Consumido pela rodada quando a interface da conversa a abrir.
 pub(crate) async fn system_prompt(
     pack: &MethodPack,
     today: NaiveDate,

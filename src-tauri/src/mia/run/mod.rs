@@ -12,7 +12,7 @@
 pub(crate) mod grounding;
 pub(crate) mod redaction;
 
-use super::envelope::{ErrorCode, ToolError};
+use super::envelope::{Envelope, ErrorCode, ToolError};
 use super::provider::pins::ModelPin;
 use super::provider::request::{RunSpec, ToolDeclaration};
 use super::provider::stream::{ErrorKind, FinishReason, ProviderError, ProviderEvent, Usage};
@@ -110,6 +110,13 @@ pub(crate) enum RunEvent {
         id: String,
         tool: String,
         ok: bool,
+    },
+    /// A proposta de lançamento montada pela ferramenta, ainda sem aprovação. Ela viaja como
+    /// evento próprio porque a tela lhe dá um cartão, não uma linha de leitura — e porque o gesto
+    /// que a aprova acontece fora do laço, pelo mesmo caminho interno do formulário.
+    ProposalReady {
+        id: String,
+        proposal: Value,
     },
     AnswerReady {
         text: String,
@@ -212,6 +219,9 @@ pub(crate) struct RunOutcome {
     pub provenance: Option<AnswerProvenance>,
     pub stop: StopReason,
     pub turns: u32,
+    // Lidas pelo relatório da bancada e pela suíte: a rodada do app publica o que a tela precisa
+    // por evento, e o consolidado só a conversa completa consome.
+    #[allow(dead_code)]
     pub tool_calls: u32,
     pub cost_micro_usd: i64,
     /// Todo uso da rodada veio com custo declarado pelo provedor — inclusive o das tentativas que
@@ -221,6 +231,7 @@ pub(crate) struct RunOutcome {
     pub attempts: u32,
     /// O transcript já com a pergunta, as chamadas e os envelopes — o que a persistência grava.
     pub transcript: Vec<Value>,
+    #[allow(dead_code)]
     pub trace: Vec<TraceEntry>,
 }
 
@@ -574,7 +585,22 @@ fn failure_code(kind: &ErrorKind) -> RunErrorCode {
     }
 }
 
-fn run_error(code: RunErrorCode) -> RunError {
+/// A proposta que a rodada publica, quando houve uma.
+///
+/// Só a proposta VALIDADA vira evento: uma recusa da ferramenta é correção para o modelo, e um
+/// cartão de aprovação montado sobre ela ofereceria à pessoa um gesto sobre um lançamento que não
+/// existe.
+fn proposal_event(tool: &str, id: &str, envelope: &Envelope) -> Option<RunEvent> {
+    if tool != catalog::PROPOSAL_TOOL || !envelope.ok {
+        return None;
+    }
+    Some(RunEvent::ProposalReady {
+        id: id.to_string(),
+        proposal: serde_json::to_value(envelope).expect("o envelope da ferramenta é serializável"),
+    })
+}
+
+pub(crate) fn run_error(code: RunErrorCode) -> RunError {
     let (message, fix) = match code {
         RunErrorCode::ConsentMissing => (
             "A conversa aberta só roda com o seu consentimento registrado.",
@@ -1079,6 +1105,10 @@ impl<A: ProviderAdapter> Runner<'_, A> {
                                     envelope
                                 }
                             };
+
+                            if let Some(event) = proposal_event(&name, &call.id, &envelope) {
+                                self.emit(event, deadline, EventWindow::Ordinary).await;
+                            }
 
                             let origin = if catalog::is_method_layer(&name) {
                                 grounding::FactOrigin::Method
