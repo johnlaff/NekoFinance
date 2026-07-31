@@ -3,7 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- `interactive-widget`: sem ela o teclado virtual cobre o composer em vez de encolher o
+         layout — `dvh` só acompanha o teclado sob `resizes-content`. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content"
+    />
     <title>Tauri + React + Typescript</title>
   </head>
 

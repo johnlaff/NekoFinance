@@ -18,9 +18,15 @@
   margin-bottom: -64px;
 }
 
+/* A conversa cresce da base para cima: com poucas trocas, o vão fica acima do que foi dito,
+   e a última resposta encosta no composer em vez de deixar um buraco no meio da coluna. */
 .mia__thread {
   grid-column: 1;
   grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 0;
   width: 100%;
   max-width: 720px;
   justify-self: center;
@@ -51,6 +57,11 @@
     position: static;
     margin-top: 0;
   }
+}
+
+.mia__log {
+  display: flex;
+  flex-direction: column;
 }
 
 /* Respiro entre a última resposta e o composer ancorado. O encaixe de verdade vem da
@@ -580,7 +591,7 @@
   justify-self: center;
   position: sticky;
   bottom: 0;
-  padding: var(--space-5) 0 var(--space-12);
+  padding: var(--space-5) 0 var(--space-8);
   /* O véu cobre a thread que rola por baixo — sem ele o texto encosta no composer. */
   background: linear-gradient(to top, var(--bg) 82%, transparent);
 }
@@ -592,7 +603,7 @@
 }
 /* No desktop as demais sugestões viveriam em 3 linhas de pílula empurrando o composer —
    lá o painel já oferece cada pergunta com o valor dela ao lado. */
-.mia__sugg .mia__chip:nth-child(n + 5) {
+.mia__sugg .mia__chip:nth-child(n + 4) {
   display: none;
 }
 .mia__chip {
@@ -669,18 +680,25 @@
   color: var(--text-faint);
 }
 .mia__honesty {
-  margin: var(--space-5) 0 0;
-  text-align: center;
+  margin: var(--space-6) 0 0;
   font-size: var(--fs-micro);
   color: var(--text-faint);
 }
 
-/* Gesto destrutivo discreto: texto simples no rodapé do dock, sem peso de botão — a densidade
-   calma reserva o acento para os gestos que a conversa oferece, nunca para os que a apagam. */
+/* O gesto de apagar abre a conversa, alinhado à direita da coluna — presente para quem
+   procura, longe do caminho de quem só lê. */
+.mia__thread-head {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-2);
+}
+
+/* Gesto destrutivo discreto: texto simples, sem peso de botão — a densidade calma reserva o
+   acento para os gestos que a conversa oferece, nunca para os que a apagam. */
 .mia__clear {
-  display: block;
-  margin: var(--space-2) auto 0;
-  padding: 0;
+  min-height: 44px;
+  margin: 0;
+  padding: 0 var(--space-2);
   border: none;
   background: none;
   font-size: var(--fs-micro);
@@ -733,19 +751,23 @@
 
 @media (max-width: 700px) {
   .mia {
-    /* O scroller mobile já paga o aluguel do dock flutuante no padding dele. */
-    margin-bottom: 0;
-    min-height: calc(100dvh - 192px);
+    /* O composer encosta na tab bar flutuante: o respiro do scroller é comido pela margem
+       negativa e repago aqui dentro, senão o campo nasce longe do polegar. */
+    margin-bottom: -24px;
+    /* Altura útil = viewport menos o chrome mobile do shell: appbar (62) + reserva da tab
+       bar flutuante (96) + respiro do corpo (10 em cima, 24 embaixo), com os 24 de baixo
+       devolvidos pela margem negativa e repagados dentro do dock. Reservar mais do que o
+       chrome ocupa abre um vão morto acima do composer. */
+    min-height: calc(100dvh - 168px);
   }
   .mia__msg,
   .mia__msg--you {
     max-width: 94%;
   }
-  /* No polegar o composer não sobe, mas a saudação também não fica colada no appbar com
-     um vão morto abaixo: ela centraliza no espaço que sobra (regra 18). */
+  /* No polegar o composer não sobe, mas a saudação também não cola nele: ela centraliza no
+     espaço que sobra, e o vão fica repartido em vez de virar um buraco só. */
   .mia--empty .mia__thread {
-    display: grid;
-    align-content: center;
+    justify-content: center;
   }
   .mia__greet {
     padding: var(--space-7) 0 var(--space-6);
@@ -756,11 +778,14 @@
   .mia__greet-say {
     font-size: var(--fs-body);
   }
-  /* Pílulas roláveis: o cartão cortado na borda é o convite para arrastar. */
+  /* Pílulas roláveis: o cartão cortado na borda é o convite para arrastar. O
+     `scroll-padding` é o que impede a pílula focada de parar meio escondida sob a margem
+     quando o teclado ou um clique rola a fileira até ela. */
   .mia__sugg {
     flex-wrap: nowrap;
     overflow-x: auto;
-    scroll-snap-type: x mandatory;
+    scroll-snap-type: x proximity;
+    scroll-padding-inline: var(--space-6);
     scrollbar-width: none;
     margin-inline: calc(-1 * var(--space-6));
     padding-inline: var(--space-6);
@@ -769,9 +794,9 @@
     display: none;
   }
   /* No polegar a fileira rola: nenhuma sugestão fica de fora (a regra de esconder a
-     partir da quinta é do desktop, onde o painel cobre o resto). */
+     partir da quarta é do desktop, onde o painel cobre o resto). */
   .mia__sugg .mia__chip,
-  .mia__sugg .mia__chip:nth-child(n + 5) {
+  .mia__sugg .mia__chip:nth-child(n + 4) {
     display: inline-block;
     flex: none;
     white-space: nowrap;

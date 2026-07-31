@@ -225,6 +225,11 @@ const PROPOSAL_KIND_META: Record<MiaProposalKind, TypeMeta> = {
   expense: TYPE_META.saida,
 };
 
+const GREET_INFO = {
+  title: "Como respondo?",
+  body: "Com a conta à mostra: todo número vem com os operandos que o produziram. Ensino o método por trás dela quando ele explica o veredito, e digo quando não sei em vez de inventar.",
+};
+
 const PROPOSAL_INFO = {
   title: "Como funciona?",
   body: "A Mia monta o lançamento a partir do que você descreveu. Nada entra no seu histórico até você tocar em Aprovar aqui — e editar qualquer campo pede a aprovação de novo.",
@@ -635,6 +640,7 @@ export function CopilotScreen() {
   const [showReceipt, setShowReceipt] = useState(true);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const suggRef = useRef<HTMLDivElement | null>(null);
   const stopRef = useRef<HTMLButtonElement | null>(null);
 
   const summary = summaryQ.data;
@@ -689,6 +695,9 @@ export function CopilotScreen() {
     const trimmed = question.trim();
     if (!trimmed || busy) return;
     setInput("");
+    // Tocar numa pílula rola a fileira até ela, e a próxima sugestão nasceria meio escondida
+    // na borda: a fileira volta ao começo a cada pergunta.
+    if (suggRef.current) suggRef.current.scrollLeft = 0;
     // Com a conversa ligada, TODA pergunta vai ao runtime — inclusive as seis que o piso
     // offline resolve local: a recusa "ainda não está ligada" só é a resposta honesta
     // quando `linked` é falso de verdade.
@@ -717,15 +726,15 @@ export function CopilotScreen() {
   }
 
   const timeline = buildTimeline(log, localTodayIso());
+  const honesty = linked
+    ? "Conversa ligada · Provedor externo · Cada rodada mostra provedor, modelo e custo"
+    : "Lê sua planilha · Responde local · A conversa fica no seu computador";
 
   return (
     <div ref={rootRef} className={"mia" + (log.length === 0 ? " mia--empty" : "")}>
-      <div
-        className="mia__thread"
-        role="log"
-        aria-live="polite"
-        aria-label="Conversa com a Mia"
-      >
+      {/* A região viva guarda só as mensagens: saudação e gesto de apagar não são eventos da
+          conversa, e dentro dela seriam reanunciados a cada rodada. */}
+      <div className="mia__thread">
         {fetchError ? (
           <p role="status" className="mia__stale">
             Não foi possível atualizar agora — respondo com os últimos dados carregados.
@@ -738,58 +747,77 @@ export function CopilotScreen() {
             </span>
             <h1 data-large-title>{greetingForHour(new Date().getHours())}</h1>
             <p className="mia__greet-say">
-              Sou a Mia. Pergunte sobre os seus números — eu respondo com a conta à
-              mostra, ensino o método por trás dela e digo quando não sei.
+              Sou a Mia. Pergunte sobre os seus números.{" "}
+              <InfoPopover term={GREET_INFO}>Como respondo?</InfoPopover>
             </p>
             {!isTauri ? (
               <p className="mia__greet-web">
                 Preview web — abra o app desktop para conversar sobre os seus dados.
               </p>
             ) : null}
+            {/* O que sai da máquina se diz onde a conversa começa. Repetido sob o composer,
+                ele viraria uma parede fixa entre o campo e o dock. */}
+            <p className="mia__honesty">{honesty}</p>
           </div>
         ) : null}
 
         {log.length > 0 ? (
           // Com conversa a saudação sai de cena, e a tela ficaria sem título: o leitor de
           // tela perderia o nível 1 da hierarquia (o painel abre em h2).
-          <h1 style={SR_ONLY}>Conversa com a Mia</h1>
+          <>
+            <h1 style={SR_ONLY}>Conversa com a Mia</h1>
+            {/* A ação destrutiva abre a conversa, com o histórico logo abaixo dela: no pé,
+                entre o campo e o dock, ela empurrava o composer para longe do polegar. */}
+            <div className="mia__thread-head">
+              <button type="button" className="mia__clear" onClick={clearConversation}>
+                Apagar conversa
+              </button>
+            </div>
+          </>
         ) : null}
 
-        {timeline.map((item) =>
-          item.kind === "daymark" ? (
-            <p key={item.key} className="mia__daymark">
-              <span>{item.label}</span>
-            </p>
-          ) : item.message.author === "voce" ? (
-            <div key={item.key} className="mia__msg mia__msg--you">
-              <p className="mia__bubble">
-                <span style={SR_ONLY}>Você: </span>
-                {item.message.question}
-                <time>{timeLabel(item.message.atISO)}</time>
+        <div
+          className="mia__log"
+          role="log"
+          aria-live="polite"
+          aria-label="Conversa com a Mia"
+        >
+          {timeline.map((item) =>
+            item.kind === "daymark" ? (
+              <p key={item.key} className="mia__daymark">
+                <span>{item.label}</span>
               </p>
-            </div>
-          ) : (
-            <div key={item.key} className="mia__msg">
-              <span className="mia__av" aria-hidden="true">
-                <MiaAvatar width={22} height={22} />
-              </span>
-              <span style={SR_ONLY}>Mia: </span>
-              <Answer
-                answer={item.message.answer!}
-                at={item.message.atISO}
-                onAsk={ask}
-                onCta={runCta}
-                showReceipt={showReceipt}
-              />
-            </div>
-          ),
-        )}
+            ) : item.message.author === "voce" ? (
+              <div key={item.key} className="mia__msg mia__msg--you">
+                <p className="mia__bubble">
+                  <span style={SR_ONLY}>Você: </span>
+                  {item.message.question}
+                  <time>{timeLabel(item.message.atISO)}</time>
+                </p>
+              </div>
+            ) : (
+              <div key={item.key} className="mia__msg">
+                <span className="mia__av" aria-hidden="true">
+                  <MiaAvatar width={22} height={22} />
+                </span>
+                <span style={SR_ONLY}>Mia: </span>
+                <Answer
+                  answer={item.message.answer!}
+                  at={item.message.atISO}
+                  onAsk={ask}
+                  onCta={runCta}
+                  showReceipt={showReceipt}
+                />
+              </div>
+            ),
+          )}
+        </div>
       </div>
 
       <ContextPanel facts={contextFacts(facts)} loading={loading} onAsk={ask} />
 
       <div className="mia__dock">
-        <div className="mia__sugg">
+        <div className="mia__sugg" ref={suggRef}>
           {SUGGESTIONS.map((suggestion) => (
             <button
               key={suggestion}
@@ -840,16 +868,6 @@ export function CopilotScreen() {
             </button>
           )}
         </form>
-        <p className="mia__honesty">
-          {linked
-            ? "Conversa ligada · Provedor externo · Cada rodada mostra provedor, modelo e custo"
-            : "Lê sua planilha · Responde local · A conversa fica no seu computador"}
-        </p>
-        {log.length > 0 ? (
-          <button type="button" className="mia__clear" onClick={clearConversation}>
-            Apagar conversa
-          </button>
-        ) : null}
       </div>
     </div>
   );
