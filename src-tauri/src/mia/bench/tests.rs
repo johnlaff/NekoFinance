@@ -4968,7 +4968,7 @@ async fn a_retomada_recusa_um_total_que_contradiz_os_componentes() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// Um relatório de formato anterior, que não registra a configuração da requisição.
+/// Um relatório que registra o candidato mas não a configuração da requisição.
 fn sem_configuracao(report: &serde_json::Value) -> serde_json::Value {
     let mut sem = report.clone();
     for phase in ["phase_one", "phase_two"] {
@@ -4982,6 +4982,17 @@ fn sem_configuracao(report: &serde_json::Value) -> serde_json::Value {
     sem
 }
 
+/// Um relatório de formato anterior: sem candidato e sem configuração, só o nome do modelo.
+fn formato_anterior(report: &serde_json::Value) -> serde_json::Value {
+    let mut sem = sem_configuracao(report);
+    for phase in ["phase_one", "phase_two"] {
+        for entry in sem[phase].as_array_mut().unwrap() {
+            entry["run"].as_object_mut().unwrap().remove("candidate");
+        }
+    }
+    sem
+}
+
 /// Sem a configuração no arquivo, a prova de identidade mora fora dele: a retomada recusa e diz
 /// qual é a saída, em vez de decidir sozinha assumir o que não pode conferir.
 #[tokio::test]
@@ -4990,15 +5001,35 @@ async fn a_retomada_de_formato_anterior_recusa_e_aponta_o_reconhecimento() {
     let (report, _) = bakeoff_gravado(&dir).await;
 
     let error = resume::parse(
-        &sem_configuracao(&report),
+        &formato_anterior(&report),
         &resume_cases(),
         "r.json".into(),
         false,
     )
     .unwrap_err();
 
-    assert!(error.contains("beta_headers"), "{error}");
+    assert!(error.contains("candidate"), "{error}");
     assert!(error.contains("--assume-pin-identity"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// O reconhecimento responde por modelo que um único pin corre — entre dois esforços do mesmo
+/// modelo não há o que assumir, e a recusa diz isso mesmo com a flag ligada.
+#[tokio::test]
+async fn identidade_ambigua_nao_se_assume_nem_com_reconhecimento() {
+    let dir = reports_dir();
+    let (report, _) = bakeoff_gravado(&dir).await;
+
+    let error = resume::parse(
+        &formato_anterior(&report),
+        &resume_cases(),
+        "r.json".into(),
+        true,
+    )
+    .unwrap_err();
+
+    assert!(error.contains("não há o que assumir"), "{error}");
 
     std::fs::remove_dir_all(&dir).unwrap();
 }

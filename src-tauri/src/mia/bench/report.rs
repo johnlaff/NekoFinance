@@ -121,8 +121,8 @@ fn repetition_json(outcome: &RepetitionOutcome) -> Value {
 }
 
 /// O nome do arquivo: instante da execução (até o segundo, com `:` trocado por `-` para valer
-/// em qualquer sistema de arquivos) mais o modelo. Dois relatórios nunca disputam o mesmo nome,
-/// e o diretório lista a história em ordem.
+/// em qualquer sistema de arquivos) mais o candidato. Dois relatórios nunca disputam o mesmo
+/// nome, e o diretório lista a história em ordem.
 pub(crate) fn file_name(ran_at: &str, model: &str) -> String {
     let stamp: String = ran_at
         .chars()
@@ -148,7 +148,7 @@ pub(crate) async fn write(
     pack: Option<&MethodPack>,
 ) -> Result<PathBuf, String> {
     let report = render(run, ran_at);
-    write_json(dir, &file_name(ran_at, run.pin.model), None, &report, pack).await
+    write_json(dir, &file_name(ran_at, run.pin.label), None, &report, pack).await
 }
 
 /// Escreve um relatório em JSON, com a varredura de privacidade antes de qualquer byte tocar o

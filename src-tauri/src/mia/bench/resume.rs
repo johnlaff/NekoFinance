@@ -89,18 +89,47 @@ pub(crate) fn parse(
     }
 
     let sieve = phase(report, "phase_one")?;
-    let matrix: Vec<&str> = contenders().iter().map(|pin| pin.label).collect();
-    let inherited_matrix: Vec<&str> = sieve
+    let matrix: Vec<String> = contenders()
         .iter()
-        .map(|entry| entry["run"]["candidate"].as_str().unwrap_or_default())
+        .map(|pin| pin.label.to_string())
+        .collect();
+    // Corrida sem o campo `candidate` entra pelo mesmo reconhecimento do resto da identidade:
+    // com a flag, o nome do modelo responde por ela quando um único pin o corre — entre dois
+    // esforços do mesmo modelo não há o que assumir, e o nome cru fica para a recusa nomear.
+    let mut candidateless = false;
+    let inherited_matrix: Vec<String> = sieve
+        .iter()
+        .map(|entry| {
+            let run = &entry["run"];
+            match run["candidate"].as_str() {
+                Some(candidate) => candidate.to_string(),
+                None => {
+                    candidateless = true;
+                    let model = run["model"].as_str().unwrap_or_default();
+                    match crate::mia::provider::pins::by_model(model).as_slice() {
+                        [only] if assume_pin_identity => only.label.to_string(),
+                        _ => model.to_string(),
+                    }
+                }
+            }
+        })
         .collect();
     // A ordem também é conferida, não só o conjunto: a ordem de corrida é a da matriz, e um
     // relatório que a contradiz descreve outra matriz — ainda que os mesmos modelos apareçam.
     if inherited_matrix != matrix {
+        let hint = if candidateless && assume_pin_identity {
+            " Corrida sem o campo candidate só se assume para modelo que um único pin corre — \
+             entre dois esforços do mesmo modelo não há o que assumir."
+        } else if candidateless {
+            " Corrida sem o campo candidate não prova qual candidato correu; \
+             --assume-pin-identity responde por modelo que um único pin corre."
+        } else {
+            ""
+        };
         return Err(format!(
             "A peneira do relatório correu {inherited_matrix:?} e a matriz de hoje corre \
              {matrix:?}, nesta ordem. Reaproveitar seria comparar candidatos que a matriz atual \
-             não tem. {FIX}"
+             não tem.{hint} {FIX}"
         ));
     }
 
