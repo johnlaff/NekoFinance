@@ -451,6 +451,7 @@ pub(crate) async fn run_catalog<A: ProviderAdapter>(
             let ctx = Context {
                 clock: fixtures::bench_clock(),
                 pack: MethodPack::at(&pack_root),
+                conversation_id: None,
             };
             // O teto da rodada é o menor entre o da conversa e o que sobra na trava: assim o teto
             // acumulado é respeitado pelo corte DENTRO da rodada, e não só pela decisão de não

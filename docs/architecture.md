@@ -32,8 +32,8 @@ Neko Finance is designed as a local-first desktop app. The repo is public-safe; 
 The rules below are the contract the copilot must satisfy. The read half is built — the facade's
 tools are deterministic, read-only, and share the engine functions the screens call, so a number
 in the conversation cannot diverge from the number on screen. The agent loop and the provider are
-wired in behind consent and a stored key; the write path (proposal + explicit approval) is not
-wired in yet.
+wired in behind consent and a stored key; the write path (proposal + explicit approval) operates
+through a durable proposal ledger that persists independently of the conversation transcript.
 
 - Deterministic tools calculate totals, categories, budgets, deltas, and sheet diffs.
 - The model can explain, diagnose, rank options, and draft proposed changes.

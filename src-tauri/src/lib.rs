@@ -78,6 +78,8 @@ pub fn run() {
             commands::load_mia_conversation,
             commands::append_mia_exchange,
             commands::delete_mia_conversation,
+            commands::approve_mia_proposal,
+            commands::reject_mia_proposal,
             commands::upsert_daily_budget,
             commands::upsert_daily_budget_with_categories_cmd,
             commands::get_daily_budget_categories_cmd,

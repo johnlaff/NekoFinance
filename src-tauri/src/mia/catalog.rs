@@ -307,6 +307,31 @@ pub(crate) const CATALOG: &[ToolSpec] = &[
         params: &["topic"],
         includes: &[],
     },
+    ToolSpec {
+        name: "propose_transaction",
+        summary: "Monta a proposta de UM lançamento avulso — entrada ou despesa — já validada e \
+                  normalizada, com validade e assinatura. Nada é gravado: a proposta vira um \
+                  cartão na tela, e só o gesto de aprovar cria o lançamento. Campos: kind \
+                  (income · expense), amount_cents (inteiro positivo), date (YYYY-MM-DD), mais os \
+                  opcionais description, payment_method, is_fixed e tag_ids.",
+        use_for: "Quando a pessoa PEDE para registrar um gasto ou uma entrada avulsa — \"lança \
+                  aí R$ 80 de farmácia hoje\", \"registra o salário de sexta\", \"anota 45 reais \
+                  de uber ontem\".",
+        not_for: "Transferência, Economia, recorrência, parcelamento e divisão entre pessoas, que \
+                  o formulário de Lançar trata direito e esta ferramenta recusa. Editar, excluir \
+                  ou reclassificar lançamento que já existe. E aprovar: texto no chat não aprova \
+                  nada — quem cria o lançamento é o gesto da pessoa sobre o cartão.",
+        params: &[
+            "kind",
+            "amount_cents",
+            "date",
+            "description",
+            "payment_method",
+            "is_fixed",
+            "tag_ids",
+        ],
+        includes: &[],
+    },
 ];
 
 pub(crate) fn spec(name: &str) -> Option<&'static ToolSpec> {

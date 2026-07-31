@@ -1,13 +1,28 @@
 import {
   appendMiaExchange,
+  approveMiaProposal,
   cancelMiaRound,
   deleteMiaConversation,
   loadMiaConversation,
+  rejectMiaProposal,
   runMiaRound,
   type MiaScreenEvent,
   type StoredMiaMessage,
 } from "../lib/api";
-import { applyMiaScreenEvent, initialRuntimeRound, runningAnswer } from "./miaRuntime";
+import { safeErrorMessage } from "../lib/errors";
+import {
+  applyApprovalResult,
+  applyMiaScreenEvent,
+  editProposalField as editProposalFieldPure,
+  initialRuntimeRound,
+  initProposalCard,
+  parseMiaProposal,
+  proposalRejected,
+  requestApprovalGeneration,
+  runningAnswer,
+  type MiaProposalPayload,
+  type ProposalCardState,
+} from "./miaRuntime";
 import {
   answerFor,
   localStamp,
@@ -34,8 +49,21 @@ let hydrated = false;
  *  chamada, na mesma tela) alcançar a rodada que já está falando com o provedor. */
 let runningRoundId: string | null = null;
 
+/** Cartões de proposta da sessão corrente, por id do evento `proposal_ready`. A proposta é
+ *  do rastro técnico da rodada, não da conversa persistida — não sobrevive a fechar o app
+ *  (a mesma decisão de escopo do runId em curso). */
+let proposals: Record<string, ProposalCardState> = {};
+
 export function sessionLog(): MiaMessage[] {
   return log;
+}
+
+export function sessionProposals(): Record<string, ProposalCardState> {
+  return proposals;
+}
+
+function setProposal(id: string, card: ProposalCardState): void {
+  proposals = { ...proposals, [id]: card };
 }
 
 function isSpan(value: unknown): value is Span {
@@ -166,6 +194,14 @@ export function askInSessionRuntime(
     function onEvent(event: MiaScreenEvent) {
       round = applyMiaScreenEvent(round, event);
       if (event.kind === "run_started") runningRoundId = event.run_id;
+      if (event.kind === "proposal_ready" && !proposals[event.id]) {
+        const envelope = parseMiaProposal(event.proposal);
+        if (envelope) setProposal(event.id, initProposalCard(envelope));
+        // O cartão novo não muda a bolha de progresso (mesmo texto, mesmo rótulo de
+        // ferramenta): `publish()` sozinho não republicaria. Uma referência nova de `log`
+        // força a tela a reler `sessionProposals()` no próximo render.
+        onUpdate([...log]);
+      }
       publish();
     }
 
@@ -187,6 +223,75 @@ export function cancelRunningRound(): Promise<void> {
   return cancelMiaRound(runningRoundId).catch(() => undefined);
 }
 
+/** Edita um campo do rascunho do cartão. Gesto sem efeito para um id sem cartão (a tela nunca
+ *  deveria chamar isto fora do ciclo de vida do cartão, mas o módulo não confia no chamador). */
+export function editSessionProposal<K extends keyof MiaProposalPayload>(
+  id: string,
+  field: K,
+  value: MiaProposalPayload[K],
+): ProposalCardState | null {
+  const card = proposals[id];
+  if (!card) return null;
+  const updated = editProposalFieldPure(card, field, value);
+  setProposal(id, updated);
+  return updated;
+}
+
+/** Aprova o cartão: revalida no backend com o hash do envelope ORIGINAL (a prova de que a
+ *  proposta não mudou embaixo da pessoa) mais o rascunho corrente. Uma resposta que chega
+ *  depois de uma edição nova é descartada pelo view-model puro (`applyApprovalResult`) — o
+ *  cartão nunca aprova um valor que a tela não está mais mostrando. */
+export async function approveSessionProposal(
+  id: string,
+): Promise<ProposalCardState | null> {
+  const card = proposals[id];
+  if (!card) return null;
+  const generation = requestApprovalGeneration(card);
+  try {
+    const transactionId = await approveMiaProposal(
+      card.envelope.id,
+      JSON.stringify(card.draft),
+      card.envelope.hash,
+    );
+    const updated = applyApprovalResult(card, {
+      generation,
+      outcome: { ok: true, transactionId },
+    });
+    setProposal(id, updated);
+    return updated;
+  } catch (error) {
+    const updated = applyApprovalResult(card, {
+      generation,
+      outcome: {
+        ok: false,
+        message: safeErrorMessage(
+          error,
+          "Não foi possível aprovar a proposta. Tente novamente.",
+        ),
+      },
+    });
+    setProposal(id, updated);
+    return updated;
+  }
+}
+
+/** Recusa explícita — nunca inferida de texto no chat. Recusar é gesto local e definitivo; o
+ *  backend só precisa saber para não segurar o ledger de propostas pendente para sempre. */
+export async function rejectSessionProposal(
+  id: string,
+): Promise<ProposalCardState | null> {
+  const card = proposals[id];
+  if (!card) return null;
+  try {
+    await rejectMiaProposal(card.envelope.id);
+  } catch (error) {
+    console.error("Falha ao recusar a proposta:", error);
+  }
+  const updated = proposalRejected(card);
+  setProposal(id, updated);
+  return updated;
+}
+
 /** Zera a conversa — usado pelos testes para isolar cenários. Não toca o banco: quem apaga de
  *  verdade é `clearSession`. */
 export function resetSession(): void {
@@ -194,6 +299,7 @@ export function resetSession(): void {
   seq = 1;
   hydrated = false;
   runningRoundId = null;
+  proposals = {};
 }
 
 /** Apaga a conversa de verdade — o que a pessoa leu e o rastro técnico das rodadas somem
@@ -204,4 +310,5 @@ export async function clearSession(): Promise<void> {
   log = [];
   seq = 1;
   hydrated = true;
+  proposals = {};
 }

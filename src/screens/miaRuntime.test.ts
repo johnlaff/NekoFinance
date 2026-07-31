@@ -1,11 +1,21 @@
 import { describe, expect, it } from "vitest";
 import type { MiaScreenEvent } from "../lib/api";
 import {
+  applyApprovalResult,
   applyMiaScreenEvent,
+  canApproveProposal,
+  displayProposalStatus,
+  editProposalField,
   initialRuntimeRound,
+  initProposalCard,
+  parseMiaProposal,
+  proposalExpiryLabel,
+  proposalRejected,
+  requestApprovalGeneration,
   runningAnswer,
   toolLabel,
   transparencyLine,
+  type MiaProposalEnvelope,
   type RuntimeRoundState,
 } from "./miaRuntime";
 import { plainText } from "./miaView";
@@ -242,6 +252,25 @@ describe("proposal_ready", () => {
     expect(state.proposals).toEqual([{ id: "p1", proposal: { amount_cents: 5_000 } }]);
     expect(state.status).toBe("running");
   });
+
+  it("a resposta seguinte carrega os ids das propostas vistas na rodada", () => {
+    const state = reduce([
+      { kind: "proposal_ready", id: "p1", proposal: { amount_cents: 5_000 } },
+      { kind: "answer_ready", text: "Aqui está a proposta.", provenance: "calculo" },
+    ]);
+    expect(state.answer?.proposalIds).toEqual(["p1"]);
+  });
+
+  it("sem proposta na rodada, a resposta não carrega o campo", () => {
+    const state = reduce([
+      {
+        kind: "answer_ready",
+        text: "Você pode gastar até R$ 80 hoje.",
+        provenance: "calculo",
+      },
+    ]);
+    expect(state.answer?.proposalIds).toBeUndefined();
+  });
 });
 
 describe("rodapé por estado — nunca alega resposta que não chegou", () => {
@@ -296,5 +325,177 @@ describe("natureza epistêmica — explicação nunca se disfarça de cálculo",
     ]);
     expect(state.answer?.explanation).toBe(true);
     expect(state.answer?.transparency).toContain("Provedor: openai");
+  });
+});
+
+// ---------------------------------------------------------------------
+// Cartão de proposta — o view-model puro do estado proposta → editando →
+// aprovada / recusada / expirada. TDD: RED antes do comportamento (issue #243).
+// ---------------------------------------------------------------------
+
+function makeEnvelope(
+  overrides: Partial<MiaProposalEnvelope> = {},
+): MiaProposalEnvelope {
+  return {
+    id: 1,
+    schema_version: 1,
+    payload: {
+      kind: "expense",
+      amount_cents: 5_000,
+      date: "2026-07-31",
+      description: "Mercado",
+      payment_method: "debito",
+      is_fixed: false,
+      tag_ids: [],
+    },
+    data_revision: "rev-1",
+    issued_at: "2026-07-31T10:00:00.000Z",
+    expires_at: "2026-07-31T10:10:00.000Z",
+    hash: "hash-abc",
+    ...overrides,
+  };
+}
+
+describe("parseMiaProposal — contrato do envelope", () => {
+  it("aceita o envelope na forma pinada com o backend", () => {
+    const envelope = parseMiaProposal(makeEnvelope());
+    expect(envelope).not.toBeNull();
+    expect(envelope?.payload.kind).toBe("expense");
+  });
+
+  it("desembrulha a forma do fio — o envelope inteiro da ferramenta", () => {
+    const wire = {
+      tool: "propose_transaction",
+      ok: true,
+      meta: { currency: "BRL" },
+      data: { proposal: makeEnvelope() },
+    };
+    const envelope = parseMiaProposal(wire);
+    expect(envelope).not.toBeNull();
+    expect(envelope?.id).toBe(1);
+    expect(envelope?.payload.amount_cents).toBe(5_000);
+  });
+
+  it("rejeita payload malformado — nunca finge um cartão a partir de lixo", () => {
+    expect(parseMiaProposal({ id: "x" })).toBeNull();
+    expect(parseMiaProposal(null)).toBeNull();
+    expect(
+      parseMiaProposal({ ...makeEnvelope(), payload: { kind: "transfer" } }),
+    ).toBeNull();
+  });
+});
+
+describe("cartão de proposta — estados", () => {
+  it("nasce no estado 'proposta', com o draft igual ao payload recebido", () => {
+    const card = initProposalCard(makeEnvelope());
+    expect(card.gesture).toBe("proposta");
+    expect(card.draft).toEqual(card.envelope.payload);
+  });
+
+  it("editar qualquer campo move o cartão para 'editando'", () => {
+    const card = editProposalField(
+      initProposalCard(makeEnvelope()),
+      "amount_cents",
+      7_000,
+    );
+    expect(card.gesture).toBe("editando");
+    expect(card.draft.amount_cents).toBe(7_000);
+    // O restante do payload não muda por editar um campo isolado.
+    expect(card.draft.description).toBe("Mercado");
+  });
+
+  it("editar depois de aprovado ou recusado é gesto sem efeito — estado terminal", () => {
+    const approved = applyApprovalResult(initProposalCard(makeEnvelope()), {
+      generation: 0,
+      outcome: { ok: true, transactionId: "tx-1" },
+    });
+    const stillApproved = editProposalField(approved, "amount_cents", 1);
+    expect(stillApproved.gesture).toBe("aprovada");
+    expect(stillApproved.draft.amount_cents).toBe(5_000);
+
+    const rejected = proposalRejected(initProposalCard(makeEnvelope()));
+    const stillRejected = editProposalField(rejected, "amount_cents", 1);
+    expect(stillRejected.gesture).toBe("recusada");
+  });
+
+  it("(a) editar invalida o gesto de aprovação anterior — uma aprovação em voo some quando o campo muda antes dela chegar", () => {
+    let card = initProposalCard(makeEnvelope());
+    const generation = requestApprovalGeneration(card); // captura o draft no momento do clique
+    card = editProposalField(card, "description", "Mercado — trocado"); // edição chega antes da resposta do backend
+    // A resposta da aprovação antiga (do draft pré-edição) chega depois — é descartada.
+    card = applyApprovalResult(card, {
+      generation,
+      outcome: { ok: true, transactionId: "tx-stale" },
+    });
+    expect(card.gesture).toBe("editando");
+    expect(card.approvedTransactionId).toBeNull();
+
+    // Uma aprovação pedida DEPOIS da edição (geração corrente) resolve normalmente.
+    const freshGeneration = requestApprovalGeneration(card);
+    card = applyApprovalResult(card, {
+      generation: freshGeneration,
+      outcome: { ok: true, transactionId: "tx-fresh" },
+    });
+    expect(card.gesture).toBe("aprovada");
+    expect(card.approvedTransactionId).toBe("tx-fresh");
+  });
+
+  it("(b) nenhum evento de texto/mensagem do chat aprova a proposta", () => {
+    const card = initProposalCard(makeEnvelope());
+    // A recepção de outros eventos da rodada (resposta, uso, erro) não conhece o cartão de
+    // proposta — nada no redutor de eventos da rodada aprova ou recusa um cartão.
+    reduce([
+      { kind: "answer_ready", text: "Sim, aprovo a proposta.", provenance: "calculo" },
+      {
+        kind: "usage",
+        model: "gpt-5.6-terra",
+        endpoint: "openai",
+        prompt_tokens: 1,
+        completion_tokens: 1,
+        cost_micro_usd: 1,
+        attempts: 1,
+      },
+    ]);
+    expect(card.gesture).toBe("proposta");
+  });
+
+  it("(c) expirada: `expires_at` no passado mostra o cartão expirado e bloqueia o gesto de aprovar", () => {
+    const card = initProposalCard(
+      makeEnvelope({ expires_at: "2020-01-01T00:00:00.000Z" }),
+    );
+    const now = "2026-07-31T10:00:00.000Z";
+    expect(displayProposalStatus(card, now)).toBe("expirada");
+    expect(canApproveProposal(card, now)).toBe(false);
+  });
+
+  it("expira também um cartão em edição, não só o recém-chegado", () => {
+    const card = editProposalField(
+      initProposalCard(makeEnvelope({ expires_at: "2020-01-01T00:00:00.000Z" })),
+      "amount_cents",
+      1,
+    );
+    expect(displayProposalStatus(card, "2026-07-31T10:00:00.000Z")).toBe("expirada");
+  });
+
+  it("um cartão dentro da validade permite o gesto de aprovar", () => {
+    const card = initProposalCard(makeEnvelope());
+    expect(canApproveProposal(card, "2026-07-31T10:05:00.000Z")).toBe(true);
+  });
+
+  it("um cartão já aprovado ou recusado nunca volta a 'expirada' — o estado terminal vence", () => {
+    const approved = applyApprovalResult(
+      initProposalCard(makeEnvelope({ expires_at: "2020-01-01T00:00:00.000Z" })),
+      { generation: 0, outcome: { ok: true, transactionId: "tx-1" } },
+    );
+    expect(displayProposalStatus(approved, "2026-07-31T10:00:00.000Z")).toBe(
+      "aprovada",
+    );
+  });
+});
+
+describe("proposalExpiryLabel", () => {
+  it("formata a validade no padrão de hora local do resto da conversa (HHhMM)", () => {
+    const label = proposalExpiryLabel(makeEnvelope());
+    expect(label).toMatch(/^\d{2}h\d{2}$/);
   });
 });

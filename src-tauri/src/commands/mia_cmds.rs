@@ -12,6 +12,7 @@ use crate::mia::consent::{self, ConsentState, ConsentText};
 use crate::mia::envelope::Clock;
 use crate::mia::key_store::{self, ApiKey};
 use crate::mia::method_tools::MethodPack;
+use crate::mia::proposal_tools;
 use crate::mia::provider::http::HttpAdapter;
 use crate::mia::provider::pins::default_pin;
 use crate::mia::run::{
@@ -202,6 +203,7 @@ pub async fn run_mia_round(
     let ctx = Context {
         clock: Clock::at(chrono::Local::now().fixed_offset()),
         pack: MethodPack::in_app_data(&app_dir.0),
+        conversation_id: Some(conversation),
     };
     let system = prompt::system_prompt(&ctx.pack, ctx.clock.today())
         .await
@@ -316,6 +318,38 @@ pub async fn delete_mia_conversation(pool: State<'_, SqlitePool>) -> Result<(), 
     store::delete_conversation(pool.inner(), conversation)
         .await
         .map_err(|error| format!("apagar a conversa: {error}"))
+}
+
+/// Cria o lançamento de uma proposta. O gesto vive AQUI, fora do laço: nenhum caminho da conversa
+/// alcança este comando, e é isso que garante que texto no chat não aprove nada.
+///
+/// `payload_json` é o lançamento como o cartão o mostra e `hash` é a assinatura que a proposta
+/// trouxe. Os dois viajam juntos porque a conferência é entre eles: um campo alterado no caminho
+/// deixa de corresponder à assinatura e a aprovação é recusada.
+#[tauri::command]
+pub async fn approve_mia_proposal(
+    proposal_id: i64,
+    payload_json: String,
+    hash: String,
+    pool: State<'_, SqlitePool>,
+) -> Result<String, String> {
+    proposal_tools::approve(
+        pool.inner(),
+        proposal_id,
+        &payload_json,
+        &hash,
+        chrono::Local::now().fixed_offset(),
+    )
+    .await
+}
+
+/// Registra que a proposta foi recusada. Nada é criado, e a linha permanece no ledger.
+#[tauri::command]
+pub async fn reject_mia_proposal(
+    proposal_id: i64,
+    pool: State<'_, SqlitePool>,
+) -> Result<(), String> {
+    proposal_tools::reject(pool.inner(), proposal_id).await
 }
 
 /// Interrompe uma rodada em curso. Cancelar o que já terminou é gesto sem efeito, nunca erro: a

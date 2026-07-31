@@ -75,6 +75,12 @@ export interface MiaAnswer {
    * números da pessoa. O rodapé marca a natureza para ela não se disfarçar de conta.
    */
   explanation?: boolean;
+  /**
+   * Ids das propostas (`proposal_ready`) que a RODADA desta resposta gerou — a tela desenha o
+   * cartão de aprovação logo abaixo desta bolha para cada id aqui. Nunca aprovação: só o
+   * ponteiro para o cartão, cujo estado vive em `miaSession`.
+   */
+  proposalIds?: string[];
 }
 
 export interface MiaFacts {
