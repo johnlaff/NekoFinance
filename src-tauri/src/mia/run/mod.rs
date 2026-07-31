@@ -189,6 +189,9 @@ pub(crate) enum RunErrorCode {
     TimeCap,
     Cancelled,
     Ungrounded,
+    /// A conversa acumulada já não cabe na janela do modelo. Recusa ANTES de falar com o provedor:
+    /// a v1 não resume nada por conta própria.
+    ContextCap,
 }
 
 /// Rastro técnico da rodada. Retenção e persistência não são deste ticket; o que é daqui é a
@@ -229,6 +232,10 @@ pub(crate) struct RunOutcome {
     /// impede a trava de gasto da bancada de ler um total incompleto como total.
     pub cost_declared: bool,
     pub attempts: u32,
+    /// Tokens da rodada inteira, tentativas falhas incluídas: o rastro conta o que foi consumido,
+    /// não só o que virou resposta.
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
     /// O transcript já com a pergunta, as chamadas e os envelopes — o que a persistência grava.
     pub transcript: Vec<Value>,
     #[allow(dead_code)]
@@ -646,6 +653,10 @@ pub(crate) fn run_error(code: RunErrorCode) -> RunError {
             "A resposta citou números sem origem nos seus dados.",
             "Tente de novo para consultar os dados necessários.",
         ),
+        RunErrorCode::ContextCap => (
+            "Esta conversa chegou ao teto da janela do modelo.",
+            "Apague a conversa para começar outra — o que você já leu some junto.",
+        ),
     };
     RunError {
         code,
@@ -745,6 +756,8 @@ impl<A: ProviderAdapter> Runner<'_, A> {
                 // A rodada recusada não falou com o provedor: não há custo, e não há lacuna.
                 cost_declared: true,
                 attempts: 0,
+                prompt_tokens: 0,
+                completion_tokens: 0,
                 transcript: vec![],
                 trace,
             };
@@ -772,6 +785,8 @@ impl<A: ProviderAdapter> Runner<'_, A> {
         let mut cost_micro_usd = 0;
         let mut cost_declared = true;
         let mut attempts = 0;
+        let mut prompt_tokens: u32 = 0;
+        let mut completion_tokens: u32 = 0;
         let mut regenerations = 0;
         let mut terminal_error = None;
         let mut last_attempt_in_turn = 0;
@@ -912,6 +927,9 @@ impl<A: ProviderAdapter> Runner<'_, A> {
                     }
                 };
 
+                // O delta desta tentativa, não o acumulado do turno: `turn_usage` soma tentativas
+                // entre si, e recolher o total a cada volta contaria a mesma tentativa duas vezes.
+                let tokens_before = (turn_usage.prompt_tokens, turn_usage.completion_tokens);
                 let turn_read = consume_turn(
                     &mut receiver,
                     &self.cancel,
@@ -920,6 +938,10 @@ impl<A: ProviderAdapter> Runner<'_, A> {
                     &mut cost_micro_usd,
                 )
                 .await;
+                prompt_tokens =
+                    prompt_tokens.saturating_add(turn_usage.prompt_tokens - tokens_before.0);
+                completion_tokens = completion_tokens
+                    .saturating_add(turn_usage.completion_tokens - tokens_before.1);
                 // Lido a cada tentativa, não ao fim do turno: a tentativa que falhou some do
                 // caminho de sucesso, e é ela quem pode ter consumido dinheiro sem declarar.
                 cost_declared = cost_declared && !turn_usage.missing_cost;
@@ -1240,6 +1262,8 @@ impl<A: ProviderAdapter> Runner<'_, A> {
             cost_micro_usd,
             cost_declared,
             attempts,
+            prompt_tokens,
+            completion_tokens,
             transcript,
             trace,
         }

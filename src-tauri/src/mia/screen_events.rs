@@ -76,6 +76,7 @@ fn error_code(code: RunErrorCode) -> &'static str {
         RunErrorCode::TimeCap => "time_cap",
         RunErrorCode::Cancelled => "cancelled",
         RunErrorCode::Ungrounded => "ungrounded",
+        RunErrorCode::ContextCap => "context_cap",
     }
 }
 
@@ -86,7 +87,7 @@ fn provenance(provenance: AnswerProvenance) -> &'static str {
     }
 }
 
-fn stop_reason(stop: StopReason) -> &'static str {
+pub(crate) fn stop_reason(stop: StopReason) -> &'static str {
     match stop {
         StopReason::ConsentMissing => "consent_missing",
         StopReason::Answered => "answered",

@@ -75,6 +75,9 @@ pub fn run() {
             commands::set_mia_api_key,
             commands::run_mia_round,
             commands::cancel_mia_round,
+            commands::load_mia_conversation,
+            commands::append_mia_exchange,
+            commands::delete_mia_conversation,
             commands::upsert_daily_budget,
             commands::upsert_daily_budget_with_categories_cmd,
             commands::get_daily_budget_categories_cmd,
@@ -179,6 +182,12 @@ pub fn run() {
                     .run(&pool)
                     .await
                     .map_err(|e| format!("migrações do banco: {e}"))?;
+
+                // Retenção do rastro técnico da conversa. Na abertura porque quem parou de
+                // conversar também para de purgar: sem esta passagem, um rastro venceria e ficaria.
+                mia::store::purge_stale_traces(&pool, chrono::Utc::now())
+                    .await
+                    .map_err(|e| format!("purga do rastro da conversa: {e}"))?;
 
                 // Backfill dos empréstimos legados marcados por sufixo `#loan:` na descrição →
                 // entidades `scenario_loan`. Idempotente (a marca some ao processar); precisa de

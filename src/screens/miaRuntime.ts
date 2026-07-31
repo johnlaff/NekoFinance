@@ -47,6 +47,7 @@ const ERROR_HEADLINE: Record<MiaErrorCode, string> = {
   time_cap: "A rodada chegou ao teto de tempo.",
   cancelled: "Rodada cancelada.",
   ungrounded: "A resposta não tinha número de origem confiável.",
+  context_cap: "A conversa chegou ao teto da janela.",
 };
 
 /** "US$ 0,0026" · "custo não declarado pelo provedor" — nulo é lacuna, nunca zero. */

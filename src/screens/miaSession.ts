@@ -1,25 +1,103 @@
-import { cancelMiaRound, runMiaRound, type MiaScreenEvent } from "../lib/api";
+import {
+  appendMiaExchange,
+  cancelMiaRound,
+  deleteMiaConversation,
+  loadMiaConversation,
+  runMiaRound,
+  type MiaScreenEvent,
+  type StoredMiaMessage,
+} from "../lib/api";
 import { applyMiaScreenEvent, initialRuntimeRound, runningAnswer } from "./miaRuntime";
 import {
   answerFor,
   localStamp,
   routeQuestion,
+  type MiaAnswer,
   type MiaFacts,
   type MiaMessage,
+  type Span,
 } from "./miaView";
 
-// A conversa da sessão. Ela sobrevive à navegação entre telas (a tela remonta a cada troca)
-// e morre com o app: transcript persistido e apagável é contrato do runtime do copiloto, e
-// um segundo store aqui nasceria com regra de privacidade própria para conciliar depois.
+// A conversa da sessão. Ela sobrevive à navegação entre telas (a tela remonta a cada troca) e à
+// reabertura do app: o log em memória é hidratado a partir da conversa guardada no banco na
+// montagem da tela (`hydrateSession`), e cada rodada concluída — piso offline e runtime —
+// persiste o par pergunta/resposta assim que fecha. `clearSession` apaga as duas cópias juntas.
 
 let log: MiaMessage[] = [];
 let seq = 1;
+
+/** A hidratação acontece uma vez por vida do módulo — chamadas seguintes são gesto sem
+ *  efeito, tela remontando sobre a mesma sessão. */
+let hydrated = false;
 
 /** O id da rodada em curso — o único jeito de o gesto de cancelar (disparado de outra
  *  chamada, na mesma tela) alcançar a rodada que já está falando com o provedor. */
 let runningRoundId: string | null = null;
 
 export function sessionLog(): MiaMessage[] {
+  return log;
+}
+
+function isSpan(value: unknown): value is Span {
+  if (typeof value !== "object" || value === null) return false;
+  const span = value as Record<string, unknown>;
+  if (span["t"] === "money") return typeof span["cents"] === "number";
+  if (span["t"] === "text" || span["t"] === "strong")
+    return typeof span["s"] === "string";
+  return false;
+}
+
+const VALID_PROVENANCE = new Set(["calculo", "metodo", "runtime"]);
+
+/** Valida no boundary a forma mínima de uma resposta guardada — o backend trata o JSON como
+ *  opaco, então um registro de uma versão anterior do formato, ou corrompido, não pode
+ *  derrubar a tela. Malformado vira `null`: a linha correspondente é descartada na hidratação. */
+function parseStoredAnswer(raw: unknown): MiaAnswer | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const value = raw as Record<string, unknown>;
+  if (!Array.isArray(value["text"]) || !value["text"].every(isSpan)) return null;
+  const provenance = value["provenance"];
+  if (typeof provenance !== "string" || !VALID_PROVENANCE.has(provenance)) return null;
+  return raw as MiaAnswer;
+}
+
+/** Registra a pergunta+resposta no banco. Fogo-e-esquece por decisão: a tela já mostrou a
+ *  resposta, e uma falha de gravação não deve travar a conversa — só fica no console, para o
+ *  próximo diagnóstico. */
+function persistExchange(question: string, answer: MiaAnswer): void {
+  appendMiaExchange(question, JSON.stringify(answer)).catch((error: unknown) => {
+    console.error("Falha ao guardar a mensagem da conversa:", error);
+  });
+}
+
+/**
+ * Hidrata o log em memória a partir da conversa guardada. Idempotente: chamada de novo depois
+ * da primeira, ou com mensagens já na sessão (uma pergunta feita antes do banco responder), não
+ * faz nada — nunca sobrescreve uma conversa que já está acontecendo na tela.
+ */
+export async function hydrateSession(): Promise<MiaMessage[]> {
+  if (hydrated || log.length > 0) return log;
+  hydrated = true;
+  let stored: StoredMiaMessage[];
+  try {
+    stored = await loadMiaConversation();
+  } catch (error) {
+    console.error("Falha ao carregar a conversa guardada:", error);
+    return log;
+  }
+  const restored: MiaMessage[] = [];
+  for (const row of stored) {
+    const atISO = localStamp(new Date(row.at_iso));
+    if (row.author === "voce") {
+      if (typeof row.question !== "string") continue;
+      restored.push({ id: seq++, author: "voce", atISO, question: row.question });
+      continue;
+    }
+    const answer = parseStoredAnswer(row.answer);
+    if (!answer) continue;
+    restored.push({ id: seq++, author: "mia", atISO, answer });
+  }
+  if (log.length === 0) log = restored;
   return log;
 }
 
@@ -31,16 +109,13 @@ export function askInSession(
   linked = false,
 ): MiaMessage[] {
   const at = localStamp();
+  const answer = answerFor(routeQuestion(question), facts, linked);
   log = [
     ...log,
     { id: seq++, author: "voce", atISO: at, question },
-    {
-      id: seq++,
-      author: "mia",
-      atISO: at,
-      answer: answerFor(routeQuestion(question), facts, linked),
-    },
+    { id: seq++, author: "mia", atISO: at, answer },
   ];
+  persistExchange(question, answer);
   return log;
 }
 
@@ -83,6 +158,7 @@ export function askInSessionRuntime(
       if (round.status === "done" && !settled) {
         settled = true;
         runningRoundId = null;
+        persistExchange(question, answer);
         resolve();
       }
     }
@@ -111,9 +187,21 @@ export function cancelRunningRound(): Promise<void> {
   return cancelMiaRound(runningRoundId).catch(() => undefined);
 }
 
-/** Zera a conversa — usado pelos testes para isolar cenários. */
+/** Zera a conversa — usado pelos testes para isolar cenários. Não toca o banco: quem apaga de
+ *  verdade é `clearSession`. */
 export function resetSession(): void {
   log = [];
   seq = 1;
+  hydrated = false;
   runningRoundId = null;
+}
+
+/** Apaga a conversa de verdade — o que a pessoa leu e o rastro técnico das rodadas somem
+ *  juntos, no banco e na sessão. A promessa só resolve depois da gravação sumir: a tela volta
+ *  ao vazio quando a exclusão é fato, não antes. */
+export async function clearSession(): Promise<void> {
+  await deleteMiaConversation();
+  log = [];
+  seq = 1;
+  hydrated = true;
 }

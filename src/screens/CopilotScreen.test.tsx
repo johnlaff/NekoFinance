@@ -139,4 +139,61 @@ describe("CopilotScreen (Mia)", () => {
       within(await screen.findByRole("log")).getByText("Quanto posso gastar hoje?"),
     ).toBeInTheDocument();
   });
+
+  describe("apagar conversa", () => {
+    it("o botão só aparece quando há mensagens", async () => {
+      renderMia();
+      await screen.findByText(/Sou a Mia/);
+      expect(
+        screen.queryByRole("button", { name: "Apagar conversa" }),
+      ).not.toBeInTheDocument();
+
+      const user = userEvent.setup();
+      await user.click(
+        await screen.findByRole("button", { name: "Quanto posso gastar hoje?" }),
+      );
+      expect(
+        await screen.findByRole("button", { name: "Apagar conversa" }),
+      ).toBeInTheDocument();
+    });
+
+    it("confirm cancelado não apaga nada", async () => {
+      const user = userEvent.setup();
+      vi.spyOn(window, "confirm").mockReturnValue(false);
+      renderMia();
+      await user.click(
+        await screen.findByRole("button", { name: "Quanto posso gastar hoje?" }),
+      );
+
+      await user.click(await screen.findByRole("button", { name: "Apagar conversa" }));
+
+      expect(
+        within(screen.getByRole("log")).getByText("Quanto posso gastar hoje?"),
+      ).toBeInTheDocument();
+      expect(mockInvoke).not.toHaveBeenCalledWith("delete_mia_conversation");
+    });
+
+    it("confirmado chama o comando de apagar e a tela volta ao vazio", async () => {
+      const user = userEvent.setup();
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      mockCommands({
+        get_dashboard_summary: SUMMARY,
+        get_forecast: FORECAST,
+        get_mia_consent: MIA_CONSENT,
+        delete_mia_conversation: undefined,
+      });
+      renderMia();
+      await user.click(
+        await screen.findByRole("button", { name: "Quanto posso gastar hoje?" }),
+      );
+
+      await user.click(await screen.findByRole("button", { name: "Apagar conversa" }));
+
+      expect(mockInvoke).toHaveBeenCalledWith("delete_mia_conversation");
+      await screen.findByText(/Sou a Mia/);
+      expect(
+        screen.queryByRole("button", { name: "Apagar conversa" }),
+      ).not.toBeInTheDocument();
+    });
+  });
 });
