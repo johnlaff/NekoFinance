@@ -3513,15 +3513,6 @@ fn bilhetes_de(report: &serde_json::Value, candidate: &str) -> Vec<String> {
         .collect()
 }
 
-fn vereditos(
-    pares: &[(&str, bakeoff::Judgment)],
-) -> std::collections::BTreeMap<String, bakeoff::Judgment> {
-    pares
-        .iter()
-        .map(|(ticket, verdict)| ((*ticket).to_string(), *verdict))
-        .collect()
-}
-
 /// Com a didática aprovada em leitura cega, o líder vira default de verdade — e o campo que induz
 /// a troca do pin finalmente deixa de ser nulo.
 #[test]

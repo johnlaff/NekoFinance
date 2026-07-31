@@ -30,7 +30,10 @@ pub(crate) enum EgressDenied {
     /// Credencial embutida na autoridade — a forma clássica de fazer um host permitido parecer
     /// o destino quando o destino é outro.
     CredentialsInUrl,
-    /// Redirecionamento: recusado por princípio, qualquer que seja o destino.
+    /// Redirecionamento: recusado por princípio, qualquer que seja o destino. O cliente da rodada
+    /// já nasce sem seguir redirecionamento, então esta recusa é a política escrita — o que a
+    /// suíte exercita para que a decisão não dependa só da configuração do cliente.
+    #[allow(dead_code)]
     RedirectRefused,
 }
 
@@ -65,6 +68,7 @@ pub(crate) fn check(url: &str) -> Result<(), EgressDenied> {
 
 /// A decisão diante de um redirecionamento. Existe como função — em vez de uma política opaca do
 /// cliente HTTP — para que a recusa seja exercitável em teste sem subir rede.
+#[allow(dead_code)]
 pub(crate) fn on_redirect(_location: &str) -> EgressDenied {
     // O destino não atenua o desvio: seguir qualquer redirecionamento delegaria ao provedor a
     // escolha do receptor do conteúdo da rodada.

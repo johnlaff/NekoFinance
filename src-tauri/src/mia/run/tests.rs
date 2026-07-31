@@ -594,6 +594,7 @@ fn event_names(events: &[RunEvent]) -> Vec<&'static str> {
             RunEvent::RunStarted { .. } => "RunStarted",
             RunEvent::ToolStarted { .. } => "ToolStarted",
             RunEvent::ToolFinished { .. } => "ToolFinished",
+            RunEvent::ProposalReady { .. } => "ProposalReady",
             RunEvent::AnswerReady { .. } => "AnswerReady",
             RunEvent::Usage(_) => "Usage",
             RunEvent::Error(_) => "Error",
@@ -1575,4 +1576,35 @@ async fn ungrounded_answer_is_refused_after_the_regeneration_cap() {
     assert!(events.iter().any(
         |event| matches!(event, RunEvent::Error(error) if error.code == RunErrorCode::Ungrounded)
     ));
+}
+
+/// A proposta vira evento próprio só quando a ferramenta a validou. Uma recusa é correção para o
+/// modelo, e um cartão de aprovação sobre ela ofereceria um gesto sobre lançamento inexistente.
+#[test]
+fn so_a_proposta_validada_vira_evento_da_tela() {
+    let mut proposta = envelope(json!({"transaction": {"amount_cents": 5_000}}));
+    proposta.tool = catalog::PROPOSAL_TOOL.to_string();
+
+    let event = super::proposal_event(catalog::PROPOSAL_TOOL, "call-2", &proposta)
+        .expect("a proposta validada publica o evento");
+
+    match event {
+        RunEvent::ProposalReady { id, proposal } => {
+            assert_eq!(id, "call-2");
+            assert_eq!(proposal["tool"], json!(catalog::PROPOSAL_TOOL));
+            assert_eq!(
+                proposal["data"]["transaction"]["amount_cents"],
+                json!(5_000)
+            );
+        }
+        outro => panic!("a proposta validada deveria publicar ProposalReady, veio {outro:?}"),
+    }
+
+    let mut recusada = proposta;
+    recusada.ok = false;
+    recusada.data = None;
+    assert!(super::proposal_event(catalog::PROPOSAL_TOOL, "call-2", &recusada).is_none());
+
+    let leitura = envelope(json!({"amount_cents": 810_158}));
+    assert!(super::proposal_event("get_financial_snapshot", "call-1", &leitura).is_none());
 }

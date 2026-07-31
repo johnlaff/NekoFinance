@@ -317,6 +317,11 @@ pub(crate) fn spec(name: &str) -> Option<&'static ToolSpec> {
 /// resposta didática de uma conta sobre os números de quem perguntou.
 pub(crate) const METHOD_LAYER_TOOL: &str = "get_method_guidance";
 
+/// A única ferramenta que monta um lançamento canônico em vez de responder uma leitura. Ela
+/// continua read-only: valida, normaliza e devolve a proposta assinada — quem grava é o gesto de
+/// aprovação, fora do laço.
+pub(crate) const PROPOSAL_TOOL: &str = "propose_transaction";
+
 pub(crate) fn is_method_layer(tool: &str) -> bool {
     tool == METHOD_LAYER_TOOL
 }

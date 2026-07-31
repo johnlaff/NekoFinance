@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 /** True when running inside the Tauri shell (vs plain web preview). */
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -66,6 +66,78 @@ export function revokeMiaConsent(): Promise<MiaConsentView> {
 
 export function setMiaApiKey(key: string): Promise<MiaConsentView> {
   return invoke("set_mia_api_key", { key });
+}
+
+// --- Rodada da conversa (runtime) ---
+//
+// Espelha `MiaScreenEvent` do backend (`src-tauri/src/mia/screen_events.rs`) linha a linha —
+// `kind` em snake_case é a etiqueta discriminante do evento, os demais campos são exatamente o
+// que aquela linha carrega. Sem texto token a token: `answer_ready` publica a resposta inteira.
+
+export type MiaErrorCode =
+  | "consent_missing"
+  | "provider_unavailable"
+  | "rate_limited"
+  | "provider_refused"
+  | "protocol_violation"
+  | "turn_cap"
+  | "tool_call_cap"
+  | "cost_cap"
+  | "time_cap"
+  | "cancelled"
+  | "ungrounded";
+
+export type MiaStopReason =
+  | "consent_missing"
+  | "answered"
+  | "turn_cap"
+  | "tool_call_cap"
+  | "cost_cap"
+  | "time_cap"
+  | "cancelled"
+  | "ungrounded"
+  | "failed";
+
+export type MiaScreenEvent =
+  | { kind: "run_started"; run_id: string; model: string; endpoint: string }
+  | { kind: "tool_started"; id: string; tool: string }
+  | { kind: "tool_finished"; id: string; tool: string; ok: boolean }
+  | { kind: "proposal_ready"; id: string; proposal: unknown }
+  | { kind: "answer_ready"; text: string; provenance: "calculo" | "metodo" }
+  | {
+      kind: "usage";
+      model: string;
+      endpoint: string;
+      prompt_tokens: number;
+      completion_tokens: number;
+      /** Nulo é lacuna declarada pelo provedor — nunca renderizar como zero. */
+      cost_micro_usd: number | null;
+      attempts: number;
+    }
+  | { kind: "error"; code: MiaErrorCode; message: string; fix: string }
+  | { kind: "run_finished"; stop: MiaStopReason };
+
+/**
+ * Abre uma rodada da conversa ligada. Devolve o `run_id` assim que o backend a registra — antes
+ * de qualquer evento, para o cancelamento poder alcançá-la mesmo antes da primeira resposta.
+ * Fora do Tauri a promessa rejeita com um erro honesto: não existe rodada para simular.
+ */
+export function runMiaRound(
+  question: string,
+  onEvent: (event: MiaScreenEvent) => void,
+): Promise<string> {
+  if (!isTauri) {
+    return Promise.reject(new Error("A conversa ligada só funciona no app desktop."));
+  }
+  const channel = new Channel<MiaScreenEvent>();
+  channel.onmessage = onEvent;
+  return invoke<string>("run_mia_round", { question, onEvent: channel });
+}
+
+/** Interrompe uma rodada em curso. Fora do Tauri não há rodada — gesto sem efeito. */
+export function cancelMiaRound(runId: string): Promise<void> {
+  if (!isTauri) return Promise.resolve();
+  return invoke("cancel_mia_round", { runId });
 }
 
 export interface UpcomingInvoice {

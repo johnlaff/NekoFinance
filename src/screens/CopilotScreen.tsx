@@ -1,6 +1,6 @@
 import "./mia.css";
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp } from "lucide-react";
+import { ArrowUp, Square } from "lucide-react";
 import { EmptyState } from "../design-system/components/EmptyState";
 import { EstimateMark } from "../design-system/components/EstimateMark";
 import { MiaAvatar } from "../design-system/components/MiaAvatar";
@@ -11,7 +11,12 @@ import { motionEnabled } from "../lib/motion";
 import { useCommand } from "../lib/useCommand";
 import { useNekoApp } from "../shell/appContext";
 import { greetingForHour, localTodayIso } from "./hojeView";
-import { askInSession, sessionLog } from "./miaSession";
+import {
+  askInSession,
+  askInSessionRuntime,
+  cancelRunningRound,
+  sessionLog,
+} from "./miaSession";
 import {
   buildTimeline,
   contextFacts,
@@ -164,7 +169,10 @@ function Answer({
         <span>
           {answer.provenance === "calculo"
             ? "Cálculo determinístico · Lê sua planilha · Responde local"
-            : "Explicação do método"}
+            : answer.provenance === "runtime"
+              ? (answer.explanation ? "Explicação do método · " : "") +
+                (answer.transparency ?? "Resposta da conversa ligada")
+              : "Explicação do método"}
         </span>
         <time>{timeLabel(at)}</time>
       </p>
@@ -238,6 +246,11 @@ function scrollerOf(el: HTMLElement | null): HTMLElement | null {
   return null;
 }
 
+/** Módulo, não estado local — o gesto de cancelar só repassa ao runId em curso na sessão. */
+function cancelRound(): void {
+  void cancelRunningRound();
+}
+
 /* ------------------------------------------------------------------ */
 /* CopilotScreen                                                       */
 /* ------------------------------------------------------------------ */
@@ -250,8 +263,10 @@ export function CopilotScreen() {
 
   const [log, setLog] = useState<MiaMessage[]>(sessionLog);
   const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const stopRef = useRef<HTMLButtonElement | null>(null);
 
   const summary = summaryQ.data;
   const forecast = forecastQ.data;
@@ -268,6 +283,16 @@ export function CopilotScreen() {
     if (pointerViewport()) inputRef.current?.focus();
   }, []);
 
+  // Desabilitar o campo focado solta o foco do documento — sem realocação, o Tab seguinte
+  // recomeça do topo. Durante a rodada o foco vai ao cancelar; ao fechar, volta ao campo
+  // (só em teclado físico — no polegar reabriria o teclado virtual sem pedido).
+  const wasBusy = useRef(false);
+  useEffect(() => {
+    if (busy) stopRef.current?.focus();
+    else if (wasBusy.current && pointerViewport()) inputRef.current?.focus();
+    wasBusy.current = busy;
+  }, [busy]);
+
   // A conversa acompanha a última resposta rolando o SCROLLER até o fim — `scrollIntoView`
   // alinharia o fim da tela ao fim do scrollport e pararia antes, deixando o dock ancorado
   // (que flutua enquanto sobra rolagem) por cima da resposta nova.
@@ -281,9 +306,19 @@ export function CopilotScreen() {
 
   function ask(question: string) {
     const trimmed = question.trim();
-    if (!trimmed) return;
-    setLog(askInSession(trimmed, facts, linked));
+    if (!trimmed || busy) return;
     setInput("");
+    // Com a conversa ligada, TODA pergunta vai ao runtime — inclusive as seis que o piso
+    // offline resolve local: a recusa "ainda não está ligada" só é a resposta honesta
+    // quando `linked` é falso de verdade.
+    if (linked) {
+      setBusy(true);
+      askInSessionRuntime(trimmed, setLog)
+        .catch(() => undefined)
+        .finally(() => setBusy(false));
+      return;
+    }
+    setLog(askInSession(trimmed, facts, linked));
   }
 
   function runCta(cta: AnswerCta) {
@@ -381,25 +416,43 @@ export function CopilotScreen() {
             e.preventDefault();
             ask(input);
           }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && busy) cancelRound();
+          }}
         >
           <input
             ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Converse com a Mia"
+            placeholder={busy ? "A Mia está respondendo…" : "Converse com a Mia"}
             aria-label="Mensagem para a Mia"
+            disabled={busy}
           />
-          <button
-            type="submit"
-            className="mia__send"
-            aria-label="Enviar"
-            disabled={!input.trim()}
-          >
-            <ArrowUp size={19} strokeWidth={2} />
-          </button>
+          {busy ? (
+            <button
+              ref={stopRef}
+              type="button"
+              className="mia__send mia__send--stop"
+              aria-label="Cancelar a rodada"
+              onClick={cancelRound}
+            >
+              <Square size={15} strokeWidth={2} fill="currentColor" />
+            </button>
+          ) : (
+            <button
+              type="submit"
+              className="mia__send"
+              aria-label="Enviar"
+              disabled={!input.trim()}
+            >
+              <ArrowUp size={19} strokeWidth={2} />
+            </button>
+          )}
         </form>
         <p className="mia__honesty">
-          Lê sua planilha · Responde local · A conversa fica só nesta sessão
+          {linked
+            ? "Conversa ligada · Provedor externo · Cada rodada mostra provedor, modelo e custo"
+            : "Lê sua planilha · Responde local · A conversa fica só nesta sessão"}
         </p>
       </div>
     </div>

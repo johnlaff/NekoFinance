@@ -16,11 +16,12 @@ pub(crate) mod consent;
 pub(crate) mod envelope;
 pub(crate) mod key_store;
 mod ledger_tools;
-mod method_tools;
+pub(crate) mod method_tools;
 pub(crate) mod prompt;
 pub(crate) mod provider;
 pub(crate) mod run;
 mod scenario_tools;
+pub(crate) mod screen_events;
 mod state_tools;
 #[cfg(test)]
 mod test_pack;

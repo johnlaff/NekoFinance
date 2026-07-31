@@ -188,11 +188,19 @@
 }
 .mia__prov {
   display: flex;
+  /* A linha de transparência da rodada (provedor · modelo · custo) é a mais longa da
+     bolha: na coluna do polegar ela quebra antes de empurrar o horário para fora. */
+  flex-wrap: wrap;
   justify-content: space-between;
-  gap: var(--space-5);
+  gap: var(--space-2) var(--space-5);
   margin: var(--space-5) 0 0;
   font-size: var(--fs-micro);
   color: var(--text-faint);
+}
+
+.mia__prov span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /* ---- Recibo: a assinatura da tela — a conta que o motor fez, impressa ---- */
@@ -453,6 +461,18 @@
   background: var(--surface-elevated);
   color: var(--text-faint);
   cursor: default;
+}
+/* Cancelar a rodada do runtime: mesmo alvo do envio, tom de atenção — nunca a cor de erro,
+   que sobra para a recusa em si. */
+.mia__send--stop {
+  background: var(--warning-400);
+  color: var(--text-on-primary);
+}
+.mia__send--stop:hover {
+  background: var(--warning-500);
+}
+.mia__composer input:disabled {
+  color: var(--text-faint);
 }
 .mia__honesty {
   margin: var(--space-5) 0 0;
