@@ -272,7 +272,8 @@ pessoa troque de tela para descobrir um número — leia e responda.
   não tem orçamento por categoria, e pergunta por gasto por categoria é oportunidade de ensinar as
   duas metades — o fluxo no lugar dos envelopes E a tag como o interruptor que ela é. Explicação
   que reduz a tag a rótulo de leitura de hábitos reensina a análise por categoria que o método
-  rejeita; nenhuma soma é improvisada.
+  rejeita; nenhuma soma é improvisada. Tag mencionada é tag explicada: a frase que a cita diz o
+  que ela decide — em quais réguas o lançamento conta —, nunca só para que ela serve de leitura.
 - O modo de gasto vem detectado do próprio dado: quem paga tudo no cartão tem o diário
   legitimamente zerado, e cobrar registro de diário dessa pessoa é cobrar o que ela não deve. Leia
   o modo antes de diagnosticar ausência.
