@@ -14,8 +14,11 @@ use crate::mia::key_store::{self, ApiKey};
 use crate::mia::method_tools::MethodPack;
 use crate::mia::provider::http::HttpAdapter;
 use crate::mia::provider::pins::default_pin;
-use crate::mia::run::{CancelToken, Round, RunLimits, Runner};
+use crate::mia::run::{
+    CancelToken, Round, RunErrorCode, RunEvent, RunLimits, Runner, StopReason, run_error,
+};
 use crate::mia::screen_events::{MiaScreenEvent, screen_event};
+use crate::mia::store::{self, StoredMessage};
 use crate::mia::{Context, prompt};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -183,6 +186,17 @@ pub async fn run_mia_round(
     };
     let adapter = HttpAdapter::new(key.expose().to_string())?;
 
+    // A conversa é reidratada ANTES de a rodada abrir: o histórico é do app, e é ele que faz a
+    // pergunta seguinte entender a anterior. A purga do rastro vencido pega carona no mesmo
+    // caminho — quem conversa é quem produz rastro.
+    let conversation = open_conversation(pool.inner()).await?;
+    store::purge_stale_traces(pool.inner(), chrono::Utc::now())
+        .await
+        .map_err(|error| format!("limpar o rastro técnico vencido: {error}"))?;
+    let history = store::load_history(pool.inner(), conversation)
+        .await
+        .map_err(|error| format!("ler a conversa guardada: {error}"))?;
+
     // Uma leitura só do relógio por rodada: o hoje do prefixo e o `as_of` dos envelopes saem da
     // mesma, senão o modelo receberia dois calendários e nenhum critério para escolher entre eles.
     let ctx = Context {
@@ -194,6 +208,22 @@ pub async fn run_mia_round(
         .map_err(|error| format!("{} {}", error.message, error.fix))?;
 
     let run_id = uuid::Uuid::new_v4().to_string();
+
+    // O teto da janela é conferido antes de qualquer gasto: a rodada que não caberia seria recusada
+    // pelo provedor depois de cobrada. Nada é resumido — a saída é apagar a conversa, e a recusa
+    // diz isso em vez de deixar a pessoa reenviando a mesma pergunta.
+    if store::window_exceeded(&history) {
+        let refusal = run_error(RunErrorCode::ContextCap);
+        let _ = on_event.send(screen_event(&run_id, RunEvent::Error(refusal)));
+        let _ = on_event.send(screen_event(
+            &run_id,
+            RunEvent::RunFinished {
+                stop: StopReason::Failed,
+            },
+        ));
+        return Ok(run_id);
+    }
+
     let cancel = CancelToken::new();
     runs.register(&run_id, cancel.clone());
 
@@ -222,17 +252,70 @@ pub async fn run_mia_round(
             cancel,
             events,
         };
-        runner
+        let outcome = runner
             .run(Round {
                 system: &system.text,
-                history: &[],
+                history: &history,
                 question: &question,
             })
             .await;
         runs.finish(&round_id);
+
+        // A gravação é o último gesto da rodada, e a falha dela não tem tela: a resposta já foi
+        // publicada pelo canal. Fica no console, para o próximo diagnóstico — engolir em silêncio
+        // esconderia uma conversa que deixou de durar.
+        if let Err(error) =
+            store::save_round(&pool, conversation, &round_id, default_pin(), &outcome).await
+        {
+            eprintln!("[mia/store] gravar a rodada: {error}");
+        }
     });
 
     Ok(run_id)
+}
+
+/// A conversa única, com a mensagem de erro que toda porta dela usa.
+async fn open_conversation(pool: &SqlitePool) -> Result<i64, String> {
+    store::active_conversation(pool)
+        .await
+        .map_err(|error| format!("abrir a conversa guardada: {error}"))
+}
+
+/// A conversa guardada, como a tela a desenha ao abrir.
+#[tauri::command]
+pub async fn load_mia_conversation(
+    pool: State<'_, SqlitePool>,
+) -> Result<Vec<StoredMessage>, String> {
+    let conversation = open_conversation(pool.inner()).await?;
+    store::visible_messages(pool.inner(), conversation)
+        .await
+        .map_err(|error| format!("ler a conversa guardada: {error}"))
+}
+
+/// Registra o par pergunta/resposta que a tela acabou de desenhar.
+///
+/// O backend guarda o JSON como ele vem: quem reduz os eventos da rodada à resposta visível é a
+/// interface, e conhecer esse formato aqui seria uma segunda definição dele para divergir.
+#[tauri::command]
+pub async fn append_mia_exchange(
+    question: String,
+    answer_json: String,
+    pool: State<'_, SqlitePool>,
+) -> Result<(), String> {
+    let conversation = open_conversation(pool.inner()).await?;
+    store::append_exchange(pool.inner(), conversation, &question, &answer_json)
+        .await
+        .map_err(|error| format!("guardar a mensagem da conversa: {error}"))
+}
+
+/// Apaga a conversa de verdade: o que a pessoa leu e o rastro técnico das rodadas somem juntos. A
+/// proveniência de um lançamento aprovado permanece — ela é histórico financeiro, não da conversa.
+#[tauri::command]
+pub async fn delete_mia_conversation(pool: State<'_, SqlitePool>) -> Result<(), String> {
+    let conversation = open_conversation(pool.inner()).await?;
+    store::delete_conversation(pool.inner(), conversation)
+        .await
+        .map_err(|error| format!("apagar a conversa: {error}"))
 }
 
 /// Interrompe uma rodada em curso. Cancelar o que já terminou é gesto sem efeito, nunca erro: a

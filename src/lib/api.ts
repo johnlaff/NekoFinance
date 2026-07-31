@@ -85,7 +85,8 @@ export type MiaErrorCode =
   | "cost_cap"
   | "time_cap"
   | "cancelled"
-  | "ungrounded";
+  | "ungrounded"
+  | "context_cap";
 
 export type MiaStopReason =
   | "consent_missing"
@@ -138,6 +139,32 @@ export function runMiaRound(
 export function cancelMiaRound(runId: string): Promise<void> {
   if (!isTauri) return Promise.resolve();
   return invoke("cancel_mia_round", { runId });
+}
+
+/** Uma linha da conversa guardada, como o backend a devolve — espelha `StoredMessage`
+ *  (`src-tauri/src/mia/store.rs`) linha a linha. `answer` é opaco: o formato é o que a
+ *  própria interface gravou como `MiaAnswer` serializado, e valê-lo cabe a quem lê. */
+export interface StoredMiaMessage {
+  author: "voce" | "mia";
+  question: string | null;
+  answer: unknown;
+  at_iso: string;
+}
+
+/** A conversa guardada, na ordem em que foi dita. */
+export function loadMiaConversation(): Promise<StoredMiaMessage[]> {
+  return invoke("load_mia_conversation");
+}
+
+/** Grava o par pergunta/resposta que a tela acabou de desenhar. `answerJson` é o `MiaAnswer`
+ *  já serializado — o backend guarda o JSON como ele vem, sem conhecer a forma dele. */
+export function appendMiaExchange(question: string, answerJson: string): Promise<void> {
+  return invoke("append_mia_exchange", { question, answerJson });
+}
+
+/** Apaga a conversa de verdade: o que a pessoa leu e o rastro técnico das rodadas somem juntos. */
+export function deleteMiaConversation(): Promise<void> {
+  return invoke("delete_mia_conversation");
 }
 
 export interface UpcomingInvoice {

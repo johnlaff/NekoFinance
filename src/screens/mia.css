@@ -481,6 +481,24 @@
   color: var(--text-faint);
 }
 
+/* Gesto destrutivo discreto: texto simples no rodapé do dock, sem peso de botão — a densidade
+   calma reserva o acento para os gestos que a conversa oferece, nunca para os que a apagam. */
+.mia__clear {
+  display: block;
+  margin: var(--space-2) auto 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.mia__clear:hover,
+.mia__clear:focus-visible {
+  color: var(--text-muted);
+  text-decoration: underline;
+}
+
 @keyframes mia-rise {
   from {
     opacity: 0;

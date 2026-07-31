@@ -176,6 +176,7 @@ fn toda_classe_de_erro_chega_nomeada_e_com_saida() {
         (RunErrorCode::TimeCap, "time_cap"),
         (RunErrorCode::Cancelled, "cancelled"),
         (RunErrorCode::Ungrounded, "ungrounded"),
+        (RunErrorCode::ContextCap, "context_cap"),
     ];
 
     for (code, name) in codes {

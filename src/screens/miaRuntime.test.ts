@@ -184,6 +184,22 @@ describe("erro — recusa honesta", () => {
     ]);
     expect(state.answer?.cta).toBeUndefined();
   });
+
+  it("context_cap nomeia o teto da janela — o corpo vem do backend", () => {
+    const state = reduce([
+      {
+        kind: "error",
+        code: "context_cap",
+        message: "Esta conversa chegou ao teto da janela do modelo.",
+        fix: "Apague a conversa para começar outra — o que você já leu some junto.",
+      },
+    ]);
+    const text = plainText(state.answer!.text);
+    expect(text).toContain("A conversa chegou ao teto da janela.");
+    expect(text).toContain("Esta conversa chegou ao teto da janela do modelo.");
+    expect(text).toContain("Apague a conversa para começar outra");
+    expect(state.answer?.cta).toBeUndefined();
+  });
 });
 
 describe("cancelamento", () => {

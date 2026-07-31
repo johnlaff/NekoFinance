@@ -23,6 +23,7 @@ pub(crate) mod run;
 mod scenario_tools;
 pub(crate) mod screen_events;
 mod state_tools;
+pub(crate) mod store;
 #[cfg(test)]
 mod test_pack;
 mod time_tools;

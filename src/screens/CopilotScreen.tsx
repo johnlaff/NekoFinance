@@ -15,6 +15,8 @@ import {
   askInSession,
   askInSessionRuntime,
   cancelRunningRound,
+  clearSession,
+  hydrateSession,
   sessionLog,
 } from "./miaSession";
 import {
@@ -251,6 +253,13 @@ function cancelRound(): void {
   void cancelRunningRound();
 }
 
+/** O texto do confirm declara ANTES o que some e o que sobrevive — apagar é irreversível, e a
+ *  proveniência de um lançamento aprovado não é rastro da conversa, é histórico financeiro. */
+const CLEAR_CONFIRM =
+  "Apagar a conversa?\n\n" +
+  "Apaga as mensagens e o rastro técnico das rodadas.\n" +
+  "A origem dos lançamentos que você aprovou fica no seu histórico financeiro.";
+
 /* ------------------------------------------------------------------ */
 /* CopilotScreen                                                       */
 /* ------------------------------------------------------------------ */
@@ -281,6 +290,12 @@ export function CopilotScreen() {
   // saudação, sem ninguém ter pedido.
   useEffect(() => {
     if (pointerViewport()) inputRef.current?.focus();
+  }, []);
+
+  // A conversa guardada carrega antes de a tela decidir entre a saudação e a thread — sem
+  // isso, quem reabre o app veria o vazio piscar antes das próprias mensagens voltarem.
+  useEffect(() => {
+    void hydrateSession().then(setLog);
   }, []);
 
   // Desabilitar o campo focado solta o foco do documento — sem realocação, o Tab seguinte
@@ -324,6 +339,15 @@ export function CopilotScreen() {
   function runCta(cta: AnswerCta) {
     if (cta.target === "compose") openCompose({ mode: "new" });
     else navigate(cta.target);
+  }
+
+  function clearConversation() {
+    if (!window.confirm(CLEAR_CONFIRM)) return;
+    clearSession()
+      .then(() => setLog([]))
+      .catch((error: unknown) => {
+        console.error("Falha ao apagar a conversa:", error);
+      });
   }
 
   const timeline = buildTimeline(log, localTodayIso());
@@ -452,8 +476,13 @@ export function CopilotScreen() {
         <p className="mia__honesty">
           {linked
             ? "Conversa ligada · Provedor externo · Cada rodada mostra provedor, modelo e custo"
-            : "Lê sua planilha · Responde local · A conversa fica só nesta sessão"}
+            : "Lê sua planilha · Responde local · A conversa fica no seu computador"}
         </p>
+        {log.length > 0 ? (
+          <button type="button" className="mia__clear" onClick={clearConversation}>
+            Apagar conversa
+          </button>
+        ) : null}
       </div>
     </div>
   );
