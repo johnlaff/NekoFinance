@@ -7,7 +7,7 @@ use super::stream::{ErrorKind, ProviderEvent, StreamParser};
 use serde_json::{Value, json};
 
 fn candidate_pin() -> &'static super::pins::ModelPin {
-    pin("openai/gpt-5.6-luna").expect("pin candidato declarado")
+    pin("openai/gpt-5.6-luna@medium").expect("pin candidato declarado")
 }
 
 fn request_for(
@@ -64,7 +64,8 @@ fn finish_chunk(reason: &str) -> String {
 /// referência, na matriz vigente.
 #[test]
 fn request_requires_zero_data_retention_for_a_zero_retention_pin() {
-    let zero_retention_pin = pin("openai/gpt-5.6-sol").expect("pin de retenção zero declarado");
+    let zero_retention_pin =
+        pin("openai/gpt-5.6-sol@medium").expect("pin de retenção zero declarado");
     let request = request_for(zero_retention_pin, vec![]);
 
     assert_eq!(
@@ -158,7 +159,7 @@ fn request_uses_the_pinned_model_for_default_and_candidate() {
 }
 
 #[test]
-fn request_pins_reasoning_to_the_floor() {
+fn request_sends_the_pins_declared_reasoning_effort() {
     let request = request_for(default_pin(), vec![]);
 
     assert_eq!(
@@ -166,7 +167,7 @@ fn request_pins_reasoning_to_the_floor() {
             .body
             .pointer("/reasoning/effort")
             .and_then(Value::as_str),
-        Some("minimal")
+        Some("medium")
     );
 }
 
@@ -842,7 +843,8 @@ fn drift_verifies_a_provider_policy_pin_against_the_general_endpoints_catalog() 
         super::drift::catalog_for(opt_out_pin, &zdr_catalog, &general_catalog),
         &general_catalog
     ));
-    let zero_retention_pin = pin("openai/gpt-5.6-sol").expect("pin de retenção zero declarado");
+    let zero_retention_pin =
+        pin("openai/gpt-5.6-sol@medium").expect("pin de retenção zero declarado");
     assert!(std::ptr::eq(
         super::drift::catalog_for(zero_retention_pin, &zdr_catalog, &general_catalog),
         &zdr_catalog

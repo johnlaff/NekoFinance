@@ -33,11 +33,12 @@ pub(crate) fn render(run: &BenchRun, ran_at: &str) -> Value {
         // configuração da requisição diz sob que regras ela foi produzida. Sem os três últimos, uma
         // corrida guardada não prova ter nascido da configuração que a matriz declara hoje — e é
         // sobre essa prova que a retomada decide reaproveitar em vez de pagar de novo.
+        "candidate": run.pin.label,
         "model": run.pin.model,
         "endpoint": run.pin.endpoint,
         "operator": run.pin.operator,
         "beta_headers": run.pin.beta_headers,
-        "reasoning_floor": run.pin.reasoning_floor.effort(),
+        "reasoning_effort": run.pin.reasoning_effort.wire(),
         "token_cap": run.pin.token_cap.field(),
         "method_core": run.method_core,
         "max_spend_micro_usd": run.max_spend_micro_usd,
@@ -120,8 +121,8 @@ fn repetition_json(outcome: &RepetitionOutcome) -> Value {
 }
 
 /// O nome do arquivo: instante da execução (até o segundo, com `:` trocado por `-` para valer
-/// em qualquer sistema de arquivos) mais o modelo. Dois relatórios nunca disputam o mesmo nome,
-/// e o diretório lista a história em ordem.
+/// em qualquer sistema de arquivos) mais o candidato. Dois relatórios nunca disputam o mesmo
+/// nome, e o diretório lista a história em ordem.
 pub(crate) fn file_name(ran_at: &str, model: &str) -> String {
     let stamp: String = ran_at
         .chars()
@@ -147,7 +148,7 @@ pub(crate) async fn write(
     pack: Option<&MethodPack>,
 ) -> Result<PathBuf, String> {
     let report = render(run, ran_at);
-    write_json(dir, &file_name(ran_at, run.pin.model), None, &report, pack).await
+    write_json(dir, &file_name(ran_at, run.pin.label), None, &report, pack).await
 }
 
 /// Escreve um relatório em JSON, com a varredura de privacidade antes de qualquer byte tocar o

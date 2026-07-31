@@ -407,13 +407,13 @@ pub(crate) fn decide(scored: &[(&'static ModelPin, Score)]) -> Decision {
     );
     if score.pending_judgment > 0 {
         return Decision::PendingBlindJudgment {
-            leading_model: pin.model,
+            leading_model: pin.label,
             rationale,
             pending_judgment: score.pending_judgment,
         };
     }
     Decision::Adopt {
-        model: pin.model,
+        model: pin.label,
         rationale,
     }
 }
@@ -437,7 +437,7 @@ fn meterless_note(meterless: &[Scored<'_>]) -> String {
          sem custo declarado), e o que não foi medido não compara nem é cobrado do modelo.",
         meterless
             .iter()
-            .map(|(pin, _)| pin.model)
+            .map(|(pin, _)| pin.label)
             .collect::<Vec<_>>()
             .join(", ")
     )
@@ -461,7 +461,7 @@ fn mixed_epochs(eligible: &[Scored<'_>]) -> String {
     }
     let quando: Vec<String> = eligible
         .iter()
-        .map(|(pin, score)| format!("{} em {}", pin.model, score.priced_at))
+        .map(|(pin, score)| format!("{} em {}", pin.label, score.priced_at))
         .collect();
     format!(
         " ATENÇÃO: estes custos foram cobrados em datas diferentes ({}), cada um pela tarifa \
@@ -669,7 +669,7 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog + EndpointsCatalog>(
                 bakeoff
                     .drifted
                     .iter()
-                    .map(|(pin, why)| format!("{}: {why}", pin.model))
+                    .map(|(pin, why)| format!("{}: {why}", pin.label))
                     .collect::<Vec<_>>()
                     .join(" · ")
             ),
@@ -739,7 +739,7 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog + EndpointsCatalog>(
             .probes
             .iter()
             .filter(|probe| probe.cost_declared && probe.complete && probe.cost_micro_usd > 0)
-            .map(|probe| probe.pin.model)
+            .map(|probe| probe.pin.label)
             .collect();
         if probed.len() < verdict.cleared.len() {
             bakeoff.decision = Decision::NoWinner {
@@ -856,7 +856,7 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog + EndpointsCatalog>(
     let unmeasured: Vec<&str> = sieved
         .iter()
         .filter(|(_, score)| !score.complete)
-        .map(|(pin, _)| pin.model)
+        .map(|(pin, _)| pin.label)
         .collect();
     if !unmeasured.is_empty() {
         bakeoff.decision = Decision::NoWinner {
@@ -897,9 +897,9 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog + EndpointsCatalog>(
             !verdict
                 .cleared
                 .iter()
-                .any(|cleared| cleared.model == pin.model)
+                .any(|cleared| cleared.label == pin.label)
         })
-        .map(|pin| pin.model)
+        .map(|pin| pin.label)
         .collect();
     if !drifted.is_empty() {
         bakeoff.decision = Decision::NoWinner {
@@ -934,13 +934,13 @@ pub(crate) async fn run<A: ProviderAdapter + ZdrCatalog + EndpointsCatalog>(
             let Some(probe) = bakeoff
                 .probes
                 .iter()
-                .find(|probe| probe.pin.model == pin.model)
+                .find(|probe| probe.pin.label == pin.label)
             else {
                 bakeoff.decision = Decision::NoWinner {
                     reason: format!(
                         "A sonda do relatório retomado não mediu {}, que a peneira mandou à final: \
                          sem ela, nada projeta o custo da corrida que falta. Rode do zero.",
-                        pin.model
+                        pin.label
                     ),
                 };
                 let path = config
@@ -1078,7 +1078,7 @@ impl BakeoffConfig<'_> {
 fn reused(bakeoff: &Bakeoff, pin: &'static ModelPin) -> bool {
     inherited_two(bakeoff)
         .iter()
-        .any(|run| run.pin.model == pin.model)
+        .any(|run| run.pin.label == pin.label)
 }
 
 /// A peneira herdada, ou nada quando esta execução não retoma relatório nenhum.
@@ -1181,6 +1181,7 @@ pub(crate) fn render(bakeoff: &Bakeoff, ran_at: &str) -> Value {
         "probe": {
             "estimate_micro_usd": bakeoff.estimate_micro_usd,
             "rounds": bakeoff.probes.iter().map(|probe| json!({
+                "candidate": probe.pin.label,
                 "model": probe.pin.model,
                 "cost_micro_usd": probe.cost_micro_usd,
                 "cost_declared": probe.cost_declared,
@@ -1189,6 +1190,7 @@ pub(crate) fn render(bakeoff: &Bakeoff, ran_at: &str) -> Value {
             })).collect::<Vec<Value>>(),
         },
         "canary_drift": bakeoff.drifted.iter().map(|(pin, why)| json!({
+            "candidate": pin.label,
             "model": pin.model,
             "endpoint": pin.endpoint,
             "reason": why,
@@ -1339,7 +1341,7 @@ pub(crate) fn blind_entries(bakeoff: &Bakeoff) -> Vec<BlindEntry> {
                         case_id.to_string(),
                         answer.to_string(),
                         question.to_string(),
-                        run.pin.model,
+                        run.pin.label,
                     ));
                 }
             }
@@ -1355,7 +1357,7 @@ pub(crate) fn blind_entries(bakeoff: &Bakeoff) -> Vec<BlindEntry> {
                         case.case.id.clone(),
                         answer.clone(),
                         case.case.question.clone(),
-                        run.pin.model,
+                        run.pin.label,
                     ));
                 }
             }
@@ -1626,7 +1628,7 @@ pub(crate) fn judged_decision(
              modelo.",
             meterless
                 .iter()
-                .map(|run| run.pin.model)
+                .map(|run| run.pin.label)
                 .collect::<Vec<_>>()
                 .join(", ")
         )
@@ -1661,7 +1663,7 @@ pub(crate) fn judged_decision(
                 && run.mechanical_total > 0
                 && run.mechanical_passed == run.mechanical_total
                 && run.injection_failed == 0
-                && !rejected.contains(run.pin.model)
+                && !rejected.contains(run.pin.label)
         })
         .collect();
     // Empate de qualidade cai no custo, como na decisão mecânica; empate de custo, na ordem de
@@ -1682,7 +1684,7 @@ pub(crate) fn judged_decision(
              o desempate por custo é base frágil e não afirma qual pergunta custa menos hoje.",
             eligible
                 .iter()
-                .map(|run| format!("{} em {}", run.pin.model, run.priced_at))
+                .map(|run| format!("{} em {}", run.pin.label, run.priced_at))
                 .collect::<Vec<_>>()
                 .join(", ")
         )
@@ -1698,7 +1700,7 @@ pub(crate) fn judged_decision(
         });
     };
     Ok(Decision::Adopt {
-        model: winner.pin.model,
+        model: winner.pin.label,
         rationale: format!(
             "Suíte mecânica zerada, didática aprovada em leitura cega e {} micro-USD na final — {} \
              entre os que passaram nos dois gates.{epochs}{excluded}{walkover}",
@@ -1724,9 +1726,9 @@ fn rebuild_blind_entries(report: &Value) -> Result<Vec<BlindEntry>, String> {
             .ok_or_else(|| format!("O relatório não traz {phase}."))?;
         for entry in runs {
             let run = &entry["run"];
-            let model = run["model"]
+            let model = run["candidate"]
                 .as_str()
-                .ok_or_else(|| format!("Uma corrida de {phase} não nomeia o modelo."))?;
+                .ok_or_else(|| format!("Uma corrida de {phase} não nomeia o candidato."))?;
             let pin = crate::mia::provider::pins::pin(model).ok_or_else(|| {
                 format!("O relatório aponta {model}, que não está na matriz de pins.")
             })?;
@@ -1746,7 +1748,7 @@ fn rebuild_blind_entries(report: &Value) -> Result<Vec<BlindEntry>, String> {
                         case_id.to_string(),
                         answer.to_string(),
                         question.to_string(),
-                        pin.model,
+                        pin.label,
                     ));
                 }
             }
@@ -1822,7 +1824,7 @@ fn parse_finalists(report: &Value) -> Result<Vec<FinalRun>, String> {
         .ok_or_else(|| "O relatório não traz a peneira.".to_string())?;
     let sieved: std::collections::BTreeSet<&str> = sieve
         .iter()
-        .filter_map(|entry| entry["run"]["model"].as_str())
+        .filter_map(|entry| entry["run"]["candidate"].as_str())
         .collect();
     let entries = report["phase_two"]
         .as_array()
@@ -1847,9 +1849,9 @@ fn parse_finalists(report: &Value) -> Result<Vec<FinalRun>, String> {
     let mut runs: Vec<FinalRun> = Vec::with_capacity(entries.len());
     for entry in entries {
         let run = &entry["run"];
-        let model = run["model"]
+        let model = run["candidate"]
             .as_str()
-            .ok_or_else(|| "Uma corrida da final não nomeia o modelo.".to_string())?;
+            .ok_or_else(|| "Uma corrida da final não nomeia o candidato.".to_string())?;
         let pin = crate::mia::provider::pins::pin(model).ok_or_else(|| {
             format!("O relatório aponta {model}, que não está na matriz de pins.")
         })?;
@@ -1859,14 +1861,14 @@ fn parse_finalists(report: &Value) -> Result<Vec<FinalRun>, String> {
                  o desenho do bakeoff."
             ));
         }
-        if runs.iter().any(|other| other.pin.model == pin.model) {
+        if runs.iter().any(|other| other.pin.label == pin.label) {
             return Err(format!(
-                "{model} aparece duas vezes na final. Um mesmo modelo não faz quórum consigo mesmo."
+                "{model} aparece duas vezes na final. Um mesmo candidato não faz quórum consigo mesmo."
             ));
         }
         // Quem chega à final saiu da peneira: um finalista que não a correu não foi comparado com
         // ninguém antes de chegar lá.
-        if !sieved.contains(pin.model) {
+        if !sieved.contains(pin.label) {
             return Err(format!(
                 "{model} está na final e não aparece na peneira: este relatório não bate com o \
                  desenho do bakeoff."

@@ -89,18 +89,47 @@ pub(crate) fn parse(
     }
 
     let sieve = phase(report, "phase_one")?;
-    let matrix: Vec<&str> = contenders().iter().map(|pin| pin.model).collect();
-    let inherited_matrix: Vec<&str> = sieve
+    let matrix: Vec<String> = contenders()
         .iter()
-        .map(|entry| entry["run"]["model"].as_str().unwrap_or_default())
+        .map(|pin| pin.label.to_string())
+        .collect();
+    // Corrida sem o campo `candidate` entra pelo mesmo reconhecimento do resto da identidade:
+    // com a flag, o nome do modelo responde por ela quando um único pin o corre — entre dois
+    // esforços do mesmo modelo não há o que assumir, e o nome cru fica para a recusa nomear.
+    let mut candidateless = false;
+    let inherited_matrix: Vec<String> = sieve
+        .iter()
+        .map(|entry| {
+            let run = &entry["run"];
+            match run["candidate"].as_str() {
+                Some(candidate) => candidate.to_string(),
+                None => {
+                    candidateless = true;
+                    let model = run["model"].as_str().unwrap_or_default();
+                    match crate::mia::provider::pins::by_model(model).as_slice() {
+                        [only] if assume_pin_identity => only.label.to_string(),
+                        _ => model.to_string(),
+                    }
+                }
+            }
+        })
         .collect();
     // A ordem também é conferida, não só o conjunto: a ordem de corrida é a da matriz, e um
     // relatório que a contradiz descreve outra matriz — ainda que os mesmos modelos apareçam.
     if inherited_matrix != matrix {
+        let hint = if candidateless && assume_pin_identity {
+            " Corrida sem o campo candidate só se assume para modelo que um único pin corre — \
+             entre dois esforços do mesmo modelo não há o que assumir."
+        } else if candidateless {
+            " Corrida sem o campo candidate não prova qual candidato correu; \
+             --assume-pin-identity responde por modelo que um único pin corre."
+        } else {
+            ""
+        };
         return Err(format!(
             "A peneira do relatório correu {inherited_matrix:?} e a matriz de hoje corre \
              {matrix:?}, nesta ordem. Reaproveitar seria comparar candidatos que a matriz atual \
-             não tem. {FIX}"
+             não tem.{hint} {FIX}"
         ));
     }
 
@@ -119,7 +148,7 @@ pub(crate) fn parse(
         if !run.score.complete {
             return Err(format!(
                 "A peneira do relatório não mediu {} por inteiro. {FIX}",
-                run.pin.model
+                run.pin.label
             ));
         }
         phase_one.push(run);
@@ -150,10 +179,10 @@ pub(crate) fn parse(
         };
         let repeated = phase_two
             .iter()
-            .any(|other| other.pin.model == run.pin.model);
+            .any(|other| other.pin.label == run.pin.label);
         if !run.score.complete
             || repeated
-            || !finalists.iter().any(|pin| pin.model == run.pin.model)
+            || !finalists.iter().any(|pin| pin.label == run.pin.label)
         {
             continue;
         }
@@ -257,23 +286,24 @@ fn probes(report: &Value) -> Result<Vec<Probe>, String> {
     let rounds = report["probe"]["rounds"]
         .as_array()
         .ok_or_else(|| format!("O relatório retomado não traz a sonda de custo. {FIX}"))?;
-    let matrix: Vec<&str> = contenders().iter().map(|pin| pin.model).collect();
+    let matrix: Vec<&str> = contenders().iter().map(|pin| pin.label).collect();
     let measured: Vec<&str> = rounds
         .iter()
-        .map(|round| round["model"].as_str().unwrap_or_default())
+        .map(|round| round["candidate"].as_str().unwrap_or_default())
         .collect();
     // Cobertura, ordem e unicidade de uma vez: a sonda corre um pin por vez, na ordem da matriz, e
-    // qualquer desvio disso descreve outra sonda.
+    // qualquer desvio disso descreve outra sonda. A comparação é pelo rótulo do candidato — o nome
+    // do modelo não distingue dois esforços do mesmo modelo.
     if measured != matrix {
         return Err(format!(
             "A sonda do relatório mediu {measured:?} e a matriz de hoje corre {matrix:?}, nesta \
-             ordem. Sem uma rodada por modelo não há projeção de custo para a final. {FIX}"
+             ordem. Sem uma rodada por candidato não há projeção de custo para a final. {FIX}"
         ));
     }
 
     let mut probes = Vec::with_capacity(rounds.len());
     for round in rounds {
-        let model = round["model"].as_str().unwrap_or_default();
+        let model = round["candidate"].as_str().unwrap_or_default();
         let pin = pin(model).ok_or_else(|| {
             format!("A sonda do relatório mediu {model}, que não está na matriz de pins. {FIX}")
         })?;
@@ -327,10 +357,43 @@ fn parse_run(
     let model = run["model"]
         .as_str()
         .ok_or_else(|| format!("Uma corrida do relatório não nomeia o modelo. {FIX}"))?;
-    let pin = pin(model)
-        .ok_or_else(|| format!("O relatório aponta {model}, que não está na matriz. {FIX}"))?;
+    // O rótulo do candidato identifica QUEM correu; os campos de configuração abaixo provam COMO.
+    // Sem o rótulo, o nome do modelo só basta quando um único pin o corre — entre dois esforços do
+    // mesmo modelo não há o que assumir, porque a ambiguidade é entre candidatos de HOJE, não
+    // entre o arquivo e a matriz.
+    let mut identity_assumed = false;
+    let pin = match run["candidate"].as_str() {
+        Some(candidate) => pin(candidate).ok_or_else(|| {
+            format!("O relatório aponta {candidate}, que não está na matriz. {FIX}")
+        })?,
+        None => match crate::mia::provider::pins::by_model(model).as_slice() {
+            [] => {
+                return Err(format!(
+                    "O relatório aponta {model}, que não está na matriz. {FIX}"
+                ));
+            }
+            [only] if assume_pin_identity => {
+                identity_assumed = true;
+                only
+            }
+            [_] => {
+                return Err(format!(
+                    "A corrida de {model} não registra o candidato, então o arquivo não prova \
+                     ter nascido do pin que a matriz declara hoje. Rode com --assume-pin-identity \
+                     para responder por essa identidade, ou {FIX}"
+                ));
+            }
+            _ => {
+                return Err(format!(
+                    "A corrida de {model} não registra o candidato, e a matriz de hoje corre \
+                     {model} sob mais de um esforço — não há como saber qual deles correu, e \
+                     identidade ambígua não se assume. {FIX}"
+                ));
+            }
+        },
+    };
     // O pin é por ENDPOINT e pela configuração da requisição, não por nome de modelo: o mesmo
-    // modelo servido de outro lugar — ou pedido com outro cabeçalho beta, outro piso de raciocínio
+    // modelo servido de outro lugar — ou pedido com outro cabeçalho beta, outro esforço de raciocínio
     // ou outro nome de teto de saída — responde outra coisa, e é outro candidato. O canary prova que
     // o pin de HOJE está limpo; é esta conferência que prova que a evidência herdada nasceu dele.
     let refuse = |field: &str, recorded: &Value, current: &Value| {
@@ -352,10 +415,19 @@ fn parse_run(
     // identidade fica FORA do arquivo, e reconhecê-la transfere a responsabilidade para quem
     // invoca. O reconhecimento supre a ausência e nada mais — campo registrado que diverge continua
     // recusando, porque aí a divergência está provada e nenhuma afirmação de fora a desfaz.
-    let mut identity_assumed = false;
+    // Relatório que registra o esforço sob o modelo de PISO nasceu de outra configuração de
+    // requisição — a divergência está provada no próprio arquivo, então o reconhecimento de
+    // identidade não a cobre: ele supre ausência, nunca desfaz prova.
+    if run.get("reasoning_floor").is_some() {
+        return Err(refuse(
+            "reasoning_floor",
+            &run["reasoning_floor"],
+            &json!(pin.reasoning_effort.wire()),
+        ));
+    }
     for (field, current) in [
         ("beta_headers", json!(pin.beta_headers)),
-        ("reasoning_floor", json!(pin.reasoning_floor.effort())),
+        ("reasoning_effort", json!(pin.reasoning_effort.wire())),
         ("token_cap", json!(pin.token_cap.field())),
     ] {
         match run.get(field) {

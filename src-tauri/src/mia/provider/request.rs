@@ -48,11 +48,10 @@ pub(crate) fn build(spec: &RunSpec<'_>) -> PreparedRequest {
     let mut body = json!({
         "model": spec.pin.model,
         "stream": true,
-        // Raciocínio no piso que ESTE pin aceita. A conversa não deriva número — todo valor
-        // material chega pronto da ferramenta —, então raciocínio pago compraria latência e custo
-        // sem comprar fidelidade; e o piso vem do pin porque a matriz não é uniforme, e o piso
-        // errado é rodada recusada em vez de resposta pior.
-        "reasoning": {"effort": spec.pin.reasoning_floor.effort()},
+        // O esforço que ESTE pin declara, no vocabulário oficial do modelo. Ele vem do pin porque
+        // é parte da identidade do candidato — outro esforço é outra corrida —, e o nível errado
+        // é rodada recusada ou objeto medido diferente do declarado, não resposta pior.
+        "reasoning": {"effort": spec.pin.reasoning_effort.wire()},
         "messages": messages,
         "provider": {
             // Impede a coleta do conteúdo da rodada pelo provedor — vale para todo pin, ZDR ou

@@ -1453,6 +1453,7 @@ fn o_relatorio_carrega_modelo_provedor_e_totais() {
     let report = super::report::render(&bench_run_fixture(), "2026-07-29T14:33:05-03:00");
 
     assert_eq!(report["ran_at"], "2026-07-29T14:33:05-03:00");
+    assert_eq!(report["candidate"], default_pin().label);
     assert_eq!(report["model"], default_pin().model);
     assert_eq!(report["endpoint"], default_pin().endpoint);
     assert_eq!(report["operator"], default_pin().operator);
@@ -1530,6 +1531,7 @@ async fn o_relatorio_escreve_no_diretorio_e_reparseia() {
 
     let text = std::fs::read_to_string(&path).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(parsed["candidate"], default_pin().label);
     assert_eq!(parsed["model"], default_pin().model);
     assert!(text.ends_with('\n'));
     std::fs::remove_dir_all(&dir).unwrap();
@@ -1734,7 +1736,7 @@ async fn os_numeros_esperados_existem_no_envelope_da_fachada() {
 use super::bakeoff::{self, Decision, Score};
 use crate::mia::provider::drift::{EndpointsCatalog, ZdrCatalog};
 use crate::mia::provider::pins::{
-    ModelPin, PINS, PinRole, ReasoningFloor, Retention, TokenCap, pin,
+    ModelPin, PINS, PinRole, ReasoningEffort, Retention, TokenCap, pin,
 };
 
 fn zdr_catalog() -> serde_json::Value {
@@ -1776,8 +1778,8 @@ fn score_of(passed: usize, total: usize, cost_micro_usd: i64) -> Score {
     }
 }
 
-fn pinned(model: &str) -> &'static ModelPin {
-    pin(model).expect("modelo na matriz de pins")
+fn pinned(label: &str) -> &'static ModelPin {
+    pin(label).expect("candidato na matriz de pins")
 }
 
 /// Um pin que não está na matriz real, só para exercitar a ordenação da peneira/final com mais
@@ -1785,12 +1787,13 @@ fn pinned(model: &str) -> &'static ModelPin {
 /// custo e ordem de corrida, não a identidade de quem participa.
 fn fictional_pin(model: &'static str, run_order: u8) -> &'static ModelPin {
     Box::leak(Box::new(ModelPin {
+        label: Box::leak(format!("{model}@medium").into_boxed_str()),
         model,
         endpoint: "test/endpoint",
         operator: "Teste",
         role: PinRole::Candidate,
         beta_headers: &[],
-        reasoning_floor: ReasoningFloor::Minimal,
+        reasoning_effort: ReasoningEffort::Medium,
         token_cap: TokenCap::MaxCompletionTokens,
         retention: Retention::Zero,
         run_order,
@@ -1830,7 +1833,7 @@ fn o_canary_tira_da_corrida_o_pin_que_divergiu() {
     let mut catalog = zdr_catalog();
     // O teto de referência é o único pin de retenção zero da matriz vigente: só ele some do
     // catálogo de retenção zero sem que a troca precise tocar o catálogo geral.
-    let target = pinned("openai/gpt-5.6-sol");
+    let target = pinned("openai/gpt-5.6-sol@medium");
     catalog["data"] = serde_json::Value::Array(
         catalog["data"]
             .as_array()
@@ -1856,19 +1859,22 @@ fn o_canary_tira_da_corrida_o_pin_que_divergiu() {
 fn a_peneira_elimina_quem_obedeceu_a_isca() {
     let scored = vec![
         (
-            pinned("openai/gpt-5.6-terra"),
+            pinned("openai/gpt-5.6-terra@medium"),
             Score {
                 injection_failed: 1,
                 ..score_of(20, 20, 10_000)
             },
         ),
-        (pinned("openai/gpt-5.6-luna"), score_of(15, 20, 10_000)),
+        (
+            pinned("openai/gpt-5.6-luna@medium"),
+            score_of(15, 20, 10_000),
+        ),
     ];
 
     let finalists = bakeoff::survivors(&scored);
 
     assert_eq!(finalists.len(), 1);
-    assert_eq!(finalists[0].model, "openai/gpt-5.6-luna");
+    assert_eq!(finalists[0].label, "openai/gpt-5.6-luna@medium");
 }
 
 /// Corrida truncada pela trava não compara com corrida inteira: ela não mediu o que a final cobra.
@@ -1876,48 +1882,57 @@ fn a_peneira_elimina_quem_obedeceu_a_isca() {
 fn a_peneira_elimina_a_corrida_incompleta() {
     let scored = vec![
         (
-            pinned("openai/gpt-5.6-terra"),
+            pinned("openai/gpt-5.6-terra@medium"),
             Score {
                 complete: false,
                 ..score_of(20, 20, 10_000)
             },
         ),
-        (pinned("openai/gpt-5.6-luna"), score_of(10, 20, 10_000)),
+        (
+            pinned("openai/gpt-5.6-luna@medium"),
+            score_of(10, 20, 10_000),
+        ),
     ];
 
     let finalists = bakeoff::survivors(&scored);
 
     assert_eq!(finalists.len(), 1);
-    assert_eq!(finalists[0].model, "openai/gpt-5.6-luna");
+    assert_eq!(finalists[0].label, "openai/gpt-5.6-luna@medium");
 }
 
 /// A ordem é taxa, depois custo, depois a ordem de corrida — e o teto de referência nunca disputa.
 #[test]
 fn a_peneira_ordena_por_taxa_custo_e_ordem_de_corrida() {
-    // A matriz vigente tem só dois candidatos: um terceiro, fora dela, prova que o desempate
-    // continua funcionando com mais de dois — o que está sob teste é a ordenação, não a matriz.
+    // A matriz vigente tem três candidatos; um quarto, fora dela, prova que o corte preserva a
+    // ordenação — o que está sob teste é o desempate, não a matriz.
     let quarto_candidato = fictional_pin("test/quarto-candidato", 90);
     let baixa_taxa = fictional_pin("test/baixa-taxa", 91);
     let scored = vec![
         (baixa_taxa, score_of(18, 20, 5_000)),
-        (pinned("openai/gpt-5.6-luna"), score_of(20, 20, 90_000)),
+        (
+            pinned("openai/gpt-5.6-luna@medium"),
+            score_of(20, 20, 90_000),
+        ),
         (quarto_candidato, score_of(20, 20, 30_000)),
-        (pinned("openai/gpt-5.6-terra"), score_of(20, 20, 30_000)),
-        (pinned("openai/gpt-5.6-sol"), score_of(20, 20, 1_000)),
+        (
+            pinned("openai/gpt-5.6-terra@medium"),
+            score_of(20, 20, 30_000),
+        ),
+        (pinned("openai/gpt-5.6-sol@medium"), score_of(20, 20, 1_000)),
     ];
 
     let finalists: Vec<&str> = bakeoff::survivors(&scored)
         .iter()
-        .map(|pin| pin.model)
+        .map(|pin| pin.label)
         .collect();
 
     assert_eq!(
         finalists,
         vec![
             // Empate de taxa e de custo: decide a ordem de corrida, como determinismo.
-            "openai/gpt-5.6-terra",
-            "test/quarto-candidato",
-            "openai/gpt-5.6-luna",
+            "openai/gpt-5.6-terra@medium",
+            "test/quarto-candidato@medium",
+            "openai/gpt-5.6-luna@medium",
         ],
         "o teto de referência não disputa, e a peneira leva no máximo três"
     );
@@ -1929,8 +1944,14 @@ fn a_decisao_exige_a_suite_mecanica_zerada() {
     // Dois finalistas COMPLETOS: o quórum passa, e o que reprova é a suíte mecânica. Com um só, a
     // guarda de quórum responderia antes e o teste não provaria nada sobre o gate de 100%.
     let almost = vec![
-        (pinned("openai/gpt-5.6-terra"), score_of(59, 60, 200_000)),
-        (pinned("openai/gpt-5.6-luna"), score_of(58, 60, 100_000)),
+        (
+            pinned("openai/gpt-5.6-terra@medium"),
+            score_of(59, 60, 200_000),
+        ),
+        (
+            pinned("openai/gpt-5.6-luna@medium"),
+            score_of(58, 60, 100_000),
+        ),
     ];
 
     let Decision::NoWinner { reason } = bakeoff::decide(&almost) else {
@@ -1944,9 +1965,12 @@ fn a_decisao_exige_a_suite_mecanica_zerada() {
 #[test]
 fn entre_os_que_zeraram_ganha_o_mais_barato() {
     let finalists = vec![
-        (pinned("openai/gpt-5.6-terra"), score_of(60, 60, 900_000)),
         (
-            pinned("openai/gpt-5.6-sol"),
+            pinned("openai/gpt-5.6-terra@medium"),
+            score_of(60, 60, 900_000),
+        ),
+        (
+            pinned("openai/gpt-5.6-sol@medium"),
             Score {
                 pending_judgment: 9,
                 ..score_of(60, 60, 120_000)
@@ -1962,7 +1986,7 @@ fn entre_os_que_zeraram_ganha_o_mais_barato() {
     else {
         panic!("com didática pendente, o líder ainda não é default");
     };
-    assert_eq!(leading_model, "openai/gpt-5.6-sol");
+    assert_eq!(leading_model, "openai/gpt-5.6-sol@medium");
     // A parte mecânica é firme; o ensino, que a máquina não julga, sai declarado em vez de
     // omitido — e o campo do default fica vazio até alguém ler as respostas.
     assert_eq!(pending_judgment, 9);
@@ -2092,7 +2116,7 @@ async fn o_bakeoff_atravessa_as_duas_fases_e_decide_o_default() {
 
     // A peneira corre a matriz inteira uma vez por caso; a final, três vezes nos sobreviventes.
     assert_eq!(bakeoff.phase_one.len(), PINS.len());
-    assert_eq!(bakeoff.phase_two.len(), 2);
+    assert_eq!(bakeoff.phase_two.len(), 3);
     // TODAS as corridas, não só a primeira: um finalista abortado no meio passaria despercebido
     // por uma asserção que olha um índice só.
     for run in bakeoff.phase_one.iter() {
@@ -2116,7 +2140,7 @@ async fn o_bakeoff_atravessa_as_duas_fases_e_decide_o_default() {
     let Decision::Adopt { model, .. } = &bakeoff.decision else {
         panic!("a final zerada decide o default");
     };
-    assert_eq!(*model, "openai/gpt-5.6-terra");
+    assert_eq!(*model, "openai/gpt-5.6-terra@medium");
 
     // Um relatório só, reescrito a cada corrida, com as duas fases e a decisão dentro.
     assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
@@ -2124,7 +2148,7 @@ async fn o_bakeoff_atravessa_as_duas_fases_e_decide_o_default() {
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(written["decision"]["default_model"], *model);
     assert_eq!(written["phase_one"].as_array().unwrap().len(), PINS.len());
-    assert_eq!(written["phase_two"].as_array().unwrap().len(), 2);
+    assert_eq!(written["phase_two"].as_array().unwrap().len(), 3);
     assert_eq!(written["phase_one"][0]["score"]["pass_per_mille"], 1_000);
     assert_eq!(written["spent_micro_usd"], lock.spent_micro_usd());
     assert!(bakeoff::summary(&bakeoff, &path, None).contains("pins.rs"));
@@ -2171,6 +2195,17 @@ async fn o_bakeoff_recusa_quando_o_canary_deixa_menos_de_dois_candidatos() {
         written["canary_drift"].as_array().unwrap().len(),
         PINS.len()
     );
+    let drifted: std::collections::BTreeSet<&str> = written["canary_drift"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| entry["candidate"].as_str())
+        .collect();
+    assert_eq!(
+        drifted,
+        PINS.iter().map(|pin| pin.label).collect(),
+        "cada divergência nomeia o candidato que a matriz declara"
+    );
     assert_eq!(
         written["decision"]["default_model"],
         serde_json::Value::Null
@@ -2216,7 +2251,7 @@ async fn a_sonda_recusa_quando_nem_uma_rodada_por_modelo_cabe() {
     let Decision::NoWinner { reason } = &bakeoff.decision else {
         panic!("sem sonda completa não há decisão");
     };
-    assert!(reason.contains("0 de 3 modelos"), "recusa: {reason}");
+    assert!(reason.contains("0 de 4 modelos"), "recusa: {reason}");
 
     // O teto não foi ultrapassado para descobrir isso, e a sonda ficou no relatório.
     assert!(lock.spent_micro_usd() <= 10_000);
@@ -2345,7 +2380,7 @@ impl EndpointsCatalog for EscaladaAdapter {
 async fn a_peneira_truncada_nao_abre_a_final() {
     let dir = reports_dir();
     let adapter = EscaladaAdapter {
-        // As seis rodadas da sonda saem baratas; a peneira, não.
+        // As quatro rodadas da sonda saem baratas; a peneira, não.
         arranque: 100,
         primeiras: PINS.len(),
         resto: 20_000,
@@ -2371,7 +2406,7 @@ async fn a_peneira_truncada_nao_abre_a_final() {
     .await
     .unwrap();
 
-    // A sonda passou: seis rodadas baratas projetaram uma medição que caberia.
+    // A sonda passou: quatro rodadas baratas projetaram uma medição que caberia.
     assert_eq!(bakeoff.probes.len(), PINS.len());
     assert!(bakeoff.estimate_micro_usd < lock.cap_micro_usd());
 
@@ -2417,15 +2452,15 @@ fn a_peneira_nao_fabrica_empate_ao_truncar_a_taxa() {
     );
 
     let ordem: Vec<&str> = bakeoff::survivors(&[
-        (pinned("openai/gpt-5.6-luna"), menos_exato_e_barato),
-        (pinned("openai/gpt-5.6-terra"), mais_exato_e_caro),
+        (pinned("openai/gpt-5.6-luna@medium"), menos_exato_e_barato),
+        (pinned("openai/gpt-5.6-terra@medium"), mais_exato_e_caro),
     ])
     .iter()
-    .map(|pin| pin.model)
+    .map(|pin| pin.label)
     .collect();
 
     assert_eq!(
-        ordem[0], "openai/gpt-5.6-terra",
+        ordem[0], "openai/gpt-5.6-terra@medium",
         "59/60 vem antes de 58/59, mesmo custando nove vezes mais"
     );
 }
@@ -2562,22 +2597,23 @@ async fn o_teto_de_referencia_corre_o_recorte_na_peneira() {
 /// corre.
 #[test]
 fn a_projecao_reflete_o_recorte_da_regua() {
-    let probe = |model: &str, cost| bakeoff::Probe {
-        pin: pinned(model),
+    let probe = |label: &str, cost| bakeoff::Probe {
+        pin: pinned(label),
         cost_micro_usd: cost,
         cost_declared: true,
         complete: true,
         failure: None,
     };
     let probes = vec![
-        probe("openai/gpt-5.6-terra", 1_000),
-        probe("openai/gpt-5.6-luna", 1_000),
-        probe("openai/gpt-5.6-sol", 10_000),
+        probe("openai/gpt-5.6-terra@medium", 1_000),
+        probe("openai/gpt-5.6-luna@medium", 1_000),
+        probe("openai/gpt-5.6-luna@max", 1_000),
+        probe("openai/gpt-5.6-sol@medium", 10_000),
     ];
 
-    // Sonda 12.000 + peneira (2×10×1.000 + 10.000×2) + final (2×1.000×10×3) = 112.000, e um
+    // Sonda 13.000 + peneira (3×10×1.000 + 10.000×2) + final (3×1.000×10×3) = 153.000, e um
     // quarto de margem sobre o todo.
-    let integral = 12_000 + 40_000 + 60_000;
+    let integral = 13_000 + 50_000 + 90_000;
     assert_eq!(bakeoff::estimate(&probes, 10, 2), integral + integral / 4);
 
     // A régua correndo o catálogo inteiro projetaria mais caro: é essa a diferença que o recorte
@@ -2585,11 +2621,11 @@ fn a_projecao_reflete_o_recorte_da_regua() {
     assert!(bakeoff::estimate(&probes, 10, 2) < bakeoff::estimate(&probes, 10, 10));
 }
 
-/// Cada pin manda o piso que declarou: mandar "desligado" a um modelo de raciocínio obrigatório é
-/// rodada recusada, não resposta pior — e um teste que só olhasse o default não veria a diferença.
+/// Cada pin manda o esforço que declarou, no vocabulário oficial do modelo: mandar "desligado" a
+/// um modelo de raciocínio obrigatório é rodada recusada, não resposta pior — e um teste que só
+/// olhasse o default não veria a diferença.
 #[test]
-fn cada_pin_envia_o_piso_de_raciocinio_que_declarou() {
-    use crate::mia::provider::pins::ReasoningFloor;
+fn cada_pin_envia_o_esforco_de_raciocinio_que_declarou() {
     use crate::mia::provider::request::{RunSpec, build};
 
     for pin in PINS {
@@ -2600,30 +2636,76 @@ fn cada_pin_envia_o_piso_de_raciocinio_que_declarou() {
             tools: &[],
             max_tokens: 1_024,
         });
-        let esperado = match pin.reasoning_floor {
-            ReasoningFloor::Off => "none",
-            ReasoningFloor::Minimal => "minimal",
-        };
         assert_eq!(
             request
                 .body
                 .pointer("/reasoning/effort")
                 .and_then(serde_json::Value::as_str),
-            Some(esperado),
+            Some(pin.reasoning_effort.wire()),
             "o pin {} declara {:?}",
             pin.model,
-            pin.reasoning_floor
+            pin.reasoning_effort
         );
     }
 
-    // A matriz vigente é uniforme em "minimal" — o campo continua por pin porque o piso é fato
-    // do ENDPOINT: o estreante entra com palpite declarado e a sonda o confirma, e um endpoint
-    // que aceite desligar volta a diferenciar a matriz sem mexer em nada além do próprio pin.
-    let pisos: std::collections::BTreeSet<&str> = PINS
+    // A régua comparável da matriz corre em "medium": terra, luna e sol declaram o mesmo nível,
+    // teto incluso. O quarto candidato é o mesmo luna em "max" — o esforço é propriedade do
+    // CANDIDATO, e o preço do tier paga medir o teto de esforço dele na mesma corrida.
+    let esforcos: Vec<(&str, &str)> = PINS
         .iter()
-        .map(|pin| pin.reasoning_floor.effort())
+        .map(|pin| (pin.label, pin.reasoning_effort.wire()))
         .collect();
-    assert_eq!(pisos, std::collections::BTreeSet::from(["minimal"]));
+    assert_eq!(
+        esforcos,
+        [
+            ("openai/gpt-5.6-terra@medium", "medium"),
+            ("openai/gpt-5.6-luna@medium", "medium"),
+            ("openai/gpt-5.6-luna@max", "max"),
+            ("openai/gpt-5.6-sol@medium", "medium"),
+        ]
+    );
+}
+
+/// O rótulo é a identidade do candidato — modelo mais esforço — e não admite empate: dois pins
+/// com o mesmo rótulo seriam o mesmo candidato correndo duas vezes, e toda a contabilidade do
+/// bakeoff (dedup da final, sonda, chave do julgamento cego, retomada) se apoia nessa unicidade.
+#[test]
+fn o_rotulo_identifica_o_candidato_sem_empate() {
+    let labels: std::collections::BTreeSet<&str> = PINS.iter().map(|pin| pin.label).collect();
+    assert_eq!(labels.len(), PINS.len());
+    for pin in PINS {
+        assert_eq!(
+            pin.label,
+            format!("{}@{}", pin.model, pin.reasoning_effort.wire()),
+            "o rótulo deriva de modelo e esforço"
+        );
+    }
+    // O lookup é pelo rótulo: o nome do modelo sozinho é ambíguo entre os dois luna.
+    assert_eq!(
+        pin("openai/gpt-5.6-luna@max").map(|p| p.reasoning_effort),
+        Some(ReasoningEffort::Max)
+    );
+    assert!(pin("openai/gpt-5.6-luna").is_none());
+}
+
+/// O vocabulário de esforço é o oficial do modelo, nível a nível: um nome fora dele passa no
+/// endpoint por tolerância, não por contrato — e o que se mede deixa de ser o que se declarou.
+#[test]
+fn o_esforco_fala_o_vocabulario_oficial() {
+    use crate::mia::provider::pins::ReasoningEffort;
+
+    let niveis: Vec<&str> = [
+        ReasoningEffort::None,
+        ReasoningEffort::Low,
+        ReasoningEffort::Medium,
+        ReasoningEffort::High,
+        ReasoningEffort::Xhigh,
+        ReasoningEffort::Max,
+    ]
+    .into_iter()
+    .map(ReasoningEffort::wire)
+    .collect();
+    assert_eq!(niveis, ["none", "low", "medium", "high", "xhigh", "max"]);
 }
 
 /// Um turno cobrado e declarado, seguido de um turno que gera texto e trava no tempo: o total
@@ -2809,8 +2891,8 @@ async fn o_caderno_do_julgamento_cego_nao_nomeia_o_modelo() {
     assert!(!bilhetes.is_empty());
     assert_eq!(bilhetes[0]["ticket"], "fn-01-01");
 
-    // Seis pins na peneira: seis bilhetes, um por resposta — respostas idênticas não colapsam,
-    // senão modelos diferentes dividiriam um bilhete e a chave apontaria para um deles por acaso.
+    // Quatro pins na peneira: quatro bilhetes, um por resposta — respostas idênticas não colapsam,
+    // senão candidatos diferentes dividiriam um bilhete e a chave apontaria para um deles por acaso.
     assert_eq!(bilhetes.len(), PINS.len());
 
     // A chave que liga bilhete a modelo existe — no OUTRO arquivo — e cobre todos os bilhetes.
@@ -2833,7 +2915,7 @@ async fn o_caderno_do_julgamento_cego_nao_nomeia_o_modelo() {
 #[tokio::test]
 async fn a_sonda_recusa_quando_a_medicao_inteira_nao_cabe() {
     let dir = reports_dir();
-    // Vinte casos com o custo da sonda projetam bem além do teto, e a sonda mede seis rodadas
+    // Vinte casos com o custo da sonda projetam bem além do teto, e a sonda mede quatro rodadas
     // baratas antes de dizer isso.
     let cases: Vec<case::Case> = (1..=20)
         .map(|index| {
@@ -2869,23 +2951,23 @@ async fn a_sonda_recusa_quando_a_medicao_inteira_nao_cabe() {
     .await
     .unwrap();
 
-    // Três rodadas de sonda (3.000), mais 2×20×1.000 + 1×1×1.000 na peneira (a régua corre o
-    // recorte, aqui um caso) e 2×20×3×1.000 na final — 164.000, e 205.000 com a margem de um
+    // Quatro rodadas de sonda (4.000), mais 3×20×1.000 + 1×1×1.000 na peneira (a régua corre o
+    // recorte, aqui um caso) e 3×20×3×1.000 na final — 245.000, e 306.250 com a margem de um
     // quarto. Muito além do teto.
     assert_eq!(bakeoff.probes.len(), PINS.len());
-    assert_eq!(bakeoff.estimate_micro_usd, 205_000);
-    assert_eq!(lock.spent_micro_usd(), 3_000);
+    assert_eq!(bakeoff.estimate_micro_usd, 306_250);
+    assert_eq!(lock.spent_micro_usd(), 4_000);
     assert!(bakeoff.phase_one.is_empty(), "nada além da sonda foi pago");
 
     let Decision::NoWinner { reason } = &bakeoff.decision else {
         panic!("uma medição que não cabe não decide o default");
     };
-    assert!(reason.contains("205000"));
+    assert!(reason.contains("306250"));
     assert!(reason.contains("100000"));
 
     let written: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(written["probe"]["estimate_micro_usd"], 205_000);
+    assert_eq!(written["probe"]["estimate_micro_usd"], 306_250);
     assert_eq!(
         written["probe"]["rounds"].as_array().unwrap().len(),
         PINS.len()
@@ -2899,28 +2981,29 @@ async fn a_sonda_recusa_quando_a_medicao_inteira_nao_cabe() {
 /// gasta o teto para descobrir a mesma coisa.
 #[test]
 fn a_projecao_da_final_assume_os_candidatos_mais_caros() {
-    let probe = |model: &str, cost| bakeoff::Probe {
-        pin: pinned(model),
+    let probe = |label: &str, cost| bakeoff::Probe {
+        pin: pinned(label),
         cost_micro_usd: cost,
         cost_declared: true,
         complete: true,
         failure: None,
     };
     let probes = vec![
-        probe("openai/gpt-5.6-terra", 4_000),
-        probe("openai/gpt-5.6-luna", 3_000),
+        probe("openai/gpt-5.6-terra@medium", 4_000),
+        probe("openai/gpt-5.6-luna@medium", 3_000),
+        probe("openai/gpt-5.6-luna@max", 7_000),
         // O teto de referência entra na peneira e nunca na final.
-        probe("openai/gpt-5.6-sol", 9_000),
+        probe("openai/gpt-5.6-sol@medium", 9_000),
     ];
 
-    // O que a sonda gastou (16.000) + a peneira (a soma de todos, uma vez por caso) + a final
-    // (os dois candidatos, três repetições por caso), e um quarto de margem sobre o todo — uma
+    // O que a sonda gastou (23.000) + a peneira (a soma de todos, uma vez por caso) + a final
+    // (os três candidatos, três repetições por caso), e um quarto de margem sobre o todo — uma
     // amostra por modelo estima, não limita.
-    let integral = 16_000 + 16_000 + (4_000 + 3_000) * 3;
+    let integral = 23_000 + 23_000 + (7_000 + 4_000 + 3_000) * 3;
     assert_eq!(bakeoff::estimate(&probes, 1, 1), integral + integral / 4);
 
     // A sonda entra na conta: ignorá-la aprovaria, na fronteira, medições que não cabem.
-    assert!(bakeoff::estimate(&probes, 1, 1) > 16_000 + (4_000 + 3_000) * 3);
+    assert!(bakeoff::estimate(&probes, 1, 1) > 23_000 + (7_000 + 4_000 + 3_000) * 3);
 }
 
 // --- Regressões restauradas ---------------------------------------------------------------
@@ -3068,10 +3151,16 @@ async fn tentativa_que_gerou_texto_e_caiu_sem_uso_e_lacuna_cobrada() {
 #[test]
 fn a_decisao_recusa_quando_um_finalista_foi_truncado() {
     let finalistas = vec![
-        (pinned("openai/gpt-5.6-sol"), score_of(60, 60, 100_000)),
-        (pinned("openai/gpt-5.6-terra"), score_of(60, 60, 120_000)),
         (
-            pinned("openai/gpt-5.6-luna"),
+            pinned("openai/gpt-5.6-sol@medium"),
+            score_of(60, 60, 100_000),
+        ),
+        (
+            pinned("openai/gpt-5.6-terra@medium"),
+            score_of(60, 60, 120_000),
+        ),
+        (
+            pinned("openai/gpt-5.6-luna@medium"),
             Score {
                 complete: false,
                 ..score_of(20, 20, 30_000)
@@ -3089,7 +3178,10 @@ fn a_decisao_recusa_quando_um_finalista_foi_truncado() {
 /// adotá-lo seria promover por ausência de adversário.
 #[test]
 fn a_decisao_recusa_uma_final_de_um_so() {
-    let unico = vec![(pinned("openai/gpt-5.6-terra"), score_of(60, 60, 100_000))];
+    let unico = vec![(
+        pinned("openai/gpt-5.6-terra@medium"),
+        score_of(60, 60, 100_000),
+    )];
 
     let Decision::NoWinner { reason } = bakeoff::decide(&unico) else {
         panic!("um finalista sozinho não decide o default");
@@ -3101,11 +3193,11 @@ fn a_decisao_recusa_uma_final_de_um_so() {
 /// devolveria uma fatia menor, apertando a peneira sem nada avisar.
 #[test]
 fn a_fatia_da_peneira_nao_estoura_em_teto_alto() {
-    // Com 22 casos e recorte de 6: 3 rodadas de sonda, 50 de peneira (dois candidatos correm
-    // 22, a régua corre 6) e 198 de final — 251 no total, e a fase um acumula as 53 primeiras.
+    // Com 22 casos e recorte de 6: 4 rodadas de sonda, 72 de peneira (três candidatos correm
+    // 22, a régua corre 6) e 198 de final — 274 no total, e a fase um acumula as 76 primeiras.
     let cap = bakeoff::phase_one_cap(i64::MAX, 22, 6);
 
-    assert_eq!(cap, ((i64::MAX as i128 * 53) / 251) as i64);
+    assert_eq!(cap, ((i64::MAX as i128 * 76) / 274) as i64);
     // O que uma multiplicação saturada devolveria, apertando a peneira em silêncio.
     assert_ne!(cap, i64::MAX / 251);
 }
@@ -3168,27 +3260,28 @@ fn o_teto_do_bakeoff_so_pode_ser_abaixado() {
 /// peneira sem que nada tenha corrido errado — com a sonda medida, a reserva sai dos custos.
 #[test]
 fn a_reserva_da_peneira_segue_os_custos_medidos_e_nao_a_contagem() {
-    let probe = |model: &str, cost| bakeoff::Probe {
-        pin: pinned(model),
+    let probe = |label: &str, cost| bakeoff::Probe {
+        pin: pinned(label),
         cost_micro_usd: cost,
         cost_declared: true,
         complete: true,
         failure: None,
     };
-    // Dois candidatos baratos e um teto de referência cinco vezes mais caro.
+    // Três candidatos baratos e um teto de referência cinco vezes mais caro.
     let probes = vec![
-        probe("openai/gpt-5.6-terra", 10_000),
-        probe("openai/gpt-5.6-luna", 10_000),
-        probe("openai/gpt-5.6-sol", 50_000),
+        probe("openai/gpt-5.6-terra@medium", 10_000),
+        probe("openai/gpt-5.6-luna@medium", 10_000),
+        probe("openai/gpt-5.6-luna@max", 10_000),
+        probe("openai/gpt-5.6-sol@medium", 50_000),
     ];
     let cap = 5_000_000;
 
     let por_contagem = bakeoff::phase_one_cap(cap, 22, 6);
     let por_custo = bakeoff::measured_phase_one_cap(cap, &probes, 22, 6);
 
-    // A final projetada são os dois candidatos a 10.000 × 22 casos × 3 repetições, mais margem:
-    // 1.320.000 + 330.000. O resto é da peneira — bem mais que a fatia por contagem.
-    assert_eq!(por_custo, cap - (1_320_000 + 330_000));
+    // A final projetada são os três candidatos a 10.000 × 22 casos × 3 repetições, mais margem:
+    // 1.980.000 + 495.000. O resto é da peneira — bem mais que a fatia por contagem.
+    assert_eq!(por_custo, cap - (1_980_000 + 495_000));
     assert!(
         por_custo > por_contagem,
         "a contagem reserva {por_contagem} e os custos liberam {por_custo}"
@@ -3208,7 +3301,9 @@ fn a_reserva_da_peneira_segue_os_custos_medidos_e_nao_a_contagem() {
 /// repetições e chave cega derivada das respostas pendentes das duas. A leitura do julgamento é
 /// estrita, e uma fixture frouxa provaria menos do que promete.
 fn julgado(finalistas: &[(&str, i64, bool)], reprovadas: &[(&str, usize)]) -> serde_json::Value {
-    let corrida = |model: &str, cost: i64, complete: bool, repeticoes: usize| {
+    let corrida = |candidate: &str, cost: i64, complete: bool, repeticoes: usize| {
+        let pin = pinned(candidate);
+        let model = pin.model;
         let total = repeticoes * 2;
         let por_repeticao = cost / total as i64;
         let sobra = cost - por_repeticao * total as i64;
@@ -3228,7 +3323,7 @@ fn julgado(finalistas: &[(&str, i64, bool)], reprovadas: &[(&str, usize)]) -> se
         };
         let reprovadas_desta: usize = reprovadas
             .iter()
-            .filter(|(alvo, _)| *alvo == model)
+            .filter(|(alvo, _)| *alvo == candidate)
             .map(|(_, quantas)| *quantas)
             .sum();
         let mecanicas: Vec<serde_json::Value> = (0..repeticoes)
@@ -3253,6 +3348,7 @@ fn julgado(finalistas: &[(&str, i64, bool)], reprovadas: &[(&str, usize)]) -> se
         json!({
             "score": { "complete": complete },
             "run": {
+                "candidate": candidate,
                 "model": model,
                 "ran_at": "2026-07-29T14:33:05-03:00",
                 "total_cost_micro_usd": cost,
@@ -3282,11 +3378,11 @@ fn julgado(finalistas: &[(&str, i64, bool)], reprovadas: &[(&str, usize)]) -> se
     // A peneira correu a matriz inteira com uma repetição; a final, os finalistas com três.
     let phase_one: Vec<serde_json::Value> = PINS
         .iter()
-        .map(|pin| corrida(pin.model, 6_000, true, 1))
+        .map(|pin| corrida(pin.label, 6_000, true, 1))
         .collect();
     let phase_two: Vec<serde_json::Value> = finalistas
         .iter()
-        .map(|(model, cost, complete)| corrida(model, *cost, *complete, 3))
+        .map(|(candidate, cost, complete)| corrida(candidate, *cost, *complete, 3))
         .collect();
 
     // A chave cega, derivada como o caderno a deriva: por caso, ordenada pela própria resposta.
@@ -3295,15 +3391,16 @@ fn julgado(finalistas: &[(&str, i64, bool)], reprovadas: &[(&str, usize)]) -> se
         pendentes.push((
             "di-01".to_string(),
             format!("resposta 0 de {} em 1x", pin.model),
-            pin.model.to_string(),
+            pin.label.to_string(),
         ));
     }
-    for (model, _, _) in finalistas {
+    for (candidate, _, _) in finalistas {
+        let model = pinned(candidate).model;
         for indice in 0..3 {
             pendentes.push((
                 "di-01".to_string(),
                 format!("resposta {indice} de {model} em 3x"),
-                (*model).to_string(),
+                (*candidate).to_string(),
             ));
         }
     }
@@ -3371,12 +3468,12 @@ fn aprovando(report: &serde_json::Value) -> std::collections::BTreeMap<String, b
 }
 
 /// Os bilhetes de um modelo específico, para reprovar quem se quer reprovar.
-fn bilhetes_de(report: &serde_json::Value, model: &str) -> Vec<String> {
+fn bilhetes_de(report: &serde_json::Value, candidate: &str) -> Vec<String> {
     report["blind_judgment_key"]
         .as_object()
         .unwrap()
         .iter()
-        .filter(|(_, dono)| dono.as_str() == Some(model))
+        .filter(|(_, dono)| dono.as_str() == Some(candidate))
         .map(|(ticket, _)| ticket.clone())
         .collect()
 }
@@ -3396,8 +3493,8 @@ fn vereditos(
 fn o_julgamento_aprovado_fecha_a_decisao() {
     let report = julgado(
         &[
-            ("openai/gpt-5.6-luna", 200_000, true),
-            ("openai/gpt-5.6-terra", 120_000, true),
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
         ],
         &[],
     );
@@ -3408,7 +3505,7 @@ fn o_julgamento_aprovado_fecha_a_decisao() {
         panic!("dois finalistas aprovados decidem o default");
     };
     // Empate de qualidade cai no custo, como na decisão mecânica.
-    assert_eq!(model, "openai/gpt-5.6-terra");
+    assert_eq!(model, "openai/gpt-5.6-terra@medium");
     assert!(rationale.contains("didática aprovada"));
 }
 
@@ -3417,14 +3514,14 @@ fn o_julgamento_aprovado_fecha_a_decisao() {
 fn um_bilhete_reprovado_tira_o_modelo_da_decisao() {
     let report = julgado(
         &[
-            ("openai/gpt-5.6-luna", 200_000, true),
-            ("openai/gpt-5.6-terra", 120_000, true),
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
         ],
         &[],
     );
     let mut verdicts = aprovando(&report);
     // O mais barato ensinou errado numa resposta.
-    let alvo = bilhetes_de(&report, "openai/gpt-5.6-terra")[0].clone();
+    let alvo = bilhetes_de(&report, "openai/gpt-5.6-terra@medium")[0].clone();
     verdicts.insert(alvo, bakeoff::Judgment::Rejected);
 
     let bakeoff::Decision::Adopt { model, .. } =
@@ -3432,7 +3529,7 @@ fn um_bilhete_reprovado_tira_o_modelo_da_decisao() {
     else {
         panic!("o outro finalista ainda decide");
     };
-    assert_eq!(model, "openai/gpt-5.6-luna");
+    assert_eq!(model, "openai/gpt-5.6-luna@medium");
 }
 
 /// Bilhete sem veredito é resposta que ninguém leu: decidir assim pularia o gate que este comando
@@ -3441,8 +3538,8 @@ fn um_bilhete_reprovado_tira_o_modelo_da_decisao() {
 fn a_decisao_julgada_exige_todos_os_bilhetes_lidos() {
     let report = julgado(
         &[
-            ("openai/gpt-5.6-luna", 200_000, true),
-            ("openai/gpt-5.6-terra", 120_000, true),
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
         ],
         &[],
     );
@@ -3461,8 +3558,8 @@ fn a_decisao_julgada_exige_todos_os_bilhetes_lidos() {
 fn a_decisao_julgada_recusa_bilhete_de_outra_execucao() {
     let report = julgado(
         &[
-            ("openai/gpt-5.6-luna", 200_000, true),
-            ("openai/gpt-5.6-terra", 120_000, true),
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
         ],
         &[],
     );
@@ -3480,8 +3577,8 @@ fn a_decisao_julgada_recusa_bilhete_de_outra_execucao() {
 fn didatica_reprovada_em_todos_nao_decide_default() {
     let report = julgado(
         &[
-            ("openai/gpt-5.6-luna", 200_000, true),
-            ("openai/gpt-5.6-terra", 120_000, true),
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
         ],
         &[],
     );
@@ -3507,8 +3604,8 @@ fn didatica_reprovada_em_todos_nao_decide_default() {
 fn a_decisao_julgada_mantem_o_quorum_da_final() {
     let report = julgado(
         &[
-            ("openai/gpt-5.6-luna", 200_000, true),
-            ("openai/gpt-5.6-terra", 120_000, false),
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, false),
         ],
         &[],
     );
@@ -3527,11 +3624,11 @@ fn a_decisao_julgada_mantem_o_quorum_da_final() {
 fn a_decisao_julgada_ignora_o_score_derivado_do_relatorio() {
     let mut report = julgado(
         &[
-            ("openai/gpt-5.6-luna", 200_000, true),
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
             // O mais barato tem uma repetição REPROVADA nos dados brutos.
-            ("openai/gpt-5.6-terra", 120_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
         ],
-        &[("openai/gpt-5.6-terra", 1)],
+        &[("openai/gpt-5.6-terra@medium", 1)],
     );
     // ...e um score derretido para parecer perfeito.
     report["phase_two"][1]["score"] = json!({
@@ -3547,7 +3644,7 @@ fn a_decisao_julgada_ignora_o_score_derivado_do_relatorio() {
         panic!("o outro finalista continua elegível");
     };
     assert_eq!(
-        model, "openai/gpt-5.6-luna",
+        model, "openai/gpt-5.6-luna@medium",
         "o score derivado não decide; as repetições decidem"
     );
 }
@@ -3558,8 +3655,8 @@ fn a_decisao_julgada_ignora_o_score_derivado_do_relatorio() {
 fn a_decisao_julgada_recusa_chave_cega_adulterada() {
     let base = julgado(
         &[
-            ("openai/gpt-5.6-luna", 200_000, true),
-            ("openai/gpt-5.6-terra", 120_000, true),
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
         ],
         &[],
     );
@@ -3572,19 +3669,19 @@ fn a_decisao_julgada_recusa_chave_cega_adulterada() {
 
     // Remapear um bilhete para o outro modelo: a reprovação cairia sobre quem não a mereceu.
     let mut trocada = base.clone();
-    let alvo = bilhetes_de(&base, "openai/gpt-5.6-terra")[0].clone();
-    trocada["blind_judgment_key"][&alvo] = json!("openai/gpt-5.6-luna");
+    let alvo = bilhetes_de(&base, "openai/gpt-5.6-terra@medium")[0].clone();
+    trocada["blind_judgment_key"][&alvo] = json!("openai/gpt-5.6-luna@medium");
     let error = bakeoff::judged_decision(&trocada, &aprovando(&base)).unwrap_err();
     assert!(error.contains("editado depois de escrito"));
 }
 
-/// Um mesmo modelo duas vezes na final não faz quórum consigo mesmo.
+/// Um mesmo candidato duas vezes na final não faz quórum consigo mesmo.
 #[test]
-fn a_decisao_julgada_recusa_o_mesmo_modelo_duas_vezes() {
+fn a_decisao_julgada_recusa_o_mesmo_candidato_duas_vezes() {
     let report = julgado(
         &[
-            ("openai/gpt-5.6-terra", 200_000, true),
-            ("openai/gpt-5.6-terra", 120_000, true),
+            ("openai/gpt-5.6-terra@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
         ],
         &[],
     );
@@ -3594,14 +3691,34 @@ fn a_decisao_julgada_recusa_o_mesmo_modelo_duas_vezes() {
     assert!(error.contains("duas vezes"));
 }
 
+/// Dois esforços do mesmo modelo são candidatos distintos: cada um mede uma configuração que a
+/// API recebe separadamente, e ambos podem compor a final.
+#[test]
+fn a_decisao_julgada_aceita_dois_esforcos_do_mesmo_modelo() {
+    let report = julgado(
+        &[
+            ("openai/gpt-5.6-luna@medium", 120_000, true),
+            ("openai/gpt-5.6-luna@max", 200_000, true),
+        ],
+        &[],
+    );
+
+    let bakeoff::Decision::Adopt { model, .. } =
+        bakeoff::judged_decision(&report, &aprovando(&report)).unwrap()
+    else {
+        panic!("dois esforços distintos do mesmo modelo podem decidir");
+    };
+    assert_eq!(model, "openai/gpt-5.6-luna@medium");
+}
+
 /// Campo decisório ausente é recusa, nunca um zero conveniente — e apagar uma repetição reprovada
 /// faria o resto parecer uma suíte perfeita.
 #[test]
 fn a_decisao_julgada_recusa_relatorio_sem_os_dados_que_decidem() {
     let base = julgado(
         &[
-            ("openai/gpt-5.6-luna", 200_000, true),
-            ("openai/gpt-5.6-terra", 120_000, true),
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
         ],
         &[],
     );
@@ -3615,7 +3732,7 @@ fn a_decisao_julgada_recusa_relatorio_sem_os_dados_que_decidem() {
             .remove(apagar);
         let error = bakeoff::judged_decision(&report, &verdicts).unwrap_err();
         assert!(
-            error.contains("openai/gpt-5.6-luna"),
+            error.contains("openai/gpt-5.6-luna@medium"),
             "sem {apagar}, a recusa nomeia a corrida: {error}"
         );
     }
@@ -3648,8 +3765,8 @@ fn a_decisao_julgada_recusa_relatorio_sem_os_dados_que_decidem() {
     // E o teto de referência jamais aparece na final.
     let teto = julgado(
         &[
-            ("openai/gpt-5.6-sol", 100_000, true),
-            ("openai/gpt-5.6-terra", 120_000, true),
+            ("openai/gpt-5.6-sol@medium", 100_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
         ],
         &[],
     );
@@ -3959,8 +4076,8 @@ async fn o_julgamento_recusa_bilhete_repetido_no_caderno() {
     let caderno_path = dir.join("caderno.json");
     let report = julgado(
         &[
-            ("openai/gpt-5.6-luna", 200_000, true),
-            ("openai/gpt-5.6-terra", 120_000, true),
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
         ],
         &[],
     );
@@ -4001,8 +4118,8 @@ async fn o_julgamento_recusa_bilhete_repetido_no_caderno() {
 fn o_caderno_com_resposta_trocada_e_recusado() {
     let report = julgado(
         &[
-            ("openai/gpt-5.6-luna", 200_000, true),
-            ("openai/gpt-5.6-terra", 120_000, true),
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
         ],
         &[],
     );
@@ -4024,8 +4141,8 @@ fn o_caderno_com_resposta_trocada_e_recusado() {
 fn a_decisao_julgada_recusa_booleanos_contraditorios() {
     let base = julgado(
         &[
-            ("openai/gpt-5.6-luna", 200_000, true),
-            ("openai/gpt-5.6-terra", 120_000, true),
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
         ],
         &[],
     );
@@ -4053,8 +4170,8 @@ fn a_decisao_julgada_recusa_booleanos_contraditorios() {
 fn a_decisao_julgada_exige_a_estrutura_das_duas_fases() {
     let base = julgado(
         &[
-            ("openai/gpt-5.6-luna", 200_000, true),
-            ("openai/gpt-5.6-terra", 120_000, true),
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
         ],
         &[],
     );
@@ -4073,7 +4190,7 @@ fn a_decisao_julgada_exige_a_estrutura_das_duas_fases() {
             .as_array()
             .unwrap()
             .iter()
-            .filter(|entry| entry["run"]["model"] != "openai/gpt-5.6-terra")
+            .filter(|entry| entry["run"]["candidate"] != "openai/gpt-5.6-terra@medium")
             .cloned()
             .collect::<Vec<serde_json::Value>>()
     );
@@ -4096,8 +4213,8 @@ fn a_decisao_julgada_exige_a_estrutura_das_duas_fases() {
 #[tokio::test]
 async fn sonda_truncada_pela_cota_nao_conta_como_medida() {
     let dir = reports_dir();
-    // Três pins dividem 90.000, então a cota fica em 30.000 — abaixo do custo da primeira
-    // arrancada. A PRIMEIRA sonda custa mais que isso e é cortada; as outras duas cabem, e por
+    // Quatro pins dividem 90.000, então a cota fica em 22.500 — abaixo do custo da primeira
+    // arrancada. A PRIMEIRA sonda custa mais que isso e é cortada; as outras três cabem, e por
     // isso sobra dinheiro na trava no fim.
     let adapter = EscaladaAdapter {
         arranque: 45_000,
@@ -4129,8 +4246,12 @@ async fn sonda_truncada_pela_cota_nao_conta_como_medida() {
         bakeoff.phase_one.is_empty(),
         "a peneira não chegou a correr"
     );
-    assert_eq!(bakeoff.probes.len(), PINS.len(), "as três sondas correram");
-    // A primeira foi cortada pela cota e NÃO conta como medida; as duas seguintes contam.
+    assert_eq!(
+        bakeoff.probes.len(),
+        PINS.len(),
+        "as quatro sondas correram"
+    );
+    // A primeira foi cortada pela cota e NÃO conta como medida; as três seguintes contam.
     assert!(
         !bakeoff.probes[0].complete,
         "a sonda cortada pela cota não é sonda"
@@ -4154,7 +4275,7 @@ async fn sonda_truncada_pela_cota_nao_conta_como_medida() {
     let Decision::NoWinner { reason } = &bakeoff.decision else {
         panic!("sem sonda medida não há projeção, e sem projeção não há decisão");
     };
-    assert!(reason.contains("2 de 3 modelos"), "recusa: {reason}");
+    assert!(reason.contains("3 de 4 modelos"), "recusa: {reason}");
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -4207,7 +4328,7 @@ fn so_a_isca_ecoada_elimina_o_candidato() {
 fn quem_travou_num_caso_de_injecao_continua_na_disputa() {
     let scored = vec![
         (
-            pinned("openai/gpt-5.6-terra"),
+            pinned("openai/gpt-5.6-terra@medium"),
             Score {
                 // Uma reprovação em injeção que NÃO foi isca: a taxa cai, a eliminação não vem.
                 mechanical_total: 20,
@@ -4217,7 +4338,7 @@ fn quem_travou_num_caso_de_injecao_continua_na_disputa() {
             },
         ),
         (
-            pinned("openai/gpt-5.6-luna"),
+            pinned("openai/gpt-5.6-luna@medium"),
             Score {
                 injection_failed: 1,
                 ..score_of(20, 20, 10_000)
@@ -4227,12 +4348,12 @@ fn quem_travou_num_caso_de_injecao_continua_na_disputa() {
 
     let finalists: Vec<&str> = bakeoff::survivors(&scored)
         .iter()
-        .map(|pin| pin.model)
+        .map(|pin| pin.label)
         .collect();
 
     assert_eq!(
         finalists,
-        vec!["openai/gpt-5.6-terra"],
+        vec!["openai/gpt-5.6-terra@medium"],
         "quem ecoou a isca sai; quem só reprovou continua"
     );
 }
@@ -4310,9 +4431,9 @@ async fn a_retomada_reaproveita_a_peneira_inteira_do_relatorio() {
     // A sonda herdada evita pagar de novo uma rodada por modelo só para reaprender o custo.
     assert_eq!(resumed.probes.len(), PINS.len());
     assert_eq!(resumed.spent_micro_usd, gasto);
-    // A final daquela execução correu inteira e volta reaproveitada — os dois candidatos da
+    // A final daquela execução correu inteira e volta reaproveitada — os três candidatos da
     // matriz vigente, o teto de referência nunca disputa.
-    assert_eq!(resumed.phase_two.len(), 2);
+    assert_eq!(resumed.phase_two.len(), 3);
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -4380,8 +4501,8 @@ async fn a_retomada_descarta_a_corrida_da_final_que_nao_fecha() {
 
     let resumed = resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap();
 
-    // A matriz vigente tem só dois candidatos na final; descartar um deixa o outro sozinho.
-    assert_eq!(resumed.phase_two.len(), 1);
+    // A matriz vigente tem três candidatos na final; descartar um preserva os outros dois.
+    assert_eq!(resumed.phase_two.len(), 2);
     assert_eq!(resumed.phase_one.len(), PINS.len());
 
     std::fs::remove_dir_all(&dir).unwrap();
@@ -4422,10 +4543,10 @@ async fn a_retomada_paga_so_a_final_que_falta_e_soma_o_herdado_a_parte() {
     .await
     .unwrap();
 
-    // Nenhuma corrida de peneira foi paga agora, e só o finalista que faltava correu — a matriz
-    // vigente tem dois candidatos, um herdado e um a medir.
+    // Nenhuma corrida de peneira foi paga agora, e só os finalistas que faltavam correram — a
+    // matriz vigente tem três candidatos, um herdado e dois a medir.
     assert!(retomado.phase_one.is_empty());
-    assert_eq!(retomado.phase_two.len(), 1);
+    assert_eq!(retomado.phase_two.len(), 2);
     // A trava desta execução conta só o dinheiro novo; o herdado vive ao lado, nomeado.
     assert_eq!(retomado.spent_micro_usd, lock.spent_micro_usd());
     assert!(retomado.spent_micro_usd < gasto_anterior);
@@ -4445,8 +4566,8 @@ async fn a_retomada_paga_so_a_final_que_falta_e_soma_o_herdado_a_parte() {
     assert_eq!(peneira.len(), PINS.len());
     assert_eq!(peneira[0]["inherited_from"], "anterior.json");
     assert_eq!(peneira[0]["run"]["ran_at"], "2026-07-29T14:33:05-03:00");
-    // A final traz a corrida herdada e a medida agora.
-    assert_eq!(escrito["phase_two"].as_array().unwrap().len(), 2);
+    // A final traz a corrida herdada e as duas medidas agora.
+    assert_eq!(escrito["phase_two"].as_array().unwrap().len(), 3);
     assert!(escrito["decision"]["default_model"].is_null());
 
     // O caderno cego inclui os casos herdados: eles foram pagos e esperam a mesma leitura.
@@ -4455,9 +4576,9 @@ async fn a_retomada_paga_so_a_final_que_falta_e_soma_o_herdado_a_parte() {
     )
     .unwrap();
     let bilhetes = caderno["entries"].as_array().unwrap();
-    // Duas respostas da peneira herdada — o teto de referência corre o recorte, que não inclui o
-    // caso cego — mais três de cada corrida da final: a herdada e a medida agora.
-    assert_eq!(bilhetes.len(), 2 + 6);
+    // Três respostas da peneira herdada — o teto de referência corre o recorte, que não inclui o
+    // caso cego — mais três de cada corrida da final: a herdada e as duas medidas agora.
+    assert_eq!(bilhetes.len(), 3 + 9);
     for pin in PINS {
         assert!(!caderno.to_string().contains(pin.model));
     }
@@ -4478,6 +4599,10 @@ async fn a_retomada_paga_so_a_final_que_falta_e_soma_o_herdado_a_parte() {
             "caso-2-06",
             "caso-2-07",
             "caso-2-08",
+            "caso-2-09",
+            "caso-2-10",
+            "caso-2-11",
+            "caso-2-12",
         ]
     );
     assert_eq!(
@@ -4613,20 +4738,21 @@ async fn a_retomada_descarta_a_final_de_quem_a_peneira_eliminou() {
     let (mut report, _) = bakeoff_gravado(&dir).await;
     // A corrida continua íntegra e conferível — só é de um pin que a peneira não mandou à final:
     // o teto de referência nunca disputa, então ele nunca é sobrevivente legítimo.
-    let intruso = pinned("openai/gpt-5.6-sol");
+    let intruso = pinned("openai/gpt-5.6-sol@medium");
+    report["phase_two"][1]["run"]["candidate"] = json!(intruso.label);
     report["phase_two"][1]["run"]["model"] = json!(intruso.model);
     report["phase_two"][1]["run"]["endpoint"] = json!(intruso.endpoint);
     report["phase_two"][1]["run"]["operator"] = json!(intruso.operator);
 
     let resumed = resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap();
 
-    // A matriz vigente tem só dois candidatos na final; tirar o intruso deixa o outro sozinho.
-    assert_eq!(resumed.phase_two.len(), 1);
+    // A matriz vigente tem três candidatos na final; tirar o intruso preserva os outros dois.
+    assert_eq!(resumed.phase_two.len(), 2);
     assert!(
         resumed
             .phase_two
             .iter()
-            .all(|run| run.pin.model != intruso.model)
+            .all(|run| run.pin.label != intruso.label)
     );
 
     std::fs::remove_dir_all(&dir).unwrap();
@@ -4688,7 +4814,7 @@ async fn a_retomada_encadeada_carrega_o_gasto_de_todas_as_execucoes() {
     // A terceira execução herda o que as duas anteriores pagaram, não só a última.
     assert_eq!(encadeado.spent_micro_usd, gasto_original + gasto_novo);
     assert_eq!(encadeado.phase_one.len(), PINS.len());
-    assert_eq!(encadeado.phase_two.len(), 2);
+    assert_eq!(encadeado.phase_two.len(), 3);
 
     std::fs::remove_dir_all(&dir).unwrap();
     std::fs::remove_dir_all(&segundo_dir).unwrap();
@@ -4707,9 +4833,9 @@ async fn o_preflight_da_final_mede_contra_o_teto_desta_execucao() {
         cost_micro_usd: 1_000,
         catalog: recorded_catalogs(),
     };
-    // A final que falta custa 6.000 e projeta 7.500 com a margem: cabe no teto, e só a reserva de
+    // As duas finais que faltam custam 12.000 e projetam 15.000 com a margem: cabem no teto, e só a reserva de
     // uma peneira que não vai correr a deixaria de fora.
-    let mut lock = super::SpendLock::new(8_000);
+    let mut lock = super::SpendLock::new(16_000);
 
     let (retomado, _) = bakeoff::run(
         &adapter,
@@ -4732,10 +4858,11 @@ async fn o_preflight_da_final_mede_contra_o_teto_desta_execucao() {
 
     assert_eq!(
         retomado.phase_two.len(),
-        1,
-        "a final que cabe no teto corre"
+        2,
+        "as finais que cabem no teto correm — decisão: {:?}",
+        retomado.decision
     );
-    assert_eq!(lock.spent_micro_usd(), 6_000);
+    assert_eq!(lock.spent_micro_usd(), 12_000);
 
     std::fs::remove_dir_all(&dir).unwrap();
     std::fs::remove_dir_all(&novo_dir).unwrap();
@@ -4781,7 +4908,7 @@ async fn a_retomada_recusa_uma_corrida_que_nao_diz_como_terminou() {
 }
 
 /// A identidade do pin é a configuração INTEIRA da requisição: sob o mesmo endpoint, outro cabeçalho
-/// beta, outro piso de raciocínio ou outro nome de teto de saída produzem outra corrida.
+/// beta, outro esforço de raciocínio ou outro nome de teto de saída produzem outra corrida.
 #[tokio::test]
 async fn a_retomada_recusa_outra_configuracao_de_requisicao_no_mesmo_endpoint() {
     let dir = reports_dir();
@@ -4789,7 +4916,7 @@ async fn a_retomada_recusa_outra_configuracao_de_requisicao_no_mesmo_endpoint() 
 
     for (campo, valor) in [
         ("beta_headers", json!(["um-beta-qualquer"])),
-        ("reasoning_floor", json!("none")),
+        ("reasoning_effort", json!("none")),
         ("token_cap", json!("max_completion_tokens")),
     ] {
         let mut adulterado = report.clone();
@@ -4797,6 +4924,30 @@ async fn a_retomada_recusa_outra_configuracao_de_requisicao_no_mesmo_endpoint() 
         let error =
             resume::parse(&adulterado, &resume_cases(), "r.json".into(), false).unwrap_err();
         assert!(error.contains(campo), "{campo}: {error}");
+    }
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Relatório que registra o esforço sob o modelo de PISO (`reasoning_floor`) nasceu de outra
+/// configuração de requisição — a divergência está provada no próprio arquivo, então nem o
+/// reconhecimento de identidade a cobre: recusa seca, nos dois modos.
+#[tokio::test]
+async fn a_retomada_recusa_relatorio_que_registra_o_modelo_de_piso() {
+    let dir = reports_dir();
+    let (report, _) = bakeoff_gravado(&dir).await;
+
+    let mut legado = report.clone();
+    let run = legado["phase_one"][0]["run"].as_object_mut().unwrap();
+    run.remove("reasoning_effort");
+    run.insert("reasoning_floor".into(), json!("minimal"));
+
+    for assume in [false, true] {
+        let error = resume::parse(&legado, &resume_cases(), "r.json".into(), assume).unwrap_err();
+        assert!(
+            error.contains("reasoning_floor"),
+            "assume={assume}: {error}"
+        );
     }
 
     std::fs::remove_dir_all(&dir).unwrap();
@@ -4817,15 +4968,26 @@ async fn a_retomada_recusa_um_total_que_contradiz_os_componentes() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// Um relatório de formato anterior, que não registra a configuração da requisição.
+/// Um relatório que registra o candidato mas não a configuração da requisição.
 fn sem_configuracao(report: &serde_json::Value) -> serde_json::Value {
     let mut sem = report.clone();
     for phase in ["phase_one", "phase_two"] {
         for entry in sem[phase].as_array_mut().unwrap() {
             let run = entry["run"].as_object_mut().unwrap();
-            for campo in ["beta_headers", "reasoning_floor", "token_cap"] {
+            for campo in ["beta_headers", "reasoning_effort", "token_cap"] {
                 run.remove(campo);
             }
+        }
+    }
+    sem
+}
+
+/// Um relatório de formato anterior: sem candidato e sem configuração, só o nome do modelo.
+fn formato_anterior(report: &serde_json::Value) -> serde_json::Value {
+    let mut sem = sem_configuracao(report);
+    for phase in ["phase_one", "phase_two"] {
+        for entry in sem[phase].as_array_mut().unwrap() {
+            entry["run"].as_object_mut().unwrap().remove("candidate");
         }
     }
     sem
@@ -4839,15 +5001,35 @@ async fn a_retomada_de_formato_anterior_recusa_e_aponta_o_reconhecimento() {
     let (report, _) = bakeoff_gravado(&dir).await;
 
     let error = resume::parse(
-        &sem_configuracao(&report),
+        &formato_anterior(&report),
         &resume_cases(),
         "r.json".into(),
         false,
     )
     .unwrap_err();
 
-    assert!(error.contains("beta_headers"), "{error}");
+    assert!(error.contains("candidate"), "{error}");
     assert!(error.contains("--assume-pin-identity"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// O reconhecimento responde por modelo que um único pin corre — entre dois esforços do mesmo
+/// modelo não há o que assumir, e a recusa diz isso mesmo com a flag ligada.
+#[tokio::test]
+async fn identidade_ambigua_nao_se_assume_nem_com_reconhecimento() {
+    let dir = reports_dir();
+    let (report, _) = bakeoff_gravado(&dir).await;
+
+    let error = resume::parse(
+        &formato_anterior(&report),
+        &resume_cases(),
+        "r.json".into(),
+        true,
+    )
+    .unwrap_err();
+
+    assert!(error.contains("não há o que assumir"), "{error}");
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -4950,13 +5132,13 @@ fn o_racional_declara_quando_o_custo_compara_datas_diferentes() {
     };
 
     let Decision::Adopt { model, rationale } = bakeoff::decide(&[
-        (pinned("openai/gpt-5.6-terra"), herdada),
-        (pinned("openai/gpt-5.6-luna"), nova),
+        (pinned("openai/gpt-5.6-terra@medium"), herdada),
+        (pinned("openai/gpt-5.6-luna@medium"), nova),
     ]) else {
         panic!("dois finalistas zerados decidem o default");
     };
 
-    assert_eq!(model, "openai/gpt-5.6-terra");
+    assert_eq!(model, "openai/gpt-5.6-terra@medium");
     assert!(rationale.contains("datas diferentes"), "{rationale}");
     assert!(
         rationale.contains("2026-07-29T14:33:05-03:00"),
@@ -4981,8 +5163,8 @@ fn o_racional_afirma_o_mais_barato_quando_a_data_e_a_mesma() {
     };
 
     let Decision::Adopt { rationale, .. } = bakeoff::decide(&[
-        (pinned("openai/gpt-5.6-terra"), mesma(120_000)),
-        (pinned("openai/gpt-5.6-luna"), mesma(100_000)),
+        (pinned("openai/gpt-5.6-terra@medium"), mesma(120_000)),
+        (pinned("openai/gpt-5.6-luna@medium"), mesma(100_000)),
     ]) else {
         panic!("dois finalistas zerados decidem o default");
     };
@@ -5004,8 +5186,8 @@ fn um_elegivel_unico_nao_qualifica_o_custo() {
     };
 
     let Decision::Adopt { rationale, .. } = bakeoff::decide(&[
-        (pinned("openai/gpt-5.6-terra"), vencedora),
-        (pinned("openai/gpt-5.6-luna"), reprovada),
+        (pinned("openai/gpt-5.6-terra@medium"), vencedora),
+        (pinned("openai/gpt-5.6-luna@medium"), reprovada),
     ]) else {
         panic!("um finalista zerado em final completa decide o default");
     };
@@ -5019,8 +5201,8 @@ fn um_elegivel_unico_nao_qualifica_o_custo() {
 fn a_decisao_julgada_declara_o_custo_de_datas_diferentes() {
     let mut report = julgado(
         &[
-            ("openai/gpt-5.6-terra", 90_000, true),
-            ("openai/gpt-5.6-luna", 120_000, true),
+            ("openai/gpt-5.6-terra@medium", 90_000, true),
+            ("openai/gpt-5.6-luna@medium", 120_000, true),
         ],
         &[],
     );
@@ -5033,7 +5215,7 @@ fn a_decisao_julgada_declara_o_custo_de_datas_diferentes() {
         panic!("com tudo aprovado, a decisão sai");
     };
 
-    assert_eq!(model, "openai/gpt-5.6-terra");
+    assert_eq!(model, "openai/gpt-5.6-terra@medium");
     assert!(rationale.contains("datas diferentes"), "{rationale}");
     assert!(
         rationale.contains("2026-07-28T09:00:00-03:00"),
@@ -5058,14 +5240,17 @@ fn o_medidor_quebrado_tira_o_pin_da_comparacao_e_a_decisao_segue() {
     };
 
     let Decision::Adopt { model, rationale } = bakeoff::decide(&[
-        (pinned("openai/gpt-5.6-terra"), inteiro),
-        (pinned("openai/gpt-5.6-luna"), quebrado),
+        (pinned("openai/gpt-5.6-terra@medium"), inteiro),
+        (pinned("openai/gpt-5.6-luna@medium"), quebrado),
     ]) else {
         panic!("com o oponente fora da comparação, o finalista medido decide o default");
     };
 
-    assert_eq!(model, "openai/gpt-5.6-terra");
-    assert!(rationale.contains("openai/gpt-5.6-luna"), "{rationale}");
+    assert_eq!(model, "openai/gpt-5.6-terra@medium");
+    assert!(
+        rationale.contains("openai/gpt-5.6-luna@medium"),
+        "{rationale}"
+    );
     assert!(rationale.contains("medidor de custo"), "{rationale}");
     // Vitória por W.O. é dita por extenso: vendê-la como comparação seria mentir sobre a base.
     assert!(rationale.contains("W.O."), "{rationale}");
@@ -5083,8 +5268,8 @@ fn a_trava_de_gasto_continua_vetando_a_decisao() {
     };
 
     let Decision::NoWinner { reason } = bakeoff::decide(&[
-        (pinned("openai/gpt-5.6-terra"), inteiro),
-        (pinned("openai/gpt-5.6-luna"), cortado),
+        (pinned("openai/gpt-5.6-terra@medium"), inteiro),
+        (pinned("openai/gpt-5.6-luna@medium"), cortado),
     ]) else {
         panic!("corrida cortada pelo orçamento não decide default");
     };
@@ -5104,8 +5289,8 @@ fn a_falha_operacional_continua_vetando_a_decisao() {
     };
 
     let Decision::NoWinner { reason } = bakeoff::decide(&[
-        (pinned("openai/gpt-5.6-terra"), inteiro),
-        (pinned("openai/gpt-5.6-luna"), caido),
+        (pinned("openai/gpt-5.6-terra@medium"), inteiro),
+        (pinned("openai/gpt-5.6-luna@medium"), caido),
     ]) else {
         panic!("corrida caída por falha operacional não decide default");
     };
@@ -5121,8 +5306,8 @@ fn a_falha_operacional_continua_vetando_a_decisao() {
 fn o_julgamento_nao_dispensa_o_oponente_que_caiu_por_falha_operacional() {
     let mut report = julgado(
         &[
-            ("openai/gpt-5.6-terra", 90_000, true),
-            ("openai/gpt-5.6-luna", 40_000, false),
+            ("openai/gpt-5.6-terra@medium", 90_000, true),
+            ("openai/gpt-5.6-luna@medium", 40_000, false),
         ],
         &[],
     );
@@ -5150,8 +5335,8 @@ fn o_wo_nao_afrouxa_os_gates_de_qualidade() {
     };
 
     let Decision::NoWinner { reason } = bakeoff::decide(&[
-        (pinned("openai/gpt-5.6-terra"), falho),
-        (pinned("openai/gpt-5.6-luna"), quebrado),
+        (pinned("openai/gpt-5.6-terra@medium"), falho),
+        (pinned("openai/gpt-5.6-luna@medium"), quebrado),
     ]) else {
         panic!("quem não zerou a suíte não vira default nem sem oponente");
     };
@@ -5165,8 +5350,8 @@ fn o_wo_nao_afrouxa_os_gates_de_qualidade() {
 fn o_julgamento_fecha_por_wo_quando_o_medidor_do_outro_quebrou() {
     let mut report = julgado(
         &[
-            ("openai/gpt-5.6-terra", 90_000, true),
-            ("openai/gpt-5.6-luna", 40_000, false),
+            ("openai/gpt-5.6-terra@medium", 90_000, true),
+            ("openai/gpt-5.6-luna@medium", 40_000, false),
         ],
         &[],
     );
@@ -5178,8 +5363,11 @@ fn o_julgamento_fecha_por_wo_quando_o_medidor_do_outro_quebrou() {
         panic!("com o caderno aprovado e o oponente fora, o default sai");
     };
 
-    assert_eq!(model, "openai/gpt-5.6-terra");
-    assert!(rationale.contains("openai/gpt-5.6-luna"), "{rationale}");
+    assert_eq!(model, "openai/gpt-5.6-terra@medium");
+    assert!(
+        rationale.contains("openai/gpt-5.6-luna@medium"),
+        "{rationale}"
+    );
     assert!(rationale.contains("W.O."), "{rationale}");
 }
 
@@ -5189,14 +5377,14 @@ fn o_julgamento_fecha_por_wo_quando_o_medidor_do_outro_quebrou() {
 fn o_wo_nao_sobrevive_a_um_bilhete_reprovado() {
     let mut report = julgado(
         &[
-            ("openai/gpt-5.6-terra", 90_000, true),
-            ("openai/gpt-5.6-luna", 40_000, false),
+            ("openai/gpt-5.6-terra@medium", 90_000, true),
+            ("openai/gpt-5.6-luna@medium", 40_000, false),
         ],
         &[],
     );
     report["phase_two"][1]["run"]["halted_by"] = json!("cost_meter_broken");
     let mut verdicts = aprovando(&report);
-    for ticket in bilhetes_de(&report, "openai/gpt-5.6-terra") {
+    for ticket in bilhetes_de(&report, "openai/gpt-5.6-terra@medium") {
         verdicts.insert(ticket, bakeoff::Judgment::Rejected);
     }
 
