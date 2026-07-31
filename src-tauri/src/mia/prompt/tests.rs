@@ -107,6 +107,30 @@ async fn the_prefix_adds_the_app_context_and_the_sheet_structure_to_the_core() {
 }
 
 #[tokio::test]
+async fn the_prefix_teaches_the_tag_switch_and_the_register_offer() {
+    let pack = installed_pack();
+    let prompt = system_prompt(&MethodPack::at(pack.path()), today())
+        .await
+        .unwrap();
+
+    // As duas metades da resposta sobre orçamento por categoria: o fluxo no lugar dos envelopes
+    // E a tag como interruptor — reduzir a tag a rótulo de hábitos reensina a análise por
+    // categoria que o método rejeita.
+    for expected in [
+        "duas metades",
+        "rótulo de leitura de hábitos",
+        // A recusa por capacidade fecha oferecendo o gesto do app por nome: mover dinheiro é do
+        // banco, registrar o lançamento é do app.
+        "lançamento é do app",
+    ] {
+        assert!(
+            prompt.text.contains(expected),
+            "o prefixo não ensina: {expected}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn the_prefix_is_identical_between_rounds() {
     let pack = installed_pack();
 
