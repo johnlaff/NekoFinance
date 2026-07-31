@@ -309,6 +309,131 @@
   color: var(--primary);
 }
 
+/* ---- Cartão de proposta: registrar por proposta ----
+   Superfície própria dentro da bolha da Mia — dashed border como o recibo, mas com campos
+   editáveis: é uma decisão pendente, não uma conta já fechada. */
+
+.mia__proposal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  margin-top: var(--space-5);
+  padding: var(--space-6);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+}
+.mia__proposal--done {
+  padding: var(--space-5) var(--space-6);
+}
+.mia__proposal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text-strong);
+}
+.mia__proposal-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+.mia__proposal-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+}
+.mia__proposal-fixed {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.mia__proposal-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+.mia__tagchip {
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: none;
+  font: inherit;
+  font-size: var(--fs-label);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: var(--t-hover);
+}
+.mia__tagchip:hover {
+  border-color: var(--border-strong);
+}
+.mia__proposal-validity {
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+}
+.mia__proposal-error {
+  margin: 0;
+  font-size: var(--fs-label);
+  color: var(--danger-400);
+}
+.mia__proposal-actions {
+  display: flex;
+  gap: var(--space-4);
+}
+.mia__proposal-approve,
+.mia__proposal-reject {
+  padding: var(--space-4) var(--space-6);
+  border-radius: var(--radius-pill);
+  border: 0;
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: var(--t-hover);
+}
+.mia__proposal-approve {
+  color: var(--text-on-primary);
+}
+.mia__proposal-approve:disabled {
+  background: var(--surface-elevated);
+  color: var(--text-faint);
+  cursor: default;
+}
+.mia__proposal-reject {
+  border: 1px solid var(--border-strong);
+  background: none;
+  color: var(--text-muted);
+}
+.mia__proposal-reject:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--text-faint);
+}
+.mia__proposal-reject:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+.mia__proposal-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.mia__proposal-status--ok {
+  color: var(--success-400);
+}
+
+@media (max-width: 480px) {
+  .mia__proposal-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ---- Painel: os números por trás ---- */
 
 .mia__ctx {

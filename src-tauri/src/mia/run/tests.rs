@@ -485,6 +485,7 @@ async fn execute_round(
     let ctx = Context {
         clock: clock(),
         pack: MethodPack::at(pack.path()),
+        conversation_id: None,
     };
     let (events, mut receiver) = mpsc::channel(32);
     let runner = Runner {
@@ -523,6 +524,7 @@ async fn execute_com_pool<A: ProviderAdapter>(
     let ctx = Context {
         clock: clock(),
         pack: MethodPack::at(pack.path()),
+        conversation_id: None,
     };
     let (events, mut receiver) = mpsc::channel(32);
     let runner = Runner {
@@ -1288,6 +1290,7 @@ async fn cancellation_closes_the_provider_connection() {
     let ctx = Context {
         clock: clock(),
         pack: MethodPack::at(pack.path()),
+        conversation_id: None,
     };
     let (events, mut receiver) = mpsc::channel(32);
     let cancel = CancelToken::new();
@@ -1335,6 +1338,7 @@ async fn event_backpressure_never_outlives_the_time_cap() {
     let ctx = Context {
         clock: clock(),
         pack: MethodPack::at(pack.path()),
+        conversation_id: None,
     };
     let (events, _receiver) = mpsc::channel(1);
     let runner = Runner {
@@ -1582,7 +1586,7 @@ async fn ungrounded_answer_is_refused_after_the_regeneration_cap() {
 /// modelo, e um cartão de aprovação sobre ela ofereceria um gesto sobre lançamento inexistente.
 #[test]
 fn so_a_proposta_validada_vira_evento_da_tela() {
-    let mut proposta = envelope(json!({"transaction": {"amount_cents": 5_000}}));
+    let mut proposta = envelope(json!({"proposal": {"payload": {"amount_cents": 5_000}}}));
     proposta.tool = catalog::PROPOSAL_TOOL.to_string();
 
     let event = super::proposal_event(catalog::PROPOSAL_TOOL, "call-2", &proposta)
@@ -1593,7 +1597,7 @@ fn so_a_proposta_validada_vira_evento_da_tela() {
             assert_eq!(id, "call-2");
             assert_eq!(proposal["tool"], json!(catalog::PROPOSAL_TOOL));
             assert_eq!(
-                proposal["data"]["transaction"]["amount_cents"],
+                proposal["data"]["proposal"]["payload"]["amount_cents"],
                 json!(5_000)
             );
         }

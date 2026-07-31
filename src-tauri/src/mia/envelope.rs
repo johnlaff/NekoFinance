@@ -31,6 +31,12 @@ impl Clock {
         Self { now }
     }
 
+    /// O instante da rodada. Quem precisa dele é a validade de uma proposta: a expiração se
+    /// conta do mesmo relógio que carimbou a resposta, nunca de uma segunda leitura.
+    pub(crate) fn now(&self) -> DateTime<FixedOffset> {
+        self.now
+    }
+
     pub(crate) fn today(&self) -> NaiveDate {
         self.now.date_naive()
     }

@@ -625,6 +625,7 @@ async fn uma_repeticao_atravessa_o_loop_e_a_fachada_reais() {
     let ctx = Context {
         clock: super::fixtures::bench_clock(),
         pack: MethodPack::at(temp.path()),
+        conversation_id: None,
     };
 
     let case = parse("fn-01.json", &{
@@ -1707,6 +1708,7 @@ async fn os_numeros_esperados_existem_no_envelope_da_fachada() {
         let ctx = Context {
             clock: super::fixtures::bench_clock(),
             pack: MethodPack::at(temp.path()),
+            conversation_id: None,
         };
         let envelope = crate::mia::dispatch(
             &pool,

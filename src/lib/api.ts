@@ -141,6 +141,22 @@ export function cancelMiaRound(runId: string): Promise<void> {
   return invoke("cancel_mia_round", { runId });
 }
 
+/** Aprova a proposta da conversa (evento `proposal_ready`): o backend revalida hash,
+ *  `data_revision` e validade antes de gravar, e devolve o id do lançamento criado. `hash`
+ *  amarra a aprovação ao envelope que a pessoa viu — nunca o valor editado no cartão. */
+export function approveMiaProposal(
+  proposalId: number,
+  payloadJson: string,
+  hash: string,
+): Promise<string> {
+  return invoke("approve_mia_proposal", { proposalId, payloadJson, hash });
+}
+
+/** Recusa a proposta — gesto explícito, nunca inferido de texto no chat. */
+export function rejectMiaProposal(proposalId: number): Promise<void> {
+  return invoke("reject_mia_proposal", { proposalId });
+}
+
 /** Uma linha da conversa guardada, como o backend a devolve — espelha `StoredMessage`
  *  (`src-tauri/src/mia/store.rs`) linha a linha. `answer` é opaco: o formato é o que a
  *  própria interface gravou como `MiaAnswer` serializado, e valê-lo cabe a quem lê. */

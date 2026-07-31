@@ -638,6 +638,7 @@ mod tests {
         Context {
             clock: bench_clock(),
             pack: MethodPack::at(pack.path()),
+            conversation_id: None,
         }
     }
 
