@@ -33,6 +33,7 @@ pub(crate) fn render(run: &BenchRun, ran_at: &str) -> Value {
         // configuração da requisição diz sob que regras ela foi produzida. Sem os três últimos, uma
         // corrida guardada não prova ter nascido da configuração que a matriz declara hoje — e é
         // sobre essa prova que a retomada decide reaproveitar em vez de pagar de novo.
+        "candidate": run.pin.label,
         "model": run.pin.model,
         "endpoint": run.pin.endpoint,
         "operator": run.pin.operator,

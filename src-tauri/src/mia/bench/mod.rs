@@ -675,16 +675,26 @@ async fn execute(cli: cli::CliArgs, key: String) -> Result<String, String> {
     }
 
     let pin = match &cli.model {
-        Some(model) => crate::mia::provider::pins::pin(model).ok_or_else(|| {
-            format!(
-                "O modelo \"{model}\" não está na matriz de pins. Use um destes: {}.",
-                crate::mia::provider::pins::PINS
-                    .iter()
-                    .map(|pin| pin.model)
-                    .collect::<Vec<_>>()
-                    .join(", ")
+        // O rótulo (`modelo@esforço`) identifica o candidato; o nome do modelo sozinho só serve
+        // enquanto um único pin o corre — com dois esforços do mesmo modelo, a escolha é de quem
+        // invoca, nunca de um desempate silencioso.
+        Some(model) => crate::mia::provider::pins::pin(model)
+            .or_else(
+                || match crate::mia::provider::pins::by_model(model).as_slice() {
+                    [only] => Some(only),
+                    _ => None,
+                },
             )
-        })?,
+            .ok_or_else(|| {
+                format!(
+                    "\"{model}\" não identifica um candidato na matriz de pins. Use um destes: {}.",
+                    crate::mia::provider::pins::PINS
+                        .iter()
+                        .map(|pin| pin.label)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })?,
         None => crate::mia::provider::pins::default_pin(),
     };
     let config = BenchConfig {

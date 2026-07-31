@@ -103,6 +103,12 @@ pub(crate) enum Retention {
 
 #[derive(Debug)]
 pub(crate) struct ModelPin {
+    /// A identidade do CANDIDATO: `modelo@esforço`, única na matriz. O mesmo modelo pode correr
+    /// mais de uma vez sob esforços diferentes — cada corrida é outro candidato, e é o rótulo,
+    /// nunca o nome do modelo, que a contabilidade do bakeoff (dedup, sonda, chave do julgamento
+    /// cego, retomada) usa para dizer quem é quem.
+    pub label: &'static str,
+    /// O que a API recebe — e só isso: para identidade, ver [`ModelPin::label`].
     pub model: &'static str,
     pub endpoint: &'static str,
     pub operator: &'static str,
@@ -128,6 +134,7 @@ pub(crate) struct ModelPin {
 
 pub(crate) const PINS: &[ModelPin] = &[
     ModelPin {
+        label: "openai/gpt-5.6-terra@medium",
         model: "openai/gpt-5.6-terra",
         endpoint: "openai",
         operator: "OpenAI",
@@ -147,6 +154,7 @@ pub(crate) const PINS: &[ModelPin] = &[
         run_order: 1,
     },
     ModelPin {
+        label: "openai/gpt-5.6-luna@medium",
         model: "openai/gpt-5.6-luna",
         endpoint: "openai",
         operator: "OpenAI",
@@ -160,6 +168,22 @@ pub(crate) const PINS: &[ModelPin] = &[
         run_order: 2,
     },
     ModelPin {
+        label: "openai/gpt-5.6-luna@max",
+        model: "openai/gpt-5.6-luna",
+        endpoint: "openai",
+        operator: "OpenAI",
+        // O mesmo luna sob o esforço máximo: fora da régua comparável de "medium", ele mede o que
+        // o teto de esforço compra — em consistência e em custo — no tier cujo preço torna a
+        // pergunta barata de responder. Concorre ao default como qualquer candidato.
+        role: PinRole::Candidate,
+        beta_headers: &[],
+        reasoning_effort: ReasoningEffort::Max,
+        token_cap: TokenCap::MaxTokens,
+        retention: Retention::ProviderPolicy,
+        run_order: 3,
+    },
+    ModelPin {
+        label: "openai/gpt-5.6-sol@medium",
         model: "openai/gpt-5.6-sol",
         endpoint: "azure",
         operator: "Microsoft Azure",
@@ -170,12 +194,20 @@ pub(crate) const PINS: &[ModelPin] = &[
         // Sem desconto para pagar a troca ($5/$30 nos dois endpoints, verificado 2026-07-30) e
         // uptime pior no fabricante — o azure segue provando a garantia pelo catálogo.
         retention: Retention::Zero,
-        run_order: 3,
+        run_order: 4,
     },
 ];
 
-pub(crate) fn pin(model: &str) -> Option<&'static ModelPin> {
-    PINS.iter().find(|pin| pin.model == model)
+/// O pin pelo rótulo do candidato. O nome do modelo sozinho não identifica: ver [`by_model`].
+pub(crate) fn pin(label: &str) -> Option<&'static ModelPin> {
+    PINS.iter().find(|pin| pin.label == label)
+}
+
+/// Os pins que correm um mesmo modelo. Serve a quem só tem o nome do modelo na mão — a seleção
+/// da linha de comando, a leitura de relatório sem rótulo — e precisa saber se ele basta para
+/// identificar um candidato ou se a ambiguidade exige o rótulo.
+pub(crate) fn by_model(model: &str) -> Vec<&'static ModelPin> {
+    PINS.iter().filter(|pin| pin.model == model).collect()
 }
 
 pub(crate) fn default_pin() -> &'static ModelPin {
