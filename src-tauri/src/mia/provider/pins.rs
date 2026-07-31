@@ -143,9 +143,7 @@ pub(crate) const PINS: &[ModelPin] = &[
         model: "openai/gpt-5.6-terra",
         endpoint: "openai",
         operator: "OpenAI",
-        // Default por necessidade técnica — o runtime exige um pin neste papel —, não por
-        // vitória: o bakeoff ainda não fechou uma decisão, e é a corrida quem promove ou rebaixa.
-        role: PinRole::Default,
+        role: PinRole::Candidate,
         beta_headers: &[],
         reasoning_effort: ReasoningEffort::Medium,
         // O endpoint do próprio fabricante anuncia `max_tokens`, não o irmão que o azure usa.
@@ -179,10 +177,11 @@ pub(crate) const PINS: &[ModelPin] = &[
         model: "openai/gpt-5.6-luna",
         endpoint: "openai",
         operator: "OpenAI",
-        // O mesmo luna sob o esforço máximo: fora da régua comparável de "medium", ele mede o que
-        // o teto de esforço compra — em consistência e em custo — no tier cujo preço torna a
-        // pergunta barata de responder. Concorre ao default como qualquer candidato.
-        role: PinRole::Candidate,
+        // O mesmo luna sob o esforço máximo: o teto de esforço do tier cujo preço torna a
+        // pergunta barata de responder. Default por adoção manual, sustentada por medição: suíte
+        // mecânica zerada nas corridas de bancada e didática aprovada em julgamento cego, a uma
+        // fração do custo dos tiers acima.
+        role: PinRole::Default,
         beta_headers: &[],
         reasoning_effort: ReasoningEffort::Max,
         token_cap: TokenCap::MaxTokens,

@@ -167,7 +167,7 @@ fn request_sends_the_pins_declared_reasoning_effort() {
             .body
             .pointer("/reasoning/effort")
             .and_then(Value::as_str),
-        Some("medium")
+        Some("max")
     );
 }
 
