@@ -404,14 +404,3 @@ fn point(p: &crate::commands::DayPointDto) -> PointDto {
         balance_cents: p.balance_cents,
     }
 }
-
-/// A última data da hipótese — o recorte da resposta cobre o que foi simulado, mesmo quando a
-/// série passa do horizonte que o mundo real alcança.
-#[allow(dead_code)]
-fn last_date(lines: &[(&'static str, HypotheticalLine, Option<String>)]) -> NaiveDate {
-    lines
-        .iter()
-        .map(|(_, line, _)| line.date)
-        .max()
-        .unwrap_or(NaiveDate::MIN)
-}
