@@ -308,6 +308,48 @@ describe("TetoScreen", () => {
     ).not.toBeInTheDocument();
   });
 
+  // A estimativa IMPRIME a conta em vez de descrevê-la: a frase antiga falava em "meses"
+  // com registro, e o motor divide o gasto de UM mês pelos dias dele.
+  it("estimativa: a conta vem impressa com os operandos do motor", async () => {
+    mockCommands({
+      get_daily_budget_cmd: EMPTY_BUDGET,
+      get_ceiling_proposal_cmd: null,
+      get_dashboard_summary: {
+        ...SUMMARY,
+        daily_ceiling_source: "estimate",
+        daily_budget: 2000,
+        daily_ceiling_estimate: { variable_cents: 62000, days: 31, month: "2026-05" },
+      },
+    });
+    render(<TetoScreen />);
+
+    expect(
+      await screen.findByText("Gasto variável de maio de 2026"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Dias de maio de 2026")).toBeInTheDocument();
+    expect(screen.getByText("31")).toBeInTheDocument();
+    expect(screen.getByText("Cerca de, por dia")).toBeInTheDocument();
+    // A prosa que descrevia a fórmula saiu: quem descreve agora é a própria conta.
+    expect(screen.queryByText(/média do gasto variável dos seus meses/)).toBeNull();
+  });
+
+  // Sem operandos do motor, a tela fica sem conta — nunca com uma conta reconstruída.
+  it("estimativa sem base do motor não imprime conta nenhuma", async () => {
+    mockCommands({
+      get_daily_budget_cmd: EMPTY_BUDGET,
+      get_ceiling_proposal_cmd: null,
+      get_dashboard_summary: {
+        ...SUMMARY,
+        daily_ceiling_source: "estimate",
+        daily_budget: 4600,
+      },
+    });
+    render(<TetoScreen />);
+
+    await screen.findByRole("heading", { level: 1 });
+    expect(screen.queryByText(/^Gasto variável de/)).toBeNull();
+  });
+
   it("proposta da planilha: manda na manchete, confronta o teto vigente e só grava no aceite", async () => {
     const user = userEvent.setup();
     mockCommands({

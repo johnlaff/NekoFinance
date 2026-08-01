@@ -65,8 +65,7 @@
   align-items: center;
   gap: var(--space-3);
   font-size: var(--fs-label);
-  letter-spacing: var(--ls-label);
-  text-transform: uppercase;
+  letter-spacing: var(--ls-normal);
   color: var(--text-faint);
 }
 
@@ -355,8 +354,7 @@
 .teto__step {
   margin: 0 0 var(--space-3);
   font-size: var(--fs-micro);
-  letter-spacing: var(--ls-label);
-  text-transform: uppercase;
+  letter-spacing: var(--ls-normal);
   color: var(--text-faint);
 }
 

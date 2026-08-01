@@ -200,6 +200,18 @@ export interface DashboardSummary {
   daily_budget: number;
   /** Procedência do teto exibido: veredito escolhido, estimativa da média, ou sem registro. */
   daily_ceiling_source: "chosen" | "estimate" | "none";
+  /**
+   * Operandos da estimativa do teto — a tela imprime esta conta em vez de descrevê-la.
+   * Ausente quando o teto é escolhido: número digitado não tem conta a mostrar.
+   */
+  daily_ceiling_estimate: {
+    /** Gasto variável somado do mês da base (magnitude, centavos). */
+    variable_cents: number;
+    /** Dias do mês da base — o divisor da média. */
+    days: number;
+    /** Mês da base, `YYYY-MM`. */
+    month: string;
+  } | null;
   /** Overlay: existe proposta da cerimônia do teto aguardando confirmação. */
   ceiling_proposal_pending: boolean;
   daily_spend_today: number;
@@ -820,8 +832,11 @@ export function setAppSetting(key: string, value: string): Promise<void> {
   return invoke("set_app_setting", { key, value });
 }
 
-/** Chave da preferência de exibição do recibo na conversa. */
-export const MIA_SHOW_RECEIPT = "mia_show_receipt";
+/**
+ * Chave da preferência de exibição do recibo, válida em todo o app. O nome persistido guarda
+ * o prefixo da conversa, onde o recibo nasceu: renomeá-lo descartaria a escolha já gravada.
+ */
+export const SHOW_RECEIPT = "mia_show_receipt";
 
 /**
  * Lê uma preferência de liga/desliga. O default mora aqui, e não em cada tela que consulta a

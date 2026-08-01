@@ -15,21 +15,12 @@
 
 /* ------------------------------------------------------------------ head -- */
 
-.cartoes__head {
-  display: grid;
-  gap: var(--space-5);
-}
-
-.cartoes__head h1 {
-  margin: 0;
-  font: var(--fw-bold) var(--fs-h1) / var(--lh-snug) var(--font-sans);
-  letter-spacing: -0.02em;
-  text-wrap: balance;
-}
+/* A manchete é o `VerdictHero` do DS; o gate entra como rodapé dele. */
 
 /* O gate é a prova do veredito, não um formulário: linha nua sob o h1 —
    espaço e tipografia separam; a moldura fica com quem age (proposta). */
 .cartoes__gate {
+  margin-top: var(--space-5);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -192,11 +183,10 @@
   box-shadow: inset 0 -30px 40px -30px rgb(0 0 0 / 0.35);
 }
 
+/* Bloco, não flex: nome e instituição empilham. O `space-between` existia para empurrar
+   um segundo filho à direita; sem ele, o flex deitaria a instituição ao lado do nome. */
 .cartoes__face-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: var(--space-3);
+  display: block;
 }
 
 .cartoes__face-name {
@@ -213,11 +203,6 @@
   opacity: 0.72;
 }
 
-.cartoes__face-cat {
-  flex: none;
-  opacity: 0.82;
-}
-
 .cartoes__face-foot {
   display: flex;
   justify-content: space-between;
@@ -230,8 +215,7 @@
   display: block;
   font-size: var(--fs-micro);
   opacity: 0.72;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: var(--ls-normal);
 }
 
 .cartoes__face-due b {
@@ -808,22 +792,22 @@ b > .cartoes__chip {
 
 /* ------------------------------------------------------------------ motion -- */
 
-@media (prefers-reduced-motion: no-preference) {
-  .cartoes > * {
-    animation: cartoes-rise 0.34s cubic-bezier(0.2, 0, 0, 1) both;
-  }
+/* Sem media query: os tokens governam (0ms sob reduzido/desligado, restaurados quando o
+   usuário liga o toggle "Animações", que uma media query não enxergaria). */
+.cartoes > * {
+  animation: cartoes-rise var(--dur-base) var(--ease-standard) both;
+}
 
-  .cartoes > *:nth-child(2) {
-    animation-delay: 0.05s;
-  }
+.cartoes > *:nth-child(2) {
+  animation-delay: calc(var(--dur-stagger-step) * 1);
+}
 
-  .cartoes > *:nth-child(3) {
-    animation-delay: 0.1s;
-  }
+.cartoes > *:nth-child(3) {
+  animation-delay: calc(var(--dur-stagger-step) * 2);
+}
 
-  .cartoes > *:nth-child(n + 4) {
-    animation-delay: 0.15s;
-  }
+.cartoes > *:nth-child(n + 4) {
+  animation-delay: calc(var(--dur-stagger-step) * 3);
 }
 
 @keyframes cartoes-rise {

@@ -13,6 +13,7 @@ import {
 import { useCommand } from "../lib/useCommand";
 import { MonthNav } from "../design-system/components/MonthNav";
 import { EmptyState } from "../design-system/components/EmptyState";
+import { MiaAvatar } from "../design-system/components/MiaAvatar";
 import { OwnerChip } from "../design-system/components/OwnerChip";
 import { Money, SignedMoney } from "../design-system/components/Money";
 import { HealthBadge } from "../design-system/components/HealthBadge";
@@ -427,9 +428,23 @@ export function TotaisScreen() {
   if (forecastQ.loading) {
     return <EmptyState variant="skeleton" skeletonRows={6} />;
   }
-  if (forecastQ.error || !forecast) {
+  // Falha de carga e ausência de dado são estados diferentes: o primeiro anuncia por
+  // `role="alert"` e não manda importar planilha; o segundo é lacuna do método, e é a Mia
+  // quem diz o que fazer com ela.
+  if (forecastQ.error) {
     return (
       <EmptyState
+        variant="error"
+        title="Não foi possível carregar os totais"
+        description="A leitura dos cálculos do mês falhou. Tente de novo em instantes."
+      />
+    );
+  }
+
+  if (!forecast) {
+    return (
+      <EmptyState
+        icon={<MiaAvatar width={22} height={22} />}
         title="Sem dados para os totais"
         description="Importe a planilha ou lance um movimento para ver os cálculos do mês."
       />
@@ -450,6 +465,7 @@ export function TotaisScreen() {
   if (!m) {
     return (
       <EmptyState
+        icon={<MiaAvatar width={22} height={22} />}
         title="Mês sem movimentos"
         description="Ainda não há lançamentos no mês corrente para calcular os totais."
       />

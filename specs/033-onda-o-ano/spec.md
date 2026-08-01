@@ -221,8 +221,9 @@ gasto_típico`.
 
 ## Motion
 
-Coreografia de entrada única por montagem (fade+translate curto com stagger, CSS puro,
-`prefers-reduced-motion` respeitado, teto de 480ms do DS). Superfícies transitam;
+Coreografia de entrada única por montagem (fade+translate curto com stagger, CSS puro no
+orçamento de entrada do app — ~400ms do início ao fim, governado pelos tokens `--dur-*` e
+nunca dentro de media query, que o toggle "Animações" não alcança). Superfícies transitam;
 **dinheiro e percentuais nunca animam** (sem count-up; o pino da régua não desliza ao
 montar).
 

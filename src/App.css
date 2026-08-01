@@ -139,8 +139,7 @@ h3,
   margin-left: auto;
   font-size: var(--fs-micro);
   font-weight: var(--fw-bold);
-  letter-spacing: var(--ls-caps);
-  text-transform: uppercase;
+  letter-spacing: var(--ls-normal);
   color: var(--text-faint);
   display: flex;
   align-items: center;
@@ -160,8 +159,7 @@ h3,
 .ak-navh {
   font-size: var(--fs-micro);
   font-weight: var(--fw-bold);
-  letter-spacing: var(--ls-caps);
-  text-transform: uppercase;
+  letter-spacing: var(--ls-normal);
   color: var(--text-faint);
   padding: 14px 10px 6px;
 }
@@ -490,8 +488,7 @@ h3,
 .dash-hero__stats dt {
   font-size: var(--fs-label);
   font-weight: var(--fw-medium);
-  letter-spacing: var(--ls-label);
-  text-transform: uppercase;
+  letter-spacing: var(--ls-normal);
   color: var(--text-faint);
 }
 
@@ -601,10 +598,9 @@ h3,
   color: var(--text-faint);
   font-size: var(--fs-micro);
   font-weight: var(--fw-semibold);
-  letter-spacing: var(--ls-caps);
+  letter-spacing: var(--ls-normal);
   padding: var(--space-4) var(--space-4);
   text-align: left;
-  text-transform: uppercase;
   background: var(--bg-subtle);
 }
 
@@ -951,9 +947,8 @@ h3,
   color: var(--text-faint);
   font-size: var(--fs-label);
   font-weight: var(--fw-medium);
-  letter-spacing: var(--ls-label);
+  letter-spacing: var(--ls-normal);
   margin: 0 0 var(--space-1);
-  text-transform: uppercase;
 }
 
 .assistant-panel p {
@@ -1169,8 +1164,7 @@ h3,
 .gs-resync__label {
   font-size: var(--fs-micro);
   font-weight: var(--fw-bold);
-  letter-spacing: var(--ls-caps);
-  text-transform: uppercase;
+  letter-spacing: var(--ls-normal);
   color: var(--text-muted);
 }
 .gs-resync__name {
@@ -1199,8 +1193,7 @@ h3,
 .gs-label {
   font-size: var(--fs-micro);
   font-weight: var(--fw-bold);
-  letter-spacing: var(--ls-caps);
-  text-transform: uppercase;
+  letter-spacing: var(--ls-normal);
   color: var(--text-faint);
 }
 
@@ -2024,8 +2017,7 @@ h3,
 .dash-colchao__phase {
   font-size: var(--fs-xs);
   color: var(--text-faint);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--ls-normal);
 }
 
 .dash-colchao__nums {
@@ -2180,8 +2172,7 @@ h3,
   margin-left: var(--space-2);
   font-size: var(--fs-micro);
   font-weight: var(--fw-bold);
-  letter-spacing: var(--ls-caps);
-  text-transform: uppercase;
+  letter-spacing: var(--ls-normal);
   color: var(--primary);
 }
 
@@ -2195,8 +2186,7 @@ h3,
 }
 .fc-foot th[scope="row"] {
   text-align: left;
-  text-transform: uppercase;
-  letter-spacing: var(--ls-label);
+  letter-spacing: var(--ls-normal);
   font-size: var(--fs-label);
   color: var(--text-muted);
 }
@@ -2433,8 +2423,7 @@ h3,
 
 .pockets-cell__label {
   font-size: var(--fs-micro);
-  text-transform: uppercase;
-  letter-spacing: var(--ls-caps);
+  letter-spacing: var(--ls-normal);
   color: var(--text-faint);
 }
 

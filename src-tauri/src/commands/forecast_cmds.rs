@@ -623,7 +623,9 @@ pub(crate) async fn effective_daily_ceiling(
     if let Some(amount) = active_daily_budget(pool).await? {
         return Ok(amount);
     }
-    prev_month_daily_avg(pool, today_naive).await
+    Ok(prev_month_daily_avg(pool, today_naive)
+        .await?
+        .map_or(0, |basis| basis.per_day_cents))
 }
 
 /// Orçamento diário explícito ativo (> 0), se houver — o único teto que é VEREDITO (escolhido).
@@ -640,13 +642,29 @@ pub(crate) async fn active_daily_budget(pool: &SqlitePool) -> Result<Option<i64>
 
 /// Diário médio do último mês COMPLETO (Σ diário realizado ÷ dias do mês) — a base do teto
 /// ESTIMADO quando o dono não estipulou nada.
-async fn prev_month_daily_avg(pool: &SqlitePool, today_naive: NaiveDate) -> Result<i64, String> {
+/// Base da estimativa do teto: os operandos que produzem a média, não só o resultado. A tela
+/// IMPRIME esta conta — uma frase que a descrevesse poderia divergir do que o SQL faz.
+#[derive(Debug, Clone)]
+pub(crate) struct CeilingEstimateBasis {
+    /// Mês da base, `YYYY-MM`.
+    pub month: String,
+    /// Gasto variável somado do mês anterior (magnitude).
+    pub variable_cents: i64,
+    /// Dias do mês anterior — o divisor.
+    pub days: i64,
+    pub per_day_cents: i64,
+}
+
+async fn prev_month_daily_avg(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+) -> Result<Option<CeilingEstimateBasis>, String> {
     // Mês anterior completo: primeiro dia do mês corrente − 1 dia.
     let first_this = NaiveDate::from_ymd_opt(today_naive.year(), today_naive.month(), 1)
         .ok_or("data inválida")?;
     let last_prev = match first_this.pred_opt() {
         Some(d) => d,
-        None => return Ok(0),
+        None => return Ok(None),
     };
     let prev_ym = last_prev.format("%Y-%m").to_string();
     let days_prev = last_prev.day() as i64;
@@ -667,7 +685,15 @@ async fn prev_month_daily_avg(pool: &SqlitePool, today_naive: NaiveDate) -> Resu
     .fetch_one(pool)
     .await
     .map_err(|e| format!("daily ceiling (avg): {e}"))?;
-    Ok(if days_prev > 0 { sum.0 / days_prev } else { 0 })
+    if days_prev <= 0 {
+        return Ok(None);
+    }
+    Ok(Some(CeilingEstimateBasis {
+        month: prev_ym,
+        variable_cents: sum.0,
+        days: days_prev,
+        per_day_cents: sum.0 / days_prev,
+    }))
 }
 
 /// Procedência do teto exibido. `chosen` é o único veredito; `estimate` é a média do mês
@@ -696,6 +722,9 @@ impl CeilingSource {
 pub(crate) struct CeilingReading {
     pub per_day_cents: i64,
     pub source: CeilingSource,
+    /// Presente só quando `source` é `Estimate`: o teto escolhido é decisão do dono, e
+    /// número digitado não tem conta a mostrar.
+    pub estimate_basis: Option<CeilingEstimateBasis>,
 }
 
 pub(crate) async fn daily_ceiling_reading(
@@ -706,18 +735,22 @@ pub(crate) async fn daily_ceiling_reading(
         return Ok(CeilingReading {
             per_day_cents: amount,
             source: CeilingSource::Chosen,
+            estimate_basis: None,
         });
     }
-    let avg = prev_month_daily_avg(pool, today_naive).await?;
-    if avg > 0 {
+    if let Some(basis) = prev_month_daily_avg(pool, today_naive).await?
+        && basis.per_day_cents > 0
+    {
         return Ok(CeilingReading {
-            per_day_cents: avg,
+            per_day_cents: basis.per_day_cents,
             source: CeilingSource::Estimate,
+            estimate_basis: Some(basis),
         });
     }
     Ok(CeilingReading {
         per_day_cents: 0,
         source: CeilingSource::None,
+        estimate_basis: None,
     })
 }
 
@@ -2736,12 +2769,25 @@ pub struct UpcomingInvoiceDto {
 }
 
 #[derive(serde::Serialize)]
+pub struct CeilingEstimateJson {
+    /// Gasto variável somado do mês anterior (magnitude).
+    pub variable_cents: i64,
+    /// Dias do mês anterior — o divisor da média.
+    pub days: i64,
+    /// Mês da base, `YYYY-MM`.
+    pub month: String,
+}
+
+#[derive(serde::Serialize)]
 pub struct DashboardSummary {
     pub balance: i64,
     pub daily_budget: i64,
     /// Procedência do teto exibido: `chosen` (veredito) · `estimate` (média do mês anterior,
     /// com selo) · `none` (sem registro).
     pub daily_ceiling_source: String,
+    /// Operandos da estimativa do teto, para a tela IMPRIMIR a conta em vez de descrevê-la.
+    /// `None` quando o teto é escolhido: número digitado não tem conta a mostrar.
+    pub daily_ceiling_estimate: Option<CeilingEstimateJson>,
     /// Overlay: existe proposta da cerimônia do teto aguardando confirmação do dono.
     pub ceiling_proposal_pending: bool,
     pub daily_spend_today: i64,
@@ -2939,6 +2985,14 @@ pub(crate) async fn dashboard_summary(
         balance: projected_balance,
         daily_budget,
         daily_ceiling_source: ceiling.source.as_str().to_string(),
+        daily_ceiling_estimate: ceiling
+            .estimate_basis
+            .as_ref()
+            .map(|b| CeilingEstimateJson {
+                variable_cents: b.variable_cents,
+                days: b.days,
+                month: b.month.clone(),
+            }),
         ceiling_proposal_pending,
         daily_spend_today: daily_spend.0,
         card_spend_today_cents: card_spend.0,
@@ -4341,6 +4395,39 @@ mod tests {
         assert_eq!(s.daily_ceiling_source, "none");
         assert_eq!(s.daily_budget, 0);
         assert!(s.ceiling_proposal_pending);
+        // Sem estimativa não há conta a imprimir — a tela não pode inventar operandos.
+        assert!(s.daily_ceiling_estimate.is_none());
+    }
+
+    // A tela IMPRIME a estimativa do teto, então os operandos precisam FECHAR na divisão: uma
+    // conta que não bate é pior que uma frase vaga, porque tem cara de prova.
+    #[tokio::test]
+    async fn ceiling_estimate_basis_divides_to_the_shown_per_day() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        for (day, cents) in [("2026-05-03", 30_000_i64), ("2026-05-20", 32_000)] {
+            sqlx::query(
+                "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed) \
+                 VALUES (?1, 'expense', ?3, ?2, 0)",
+            )
+            .bind(format!("t-{day}"))
+            .bind(day)
+            .bind(cents)
+            .execute(&p)
+            .await
+            .unwrap();
+        }
+
+        let s = dashboard_summary(&p, today).await.unwrap();
+        assert_eq!(s.daily_ceiling_source, "estimate");
+        let basis = s.daily_ceiling_estimate.expect("estimativa tem base");
+        assert_eq!(basis.month, "2026-05");
+        assert_eq!(basis.variable_cents, 62_000);
+        assert_eq!(
+            basis.days, 31,
+            "maio tem 31 dias — o divisor é o mês da base"
+        );
+        assert_eq!(basis.variable_cents / basis.days, s.daily_budget);
     }
 
     // --- Fixes da revisão adversarial: driver por modo, staleness da média, supersede ---

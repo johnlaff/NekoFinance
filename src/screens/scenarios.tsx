@@ -79,6 +79,7 @@ import {
 import { SR_ONLY } from "../design-system/srOnly";
 import { Money, SignedMoney } from "../design-system/components/Money";
 import { Button } from "../design-system/components/Button";
+import { HealthBadge, type HealthLevel } from "../design-system/components/HealthBadge";
 import { Disclosure } from "../design-system/components/Disclosure";
 import { InfoPopover } from "../design-system/components/InfoPopover";
 import { safeErrorMessage, errorText } from "../lib/errors";
@@ -1842,19 +1843,22 @@ function scenarioVerdict(compare: ScenarioCompareDto): ScenarioVerdict {
   };
 }
 
-/** Gêmeo VISÍVEL da região aria-live (que continua existindo e anunciando cada recomputo) —
- * ícone + palavra + cor, nunca só cor; borda tintada reforça sem depender só do texto. */
+/** Escala pequena do veredito-primeiro: a palavra de estado vem no `HealthBadge`, e a
+ * hierarquia da manchete é tipográfica. Caixa tintada para ranquear conteúdo é problema de
+ * escala de tipo, não de cor — e o acento de status se gasta na pílula, não na superfície.
+ * Gêmeo VISÍVEL da região aria-live, que segue anunciando cada recomputo. */
+const VERDICT_STATE: Record<VerdictTier, { level: HealthLevel; label: string }> = {
+  ok: { level: "steady", label: "Livre" },
+  tight: { level: "watch", label: "Aperto" },
+  risk: { level: "risk", label: "Buraco" },
+};
+
 function ScenarioVerdictBanner({ compare }: { compare: ScenarioCompareDto }) {
   const verdict = scenarioVerdict(compare);
+  const state = VERDICT_STATE[verdict.tier];
   return (
-    <div className={`scn-verdict scn-verdict--${verdict.tier}`}>
-      <span className="scn-verdict__icon" aria-hidden="true">
-        {verdict.tier === "ok" ? (
-          <CheckCircle2 size={20} strokeWidth={1.75} />
-        ) : (
-          <AlertTriangle size={20} strokeWidth={1.75} />
-        )}
-      </span>
+    <div className="scn-verdict">
+      <HealthBadge level={state.level} label={state.label} />
       <div>
         <p className="scn-verdict__headline">{verdict.headline}</p>
         <p className="scn-verdict__subline">{verdict.subline}</p>

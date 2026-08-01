@@ -3,6 +3,11 @@ import { useEffect, useRef, useState } from "react";
 import { Clock3, Gauge, ListChecks, Plus, Trash2 } from "lucide-react";
 import { Button } from "../design-system/components/Button";
 import { EmptyState } from "../design-system/components/EmptyState";
+import {
+  CollapsedReceipt,
+  Receipt,
+  type ReceiptLine,
+} from "../design-system/components/Receipt";
 import { EstimateMark } from "../design-system/components/EstimateMark";
 import { InfoPopover } from "../design-system/components/InfoPopover";
 import { ModeChip } from "../design-system/components/ModeChip";
@@ -20,6 +25,7 @@ import {
 import { centsToBRLInput, formatBRL, parseBRLToCents, todayISO } from "../lib/format";
 import { safeErrorMessage } from "../lib/errors";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
+import { useShowReceipt } from "../lib/useShowReceipt";
 import {
   GUIDED_QUESTIONS,
   buildTetoView,
@@ -191,6 +197,7 @@ function Verdict({
   view: TetoView;
   onStartRite: (step: RiteStep) => void;
 }) {
+  const showReceipt = useShowReceipt();
   return (
     <div className="teto__verdict">
       <p className="teto__vlabel">
@@ -205,12 +212,16 @@ function Verdict({
           <EstimateMark
             term={{
               title: "Número em estimativa",
-              body: "É a média do Diário dos meses com registro, exibida enquanto não há teto escolhido. A cerimônia transforma a estimativa em decisão.",
+              body: "É o gasto variável do mês anterior dividido pelos dias dele, exibido enquanto não há teto escolhido. A conta está à mostra na própria manchete. A cerimônia transforma a estimativa em decisão.",
             }}
           />
         ) : null}
       </p>
-      <VerdictHeadline view={view} onStartRite={onStartRite} />
+      <VerdictHeadline
+        view={view}
+        onStartRite={onStartRite}
+        showReceipt={showReceipt}
+      />
       {view.kind === "chosen" ? (
         /* Sem o gate do método: esta tela registra a decisão do dono, e o julgamento da
            legitimidade do modo cartão mora onde a economia é julgada. */
@@ -220,12 +231,33 @@ function Verdict({
   );
 }
 
+/** A conta da estimativa. A preferência escolhe entre aberta e recolhida — nunca some. */
+function EstimateReceipt({
+  basis,
+  perDayCents,
+  showReceipt,
+}: {
+  basis: NonNullable<TetoView["estimateBasis"]>;
+  perDayCents: number;
+  showReceipt: boolean;
+}) {
+  const month = monthYearLabel(basis.month) ?? "o mês anterior";
+  const lines: ReceiptLine[] = [
+    { label: `Gasto variável de ${month}`, cents: basis.variableCents },
+    { label: `Dias de ${month}`, text: String(basis.days), op: "div" },
+    { label: "Cerca de, por dia", cents: perDayCents, op: "eq", result: true },
+  ];
+  return showReceipt ? <Receipt lines={lines} /> : <CollapsedReceipt lines={lines} />;
+}
+
 function VerdictHeadline({
   view,
   onStartRite,
+  showReceipt,
 }: {
   view: TetoView;
   onStartRite: (step: RiteStep) => void;
+  showReceipt: boolean;
 }) {
   switch (view.kind) {
     case "proposal":
@@ -237,9 +269,17 @@ function VerdictHeadline({
             Cerca de <Money cents={view.perDayCents} size="inherit" hideCents /> por
             dia, pelo seu histórico.
           </h1>
+          {/* A conta impressa no lugar da frase que a descrevia: uma frase pode divergir do
+              motor — e esta divergia, falando em "meses" onde o cálculo usa um mês só. */}
+          {view.estimateBasis ? (
+            <EstimateReceipt
+              basis={view.estimateBasis}
+              perDayCents={view.perDayCents}
+              showReceipt={showReceipt}
+            />
+          ) : null}
           <p>
-            É a média do gasto variável dos seus meses com registro — não um teto
-            escolhido.{" "}
+            Não é um teto escolhido.{" "}
             <span className="teto__cf">
               A cerimônia transforma a estimativa em decisão.
             </span>

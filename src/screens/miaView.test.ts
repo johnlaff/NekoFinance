@@ -39,6 +39,7 @@ const SUMMARY: DashboardSummary = {
   balance: 1_299_520,
   daily_budget: 4_300,
   daily_ceiling_source: "chosen",
+  daily_ceiling_estimate: null,
   ceiling_proposal_pending: false,
   daily_spend_today: 3_800,
   card_spend_today_cents: 0,
