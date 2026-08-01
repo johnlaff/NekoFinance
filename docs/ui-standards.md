@@ -216,3 +216,22 @@ from drifting back into one implementation per screen.
 40. Every wave passes: `npm run check`, e2e visual smoke with inspected screenshots,
     React Doctor with no new findings, and the impeccable audit + critique gates before
     it is considered done.
+
+## Screen density
+
+41. **Each datum appears once per screen.** A number, a date or a state printed in one block
+    does not repeat in another block at the same level of reading. Repetition does not
+    reinforce: it splits attention and forces the reader to check whether the two are the same
+    datum. When two blocks need the same fact, either the second points at the first, or one of
+    them should not exist. The exception is **detail, not redundancy**: a block that goes deeper
+    into an item may reprint it at higher precision — the calendar cell shows `8.420` and the
+    opened day shows `R$ 8.420,00`, two zoom levels of the same datum. What the rule forbids is
+    the same fact, at the same resolution, in two places competing for the same attention.
+42. **A screen opening is a headline, not a paragraph.** The verdict block carries at most three
+    lines: eyebrow, headline and one line of body — and the body disappears when rule 41 leaves
+    nothing exclusive for it to say. Navigation chrome shares the eyebrow line and gets no frame
+    of its own; the touch target comes from padding, not from a drawn box (`MonthNav` takes
+    `hideLabel` when the app bar already prints the month — the text stays in the DOM for the
+    `aria-live` announcement). The defect both rules prevent: a screen that looks full and
+    informs little, with primary data pushed off the first screen by text that already exists
+    below it.

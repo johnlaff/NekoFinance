@@ -15,17 +15,27 @@ Não há matemática nova: todos os números vêm dos DTOs existentes (`MonthGri
 
 ## Estrutura da tela (ordem do DOM = ordem de leitura)
 
-1. **Cabeçalho** — o título "Calendário" vive no shell; a tela abre com o h2 do mês
-   ("Julho dia a dia") e uma frase de contexto ("Cada dia mostra o movimento e o
-   saldo que ele deixou.") com o "Como funciona?" ao lado (didática atrás de
-   pergunta). `MonthNav` ao lado no desktop, empilhado no mobile. O crumb da appbar
-   mostra o mês visto ("Julho de 2026") via store de crumbs do shell.
-2. **Grade do mês** — 7 colunas, semana começa na segunda (Seg → Dom, como a
+1. **Veredito** — a abertura cabe em duas linhas (regras 41 e 42): um olho que
+   declara a costura ("Realizado até 10/06") com o "Como funciona?" e a navegação
+   de mês na mesma linha, e a manchete com a forma do mês ("Junho afunda no dia 20
+   e respira no 25."). Sem corpo: todo número que ele diria já está impresso
+   abaixo. O rótulo do mês fica em `sr-only` no `MonthNav` (`hideLabel`) — o crumb
+   da appbar já o mostra, e o texto no DOM é o que a `aria-live` anuncia.
+2. **Trilho** — o saldo do mês numa linha do tamanho de uma frase, sólida no
+   realizado e tracejada na projeção, com marcadores em hoje, no menor saldo e nas
+   entradas. **Só aparece no celular**: no desktop a célula tem altura para
+   movimento e saldo, e a forma do mês se lê na própria grade. O DOM é único (regra 10) — quem esconde é o CSS, e o SVG é `aria-hidden` nos dois viewports.
+3. **Grade do mês** — 7 colunas, semana começa na segunda (Seg → Dom, como a
    direção). Anatomia por viewport abaixo.
-3. **Legenda** — imediatamente abaixo da grade, declara as cores em uso no viewport.
-4. **Agenda do dia** — painel fixo (sticky) de ~340px à direita no desktop,
-   ocupando a segunda coluna do grid da tela; no mobile, logo abaixo da legenda.
-   O dia selecionado nasce em **hoje** no mês corrente, no **dia 1** nos demais.
+4. **O dia aberto** — painel de ~340px à direita no desktop, bloco abaixo da grade
+   no celular. O saldo é o herói e a faixa do termômetro vem em palavra ao lado
+   dele. O dia nasce em **hoje** no mês corrente, no **dia 1** nos demais.
+5. **O que marca o mês** — menor saldo, maior saída e entradas, cada linha
+   navegando para o dia. Quando o vale e a maior saída caem no mesmo dia, a data
+   aparece uma vez e a linha nomeia os dois papéis.
+
+Não há legenda de cores: ela era didática fixa (regra 1) e a explicação inteira
+mora no "Como funciona?", faixas do termômetro incluídas.
 
 ## Grade — anatomia por viewport
 
@@ -34,6 +44,10 @@ A célula é um `gridcell` real (padrão APG de grade de datas): a grade usa
 ±7 (Cima/Baixo), Home/End vão ao início/fim da semana, PageUp/PageDown trocam o mês,
 Enter/Espaço selecionam o dia (a seleção também acontece no próprio foco de clique).
 Tab entra e sai da grade uma única vez.
+
+As linhas da grade dividem a altura disponível no desktop (`grid-auto-rows:
+minmax(76px, 1fr)` sobre `--content-h`, publicada pelo shell): o dado ocupa a tela
+que é dele, em vez de parar no meio da viewport.
 
 **Desktop (>900px)** — a célula fala:
 
@@ -50,24 +64,25 @@ Tab entra e sai da grade uma única vez.
 - Dia selecionado: `outline` de 2px no acento (não muda a borda de evento).
 - Dias fora do mês: célula vazia, sem borda, fora da navegação do teclado.
 
-**Mobile (≤900px)** — a grade é navegação (fallback deliberado, não planilha
-encolhida): em 390px, 7 colunas × 3 dados dá ~50px por célula — números de 5
-dígitos virariam fonte de 8px.
+**Mobile (≤900px)** — a célula tem 46×52px e carrega **dia e saldo** (reais
+inteiros com milhar, o mesmo formato do desktop). O movimento é o que não cabe: ele
+mora no dia aberto.
 
-- Célula quadrada (aspect-ratio 1) só com o **número do dia** sobre o **tint do
-  termômetro** (faixas fixas em reais — `saldoBand`, a "saúde" do dia). Movimento e
-  saldo não renderizam: os números moram na agenda do dia tocado.
-- Eventos viram sinais discretos: ponto sob o número (entrada = positivo, menor
-  saldo = warning), anel de acento para hoje; previsto esmaece o tint (opacity).
+- Superfície neutra. **O termômetro pinta só as faixas que apertam** (Apertado,
+  Negativo, Crítico): os limiares seguem absolutos em reais, o que muda é onde a
+  cor é gasta — num mês inteiro na faixa boa, 30 células tingidas não distinguem
+  nada. Sobre o tint, o número do dia sobe para `--text-strong` e o saldo crítico
+  usa `--danger-300`, ambos para manter AA.
+- Eventos: anel de acento em hoje, preenchimento no dia aberto (dois conceitos,
+  duas formas), triângulo verde na entrada (forma além de cor) e contorno âmbar no
+  menor saldo; previsto recua a superfície e esmaece o número — nunca `opacity`
+  global, que apagaria também o tint de aperto.
 - Alvo de toque ≥ 44px (gap reduz em <380px antes de encolher a célula).
 
 A frase didática do "Como funciona?" cobre as duas leituras (eventos no desktop,
-termômetro no mobile) — o copy inline não bifurca por viewport (regra 8); só a
-**legenda** muda, porque descreve as cores que o viewport realmente usa:
-
-- Desktop: Hoje · Entrada · Menor saldo do mês · Previsto — ainda não aconteceu.
-- Mobile: as 5 faixas do termômetro (Folga · OK · Apertado · Negativo · Crítico) +
-  Hoje · Entrada · Menor saldo · Previsto.
+termômetro no mobile) — o copy inline não bifurca por viewport (regra 8). O que
+varia entre viewports é instrumento, não texto: o trilho existe só no celular, e a
+grade do celular troca movimento por saldo porque 46px não comportam os dois.
 
 ## Movimento líquido (a conta)
 
@@ -81,19 +96,23 @@ véspera conhecida, o movimento do dia 1 não renderiza (dado ausente ≠ zero).
 Saldo por dia: passado vem do `get_month_grid` (planilha restaurada), hoje-em-diante
 do `get_forecast` (projeção) — mesma costura da tela atual.
 
-## Agenda do dia (anatomia única, dois endereços)
+## O dia aberto (anatomia única, dois endereços)
 
-- **Título**: dia por extenso ("Sábado, 12 de julho") + tag "Previsto — ainda não
-  aconteceu" quando o dia é futuro (mesma gramática da grade).
+- **Título**: dia por extenso ("Sábado, 12 de julho") + sufixo "· previsto" quando o
+  dia é futuro (mesma gramática da grade).
+- **Saldo herói**: o saldo que o dia deixou em `--fs-money-lg`, com a faixa do
+  termômetro em palavra ao lado ("Folga", "Apertado") — cor nunca é o único canal.
+- **Movimento do dia**: o delta contra a véspera, logo abaixo do saldo.
 - **Lançamentos do dia**: linhas de `getMonthTransactions` filtradas pela data —
   descrição + valor (`Money`), pílulas herdadas do Livro-razão só quando carregam
   estado (parcela, Previsto, Reembolso). Dia sem lançamentos: "Sem movimento — o
   saldo ficou como estava." (o vazio é fato, não erro).
 - **Resumo do dia**: componentes não-zerados (Entrada · Saídas fixas · Diário ·
   Economia) — zerados são omitidos para a leitura não virar formulário.
-- **Saldo que o dia deixou**: a última linha, sempre presente (ou travessão
-  epistêmico quando não há corrente para o dia).
-- **Rodapé**: link "Ver no Livro-razão" — navega para Lançamentos (o mês da agenda).
+- **Sem corrente para o dia**: travessão epistêmico no lugar do saldo herói —
+  nunca `R$ 0,00` fabricado.
+- **Rodapé**: link "Ver no Livro-razão", ancorado no fim do painel (regra 14) —
+  navega para Lançamentos (o mês visto).
 
 ## O que morre — e por quê
 
@@ -102,9 +121,12 @@ do `get_forecast` (projeção) — mesma costura da tela atual.
   para a mesma pergunta, fora da direção. O `SegmentedControl` sai com ela.
 - **Célula → Lançamentos**: o clique passa a selecionar o dia na agenda (o link para
   o Livro-razão vive no rodapé da agenda). A tela deixa de ser um atalho cego.
-- **Heatmap do termômetro no desktop**: a saúde vira dado da célula (saldo visível)
-  e o evento "menor saldo" guarda o pior ponto; o tint contínuo permanece no mobile,
-  onde a célula não tem espaço para o número.
+- **Heatmap contínuo do termômetro**: a saúde vira dado da célula (saldo visível) e
+  o evento "menor saldo" guarda o pior ponto. No celular o tint sobrevive só nas
+  faixas que apertam — pintar as 30 células de um mês saudável não distingue nada.
+- **Legenda de cores**: era didática fixa ocupando espaço permanente (regra 1) e
+  nenhum calendário de mercado a mantém. A explicação inteira foi para o "Como
+  funciona?".
 
 ## Estados
 
@@ -129,9 +151,12 @@ do `get_forecast` (projeção) — mesma costura da tela atual.
 
 - View-model puro (`calendarioView.ts`): matriz Seg-first, costura das correntes,
   delta do movimento (fronteira de mês/ano), detecção de eventos (menor saldo com
-  empate, entrada), agrupamento da agenda — TDD.
-- Testes de tela: estados (loading/erro/dados), seleção default, roving tabindex,
-  legenda por viewport, aba anual ausente.
+  empate, entrada), agrupamento da agenda, **manchete do mês** (vale × respiração,
+  ordem cronológica), **marcos do mês** (colisão vale/maior-saída), **faixa da
+  grade** (só o que aperta) e **série do trilho** (normalização, corte
+  realizado × projeção) — TDD.
+- Testes de tela: estados (loading/erro/dados/mês sem corrente), seleção default,
+  roving tabindex, aba anual ausente, e a ausência da legenda fixa.
 - E2E visual: baselines regenerados do zero (rm -rf + 2 execuções), shots mobile e
   desktop com a agenda visível; React Doctor sem achados novos; impeccable audit +
   critique antes do PR.

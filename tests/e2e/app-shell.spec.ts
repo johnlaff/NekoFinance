@@ -222,10 +222,15 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     await expect(
       page.getByRole("button", { name: "Calendário", exact: true }),
     ).toHaveAttribute("aria-current", "page");
-    // Master-detail: grade do mês + agenda do dia selecionado (hoje).
+    // Veredito do mês → grade → o dia aberto, com o saldo como herói do painel.
     await expect(page.getByRole("grid", { name: /junho de 2026/i })).toBeVisible();
-    await expect(page.getByText("Menor saldo do mês")).toBeVisible();
-    await expect(page.getByText("Saldo que o dia deixou")).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: /^Junho afunda no dia 20/ }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("complementary", { name: "O que marca o mês" }),
+    ).toBeVisible();
+    await expect(page.getByText("R$ 8.420,00").first()).toBeVisible();
     await page.screenshot({
       fullPage: true,
       path: testInfo.outputPath("calendario.png"),

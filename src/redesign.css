@@ -244,6 +244,11 @@
   padding: 26px 44px 64px;
   max-width: 1160px;
   margin: 0 auto;
+  /* A altura útil da tela abaixo da topbar, publicada para quem estica um
+     instrumento até o rodapé (o Calendário): `height: 100%` não serve, porque o
+     corpo rolável não fixa altura. Vale no chrome de desktop/tablet — no celular
+     nenhuma tela reclama a viewport, e o dock flutuante mudaria a conta. */
+  --content-h: calc(100dvh - var(--topbar-h) - 90px);
 }
 
 /* Ultrawide: o teto de leitura sobe um degrau em vez de deixar o vazio crescer

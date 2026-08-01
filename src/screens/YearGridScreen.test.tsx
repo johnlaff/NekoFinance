@@ -18,6 +18,11 @@ function renderCal() {
   );
 }
 
+/** O painel do dia é o `complementary` rotulado pela data; o outro é o dos marcos. */
+function dayPanel() {
+  return screen.getByRole("complementary", { name: /-feira|Sábado|Domingo/ });
+}
+
 /** Grid realizado só para junho — maio (véspera do dia 1) e demais meses vazios. */
 const gridByMonth = (args?: Record<string, unknown>) =>
   Number(args?.["month"]) === 6 ? MONTH_GRID : [];
@@ -49,14 +54,51 @@ describe("YearGridScreen (Calendário)", () => {
     vi.useRealTimers();
   });
 
-  it("abre a grade do mês com legenda de eventos e sem a aba anual", async () => {
+  it("abre pelo veredito do mês, sem legenda fixa e sem a aba anual", async () => {
     mockAll();
     renderCal();
     expect(
       await screen.findByRole("grid", { name: /junho de 2026/i }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Menor saldo do mês")).toBeInTheDocument();
+    // A forma do mês vem em palavras; a didática mora atrás da pergunta.
+    expect(
+      screen.getByRole("heading", { name: /^Junho afunda no dia 15/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Como funciona?")).toBeInTheDocument();
+    expect(screen.queryByText("Previsto — ainda não aconteceu")).toBeNull();
     expect(screen.queryByRole("radio", { name: "Ano inteiro" })).toBeNull();
+  });
+
+  it("o rótulo do mês não se repete: a barra do app já o imprime", async () => {
+    mockAll();
+    renderCal();
+    await screen.findByRole("grid", { name: /junho/i });
+    // O texto continua no DOM para a `aria-live` anunciar a troca — mas fora da vista.
+    const label = screen.getByText("Junho de 2026");
+    expect(label).toHaveStyle({ position: "absolute" });
+  });
+
+  it("o dia que aperta acende na grade; o resto fica neutro", async () => {
+    mockAll();
+    renderCal();
+    // A fixture de junho vive inteira acima de R$ 2.000: nenhuma célula pinta.
+    const cells = await screen.findAllByRole("gridcell");
+    expect(cells.filter((c) => c.hasAttribute("data-band"))).toHaveLength(0);
+  });
+
+  it("O que marca o mês lista o vale e as entradas, e navega para o dia", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    mockAll();
+    renderCal();
+    const marks = await screen.findByRole("complementary", {
+      name: "O que marca o mês",
+    });
+    expect(within(marks).getByText("Menor saldo")).toBeInTheDocument();
+    await user.click(within(marks).getByRole("button", { name: /15 de junho/ }));
+    expect(screen.getByRole("gridcell", { name: /15 de junho/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 
   it("costura as correntes: passado do grid, hoje em diante da projeção", async () => {
@@ -91,12 +133,14 @@ describe("YearGridScreen (Calendário)", () => {
     renderCal();
     const today = await screen.findByRole("gridcell", { name: /10 de junho/ });
     expect(today).toHaveAttribute("aria-selected", "true");
-    const agenda = screen.getByRole("complementary");
+    const agenda = dayPanel();
     expect(
       within(agenda).getByRole("heading", { name: "Quarta-feira, 10 de junho" }),
     ).toBeInTheDocument();
     expect(within(agenda).getByText("Café do dia")).toBeInTheDocument();
-    expect(within(agenda).getByText("Saldo que o dia deixou")).toBeInTheDocument();
+    // O saldo é o herói do bloco, com o termômetro em palavra ao lado.
+    expect(within(agenda).getByText("R$ 8.420,00")).toBeInTheDocument();
+    expect(within(agenda).getByText("Folga")).toBeInTheDocument();
   });
 
   it("tocar um dia move a agenda para ele", async () => {
@@ -106,15 +150,13 @@ describe("YearGridScreen (Calendário)", () => {
     const day15 = await screen.findByRole("gridcell", { name: /15 de junho/ });
     await user.click(day15);
     expect(day15).toHaveAttribute("aria-selected", "true");
-    const agenda = screen.getByRole("complementary");
+    const agenda = dayPanel();
     expect(
-      within(agenda).getByRole("heading", { name: "Segunda-feira, 15 de junho" }),
+      within(agenda).getByRole("heading", { name: /Segunda-feira, 15 de junho/ }),
     ).toBeInTheDocument();
     expect(within(agenda).getByText("Conta de luz")).toBeInTheDocument();
-    // Dia futuro declara-se previsto uma vez na agenda — nunca pílula por linha.
-    expect(
-      within(agenda).getByText("Previsto — ainda não aconteceu"),
-    ).toBeInTheDocument();
+    // Dia futuro declara-se previsto uma vez, no próprio título.
+    expect(within(agenda).getByText("· previsto")).toBeInTheDocument();
     expect(within(agenda).getByText("Saídas fixas")).toBeInTheDocument();
   });
 
@@ -125,7 +167,7 @@ describe("YearGridScreen (Calendário)", () => {
     // 13/06 (projeção): nenhum componente e nenhum lançamento.
     const day13 = await screen.findByRole("gridcell", { name: /13 de junho/ });
     await user.click(day13);
-    const agenda = screen.getByRole("complementary");
+    const agenda = dayPanel();
     expect(
       within(agenda).getByText("Sem movimento — o saldo ficou como estava."),
     ).toBeInTheDocument();
@@ -138,7 +180,7 @@ describe("YearGridScreen (Calendário)", () => {
     // 02/06 tem saídas realizadas (componentes), mas nenhum lançamento listado.
     const day2 = await screen.findByRole("gridcell", { name: /^2 de junho/ });
     await user.click(day2);
-    const agenda = screen.getByRole("complementary");
+    const agenda = dayPanel();
     expect(
       within(agenda).queryByText("Sem movimento — o saldo ficou como estava."),
     ).toBeNull();
@@ -155,8 +197,27 @@ describe("YearGridScreen (Calendário)", () => {
     // 20/06 não existe em nenhuma corrente (grid nem forecast).
     const day20 = await screen.findByRole("gridcell", { name: /20 de junho/ });
     await user.click(day20);
-    const agenda = screen.getByRole("complementary");
+    const agenda = dayPanel();
     expect(within(agenda).getByText("Sem corrente")).toBeInTheDocument();
+  });
+
+  it("mês sem corrente: manchete de fallback, sem trilho e sem marcos", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    mockAll();
+    const { container } = renderCal();
+    await screen.findByRole("grid", { name: /junho/i });
+    // Agosto não tem grid nem projeção na fixture — a tela cai no vazio honesto.
+    await user.click(screen.getByRole("button", { name: "Próximo mês" }));
+    await user.click(screen.getByRole("button", { name: "Próximo mês" }));
+    expect(
+      await screen.findByRole("heading", { name: "Agosto ainda não tem corrente." }),
+    ).toBeInTheDocument();
+    expect(container.querySelector(".calendario__rail")).toBeNull();
+    expect(
+      screen.queryByRole("complementary", { name: "O que marca o mês" }),
+    ).toBeNull();
+    // Nenhum saldo fabricado: o dia aberto declara a ausência.
+    expect(within(dayPanel()).getByText("Sem corrente")).toBeInTheDocument();
   });
 
   it("Ver no Livro-razão navega para Lançamentos", async () => {
