@@ -195,7 +195,6 @@ const ANNUAL_SAVINGS = {
   patrimonio_cents: 0,
   economia_ruler_cents: 250000,
   economia_ruler_rate_bps: 500,
-  includes_previdencia: false,
   economia_state: "verdict" as const,
   projected_income_cents: 6000000,
   projected_savings_cents: 1500000,

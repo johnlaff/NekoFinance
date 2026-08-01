@@ -853,8 +853,9 @@ mod tests {
 
         // Asserts pontuais primeiro (diagnóstico direto por família), depois o byte-a-byte global.
         assert_eq!(
-            fc_after_dto.annual_savings.realized_income_cents, 800_000,
-            "renda anual realizada = só os income REAIS de jan+fev (nenhuma renda de cenário)"
+            fc_after_dto.annual_savings.realized_income_cents, 1_320_000,
+            "entradas do ano = só os income REAIS dos meses vividos, o corrente incluído \
+             (nenhuma renda de cenário, nem a de janeiro nem a de março)"
         );
         assert_eq!(
             fc_after_dto.annual_savings.registered_economia_cents, 50_000,

@@ -12,7 +12,8 @@ use super::envelope::{
 use super::{Args, insert};
 use crate::commands::{
     MonthCoverageDto, MonthGridDayDto, SAVINGS_CEILING_BPS, SAVINGS_FLOOR_BPS, SAVINGS_TARGET_BPS,
-    annual_month_end, annual_month_metrics, forecast_dto, month_grid_at, reserve_reading,
+    annual_month_end, annual_month_metrics, annual_ruler_reading, forecast_dto, month_grid_at,
+    reserve_reading,
 };
 use crate::forecast::{self, AnnualRuler};
 use chrono::{Datelike, NaiveDate};
@@ -251,19 +252,17 @@ pub(crate) async fn year_analysis(pool: &SqlitePool, args: &Args, today: NaiveDa
         .map_err(ToolError::read_failed)?;
     let reserve_months = (reserve.state != "no_record").then_some(reserve.months);
 
-    let metrics = annual_month_metrics(pool, year, today)
+    let (metrics, ruler) = annual_ruler_reading(pool, year, today)
         .await
         .map_err(ToolError::read_failed)?;
-    let ruler = forecast::annual_ruler(&metrics, year, today);
     let figures = year_dto(year, today, &ruler, reserve_months);
 
     let mut data = serde_json::to_value(&figures).expect("figuras do ano são serializáveis");
 
     if let Some(base_year) = args.year("compare_to")? {
-        let base_metrics = annual_month_metrics(pool, base_year, today)
+        let (_, base_ruler) = annual_ruler_reading(pool, base_year, today)
             .await
             .map_err(ToolError::read_failed)?;
-        let base_ruler = forecast::annual_ruler(&base_metrics, base_year, today);
         let base = year_dto(base_year, today, &base_ruler, reserve_months);
         let delta = json!({
             // A comparação entre anos é de RENDA MÉDIA por mês com registro, nunca de totais: um

@@ -530,15 +530,22 @@ function Answer({
         </button>
       ) : null}
       <p className="mia__prov">
-        <span>
-          {answer.provenance === "calculo"
-            ? "Cálculo determinístico · Lê sua planilha · Responde local"
-            : answer.provenance === "runtime"
-              ? (answer.explanation ? "Explicação do método · " : "") +
-                (answer.transparency ?? "Resposta da conversa ligada")
+        {(answer.provenance !== "runtime" || answer.explanation) && (
+          <span className="mia__prov-source">
+            {answer.provenance === "calculo"
+              ? "Cálculo determinístico · Lê sua planilha · Responde local"
               : "Explicação do método"}
-        </span>
-        <time>{timeLabel(at)}</time>
+          </span>
+        )}
+        {/* Transparência da rodada (provedor/modelo/custo) é outra natureza — de quanto o
+            motor CONFIA na resposta, não de onde ela veio — por isso vira pílula à parte
+            em vez de emendar na mesma frase da proveniência. */}
+        {answer.provenance === "runtime" ? (
+          <span className="mia__prov-round">
+            {answer.transparency ?? "Resposta da conversa ligada"}
+          </span>
+        ) : null}
+        <time dateTime={at}>{timeLabel(at)}</time>
       </p>
     </div>
   );
@@ -792,7 +799,9 @@ export function CopilotScreen() {
                 <p className="mia__bubble">
                   <span style={SR_ONLY}>Você: </span>
                   {item.message.question}
-                  <time>{timeLabel(item.message.atISO)}</time>
+                  <time dateTime={item.message.atISO}>
+                    {timeLabel(item.message.atISO)}
+                  </time>
                 </p>
               </div>
             ) : (

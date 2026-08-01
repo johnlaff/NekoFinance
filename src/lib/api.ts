@@ -411,18 +411,18 @@ export interface MonthMetric {
 
 /** Poupança do ano: realizada (honesta) vs projetada (otimista se o futuro está incompleto). */
 export interface AnnualSavings {
+  /** Entradas dos meses vividos do ano, o corrente incluído — denominador da régua. */
   realized_income_cents: number;
-  /** NET superávit (renda − saída) — o "colchão" do Neko, distinto da Economia registrada. */
+  /** NET superávit (renda − saída) dos meses vividos — o "colchão", distinto da Economia. */
   realized_savings_cents: number;
   realized_rate_bps: number;
   /** Economia REGISTRADA do ano (transfers→reserva) — numerador do Economizado% do método. */
   registered_economia_cents: number;
   /** Patrimônio realizado do ano (previdência/ilíquido) — a outra leitura do popover. */
   patrimonio_cents: number;
-  /** A régua que julga: registrada + patrimônio quando a reserva líquida ≥ 6 meses. */
+  /** Numerador da régua: Economia lançada nos meses vividos. Patrimônio fica de fora. */
   economia_ruler_cents: number;
   economia_ruler_rate_bps: number;
-  includes_previdencia: boolean;
   /** Estado da régua de economia: sem registro ⇒ a UI exibe a sobra como estimativa marcada. */
   economia_state: "verdict" | "no_record";
   projected_income_cents: number;
