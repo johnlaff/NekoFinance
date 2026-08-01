@@ -623,7 +623,9 @@ pub(crate) async fn effective_daily_ceiling(
     if let Some(amount) = active_daily_budget(pool).await? {
         return Ok(amount);
     }
-    prev_month_daily_avg(pool, today_naive).await
+    Ok(prev_month_daily_avg(pool, today_naive)
+        .await?
+        .map_or(0, |basis| basis.per_day_cents))
 }
 
 /// Orçamento diário explícito ativo (> 0), se houver — o único teto que é VEREDITO (escolhido).
@@ -640,13 +642,29 @@ pub(crate) async fn active_daily_budget(pool: &SqlitePool) -> Result<Option<i64>
 
 /// Diário médio do último mês COMPLETO (Σ diário realizado ÷ dias do mês) — a base do teto
 /// ESTIMADO quando o dono não estipulou nada.
-async fn prev_month_daily_avg(pool: &SqlitePool, today_naive: NaiveDate) -> Result<i64, String> {
+/// Base da estimativa do teto: os operandos que produzem a média, não só o resultado. A tela
+/// IMPRIME esta conta — uma frase que a descrevesse poderia divergir do que o SQL faz.
+#[derive(Debug, Clone)]
+pub(crate) struct CeilingEstimateBasis {
+    /// Mês da base, `YYYY-MM`.
+    pub month: String,
+    /// Gasto variável somado do mês anterior (magnitude).
+    pub variable_cents: i64,
+    /// Dias do mês anterior — o divisor.
+    pub days: i64,
+    pub per_day_cents: i64,
+}
+
+async fn prev_month_daily_avg(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+) -> Result<Option<CeilingEstimateBasis>, String> {
     // Mês anterior completo: primeiro dia do mês corrente − 1 dia.
     let first_this = NaiveDate::from_ymd_opt(today_naive.year(), today_naive.month(), 1)
         .ok_or("data inválida")?;
     let last_prev = match first_this.pred_opt() {
         Some(d) => d,
-        None => return Ok(0),
+        None => return Ok(None),
     };
     let prev_ym = last_prev.format("%Y-%m").to_string();
     let days_prev = last_prev.day() as i64;
@@ -667,7 +685,15 @@ async fn prev_month_daily_avg(pool: &SqlitePool, today_naive: NaiveDate) -> Resu
     .fetch_one(pool)
     .await
     .map_err(|e| format!("daily ceiling (avg): {e}"))?;
-    Ok(if days_prev > 0 { sum.0 / days_prev } else { 0 })
+    if days_prev <= 0 {
+        return Ok(None);
+    }
+    Ok(Some(CeilingEstimateBasis {
+        month: prev_ym,
+        variable_cents: sum.0,
+        days: days_prev,
+        per_day_cents: sum.0 / days_prev,
+    }))
 }
 
 /// Procedência do teto exibido. `chosen` é o único veredito; `estimate` é a média do mês
@@ -696,6 +722,9 @@ impl CeilingSource {
 pub(crate) struct CeilingReading {
     pub per_day_cents: i64,
     pub source: CeilingSource,
+    /// Presente só quando `source` é `Estimate`: o teto escolhido é decisão do dono, e
+    /// número digitado não tem conta a mostrar.
+    pub estimate_basis: Option<CeilingEstimateBasis>,
 }
 
 pub(crate) async fn daily_ceiling_reading(
@@ -706,18 +735,22 @@ pub(crate) async fn daily_ceiling_reading(
         return Ok(CeilingReading {
             per_day_cents: amount,
             source: CeilingSource::Chosen,
+            estimate_basis: None,
         });
     }
-    let avg = prev_month_daily_avg(pool, today_naive).await?;
-    if avg > 0 {
+    if let Some(basis) = prev_month_daily_avg(pool, today_naive).await?
+        && basis.per_day_cents > 0
+    {
         return Ok(CeilingReading {
-            per_day_cents: avg,
+            per_day_cents: basis.per_day_cents,
             source: CeilingSource::Estimate,
+            estimate_basis: Some(basis),
         });
     }
     Ok(CeilingReading {
         per_day_cents: 0,
         source: CeilingSource::None,
+        estimate_basis: None,
     })
 }
 
@@ -1249,18 +1282,17 @@ pub(crate) async fn reserve_reading(
     })
 }
 
-/// A régua de economia que JULGA: Economia registrada do ano mais, só quando a reserva líquida
-/// cobre ≥ 6 meses de custo de vida, o Patrimônio realizado. O método constrói liquidez
-/// primeiro; poupança de longo prazo só conta depois que o colchão existe.
+/// A régua de economia que JULGA: a Economia REGISTRADA do ano, e só ela. Patrimônio
+/// (previdência, ilíquido) é saída de longo prazo — vive fora do numerador, como outra linha da
+/// vida financeira, e é publicado ao lado para leitura, nunca somado à régua.
 ///
-/// Uma régua só, sem bifurcar semântica: alimenta o guardrail de poupança, o Economizado% e a
-/// perna de economia do gate do modo cartão.
+/// Uma régua só, sem bifurcar semântica: alimenta o guardrail de poupança e a perna de economia
+/// do gate do modo cartão.
 pub(crate) struct EconomiaRulerReading {
-    /// Economia registrada + patrimônio condicional — o numerador que julga.
-    pub cents: i64,
+    /// O numerador que julga: Economia registrada dos meses completos.
     pub registered_cents: i64,
+    /// Patrimônio realizado do ano — leitura vizinha, fora da régua.
     pub patrimonio_cents: i64,
-    pub includes_patrimonio: bool,
     /// `verdict` (régua viva) · `no_record` (nada registrado — a superfície mostra a sobra
     /// derivada como estimativa marcada).
     pub state: &'static str,
@@ -1272,21 +1304,30 @@ pub(crate) async fn economia_ruler_reading(
 ) -> Result<EconomiaRulerReading, String> {
     let registered = realized_annual_economia(pool, today_naive).await?;
     let patrimonio = realized_annual_patrimonio(pool, today_naive).await?;
-    let balance: (i64,) =
-        sqlx::query_as("SELECT COALESCE(SUM(balance), 0) FROM account WHERE liquidity = 'reserve'")
-            .fetch_one(pool)
-            .await
-            .map_err(|e| format!("query reserve balance: {e}"))?;
-    let baseline = realized_monthly_baseline(pool, today_naive).await?;
-    let includes_patrimonio = baseline > 0 && balance.0 >= baseline * RESERVE_MIN_MONTHS;
-    let cents = registered + if includes_patrimonio { patrimonio } else { 0 };
     Ok(EconomiaRulerReading {
-        cents,
         registered_cents: registered,
         patrimonio_cents: patrimonio,
-        includes_patrimonio,
-        state: if cents > 0 { "verdict" } else { "no_record" },
+        state: if registered > 0 {
+            "verdict"
+        } else {
+            "no_record"
+        },
     })
+}
+
+/// A régua anual de um ano com as métricas que a sustentam, montadas uma vez só: carrega os doze
+/// meses e aplica a régua do motor. Quem precisa do Economizado%, do recorte vivido ou do
+/// veredito da faixa lê daqui — a montagem repetida por call site é o que deixa um deles para
+/// trás quando a régua ganha um parâmetro. As métricas vêm junto porque quem lista o ano mês a
+/// mês precisa das duas leituras, e carregá-las de novo leria o ano duas vezes.
+pub(crate) async fn annual_ruler_reading(
+    pool: &SqlitePool,
+    year: i32,
+    today_naive: NaiveDate,
+) -> Result<(Vec<forecast::MonthMetric>, forecast::AnnualRuler), String> {
+    let metrics = annual_month_metrics(pool, year, today_naive).await?;
+    let ruler = forecast::annual_ruler(&metrics, year, today_naive);
+    Ok((metrics, ruler))
 }
 
 /// Piso de reserva = colchão intocável que a folga de caixa não pode comer.
@@ -2054,18 +2095,19 @@ pub struct MonthMetricDto {
 /// usa a Economia registrada; o net só aparece como exibição do colchão.
 #[derive(serde::Serialize)]
 pub struct AnnualSavingsDto {
+    /// Entradas dos meses VIVIDOS do ano, o corrente incluído — o denominador da régua anual.
     pub realized_income_cents: i64,
+    /// Sobra dos meses vividos (o colchão), na mesma janela do denominador.
     pub realized_savings_cents: i64,
     pub realized_rate_bps: i64,
-    /// Economia REGISTRADA do ano (transfers→reserva/ilíquido), meses completos. Distinta do net.
+    /// Economia REGISTRADA do ano (transfers→reserva), meses completos. Distinta do net.
     pub registered_economia_cents: i64,
     /// Patrimônio realizado do ano (previdência/ilíquido) — a outra leitura do popover.
     pub patrimonio_cents: i64,
-    /// A régua de economia que julga (e alimenta o guardrail): registrada + patrimônio quando a
-    /// reserva líquida ≥ 6 meses (condição do método: liquidez primeiro).
+    /// Numerador da régua que julga: a Economia lançada nos meses vividos. Patrimônio fica de
+    /// fora — é saída de longo prazo, não Economia.
     pub economia_ruler_cents: i64,
     pub economia_ruler_rate_bps: i64,
-    pub includes_previdencia: bool,
     /// Estado epistêmico da régua de economia: `verdict` (economia registrada viva) ·
     /// `no_record` (nada registrado — a UI exibe a sobra derivada como estimativa marcada).
     pub economia_state: String,
@@ -2149,17 +2191,17 @@ pub(crate) async fn forecast_dto(
     );
 
     let reserve_floor_cents = reserve_floor(pool, today_naive).await?;
-    // Poupança ANUAL realizada (não o mês isolado, não o ano projetado-incompleto).
-    let (annual_income, annual_savings_amt) = realized_annual_savings(pool, today_naive).await?;
+    // Renda-base do GUARDRAIL: só meses COMPLETOS. No meio do mês as fixas já entraram e o
+    // salário pode não ter, e um denominador em formação viraria "pode gastar R$ 0" de falso
+    // pânico. A régua que a tela publica é outra janela — decisão, não exibição.
+    let (guardrail_income_cents, _) = realized_annual_savings(pool, today_naive).await?;
     let economia = economia_ruler_reading(pool, today_naive).await?;
     let annual_economia = economia.registered_cents;
     let annual_patrimonio = economia.patrimonio_cents;
-    let includes_previdencia = economia.includes_patrimonio;
-    let economia_ruler = economia.cents;
     let sts = forecast::safe_to_spend_today(
         &fc,
-        annual_income,
-        economia_ruler,
+        guardrail_income_cents,
+        annual_economia,
         SAVINGS_TARGET_BPS,
         reserve_floor_cents,
     );
@@ -2180,15 +2222,22 @@ pub(crate) async fn forecast_dto(
             0
         }
     };
+    // A régua anual é ÚNICA e mora no motor: Economizado% = Economia ÷ entradas sobre os meses
+    // VIVIDOS, o corrente incluído. Ler daqui é o que faz a conversa, a tela do ano e este DTO
+    // publicarem o mesmo percentual — uma segunda derivação aqui abriria duas verdades.
+    let (_, annual_ruler) = annual_ruler_reading(pool, today_naive.year(), today_naive).await?;
+    let ruler_income_cents = annual_ruler.income_lived_cents;
+
     let annual_savings = AnnualSavingsDto {
-        realized_income_cents: annual_income,
-        realized_savings_cents: annual_savings_amt,
-        realized_rate_bps: rate_bps(annual_savings_amt, annual_income),
+        realized_income_cents: ruler_income_cents,
+        realized_savings_cents: annual_ruler.surplus_lived_cents,
+        realized_rate_bps: rate_bps(annual_ruler.surplus_lived_cents, ruler_income_cents),
         registered_economia_cents: annual_economia,
         patrimonio_cents: annual_patrimonio,
-        economia_ruler_cents: economia_ruler,
-        economia_ruler_rate_bps: rate_bps(economia_ruler, annual_income),
-        includes_previdencia,
+        economia_ruler_cents: annual_ruler.economia_lived_cents,
+        // O percentual sai truncado do motor: exibir 21% de 21,9% nunca promete o que a régua
+        // não mediu. Sem renda vivida não há o que dividir — a régua não fabrica zero.
+        economia_ruler_rate_bps: annual_ruler.lived_bps.unwrap_or(0),
         economia_state: economia.state.to_string(),
         projected_income_cents: proj_income,
         projected_savings_cents: proj_savings,
@@ -2720,12 +2769,25 @@ pub struct UpcomingInvoiceDto {
 }
 
 #[derive(serde::Serialize)]
+pub struct CeilingEstimateJson {
+    /// Gasto variável somado do mês anterior (magnitude).
+    pub variable_cents: i64,
+    /// Dias do mês anterior — o divisor da média.
+    pub days: i64,
+    /// Mês da base, `YYYY-MM`.
+    pub month: String,
+}
+
+#[derive(serde::Serialize)]
 pub struct DashboardSummary {
     pub balance: i64,
     pub daily_budget: i64,
     /// Procedência do teto exibido: `chosen` (veredito) · `estimate` (média do mês anterior,
     /// com selo) · `none` (sem registro).
     pub daily_ceiling_source: String,
+    /// Operandos da estimativa do teto, para a tela IMPRIMIR a conta em vez de descrevê-la.
+    /// `None` quando o teto é escolhido: número digitado não tem conta a mostrar.
+    pub daily_ceiling_estimate: Option<CeilingEstimateJson>,
     /// Overlay: existe proposta da cerimônia do teto aguardando confirmação do dono.
     pub ceiling_proposal_pending: bool,
     pub daily_spend_today: i64,
@@ -2863,18 +2925,15 @@ pub(crate) async fn dashboard_summary(
     .map_err(|e| format!("query last_real_tx_date: {e}"))?;
     let last_real_tx_date = last_real.and_then(|(d,)| d);
 
-    // Gate de legitimidade do modo cartão: a economia 20–30% precisa estar VIVA (piso de 20%
-    // sobre a régua anual de economia, com a previdência condicional à reserva ≥ 6 meses).
-    let (annual_income, _) = realized_annual_savings(pool, today_naive).await?;
-    let economia_ruler = economia_ruler_reading(pool, today_naive).await?.cents;
-    let card_gate_economy_bps =
-        (annual_income > 0).then(|| economia_ruler * 10_000 / annual_income);
-    let card_gate_economy = if annual_income <= 0 {
-        crate::cards::GateLeg::Unknown
-    } else if economia_ruler * 10_000 >= SAVINGS_FLOOR_BPS * annual_income {
-        crate::cards::GateLeg::Alive
-    } else {
-        crate::cards::GateLeg::Below
+    // Gate de legitimidade do modo cartão: a economia 20–30% precisa estar VIVA. A perna lê a
+    // régua anual do motor — a mesma que a conversa e a tela do ano publicam —, para que o gate
+    // nunca declare viva uma economia que a pessoa está vendo abaixo da faixa.
+    let (_, annual_ruler) = annual_ruler_reading(pool, today_naive.year(), today_naive).await?;
+    let card_gate_economy_bps = annual_ruler.lived_bps;
+    let card_gate_economy = match card_gate_economy_bps {
+        None => crate::cards::GateLeg::Unknown,
+        Some(bps) if bps >= SAVINGS_FLOOR_BPS => crate::cards::GateLeg::Alive,
+        Some(_) => crate::cards::GateLeg::Below,
     };
     let card_gate_reserve = if reserve.state == "no_record" {
         crate::cards::GateLeg::Unknown
@@ -2926,6 +2985,14 @@ pub(crate) async fn dashboard_summary(
         balance: projected_balance,
         daily_budget,
         daily_ceiling_source: ceiling.source.as_str().to_string(),
+        daily_ceiling_estimate: ceiling
+            .estimate_basis
+            .as_ref()
+            .map(|b| CeilingEstimateJson {
+                variable_cents: b.variable_cents,
+                days: b.days,
+                month: b.month.clone(),
+            }),
         ceiling_proposal_pending,
         daily_spend_today: daily_spend.0,
         card_spend_today_cents: card_spend.0,
@@ -4192,32 +4259,30 @@ mod tests {
         assert_eq!(s.reserve_state, "zero"); // conta mapeada zerada é alerta legítimo
     }
 
-    // Previdência condicional: patrimônio entra na régua de economia (e no guardrail) apenas
-    // com a reserva líquida ≥ 6 meses de custo de vida.
+    // Previdência é PATRIMÔNIO, nunca Economia: ela é publicada ao lado como leitura própria e
+    // fica fora do numerador da régua, qualquer que seja a cobertura da reserva.
     #[tokio::test]
-    async fn forecast_dto_includes_previdencia_only_with_reserve_coverage() {
+    async fn previdencia_nunca_entra_na_regua_de_economia() {
         let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
 
-        // Reserva folgada (6 × custo de vida de 1.000,00): previdência conta.
+        // Reserva folgada (6 × custo de vida de 1.000,00).
         let p = pool().await;
         insert_income(&p, "i1", 500_000, "2026-03-05").await;
         insert_daily(&p, "d1", 100_000, "2026-05-10").await;
         insert_patrimonio_transfer(&p, "pv1", 30_000, "2026-04-08").await;
         insert_reserve_account(&p, 600_000).await;
         let f = forecast_dto(&p, today).await.unwrap();
-        assert!(f.annual_savings.includes_previdencia);
         assert_eq!(f.annual_savings.patrimonio_cents, 30_000);
-        assert_eq!(f.annual_savings.economia_ruler_cents, 30_000);
-        assert_eq!(f.annual_savings.economia_state, "verdict");
+        assert_eq!(f.annual_savings.economia_ruler_cents, 0);
+        assert_eq!(f.annual_savings.economia_state, "no_record");
 
-        // Reserva curta (< 6 meses): previdência fica fora e a régua não tem registro.
+        // Reserva curta (< 6 meses): mesmo veredito, a cobertura não move a régua.
         let p = pool().await;
         insert_income(&p, "i1", 500_000, "2026-03-05").await;
         insert_daily(&p, "d1", 100_000, "2026-05-10").await;
         insert_patrimonio_transfer(&p, "pv1", 30_000, "2026-04-08").await;
         insert_reserve_account(&p, 500_000).await;
         let f = forecast_dto(&p, today).await.unwrap();
-        assert!(!f.annual_savings.includes_previdencia);
         assert_eq!(f.annual_savings.patrimonio_cents, 30_000);
         assert_eq!(f.annual_savings.economia_ruler_cents, 0);
         assert_eq!(f.annual_savings.economia_state, "no_record");
@@ -4330,6 +4395,39 @@ mod tests {
         assert_eq!(s.daily_ceiling_source, "none");
         assert_eq!(s.daily_budget, 0);
         assert!(s.ceiling_proposal_pending);
+        // Sem estimativa não há conta a imprimir — a tela não pode inventar operandos.
+        assert!(s.daily_ceiling_estimate.is_none());
+    }
+
+    // A tela IMPRIME a estimativa do teto, então os operandos precisam FECHAR na divisão: uma
+    // conta que não bate é pior que uma frase vaga, porque tem cara de prova.
+    #[tokio::test]
+    async fn ceiling_estimate_basis_divides_to_the_shown_per_day() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        for (day, cents) in [("2026-05-03", 30_000_i64), ("2026-05-20", 32_000)] {
+            sqlx::query(
+                "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed) \
+                 VALUES (?1, 'expense', ?3, ?2, 0)",
+            )
+            .bind(format!("t-{day}"))
+            .bind(day)
+            .bind(cents)
+            .execute(&p)
+            .await
+            .unwrap();
+        }
+
+        let s = dashboard_summary(&p, today).await.unwrap();
+        assert_eq!(s.daily_ceiling_source, "estimate");
+        let basis = s.daily_ceiling_estimate.expect("estimativa tem base");
+        assert_eq!(basis.month, "2026-05");
+        assert_eq!(basis.variable_cents, 62_000);
+        assert_eq!(
+            basis.days, 31,
+            "maio tem 31 dias — o divisor é o mês da base"
+        );
+        assert_eq!(basis.variable_cents / basis.days, s.daily_budget);
     }
 
     // --- Fixes da revisão adversarial: driver por modo, staleness da média, supersede ---

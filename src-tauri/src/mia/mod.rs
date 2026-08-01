@@ -13,15 +13,20 @@
 pub mod bench;
 pub(crate) mod catalog;
 pub(crate) mod consent;
+#[cfg(test)]
+mod convergence;
 pub(crate) mod envelope;
 pub(crate) mod key_store;
 mod ledger_tools;
-mod method_tools;
+pub(crate) mod method_tools;
 pub(crate) mod prompt;
+pub(crate) mod proposal_tools;
 pub(crate) mod provider;
 pub(crate) mod run;
 mod scenario_tools;
+pub(crate) mod screen_events;
 mod state_tools;
+pub(crate) mod store;
 #[cfg(test)]
 mod test_pack;
 mod time_tools;
@@ -207,6 +212,36 @@ impl Args {
         })
     }
 
+    /// Chave de duas posições. Ausente vale como `false`: um campo que a chamada não menciona é
+    /// campo desligado, e exigir o `false` explícito seria atrito sem ganho.
+    pub(crate) fn flag(&self, key: &str) -> Result<bool, ToolError> {
+        let Some(raw) = self.value(key) else {
+            return Ok(false);
+        };
+        raw.as_bool()
+            .ok_or_else(|| Self::invalid(key, "true ou false", format!("{key}: false")))
+    }
+
+    /// Lista de identificadores. Cada item é texto: um número solto aqui apontaria para nada, e
+    /// aceitá-lo adiaria a recusa para o ponto em que já não se sabe qual item estava errado.
+    pub(crate) fn strings(&self, key: &str) -> Result<Vec<String>, ToolError> {
+        let Some(raw) = self.value(key) else {
+            return Ok(vec![]);
+        };
+        let refuse = || {
+            Self::invalid(
+                key,
+                "uma lista de identificadores em texto",
+                format!("{key}: [\"…\"]"),
+            )
+        };
+        raw.as_array()
+            .ok_or_else(refuse)?
+            .iter()
+            .map(|item| item.as_str().map(str::to_string).ok_or_else(refuse))
+            .collect()
+    }
+
     /// Lista de objetos: cada mudança preserva seus campos para a ferramenta validar a própria
     /// gramática, sem aceitar valores soltos que não têm como ser interpretados.
     pub(crate) fn objects(
@@ -299,6 +334,10 @@ impl Args {
 pub(crate) struct Context {
     pub clock: Clock,
     pub pack: MethodPack,
+    /// A conversa a que esta rodada pertence, quando há uma. É o que amarra uma proposta à
+    /// conversa que a produziu; nulo é o caso legítimo de quem chama a fachada fora de uma
+    /// conversa guardada — a bancada de evals, por exemplo.
+    pub conversation_id: Option<i64>,
 }
 
 /// Acrescenta um campo ao objeto de dados de uma ferramenta. A serialização de um tipo próprio
@@ -336,7 +375,7 @@ pub(crate) async fn dispatch(pool: &SqlitePool, call: &ToolCall, ctx: &Context) 
 
     let outcome = match Args::parse(spec, &call.arguments) {
         Err(e) => Err(e),
-        Ok(args) => run(pool, spec, &args, today, ctx).await,
+        Ok(args) => run(pool, spec, &args, today, ctx, revision.as_deref()).await,
     };
 
     let period = match &outcome {
@@ -370,6 +409,7 @@ async fn run(
     args: &Args,
     today: chrono::NaiveDate,
     ctx: &Context,
+    revision: Option<&str>,
 ) -> ToolResult {
     match spec.name {
         "get_financial_snapshot" => state_tools::financial_snapshot(pool, args, today).await,
@@ -387,6 +427,9 @@ async fn run(
         "get_commitments" => ledger_tools::commitments(pool, args, today).await,
         "simulate_scenario" => scenario_tools::simulate_scenario(pool, args, today).await,
         "get_method_guidance" => method_tools::method_guidance(&ctx.pack, args, today).await,
+        "propose_transaction" => {
+            proposal_tools::propose_transaction(pool, args, today, ctx, revision).await
+        }
         // O catálogo é a fonte da verdade dos nomes; uma entrada sem braço aqui é erro de
         // programação, e o teste de cobertura do catálogo o pega antes de qualquer rodada.
         other => Err(ToolError::new(

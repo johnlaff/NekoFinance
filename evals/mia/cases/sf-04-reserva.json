@@ -8,7 +8,7 @@
     "judgment": "mecanico",
     "provenance": "calculo",
     "tools": {
-      "must_call": ["get_accounts_and_net_worth"]
+      "must_call_any": [["get_accounts_and_net_worth", "get_financial_snapshot"]]
     },
     "answer": {
       "must_contain": ["21.000,00"]

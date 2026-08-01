@@ -40,6 +40,7 @@ async fn call_with_pack(
     let ctx = Context {
         clock: clock(),
         pack: method_tools::MethodPack::at(pack_root),
+        conversation_id: None,
     };
     dispatch(pool, &ToolCall::new(name, arguments), &ctx).await
 }
@@ -903,6 +904,11 @@ async fn every_tool_declares_use_for_and_not_for_and_answers() {
 
 fn minimal_args(tool: &str) -> serde_json::Map<String, Value> {
     let mut arguments = serde_json::Map::new();
+    if tool == "propose_transaction" {
+        for (key, value) in a_proposal().as_object().unwrap() {
+            arguments.insert(key.clone(), value.clone());
+        }
+    }
     if tool == "simulate_scenario" {
         arguments.insert(
             "changes".to_string(),
@@ -3124,4 +3130,371 @@ async fn method_guidance_fails_closed_without_deny_list() {
     assert!(!env.ok);
     assert!(env.data.is_none());
     assert_eq!(env.error.unwrap().code, ErrorCode::PrivacyBlocked);
+}
+
+// --- Proposta de lançamento -------------------------------------------------------------
+
+/// O relógio da aprovação: cinco minutos depois da emissão, dentro da validade.
+fn approval_clock() -> DateTime<chrono::FixedOffset> {
+    DateTime::parse_from_rfc3339("2026-07-25T09:05:00-03:00").unwrap()
+}
+
+/// Chama a fachada de dentro de uma conversa guardada, como o laço faz.
+async fn call_in_conversation(
+    pool: &SqlitePool,
+    conversation_id: i64,
+    name: &str,
+    arguments: Value,
+) -> Envelope {
+    let ctx = Context {
+        clock: clock(),
+        pack: method_tools::MethodPack::at(pack_fixture()),
+        conversation_id: Some(conversation_id),
+    };
+    dispatch(pool, &ToolCall::new(name, arguments), &ctx).await
+}
+
+/// A proposta de exemplo: uma despesa avulsa de R$ 80,00.
+fn a_proposal() -> Value {
+    json!({
+        "kind": "expense",
+        "amount_cents": 8000,
+        "date": "2026-07-25",
+        "description": "Farmácia",
+        "payment_method": "credit"
+    })
+}
+
+async fn propose(pool: &SqlitePool) -> Value {
+    data(pool, "propose_transaction", a_proposal()).await["proposal"].clone()
+}
+
+/// O payload e a assinatura como a tela os devolve ao aprovar.
+fn approval_of(proposal: &Value) -> (String, String) {
+    (
+        proposal["payload"].to_string(),
+        proposal["hash"].as_str().unwrap().to_string(),
+    )
+}
+
+async fn ledger_row(pool: &SqlitePool, id: i64) -> (Option<i64>, Option<String>, Option<String>) {
+    sqlx::query_as(
+        "SELECT conversation_id, decision, transaction_id FROM mia_proposal_ledger WHERE id = ?1",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_proposta_sai_normalizada_assinada_e_com_validade() {
+    let p = pool().await;
+    world(&p).await;
+
+    let proposal = propose(&p).await;
+
+    assert_eq!(proposal["schema_version"], 1);
+    assert_eq!(proposal["payload"]["kind"], "expense");
+    assert_eq!(proposal["payload"]["amount_cents"], 8000);
+    assert_eq!(proposal["payload"]["date"], "2026-07-25");
+    assert_eq!(proposal["payload"]["is_fixed"], false);
+    assert_eq!(proposal["payload"]["tag_ids"], json!([]));
+    assert_eq!(proposal["issued_at"], "2026-07-25T09:00:00-03:00");
+    assert_eq!(proposal["expires_at"], "2026-07-25T09:10:00-03:00");
+    assert!(proposal["id"].as_i64().is_some());
+    // A assinatura amarra a proposta ao mundo que a originou.
+    assert_eq!(
+        proposal["data_revision"].as_str(),
+        data_revision(&p).await.ok().as_deref()
+    );
+    assert_eq!(proposal["hash"].as_str().unwrap().len(), 64);
+}
+
+#[tokio::test]
+async fn duas_propostas_iguais_sobre_o_mesmo_mundo_tem_a_mesma_assinatura() {
+    let p = pool().await;
+    world(&p).await;
+
+    let primeira = propose(&p).await;
+    let segunda = propose(&p).await;
+
+    assert_eq!(primeira["hash"], segunda["hash"]);
+    assert_ne!(primeira["id"], segunda["id"]);
+}
+
+#[tokio::test]
+async fn o_escopo_estreito_recusa_e_nomeia_o_formulario() {
+    let p = pool().await;
+    world(&p).await;
+
+    for fora in ["transfer", "recurring", "installment", "split"] {
+        let mut arguments = a_proposal();
+        arguments["kind"] = json!(fora);
+        let env = call(&p, "propose_transaction", arguments).await;
+        let error = env.error.expect("escopo fora da proposta é recusado");
+
+        assert!(!env.ok);
+        assert_eq!(error.code, ErrorCode::InvalidArgument);
+        assert!(error.fix.contains("formulário de Lançar"), "{}", error.fix);
+    }
+}
+
+#[tokio::test]
+async fn campo_material_ausente_vira_pergunta_de_esclarecimento() {
+    let p = pool().await;
+    world(&p).await;
+
+    for ausente in ["kind", "amount_cents", "date"] {
+        let mut arguments = a_proposal();
+        arguments.as_object_mut().unwrap().remove(ausente);
+        let env = call(&p, "propose_transaction", arguments).await;
+        let error = env.error.expect("campo material ausente é recusado");
+
+        assert!(!env.ok);
+        assert!(
+            error.fix.starts_with("Pergunte antes de propor"),
+            "{}",
+            error.fix
+        );
+        assert!(error.message.contains(ausente), "{}", error.message);
+    }
+}
+
+#[tokio::test]
+async fn tag_inexistente_e_recusada_pelo_nome() {
+    let p = pool().await;
+    world(&p).await;
+    tag(&p, "tag-real", "Mercado").await;
+
+    let mut arguments = a_proposal();
+    arguments["tag_ids"] = json!(["tag-real", "tag-fantasma"]);
+    let env = call(&p, "propose_transaction", arguments).await;
+    let error = env.error.expect("tag inexistente é recusada");
+
+    assert_eq!(error.code, ErrorCode::InvalidArgument);
+    assert!(error.message.contains("tag-fantasma"), "{}", error.message);
+    assert!(error.fix.contains("get_tags"), "{}", error.fix);
+}
+
+#[tokio::test]
+async fn a_emissao_registra_a_proposta_no_ledger() {
+    let p = pool().await;
+    world(&p).await;
+    let conversation = store::active_conversation(&p).await.unwrap();
+
+    let env = call_in_conversation(&p, conversation, "propose_transaction", a_proposal()).await;
+    let proposal = env.data.unwrap()["proposal"].clone();
+
+    let (owner, decision, transaction) = ledger_row(&p, proposal["id"].as_i64().unwrap()).await;
+    assert_eq!(owner, Some(conversation));
+    assert_eq!(decision.as_deref(), Some("proposed"));
+    assert_eq!(transaction, None);
+}
+
+#[tokio::test]
+async fn aprovar_cria_o_lancamento_local_e_fecha_a_linha_do_ledger() {
+    let p = pool().await;
+    world(&p).await;
+    tag(&p, "tag-saude", "Saúde").await;
+
+    let mut arguments = a_proposal();
+    arguments["tag_ids"] = json!(["tag-saude"]);
+    let proposal = data(&p, "propose_transaction", arguments).await["proposal"].clone();
+    let (payload, hash) = approval_of(&proposal);
+
+    let id = proposal["id"].as_i64().unwrap();
+    let transaction_id = proposal_tools::approve(&p, id, &payload, &hash, approval_clock())
+        .await
+        .unwrap();
+
+    let row: (String, i64, Option<String>, String) =
+        sqlx::query_as("SELECT type, amount, description, date FROM \"transaction\" WHERE id = ?1")
+            .bind(&transaction_id)
+            .fetch_one(&p)
+            .await
+            .unwrap();
+    assert_eq!(row.0, "expense");
+    assert_eq!(row.1, 8000);
+    assert_eq!(row.2.as_deref(), Some("Farmácia"));
+    assert_eq!(row.3, "2026-07-25");
+
+    let vinculada: (String,) =
+        sqlx::query_as("SELECT tag_id FROM transaction_tag WHERE transaction_id = ?1")
+            .bind(&transaction_id)
+            .fetch_one(&p)
+            .await
+            .unwrap();
+    assert_eq!(vinculada.0, "tag-saude");
+
+    let (_, decision, gravada) = ledger_row(&p, id).await;
+    assert_eq!(decision.as_deref(), Some("approved"));
+    assert_eq!(gravada, Some(transaction_id));
+}
+
+#[tokio::test]
+async fn proposta_vencida_nao_grava() {
+    let p = pool().await;
+    world(&p).await;
+    let proposal = propose(&p).await;
+    let (payload, hash) = approval_of(&proposal);
+    let id = proposal["id"].as_i64().unwrap();
+    let tarde = DateTime::parse_from_rfc3339("2026-07-25T09:11:00-03:00").unwrap();
+
+    let recusa = proposal_tools::approve(&p, id, &payload, &hash, tarde)
+        .await
+        .unwrap_err();
+
+    assert!(recusa.contains("venceu"), "{recusa}");
+    assert_eq!(ledger_row(&p, id).await.1.as_deref(), Some("expired"));
+    assert_eq!(transaction_count(&p).await, 6);
+}
+
+#[tokio::test]
+async fn mundo_alterado_embaixo_da_proposta_nao_grava() {
+    let p = pool().await;
+    world(&p).await;
+    let proposal = propose(&p).await;
+    let (payload, hash) = approval_of(&proposal);
+    let id = proposal["id"].as_i64().unwrap();
+
+    expense(&p, "depois", 12_345, "2026-07-20", false).await;
+
+    let recusa = proposal_tools::approve(&p, id, &payload, &hash, approval_clock())
+        .await
+        .unwrap_err();
+
+    assert!(recusa.contains("mudaram"), "{recusa}");
+    assert_eq!(ledger_row(&p, id).await.1.as_deref(), Some("expired"));
+    assert_eq!(transaction_count(&p).await, 7);
+}
+
+#[tokio::test]
+async fn payload_editado_na_tela_aprova_depois_de_revalidado() {
+    let p = pool().await;
+    world(&p).await;
+    let proposal = propose(&p).await;
+    let (_, hash) = approval_of(&proposal);
+    let id = proposal["id"].as_i64().unwrap();
+
+    // Corrigir um campo no cartão não obriga a recomeçar a conversa: o payload editado passa pela
+    // régua inteira de novo, e é ele — não o que o modelo propôs — que o ledger registra aprovado.
+    let mut editado = proposal["payload"].clone();
+    editado["amount_cents"] = json!(9_000);
+
+    let transaction_id =
+        proposal_tools::approve(&p, id, &editado.to_string(), &hash, approval_clock())
+            .await
+            .unwrap();
+
+    let (amount,): (i64,) = sqlx::query_as("SELECT amount FROM \"transaction\" WHERE id = ?1")
+        .bind(&transaction_id)
+        .fetch_one(&p)
+        .await
+        .unwrap();
+    assert_eq!(amount, 9_000);
+
+    let (_, decision, gravada) = ledger_row(&p, id).await;
+    assert_eq!(decision.as_deref(), Some("approved"));
+    assert_eq!(gravada, Some(transaction_id));
+    let (stored,): (String,) =
+        sqlx::query_as("SELECT proposal_json FROM mia_proposal_ledger WHERE id = ?1")
+            .bind(id)
+            .fetch_one(&p)
+            .await
+            .unwrap();
+    let stored: Value = serde_json::from_str(&stored).unwrap();
+    assert_eq!(stored["payload"]["amount_cents"], 9_000);
+}
+
+#[tokio::test]
+async fn assinatura_que_nao_corresponde_a_proposta_nao_grava() {
+    let p = pool().await;
+    world(&p).await;
+    let proposal = propose(&p).await;
+    let (payload, _) = approval_of(&proposal);
+    let id = proposal["id"].as_i64().unwrap();
+
+    let recusa = proposal_tools::approve(&p, id, &payload, &"0".repeat(64), approval_clock())
+        .await
+        .unwrap_err();
+
+    assert!(recusa.contains("não corresponde"), "{recusa}");
+    assert_eq!(ledger_row(&p, id).await.1.as_deref(), Some("proposed"));
+    assert_eq!(transaction_count(&p).await, 6);
+}
+
+#[tokio::test]
+async fn edicao_que_quebra_a_regua_e_recusada_e_nao_grava() {
+    let p = pool().await;
+    world(&p).await;
+    let proposal = propose(&p).await;
+    let (_, hash) = approval_of(&proposal);
+    let id = proposal["id"].as_i64().unwrap();
+
+    let mut editado = proposal["payload"].clone();
+    editado["kind"] = json!("transfer");
+
+    let recusa = proposal_tools::approve(&p, id, &editado.to_string(), &hash, approval_clock())
+        .await
+        .unwrap_err();
+
+    assert!(recusa.contains("entrada ou despesa avulsa"), "{recusa}");
+    assert_eq!(ledger_row(&p, id).await.1.as_deref(), Some("proposed"));
+    assert_eq!(transaction_count(&p).await, 6);
+}
+
+#[tokio::test]
+async fn a_segunda_aprovacao_da_mesma_proposta_e_recusada() {
+    let p = pool().await;
+    world(&p).await;
+    let proposal = propose(&p).await;
+    let (payload, hash) = approval_of(&proposal);
+    let id = proposal["id"].as_i64().unwrap();
+
+    proposal_tools::approve(&p, id, &payload, &hash, approval_clock())
+        .await
+        .unwrap();
+    let recusa = proposal_tools::approve(&p, id, &payload, &hash, approval_clock())
+        .await
+        .unwrap_err();
+
+    assert!(recusa.contains("já foi decidida"), "{recusa}");
+    assert_eq!(transaction_count(&p).await, 7);
+}
+
+#[tokio::test]
+async fn recusar_registra_a_decisao_e_nao_grava() {
+    let p = pool().await;
+    world(&p).await;
+    let proposal = propose(&p).await;
+    let id = proposal["id"].as_i64().unwrap();
+
+    proposal_tools::reject(&p, id).await.unwrap();
+
+    assert_eq!(ledger_row(&p, id).await.1.as_deref(), Some("rejected"));
+    assert_eq!(transaction_count(&p).await, 6);
+}
+
+#[tokio::test]
+async fn apagar_a_conversa_preserva_o_ledger_de_propostas() {
+    let p = pool().await;
+    world(&p).await;
+    let conversation = store::active_conversation(&p).await.unwrap();
+    let env = call_in_conversation(&p, conversation, "propose_transaction", a_proposal()).await;
+    let id = env.data.unwrap()["proposal"]["id"].as_i64().unwrap();
+
+    store::delete_conversation(&p, conversation).await.unwrap();
+
+    let (owner, decision, _) = ledger_row(&p, id).await;
+    assert_eq!(owner, None, "a proveniência sobrevive à conversa");
+    assert_eq!(decision.as_deref(), Some("proposed"));
+}
+
+async fn transaction_count(pool: &SqlitePool) -> i64 {
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM \"transaction\"")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    count
 }

@@ -122,11 +122,15 @@ rótulos agrupados do protótipo eram do mock; a tela mostra o que está lançad
 
 ## Motion
 
-A estrada **se desenha** (stroke-draw da linha do lançado em ~480 ms na curva do DS); o
-trecho sem lastro e o traçado típico entram por fade depois dela. A grade **assenta em onda**
-(stagger de ~50 ms por card). **Dinheiro nunca anima** — entra pronto. A cor de banda é
-estado, não alerta: **o semáforo nunca pisca**; o único elemento que pulsa é o esqueleto de
-carregamento. Com `prefers-reduced-motion`, tudo é instantâneo.
+A estrada **se desenha** (stroke-draw da linha do lançado em `--dur-slow`); o trecho sem
+lastro e o traçado típico entram por fade **enquanto ela ainda se desenha** — encadeados
+depois dela, a sequência passaria do orçamento. A grade **assenta em onda**, e o
+escalonamento para no quinto passo por mais meses que a fileira tenha. Tudo cabe no
+orçamento de entrada do app (~400ms do início ao fim), governado pelos tokens `--dur-*` e
+nunca dentro de media query, que o toggle "Animações" não alcança. **Dinheiro nunca anima** —
+entra pronto. A cor de banda é estado, não alerta: **o semáforo nunca pisca**; o único
+elemento que pulsa é o esqueleto de carregamento. Com movimento reduzido — do sistema ou do
+toggle —, tudo é instantâneo.
 
 ## Divergências entre o desenho e as réguas do repositório
 

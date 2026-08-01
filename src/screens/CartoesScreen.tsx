@@ -17,8 +17,9 @@ import { Button } from "../design-system/components/Button";
 import { EmptyState } from "../design-system/components/EmptyState";
 import { InfoPopover } from "../design-system/components/InfoPopover";
 import { Meter } from "../design-system/components/Meter";
+import { MiaAvatar } from "../design-system/components/MiaAvatar";
+import { VerdictHero } from "../design-system/components/VerdictHero";
 import { Money } from "../design-system/components/Money";
-import { NekoMark } from "../design-system/components/NekoMark";
 import { NoRecordDash } from "../design-system/components/NoRecordDash";
 import { OwnerChip } from "../design-system/components/OwnerChip";
 import { SegmentedControl } from "../design-system/components/SegmentedControl";
@@ -422,10 +423,12 @@ export function CartoesScreen() {
 
   return (
     <div className={`cartoes${drilled ? " cartoes--drilled" : ""}`}>
-      <section className="cartoes__head" data-large-title>
-        <h1>{verdictLine(holderCards)}</h1>
-        {cards.length > 0 ? <CardGate summary={gateSummary} /> : null}
-      </section>
+      {/* O gate é a prova da manchete, então entra como rodapé do veredito — não como
+          bloco irmão que competiria com ela pela abertura da tela. */}
+      <VerdictHero
+        headline={verdictLine(holderCards)}
+        footer={cards.length > 0 ? <CardGate summary={gateSummary} /> : null}
+      />
 
       {proposals.map((proposal) => (
         <ProposalBanner
@@ -437,6 +440,7 @@ export function CartoesScreen() {
 
       {cards.length === 0 && proposals.length === 0 ? (
         <EmptyState
+          icon={<MiaAvatar width={22} height={22} />}
           title="Nenhum cartão cadastrado"
           description="Cadastre um cartão para acompanhar faturas, assinaturas e parcelas."
           action={
@@ -698,14 +702,11 @@ function CardTile({
         aria-label={`Faturas de ${card.name} — cartão selecionado`}
       >
         <span className="cartoes__face-top">
-          <span>
-            <span className="cartoes__face-name">{card.name}</span>
-            <span className="cartoes__face-inst">
-              Titular · {card.owner_name}
-              {card.institution ? ` · ${card.institution}` : ""}
-            </span>
+          <span className="cartoes__face-name">{card.name}</span>
+          <span className="cartoes__face-inst">
+            Titular · {card.owner_name}
+            {card.institution ? ` · ${card.institution}` : ""}
           </span>
-          <NekoMark width={26} height={26} className="cartoes__face-cat" />
         </span>
         <span className="cartoes__face-foot">
           {next ? (

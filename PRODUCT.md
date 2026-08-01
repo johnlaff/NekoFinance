@@ -43,6 +43,30 @@ The visual design system is **"Midnight Purr"** (dark-first), the systematizatio
 
 Full design system at `src/design-system/`. Agent skill at `.agents/skills/neko-finance-design/SKILL.md`.
 
+## Signatures
+
+Four proprietary moments. A signature is a **recognizable moment** — proprietary, repeated
+with discipline, and noticeable when it appears. The token foundation (zinc, Geist,
+pill geometry) is the market's most converged palette; what differentiates this product
+lives here, not in the tokens.
+
+1. **Verdict-first** — one contract, two scales. The word comes before the number, state is
+   always text (color is never the only signal), and the level comes from a single closed
+   vocabulary. `VerdictHero` opens a screen; `HealthBadge` marks a block.
+2. **The audited receipt** — a derived number that heroes a surface prints the operands that
+   produced it: `Receipt`, one per screen, behind "Ver a conta" and the "Conta sempre à
+   mostra" preference. It **replaces** the prose that described the formula; a sentence can
+   diverge from the engine, printed arithmetic cannot.
+3. **The cat marks Mia's voice** — `MiaAvatar` says "this line is the copilot's reading, not
+   a datum from the spreadsheet"; `NekoMark` is the product mark and lives only in the shell.
+   It is attribution, like a byline — never a mascot performing.
+4. **The method's rulers** — every progress ruler is the DS `Meter`: the method's measure
+   made visible.
+
+Two proprietary patterns are **principles, not signatures**: didactics behind a question and
+epistemic honesty are omnipresent and invisible by design, which is the opposite of a moment.
+Both are hard rules in `docs/ui-standards.md`.
+
 ## Design Principles
 
 1. **Night-first** — designed for low-light use. Dark mode is the default, not an afterthought. Light surfaces are the minority.

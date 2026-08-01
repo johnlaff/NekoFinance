@@ -14,34 +14,40 @@ import type { Screen } from "../shell/screens";
 
 // ------------------------------------------------------------------- tipos --
 
+/** Selo epistêmico: número derivado sai marcado, com a didática do ritual que o tornaria
+ *  veredito. Vive colado ao número que qualifica — na frase, quando o número é o veredito da
+ *  resposta; na linha do recibo, quando é um operando estimado entre operandos vividos. */
+// A forma do recibo é do DS, que a desenha: a conversa consome, não redefine.
+export type {
+  EpistemicMark,
+  ReceiptLine,
+  ReceiptOp,
+  Tone,
+} from "../design-system/components/Receipt";
+
+import type {
+  EpistemicMark,
+  ReceiptLine,
+  Tone,
+} from "../design-system/components/Receipt";
+
 /** Trecho de texto de uma resposta: prosa, ênfase ou dinheiro (que rende tabular). */
 export type Span =
-  { t: "text"; s: string } | { t: "strong"; s: string } | { t: "money"; cents: number };
+  | { t: "text"; s: string }
+  | { t: "strong"; s: string; mark?: EpistemicMark }
+  | { t: "money"; cents: number; mark?: EpistemicMark };
 
-/** Operação impressa entre os operandos do recibo. */
-export type ReceiptOp = "min" | "minus" | "div" | "eq";
+/**
+ * De onde a resposta vem — a linha de proveniência do pé da bolha. `runtime` é a rodada ligada:
+ * nunca imprime "Responde local", porque a resposta saiu de um provedor externo; a linha de
+ * transparência da rodada (proveniência, modelo, custo) vai em `MiaAnswer.transparency`.
+ */
+export type Provenance = "calculo" | "metodo" | "runtime";
 
-/** Tom do método: paz, atenção, alerta. Nunca segue o acento da marca. */
-export type Tone = "ok" | "warn" | "bad";
-
-export interface ReceiptLine {
-  label: string;
-  /** Valor monetário (renderiza tabular); exclusivo com `text`. */
-  cents?: number;
-  text?: string;
-  op?: ReceiptOp;
-  result?: boolean;
-  tone?: Tone;
-  /** Selo epistêmico: número derivado sai marcado, com a didática do ritual que o
-   *  tornaria veredito. */
-  mark?: { kind: "estimate"; term: { title?: string; body: string } };
-}
-
-/** De onde a resposta vem — a linha de proveniência do pé da bolha. */
-export type Provenance = "calculo" | "metodo";
-
-/** Motivo da recusa (taxonomia do contrato do copiloto). */
-export type Refusal = "sem_dado" | "capacidade" | "ambigua" | "nao_ligada";
+/** Motivo da recusa (taxonomia do contrato do copiloto). `execucao` é a recusa do runtime — o
+ *  laço fechou uma das portas do contrato (consentimento, provedor, teto, cancelamento) e a
+ *  mensagem+saída concreta vêm prontas do evento `error`. */
+export type Refusal = "sem_dado" | "capacidade" | "ambigua" | "nao_ligada" | "execucao";
 
 export interface AnswerCta {
   label: string;
@@ -59,6 +65,22 @@ export interface MiaAnswer {
   cta?: AnswerCta;
   /** Perguntas oferecidas (recusa ambígua e conversa ainda não ligada). */
   options?: string[];
+  /**
+   * Linha de transparência da rodada (`provenance: "runtime"`): provedor efetivo, modelo e
+   * custo, do evento `usage`. Ausente enquanto a rodada ainda não fechou a conta.
+   */
+  transparency?: string;
+  /**
+   * Resposta do runtime que veio da camada de método — explicação, nunca cálculo sobre os
+   * números da pessoa. O rodapé marca a natureza para ela não se disfarçar de conta.
+   */
+  explanation?: boolean;
+  /**
+   * Ids das propostas (`proposal_ready`) que a RODADA desta resposta gerou — a tela desenha o
+   * cartão de aprovação logo abaixo desta bolha para cada id aqui. Nunca aprovação: só o
+   * ponteiro para o cartão, cujo estado vive em `miaSession`.
+   */
+  proposalIds?: string[];
 }
 
 export interface MiaFacts {
@@ -235,8 +257,16 @@ export function routeQuestion(question: string): Route {
 // ------------------------------------------------------------- formatadores --
 
 const t = (s: string): Span => ({ t: "text", s });
-const b = (s: string): Span => ({ t: "strong", s });
-const m = (cents: number): Span => ({ t: "money", cents });
+const b = (s: string, mark?: EpistemicMark): Span => ({
+  t: "strong",
+  s,
+  ...(mark ? { mark } : {}),
+});
+const m = (cents: number, mark?: EpistemicMark): Span => ({
+  t: "money",
+  cents,
+  ...(mark ? { mark } : {}),
+});
 
 /** Texto corrido de uma resposta — a base do `aria-label` e das asserções de copy. */
 export function plainText(spans: Span[]): string {
@@ -318,7 +348,7 @@ function notLinked(linked = false): MiaAnswer {
     ],
     provenance: "metodo",
     refusal: "nao_ligada",
-    options: SUGGESTIONS.slice(0, 6),
+    options: SUGGESTIONS,
     ...(linked ? {} : { cta: { label: "Autorizar a conversa", target: "config" } }),
   };
 }
@@ -463,14 +493,13 @@ function economiaAno(facts: MiaFacts): MiaAnswer {
         t(
           "A planilha ainda não registra Economia neste ano, então não há Economizado para julgar. O que dá para ver é o colchão — a sobra que ficou em conta: ",
         ),
-        m(a.realized_savings_cents),
+        m(a.realized_savings_cents, { kind: "estimate", term: GLOSSARY["colchao"]! }),
         t("."),
       ],
       receipt: [
         {
           label: "Colchão do ano",
           cents: a.realized_savings_cents,
-          mark: { kind: "estimate", term: GLOSSARY["colchao"]! },
           result: true,
         },
       ],
@@ -499,7 +528,7 @@ function economiaAno(facts: MiaFacts): MiaAnswer {
     ],
     receipt: [
       { label: "Economia da régua", cents: a.economia_ruler_cents },
-      { label: "Renda realizada", cents: a.realized_income_cents, op: "div" },
+      { label: "Entradas do ano até aqui", cents: a.realized_income_cents, op: "div" },
       {
         label: "Economizado no ano",
         text: pct(rate),
@@ -510,9 +539,7 @@ function economiaAno(facts: MiaFacts): MiaAnswer {
     ],
     note: [
       t(
-        a.includes_previdencia
-          ? "A previdência entra na régua porque a reserva já cobre 6 meses do custo de vida."
-          : "A previdência só entra nessa régua quando a reserva cobre 6 meses do custo de vida — o método faz liquidez primeiro.",
+        "Previdência não entra nessa conta: ela é patrimônio, não economia acessível. O dinheiro continua seu — só não conta na régua, porque a régua mede o que fica ao alcance.",
       ),
     ],
     provenance: "calculo",
@@ -543,7 +570,7 @@ function reservaAnswer(facts: MiaFacts): MiaAnswer {
       text: [
         b("Sem reserva"),
         t(
-          " — as contas marcadas como reserva estão zeradas. O método começa por ela: 6 meses do custo de vida num lugar separado, antes de qualquer investimento.",
+          " — as contas marcadas como reserva estão zeradas. A meta do método são 6 meses do custo de vida num lugar separado, à mão para o que a vida cobrar.",
         ),
       ],
       receipt: [
@@ -551,7 +578,6 @@ function reservaAnswer(facts: MiaFacts): MiaAnswer {
         { label: "Reserva de hoje", text: monthsLabel(0), result: true, tone: "warn" },
       ],
       provenance: "calculo",
-      cta: { label: "Abrir Configurações", target: "config" },
     };
   }
   const months = s.reserve_months;
@@ -563,7 +589,7 @@ function reservaAnswer(facts: MiaFacts): MiaAnswer {
           t("Com "),
           t(monthsLabel(s.reserve_basis_months)),
           t(" de custo de vida vividos, o retrato de agora aponta "),
-          b(monthsLabel(months)),
+          b(monthsLabel(months), { kind: "estimate", term: LIVE_PORTRAIT }),
           t(
             " de reserva — ainda é uma estimativa: a régua pede 6 meses completos para virar veredito.",
           ),
@@ -580,13 +606,9 @@ function reservaAnswer(facts: MiaFacts): MiaAnswer {
         text: monthsLabel(months),
         result: true,
         tone,
-        ...(estimate
-          ? { mark: { kind: "estimate" as const, term: LIVE_PORTRAIT } }
-          : {}),
       },
     ],
     provenance: "calculo",
-    cta: { label: "Abrir Configurações", target: "config" },
   };
 }
 

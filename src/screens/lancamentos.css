@@ -531,18 +531,20 @@
 
 /* ---- Coreografia de entrada (superfícies transitam; dinheiro nunca anima) ---- */
 
-@media (prefers-reduced-motion: no-preference) {
-  .lc-head {
-    animation: lc-in 0.4s var(--ease-standard) both;
-  }
+/* Sem media query: os tokens governam (0ms sob reduzido/desligado, restaurados quando o
+   usuário liga o toggle "Animações", que uma media query não enxergaria). */
+.lc-head {
+  animation: lc-in var(--dur-base) var(--ease-standard) both;
+}
 
-  .lc-filters {
-    animation: lc-in 0.4s var(--ease-standard) both 0.08s;
-  }
+.lc-filters {
+  animation: lc-in var(--dur-base) var(--ease-standard) both
+    calc(var(--dur-stagger-step) * 1);
+}
 
-  .lc-list {
-    animation: lc-in 0.45s var(--ease-standard) both 0.16s;
-  }
+.lc-list {
+  animation: lc-in var(--dur-base) var(--ease-standard) both
+    calc(var(--dur-stagger-step) * 2);
 }
 
 @keyframes lc-in {

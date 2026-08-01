@@ -78,6 +78,10 @@ pub(crate) enum ExpectedProvenance {
 pub(crate) struct ExpectedTools {
     #[serde(default)]
     pub must_call: Vec<String>,
+    /// Cada grupo exige pelo menos UMA ferramenta — rotas diferentes podem expor o mesmo fato
+    /// sem transformar a escolha correta em erro mecânico.
+    #[serde(default)]
+    pub must_call_any: Vec<Vec<String>>,
     #[serde(default)]
     pub must_not_call: Vec<String>,
     #[serde(default)]
@@ -120,6 +124,9 @@ pub(crate) struct Expected {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Verification {
     pub tool: String,
+    // A chamada esperada é lida pela graduação dos casos de fidelidade, que corre no binário da
+    // bancada; o app nunca a consome.
+    #[allow(dead_code)]
     pub arguments: Value,
 }
 
@@ -205,6 +212,7 @@ pub(crate) fn parse_case(file_name: &str, text: &str) -> Result<Case, CatalogErr
         .tools
         .must_call
         .iter()
+        .chain(case.expected.tools.must_call_any.iter().flatten())
         .chain(&case.expected.tools.must_not_call)
         .chain(case.verification.iter().map(|v| &v.tool));
     for tool in declared {
@@ -216,6 +224,20 @@ pub(crate) fn parse_case(file_name: &str, text: &str) -> Result<Case, CatalogErr
                 format!("Use uma destas: {}.", known_tools.join(", ")),
             ));
         }
+    }
+
+    if case
+        .expected
+        .tools
+        .must_call_any
+        .iter()
+        .any(|group| group.is_empty())
+    {
+        return Err(CatalogError::new(
+            format!("O caso {file_name} tem um grupo vazio em must_call_any."),
+            "Preencha o grupo ou remova-o — grupo vazio é insatisfazível e falharia sempre."
+                .to_string(),
+        ));
     }
 
     if case

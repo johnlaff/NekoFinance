@@ -8,9 +8,8 @@ mod google_sheets;
 mod http;
 // A fachada da conversa é porta INTERNA: quem a consome é o loop do copiloto, não o shell
 // Tauri — nenhum comando expõe as ferramentas ao webview, e é essa ausência que mantém a
-// leitura do domínio atrás do consentimento. Sem chamador no binário, o compilador leria a
-// superfície inteira como morta.
-#[allow(dead_code)]
+// leitura do domínio atrás do consentimento. O que o shell alcança é a rodada inteira, por um
+// comando só.
 mod mia;
 // A bancada de evals é a única superfície pública do módulo da conversa: o binário `mia-bench`
 // é outro crate e só alcança o que o lib expõe.
@@ -74,6 +73,13 @@ pub fn run() {
             commands::grant_mia_consent,
             commands::revoke_mia_consent,
             commands::set_mia_api_key,
+            commands::run_mia_round,
+            commands::cancel_mia_round,
+            commands::load_mia_conversation,
+            commands::append_mia_exchange,
+            commands::delete_mia_conversation,
+            commands::approve_mia_proposal,
+            commands::reject_mia_proposal,
             commands::upsert_daily_budget,
             commands::upsert_daily_budget_with_categories_cmd,
             commands::get_daily_budget_categories_cmd,
@@ -179,6 +185,12 @@ pub fn run() {
                     .await
                     .map_err(|e| format!("migrações do banco: {e}"))?;
 
+                // Retenção do rastro técnico da conversa. Na abertura porque quem parou de
+                // conversar também para de purgar: sem esta passagem, um rastro venceria e ficaria.
+                mia::store::purge_stale_traces(&pool, chrono::Utc::now())
+                    .await
+                    .map_err(|e| format!("purga do rastro da conversa: {e}"))?;
+
                 // Backfill dos empréstimos legados marcados por sufixo `#loan:` na descrição →
                 // entidades `scenario_loan`. Idempotente (a marca some ao processar); precisa de
                 // lógica de parse/derivação, por isso vive em Rust e não numa migração SQL.
@@ -278,6 +290,7 @@ pub fn run() {
             Ok(())
         })
         .manage(oauth::OAuthStateStore(Mutex::new(None)))
+        .manage(commands::MiaRuns::default())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

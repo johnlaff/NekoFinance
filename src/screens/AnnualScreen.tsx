@@ -24,8 +24,9 @@ import { RangeRuler } from "../design-system/components/RangeRuler";
 import { Meter } from "../design-system/components/Meter";
 import { EmptyState } from "../design-system/components/EmptyState";
 import { InfoPopover } from "../design-system/components/InfoPopover";
+import { VerdictHero } from "../design-system/components/VerdictHero";
 import { EstimateMark } from "../design-system/components/EstimateMark";
-import { NekoMark } from "../design-system/components/NekoMark";
+import { MiaAvatar } from "../design-system/components/MiaAvatar";
 import { SR_ONLY } from "../design-system/srOnly";
 import { setCrumb } from "../shell/crumbStore";
 import {
@@ -207,10 +208,10 @@ function Verdict({ v }: { v: AnoView }) {
   }
 
   return (
-    <div className="ano__verdict">
-      <p className="ano__vlabel">
-        Economizado · {year}
-        {v.estimate ? (
+    <VerdictHero
+      label={`Economizado · ${year}`}
+      labelMark={
+        v.estimate ? (
           <EstimateMark
             className="ano__estmark"
             term={{
@@ -218,11 +219,12 @@ function Verdict({ v }: { v: AnoView }) {
               body: "Há meses à frente com pouca saída lançada, então a projeção do ano não se sustenta. Vale o que já foi vivido até você confirmar os lançamentos.",
             }}
           />
-        ) : null}
-      </p>
-      <h1 data-large-title>{title}</h1>
+        ) : null
+      }
+      headline={title}
+    >
       <p>{body}</p>
-    </div>
+    </VerdictHero>
   );
 }
 
@@ -638,7 +640,7 @@ function RendaCard({ rows }: { rows: IncomeRow[] }) {
 function miaLine(v: AnoView): { lead: string; teach: string } {
   if (v.economiaLived > 0) {
     return {
-      lead: "Você já tira dinheiro da conta para a reserva.",
+      lead: "Você já tira dinheiro da conta para guardar.",
       teach:
         "É isso que o método chama de economia. A régua julga a média do ano, então um mês fraco não derruba o veredito.",
     };
@@ -662,8 +664,10 @@ function MiaCard({ v }: { v: AnoView }) {
   return (
     <section className="ano__card ano__card--mia" aria-label="A linha da Mia">
       <div className="ano__mia">
+        {/* O rosto da Mia, não a marca do app: aqui o gato atribui a frase a quem a
+            interpretou. `NekoMark` fica reservado ao shell, onde marca o produto. */}
         <span className="ano__mav" aria-hidden="true">
-          <NekoMark width={19} height={19} />
+          <MiaAvatar width={19} height={19} />
         </span>
         <span className="ano__mtxt">
           {lead}
@@ -706,9 +710,12 @@ export function AnnualScreen() {
   if (forecastQ.error && !forecastQ.data) {
     return (
       <div className="ano">
+        {/* Falha de carga é erro, não vazio: a variante certa anuncia por `role="alert"`,
+            e a copy não pode mandar importar planilha quando o que quebrou foi a consulta. */}
         <EmptyState
-          title="Sem dados para o ano"
-          description="Importe a planilha ou lance um movimento para ver o ano no método."
+          variant="error"
+          title="Não foi possível carregar o ano"
+          description="A leitura dos dados do ano falhou. Tente de novo em instantes."
         />
       </div>
     );

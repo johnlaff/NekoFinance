@@ -18,9 +18,15 @@
   margin-bottom: -64px;
 }
 
+/* A conversa cresce da base para cima: com poucas trocas, o vão fica acima do que foi dito,
+   e a última resposta encosta no composer em vez de deixar um buraco no meio da coluna. */
 .mia__thread {
   grid-column: 1;
   grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 0;
   width: 100%;
   max-width: 720px;
   justify-self: center;
@@ -51,6 +57,11 @@
     position: static;
     margin-top: 0;
   }
+}
+
+.mia__log {
+  display: flex;
+  flex-direction: column;
 }
 
 /* Respiro entre a última resposta e o composer ancorado. O encaixe de verdade vem da
@@ -188,79 +199,27 @@
 }
 .mia__prov {
   display: flex;
+  /* A linha de transparência da rodada (provedor · modelo · custo) é a mais longa da
+     bolha: na coluna do polegar ela quebra antes de empurrar o horário para fora. */
+  flex-wrap: wrap;
   justify-content: space-between;
-  gap: var(--space-5);
+  gap: var(--space-2) var(--space-5);
   margin: var(--space-5) 0 0;
   font-size: var(--fs-micro);
   color: var(--text-faint);
 }
 
-/* ---- Recibo: a assinatura da tela — a conta que o motor fez, impressa ---- */
-
-.mia__receipt {
-  margin: var(--space-5) 0 0;
-  padding: var(--space-4) var(--space-5);
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-md);
-}
-.mia__rl {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-6);
-  padding: var(--space-2) 0;
-  font-size: var(--fs-sm);
-}
-.mia__rl-label {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-4);
+.mia__prov span {
   min-width: 0;
-  color: var(--text-muted);
+  overflow-wrap: anywhere;
 }
-/* O operador é impresso na margem: a conta fica visível, não subentendida. A largura
-   fixa alinha os símbolos numa coluna própria — "mín" é o mais largo deles. */
-.mia__op {
-  width: 26px;
-  flex: none;
-  text-align: right;
-  font-family: var(--font-mono);
-  font-size: var(--fs-label);
-  color: var(--text-faint);
-}
-.mia__rl-val {
-  margin: 0;
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  white-space: nowrap;
-  text-align: right;
-  color: var(--text);
-}
-.mia__rl--result {
-  margin-top: var(--space-2);
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--border);
-  font-size: var(--fs-body);
-}
-.mia__rl--result .mia__rl-label {
-  color: var(--text);
-}
-.mia__rl--result .mia__rl-val {
-  font-weight: var(--fw-semibold);
-  color: var(--text-strong);
-}
-
-/* Cor de estado do método — fixa, nunca segue o acento da marca. Ela vive na linha de
-   RESULTADO do recibo (o veredito da conta); os operandos ficam neutros. */
-.mia__rl-val.mia--ok {
-  color: var(--success-400);
-}
-.mia__rl-val.mia--warn {
-  color: var(--warning-400);
-}
-.mia__rl-val.mia--bad {
-  color: var(--danger-400);
+/* Pílula secundária: a transparência da rodada (provedor/modelo/custo) é o quanto o motor
+   externo CONFIA na resposta, natureza diferente de de-onde-ela-veio — o contorno separa as
+   duas leituras sem impor uma segunda cor de status na bolha. */
+.mia__prov-round {
+  padding: 1px var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
 }
 
 /* ---- Saídas de uma resposta: opções e o caminho concreto ---- */
@@ -272,8 +231,14 @@
   margin-top: var(--space-5);
 }
 /* Resposta rápida dentro da bolha: superfície em vez de contorno, para não virar uma
-   segunda fileira de sugestões idêntica à do dock logo abaixo. */
+   segunda fileira de sugestões idêntica à do dock logo abaixo. O alvo cresce por dentro
+   (padding + margem negativa), a mesma técnica do toggle do recibo, para alcançar os 44px
+   do polegar sem inflar o espaço que a pílula ocupa entre as outras. */
 .mia__opts .mia__chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin-block: calc(var(--space-3) * -1);
   border-color: transparent;
   background: var(--surface-elevated);
 }
@@ -299,6 +264,150 @@
 .mia__cta:hover {
   background: var(--surface-hover);
   color: var(--primary);
+}
+
+/* ---- Cartão de proposta: registrar por proposta ----
+   Superfície própria dentro da bolha da Mia — dashed border como o recibo, mas com campos
+   editáveis: é uma decisão pendente, não uma conta já fechada. */
+
+.mia__proposal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  margin-top: var(--space-5);
+  padding: var(--space-6);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+}
+.mia__proposal--done {
+  padding: var(--space-5) var(--space-6);
+}
+.mia__proposal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text-strong);
+}
+.mia__proposal-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+.mia__proposal-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+}
+/* `.cmp-type`/`.cmp-field` são do compositor e servem outras telas — escopar o piso de 44px
+   à proposta da Mia evita deslocar o layout de quem mais reaproveita essas classes. */
+.mia__proposal .cmp-type,
+.mia__proposal .cmp-field {
+  min-height: 44px;
+}
+.mia__proposal-fixed {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.mia__proposal-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+.mia__tagchip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  /* Padding + margem negativa (mesma técnica do toggle do recibo) para alcançar os 44px
+     do polegar sem empurrar as tags vizinhas para mais longe umas das outras. */
+  margin-block: calc(var(--space-5) * -1);
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: none;
+  font: inherit;
+  font-size: var(--fs-label);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: var(--t-hover);
+}
+.mia__tagchip:hover {
+  border-color: var(--border-strong);
+}
+.mia__proposal-validity {
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+}
+.mia__proposal-error {
+  margin: 0;
+  font-size: var(--fs-label);
+  color: var(--danger-400);
+}
+.mia__proposal-actions {
+  display: flex;
+  gap: var(--space-4);
+}
+.mia__proposal-approve,
+.mia__proposal-reject {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  /* Padding + margem negativa (mesma técnica do toggle do recibo) para alcançar os 44px
+     do polegar: aprovar/recusar grava ou descarta o lançamento, o par mais caro de errar. */
+  margin-block: calc(var(--space-3) * -1);
+  padding: var(--space-4) var(--space-6);
+  border-radius: var(--radius-pill);
+  border: 0;
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: var(--t-hover);
+}
+.mia__proposal-approve {
+  color: var(--text-on-primary);
+}
+.mia__proposal-approve:disabled {
+  background: var(--surface-elevated);
+  color: var(--text-faint);
+  cursor: default;
+}
+.mia__proposal-reject {
+  border: 1px solid var(--border-strong);
+  background: none;
+  color: var(--text-muted);
+}
+.mia__proposal-reject:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--text-faint);
+}
+.mia__proposal-reject:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+.mia__proposal-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.mia__proposal-status--ok {
+  color: var(--success-400);
+}
+
+@media (max-width: 480px) {
+  .mia__proposal-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ---- Painel: os números por trás ---- */
@@ -378,7 +487,7 @@
   justify-self: center;
   position: sticky;
   bottom: 0;
-  padding: var(--space-5) 0 var(--space-12);
+  padding: var(--space-5) 0 var(--space-8);
   /* O véu cobre a thread que rola por baixo — sem ele o texto encosta no composer. */
   background: linear-gradient(to top, var(--bg) 82%, transparent);
 }
@@ -390,7 +499,7 @@
 }
 /* No desktop as demais sugestões viveriam em 3 linhas de pílula empurrando o composer —
    lá o painel já oferece cada pergunta com o valor dela ao lado. */
-.mia__sugg .mia__chip:nth-child(n + 5) {
+.mia__sugg .mia__chip:nth-child(n + 4) {
   display: none;
 }
 .mia__chip {
@@ -454,11 +563,48 @@
   color: var(--text-faint);
   cursor: default;
 }
+/* Cancelar a rodada do runtime: mesmo alvo do envio, tom de atenção — nunca a cor de erro,
+   que sobra para a recusa em si. */
+.mia__send--stop {
+  background: var(--warning-400);
+  color: var(--text-on-primary);
+}
+.mia__send--stop:hover {
+  background: var(--warning-500);
+}
+.mia__composer input:disabled {
+  color: var(--text-faint);
+}
 .mia__honesty {
-  margin: var(--space-5) 0 0;
-  text-align: center;
+  margin: var(--space-6) 0 0;
   font-size: var(--fs-micro);
   color: var(--text-faint);
+}
+
+/* O gesto de apagar abre a conversa, alinhado à direita da coluna — presente para quem
+   procura, longe do caminho de quem só lê. */
+.mia__thread-head {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-2);
+}
+
+/* Gesto destrutivo discreto: texto simples, sem peso de botão — a densidade calma reserva o
+   acento para os gestos que a conversa oferece, nunca para os que a apagam. */
+.mia__clear {
+  min-height: 44px;
+  margin: 0;
+  padding: 0 var(--space-2);
+  border: none;
+  background: none;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.mia__clear:hover,
+.mia__clear:focus-visible {
+  color: var(--text-muted);
+  text-decoration: underline;
 }
 
 @keyframes mia-rise {
@@ -468,11 +614,10 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .mia__msg {
-    animation: none;
-  }
-}
+/* A mensagem, o chevron e a dobra do recibo já correm em `--dur-*`: o token colapsa para
+   0ms sob movimento reduzido e sob o toggle desligado, e o estado final continua existindo
+   nos dois casos — a dobra nunca trava colapsada. Uma media query aqui só serviria para
+   ignorar o usuário que liga o movimento de propósito. */
 
 /* ---- Tablet: o painel cede a largura antes de sumir ---- */
 
@@ -501,19 +646,23 @@
 
 @media (max-width: 700px) {
   .mia {
-    /* O scroller mobile já paga o aluguel do dock flutuante no padding dele. */
-    margin-bottom: 0;
-    min-height: calc(100dvh - 192px);
+    /* O composer encosta na tab bar flutuante: o respiro do scroller é comido pela margem
+       negativa e repago aqui dentro, senão o campo nasce longe do polegar. */
+    margin-bottom: -24px;
+    /* Altura útil = viewport menos o chrome mobile do shell: appbar (62) + reserva da tab
+       bar flutuante (96) + respiro do corpo (10 em cima, 24 embaixo), com os 24 de baixo
+       devolvidos pela margem negativa e repagados dentro do dock. Reservar mais do que o
+       chrome ocupa abre um vão morto acima do composer. */
+    min-height: calc(100dvh - 168px);
   }
   .mia__msg,
   .mia__msg--you {
     max-width: 94%;
   }
-  /* No polegar o composer não sobe, mas a saudação também não fica colada no appbar com
-     um vão morto abaixo: ela centraliza no espaço que sobra (regra 18). */
+  /* No polegar o composer não sobe, mas a saudação também não cola nele: ela centraliza no
+     espaço que sobra, e o vão fica repartido em vez de virar um buraco só. */
   .mia--empty .mia__thread {
-    display: grid;
-    align-content: center;
+    justify-content: center;
   }
   .mia__greet {
     padding: var(--space-7) 0 var(--space-6);
@@ -524,11 +673,14 @@
   .mia__greet-say {
     font-size: var(--fs-body);
   }
-  /* Pílulas roláveis: o cartão cortado na borda é o convite para arrastar. */
+  /* Pílulas roláveis: o cartão cortado na borda é o convite para arrastar. O
+     `scroll-padding` é o que impede a pílula focada de parar meio escondida sob a margem
+     quando o teclado ou um clique rola a fileira até ela. */
   .mia__sugg {
     flex-wrap: nowrap;
     overflow-x: auto;
-    scroll-snap-type: x mandatory;
+    scroll-snap-type: x proximity;
+    scroll-padding-inline: var(--space-6);
     scrollbar-width: none;
     margin-inline: calc(-1 * var(--space-6));
     padding-inline: var(--space-6);
@@ -537,9 +689,9 @@
     display: none;
   }
   /* No polegar a fileira rola: nenhuma sugestão fica de fora (a regra de esconder a
-     partir da quinta é do desktop, onde o painel cobre o resto). */
+     partir da quarta é do desktop, onde o painel cobre o resto). */
   .mia__sugg .mia__chip,
-  .mia__sugg .mia__chip:nth-child(n + 5) {
+  .mia__sugg .mia__chip:nth-child(n + 4) {
     display: inline-block;
     flex: none;
     white-space: nowrap;
