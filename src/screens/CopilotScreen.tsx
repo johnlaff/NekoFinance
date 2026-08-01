@@ -58,7 +58,7 @@ import {
 
 // A tela da conversa. Toda derivação — roteamento da pergunta, resposta, recibo, recusa —
 // vive em `miaView`; aqui é superfície: a thread, o painel dos números e o composer
-// ancorado. O recibo é a assinatura da tela: a conta que o motor fez, impressa.
+// ancorado. A conta que o motor fez vem impressa pelo `Receipt` do DS.
 
 const TONE_CLASS: Record<Tone, string> = {
   ok: "mia--ok",

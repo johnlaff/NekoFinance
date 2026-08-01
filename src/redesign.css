@@ -602,12 +602,9 @@
 .cmp.is-open {
   transform: translateX(0);
 }
-@media (prefers-reduced-motion: reduce) {
-  .cmp,
-  .cmp-dialog::backdrop {
-    transition: none;
-  }
-}
+/* O painel e o scrim já transitam em `--dur-base`: o token colapsa para 0ms sob movimento
+   reduzido e sob o toggle desligado. Zerar por media query só custaria o caso inverso — o
+   usuário que liga o movimento de propósito ficaria sem ele. */
 .cmp-head {
   display: flex;
   align-items: center;

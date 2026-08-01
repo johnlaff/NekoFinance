@@ -119,7 +119,7 @@ qualidade que ele recusa ser.
 
 ## Fora de escopo
 
-- O vazio abaixo da dobra do Calendário (issue própria).
+- O vazio abaixo da dobra do Calendário (issue #282).
 - Adoção do recibo em Este mês, O ano, Horizonte e Cartões — onda de adoção posterior, com a
   regra já registrada.
 - A prova da cerimônia no Teto do diário (`ProofCard`) é a mesma assinatura construída à mão,
