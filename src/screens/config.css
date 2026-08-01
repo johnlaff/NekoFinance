@@ -256,8 +256,7 @@
   color: var(--text-muted);
   font-size: var(--fs-micro);
   font-weight: var(--fw-semibold);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  letter-spacing: var(--ls-normal);
 }
 .config__consent-list {
   display: grid;

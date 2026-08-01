@@ -665,30 +665,36 @@
 
 /* ---- Coreografia de entrada: superfícies transitam; dinheiro nunca anima sozinho ---- */
 
-@media (prefers-reduced-motion: no-preference) {
-  .hoje__greet {
-    animation: hoje-pop 0.5s cubic-bezier(0.2, 0, 0, 1) both 0.1s;
-  }
+/* Sem media query: os tokens governam a coreografia inteira. `--dur-*` colapsa para 0ms
+   sob movimento reduzido do sistema E sob o toggle "Animações" desligado, e volta ao normal
+   quando o usuário liga o toggle explicitamente — o que uma media query não enxergaria. */
+.hoje__greet {
+  animation: hoje-pop var(--dur-base) var(--ease-standard) both;
+}
 
-  .hoje__curated {
-    animation: hoje-pop 0.4s cubic-bezier(0.2, 0, 0, 1) both 0.26s;
-  }
+.hoje__curated {
+  animation: hoje-pop var(--dur-base) var(--ease-standard) both
+    calc(var(--dur-stagger-step) * 1);
+}
 
-  .hoje__blockday {
-    animation: hoje-pop 0.45s cubic-bezier(0.2, 0, 0, 1) both 0.38s;
-  }
+.hoje__blockday {
+  animation: hoje-pop var(--dur-base) var(--ease-standard) both
+    calc(var(--dur-stagger-step) * 2);
+}
 
-  .hoje__insight--month {
-    animation: hoje-pop 0.45s cubic-bezier(0.2, 0, 0, 1) both 0.5s;
-  }
+.hoje__insight--month {
+  animation: hoje-pop var(--dur-base) var(--ease-standard) both
+    calc(var(--dur-stagger-step) * 3);
+}
 
-  .hoje__card--moves {
-    animation: hoje-pop 0.45s cubic-bezier(0.2, 0, 0, 1) both 0.6s;
-  }
+.hoje__card--moves {
+  animation: hoje-pop var(--dur-base) var(--ease-standard) both
+    calc(var(--dur-stagger-step) * 4);
+}
 
-  .hoje__card--saldo {
-    animation: hoje-pop 0.45s cubic-bezier(0.2, 0, 0, 1) both 0.7s;
-  }
+.hoje__card--saldo {
+  animation: hoje-pop var(--dur-base) var(--ease-standard) both
+    calc(var(--dur-stagger-step) * 5);
 }
 
 @keyframes hoje-pop {

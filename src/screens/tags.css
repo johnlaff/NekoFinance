@@ -715,16 +715,8 @@ details[open] > summary .tags__chev {
 }
 
 /* ============================================================
-   Reduced motion: cobre animation E transition — categoria inteira,
-   não caso a caso (uma transição nova entraria sem cobertura senão).
+   Reduced motion: coberto na origem. Todo tempo desta tela sai de `--dur-*`, e o token
+   colapsa para 0ms sob movimento reduzido do sistema e sob o toggle "Animações" desligado
+   — inclusive para transição que ainda não existe. Zerar por `!important` numa media query
+   custaria o caso inverso: o usuário que liga o movimento de propósito ficaria sem ele.
    ============================================================ */
-
-@media (prefers-reduced-motion: reduce) {
-  .tags *,
-  .tags *::before,
-  .tags *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
-}

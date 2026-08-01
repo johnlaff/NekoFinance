@@ -1429,7 +1429,7 @@ describe("ScenarioCompare — camada didática (plano 074, fatia B: veredito + e
 
     const banner = document.querySelector(".scn-verdict");
     expect(banner).not.toBeNull();
-    expect(banner).toHaveClass("scn-verdict--risk");
+    expect(banner!.textContent).toContain("Buraco");
     expect(banner!.textContent).toContain(
       `Fura o caixa em julho — faltam ${fmtCompactBRL(50_000)}.`,
     );
@@ -1437,8 +1437,6 @@ describe("ScenarioCompare — camada didática (plano 074, fatia B: veredito + e
     expect(banner!.querySelector(".scn-verdict__subline")?.textContent).toMatch(
       /antecipe|reduza|cubra/i,
     );
-    // Nunca só cor: o ícone (lucide) acompanha a palavra/cor sempre.
-    expect(banner!.querySelector(".lucide-triangle-alert")).toBeInTheDocument();
   });
 
   it("veredito ok: cenário não fura o caixa mostra o menor saldo + a banda do Termômetro (saldoBand verbatim)", async () => {
@@ -1450,13 +1448,12 @@ describe("ScenarioCompare — camada didática (plano 074, fatia B: veredito + e
     await renderCompare(compare);
 
     const banner = document.querySelector(".scn-verdict");
-    expect(banner).toHaveClass("scn-verdict--ok");
+    expect(banner!.textContent).toContain("Livre");
     expect(banner!.textContent).toContain("Este cenário se mantém no azul o ano todo.");
     const band = saldoBand(150_000);
     expect(banner!.querySelector(".scn-verdict__subline")?.textContent).toBe(
       `Menor saldo no período: ${fmtBRL(150_000)} — ${band.label}.`,
     );
-    expect(banner!.querySelector(".lucide-circle-check")).toBeInTheDocument();
   });
 
   it("veredito intermediário (âmbar) em R$0: banda 'apertado' nunca vira 'no azul' — banner e card concordam", async () => {
@@ -1470,7 +1467,7 @@ describe("ScenarioCompare — camada didática (plano 074, fatia B: veredito + e
     await renderCompare(compare);
 
     const banner = document.querySelector(".scn-verdict");
-    expect(banner).toHaveClass("scn-verdict--tight");
+    expect(banner!.textContent).toContain("Aperto");
     expect(banner!.textContent).not.toContain("no azul o ano todo");
     expect(banner!.textContent).toContain(
       `Fica apertado em setembro — menor saldo ${fmtCompactBRL(0)}.`,
@@ -1479,7 +1476,6 @@ describe("ScenarioCompare — camada didática (plano 074, fatia B: veredito + e
     expect(banner!.querySelector(".scn-verdict__subline")?.textContent).toMatch(
       /segure|reforce/i,
     );
-    expect(banner!.querySelector(".lucide-triangle-alert")).toBeInTheDocument();
     // O card logo abaixo classifica o MESMO número na MESMA banda (âmbar) — sem contradição.
     const surface = screen.getByLabelText("Comparação real × cenário");
     const card = within(surface)
@@ -1498,7 +1494,7 @@ describe("ScenarioCompare — camada didática (plano 074, fatia B: veredito + e
     await renderCompare(compare);
 
     const banner = document.querySelector(".scn-verdict");
-    expect(banner).toHaveClass("scn-verdict--tight");
+    expect(banner!.textContent).toContain("Aperto");
     expect(banner!.textContent).toContain(
       `Fica apertado em agosto — menor saldo ${fmtCompactBRL(100_000)}.`,
     );
@@ -1518,7 +1514,7 @@ describe("ScenarioCompare — camada didática (plano 074, fatia B: veredito + e
     // Mínimo mensal 90.000 → banda "apertado" → nível intermediário, com o mês do mínimo.
     expect(saldoBand(90_000).key).toBe("tight");
     const banner = document.querySelector(".scn-verdict");
-    expect(banner).toHaveClass("scn-verdict--tight");
+    expect(banner!.textContent).toContain("Aperto");
     expect(banner!.textContent).toContain(
       `Fica apertado em agosto — menor saldo ${fmtCompactBRL(90_000)}.`,
     );
@@ -1559,7 +1555,7 @@ describe("ScenarioCompare — camada didática (plano 074, fatia B: veredito + e
     await renderCompare(compare);
 
     const banner = document.querySelector(".scn-verdict");
-    expect(banner).toHaveClass("scn-verdict--ok");
+    expect(banner!.textContent).toContain("Livre");
     expect(banner!.querySelector(".scn-verdict__subline")?.textContent).toBe(
       "Sem pontos de projeção no horizonte para apontar um menor saldo.",
     );

@@ -17,33 +17,25 @@ import type { Screen } from "../shell/screens";
 /** Selo epistêmico: número derivado sai marcado, com a didática do ritual que o tornaria
  *  veredito. Vive colado ao número que qualifica — na frase, quando o número é o veredito da
  *  resposta; na linha do recibo, quando é um operando estimado entre operandos vividos. */
-export interface EpistemicMark {
-  kind: "estimate";
-  term: { title?: string; body: string };
-}
+// A forma do recibo é do DS, que a desenha: a conversa consome, não redefine.
+export type {
+  EpistemicMark,
+  ReceiptLine,
+  ReceiptOp,
+  Tone,
+} from "../design-system/components/Receipt";
+
+import type {
+  EpistemicMark,
+  ReceiptLine,
+  Tone,
+} from "../design-system/components/Receipt";
 
 /** Trecho de texto de uma resposta: prosa, ênfase ou dinheiro (que rende tabular). */
 export type Span =
   | { t: "text"; s: string }
   | { t: "strong"; s: string; mark?: EpistemicMark }
   | { t: "money"; cents: number; mark?: EpistemicMark };
-
-/** Operação impressa entre os operandos do recibo. */
-export type ReceiptOp = "min" | "minus" | "div" | "eq";
-
-/** Tom do método: paz, atenção, alerta. Nunca segue o acento da marca. */
-export type Tone = "ok" | "warn" | "bad";
-
-export interface ReceiptLine {
-  label: string;
-  /** Valor monetário (renderiza tabular); exclusivo com `text`. */
-  cents?: number;
-  text?: string;
-  op?: ReceiptOp;
-  result?: boolean;
-  tone?: Tone;
-  mark?: EpistemicMark;
-}
 
 /**
  * De onde a resposta vem — a linha de proveniência do pé da bolha. `runtime` é a rodada ligada:

@@ -176,9 +176,7 @@ describe("CopilotScreen (Mia)", () => {
       expect(within(log).getByText("Reserva de hoje")).toBeInTheDocument();
       // A chave esconde aritmética, nunca estado do dado: o selo segue colado ao número.
       expect(within(log).getAllByText("Estimativa")).toHaveLength(1);
-      const fold = within(log)
-        .getByText("Meta do método")
-        .closest(".mia__receipt-fold");
+      const fold = within(log).getByText("Meta do método").closest(".nk-receipt__fold");
       expect(fold).toHaveAttribute("inert");
 
       const toggle = within(log).getByRole("button", { name: "Ver a conta" });
@@ -230,7 +228,7 @@ describe("CopilotScreen (Mia)", () => {
 
       const log = await screen.findByRole("log");
       // Recolhida, o operando e o selo dele ficam inertes junto com o resto da conta.
-      const fold = within(log).getByText("Gasto típico").closest(".mia__receipt-fold");
+      const fold = within(log).getByText("Gasto típico").closest(".nk-receipt__fold");
       expect(fold).toHaveAttribute("inert");
       expect(within(fold as HTMLElement).getByText("Estimativa")).toBeInTheDocument();
 

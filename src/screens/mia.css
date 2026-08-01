@@ -222,143 +222,6 @@
   border-radius: var(--radius-pill);
 }
 
-/* ---- Recibo: a assinatura da tela — a conta que o motor fez, impressa ---- */
-
-.mia__receipt {
-  margin: var(--space-5) 0 0;
-  padding: var(--space-4) var(--space-5);
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-md);
-}
-.mia__rl {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-6);
-  padding: var(--space-2) 0;
-  font-size: var(--fs-sm);
-}
-.mia__rl-label {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-4);
-  min-width: 0;
-  color: var(--text-muted);
-}
-/* O operador é impresso na margem: a conta fica visível, não subentendida. A largura
-   fixa alinha os símbolos numa coluna própria — "mín" é o mais largo deles. */
-.mia__op {
-  width: 26px;
-  flex: none;
-  text-align: right;
-  font-family: var(--font-mono);
-  font-size: var(--fs-label);
-  color: var(--text-faint);
-}
-.mia__rl-val {
-  margin: 0;
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  white-space: nowrap;
-  text-align: right;
-  color: var(--text);
-}
-.mia__rl--result {
-  margin-top: var(--space-2);
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--border);
-  font-size: var(--fs-body);
-}
-.mia__rl--result .mia__rl-label {
-  color: var(--text);
-}
-.mia__rl--result .mia__rl-val {
-  font-weight: var(--fw-semibold);
-  color: var(--text-strong);
-}
-
-/* Cor de estado do método — fixa, nunca segue o acento da marca. Ela vive na linha de
-   RESULTADO do recibo (o veredito da conta); os operandos ficam neutros. */
-.mia__rl-val.mia--ok {
-  color: var(--success-400);
-}
-.mia__rl-val.mia--warn {
-  color: var(--warning-400);
-}
-.mia__rl-val.mia--bad {
-  color: var(--danger-400);
-}
-
-/* ---- Recibo recolhido: o resultado fica, a conta abre sob pedido ---- */
-
-/* Fechada, a moldura tracejada prometeria uma conta que não está à vista: sem operandos, o
-   resultado é uma linha de dado, e a caixa se desenha quando a conta abre. */
-.mia__receipt[data-open="false"] {
-  padding: 0;
-  border-color: transparent;
-}
-.mia__receipt-lines {
-  margin: 0;
-}
-/* Sem operando à vista, o resultado é a única linha: a régua que o separava não separa nada. */
-.mia__receipt-fold:not([data-open="true"]) + .mia__receipt-lines .mia__rl--result {
-  margin-top: 0;
-  padding-top: 0;
-  border-top: none;
-}
-/* O alvo cresce por dentro (padding + margem negativa) para alcançar os 44px do polegar sem
-   inflar o espaço que o gesto ocupa na bolha. */
-.mia__receipt-toggle {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 44px;
-  margin: calc(var(--space-4) * -1) calc(var(--space-4) * -1) calc(var(--space-4) * -1);
-  padding: 0 var(--space-4);
-  border: none;
-  background: none;
-  font-size: var(--fs-label);
-  font-weight: var(--fw-medium);
-  color: var(--text-muted);
-  cursor: pointer;
-}
-.mia__receipt[data-open="false"] .mia__receipt-toggle {
-  margin-inline: 0;
-  padding-inline: 0;
-}
-.mia__receipt-toggle:hover,
-.mia__receipt-toggle:focus-visible {
-  color: var(--text);
-}
-.mia__receipt-toggle svg {
-  transition: transform var(--dur-base) var(--ease-standard);
-}
-.mia__receipt-toggle[aria-expanded="true"] svg {
-  transform: rotate(180deg);
-}
-.mia__receipt-fold {
-  display: grid;
-  grid-template-rows: 0fr;
-  /* Fechado, a linha vale zero — mas a borda do recibo ainda desenharia uma faixa vazia:
-     `visibility` a apaga, e o atraso segura o sumiço até a altura terminar de colapsar. */
-  visibility: hidden;
-  transition:
-    grid-template-rows var(--dur-base) var(--ease-standard),
-    visibility 0s linear var(--dur-base);
-}
-.mia__receipt-fold[data-open="true"] {
-  grid-template-rows: 1fr;
-  visibility: visible;
-  transition:
-    grid-template-rows var(--dur-base) var(--ease-standard),
-    visibility 0s;
-}
-.mia__receipt-fold > .mia__receipt-lines {
-  overflow: hidden;
-  min-height: 0;
-}
-
 /* ---- Saídas de uma resposta: opções e o caminho concreto ---- */
 
 .mia__opts {
@@ -751,19 +614,10 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .mia__msg {
-    animation: none;
-  }
-  /* O chevron não gira e a altura troca no corte — mas o estado final (aberto/fechado)
-     precisa continuar existindo sem a transição, senão o recibo trava colapsado. */
-  .mia__receipt-toggle svg {
-    transition: none;
-  }
-  .mia__receipt-fold {
-    transition: none;
-  }
-}
+/* A mensagem, o chevron e a dobra do recibo já correm em `--dur-*`: o token colapsa para
+   0ms sob movimento reduzido e sob o toggle desligado, e o estado final continua existindo
+   nos dois casos — a dobra nunca trava colapsada. Uma media query aqui só serviria para
+   ignorar o usuário que liga o movimento de propósito. */
 
 /* ---- Tablet: o painel cede a largura antes de sumir ---- */
 

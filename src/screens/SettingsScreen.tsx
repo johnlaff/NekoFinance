@@ -29,7 +29,7 @@ import {
   getAppInfo,
   getAppSetting,
   getFlagSetting,
-  MIA_SHOW_RECEIPT,
+  SHOW_RECEIPT,
   getDailyBudget,
   getMiaConsent,
   GOOGLE_CLIENT_ID,
@@ -619,7 +619,7 @@ function MotionDiagnostics() {
 }
 
 // ---------------------------------------------------------------------------
-// Conta sempre à mostra — a preferência de exibição do recibo na conversa
+// Conta sempre à mostra — a preferência de exibição do recibo em todo o app
 // ---------------------------------------------------------------------------
 
 function ShowReceiptLine() {
@@ -630,7 +630,7 @@ function ShowReceiptLine() {
     if (!isTauri) return;
     void (async () => {
       try {
-        setEnabled(await getFlagSetting(MIA_SHOW_RECEIPT, true));
+        setEnabled(await getFlagSetting(SHOW_RECEIPT, true));
       } catch {
         setEnabled(true);
       }
@@ -641,7 +641,7 @@ function ShowReceiptLine() {
     setEnabled(next);
     setSaving(true);
     try {
-      await setAppSetting(MIA_SHOW_RECEIPT, next ? "true" : "false");
+      await setAppSetting(SHOW_RECEIPT, next ? "true" : "false");
       setSaving(false);
     } catch {
       setSaving(false);
@@ -654,7 +654,7 @@ function ShowReceiptLine() {
     <Line
       icon={Receipt}
       title="Conta sempre à mostra"
-      sub="Desligada, a resposta traz só o resultado, e a conta abre em cada bolha sob demanda."
+      sub="Desligada, a tela traz só o resultado, e a conta abre sob demanda onde ela estiver."
       right={
         <Switch
           on={enabled}

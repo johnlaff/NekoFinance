@@ -316,11 +316,14 @@ export function YearGridScreen() {
   if (forecastQ.loading || gridQ.loading || prevGridQ.loading) {
     return <EmptyState variant="skeleton" skeletonRows={6} />;
   }
+  // A condição é falha de consulta, não ausência de dado: a variante de erro anuncia por
+  // `role="alert"` e a copy não atribui ao usuário o que quebrou na leitura.
   if (forecastQ.error || gridQ.error) {
     return (
       <EmptyState
-        title="Sem dados para o calendário"
-        description="Importe a planilha para ver o saldo dia a dia."
+        variant="error"
+        title="Não foi possível carregar o calendário"
+        description="A leitura do saldo dia a dia falhou. Tente de novo em instantes."
       />
     );
   }

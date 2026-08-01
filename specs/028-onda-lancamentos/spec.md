@@ -133,8 +133,9 @@ mês-escopado — a janela recente pura cortaria meses antigos no limite.
 
 ## Motion
 
-Coreografia de entrada única por montagem (fade+translate curto com stagger, CSS puro,
-`prefers-reduced-motion` respeitado). Superfícies transitam; **dinheiro nunca anima**.
+Coreografia de entrada única por montagem (fade+translate curto com stagger, CSS puro no
+orçamento de entrada do app — ~400ms do início ao fim, governado pelos tokens `--dur-*` e
+nunca dentro de media query, que o toggle "Animações" não alcança). Superfícies transitam; **dinheiro nunca anima**.
 O bottom sheet abre/fecha com a transição do dialog nativo (mesma gramática do Compose).
 
 ## Acessibilidade

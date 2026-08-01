@@ -1,15 +1,14 @@
 import "./mia.css";
-import { useEffect, useId, useRef, useState } from "react";
-import { ArrowUp, Check, ChevronDown, Square } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowUp, Check, Square } from "lucide-react";
 import { EmptyState } from "../design-system/components/EmptyState";
 import { EstimateMark } from "../design-system/components/EstimateMark";
+import { CollapsedReceipt, Receipt } from "../design-system/components/Receipt";
 import { InfoPopover } from "../design-system/components/InfoPopover";
 import { MiaAvatar } from "../design-system/components/MiaAvatar";
 import { Money } from "../design-system/components/Money";
 import { SR_ONLY } from "../design-system/srOnly";
 import {
-  getFlagSetting,
-  MIA_SHOW_RECEIPT,
   getDashboardSummary,
   getForecast,
   getMiaConsent,
@@ -20,6 +19,7 @@ import { centsToBRLInput, parseBRLToCents } from "../lib/format";
 import { motionEnabled } from "../lib/motion";
 import { TYPE_META, type TypeMeta } from "../lib/nkFormat";
 import { useCommand } from "../lib/useCommand";
+import { useShowReceipt } from "../lib/useShowReceipt";
 import { useNekoApp } from "../shell/appContext";
 import { greetingForHour, localTodayIso } from "./hojeView";
 import {
@@ -52,14 +52,13 @@ import {
   type MiaAnswer,
   type MiaFacts,
   type MiaMessage,
-  type ReceiptLine,
   type Span,
   type Tone,
 } from "./miaView";
 
 // A tela da conversa. Toda derivação — roteamento da pergunta, resposta, recibo, recusa —
 // vive em `miaView`; aqui é superfície: a thread, o painel dos números e o composer
-// ancorado. O recibo é a assinatura da tela: a conta que o motor fez, impressa.
+// ancorado. A conta que o motor fez vem impressa pelo `Receipt` do DS.
 
 const TONE_CLASS: Record<Tone, string> = {
   ok: "mia--ok",
@@ -68,13 +67,6 @@ const TONE_CLASS: Record<Tone, string> = {
 };
 
 /** Símbolo impresso e a palavra que o leitor de tela ouve no lugar dele. */
-const OP_META: Record<string, { glyph: string; spoken: string }> = {
-  min: { glyph: "mín", spoken: "O menor dos dois — " },
-  minus: { glyph: "−", spoken: "Menos " },
-  div: { glyph: "÷", spoken: "Dividido por " },
-  eq: { glyph: "=", spoken: "Resultado — " },
-};
-
 /* ------------------------------------------------------------------ */
 /* Trechos de texto: prosa, ênfase e dinheiro (tabular, nunca anima)   */
 /* ------------------------------------------------------------------ */
@@ -108,110 +100,6 @@ function Prose({ spans }: { spans: Span[] }) {
           </span>
         ),
       )}
-    </>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Recibo — a conta à mostra                                           */
-/* ------------------------------------------------------------------ */
-
-function ReceiptRow({ line }: { line: ReceiptLine }) {
-  const op = line.op ? OP_META[line.op] : null;
-  return (
-    <div className={"mia__rl" + (line.result ? " mia__rl--result" : "")}>
-      <dt className="mia__rl-label">
-        {op ? (
-          <>
-            <span className="mia__op" aria-hidden="true">
-              {op.glyph}
-            </span>
-            <span style={SR_ONLY}>{op.spoken}</span>
-          </>
-        ) : null}
-        {line.label}
-      </dt>
-      <dd className={"mia__rl-val " + (line.tone ? TONE_CLASS[line.tone] : "")}>
-        {line.cents === undefined ? (
-          <span className="mia__rl-text">{line.text}</span>
-        ) : (
-          <Money cents={line.cents} size="inherit" />
-        )}
-        {line.mark ? <EstimateMark term={line.mark.term} /> : null}
-      </dd>
-    </div>
-  );
-}
-
-/**
- * Rótulo repetido acontece — duas faturas do mesmo cartão, duas séries de mesmo nome — e um
- * `key` só de rótulo faria o React descartar uma linha: a conta impressa deixaria de fechar.
- * O contador desempata pelo conteúdo, sem depender da posição no array.
- */
-function keyed(lines: ReceiptLine[]): { line: ReceiptLine; key: string }[] {
-  const seen = new Map<string, number>();
-  return lines.map((line) => {
-    const base = `${line.label}:${line.cents ?? line.text ?? ""}`;
-    const nth = (seen.get(base) ?? 0) + 1;
-    seen.set(base, nth);
-    return { line, key: `${base}#${nth}` };
-  });
-}
-
-function ReceiptLines({
-  lines,
-  className,
-}: {
-  lines: ReceiptLine[];
-  className: string;
-}) {
-  return (
-    <dl className={className}>
-      {keyed(lines).map(({ line, key }) => (
-        <ReceiptRow key={key} line={line} />
-      ))}
-    </dl>
-  );
-}
-
-function Receipt({ lines }: { lines: ReceiptLine[] }) {
-  return <ReceiptLines lines={lines} className="mia__receipt" />;
-}
-
-/**
- * Recibo com a aritmética recolhida: a preferência de exibição esconde os operandos, nunca
- * o resultado — a linha `result` fica sempre à mostra, e o botão abre o resto da conta ali
- * mesmo, sem navegar.
- */
-function CollapsedReceipt({ lines }: { lines: ReceiptLine[] }) {
-  const [open, setOpen] = useState(false);
-  const foldId = useId();
-  const resultLines = lines.filter((line) => line.result);
-  const restLines = lines.filter((line) => !line.result);
-
-  if (restLines.length === 0) return <Receipt lines={lines} />;
-
-  return (
-    <>
-      {/* Os operandos vêm antes do resultado mesmo recolhidos: aberta, a conta se lê na
-          ordem em que foi feita, sem o resultado saltar para o topo. A moldura tracejada é o
-          sinal de "aqui tem conta" — fechada, ela não promete o que não mostra. */}
-      <div className="mia__receipt" data-open={open}>
-        <div id={foldId} data-open={open} inert={!open} className="mia__receipt-fold">
-          <ReceiptLines lines={restLines} className="mia__receipt-lines" />
-        </div>
-        <ReceiptLines lines={resultLines} className="mia__receipt-lines" />
-        <button
-          type="button"
-          className="mia__receipt-toggle"
-          aria-expanded={open}
-          aria-controls={foldId}
-          onClick={() => setOpen((current) => !current)}
-        >
-          <ChevronDown size={14} aria-hidden="true" />
-          {open ? "Ocultar a conta" : "Ver a conta"}
-        </button>
-      </div>
     </>
   );
 }
@@ -644,7 +532,7 @@ export function CopilotScreen() {
   const [busy, setBusy] = useState(false);
   // A chave esconde aritmética, nunca estado do dado: default ligado quando a preferência
   // nunca foi gravada (ou a leitura falha) — o recibo some só quando a pessoa pediu.
-  const [showReceipt, setShowReceipt] = useState(true);
+  const showReceipt = useShowReceipt();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const suggRef = useRef<HTMLDivElement | null>(null);
@@ -669,12 +557,6 @@ export function CopilotScreen() {
   // isso, quem reabre o app veria o vazio piscar antes das próprias mensagens voltarem.
   useEffect(() => {
     void hydrateSession().then(setLog);
-  }, []);
-
-  useEffect(() => {
-    getFlagSetting(MIA_SHOW_RECEIPT, true)
-      .then(setShowReceipt)
-      .catch(() => setShowReceipt(true));
   }, []);
 
   // Desabilitar o campo focado solta o foco do documento — sem realocação, o Tab seguinte
