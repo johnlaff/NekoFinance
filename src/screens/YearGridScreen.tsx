@@ -377,9 +377,13 @@ export function YearGridScreen() {
 
   const [selectedIso, setSelectedIso] = useState<string | null>(null);
   const [focusedIso, setFocusedIso] = useState<string | null>(null);
-  // Lazy init: `useRef(new Map())` aloca um Map a cada render e joga fora.
+  // Lazy init: `useRef(new Map())` alocaria um Map a cada render e o jogaria
+  // fora. A atribuição é um `if` explícito de propósito: `BuildHIR` não trata
+  // `??=` e o componente inteiro sairia da memoização automática do React
+  // Compiler — o custo de obedecer ao lint aqui é maior que o da exceção.
   const cellRefsBox = useRef<Map<string, HTMLButtonElement> | null>(null);
-  cellRefsBox.current ??= new Map();
+  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+  if (cellRefsBox.current === null) cellRefsBox.current = new Map();
   const cellRefs = cellRefsBox.current;
   const pendingFocus = useRef<string | null>(null);
   const { navigate } = useNekoApp();
