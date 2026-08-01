@@ -676,12 +676,15 @@ test("Mia — recusa, ambiguidade e didática", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Mia", exact: false }).first().click();
   const input = page.getByLabel("Mensagem para a Mia");
-  for (const question of ["onde gastei mais?", "e a fatura deste mês?"]) {
+  for (const question of [
+    "onde gastei mais?",
+    "e a fatura deste mês?",
+    "O que é buraco do futuro?",
+  ]) {
     await input.fill(question);
     await input.press("Enter");
     await page.waitForTimeout(150);
   }
-  await page.getByRole("button", { name: "O que é buraco do futuro?" }).click();
   await page.waitForTimeout(350);
   await expect(page).toHaveScreenshot("Mia-recusas-dark.png", {
     fullPage: true,

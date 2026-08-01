@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 /** True when running inside the Tauri shell (vs plain web preview). */
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -68,6 +68,121 @@ export function setMiaApiKey(key: string): Promise<MiaConsentView> {
   return invoke("set_mia_api_key", { key });
 }
 
+// --- Rodada da conversa (runtime) ---
+//
+// Espelha `MiaScreenEvent` do backend (`src-tauri/src/mia/screen_events.rs`) linha a linha —
+// `kind` em snake_case é a etiqueta discriminante do evento, os demais campos são exatamente o
+// que aquela linha carrega. Sem texto token a token: `answer_ready` publica a resposta inteira.
+
+export type MiaErrorCode =
+  | "consent_missing"
+  | "provider_unavailable"
+  | "rate_limited"
+  | "provider_refused"
+  | "protocol_violation"
+  | "turn_cap"
+  | "tool_call_cap"
+  | "cost_cap"
+  | "time_cap"
+  | "cancelled"
+  | "ungrounded"
+  | "context_cap";
+
+export type MiaStopReason =
+  | "consent_missing"
+  | "answered"
+  | "turn_cap"
+  | "tool_call_cap"
+  | "cost_cap"
+  | "time_cap"
+  | "cancelled"
+  | "ungrounded"
+  | "failed";
+
+export type MiaScreenEvent =
+  | { kind: "run_started"; run_id: string; model: string; endpoint: string }
+  | { kind: "tool_started"; id: string; tool: string }
+  | { kind: "tool_finished"; id: string; tool: string; ok: boolean }
+  | { kind: "proposal_ready"; id: string; proposal: unknown }
+  | { kind: "answer_ready"; text: string; provenance: "calculo" | "metodo" }
+  | {
+      kind: "usage";
+      model: string;
+      endpoint: string;
+      prompt_tokens: number;
+      completion_tokens: number;
+      /** Nulo é lacuna declarada pelo provedor — nunca renderizar como zero. */
+      cost_micro_usd: number | null;
+      attempts: number;
+    }
+  | { kind: "error"; code: MiaErrorCode; message: string; fix: string }
+  | { kind: "run_finished"; stop: MiaStopReason };
+
+/**
+ * Abre uma rodada da conversa ligada. Devolve o `run_id` assim que o backend a registra — antes
+ * de qualquer evento, para o cancelamento poder alcançá-la mesmo antes da primeira resposta.
+ * Fora do Tauri a promessa rejeita com um erro honesto: não existe rodada para simular.
+ */
+export function runMiaRound(
+  question: string,
+  onEvent: (event: MiaScreenEvent) => void,
+): Promise<string> {
+  if (!isTauri) {
+    return Promise.reject(new Error("A conversa ligada só funciona no app desktop."));
+  }
+  const channel = new Channel<MiaScreenEvent>();
+  channel.onmessage = onEvent;
+  return invoke<string>("run_mia_round", { question, onEvent: channel });
+}
+
+/** Interrompe uma rodada em curso. Fora do Tauri não há rodada — gesto sem efeito. */
+export function cancelMiaRound(runId: string): Promise<void> {
+  if (!isTauri) return Promise.resolve();
+  return invoke("cancel_mia_round", { runId });
+}
+
+/** Aprova a proposta da conversa (evento `proposal_ready`): o backend revalida hash,
+ *  `data_revision` e validade antes de gravar, e devolve o id do lançamento criado. `hash`
+ *  amarra a aprovação ao envelope que a pessoa viu — nunca o valor editado no cartão. */
+export function approveMiaProposal(
+  proposalId: number,
+  payloadJson: string,
+  hash: string,
+): Promise<string> {
+  return invoke("approve_mia_proposal", { proposalId, payloadJson, hash });
+}
+
+/** Recusa a proposta — gesto explícito, nunca inferido de texto no chat. */
+export function rejectMiaProposal(proposalId: number): Promise<void> {
+  return invoke("reject_mia_proposal", { proposalId });
+}
+
+/** Uma linha da conversa guardada, como o backend a devolve — espelha `StoredMessage`
+ *  (`src-tauri/src/mia/store.rs`) linha a linha. `answer` é opaco: o formato é o que a
+ *  própria interface gravou como `MiaAnswer` serializado, e valê-lo cabe a quem lê. */
+export interface StoredMiaMessage {
+  author: "voce" | "mia";
+  question: string | null;
+  answer: unknown;
+  at_iso: string;
+}
+
+/** A conversa guardada, na ordem em que foi dita. */
+export function loadMiaConversation(): Promise<StoredMiaMessage[]> {
+  return invoke("load_mia_conversation");
+}
+
+/** Grava o par pergunta/resposta que a tela acabou de desenhar. `answerJson` é o `MiaAnswer`
+ *  já serializado — o backend guarda o JSON como ele vem, sem conhecer a forma dele. */
+export function appendMiaExchange(question: string, answerJson: string): Promise<void> {
+  return invoke("append_mia_exchange", { question, answerJson });
+}
+
+/** Apaga a conversa de verdade: o que a pessoa leu e o rastro técnico das rodadas somem juntos. */
+export function deleteMiaConversation(): Promise<void> {
+  return invoke("delete_mia_conversation");
+}
+
 export interface UpcomingInvoice {
   account_id: string;
   card_name: string;
@@ -85,6 +200,18 @@ export interface DashboardSummary {
   daily_budget: number;
   /** Procedência do teto exibido: veredito escolhido, estimativa da média, ou sem registro. */
   daily_ceiling_source: "chosen" | "estimate" | "none";
+  /**
+   * Operandos da estimativa do teto — a tela imprime esta conta em vez de descrevê-la.
+   * Ausente quando o teto é escolhido: número digitado não tem conta a mostrar.
+   */
+  daily_ceiling_estimate: {
+    /** Gasto variável somado do mês da base (magnitude, centavos). */
+    variable_cents: number;
+    /** Dias do mês da base — o divisor da média. */
+    days: number;
+    /** Mês da base, `YYYY-MM`. */
+    month: string;
+  } | null;
   /** Overlay: existe proposta da cerimônia do teto aguardando confirmação. */
   ceiling_proposal_pending: boolean;
   daily_spend_today: number;
@@ -296,18 +423,18 @@ export interface MonthMetric {
 
 /** Poupança do ano: realizada (honesta) vs projetada (otimista se o futuro está incompleto). */
 export interface AnnualSavings {
+  /** Entradas dos meses vividos do ano, o corrente incluído — denominador da régua. */
   realized_income_cents: number;
-  /** NET superávit (renda − saída) — o "colchão" do Neko, distinto da Economia registrada. */
+  /** NET superávit (renda − saída) dos meses vividos — o "colchão", distinto da Economia. */
   realized_savings_cents: number;
   realized_rate_bps: number;
   /** Economia REGISTRADA do ano (transfers→reserva) — numerador do Economizado% do método. */
   registered_economia_cents: number;
   /** Patrimônio realizado do ano (previdência/ilíquido) — a outra leitura do popover. */
   patrimonio_cents: number;
-  /** A régua que julga: registrada + patrimônio quando a reserva líquida ≥ 6 meses. */
+  /** Numerador da régua: Economia lançada nos meses vividos. Patrimônio fica de fora. */
   economia_ruler_cents: number;
   economia_ruler_rate_bps: number;
-  includes_previdencia: boolean;
   /** Estado da régua de economia: sem registro ⇒ a UI exibe a sobra como estimativa marcada. */
   economia_state: "verdict" | "no_record";
   projected_income_cents: number;
@@ -703,6 +830,21 @@ export function getAppSetting(key: string): Promise<string | null> {
 /** Grava uma preferência local (sobrescreve). */
 export function setAppSetting(key: string, value: string): Promise<void> {
   return invoke("set_app_setting", { key, value });
+}
+
+/**
+ * Chave da preferência de exibição do recibo, válida em todo o app. O nome persistido guarda
+ * o prefixo da conversa, onde o recibo nasceu: renomeá-lo descartaria a escolha já gravada.
+ */
+export const SHOW_RECEIPT = "mia_show_receipt";
+
+/**
+ * Lê uma preferência de liga/desliga. O default mora aqui, e não em cada tela que consulta a
+ * chave: quem lê e quem escreve precisam concordar sobre o que "nunca gravada" significa.
+ */
+export async function getFlagSetting(key: string, fallback: boolean): Promise<boolean> {
+  const value = await getAppSetting(key);
+  return value === null ? fallback : value !== "false";
 }
 
 /**

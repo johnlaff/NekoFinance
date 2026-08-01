@@ -54,7 +54,7 @@
   font-size: var(--fs-label);
 }
 
-/* ---- Veredito: a manchete na voz da marca ---- */
+/* ---- Veredito: o `VerdictHero` do DS. Aqui fica só o que é da tela. ---- */
 
 .hz__verdict {
   display: flex;
@@ -62,53 +62,15 @@
   gap: var(--space-2);
 }
 
-.hz__vlabel {
-  margin: 0 0 var(--space-2);
-  font-size: var(--fs-label);
-  letter-spacing: var(--ls-label);
-  text-transform: uppercase;
-  color: var(--text-faint);
-}
-
-.hz__verdict h1 {
-  margin: 0;
-  font-size: var(--fs-h1);
-  font-weight: var(--fw-semibold);
-  letter-spacing: -0.03em;
-  line-height: var(--lh-tight);
-  color: var(--text-strong);
-  text-wrap: balance;
-}
-
-.hz__vbody {
-  margin: var(--space-4) 0 0;
-  font-size: var(--fs-body);
-  line-height: 1.55;
-  color: var(--text-muted);
-  max-width: 52ch;
-}
-
-.hz__vbody b {
-  color: var(--text-strong);
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-
+/* `.nk-verdict__body b` tem especificidade maior que `.hz__neg` sozinho: sem repetir a
+   classe no contexto do corpo, o vermelho do buraco perderia para a tinta padrão. */
 .hz__neg,
-.hz__vbody b.hz__neg {
+.nk-verdict__body b.hz__neg {
   color: var(--money-neg);
 }
 
 .hz__cf {
   color: var(--text-faint);
-}
-
-.hz__vactions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-4);
-  margin-top: var(--space-4);
 }
 
 .hz__prov {
@@ -736,61 +698,47 @@ td.hz__num.hz__neg,
 
 /* ---- Coreografia: a estrada se desenha; a grade assenta em onda; dinheiro entra pronto ---- */
 
-@media (prefers-reduced-motion: no-preference) {
-  .hz-road-lanc {
-    stroke-dasharray: 1;
-    stroke-dashoffset: 1;
-    animation: hz-road-draw 0.48s cubic-bezier(0.2, 0, 0, 1) forwards;
-  }
+/* Sem media query: os tokens governam (0ms sob reduzido/desligado, restaurados quando o
+   usuário liga o toggle "Animações", que uma media query não enxergaria).
 
-  .hz-road-fog {
-    animation: hz-fade 0.3s cubic-bezier(0.2, 0, 0, 1) 0.34s both;
-  }
+   A névoa e a ponta entram enquanto a estrada ainda se desenha, em vez de esperarem o
+   traçado terminar: encadeadas, a sequência passaria do orçamento de entrada da tela. */
+.hz-road-lanc {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: hz-road-draw var(--dur-slow) var(--ease-standard) forwards;
+}
 
-  .hz-road-tip {
-    animation: hz-fade 0.3s cubic-bezier(0.2, 0, 0, 1) 0.42s both;
-  }
+.hz-road-fog {
+  animation: hz-fade var(--dur-base) var(--ease-standard)
+    calc(var(--dur-stagger-step) * 4) both;
+}
 
-  .hz__mcard {
-    animation: hz-set 0.34s cubic-bezier(0.2, 0, 0, 1) both;
-  }
+.hz-road-tip {
+  animation: hz-fade var(--dur-base) var(--ease-standard)
+    calc(var(--dur-stagger-step) * 5) both;
+}
 
-  .hz__mcard:nth-child(1) {
-    animation-delay: 0s;
-  }
-  .hz__mcard:nth-child(2) {
-    animation-delay: 0.05s;
-  }
-  .hz__mcard:nth-child(3) {
-    animation-delay: 0.1s;
-  }
-  .hz__mcard:nth-child(4) {
-    animation-delay: 0.15s;
-  }
-  .hz__mcard:nth-child(5) {
-    animation-delay: 0.2s;
-  }
-  .hz__mcard:nth-child(6) {
-    animation-delay: 0.25s;
-  }
-  .hz__mcard:nth-child(7) {
-    animation-delay: 0.3s;
-  }
-  .hz__mcard:nth-child(8) {
-    animation-delay: 0.35s;
-  }
-  .hz__mcard:nth-child(9) {
-    animation-delay: 0.4s;
-  }
-  .hz__mcard:nth-child(10) {
-    animation-delay: 0.45s;
-  }
-  .hz__mcard:nth-child(11) {
-    animation-delay: 0.5s;
-  }
-  .hz__mcard:nth-child(12) {
-    animation-delay: 0.55s;
-  }
+/* Doze meses cabem na fileira, mas o escalonamento para no quinto passo: além dele o
+   último cartão entraria depois do orçamento, e o usuário assiste a tela carregar. */
+.hz__mcard {
+  animation: hz-set var(--dur-base) var(--ease-standard) both;
+}
+
+.hz__mcard:nth-child(2) {
+  animation-delay: calc(var(--dur-stagger-step) * 1);
+}
+.hz__mcard:nth-child(3) {
+  animation-delay: calc(var(--dur-stagger-step) * 2);
+}
+.hz__mcard:nth-child(4) {
+  animation-delay: calc(var(--dur-stagger-step) * 3);
+}
+.hz__mcard:nth-child(5) {
+  animation-delay: calc(var(--dur-stagger-step) * 4);
+}
+.hz__mcard:nth-child(n + 6) {
+  animation-delay: calc(var(--dur-stagger-step) * 5);
 }
 
 @keyframes hz-road-draw {

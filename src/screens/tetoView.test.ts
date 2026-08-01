@@ -224,6 +224,50 @@ describe("o estado da manchete", () => {
     expect(v.proof).toBeNull();
   });
 
+  // A tela IMPRIME a conta da estimativa: sem os operandos do motor ela não pode inventá-los,
+  // e com eles a divisão precisa fechar no número da manchete.
+  it("estimativa carrega os operandos que o motor usou, e eles fecham", () => {
+    const v = buildTetoView({
+      budget: budget({ per_day_cents: 0, categories: [], divisor_days: null }),
+      proposal: null,
+      summary: summary({
+        daily_ceiling_source: "estimate",
+        daily_budget: 2_000,
+        daily_ceiling_estimate: { variable_cents: 62_000, days: 31, month: "2026-05" },
+      }),
+      today: "2026-07-23",
+    });
+    expect(v.estimateBasis).toEqual({
+      variableCents: 62_000,
+      days: 31,
+      month: "2026-05",
+    });
+    expect(v.estimateBasis!.variableCents / v.estimateBasis!.days).toBe(v.perDayCents);
+  });
+
+  // Sem base vinda do motor, a tela fica sem conta a mostrar — nunca com uma conta inventada.
+  it("estimativa sem base do motor não fabrica operandos", () => {
+    const v = buildTetoView({
+      budget: budget({ per_day_cents: 0, categories: [], divisor_days: null }),
+      proposal: null,
+      summary: summary({ daily_ceiling_source: "estimate", daily_budget: 4_600 }),
+      today: "2026-07-23",
+    });
+    expect(v.estimateBasis).toBeNull();
+  });
+
+  // Teto escolhido é decisão do dono: número digitado não tem conta a mostrar.
+  it("teto escolhido não carrega base de estimativa", () => {
+    const v = buildTetoView({
+      budget: budget({ per_day_cents: 5_000 }),
+      proposal: null,
+      summary: summary({ daily_ceiling_source: "chosen", daily_budget: 5_000 }),
+      today: "2026-07-23",
+    });
+    expect(v.kind).toBe("chosen");
+    expect(v.estimateBasis).toBeNull();
+  });
+
   it("sem registro: nem teto escolhido, nem histórico para estimar", () => {
     const v = buildTetoView({
       budget: budget({ per_day_cents: 0, categories: [], divisor_days: null }),

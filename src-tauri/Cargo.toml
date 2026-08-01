@@ -4,6 +4,9 @@ version = "0.1.0"
 description = "Local-first, forecast-first personal finance desktop app (Google Sheets + deterministic projection engine + AI copilot)"
 authors = ["John"]
 edition = "2024"
+# O crate tem dois binários (o app e o `mia-bench`), e o empacotador precisa saber
+# qual deles é o produto — sem isto ele para em "failed to find main binary".
+default-run = "neko-finance"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

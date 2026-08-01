@@ -4,7 +4,7 @@
 //! importa: uma preferência marcada no painel do provedor vale enquanto ninguém a desmarca, e
 //! ninguém percebe quando ela cai; um campo ausente do corpo é teste vermelho.
 
-use super::pins::ModelPin;
+use super::pins::{ModelPin, Retention};
 use serde_json::{Value, json};
 
 /// Uma ferramenta como o provedor a declara. `strict` só tem efeito com o beta do pin junto.
@@ -36,17 +36,26 @@ pub(crate) fn build(spec: &RunSpec<'_>) -> PreparedRequest {
     messages.push(json!({"role": "system", "content": spec.system}));
     messages.extend(spec.messages.iter().cloned());
 
+    // `parallel_tool_calls` NÃO entra no corpo. Sob `require_parameters`, um campo que os
+    // endpoints não anunciam derruba o roteamento inteiro — quase nenhum anuncia este (verificado
+    // 2026-07), e o pedido volta como "no endpoints found" antes de qualquer rodada existir. A
+    // invariante de uma chamada por turno continua garantida onde ela sempre foi decidida: o laço
+    // fecha a rodada ao ver a segunda chamada, e é isso que o teste dela prova. Pedir ao provedor
+    // era defesa em profundidade; entre perdê-la e não ter bancada, a bancada vence.
+    // `usage` também fica de fora: a linha de uso, com o custo, vem por padrão no último evento
+    // do stream — conferido por execução nas duas formas, com e sem o pedido explícito
+    // (verificado 2026-07). Campo sem efeito no corpo é só superfície.
     let mut body = json!({
         "model": spec.pin.model,
         "stream": true,
-        "usage": {"include": true},
-        "max_tokens": spec.max_tokens,
-        "parallel_tool_calls": false,
+        // O esforço que ESTE pin declara, no vocabulário oficial do modelo. Ele vem do pin porque
+        // é parte da identidade do candidato — outro esforço é outra corrida —, e o nível errado
+        // é rodada recusada ou objeto medido diferente do declarado, não resposta pior.
+        "reasoning": {"effort": spec.pin.reasoning_effort.wire()},
         "messages": messages,
         "provider": {
-            // Impede que a rodada use endpoint fora do catálogo de retenção zero.
-            "zdr": true,
-            // Impede a coleta do conteúdo da rodada pelo provedor.
+            // Impede a coleta do conteúdo da rodada pelo provedor — vale para todo pin, ZDR ou
+            // opt-out: a política do operador cobre retenção, nunca coleta para treino.
             "data_collection": "deny",
             // Impede que o roteador escolha um endpoint diferente do pin.
             "only": [spec.pin.endpoint],
@@ -56,6 +65,23 @@ pub(crate) fn build(spec: &RunSpec<'_>) -> PreparedRequest {
             "require_parameters": true,
         },
     });
+
+    // `zdr` só sai para o pin que prova a garantia pelo catálogo de retenção zero. Mandá-lo para
+    // um pin em opt-out deliberado ([`Retention::ProviderPolicy`]) excluiria do roteamento o
+    // próprio endpoint que o pin escolheu — a garantia dele vem da política do operador, que o
+    // roteador não lê por este campo.
+    if spec.pin.retention == Retention::Zero {
+        body["provider"]["zdr"] = json!(true);
+    }
+
+    // O teto de saída entra com o nome que ESTE endpoint anuncia: sob `require_parameters`, o
+    // nome que o endpoint não anuncia é rodada recusada pelo roteador, não teto ignorado.
+    body.as_object_mut()
+        .expect("a requisição é um objeto JSON")
+        .insert(
+            spec.pin.token_cap.field().to_string(),
+            json!(spec.max_tokens),
+        );
 
     if !spec.tools.is_empty() {
         let tools: Vec<Value> = spec

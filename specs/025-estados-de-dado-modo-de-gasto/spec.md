@@ -206,20 +206,17 @@ teto na Hoje e por link em Configurações):
 - As seções de teto de Configurações são substituídas por um cartão-resumo com
   link para a tela (uma fonte de edição só).
 
-## D4 — Economia: veredito só de economia registrada; previdência condicional
+## D4 — Economia: veredito só de economia registrada
 
-- A régua Economizado% (anual e mensal) continua alimentada por economia
+- A régua Economizado% (anual e mensal) é alimentada por economia
   **registrada** (eventos Economia + anotação da aba, `max(derivado, anotado)`
   — economia é ato, não resíduo).
-- **Previdência condicional à reserva líquida**: quando a reserva (D5) ≥ 6
-  meses, os eventos Patrimônio passam a contar na régua de economia (o método:
-  primeiro constrói liquidez, depois patrimônio conta como poupança); < 6
-  meses, ficam fora (comportamento atual). O popover expõe as duas leituras
-  (com e sem previdência). A inclusão vale para a régua E para o guardrail de
-  poupança do "pode gastar hoje" (uma régua só, sem bifurcar semântica).
-- **Estados**: veredito quando a régua (economia registrada + previdência
-  condicional) > 0 — previdência contando é dado registrado, só vive noutro
-  balde; senão **sem registro** — o app exibe a **sobra derivada (Colchão)**
+- **Previdência é patrimônio, nunca Economia**: os eventos Patrimônio ficam
+  fora do numerador da régua em qualquer cenário — não há condição de reserva
+  que os faça contar. O método faz liquidez primeiro e trata o longo prazo como
+  outra linha da vida financeira. O popover expõe o patrimônio realizado ao
+  lado da régua, como leitura vizinha.
+- **Estados**: veredito quando a economia registrada > 0; senão **sem registro** — o app exibe a **sobra derivada (Colchão)**
   como estimativa marcada + CTA didático do ritual de transferir para a
   reserva.
   A economia NÃO tem ramo de zero-diagnóstico: a planilha real demonstra que

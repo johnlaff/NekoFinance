@@ -7,7 +7,12 @@ import {
   cellMoney,
   cellSigned,
   dayComponents,
+  gridBand,
+  monthHeadline,
+  monthMarks,
+  railSeries,
   shiftIso,
+  shortDate,
   type DayRow,
 } from "./calendarioView";
 import type { TransactionRow } from "../lib/api";
@@ -99,6 +104,23 @@ describe("buildCalendarMonth — matriz Seg-first", () => {
     // 2 vazias + 31 dias = 33 → 5 semanas com 2 vazias no fim.
     expect(m.weeks).toHaveLength(5);
     expect(m.weeks[4]?.[6]).toBeNull();
+  });
+});
+
+describe("buildCalendarMonth — meses de 6 semanas", () => {
+  it("agosto/2026 (sábado) abre com 5 vazias e fecha em 6 semanas", () => {
+    const m = buildCalendarMonth({
+      year: 2026,
+      month0: 7,
+      today: TODAY,
+      realized: [],
+      forecast: [],
+    });
+    expect(m.weeks).toHaveLength(6);
+    for (const week of m.weeks) expect(week).toHaveLength(7);
+    expect(m.weeks[0]?.slice(0, 5)).toEqual([null, null, null, null, null]);
+    expect(m.weeks[0]?.[5]?.day).toBe(1);
+    expect(m.weeks[5]?.[0]?.day).toBe(31);
   });
 });
 
@@ -277,6 +299,13 @@ describe("navegação de mês e dia", () => {
   });
 });
 
+describe("shortDate — a data curta do olho", () => {
+  it("imprime dia/mês com dois dígitos", () => {
+    expect(shortDate("2026-06-10")).toBe("10/06");
+    expect(shortDate("2026-12-01")).toBe("01/12");
+  });
+});
+
 describe("formatadores de célula", () => {
   it("cellMoney arredonda a reais inteiros com milhar", () => {
     expect(cellMoney(1_520_296)).toBe("15.203");
@@ -288,5 +317,215 @@ describe("formatadores de célula", () => {
     expect(cellSigned(-2_600)).toBe("−26");
     expect(cellSigned(3)).toBe("");
     expect(cellSigned(0)).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A leitura do mês: a manchete, os dias que o marcam, a faixa que a grade
+// pinta e a série do trilho. Tudo derivado do mês já montado.
+// ---------------------------------------------------------------------------
+
+describe("gridBand — a cor só aparece quando o dia aperta", () => {
+  it("cala nas faixas boas", () => {
+    expect(gridBand(1_000_000)).toBeNull();
+    expect(gridBand(200_001)).toBeNull(); // folga
+    expect(gridBand(200_000)).toBeNull(); // ok — R$ 2.000 cai em "ok"
+    expect(gridBand(100_001)).toBeNull();
+  });
+
+  it("acende de Apertado para baixo, nos limiares da planilha", () => {
+    expect(gridBand(100_000)).toBe("tight"); // R$ 1.000 cai em "apertado"
+    expect(gridBand(0)).toBe("tight");
+    expect(gridBand(-1)).toBe("negative");
+    expect(gridBand(-49_999)).toBe("negative");
+    expect(gridBand(-50_001)).toBe("critical");
+  });
+
+  it("dado ausente não pinta nada", () => {
+    expect(gridBand(null)).toBeNull();
+  });
+});
+
+describe("monthMarks — os dias que decidem o mês", () => {
+  it("abre pelo dia do vale e segue com as entradas", () => {
+    const marks = monthMarks(build());
+    expect(marks.map((m) => m.kind)).toEqual([
+      "lowest-out",
+      "income",
+      "income",
+      "income",
+      "income",
+    ]);
+    expect(marks[0]?.iso).toBe("2026-07-12");
+    expect(marks[0]?.cents).toBe(556_965);
+  });
+
+  it("as entradas saem em ordem cronológica, com o valor que entrou", () => {
+    const incomes = monthMarks(build()).filter((m) => m.kind === "income");
+    expect(incomes.map((m) => m.iso)).toEqual([
+      "2026-07-01",
+      "2026-07-07",
+      "2026-07-08",
+      "2026-07-20", // a projetada conta como qualquer outra
+    ]);
+    expect(incomes[2]?.cents).toBe(100);
+    expect(incomes[3]?.cents).toBe(199_865);
+  });
+
+  it("separa os papéis quando o vale e a maior saída caem em dias diferentes", () => {
+    const m = buildCalendarMonth({
+      year: 2026,
+      month0: 5,
+      today: "2026-06-28",
+      realized: [
+        row({ date: "2026-06-01", balance_cents: 900_000 }),
+        row({ date: "2026-06-02", balance_cents: 300_000 }), // queda de 600k
+        row({ date: "2026-06-20", balance_cents: 250_000 }), // vale, queda de 50k
+      ],
+      forecast: [],
+    });
+    const marks = monthMarks(m);
+    expect(marks.map((k) => k.kind)).toEqual(["lowest", "out"]);
+    expect(marks[0]?.iso).toBe("2026-06-20");
+    expect(marks[1]?.iso).toBe("2026-06-02");
+    expect(marks[1]?.cents).toBe(-600_000);
+  });
+
+  it("quando menor saldo e maior saída caem no mesmo dia, a data aparece uma vez", () => {
+    // Julho da fixture: o dia 12 é o vale E a maior queda do mês.
+    const marks = monthMarks(build());
+    const dozes = marks.filter((m) => m.iso === "2026-07-12");
+    expect(dozes).toHaveLength(1);
+    expect(dozes[0]?.kind).toBe("lowest-out");
+    expect(dozes[0]?.label).toBe("Menor saldo e maior saída");
+    expect(dozes[0]?.cents).toBe(556_965);
+    expect(dozes[0]?.extraCents).toBe(556_965 - 1_367_123);
+  });
+
+  it("mês sem corrente não tem o que marcar", () => {
+    expect(monthMarks(build({ realized: [], forecast: [] }))).toEqual([]);
+  });
+});
+
+describe("monthHeadline — a forma do mês em palavras", () => {
+  it("respira na maior entrada DEPOIS do vale, não na primeira do mês", () => {
+    const m = buildCalendarMonth({
+      year: 2026,
+      month0: 5,
+      today: "2026-06-10",
+      realized: [
+        row({ date: "2026-06-01", balance_cents: 910_000, income_cents: 700_000 }),
+        row({ date: "2026-06-09", balance_cents: 845_800 }),
+      ],
+      forecast: [
+        row({ date: "2026-06-20", balance_cents: 575_200 }),
+        row({ date: "2026-06-25", balance_cents: 1_275_200, income_cents: 700_000 }),
+      ],
+    });
+    expect(monthHeadline(m, "Junho")).toBe("Junho afunda no dia 20 e respira no 25.");
+  });
+
+  it("sem entrada no mês, fala só do vale", () => {
+    const m = buildCalendarMonth({
+      year: 2026,
+      month0: 5,
+      today: "2026-06-10",
+      realized: [row({ date: "2026-06-03", balance_cents: 400_000 })],
+      forecast: [row({ date: "2026-06-18", balance_cents: 120_000 })],
+    });
+    expect(monthHeadline(m, "Junho")).toBe("Junho afunda no dia 18.");
+  });
+
+  it("quando a entrada vem antes do vale, a ordem cronológica manda", () => {
+    const m = buildCalendarMonth({
+      year: 2026,
+      month0: 5,
+      today: "2026-06-28",
+      realized: [
+        row({ date: "2026-06-05", balance_cents: 900_000, income_cents: 500_000 }),
+        row({ date: "2026-06-22", balance_cents: 100_000 }),
+      ],
+      forecast: [],
+    });
+    expect(monthHeadline(m, "Junho")).toBe("Junho respira no dia 5 e afunda no 22.");
+  });
+
+  it("mês sem corrente não tem manchete", () => {
+    expect(monthHeadline(build({ realized: [], forecast: [] }), "Julho")).toBeNull();
+  });
+});
+
+describe("railSeries — o trilho do saldo", () => {
+  it("normaliza x pelo dia e v pelo valor, com o vale no piso", () => {
+    const s = railSeries(build());
+    expect(s).not.toBeNull();
+    const pts = s!.points;
+    expect(pts[0]?.x).toBe(0);
+    expect(pts[pts.length - 1]?.x).toBe(1);
+    const vale = pts.find((p) => p.iso === "2026-07-12");
+    expect(vale?.v).toBe(0);
+    const topo = pts.find((p) => p.iso === "2026-07-08");
+    expect(topo?.v).toBe(1);
+  });
+
+  it("cada ponto carrega o evento de entrada — a tela não reanda a matriz", () => {
+    const s = railSeries(build());
+    expect(s!.points.find((p) => p.iso === "2026-07-08")?.hasIncome).toBe(true);
+    expect(s!.points.find((p) => p.iso === "2026-07-09")?.hasIncome).toBe(false);
+  });
+
+  it("marca onde a corrente vira projeção", () => {
+    const s = railSeries(build());
+    expect(s!.points.find((p) => p.iso === "2026-07-14")?.isFuture).toBe(false);
+    expect(s!.points.find((p) => p.iso === "2026-07-16")?.isFuture).toBe(true);
+    expect(s!.todayIndex).toBe(s!.points.findIndex((p) => p.iso === "2026-07-15"));
+  });
+
+  it("dia sem corrente não entra na série", () => {
+    const s = railSeries(
+      buildCalendarMonth({
+        year: 2026,
+        month0: 5,
+        today: "2026-06-10",
+        realized: [row({ date: "2026-06-02", balance_cents: 100_000 })],
+        forecast: [row({ date: "2026-06-20", balance_cents: 300_000 })],
+      }),
+    );
+    expect(s!.points.map((p) => p.iso)).toEqual(["2026-06-02", "2026-06-20"]);
+  });
+
+  it("mês inteiro no mesmo saldo não colapsa o traço na borda", () => {
+    const flat = buildCalendarMonth({
+      year: 2026,
+      month0: 5,
+      today: "2026-06-10",
+      realized: [
+        row({ date: "2026-06-01", balance_cents: 300_000 }),
+        row({ date: "2026-06-02", balance_cents: 300_000 }),
+      ],
+      forecast: [row({ date: "2026-06-20", balance_cents: 300_000 })],
+    });
+    const s = railSeries(flat);
+    expect(s!.points).toHaveLength(3);
+    expect(s!.points.map((p) => p.v)).toEqual([0.5, 0.5, 0.5]);
+  });
+
+  it("um único ponto fica no meio da faixa, sem divisão por zero", () => {
+    const s = railSeries(
+      buildCalendarMonth({
+        year: 2026,
+        month0: 5,
+        today: "2026-06-10",
+        realized: [row({ date: "2026-06-02", balance_cents: 100_000 })],
+        forecast: [],
+      }),
+    );
+    expect(s!.points).toHaveLength(1);
+    expect(s!.points[0]?.v).toBe(0.5);
+    expect(s!.points[0]?.x).toBe(0);
+  });
+
+  it("mês sem corrente não tem trilho", () => {
+    expect(railSeries(build({ realized: [], forecast: [] }))).toBeNull();
   });
 });

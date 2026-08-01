@@ -26,3 +26,23 @@ fn main() {
     }
     neko_finance_lib::run()
 }
+
+#[cfg(test)]
+mod manifest_contract {
+    /// O empacotador escolhe o binário do produto pelo `default-run`. Com mais de
+    /// um `[[bin]]` no crate e sem essa chave, `tauri build` para em "failed to
+    /// find main binary" — e nenhum gate acusa, porque `npm run build` compila só
+    /// o frontend e o CI só empacota em tag de release.
+    #[test]
+    fn crate_com_binario_extra_declara_default_run() {
+        let manifest = include_str!("../Cargo.toml");
+        let extra_bins = manifest.matches("[[bin]]").count();
+        if extra_bins > 0 {
+            assert!(
+                manifest.contains("default-run ="),
+                "o crate tem {extra_bins} [[bin]] além do implícito: declare `default-run` \
+                 no [package], senão o build do executável quebra",
+            );
+        }
+    }
+}

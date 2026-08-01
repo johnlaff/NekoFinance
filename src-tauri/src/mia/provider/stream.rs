@@ -19,6 +19,9 @@ pub(crate) enum ProviderEvent {
     Usage(Usage),
     Finished {
         reason: FinishReason,
+        // O motivo no vocabulário do provedor, preservado como o transcript nativo manda; quem
+        // decide o rumo da rodada é `reason`, traduzido.
+        #[allow(dead_code)]
         native: Option<String>,
     },
     Failed(ProviderError),
@@ -45,6 +48,13 @@ pub(crate) struct ProviderError {
     /// Texto vindo do provedor, que pode ecoar trecho enviado e é dado não confiável: serve ao
     /// rastro técnico, nunca é publicado como resposta ou colado no texto que o modelo relê.
     pub message: String,
+    /// O servidor chegou a responder — qualquer status HTTP. É o fato que separa, na fronteira
+    /// de ABERTURA, recusa comprovada de falha incerta: com resposta, o corpo de erro não é
+    /// stream e nada foi gerado nem cobrado; sem resposta, o pedido pode ter alcançado o
+    /// servidor e gerado custo que só viria no stream que nunca abriu — e dinheiro em dúvida
+    /// fecha. Depois de o stream abrir, quem contabiliza é a linha de uso, e este campo deixa
+    /// de decidir.
+    pub responded: bool,
 }
 
 /// A taxonomia escolhe a próxima ação do laço: cada variante pede uma resposta diferente.
@@ -265,6 +275,8 @@ impl StreamParser {
         vec![ProviderEvent::Failed(ProviderError {
             kind,
             message: message.into(),
+            // O parser só existe depois de o stream abrir: houve resposta por definição.
+            responded: true,
         })]
     }
 }

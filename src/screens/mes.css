@@ -324,30 +324,35 @@
 
 /* ---- Coreografia de entrada (uma vez por montagem; dinheiro não anima) ---- */
 
-@media (prefers-reduced-motion: no-preference) {
-  .mes__head {
-    animation: mes-pop 0.5s cubic-bezier(0.2, 0, 0, 1) both 0.06s;
-  }
+/* Sem media query: os tokens governam (0ms sob reduzido/desligado, restaurados quando o
+   usuário liga o toggle "Animações", que uma media query não enxergaria). */
+.mes__head {
+  animation: mes-pop var(--dur-base) var(--ease-standard) both;
+}
 
-  .mes__bento > :nth-child(1) {
-    animation: mes-pop 0.45s cubic-bezier(0.2, 0, 0, 1) both 0.16s;
-  }
+.mes__bento > :nth-child(1) {
+  animation: mes-pop var(--dur-base) var(--ease-standard) both
+    calc(var(--dur-stagger-step) * 1);
+}
 
-  .mes__bento > :nth-child(2) {
-    animation: mes-pop 0.45s cubic-bezier(0.2, 0, 0, 1) both 0.26s;
-  }
+.mes__bento > :nth-child(2) {
+  animation: mes-pop var(--dur-base) var(--ease-standard) both
+    calc(var(--dur-stagger-step) * 2);
+}
 
-  .mes__bento > :nth-child(3) {
-    animation: mes-pop 0.45s cubic-bezier(0.2, 0, 0, 1) both 0.36s;
-  }
+.mes__bento > :nth-child(3) {
+  animation: mes-pop var(--dur-base) var(--ease-standard) both
+    calc(var(--dur-stagger-step) * 3);
+}
 
-  .mes__bento > :nth-child(4) {
-    animation: mes-pop 0.45s cubic-bezier(0.2, 0, 0, 1) both 0.44s;
-  }
+.mes__bento > :nth-child(4) {
+  animation: mes-pop var(--dur-base) var(--ease-standard) both
+    calc(var(--dur-stagger-step) * 4);
+}
 
-  .mes__bento > :nth-child(n + 5) {
-    animation: mes-pop 0.45s cubic-bezier(0.2, 0, 0, 1) both 0.52s;
-  }
+.mes__bento > :nth-child(n + 5) {
+  animation: mes-pop var(--dur-base) var(--ease-standard) both
+    calc(var(--dur-stagger-step) * 5);
 }
 
 @keyframes mes-pop {

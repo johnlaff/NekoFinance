@@ -9,13 +9,23 @@
 //! A credencial entra pelo construtor, vira cabeçalho e não existe em mais lugar nenhum: o tipo
 //! não deriva Debug nem Serialize de propósito, para que nenhum formato a carregue por acidente.
 
+use super::drift::{EndpointsCatalog, ZdrCatalog};
 use super::egress;
 use super::request::RunSpec;
 use super::stream::{ErrorKind, ProviderError, ProviderEvent, StreamParser};
 use crate::mia::run::{CancelToken, ProviderAdapter};
+use serde_json::Value;
 use std::future::Future;
 use std::time::Duration;
 use tokio::sync::mpsc;
+
+/// O catálogo de endpoints de retenção zero do provedor. É o que o canary consulta antes de
+/// confiar num pin: cada presença nesta lista é, por definição, um endpoint de retenção zero.
+const ZDR_CATALOG_URL: &str = "https://openrouter.ai/api/v1/endpoints/zdr";
+
+/// Quanto do catálogo entra na memória. Folgado para a lista inteira do provedor e finito de
+/// propósito: um corpo sem fim viraria memória sem fim.
+const CATALOG_BODY_LIMIT: usize = 8 * 1024 * 1024;
 
 /// Espera máxima pela abertura da conexão. Curta de propósito: falha de conexão é pré-resposta,
 /// o caminho mais barato de retentar.
@@ -79,12 +89,18 @@ impl ProviderAdapter for HttpAdapter {
             egress::check(prepared.url).map_err(|denied| ProviderError {
                 kind: ErrorKind::Permanent,
                 message: format!("A saída para o provedor foi recusada: {denied:?}."),
+                // O pedido nem saiu — mas este caminho só dispara com invariante do programa
+                // violada, e aí o lado fechado é o único barato.
+                responded: false,
             })?;
 
             let response = request.send().await.map_err(|error| ProviderError {
                 // Falha de envio acontece antes de qualquer evento: retentável por definição.
                 kind: ErrorKind::Transient,
                 message: format!("O pedido ao provedor não pôde ser enviado: {error}."),
+                // Sem resposta não se sabe o estágio que o servidor alcançou: o pedido pode ter
+                // chegado e gerado, com o custo no stream que nunca abriu.
+                responded: false,
             })?;
 
             let status = response.status().as_u16();
@@ -101,14 +117,143 @@ impl ProviderAdapter for HttpAdapter {
     }
 }
 
+impl ZdrCatalog for HttpAdapter {
+    /// Busca o catálogo pelo mesmo cliente endurecido e a mesma credencial da rodada. Falha aqui
+    /// nunca é "pin verificado": quem chama trata a ausência de catálogo como recusa.
+    fn fetch(&self) -> impl Future<Output = Result<Value, String>> + Send {
+        let request = self
+            .client
+            .get(ZDR_CATALOG_URL)
+            .header("authorization", format!("Bearer {}", self.api_key));
+
+        async move {
+            egress::check(ZDR_CATALOG_URL)
+                .map_err(|denied| format!("A saída para o catálogo foi recusada: {denied:?}."))?;
+
+            let response = request.send().await.map_err(|error| {
+                format!("O catálogo do provedor não pôde ser buscado: {error}.")
+            })?;
+
+            let status = response.status().as_u16();
+            if !(200..300).contains(&status) {
+                // O corpo é do outro lado e esta mensagem termina no terminal de quem rodou: um
+                // erro que ecoasse o cabeçalho de autorização publicaria a chave. O status
+                // diagnostica a recusa; o corpo não acrescenta nada que valha esse risco.
+                return Err(format!(
+                    "O provedor recusou o catálogo de retenção zero (HTTP {status})."
+                ));
+            }
+
+            let body = read_body(ResponseSource(response), CATALOG_BODY_LIMIT).await?;
+            serde_json::from_slice(&body)
+                .map_err(|error| format!("O catálogo do provedor não parseia como JSON: {error}."))
+        }
+    }
+}
+
+/// O catálogo geral de endpoints de UM modelo — a fonte que prova um pin em opt-out deliberado
+/// ([`super::pins::Retention::ProviderPolicy`]), ao contrário do catálogo de retenção zero, que é
+/// global. O provedor não publica isto por modelo escaneado de antemão; é um pedido por modelo.
+const MODEL_ENDPOINTS_URL: &str = "https://openrouter.ai/api/v1/models";
+
+impl EndpointsCatalog for HttpAdapter {
+    /// Busca e ACHATA a resposta para a mesma forma que [`super::drift::verify`] já lê do
+    /// catálogo de retenção zero — `{"data": [{tag, model_id, supported_parameters}, ...]}`. A
+    /// resposta por modelo aninha os endpoints sob `data.endpoints` e não repete o `model_id` em
+    /// cada um; achatar aqui, na borda, evita que a verificação de drift precise conhecer uma
+    /// segunda forma de catálogo.
+    fn fetch(&self, model: &str) -> impl Future<Output = Result<Value, String>> + Send {
+        let url = format!("{MODEL_ENDPOINTS_URL}/{model}/endpoints");
+        let request = self
+            .client
+            .get(&url)
+            .header("authorization", format!("Bearer {}", self.api_key));
+        let model = model.to_string();
+
+        async move {
+            egress::check(&url).map_err(|denied| {
+                format!("A saída para o catálogo de endpoints foi recusada: {denied:?}.")
+            })?;
+
+            let response = request.send().await.map_err(|error| {
+                format!("O catálogo de endpoints de {model} não pôde ser buscado: {error}.")
+            })?;
+
+            let status = response.status().as_u16();
+            if !(200..300).contains(&status) {
+                // O corpo é do outro lado, como na busca do catálogo de retenção zero: o status
+                // diagnostica a recusa sem arriscar publicar o cabeçalho de autorização.
+                return Err(format!(
+                    "O provedor recusou o catálogo de endpoints de {model} (HTTP {status})."
+                ));
+            }
+
+            let body = read_body(ResponseSource(response), CATALOG_BODY_LIMIT).await?;
+            let raw: Value = serde_json::from_slice(&body).map_err(|error| {
+                format!("O catálogo de endpoints de {model} não parseia como JSON: {error}.")
+            })?;
+            flatten_model_endpoints(&raw, &model)
+        }
+    }
+}
+
+/// Achata `{"data": {"endpoints": [...]}}` em `{"data": [{tag, model_id, supported_parameters,
+/// ...}, ...]}`, injetando o `model_id` que a resposta por modelo omite em cada entrada.
+fn flatten_model_endpoints(raw: &Value, model: &str) -> Result<Value, String> {
+    let endpoints = raw
+        .pointer("/data/endpoints")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            format!("O catálogo de endpoints de {model} não contém data.endpoints em lista.")
+        })?;
+    let flattened: Vec<Value> = endpoints
+        .iter()
+        .map(|endpoint| {
+            let mut entry = endpoint.clone();
+            if let Value::Object(map) = &mut entry {
+                map.insert("model_id".to_string(), Value::String(model.to_string()));
+            }
+            entry
+        })
+        .collect();
+    Ok(serde_json::json!({ "data": flattened }))
+}
+
+/// Materializa um corpo inteiro até o teto. Estourar o teto é erro, não truncamento: um catálogo
+/// cortado no meio parseia como JSON inválido ou, pior, como catálogo menor do que é.
+pub(crate) async fn read_body<S: ByteSource>(
+    mut source: S,
+    limit: usize,
+) -> Result<Vec<u8>, String> {
+    let mut collected: Vec<u8> = Vec::new();
+    while let Some(bytes) = source.next_chunk().await? {
+        // A conferência vem ANTES da cópia: medir depois de anexar deixaria um pedaço único e
+        // enorme entrar inteiro na memória antes de ser recusado, e o teto não seria teto.
+        if bytes.len() > limit - collected.len() {
+            return Err(format!(
+                "A resposta do provedor passou de {limit} bytes e foi descartada."
+            ));
+        }
+        collected.extend_from_slice(&bytes);
+    }
+    Ok(collected)
+}
+
 /// Lê no máximo o trecho diagnosticável do corpo de um erro e SOLTA o resto: materializar o
 /// corpo inteiro entregaria a um provedor defeituoso o poder de encher a memória da rodada com
 /// uma resposta de erro sem fim.
 async fn error_excerpt<S: ByteSource>(mut source: S) -> String {
+    // Quatro vezes o trecho em bytes cobre o pior caso de caractere multibyte antes do corte.
+    let ceiling = ERROR_BODY_EXCERPT * 4;
     let mut collected: Vec<u8> = Vec::new();
-    while collected.len() < ERROR_BODY_EXCERPT * 4 {
+    while collected.len() < ceiling {
         match source.next_chunk().await {
-            Ok(Some(bytes)) => collected.extend_from_slice(&bytes),
+            // Só o que falta para o trecho é copiado: anexar o pedaço inteiro e conferir depois
+            // deixaria um corpo de erro gigante entrar na memória antes de ser descartado.
+            Ok(Some(bytes)) => {
+                let room = ceiling - collected.len();
+                collected.extend_from_slice(&bytes[..bytes.len().min(room)]);
+            }
             Ok(None) | Err(_) => break,
         }
     }
@@ -137,7 +282,12 @@ fn refusal(status: u16, retry_after_secs: Option<u64>, body: &str) -> ProviderEr
     } else {
         format!("O provedor recusou a rodada (HTTP {status}): {excerpt}")
     };
-    ProviderError { kind, message }
+    ProviderError {
+        kind,
+        message,
+        // O status chegou: recusa comprovada, corpo de erro em vez de stream, nada gerado.
+        responded: true,
+    }
 }
 
 fn retry_after_secs(response: &reqwest::Response) -> Option<u64> {
@@ -257,6 +407,8 @@ pub(crate) async fn pump<S: ByteSource>(
                     .send(ProviderEvent::Failed(ProviderError {
                         kind: ErrorKind::Transient,
                         message,
+                        // A bomba só corre sobre um stream aberto: a resposta já veio.
+                        responded: true,
                     }))
                     .await;
                 return;
@@ -399,6 +551,9 @@ mod tests {
             ProviderEvent::Failed(ProviderError {
                 kind: ErrorKind::Transient,
                 message,
+                // A bomba corre pós-resposta: a falha dela nunca vira "não sei se cobrou" na
+                // fronteira de abertura.
+                responded: true,
             }) if message.contains("a conexão caiu")
         ));
     }
@@ -431,10 +586,39 @@ mod tests {
         ));
         assert!(matches!(refusal(500, None, "").kind, ErrorKind::Transient));
         assert!(matches!(refusal(401, None, "").kind, ErrorKind::Permanent));
+        // Toda recusa com status é resposta do servidor: comprovadamente nada foi gerado, e é
+        // isso que autoriza a bancada a seguir sem fechar a trava.
+        assert!(refusal(500, None, "").responded);
+        assert!(refusal(404, None, "").responded);
 
         let redirect = refusal(302, None, "");
         assert!(matches!(redirect.kind, ErrorKind::Permanent));
         assert!(redirect.message.contains("redirecionamento"));
+    }
+
+    /// O catálogo chega inteiro, remontado de pedaços que o transporte cortou onde quis.
+    #[tokio::test]
+    async fn o_corpo_do_catalogo_e_remontado_ate_o_teto() {
+        let payload = "{\"data\": []}";
+
+        let body = read_body(Scripted::chunks(payload, 3), 1_024)
+            .await
+            .unwrap();
+
+        assert_eq!(String::from_utf8(body).unwrap(), payload);
+    }
+
+    /// Corpo acima do teto é descartado, nunca truncado: um catálogo cortado no meio parseia
+    /// como catálogo menor do que é, e um pin sumido do catálogo tira um modelo da corrida.
+    #[tokio::test]
+    async fn corpo_acima_do_teto_e_recusado_em_vez_de_cortado() {
+        let payload = "x".repeat(2_048);
+
+        let error = read_body(Scripted::chunks(&payload, 512), 1_024)
+            .await
+            .unwrap_err();
+
+        assert!(error.contains("1024"));
     }
 
     /// O corpo de um erro entra na mensagem só como trecho: diagnóstico sem transporte de lixo.

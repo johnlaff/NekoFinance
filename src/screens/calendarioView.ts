@@ -1,5 +1,5 @@
 import type { TransactionRow } from "../lib/api";
-import { MES, fmtBRL, fmtSigned } from "../lib/nkFormat";
+import { MES, fmtBRL, fmtSigned, saldoBand } from "../lib/nkFormat";
 import { toMovementType } from "./lancamentosView";
 
 // ---------------------------------------------------------------------------
@@ -32,6 +32,8 @@ export interface CalDayCell {
   isToday: boolean;
   isFuture: boolean;
   hasIncome: boolean;
+  /** Quanto entrou no dia — o valor que "O que marca o mês" imprime. */
+  incomeCents: number;
   isLowest: boolean;
 }
 
@@ -116,6 +118,7 @@ export function buildCalendarMonth(opts: {
       isToday: iso === today,
       isFuture: iso > today,
       hasIncome: (row?.income_cents ?? 0) > 0,
+      incomeCents: row?.income_cents ?? 0,
       isLowest: iso === lowestIso,
     });
   }
@@ -124,6 +127,170 @@ export function buildCalendarMonth(opts: {
   const weeks: CalCell[][] = [];
   for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
   return { weeks, lowestIso };
+}
+
+/** Os dias do mês em ordem, sem as células de preenchimento da semana. */
+function daysOf(month: CalendarMonth): CalDayCell[] {
+  return month.weeks.flat().filter((c): c is CalDayCell => c != null);
+}
+
+// ---------------------------------------------------------------------------
+// A leitura do mês — manchete, marcos, faixa da grade e trilho
+// ---------------------------------------------------------------------------
+
+/** A faixa do termômetro que a GRADE pinta. Os limiares seguem absolutos: o que
+ *  muda é onde a cor é gasta — um dia na faixa boa fica neutro, porque num mês
+ *  saudável 30 células tingidas não distinguem nada. A faixa cheia continua no
+ *  veredito e no dia aberto, onde a palavra acompanha a cor. */
+export function gridBand(
+  cents: number | null | undefined,
+): "tight" | "negative" | "critical" | null {
+  if (cents == null) return null;
+  const band = saldoBand(cents).key;
+  return band === "tight" || band === "negative" || band === "critical" ? band : null;
+}
+
+export type MarkKind = "lowest" | "out" | "income" | "lowest-out";
+
+export interface MonthMark {
+  kind: MarkKind;
+  /** O papel do dia, já resolvido — inclusive quando ele acumula dois. */
+  label: string;
+  iso: string;
+  /** O valor principal: saldo no vale, movimento na saída, entrada na entrada. */
+  cents: number;
+  /** O segundo valor, só quando a linha carrega dois papéis. */
+  extraCents?: number;
+}
+
+/** Os dois extremos do mês, fundidos numa linha só quando caem no mesmo dia:
+ *  repetir a data infla o bloco sem informação nova (regra 41). */
+function extremeMarks(
+  lowest: MonthMark | null | undefined,
+  out: MonthMark | null | undefined,
+): MonthMark[] {
+  if (!lowest) return out ? [out] : [];
+  if (!out) return [lowest];
+  if (lowest.iso !== out.iso) return [lowest, out];
+  return [
+    {
+      ...lowest,
+      kind: "lowest-out",
+      label: "Menor saldo e maior saída",
+      extraCents: out.cents,
+    },
+  ];
+}
+
+/** Os dias que decidem o mês: o vale, a maior saída e as entradas. */
+export function monthMarks(month: CalendarMonth): MonthMark[] {
+  const days = daysOf(month);
+  // Os predicados provam o que o tipo sozinho não prova — sem eles, cada leitura
+  // de saldo ou movimento precisaria de um `!`.
+  const withBalance = (d: CalDayCell): d is CalDayCell & { balanceCents: number } =>
+    d.balanceCents != null;
+  const falling = (d: CalDayCell): d is CalDayCell & { movementCents: number } =>
+    d.movementCents != null && d.movementCents < 0;
+
+  const lowest = days.filter(withBalance).find((d) => d.isLowest);
+  const out = days
+    .filter(falling)
+    .reduce<(CalDayCell & { movementCents: number }) | null>(
+      (a, b) => (a == null || b.movementCents < a.movementCents ? b : a),
+      null,
+    );
+
+  const marks: MonthMark[] = extremeMarks(
+    lowest && {
+      kind: "lowest",
+      label: "Menor saldo",
+      iso: lowest.iso,
+      cents: lowest.balanceCents,
+    },
+    out && {
+      kind: "out",
+      label: "Maior saída",
+      iso: out.iso,
+      cents: out.movementCents,
+    },
+  );
+
+  for (const d of days) {
+    if (d.hasIncome) {
+      marks.push({
+        kind: "income",
+        label: "Entradas",
+        iso: d.iso,
+        cents: d.incomeCents,
+      });
+    }
+  }
+  return marks;
+}
+
+/** A forma do mês em uma frase: onde ele afunda e onde respira, na ordem em que
+ *  acontece. Sem entrada no mês, só o vale; sem corrente, não há o que dizer. */
+export function monthHeadline(month: CalendarMonth, monthLabel: string): string | null {
+  const days = daysOf(month);
+  const lowest = days.find((d) => d.isLowest && d.balanceCents != null);
+  if (!lowest) return null;
+  // "Respirar" é a recuperação: a maior entrada DEPOIS do vale. Quando o mês só
+  // tem entrada antes dele, ela ainda nomeia o alívio — e a ordem cronológica
+  // inverte a frase.
+  const biggest = (pool: CalDayCell[]) =>
+    pool.reduce<CalDayCell | null>(
+      (a, b) => (a == null || b.incomeCents > a.incomeCents ? b : a),
+      null,
+    );
+  const incomes = days.filter((d) => d.hasIncome);
+  const breath = biggest(incomes.filter((d) => d.iso > lowest.iso)) ?? biggest(incomes);
+
+  if (!breath) return `${monthLabel} afunda no dia ${lowest.day}.`;
+  const [first, second] =
+    lowest.iso <= breath.iso
+      ? [`afunda no dia ${lowest.day}`, `respira no ${breath.day}`]
+      : [`respira no dia ${breath.day}`, `afunda no ${lowest.day}`];
+  return `${monthLabel} ${first} e ${second}.`;
+}
+
+export interface RailPoint {
+  iso: string;
+  /** Posição no eixo do tempo, 0 no primeiro ponto e 1 no último. */
+  x: number;
+  /** Posição do valor, 0 no menor saldo do mês e 1 no maior. */
+  v: number;
+  isFuture: boolean;
+  /** O evento do dia viaja com o ponto: a tela desenha, não reanda o mês. */
+  hasIncome: boolean;
+}
+
+/** A série do trilho: os saldos conhecidos do mês, normalizados. A tela decide
+ *  os pixels; aqui mora só a forma. */
+export function railSeries(
+  month: CalendarMonth,
+): { points: RailPoint[]; lowestIndex: number; todayIndex: number } | null {
+  const days = daysOf(month).filter((d) => d.balanceCents != null);
+  if (days.length === 0) return null;
+
+  const values = days.map((d) => d.balanceCents!);
+  const min = Math.min(...values);
+  const span = Math.max(...values) - min;
+  const lastX = days.length - 1;
+
+  const points = days.map((d, i) => ({
+    iso: d.iso,
+    x: lastX === 0 ? 0 : i / lastX,
+    // Faixa de valor nula (um ponto, ou mês inteiro no mesmo saldo): o traço
+    // fica no meio da caixa em vez de colapsar na borda.
+    v: span === 0 ? 0.5 : (d.balanceCents! - min) / span,
+    isFuture: d.isFuture,
+    hasIncome: d.hasIncome,
+  }));
+  return {
+    points,
+    lowestIndex: days.findIndex((d) => d.isLowest),
+    todayIndex: days.findIndex((d) => d.isToday),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -172,6 +339,12 @@ export function agendaTransactions(
 function dayMonthLabel(iso: string): string {
   const [, m, d] = iso.split("-").map(Number);
   return `${d} de ${(MES[(m ?? 1) - 1] ?? "").toLowerCase()}`;
+}
+
+/** "10/06" — a data curta do olho do veredito, onde a linha é estreita. */
+export function shortDate(iso: string): string {
+  const [, m, d] = iso.split("-");
+  return `${d}/${m}`;
 }
 
 /** Rótulo acessível completo da célula: data, saldo, movimento e eventos.
