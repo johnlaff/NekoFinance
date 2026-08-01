@@ -8,13 +8,56 @@
 //! de ambiente, nunca a chave do app no cofre, porque a chave da bancada é a que tem limite de
 //! gasto próprio no painel do provedor.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub(crate) const USAGE: &str = "Uso: mia-bench [--model <id do pin>] [--max-spend-usd <decimal>] \
-     [--pack <caminho>] [--only <trecho do id>] [--cases-dir <caminho>] [--reports-dir <caminho>]";
+     [--pack <caminho>] [--only <trecho do id>] [--cases-dir <caminho>] [--reports-dir <caminho>]\n\
+     \x20    mia-bench bakeoff [--max-spend-usd <decimal, teto US$ 20>] [--pack <caminho>] \
+     [--reports-dir <caminho>] [--resume <relatório>] [--assume-pin-identity]\n\
+     \x20    mia-bench julgar --report <relatório> --verdicts <caderno julgado>";
+
+/// O que a execução vai fazer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Mode {
+    /// Uma corrida num pin só, com as repetições que os casos declaram. É a medição do dia a dia:
+    /// mudou fachada, prompt ou ferramenta, roda de novo no modelo em uso.
+    Single,
+    /// As duas fases sobre a matriz inteira, terminando na decisão do modelo default.
+    Bakeoff,
+    /// Fecha o ciclo: recebe o caderno cego julgado e escreve a decisão final no relatório. Não
+    /// fala com o provedor, não gasta nada e não precisa de chave — é leitura e conta.
+    Judge,
+}
+
+/// Um dólar cobre o catálogo inteiro com folga num modelo só, e não cobre um laço desgovernado.
+const SINGLE_CAP_MICRO_USD: i64 = 1_000_000;
+
+/// O teto do bakeoff, fixado pela spec a partir de MEDIÇÃO: com o custo por rodada sondado em
+/// cada pin, o desenho integral — sonda, peneira com o recorte da régua e final — projeta cerca
+/// de US$ 17 (verificado 2026-07-30, aos preços cobrados naquela medição), e o teto o cobre com
+/// folga sem alcançar o limite da chave dedicada no painel do provedor, que é a parada dura. O
+/// número envelhece com a tabela do provedor e a bancada não o consulta: a sonda mede o custo por
+/// rodada na corrida do zero — uma queda de preço aparece como folga maior, e uma alta aparece na
+/// recusa antes de qualquer fase paga. A retomada não sonda de novo: ela herda a sonda da execução
+/// anterior, com os preços daquela data, porque o que ela ainda tem a pagar é a final que falta. Se a projeção passar do teto, a corrida
+/// termina sem decisão dizendo o número que falta — que é a resposta honesta —, e o teto volta à
+/// mesa como decisão de spec, nunca como flag de quem está com pressa.
+const BAKEOFF_CAP_MICRO_USD: i64 = 20_000_000;
+
+/// O catálogo versionado. Sair dele é recorte, e recorte não decide modelo default.
+const DEFAULT_CASES_DIR: &str = "evals/mia/cases";
 
 #[derive(Debug)]
 pub(crate) struct CliArgs {
+    pub mode: Mode,
+    /// O relatório do bakeoff a finalizar, no modo de julgamento.
+    pub report: Option<PathBuf>,
+    /// O caderno cego com os vereditos preenchidos.
+    pub verdicts: Option<PathBuf>,
+    /// O relatório de uma execução anterior cuja peneira será reaproveitada.
+    pub resume: Option<PathBuf>,
+    /// Quem invoca responde pela identidade dos pins que o relatório retomado não registra.
+    pub assume_pin_identity: bool,
     pub model: Option<String>,
     pub max_spend_micro_usd: i64,
     pub pack_root: Option<PathBuf>,
@@ -24,17 +67,36 @@ pub(crate) struct CliArgs {
 }
 
 pub(crate) fn parse_args(args: &[String]) -> Result<CliArgs, String> {
-    let mut parsed = CliArgs {
-        model: None,
-        // Um dólar cobre o catálogo com folga e não cobre um laço desgovernado.
-        max_spend_micro_usd: 1_000_000,
-        pack_root: None,
-        only: None,
-        cases_dir: PathBuf::from("evals/mia/cases"),
-        reports_dir: PathBuf::from("evals/mia/reports"),
+    let (mode, flags) = match args.first() {
+        Some(first) if !first.starts_with("--") => {
+            let mode = match first.as_str() {
+                "bakeoff" => Mode::Bakeoff,
+                "julgar" => Mode::Judge,
+                other => return Err(format!("Modo desconhecido: {other}. {USAGE}")),
+            };
+            (mode, &args[1..])
+        }
+        _ => (Mode::Single, args),
     };
 
-    let mut rest = args.iter();
+    let mut parsed = CliArgs {
+        mode,
+        report: None,
+        verdicts: None,
+        resume: None,
+        assume_pin_identity: false,
+        model: None,
+        max_spend_micro_usd: 0,
+        pack_root: None,
+        only: None,
+        cases_dir: PathBuf::from(DEFAULT_CASES_DIR),
+        reports_dir: PathBuf::from("evals/mia/reports"),
+    };
+    // O teto pedido fica separado do default até o fim do parse: cada modo tem o seu, e o valor
+    // explícito vence os dois.
+    let mut requested_cap: Option<i64> = None;
+
+    let mut rest = flags.iter();
     while let Some(flag) = rest.next() {
         let mut value = || {
             rest.next()
@@ -43,14 +105,81 @@ pub(crate) fn parse_args(args: &[String]) -> Result<CliArgs, String> {
         };
         match flag.as_str() {
             "--model" => parsed.model = Some(value()?),
-            "--max-spend-usd" => parsed.max_spend_micro_usd = parse_usd(&value()?)?,
+            "--max-spend-usd" => requested_cap = Some(parse_usd(&value()?)?),
             "--pack" => parsed.pack_root = Some(PathBuf::from(value()?)),
             "--only" => parsed.only = Some(value()?),
             "--cases-dir" => parsed.cases_dir = PathBuf::from(value()?),
             "--reports-dir" => parsed.reports_dir = PathBuf::from(value()?),
+            "--report" => parsed.report = Some(PathBuf::from(value()?)),
+            "--verdicts" => parsed.verdicts = Some(PathBuf::from(value()?)),
+            "--resume" => parsed.resume = Some(PathBuf::from(value()?)),
+            "--assume-pin-identity" => parsed.assume_pin_identity = true,
             other => return Err(format!("Flag desconhecida: {other}. {USAGE}")),
         }
     }
+
+    parsed.max_spend_micro_usd = requested_cap.unwrap_or(match mode {
+        Mode::Single => SINGLE_CAP_MICRO_USD,
+        Mode::Bakeoff => BAKEOFF_CAP_MICRO_USD,
+        // O julgamento não fala com o provedor: o teto existe no tipo e não tem o que travar.
+        Mode::Judge => 0,
+    });
+
+    // O bakeoff decide qual modelo conversa com o dinheiro de alguém, então ele não aceita recorte
+    // NENHUM: nem escolher o modelo à mão, nem medir um pedaço do catálogo, nem trocar o catálogo
+    // por outro. Um veredito tirado de um caso repetido três vezes leria, no relatório, igual a um
+    // veredito tirado das seis famílias — e é esse relatório que alguém vai consultar para trocar
+    // o pin. Para experimentar, existe a corrida solta, que não decide default.
+    if mode == Mode::Bakeoff {
+        let narrowing = [
+            ("--model", parsed.model.is_some()),
+            ("--only", parsed.only.is_some()),
+            (
+                "--cases-dir",
+                parsed.cases_dir != Path::new(DEFAULT_CASES_DIR),
+            ),
+        ];
+        if let Some((flag, _)) = narrowing.iter().find(|(_, given)| *given) {
+            return Err(format!(
+                "O bakeoff mede a matriz inteira sobre o catálogo inteiro e não aceita {flag}. \
+                 Rode sem o modo bakeoff para medir um recorte — a corrida solta não decide o \
+                 modelo default."
+            ));
+        }
+        // O teto do bakeoff é da spec, e um teto maior passado à mão não é uma preferência: é a
+        // decisão que o critério fixou, contornada por quem estava com pressa.
+        if parsed.max_spend_micro_usd > BAKEOFF_CAP_MICRO_USD {
+            return Err(format!(
+                "O teto do bakeoff é de US$ {}, e --max-spend-usd só pode abaixá-lo.",
+                BAKEOFF_CAP_MICRO_USD / 1_000_000
+            ));
+        }
+    }
+
+    // Retomar é reaproveitar a peneira de uma execução do bakeoff; fora dele não existe peneira
+    // para herdar, e aceitar a flag ali prometeria uma economia que não aconteceria.
+    if parsed.resume.is_some() && mode != Mode::Bakeoff {
+        return Err(format!(
+            "--resume só vale no modo bakeoff: é a peneira dele que se reaproveita. {USAGE}"
+        ));
+    }
+
+    // Reconhecer a identidade dos pins é um gesto sobre a evidência HERDADA: fora de uma retomada
+    // não há relatório antigo para responder por, e a flag prometeria uma garantia sobre nada.
+    if parsed.assume_pin_identity && parsed.resume.is_none() {
+        return Err(format!(
+            "--assume-pin-identity só vale junto de --resume: é a identidade dos pins do relatório \
+             retomado que ela reconhece. {USAGE}"
+        ));
+    }
+
+    if mode == Mode::Judge && (parsed.report.is_none() || parsed.verdicts.is_none()) {
+        return Err(format!(
+            "O julgamento precisa de --report (o relatório do bakeoff) e --verdicts (o caderno \
+             cego com um veredito por bilhete). {USAGE}"
+        ));
+    }
+
     Ok(parsed)
 }
 

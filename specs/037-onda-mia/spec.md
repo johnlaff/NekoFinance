@@ -198,7 +198,7 @@ onda). `prefers-reduced-motion` desliga a entrada e a rolagem suave.
 
 Tudo que a tela afirma já é lei do motor: o "pode gastar" é o guardrail que
 morde e o teto é o segundo limite do dia; o Economizado% é anual e a régua
-inclui previdência só com reserva de 6 meses; custo de vida é Saídas + Diário
+deixa a previdência de fora, porque previdência é patrimônio; custo de vida é Saídas + Diário
 
 - Cartão; o menor ponto do horizonte é a prova do "pode gastar"; o termômetro
   tem faixas absolutas. A Mia **expõe** e ensina — não recalcula, não julga.

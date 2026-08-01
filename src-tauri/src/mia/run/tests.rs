@@ -295,6 +295,7 @@ impl ProviderAdapter for ScriptedAdapter {
                 Script::OpenError(ProviderError {
                     kind: ErrorKind::Permanent,
                     message: "Não há roteiro para este turno.".to_string(),
+                    responded: true,
                 })
             });
         let cancel = cancel.clone();
@@ -452,10 +453,13 @@ fn tool_call(id: &str, name: &str, arguments: &str) -> ProviderEvent {
     }
 }
 
+/// Erro COM resposta do servidor — o caso que não mexe na contagem de dinheiro. Falha sem
+/// resposta se constrói explícita no teste que a exercita.
 fn provider_error(kind: ErrorKind, message: &str) -> ProviderError {
     ProviderError {
         kind,
         message: message.to_string(),
+        responded: true,
     }
 }
 
@@ -481,6 +485,7 @@ async fn execute_round(
     let ctx = Context {
         clock: clock(),
         pack: MethodPack::at(pack.path()),
+        conversation_id: None,
     };
     let (events, mut receiver) = mpsc::channel(32);
     let runner = Runner {
@@ -519,6 +524,7 @@ async fn execute_com_pool<A: ProviderAdapter>(
     let ctx = Context {
         clock: clock(),
         pack: MethodPack::at(pack.path()),
+        conversation_id: None,
     };
     let (events, mut receiver) = mpsc::channel(32);
     let runner = Runner {
@@ -590,6 +596,7 @@ fn event_names(events: &[RunEvent]) -> Vec<&'static str> {
             RunEvent::RunStarted { .. } => "RunStarted",
             RunEvent::ToolStarted { .. } => "ToolStarted",
             RunEvent::ToolFinished { .. } => "ToolFinished",
+            RunEvent::ProposalReady { .. } => "ProposalReady",
             RunEvent::AnswerReady { .. } => "AnswerReady",
             RunEvent::Usage(_) => "Usage",
             RunEvent::Error(_) => "Error",
@@ -1283,6 +1290,7 @@ async fn cancellation_closes_the_provider_connection() {
     let ctx = Context {
         clock: clock(),
         pack: MethodPack::at(pack.path()),
+        conversation_id: None,
     };
     let (events, mut receiver) = mpsc::channel(32);
     let cancel = CancelToken::new();
@@ -1330,6 +1338,7 @@ async fn event_backpressure_never_outlives_the_time_cap() {
     let ctx = Context {
         clock: clock(),
         pack: MethodPack::at(pack.path()),
+        conversation_id: None,
     };
     let (events, _receiver) = mpsc::channel(1);
     let runner = Runner {
@@ -1571,4 +1580,35 @@ async fn ungrounded_answer_is_refused_after_the_regeneration_cap() {
     assert!(events.iter().any(
         |event| matches!(event, RunEvent::Error(error) if error.code == RunErrorCode::Ungrounded)
     ));
+}
+
+/// A proposta vira evento próprio só quando a ferramenta a validou. Uma recusa é correção para o
+/// modelo, e um cartão de aprovação sobre ela ofereceria um gesto sobre lançamento inexistente.
+#[test]
+fn so_a_proposta_validada_vira_evento_da_tela() {
+    let mut proposta = envelope(json!({"proposal": {"payload": {"amount_cents": 5_000}}}));
+    proposta.tool = catalog::PROPOSAL_TOOL.to_string();
+
+    let event = super::proposal_event(catalog::PROPOSAL_TOOL, "call-2", &proposta)
+        .expect("a proposta validada publica o evento");
+
+    match event {
+        RunEvent::ProposalReady { id, proposal } => {
+            assert_eq!(id, "call-2");
+            assert_eq!(proposal["tool"], json!(catalog::PROPOSAL_TOOL));
+            assert_eq!(
+                proposal["data"]["proposal"]["payload"]["amount_cents"],
+                json!(5_000)
+            );
+        }
+        outro => panic!("a proposta validada deveria publicar ProposalReady, veio {outro:?}"),
+    }
+
+    let mut recusada = proposta;
+    recusada.ok = false;
+    recusada.data = None;
+    assert!(super::proposal_event(catalog::PROPOSAL_TOOL, "call-2", &recusada).is_none());
+
+    let leitura = envelope(json!({"amount_cents": 810_158}));
+    assert!(super::proposal_event("get_financial_snapshot", "call-1", &leitura).is_none());
 }

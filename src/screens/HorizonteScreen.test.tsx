@@ -18,7 +18,6 @@ const ann = {
   patrimonio_cents: 0,
   economia_ruler_cents: 0,
   economia_ruler_rate_bps: 0,
-  includes_previdencia: false,
   economia_state: "no_record" as const,
   projected_income_cents: 0,
   projected_savings_cents: 0,

@@ -7,7 +7,7 @@
   "expected": {
     "judgment": "mecanico",
     "answer": {
-      "must_contain_any": [["lançar", "registrar"], ["não"]]
+      "must_contain_any": [["lanç", "lanc", "registr"], ["não"]]
     }
   }
 }

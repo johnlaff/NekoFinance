@@ -55,6 +55,8 @@ export interface TetoView {
   /** A prova fecha com o teto vigente? `true` quando não há prova a confrontar. */
   proofMatchesVerdict: boolean;
   proposal: CeilingProposal | null;
+  /** Operandos da estimativa, para a tela imprimir a conta. Só existe no estado `estimate`. */
+  estimateBasis: { variableCents: number; days: number; month: string } | null;
 }
 
 /** Cadência do método: a cerimônia se refaz de três em três meses. */
@@ -236,6 +238,7 @@ export function buildTetoView(input: TetoInput): TetoView {
       proof: null,
       proofMatchesVerdict: true,
       proposal: null,
+      estimateBasis: null,
     };
   }
 
@@ -253,6 +256,8 @@ export function buildTetoView(input: TetoInput): TetoView {
     proof,
     proofMatchesVerdict: proof == null || proof.perDayCents === currentPerDayCents,
     proposal: proposal ?? null,
+    // Só o estado `estimate` tem conta a mostrar; os outros sobrescrevem quando têm.
+    estimateBasis: null,
   };
 
   // A proposta é uma decisão esperando o dono — ela toma a manchete mesmo com teto vigente, que
@@ -264,7 +269,15 @@ export function buildTetoView(input: TetoInput): TetoView {
     return { ...base, kind: "chosen", perDayCents: currentPerDayCents };
   }
   if (summary?.daily_ceiling_source === "estimate" && summary.daily_budget > 0) {
-    return { ...base, kind: "estimate", perDayCents: summary.daily_budget };
+    const basis = summary.daily_ceiling_estimate;
+    return {
+      ...base,
+      kind: "estimate",
+      perDayCents: summary.daily_budget,
+      estimateBasis: basis
+        ? { variableCents: basis.variable_cents, days: basis.days, month: basis.month }
+        : null,
+    };
   }
   return { ...base, kind: "none", perDayCents: 0 };
 }

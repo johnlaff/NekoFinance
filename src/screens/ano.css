@@ -72,47 +72,7 @@
   letter-spacing: -0.01em;
 }
 
-/* ---- Veredito: manchete na voz da marca, cor de status FORA daqui ---- */
-
-.ano__verdict {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.ano__vlabel {
-  margin: 0;
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  font-size: var(--fs-label);
-  letter-spacing: var(--ls-label);
-  text-transform: uppercase;
-  color: var(--text-faint);
-}
-
-.ano__verdict h1 {
-  margin: 0;
-  font-size: 28px;
-  font-weight: var(--fw-semibold);
-  letter-spacing: -0.03em;
-  line-height: var(--lh-tight);
-  color: var(--text-strong);
-}
-
-.ano__verdict p {
-  margin: 0;
-  font-size: var(--fs-body);
-  line-height: 1.55;
-  color: var(--text-muted);
-  max-width: 60ch;
-}
-
-.ano__verdict p b {
-  color: var(--text-strong);
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
+/* Veredito: o `VerdictHero` do DS. Só o que é da tela mora aqui. */
 
 /* Fecho didático em tom mais tênue — o convite do método, nunca uma acusação. */
 .ano__cf {
@@ -443,7 +403,7 @@
 .ano__mysum .ano__exchev {
   margin-left: auto;
   color: var(--text-faint);
-  transition: transform 0.18s cubic-bezier(0.2, 0, 0, 1);
+  transition: transform var(--dur-fast) var(--ease-standard);
 }
 
 .ano__foldsum[aria-expanded="true"] .ano__exchev,
@@ -773,14 +733,15 @@
 
 /* ---- Coreografia de entrada (uma vez por montagem; dinheiro nunca anima) ---- */
 
-@media (prefers-reduced-motion: no-preference) {
-  .ano__verdict {
-    animation: ano-pop 0.5s cubic-bezier(0.2, 0, 0, 1) both 0.08s;
-  }
-  .ano > .ano__card,
-  .ano__bento {
-    animation: ano-pop 0.45s cubic-bezier(0.2, 0, 0, 1) both 0.2s;
-  }
+/* Sem media query: os tokens governam (0ms sob reduzido/desligado, restaurados quando o
+   usuário liga o toggle "Animações", que uma media query não enxergaria). */
+.ano > .nk-verdict {
+  animation: ano-pop var(--dur-base) var(--ease-standard) both;
+}
+.ano > .ano__card,
+.ano__bento {
+  animation: ano-pop var(--dur-base) var(--ease-standard) both
+    calc(var(--dur-stagger-step) * 1);
 }
 
 @keyframes ano-pop {

@@ -182,8 +182,9 @@ Par de stats com réguas (mesma gramática do protótipo):
 ## Motion
 
 Coreografia de entrada única por montagem: herói → curadoria → bloco do dia → insight →
-demais cards, fade+translate curto (~400ms total, stagger de ~120ms), CSS puro sob
-`prefers-reduced-motion: no-preference`. Superfícies transitam; **dinheiro nunca anima**
+demais cards, fade+translate curto no orçamento de entrada do app (~400ms do início ao fim
+da sequência, escalonamento em `--dur-stagger-step`), CSS puro governado pelos tokens
+`--dur-*` — nunca dentro de media query, que o toggle "Animações" não alcança. Superfícies transitam; **dinheiro nunca anima**
 (o valor viaja com a superfície, nunca sozinho — contrato do DS). Nenhuma animação de
 número, count-up ou morph.
 

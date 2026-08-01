@@ -8,6 +8,17 @@ for humans, and versions follow [SemVer](https://semver.org/).
 
 ### Added
 
+- `mia-bench bakeoff` measures the pinned model matrix and decides which one becomes
+  the conversation's default — the choice moved from intuition to measurement. A live
+  canary verifies every pin against the provider's zero-retention catalog before any
+  paid round; a cost probe runs one repetition per model and refuses upfront when the
+  whole design would not fit the cap; a one-repetition sieve runs every candidate plus
+  the reference ceiling, and a three-repetition final runs the survivors. Nothing is
+  decided on partial measurement: the sieve must cover every cleared pin and the final
+  every selected finalist. Blind-judgment answers go to a separate sheet that names no
+  model, and `mia-bench julgar` closes the loop offline, writing the final decision into
+  the report. Adopting the pin stays a manual gesture.
+
 - The Horizonte screen became the cash radar: the only view that looks strictly
   forward (projected, in months, to the end of the data), answering the method's
   question — is there a hole in the road? It opens on a three-voice verdict (clear

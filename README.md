@@ -27,12 +27,14 @@ tokens, spreadsheet data, or personal finance caches are committed — see Priva
 - **Google Sheets import** — OAuth (PKCE, loopback) + month-block layout detection, column
   mapping review, deduplicated imports. Or import a local `.xlsx` copy without any Google account.
 - **Nine navigable screens** — Hoje (dashboard), Lançamentos (filter + search), Este mês (Totais),
-  O ano (Anual), Calendário (monthly day-by-day grid), Horizonte (multi-month), Tags, Mia (chat UI
-  with one deterministic safe-to-spend answer today; free-form questions get a "still learning"
-  reply), and Configurações (connections, local import, where-your-data-lives).
-- **Local SQLite store** (WAL) — 41 migrations: accounts/pockets + liquidity, transactions/splits,
+  O ano (Anual), Calendário (monthly day-by-day grid), Horizonte (multi-month), Tags, Mia (chat: six
+  deterministic local answers offline; with the conversation linked, an agent loop over the read
+  facade — the transcript persists locally and can be truly deleted), and Configurações
+  (connections, local import, where-your-data-lives).
+- **Local SQLite store** (WAL) — 53 migrations: accounts/pockets + liquidity, transactions/splits,
   tags, recurrence, reserve tracking + snapshots, sheet layouts + note line-item classification,
-  three-way-merge reconciliation, sync log. FTS5 was added then removed (never populated; search is
+  three-way-merge reconciliation, sync log, conversation store (transcript, 30-day technical
+  trace, durable proposal ledger). FTS5 was added then removed (never populated; search is
   client-side). SQLite is the system of record; the spreadsheet stays a human-friendly projection
   kept in sync by import + approved write-back (see `docs/adr/0003-sqlite-system-of-record-collapsed-writeback.md`).
 

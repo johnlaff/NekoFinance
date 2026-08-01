@@ -1,11 +1,5 @@
 import "./calendario.css";
-import {
-  useEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type KeyboardEvent,
-} from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
   getForecast,
   getMonthGrid,
@@ -23,7 +17,7 @@ import { Money, SignedMoney } from "../design-system/components/Money";
 import { MonthNav } from "../design-system/components/MonthNav";
 import { NoRecordDash } from "../design-system/components/NoRecordDash";
 import { SR_ONLY } from "../design-system/srOnly";
-import { MES, saldoBand } from "../lib/nkFormat";
+import { MES, fmtBRL, saldoBand } from "../lib/nkFormat";
 import { todayISO } from "../lib/format";
 import { eyebrowDate } from "./hojeView";
 import { monthTitle } from "./lancamentosView";
@@ -37,10 +31,17 @@ import {
   cellMoney,
   cellSigned,
   dayComponents,
+  gridBand,
+  monthHeadline,
+  monthMarks,
+  railSeries,
   shiftIso,
+  shortDate,
   type AgendaComponent,
   type CalDayCell,
+  type CalendarMonth,
   type DayRow,
+  type MonthMark,
 } from "./calendarioView";
 
 // Fetchers com identidade estável por argumento (contrato do useCommand: o
@@ -64,9 +65,11 @@ function txFetcher(ym: string): () => Promise<TransactionRow[]> {
   return fn;
 }
 
+// A didática inteira mora aqui — inclusive as faixas do termômetro, que saíram
+// da tela como legenda fixa (regra 1: didática atrás de uma pergunta).
 const HOW_TERM = {
   title: "Como ler o calendário",
-  body: "Cada dia mostra o movimento e o saldo que ele deixou; borda tracejada é dia previsto. As cores marcam hoje, entradas e o menor saldo — no celular a cor é o termômetro do saldo e os números moram na agenda do dia tocado.",
+  body: "Cada dia mostra o saldo que deixou; borda tracejada é dia previsto. O anel do acento marca hoje, o preenchimento marca o dia aberto, o triângulo verde marca entrada e o contorno âmbar, o menor saldo do mês. No celular a cor de fundo só aparece quando o dia aperta — o termômetro do saldo vai de Folga (acima de R$ 2.000) a Crítico (abaixo de −R$ 500), e a faixa cheia acompanha o dia aberto em palavra.",
 };
 
 const NO_CHAIN_TERM = {
@@ -82,8 +85,9 @@ interface CalendarioCellProps {
   cellRef: (iso: string, el: HTMLButtonElement | null) => void;
 }
 
-/** Gridcell interativo do dia — os eventos viram classe (a cor é CSS) e o
- *  rótulo acessível repete tudo que a borda diz. */
+/** Gridcell interativo do dia: número, movimento e o saldo que o dia deixou. Os
+ *  eventos viram classe (a cor é CSS) e o rótulo acessível repete tudo que a
+ *  borda diz — cor nunca é o único canal. */
 function CalendarioCell({
   cell,
   selected,
@@ -91,7 +95,6 @@ function CalendarioCell({
   onSelect,
   cellRef,
 }: CalendarioCellProps) {
-  const band = saldoBand(cell.balanceCents);
   const cls = [
     "calendario__cell",
     cell.isToday ? "calendario__cell--today" : "",
@@ -102,12 +105,13 @@ function CalendarioCell({
   ]
     .filter(Boolean)
     .join(" ");
+  const band = gridBand(cell.balanceCents);
   return (
     <button
       type="button"
       role="gridcell"
       className={cls}
-      style={{ "--cell-band": band.fill } as CSSProperties}
+      data-band={band ?? undefined}
       tabIndex={focused ? 0 : -1}
       aria-selected={selected}
       aria-label={cellLabel(cell)}
@@ -129,100 +133,130 @@ function CalendarioCell({
   );
 }
 
-/** A legenda descreve as cores que o viewport usa: eventos na grade cheia do
- *  desktop, termômetro + pontos no celular (CSS alterna os conjuntos). */
-function CalendarioLegend() {
+/** O trilho: o saldo do mês numa linha do tamanho de uma frase. Sólido no
+ *  realizado, tracejado na projeção — a mesma gramática da borda da célula.
+ *  Decorativo por construção: cada valor que ele desenha está impresso na grade. */
+function CalendarioRail({ month }: { month: CalendarMonth }) {
+  const series = railSeries(month);
+  if (!series) return null;
+  const W = 340;
+  const H = 74;
+  const PAD = 8;
+  const at = (i: number) => {
+    const p = series.points[i];
+    if (!p) return "";
+    return `${(p.x * W).toFixed(1)},${(H - PAD - p.v * (H - PAD * 2)).toFixed(1)}`;
+  };
+  const cut = series.points.findIndex((p) => p.isFuture);
+  const lastRealized = cut === -1 ? series.points.length - 1 : cut - 1;
+  // Uma passada por traço: o trecho previsto começa no último ponto realizado,
+  // para que a linha sólida e a tracejada se encontrem sem intervalo.
+  const trace = (from: number, to: number) => {
+    const parts: string[] = [];
+    for (let i = from; i <= to; i++) parts.push(at(i));
+    return parts.join(" ");
+  };
+  const solid = trace(0, lastRealized);
+  const dashed = trace(Math.max(lastRealized, 0), series.points.length - 1);
+  const dot = (i: number, cls: string) => {
+    const p = series.points[i];
+    if (!p) return null;
+    return (
+      <circle
+        key={cls}
+        className={cls}
+        cx={p.x * W}
+        cy={H - PAD - p.v * (H - PAD * 2)}
+        r={3}
+      />
+    );
+  };
   return (
-    <div className="calendario__legend">
-      <span className="calendario__legend-item calendario__legend-item--desk">
-        <i className="calendario__k calendario__k--today" /> Hoje
-      </span>
-      <span className="calendario__legend-item calendario__legend-item--desk">
-        <i className="calendario__k calendario__k--income" /> Entrada
-      </span>
-      <span className="calendario__legend-item calendario__legend-item--desk">
-        <i className="calendario__k calendario__k--lowest" /> Menor saldo do mês
-      </span>
-      <span className="calendario__legend-item calendario__legend-item--desk">
-        <i className="calendario__k calendario__k--future" /> Previsto — ainda não
-        aconteceu
-      </span>
-      <span className="calendario__legend-item calendario__legend-item--mob">
-        <i
-          className="calendario__k"
-          style={{ background: "var(--saldo-band-comfortable-fill)" }}
-        />{" "}
-        Folga
-      </span>
-      <span className="calendario__legend-item calendario__legend-item--mob">
-        <i
-          className="calendario__k"
-          style={{ background: "var(--saldo-band-ok-fill)" }}
-        />{" "}
-        OK
-      </span>
-      <span className="calendario__legend-item calendario__legend-item--mob">
-        <i
-          className="calendario__k"
-          style={{ background: "var(--saldo-band-tight-fill)" }}
-        />{" "}
-        Apertado
-      </span>
-      <span className="calendario__legend-item calendario__legend-item--mob">
-        <i
-          className="calendario__k"
-          style={{ background: "var(--saldo-band-negative-fill)" }}
-        />{" "}
-        Negativo
-      </span>
-      <span className="calendario__legend-item calendario__legend-item--mob">
-        <i
-          className="calendario__k"
-          style={{ background: "var(--saldo-band-critical-fill)" }}
-        />{" "}
-        Crítico
-      </span>
-      <span className="calendario__legend-item calendario__legend-item--mob">
-        <i className="calendario__dot calendario__dot--income" /> Entrada
-      </span>
-      <span className="calendario__legend-item calendario__legend-item--mob">
-        <i className="calendario__dot calendario__dot--lowest" /> Menor saldo
-      </span>
-    </div>
+    <svg
+      className="calendario__rail"
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="none"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {solid ? (
+        <polyline
+          className="calendario__rail-real"
+          points={solid}
+          vectorEffect="non-scaling-stroke"
+        />
+      ) : null}
+      {cut !== -1 ? (
+        <polyline
+          className="calendario__rail-proj"
+          points={dashed}
+          vectorEffect="non-scaling-stroke"
+        />
+      ) : null}
+      {series.points.map((p, i) =>
+        p.hasIncome ? dot(i, `calendario__rail-in i${i}`) : null,
+      )}
+      {series.lowestIndex >= 0 ? dot(series.lowestIndex, "calendario__rail-low") : null}
+      {series.todayIndex >= 0 ? dot(series.todayIndex, "calendario__rail-today") : null}
+    </svg>
   );
 }
 
-interface CalendarioAgendaProps {
+interface CalendarioDayProps {
   iso: string;
   isFuture: boolean;
   txs: TransactionRow[];
   comps: AgendaComponent[];
   balanceCents: number | null;
+  movementCents: number | null;
   onOpenLedger: () => void;
 }
 
-/** Agenda do dia — painel fixo à direita no desktop, abaixo da grade no
- *  celular; `aria-live` anuncia a troca de dia. */
-function CalendarioAgenda({
+/** O dia aberto — painel fixo à direita no desktop, bloco abaixo da grade no
+ *  celular. O saldo é o herói e o termômetro vem em palavra ao lado dele;
+ *  `aria-live` anuncia a troca de dia. */
+function CalendarioDay({
   iso,
   isFuture,
   txs,
   comps,
   balanceCents,
+  movementCents,
   onOpenLedger,
-}: CalendarioAgendaProps) {
+}: CalendarioDayProps) {
+  const band = balanceCents != null ? saldoBand(balanceCents) : null;
   return (
-    <aside className="calendario__agenda" aria-labelledby="cal-agenda-t">
+    <aside className="calendario__day" aria-labelledby="cal-day-t">
       <div aria-live="polite">
-        <h3 id="cal-agenda-t">{eyebrowDate(iso)}</h3>
-        {isFuture ? (
-          <p className="calendario__agenda-tag">Previsto — ainda não aconteceu</p>
-        ) : null}
+        <h3 id="cal-day-t">
+          {eyebrowDate(iso)}
+          {isFuture ? <span className="calendario__day-prev"> · previsto</span> : null}
+        </h3>
+        <div className="calendario__day-head">
+          {balanceCents != null ? (
+            <p className="calendario__day-money">{fmtBRL(balanceCents)}</p>
+          ) : (
+            <NoRecordDash term={NO_CHAIN_TERM} label="Sem corrente" />
+          )}
+          {band ? (
+            <span className="calendario__day-band">
+              <i style={{ background: band.text }} aria-hidden="true" />
+              {band.label}
+            </span>
+          ) : null}
+        </div>
+        <p className="calendario__day-mv">
+          {movementCents == null
+            ? "Sem movimento conhecido"
+            : movementCents === 0
+              ? "Sem movimento no dia"
+              : `${cellSignedFull(movementCents)} no dia`}
+        </p>
         {txs.length > 0 ? (
-          <ul className="calendario__agenda-list">
+          <ul className="calendario__day-list">
             {txs.map((t) => (
               <li key={t.id}>
-                <span className="calendario__agenda-desc">
+                <span className="calendario__day-desc">
                   {t.description}
                   {t.installment_index != null && t.installment_total != null ? (
                     <i className="calendario__pill calendario__pill--mono">
@@ -241,14 +275,14 @@ function CalendarioAgenda({
             ))}
           </ul>
         ) : (
-          <p className="calendario__agenda-empty">
+          <p className="calendario__day-empty">
             {comps.length > 0
               ? "Sem itens detalhados — o dia fecha no resumo."
               : "Sem movimento — o saldo ficou como estava."}
           </p>
         )}
         {comps.length > 0 ? (
-          <ul className="calendario__agenda-comps">
+          <ul className="calendario__day-comps">
             {comps.map((c) => (
               <li key={c.key}>
                 <span>{c.label}</span>
@@ -257,18 +291,65 @@ function CalendarioAgenda({
             ))}
           </ul>
         ) : null}
-        <div className="calendario__agenda-saldo">
-          <span>Saldo que o dia deixou</span>
-          {balanceCents != null ? (
-            <Money cents={balanceCents} size="sm" />
-          ) : (
-            <NoRecordDash term={NO_CHAIN_TERM} label="Sem corrente" />
-          )}
-        </div>
       </div>
-      <button type="button" className="calendario__agenda-link" onClick={onOpenLedger}>
+      <button type="button" className="calendario__day-link" onClick={onOpenLedger}>
         Ver no Livro-razão ›
       </button>
+    </aside>
+  );
+}
+
+/** Assinatura de dinheiro com sinal e precisão cheia (o `cellSigned` é a versão
+ *  compacta da célula). */
+function cellSignedFull(cents: number): string {
+  return `${cents > 0 ? "+" : ""}${fmtBRL(cents)}`;
+}
+
+/** "O que marca o mês": os dias que decidem o mês, cada linha navegando para o
+ *  dia. É a legenda virada conteúdo — as mesmas marcas que a grade desenha,
+ *  agora com data e valor. */
+function CalendarioMarks({
+  marks,
+  onSelect,
+}: {
+  marks: MonthMark[];
+  onSelect: (iso: string) => void;
+}) {
+  if (marks.length === 0) return null;
+  return (
+    <aside className="calendario__marks" aria-labelledby="cal-marks-t">
+      <h3 id="cal-marks-t">O que marca o mês</h3>
+      <ul>
+        {marks.map((m, i) => {
+          // As entradas se agrupam sob um rótulo só: repetir "Entradas" em cada
+          // linha transforma o papel em ruído (regra 41).
+          const repeated = m.kind === "income" && marks[i - 1]?.kind === "income";
+          const tone =
+            m.kind === "income"
+              ? "calendario__mark--in"
+              : m.kind === "out"
+                ? ""
+                : "calendario__mark--low";
+          return (
+            <li key={m.iso + m.kind}>
+              <button type="button" onClick={() => onSelect(m.iso)}>
+                <span className="calendario__mark-l">
+                  {repeated ? null : <b>{m.label}</b>}
+                  <span>{eyebrowDate(m.iso)}</span>
+                </span>
+                <span className={`calendario__mark-v ${tone}`}>
+                  {m.kind === "lowest" || m.kind === "lowest-out"
+                    ? fmtBRL(m.cents)
+                    : cellSignedFull(m.cents)}
+                  {m.extraCents != null ? (
+                    <em>{cellSignedFull(m.extraCents)}</em>
+                  ) : null}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
     </aside>
   );
 }
@@ -296,7 +377,14 @@ export function YearGridScreen() {
 
   const [selectedIso, setSelectedIso] = useState<string | null>(null);
   const [focusedIso, setFocusedIso] = useState<string | null>(null);
-  const cellRefs = useRef(new Map<string, HTMLButtonElement>());
+  // Lazy init: `useRef(new Map())` alocaria um Map a cada render e o jogaria
+  // fora. A atribuição é um `if` explícito de propósito: `BuildHIR` não trata
+  // `??=` e o componente inteiro sairia da memoização automática do React
+  // Compiler — o custo de obedecer ao lint aqui é maior que o da exceção.
+  const cellRefsBox = useRef<Map<string, HTMLButtonElement> | null>(null);
+  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+  if (cellRefsBox.current === null) cellRefsBox.current = new Map();
+  const cellRefs = cellRefsBox.current;
   const pendingFocus = useRef<string | null>(null);
   const { navigate } = useNekoApp();
 
@@ -316,11 +404,14 @@ export function YearGridScreen() {
   if (forecastQ.loading || gridQ.loading || prevGridQ.loading) {
     return <EmptyState variant="skeleton" skeletonRows={6} />;
   }
+  // A condição é falha de consulta, não ausência de dado: a variante de erro anuncia por
+  // `role="alert"` e a copy não atribui ao usuário o que quebrou na leitura.
   if (forecastQ.error || gridQ.error) {
     return (
       <EmptyState
-        title="Sem dados para o calendário"
-        description="Importe a planilha para ver o saldo dia a dia."
+        variant="error"
+        title="Não foi possível carregar o calendário"
+        description="A leitura do saldo dia a dia falhou. Tente de novo em instantes."
       />
     );
   }
@@ -355,20 +446,20 @@ export function YearGridScreen() {
 
   const focusCell = (iso: string) => {
     setFocusedIso(iso);
-    cellRefs.current.get(iso)?.focus();
+    cellRefs.get(iso)?.focus();
   };
 
   // O ref das células alimenta o roving focus; quando um PageUp/Down pediu um
   // dia do mês novo, o foco acontece no mount da célula-alvo.
   const registerCellRef = (iso: string, el: HTMLButtonElement | null) => {
     if (el) {
-      cellRefs.current.set(iso, el);
+      cellRefs.set(iso, el);
       if (pendingFocus.current === iso) {
         pendingFocus.current = null;
         el.focus();
       }
     } else {
-      cellRefs.current.delete(iso);
+      cellRefs.delete(iso);
     }
   };
 
@@ -423,38 +514,46 @@ export function YearGridScreen() {
   const selTxs = agendaTransactions(txQ.data ?? [], selIso);
   const selComps = dayComponents(selRow);
   const selFuture = selIso > TODAY;
+  const headline = monthHeadline(calMonth, MES[month0] ?? "");
 
   return (
     <div className="calendario">
-      <div className="calendario__head">
-        <div className="calendario__head-text">
-          <h2>{MES[month0]} dia a dia</h2>
-          <p className="calendario__context">
-            Cada dia mostra o movimento e o saldo que ele deixou.{" "}
-            <InfoPopover term={HOW_TERM} hideMarker>
-              <span className="calendario__how">
-                Como funciona?
-                <span style={SR_ONLY}> — Calendário do saldo</span>
-              </span>
-            </InfoPopover>
-          </p>
+      <header className="calendario__verdict">
+        <div className="calendario__eyebrow">
+          {calMonth.lowestIso ? `Realizado até ${shortDate(TODAY)}` : "Sem corrente"}
+          {" · "}
+          <InfoPopover term={HOW_TERM} hideMarker>
+            <span className="calendario__how">
+              Como funciona?
+              <span style={SR_ONLY}> — Calendário do saldo</span>
+            </span>
+          </InfoPopover>
+          <MonthNav
+            className="calendario__nav"
+            label={crumbLabel}
+            hideLabel
+            atToday={isCurrentMonth}
+            onPrev={() => goMonth(-1)}
+            onNext={() => goMonth(1)}
+            onToday={() => {
+              setYm(null);
+              setSelectedIso(null);
+              setFocusedIso(null);
+            }}
+            prevLabel="Mês anterior"
+            nextLabel="Próximo mês"
+          />
         </div>
-        <MonthNav
-          label={crumbLabel}
-          atToday={isCurrentMonth}
-          onPrev={() => goMonth(-1)}
-          onNext={() => goMonth(1)}
-          onToday={() => {
-            setYm(null);
-            setSelectedIso(null);
-            setFocusedIso(null);
-          }}
-          prevLabel="Mês anterior"
-          nextLabel="Próximo mês"
-        />
-      </div>
+        <h2 className="calendario__headline" data-large-title>
+          {headline ?? `${MES[month0]} ainda não tem corrente.`}
+        </h2>
+      </header>
 
       <div className="calendario__main">
+        <div className="calendario__rail-wrap" aria-hidden="true">
+          <CalendarioRail month={calMonth} />
+        </div>
+
         <div
           className="calendario__grid"
           role="grid"
@@ -468,41 +567,44 @@ export function YearGridScreen() {
               </span>
             ))}
           </div>
-          {calMonth.weeks.map((week, wi) => (
-            <div className="calendario__week" role="row" key={wi}>
-              {week.map((cell, ci) =>
-                cell ? (
-                  <CalendarioCell
-                    key={cell.iso}
-                    cell={cell}
-                    selected={cell.iso === selIso}
-                    focused={cell.iso === focusIso}
-                    onSelect={selectDay}
-                    cellRef={registerCellRef}
-                  />
-                ) : (
-                  <span
-                    key={`out-${ci}`}
-                    role="gridcell"
-                    aria-hidden="true"
-                    className="calendario__cell calendario__cell--out"
-                  />
-                ),
-              )}
-            </div>
-          ))}
+          <div className="calendario__weeks">
+            {calMonth.weeks.map((week, wi) => (
+              <div className="calendario__week" role="row" key={wi}>
+                {week.map((cell, ci) =>
+                  cell ? (
+                    <CalendarioCell
+                      key={cell.iso}
+                      cell={cell}
+                      selected={cell.iso === selIso}
+                      focused={cell.iso === focusIso}
+                      onSelect={selectDay}
+                      cellRef={registerCellRef}
+                    />
+                  ) : (
+                    <span
+                      key={`out-${ci}`}
+                      role="gridcell"
+                      aria-hidden="true"
+                      className="calendario__cell calendario__cell--out"
+                    />
+                  ),
+                )}
+              </div>
+            ))}
+          </div>
         </div>
 
-        <CalendarioLegend />
-
-        <CalendarioAgenda
+        <CalendarioDay
           iso={selIso}
           isFuture={selFuture}
           txs={selTxs}
           comps={selComps}
           balanceCents={selCell?.balanceCents ?? null}
+          movementCents={selCell?.movementCents ?? null}
           onOpenLedger={() => navigate("lancamentos")}
         />
+
+        <CalendarioMarks marks={monthMarks(calMonth)} onSelect={selectDay} />
       </div>
 
       {!isTauri && (

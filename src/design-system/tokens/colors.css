@@ -72,6 +72,8 @@
 
   --danger-500: #ef4444;
   --danger-400: #f87171;
+  /* Degrau claro para TEXTO sobre o tint forte da faixa crítica (>=4.5:1). */
+  --danger-300: #fca5a5;
   --danger-tint: rgba(248, 113, 113, 0.14);
 
   --info-500: #0ea5e9;
@@ -184,6 +186,7 @@
 
   --danger-500: #dc2626;
   --danger-400: #b91c1c;
+  --danger-300: #7f1d1d;
   --danger-tint: rgba(220, 38, 38, 0.1);
 
   --info-500: #0284c7;

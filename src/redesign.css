@@ -244,6 +244,11 @@
   padding: 26px 44px 64px;
   max-width: 1160px;
   margin: 0 auto;
+  /* A altura útil da tela abaixo da topbar, publicada para quem estica um
+     instrumento até o rodapé (o Calendário): `height: 100%` não serve, porque o
+     corpo rolável não fixa altura. Vale no chrome de desktop/tablet — no celular
+     nenhuma tela reclama a viewport, e o dock flutuante mudaria a conta. */
+  --content-h: calc(100dvh - var(--topbar-h) - 90px);
 }
 
 /* Ultrawide: o teto de leitura sobe um degrau em vez de deixar o vazio crescer
@@ -602,12 +607,9 @@
 .cmp.is-open {
   transform: translateX(0);
 }
-@media (prefers-reduced-motion: reduce) {
-  .cmp,
-  .cmp-dialog::backdrop {
-    transition: none;
-  }
-}
+/* O painel e o scrim já transitam em `--dur-base`: o token colapsa para 0ms sob movimento
+   reduzido e sob o toggle desligado. Zerar por media query só custaria o caso inverso — o
+   usuário que liga o movimento de propósito ficaria sem ele. */
 .cmp-head {
   display: flex;
   align-items: center;
@@ -666,8 +668,7 @@
   display: block;
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  letter-spacing: var(--ls-normal);
   color: var(--text-faint);
   margin-bottom: 9px;
 }
@@ -873,8 +874,7 @@
   border-bottom: 1px solid var(--border);
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  letter-spacing: var(--ls-normal);
   color: var(--text-faint);
 }
 .cmp-prev__cell {
@@ -889,8 +889,7 @@
 .cmp-prev__cell-label {
   font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  letter-spacing: var(--ls-normal);
   color: var(--text-faint);
 }
 /* Cell value (money display) */
@@ -908,8 +907,7 @@
   font-family: var(--font-sans);
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  letter-spacing: var(--ls-normal);
   color: var(--warning-400);
   margin-bottom: 6px;
   white-space: nowrap;
@@ -920,4 +918,211 @@
   color: var(--text);
   line-height: 1.7;
   white-space: pre-wrap;
+}
+
+/* ============================================================
+   VerdictHero — a escala grande do veredito-primeiro.
+
+   Uma implementação para as telas que abrem com manchete: as três divergiam em tamanho de
+   título, largura de leitura e folga do corpo, e a divergência só aparecia lado a lado.
+   Cor de status fica fora daqui — a manchete é a voz da marca, não o semáforo do método.
+   ============================================================ */
+
+.nk-verdict {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.nk-verdict__label {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--fs-label);
+  letter-spacing: var(--ls-normal);
+  color: var(--text-faint);
+}
+
+.nk-verdict__headline {
+  margin: 0;
+  font-size: var(--fs-h1);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.03em;
+  line-height: var(--lh-tight);
+  color: var(--text-strong);
+  text-wrap: balance;
+}
+
+/* A linha de leitura trava no texto: manchete equilibra, corpo não passa de 52ch. */
+.nk-verdict__body {
+  margin: var(--space-4) 0 0;
+  font-size: var(--fs-body);
+  line-height: 1.55;
+  color: var(--text-muted);
+  max-width: 52ch;
+}
+
+.nk-verdict__body p {
+  margin: 0;
+}
+
+.nk-verdict__body p + p {
+  margin-top: var(--space-4);
+}
+
+.nk-verdict__body b {
+  color: var(--text-strong);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.nk-verdict__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+/* ============================================================
+   Receipt — a conta que o motor fez, impressa. Chrome compartilhado: onde um número
+   derivado é herói, ele carrega os operandos que o produziram.
+   ============================================================ */
+
+.nk-receipt {
+  margin: var(--space-5) 0 0;
+  padding: var(--space-4) var(--space-5);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+}
+.nk-receipt__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-6);
+  padding: var(--space-2) 0;
+  font-size: var(--fs-sm);
+}
+.nk-receipt__label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  min-width: 0;
+  color: var(--text-muted);
+}
+/* O operador é impresso na margem: a conta fica visível, não subentendida. A largura
+   fixa alinha os símbolos numa coluna própria — "mín" é o mais largo deles. */
+.nk-receipt__op {
+  width: 26px;
+  flex: none;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+}
+.nk-receipt__val {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  white-space: nowrap;
+  text-align: right;
+  color: var(--text);
+}
+.nk-receipt__row--result {
+  margin-top: var(--space-2);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-body);
+}
+.nk-receipt__row--result .nk-receipt__label {
+  color: var(--text);
+}
+.nk-receipt__row--result .nk-receipt__val {
+  font-weight: var(--fw-semibold);
+  color: var(--text-strong);
+}
+
+/* Cor de estado do método — fixa, nunca segue o acento da marca. Ela vive na linha de
+   RESULTADO do recibo (o veredito da conta); os operandos ficam neutros. */
+.nk-receipt__val.nk-receipt__val--ok {
+  color: var(--success-400);
+}
+.nk-receipt__val.nk-receipt__val--warn {
+  color: var(--warning-400);
+}
+.nk-receipt__val.nk-receipt__val--bad {
+  color: var(--danger-400);
+}
+
+/* ---- Recibo recolhido: o resultado fica, a conta abre sob pedido ---- */
+
+/* Fechada, a moldura tracejada prometeria uma conta que não está à vista: sem operandos, o
+   resultado é uma linha de dado, e a caixa se desenha quando a conta abre. */
+.nk-receipt[data-open="false"] {
+  padding: 0;
+  border-color: transparent;
+}
+.nk-receipt__lines {
+  margin: 0;
+}
+/* Sem operando à vista, o resultado é a única linha: a régua que o separava não separa nada. */
+.nk-receipt__fold:not([data-open="true"])
+  + .nk-receipt__lines
+  .nk-receipt__row--result {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+/* O alvo cresce por dentro (padding + margem negativa) para alcançar os 44px do polegar sem
+   inflar o espaço que o gesto ocupa na bolha. */
+.nk-receipt__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  margin: calc(var(--space-4) * -1) calc(var(--space-4) * -1) calc(var(--space-4) * -1);
+  padding: 0 var(--space-4);
+  border: none;
+  background: none;
+  font-size: var(--fs-label);
+  font-weight: var(--fw-medium);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.nk-receipt[data-open="false"] .nk-receipt__toggle {
+  margin-inline: 0;
+  padding-inline: 0;
+}
+.nk-receipt__toggle:hover,
+.nk-receipt__toggle:focus-visible {
+  color: var(--text);
+}
+.nk-receipt__toggle svg {
+  transition: transform var(--dur-base) var(--ease-standard);
+}
+.nk-receipt__toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+.nk-receipt__fold {
+  display: grid;
+  grid-template-rows: 0fr;
+  /* Fechado, a linha vale zero — mas a borda do recibo ainda desenharia uma faixa vazia:
+     `visibility` a apaga, e o atraso segura o sumiço até a altura terminar de colapsar. */
+  visibility: hidden;
+  transition:
+    grid-template-rows var(--dur-base) var(--ease-standard),
+    visibility 0s linear var(--dur-base);
+}
+.nk-receipt__fold[data-open="true"] {
+  grid-template-rows: 1fr;
+  visibility: visible;
+  transition:
+    grid-template-rows var(--dur-base) var(--ease-standard),
+    visibility 0s;
+}
+.nk-receipt__fold > .nk-receipt__lines {
+  overflow: hidden;
+  min-height: 0;
 }

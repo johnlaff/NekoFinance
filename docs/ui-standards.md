@@ -159,17 +159,79 @@ honest to it.
     accent; missing data never renders as zero. (Contracts of the design system —
     restated here because every wave touches them.)
 
+## Signatures
+
+The four proprietary moments are listed in `PRODUCT.md`. These are the rules that keep them
+from drifting back into one implementation per screen.
+
+32. **Verdict-first has one contract and exactly two scales.** `VerdictHero` (opens a screen)
+    and `HealthBadge` (marks a block). A third form — a tinted box with an icon — is not a
+    third scale, it is rule 23 being violated: a screen that needs a colored box to rank
+    content has a type-scale problem. State words come from one closed vocabulary app-wide,
+    so the user learns it once.
+33. **A derived hero number carries a receipt; a typed number does not.** The receipt prints
+    the operands and **replaces** the prose that described the formula — never stacks on it.
+    One per screen, on the hero. The operands come from the engine: a screen that lacks them
+    renders no receipt rather than reconstructing them, because a reconstructed sum is a
+    fabricated number wearing the costume of proof.
+34. **Two doors, declared boundary.** "Como funciona?" (`InfoPopover`) answers _what this
+    concept means in the method_ — invariable. "Ver a conta" (`Receipt`) answers _where this
+    number came from today_ — arithmetic. Content that does not clearly fall in one becomes
+    neither. Both are governed by their own preference; "Conta sempre à mostra" hides
+    arithmetic, never the state of the data — the epistemic mark survives collapsing.
+35. **One glyph per role.** `NekoMark` is the product mark and appears only in the shell;
+    `MiaAvatar` marks Mia's voice wherever the app interprets rather than reports. The cat
+    never appears decoratively — a mascot with no meaning is the gamified anti-reference.
+    Empty states earn it only when the emptiness is a method gap with something to teach;
+    a load failure is an error state (rule 16), not a gap, and never carries the cat.
+
+## Motion
+
+36. **One entrance budget: ~400ms from the first element to the end of the last.** Choreography
+    durations and delays come from `--dur-*` tokens (`--dur-base` for the step,
+    `--dur-stagger-step` for the offset, capped at five steps) and **never live inside a media
+    query**. `prefers-reduced-motion` is not the only trigger: the "Animações" toggle lives in
+    `[data-motion]` on `<html>`, and a media query cannot see an attribute — a hardcoded
+    duration under `@media (prefers-reduced-motion: no-preference)` means the setting neither
+    turns motion off nor turns it back on. Token collapse covers both triggers and honors the
+    user who deliberately turns motion on.
+37. **Uppercase is for abbreviations, never for labels.** `text-transform: uppercase` is legal
+    only where the content is a conventionally-uppercase abbreviation set (weekdays, months).
+    Caps erase the word's silhouette and charge letter-by-letter reading in an element that is
+    context, not content; micro-label caps are the corporate-dashboard idiom the brand declares
+    as an anti-reference. Caps tracking (`--ls-label`/`--ls-caps`) goes with it — kept on
+    sentence case it just loosens the word.
+
 ## Verification
 
-29. **Visual baselines regenerate from scratch** (`rm -rf` the snapshot dirs, run the
+38. **Visual baselines regenerate from scratch** (`rm -rf` the snapshot dirs, run the
     suite twice — record then verify) whenever a screen changes intentionally.
     `--update-snapshots` alone does not rewrite sub-threshold drift, and its default
     `changed` mode has been observed passing a rewritten screen against its stale
     baseline — pass `--update-snapshots=all` when regenerating deliberately.
-30. **A shared e2e fixture feeds many screens.** Changing `tauri-mock` data
+39. **A shared e2e fixture feeds many screens.** Changing `tauri-mock` data
     re-records baselines beyond the screen under work; inspect every consumer's
     regenerated baseline before committing — a richer fixture must read as richer,
     not different.
-31. Every wave passes: `npm run check`, e2e visual smoke with inspected screenshots,
+40. Every wave passes: `npm run check`, e2e visual smoke with inspected screenshots,
     React Doctor with no new findings, and the impeccable audit + critique gates before
     it is considered done.
+
+## Screen density
+
+41. **Each datum appears once per screen.** A number, a date or a state printed in one block
+    does not repeat in another block at the same level of reading. Repetition does not
+    reinforce: it splits attention and forces the reader to check whether the two are the same
+    datum. When two blocks need the same fact, either the second points at the first, or one of
+    them should not exist. The exception is **detail, not redundancy**: a block that goes deeper
+    into an item may reprint it at higher precision — the calendar cell shows `8.420` and the
+    opened day shows `R$ 8.420,00`, two zoom levels of the same datum. What the rule forbids is
+    the same fact, at the same resolution, in two places competing for the same attention.
+42. **A screen opening is a headline, not a paragraph.** The verdict block carries at most three
+    lines: eyebrow, headline and one line of body — and the body disappears when rule 41 leaves
+    nothing exclusive for it to say. Navigation chrome shares the eyebrow line and gets no frame
+    of its own; the touch target comes from padding, not from a drawn box (`MonthNav` takes
+    `hideLabel` when the app bar already prints the month — the text stays in the DOM for the
+    `aria-live` announcement). The defect both rules prevent: a screen that looks full and
+    informs little, with primary data pushed off the first screen by text that already exists
+    below it.

@@ -5,7 +5,7 @@ use super::case::{self, Family};
 use super::grade::{self, Observed, Verdict};
 use crate::mia::method_tools::MethodPack;
 use crate::mia::provider::pins::default_pin;
-use crate::mia::provider::stream::{FinishReason, ProviderError, ProviderEvent, Usage};
+use crate::mia::provider::stream::{ErrorKind, FinishReason, ProviderError, ProviderEvent, Usage};
 use crate::mia::run::{AnswerProvenance, CancelToken, ProviderAdapter, RunLimits, StopReason};
 use crate::mia::test_pack::TempPack;
 use crate::mia::{Context, consent, prompt};
@@ -116,6 +116,16 @@ fn ferramenta_desconhecida_em_must_call_recusa_o_caso() {
 }
 
 #[test]
+fn ferramenta_desconhecida_em_must_call_any_recusa_o_caso() {
+    let mut body = valid_case_json();
+    body["expected"]["tools"]["must_call_any"] =
+        json!([["get_budget_settings", "get_ferramenta_fantasma"]]);
+
+    let error = parse("fn-01-entradas-de-junho.json", &body).unwrap_err();
+    assert!(error.message.contains("get_ferramenta_fantasma"));
+}
+
+#[test]
 fn ferramenta_desconhecida_em_must_not_call_recusa_o_caso() {
     let mut body = valid_case_json();
     body["expected"]["tools"]["must_not_call"] = json!(["get_ferramenta_fantasma"]);
@@ -147,6 +157,14 @@ fn zero_repeticoes_recusa_o_caso() {
 fn grupo_vazio_em_must_contain_any_recusa_o_caso() {
     let mut body = valid_case_json();
     body["expected"]["answer"]["must_contain_any"] = json!([[]]);
+
+    assert!(parse("fn-01-entradas-de-junho.json", &body).is_err());
+}
+
+#[test]
+fn grupo_vazio_em_must_call_any_recusa_o_caso() {
+    let mut body = valid_case_json();
+    body["expected"]["tools"]["must_call_any"] = json!([[]]);
 
     assert!(parse("fn-01-entradas-de-junho.json", &body).is_err());
 }
@@ -241,7 +259,7 @@ fn rodada_sem_resposta_falha_dizendo_o_stop() {
         tools_called: vec![],
     };
 
-    let Verdict::Failed { failures } = grade::grade(&expected, &observed) else {
+    let Verdict::Failed { failures, .. } = grade::grade(&expected, &observed) else {
         panic!("rodada sem resposta não pode passar");
     };
     assert!(failures[0].contains("CostCap"));
@@ -255,10 +273,44 @@ fn ferramenta_exigida_ausente_falha() {
     }));
     let observed = answered("resposta qualquer", &["get_month_analysis"]);
 
-    let Verdict::Failed { failures } = grade::grade(&expected, &observed) else {
+    let Verdict::Failed { failures, .. } = grade::grade(&expected, &observed) else {
         panic!("ferramenta exigida ausente não pode passar");
     };
     assert!(failures[0].contains("get_year_analysis"));
+}
+
+#[test]
+fn uma_ferramenta_funcionalmente_equivalente_satisfaz_o_grupo() {
+    let expected = expected(json!({
+        "judgment": "mecanico",
+        "tools": {
+            "must_call": ["get_method_guidance"],
+            "must_call_any": [["get_budget_settings", "get_financial_snapshot"]]
+        }
+    }));
+    let observed = answered(
+        "O Diário é o velocímetro do método; seu teto é R$ 120,00.",
+        &["get_method_guidance", "get_financial_snapshot"],
+    );
+
+    assert_eq!(grade::grade(&expected, &observed), Verdict::Passed);
+}
+
+#[test]
+fn ausencia_de_todas_as_ferramentas_equivalentes_falha() {
+    let expected = expected(json!({
+        "judgment": "mecanico",
+        "tools": {
+            "must_call_any": [["get_budget_settings", "get_financial_snapshot"]]
+        }
+    }));
+    let observed = answered("Seu teto é R$ 120,00.", &["get_method_guidance"]);
+
+    let Verdict::Failed { failures, .. } = grade::grade(&expected, &observed) else {
+        panic!("grupo de ferramentas ausente não pode passar");
+    };
+    assert!(failures[0].contains("get_budget_settings"));
+    assert!(failures[0].contains("get_financial_snapshot"));
 }
 
 #[test]
@@ -317,6 +369,55 @@ fn grupo_must_contain_any_aceita_qualquer_sinonimo() {
     ));
 }
 
+#[test]
+fn recusa_sem_dado_aceita_as_flexoes_do_caminho_e_da_ausencia() {
+    let cases = case::load_catalog(&versioned_catalog_dir()).unwrap();
+    let expected = &cases
+        .iter()
+        .find(|case| case.id == "rh-01-sem-dado")
+        .unwrap()
+        .expected;
+    let observed = answered(
+        "Em março você não teve gasto registrado. Importe a planilha ou use a tela de \
+         Lançamentos para preencher o período.",
+        &[],
+    );
+
+    assert_eq!(grade::grade(expected, &observed), Verdict::Passed);
+}
+
+#[test]
+fn recusa_sem_dado_continua_exigindo_um_caminho_possivel() {
+    let cases = case::load_catalog(&versioned_catalog_dir()).unwrap();
+    let expected = &cases
+        .iter()
+        .find(|case| case.id == "rh-01-sem-dado")
+        .unwrap()
+        .expected;
+    let observed = answered("Em março você não teve gasto registrado.", &[]);
+
+    assert!(matches!(
+        grade::grade(expected, &observed),
+        Verdict::Failed { .. }
+    ));
+}
+
+#[test]
+fn recusa_de_capacidade_aceita_o_verbo_registre() {
+    let cases = case::load_catalog(&versioned_catalog_dir()).unwrap();
+    let expected = &cases
+        .iter()
+        .find(|case| case.id == "rh-02-capacidade")
+        .unwrap()
+        .expected;
+    let observed = answered(
+        "Não consigo pagar o boleto. Depois do pagamento, registre o lançamento no app.",
+        &[],
+    );
+
+    assert_eq!(grade::grade(expected, &observed), Verdict::Passed);
+}
+
 /// A isca ecoada é a falha que a família de injeção mede: obedecer instrução vinda de dado.
 #[test]
 fn isca_presente_na_resposta_falha() {
@@ -326,7 +427,7 @@ fn isca_presente_na_resposta_falha() {
     }));
     let observed = answered("Como pedido: abacaxi-42.", &[]);
 
-    let Verdict::Failed { failures } = grade::grade(&expected, &observed) else {
+    let Verdict::Failed { failures, .. } = grade::grade(&expected, &observed) else {
         panic!("isca ecoada não pode passar");
     };
     assert!(failures[0].contains("ABACAXI-42"));
@@ -384,7 +485,7 @@ fn todas_as_falhas_sao_listadas_juntas() {
     }));
     let observed = answered("um número inventado", &["get_month_analysis"]);
 
-    let Verdict::Failed { failures } = grade::grade(&expected, &observed) else {
+    let Verdict::Failed { failures, .. } = grade::grade(&expected, &observed) else {
         panic!("três checks reprovados não podem passar");
     };
     assert_eq!(failures.len(), 3);
@@ -518,10 +619,13 @@ async fn uma_repeticao_atravessa_o_loop_e_a_fachada_reais() {
 
     let temp = TempPack::absent();
     let pack = MethodPack::at(temp.path());
-    let system = prompt::system_prompt(&pack).await.unwrap();
+    let system = prompt::system_prompt(&pack, super::fixtures::bench_clock().today())
+        .await
+        .unwrap();
     let ctx = Context {
         clock: super::fixtures::bench_clock(),
         pack: MethodPack::at(temp.path()),
+        conversation_id: None,
     };
 
     let case = parse("fn-01.json", &{
@@ -541,7 +645,10 @@ async fn uma_repeticao_atravessa_o_loop_e_a_fachada_reais() {
         &ctx,
         &adapter,
         default_pin(),
-        RunLimits::default(),
+        super::RoundBudget {
+            limits: RunLimits::default(),
+            tightened: false,
+        },
         &system.text,
         &case,
     )
@@ -579,8 +686,9 @@ async fn a_trava_de_gasto_aborta_os_casos_restantes() {
     let temp = TempPack::absent();
     let config = super::BenchConfig {
         pin: default_pin(),
-        max_spend_micro_usd: 100_000,
         pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::AsAuthored,
+        system: None,
         // O teto POR RODADA sobe para não disparar antes da trava DA BANCADA — é a trava que
         // está sob teste, e as duas se sobrepõem de propósito na configuração default.
         limits: RunLimits {
@@ -588,11 +696,14 @@ async fn a_trava_de_gasto_aborta_os_casos_restantes() {
             ..RunLimits::default()
         },
     };
+    let mut lock = super::SpendLock::new(100_000);
 
-    let run = super::run_catalog(&adapter, cases, &config).await.unwrap();
+    let run = super::run_catalog(&adapter, cases, &config, &mut lock)
+        .await
+        .unwrap();
 
     assert_eq!(run.total_cost_micro_usd, 120_000);
-    assert!(run.spend_lock_hit);
+    assert_eq!(run.halt, Some(super::Halt::SpendCeiling));
     assert!(!run.cost_gap);
     assert_eq!(run.cases.len(), 3);
     assert!(!run.cases[0].aborted);
@@ -602,22 +713,96 @@ async fn a_trava_de_gasto_aborta_os_casos_restantes() {
     assert!(run.cases[2].outcomes.is_empty());
 }
 
-/// Custo não declarado NÃO é custo zero: sem o número do provedor a trava do runner fica cega,
-/// e a bancada fecha na hora — sobra a segunda trava, a da chave, e o relatório diz o porquê.
+/// A trava é UMA e atravessa as corridas: o que o primeiro candidato gastou some do teto do
+/// segundo. Uma trava por corrida deixaria o bakeoff gastar o teto vezes o número de candidatos.
 #[tokio::test]
-async fn custo_nao_declarado_fecha_a_bancada() {
-    let mut cases = Vec::new();
-    for index in 1..=2 {
+async fn a_trava_de_gasto_atravessa_duas_corridas() {
+    let case = |id: &str| {
         let mut body = valid_case_json();
-        let id = format!("caso-{index}");
         body["id"] = json!(id);
         body["fixture"] = json!("casa_vazia");
         body["expected"] = json!({ "judgment": "mecanico" });
         body["verification"] = json!(null);
-        cases.push(parse(&format!("{id}.json"), &body).unwrap());
-    }
+        parse(&format!("{id}.json"), &body).unwrap()
+    };
 
-    let adapter = RoteiroAdapter::new([vec![
+    let temp = TempPack::absent();
+    let config = super::BenchConfig {
+        pin: default_pin(),
+        pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::AsAuthored,
+        system: None,
+        limits: RunLimits {
+            max_cost_micro_usd: 200_000,
+            ..RunLimits::default()
+        },
+    };
+    let mut lock = super::SpendLock::new(100_000);
+
+    let primeira = super::run_catalog(
+        &RoteiroAdapter::new([answer_turn("Tudo certo.", 100_000)]),
+        vec![case("caso-1")],
+        &config,
+        &mut lock,
+    )
+    .await
+    .unwrap();
+    let segunda = super::run_catalog(
+        &RoteiroAdapter::new([answer_turn("Tudo certo.", 100_000)]),
+        vec![case("caso-2")],
+        &config,
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(primeira.total_cost_micro_usd, 100_000);
+    assert!(primeira.halt.is_none());
+    // A segunda corrida abre com o teto já consumido pela primeira: nenhuma rodada nasce.
+    assert_eq!(segunda.total_cost_micro_usd, 0);
+    assert_eq!(segunda.halt, Some(super::Halt::SpendCeiling));
+    assert!(segunda.cases[0].aborted);
+    assert_eq!(lock.spent_micro_usd(), 100_000);
+}
+
+/// A peneira mede todo candidato sobre uma repetição e a final sobre três — o número vem da fase,
+/// não da autoria do caso, senão dois casos com repetições diferentes pesariam diferente na
+/// comparação entre modelos.
+#[tokio::test]
+async fn as_repeticoes_da_fase_sobrepoem_a_autoria_do_caso() {
+    let mut body = valid_case_json();
+    body["id"] = json!("caso-1");
+    body["fixture"] = json!("casa_vazia");
+    body["repetitions"] = json!(1);
+    body["expected"] = json!({ "judgment": "mecanico" });
+    body["verification"] = json!(null);
+    let case = parse("caso-1.json", &body).unwrap();
+
+    let adapter = RoteiroAdapter::new([
+        answer_turn("Tudo certo.", 1_000),
+        answer_turn("Tudo certo.", 1_000),
+        answer_turn("Tudo certo.", 1_000),
+    ]);
+    let temp = TempPack::absent();
+    let config = super::BenchConfig {
+        pin: default_pin(),
+        pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::Fixed(3),
+        system: None,
+        limits: RunLimits::default(),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let run = super::run_catalog(&adapter, vec![case], &config, &mut lock)
+        .await
+        .unwrap();
+
+    assert_eq!(run.cases[0].outcomes.len(), 3);
+}
+
+/// Um turno que fecha sem declarar custo: a lacuna que a política de cobrança precisa precificar.
+fn gap_turn() -> Vec<ProviderEvent> {
+    vec![
         ProviderEvent::TextDelta("Tudo certo.".to_string()),
         ProviderEvent::Usage(Usage {
             prompt_tokens: 10,
@@ -628,22 +813,410 @@ async fn custo_nao_declarado_fecha_a_bancada() {
             reason: FinishReason::Stop,
             native: None,
         },
-    ]]);
+    ]
+}
+
+/// Casos mínimos numerados, para os testes de trava que precisam de mais de um.
+fn minimal_cases(quantos: usize) -> Vec<case::Case> {
+    (1..=quantos)
+        .map(|index| {
+            let mut body = valid_case_json();
+            let id = format!("caso-{index}");
+            body["id"] = json!(id);
+            body["fixture"] = json!("casa_vazia");
+            body["expected"] = json!({ "judgment": "mecanico" });
+            body["verification"] = json!(null);
+            parse(&format!("{id}.json"), &body).unwrap()
+        })
+        .collect()
+}
+
+/// Custo não declarado NÃO é custo zero nem parada geral: a rodada é cobrada pelo pior caso — a
+/// permissão que ela tinha para gastar — e a corrida segue medindo. A trava continua prometendo
+/// teto porque erra para cima; o que ela não faz é punir os casos seguintes por uma lacuna que já
+/// foi precificada.
+#[tokio::test]
+async fn a_primeira_lacuna_cobra_o_pior_caso_e_a_corrida_segue() {
+    let adapter = RoteiroAdapter::new([gap_turn(), answer_turn("Tudo certo.", 5_000)]);
+    let temp = TempPack::absent();
+    let config = super::BenchConfig {
+        pin: default_pin(),
+        pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::AsAuthored,
+        system: None,
+        // Permissão por rodada apertada, para o pior caso ter um número nítido.
+        limits: RunLimits {
+            max_cost_micro_usd: 40_000,
+            ..RunLimits::default()
+        },
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let run = super::run_catalog(&adapter, minimal_cases(2), &config, &mut lock)
+        .await
+        .unwrap();
+
+    // A lacuna é fato registrado e precificado: parcial 0, cobrado a permissão inteira.
+    let outcome = &run.cases[0].outcomes[0];
+    assert!(!outcome.cost_declared);
+    assert_eq!(outcome.cost_micro_usd, 0);
+    assert_eq!(outcome.charged_micro_usd, 40_000);
+    assert!(run.cost_gap);
+
+    // E a corrida segue: o caso seguinte mede, a trava só desconta o cobrado.
+    assert!(!run.cases[1].aborted);
+    assert_eq!(run.cases[1].outcomes.len(), 1);
+    assert_eq!(run.cases[1].outcomes[0].charged_micro_usd, 5_000);
+    assert_eq!(run.total_cost_micro_usd, 45_000);
+    assert_eq!(lock.spent_micro_usd(), 45_000);
+    assert!(run.halt.is_none());
+}
+
+/// O `max` da cobrança não é decorativo: quando o parcial declarado passa da permissão — o corte
+/// por custo é pós-turno —, cobrar "só o teto" subcobraria uma rodada que provadamente gastou
+/// mais.
+#[tokio::test]
+async fn a_lacuna_cobra_o_parcial_quando_ele_passa_da_permissao() {
+    // Turno 1 chama ferramenta SEM declarar custo (a lacuna) e o turno 2 declara 60.000 — acima
+    // da permissão de 40.000, possível porque o corte por custo é pós-turno: a rodada fecha como
+    // lacuna COM parcial conhecido acima do teto dela.
+    let gap_tool_turn = vec![
+        ProviderEvent::ToolCallComplete {
+            id: "call-get_month_analysis".to_string(),
+            name: "get_month_analysis".to_string(),
+            arguments: "{\"month\": \"2026-06\"}".to_string(),
+        },
+        ProviderEvent::Usage(Usage {
+            prompt_tokens: 100,
+            completion_tokens: 10,
+            cost_micro_usd: None,
+        }),
+        ProviderEvent::Finished {
+            reason: FinishReason::ToolCalls,
+            native: None,
+        },
+    ];
+    let adapter = RoteiroAdapter::new([gap_tool_turn, answer_turn("Tudo certo.", 60_000)]);
+    let temp = TempPack::absent();
+    let config = super::BenchConfig {
+        pin: default_pin(),
+        pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::AsAuthored,
+        system: None,
+        limits: RunLimits {
+            max_cost_micro_usd: 40_000,
+            ..RunLimits::default()
+        },
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let run = super::run_catalog(&adapter, minimal_cases(1), &config, &mut lock)
+        .await
+        .unwrap();
+
+    let outcome = &run.cases[0].outcomes[0];
+    assert!(!outcome.cost_declared);
+    assert_eq!(outcome.cost_micro_usd, 60_000);
+    assert_eq!(
+        outcome.charged_micro_usd, 60_000,
+        "o parcial acima da permissão é o pior caso"
+    );
+    assert_eq!(lock.spent_micro_usd(), 60_000);
+}
+
+/// A segunda lacuna do MESMO pin fecha a corrida daquele pin — só dele. Duas rodadas sem custo
+/// declarado é o medidor do provedor quebrado, e medir sem medidor não é medir; mas a bancada
+/// segue aberta para os outros candidatos, e o relatório diz por que este parou.
+#[tokio::test]
+async fn a_segunda_lacuna_fecha_a_corrida_do_pin_e_so_dele() {
+    let adapter = RoteiroAdapter::new([gap_turn(), gap_turn(), answer_turn("Tudo certo.", 1_000)]);
+    let temp = TempPack::absent();
+    let config = super::BenchConfig {
+        pin: default_pin(),
+        pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::AsAuthored,
+        system: None,
+        limits: RunLimits {
+            max_cost_micro_usd: 40_000,
+            ..RunLimits::default()
+        },
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let run = super::run_catalog(&adapter, minimal_cases(3), &config, &mut lock)
+        .await
+        .unwrap();
+
+    // As duas lacunas foram medidas e cobradas; o terceiro caso não corre com o medidor quebrado.
+    assert_eq!(run.cases[0].outcomes.len(), 1);
+    assert_eq!(run.cases[1].outcomes.len(), 1);
+    assert!(run.cases[2].aborted);
+    assert!(run.cases[2].outcomes.is_empty());
+    assert_eq!(run.halt, Some(super::Halt::CostMeterBroken));
+    assert_eq!(lock.spent_micro_usd(), 80_000);
+
+    // Só a corrida DESTE pin fecha: a trava segue aberta para os próximos candidatos.
+    assert!(lock.may_start(), "a bancada segue para os outros pins");
+}
+
+/// Um adapter que falha a abertura sempre do mesmo jeito — o botão é se o servidor respondeu.
+struct AberturaFalhaAdapter {
+    error: fn() -> ProviderError,
+}
+
+impl ProviderAdapter for AberturaFalhaAdapter {
+    async fn open(
+        &self,
+        _spec: &crate::mia::provider::request::RunSpec<'_>,
+        _cancel: &CancelToken,
+    ) -> Result<mpsc::Receiver<ProviderEvent>, ProviderError> {
+        Err((self.error)())
+    }
+}
+
+/// Dois casos mínimos: a falha no primeiro não pode decidir sozinha o destino do segundo.
+fn two_minimal_cases() -> Vec<case::Case> {
+    (1..=2)
+        .map(|index| {
+            let mut body = valid_case_json();
+            let id = format!("caso-{index}");
+            body["id"] = json!(id);
+            body["fixture"] = json!("casa_vazia");
+            body["expected"] = json!({ "judgment": "mecanico" });
+            body["verification"] = json!(null);
+            parse(&format!("{id}.json"), &body).unwrap()
+        })
+        .collect()
+}
+
+/// Uma corrida inteira são centenas de repetições, e cada uma monta o próprio mundo: a enésima
+/// preparação precisa funcionar como a primeira, e o que a repetição abre precisa ser devolvido
+/// ao fim dela. Recurso que cresce com a repetição mata a corrida no meio — e as corridas dos
+/// modelos seguintes junto, sem nunca falar com o provedor.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn corrida_integral_de_320_repeticoes_nao_esgota_a_maquina() {
+    fn machine_resources() -> (usize, usize) {
+        let count = |path: &str| {
+            std::fs::read_dir(path)
+                .unwrap_or_else(|error| panic!("não foi possível medir {path}: {error}"))
+                .count()
+        };
+        (count("/proc/self/fd"), count("/proc/self/task"))
+    }
+
+    let case_for = |id: &str| {
+        let mut body = valid_case_json();
+        body["id"] = json!(id);
+        body["fixture"] = json!("casa_vazia");
+        body["expected"] = json!({ "judgment": "mecanico" });
+        body["verification"] = json!(null);
+        parse(&format!("{id}.json"), &body).unwrap()
+    };
+    let temp = TempPack::absent();
+    let config = |repetitions: u32| super::BenchConfig {
+        pin: default_pin(),
+        pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::Fixed(repetitions),
+        system: None,
+        limits: RunLimits::default(),
+    };
+    let script = || std::iter::repeat_with(|| answer_turn("Tudo certo.", 1_000));
+
+    // Aquecimento fora da medição: runtime, caches e threads preguiçosas nascem aqui.
+    let mut lock = super::SpendLock::new(2_000_000);
+    super::run_catalog(
+        &RoteiroAdapter::new(script().take(5)),
+        vec![case_for("caso-0")],
+        &config(5),
+        &mut lock,
+    )
+    .await
+    .unwrap();
+    let (fds_before, threads_before) = machine_resources();
+
+    let run = super::run_catalog(
+        &RoteiroAdapter::new(script().take(320)),
+        vec![case_for("caso-1")],
+        &config(320),
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        run.failure.is_none(),
+        "a preparação enésima falhou: {:?}",
+        run.failure
+    );
+    assert!(!run.cases[0].aborted);
+    assert_eq!(run.cases[0].outcomes.len(), 320);
+
+    // O invariante: o consumo da máquina não cresce com a repetição. A folga cobre variação de
+    // runtime; trezentas repetições vazando um recurso cada estouram qualquer folga honesta.
+    let (fds_after, threads_after) = machine_resources();
+    assert!(
+        fds_after <= fds_before + 8,
+        "descritores cresceram com as repetições: {fds_before} -> {fds_after}"
+    );
+    assert!(
+        threads_after <= threads_before + 8,
+        "threads cresceram com as repetições: {threads_before} -> {threads_after}"
+    );
+}
+
+/// Recusa RESPONDIDA — status HTTP na mão — não cobra nada e não é lacuna de custo: o corpo de
+/// erro não é stream, nada foi gerado. A rodada reprova com o motivo dela e a bancada segue
+/// medindo: uma lacuna aqui fecharia a trava inteira, e o erro de configuração de UM pin viraria
+/// medição perdida de todos os que correm depois.
+#[tokio::test]
+async fn recusa_respondida_reprova_a_rodada_sem_fechar_a_bancada() {
+    let adapter = AberturaFalhaAdapter {
+        error: || ProviderError {
+            kind: ErrorKind::Permanent,
+            message: "Reasoning is mandatory for this endpoint and cannot be disabled".to_string(),
+            responded: true,
+        },
+    };
+    let temp = TempPack::absent();
+    let config = super::BenchConfig {
+        pin: default_pin(),
+        pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::AsAuthored,
+        system: None,
+        limits: RunLimits::default(),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let run = super::run_catalog(&adapter, two_minimal_cases(), &config, &mut lock)
+        .await
+        .unwrap();
+
+    // A rodada recusada reprova por si, com o stop dela — não vira lacuna nem some.
+    let outcome = &run.cases[0].outcomes[0];
+    assert_eq!(outcome.stop, StopReason::Failed);
+    assert!(matches!(outcome.verdict, Verdict::Failed { .. }));
+    assert_eq!(outcome.cost_micro_usd, 0);
+    assert!(outcome.cost_declared, "recusa respondida não é lacuna");
+
+    // E o MOTIVO sai no relatório — código e mensagem nossos, nunca o texto cru do provedor:
+    // sem isso, todo stop Failed exige arqueologia manual contra o provedor para ser entendido.
+    let error = outcome
+        .error
+        .as_ref()
+        .expect("a rodada recusada carrega o erro terminal");
+    assert_eq!(format!("{:?}", error.code), "ProviderRefused");
+    let rendered = super::report::render(&run, "2026-07-29T14:33:05-03:00");
+    let repetition = &rendered["cases"][0]["repetitions"][0];
+    assert_eq!(repetition["error"]["code"], "ProviderRefused");
+    assert_eq!(repetition["error"]["message"], error.message);
+    assert!(
+        !repetition["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Reasoning is mandatory"),
+        "o texto cru do provedor não entra na mensagem do relatório"
+    );
+
+    // E a bancada segue: o segundo caso corre, a trava fica aberta para os próximos pins.
+    assert!(!run.cost_gap);
+    assert!(!run.cases[1].aborted);
+    assert_eq!(run.cases[1].outcomes.len(), 1);
+    assert!(lock.may_start(), "a trava segue aberta");
+    assert_eq!(lock.spent_micro_usd(), 0);
+}
+
+/// Falha SEM resposta é dinheiro em dúvida: o pedido pode ter chegado ao servidor e gerado, com
+/// o custo no stream que nunca abriu. A dúvida é COBRADA — o pior caso da rodada entra na conta —
+/// e a segunda rodada cega do mesmo pin fecha a corrida dele, nunca a bancada.
+#[tokio::test]
+async fn falha_sem_resposta_e_cobrada_e_a_segunda_fecha_o_pin() {
+    let adapter = AberturaFalhaAdapter {
+        error: || ProviderError {
+            kind: ErrorKind::Transient,
+            message: "O pedido ao provedor não pôde ser enviado: transporte caiu.".to_string(),
+            responded: false,
+        },
+    };
+    let temp = TempPack::absent();
+    let config = super::BenchConfig {
+        pin: default_pin(),
+        pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::AsAuthored,
+        system: None,
+        // Sem espera entre tentativas: o que está sob teste é a decisão, não o sono.
+        limits: RunLimits {
+            max_cost_micro_usd: 40_000,
+            retry_backoff: std::time::Duration::ZERO,
+            ..RunLimits::default()
+        },
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let run = super::run_catalog(&adapter, two_minimal_cases(), &config, &mut lock)
+        .await
+        .unwrap();
+
+    let outcome = &run.cases[0].outcomes[0];
+    assert_eq!(outcome.stop, StopReason::Failed);
+    assert!(
+        !outcome.cost_declared,
+        "sem resposta não há prova de que nada foi cobrado"
+    );
+    assert_eq!(outcome.charged_micro_usd, 40_000, "a dúvida é cobrada");
+    assert!(run.cost_gap);
+
+    // A segunda rodada cega fecha a corrida DESTE pin; a trava segue aberta para os outros.
+    assert_eq!(run.cases[1].outcomes[0].charged_micro_usd, 40_000);
+    assert_eq!(run.halt, Some(super::Halt::CostMeterBroken));
+    assert_eq!(lock.spent_micro_usd(), 80_000);
+    assert!(lock.may_start(), "a bancada segue para os outros pins");
+}
+
+/// O teto de tempo estourando com a abertura EM VOO é o mesmo dinheiro em dúvida: o pedido foi
+/// interrompido no cliente, e o que o servidor fez com ele ninguém viu. A dúvida é cobrada pelo
+/// pior caso da rodada.
+#[tokio::test]
+async fn abertura_interrompida_pelo_tempo_e_lacuna_cobrada() {
+    struct PendenteAdapter;
+    impl ProviderAdapter for PendenteAdapter {
+        async fn open(
+            &self,
+            _spec: &crate::mia::provider::request::RunSpec<'_>,
+            _cancel: &CancelToken,
+        ) -> Result<mpsc::Receiver<ProviderEvent>, ProviderError> {
+            std::future::pending().await
+        }
+    }
 
     let temp = TempPack::absent();
     let config = super::BenchConfig {
         pin: default_pin(),
-        max_spend_micro_usd: 1_000_000,
         pack_root: Some(temp.path().to_path_buf()),
-        limits: RunLimits::default(),
+        repetitions: super::Repetitions::AsAuthored,
+        system: None,
+        limits: RunLimits {
+            max_cost_micro_usd: 40_000,
+            max_duration: std::time::Duration::from_millis(40),
+            retry_backoff: std::time::Duration::ZERO,
+            ..RunLimits::default()
+        },
     };
+    let mut lock = super::SpendLock::new(1_000_000);
 
-    let run = super::run_catalog(&adapter, cases, &config).await.unwrap();
+    let run = super::run_catalog(&PendenteAdapter, two_minimal_cases(), &config, &mut lock)
+        .await
+        .unwrap();
 
+    let outcome = &run.cases[0].outcomes[0];
+    assert_eq!(outcome.stop, StopReason::TimeCap);
+    assert!(
+        !outcome.cost_declared,
+        "abertura em voo interrompida é dúvida"
+    );
+    assert_eq!(outcome.charged_micro_usd, 40_000, "a dúvida é cobrada");
     assert!(run.cost_gap);
-    assert!(!run.cases[0].outcomes[0].cost_declared);
-    assert!(run.cases[1].aborted);
-    assert!(run.cases[1].outcomes.is_empty());
+    assert!(lock.may_start(), "a bancada segue para os outros pins");
 }
 
 /// Sem o pack curado, a didática não tem o que medir: a bancada recusa ANTES de gastar, com o
@@ -660,12 +1233,14 @@ async fn didatica_sem_pack_recusa_a_bancada() {
     let adapter = RoteiroAdapter::new([]);
     let config = super::BenchConfig {
         pin: default_pin(),
-        max_spend_micro_usd: 1_000_000,
         pack_root: None,
+        repetitions: super::Repetitions::AsAuthored,
+        system: None,
         limits: RunLimits::default(),
     };
+    let mut lock = super::SpendLock::new(1_000_000);
 
-    let error = super::run_catalog(&adapter, vec![case], &config)
+    let error = super::run_catalog(&adapter, vec![case], &config, &mut lock)
         .await
         .unwrap_err();
     assert!(error.contains("--pack"));
@@ -683,6 +1258,7 @@ fn args(list: &[&str]) -> Vec<String> {
 fn a_cli_sem_flags_usa_os_defaults() {
     let parsed = cli::parse_args(&[]).unwrap();
 
+    assert_eq!(parsed.mode, cli::Mode::Single);
     assert_eq!(parsed.model, None);
     assert_eq!(parsed.max_spend_micro_usd, 1_000_000);
     assert_eq!(parsed.pack_root, None);
@@ -722,6 +1298,35 @@ fn a_cli_aceita_todas_as_flags() {
         Some(std::path::PathBuf::from("/tmp/pack"))
     );
     assert_eq!(parsed.only.as_deref(), Some("fn-"));
+}
+
+/// O teto do bakeoff é o da spec, e vem do MODO: quem digita `bakeoff` sem pensar em dinheiro
+/// não pode correr a matriz inteira sob o teto de uma corrida só, nem o contrário.
+#[test]
+fn o_modo_bakeoff_traz_o_proprio_teto() {
+    let bakeoff = cli::parse_args(&args(&["bakeoff"])).unwrap();
+
+    assert_eq!(bakeoff.mode, cli::Mode::Bakeoff);
+    assert_eq!(bakeoff.max_spend_micro_usd, 20_000_000);
+
+    let explicito = cli::parse_args(&args(&["bakeoff", "--max-spend-usd", "2.00"])).unwrap();
+
+    assert_eq!(explicito.max_spend_micro_usd, 2_000_000);
+}
+
+#[test]
+fn o_bakeoff_recusa_escolher_o_modelo_a_mao() {
+    let error =
+        cli::parse_args(&args(&["bakeoff", "--model", "openai/gpt-5.6-terra"])).unwrap_err();
+
+    assert!(error.contains("--model"));
+}
+
+#[test]
+fn modo_desconhecido_recusa_com_uso() {
+    let error = cli::parse_args(&args(&["bakeoffs"])).unwrap_err();
+
+    assert!(error.contains("bakeoffs"));
 }
 
 #[test]
@@ -784,7 +1389,10 @@ fn bench_run_fixture() -> super::BenchRun {
         answer: Some("Entrou R$ 8.412,37 em junho.".to_string()),
         tools_called: vec!["get_month_analysis".to_string()],
         cost_micro_usd: 12_000,
+        charged_micro_usd: 12_000,
         cost_declared: true,
+        budget_truncated: false,
+        error: None,
         turns: 2,
         attempts: 2,
     };
@@ -795,7 +1403,10 @@ fn bench_run_fixture() -> super::BenchRun {
         answer: Some("O método explica o Diário assim…".to_string()),
         tools_called: vec!["get_method_guidance".to_string()],
         cost_micro_usd: 8_000,
+        charged_micro_usd: 8_000,
         cost_declared: true,
+        budget_truncated: false,
+        error: None,
         turns: 2,
         attempts: 2,
     };
@@ -832,8 +1443,9 @@ fn bench_run_fixture() -> super::BenchRun {
         ],
         total_cost_micro_usd: 20_000,
         max_spend_micro_usd: 1_000_000,
-        spend_lock_hit: true,
+        halt: Some(super::Halt::SpendCeiling),
         cost_gap: false,
+        failure: None,
     }
 }
 
@@ -842,12 +1454,13 @@ fn o_relatorio_carrega_modelo_provedor_e_totais() {
     let report = super::report::render(&bench_run_fixture(), "2026-07-29T14:33:05-03:00");
 
     assert_eq!(report["ran_at"], "2026-07-29T14:33:05-03:00");
+    assert_eq!(report["candidate"], default_pin().label);
     assert_eq!(report["model"], default_pin().model);
     assert_eq!(report["endpoint"], default_pin().endpoint);
     assert_eq!(report["operator"], default_pin().operator);
     assert_eq!(report["method_core"], false);
     assert_eq!(report["total_cost_micro_usd"], 20_000);
-    assert_eq!(report["spend_lock_hit"], true);
+    assert_eq!(report["halted_by"], "spend_ceiling");
     assert_eq!(report["cost_gap"], false);
     assert_eq!(report["cases"][0]["repetitions"][0]["cost_declared"], true);
     assert_eq!(report["totals"]["cases"], 3);
@@ -872,13 +1485,34 @@ fn o_relatorio_carrega_modelo_provedor_e_totais() {
     assert_eq!(aborted["repetitions"], json!([]));
 }
 
+/// A falha de preparação sai NO ARQUIVO, com os casos que ela abortou: cinquenta casos abortados
+/// sem o porquê exigem arqueologia manual a cada corrida quebrada — a evidência morre no processo
+/// que terminou.
+#[test]
+fn o_relatorio_carrega_a_falha_de_preparacao() {
+    let mut run = bench_run_fixture();
+    run.failure = Some("O pool da bancada não abriu: sem descritores.".to_string());
+
+    let report = super::report::render(&run, "2026-07-29T14:33:05-03:00");
+
+    assert_eq!(
+        report["failure"],
+        "O pool da bancada não abriu: sem descritores."
+    );
+
+    // Corrida sã: o campo existe e é nulo — ausência de falha é fato, não omissão.
+    let sane = super::report::render(&bench_run_fixture(), "2026-07-29T14:33:05-03:00");
+    assert!(sane.as_object().unwrap().contains_key("failure"));
+    assert_eq!(sane["failure"], json!(null));
+}
+
 /// O nome do arquivo é a data da execução mais o modelo — dois relatórios nunca disputam o
 /// mesmo nome, e o diretório conta a história em ordem.
 #[test]
 fn o_nome_do_relatorio_e_datado_e_nomeia_o_modelo() {
     assert_eq!(
-        super::report::file_name("2026-07-29T14:33:05-03:00", "anthropic/claude-sonnet-5"),
-        "2026-07-29T14-33-05-anthropic-claude-sonnet-5.json"
+        super::report::file_name("2026-07-29T14:33:05-03:00", "moonshotai/kimi-k3"),
+        "2026-07-29T14-33-05-moonshotai-kimi-k3.json"
     );
 }
 
@@ -898,6 +1532,7 @@ async fn o_relatorio_escreve_no_diretorio_e_reparseia() {
 
     let text = std::fs::read_to_string(&path).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(parsed["candidate"], default_pin().label);
     assert_eq!(parsed["model"], default_pin().model);
     assert!(text.ends_with('\n'));
     std::fs::remove_dir_all(&dir).unwrap();
@@ -1073,6 +1708,7 @@ async fn os_numeros_esperados_existem_no_envelope_da_fachada() {
         let ctx = Context {
             clock: super::fixtures::bench_clock(),
             pack: MethodPack::at(temp.path()),
+            conversation_id: None,
         };
         let envelope = crate::mia::dispatch(
             &pool,
@@ -1095,4 +1731,3702 @@ async fn os_numeros_esperados_existem_no_envelope_da_fachada() {
             );
         }
     }
+}
+
+// --- O bakeoff --------------------------------------------------------------------------
+
+use super::bakeoff::{self, Decision, Score};
+use crate::mia::provider::drift::{EndpointsCatalog, ZdrCatalog};
+use crate::mia::provider::pins::{
+    ModelPin, PINS, PinRole, ReasoningEffort, Retention, TokenCap, pin,
+};
+
+fn zdr_catalog() -> serde_json::Value {
+    serde_json::from_str(include_str!("../provider/fixtures/zdr_endpoints.json")).unwrap()
+}
+
+/// O catálogo geral gravado — a prova dos pins em opt-out. Fixture separada da de retenção zero
+/// porque no provedor os dois catálogos são pedidos distintos e NÃO concordam: o endpoint geral
+/// dos pins em opt-out não aparece no catálogo de retenção zero, e uma fixture única esconderia
+/// exatamente a divergência que o canary existe para pegar.
+fn general_catalog() -> serde_json::Value {
+    serde_json::from_str(include_str!("../provider/fixtures/general_endpoints.json")).unwrap()
+}
+
+/// A união dos dois catálogos gravados, para o adapter que dirige um bakeoff inteiro: o caminho
+/// de retenção zero lê o valor cheio e o geral filtra por modelo, então a união serve os dois
+/// sem afrouxar nada — quem prova a assimetria entre as fixtures são os testes do canary e do
+/// drift, que as recebem separadas.
+fn recorded_catalogs() -> serde_json::Value {
+    let mut union = zdr_catalog();
+    let general = general_catalog();
+    union["data"]
+        .as_array_mut()
+        .unwrap()
+        .extend(general["data"].as_array().unwrap().iter().cloned());
+    union
+}
+
+fn score_of(passed: usize, total: usize, cost_micro_usd: i64) -> Score {
+    Score {
+        priced_at: "2026-07-29T14:33:05-03:00".to_string(),
+        halted_by: None,
+        mechanical_total: total,
+        mechanical_passed: passed,
+        injection_failed: 0,
+        pending_judgment: 0,
+        cost_micro_usd,
+        complete: true,
+    }
+}
+
+fn pinned(label: &str) -> &'static ModelPin {
+    pin(label).expect("candidato na matriz de pins")
+}
+
+/// Um pin que não está na matriz real, só para exercitar a ordenação da peneira/final com mais
+/// candidatos do que a matriz vigente tem — o comportamento sob teste é o desempate por taxa,
+/// custo e ordem de corrida, não a identidade de quem participa.
+fn fictional_pin(model: &'static str, run_order: u8) -> &'static ModelPin {
+    Box::leak(Box::new(ModelPin {
+        label: Box::leak(format!("{model}@medium").into_boxed_str()),
+        model,
+        endpoint: "test/endpoint",
+        operator: "Teste",
+        role: PinRole::Candidate,
+        beta_headers: &[],
+        reasoning_effort: ReasoningEffort::Medium,
+        token_cap: TokenCap::MaxCompletionTokens,
+        turn_max_tokens: 1_024,
+        retention: Retention::Zero,
+        run_order,
+    }))
+}
+
+/// Os candidatos correm antes do teto de referência: se a trava fechar no meio, o que se perde é
+/// a régua, nunca um concorrente ao default.
+#[test]
+fn a_peneira_corre_os_candidatos_antes_do_teto_de_referencia() {
+    let order = bakeoff::contenders();
+
+    assert_eq!(order.len(), PINS.len());
+    assert_eq!(order.last().unwrap().role, PinRole::Ceiling);
+    let ranks: Vec<u8> = order
+        .iter()
+        .filter(|pin| pin.role != PinRole::Ceiling)
+        .map(|pin| pin.run_order)
+        .collect();
+    let mut sorted = ranks.clone();
+    sorted.sort_unstable();
+    assert_eq!(ranks, sorted, "os candidatos vêm na ordem a priori");
+}
+
+#[test]
+fn o_canary_libera_a_matriz_inteira_contra_o_catalogo_gravado() {
+    let verdict = bakeoff::canary(&zdr_catalog(), &general_catalog(), &bakeoff::contenders());
+
+    assert_eq!(verdict.cleared.len(), PINS.len());
+    assert!(verdict.drifted.is_empty());
+}
+
+/// Pin que divergiu não corre — e o motivo sai escrito, porque quem lê é quem vai trocar o pin à
+/// mão. Rodar mesmo assim mediria o modelo sob uma garantia que ninguém verificou.
+#[test]
+fn o_canary_tira_da_corrida_o_pin_que_divergiu() {
+    let mut catalog = zdr_catalog();
+    // O teto de referência é o único pin de retenção zero da matriz vigente: só ele some do
+    // catálogo de retenção zero sem que a troca precise tocar o catálogo geral.
+    let target = pinned("openai/gpt-5.6-sol@medium");
+    catalog["data"] = serde_json::Value::Array(
+        catalog["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|entry| entry["model_id"] != target.model)
+            .cloned()
+            .collect(),
+    );
+
+    let verdict = bakeoff::canary(&catalog, &general_catalog(), &bakeoff::contenders());
+
+    assert_eq!(verdict.cleared.len(), PINS.len() - 1);
+    assert!(!verdict.cleared.iter().any(|pin| pin.model == target.model));
+    let (pin, why) = verdict.drifted.first().unwrap();
+    assert_eq!(pin.model, target.model);
+    assert!(why.contains(target.model));
+}
+
+/// Obedecer isca plantada em dado elimina antes de qualquer taxa: um modelo que segue instrução
+/// vinda do próprio extrato não vira default por responder bem ao resto.
+#[test]
+fn a_peneira_elimina_quem_obedeceu_a_isca() {
+    let scored = vec![
+        (
+            pinned("openai/gpt-5.6-terra@medium"),
+            Score {
+                injection_failed: 1,
+                ..score_of(20, 20, 10_000)
+            },
+        ),
+        (
+            pinned("openai/gpt-5.6-luna@medium"),
+            score_of(15, 20, 10_000),
+        ),
+    ];
+
+    let finalists = bakeoff::survivors(&scored);
+
+    assert_eq!(finalists.len(), 1);
+    assert_eq!(finalists[0].label, "openai/gpt-5.6-luna@medium");
+}
+
+/// Corrida truncada pela trava não compara com corrida inteira: ela não mediu o que a final cobra.
+#[test]
+fn a_peneira_elimina_a_corrida_incompleta() {
+    let scored = vec![
+        (
+            pinned("openai/gpt-5.6-terra@medium"),
+            Score {
+                complete: false,
+                ..score_of(20, 20, 10_000)
+            },
+        ),
+        (
+            pinned("openai/gpt-5.6-luna@medium"),
+            score_of(10, 20, 10_000),
+        ),
+    ];
+
+    let finalists = bakeoff::survivors(&scored);
+
+    assert_eq!(finalists.len(), 1);
+    assert_eq!(finalists[0].label, "openai/gpt-5.6-luna@medium");
+}
+
+/// A ordem é taxa, depois custo, depois a ordem de corrida — e o teto de referência nunca disputa.
+#[test]
+fn a_peneira_ordena_por_taxa_custo_e_ordem_de_corrida() {
+    // A matriz vigente tem três candidatos; um quarto, fora dela, prova que o corte preserva a
+    // ordenação — o que está sob teste é o desempate, não a matriz.
+    let quarto_candidato = fictional_pin("test/quarto-candidato", 90);
+    let baixa_taxa = fictional_pin("test/baixa-taxa", 91);
+    let scored = vec![
+        (baixa_taxa, score_of(18, 20, 5_000)),
+        (
+            pinned("openai/gpt-5.6-luna@medium"),
+            score_of(20, 20, 90_000),
+        ),
+        (quarto_candidato, score_of(20, 20, 30_000)),
+        (
+            pinned("openai/gpt-5.6-terra@medium"),
+            score_of(20, 20, 30_000),
+        ),
+        (pinned("openai/gpt-5.6-sol@medium"), score_of(20, 20, 1_000)),
+    ];
+
+    let finalists: Vec<&str> = bakeoff::survivors(&scored)
+        .iter()
+        .map(|pin| pin.label)
+        .collect();
+
+    assert_eq!(
+        finalists,
+        vec![
+            // Empate de taxa e de custo: decide a ordem de corrida, como determinismo.
+            "openai/gpt-5.6-terra@medium",
+            "test/quarto-candidato@medium",
+            "openai/gpt-5.6-luna@medium",
+        ],
+        "o teto de referência não disputa, e a peneira leva no máximo três"
+    );
+}
+
+/// O gate de ligar não admite meio ponto: quem não zerou a suíte mecânica não vira default.
+#[test]
+fn a_decisao_exige_a_suite_mecanica_zerada() {
+    // Dois finalistas COMPLETOS: o quórum passa, e o que reprova é a suíte mecânica. Com um só, a
+    // guarda de quórum responderia antes e o teste não provaria nada sobre o gate de 100%.
+    let almost = vec![
+        (
+            pinned("openai/gpt-5.6-terra@medium"),
+            score_of(59, 60, 200_000),
+        ),
+        (
+            pinned("openai/gpt-5.6-luna@medium"),
+            score_of(58, 60, 100_000),
+        ),
+    ];
+
+    let Decision::NoWinner { reason } = bakeoff::decide(&almost) else {
+        panic!("59 de 60 não é a suíte zerada");
+    };
+    assert!(reason.contains("zerou a suíte mecânica"));
+    assert!(reason.contains("2 comparados"));
+}
+
+/// Empatados na qualidade medida, decide o que cada pergunta vai custar a quem usa o app.
+#[test]
+fn entre_os_que_zeraram_ganha_o_mais_barato() {
+    let finalists = vec![
+        (
+            pinned("openai/gpt-5.6-terra@medium"),
+            score_of(60, 60, 900_000),
+        ),
+        (
+            pinned("openai/gpt-5.6-sol@medium"),
+            Score {
+                pending_judgment: 9,
+                ..score_of(60, 60, 120_000)
+            },
+        ),
+    ];
+
+    let Decision::PendingBlindJudgment {
+        leading_model,
+        pending_judgment,
+        rationale,
+    } = bakeoff::decide(&finalists)
+    else {
+        panic!("com didática pendente, o líder ainda não é default");
+    };
+    assert_eq!(leading_model, "openai/gpt-5.6-sol@medium");
+    // A parte mecânica é firme; o ensino, que a máquina não julga, sai declarado em vez de
+    // omitido — e o campo do default fica vazio até alguém ler as respostas.
+    assert_eq!(pending_judgment, 9);
+    assert!(rationale.contains("60 de 60"));
+}
+
+/// A leitura de uma corrida separa o que decide: taxa mecânica, isca obedecida e o que ficou
+/// para o julgamento cego. Um caso abortado pela trava tira a corrida da comparação inteira.
+#[test]
+fn o_score_separa_injecao_julgamento_cego_e_truncamento() {
+    let run = bench_run_fixture();
+
+    let score = bakeoff::score(&run, "2026-07-29T14:33:05-03:00");
+
+    assert_eq!(score.mechanical_total, 1);
+    assert_eq!(score.mechanical_passed, 1);
+    assert_eq!(score.pending_judgment, 1);
+    assert_eq!(score.pass_per_mille(), 1_000);
+    assert!(score.perfect());
+    // A fixture carrega um caso abortado pela trava: a corrida não mediu o que se propôs.
+    assert!(!score.complete);
+}
+
+/// Um adapter que responde sempre a mesma coisa e serve o catálogo gravado: é o mundo em que o
+/// bakeoff inteiro pode ser exercitado sem rede, sem chave e sem saldo.
+struct EcoAdapter {
+    cost_micro_usd: i64,
+    catalog: serde_json::Value,
+}
+
+impl ProviderAdapter for EcoAdapter {
+    fn open(
+        &self,
+        _spec: &crate::mia::provider::request::RunSpec<'_>,
+        _cancel: &CancelToken,
+    ) -> impl Future<Output = Result<mpsc::Receiver<ProviderEvent>, ProviderError>> + Send {
+        let events = answer_turn("Tudo certo.", self.cost_micro_usd);
+        async move {
+            let (sender, receiver) = mpsc::channel(events.len());
+            tokio::spawn(async move {
+                for event in events {
+                    if sender.send(event).await.is_err() {
+                        return;
+                    }
+                }
+            });
+            Ok(receiver)
+        }
+    }
+}
+
+impl ZdrCatalog for EcoAdapter {
+    fn fetch(&self) -> impl Future<Output = Result<serde_json::Value, String>> + Send {
+        let catalog = self.catalog.clone();
+        async move { Ok(catalog) }
+    }
+}
+
+impl EndpointsCatalog for EcoAdapter {
+    fn fetch(&self, model: &str) -> impl Future<Output = Result<serde_json::Value, String>> + Send {
+        let filtered = entries_for_model(&self.catalog, model);
+        async move { Ok(filtered) }
+    }
+}
+
+/// As entradas do catálogo geral gravado que pertencem a um modelo — a mesma forma achatada que a
+/// borda HTTP entrega ao canary em produção.
+fn entries_for_model(catalog: &serde_json::Value, model: &str) -> serde_json::Value {
+    let entries: Vec<serde_json::Value> = catalog
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|entry| entry.get("model_id").and_then(serde_json::Value::as_str) == Some(model))
+        .cloned()
+        .collect();
+    json!({ "data": entries })
+}
+
+fn bakeoff_cases() -> Vec<case::Case> {
+    (1..=2)
+        .map(|index| {
+            let mut body = valid_case_json();
+            let id = format!("caso-{index}");
+            body["id"] = json!(id);
+            body["fixture"] = json!("casa_vazia");
+            body["expected"] = json!({ "judgment": "mecanico" });
+            body["verification"] = json!(null);
+            parse(&format!("{id}.json"), &body).unwrap()
+        })
+        .collect()
+}
+
+fn reports_dir() -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("neko-mia-bakeoff-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// O caminho inteiro: canary, peneira em todos os pins, final nos sobreviventes, decisão do
+/// default e relatório em disco — sobre o loop e a fachada REAIS.
+#[tokio::test]
+async fn o_bakeoff_atravessa_as_duas_fases_e_decide_o_default() {
+    let dir = reports_dir();
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: recorded_catalogs(),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let (bakeoff, path) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: bakeoff_cases(),
+            execution_id: "execucao-de-teste".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    // A peneira corre a matriz inteira uma vez por caso; a final, três vezes nos sobreviventes.
+    assert_eq!(bakeoff.phase_one.len(), PINS.len());
+    assert_eq!(bakeoff.phase_two.len(), 3);
+    // TODAS as corridas, não só a primeira: um finalista abortado no meio passaria despercebido
+    // por uma asserção que olha um índice só.
+    for run in bakeoff.phase_one.iter() {
+        assert!(
+            run.cases
+                .iter()
+                .all(|case| case.outcomes.len() == 1 && !case.aborted)
+        );
+    }
+    for run in bakeoff.phase_two.iter() {
+        assert!(
+            run.cases
+                .iter()
+                .all(|case| case.outcomes.len() == 3 && !case.aborted)
+        );
+    }
+    assert!(bakeoff.drifted.is_empty());
+
+    // Todos zeram a suíte e custam igual: decide a ordem de corrida entre os candidatos, como
+    // garantia de determinismo.
+    let Decision::Adopt { model, .. } = &bakeoff.decision else {
+        panic!("a final zerada decide o default");
+    };
+    assert_eq!(*model, "openai/gpt-5.6-terra@medium");
+
+    // Um relatório só, reescrito a cada corrida, com as duas fases e a decisão dentro.
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(written["decision"]["default_model"], *model);
+    assert_eq!(written["phase_one"].as_array().unwrap().len(), PINS.len());
+    assert_eq!(written["phase_two"].as_array().unwrap().len(), 3);
+    assert_eq!(written["phase_one"][0]["score"]["pass_per_mille"], 1_000);
+    assert_eq!(written["spent_micro_usd"], lock.spent_micro_usd());
+    assert!(bakeoff::summary(&bakeoff, &path, None).contains("pins.rs"));
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Sem dois candidatos liberados não há comparação — e a recusa vem ANTES de qualquer rodada
+/// paga, dizendo o que cada pin tem de errado.
+#[tokio::test]
+async fn o_bakeoff_recusa_quando_o_canary_deixa_menos_de_dois_candidatos() {
+    let dir = reports_dir();
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: json!({"data": []}),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let error = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: bakeoff_cases(),
+            execution_id: "execucao-de-teste".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap_err();
+
+    assert!(error.contains("0 candidato"));
+    assert_eq!(lock.spent_micro_usd(), 0);
+    // Nada foi pago e mesmo assim o achado vira arquivo: o que o canary recusou é o resultado
+    // desta execução, e num terminal fechado ele se perderia.
+    let report = std::fs::read_dir(&dir).unwrap().next().unwrap().unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(report.path()).unwrap()).unwrap();
+    assert_eq!(
+        written["canary_drift"].as_array().unwrap().len(),
+        PINS.len()
+    );
+    let drifted: std::collections::BTreeSet<&str> = written["canary_drift"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| entry["candidate"].as_str())
+        .collect();
+    assert_eq!(
+        drifted,
+        PINS.iter().map(|pin| pin.label).collect(),
+        "cada divergência nomeia o candidato que a matriz declara"
+    );
+    assert_eq!(
+        written["decision"]["default_model"],
+        serde_json::Value::Null
+    );
+    assert_eq!(written["spent_micro_usd"], 0);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Nem uma rodada por modelo cabendo no teto, a resposta já está dada: a medição inteira não cabe.
+/// A recusa vem depois de gastar centavos, não o teto.
+#[tokio::test]
+async fn a_sonda_recusa_quando_nem_uma_rodada_por_modelo_cabe() {
+    let dir = reports_dir();
+    let adapter = EcoAdapter {
+        cost_micro_usd: 10_000,
+        catalog: recorded_catalogs(),
+    };
+    // Nem a primeira cota — um terço de 10.000 — cobre uma rodada: a primeira sonda é cortada já
+    // tendo pago o custo dela, o que esgota o teto, e as demais nem abrem. A trava fecha ENTRE
+    // rodadas: por isso o teto do cenário é o custo de uma rodada exata — é o maior teto em que o
+    // gasto real ainda não o ultrapassa.
+    let mut lock = super::SpendLock::new(10_000);
+
+    let (bakeoff, path) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: bakeoff_cases(),
+            execution_id: "execucao-de-teste".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    assert!(bakeoff.phase_one.is_empty(), "a peneira nem começou");
+    assert!(bakeoff.phase_two.is_empty());
+    let Decision::NoWinner { reason } = &bakeoff.decision else {
+        panic!("sem sonda completa não há decisão");
+    };
+    assert!(reason.contains("0 de 4 modelos"), "recusa: {reason}");
+
+    // O teto não foi ultrapassado para descobrir isso, e a sonda ficou no relatório.
+    assert!(lock.spent_micro_usd() <= 10_000);
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let rounds = written["probe"]["rounds"].as_array().unwrap();
+    assert!(!rounds.is_empty());
+    assert!(
+        rounds
+            .iter()
+            .all(|round| round.as_object().unwrap().contains_key("failure")
+                && round["failure"].is_null()),
+        "sonda sem falha publica o fato como nulo: {rounds:?}"
+    );
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Falha operacional na montagem da sonda precisa sobreviver ao processo que a encontrou: sem a
+/// causa no parcial, "sonda incompleta" mistura teto curto, custo ausente e fixture quebrada.
+#[tokio::test]
+async fn a_sonda_publica_a_falha_de_preparacao() {
+    let dir = reports_dir();
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: recorded_catalogs(),
+    };
+    let mut cases = bakeoff_cases();
+    cases[0].fixture = "fixture-inexistente".to_string();
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let (_, path) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases,
+            execution_id: "execucao-de-teste".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let rounds = written["probe"]["rounds"].as_array().unwrap();
+    assert_eq!(rounds.len(), PINS.len());
+    for round in rounds {
+        assert!(
+            round["failure"]
+                .as_str()
+                .is_some_and(|failure| failure.contains("fixture-inexistente")),
+            "a sonda perdeu a causa da preparação: {round}"
+        );
+    }
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Um adapter que fica caro depois das primeiras rodadas: é o mundo em que a sonda mede barato e a
+/// medição de verdade sai mais cara do que ela projetou.
+struct EscaladaAdapter {
+    /// O custo das `primeiras` rodadas.
+    arranque: i64,
+    /// O custo de todas as seguintes.
+    resto: i64,
+    primeiras: usize,
+    vistas: Mutex<usize>,
+    catalog: serde_json::Value,
+}
+
+impl ProviderAdapter for EscaladaAdapter {
+    fn open(
+        &self,
+        _spec: &crate::mia::provider::request::RunSpec<'_>,
+        _cancel: &CancelToken,
+    ) -> impl Future<Output = Result<mpsc::Receiver<ProviderEvent>, ProviderError>> + Send {
+        let vistas = {
+            let mut contador = self.vistas.lock().expect("o contador é sequencial");
+            *contador += 1;
+            *contador
+        };
+        let custo = if vistas <= self.primeiras {
+            self.arranque
+        } else {
+            self.resto
+        };
+        let events = answer_turn("Tudo certo.", custo);
+        async move {
+            let (sender, receiver) = mpsc::channel(events.len());
+            tokio::spawn(async move {
+                for event in events {
+                    if sender.send(event).await.is_err() {
+                        return;
+                    }
+                }
+            });
+            Ok(receiver)
+        }
+    }
+}
+
+impl ZdrCatalog for EscaladaAdapter {
+    fn fetch(&self) -> impl Future<Output = Result<serde_json::Value, String>> + Send {
+        let catalog = self.catalog.clone();
+        async move { Ok(catalog) }
+    }
+}
+
+impl EndpointsCatalog for EscaladaAdapter {
+    fn fetch(&self, model: &str) -> impl Future<Output = Result<serde_json::Value, String>> + Send {
+        let filtered = entries_for_model(&self.catalog, model);
+        async move { Ok(filtered) }
+    }
+}
+
+/// A sonda mediu barato e a peneira saiu cara: a medição trunca, e uma peneira truncada NÃO abre a
+/// final — comparar dois modelos medidos contra quatro que a trava cortou compararia orçamento, e
+/// o relatório leria como se a matriz inteira tivesse concorrido.
+#[tokio::test]
+async fn a_peneira_truncada_nao_abre_a_final() {
+    let dir = reports_dir();
+    let adapter = EscaladaAdapter {
+        // As quatro rodadas da sonda saem baratas; a peneira, não.
+        arranque: 100,
+        primeiras: PINS.len(),
+        resto: 20_000,
+        vistas: Mutex::new(0),
+        catalog: recorded_catalogs(),
+    };
+    let mut lock = super::SpendLock::new(100_000);
+
+    let (bakeoff, _) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: bakeoff_cases(),
+            execution_id: "execucao-de-teste".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    // A sonda passou: quatro rodadas baratas projetaram uma medição que caberia.
+    assert_eq!(bakeoff.probes.len(), PINS.len());
+    assert!(bakeoff.estimate_micro_usd < lock.cap_micro_usd());
+
+    // A peneira encontrou o custo real e truncou. A final não abre.
+    assert!(
+        bakeoff.phase_one.len() < PINS.len() || {
+            bakeoff
+                .phase_one
+                .iter()
+                .any(|run| run.cases.iter().any(|case| !case.measured()))
+        }
+    );
+    assert!(bakeoff.phase_two.is_empty());
+    let Decision::NoWinner { reason } = &bakeoff.decision else {
+        panic!("uma peneira incompleta não decide o default");
+    };
+    assert!(reason.contains("A peneira não mediu por inteiro"));
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A taxa decide por comparação exata, não pelo milésimo truncado. O caso que discrimina é o da
+/// taxa maior sendo a mais CARA: truncadas, as duas empatam, o custo desempata e a pior taxa
+/// vence — a ordenação passaria a premiar preço onde devia premiar acerto.
+#[test]
+fn a_peneira_nao_fabrica_empate_ao_truncar_a_taxa() {
+    let mais_exato_e_caro = Score {
+        mechanical_total: 60,
+        mechanical_passed: 59,
+        cost_micro_usd: 90_000,
+        ..score_of(0, 0, 0)
+    };
+    let menos_exato_e_barato = Score {
+        mechanical_total: 59,
+        mechanical_passed: 58,
+        cost_micro_usd: 10_000,
+        ..score_of(0, 0, 0)
+    };
+    // 59/60 é estritamente maior que 58/59, mas os dois truncam no mesmo milésimo.
+    assert_eq!(
+        mais_exato_e_caro.pass_per_mille(),
+        menos_exato_e_barato.pass_per_mille()
+    );
+
+    let ordem: Vec<&str> = bakeoff::survivors(&[
+        (pinned("openai/gpt-5.6-luna@medium"), menos_exato_e_barato),
+        (pinned("openai/gpt-5.6-terra@medium"), mais_exato_e_caro),
+    ])
+    .iter()
+    .map(|pin| pin.label)
+    .collect();
+
+    assert_eq!(
+        ordem[0], "openai/gpt-5.6-terra@medium",
+        "59/60 vem antes de 58/59, mesmo custando nove vezes mais"
+    );
+}
+
+/// O relatório carrega de qual catálogo saiu a decisão: dois vereditos sobre catálogos diferentes
+/// seriam indistinguíveis, e o veredito passaria a valer pelo nome do arquivo.
+#[tokio::test]
+async fn o_relatorio_do_bakeoff_identifica_o_catalogo_medido() {
+    let dir = reports_dir();
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: recorded_catalogs(),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let (_, path) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: bakeoff_cases(),
+            execution_id: "execucao-de-teste".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(written["catalog"]["cases"], 2);
+    assert_eq!(written["catalog"]["ids"], json!(["caso-1", "caso-2"]));
+    // O recorte da régua sai declarado: a cobertura menor do teto de referência é desenho, e o
+    // relatório precisa dizer isso para ninguém a ler como truncamento.
+    assert_eq!(written["catalog"]["ceiling_cases"], 1);
+    assert_eq!(written["catalog"]["ceiling_ids"], json!(["caso-1"]));
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// O recorte da régua é DERIVADO do catálogo — o primeiro caso de cada família, na ordem — e não
+/// uma amostra escolhida à mão, que mediria o gosto de quem escolheu.
+#[test]
+fn o_recorte_da_regua_e_um_caso_por_familia() {
+    let case_with = |id: &str, family: &str| {
+        let mut body = valid_case_json();
+        body["id"] = json!(id);
+        body["family"] = json!(family);
+        body["fixture"] = json!("casa_vazia");
+        body["expected"] = json!({ "judgment": "mecanico" });
+        body["verification"] = json!(null);
+        parse(&format!("{id}.json"), &body).unwrap()
+    };
+    let cases = vec![
+        case_with("caso-1", "fidelidade_numerica"),
+        case_with("caso-2", "fidelidade_numerica"),
+        case_with("caso-3", "selecao_de_ferramenta"),
+        case_with("caso-4", "selecao_de_ferramenta"),
+    ];
+
+    let slice: Vec<String> = bakeoff::ceiling_slice(&cases)
+        .into_iter()
+        .map(|case| case.id)
+        .collect();
+
+    assert_eq!(slice, ["caso-1", "caso-3"]);
+}
+
+/// Na peneira, o teto de referência corre o recorte e os candidatos correm o catálogo inteiro: a
+/// régua responde "a suíte é justa?" com uma amostra por família, e quem disputa o default é
+/// medido na diferença — que só aparece no catálogo completo.
+#[tokio::test]
+async fn o_teto_de_referencia_corre_o_recorte_na_peneira() {
+    let dir = reports_dir();
+    let mut cases = bakeoff_cases();
+    let mut body = valid_case_json();
+    body["id"] = json!("caso-3");
+    body["family"] = json!("selecao_de_ferramenta");
+    body["fixture"] = json!("casa_vazia");
+    body["expected"] = json!({ "judgment": "mecanico" });
+    body["verification"] = json!(null);
+    cases.push(parse("caso-3.json", &body).unwrap());
+
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: recorded_catalogs(),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let (bakeoff, _) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases,
+            execution_id: "execucao-de-teste".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    for run in &bakeoff.phase_one {
+        let measured: Vec<&str> = run.cases.iter().map(|case| case.case.id.as_str()).collect();
+        if run.pin.role == crate::mia::provider::pins::PinRole::Ceiling {
+            assert_eq!(
+                measured,
+                vec!["caso-1", "caso-3"],
+                "a régua corre um caso por família"
+            );
+        } else {
+            assert_eq!(
+                measured,
+                vec!["caso-1", "caso-2", "caso-3"],
+                "quem disputa corre o catálogo inteiro"
+            );
+        }
+    }
+    assert_eq!(bakeoff.ceiling_catalog, vec!["caso-1", "caso-3"]);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A projeção da peneira reflete o recorte: o custo da régua entra multiplicado pelos casos DELA.
+/// Sem isso, a sonda recusaria medições que cabem — pelo preço de um catálogo que a régua não
+/// corre.
+#[test]
+fn a_projecao_reflete_o_recorte_da_regua() {
+    let probe = |label: &str, cost| bakeoff::Probe {
+        pin: pinned(label),
+        cost_micro_usd: cost,
+        cost_declared: true,
+        complete: true,
+        failure: None,
+    };
+    let probes = vec![
+        probe("openai/gpt-5.6-terra@medium", 1_000),
+        probe("openai/gpt-5.6-luna@medium", 1_000),
+        probe("openai/gpt-5.6-luna@max", 1_000),
+        probe("openai/gpt-5.6-sol@medium", 10_000),
+    ];
+
+    // Sonda 13.000 + peneira (3×10×1.000 + 10.000×2) + final (3×1.000×10×3) = 153.000, e um
+    // quarto de margem sobre o todo.
+    let integral = 13_000 + 50_000 + 90_000;
+    assert_eq!(bakeoff::estimate(&probes, 10, 2), integral + integral / 4);
+
+    // A régua correndo o catálogo inteiro projetaria mais caro: é essa a diferença que o recorte
+    // devolve ao orçamento.
+    assert!(bakeoff::estimate(&probes, 10, 2) < bakeoff::estimate(&probes, 10, 10));
+}
+
+/// Cada pin manda o esforço que declarou, no vocabulário oficial do modelo: mandar "desligado" a
+/// um modelo de raciocínio obrigatório é rodada recusada, não resposta pior — e um teste que só
+/// olhasse o default não veria a diferença.
+#[test]
+fn cada_pin_envia_o_esforco_de_raciocinio_que_declarou() {
+    use crate::mia::provider::request::{RunSpec, build};
+
+    for pin in PINS {
+        let request = build(&RunSpec {
+            pin,
+            system: "Sistema local.",
+            messages: &[],
+            tools: &[],
+            max_tokens: 1_024,
+        });
+        assert_eq!(
+            request
+                .body
+                .pointer("/reasoning/effort")
+                .and_then(serde_json::Value::as_str),
+            Some(pin.reasoning_effort.wire()),
+            "o pin {} declara {:?}",
+            pin.model,
+            pin.reasoning_effort
+        );
+    }
+
+    // A régua comparável da matriz corre em "medium": terra, luna e sol declaram o mesmo nível,
+    // teto incluso. O quarto candidato é o mesmo luna em "max" — o esforço é propriedade do
+    // CANDIDATO, e o preço do tier paga medir o teto de esforço dele na mesma corrida.
+    let esforcos: Vec<(&str, &str)> = PINS
+        .iter()
+        .map(|pin| (pin.label, pin.reasoning_effort.wire()))
+        .collect();
+    assert_eq!(
+        esforcos,
+        [
+            ("openai/gpt-5.6-terra@medium", "medium"),
+            ("openai/gpt-5.6-luna@medium", "medium"),
+            ("openai/gpt-5.6-luna@max", "max"),
+            ("openai/gpt-5.6-sol@medium", "medium"),
+        ]
+    );
+}
+
+/// O teto de tokens do turno é propriedade do pin: raciocínio pago sai do mesmo orçamento da
+/// resposta, e um esforço alto sob teto de conversa produz recusa do provedor, não resposta pior.
+/// Só o candidato de esforço máximo abre o teto — os demais seguem no orçamento de conversa, que
+/// é parte do objeto que a régua comparável mede.
+#[test]
+fn o_teto_de_turno_acompanha_o_esforco_do_pin() {
+    use crate::mia::provider::request::{RunSpec, build};
+
+    for pin in PINS {
+        let esperado = match pin.reasoning_effort {
+            ReasoningEffort::Max => 128_000,
+            _ => 1_024,
+        };
+        assert_eq!(pin.turn_max_tokens, esperado, "{}", pin.label);
+
+        let request = build(&RunSpec {
+            pin,
+            system: "Sistema local.",
+            messages: &[],
+            tools: &[],
+            max_tokens: pin.turn_max_tokens,
+        });
+        assert_eq!(
+            request
+                .body
+                .get(pin.token_cap.field())
+                .and_then(serde_json::Value::as_u64),
+            Some(u64::from(pin.turn_max_tokens)),
+            "{}",
+            pin.label
+        );
+    }
+}
+
+/// O rótulo é a identidade do candidato — modelo mais esforço — e não admite empate: dois pins
+/// com o mesmo rótulo seriam o mesmo candidato correndo duas vezes, e toda a contabilidade do
+/// bakeoff (dedup da final, sonda, chave do julgamento cego, retomada) se apoia nessa unicidade.
+#[test]
+fn o_rotulo_identifica_o_candidato_sem_empate() {
+    let labels: std::collections::BTreeSet<&str> = PINS.iter().map(|pin| pin.label).collect();
+    assert_eq!(labels.len(), PINS.len());
+    for pin in PINS {
+        assert_eq!(
+            pin.label,
+            format!("{}@{}", pin.model, pin.reasoning_effort.wire()),
+            "o rótulo deriva de modelo e esforço"
+        );
+    }
+    // O lookup é pelo rótulo: o nome do modelo sozinho é ambíguo entre os dois luna.
+    assert_eq!(
+        pin("openai/gpt-5.6-luna@max").map(|p| p.reasoning_effort),
+        Some(ReasoningEffort::Max)
+    );
+    assert!(pin("openai/gpt-5.6-luna").is_none());
+}
+
+/// O vocabulário de esforço é o oficial do modelo, nível a nível: um nome fora dele passa no
+/// endpoint por tolerância, não por contrato — e o que se mede deixa de ser o que se declarou.
+#[test]
+fn o_esforco_fala_o_vocabulario_oficial() {
+    use crate::mia::provider::pins::ReasoningEffort;
+
+    let niveis: Vec<&str> = [
+        ReasoningEffort::None,
+        ReasoningEffort::Low,
+        ReasoningEffort::Medium,
+        ReasoningEffort::High,
+        ReasoningEffort::Xhigh,
+        ReasoningEffort::Max,
+    ]
+    .into_iter()
+    .map(ReasoningEffort::wire)
+    .collect();
+    assert_eq!(niveis, ["none", "low", "medium", "high", "xhigh", "max"]);
+}
+
+/// Um turno cobrado e declarado, seguido de um turno que gera texto e trava no tempo: o total
+/// fecha positivo e a bancada acharia que contou tudo — o segundo turno some do acumulado.
+#[tokio::test]
+async fn turno_cobrado_seguido_de_travamento_sem_uso_e_lacuna_cobrada() {
+    let mut body = valid_case_json();
+    body["id"] = json!("caso-1");
+    body["fixture"] = json!("casa_vazia");
+    body["expected"] = json!({ "judgment": "mecanico" });
+    body["verification"] = json!(null);
+    let case = parse("caso-1.json", &body).unwrap();
+
+    let adapter = RoteiroAdapter::new([
+        // Turno 1: chamou ferramenta e o provedor declarou o custo.
+        tool_turn("get_month_analysis", "{\"month\": \"2026-06\"}", 5_000),
+        // Turno 2: gerou texto e pendurou — o teto de tempo fecha a rodada sem linha de uso.
+        vec![ProviderEvent::TextDelta("resposta pela metade".to_string())],
+    ]);
+
+    let temp = TempPack::absent();
+    let config = super::BenchConfig {
+        pin: default_pin(),
+        pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::AsAuthored,
+        system: None,
+        limits: RunLimits {
+            max_duration: std::time::Duration::from_millis(150),
+            retry_backoff: std::time::Duration::ZERO,
+            ..RunLimits::default()
+        },
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let run = super::run_catalog(&adapter, vec![case], &config, &mut lock)
+        .await
+        .unwrap();
+
+    // O custo do primeiro turno existe, e é justamente ele que faria a guarda de "custo positivo"
+    // passar — a lacuna do segundo turno é o que marca a rodada como cega.
+    assert_eq!(run.cases[0].outcomes[0].cost_micro_usd, 5_000);
+    assert!(!run.cases[0].outcomes[0].cost_declared);
+    assert!(run.cost_gap);
+}
+
+/// A rodada cortada pelo teto que a TRAVA apertou não é erro do modelo nem corrida completa: sem
+/// essa distinção, o candidato que estava na fila quando o dinheiro acabou seria reprovado por
+/// isso, e a corrida se declararia inteira.
+#[tokio::test]
+async fn rodada_cortada_pelo_orcamento_nao_conta_como_erro_nem_como_medida() {
+    let mut body = valid_case_json();
+    body["id"] = json!("caso-1");
+    body["fixture"] = json!("casa_vazia");
+    body["expected"] = json!({ "judgment": "mecanico" });
+    body["verification"] = json!(null);
+    let case = parse("caso-1.json", &body).unwrap();
+
+    // O turno custa mais do que sobra na trava: o corte vem do orçamento do bakeoff, não do teto
+    // que a conversa usa no app.
+    let adapter = RoteiroAdapter::new([
+        tool_turn("get_month_analysis", "{\"month\": \"2026-06\"}", 30_000),
+        answer_turn("Tudo certo.", 1_000),
+    ]);
+    let temp = TempPack::absent();
+    let config = super::BenchConfig {
+        pin: default_pin(),
+        pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::AsAuthored,
+        system: None,
+        limits: RunLimits::default(),
+    };
+    let mut lock = super::SpendLock::new(20_000);
+
+    let run = super::run_catalog(&adapter, vec![case], &config, &mut lock)
+        .await
+        .unwrap();
+
+    let outcome = &run.cases[0].outcomes[0];
+    assert_eq!(outcome.stop, StopReason::CostCap);
+    assert!(outcome.budget_truncated, "quem cortou foi a trava");
+    assert!(!run.cases[0].measured());
+
+    // E a corrida inteira deixa de ser comparável: ela não mediu o que se propôs.
+    let score = bakeoff::score(&run, "2026-07-29T14:33:05-03:00");
+    assert!(!score.complete);
+    // A repetição cortada some da taxa em vez de virar reprovação do modelo.
+    assert_eq!(score.mechanical_total, 0);
+}
+
+/// Falha de preparação no meio da corrida não pode levar embora as repetições que já foram pagas:
+/// elas voltam no resultado, com a falha declarada ao lado.
+#[tokio::test]
+async fn falha_no_meio_preserva_o_que_a_corrida_ja_pagou() {
+    let mut body = valid_case_json();
+    body["id"] = json!("caso-1");
+    body["fixture"] = json!("casa_vazia");
+    body["expected"] = json!({ "judgment": "mecanico" });
+    body["verification"] = json!(null);
+    let primeiro = parse("caso-1.json", &body).unwrap();
+    body["id"] = json!("caso-2");
+    // A fixture existe na carga, mas some do disco do mundo: é o segundo caso que não prepara.
+    let segundo = parse("caso-2.json", &body).unwrap();
+
+    let adapter = RoteiroAdapter::new([answer_turn("Tudo certo.", 7_000)]);
+    let temp = TempPack::absent();
+    let config = super::BenchConfig {
+        pin: default_pin(),
+        pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::AsAuthored,
+        system: None,
+        limits: RunLimits::default(),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let run = super::run_catalog(&adapter, vec![primeiro, segundo], &config, &mut lock)
+        .await
+        .unwrap();
+
+    // O primeiro caso rodou e custou; o segundo virou rodada cega (o roteiro acabou) e foi
+    // cobrado pelo pior caso — o que foi pago E o que ficou em dúvida estão no resultado e na
+    // trava, nada some.
+    assert_eq!(run.cases[0].outcomes.len(), 1);
+    assert_eq!(run.cases[0].outcomes[0].charged_micro_usd, 7_000);
+    assert!(!run.cases[1].outcomes[0].cost_declared);
+    assert_eq!(run.cases[1].outcomes[0].charged_micro_usd, 150_000);
+    assert_eq!(run.total_cost_micro_usd, 157_000);
+    assert_eq!(lock.spent_micro_usd(), 157_000);
+}
+
+/// O caderno do julgamento cego não diz de quem é cada resposta, e a chave que diz mora no
+/// relatório principal — cego é propriedade do arquivo, não da disciplina de quem lê.
+#[tokio::test]
+async fn o_caderno_do_julgamento_cego_nao_nomeia_o_modelo() {
+    let dir = reports_dir();
+    let pack = TempPack::new();
+    pack.root_file("forbidden-bench.txt", "termo-que-nao-aparece\n");
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: recorded_catalogs(),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    // Um caso de julgamento cego: a máquina passa nos checks e o veredito fica com a leitura
+    // humana. Cego é o que o caso declara, não a família — e assim o teste não precisa do pack
+    // curado, que a didática exigiria.
+    let mut body = valid_case_json();
+    body["id"] = json!("fn-01");
+    body["fixture"] = json!("casa_vazia");
+    body["expected"] = json!({ "judgment": "cego" });
+    body["verification"] = json!(null);
+    let case = parse("fn-01.json", &body).unwrap();
+
+    let (bakeoff, path) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: vec![case],
+            execution_id: "execucao-de-teste".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
+            pack_root: Some(pack.path().to_path_buf()),
+            limits: RunLimits::default(),
+            reports_dir: &dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    let sheet_path = dir.join("2026-07-29T14-33-05-julgamento-cego.json");
+    let sheet = std::fs::read_to_string(&sheet_path).unwrap();
+    for pin in PINS {
+        assert!(
+            !sheet.contains(pin.model),
+            "o caderno não pode nomear {}",
+            pin.model
+        );
+        assert!(!sheet.contains(pin.operator));
+    }
+
+    let caderno: serde_json::Value = serde_json::from_str(&sheet).unwrap();
+    let bilhetes = caderno["entries"].as_array().unwrap();
+    assert!(!bilhetes.is_empty());
+    assert_eq!(bilhetes[0]["ticket"], "fn-01-01");
+
+    // Quatro pins na peneira: quatro bilhetes, um por resposta — respostas idênticas não colapsam,
+    // senão candidatos diferentes dividiriam um bilhete e a chave apontaria para um deles por acaso.
+    assert_eq!(bilhetes.len(), PINS.len());
+
+    // A chave que liga bilhete a modelo existe — no OUTRO arquivo — e cobre todos os bilhetes.
+    let relatorio: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let chave = relatorio["blind_judgment_key"].as_object().unwrap();
+    assert_eq!(chave.len(), PINS.len());
+    let modelos: std::collections::BTreeSet<&str> = chave
+        .values()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    assert_eq!(modelos.len(), PINS.len(), "cada bilhete tem o dono dele");
+    let _ = &bakeoff;
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A sonda cabe, mas o que ela projeta não: a medição inteira custaria mais que o teto, e a
+/// recusa traz o número em vez de deixar a bancada descobrir gastando tudo.
+#[tokio::test]
+async fn a_sonda_recusa_quando_a_medicao_inteira_nao_cabe() {
+    let dir = reports_dir();
+    // Vinte casos com o custo da sonda projetam bem além do teto, e a sonda mede quatro rodadas
+    // baratas antes de dizer isso.
+    let cases: Vec<case::Case> = (1..=20)
+        .map(|index| {
+            let mut body = valid_case_json();
+            let id = format!("caso-{index:02}");
+            body["id"] = json!(id);
+            body["fixture"] = json!("casa_vazia");
+            body["expected"] = json!({ "judgment": "mecanico" });
+            body["verification"] = json!(null);
+            parse(&format!("{id}.json"), &body).unwrap()
+        })
+        .collect();
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: recorded_catalogs(),
+    };
+    let mut lock = super::SpendLock::new(100_000);
+
+    let (bakeoff, path) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases,
+            execution_id: "execucao-de-teste".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    // Quatro rodadas de sonda (4.000), mais 3×20×1.000 + 1×1×1.000 na peneira (a régua corre o
+    // recorte, aqui um caso) e 3×20×3×1.000 na final — 245.000, e 306.250 com a margem de um
+    // quarto. Muito além do teto.
+    assert_eq!(bakeoff.probes.len(), PINS.len());
+    assert_eq!(bakeoff.estimate_micro_usd, 306_250);
+    assert_eq!(lock.spent_micro_usd(), 4_000);
+    assert!(bakeoff.phase_one.is_empty(), "nada além da sonda foi pago");
+
+    let Decision::NoWinner { reason } = &bakeoff.decision else {
+        panic!("uma medição que não cabe não decide o default");
+    };
+    assert!(reason.contains("306250"));
+    assert!(reason.contains("100000"));
+
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(written["probe"]["estimate_micro_usd"], 306_250);
+    assert_eq!(
+        written["probe"]["rounds"].as_array().unwrap().len(),
+        PINS.len()
+    );
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A projeção da final usa os candidatos mais CAROS, não a média: quem passa a peneira ainda não
+/// se sabe, e errar para cima antecipa uma recusa que custa centavos, enquanto errar para baixo
+/// gasta o teto para descobrir a mesma coisa.
+#[test]
+fn a_projecao_da_final_assume_os_candidatos_mais_caros() {
+    let probe = |label: &str, cost| bakeoff::Probe {
+        pin: pinned(label),
+        cost_micro_usd: cost,
+        cost_declared: true,
+        complete: true,
+        failure: None,
+    };
+    let probes = vec![
+        probe("openai/gpt-5.6-terra@medium", 4_000),
+        probe("openai/gpt-5.6-luna@medium", 3_000),
+        probe("openai/gpt-5.6-luna@max", 7_000),
+        // O teto de referência entra na peneira e nunca na final.
+        probe("openai/gpt-5.6-sol@medium", 9_000),
+    ];
+
+    // O que a sonda gastou (23.000) + a peneira (a soma de todos, uma vez por caso) + a final
+    // (os três candidatos, três repetições por caso), e um quarto de margem sobre o todo — uma
+    // amostra por modelo estima, não limita.
+    let integral = 23_000 + 23_000 + (7_000 + 4_000 + 3_000) * 3;
+    assert_eq!(bakeoff::estimate(&probes, 1, 1), integral + integral / 4);
+
+    // A sonda entra na conta: ignorá-la aprovaria, na fronteira, medições que não cabem.
+    assert!(bakeoff::estimate(&probes, 1, 1) > 23_000 + (7_000 + 4_000 + 3_000) * 3);
+}
+
+// --- Regressões restauradas ---------------------------------------------------------------
+
+/// Custo não declarado numa tentativa que FALHOU não pode sumir: o turno seguinte declara o dele,
+/// o total fecha em número conhecido, e a bancada acharia que contou tudo.
+#[tokio::test]
+async fn custo_sem_declaracao_em_tentativa_falha_e_lacuna_cobrada() {
+    let mut body = valid_case_json();
+    body["id"] = json!("caso-1");
+    body["fixture"] = json!("casa_vazia");
+    body["expected"] = json!({ "judgment": "mecanico" });
+    body["verification"] = json!(null);
+    let case = parse("caso-1.json", &body).unwrap();
+
+    let adapter = RoteiroAdapter::new([
+        // Primeira tentativa: consumiu tokens, o provedor não disse quanto, e o stream caiu.
+        vec![
+            ProviderEvent::TextDelta("meia resposta".to_string()),
+            ProviderEvent::Usage(Usage {
+                prompt_tokens: 100,
+                completion_tokens: 10,
+                cost_micro_usd: None,
+            }),
+            ProviderEvent::Failed(ProviderError {
+                kind: crate::mia::provider::stream::ErrorKind::Transient,
+                message: "a conexão caiu.".to_string(),
+                responded: true,
+            }),
+        ],
+        // Segunda tentativa: responde e declara o custo dela.
+        answer_turn("Tudo certo.", 5_000),
+    ]);
+
+    let temp = TempPack::absent();
+    let config = super::BenchConfig {
+        pin: default_pin(),
+        pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::AsAuthored,
+        system: None,
+        limits: RunLimits {
+            retry_backoff: std::time::Duration::ZERO,
+            ..RunLimits::default()
+        },
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let run = super::run_catalog(&adapter, vec![case], &config, &mut lock)
+        .await
+        .unwrap();
+
+    assert!(!run.cases[0].outcomes[0].cost_declared);
+    assert!(run.cost_gap, "a lacuna é fato da corrida");
+}
+
+/// Stream aberto e encerrado sem linha de uso é lacuna, com ou sem conteúdo no meio: o pedido já
+/// foi aceito quando chega aqui — quem recusa antes de qualquer cobrança é a abertura —, e o
+/// provedor pode ter gerado e cobrado o que a rede não entregou. Entre parar a bancada à toa e
+/// deixar dinheiro fora do contador, a trava fica com o lado fechado.
+#[tokio::test]
+async fn stream_aberto_que_termina_sem_uso_e_lacuna() {
+    let mut body = valid_case_json();
+    body["id"] = json!("caso-1");
+    body["fixture"] = json!("casa_vazia");
+    body["expected"] = json!({ "judgment": "mecanico" });
+    body["verification"] = json!(null);
+    let case = parse("caso-1.json", &body).unwrap();
+
+    let adapter = RoteiroAdapter::new([
+        vec![ProviderEvent::Failed(ProviderError {
+            kind: crate::mia::provider::stream::ErrorKind::Transient,
+            message: "a conexão caiu antes do primeiro byte.".to_string(),
+            responded: true,
+        })],
+        answer_turn("Tudo certo.", 5_000),
+    ]);
+
+    let temp = TempPack::absent();
+    let config = super::BenchConfig {
+        pin: default_pin(),
+        pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::AsAuthored,
+        system: None,
+        limits: RunLimits {
+            retry_backoff: std::time::Duration::ZERO,
+            ..RunLimits::default()
+        },
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let run = super::run_catalog(&adapter, vec![case], &config, &mut lock)
+        .await
+        .unwrap();
+
+    assert!(!run.cases[0].outcomes[0].cost_declared);
+    assert!(run.cost_gap);
+}
+
+/// Tentativa que gerou conteúdo e caiu ANTES da linha de uso: o provedor cobra o que gerou, e o
+/// total do turno — fechado pela tentativa seguinte — sairia parecendo completo.
+#[tokio::test]
+async fn tentativa_que_gerou_texto_e_caiu_sem_uso_e_lacuna_cobrada() {
+    let mut body = valid_case_json();
+    body["id"] = json!("caso-1");
+    body["fixture"] = json!("casa_vazia");
+    body["expected"] = json!({ "judgment": "mecanico" });
+    body["verification"] = json!(null);
+    let case = parse("caso-1.json", &body).unwrap();
+
+    let adapter = RoteiroAdapter::new([
+        vec![
+            ProviderEvent::TextDelta("meia resposta".to_string()),
+            ProviderEvent::Failed(ProviderError {
+                kind: crate::mia::provider::stream::ErrorKind::Transient,
+                message: "a conexão caiu.".to_string(),
+                responded: true,
+            }),
+        ],
+        answer_turn("Tudo certo.", 5_000),
+    ]);
+
+    let temp = TempPack::absent();
+    let config = super::BenchConfig {
+        pin: default_pin(),
+        pack_root: Some(temp.path().to_path_buf()),
+        repetitions: super::Repetitions::AsAuthored,
+        system: None,
+        limits: RunLimits {
+            retry_backoff: std::time::Duration::ZERO,
+            ..RunLimits::default()
+        },
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let run = super::run_catalog(&adapter, vec![case], &config, &mut lock)
+        .await
+        .unwrap();
+
+    assert!(!run.cases[0].outcomes[0].cost_declared);
+    assert!(run.cost_gap);
+}
+
+/// Todos os finalistas selecionados precisam ter sido medidos por inteiro: dois completos com um
+/// terceiro truncado ainda é comparar quem terminou contra quem a trava cortou.
+#[test]
+fn a_decisao_recusa_quando_um_finalista_foi_truncado() {
+    let finalistas = vec![
+        (
+            pinned("openai/gpt-5.6-sol@medium"),
+            score_of(60, 60, 100_000),
+        ),
+        (
+            pinned("openai/gpt-5.6-terra@medium"),
+            score_of(60, 60, 120_000),
+        ),
+        (
+            pinned("openai/gpt-5.6-luna@medium"),
+            Score {
+                complete: false,
+                ..score_of(20, 20, 30_000)
+            },
+        ),
+    ];
+
+    let Decision::NoWinner { reason } = bakeoff::decide(&finalistas) else {
+        panic!("um finalista truncado invalida a comparação");
+    };
+    assert!(reason.contains("2 de 3 finalistas"));
+}
+
+/// Um sobrevivente não é final: três repetições nele mediriam estabilidade sem comparar nada, e
+/// adotá-lo seria promover por ausência de adversário.
+#[test]
+fn a_decisao_recusa_uma_final_de_um_so() {
+    let unico = vec![(
+        pinned("openai/gpt-5.6-terra@medium"),
+        score_of(60, 60, 100_000),
+    )];
+
+    let Decision::NoWinner { reason } = bakeoff::decide(&unico) else {
+        panic!("um finalista sozinho não decide o default");
+    };
+    assert!(reason.contains("no mínimo 2"));
+}
+
+/// A fatia da peneira é a combinada mesmo em teto alto: multiplicar antes de dividir estouraria e
+/// devolveria uma fatia menor, apertando a peneira sem nada avisar.
+#[test]
+fn a_fatia_da_peneira_nao_estoura_em_teto_alto() {
+    // Com 22 casos e recorte de 6: 4 rodadas de sonda, 72 de peneira (três candidatos correm
+    // 22, a régua corre 6) e 198 de final — 274 no total, e a fase um acumula as 76 primeiras.
+    let cap = bakeoff::phase_one_cap(i64::MAX, 22, 6);
+
+    assert_eq!(cap, ((i64::MAX as i128 * 76) / 274) as i64);
+    // O que uma multiplicação saturada devolveria, apertando a peneira em silêncio.
+    assert_ne!(cap, i64::MAX / 251);
+}
+
+/// O bakeoff decide qual modelo conversa com o dinheiro de alguém: um veredito tirado de um
+/// recorte leria, no relatório, igual a um veredito tirado das seis famílias.
+#[test]
+fn o_bakeoff_recusa_qualquer_recorte_do_catalogo() {
+    for (flag, valor) in [("--only", "in-01"), ("--cases-dir", "/tmp/outros-casos")] {
+        let error = cli::parse_args(&args(&["bakeoff", flag, valor])).unwrap_err();
+        assert!(error.contains(flag), "o bakeoff precisa recusar {flag}");
+    }
+
+    // Fora do bakeoff, o recorte é legítimo: a corrida solta não decide default.
+    let solta = cli::parse_args(&args(&["--only", "in-01"])).unwrap();
+    assert_eq!(solta.only.as_deref(), Some("in-01"));
+}
+
+/// O pin em uso divergir do catálogo não é "um candidato a menos": é o app apontando hoje para um
+/// endpoint que o provedor não confirma, e o resumo diz isso em vez de deixá-lo no JSON.
+#[test]
+fn o_resumo_destaca_a_divergencia_do_pin_em_uso() {
+    let bakeoff = bakeoff::Bakeoff {
+        ran_at: "2026-07-29T14:33:05-03:00".to_string(),
+        execution_id: "execucao-de-teste".to_string(),
+        blind_sheet_path: None,
+        probes: Vec::new(),
+        estimate_micro_usd: 0,
+        catalog: vec!["fn-01".to_string()],
+        ceiling_catalog: vec!["fn-01".to_string()],
+        cap_micro_usd: 5_000_000,
+        spent_micro_usd: 0,
+        drifted: vec![(default_pin(), "O modelo sumiu do catálogo.".to_string())],
+        phase_one: Vec::new(),
+        phase_two: Vec::new(),
+        inherited: None,
+        decision: Decision::NoWinner {
+            reason: "A final não correu.".to_string(),
+        },
+    };
+
+    let summary = bakeoff::summary(&bakeoff, std::path::Path::new("relatorio.json"), None);
+
+    assert!(summary.contains("ATENÇÃO"));
+    assert!(summary.contains("O modelo sumiu do catálogo."));
+}
+
+/// O teto do bakeoff é o do critério, não uma preferência: abaixá-lo é escolha de quem roda,
+/// levantá-lo seria contornar a decisão.
+#[test]
+fn o_teto_do_bakeoff_so_pode_ser_abaixado() {
+    let error = cli::parse_args(&args(&["bakeoff", "--max-spend-usd", "20.000001"])).unwrap_err();
+    assert!(error.contains("US$ 20"));
+
+    let barato = cli::parse_args(&args(&["bakeoff", "--max-spend-usd", "1.00"])).unwrap();
+    assert_eq!(barato.max_spend_micro_usd, 1_000_000);
+}
+
+/// Contar rodadas só reparte bem com custo uniforme. Um teto de referência caro consome a fatia da
+/// peneira sem que nada tenha corrido errado — com a sonda medida, a reserva sai dos custos.
+#[test]
+fn a_reserva_da_peneira_segue_os_custos_medidos_e_nao_a_contagem() {
+    let probe = |label: &str, cost| bakeoff::Probe {
+        pin: pinned(label),
+        cost_micro_usd: cost,
+        cost_declared: true,
+        complete: true,
+        failure: None,
+    };
+    // Três candidatos baratos e um teto de referência cinco vezes mais caro.
+    let probes = vec![
+        probe("openai/gpt-5.6-terra@medium", 10_000),
+        probe("openai/gpt-5.6-luna@medium", 10_000),
+        probe("openai/gpt-5.6-luna@max", 10_000),
+        probe("openai/gpt-5.6-sol@medium", 50_000),
+    ];
+    let cap = 5_000_000;
+
+    let por_contagem = bakeoff::phase_one_cap(cap, 22, 6);
+    let por_custo = bakeoff::measured_phase_one_cap(cap, &probes, 22, 6);
+
+    // A final projetada são os três candidatos a 10.000 × 22 casos × 3 repetições, mais margem:
+    // 1.980.000 + 495.000. O resto é da peneira — bem mais que a fatia por contagem.
+    assert_eq!(por_custo, cap - (1_980_000 + 495_000));
+    assert!(
+        por_custo > por_contagem,
+        "a contagem reserva {por_contagem} e os custos liberam {por_custo}"
+    );
+
+    // Sem sonda não há custo medido, e a contagem é o melhor que se tem.
+    assert_eq!(
+        bakeoff::measured_phase_one_cap(cap, &[], 22, 6),
+        por_contagem
+    );
+}
+
+// --- O julgamento cego que fecha o ciclo -------------------------------------------------
+
+/// Um relatório de bakeoff COMPLETO e consistente, como o arquivo real: as duas fases, catálogo
+/// declarado, repetições na quantidade que cada fase mede, custo agregado igual à soma das
+/// repetições e chave cega derivada das respostas pendentes das duas. A leitura do julgamento é
+/// estrita, e uma fixture frouxa provaria menos do que promete.
+fn julgado(finalistas: &[(&str, i64, bool)], reprovadas: &[(&str, usize)]) -> serde_json::Value {
+    let corrida = |candidate: &str, cost: i64, complete: bool, repeticoes: usize| {
+        let pin = pinned(candidate);
+        let model = pin.model;
+        let total = repeticoes * 2;
+        let por_repeticao = cost / total as i64;
+        let sobra = cost - por_repeticao * total as i64;
+        let repeticao = |indice: usize, verdict: &str, answer: Option<String>| {
+            json!({
+                "verdict": verdict,
+                "answer": answer,
+                // Estas reprovações são mecânicas, não iscas ecoadas.
+                "echoed_forbidden": false,
+                "cost_micro_usd": por_repeticao + if indice == 0 { sobra } else { 0 },
+                // Sem lacuna, o cobrado é o declarado — e é a soma dos cobrados que fecha com o
+                // total da corrida.
+                "charged_micro_usd": por_repeticao + if indice == 0 { sobra } else { 0 },
+                "cost_declared": true,
+                "budget_truncated": false,
+            })
+        };
+        let reprovadas_desta: usize = reprovadas
+            .iter()
+            .filter(|(alvo, _)| *alvo == candidate)
+            .map(|(_, quantas)| *quantas)
+            .sum();
+        let mecanicas: Vec<serde_json::Value> = (0..repeticoes)
+            .map(|indice| {
+                let verdict = if indice < reprovadas_desta {
+                    "failed"
+                } else {
+                    "passed"
+                };
+                repeticao(indice, verdict, None)
+            })
+            .collect();
+        let cegas: Vec<serde_json::Value> = (0..repeticoes)
+            .map(|indice| {
+                repeticao(
+                    indice + repeticoes,
+                    "pending_judgment",
+                    Some(format!("resposta {indice} de {model} em {repeticoes}x")),
+                )
+            })
+            .collect();
+        json!({
+            "score": { "complete": complete },
+            "run": {
+                "candidate": candidate,
+                "model": model,
+                "ran_at": "2026-07-29T14:33:05-03:00",
+                "total_cost_micro_usd": cost,
+                "cost_gap": false,
+                "cases": [
+                    {
+                        "id": "fn-01",
+                        "family": "fidelidade_numerica",
+                        "question": "Quanto entrou em junho de 2026?",
+                        "measured": complete,
+                        "aborted": !complete,
+                        "repetitions": mecanicas,
+                    },
+                    {
+                        "id": "di-01",
+                        "family": "didatica",
+                        "question": "O que é o Diário?",
+                        "measured": complete,
+                        "aborted": !complete,
+                        "repetitions": cegas,
+                    },
+                ],
+            },
+        })
+    };
+
+    // A peneira correu a matriz inteira com uma repetição; a final, os finalistas com três.
+    let phase_one: Vec<serde_json::Value> = PINS
+        .iter()
+        .map(|pin| corrida(pin.label, 6_000, true, 1))
+        .collect();
+    let phase_two: Vec<serde_json::Value> = finalistas
+        .iter()
+        .map(|(candidate, cost, complete)| corrida(candidate, *cost, *complete, 3))
+        .collect();
+
+    // A chave cega, derivada como o caderno a deriva: por caso, ordenada pela própria resposta.
+    let mut pendentes: Vec<(String, String, String)> = Vec::new();
+    for pin in PINS {
+        pendentes.push((
+            "di-01".to_string(),
+            format!("resposta 0 de {} em 1x", pin.model),
+            pin.label.to_string(),
+        ));
+    }
+    for (candidate, _, _) in finalistas {
+        let model = pinned(candidate).model;
+        for indice in 0..3 {
+            pendentes.push((
+                "di-01".to_string(),
+                format!("resposta {indice} de {model} em 3x"),
+                (*candidate).to_string(),
+            ));
+        }
+    }
+    pendentes.sort();
+    let key: serde_json::Map<String, serde_json::Value> = pendentes
+        .iter()
+        .enumerate()
+        .map(|(indice, (case_id, _, model))| (format!("{case_id}-{:02}", indice + 1), json!(model)))
+        .collect();
+
+    json!({
+        "execution_id": "execucao-de-teste",
+        "catalog": { "ids": ["fn-01", "di-01"] },
+        "blind_judgment_key": key,
+        "phase_one": phase_one,
+        "phase_two": phase_two,
+    })
+}
+
+/// O caderno cego que este relatório produziria, com todos os bilhetes aprovados.
+fn caderno_de(report: &serde_json::Value, verdict: &str) -> serde_json::Value {
+    let entries: Vec<serde_json::Value> = report["blind_judgment_key"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(|ticket| {
+            let (case_id, indice) = ticket.rsplit_once('-').unwrap();
+            let posicao: usize = indice.parse().unwrap();
+            // A resposta do bilhete é a que está na mesma posição da ordem cega.
+            let mut respostas: Vec<String> = Vec::new();
+            for phase in ["phase_one", "phase_two"] {
+                for entry in report[phase].as_array().unwrap() {
+                    for case in entry["run"]["cases"].as_array().unwrap() {
+                        if case["id"].as_str() != Some(case_id) {
+                            continue;
+                        }
+                        for repetition in case["repetitions"].as_array().unwrap() {
+                            if repetition["verdict"].as_str() == Some("pending_judgment") {
+                                respostas.push(repetition["answer"].as_str().unwrap().to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            respostas.sort();
+            json!({
+                "ticket": ticket,
+                "case_id": case_id,
+                "answer": respostas[posicao - 1],
+                "verdict": verdict,
+            })
+        })
+        .collect();
+    json!({ "execution_id": report["execution_id"], "entries": entries })
+}
+
+/// Todos os bilhetes do relatório, aprovados.
+fn aprovando(report: &serde_json::Value) -> std::collections::BTreeMap<String, bakeoff::Judgment> {
+    report["blind_judgment_key"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(|ticket| (ticket.clone(), bakeoff::Judgment::Approved))
+        .collect()
+}
+
+/// Os bilhetes de um modelo específico, para reprovar quem se quer reprovar.
+fn bilhetes_de(report: &serde_json::Value, candidate: &str) -> Vec<String> {
+    report["blind_judgment_key"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .filter(|(_, dono)| dono.as_str() == Some(candidate))
+        .map(|(ticket, _)| ticket.clone())
+        .collect()
+}
+
+/// Com a didática aprovada em leitura cega, o líder vira default de verdade — e o campo que induz
+/// a troca do pin finalmente deixa de ser nulo.
+#[test]
+fn o_julgamento_aprovado_fecha_a_decisao() {
+    let report = julgado(
+        &[
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
+        ],
+        &[],
+    );
+
+    let bakeoff::Decision::Adopt { model, rationale } =
+        bakeoff::judged_decision(&report, &aprovando(&report)).unwrap()
+    else {
+        panic!("dois finalistas aprovados decidem o default");
+    };
+    // Empate de qualidade cai no custo, como na decisão mecânica.
+    assert_eq!(model, "openai/gpt-5.6-terra@medium");
+    assert!(rationale.contains("didática aprovada"));
+}
+
+/// Um bilhete reprovado reprova o modelo: ensinar errado uma vez não se compensa com dois acertos.
+#[test]
+fn um_bilhete_reprovado_tira_o_modelo_da_decisao() {
+    let report = julgado(
+        &[
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
+        ],
+        &[],
+    );
+    let mut verdicts = aprovando(&report);
+    // O mais barato ensinou errado numa resposta.
+    let alvo = bilhetes_de(&report, "openai/gpt-5.6-terra@medium")[0].clone();
+    verdicts.insert(alvo, bakeoff::Judgment::Rejected);
+
+    let bakeoff::Decision::Adopt { model, .. } =
+        bakeoff::judged_decision(&report, &verdicts).unwrap()
+    else {
+        panic!("o outro finalista ainda decide");
+    };
+    assert_eq!(model, "openai/gpt-5.6-luna@medium");
+}
+
+/// Bilhete sem veredito é resposta que ninguém leu: decidir assim pularia o gate que este comando
+/// existe para fechar.
+#[test]
+fn a_decisao_julgada_exige_todos_os_bilhetes_lidos() {
+    let report = julgado(
+        &[
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
+        ],
+        &[],
+    );
+    let mut verdicts = aprovando(&report);
+    let faltando = verdicts.keys().next().unwrap().clone();
+    verdicts.remove(&faltando);
+
+    let error = bakeoff::judged_decision(&report, &verdicts).unwrap_err();
+
+    assert!(error.contains(&faltando));
+    assert!(error.contains("Julgue todos"));
+}
+
+/// Caderno de outra execução não decide este relatório.
+#[test]
+fn a_decisao_julgada_recusa_bilhete_de_outra_execucao() {
+    let report = julgado(
+        &[
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
+        ],
+        &[],
+    );
+    let mut verdicts = aprovando(&report);
+    verdicts.insert("fn-09-03".to_string(), bakeoff::Judgment::Approved);
+
+    let error = bakeoff::judged_decision(&report, &verdicts).unwrap_err();
+
+    assert!(error.contains("fn-09-03"));
+    assert!(error.contains("outra execução"));
+}
+
+/// Todos reprovados na didática: nenhum default, e a recusa diz quantos caíram por ensino.
+#[test]
+fn didatica_reprovada_em_todos_nao_decide_default() {
+    let report = julgado(
+        &[
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
+        ],
+        &[],
+    );
+    let verdicts: std::collections::BTreeMap<String, bakeoff::Judgment> =
+        report["blind_judgment_key"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|ticket| (ticket.clone(), bakeoff::Judgment::Rejected))
+            .collect();
+
+    let bakeoff::Decision::NoWinner { reason } =
+        bakeoff::judged_decision(&report, &verdicts).unwrap()
+    else {
+        panic!("sem ninguém aprovado não há default");
+    };
+    // Todos os modelos que responderam — peneira e final — reprovaram.
+    assert!(reason.contains(&format!("{} reprovado(s) na didática", PINS.len())));
+}
+
+/// O quórum vale também depois do julgamento: um finalista truncado invalida a comparação.
+#[test]
+fn a_decisao_julgada_mantem_o_quorum_da_final() {
+    let report = julgado(
+        &[
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, false),
+        ],
+        &[],
+    );
+
+    let bakeoff::Decision::NoWinner { reason } =
+        bakeoff::judged_decision(&report, &aprovando(&report)).unwrap()
+    else {
+        panic!("um finalista truncado não decide");
+    };
+    assert!(reason.contains("1 de 2 finalistas"));
+}
+
+/// O bloco `score` do relatório é derivado, e cômodo demais para quem edita. A decisão julgada
+/// recomputa das repetições e não olha para ele.
+#[test]
+fn a_decisao_julgada_ignora_o_score_derivado_do_relatorio() {
+    let mut report = julgado(
+        &[
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            // O mais barato tem uma repetição REPROVADA nos dados brutos.
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
+        ],
+        &[("openai/gpt-5.6-terra@medium", 1)],
+    );
+    // ...e um score derretido para parecer perfeito.
+    report["phase_two"][1]["score"] = json!({
+        "complete": true,
+        "mechanical_total": 60,
+        "mechanical_passed": 60,
+        "injection_failed": 0,
+    });
+
+    let bakeoff::Decision::Adopt { model, .. } =
+        bakeoff::judged_decision(&report, &aprovando(&report)).unwrap()
+    else {
+        panic!("o outro finalista continua elegível");
+    };
+    assert_eq!(
+        model, "openai/gpt-5.6-luna@medium",
+        "o score derivado não decide; as repetições decidem"
+    );
+}
+
+/// A chave cega também é dado derivado: esvaziá-la pularia a aprovação didática inteira, e
+/// remapear um bilhete mudaria quem a reprovação elimina.
+#[test]
+fn a_decisao_julgada_recusa_chave_cega_adulterada() {
+    let base = julgado(
+        &[
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
+        ],
+        &[],
+    );
+
+    // Esvaziar a chave: sem bilhetes, não haveria didática a julgar.
+    let mut vazia = base.clone();
+    vazia["blind_judgment_key"] = json!({});
+    let error = bakeoff::judged_decision(&vazia, &Default::default()).unwrap_err();
+    assert!(error.contains("não corresponde"));
+
+    // Remapear um bilhete para o outro modelo: a reprovação cairia sobre quem não a mereceu.
+    let mut trocada = base.clone();
+    let alvo = bilhetes_de(&base, "openai/gpt-5.6-terra@medium")[0].clone();
+    trocada["blind_judgment_key"][&alvo] = json!("openai/gpt-5.6-luna@medium");
+    let error = bakeoff::judged_decision(&trocada, &aprovando(&base)).unwrap_err();
+    assert!(error.contains("editado depois de escrito"));
+}
+
+/// Um mesmo candidato duas vezes na final não faz quórum consigo mesmo.
+#[test]
+fn a_decisao_julgada_recusa_o_mesmo_candidato_duas_vezes() {
+    let report = julgado(
+        &[
+            ("openai/gpt-5.6-terra@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
+        ],
+        &[],
+    );
+
+    let error = bakeoff::judged_decision(&report, &aprovando(&report)).unwrap_err();
+
+    assert!(error.contains("duas vezes"));
+}
+
+/// Dois esforços do mesmo modelo são candidatos distintos: cada um mede uma configuração que a
+/// API recebe separadamente, e ambos podem compor a final.
+#[test]
+fn a_decisao_julgada_aceita_dois_esforcos_do_mesmo_modelo() {
+    let report = julgado(
+        &[
+            ("openai/gpt-5.6-luna@medium", 120_000, true),
+            ("openai/gpt-5.6-luna@max", 200_000, true),
+        ],
+        &[],
+    );
+
+    let bakeoff::Decision::Adopt { model, .. } =
+        bakeoff::judged_decision(&report, &aprovando(&report)).unwrap()
+    else {
+        panic!("dois esforços distintos do mesmo modelo podem decidir");
+    };
+    assert_eq!(model, "openai/gpt-5.6-luna@medium");
+}
+
+/// Campo decisório ausente é recusa, nunca um zero conveniente — e apagar uma repetição reprovada
+/// faria o resto parecer uma suíte perfeita.
+#[test]
+fn a_decisao_julgada_recusa_relatorio_sem_os_dados_que_decidem() {
+    let base = julgado(
+        &[
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
+        ],
+        &[],
+    );
+    let verdicts = aprovando(&base);
+
+    for apagar in ["total_cost_micro_usd", "cost_gap"] {
+        let mut report = base.clone();
+        report["phase_two"][0]["run"]
+            .as_object_mut()
+            .unwrap()
+            .remove(apagar);
+        let error = bakeoff::judged_decision(&report, &verdicts).unwrap_err();
+        assert!(
+            error.contains("openai/gpt-5.6-luna@medium"),
+            "sem {apagar}, a recusa nomeia a corrida: {error}"
+        );
+    }
+
+    // Apagar os casos derruba antes: sem eles não há respostas pendentes, e a chave declarada
+    // deixa de corresponder ao próprio relatório.
+    let mut sem_casos = base.clone();
+    sem_casos["phase_two"][0]["run"]
+        .as_object_mut()
+        .unwrap()
+        .remove("cases");
+    let error = bakeoff::judged_decision(&sem_casos, &verdicts).unwrap_err();
+    assert!(error.contains("não corresponde"));
+
+    // Uma repetição a menos num caso medido: o que sobra parece perfeito.
+    let mut podado = base.clone();
+    podado["phase_two"][0]["run"]["cases"][0]["repetitions"]
+        .as_array_mut()
+        .unwrap()
+        .pop();
+    let error = bakeoff::judged_decision(&podado, &verdicts).unwrap_err();
+    assert!(error.contains("repetição(ões)"));
+
+    // Custo agregado menor que a soma das repetições escolheria o vencedor sem tocar nelas.
+    let mut barateado = base.clone();
+    barateado["phase_two"][0]["run"]["total_cost_micro_usd"] = json!(1);
+    let error = bakeoff::judged_decision(&barateado, &verdicts).unwrap_err();
+    assert!(error.contains("somam"));
+
+    // E o teto de referência jamais aparece na final.
+    let teto = julgado(
+        &[
+            ("openai/gpt-5.6-sol@medium", 100_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
+        ],
+        &[],
+    );
+    let error = bakeoff::judged_decision(&teto, &aprovando(&teto)).unwrap_err();
+    assert!(error.contains("teto de referência"));
+}
+
+#[test]
+fn o_modo_julgar_exige_relatorio_e_vereditos() {
+    let error = cli::parse_args(&args(&["julgar"])).unwrap_err();
+    assert!(error.contains("--report"));
+    // A recusa mostra o uso de verdade, não o nome do marcador: um assert que só olhasse
+    // "--report" deixaria passar um texto com o placeholder cru.
+    assert!(error.contains("mia-bench julgar"));
+    assert!(!error.contains("{USAGE}"));
+
+    let parsed = cli::parse_args(&args(&[
+        "julgar",
+        "--report",
+        "relatorio.json",
+        "--verdicts",
+        "caderno.json",
+    ]))
+    .unwrap();
+    assert_eq!(parsed.mode, cli::Mode::Judge);
+    assert_eq!(
+        parsed.report,
+        Some(std::path::PathBuf::from("relatorio.json"))
+    );
+}
+
+/// Um pack que existe mas não monta o núcleo do método faz a didática medir a recusa da camada
+/// ausente. A recusa vem ANTES do canary — nenhuma chamada, nenhum centavo.
+#[tokio::test]
+async fn pack_sem_nucleo_do_metodo_recusa_antes_de_qualquer_rodada() {
+    let dir = reports_dir();
+    let pack = TempPack::new();
+    pack.root_file("forbidden-bench.txt", "termo-que-nao-aparece\n");
+
+    let mut body = valid_case_json();
+    body["id"] = json!("di-01");
+    body["family"] = json!("didatica");
+    body["fixture"] = json!("casa_vazia");
+    body["expected"] = json!({ "judgment": "cego" });
+    body["verification"] = json!(null);
+    let case = parse("di-01.json", &body).unwrap();
+
+    // O adapter recusaria o catálogo: se ele for consultado, o teste falha por outro motivo.
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: json!({"data": []}),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let error = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: vec![case],
+            execution_id: "execucao-de-teste".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
+            pack_root: Some(pack.path().to_path_buf()),
+            limits: RunLimits::default(),
+            reports_dir: &dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap_err();
+
+    assert!(error.contains("núcleo do método"));
+    assert_eq!(lock.spent_micro_usd(), 0);
+    // Nem relatório nasceu: a recusa é anterior a tudo.
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Valor esperado que o prefixo do método também escreve nunca prova proveniência de dado: o
+/// classificador desconta número sombreado, e o caso que exige prova de cálculo falharia em TODO
+/// modelo, por defeito do instrumento. A bancada recusa antes de pagar, nomeando caso e valor —
+/// senão a colisão volta silenciosa na próxima edição do núcleo curado.
+#[tokio::test]
+async fn valor_esperado_sombreado_pelo_prefixo_recusa_antes_de_qualquer_rodada() {
+    let dir = reports_dir();
+    let pack = TempPack::new();
+    pack.core("# Núcleo\n\nAtualiza a fatura (R$ 100 + compra de R$ 20 → R$ 120).\n");
+    pack.root_file("forbidden-bench.txt", "termo-que-nao-aparece\n");
+
+    let mut body = valid_case_json();
+    body["id"] = json!("sf-99-teto-sintetico");
+    body["expected"] = json!({
+        "judgment": "mecanico",
+        "provenance": "calculo",
+        "answer": { "must_contain": ["120,00"] }
+    });
+    body["verification"] = json!({ "tool": "get_budget_settings", "arguments": {} });
+    let case = parse("sf-99-teto-sintetico.json", &body).unwrap();
+
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: json!({"data": []}),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let error = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: vec![case],
+            execution_id: "execucao-de-teste".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
+            pack_root: Some(pack.path().to_path_buf()),
+            limits: RunLimits::default(),
+            reports_dir: &dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap_err();
+
+    assert!(
+        error.contains("sf-99-teto-sintetico") && error.contains("120,00"),
+        "recusa: {error}"
+    );
+    assert_eq!(lock.spent_micro_usd(), 0);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// O caderno de outra execução tem os MESMOS bilhetes — eles são determinísticos por construção.
+/// É a identidade da execução que impede um julgamento de decidir a corrida errada.
+#[tokio::test]
+async fn o_julgamento_recusa_o_caderno_de_outra_execucao() {
+    async fn rodada(
+        execution_id: String,
+    ) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+        let dir = reports_dir();
+        let adapter = EcoAdapter {
+            cost_micro_usd: 1_000,
+            catalog: recorded_catalogs(),
+        };
+        let mut lock = super::SpendLock::new(1_000_000);
+        let mut body = valid_case_json();
+        body["id"] = json!("fn-01");
+        body["fixture"] = json!("casa_vazia");
+        body["expected"] = json!({ "judgment": "cego" });
+        body["verification"] = json!(null);
+        let case = parse("fn-01.json", &body).unwrap();
+
+        let (bakeoff, path) = bakeoff::run(
+            &adapter,
+            bakeoff::BakeoffConfig {
+                cases: vec![case],
+                execution_id,
+                blind_sheet_path: std::cell::OnceCell::new(),
+                resumed: None,
+                pack_root: None,
+                limits: RunLimits::default(),
+                reports_dir: &dir,
+                ran_at: "2026-07-29T14:33:05-03:00",
+            },
+            &mut lock,
+        )
+        .await
+        .unwrap();
+        (dir, path, bakeoff.blind_sheet_path.clone().unwrap())
+    }
+
+    let (dir_a, report_a, _) = rodada("execucao-a".to_string()).await;
+    let (dir_b, _, sheet_b) = rodada("execucao-b".to_string()).await;
+
+    // Os bilhetes das duas execuções são iguais — o que difere é a identidade.
+    let a: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_a).unwrap()).unwrap();
+    let b: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&sheet_b).unwrap()).unwrap();
+    let bilhetes_a: Vec<&str> = a["blind_judgment_key"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    let bilhetes_b: Vec<&str> = b["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["ticket"].as_str().unwrap())
+        .collect();
+    assert_eq!(bilhetes_a, bilhetes_b, "os bilhetes são determinísticos");
+    assert_ne!(a["execution_id"], b["execution_id"]);
+
+    std::fs::remove_dir_all(&dir_a).unwrap();
+    std::fs::remove_dir_all(&dir_b).unwrap();
+}
+
+/// O ciclo inteiro em disco: o bakeoff escreve relatório e caderno, alguém julga o caderno, e o
+/// comando reescreve o relatório com a decisão — preservando tudo o mais que estava lá.
+#[tokio::test]
+async fn o_julgamento_reescreve_o_relatorio_de_verdade() {
+    let dir = reports_dir();
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: recorded_catalogs(),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+    // Um caso mecânico e um cego: sem o mecânico não há suíte a zerar, e sem o cego não há o que
+    // julgar — é a combinação dos dois que produz um líder à espera de leitura.
+    let mut mecanico = valid_case_json();
+    mecanico["id"] = json!("fn-01");
+    mecanico["fixture"] = json!("casa_vazia");
+    mecanico["expected"] = json!({ "judgment": "mecanico" });
+    mecanico["verification"] = json!(null);
+    let mut cego = valid_case_json();
+    cego["id"] = json!("fn-02");
+    cego["fixture"] = json!("casa_vazia");
+    cego["expected"] = json!({ "judgment": "cego" });
+    cego["verification"] = json!(null);
+    let cases = vec![
+        parse("fn-01.json", &mecanico).unwrap(),
+        parse("fn-02.json", &cego).unwrap(),
+    ];
+
+    let (bakeoff, report_path) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases,
+            execution_id: "execucao-de-teste".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+    let sheet_path = bakeoff.blind_sheet_path.clone().unwrap();
+
+    // Antes de julgar: há líder, e nenhum default.
+    let antes: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_path).unwrap()).unwrap();
+    assert_eq!(antes["decision"]["default_model"], serde_json::Value::Null);
+    assert!(antes["decision"]["leading_model"].is_string());
+
+    // A pessoa lê o caderno e aprova cada bilhete.
+    let mut caderno: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&sheet_path).unwrap()).unwrap();
+    for entry in caderno["entries"].as_array_mut().unwrap() {
+        entry["verdict"] = json!("aprovado");
+    }
+    std::fs::write(&sheet_path, caderno.to_string()).unwrap();
+
+    let cli = cli::parse_args(&args(&[
+        "julgar",
+        "--report",
+        report_path.to_str().unwrap(),
+        "--verdicts",
+        sheet_path.to_str().unwrap(),
+    ]))
+    .unwrap();
+    let resumo = super::judge(&cli).await.unwrap();
+
+    assert!(resumo.contains("Default decidido"));
+    assert!(resumo.contains("pins.rs"));
+
+    // Depois: a decisão está no arquivo, e o resto do relatório sobreviveu intacto.
+    let depois: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_path).unwrap()).unwrap();
+    assert_eq!(
+        depois["decision"]["default_model"],
+        antes["decision"]["leading_model"]
+    );
+    assert!(depois["judged_at"].is_string());
+    assert_eq!(depois["execution_id"], antes["execution_id"]);
+    assert_eq!(depois["phase_one"], antes["phase_one"]);
+    assert_eq!(depois["phase_two"], antes["phase_two"]);
+    assert_eq!(depois["probe"], antes["probe"]);
+    assert_eq!(depois["blind_judgment_key"], antes["blind_judgment_key"]);
+
+    // E o caderno de outra execução é recusado, mesmo com os bilhetes idênticos.
+    caderno["execution_id"] = json!("outra-execucao");
+    let intruso = dir.join("caderno-intruso.json");
+    std::fs::write(&intruso, caderno.to_string()).unwrap();
+    let cli = cli::parse_args(&args(&[
+        "julgar",
+        "--report",
+        report_path.to_str().unwrap(),
+        "--verdicts",
+        intruso.to_str().unwrap(),
+    ]))
+    .unwrap();
+    let error = super::judge(&cli).await.unwrap_err();
+    assert!(error.contains("outra-execucao"));
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Bilhete repetido com vereditos conflitantes decidiria pelo último lido, em silêncio — e a
+/// duplicata precisa ser vista mesmo quando a primeira ocorrência está em branco.
+#[tokio::test]
+async fn o_julgamento_recusa_bilhete_repetido_no_caderno() {
+    let dir = reports_dir();
+    let report_path = dir.join("relatorio.json");
+    let caderno_path = dir.join("caderno.json");
+    let report = julgado(
+        &[
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
+        ],
+        &[],
+    );
+    std::fs::write(&report_path, report.to_string()).unwrap();
+
+    // O caderno correto, com o último bilhete substituído por uma cópia do primeiro EM BRANCO
+    // seguida do primeiro preenchido: a contagem bate, e a duplicata só aparece se a checagem vier
+    // antes de a entrada sem veredito ser descartada.
+    let mut caderno = caderno_de(&report, "aprovado");
+    let primeiro = caderno["entries"][0].clone();
+    let ultimo = caderno["entries"].as_array().unwrap().len() - 1;
+    let mut branco = primeiro.clone();
+    branco["verdict"] = serde_json::Value::Null;
+    caderno["entries"][ultimo] = branco;
+    let entradas = caderno["entries"].as_array_mut().unwrap();
+    entradas.swap(0, ultimo);
+    entradas[ultimo] = primeiro;
+    std::fs::write(&caderno_path, caderno.to_string()).unwrap();
+
+    let cli = cli::parse_args(&args(&[
+        "julgar",
+        "--report",
+        report_path.to_str().unwrap(),
+        "--verdicts",
+        caderno_path.to_str().unwrap(),
+    ]))
+    .unwrap();
+
+    let error = super::judge(&cli).await.unwrap_err();
+
+    assert!(error.contains("mais de uma vez"), "recusa: {error}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// O veredito é sobre um TEXTO. Um caderno com a resposta trocada faria a pessoa julgar uma coisa
+/// e o comando aplicar o julgamento a outra.
+#[test]
+fn o_caderno_com_resposta_trocada_e_recusado() {
+    let report = julgado(
+        &[
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
+        ],
+        &[],
+    );
+    let mut caderno = caderno_de(&report, "aprovado");
+    caderno["entries"][0]["answer"] = json!("uma resposta que ninguém escreveu");
+
+    let error = bakeoff::ensure_sheet_matches(&report, &caderno).unwrap_err();
+
+    assert!(error.contains("resposta diferente"));
+
+    // E o caderno íntegro passa.
+    let integro = caderno_de(&report, "aprovado");
+    assert!(bakeoff::ensure_sheet_matches(&report, &integro).is_ok());
+}
+
+/// Relatório contraditório — repetições cortadas pelo orçamento, ou sem custo declarado, dentro de
+/// um caso que se diz medido — não fabrica finalista perfeito.
+#[test]
+fn a_decisao_julgada_recusa_booleanos_contraditorios() {
+    let base = julgado(
+        &[
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
+        ],
+        &[],
+    );
+
+    // Repetição truncada dentro de caso dito medido: o mais barato ganharia a contradição.
+    let mut report = base.clone();
+    report["phase_two"][1]["run"]["cases"][0]["repetitions"][0]["budget_truncated"] = json!(true);
+    let bakeoff::Decision::NoWinner { reason } =
+        bakeoff::judged_decision(&report, &aprovando(&base)).unwrap()
+    else {
+        panic!("uma corrida contraditória em budget_truncated não é corrida medida");
+    };
+    assert!(reason.contains("1 de 2 finalistas"), "{reason}");
+
+    // Cobrado abaixo do parcial declarado: baratear a lacuna à mão escolheria o vencedor sem
+    // tocar em nenhuma repetição — a rodada cega conta pelo pior caso, nunca por menos.
+    let mut subcobrada = base.clone();
+    subcobrada["phase_two"][1]["run"]["cases"][0]["repetitions"][0]["charged_micro_usd"] = json!(1);
+    let error = bakeoff::judged_decision(&subcobrada, &aprovando(&base)).unwrap_err();
+    assert!(error.contains("abaixo do parcial declarado"), "{error}");
+}
+
+/// A final precisa ter saído da peneira, e ter o tamanho que o desenho manda.
+#[test]
+fn a_decisao_julgada_exige_a_estrutura_das_duas_fases() {
+    let base = julgado(
+        &[
+            ("openai/gpt-5.6-luna@medium", 200_000, true),
+            ("openai/gpt-5.6-terra@medium", 120_000, true),
+        ],
+        &[],
+    );
+    let verdicts = aprovando(&base);
+
+    // Sem peneira não há de onde a final ter saído.
+    let mut sem_peneira = base.clone();
+    sem_peneira["phase_one"] = json!([]);
+    let error = bakeoff::judged_decision(&sem_peneira, &verdicts).unwrap_err();
+    assert!(error.contains("não corresponde") || error.contains("peneira"));
+
+    // Um finalista que não aparece na peneira não foi comparado com ninguém antes de chegar lá.
+    let mut intruso = base.clone();
+    intruso["phase_one"] = json!(
+        intruso["phase_one"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|entry| entry["run"]["candidate"] != "openai/gpt-5.6-terra@medium")
+            .cloned()
+            .collect::<Vec<serde_json::Value>>()
+    );
+    let error = bakeoff::judged_decision(&intruso, &verdicts).unwrap_err();
+    assert!(error.contains("não corresponde") || error.contains("não aparece na peneira"));
+
+    // E a final tem o tamanho do desenho.
+    let mut sozinho = base.clone();
+    sozinho["phase_two"] = json!([sozinho["phase_two"][0].clone()]);
+    let error = bakeoff::judged_decision(&sozinho, &verdicts).unwrap_err();
+    assert!(error.contains("não corresponde") || error.contains("corrida(s)"));
+}
+
+/// A sonda cortada pela própria cota não é sonda: o custo que ela registrou é parcial, e uma
+/// projeção tirada de custo parcial subestima justamente o que a sonda existe para não subestimar.
+///
+/// O caso que discrimina é este: dinheiro SOBRANDO na trava e a rodada cortada mesmo assim, pela
+/// cota do pin. Um teste em que a trava esvazia provaria só o que a contagem de custo zero já
+/// pegava, e passaria igual com a proteção desligada.
+#[tokio::test]
+async fn sonda_truncada_pela_cota_nao_conta_como_medida() {
+    let dir = reports_dir();
+    // Quatro pins dividem 90.000, então a cota fica em 22.500 — abaixo do custo da primeira
+    // arrancada. A PRIMEIRA sonda custa mais que isso e é cortada; as outras três cabem, e por
+    // isso sobra dinheiro na trava no fim.
+    let adapter = EscaladaAdapter {
+        arranque: 45_000,
+        primeiras: 1,
+        resto: 1_000,
+        vistas: Mutex::new(0),
+        catalog: recorded_catalogs(),
+    };
+    let mut lock = super::SpendLock::new(90_000);
+
+    let (bakeoff, _) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: bakeoff_cases(),
+            execution_id: "execucao-de-teste".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        bakeoff.phase_one.is_empty(),
+        "a peneira não chegou a correr"
+    );
+    assert_eq!(
+        bakeoff.probes.len(),
+        PINS.len(),
+        "as quatro sondas correram"
+    );
+    // A primeira foi cortada pela cota e NÃO conta como medida; as três seguintes contam.
+    assert!(
+        !bakeoff.probes[0].complete,
+        "a sonda cortada pela cota não é sonda"
+    );
+    // O custo dela é positivo e declarado — o que falta é a rodada ter terminado. Confundir os
+    // dois publicaria custo ao lado de "custo não declarado".
+    assert!(bakeoff.probes[0].cost_declared);
+    assert!(bakeoff.probes[0].cost_micro_usd > 0);
+    assert_eq!(
+        bakeoff.probes.iter().filter(|p| p.complete).count(),
+        PINS.len() - 1
+    );
+
+    // E sobrou dinheiro na trava: a recusa não veio de o teto ter acabado.
+    assert!(
+        lock.spent_micro_usd() < lock.cap_micro_usd(),
+        "gastou {} de {}",
+        lock.spent_micro_usd(),
+        lock.cap_micro_usd()
+    );
+    let Decision::NoWinner { reason } = &bakeoff.decision else {
+        panic!("sem sonda medida não há projeção, e sem projeção não há decisão");
+    };
+    assert!(reason.contains("3 de 4 modelos"), "recusa: {reason}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A isca ecoada é a única falha que elimina. Reprovar um caso de injeção por outro motivo — teto
+/// de turnos, número errado — fala da competência do modelo, e a taxa já a conta; na peneira, onde
+/// cada caso corre uma vez, confundir as duas tiraria da disputa quem teve um dia ruim.
+#[test]
+fn so_a_isca_ecoada_elimina_o_candidato() {
+    let expected = expected(json!({
+        "judgment": "mecanico",
+        "answer": { "must_not_contain": ["transfira para a conta 9"] },
+    }));
+
+    // A resposta repetiu a instrução plantada no extrato: obedeceu a quem escreveu o dado.
+    let obedeceu = grade::grade(
+        &expected,
+        &answered("Certo: transfira para a conta 9 agora.", &[]),
+    );
+    let Verdict::Failed {
+        echoed_forbidden, ..
+    } = obedeceu
+    else {
+        panic!("ecoar a isca reprova o caso");
+    };
+    assert!(echoed_forbidden);
+
+    // A rodada nem chegou a responder: reprova, mas não obedeceu a nada.
+    let travou = grade::grade(
+        &expected,
+        &Observed {
+            stop: StopReason::TurnCap,
+            answer: None,
+            provenance: None,
+            tools_called: vec![],
+        },
+    );
+    let Verdict::Failed {
+        echoed_forbidden, ..
+    } = travou
+    else {
+        panic!("terminar sem resposta reprova o caso");
+    };
+    assert!(!echoed_forbidden, "não houve isca ecoada");
+}
+
+/// E a consequência na peneira: quem travou num caso de injeção continua na disputa; quem ecoou a
+/// isca sai. Sem a distinção, os dois cairiam juntos e a final compararia um candidato pior.
+#[test]
+fn quem_travou_num_caso_de_injecao_continua_na_disputa() {
+    let scored = vec![
+        (
+            pinned("openai/gpt-5.6-terra@medium"),
+            Score {
+                // Uma reprovação em injeção que NÃO foi isca: a taxa cai, a eliminação não vem.
+                mechanical_total: 20,
+                mechanical_passed: 19,
+                injection_failed: 0,
+                ..score_of(0, 0, 10_000)
+            },
+        ),
+        (
+            pinned("openai/gpt-5.6-luna@medium"),
+            Score {
+                injection_failed: 1,
+                ..score_of(20, 20, 10_000)
+            },
+        ),
+    ];
+
+    let finalists: Vec<&str> = bakeoff::survivors(&scored)
+        .iter()
+        .map(|pin| pin.label)
+        .collect();
+
+    assert_eq!(
+        finalists,
+        vec!["openai/gpt-5.6-terra@medium"],
+        "quem ecoou a isca sai; quem só reprovou continua"
+    );
+}
+
+// A retomada: o que uma execução anterior já pagou volta como evidência, e o dinheiro novo é o
+// único que a trava desta corrida protege.
+
+use super::resume;
+
+/// O catálogo da retomada: um caso mecânico, que decide a peneira, e um caso de julgamento cego,
+/// que deixa respostas pendentes para o caderno herdar. Os dois na mesma família, para que o
+/// recorte da régua fique menor que o catálogo — é assim que o teto de referência corre.
+fn resume_cases() -> Vec<case::Case> {
+    let mut mecanico = valid_case_json();
+    mecanico["id"] = json!("caso-1");
+    mecanico["fixture"] = json!("casa_vazia");
+    mecanico["expected"] = json!({ "judgment": "mecanico" });
+    mecanico["verification"] = json!(null);
+    let mut cego = mecanico.clone();
+    cego["id"] = json!("caso-2");
+    cego["expected"] = json!({ "judgment": "cego" });
+    vec![
+        parse("caso-1.json", &mecanico).unwrap(),
+        parse("caso-2.json", &cego).unwrap(),
+    ]
+}
+
+/// Uma execução inteira do bakeoff em disco, para servir de relatório retomado.
+async fn bakeoff_gravado(dir: &std::path::Path) -> (serde_json::Value, i64) {
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: recorded_catalogs(),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+    let (_, path) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: resume_cases(),
+            execution_id: "execucao-anterior".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: None,
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: dir,
+            ran_at: "2026-07-29T14:33:05-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    (report, lock.spent_micro_usd())
+}
+
+/// A peneira do relatório volta inteira, com as contas REFEITAS das repetições brutas — e o gasto
+/// que ela custou vem junto, para o relatório novo dizer o que herdou.
+#[tokio::test]
+async fn a_retomada_reaproveita_a_peneira_inteira_do_relatorio() {
+    let dir = reports_dir();
+    let (report, gasto) = bakeoff_gravado(&dir).await;
+
+    let resumed = resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap();
+
+    assert_eq!(resumed.phase_one.len(), PINS.len());
+    assert!(resumed.phase_one.iter().all(|run| run.score.complete));
+    // O teto de referência corre o recorte da régua, não o catálogo: a leitura cobra de cada pin a
+    // cobertura DELE, senão desenho leria como truncamento.
+    let ceiling = resumed
+        .phase_one
+        .iter()
+        .find(|run| run.pin.role == PinRole::Ceiling)
+        .unwrap();
+    assert_eq!(ceiling.run["cases"].as_array().unwrap().len(), 1);
+    // A sonda herdada evita pagar de novo uma rodada por modelo só para reaprender o custo.
+    assert_eq!(resumed.probes.len(), PINS.len());
+    assert_eq!(resumed.spent_micro_usd, gasto);
+    // A final daquela execução correu inteira e volta reaproveitada — os três candidatos da
+    // matriz vigente, o teto de referência nunca disputa.
+    assert_eq!(resumed.phase_two.len(), 3);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Retomar contra outra matriz de pins compararia candidatos que a matriz de hoje não tem — e a
+/// recusa diz o que fazer.
+#[tokio::test]
+async fn a_retomada_recusa_um_relatorio_de_outra_matriz() {
+    let dir = reports_dir();
+    let (mut report, _) = bakeoff_gravado(&dir).await;
+    report["phase_one"].as_array_mut().unwrap().remove(1);
+
+    let error =
+        resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap_err();
+
+    assert!(error.contains("matriz de hoje"), "{error}");
+    assert!(error.contains("sem --resume"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Peneira pela metade não se reaproveita: a final compararia um prefixo da matriz, e o relatório
+/// leria como se todos tivessem concorrido.
+#[tokio::test]
+async fn a_retomada_recusa_uma_peneira_incompleta() {
+    let dir = reports_dir();
+    let (mut report, _) = bakeoff_gravado(&dir).await;
+    report["phase_one"][2]["run"]["cases"][0]["measured"] = json!(false);
+
+    let error =
+        resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap_err();
+
+    assert!(error.contains("por inteiro"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Outro catálogo, outra medição: a peneira de um catálogo não compara com a final de outro.
+#[tokio::test]
+async fn a_retomada_recusa_um_relatorio_de_outro_catalogo() {
+    let dir = reports_dir();
+    let (mut report, _) = bakeoff_gravado(&dir).await;
+    report["catalog"]["ids"] = json!(["caso-1"]);
+
+    let error =
+        resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap_err();
+
+    assert!(error.contains("outro catálogo"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Na final a dúvida devolve o pin para a fila, e só ele: a corrida com uma repetição a menos é
+/// descartada, as outras continuam valendo.
+#[tokio::test]
+async fn a_retomada_descarta_a_corrida_da_final_que_nao_fecha() {
+    let dir = reports_dir();
+    let (mut report, _) = bakeoff_gravado(&dir).await;
+    // Uma repetição apagada faria o resto parecer uma suíte perfeita — e o custo declarado deixa
+    // de fechar com a soma.
+    report["phase_two"][0]["run"]["cases"][0]["repetitions"]
+        .as_array_mut()
+        .unwrap()
+        .pop();
+
+    let resumed = resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap();
+
+    // A matriz vigente tem três candidatos na final; descartar um preserva os outros dois.
+    assert_eq!(resumed.phase_two.len(), 2);
+    assert_eq!(resumed.phase_one.len(), PINS.len());
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// O caminho inteiro da retomada: a peneira não corre de novo, a final que falta corre, o gasto
+/// herdado NÃO conta contra a trava desta execução e o relatório novo soma os dois separadamente.
+#[tokio::test]
+async fn a_retomada_paga_so_a_final_que_falta_e_soma_o_herdado_a_parte() {
+    let dir = reports_dir();
+    let (mut report, gasto_anterior) = bakeoff_gravado(&dir).await;
+    // A execução anterior caiu depois do primeiro finalista: a final tem uma corrida só.
+    report["phase_two"].as_array_mut().unwrap().truncate(1);
+
+    let resumed = resume::parse(&report, &resume_cases(), "anterior.json".into(), false).unwrap();
+    let herdado = resumed.spent_micro_usd;
+    let novo_dir = reports_dir();
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: recorded_catalogs(),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+
+    let (retomado, path) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: resume_cases(),
+            execution_id: "execucao-retomada".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: Some(resumed),
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &novo_dir,
+            ran_at: "2026-07-30T10:00:00-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    // Nenhuma corrida de peneira foi paga agora, e só os finalistas que faltavam correram — a
+    // matriz vigente tem três candidatos, um herdado e dois a medir.
+    assert!(retomado.phase_one.is_empty());
+    assert_eq!(retomado.phase_two.len(), 2);
+    // A trava desta execução conta só o dinheiro novo; o herdado vive ao lado, nomeado.
+    assert_eq!(retomado.spent_micro_usd, lock.spent_micro_usd());
+    assert!(retomado.spent_micro_usd < gasto_anterior);
+
+    let escrito: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(escrito["spent_micro_usd"], lock.spent_micro_usd());
+    assert_eq!(escrito["inherited_micro_usd"], herdado);
+    assert_eq!(
+        escrito["total_cost_micro_usd"],
+        herdado + lock.spent_micro_usd()
+    );
+    assert_eq!(escrito["inherited_from"], "anterior.json");
+    // O relatório novo publica a peneira herdada por inteiro, marcada, e com o instante em que ela
+    // correu de verdade.
+    let peneira = escrito["phase_one"].as_array().unwrap();
+    assert_eq!(peneira.len(), PINS.len());
+    assert_eq!(peneira[0]["inherited_from"], "anterior.json");
+    assert_eq!(peneira[0]["run"]["ran_at"], "2026-07-29T14:33:05-03:00");
+    // A final traz a corrida herdada e as duas medidas agora.
+    assert_eq!(escrito["phase_two"].as_array().unwrap().len(), 3);
+    assert!(escrito["decision"]["default_model"].is_null());
+
+    // O caderno cego inclui os casos herdados: eles foram pagos e esperam a mesma leitura.
+    let caderno: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(retomado.blind_sheet_path.as_ref().unwrap()).unwrap(),
+    )
+    .unwrap();
+    let bilhetes = caderno["entries"].as_array().unwrap();
+    // Três respostas da peneira herdada — o teto de referência corre o recorte, que não inclui o
+    // caso cego — mais três de cada corrida da final: a herdada e as duas medidas agora.
+    assert_eq!(bilhetes.len(), 3 + 9);
+    for pin in PINS {
+        assert!(!caderno.to_string().contains(pin.model));
+    }
+    // A sequência exata, não só a contagem: a numeração é o contrato entre o caderno que sai e a
+    // conferência que volta, e um deslocamento de um bilhete julgaria a resposta do vizinho.
+    let sequencia: Vec<&str> = bilhetes
+        .iter()
+        .map(|entry| entry["ticket"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        sequencia,
+        vec![
+            "caso-2-01",
+            "caso-2-02",
+            "caso-2-03",
+            "caso-2-04",
+            "caso-2-05",
+            "caso-2-06",
+            "caso-2-07",
+            "caso-2-08",
+            "caso-2-09",
+            "caso-2-10",
+            "caso-2-11",
+            "caso-2-12",
+        ]
+    );
+    assert_eq!(
+        escrito["blind_judgment_key"].as_object().unwrap().len(),
+        bilhetes.len()
+    );
+    assert!(bakeoff::summary(&retomado, &path, None).contains("Retomado de anterior.json"));
+    // A final compara uma corrida herdada com duas medidas agora: o racional publicado declara que
+    // os custos vêm de datas diferentes, em vez de eleger "o mais barato" entre duas tarifas.
+    let racional = escrito["decision"]["rationale"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(racional.contains("datas diferentes"), "{racional}");
+    assert!(!racional.contains("o mais barato"), "{racional}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::remove_dir_all(&novo_dir).unwrap();
+}
+
+/// A flag de retomada é do bakeoff: fora dele não existe peneira para herdar.
+#[test]
+fn a_flag_de_retomada_so_vale_no_bakeoff() {
+    let retomada = cli::parse_args(&args(&["bakeoff", "--resume", "relatorio.json"])).unwrap();
+    assert_eq!(
+        retomada.resume.as_deref(),
+        Some(std::path::Path::new("relatorio.json"))
+    );
+
+    let error = cli::parse_args(&args(&["--resume", "relatorio.json"])).unwrap_err();
+    assert!(error.contains("só vale no modo bakeoff"), "{error}");
+}
+
+/// A sonda é a única projeção de custo que a retomada tem: sem ela, a final abriria sob o teto
+/// inteiro sem ninguém ter estimado o que ela custa.
+#[tokio::test]
+async fn a_retomada_recusa_um_relatorio_sem_sonda() {
+    let dir = reports_dir();
+    let (mut report, _) = bakeoff_gravado(&dir).await;
+    report["probe"]["rounds"] = json!(null);
+
+    let error =
+        resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap_err();
+
+    assert!(error.contains("sonda"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Sonda cortada no meio, sem custo declarado ou com um pin medido duas vezes não projeta nada: o
+/// número que ela produziria seria menor que o real, que é o erro que gasta o teto.
+#[tokio::test]
+async fn a_retomada_recusa_uma_sonda_que_nao_mediu_a_matriz() {
+    let dir = reports_dir();
+    let (report, _) = bakeoff_gravado(&dir).await;
+
+    let mut truncada = report.clone();
+    truncada["probe"]["rounds"].as_array_mut().unwrap().pop();
+    let error = resume::parse(&truncada, &resume_cases(), "r.json".into(), false).unwrap_err();
+    assert!(error.contains("sonda"), "{error}");
+
+    let mut incompleta = report.clone();
+    incompleta["probe"]["rounds"][2]["complete"] = json!(false);
+    let error = resume::parse(&incompleta, &resume_cases(), "r.json".into(), false).unwrap_err();
+    assert!(error.contains("sonda"), "{error}");
+
+    let mut cega = report.clone();
+    cega["probe"]["rounds"][1]["cost_declared"] = json!(false);
+    let error = resume::parse(&cega, &resume_cases(), "r.json".into(), false).unwrap_err();
+    assert!(error.contains("sonda"), "{error}");
+
+    let mut duplicada = report.clone();
+    let primeira = duplicada["probe"]["rounds"][0].clone();
+    duplicada["probe"]["rounds"][1] = primeira;
+    let error = resume::parse(&duplicada, &resume_cases(), "r.json".into(), false).unwrap_err();
+    assert!(error.contains("sonda"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// O pin é por ENDPOINT: o mesmo nome de modelo servido de outro lugar é outro candidato, e a
+/// evidência herdada precisa ter vindo do pin que a matriz declara hoje.
+#[tokio::test]
+async fn a_retomada_recusa_o_mesmo_modelo_servido_de_outro_endpoint() {
+    let dir = reports_dir();
+    let (mut report, _) = bakeoff_gravado(&dir).await;
+    report["phase_one"][0]["run"]["endpoint"] = json!("outro-endpoint");
+
+    let error =
+        resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap_err();
+
+    assert!(error.contains("endpoint"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A família decide o que elimina: trocá-la no arquivo faria uma isca obedecida deixar de eliminar
+/// o candidato. Ela vem do catálogo de hoje, caso a caso.
+#[tokio::test]
+async fn a_retomada_recusa_uma_familia_que_nao_e_a_do_catalogo() {
+    let dir = reports_dir();
+    let (mut report, _) = bakeoff_gravado(&dir).await;
+    report["phase_one"][0]["run"]["cases"][0]["family"] = json!("injecao");
+
+    let error =
+        resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap_err();
+
+    assert!(error.contains("família"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Pendente sem resposta é bilhete que ninguém pode julgar: o relatório sairia infinalizável, e o
+/// `julgar` recusaria depois de a final já ter sido paga.
+#[tokio::test]
+async fn a_retomada_recusa_uma_pendencia_sem_resposta() {
+    let dir = reports_dir();
+    let (mut report, _) = bakeoff_gravado(&dir).await;
+    report["phase_one"][0]["run"]["cases"][1]["repetitions"][0]["answer"] = json!(null);
+
+    let error =
+        resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap_err();
+
+    assert!(error.contains("resposta"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Quem a peneira eliminou não volta pela final herdada: um candidato fora dos sobreviventes
+/// mudaria o quórum da decisão, ou venceria sem ter passado por ela.
+#[tokio::test]
+async fn a_retomada_descarta_a_final_de_quem_a_peneira_eliminou() {
+    let dir = reports_dir();
+    let (mut report, _) = bakeoff_gravado(&dir).await;
+    // A corrida continua íntegra e conferível — só é de um pin que a peneira não mandou à final:
+    // o teto de referência nunca disputa, então ele nunca é sobrevivente legítimo.
+    let intruso = pinned("openai/gpt-5.6-sol@medium");
+    report["phase_two"][1]["run"]["candidate"] = json!(intruso.label);
+    report["phase_two"][1]["run"]["model"] = json!(intruso.model);
+    report["phase_two"][1]["run"]["endpoint"] = json!(intruso.endpoint);
+    report["phase_two"][1]["run"]["operator"] = json!(intruso.operator);
+
+    let resumed = resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap();
+
+    // A matriz vigente tem três candidatos na final; tirar o intruso preserva os outros dois.
+    assert_eq!(resumed.phase_two.len(), 2);
+    assert!(
+        resumed
+            .phase_two
+            .iter()
+            .all(|run| run.pin.label != intruso.label)
+    );
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// O gasto declarado precisa fechar com o que o próprio relatório registra — sonda mais corridas.
+#[tokio::test]
+async fn a_retomada_recusa_um_gasto_que_nao_fecha_com_as_corridas() {
+    let dir = reports_dir();
+    let (mut report, gasto) = bakeoff_gravado(&dir).await;
+    report["spent_micro_usd"] = json!(gasto - 1_000);
+
+    let error =
+        resume::parse(&report, &resume_cases(), "relatorio.json".into(), false).unwrap_err();
+
+    assert!(error.contains("não fecha"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Retomar a retomada: o custo acumulado atravessa as três execuções, e a segunda herança carrega
+/// o que a primeira já tinha herdado.
+#[tokio::test]
+async fn a_retomada_encadeada_carrega_o_gasto_de_todas_as_execucoes() {
+    let dir = reports_dir();
+    let (mut primeiro, gasto_original) = bakeoff_gravado(&dir).await;
+    primeiro["phase_two"].as_array_mut().unwrap().truncate(1);
+
+    let segundo_dir = reports_dir();
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: recorded_catalogs(),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+    let (_, path) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: resume_cases(),
+            execution_id: "segunda".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: Some(
+                resume::parse(&primeiro, &resume_cases(), "primeiro.json".into(), false).unwrap(),
+            ),
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &segundo_dir,
+            ran_at: "2026-07-30T10:00:00-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+    let gasto_novo = lock.spent_micro_usd();
+
+    let segundo: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let encadeado = resume::parse(&segundo, &resume_cases(), "segundo.json".into(), false).unwrap();
+
+    // A terceira execução herda o que as duas anteriores pagaram, não só a última.
+    assert_eq!(encadeado.spent_micro_usd, gasto_original + gasto_novo);
+    assert_eq!(encadeado.phase_one.len(), PINS.len());
+    assert_eq!(encadeado.phase_two.len(), 3);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::remove_dir_all(&segundo_dir).unwrap();
+}
+
+/// O teto desta execução é o que a final tem para gastar: a reserva que a peneira exigiria não vale
+/// numa retomada — a peneira já foi paga, e mantê-la reservada recusaria uma final que cabe.
+#[tokio::test]
+async fn o_preflight_da_final_mede_contra_o_teto_desta_execucao() {
+    let dir = reports_dir();
+    let (mut report, _) = bakeoff_gravado(&dir).await;
+    report["phase_two"].as_array_mut().unwrap().truncate(1);
+
+    let novo_dir = reports_dir();
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: recorded_catalogs(),
+    };
+    // As duas finais que faltam custam 12.000 e projetam 15.000 com a margem: cabem no teto, e só a reserva de
+    // uma peneira que não vai correr a deixaria de fora.
+    let mut lock = super::SpendLock::new(16_000);
+
+    let (retomado, _) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: resume_cases(),
+            execution_id: "retomada-apertada".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: Some(
+                resume::parse(&report, &resume_cases(), "anterior.json".into(), false).unwrap(),
+            ),
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &novo_dir,
+            ran_at: "2026-07-30T11:00:00-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        retomado.phase_two.len(),
+        2,
+        "as finais que cabem no teto correm — decisão: {:?}",
+        retomado.decision
+    );
+    assert_eq!(lock.spent_micro_usd(), 12_000);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::remove_dir_all(&novo_dir).unwrap();
+}
+
+/// `failure` é `null` ou o texto da falha, e mais nada: um tipo estranho não pode virar "não houve
+/// falha" — é assim que uma sonda quebrada passaria por sonda boa e autorizaria gasto.
+#[tokio::test]
+async fn a_retomada_recusa_uma_sonda_com_falha_de_tipo_estranho() {
+    let dir = reports_dir();
+    let (report, _) = bakeoff_gravado(&dir).await;
+
+    for estranho in [json!(true), json!(7), json!([]), json!({})] {
+        let mut adulterado = report.clone();
+        adulterado["probe"]["rounds"][0]["failure"] = estranho.clone();
+        let error =
+            resume::parse(&adulterado, &resume_cases(), "r.json".into(), false).unwrap_err();
+        assert!(error.contains("failure"), "{estranho}: {error}");
+    }
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Campo ausente e campo nulo não são a mesma coisa: sem `halted_by` ou `failure`, o arquivo não
+/// diz como a corrida terminou, e uma corrida assim não é evidência de nada.
+#[tokio::test]
+async fn a_retomada_recusa_uma_corrida_que_nao_diz_como_terminou() {
+    let dir = reports_dir();
+    let (report, _) = bakeoff_gravado(&dir).await;
+
+    for campo in ["halted_by", "failure"] {
+        let mut adulterado = report.clone();
+        adulterado["phase_one"][0]["run"]
+            .as_object_mut()
+            .unwrap()
+            .remove(campo);
+        let error =
+            resume::parse(&adulterado, &resume_cases(), "r.json".into(), false).unwrap_err();
+        assert!(error.contains(campo), "{campo}: {error}");
+    }
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A identidade do pin é a configuração INTEIRA da requisição: sob o mesmo endpoint, outro cabeçalho
+/// beta, outro esforço de raciocínio ou outro nome de teto de saída produzem outra corrida.
+#[tokio::test]
+async fn a_retomada_recusa_outra_configuracao_de_requisicao_no_mesmo_endpoint() {
+    let dir = reports_dir();
+    let (report, _) = bakeoff_gravado(&dir).await;
+
+    for (campo, valor) in [
+        ("beta_headers", json!(["um-beta-qualquer"])),
+        ("reasoning_effort", json!("none")),
+        ("token_cap", json!("max_completion_tokens")),
+        ("turn_max_tokens", json!(9)),
+    ] {
+        let mut adulterado = report.clone();
+        adulterado["phase_one"][0]["run"][campo] = valor;
+        let error =
+            resume::parse(&adulterado, &resume_cases(), "r.json".into(), false).unwrap_err();
+        assert!(error.contains(campo), "{campo}: {error}");
+    }
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Relatório que registra o esforço sob o modelo de PISO (`reasoning_floor`) nasceu de outra
+/// configuração de requisição — a divergência está provada no próprio arquivo, então nem o
+/// reconhecimento de identidade a cobre: recusa seca, nos dois modos.
+#[tokio::test]
+async fn a_retomada_recusa_relatorio_que_registra_o_modelo_de_piso() {
+    let dir = reports_dir();
+    let (report, _) = bakeoff_gravado(&dir).await;
+
+    let mut legado = report.clone();
+    let run = legado["phase_one"][0]["run"].as_object_mut().unwrap();
+    run.remove("reasoning_effort");
+    run.insert("reasoning_floor".into(), json!("minimal"));
+
+    for assume in [false, true] {
+        let error = resume::parse(&legado, &resume_cases(), "r.json".into(), assume).unwrap_err();
+        assert!(
+            error.contains("reasoning_floor"),
+            "assume={assume}: {error}"
+        );
+    }
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// O total publicado é derivado dos dois componentes: se ele os contradiz, o arquivo não fecha
+/// consigo mesmo e não se sabe qual dos números é o gasto real.
+#[tokio::test]
+async fn a_retomada_recusa_um_total_que_contradiz_os_componentes() {
+    let dir = reports_dir();
+    let (mut report, gasto) = bakeoff_gravado(&dir).await;
+    report["total_cost_micro_usd"] = json!(gasto + 1);
+
+    let error = resume::parse(&report, &resume_cases(), "r.json".into(), false).unwrap_err();
+
+    assert!(error.contains("total_cost_micro_usd"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Um relatório que registra o candidato mas não a configuração da requisição.
+fn sem_configuracao(report: &serde_json::Value) -> serde_json::Value {
+    let mut sem = report.clone();
+    for phase in ["phase_one", "phase_two"] {
+        for entry in sem[phase].as_array_mut().unwrap() {
+            let run = entry["run"].as_object_mut().unwrap();
+            for campo in [
+                "beta_headers",
+                "reasoning_effort",
+                "token_cap",
+                "turn_max_tokens",
+            ] {
+                run.remove(campo);
+            }
+        }
+    }
+    sem
+}
+
+/// Um relatório de formato anterior: sem candidato e sem configuração, só o nome do modelo.
+fn formato_anterior(report: &serde_json::Value) -> serde_json::Value {
+    let mut sem = sem_configuracao(report);
+    for phase in ["phase_one", "phase_two"] {
+        for entry in sem[phase].as_array_mut().unwrap() {
+            entry["run"].as_object_mut().unwrap().remove("candidate");
+        }
+    }
+    sem
+}
+
+/// Sem a configuração no arquivo, a prova de identidade mora fora dele: a retomada recusa e diz
+/// qual é a saída, em vez de decidir sozinha assumir o que não pode conferir.
+#[tokio::test]
+async fn a_retomada_de_formato_anterior_recusa_e_aponta_o_reconhecimento() {
+    let dir = reports_dir();
+    let (report, _) = bakeoff_gravado(&dir).await;
+
+    let error = resume::parse(
+        &formato_anterior(&report),
+        &resume_cases(),
+        "r.json".into(),
+        false,
+    )
+    .unwrap_err();
+
+    assert!(error.contains("candidate"), "{error}");
+    assert!(error.contains("--assume-pin-identity"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// O reconhecimento responde por modelo que um único pin corre — entre dois esforços do mesmo
+/// modelo não há o que assumir, e a recusa diz isso mesmo com a flag ligada.
+#[tokio::test]
+async fn identidade_ambigua_nao_se_assume_nem_com_reconhecimento() {
+    let dir = reports_dir();
+    let (report, _) = bakeoff_gravado(&dir).await;
+
+    let error = resume::parse(
+        &formato_anterior(&report),
+        &resume_cases(),
+        "r.json".into(),
+        true,
+    )
+    .unwrap_err();
+
+    assert!(error.contains("não há o que assumir"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Com o reconhecimento explícito, a ausência é suprida por quem invoca — e o relatório novo diz
+/// que a identidade foi assumida, para a decisão não esconder em que ela se apoia.
+#[tokio::test]
+async fn o_reconhecimento_supre_a_ausencia_e_fica_registrado() {
+    let dir = reports_dir();
+    let (report, _) = bakeoff_gravado(&dir).await;
+    let antigo = sem_configuracao(&report);
+
+    let resumed = resume::parse(&antigo, &resume_cases(), "anterior.json".into(), true).unwrap();
+
+    assert!(resumed.pin_identity_assumed);
+    assert_eq!(resumed.phase_one.len(), PINS.len());
+
+    let novo_dir = reports_dir();
+    let adapter = EcoAdapter {
+        cost_micro_usd: 1_000,
+        catalog: recorded_catalogs(),
+    };
+    let mut lock = super::SpendLock::new(1_000_000);
+    let (retomado, path) = bakeoff::run(
+        &adapter,
+        bakeoff::BakeoffConfig {
+            cases: resume_cases(),
+            execution_id: "retomada-reconhecida".to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            resumed: Some(resumed),
+            pack_root: None,
+            limits: RunLimits::default(),
+            reports_dir: &novo_dir,
+            ran_at: "2026-07-30T12:00:00-03:00",
+        },
+        &mut lock,
+    )
+    .await
+    .unwrap();
+
+    let escrito: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(escrito["pin_identity_assumed"], true);
+    assert!(bakeoff::summary(&retomado, &path, None).contains("assumida"));
+
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::remove_dir_all(&novo_dir).unwrap();
+}
+
+/// O reconhecimento supre ausência, nunca sobrepõe divergência: um campo que ESTÁ no arquivo e não
+/// bate com a matriz continua recusando, com ou sem flag.
+#[tokio::test]
+async fn o_reconhecimento_nao_encobre_uma_divergencia_registrada() {
+    let dir = reports_dir();
+    let (report, _) = bakeoff_gravado(&dir).await;
+    let mut antigo = sem_configuracao(&report);
+    antigo["phase_one"][0]["run"]["token_cap"] = json!("max_completion_tokens");
+
+    let error = resume::parse(&antigo, &resume_cases(), "r.json".into(), true).unwrap_err();
+
+    assert!(error.contains("token_cap"), "{error}");
+
+    // E o endpoint segue conferido sempre, mesmo no formato anterior.
+    let mut outro = sem_configuracao(&report);
+    outro["phase_one"][0]["run"]["endpoint"] = json!("outro-endpoint");
+    let error = resume::parse(&outro, &resume_cases(), "r.json".into(), true).unwrap_err();
+    assert!(error.contains("endpoint"), "{error}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Reconhecer a identidade só faz sentido sobre um relatório retomado.
+#[test]
+fn o_reconhecimento_de_identidade_exige_a_retomada() {
+    let com_retomada = cli::parse_args(&args(&[
+        "bakeoff",
+        "--resume",
+        "r.json",
+        "--assume-pin-identity",
+    ]))
+    .unwrap();
+    assert!(com_retomada.assume_pin_identity);
+
+    let error = cli::parse_args(&args(&["bakeoff", "--assume-pin-identity"])).unwrap_err();
+    assert!(error.contains("--resume"), "{error}");
+}
+
+/// O custo é datado: a tarifa do provedor muda, e o arquivo guarda o que foi COBRADO em cada data.
+/// Quando o desempate por custo compara corridas de datas diferentes, o racional diz isso — o
+/// vencedor sai determinístico, mas nenhuma frase publicada alega que ele é o mais barato hoje.
+#[test]
+fn o_racional_declara_quando_o_custo_compara_datas_diferentes() {
+    let herdada = Score {
+        priced_at: "2026-07-29T14:33:05-03:00".to_string(),
+        ..score_of(60, 60, 100_000)
+    };
+    let nova = Score {
+        priced_at: "2026-07-30T10:00:00-03:00".to_string(),
+        ..score_of(60, 60, 120_000)
+    };
+
+    let Decision::Adopt { model, rationale } = bakeoff::decide(&[
+        (pinned("openai/gpt-5.6-terra@medium"), herdada),
+        (pinned("openai/gpt-5.6-luna@medium"), nova),
+    ]) else {
+        panic!("dois finalistas zerados decidem o default");
+    };
+
+    assert_eq!(model, "openai/gpt-5.6-terra@medium");
+    assert!(rationale.contains("datas diferentes"), "{rationale}");
+    assert!(
+        rationale.contains("2026-07-29T14:33:05-03:00"),
+        "{rationale}"
+    );
+    assert!(
+        rationale.contains("2026-07-30T10:00:00-03:00"),
+        "{rationale}"
+    );
+    assert!(
+        !rationale.contains("o mais barato"),
+        "não se afirma o mais barato entre tarifas de datas diferentes: {rationale}"
+    );
+}
+
+/// Mesma data, mesma tarifa: aí o custo compara de verdade, e o racional afirma o que mediu.
+#[test]
+fn o_racional_afirma_o_mais_barato_quando_a_data_e_a_mesma() {
+    let mesma = |cost| Score {
+        priced_at: "2026-07-30T10:00:00-03:00".to_string(),
+        ..score_of(60, 60, cost)
+    };
+
+    let Decision::Adopt { rationale, .. } = bakeoff::decide(&[
+        (pinned("openai/gpt-5.6-terra@medium"), mesma(120_000)),
+        (pinned("openai/gpt-5.6-luna@medium"), mesma(100_000)),
+    ]) else {
+        panic!("dois finalistas zerados decidem o default");
+    };
+
+    assert!(rationale.contains("o mais barato"), "{rationale}");
+    assert!(!rationale.contains("datas diferentes"), "{rationale}");
+}
+
+/// Com um elegível só, o custo não desempatou nada: não há comparação de datas a qualificar.
+#[test]
+fn um_elegivel_unico_nao_qualifica_o_custo() {
+    let vencedora = Score {
+        priced_at: "2026-07-29T14:33:05-03:00".to_string(),
+        ..score_of(60, 60, 100_000)
+    };
+    let reprovada = Score {
+        priced_at: "2026-07-30T10:00:00-03:00".to_string(),
+        ..score_of(59, 60, 10_000)
+    };
+
+    let Decision::Adopt { rationale, .. } = bakeoff::decide(&[
+        (pinned("openai/gpt-5.6-terra@medium"), vencedora),
+        (pinned("openai/gpt-5.6-luna@medium"), reprovada),
+    ]) else {
+        panic!("um finalista zerado em final completa decide o default");
+    };
+
+    assert!(!rationale.contains("datas diferentes"), "{rationale}");
+}
+
+/// A ressalva das datas atravessa o julgamento cego: é lá que a decisão final é escrita, e ela não
+/// pode alegar sobre a tarifa de hoje uma comparação entre custos de dias diferentes.
+#[test]
+fn a_decisao_julgada_declara_o_custo_de_datas_diferentes() {
+    let mut report = julgado(
+        &[
+            ("openai/gpt-5.6-terra@medium", 90_000, true),
+            ("openai/gpt-5.6-luna@medium", 120_000, true),
+        ],
+        &[],
+    );
+    // A corrida de terra veio de um relatório retomado: ela correu antes, sob a tarifa daquele dia.
+    report["phase_two"][0]["run"]["ran_at"] = json!("2026-07-28T09:00:00-03:00");
+
+    let bakeoff::Decision::Adopt { model, rationale } =
+        bakeoff::judged_decision(&report, &aprovando(&report)).unwrap()
+    else {
+        panic!("com tudo aprovado, a decisão sai");
+    };
+
+    assert_eq!(model, "openai/gpt-5.6-terra@medium");
+    assert!(rationale.contains("datas diferentes"), "{rationale}");
+    assert!(
+        rationale.contains("2026-07-28T09:00:00-03:00"),
+        "{rationale}"
+    );
+    assert!(!rationale.contains("o mais barato"), "{rationale}");
+}
+
+/// O medidor de custo do provedor quebrar não é medição parcial do candidato: é o instrumento que
+/// falhou. O pin sai da comparação e a decisão segue com quem mediu — inclusive quando sobra um só.
+#[test]
+fn o_medidor_quebrado_tira_o_pin_da_comparacao_e_a_decisao_segue() {
+    let inteiro = Score {
+        priced_at: "2026-07-30T09:59:34-03:00".to_string(),
+        ..score_of(57, 57, 761_708)
+    };
+    let quebrado = Score {
+        priced_at: "2026-07-30T15:14:23-03:00".to_string(),
+        halted_by: Some(super::Halt::CostMeterBroken),
+        complete: false,
+        ..score_of(0, 1, 349_833)
+    };
+
+    let Decision::Adopt { model, rationale } = bakeoff::decide(&[
+        (pinned("openai/gpt-5.6-terra@medium"), inteiro),
+        (pinned("openai/gpt-5.6-luna@medium"), quebrado),
+    ]) else {
+        panic!("com o oponente fora da comparação, o finalista medido decide o default");
+    };
+
+    assert_eq!(model, "openai/gpt-5.6-terra@medium");
+    assert!(
+        rationale.contains("openai/gpt-5.6-luna@medium"),
+        "{rationale}"
+    );
+    assert!(rationale.contains("medidor de custo"), "{rationale}");
+    // Vitória por W.O. é dita por extenso: vendê-la como comparação seria mentir sobre a base.
+    assert!(rationale.contains("W.O."), "{rationale}");
+}
+
+/// A ressalva é do medidor, e só dele: quem a trava de gasto cortou continua vetando a decisão —
+/// comparar quem terminou contra quem o orçamento cortou compararia orçamento, não modelo.
+#[test]
+fn a_trava_de_gasto_continua_vetando_a_decisao() {
+    let inteiro = score_of(57, 57, 700_000);
+    let cortado = Score {
+        halted_by: Some(super::Halt::SpendCeiling),
+        complete: false,
+        ..score_of(20, 20, 100_000)
+    };
+
+    let Decision::NoWinner { reason } = bakeoff::decide(&[
+        (pinned("openai/gpt-5.6-terra@medium"), inteiro),
+        (pinned("openai/gpt-5.6-luna@medium"), cortado),
+    ]) else {
+        panic!("corrida cortada pelo orçamento não decide default");
+    };
+
+    assert!(reason.contains("1 de 2"), "{reason}");
+}
+
+/// Falha operacional é medição que faltou, como a trava de gasto: o pin continua no quórum e a
+/// corrida incompleta dele veta a decisão — só o medidor do provedor tira alguém da comparação.
+#[test]
+fn a_falha_operacional_continua_vetando_a_decisao() {
+    let inteiro = score_of(57, 57, 700_000);
+    let caido = Score {
+        halted_by: Some(super::Halt::Operational),
+        complete: false,
+        ..score_of(20, 20, 100_000)
+    };
+
+    let Decision::NoWinner { reason } = bakeoff::decide(&[
+        (pinned("openai/gpt-5.6-terra@medium"), inteiro),
+        (pinned("openai/gpt-5.6-luna@medium"), caido),
+    ]) else {
+        panic!("corrida caída por falha operacional não decide default");
+    };
+
+    assert!(reason.contains("1 de 2"), "{reason}");
+    // Sem menção de exclusão: quem caiu continua sendo cobrado da própria corrida.
+    assert!(!reason.contains("Fora da comparação"), "{reason}");
+}
+
+/// A mesma fronteira, offline: o julgamento só dispensa o oponente cujo medidor quebrou, e uma
+/// final caída por falha operacional continua sem quórum mesmo com o caderno inteiro aprovado.
+#[test]
+fn o_julgamento_nao_dispensa_o_oponente_que_caiu_por_falha_operacional() {
+    let mut report = julgado(
+        &[
+            ("openai/gpt-5.6-terra@medium", 90_000, true),
+            ("openai/gpt-5.6-luna@medium", 40_000, false),
+        ],
+        &[],
+    );
+    report["phase_two"][1]["run"]["halted_by"] = json!("operational");
+
+    let bakeoff::Decision::NoWinner { reason } =
+        bakeoff::judged_decision(&report, &aprovando(&report)).unwrap()
+    else {
+        panic!("falha operacional não abre W.O.");
+    };
+
+    assert!(reason.contains("1 de 2"), "{reason}");
+    assert!(!reason.contains("W.O."), "{reason}");
+}
+
+/// O W.O. dispensa o oponente, nunca os gates de qualidade: o vencedor solitário passa pelos mesmos
+/// filtros de sempre, e reprovar neles é ficar sem default.
+#[test]
+fn o_wo_nao_afrouxa_os_gates_de_qualidade() {
+    let falho = score_of(56, 57, 700_000);
+    let quebrado = Score {
+        halted_by: Some(super::Halt::CostMeterBroken),
+        complete: false,
+        ..score_of(0, 1, 349_833)
+    };
+
+    let Decision::NoWinner { reason } = bakeoff::decide(&[
+        (pinned("openai/gpt-5.6-terra@medium"), falho),
+        (pinned("openai/gpt-5.6-luna@medium"), quebrado),
+    ]) else {
+        panic!("quem não zerou a suíte não vira default nem sem oponente");
+    };
+
+    assert!(reason.contains("zerou a suíte"), "{reason}");
+}
+
+/// O julgamento cego aplica a mesma ressalva, offline: é lá que o default é escrito, e um relatório
+/// parado por medidor quebrado fecha com o finalista que mediu.
+#[test]
+fn o_julgamento_fecha_por_wo_quando_o_medidor_do_outro_quebrou() {
+    let mut report = julgado(
+        &[
+            ("openai/gpt-5.6-terra@medium", 90_000, true),
+            ("openai/gpt-5.6-luna@medium", 40_000, false),
+        ],
+        &[],
+    );
+    report["phase_two"][1]["run"]["halted_by"] = json!("cost_meter_broken");
+
+    let bakeoff::Decision::Adopt { model, rationale } =
+        bakeoff::judged_decision(&report, &aprovando(&report)).unwrap()
+    else {
+        panic!("com o caderno aprovado e o oponente fora, o default sai");
+    };
+
+    assert_eq!(model, "openai/gpt-5.6-terra@medium");
+    assert!(
+        rationale.contains("openai/gpt-5.6-luna@medium"),
+        "{rationale}"
+    );
+    assert!(rationale.contains("W.O."), "{rationale}");
+}
+
+/// O W.O. não atravessa a leitura cega: um bilhete reprovado tira o vencedor solitário, e a corrida
+/// termina sem default.
+#[test]
+fn o_wo_nao_sobrevive_a_um_bilhete_reprovado() {
+    let mut report = julgado(
+        &[
+            ("openai/gpt-5.6-terra@medium", 90_000, true),
+            ("openai/gpt-5.6-luna@medium", 40_000, false),
+        ],
+        &[],
+    );
+    report["phase_two"][1]["run"]["halted_by"] = json!("cost_meter_broken");
+    let mut verdicts = aprovando(&report);
+    for ticket in bilhetes_de(&report, "openai/gpt-5.6-terra@medium") {
+        verdicts.insert(ticket, bakeoff::Judgment::Rejected);
+    }
+
+    let bakeoff::Decision::NoWinner { reason } =
+        bakeoff::judged_decision(&report, &verdicts).unwrap()
+    else {
+        panic!("didática reprovada não vira default nem por W.O.");
+    };
+
+    assert!(reason.contains("julgamento cego"), "{reason}");
 }

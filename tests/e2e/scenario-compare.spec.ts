@@ -170,15 +170,14 @@ test.describe("Superfície de comparação (real × cenário)", () => {
   // Plano 074, fatia B: o veredito (Nível 1) precisa aparecer ACIMA da grade de KPI, no
   // browser real, com ícone + palavra + cor — nunca só cor (o cenário mockado fura o caixa
   // em agosto, então o veredito é o ramo de risco).
-  test("veredito (Nível 1) aparece acima da grade de KPI com ícone + palavra + cor", async ({
+  test("veredito (Nível 1) aparece acima da grade de KPI, com o estado em palavra", async ({
     page,
   }) => {
     const banner = page.locator(".scn-verdict");
     await expect(banner).toBeVisible();
-    await expect(banner).toHaveClass(/scn-verdict--risk/);
+    // Nunca só cor: o nível vem escrito na pílula, do vocabulário fechado do app.
+    await expect(banner).toContainText("Buraco");
     await expect(banner).toContainText("Fura o caixa");
-    // Nunca só cor: um ícone (svg) acompanha a palavra dentro do banner.
-    await expect(banner.locator("svg")).toBeVisible();
 
     const kpis = page.locator(".scn-kpis");
     const bannerBox = await banner.boundingBox();

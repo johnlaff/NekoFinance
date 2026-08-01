@@ -10,11 +10,13 @@
 //! com modelo, provedor e resultados, para que qualquer mudança de fachada, prompt ou modelo seja
 //! reavaliada pelo mesmo critério.
 
+pub(crate) mod bakeoff;
 pub(crate) mod case;
 pub(crate) mod cli;
 pub(crate) mod fixtures;
 pub(crate) mod grade;
 pub(crate) mod report;
+pub(crate) mod resume;
 
 #[cfg(test)]
 mod tests;
@@ -34,14 +36,91 @@ use tokio::sync::mpsc;
 
 pub(crate) struct BenchConfig {
     pub pin: &'static ModelPin,
-    /// A trava de gasto do runner, em milionésimos de dólar sobre o custo declarado pelo
-    /// provedor. Ela fecha ANTES de abrir a próxima repetição: uma rodada em andamento termina, e
-    /// o estouro máximo é o teto de UMA rodada — que os limites por rodada já prendem.
-    pub max_spend_micro_usd: i64,
     /// Onde está o pack curado do método. Ausente, a bancada roda com o prefixo degradado — a
     /// conversa diz que não tem o método de cor, como na máquina de quem não o instalou.
     pub pack_root: Option<PathBuf>,
+    pub repetitions: Repetitions,
+    /// O prefixo de sistema JÁ montado, quando quem chama quer que todas as corridas leiam o
+    /// mesmo pack. Ausente, cada corrida monta o seu — que é o certo para a corrida solta e
+    /// errado para o bakeoff, onde um pack editado no meio daria prompts diferentes a candidatos
+    /// que precisam ser comparáveis.
+    pub system: Option<std::sync::Arc<prompt::SystemPrompt>>,
     pub limits: RunLimits,
+}
+
+/// Quantas vezes cada caso corre.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Repetitions {
+    /// Como o arquivo do caso declara: a corrida solta respeita a autoria, porque quem escreveu o
+    /// caso sabe se ele precisa de mais de uma amostra.
+    AsAuthored,
+    /// O mesmo número para todo caso. É assim que as fases do bakeoff comparam candidatos: sobre
+    /// a mesma quantidade de evidência por caso, senão um caso repetido pesaria mais que outro na
+    /// taxa que decide o default.
+    Fixed(u32),
+}
+
+/// A trava de gasto do runner, em milionésimos de dólar sobre o custo COBRADO de cada rodada — o
+/// declarado pelo provedor ou, na rodada sem declaração, o pior caso que ela tinha permissão de
+/// gastar. A trava erra para cima, nunca segue sem saber.
+///
+/// Ela é UMA e viaja por todas as corridas do bakeoff: uma trava por corrida deixaria o teto ser
+/// gasto uma vez por candidato. Fecha ANTES de abrir a próxima repetição — a rodada em andamento
+/// termina, e o estouro máximo é o teto de UMA rodada, que os limites por rodada já prendem.
+///
+/// O teto da FASE é o segundo botão: a peneira corre sob uma fatia do teto para que a final, que
+/// é quem decide o default, encontre dinheiro sobrando quando chegar a vez dela.
+#[derive(Debug)]
+pub(crate) struct SpendLock {
+    cap_micro_usd: i64,
+    phase_cap_micro_usd: i64,
+    spent_micro_usd: i64,
+}
+
+impl SpendLock {
+    pub(crate) fn new(cap_micro_usd: i64) -> Self {
+        Self {
+            cap_micro_usd,
+            phase_cap_micro_usd: cap_micro_usd,
+            spent_micro_usd: 0,
+        }
+    }
+
+    /// Abre uma fase sob o teto pedido, nunca acima do teto total.
+    pub(crate) fn open_phase(&mut self, cap_micro_usd: i64) {
+        self.phase_cap_micro_usd = cap_micro_usd.min(self.cap_micro_usd);
+    }
+
+    /// Uma repetição pode nascer? Só o dinheiro decide: a lacuna de custo não fecha a trava — ela
+    /// é cobrada pelo pior caso na conta, e quem a repete perde a própria corrida, nunca a dos
+    /// outros.
+    pub(crate) fn may_start(&self) -> bool {
+        self.spent_micro_usd < self.phase_cap_micro_usd
+    }
+
+    /// Quanto ainda cabe, pelo MENOR dos dois tetos vigentes. É o que a rodada seguinte pode
+    /// gastar no pior caso: a trava fecha entre repetições, então sem apertar o teto POR rodada a
+    /// última repetição estouraria o teto pelo tamanho dela — e olhar só o teto total deixaria a
+    /// última rodada da peneira comer a reserva da final.
+    pub(crate) fn remaining_micro_usd(&self) -> i64 {
+        (self.cap_micro_usd.min(self.phase_cap_micro_usd) - self.spent_micro_usd).max(0)
+    }
+
+    pub(crate) fn record(&mut self, charged_micro_usd: i64) {
+        self.spent_micro_usd = self.spent_micro_usd.saturating_add(charged_micro_usd);
+    }
+
+    pub(crate) fn spent_micro_usd(&self) -> i64 {
+        self.spent_micro_usd
+    }
+
+    pub(crate) fn cap_micro_usd(&self) -> i64 {
+        self.cap_micro_usd
+    }
+
+    pub(crate) fn phase_cap_micro_usd(&self) -> i64 {
+        self.phase_cap_micro_usd
+    }
 }
 
 /// O que uma repetição deixou para o relatório.
@@ -55,9 +134,23 @@ pub(crate) struct RepetitionOutcome {
     pub answer: Option<String>,
     pub tools_called: Vec<String>,
     pub cost_micro_usd: i64,
+    /// O que a trava descontou por esta repetição: o custo declarado — ou, quando o provedor não
+    /// declarou, o pior caso `max(parcial declarado, permissão da rodada)`. É também o número que
+    /// compara candidatos: quem não sabe dizer quanto custou conta pelo máximo, senão a lacuna
+    /// deixaria o candidato cego mais barato no papel.
+    pub charged_micro_usd: i64,
     /// Falso quando algum turno terminou sem custo declarado pelo provedor — a repetição custou
-    /// dinheiro que o contador não viu, e a trava do runner deixa de ser confiável.
+    /// dinheiro que o contador não viu, e é cobrada pelo pior caso.
     pub cost_declared: bool,
+    /// A rodada foi cortada pelo teto que a TRAVA apertou, não pelo teto da conversa. É outra
+    /// coisa que uma resposta ruim: o modelo não terminou de responder porque o dinheiro do
+    /// bakeoff acabou, e contar isso como erro dele — ou a corrida como completa — inventaria um
+    /// resultado que ninguém mediu.
+    pub budget_truncated: bool,
+    /// O erro terminal da rodada, quando houve — código e mensagem NOSSOS, nunca o texto cru do
+    /// provedor. Sem ele no relatório, todo `stop: Failed` exige arqueologia manual: descobrir
+    /// por que um modelo morreu custaria de novo o curl que já custou uma vez.
+    pub error: Option<crate::mia::run::RunError>,
     pub turns: u32,
     pub attempts: u32,
 }
@@ -71,6 +164,49 @@ pub(crate) struct CaseRun {
     pub aborted: bool,
 }
 
+impl CaseRun {
+    /// O caso foi medido inteiro: nem faltaram repetições, nem alguma delas parou no meio porque
+    /// o dinheiro acabou.
+    pub(crate) fn measured(&self) -> bool {
+        !self.aborted && !self.outcomes.iter().any(|outcome| outcome.budget_truncated)
+    }
+}
+
+/// Por que a corrida parou antes de medir tudo — quando parou. Um valor por motivo, serializado
+/// por extenso: quem abre o relatório precisa entender a parada sem ler este código.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Halt {
+    /// A trava de gasto fechou no teto: o dinheiro da fase acabou.
+    SpendCeiling,
+    /// Segunda rodada sem custo declarado do MESMO pin: o medidor do provedor está quebrado, e
+    /// medir sem medidor não é medir. Fecha só esta corrida; as dos outros pins seguem.
+    CostMeterBroken,
+    /// Falha operacional — pool, migração, fixture, consentimento. O detalhe vive em `failure`.
+    Operational,
+}
+
+impl Halt {
+    /// A parada que o relatório nomeia, lida de volta. Desconhecida é recusa: um motivo que esta
+    /// versão não conhece pode ser exatamente o que muda quem entra na decisão.
+    pub(crate) fn from_slug(slug: &str) -> Option<Halt> {
+        match slug {
+            "spend_ceiling" => Some(Halt::SpendCeiling),
+            "cost_meter_broken" => Some(Halt::CostMeterBroken),
+            "operational" => Some(Halt::Operational),
+            _ => None,
+        }
+    }
+
+    /// O nome que o relatório publica.
+    pub(crate) fn slug(self) -> &'static str {
+        match self {
+            Halt::SpendCeiling => "spend_ceiling",
+            Halt::CostMeterBroken => "cost_meter_broken",
+            Halt::Operational => "operational",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct BenchRun {
     pub pin: &'static ModelPin,
@@ -78,15 +214,47 @@ pub(crate) struct BenchRun {
     /// didática só valem julgamento quando o núcleo estava montado.
     pub method_core: bool,
     pub cases: Vec<CaseRun>,
+    /// O custo COBRADO desta corrida — declarado, ou pior caso onde faltou declaração. É ele que
+    /// compara candidatos; o acumulado do bakeoff vive na trava, que atravessa todas as corridas.
     pub total_cost_micro_usd: i64,
-    /// A trava vigente na execução, gravada no relatório: um total baixo com trava baixa e um
+    /// A trava vigente na corrida, gravada no relatório: um total baixo com trava baixa e um
     /// total baixo porque tudo passou são histórias diferentes.
     pub max_spend_micro_usd: i64,
-    pub spend_lock_hit: bool,
-    /// O provedor deixou de declarar custo em alguma repetição. A bancada fecha na hora — sem
-    /// custo declarado a trava do runner é cega, e "custo zero" no relatório significaria "não
-    /// medi", nunca "foi de graça".
+    /// Por que a corrida parou antes do fim — ou nada, quando mediu tudo.
+    pub halt: Option<Halt>,
+    /// A corrida parou por falha operacional — pool, migração, fixture, consentimento. O que ela
+    /// já mediu (e já pagou) fica aqui: um erro que levasse embora os outcomes deixaria dinheiro
+    /// gasto fora do relatório.
+    pub failure: Option<String>,
+    /// O provedor deixou de declarar custo em alguma repetição DESTA corrida. Não para nada por
+    /// si: a rodada cega é cobrada pelo pior caso e pesa no custo comparável; a segunda lacuna
+    /// fecha a corrida deste pin.
     pub cost_gap: bool,
+}
+
+/// A configuração cobre o catálogo que vai correr?
+///
+/// Didática sem o núcleo do método não mede ensino — mede a recusa de capacidade da camada ausente,
+/// e o julgamento cego receberia respostas que nunca tiveram como ensinar. Melhor recusar a bancada
+/// inteira do que pagar por uma família que não vale julgamento. Vive fora do laço porque quem
+/// chama precisa poder perguntar ANTES de qualquer rodada paga: descobrir isso depois da sonda
+/// significa ter pago por ela à toa.
+pub(crate) fn ensure_pack_covers(
+    cases: &[Case],
+    pack_root: Option<&std::path::Path>,
+) -> Result<(), String> {
+    if pack_root.is_none()
+        && cases
+            .iter()
+            .any(|case| case.family == case::Family::Didatica)
+    {
+        return Err(
+            "Os casos de didática exigem o pack curado do método: rode com --pack, ou deixe-os \
+             de fora com --only."
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 /// As ferramentas que a rodada chamou, na ordem, lidas do transcript — inclusive as recusadas
@@ -100,31 +268,46 @@ pub(crate) fn tools_called(transcript: &[Value]) -> Vec<String> {
         .collect()
 }
 
+/// O teto de custo vigente numa repetição, e de onde ele veio.
+pub(crate) struct RoundBudget {
+    pub limits: RunLimits,
+    /// O teto foi reduzido pelo que sobrava na trava, e já não é o teto que a conversa usa no app.
+    /// É o que distingue "o modelo gastou demais" de "acabou o dinheiro do bakeoff".
+    pub tightened: bool,
+}
+
 /// Roda UMA repetição de um caso num pool já semeado, atravessando o loop real.
 pub(crate) async fn run_repetition<A: ProviderAdapter>(
     pool: &SqlitePool,
     ctx: &Context,
     adapter: &A,
     pin: &'static ModelPin,
-    limits: RunLimits,
+    budget: RoundBudget,
     system: &str,
     case: &Case,
 ) -> RepetitionOutcome {
+    // A permissão de gasto desta rodada, guardada antes de os limites viajarem para o runner: é
+    // ela o pior caso que a cobrança usa quando o provedor não declara o custo.
+    let allowance_micro_usd = budget.limits.max_cost_micro_usd;
     let (events, mut receiver) = mpsc::channel(64);
     // A bancada lê o resultado consolidado, não o stream; o dreno existe para que a publicação
     // de eventos nunca prenda a rodada esperando por uma interface que não está aqui. No
-    // caminho, ele guarda o único fato que o resultado consolidado apaga: se algum turno chegou
-    // sem custo declarado.
+    // caminho, ele guarda os dois fatos que o resultado consolidado apaga: se algum turno chegou
+    // sem custo declarado, e o erro terminal — código e mensagem NOSSOS — que explica um stop
+    // Failed no relatório sem exigir arqueologia contra o provedor.
     let drain = tokio::spawn(async move {
         let mut usage_without_cost = false;
+        let mut terminal_error = None;
         while let Some(event) = receiver.recv().await {
-            if let RunEvent::Usage(usage) = &event
-                && usage.cost_micro_usd.is_none()
-            {
-                usage_without_cost = true;
+            match &event {
+                RunEvent::Usage(usage) if usage.cost_micro_usd.is_none() => {
+                    usage_without_cost = true;
+                }
+                RunEvent::Error(error) => terminal_error = Some(error.clone()),
+                _ => {}
             }
         }
-        usage_without_cost
+        (usage_without_cost, terminal_error)
     });
 
     let runner = Runner {
@@ -132,7 +315,7 @@ pub(crate) async fn run_repetition<A: ProviderAdapter>(
         ctx,
         adapter,
         pin,
-        limits,
+        limits: budget.limits,
         cancel: CancelToken::new(),
         events,
     };
@@ -146,8 +329,26 @@ pub(crate) async fn run_repetition<A: ProviderAdapter>(
     drop(runner);
     // Dreno perdido conta como lacuna: na dúvida entre "não vi custo" e "não houve custo", a
     // trava de gasto precisa do lado fechado.
-    let usage_without_cost = drain.await.unwrap_or(true);
-    let cost_declared = !usage_without_cost && (outcome.turns == 0 || outcome.cost_micro_usd > 0);
+    let (usage_without_cost, terminal_error) = drain.await.unwrap_or((true, None));
+    // Duas perguntas, e uma lacuna em qualquer delas marca a rodada: o stream publicou uso sem
+    // custo? o runner viu dinheiro em dúvida em ALGUMA tentativa — stream aberto que terminou sem
+    // linha de uso, ou abertura que acabou sem resposta do servidor (transporte, timeout,
+    // interrupção)? Só a recusa RESPONDIDA fica de fora, e de propósito: com status HTTP na mão,
+    // o corpo de erro não é stream e nada foi gerado nem cobrado.
+    let cost_declared = !usage_without_cost && outcome.cost_declared;
+    // A cobrança da lacuna: o pior caso é o MAIOR entre o parcial declarado e a permissão da
+    // rodada — o corte por custo é pós-turno, então o parcial pode passar da permissão, e cobrar
+    // "só o teto" subcobraria uma rodada que provadamente gastou mais. A trava erra para cima,
+    // nunca segue sem saber.
+    let charged_micro_usd = if cost_declared {
+        outcome.cost_micro_usd
+    } else {
+        outcome.cost_micro_usd.max(allowance_micro_usd)
+    };
+
+    // Quem cortou a rodada: o teto da conversa ou o dinheiro que sobrava? Só o segundo desqualifica
+    // a medição — o primeiro é um resultado legítimo sobre o modelo.
+    let budget_truncated = outcome.stop == StopReason::CostCap && budget.tightened;
 
     let observed = grade::Observed {
         stop: outcome.stop,
@@ -164,7 +365,10 @@ pub(crate) async fn run_repetition<A: ProviderAdapter>(
         answer: outcome.answer,
         tools_called: observed.tools_called,
         cost_micro_usd: outcome.cost_micro_usd,
+        charged_micro_usd,
         cost_declared,
+        budget_truncated,
+        error: terminal_error,
         turns: outcome.turns,
         attempts: outcome.attempts,
     }
@@ -176,21 +380,9 @@ pub(crate) async fn run_catalog<A: ProviderAdapter>(
     adapter: &A,
     cases: Vec<Case>,
     config: &BenchConfig,
+    lock: &mut SpendLock,
 ) -> Result<BenchRun, String> {
-    // Didática sem o núcleo do método não mede ensino — mede a recusa de capacidade da camada
-    // ausente, e o julgamento cego receberia respostas que nunca tiveram como ensinar. Melhor
-    // recusar a bancada inteira do que pagar por uma família que não vale julgamento.
-    if config.pack_root.is_none()
-        && cases
-            .iter()
-            .any(|case| case.family == case::Family::Didatica)
-    {
-        return Err(
-            "Os casos de didática exigem o pack curado do método: rode com --pack, ou deixe-os \
-             de fora com --only."
-                .to_string(),
-        );
-    }
+    ensure_pack_covers(&cases, config.pack_root.as_deref())?;
 
     // O prefixo é montado uma vez, como na aplicação: ele é o mesmo para toda rodada, e é sobre
     // o texto MONTADO que o gate de privacidade do pack já passou. A ausência de pack usa um
@@ -203,66 +395,106 @@ pub(crate) async fn run_catalog<A: ProviderAdapter>(
             uuid::Uuid::new_v4()
         ))
     });
-    let system = prompt::system_prompt(&MethodPack::at(&pack_root))
-        .await
-        .map_err(|error| format!("{} {}", error.message, error.fix))?;
+    let system = match &config.system {
+        Some(snapshot) => std::sync::Arc::clone(snapshot),
+        None => std::sync::Arc::new(
+            // O hoje do prefixo e o relógio das repetições são o MESMO relógio da bancada: o
+            // dia que o modelo lê é o dia em que as fixtures vivem.
+            prompt::system_prompt(&MethodPack::at(&pack_root), fixtures::bench_clock().today())
+                .await
+                .map_err(|error| format!("{} {}", error.message, error.fix))?,
+        ),
+    };
 
     let mut runs: Vec<CaseRun> = Vec::with_capacity(cases.len());
     let mut total_cost_micro_usd = 0_i64;
-    let mut spend_lock_hit = false;
-    let mut cost_gap = false;
+    let mut halt: Option<Halt> = None;
+    let mut failure: Option<String> = None;
+    let mut undeclared_rounds = 0_u32;
 
     for case in cases {
         let mut outcomes = Vec::new();
         let mut aborted = false;
+        if halt.is_some() {
+            runs.push(CaseRun {
+                case,
+                outcomes,
+                aborted: true,
+            });
+            continue;
+        }
+        let repetitions = match config.repetitions {
+            Repetitions::AsAuthored => case.repetitions,
+            Repetitions::Fixed(fixed) => fixed,
+        };
 
-        for _ in 0..case.repetitions {
-            if total_cost_micro_usd >= config.max_spend_micro_usd {
-                spend_lock_hit = true;
+        for repetition in 0..repetitions {
+            if !lock.may_start() {
+                halt = Some(Halt::SpendCeiling);
                 aborted = true;
                 break;
             }
-            if cost_gap {
-                aborted = true;
-                break;
-            }
 
-            let pool = SqlitePoolOptions::new()
-                // Uma conexão, como a de produção: pool folgado esconderia deadlock de transação.
-                .max_connections(1)
-                .connect("sqlite::memory:")
-                .await
-                .map_err(|error| format!("O pool da bancada não abriu: {error}."))?;
-            sqlx::migrate!("./migrations")
-                .run(&pool)
-                .await
-                .map_err(|error| format!("As migrações da bancada falharam: {error}."))?;
-            fixtures::seed(&pool, &case.fixture).await?;
-            // O consentimento é semeado porque quem roda a bancada JÁ consentiu — a chave
-            // dedicada é dela — e o loop recusa rodada sem registro, na bancada como no app.
-            consent::grant(&pool, config.pin, &fixtures::bench_clock().as_of())
-                .await
-                .map_err(|error| format!("O consentimento da bancada não gravou: {error}."))?;
+            // A preparação da repetição é falível, e falhar aqui NÃO pode descartar o que as
+            // repetições anteriores já pagaram: a falha vira estado da corrida e o laço para.
+            let prepared = prepare(config, &case.fixture).await;
+            let pool = match prepared {
+                Ok(pool) => pool,
+                Err(error) => {
+                    failure = Some(error);
+                    halt = Some(Halt::Operational);
+                    aborted = true;
+                    break;
+                }
+            };
 
             let ctx = Context {
                 clock: fixtures::bench_clock(),
                 pack: MethodPack::at(&pack_root),
+                conversation_id: None,
+            };
+            // O teto da rodada é o menor entre o da conversa e o que sobra na trava: assim o teto
+            // acumulado é respeitado pelo corte DENTRO da rodada, e não só pela decisão de não
+            // abrir a próxima.
+            let remaining = lock.remaining_micro_usd();
+            let budget = RoundBudget {
+                tightened: remaining < config.limits.max_cost_micro_usd,
+                limits: RunLimits {
+                    max_cost_micro_usd: config.limits.max_cost_micro_usd.min(remaining),
+                    ..config.limits.clone()
+                },
             };
             let outcome = run_repetition(
                 &pool,
                 &ctx,
                 adapter,
                 config.pin,
-                config.limits.clone(),
+                budget,
                 &system.text,
                 &case,
             )
             .await;
-            total_cost_micro_usd = total_cost_micro_usd.saturating_add(outcome.cost_micro_usd);
+            // O total e a trava andam pelo COBRADO: declarado, ou pior caso onde faltou
+            // declaração — a lacuna pesa no candidato em vez de deixá-lo mais barato no papel.
+            total_cost_micro_usd = total_cost_micro_usd.saturating_add(outcome.charged_micro_usd);
+            lock.record(outcome.charged_micro_usd);
             if !outcome.cost_declared {
-                cost_gap = true;
+                undeclared_rounds += 1;
             }
             outcomes.push(outcome);
+            // O mundo da repetição fecha no fim dela, em ponto determinístico: o Drop do sqlx
+            // devolve a conexão de forma assíncrona, no ritmo do runtime — e uma corrida são
+            // centenas de repetições cujo saldo de recursos não pode depender desse ritmo.
+            pool.close().await;
+            // Uma lacuna é soluço, cobrado pelo pior caso; a SEGUNDA é o medidor do provedor
+            // quebrado, e medir sem medidor não é medir. Fecha a corrida DESTE pin — o resíduo
+            // ratificado é de até duas rodadas cegas por pin — e a bancada segue para os outros.
+            // Repetição que ficou por correr deixa o caso abortado: caso pela metade não é medido.
+            if undeclared_rounds >= 2 {
+                halt = Some(Halt::CostMeterBroken);
+                aborted = repetition + 1 < repetitions;
+                break;
+            }
         }
 
         runs.push(CaseRun {
@@ -272,15 +504,53 @@ pub(crate) async fn run_catalog<A: ProviderAdapter>(
         });
     }
 
+    let cost_gap = runs
+        .iter()
+        .any(|run| run.outcomes.iter().any(|outcome| !outcome.cost_declared));
     Ok(BenchRun {
         pin: config.pin,
         method_core: system.method_core,
         cases: runs,
         total_cost_micro_usd,
-        max_spend_micro_usd: config.max_spend_micro_usd,
-        spend_lock_hit,
+        max_spend_micro_usd: lock.phase_cap_micro_usd(),
+        halt,
         cost_gap,
+        failure,
     })
+}
+
+/// Monta o mundo de UMA repetição: pool novo, migrado, semeado e consentido. Cada repetição mede o
+/// modelo sobre o mesmo mundo, nunca sobre o rastro da anterior. Quem recebe o pool o fecha ao fim
+/// da repetição; falha no meio da montagem fecha aqui — conexão de um mundo que não vai ser medido
+/// não fica esperando o Drop.
+async fn prepare(config: &BenchConfig, fixture: &str) -> Result<SqlitePool, String> {
+    let pool = SqlitePoolOptions::new()
+        // Uma conexão, como a de produção: pool folgado esconderia deadlock de transação.
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .map_err(|error| format!("O pool da bancada não abriu: {error}."))?;
+    if let Err(error) = furnish(&pool, config, fixture).await {
+        pool.close().await;
+        return Err(error);
+    }
+    Ok(pool)
+}
+
+/// Migra, semeia e consente sobre um pool já aberto — o pedaço falível da montagem, separado para
+/// que a falha em qualquer passo devolva a conexão em vez de vazá-la.
+async fn furnish(pool: &SqlitePool, config: &BenchConfig, fixture: &str) -> Result<(), String> {
+    sqlx::migrate!("./migrations")
+        .run(pool)
+        .await
+        .map_err(|error| format!("As migrações da bancada falharam: {error}."))?;
+    fixtures::seed(pool, fixture).await?;
+    // O consentimento é semeado porque quem roda a bancada JÁ consentiu — a chave dedicada é dela
+    // — e o loop recusa rodada sem registro, na bancada como no app.
+    consent::grant(pool, config.pin, &fixtures::bench_clock().as_of())
+        .await
+        .map_err(|error| format!("O consentimento da bancada não gravou: {error}."))?;
+    Ok(())
 }
 
 /// A porta do binário. Vive no lib para que a bancada inteira seja exercitável pela suíte; o
@@ -300,13 +570,19 @@ pub fn main() -> std::process::ExitCode {
         }
     };
 
-    let ci = std::env::var("CI").ok();
-    let key = std::env::var("NEKO_MIA_BENCH_KEY").ok();
-    if let Some(reason) = cli::refuse_reason(ci.as_deref(), key.as_deref()) {
-        eprintln!("{reason}");
-        return std::process::ExitCode::FAILURE;
-    }
-    let key = key.expect("a recusa de ambiente cobre a chave ausente");
+    // O julgamento é leitura e conta: não fala com o provedor, não gasta e não pede chave. As duas
+    // recusas de ambiente valem para quem vai gastar dinheiro.
+    let key = if cli.mode == cli::Mode::Judge {
+        String::new()
+    } else {
+        let ci = std::env::var("CI").ok();
+        let key = std::env::var("NEKO_MIA_BENCH_KEY").ok();
+        if let Some(reason) = cli::refuse_reason(ci.as_deref(), key.as_deref()) {
+            eprintln!("{reason}");
+            return std::process::ExitCode::FAILURE;
+        }
+        key.expect("a recusa de ambiente cobre a chave ausente")
+    };
 
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(runtime) => runtime,
@@ -328,6 +604,10 @@ pub fn main() -> std::process::ExitCode {
 }
 
 async fn execute(cli: cli::CliArgs, key: String) -> Result<String, String> {
+    if cli.mode == cli::Mode::Judge {
+        return judge(&cli).await;
+    }
+
     let mut cases = case::load_catalog(&cli.cases_dir).map_err(|error| error.to_string())?;
     // O filtro corta DEPOIS da carga: o catálogo inteiro continua obrigado a ser válido e a
     // cobrir as seis famílias, mesmo quando só um caso vai rodar.
@@ -337,20 +617,6 @@ async fn execute(cli: cli::CliArgs, key: String) -> Result<String, String> {
             return Err(format!("Nenhum caso do catálogo casa com \"{only}\"."));
         }
     }
-
-    let pin = match &cli.model {
-        Some(model) => crate::mia::provider::pins::pin(model).ok_or_else(|| {
-            format!(
-                "O modelo \"{model}\" não está na matriz de pins. Use um destes: {}.",
-                crate::mia::provider::pins::PINS
-                    .iter()
-                    .map(|pin| pin.model)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        })?,
-        None => crate::mia::provider::pins::default_pin(),
-    };
 
     // O destino do relatório é validado ANTES de qualquer rodada: descobrir o diretório
     // impossível depois do catálogo pago jogaria a bancada fora.
@@ -371,21 +637,84 @@ async fn execute(cli: cli::CliArgs, key: String) -> Result<String, String> {
         })?;
 
     let adapter = crate::mia::provider::http::HttpAdapter::new(key)?;
+    let mut lock = SpendLock::new(cli.max_spend_micro_usd);
+    let ran_at = chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
+
+    if cli.mode == cli::Mode::Bakeoff {
+        // A retomada é lida ANTES de qualquer rodada: um relatório incompatível com a matriz de
+        // hoje precisa recusar antes de gastar, não depois.
+        let resumed = match &cli.resume {
+            None => None,
+            Some(path) => {
+                let text = std::fs::read_to_string(path)
+                    .map_err(|error| format!("{} não pôde ser lido: {error}.", path.display()))?;
+                let report: Value = serde_json::from_str(&text).map_err(|error| {
+                    format!("{} não parseia como JSON: {error}.", path.display())
+                })?;
+                Some(resume::parse(
+                    &report,
+                    &cases,
+                    path.clone(),
+                    cli.assume_pin_identity,
+                )?)
+            }
+        };
+        let config = bakeoff::BakeoffConfig {
+            cases,
+            resumed,
+            execution_id: uuid::Uuid::new_v4().to_string(),
+            blind_sheet_path: std::cell::OnceCell::new(),
+            pack_root: cli.pack_root.clone(),
+            limits: RunLimits::default(),
+            reports_dir: &cli.reports_dir,
+            ran_at: &ran_at,
+        };
+        let (bakeoff, path) = bakeoff::run(&adapter, config, &mut lock).await?;
+        // O caminho do caderno cego sai junto: é ele que se abre ANTES do relatório.
+        let sheet = bakeoff.blind_sheet_path.clone();
+        return Ok(bakeoff::summary(&bakeoff, &path, sheet.as_deref()));
+    }
+
+    let pin = match &cli.model {
+        // O rótulo (`modelo@esforço`) identifica o candidato; o nome do modelo sozinho só serve
+        // enquanto um único pin o corre — com dois esforços do mesmo modelo, a escolha é de quem
+        // invoca, nunca de um desempate silencioso.
+        Some(model) => crate::mia::provider::pins::pin(model)
+            .or_else(
+                || match crate::mia::provider::pins::by_model(model).as_slice() {
+                    [only] => Some(only),
+                    _ => None,
+                },
+            )
+            .ok_or_else(|| {
+                format!(
+                    "\"{model}\" não identifica um candidato na matriz de pins. Use um destes: {}.",
+                    crate::mia::provider::pins::PINS
+                        .iter()
+                        .map(|pin| pin.label)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })?,
+        None => crate::mia::provider::pins::default_pin(),
+    };
     let config = BenchConfig {
         pin,
-        max_spend_micro_usd: cli.max_spend_micro_usd,
         pack_root: cli.pack_root.clone(),
+        repetitions: Repetitions::AsAuthored,
+        // A corrida solta monta o prefixo dela: é uma corrida só, e não há comparabilidade a
+        // proteger entre candidatos.
+        system: None,
         limits: RunLimits::default(),
     };
-    let run = run_catalog(&adapter, cases, &config).await?;
+    let run = run_catalog(&adapter, cases, &config, &mut lock).await?;
 
-    let ran_at = chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
     let pack = cli.pack_root.as_ref().map(MethodPack::at);
     let path = report::write(&cli.reports_dir, &run, &ran_at, pack.as_ref()).await?;
 
     let outcomes = || run.cases.iter().flat_map(|case| case.outcomes.iter());
     Ok(format!(
-        "{} casos, {} repetições: {} aprovadas, {} reprovadas, {} pendentes de julgamento, {} casos abortados pela trava.\nCusto declarado: {} micro-USD (trava em {}).\nRelatório: {}",
+        "{} casos, {} repetições: {} aprovadas, {} reprovadas, {} pendentes de julgamento, {} casos abortados pela trava.\nCusto contabilizado: {} micro-USD (trava em {}; rodada sem custo declarado é cobrada pelo pior caso).\nRelatório: {}",
         run.cases.len(),
         outcomes().count(),
         outcomes()
@@ -402,4 +731,109 @@ async fn execute(cli: cli::CliArgs, key: String) -> Result<String, String> {
         run.max_spend_micro_usd,
         path.display(),
     ))
+}
+
+/// Fecha o ciclo do julgamento cego: lê o caderno julgado, aplica os vereditos ao relatório e
+/// grava a decisão final.
+///
+/// A decisão passa a existir no arquivo, não na cabeça de quem leu — e continua sendo adotada à
+/// mão, porque trocar o pin é gesto deliberado.
+async fn judge(cli: &cli::CliArgs) -> Result<String, String> {
+    let report_path = cli.report.as_ref().expect("o parse exige --report");
+    let verdicts_path = cli.verdicts.as_ref().expect("o parse exige --verdicts");
+
+    let read = |path: &std::path::Path| -> Result<Value, String> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|error| format!("{} não pôde ser lido: {error}.", path.display()))?;
+        serde_json::from_str(&text)
+            .map_err(|error| format!("{} não parseia como JSON: {error}.", path.display()))
+    };
+    let mut report = read(report_path)?;
+    let judged = read(verdicts_path)?;
+
+    // Os bilhetes são determinísticos — caso e posição —, então o caderno de uma execução casaria
+    // com o relatório de outra sem nada reclamar. É a identidade da execução que amarra os dois.
+    let identity = |value: &Value, what: &str| -> Result<String, String> {
+        value["execution_id"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| format!("{what} não traz execution_id: ele é de uma versão anterior."))
+    };
+    let report_id = identity(&report, "O relatório")?;
+    let sheet_id = identity(&judged, "O caderno")?;
+    if report_id != sheet_id {
+        return Err(format!(
+            "O caderno é da execução {sheet_id} e o relatório é da {report_id}. Julgue o caderno \
+             que nasceu com este relatório."
+        ));
+    }
+
+    // O veredito é sobre um TEXTO: um caderno com a resposta trocada faria a pessoa julgar uma
+    // coisa e o comando aplicar o julgamento a outra.
+    bakeoff::ensure_sheet_matches(&report, &judged)?;
+
+    let entries = judged["entries"]
+        .as_array()
+        .ok_or_else(|| "O caderno julgado não traz uma lista entries.".to_string())?;
+    let mut verdicts = std::collections::BTreeMap::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for entry in entries {
+        let ticket = entry["ticket"]
+            .as_str()
+            .ok_or_else(|| "Um bilhete do caderno não tem identificador.".to_string())?;
+        // A repetição é conferida ANTES do veredito: um bilhete em branco seguido do mesmo
+        // bilhete preenchido passaria despercebido se a checagem viesse depois.
+        if !seen.insert(ticket.to_string()) {
+            return Err(format!(
+                "O bilhete {ticket} aparece mais de uma vez no caderno. Deixe um veredito por \
+                 bilhete."
+            ));
+        }
+        // Sem veredito, o bilhete simplesmente não entra — e a cobertura reclama dele adiante,
+        // nomeando o que falta ler em vez de decidir por omissão.
+        let Some(verdict) = entry.get("verdict").and_then(Value::as_str) else {
+            continue;
+        };
+        let verdict = match verdict {
+            "aprovado" => bakeoff::Judgment::Approved,
+            "reprovado" => bakeoff::Judgment::Rejected,
+            other => {
+                return Err(format!(
+                    "O bilhete {ticket} traz o veredito \"{other}\": use \"aprovado\" ou \
+                     \"reprovado\"."
+                ));
+            }
+        };
+        verdicts.insert(ticket.to_string(), verdict);
+    }
+
+    let decision = bakeoff::judged_decision(&report, &verdicts)?;
+    report["decision"] = bakeoff::decision_json(&decision);
+    report["judged_at"] =
+        Value::String(chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false));
+
+    let pack = cli.pack_root.as_ref().map(MethodPack::at);
+    report::write_json(
+        report_path.parent().unwrap_or(std::path::Path::new(".")),
+        "",
+        Some(report_path),
+        &report,
+        pack.as_ref(),
+    )
+    .await?;
+
+    Ok(match decision {
+        bakeoff::Decision::Adopt { model, rationale } => format!(
+            "Default decidido: {model}.\n{rationale}\nPara adotar, mova o papel Default em \
+             src-tauri/src/mia/provider/pins.rs para {model}.\nRelatório: {}",
+            report_path.display()
+        ),
+        bakeoff::Decision::PendingBlindJudgment { .. } => {
+            "O relatório segue pendente de julgamento.".to_string()
+        }
+        bakeoff::Decision::NoWinner { reason } => format!(
+            "Sem default: {reason}\nRelatório: {}",
+            report_path.display()
+        ),
+    })
 }

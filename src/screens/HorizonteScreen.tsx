@@ -5,6 +5,7 @@ import { Button } from "../design-system/components/Button";
 import { EmptyState } from "../design-system/components/EmptyState";
 import { EstimateMark } from "../design-system/components/EstimateMark";
 import { InfoPopover } from "../design-system/components/InfoPopover";
+import { VerdictHero } from "../design-system/components/VerdictHero";
 import { Money } from "../design-system/components/Money";
 import {
   getForecast,
@@ -341,31 +342,44 @@ function Verdict({
 
   if (view.voice === "vazio") {
     return (
-      <>
-        <p className="hz__vlabel">Horizonte</p>
-        <h1 data-large-title>O radar só enxerga o que está lançado.</h1>
-        <p className="hz__vbody">
+      <VerdictHero
+        label="Horizonte"
+        headline="O radar só enxerga o que está lançado."
+        actions={
+          <Button variant="primary" onClick={() => onNavigate("lancamentos")}>
+            Pré-lançar o futuro
+          </Button>
+        }
+      >
+        <p>
           Pré-lance o que você já sabe que vem — contas fixas, parcelas, faturas,
           salário — e a estrada aparece sozinha.{" "}
           <span className="hz__cf">
             Começa pelo próximo mês; o resto o app propõe das recorrências.
           </span>
         </p>
-        <div className="hz__vactions">
-          <Button variant="primary" onClick={() => onNavigate("lancamentos")}>
-            Pré-lançar o futuro
-          </Button>
-        </div>
-      </>
+      </VerdictHero>
     );
   }
 
   if (view.voice === "aperto" && view.deficit) {
     return (
-      <>
-        <p className="hz__vlabel">{label}</p>
-        <h1 data-large-title>O caminho aperta em {view.deficitMonthLabel}.</h1>
-        <p className="hz__vbody">
+      <VerdictHero
+        label={label}
+        headline={`O caminho aperta em ${view.deficitMonthLabel}.`}
+        actions={
+          <>
+            <Button variant="primary" size="sm" onClick={onSimulate}>
+              Simular uma saída
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => onNavigate("calendario")}>
+              Abrir {view.deficitMonthLabel}
+            </Button>
+          </>
+        }
+        footer={<Provenance view={view} />}
+      >
+        <p>
           Do jeito que está lançado, o saldo passa por{" "}
           <b className="hz__neg">
             <Money cents={view.deficit.cents} size="inherit" />
@@ -375,27 +389,18 @@ function Verdict({
           atravessar: <b>antecipar</b> uma entrada, <b>adiar</b> uma saída que caiba, ou
           cruzar com a <b>reserva</b>, por partes, repondo depois.
         </p>
-        <div className="hz__vactions">
-          <Button variant="primary" size="sm" onClick={onSimulate}>
-            Simular uma saída
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => onNavigate("calendario")}>
-            Abrir {view.deficitMonthLabel}
-          </Button>
-        </div>
-        <Provenance view={view} />
-      </>
+      </VerdictHero>
     );
   }
 
   // Livre
   return (
-    <>
-      <p className="hz__vlabel">{label}</p>
-      <h1 data-large-title>
-        Caminho livre até o fim de {view.trustedMonthLabel ?? "dezembro"}.
-      </h1>
-      <p className="hz__vbody">
+    <VerdictHero
+      label={label}
+      headline={`Caminho livre até o fim de ${view.trustedMonthLabel ?? "dezembro"}.`}
+      footer={<Provenance view={view} />}
+    >
+      <p>
         {view.minPoint ? (
           <>
             O menor saldo à vista é{" "}
@@ -438,8 +443,7 @@ function Verdict({
           </span>
         )}
       </p>
-      <Provenance view={view} />
-    </>
+    </VerdictHero>
   );
 }
 
