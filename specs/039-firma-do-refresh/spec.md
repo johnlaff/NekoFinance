@@ -92,11 +92,15 @@ telas. Entra na lista como está: é a régua do método tornada visível.
   último elemento. Cinco ondas herdaram a frase "coreografia de entrada única por montagem"
   sem o número, e as sequências divergiram até quase um segundo — cinco tempos diferentes são
   o oposto de assinatura de motion.
-- **As coreografias usam os tokens `--dur-*` e não vivem dentro de media query.** Duração
-  hardcoded sob `@media (prefers-reduced-motion: no-preference)` é invisível para o
+- **As coreografias usam os tokens `--dur-*`, e ninguém LIGA movimento por media query.**
+  Duração hardcoded sob `@media (prefers-reduced-motion: no-preference)` é invisível para o
   atributo `[data-motion]`: o toggle "Animações" das Configurações não desliga o que promete,
   e ligá-lo explicitamente não restaura nada sob movimento reduzido do sistema. O token
   colapsa para 0ms nos dois gatilhos e é restaurado pela escolha explícita do usuário.
+- **Indicador em laço é a exceção, e ela tem preço.** Um giro `infinite` não sobrevive à
+  duração 0ms — ele trava em vez de parar. Esses vivem pela regra inversa, `animation: none`
+  explícito, e por isso todo kill por media query carrega o par `[data-motion="off"]`: sem
+  ele, o gatilho do atributo fica de fora e o toggle volta a não alcançar a animação.
 - Dinheiro nunca anima; movimento comunica estado, nunca decora.
 
 ### D7 — Caixa alta é para abreviação, nunca para rótulo
@@ -138,8 +142,10 @@ qualidade que ele recusa ser.
 3. `Receipt` no DS com dois consumidores (conversa e Teto do diário); a prosa que descrevia a
    fórmula do teto foi substituída, não somada; a preferência governa os dois.
 4. `MiaAvatar` é o único glifo de voz da Mia; `NekoMark` só no shell; nenhum gato decorativo.
-5. Toggle "Animações" desliga e restaura as coreografias das seis telas, verificado por teste;
-   nenhuma sequência de entrada excede ~400ms; as cinco specs das ondas carregam o número.
+5. Nenhuma folha de estilo do app liga movimento por media query, e todo kill por media query
+   carrega o par que o atributo alcança — verificado por teste sobre as telas E o chrome
+   compartilhado; nenhuma sequência de entrada excede ~400ms; as cinco specs das ondas
+   carregam o número.
 6. `text-transform: uppercase` sobrevive apenas no cabeçalho de dias do Calendário.
 7. Gates verdes: `npm run check`, baselines visuais regeneradas do zero e inspecionadas,
    React Doctor sem achado novo.
