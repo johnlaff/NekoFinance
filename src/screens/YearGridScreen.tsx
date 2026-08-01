@@ -149,15 +149,15 @@ function CalendarioRail({ month }: { month: CalendarMonth }) {
   };
   const cut = series.points.findIndex((p) => p.isFuture);
   const lastRealized = cut === -1 ? series.points.length - 1 : cut - 1;
-  const solid = series.points
-    .slice(0, lastRealized + 1)
-    .map((_, i) => at(i))
-    .join(" ");
-  const dashed = series.points
-    .map((_, i) => i)
-    .filter((i) => i >= Math.max(lastRealized, 0))
-    .map((i) => at(i))
-    .join(" ");
+  // Uma passada por traço: o trecho previsto começa no último ponto realizado,
+  // para que a linha sólida e a tracejada se encontrem sem intervalo.
+  const trace = (from: number, to: number) => {
+    const parts: string[] = [];
+    for (let i = from; i <= to; i++) parts.push(at(i));
+    return parts.join(" ");
+  };
+  const solid = trace(0, lastRealized);
+  const dashed = trace(Math.max(lastRealized, 0), series.points.length - 1);
   const dot = (i: number, cls: string) => {
     const p = series.points[i];
     if (!p) return null;
@@ -194,9 +194,7 @@ function CalendarioRail({ month }: { month: CalendarMonth }) {
         />
       ) : null}
       {series.points.map((p, i) =>
-        month.weeks.flat().find((c) => c?.iso === p.iso)?.hasIncome
-          ? dot(i, `calendario__rail-in i${i}`)
-          : null,
+        p.hasIncome ? dot(i, `calendario__rail-in i${i}`) : null,
       )}
       {series.lowestIndex >= 0 ? dot(series.lowestIndex, "calendario__rail-low") : null}
       {series.todayIndex >= 0 ? dot(series.todayIndex, "calendario__rail-today") : null}
@@ -379,7 +377,10 @@ export function YearGridScreen() {
 
   const [selectedIso, setSelectedIso] = useState<string | null>(null);
   const [focusedIso, setFocusedIso] = useState<string | null>(null);
-  const cellRefs = useRef(new Map<string, HTMLButtonElement>());
+  // Lazy init: `useRef(new Map())` aloca um Map a cada render e joga fora.
+  const cellRefsBox = useRef<Map<string, HTMLButtonElement> | null>(null);
+  cellRefsBox.current ??= new Map();
+  const cellRefs = cellRefsBox.current;
   const pendingFocus = useRef<string | null>(null);
   const { navigate } = useNekoApp();
 
@@ -441,20 +442,20 @@ export function YearGridScreen() {
 
   const focusCell = (iso: string) => {
     setFocusedIso(iso);
-    cellRefs.current.get(iso)?.focus();
+    cellRefs.get(iso)?.focus();
   };
 
   // O ref das células alimenta o roving focus; quando um PageUp/Down pediu um
   // dia do mês novo, o foco acontece no mount da célula-alvo.
   const registerCellRef = (iso: string, el: HTMLButtonElement | null) => {
     if (el) {
-      cellRefs.current.set(iso, el);
+      cellRefs.set(iso, el);
       if (pendingFocus.current === iso) {
         pendingFocus.current = null;
         el.focus();
       }
     } else {
-      cellRefs.current.delete(iso);
+      cellRefs.delete(iso);
     }
   };
 
