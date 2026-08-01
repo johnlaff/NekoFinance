@@ -638,7 +638,7 @@ function RendaCard({ rows }: { rows: IncomeRow[] }) {
 function miaLine(v: AnoView): { lead: string; teach: string } {
   if (v.economiaLived > 0) {
     return {
-      lead: "Você já tira dinheiro da conta para a reserva.",
+      lead: "Você já tira dinheiro da conta para guardar.",
       teach:
         "É isso que o método chama de economia. A régua julga a média do ano, então um mês fraco não derruba o veredito.",
     };

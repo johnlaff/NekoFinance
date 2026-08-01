@@ -63,7 +63,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   },
   termometro: {
     title: "O termômetro do saldo",
-    body: "As cores do saldo como leitura de saúde, em faixas fixas em reais: acima de R$ 2.000 é folga, até R$ 2.000 é ok, até R$ 1.000 é atenção, abaixo de zero é vermelho. A régua é absoluta — não muda com o tamanho da sua vida.",
+    body: "As cores do saldo como leitura de saúde, em faixas fixas em reais: acima de R$ 2.000 é folga, até R$ 2.000 é ok, até R$ 1.000 é apertado, abaixo de zero é negativo e abaixo de −R$ 500 é crítico. A régua é absoluta — não muda com o tamanho da sua vida.",
   },
   diario: {
     title: "Diário",

@@ -3,7 +3,9 @@
 > Atualização 2026-06-23: a decisão travada de 2026-06-21 sobre `economia=Saída` foi reaberta por
 > decisão explícita do dono e supersedida pela [Spec 020](../020-classificacao-notas-5-tipos/spec.md).
 > O modelo atual separa Cartão, Economia e Patrimônio; custo de vida exclui economia/patrimônio, e
-> Performance desconta os outflows reais uma única vez.
+> Performance desconta os outflows reais uma única vez. A tabela de tipos abaixo também ficou para
+> trás num segundo ponto: destino `illiquid` (FGTS/previdência) **não** é Economia — é Patrimônio,
+> fora da régua dos 20–30% em qualquer condição de reserva. Ver [ADR-0005](../../docs/adr/0005-single-annual-ruler-patrimonio-outside.md).
 
 > Fonte: síntese do método + a planilha (notas locais privadas). Corrige a raiz comum de 3
 > divergências do que o método pede.

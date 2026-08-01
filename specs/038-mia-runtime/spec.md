@@ -258,8 +258,9 @@ Também sob teste:
 - **Aprovação de proposta**: aprovar revalida e grava; editar invalida a aprovação anterior; proposta expirada não grava; texto no chat não aprova.
 - **Consentimento fail-closed**: sem registro de consentimento, a rodada é recusada no backend.
 - **Chave ausente dos artefatos**: nenhum evento, log, linha de banco ou payload de erro contém a chave.
-- **Frontend**: o view-model puro da conversa é o seam da tela (prior art: a suíte da onda visual). Casos: resposta com a chave desligada mantendo o selo epistêmico, mapeamento de eventos da rodada para a linha do tempo, estados do cartão de proposta, e a **convergência do piso offline** — a mesma pergunta, respondida local e pelo runtime, chega ao mesmo número.
-- **Evals de identidade e fidelidade** consomem os casos entregues com o pack curado.
+- **Frontend**: o view-model puro da conversa é o seam da tela (prior art: a suíte da onda visual). Casos: resposta com a chave desligada mantendo o selo epistêmico, mapeamento de eventos da rodada para a linha do tempo e estados do cartão de proposta.
+- **Convergência do piso offline**: a mesma pergunta, respondida local e pelo runtime, chega ao mesmo número. O seam é o backend, porque é lá que as duas implementações se encontram sobre o mesmo dado — o DTO que alimenta o piso e o envelope da ferramenta, ambos sobre a fixture da bancada e o relógio dela. Um teste por pergunta do repertório local, mais o assert de que o recibo fecha: os operandos impressos produzem o resultado impresso. A forma impressa do número — truncagem, rótulo do operando, selo — continua coberta pela suíte do view-model, que é onde ela nasce.
+- **Evals de fidelidade** consomem os casos entregues com o pack curado.
 
 TDD é obrigatório na fachada e no loop: são ferramentas de agente pelos padrões do repo.
 
@@ -271,6 +272,7 @@ TDD é obrigatório na fachada e no loop: são ferramentas de agente pelos padr�
 - Recomendações de investimento ou tributárias.
 - Modelo local na máquina; segundo provedor (o trait deixa a porta aberta como adição posterior barata, não como dívida).
 - Modelo de peso aberto em precisão não declarada: a matriz só admite endpoint cuja quantização o catálogo declara, e endpoint × quantização é a identidade do candidato — `unknown` fica fora, e trocar de precisão é trocar de candidato, nunca um drift silencioso do mesmo pin.
+- Eval de identidade como família própria ou guarda transversal do avaliador. A garantia da v1 é estrutural, não medida: o núcleo do método montado no prompt e os capítulos servidos pelo pack são autorados em forma agnóstica — "o método", nunca origem nominal —, e o gate de anonimização mecânico varre o conteúdo antes de qualquer entrega. O que fica descoberto é a saída do modelo em tempo de execução, que a varredura de privacidade do repo não alcança: ela corre sobre arquivo versionado, não sobre resposta gerada. Risco assumido de forma deliberada, reversível a qualquer momento por uma guarda no avaliador.
 - Sumarização de conversa longa: a v1 avisa honestamente ao chegar no teto.
 - Texto token a token na interface.
 

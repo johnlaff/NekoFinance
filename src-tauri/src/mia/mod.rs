@@ -13,6 +13,8 @@
 pub mod bench;
 pub(crate) mod catalog;
 pub(crate) mod consent;
+#[cfg(test)]
+mod convergence;
 pub(crate) mod envelope;
 pub(crate) mod key_store;
 mod ledger_tools;

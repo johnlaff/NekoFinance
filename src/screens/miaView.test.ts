@@ -70,7 +70,6 @@ const FORECAST: Forecast = {
     patrimonio_cents: 0,
     economia_ruler_cents: 1_800_000,
     economia_ruler_rate_bps: 2_142,
-    includes_previdencia: false,
     economia_state: "verdict",
     projected_income_cents: 0,
     projected_savings_cents: 0,
@@ -307,7 +306,7 @@ describe("economia do ano", () => {
     const a = ask("Como está a economia do ano?");
     expect(a.receipt).toEqual([
       { label: "Economia da régua", cents: 1_800_000 },
-      { label: "Renda realizada", cents: 8_400_000, op: "div" },
+      { label: "Entradas do ano até aqui", cents: 8_400_000, op: "div" },
       {
         label: "Economizado no ano",
         text: "21%",

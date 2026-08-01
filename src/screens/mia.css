@@ -213,6 +213,14 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+/* Pílula secundária: a transparência da rodada (provedor/modelo/custo) é o quanto o motor
+   externo CONFIA na resposta, natureza diferente de de-onde-ela-veio — o contorno separa as
+   duas leituras sem impor uma segunda cor de status na bolha. */
+.mia__prov-round {
+  padding: 1px var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+}
 
 /* ---- Recibo: a assinatura da tela — a conta que o motor fez, impressa ---- */
 
@@ -360,8 +368,14 @@
   margin-top: var(--space-5);
 }
 /* Resposta rápida dentro da bolha: superfície em vez de contorno, para não virar uma
-   segunda fileira de sugestões idêntica à do dock logo abaixo. */
+   segunda fileira de sugestões idêntica à do dock logo abaixo. O alvo cresce por dentro
+   (padding + margem negativa), a mesma técnica do toggle do recibo, para alcançar os 44px
+   do polegar sem inflar o espaço que a pílula ocupa entre as outras. */
 .mia__opts .mia__chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin-block: calc(var(--space-3) * -1);
   border-color: transparent;
   background: var(--surface-elevated);
 }
@@ -424,6 +438,12 @@
   grid-template-columns: 1fr 1fr;
   gap: var(--space-4);
 }
+/* `.cmp-type`/`.cmp-field` são do compositor e servem outras telas — escopar o piso de 44px
+   à proposta da Mia evita deslocar o layout de quem mais reaproveita essas classes. */
+.mia__proposal .cmp-type,
+.mia__proposal .cmp-field {
+  min-height: 44px;
+}
 .mia__proposal-fixed {
   display: flex;
   align-items: center;
@@ -437,6 +457,12 @@
   gap: var(--space-3);
 }
 .mia__tagchip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  /* Padding + margem negativa (mesma técnica do toggle do recibo) para alcançar os 44px
+     do polegar sem empurrar as tags vizinhas para mais longe umas das outras. */
+  margin-block: calc(var(--space-5) * -1);
   padding: var(--space-2) var(--space-5);
   border-radius: var(--radius-pill);
   border: 1px solid var(--border);
@@ -466,6 +492,13 @@
 }
 .mia__proposal-approve,
 .mia__proposal-reject {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  /* Padding + margem negativa (mesma técnica do toggle do recibo) para alcançar os 44px
+     do polegar: aprovar/recusar grava ou descarta o lançamento, o par mais caro de errar. */
+  margin-block: calc(var(--space-3) * -1);
   padding: var(--space-4) var(--space-6);
   border-radius: var(--radius-pill);
   border: 0;
@@ -721,6 +754,14 @@
 @media (prefers-reduced-motion: reduce) {
   .mia__msg {
     animation: none;
+  }
+  /* O chevron não gira e a altura troca no corte — mas o estado final (aberto/fechado)
+     precisa continuar existindo sem a transição, senão o recibo trava colapsado. */
+  .mia__receipt-toggle svg {
+    transition: none;
+  }
+  .mia__receipt-fold {
+    transition: none;
   }
 }
 

@@ -356,7 +356,7 @@ function notLinked(linked = false): MiaAnswer {
     ],
     provenance: "metodo",
     refusal: "nao_ligada",
-    options: SUGGESTIONS.slice(0, 6),
+    options: SUGGESTIONS,
     ...(linked ? {} : { cta: { label: "Autorizar a conversa", target: "config" } }),
   };
 }
@@ -536,7 +536,7 @@ function economiaAno(facts: MiaFacts): MiaAnswer {
     ],
     receipt: [
       { label: "Economia da régua", cents: a.economia_ruler_cents },
-      { label: "Renda realizada", cents: a.realized_income_cents, op: "div" },
+      { label: "Entradas do ano até aqui", cents: a.realized_income_cents, op: "div" },
       {
         label: "Economizado no ano",
         text: pct(rate),
@@ -547,9 +547,7 @@ function economiaAno(facts: MiaFacts): MiaAnswer {
     ],
     note: [
       t(
-        a.includes_previdencia
-          ? "A previdência entra na régua porque a reserva já cobre 6 meses do custo de vida."
-          : "A previdência só entra nessa régua quando a reserva cobre 6 meses do custo de vida — o método faz liquidez primeiro.",
+        "Previdência não entra nessa conta: ela é patrimônio, não economia acessível. O dinheiro continua seu — só não conta na régua, porque a régua mede o que fica ao alcance.",
       ),
     ],
     provenance: "calculo",
@@ -580,7 +578,7 @@ function reservaAnswer(facts: MiaFacts): MiaAnswer {
       text: [
         b("Sem reserva"),
         t(
-          " — as contas marcadas como reserva estão zeradas. O método começa por ela: 6 meses do custo de vida num lugar separado, antes de qualquer investimento.",
+          " — as contas marcadas como reserva estão zeradas. A meta do método são 6 meses do custo de vida num lugar separado, à mão para o que a vida cobrar.",
         ),
       ],
       receipt: [
