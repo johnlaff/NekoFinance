@@ -1,4 +1,5 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { SR_ONLY } from "../srOnly";
 
 /**
  * MonthNav — navegação temporal "< Mês/Ano >" + botão "Hoje". A navegação pelo horizonte é o
@@ -18,6 +19,10 @@ interface MonthNavProps {
   /** aria-labels das setas — sobrescreva quando a navegação não for por mês (ex.: ano). */
   prevLabel?: string;
   nextLabel?: string;
+  /** Esconde o rótulo VISUALMENTE quando outra superfície da tela já o imprime
+   *  (regra 41: cada dado aparece uma vez). O texto permanece no DOM: é ele que
+   *  a `aria-live` anuncia quando o mês troca. */
+  hideLabel?: boolean;
   className?: string;
 }
 
@@ -59,6 +64,7 @@ export function MonthNav({
   atToday = true,
   prevLabel = "Mês anterior",
   nextLabel = "Próximo mês",
+  hideLabel = false,
   className = "",
 }: MonthNavProps) {
   return (
@@ -77,13 +83,17 @@ export function MonthNav({
       </button>
       <span
         aria-live="polite"
-        style={{
-          minWidth: 150,
-          textAlign: "center",
-          fontSize: "var(--fs-title)",
-          fontWeight: "var(--fw-bold)",
-          letterSpacing: "var(--ls-tight)",
-        }}
+        style={
+          hideLabel
+            ? SR_ONLY
+            : {
+                minWidth: 150,
+                textAlign: "center",
+                fontSize: "var(--fs-title)",
+                fontWeight: "var(--fw-bold)",
+                letterSpacing: "var(--ls-tight)",
+              }
+        }
       >
         {label}
       </span>
