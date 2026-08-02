@@ -1,5 +1,6 @@
 use chrono::{Datelike, NaiveDate};
 use sqlx::SqlitePool;
+use std::collections::HashMap;
 
 /// Estado da fatura derivado exclusivamente do calendário, para que banco e interface não
 /// precisem sincronizar uma cópia perecível desse estado.
@@ -68,14 +69,23 @@ fn shift_month(year: i32, month: u32, delta: i32) -> Option<(i32, u32)> {
 /// ordem temporal entre compra, fechamento e vencimento, ao contrário de agrupar a compra no
 /// ciclo já encerrado.
 pub fn cycle_close_for_purchase(purchase: NaiveDate, closing_day: u32) -> NaiveDate {
-    let closing_day = closing_day.clamp(1, 28);
-    let (year, month) = if purchase.day() <= closing_day {
+    let in_purchase_month = closing_day_in(purchase.year(), purchase.month(), closing_day);
+    let (year, month) = if purchase.day() <= in_purchase_month {
         (purchase.year(), purchase.month())
     } else {
         shift_month(purchase.year(), purchase.month(), 1).expect("mês posterior representável")
     };
 
-    NaiveDate::from_ymd_opt(year, month, closing_day).expect("dia de fechamento válido")
+    NaiveDate::from_ymd_opt(year, month, closing_day_in(year, month, closing_day))
+        .expect("dia de fechamento válido")
+}
+
+/// O dia em que o fechamento acontece NAQUELE mês. Um cartão que fecha dia 29, 30 ou 31 é comum;
+/// o mês curto é problema de derivar a data, não do cadastro — a mesma regra que o vencimento já
+/// segue. Encurtar (28/fev) preserva o ciclo; recuar para um 28 fixo empurraria a compra do dia
+/// 29 para a fatura seguinte, um mês inteiro de atraso.
+pub(crate) fn closing_day_in(year: i32, month: u32, closing_day: u32) -> u32 {
+    closing_day.clamp(1, crate::forecast::last_day_of_month(year, month).day())
 }
 
 /// Primeiro vencimento estritamente posterior ao fechamento.
@@ -138,18 +148,26 @@ pub fn dates_for_cycle_month(
     due_day: u32,
 ) -> Option<(NaiveDate, NaiveDate)> {
     let (due_year, due_month) = parse_cycle_month(cycle_month)?;
-    let due_day = due_day.clamp(
-        1,
-        crate::forecast::last_day_of_month(due_year, due_month).day(),
-    );
-    let due_date = NaiveDate::from_ymd_opt(due_year, due_month, due_day)?;
-    let closing_day = closing_day.clamp(1, 28);
+    let due_date = NaiveDate::from_ymd_opt(
+        due_year,
+        due_month,
+        due_day.clamp(
+            1,
+            crate::forecast::last_day_of_month(due_year, due_month).day(),
+        ),
+    )?;
+    // O mês do fechamento sai dos dias PEDIDOS — é a intenção do molde. Cada um encurta depois,
+    // no seu próprio mês: fechamento e vencimento podem cair em meses de tamanhos diferentes.
     let (closing_year, closing_month) = if closing_day < due_day {
         (due_year, due_month)
     } else {
         shift_month(due_year, due_month, -1)?
     };
-    let closing_date = NaiveDate::from_ymd_opt(closing_year, closing_month, closing_day)?;
+    let closing_date = NaiveDate::from_ymd_opt(
+        closing_year,
+        closing_month,
+        closing_day_in(closing_year, closing_month, closing_day),
+    )?;
     (closing_date < due_date).then_some((closing_date, due_date))
 }
 
@@ -211,6 +229,117 @@ pub fn reconciliation_delta_cents(
 /// caixa, acentos ou dois-pontos não crie identidades paralelas.
 pub(crate) fn normalize_alias(s: &str) -> String {
     crate::google_sheets::import::normalize_item_section(s)
+}
+
+/// Formas com que uma linha de nota se apresenta como fatura de cartão. Do mais específico ao
+/// mais genérico: `fatura ` sozinho consumiria só a primeira palavra de "fatura cartão X".
+const INVOICE_PREFIXES: [&str; 3] = ["fatura do cartao ", "fatura cartao ", "fatura "];
+
+/// Alias que uma linha de nota declara: o texto antes do marcador `#`, normalizado.
+pub(crate) fn declared_alias(description: &str) -> String {
+    normalize_alias(description.split('#').next().unwrap_or("").trim())
+}
+
+/// Raiz de um alias: o nome antes de um sufixo entre parênteses. A planilha distingue ciclos
+/// do mesmo cartão no próprio nome (`Nubank (26/09)`), e essa distinção é anotação humana, não
+/// identidade — a raiz é o que agrupa. Um nome que é só o parêntese não tem raiz para agrupar.
+pub(crate) fn root_alias(alias: &str) -> String {
+    let Some(open) = alias.find('(') else {
+        return alias.to_string();
+    };
+    let root = alias[..open].trim();
+    if root.is_empty() {
+        alias.to_string()
+    } else {
+        root.to_string()
+    }
+}
+
+/// Rótulo exibido para a raiz de um nome, preservando caixa e acento do texto original — o que
+/// `root_alias` faz com a identidade, este faz com a apresentação.
+pub(crate) fn root_display(name: &str) -> &str {
+    let name = name.split('#').next().unwrap_or("").trim();
+    match name.find('(') {
+        Some(open) if !name[..open].trim().is_empty() => name[..open].trim(),
+        _ => name,
+    }
+}
+
+/// `true` quando a linha se apresenta como fatura de cartão. Insumo exclusivo de DIAGNÓSTICO:
+/// reconhecer o formato não classifica dinheiro — só a seção e o léxico fazem isso.
+pub(crate) fn looks_like_invoice_line(description: &str) -> bool {
+    let alias = declared_alias(description);
+    INVOICE_PREFIXES
+        .iter()
+        .any(|prefix| alias.starts_with(prefix))
+}
+
+/// Identidades de cartão que o domínio já conhece, na forma que resolve a linha de uma nota.
+///
+/// Existe porque a planilha declara a fatura de duas maneiras: sob o cabeçalho de seção
+/// (`CARTÕES`) e, quando o dono esqueceu o cabeçalho, como uma linha comum que nomeia o cartão
+/// (`Fatura Bradesco`). A segunda forma só é reconhecível contra identidades que o próprio dono
+/// já declarou — nunca por palavra-chave de banco ou emissor, que classificaria "Fatura Vivo"
+/// como cartão.
+///
+/// `T` é o que o chamador precisa da identidade: `account_id` na leitura de eventos, alias
+/// canônico na varredura do import.
+pub(crate) struct CardLexicon<T> {
+    by_alias: HashMap<String, T>,
+}
+
+impl<T: Clone + PartialEq> CardLexicon<T> {
+    /// Indexa cada alias declarado e, quando ela não é ambígua, a sua raiz — é a raiz que faz
+    /// "Fatura Nubank" alcançar o cartão que a planilha declarou como "Nubank (26/09)". Raiz
+    /// compartilhada por identidades diferentes não vira atalho: ambiguidade não se resolve só.
+    pub(crate) fn from_entries(entries: impl IntoIterator<Item = (String, T)>) -> Self {
+        let mut by_alias: HashMap<String, T> = HashMap::new();
+        let mut by_root: HashMap<String, Option<T>> = HashMap::new();
+        for (alias, value) in entries {
+            if alias.is_empty() {
+                continue;
+            }
+            let root = root_alias(&alias);
+            if root != alias {
+                by_root
+                    .entry(root)
+                    .and_modify(|current| {
+                        if current.as_ref() != Some(&value) {
+                            *current = None;
+                        }
+                    })
+                    .or_insert_with(|| Some(value.clone()));
+            }
+            by_alias.insert(alias, value);
+        }
+        for (root, value) in by_root {
+            // Um alias declarado com esse mesmo texto sempre vence o atalho pela raiz.
+            if let Some(value) = value
+                && !by_alias.contains_key(&root)
+            {
+                by_alias.insert(root, value);
+            }
+        }
+        Self { by_alias }
+    }
+
+    /// A identidade que a descrição nomeia, ou `None` quando a linha não nomeia cartão conhecido.
+    pub(crate) fn resolve(&self, description: &str) -> Option<T> {
+        let alias = declared_alias(description);
+        if alias.is_empty() {
+            return None;
+        }
+        if let Some(value) = self.by_alias.get(&alias) {
+            return Some(value.clone());
+        }
+        // Só a linha que se apresenta como fatura tenta de novo sem o prefixo: mencionar o
+        // emissor ("Seguro Bradesco") nunca transforma uma saída comum em fatura.
+        let named = INVOICE_PREFIXES
+            .iter()
+            .find_map(|prefix| alias.strip_prefix(prefix))?
+            .trim();
+        self.by_alias.get(named).cloned()
+    }
 }
 
 /// `true` quando ao menos um cartão está configurado — insumo da relabelagem de crédito órfão
@@ -302,6 +431,177 @@ mod tests {
         NaiveDate::parse_from_str(value, "%Y-%m-%d").expect("data de teste válida")
     }
 
+    /// Léxico de teste que mapeia cada alias declarado para ele mesmo.
+    fn known(aliases: &[&str]) -> CardLexicon<String> {
+        CardLexicon::from_entries(aliases.iter().map(|a| ((*a).to_string(), (*a).to_string())))
+    }
+
+    // --- ciclo com dia que não cabe em todo mês -------------------------------------------
+
+    /// Um cartão que fecha dia 29, 30 ou 31 é comum; fevereiro é problema da DERIVAÇÃO da data,
+    /// não do cadastro. A regra é a mesma já aplicada ao vencimento: encurtar para o último dia
+    /// do mês, nunca recuar para um dia 28 fixo que atrasaria a compra um ciclo inteiro.
+    #[test]
+    fn closing_day_past_the_short_month_shortens_to_its_last_day() {
+        // Fevereiro comum: o fechamento do dia 29 acontece no dia 28.
+        assert_eq!(
+            cycle_close_for_purchase(d("2026-02-10"), 29),
+            d("2026-02-28")
+        );
+        // Bissexto: o mesmo fechamento cabe no dia 29.
+        assert_eq!(
+            cycle_close_for_purchase(d("2028-02-10"), 29),
+            d("2028-02-29")
+        );
+        // Mês de 30 dias com fechamento no 31.
+        assert_eq!(
+            cycle_close_for_purchase(d("2026-04-10"), 31),
+            d("2026-04-30")
+        );
+        // Mês longo: o dia pedido é o dia usado.
+        assert_eq!(
+            cycle_close_for_purchase(d("2026-03-10"), 29),
+            d("2026-03-29")
+        );
+    }
+
+    #[test]
+    fn a_purchase_on_the_shortened_closing_day_still_belongs_to_that_cycle() {
+        // 28/fev É o fechamento de fevereiro quando o molde diz 29 — a compra desse dia entra na
+        // fatura que fecha ali, não na seguinte.
+        assert_eq!(
+            cycle_close_for_purchase(d("2026-02-28"), 29),
+            d("2026-02-28")
+        );
+        // Depois do fechamento, a compra pertence ao ciclo seguinte.
+        assert_eq!(
+            cycle_close_for_purchase(d("2026-03-30"), 29),
+            d("2026-04-29")
+        );
+    }
+
+    #[test]
+    fn cycle_dates_reconstruct_with_a_closing_day_past_the_short_month() {
+        // Fecha 29 do mês anterior, vence 12 — o ciclo do João, em fevereiro.
+        assert_eq!(
+            dates_for_cycle_month("2026-02", 29, 12),
+            Some((d("2026-01-29"), d("2026-02-12")))
+        );
+        // Vencimento em março: o fechamento cai no fevereiro curto e encurta.
+        assert_eq!(
+            dates_for_cycle_month("2026-03", 29, 12),
+            Some((d("2026-02-28"), d("2026-03-12")))
+        );
+        assert_eq!(
+            dates_for_cycle_month("2028-03", 29, 12),
+            Some((d("2028-02-29"), d("2028-03-12")))
+        );
+    }
+
+    // --- alias declarado pela linha -------------------------------------------------------
+
+    #[test]
+    fn declared_alias_drops_the_marker_and_normalizes_case_and_accent() {
+        assert_eq!(declared_alias("Itaú"), "itau");
+        assert_eq!(declared_alias("Bradesco João #reembolso"), "bradesco joao");
+        assert_eq!(declared_alias("  Mercado Pago  "), "mercado pago");
+        assert_eq!(declared_alias("#só marcador"), "");
+    }
+
+    // --- raiz do alias (agrupa apelidos variantes) ----------------------------------------
+
+    #[test]
+    fn root_alias_drops_a_parenthesized_suffix() {
+        assert_eq!(root_alias("nubank (26/02)"), "nubank");
+        assert_eq!(root_alias("itau (usei a feature virar fatura)"), "itau");
+        assert_eq!(root_alias("nubank"), "nubank");
+    }
+
+    #[test]
+    fn root_alias_keeps_a_name_that_is_only_a_parenthesis() {
+        // Sem raiz antes do parêntese não há o que agrupar: a identidade original permanece.
+        assert_eq!(root_alias("(26/02)"), "(26/02)");
+    }
+
+    // --- resolução contra identidades já declaradas ---------------------------------------
+
+    #[test]
+    fn resolves_a_line_that_names_a_known_card_directly() {
+        let lexicon = known(&["nubank", "bradesco"]);
+        assert_eq!(lexicon.resolve("Nubank"), Some("nubank".to_string()));
+    }
+
+    #[test]
+    fn resolves_an_invoice_line_written_outside_the_cards_section() {
+        // O caso que fazia a fatura sumir: a nota do mês não tem cabeçalho de seção e a linha
+        // se apresenta como "Fatura <cartão>".
+        let lexicon = known(&["bradesco", "amazon", "nubank"]);
+        for (line, expected) in [
+            ("Fatura Bradesco", "bradesco"),
+            ("Fatura Amazon", "amazon"),
+            ("Fatura Cartão Amazon", "amazon"),
+            ("Fatura do Cartão Nubank", "nubank"),
+        ] {
+            assert_eq!(
+                lexicon.resolve(line),
+                Some(expected.to_string()),
+                "{line} nomeia um cartão declarado"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_resolve_a_line_that_merely_mentions_the_issuer() {
+        // A âncora da regra: sem prefixo de fatura, mencionar o emissor não faz da linha uma
+        // fatura. "Seguro Bradesco" e "Festa Junina Bradesco" são saídas comuns.
+        let lexicon = known(&["bradesco", "inter", "nubank"]);
+        for line in [
+            "Seguro Bradesco",
+            "Festa Junina Bradesco",
+            "Rendimentos Bradesco",
+            "Dinheiro do Inter",
+            "Empréstimo Nubank pago",
+        ] {
+            assert_eq!(lexicon.resolve(line), None, "{line} não é uma fatura");
+        }
+    }
+
+    #[test]
+    fn does_not_resolve_an_invoice_of_a_card_nobody_declared() {
+        // Sem heurística de emissor: um nome que o dono nunca declarou como cartão continua
+        // fora do balde, por mais que a linha se apresente como fatura.
+        let lexicon = known(&["bradesco"]);
+        assert_eq!(lexicon.resolve("Fatura Sicoob"), None);
+        assert_eq!(lexicon.resolve("Fatura Vivo"), None);
+    }
+
+    #[test]
+    fn resolves_through_the_root_when_only_the_variant_was_declared() {
+        // O léxico guarda "nubank (26/09)" porque foi assim que a planilha declarou; uma linha
+        // "Fatura Nubank" ainda nomeia esse cartão.
+        let lexicon = known(&["nubank (26/09)"]);
+        assert_eq!(
+            lexicon.resolve("Fatura Nubank"),
+            Some("nubank (26/09)".to_string())
+        );
+    }
+
+    #[test]
+    fn an_invoice_prefix_alone_names_no_card() {
+        let lexicon = known(&["bradesco"]);
+        assert_eq!(lexicon.resolve("Fatura"), None);
+        assert_eq!(lexicon.resolve("Fatura "), None);
+    }
+
+    #[test]
+    fn looks_like_an_invoice_line_only_with_the_prefix() {
+        // Insumo do diagnóstico: reporta, nunca decide.
+        assert!(looks_like_invoice_line("Fatura Sicoob"));
+        assert!(looks_like_invoice_line("fatura cartão XPTO"));
+        assert!(!looks_like_invoice_line("Seguro Bradesco"));
+        assert!(!looks_like_invoice_line("Aluguel"));
+    }
+
     #[test]
     fn cycle_close_for_purchase_uses_the_current_or_next_closing_date() {
         assert_eq!(
@@ -316,8 +616,15 @@ mod tests {
             cycle_close_for_purchase(d("2026-12-25"), 20),
             d("2027-01-20")
         );
+        // Fechamento no dia 31: a compra do próprio 31 pertence ao ciclo que fecha ali. O mês
+        // curto só encurta o dia quando o ciclo cai nele — nunca empurra a compra um ciclo à
+        // frente.
         assert_eq!(
             cycle_close_for_purchase(d("2026-01-31"), 31),
+            d("2026-01-31")
+        );
+        assert_eq!(
+            cycle_close_for_purchase(d("2026-02-28"), 31),
             d("2026-02-28")
         );
         assert_eq!(

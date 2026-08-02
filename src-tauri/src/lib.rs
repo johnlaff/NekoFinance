@@ -147,6 +147,8 @@ pub fn run() {
             commands::unlink_refund,
             commands::list_card_proposals,
             commands::accept_card_proposal,
+            commands::attach_card_proposal,
+            commands::set_invoice_dates,
             commands::dismiss_card_proposal,
         ])
         .setup(|app| {

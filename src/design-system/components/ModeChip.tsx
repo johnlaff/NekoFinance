@@ -47,6 +47,11 @@ const MODE_BODY: Record<SpendingModeKind, string> = {
   card: "Detectado dos seus dados: o Diário está sem constância e as faturas seguem vivas — o gasto do dia a dia vive no cartão. O dia lê as faturas; o Diário zerado aqui é legítimo, não lacuna.",
 };
 
+// Sem Diário constante e sem cartão à vista, o modo é o ponto de partida do método — não uma
+// leitura dos dados. Dizer "detectado" aqui venderia um palpite como veredito.
+const UNDETECTED_BODY =
+  "A sua planilha ainda não mostra por onde o gasto variável vive: o Diário está sem constância e nenhum cartão apareceu. Enquanto isso o dia segue o gesto-base do método — lançar no Diário e comparar com o teto. Assim que houver constância no Diário, ou uma fatura na planilha, o modo se ajusta sozinho.";
+
 const GATE_BODY =
   " O método só considera o cartão legítimo com a economia de 20–30% viva; a sua está abaixo do piso de 20%. O caminho de volta: registrar economia todo mês — acompanhe o Economizado% na tela O ano.";
 
@@ -54,12 +59,21 @@ export interface ModeChipProps {
   mode: SpendingModeKind;
   /** Gate de legitimidade do modo cartão (economia 20–30% viva). Ignorado no modo débito. */
   gate?: CardGate;
+  /** `false` quando o modo é o default de dado insuficiente. Muda a didática, não o modo. */
+  detected?: boolean;
   className?: string;
 }
 
-export function ModeChip({ mode, gate = "unknown", className }: ModeChipProps) {
+export function ModeChip({
+  mode,
+  gate = "unknown",
+  detected = true,
+  className,
+}: ModeChipProps) {
   const gateBelow = mode === "card" && gate === "below";
-  const body = MODE_BODY[mode] + (gateBelow ? GATE_BODY : "");
+  const body = detected
+    ? MODE_BODY[mode] + (gateBelow ? GATE_BODY : "")
+    : UNDETECTED_BODY;
   const Icon = mode === "card" ? CreditCard : Banknote;
   return (
     <InfoPopover

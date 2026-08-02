@@ -1058,6 +1058,14 @@ pub fn detect_spending_mode(samples: &[MonthSpendSample]) -> SpendingMode {
     SpendingMode::Debit
 }
 
+/// A janela SUSTENTA o veredito de modo, ou ele é o default de dado insuficiente?
+///
+/// Existe para a tela não afirmar "detectado dos seus dados" sobre o valor que sobra quando o
+/// motor não sabe: os dois casos devolvem `Debit`, e só este os distingue.
+pub fn spending_mode_is_detected(samples: &[MonthSpendSample]) -> bool {
+    samples.iter().any(|m| diario_ativo(m) || m.cartao_present)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1894,6 +1902,32 @@ mod tests {
     }
 
     // Sem dado nenhum na janela, o modo é o gesto-base do método.
+    #[test]
+    fn spending_mode_separates_a_verdict_from_the_default() {
+        // Janela vazia e janela só com ruído devolvem Debit — mas nenhuma das duas o SUSTENTA.
+        assert!(!spending_mode_is_detected(&[]));
+        let noise = [MonthSpendSample {
+            daily_days: 1,
+            daily_total_cents: 900,
+            cartao_present: false,
+        }];
+        assert!(!spending_mode_is_detected(&noise));
+
+        let constant = [MonthSpendSample {
+            daily_days: 5,
+            daily_total_cents: 30_000,
+            cartao_present: false,
+        }];
+        assert!(spending_mode_is_detected(&constant));
+
+        let cards = [MonthSpendSample {
+            daily_days: 0,
+            daily_total_cents: 0,
+            cartao_present: true,
+        }];
+        assert!(spending_mode_is_detected(&cards));
+    }
+
     #[test]
     fn spending_mode_defaults_to_debit_without_data() {
         assert_eq!(detect_spending_mode(&[]), SpendingMode::Debit);

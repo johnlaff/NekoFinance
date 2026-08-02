@@ -76,6 +76,9 @@ pub struct CardProposalDto {
     pub display_name: String,
     pub source_month: String,
     pub status: String,
+    /// Todas as formas com que a planilha nomeia este cartão, a identidade inclusa. O cadastro
+    /// nasce reconhecendo as variantes de ciclo em vez de propor um cartão por anotação.
+    pub aliases: Vec<String>,
 }
 
 type InvoiceRow = (String, String, String, String, Option<i64>);
@@ -116,17 +119,20 @@ fn parse_date(value: &str) -> Result<NaiveDate, String> {
 fn validate_cycle(closing_day: Option<i64>, due_day: Option<i64>) -> Result<(u32, u32), String> {
     let closing = closing_day.ok_or("fechamento obrigatório")?;
     let due = due_day.ok_or("vencimento obrigatório")?;
-    if !(1..=28).contains(&closing) {
-        return Err("fechamento deve ser entre 1 e 28".into());
+    if !(1..=31).contains(&closing) {
+        return Err("fechamento deve ser entre 1 e 31".into());
     }
     if !(1..=31).contains(&due) {
         return Err("vencimento deve ser entre 1 e 31".into());
     }
-    if closing == 28 && due >= 29 {
-        return Err(
-            "com fechamento no dia 28, o vencimento deve ser até o dia 28 — fevereiro não tem dia 29+"
-                .into(),
-        );
+    // Fechamento e vencimento no MESMO mês precisam sobreviver a fevereiro: acima do dia 28 os
+    // dois encurtam para o último dia e colidem, e um ciclo que fecha no dia em que vence não
+    // existe. Fechar depois do vencimento não tem esse problema — o fechamento é do mês anterior.
+    if closing < due && closing >= 28 {
+        return Err(format!(
+            "com fechamento no dia {closing}, o vencimento precisa vir antes dele (do mês seguinte) \
+             ou até o dia 27 — em fevereiro os dois cairiam no mesmo dia"
+        ));
     }
     Ok((closing as u32, due as u32))
 }
@@ -868,6 +874,60 @@ pub(crate) async fn set_invoice_stated_total_inner(
     Ok(())
 }
 
+/// Corrige as datas de UMA fatura, sem tocar no molde do cartão.
+///
+/// O ciclo cadastrado é um molde para derivar ciclos que ainda não existem; o banco, porém, move
+/// o fechamento de um mês para outro (dia útil, feriado, decisão do emissor). A fatura já guarda
+/// as próprias datas — só faltava a porta para corrigi-las quando a realidade diverge do molde.
+///
+/// O fechamento corrigido persiste: a varredura do import não o reescreve. O vencimento é
+/// diferente — quando a planilha declara aquela fatura, ela volta a mandar no próximo import,
+/// porque a data da linha é o vencimento observado.
+#[tauri::command]
+pub async fn set_invoice_dates(
+    pool: State<'_, SqlitePool>,
+    invoice_id: String,
+    closing_date: String,
+    due_date: String,
+) -> Result<(), String> {
+    set_invoice_dates_inner(pool.inner(), &invoice_id, &closing_date, &due_date).await
+}
+pub(crate) async fn set_invoice_dates_inner(
+    pool: &SqlitePool,
+    invoice_id: &str,
+    closing_date: &str,
+    due_date: &str,
+) -> Result<(), String> {
+    let closing =
+        parse_date(closing_date).map_err(|_| "data de fechamento inválida".to_string())?;
+    let due = parse_date(due_date).map_err(|_| "data de vencimento inválida".to_string())?;
+    if closing >= due {
+        return Err("o fechamento precisa ser anterior ao vencimento".into());
+    }
+    let cycle_month: Option<(String,)> =
+        sqlx::query_as("SELECT cycle_month FROM invoice WHERE id = ?1")
+            .bind(invoice_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("fatura: {e}"))?;
+    let (cycle_month,) = cycle_month.ok_or("fatura não encontrada")?;
+    // A identidade da fatura é cartão×mês-do-vencimento: mover o vencimento para outro mês faria
+    // a chave mentir. Para isso existe outra fatura, a daquele mês.
+    if crate::cards::cycle_month_of(due) != cycle_month {
+        return Err(format!(
+            "o vencimento precisa continuar em {cycle_month} — é o mês que identifica esta fatura"
+        ));
+    }
+    sqlx::query("UPDATE invoice SET closing_date = ?2, due_date = ?3 WHERE id = ?1")
+        .bind(invoice_id)
+        .bind(closing.to_string())
+        .bind(due.to_string())
+        .execute(pool)
+        .await
+        .map_err(|e| format!("fatura: {e}"))?;
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn materialize_series(
     conn: &mut SqliteConnection,
@@ -1457,7 +1517,47 @@ pub async fn list_card_proposals(
 pub(crate) async fn list_card_proposals_inner(
     pool: &SqlitePool,
 ) -> Result<Vec<CardProposalDto>, String> {
-    sqlx::query_as::<_,(String,String,String,String,String)>("SELECT id,alias,display_name,source_month,status FROM card_proposal WHERE status='pending' ORDER BY created_at,id").fetch_all(pool).await.map_err(|e|format!("propostas: {e}")).map(|r|r.into_iter().map(|(id,alias,display_name,source_month,status)|CardProposalDto{id,alias,display_name,source_month,status}).collect())
+    let rows = sqlx::query_as::<_, (String, String, String, String, String)>(
+        "SELECT id,alias,display_name,source_month,status FROM card_proposal \
+         WHERE status='pending' ORDER BY created_at,id",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("propostas: {e}"))?;
+
+    let mut proposals = Vec::with_capacity(rows.len());
+    for (id, alias, display_name, source_month, status) in rows {
+        let aliases = proposal_aliases(pool, &id, &alias).await?;
+        proposals.push(CardProposalDto {
+            id,
+            alias,
+            display_name,
+            source_month,
+            status,
+            aliases,
+        });
+    }
+    Ok(proposals)
+}
+
+/// Apelidos de uma proposta, com a identidade sempre na frente. Uma proposta anterior à
+/// consolidação por raiz não tem linhas próprias: ela responde pela identidade e só.
+async fn proposal_aliases(
+    pool: &SqlitePool,
+    proposal_id: &str,
+    alias: &str,
+) -> Result<Vec<String>, String> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT alias FROM card_proposal_alias WHERE proposal_id = ?1 ORDER BY alias",
+    )
+    .bind(proposal_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("apelidos da proposta: {e}"))?;
+
+    let mut aliases = vec![alias.to_string()];
+    aliases.extend(rows.into_iter().map(|(a,)| a).filter(|a| a != alias));
+    Ok(aliases)
 }
 
 #[tauri::command]
@@ -1499,6 +1599,17 @@ pub(crate) async fn accept_card_proposal_inner(
     .await
     .map_err(|e| format!("proposta: {e}"))?;
     let (alias, name) = proposal.ok_or("proposta pendente não encontrada")?;
+    let aliases: Vec<String> = {
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT alias FROM card_proposal_alias WHERE proposal_id = ?1")
+                .bind(proposal_id)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(|e| format!("apelidos da proposta: {e}"))?;
+        let mut all = vec![alias.clone()];
+        all.extend(rows.into_iter().map(|(a,)| a).filter(|a| *a != alias));
+        all
+    };
     let id = create_card_on_conn(
         &mut tx,
         &name,
@@ -1508,7 +1619,7 @@ pub(crate) async fn accept_card_proposal_inner(
         None,
         owner_person_name,
         linked_account_id,
-        &[alias],
+        &aliases,
     )
     .await?;
     sqlx::query(
@@ -1522,6 +1633,82 @@ pub(crate) async fn accept_card_proposal_inner(
         .await
         .map_err(|e| format!("aceitar proposta: {e}"))?;
     Ok(id)
+}
+
+/// Resolve a proposta como APELIDO de um cartão que já existe, em vez de criar outro.
+///
+/// A planilha nomeia o mesmo cartão de várias maneiras ao longo dos anos — o nome muda quando o
+/// dono passa a distinguir portadores, ou quando escreve só o emissor. Sem este caminho, cada
+/// grafia virava uma conta, e a fatura de um mesmo cartão aparecia repartida.
+#[tauri::command]
+pub async fn attach_card_proposal(
+    pool: State<'_, SqlitePool>,
+    proposal_id: String,
+    account_id: String,
+) -> Result<(), String> {
+    attach_card_proposal_inner(pool.inner(), &proposal_id, &account_id).await
+}
+pub(crate) async fn attach_card_proposal_inner(
+    pool: &SqlitePool,
+    proposal_id: &str,
+    account_id: &str,
+) -> Result<(), String> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| format!("vincular proposta: {e}"))?;
+    let is_card: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM account WHERE id = ?1 AND type = 'credit_card'")
+            .bind(account_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| format!("cartão de destino: {e}"))?;
+    if is_card.is_none() {
+        return Err("cartão de destino não encontrado".into());
+    }
+    let proposal: Option<(String,)> =
+        sqlx::query_as("SELECT alias FROM card_proposal WHERE id = ?1 AND status = 'pending'")
+            .bind(proposal_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| format!("proposta: {e}"))?;
+    let (alias,) = proposal.ok_or("proposta pendente não encontrada")?;
+
+    let variants: Vec<(String,)> =
+        sqlx::query_as("SELECT alias FROM card_proposal_alias WHERE proposal_id = ?1")
+            .bind(proposal_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(|e| format!("apelidos da proposta: {e}"))?;
+    for candidate in std::iter::once(alias).chain(variants.into_iter().map(|(a,)| a)) {
+        let normalized = crate::cards::normalize_alias(&candidate);
+        if normalized.is_empty() {
+            continue;
+        }
+        // O apelido pertence a um cartão só; um já tomado por outra conta não é reatribuído em
+        // silêncio, porque isso mudaria a leitura de faturas passadas sem o dono pedir.
+        sqlx::query(
+            "INSERT INTO card_alias (id, account_id, alias) VALUES (?1, ?2, ?3) \
+             ON CONFLICT(alias) DO NOTHING",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(account_id)
+        .bind(&normalized)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("vincular apelido: {e}"))?;
+    }
+
+    sqlx::query(
+        "UPDATE card_proposal SET status='accepted',resolved_at=datetime('now') WHERE id=?1",
+    )
+    .bind(proposal_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| format!("vincular proposta: {e}"))?;
+    tx.commit()
+        .await
+        .map_err(|e| format!("vincular proposta: {e}"))
 }
 
 #[tauri::command]
@@ -1571,6 +1758,19 @@ mod tests {
         )
         .await
         .unwrap()
+    }
+
+    /// Materializa a fatura de um ciclo pelo mesmo caminho da produção (o molde do cartão).
+    async fn ensure_invoice_for_test(
+        pool: &SqlitePool,
+        account_id: &str,
+        cycle_month: &str,
+    ) -> String {
+        let (closing, due) = effective_cycle(pool, account_id).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        ensure_invoice(&mut conn, account_id, cycle_month, closing, due)
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
@@ -2304,6 +2504,160 @@ mod tests {
         assert!(!id.is_empty());
         dismiss_card_proposal_inner(&pool, "p2").await.unwrap();
         assert!(list_card_proposals_inner(&pool).await.unwrap().is_empty());
+    }
+
+    /// O banco move o fechamento de um mês para outro e o molde do cartão não acompanha. A fatura
+    /// já guardava as próprias datas; o que faltava era poder corrigi-las.
+    #[tokio::test]
+    async fn invoice_dates_are_correctable_without_touching_the_card_cycle() {
+        let pool = pool().await;
+        let card = card(&pool, "Cartão", 29, 12).await;
+        let invoice = ensure_invoice_for_test(&pool, &card, "2026-02").await;
+
+        let before: (String, String) =
+            sqlx::query_as("SELECT closing_date, due_date FROM invoice WHERE id = ?1")
+                .bind(&invoice)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(before, ("2026-01-29".into(), "2026-02-12".into()));
+
+        // Neste mês o emissor fechou dia 27.
+        set_invoice_dates_inner(&pool, &invoice, "2026-01-27", "2026-02-12")
+            .await
+            .unwrap();
+        let after: (String, String) =
+            sqlx::query_as("SELECT closing_date, due_date FROM invoice WHERE id = ?1")
+                .bind(&invoice)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(after, ("2026-01-27".into(), "2026-02-12".into()));
+
+        // O molde do cartão permanece: só aquele ciclo foi corrigido.
+        assert_eq!(effective_cycle(&pool, &card).await.unwrap(), (29, 12));
+    }
+
+    #[tokio::test]
+    async fn invoice_dates_reject_an_inverted_cycle_or_a_move_across_months() {
+        let pool = pool().await;
+        let card = card(&pool, "Cartão", 29, 12).await;
+        let invoice = ensure_invoice_for_test(&pool, &card, "2026-02").await;
+
+        assert!(
+            set_invoice_dates_inner(&pool, &invoice, "2026-02-12", "2026-02-12")
+                .await
+                .is_err(),
+            "fechar no dia do vencimento não é um ciclo"
+        );
+        // Mover o vencimento de mês faria a identidade cartão×mês mentir.
+        let moved = set_invoice_dates_inner(&pool, &invoice, "2026-02-05", "2026-03-12").await;
+        assert!(moved.is_err());
+        assert!(moved.unwrap_err().contains("2026-02"));
+
+        let untouched: (String, String) =
+            sqlx::query_as("SELECT closing_date, due_date FROM invoice WHERE id = ?1")
+                .bind(&invoice)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(untouched, ("2026-01-29".into(), "2026-02-12".into()));
+    }
+
+    /// Aceitar a proposta leva TODAS as grafias junto — é isso que impede a mesma fatura de ser
+    /// lida por um cartão num mês e por nenhum no outro.
+    #[tokio::test]
+    async fn accepting_a_proposal_carries_every_alias_the_sheet_uses() {
+        let pool = pool().await;
+        sqlx::query(
+            "INSERT INTO card_proposal (id,alias,display_name,source_month,status) \
+             VALUES ('p1','nubank','Nubank','2026-01','pending')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO card_proposal_alias (id,proposal_id,alias) \
+             VALUES ('a1','p1','nubank (26/09)'),('a2','p1','nubank (26/12)')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let listed = list_card_proposals_inner(&pool).await.unwrap();
+        assert_eq!(listed[0].aliases.len(), 3);
+        assert_eq!(listed[0].aliases[0], "nubank", "a identidade vem primeiro");
+
+        let account = accept_card_proposal_inner(&pool, "p1", Some(20), Some(10), None, None)
+            .await
+            .unwrap();
+        let aliases: Vec<(String,)> =
+            sqlx::query_as("SELECT alias FROM card_alias WHERE account_id = ?1 ORDER BY alias")
+                .bind(&account)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let aliases: Vec<String> = aliases.into_iter().map(|(a,)| a).collect();
+        assert!(aliases.contains(&"nubank (26/09)".to_string()));
+        assert!(aliases.contains(&"nubank (26/12)".to_string()));
+    }
+
+    /// O caminho que faltava: a proposta é outra grafia de um cartão que já existe. Sem ele,
+    /// aceitar sempre criava conta nova e repartia a fatura de um mesmo cartão em duas.
+    #[tokio::test]
+    async fn attaching_a_proposal_adds_aliases_to_an_existing_card_without_creating_another() {
+        let pool = pool().await;
+        let emissor = card(&pool, "Emissor", 20, 12).await;
+        sqlx::query(
+            "INSERT INTO card_proposal (id,alias,display_name,source_month,status) \
+             VALUES ('p1','emissor titular','Emissor Titular','2025-10','pending')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        attach_card_proposal_inner(&pool, "p1", &emissor)
+            .await
+            .unwrap();
+
+        let cards: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM account WHERE type='credit_card'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(cards, 1, "nenhuma conta nova");
+        let owner: Option<String> =
+            sqlx::query_scalar("SELECT account_id FROM card_alias WHERE alias = 'emissor titular'")
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+        assert_eq!(owner.as_deref(), Some(emissor.as_str()));
+        assert!(
+            list_card_proposals_inner(&pool).await.unwrap().is_empty(),
+            "a proposta sai da fila resolvida"
+        );
+    }
+
+    #[tokio::test]
+    async fn attaching_a_proposal_rejects_a_destination_that_is_not_a_card() {
+        let pool = pool().await;
+        sqlx::query(
+            "INSERT INTO card_proposal (id,alias,display_name,source_month,status) \
+             VALUES ('p1','nubank','Nubank','2026-01','pending')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(
+            attach_card_proposal_inner(&pool, "p1", "conta-inexistente")
+                .await
+                .is_err()
+        );
+        let state: String = sqlx::query_scalar("SELECT status FROM card_proposal WHERE id='p1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(state, "pending", "destino inválido não resolve a proposta");
     }
 
     #[tokio::test]

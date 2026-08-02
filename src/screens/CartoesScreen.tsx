@@ -23,8 +23,10 @@ import { Money } from "../design-system/components/Money";
 import { NoRecordDash } from "../design-system/components/NoRecordDash";
 import { OwnerChip } from "../design-system/components/OwnerChip";
 import { SegmentedControl } from "../design-system/components/SegmentedControl";
+import { SR_ONLY } from "../design-system/srOnly";
 import {
   acceptCardProposal,
+  attachCardProposal,
   cancelCardSeries,
   createCardAccount,
   dismissCardProposal,
@@ -35,6 +37,7 @@ import {
   listCards,
   listInvoices,
   moveCardPurchase,
+  setInvoiceDates,
   setInvoiceStatedTotal,
   updateCardAccount,
   updateCardSeries,
@@ -283,6 +286,7 @@ const DEMO_PROPOSALS: CardProposal[] = [
     display_name: "Cartão de viagens",
     source_month: "2026-06",
     status: "pending",
+    aliases: ["Cartão de viagens"],
   },
 ];
 
@@ -434,6 +438,7 @@ export function CartoesScreen() {
         <ProposalBanner
           key={proposal.id}
           proposal={proposal}
+          cards={cards}
           onCreate={() => setForm({ proposal })}
         />
       ))}
@@ -518,17 +523,26 @@ export function CartoesScreen() {
 
 function ProposalBanner({
   proposal,
+  cards,
   onCreate,
 }: {
   proposal: CardProposal;
+  cards: Card[];
   onCreate: () => void;
 }) {
   const [busy, setBusy] = useState(false);
+  // O vínculo é a resposta menos comum, então ele não divide a abertura com o cadastro: fica
+  // atrás de um convite e só então a escolha aparece — um convite por estado.
+  const [attaching, setAttaching] = useState(false);
+  const [attachTo, setAttachTo] = useState("");
+  // As grafias além da identidade são o que a planilha escreveu de diferente para o mesmo
+  // cartão; mostrá-las explica por que uma proposta só responde por várias linhas.
+  const variants = (proposal.aliases ?? []).filter((alias) => alias !== proposal.alias);
 
-  function dismiss() {
+  function resolve(run: () => Promise<unknown>) {
     if (!isTauri) return;
     setBusy(true);
-    void dismissCardProposal(proposal.id)
+    void run()
       .then(invalidateCommands)
       .catch(() => undefined)
       .finally(() => setBusy(false));
@@ -543,19 +557,83 @@ function ProposalBanner({
         <Activity size={14} aria-hidden="true" />A Mia farejou um cartão na planilha
       </span>
       <p className="cartoes__proposal-copy">
-        Uma linha da seção de cartões de {monthLabelLower(proposal.source_month)} não
-        casa com nenhum cartão que o app conhece:{" "}
-        <strong>{proposal.display_name}</strong>. Quer cadastrar para acompanhar a
-        fatura?
+        Desde {monthLabelLower(proposal.source_month)} a sua planilha lança faturas de{" "}
+        <strong>{proposal.display_name}</strong>, e nenhum cartão do app responde por
+        elas. Quer cadastrar para acompanhar?
       </p>
-      <div className="cartoes__actions">
-        <Button variant="primary" size="sm" disabled={busy} onClick={onCreate}>
-          Cadastrar cartão
-        </Button>
-        <Button variant="ghost" size="sm" disabled={busy} onClick={dismiss}>
-          Dispensar
-        </Button>
-      </div>
+      {variants.length > 0 && (
+        <p className="cartoes__proposal-aliases">
+          Também escrito como {variants.join(", ")} — o mesmo cartão.
+        </p>
+      )}
+      {attaching ? (
+        <div className="cartoes__actions">
+          <label style={SR_ONLY} htmlFor={`attach-${proposal.id}`}>
+            Cartão que já tenho
+          </label>
+          <select
+            id={`attach-${proposal.id}`}
+            className="cartoes__field"
+            value={attachTo}
+            disabled={busy}
+            onChange={(event) => setAttachTo(event.target.value)}
+          >
+            <option value="">Escolha o cartão…</option>
+            {cards.map((card) => (
+              <option key={card.id} value={card.id}>
+                {card.name}
+              </option>
+            ))}
+          </select>
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={busy || attachTo === ""}
+            onClick={() =>
+              resolve(() =>
+                attachCardProposal({
+                  proposalId: proposal.id,
+                  accountId: attachTo,
+                }),
+              )
+            }
+          >
+            Usar como apelido
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={() => setAttaching(false)}
+          >
+            Cancelar
+          </Button>
+        </div>
+      ) : (
+        <div className="cartoes__actions">
+          <Button variant="primary" size="sm" disabled={busy} onClick={onCreate}>
+            Cadastrar cartão
+          </Button>
+          {cards.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              onClick={() => setAttaching(true)}
+            >
+              É um cartão que já tenho
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={() => resolve(() => dismissCardProposal(proposal.id))}
+          >
+            Dispensar
+          </Button>
+        </div>
+      )}
     </section>
   );
 }
@@ -916,6 +994,25 @@ function InvoiceHero({
   detail: InvoiceDetail;
   todayISO: string;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [closing, setClosing] = useState(detail.closing_date);
+  const [due, setDue] = useState(detail.due_date);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  function save() {
+    if (!isTauri) return;
+    setBusy(true);
+    setError(null);
+    void setInvoiceDates({ invoiceId: detail.id, closingDate: closing, dueDate: due })
+      .then(() => {
+        setEditing(false);
+        invalidateCommands();
+      })
+      .catch((cause: unknown) => setError(safeErrorMessage(cause)))
+      .finally(() => setBusy(false));
+  }
+
   return (
     <>
       <div className="cartoes__hero">
@@ -929,9 +1026,67 @@ function InvoiceHero({
           <small>{cycleStateLabel(detail, todayISO)}</small>
         </div>
       </div>
-      <InfoPopover term={INVOICE_TERM}>
-        <span className="cartoes__how">Como a fatura entra no mês</span>
-      </InfoPopover>
+      <div className="cartoes__hero-gestos">
+        <InfoPopover term={INVOICE_TERM}>
+          <span className="cartoes__how">Como a fatura entra no mês</span>
+        </InfoPopover>
+        {!editing && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setClosing(detail.closing_date);
+              setDue(detail.due_date);
+              setError(null);
+              setEditing(true);
+            }}
+          >
+            Corrigir datas do ciclo
+          </Button>
+        )}
+      </div>
+      {editing && (
+        <div className="cartoes__adjust-row">
+          <label className="cartoes__label">
+            Fechou em
+            <input
+              type="date"
+              className="cartoes__field"
+              value={closing}
+              onChange={(event) => setClosing(event.target.value)}
+            />
+          </label>
+          <label className="cartoes__label">
+            Vence em
+            <input
+              type="date"
+              className="cartoes__field"
+              value={due}
+              onChange={(event) => setDue(event.target.value)}
+            />
+          </label>
+          <Button variant="primary" size="sm" disabled={busy} onClick={save}>
+            Confirmar
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={() => setEditing(false)}
+          >
+            Cancelar
+          </Button>
+          <p className="cartoes__discrete">
+            Vale só para este ciclo — o cartão continua com o fechamento cadastrado. O
+            vencimento volta a seguir a planilha no próximo import.
+          </p>
+          {error ? (
+            <p role="alert" className="cartoes__error">
+              {error}
+            </p>
+          ) : null}
+        </div>
+      )}
     </>
   );
 }

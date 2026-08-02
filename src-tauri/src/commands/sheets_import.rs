@@ -10,6 +10,24 @@ pub struct SheetInfo {
     pub sheet_id: i64,
 }
 
+/// Identidades de cartão que o domínio já conhece — contas cadastradas, seus apelidos e as
+/// propostas ainda pendentes. Insumo do diagnóstico de fatura não reconhecida: uma proposta
+/// dispensada não entra, porque o dono já disse que aquilo não é cartão.
+async fn load_known_card_aliases(pool: &SqlitePool) -> Result<Vec<String>, String> {
+    sqlx::query_as::<_, (String,)>(
+        "SELECT name FROM account WHERE type = 'credit_card' \
+         UNION ALL \
+         SELECT ca.alias FROM card_alias ca JOIN account a ON a.id = ca.account_id \
+         WHERE a.type = 'credit_card' \
+         UNION ALL \
+         SELECT alias FROM card_proposal WHERE status = 'pending'",
+    )
+    .fetch_all(pool)
+    .await
+    .map(|rows| rows.into_iter().map(|(alias,)| alias).collect())
+    .map_err(|e| format!("known card aliases: {e}"))
+}
+
 /// Retorno estruturado do import: mantém `count` NUMÉRICO (consumido
 /// aritmeticamente pelo frontend, ex. `importAllTabs`/`Acc`) e acrescenta os diagnósticos de
 /// precisão (nota não itemizada / item↔célula divergente) sem substituir nada que já existia.
@@ -219,8 +237,13 @@ pub(crate) async fn import_one_tab(
     // Diagnósticos de precisão são função do LOTE já parseado (nota crua + total da
     // célula), não da escrita — coletados ANTES do skip de checksum para que uma reimportação
     // idêntica (dedup) continue reportando as mesmas notas que precisam de atenção.
-    let diagnostics =
-        import::collect_import_diagnostics(sheet_name, &imported_rows, descriptions_trusted);
+    let known_card_aliases = load_known_card_aliases(pool).await?;
+    let diagnostics = import::collect_import_diagnostics(
+        sheet_name,
+        &imported_rows,
+        descriptions_trusted,
+        &known_card_aliases,
+    );
 
     // Cerimônia do teto em nota da coluna Diário → proposta (confirmação na UI). Computada
     // ANTES do dedup de checksum: a nota vive em célula sem valor (fora do checksum de
@@ -914,6 +937,7 @@ async fn import_local_xlsx_inner(
                 sheet_name,
                 &imported_rows,
                 notes_found,
+                &load_known_card_aliases(pool).await?,
             ));
 
             let options = import::ImportRowsOptions {

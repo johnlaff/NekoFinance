@@ -88,10 +88,29 @@
 }
 
 .cartoes__proposal-copy {
-  margin: 0 0 var(--space-4);
+  margin: 0 0 var(--space-3);
   font-size: var(--fs-sm);
   line-height: var(--lh-normal);
   color: var(--text);
+  max-width: 62ch;
+}
+
+/* Didática e correção do ciclo dividem a mesma linha sob o herói: são os dois gestos discretos
+   da fatura, e nenhum deles disputa a leitura do valor. */
+.cartoes__hero-gestos {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* As grafias variantes explicam por que uma proposta responde por várias linhas da planilha;
+   são contexto de segunda leitura, então recuam na hierarquia em vez de disputar a copy. */
+.cartoes__proposal-aliases {
+  margin: 0 0 var(--space-4);
+  font-size: var(--fs-label);
+  line-height: var(--lh-normal);
+  color: var(--text-muted);
   max-width: 62ch;
 }
 
