@@ -712,16 +712,20 @@ function InvoiceRow({
   isLargest: boolean;
 }) {
   const refundExpected = refundExpectedCents(invoice);
-  const statusContext = isLargest
-    ? "A maior fatura em aberto"
-    : invoice.status === "fechada"
-      ? "Fechada — aguarda pagamento"
-      : "Acumulando";
+  const statusContext =
+    invoice.status === "fechada" ? "Fechada — aguarda pagamento" : "Acumulando";
   // "Eu" é a pessoa-padrão do domínio: só dono de cartão adicional merece prefixo.
   const foreignOwner = invoice.owner_name && invoice.owner_name !== "Eu";
-  const context = foreignOwner
-    ? `De ${invoice.owner_name} · ${statusContext.charAt(0).toLowerCase()}${statusContext.slice(1)}`
-    : statusContext;
+  // O tamanho é julgamento e o status é fato: o destaque SOMA ao status em vez de ocupar o
+  // lugar dele, senão a fatura que mais pesa é justamente a que não diz se já fechou.
+  const parts = foreignOwner
+    ? [
+        `De ${invoice.owner_name}`,
+        `${statusContext.charAt(0).toLowerCase()}${statusContext.slice(1)}`,
+      ]
+    : [statusContext];
+  if (isLargest) parts.push("a maior fatura em aberto");
+  const context = parts.join(" · ");
   return (
     <li>
       <span className="ic" aria-hidden="true">
@@ -732,9 +736,12 @@ function InvoiceRow({
         <small>
           {context}
           {refundExpected > 0 && (
-            <i className="hoje__reemb">
-              Reembolso: <Money cents={refundExpected} size="inherit" />
-            </i>
+            <>
+              {" · "}
+              <i className="hoje__reemb">
+                Reembolso: <Money cents={refundExpected} size="inherit" />
+              </i>
+            </>
           )}
         </small>
       </span>
