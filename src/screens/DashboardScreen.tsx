@@ -32,6 +32,7 @@ import {
   monthInsight,
   openInvoicesView,
   saldoBandPhrase,
+  savingsBandBroken,
   spendCapReason,
   saldoGaugeFraction,
   upcomingIncome,
@@ -407,6 +408,11 @@ function TeachLine({
       `Este é o limite do caixa: o maior gasto que o saldo aguenta até ${monthEndLabel} sem nenhum dia no vermelho.`
     );
 
+  // A faixa 20–30% é média ANUAL: rompida, ela sai do teto mas não da tela. O diagnóstico é o
+  // que aponta o caminho — e o caminho do método é performance do mês, não um dia sem gastar.
+  const bandBroken =
+    savingsBandBroken(forecast.savings_headroom_cents) && reason.kind !== "savings";
+
   // Ação nunca se esconde: os estados sem teto mantêm o CTA visível; os estados
   // informados encolhem a um rótulo curto com o valor.
   const tetoClause =
@@ -445,6 +451,13 @@ function TeachLine({
   return (
     <>
       {numberPhrase}
+      {bandBroken ? (
+        <>
+          {" "}
+          A economia do ano está abaixo dos 20% — a faixa é média anual, então o caminho
+          é a performance do mês, não um dia sem gastar.
+        </>
+      ) : null}
       {tetoClause}{" "}
       <InfoPopover term={cardMode ? VERDICT_HOW_CARD : VERDICT_HOW_DEBIT} hideMarker>
         <span className="hoje__how">Como funciona?</span>

@@ -237,3 +237,15 @@ export function spendCapReason(input: {
   }
   return { kind: "cash" };
 }
+
+/**
+ * A economia do ano rompeu a faixa do método?
+ *
+ * A régua de 20–30% é MÉDIA ANUAL — "tem mês que é mais, tem mês que é menos" —, então ela
+ * protege a faixa enquanto está viva e para de morder depois de rompida: o déficit é do ano que
+ * passou, e nenhum gasto de hoje o desfaz. Some do teto, não da tela: o diagnóstico continua
+ * visível, porque é ele que aponta o caminho (subir a performance do mês).
+ */
+export function savingsBandBroken(savingsHeadroomCents: number | null): boolean {
+  return savingsHeadroomCents != null && savingsHeadroomCents < 0;
+}

@@ -141,6 +141,50 @@ describe("DashboardScreen (Hoje)", () => {
     expect(app.navigate).toHaveBeenCalledWith("teto");
   });
 
+  // A faixa 20–30% é média ANUAL. Rompida, ela sai do teto — travar o dia puniria um déficit
+  // que nenhum gasto de hoje desfaz — mas o diagnóstico continua na tela apontando o caminho.
+  it("economia abaixo do piso não zera o teto, e o diagnóstico fica visível", async () => {
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: {
+        ...FORECAST,
+        safe_to_spend_today_cents: 734_608,
+        binding_guardrail: "cash",
+        cash_headroom_cents: 734_608,
+        savings_headroom_cents: -1_695_966,
+        deepest_deficit: { date: "2026-08-12", balance_cents: 734_608 },
+      },
+    });
+    renderHoje();
+    expect(
+      await screen.findByText("Sem deixar nenhum dia no vermelho."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/economia do ano está abaixo dos 20%/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/performance do mês/i)).toBeInTheDocument();
+  });
+
+  // Com a faixa viva, a régua da economia volta a mandar — ela protege quem ainda está nela.
+  it("faixa viva mantém a economia como régua que morde", async () => {
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: {
+        ...FORECAST,
+        safe_to_spend_today_cents: 50_000,
+        binding_guardrail: "savings",
+        savings_headroom_cents: 50_000,
+      },
+    });
+    renderHoje();
+    expect(
+      await screen.findByText("Sem tocar na economia planejada do ano."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/economia do ano está abaixo dos 20%/i),
+    ).not.toBeInTheDocument();
+  });
+
   // A ponte que o método ensina: saldo negativo é o momento de ACIONAR a reserva. O gesto
   // pré-preenche a Entrada — o lançamento continua sendo do dono, nunca automático.
   it("déficit com reserva disponível oferece o saque pré-preenchido", async () => {
