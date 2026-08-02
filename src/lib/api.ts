@@ -190,8 +190,10 @@ export interface UpcomingInvoice {
   amount_cents: number;
   status: "prevista" | "aberta" | "fechada" | "paga";
   owner_name: string;
-  /** Existe Entrada vinculada à fatura (expectativa de reembolso) — etiqueta na Hoje. */
+  /** Existe Entrada vinculada à fatura — o vínculo, mesmo quando o valor esperado é zero. */
   has_refund_expectation: boolean;
+  /** Σ das Entradas vinculadas a esta fatura, limitado ao total dela — a parte que volta. */
+  refund_expected_cents: number;
 }
 
 export interface DashboardSummary {

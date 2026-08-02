@@ -1427,6 +1427,7 @@ type CardInvoiceRow = (
     Option<i64>,
     i64,
     i64,
+    i64,
 );
 
 #[derive(Debug, Clone)]
@@ -1439,6 +1440,7 @@ pub(crate) struct CardInvoiceEvent {
     pub amount_cents: i64,
     /// Existe Entrada vinculada (`refund_invoice_id`) — a expectativa de reembolso da fatura.
     pub has_refund_expectation: bool,
+    pub refund_expected_cents: i64,
 }
 
 pub(crate) async fn load_card_invoice_events(
@@ -1458,11 +1460,15 @@ pub(crate) async fn load_card_invoice_events(
 
     let lower = today.max(start_inclusive).format("%Y-%m-%d").to_string();
     let upper = end_exclusive.map(|end| end.format("%Y-%m-%d").to_string());
+    // Reembolso é Entrada, por definição do domínio.
     let rows: Vec<CardInvoiceRow> = sqlx::query_as(
         "SELECT i.account_id, a.name, COALESCE(p.name, ''), i.closing_date, i.due_date, \
                 i.stated_total_cents, COALESCE(SUM(ABS(t.amount)), 0), \
                 EXISTS(SELECT 1 FROM \"transaction\" r WHERE r.refund_invoice_id = i.id \
-                       AND r.scenario_id IS NULL) \
+                       AND r.type = 'income' AND r.scenario_id IS NULL), \
+                COALESCE((SELECT SUM(ABS(r.amount)) FROM \"transaction\" r \
+                          WHERE r.refund_invoice_id = i.id AND r.type = 'income' \
+                            AND r.scenario_id IS NULL), 0) \
          FROM invoice i \
          JOIN account a ON a.id = i.account_id \
          LEFT JOIN person p ON p.id = a.owner_person_id \
@@ -1492,7 +1498,10 @@ pub(crate) async fn load_card_invoice_events(
                 stated_total_cents,
                 purchases_sum_cents,
                 has_refund_expectation,
+                refund_expected_cents,
             )| {
+                let amount_cents =
+                    crate::cards::effective_total_cents(stated_total_cents, purchases_sum_cents);
                 Ok(CardInvoiceEvent {
                     account_id,
                     card_name,
@@ -1501,11 +1510,10 @@ pub(crate) async fn load_card_invoice_events(
                         .map_err(|_| format!("data de fechamento inválida: {closing_date}"))?,
                     due_date: NaiveDate::parse_from_str(&due_date, "%Y-%m-%d")
                         .map_err(|_| format!("data de vencimento inválida: {due_date}"))?,
-                    amount_cents: crate::cards::effective_total_cents(
-                        stated_total_cents,
-                        purchases_sum_cents,
-                    ),
+                    amount_cents,
                     has_refund_expectation: has_refund_expectation != 0,
+                    // O reembolso não ultrapassa o compromisso que compensa, mesmo em Entrada mista.
+                    refund_expected_cents: refund_expected_cents.min(amount_cents).max(0),
                 })
             },
         )
@@ -2854,6 +2862,7 @@ pub struct UpcomingInvoiceDto {
     pub owner_name: String,
     /// Existe Entrada vinculada à fatura (`refund_invoice_id`) — etiqueta "Reembolso" na Hoje.
     pub has_refund_expectation: bool,
+    pub refund_expected_cents: i64,
 }
 
 #[derive(serde::Serialize)]
@@ -3059,6 +3068,7 @@ pub(crate) async fn dashboard_summary(
             .to_string(),
             owner_name: invoice.owner_name.clone(),
             has_refund_expectation: invoice.has_refund_expectation,
+            refund_expected_cents: invoice.refund_expected_cents,
         })
         .collect();
     let next_fatura = if has_card {
@@ -5419,6 +5429,158 @@ mod tests {
             !solo.has_refund_expectation,
             "fatura sem expectativa de reembolso"
         );
+    }
+
+    #[tokio::test]
+    async fn upcoming_invoices_sum_refund_expectations() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "card-shared",
+                card_name: "Compartilhado",
+                owner_name: "Gio",
+                invoice_id: "invoice-shared",
+                closing_date: "2026-06-20",
+                due_date: "2026-07-12",
+                stated_total_cents: Some(100_000),
+            },
+        )
+        .await;
+        for (id, amount) in [("refund-1", 25_000), ("refund-2", 30_000)] {
+            sqlx::query(
+                "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, \
+                 refund_invoice_id) VALUES (?1, 'income', ?2, '2026-07-12', 0, 1, 'invoice-shared')",
+            )
+            .bind(id)
+            .bind(amount)
+            .execute(&p)
+            .await
+            .unwrap();
+        }
+
+        let summary = dashboard_summary(&p, today).await.unwrap();
+        let shared = summary
+            .upcoming_invoices
+            .iter()
+            .find(|i| i.account_id == "card-shared")
+            .unwrap();
+        assert_eq!(shared.refund_expected_cents, 55_000);
+    }
+
+    #[tokio::test]
+    async fn upcoming_invoices_ignore_an_expense_linked_as_a_refund() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "card-shared",
+                card_name: "Compartilhado",
+                owner_name: "Gio",
+                invoice_id: "invoice-shared",
+                closing_date: "2026-06-20",
+                due_date: "2026-07-12",
+                stated_total_cents: Some(100_000),
+            },
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, \
+             refund_invoice_id) VALUES ('not-refund', 'expense', 50_000, '2026-07-12', 0, 1, 'invoice-shared')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let summary = dashboard_summary(&p, today).await.unwrap();
+        let shared = summary
+            .upcoming_invoices
+            .iter()
+            .find(|i| i.account_id == "card-shared")
+            .unwrap();
+
+        assert!(!shared.has_refund_expectation);
+        assert_eq!(shared.refund_expected_cents, 0);
+    }
+
+    #[tokio::test]
+    async fn upcoming_invoices_cap_refund_expectations_to_the_effective_invoice_total() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "card-shared",
+                card_name: "Compartilhado",
+                owner_name: "Gio",
+                invoice_id: "invoice-shared",
+                closing_date: "2026-06-20",
+                due_date: "2026-07-12",
+                stated_total_cents: Some(100_000),
+            },
+        )
+        .await;
+        for (id, amount) in [("refund-1", 80_000), ("refund-2", 50_000)] {
+            sqlx::query(
+                "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection, \
+                 refund_invoice_id) VALUES (?1, 'income', ?2, '2026-07-12', 0, 1, 'invoice-shared')",
+            )
+            .bind(id)
+            .bind(amount)
+            .execute(&p)
+            .await
+            .unwrap();
+        }
+
+        let summary = dashboard_summary(&p, today).await.unwrap();
+        let shared = summary
+            .upcoming_invoices
+            .iter()
+            .find(|i| i.account_id == "card-shared")
+            .unwrap();
+        assert_eq!(shared.refund_expected_cents, 100_000);
+    }
+
+    #[tokio::test]
+    async fn refund_links_do_not_change_the_projected_balance_or_daily_ceiling() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        seed_person(&p).await;
+        upsert_daily_budget_inner(&p, 4_000).await.unwrap();
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "card-shared",
+                card_name: "Compartilhado",
+                owner_name: "Gio",
+                invoice_id: "invoice-shared",
+                closing_date: "2026-06-20",
+                due_date: "2026-07-12",
+                stated_total_cents: Some(100_000),
+            },
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('refund-1', 'income', 55_000, '2026-07-12', 0, 1)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let unlinked = dashboard_summary(&p, today).await.unwrap();
+        sqlx::query(
+            "UPDATE \"transaction\" SET refund_invoice_id = 'invoice-shared' WHERE id = 'refund-1'",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        let linked = dashboard_summary(&p, today).await.unwrap();
+
+        assert_eq!(linked.balance, unlinked.balance);
+        assert_eq!(linked.daily_budget, unlinked.daily_budget);
     }
 
     #[tokio::test]

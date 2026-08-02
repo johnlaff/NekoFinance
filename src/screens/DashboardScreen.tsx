@@ -31,6 +31,7 @@ import {
   joinNames,
   monthInsight,
   openInvoicesView,
+  refundExpectedCents,
   saldoBandPhrase,
   savingsBandBroken,
   spendCapReason,
@@ -146,6 +147,7 @@ export function DashboardScreen() {
     bindingGuardrail: forecast.binding_guardrail,
     deepestBalanceCents: forecast.deepest_deficit?.balance_cents ?? 0,
     deepestDate: forecast.deepest_deficit?.date ?? null,
+    today,
   });
   const verdictSeal =
     capReason.kind === "savings"
@@ -180,6 +182,7 @@ export function DashboardScreen() {
             forecast={forecast}
             cardMode={cardMode}
             monthEndLabel={monthEndLabel}
+            today={today}
             onOpenTeto={() => navigate("teto")}
             onUseReserve={(shortfallCents, date) =>
               openCompose({
@@ -353,6 +356,7 @@ function TeachLine({
   forecast,
   cardMode,
   monthEndLabel,
+  today,
   onOpenTeto,
   onUseReserve,
 }: {
@@ -360,6 +364,7 @@ function TeachLine({
   forecast: Forecast;
   cardMode: boolean;
   monthEndLabel: string;
+  today: string;
   onOpenTeto: () => void;
   onUseReserve: (shortfallCents: number, date: string) => void;
 }) {
@@ -376,6 +381,7 @@ function TeachLine({
     bindingGuardrail: forecast.binding_guardrail,
     deepestBalanceCents: forecast.deepest_deficit?.balance_cents ?? 0,
     deepestDate: forecast.deepest_deficit?.date ?? null,
+    today,
   });
   // A reserva só é oferecida quando ela existe: sem conta mapeada ou zerada, a saída é outra
   // (subir a performance), e sugerir um saque impossível seria conselho vazio.
@@ -403,6 +409,19 @@ function TeachLine({
         ) : (
           "Sem reserva mapeada, o caminho é a performance do mês: entrar mais, ou sair menos."
         )}
+      </>
+    ) : reason.date ? (
+      <>
+        Este é o limite do caixa: o maior gasto que o saldo aguenta até{" "}
+        {faturaDayLabel(reason.date)} sem nenhum dia no vermelho
+        {!reason.inCurrentMonth && (
+          <>
+            {" "}
+            — o ponto mais apertado do horizonte está em{" "}
+            {(MES[monthOf(reason.date)] ?? "").toLowerCase()}.
+          </>
+        )}
+        {reason.inCurrentMonth && "."}
       </>
     ) : (
       `Este é o limite do caixa: o maior gasto que o saldo aguenta até ${monthEndLabel} sem nenhum dia no vermelho.`
@@ -575,6 +594,13 @@ function BlockDay({
                     </p>
                   </>
                 )}
+                {invoices.refundedCents > 0 && (
+                  <p className="hoje__fatura-note">
+                    Já descontado:{" "}
+                    <Money cents={invoices.refundedCents} size="inherit" /> que volta
+                    como reembolso.
+                  </p>
+                )}
               </div>
               {invoices.groups.map((group) => (
                 <div key={group.dueDate}>
@@ -685,6 +711,7 @@ function InvoiceRow({
   invoice: UpcomingInvoice;
   isLargest: boolean;
 }) {
+  const refundExpected = refundExpectedCents(invoice);
   const statusContext = isLargest
     ? "A maior fatura em aberto"
     : invoice.status === "fechada"
@@ -701,11 +728,15 @@ function InvoiceRow({
         <CreditCard size={18} strokeWidth={1.75} />
       </span>
       <span className="hoje__what">
-        <b>
-          {invoice.card_name}
-          {invoice.has_refund_expectation && <i className="hoje__reemb">Reembolso</i>}
-        </b>
-        <small>{context}</small>
+        <b>{invoice.card_name}</b>
+        <small>
+          {context}
+          {refundExpected > 0 && (
+            <i className="hoje__reemb">
+              Reembolso: <Money cents={refundExpected} size="inherit" />
+            </i>
+          )}
+        </small>
       </span>
       <span className="hoje__val">
         <Money cents={invoice.amount_cents} size="inherit" />

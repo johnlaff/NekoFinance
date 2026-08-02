@@ -712,7 +712,7 @@ function faturasAnswer(facts: MiaFacts): MiaAnswer {
       ? {
           note: [
             t("Em aberto no total: "),
-            m(view.totalCents),
+            m(view.grossTotalCents),
             t(` em ${view.count} faturas.`),
           ],
         }

@@ -25,6 +25,7 @@ function invoice(overrides: Partial<UpcomingInvoice>): UpcomingInvoice {
     status: "aberta",
     owner_name: "Eu",
     has_refund_expectation: false,
+    refund_expected_cents: 0,
     ...overrides,
   };
 }
@@ -95,6 +96,74 @@ describe("openInvoicesView", () => {
     expect(view.count).toBe(2);
     expect(view.totalCents).toBe(30_00);
     expect(view.largestAccountId).toBe("b");
+  });
+
+  it("descarta a fatura zerada, mas mantém a fatura com valor a pagar", () => {
+    const view = openInvoicesView([
+      invoice({ account_id: "zero", amount_cents: 0, status: "fechada" }),
+      invoice({ account_id: "aberta", amount_cents: 42_00 }),
+    ]);
+
+    expect(view.count).toBe(1);
+    expect(view.groups).toEqual([
+      expect.objectContaining({
+        invoices: [expect.objectContaining({ account_id: "aberta" })],
+      }),
+    ]);
+    expect(view.totalCents).toBe(42_00);
+  });
+
+  it("some com o cartão cujas faturas em aberto são todas zeradas", () => {
+    const view = openInvoicesView([
+      invoice({ account_id: "primeiro", amount_cents: 0 }),
+      invoice({ account_id: "segundo", amount_cents: 0, status: "fechada" }),
+    ]);
+
+    expect(view.count).toBe(0);
+    expect(view.groups).toEqual([]);
+    expect(view.largestAccountId).toBeNull();
+  });
+
+  it("soma o compromisso líquido e a parte esperada de reembolso", () => {
+    const view = openInvoicesView([
+      invoice({ amount_cents: 150_00, refund_expected_cents: 50_00 }),
+      invoice({
+        account_id: "card-2",
+        amount_cents: 70_00,
+        refund_expected_cents: 20_00,
+      }),
+    ]);
+
+    expect(view.totalCents).toBe(150_00);
+    expect(view.refundedCents).toBe(70_00);
+    expect(view.grossTotalCents).toBe(220_00);
+  });
+
+  it("limita o reembolso ao valor da fatura para o líquido nunca ficar negativo", () => {
+    const view = openInvoicesView([
+      invoice({ amount_cents: 80_00, refund_expected_cents: 120_00 }),
+    ]);
+
+    expect(view.totalCents).toBe(0);
+    expect(view.refundedCents).toBe(80_00);
+  });
+
+  it("trata a expectativa de reembolso ausente como zero", () => {
+    const invoiceWithoutRefund = {
+      account_id: "card-legacy",
+      card_name: "Cartão legado",
+      due_date: "2026-08-10",
+      amount_cents: 100_00,
+      status: "aberta" as const,
+      owner_name: "Eu",
+      has_refund_expectation: false,
+    } as UpcomingInvoice;
+
+    const view = openInvoicesView([invoiceWithoutRefund]);
+
+    expect(view.totalCents).toBe(100_00);
+    expect(view.refundedCents).toBe(0);
+    expect(Number.isNaN(view.totalCents)).toBe(false);
   });
 
   it("sem faturas em aberto: vazio honesto, sem destaque", () => {
@@ -207,11 +276,20 @@ describe("spendCapReason", () => {
     bindingGuardrail: "cash" as const,
     deepestBalanceCents: 734_608,
     deepestDate: "2026-08-12",
+    today: "2026-08-01",
   };
 
-  it("saldo que se segura acima do zero é leitura de caixa comum", () => {
+  it("saldo que se segura acima do zero é leitura de caixa comum, com a data do cálculo", () => {
     // A reserva incompleta NÃO aperta o teto: no método ela socorre o vermelho, não o proíbe.
-    expect(spendCapReason(base).kind).toBe("cash");
+    const reason = spendCapReason(base);
+    if (reason.kind !== "cash") throw new Error(`esperava caixa, veio ${reason.kind}`);
+    expect(reason).toMatchObject({ date: "2026-08-12", inCurrentMonth: true });
+  });
+
+  it("marca o menor saldo dos meses à frente sem trocar a data do cálculo", () => {
+    const reason = spendCapReason({ ...base, deepestDate: "2026-10-03" });
+    if (reason.kind !== "cash") throw new Error(`esperava caixa, veio ${reason.kind}`);
+    expect(reason).toMatchObject({ date: "2026-10-03", inCurrentMonth: false });
   });
 
   it("saldo que abre o bico vira déficit, com o tamanho e o dia", () => {
