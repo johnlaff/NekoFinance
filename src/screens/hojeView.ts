@@ -58,6 +58,8 @@ export interface OpenInvoicesView {
   grossTotalCents: number;
   /** Σ da parte esperada de reembolso, limitada ao total de cada fatura. */
   refundedCents: number;
+  /** Faturas em aberto com uma parte esperada de reembolso. */
+  refundedCount: number;
   count: number;
   /** Grupos por vencimento, em ordem cronológica. */
   groups: InvoiceDueGroup[];
@@ -95,28 +97,40 @@ export function openInvoicesView(invoices: UpcomingInvoice[]): OpenInvoicesView 
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([dueDate, list]) => ({
       dueDate,
-      invoices: list.toSorted((a, b) => b.amount_cents - a.amount_cents),
+      // A ordem e o destaque leem o compromisso líquido; a linha preserva o bruto declarado pela fatura.
+      invoices: list.toSorted(
+        (a, b) =>
+          b.amount_cents -
+          refundExpectedCents(b) -
+          (a.amount_cents - refundExpectedCents(a)),
+      ),
     }));
   const largest = open.reduce<UpcomingInvoice | null>(
     (acc, invoice) =>
-      acc === null || invoice.amount_cents > acc.amount_cents ? invoice : acc,
+      acc === null ||
+      invoice.amount_cents - refundExpectedCents(invoice) >
+        acc.amount_cents - refundExpectedCents(acc)
+        ? invoice
+        : acc,
     null,
   );
-  const { totalCents, grossTotalCents, refundedCents } = open.reduce(
+  const { totalCents, grossTotalCents, refundedCents, refundedCount } = open.reduce(
     (totals, invoice) => {
       const refundExpected = refundExpectedCents(invoice);
       return {
         totalCents: totals.totalCents + invoice.amount_cents - refundExpected,
         grossTotalCents: totals.grossTotalCents + invoice.amount_cents,
         refundedCents: totals.refundedCents + refundExpected,
+        refundedCount: totals.refundedCount + Number(refundExpected > 0),
       };
     },
-    { totalCents: 0, grossTotalCents: 0, refundedCents: 0 },
+    { totalCents: 0, grossTotalCents: 0, refundedCents: 0, refundedCount: 0 },
   );
   return {
     totalCents,
     grossTotalCents,
     refundedCents,
+    refundedCount,
     count: open.length,
     groups,
     largestAccountId: largest?.account_id ?? null,

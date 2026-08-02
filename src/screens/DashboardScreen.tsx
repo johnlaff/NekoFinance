@@ -594,7 +594,7 @@ function BlockDay({
                     </p>
                   </>
                 )}
-                {invoices.refundedCents > 0 && (
+                {invoices.refundedCount > 1 && (
                   <p className="hoje__fatura-note">
                     Já descontado:{" "}
                     <Money cents={invoices.refundedCents} size="inherit" /> que volta

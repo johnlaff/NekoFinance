@@ -405,6 +405,31 @@ describe("DashboardScreen (Hoje)", () => {
     expect(screen.getAllByText("Reembolso:", { exact: false })).toHaveLength(2);
   });
 
+  it("modo cartão: com um reembolso, deixa o valor apenas na fatura", async () => {
+    mockCommands({
+      get_dashboard_summary: {
+        ...SUMMARY,
+        spending_mode: "card",
+        upcoming_invoices: [
+          invoiceFixture({
+            amount_cents: 100_00,
+            refund_expected_cents: 50_00,
+          }),
+        ],
+      },
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_cards: [],
+    });
+    renderHoje();
+
+    expect(await screen.findByText(/Faturas em aberto — 1 cartão/)).toBeInTheDocument();
+    expect(
+      screen.queryByText("Já descontado:", { exact: false }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Reembolso:", { exact: false })).toBeInTheDocument();
+  });
+
   it("modo cartão sem reembolso não sugere uma devolução", async () => {
     mockCommands({
       get_dashboard_summary: {

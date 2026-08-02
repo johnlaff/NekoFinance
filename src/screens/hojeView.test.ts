@@ -130,13 +130,35 @@ describe("openInvoicesView", () => {
       invoice({
         account_id: "card-2",
         amount_cents: 70_00,
-        refund_expected_cents: 20_00,
+        refund_expected_cents: 0,
       }),
     ]);
 
-    expect(view.totalCents).toBe(150_00);
-    expect(view.refundedCents).toBe(70_00);
+    expect(view.totalCents).toBe(170_00);
+    expect(view.refundedCents).toBe(50_00);
     expect(view.grossTotalCents).toBe(220_00);
+    expect(view.refundedCount).toBe(1);
+  });
+
+  it("ordena e destaca pelo compromisso líquido, sem esconder o bruto declarado", () => {
+    const view = openInvoicesView([
+      invoice({
+        account_id: "cartao-a",
+        amount_cents: 200_00,
+        refund_expected_cents: 190_00,
+      }),
+      invoice({
+        account_id: "cartao-b",
+        amount_cents: 150_00,
+        refund_expected_cents: 0,
+      }),
+    ]);
+
+    expect(view.groups[0]?.invoices.map((entry) => entry.account_id)).toEqual([
+      "cartao-b",
+      "cartao-a",
+    ]);
+    expect(view.largestAccountId).toBe("cartao-b");
   });
 
   it("limita o reembolso ao valor da fatura para o líquido nunca ficar negativo", () => {

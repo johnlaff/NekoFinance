@@ -5544,7 +5544,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn refund_links_do_not_change_the_projected_balance_or_daily_ceiling() {
+    async fn refund_links_do_not_change_the_projected_balance_or_guardrail() {
         let p = pool().await;
         let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
         seed_person(&p).await;
@@ -5570,17 +5570,28 @@ mod tests {
         .await
         .unwrap();
 
-        let unlinked = dashboard_summary(&p, today).await.unwrap();
+        let unlinked_summary = dashboard_summary(&p, today).await.unwrap();
+        let unlinked_forecast = forecast_dto(&p, today).await.unwrap();
         sqlx::query(
             "UPDATE \"transaction\" SET refund_invoice_id = 'invoice-shared' WHERE id = 'refund-1'",
         )
         .execute(&p)
         .await
         .unwrap();
-        let linked = dashboard_summary(&p, today).await.unwrap();
+        let linked_summary = dashboard_summary(&p, today).await.unwrap();
+        let linked_forecast = forecast_dto(&p, today).await.unwrap();
 
-        assert_eq!(linked.balance, unlinked.balance);
-        assert_eq!(linked.daily_budget, unlinked.daily_budget);
+        assert_eq!(
+            linked_forecast.safe_to_spend_today_cents,
+            unlinked_forecast.safe_to_spend_today_cents
+        );
+        assert_eq!(
+            linked_forecast.cash_headroom_cents,
+            unlinked_forecast.cash_headroom_cents
+        );
+        assert_eq!(linked_forecast.month_end, unlinked_forecast.month_end);
+        assert_eq!(linked_summary.balance, unlinked_summary.balance);
+        assert_eq!(linked_summary.daily_budget, unlinked_summary.daily_budget);
     }
 
     #[tokio::test]
