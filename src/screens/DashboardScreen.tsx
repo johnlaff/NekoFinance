@@ -32,6 +32,7 @@ import {
   monthInsight,
   openInvoicesView,
   saldoBandPhrase,
+  spendCapReason,
   saldoGaugeFraction,
   upcomingIncome,
   type MonthInsight,
@@ -137,6 +138,20 @@ export function DashboardScreen() {
     : "o fim do mês";
   const saldoHoje =
     monthDaily.find((d) => d.date === today)?.balance_cents ?? summary.balance;
+  // O selo do veredito nomeia a MESMA régua que a didática logo abaixo: as duas descrevendo
+  // cálculos diferentes é como a tela passou a afirmar "sem dia no vermelho" ao lado de
+  // "nenhum dia no vermelho à vista".
+  const capReason = spendCapReason({
+    bindingGuardrail: forecast.binding_guardrail,
+    deepestBalanceCents: forecast.deepest_deficit?.balance_cents ?? 0,
+    reserveFloorCents: forecast.reserve_floor_cents,
+  });
+  const verdictSeal =
+    capReason.kind === "savings"
+      ? "Sem tocar na economia planejada do ano."
+      : capReason.kind === "reserve"
+        ? "Sem adiar a reserva de emergência."
+        : "Sem deixar nenhum dia no vermelho.";
 
   return (
     <div className="hoje neko-app">
@@ -156,11 +171,7 @@ export function DashboardScreen() {
           <span className="hoje__verdict-money">
             <Money cents={safeToSpend} size="inherit" />
           </span>
-          <b>
-            {forecast.binding_guardrail === "savings"
-              ? "Sem tocar na economia planejada do ano."
-              : "Sem deixar nenhum dia no vermelho."}
-          </b>
+          <b>{verdictSeal}</b>
         </p>
         <p className="hoje__teach">
           <TeachLine
@@ -340,16 +351,35 @@ function TeachLine({
   monthEndLabel: string;
   onOpenTeto: () => void;
 }) {
-  const savingsBound = forecast.binding_guardrail === "savings";
   const ceiling = summary.daily_budget;
   const source = summary.daily_ceiling_source;
 
   // O número é SÓ o guardrail que morde (caixa ou economia) — o teto nunca entra
   // nele; é o segundo limite do dia. Uma frase sempre visível; a mecânica completa
   // mora no "Como funciona" (didática atrás de pergunta, o padrão do método).
-  const numberPhrase = savingsBound
-    ? "Este é o limite da economia: o maior gasto que mantém a meta do ano viva."
-    : `Este é o limite do caixa: o maior gasto que o saldo aguenta até ${monthEndLabel} sem nenhum dia no vermelho.`;
+  //
+  // O guardrail de caixa tem DOIS motivos de zerar, e eles são notícias diferentes: o saldo
+  // fura o vermelho, ou ele se segura e não alcança a reserva que o método pede. Dizer "sem
+  // nenhum dia no vermelho" no segundo caso contradizia o próprio veredito da tela.
+  const reason = spendCapReason({
+    bindingGuardrail: forecast.binding_guardrail,
+    deepestBalanceCents: forecast.deepest_deficit?.balance_cents ?? 0,
+    reserveFloorCents: forecast.reserve_floor_cents,
+  });
+  const numberPhrase =
+    reason.kind === "savings" ? (
+      "Este é o limite da economia: o maior gasto que mantém a meta do ano viva."
+    ) : reason.kind === "reserve" ? (
+      <>
+        O teto de hoje é zero porque a reserva de emergência está{" "}
+        <Money cents={reason.gapCents} size="inherit" /> abaixo dos seis meses de custo
+        de vida que o método pede. Até o vermelho o saldo aguentaria{" "}
+        <Money cents={reason.cashUntilRedCents} size="inherit" /> — gastar isso adia a
+        reserva.
+      </>
+    ) : (
+      `Este é o limite do caixa: o maior gasto que o saldo aguenta até ${monthEndLabel} sem nenhum dia no vermelho.`
+    );
 
   // Ação nunca se esconde: os estados sem teto mantêm o CTA visível; os estados
   // informados encolhem a um rótulo curto com o valor.

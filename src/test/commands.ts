@@ -224,6 +224,7 @@ export const FORECAST: Forecast = {
   total_missing_cents: 648400,
   safe_to_spend_today_cents: 35000,
   cash_headroom_cents: 587700,
+  reserve_floor_cents: 0,
   savings_headroom_cents: 35000,
   binding_guardrail: "savings",
   savings_target_bps: 2500,

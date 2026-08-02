@@ -140,6 +140,47 @@ describe("DashboardScreen (Hoje)", () => {
     expect(app.navigate).toHaveBeenCalledWith("teto");
   });
 
+  // O teto zerado tinha DOIS motivos colapsados num rótulo só, e a tela acabava afirmando
+  // "sem nenhum dia no vermelho" ao lado do próprio veredito de que não há dia no vermelho.
+  it("teto zerado pela reserva nomeia a reserva, não o vermelho", async () => {
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: {
+        ...FORECAST,
+        safe_to_spend_today_cents: 0,
+        binding_guardrail: "cash",
+        cash_headroom_cents: -6_087_878,
+        reserve_floor_cents: 6_822_486,
+        deepest_deficit: { date: "2026-06-12", balance_cents: 734_608 },
+      },
+    });
+    renderHoje();
+    expect(
+      await screen.findByText("Sem adiar a reserva de emergência."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/sem nenhum dia no vermelho/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/reserva de emergência está/i)).toBeInTheDocument();
+  });
+
+  // A contrapartida: quando o saldo REALMENTE fura o zero, a leitura de caixa continua sendo
+  // a verdadeira — a correção não pode trocar uma frase errada por outra.
+  it("saldo que fura o zero mantém a leitura de caixa", async () => {
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: {
+        ...FORECAST,
+        safe_to_spend_today_cents: 0,
+        binding_guardrail: "cash",
+        reserve_floor_cents: 0,
+        deepest_deficit: { date: "2026-06-12", balance_cents: -50_000 },
+      },
+    });
+    renderHoje();
+    expect(
+      await screen.findByText("Sem deixar nenhum dia no vermelho."),
+    ).toBeInTheDocument();
+  });
+
   it("modo cartão: faturas em aberto agrupadas por vencimento são o corpo do bloco", async () => {
     mockCommands({
       get_dashboard_summary: {

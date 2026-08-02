@@ -2251,6 +2251,11 @@ pub struct ForecastDto {
     pub safe_to_spend_today_cents: i64,
     /// Folga de caixa (menor saldo projetado no horizonte − piso de reserva).
     pub cash_headroom_cents: i64,
+    /// Piso de reserva subtraído pelo guardrail de caixa: o saldo dos bolsos de reserva ou o
+    /// mínimo do método (custo de vida × 6), o que for maior. A tela precisa dele para separar
+    /// os dois motivos de o teto zerar — furar o vermelho e não alcançar a reserva são coisas
+    /// diferentes para quem lê, e só um deles é "sem nenhum dia no vermelho".
+    pub reserve_floor_cents: i64,
     /// Folga da meta de poupança do mês corrente (negativa = já abaixo da meta). `null` quando a
     /// régua de poupança está inativa (mês sem renda) → só o caixa decide.
     pub savings_headroom_cents: Option<i64>,
@@ -2430,6 +2435,7 @@ pub(crate) async fn forecast_dto(
         total_missing_cents,
         safe_to_spend_today_cents: sts.amount_cents,
         cash_headroom_cents: sts.cash_headroom_cents,
+        reserve_floor_cents,
         savings_headroom_cents: sts.savings_headroom_cents,
         binding_guardrail,
         savings_target_bps: SAVINGS_TARGET_BPS,

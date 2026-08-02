@@ -10,6 +10,7 @@ import {
   monthInsight,
   openInvoicesView,
   saldoBandPhrase,
+  spendCapReason,
   saldoGaugeFraction,
   upcomingIncome,
 } from "./hojeView";
@@ -195,5 +196,54 @@ describe("termômetro do saldo", () => {
     expect(saldoGaugeFraction("tight")).toBeLessThan(saldoGaugeFraction("ok"));
     expect(saldoGaugeFraction("negative")).toBeLessThan(saldoGaugeFraction("tight"));
     expect(saldoGaugeFraction("critical")).toBeLessThan(saldoGaugeFraction("negative"));
+  });
+});
+
+// --- por que o teto do dia é o que é -------------------------------------------------------
+
+describe("spendCapReason", () => {
+  const base = {
+    bindingGuardrail: "cash" as const,
+    deepestBalanceCents: 734_608,
+    reserveFloorCents: 6_822_486,
+  };
+
+  it("nomeia a reserva quando é ela que zera o teto, não o vermelho", () => {
+    // O caso real: nenhum dia negativo à frente, mas a reserva está muito abaixo do piso.
+    // A frase antiga dizia "sem nenhum dia no vermelho" e contradizia a própria tela.
+    const reason = spendCapReason(base);
+    if (reason.kind !== "reserve")
+      throw new Error(`esperava reserve, veio ${reason.kind}`);
+    expect(reason.gapCents).toBe(6_822_486 - 734_608);
+    expect(reason.cashUntilRedCents).toBe(734_608);
+  });
+
+  it("mantém a leitura de caixa quando o saldo realmente fura o zero", () => {
+    const reason = spendCapReason({
+      ...base,
+      deepestBalanceCents: -120_000,
+      reserveFloorCents: 0,
+    });
+    expect(reason.kind).toBe("cash");
+  });
+
+  it("com reserva coberta, quem manda é o caixa", () => {
+    const reason = spendCapReason({
+      ...base,
+      deepestBalanceCents: 9_000_000,
+      reserveFloorCents: 6_822_486,
+    });
+    expect(reason.kind).toBe("cash");
+  });
+
+  it("a régua da economia continua tendo a palavra quando é ela que morde", () => {
+    expect(spendCapReason({ ...base, bindingGuardrail: "savings" }).kind).toBe(
+      "savings",
+    );
+  });
+
+  it("sem piso de reserva registrado não há o que atribuir à reserva", () => {
+    const reason = spendCapReason({ ...base, reserveFloorCents: 0 });
+    expect(reason.kind).toBe("cash");
   });
 });
