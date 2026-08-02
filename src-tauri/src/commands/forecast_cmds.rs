@@ -3053,6 +3053,8 @@ pub(crate) async fn dashboard_summary(
     let mut seen_accounts = std::collections::HashSet::new();
     let upcoming_invoices: Vec<UpcomingInvoiceDto> = active_invoices
         .iter()
+        // Fatura zerada preserva a estrutura mensal, não um compromisso: não ocupa a vaga da real.
+        .filter(|invoice| invoice.amount_cents != 0)
         .filter(|invoice| seen_accounts.insert(invoice.account_id.clone()))
         .map(|invoice| UpcomingInvoiceDto {
             account_id: invoice.account_id.clone(),
@@ -3072,14 +3074,19 @@ pub(crate) async fn dashboard_summary(
         })
         .collect();
     let next_fatura = if has_card {
-        active_invoices.first().map(|first| {
-            let amount_cents = active_invoices
-                .iter()
-                .filter(|invoice| invoice.due_date == first.due_date)
-                .map(|invoice| invoice.amount_cents)
-                .sum();
-            (first.due_date, amount_cents)
-        })
+        active_invoices
+            .iter()
+            .find(|invoice| invoice.amount_cents != 0)
+            .map(|first| {
+                let amount_cents = active_invoices
+                    .iter()
+                    .filter(|invoice| {
+                        invoice.due_date == first.due_date && invoice.amount_cents != 0
+                    })
+                    .map(|invoice| invoice.amount_cents)
+                    .sum();
+                (first.due_date, amount_cents)
+            })
     } else {
         mode.next_fatura.as_ref().and_then(|(date, amount_cents)| {
             NaiveDate::parse_from_str(date, "%Y-%m-%d")
@@ -5288,6 +5295,102 @@ mod tests {
         assert_eq!(summary.upcoming_invoices[0].status, "fechada");
         assert_eq!(summary.upcoming_invoices[1].account_id, "holder");
         assert_eq!(summary.upcoming_invoices[1].owner_name, "Ana");
+    }
+
+    #[tokio::test]
+    async fn dashboard_reads_the_first_nonzero_invoice_for_each_card() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 8, 21).unwrap();
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "card-1",
+                card_name: "Cartão",
+                owner_name: "Pessoa",
+                invoice_id: "invoice-august-zero",
+                closing_date: "2026-07-20",
+                due_date: "2026-08-26",
+                stated_total_cents: Some(0),
+            },
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO invoice (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) VALUES ('invoice-september', 'card-1', '2026-09', '2026-08-20', '2026-09-26', 10_000)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let summary = dashboard_summary(&p, today).await.unwrap();
+
+        assert_eq!(summary.upcoming_invoices.len(), 1);
+        assert_eq!(summary.upcoming_invoices[0].account_id, "card-1");
+        assert_eq!(summary.upcoming_invoices[0].due_date, "2026-09-26");
+        assert_eq!(summary.upcoming_invoices[0].amount_cents, 10_000);
+        assert_eq!(summary.next_fatura_date.as_deref(), Some("2026-09-26"));
+        assert_eq!(summary.next_fatura_amount_cents, 10_000);
+    }
+
+    #[tokio::test]
+    async fn dashboard_omits_cards_with_only_zero_value_invoices() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 8, 21).unwrap();
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "card-1",
+                card_name: "Cartão",
+                owner_name: "Pessoa",
+                invoice_id: "invoice-august-zero",
+                closing_date: "2026-07-20",
+                due_date: "2026-08-26",
+                stated_total_cents: Some(0),
+            },
+        )
+        .await;
+
+        let summary = dashboard_summary(&p, today).await.unwrap();
+
+        assert!(summary.upcoming_invoices.is_empty());
+        assert_eq!(summary.next_fatura_date, None);
+        assert_eq!(summary.next_fatura_amount_cents, 0);
+    }
+
+    #[tokio::test]
+    async fn zero_value_invoices_do_not_change_the_projected_balance_or_safe_to_spend() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 8, 21).unwrap();
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "card-1",
+                card_name: "Cartão",
+                owner_name: "Pessoa",
+                invoice_id: "invoice-september",
+                closing_date: "2026-08-20",
+                due_date: "2026-09-26",
+                stated_total_cents: Some(10_000),
+            },
+        )
+        .await;
+        let summary_without_zero = dashboard_summary(&p, today).await.unwrap();
+        let forecast_without_zero = forecast_dto(&p, today).await.unwrap();
+
+        sqlx::query(
+            "INSERT INTO invoice (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) VALUES ('invoice-august-zero', 'card-1', '2026-08', '2026-07-20', '2026-08-26', 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let summary_with_zero = dashboard_summary(&p, today).await.unwrap();
+        let forecast_with_zero = forecast_dto(&p, today).await.unwrap();
+
+        assert_eq!(summary_with_zero.balance, summary_without_zero.balance);
+        assert_eq!(
+            forecast_with_zero.safe_to_spend_today_cents,
+            forecast_without_zero.safe_to_spend_today_cents
+        );
     }
 
     // O bloco do dia no modo cartão mostra "quanto somou nas faturas HOJE" — a soma é das
