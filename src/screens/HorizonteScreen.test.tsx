@@ -52,7 +52,6 @@ const FORECAST: Forecast = {
   total_missing_cents: 728604,
   safe_to_spend_today_cents: 20000,
   cash_headroom_cents: 752086,
-  reserve_floor_cents: 0,
   savings_headroom_cents: 20000,
   binding_guardrail: "savings",
   savings_target_bps: 2500,

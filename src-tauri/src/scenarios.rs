@@ -35,7 +35,7 @@
 use crate::commands::forecast_cmds::{
     self, finalize_card_events, finalize_card_metric_events, forecast_horizon_end,
     load_economia_annotation, load_forecast_events, load_metric_events, load_ruler_mask_map,
-    projection_seed, reserve_floor,
+    projection_seed,
 };
 use crate::commands::map_cashflow_row;
 use crate::forecast::{self, CashflowEvent, MetricEvent, RulerMask};
@@ -2086,7 +2086,6 @@ async fn compare_projection(
 
     // --- Guardrails (mesma fórmula do forecast real, poupança anual REALIZADA — não muda por
     // cenário; o "e se" só reprojeta o caixa/performance do mês, não reescreve o ano já realizado). ---
-    let reserve_floor_cents = reserve_floor(pool, today).await?;
     let (annual_income, _) = forecast_cmds::realized_annual_savings(pool, today).await?;
     let annual_economia = forecast_cmds::realized_annual_economia(pool, today).await?;
 
@@ -2095,14 +2094,12 @@ async fn compare_projection(
         annual_income,
         annual_economia,
         forecast_cmds::SAVINGS_TARGET_BPS,
-        reserve_floor_cents,
     );
     let scenario_sts = forecast::safe_to_spend_today(
         &scenario_fc,
         annual_income,
         annual_economia,
         forecast_cmds::SAVINGS_TARGET_BPS,
-        reserve_floor_cents,
     );
     let guardrail_str = |g: forecast::Guardrail| {
         match g {

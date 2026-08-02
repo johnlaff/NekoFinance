@@ -1242,6 +1242,12 @@ pub(crate) struct ReserveReading {
     /// `verdict` · `estimate` · `zero` (contas mapeadas e zeradas) · `no_record`.
     pub state: &'static str,
     pub trend: String,
+    /// Alvo do método em dinheiro: custo de vida × meses mínimos. `0` sem base para calcular.
+    pub target_cents: i64,
+    /// Quanto passa do alvo — a pergunta que o método faz depois que a reserva está de pé
+    /// ("tenho 70, preciso de 40, tenho 30 de excedente; o que faz sentido pra minha vida
+    /// agora?"). `None` enquanto a reserva ainda está sendo construída ou não há base.
+    pub surplus_cents: Option<i64>,
 }
 
 pub(crate) async fn reserve_reading(
@@ -1283,6 +1289,12 @@ pub(crate) async fn reserve_reading(
     .map_err(|e| format!("query reserve trend: {e}"))?
     .unwrap_or(("flat".to_string(),));
 
+    // O alvo do método é custo de vida × meses; o excedente só existe depois de alcançado. Sem
+    // base de custo de vida não há alvo honesto — e sem alvo não há excedente a declarar.
+    let target_cents = baseline * forecast::RESERVE_MIN_MONTHS;
+    let surplus_cents =
+        (target_cents > 0 && balance.0 > target_cents).then(|| balance.0 - target_cents);
+
     Ok(ReserveReading {
         balance_cents: balance.0,
         baseline_cents: baseline,
@@ -1290,6 +1302,8 @@ pub(crate) async fn reserve_reading(
         months,
         state,
         trend: trend.0,
+        target_cents,
+        surplus_cents,
     })
 }
 
@@ -1339,34 +1353,6 @@ pub(crate) async fn annual_ruler_reading(
     let metrics = annual_month_metrics(pool, year, today_naive).await?;
     let ruler = forecast::annual_ruler(&metrics, year, today_naive);
     Ok((metrics, ruler))
-}
-
-/// Piso de reserva = colchão intocável que a folga de caixa não pode comer.
-///
-/// Lógica em duas camadas:
-/// 1. Saldo dos Bolsos de reserva configurados (`liquidity = 'reserve'`). Esses Bolsos NÃO
-///    entram na semente líquida, então subtraí-los aqui não os dobra.
-/// 2. Piso mínimo do método: `custo de vida mensal × RESERVE_MIN_MONTHS`. O custo de vida mensal é
-///    o `realized_monthly_baseline` (mediana das saídas dos meses completos = fixas + diário +
-///    cartão). Se não há Bolso de reserva configurado (ou o saldo está abaixo do piso), usa o
-///    piso calculado — assim o guardrail não fica completamente desmontado para quem ainda não
-///    criou um Bolso de reserva.
-///
-/// Sem histórico de custo de vida (baseline = 0, usuário novo), o piso calculado é 0 e o resultado
-/// cai no saldo de reserva (também 0 nesse caso) — não bloqueia quem está começando. Sem Bolso de
-/// reserva mas com histórico, retorna o piso calculado.
-pub(crate) async fn reserve_floor(
-    pool: &SqlitePool,
-    today_naive: NaiveDate,
-) -> Result<i64, String> {
-    let reserve_balance: (i64,) =
-        sqlx::query_as("SELECT COALESCE(SUM(balance), 0) FROM account WHERE liquidity = 'reserve'")
-            .fetch_one(pool)
-            .await
-            .map_err(|e| format!("reserve floor (balance): {e}"))?;
-    let baseline = realized_monthly_baseline(pool, today_naive).await?;
-    let computed_floor = baseline * RESERVE_MIN_MONTHS;
-    Ok(reserve_balance.0.max(computed_floor))
 }
 
 /// Fim do horizonte da projeção = o último dia com dado pré-lançado (transação futura ou Saldo
@@ -2251,11 +2237,6 @@ pub struct ForecastDto {
     pub safe_to_spend_today_cents: i64,
     /// Folga de caixa (menor saldo projetado no horizonte − piso de reserva).
     pub cash_headroom_cents: i64,
-    /// Piso de reserva subtraído pelo guardrail de caixa: o saldo dos bolsos de reserva ou o
-    /// mínimo do método (custo de vida × 6), o que for maior. A tela precisa dele para separar
-    /// os dois motivos de o teto zerar — furar o vermelho e não alcançar a reserva são coisas
-    /// diferentes para quem lê, e só um deles é "sem nenhum dia no vermelho".
-    pub reserve_floor_cents: i64,
     /// Folga da meta de poupança do mês corrente (negativa = já abaixo da meta). `null` quando a
     /// régua de poupança está inativa (mês sem renda) → só o caixa decide.
     pub savings_headroom_cents: Option<i64>,
@@ -2299,7 +2280,6 @@ pub(crate) async fn forecast_dto(
         &annotation,
     );
 
-    let reserve_floor_cents = reserve_floor(pool, today_naive).await?;
     // Renda-base do GUARDRAIL: só meses COMPLETOS. No meio do mês as fixas já entraram e o
     // salário pode não ter, e um denominador em formação viraria "pode gastar R$ 0" de falso
     // pânico. A régua que a tela publica é outra janela — decisão, não exibição.
@@ -2312,7 +2292,6 @@ pub(crate) async fn forecast_dto(
         guardrail_income_cents,
         annual_economia,
         SAVINGS_TARGET_BPS,
-        reserve_floor_cents,
     );
     let binding_guardrail = match sts.binding {
         forecast::Guardrail::Cash => "cash",
@@ -2435,7 +2414,6 @@ pub(crate) async fn forecast_dto(
         total_missing_cents,
         safe_to_spend_today_cents: sts.amount_cents,
         cash_headroom_cents: sts.cash_headroom_cents,
-        reserve_floor_cents,
         savings_headroom_cents: sts.savings_headroom_cents,
         binding_guardrail,
         savings_target_bps: SAVINGS_TARGET_BPS,
@@ -2909,6 +2887,12 @@ pub struct DashboardSummary {
     pub reserve_state: String,
     /// Meses completos que sustentam o custo de vida da régua (base do retrato vivo).
     pub reserve_basis_months: i64,
+    /// Alvo da reserva em dinheiro (custo de vida × meses mínimos do método). Leitura
+    /// patrimonial: a reserva socorre o saldo negativo, não trava o teto do dia.
+    pub reserve_target_cents: i64,
+    /// Quanto a reserva passa do alvo — o excedente que o método manda olhar para decidir o
+    /// próximo movimento. `null` enquanto ela ainda está sendo construída.
+    pub reserve_surplus_cents: Option<i64>,
     pub reserve_trend: String,
     /// Modo de gasto: `debit` · `card`.
     pub spending_mode: String,
@@ -3112,6 +3096,8 @@ pub(crate) async fn dashboard_summary(
         reserve_months: reserve.months,
         reserve_state: reserve.state.to_string(),
         reserve_basis_months: reserve.basis_months,
+        reserve_target_cents: reserve.target_cents,
+        reserve_surplus_cents: reserve.surplus_cents,
         reserve_trend: reserve.trend,
         spending_mode: match mode.mode {
             forecast::SpendingMode::Debit => "debit",
@@ -3699,13 +3685,10 @@ mod tests {
             "realized_monthly_baseline must sum magnitudes (ABS), not signed amounts"
         );
 
-        // reserve_floor = baseline × RESERVE_MIN_MONTHS (6). Verifica que o piso é positivo e
-        // coerente (não negativo, como aconteceria com a baseline corrompida).
-        let floor = reserve_floor(&p, today).await.unwrap();
-        assert!(
-            floor >= 150_000 * RESERVE_MIN_MONTHS,
-            "reserve_floor must be at least baseline × RESERVE_MIN_MONTHS"
-        );
+        // O alvo da reserva deriva da mesma baseline: positivo e coerente (não negativo, como
+        // aconteceria com a baseline corrompida).
+        let reserve = reserve_reading(&p, today).await.unwrap();
+        assert_eq!(reserve.target_cents, 150_000 * forecast::RESERVE_MIN_MONTHS);
     }
 
     // --- Quebra por categoria do orçamento Diário ---

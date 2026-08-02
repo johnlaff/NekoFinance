@@ -211,30 +211,29 @@ export function monthInsight(
 /**
  * Por que o teto do dia é o que é.
  *
- * O guardrail de caixa do motor é `menor saldo projetado − piso da reserva`, e os dois motivos
- * de ele zerar são diferentes para quem lê: o saldo fura o vermelho, ou o saldo se segura mas
- * fica abaixo da reserva que o método pede. Tratar os dois como "caixa" fazia a tela afirmar
- * "sem nenhum dia no vermelho" ao lado de "nenhum dia no vermelho à vista" — descrevendo um
- * cálculo que não foi o que mordeu.
+ * O método tem duas réguas para o dia: o caixa (não abrir o bico — o Saldo e o termômetro) e a
+ * economia do ano. A reserva não é uma delas: ela é o amortecedor que se ACIONA quando o saldo
+ * fica negativo, e é por isso que o déficit tem leitura própria aqui — é o momento em que o
+ * método manda usar a reserva, não o momento de proibir o gasto.
  */
 export type SpendCapReason =
   | { kind: "savings" }
   | { kind: "cash" }
-  | { kind: "reserve"; gapCents: number; cashUntilRedCents: number };
+  | { kind: "deficit"; shortfallCents: number; date: string };
 
 export function spendCapReason(input: {
   bindingGuardrail: "cash" | "savings";
-  /** Menor saldo projetado do horizonte. */
+  /** Menor saldo projetado do horizonte, e o dia em que ele acontece. */
   deepestBalanceCents: number;
-  /** Piso da reserva subtraído desse saldo pelo guardrail de caixa. */
-  reserveFloorCents: number;
+  deepestDate: string | null;
 }): SpendCapReason {
   if (input.bindingGuardrail === "savings") return { kind: "savings" };
-  // A reserva só explica o teto quando ela é o que falta: o saldo se segura acima do zero e
-  // ainda assim não alcança o piso.
-  const gapCents = input.reserveFloorCents - input.deepestBalanceCents;
-  if (input.reserveFloorCents > 0 && input.deepestBalanceCents > 0 && gapCents > 0) {
-    return { kind: "reserve", gapCents, cashUntilRedCents: input.deepestBalanceCents };
+  if (input.deepestBalanceCents < 0 && input.deepestDate) {
+    return {
+      kind: "deficit",
+      shortfallCents: -input.deepestBalanceCents,
+      date: input.deepestDate,
+    };
   }
   return { kind: "cash" };
 }

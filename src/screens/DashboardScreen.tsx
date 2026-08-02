@@ -77,7 +77,7 @@ const FATURAS_TERM = {
 };
 
 export function DashboardScreen() {
-  const { navigate } = useNekoApp();
+  const { navigate, openCompose } = useNekoApp();
   const summaryQ = useCommand("get_dashboard_summary", getDashboardSummary);
   const forecastQ = useCommand("get_forecast", getForecast);
   const billsQ = useCommand("get_upcoming_bills", () => getUpcomingBills(45));
@@ -144,13 +144,13 @@ export function DashboardScreen() {
   const capReason = spendCapReason({
     bindingGuardrail: forecast.binding_guardrail,
     deepestBalanceCents: forecast.deepest_deficit?.balance_cents ?? 0,
-    reserveFloorCents: forecast.reserve_floor_cents,
+    deepestDate: forecast.deepest_deficit?.date ?? null,
   });
   const verdictSeal =
     capReason.kind === "savings"
       ? "Sem tocar na economia planejada do ano."
-      : capReason.kind === "reserve"
-        ? "Sem adiar a reserva de emergência."
+      : capReason.kind === "deficit"
+        ? "O mês já abre o bico — o teto de hoje é zero."
         : "Sem deixar nenhum dia no vermelho.";
 
   return (
@@ -180,6 +180,15 @@ export function DashboardScreen() {
             cardMode={cardMode}
             monthEndLabel={monthEndLabel}
             onOpenTeto={() => navigate("teto")}
+            onUseReserve={(shortfallCents, date) =>
+              openCompose({
+                mode: "new",
+                type: "entrada",
+                date,
+                description: "Saque da reserva de emergência",
+                amountCents: shortfallCents,
+              })
+            }
           />
         </p>
       </section>
@@ -344,12 +353,14 @@ function TeachLine({
   cardMode,
   monthEndLabel,
   onOpenTeto,
+  onUseReserve,
 }: {
   summary: DashboardSummary;
   forecast: Forecast;
   cardMode: boolean;
   monthEndLabel: string;
   onOpenTeto: () => void;
+  onUseReserve: (shortfallCents: number, date: string) => void;
 }) {
   const ceiling = summary.daily_budget;
   const source = summary.daily_ceiling_source;
@@ -358,24 +369,39 @@ function TeachLine({
   // nele; é o segundo limite do dia. Uma frase sempre visível; a mecânica completa
   // mora no "Como funciona" (didática atrás de pergunta, o padrão do método).
   //
-  // O guardrail de caixa tem DOIS motivos de zerar, e eles são notícias diferentes: o saldo
-  // fura o vermelho, ou ele se segura e não alcança a reserva que o método pede. Dizer "sem
-  // nenhum dia no vermelho" no segundo caso contradizia o próprio veredito da tela.
+  // Caixa zerado significa que o mês já abre o bico, e no método esse é o momento de ACIONAR a
+  // reserva — não de proibir o gasto. A frase aponta para o gesto, com o tamanho do buraco.
   const reason = spendCapReason({
     bindingGuardrail: forecast.binding_guardrail,
     deepestBalanceCents: forecast.deepest_deficit?.balance_cents ?? 0,
-    reserveFloorCents: forecast.reserve_floor_cents,
+    deepestDate: forecast.deepest_deficit?.date ?? null,
   });
+  // A reserva só é oferecida quando ela existe: sem conta mapeada ou zerada, a saída é outra
+  // (subir a performance), e sugerir um saque impossível seria conselho vazio.
+  const hasReserve =
+    summary.reserve_state === "verdict" || summary.reserve_state === "estimate";
   const numberPhrase =
     reason.kind === "savings" ? (
       "Este é o limite da economia: o maior gasto que mantém a meta do ano viva."
-    ) : reason.kind === "reserve" ? (
+    ) : reason.kind === "deficit" ? (
       <>
-        O teto de hoje é zero porque a reserva de emergência está{" "}
-        <Money cents={reason.gapCents} size="inherit" /> abaixo dos seis meses de custo
-        de vida que o método pede. Até o vermelho o saldo aguentaria{" "}
-        <Money cents={reason.cashUntilRedCents} size="inherit" /> — gastar isso adia a
-        reserva.
+        Falta <Money cents={reason.shortfallCents} size="inherit" /> em{" "}
+        {faturaDayLabel(reason.date)}.{" "}
+        {hasReserve ? (
+          <>
+            É para isso que a reserva existe —{" "}
+            <button
+              type="button"
+              className="hoje__link"
+              onClick={() => onUseReserve(reason.shortfallCents, reason.date)}
+            >
+              lançar o saque
+            </button>{" "}
+            e programar a reposição.
+          </>
+        ) : (
+          "Sem reserva mapeada, o caminho é a performance do mês: entrar mais, ou sair menos."
+        )}
       </>
     ) : (
       `Este é o limite do caixa: o maior gasto que o saldo aguenta até ${monthEndLabel} sem nenhum dia no vermelho.`
@@ -908,6 +934,14 @@ function SaldoReserva({
                     : "O método pede 6 meses de custo de vida"}
                 </span>
               </div>
+              {/* Alcançado o alvo, a pergunta do método deixa de ser "quanto falta" e passa a
+                  ser o que fazer com o excedente — é ele que financia o próximo movimento. */}
+              {summary.reserve_surplus_cents != null && (
+                <p className="hoje__stat-note">
+                  <Money cents={summary.reserve_surplus_cents} size="inherit" /> além do
+                  alvo — é com esse excedente que o próximo passo se decide.
+                </p>
+              )}
             </>
           )}
         </div>

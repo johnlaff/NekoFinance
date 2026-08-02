@@ -40,6 +40,7 @@ describe("DashboardScreen (Hoje)", () => {
   beforeEach(() => {
     mockInvoke.mockReset();
     app.navigate.mockReset();
+    app.openCompose.mockReset();
   });
 
   it("herói: saudação, veredito com o guardrail que morde e curadoria da Mia", async () => {
@@ -140,45 +141,121 @@ describe("DashboardScreen (Hoje)", () => {
     expect(app.navigate).toHaveBeenCalledWith("teto");
   });
 
-  // O teto zerado tinha DOIS motivos colapsados num rótulo só, e a tela acabava afirmando
-  // "sem nenhum dia no vermelho" ao lado do próprio veredito de que não há dia no vermelho.
-  it("teto zerado pela reserva nomeia a reserva, não o vermelho", async () => {
+  // A ponte que o método ensina: saldo negativo é o momento de ACIONAR a reserva. O gesto
+  // pré-preenche a Entrada — o lançamento continua sendo do dono, nunca automático.
+  it("déficit com reserva disponível oferece o saque pré-preenchido", async () => {
+    const user = userEvent.setup();
     mockCommands({
-      get_dashboard_summary: SUMMARY,
+      get_dashboard_summary: {
+        ...SUMMARY,
+        reserve_state: "verdict",
+        reserve_months: 7,
+      },
       get_forecast: {
         ...FORECAST,
         safe_to_spend_today_cents: 0,
         binding_guardrail: "cash",
-        cash_headroom_cents: -6_087_878,
-        reserve_floor_cents: 6_822_486,
-        deepest_deficit: { date: "2026-06-12", balance_cents: 734_608 },
+        deepest_deficit: { date: "2026-06-14", balance_cents: -100_000 },
       },
     });
     renderHoje();
-    expect(
-      await screen.findByText("Sem adiar a reserva de emergência."),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/sem nenhum dia no vermelho/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/reserva de emergência está/i)).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "lançar o saque" }));
+    expect(app.openCompose).toHaveBeenCalledWith({
+      mode: "new",
+      type: "entrada",
+      date: "2026-06-14",
+      description: "Saque da reserva de emergência",
+      amountCents: 100_000,
+    });
   });
 
-  // A contrapartida: quando o saldo REALMENTE fura o zero, a leitura de caixa continua sendo
-  // a verdadeira — a correção não pode trocar uma frase errada por outra.
-  it("saldo que fura o zero mantém a leitura de caixa", async () => {
+  // Sem reserva mapeada o conselho muda: sugerir um saque impossível seria conselho vazio, e o
+  // método aponta para a performance do mês.
+  it("déficit sem reserva aponta para a performance, não para um saque", async () => {
     mockCommands({
-      get_dashboard_summary: SUMMARY,
+      get_dashboard_summary: { ...SUMMARY, reserve_state: "no_record" },
       get_forecast: {
         ...FORECAST,
         safe_to_spend_today_cents: 0,
         binding_guardrail: "cash",
-        reserve_floor_cents: 0,
-        deepest_deficit: { date: "2026-06-12", balance_cents: -50_000 },
+        deepest_deficit: { date: "2026-06-14", balance_cents: -100_000 },
+      },
+    });
+    renderHoje();
+    expect(await screen.findByText(/performance do mês/i)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "lançar o saque" }),
+    ).not.toBeInTheDocument();
+  });
+
+  // Alcançado o alvo, a pergunta do método muda: deixa de ser "quanto falta" e passa a ser o
+  // que fazer com o excedente — é ele que financia o próximo movimento.
+  it("reserva acima do alvo mostra o excedente", async () => {
+    mockCommands({
+      get_dashboard_summary: {
+        ...SUMMARY,
+        reserve_state: "verdict",
+        reserve_months: 8.2,
+        reserve_basis_months: 6,
+        reserve_target_cents: 6_822_486,
+        reserve_surplus_cents: 1_500_000,
+      },
+      get_forecast: FORECAST,
+    });
+    renderHoje();
+    expect(await screen.findByText(/além do alvo/i)).toBeInTheDocument();
+  });
+
+  it("reserva ainda em construção não fabrica excedente", async () => {
+    mockCommands({
+      get_dashboard_summary: {
+        ...SUMMARY,
+        reserve_state: "estimate",
+        reserve_months: 2.1,
+        reserve_surplus_cents: null,
+      },
+      get_forecast: FORECAST,
+    });
+    renderHoje();
+    await screen.findByText("Reserva de emergência");
+    expect(screen.queryByText(/além do alvo/i)).not.toBeInTheDocument();
+  });
+
+  // Uma reserva incompleta NÃO aperta o teto: no método ela socorre o vermelho, não o proíbe.
+  // Com o saldo no azul a leitura é a de caixa comum, mesmo sem nada guardado.
+  it("reserva incompleta não zera o teto do dia", async () => {
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: {
+        ...FORECAST,
+        binding_guardrail: "cash",
+        cash_headroom_cents: 734_608,
+        deepest_deficit: { date: "2026-06-12", balance_cents: 734_608 },
       },
     });
     renderHoje();
     expect(
       await screen.findByText("Sem deixar nenhum dia no vermelho."),
     ).toBeInTheDocument();
+    expect(screen.queryByText(/reserva de emergência está/i)).not.toBeInTheDocument();
+  });
+
+  // Quando o mês abre o bico, o método manda ACIONAR a reserva — a tela aponta para o gesto.
+  it("saldo que fura o zero aponta para o saque da reserva", async () => {
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: {
+        ...FORECAST,
+        safe_to_spend_today_cents: 0,
+        binding_guardrail: "cash",
+        deepest_deficit: { date: "2026-06-14", balance_cents: -100_000 },
+      },
+    });
+    renderHoje();
+    expect(
+      await screen.findByText("O mês já abre o bico — o teto de hoje é zero."),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/é para isso que a reserva existe/i)).toBeInTheDocument();
   });
 
   it("modo cartão: faturas em aberto agrupadas por vencimento são o corpo do bloco", async () => {

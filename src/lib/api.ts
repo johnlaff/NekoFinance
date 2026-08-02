@@ -222,6 +222,10 @@ export interface DashboardSummary {
   reserve_state: "verdict" | "estimate" | "zero" | "no_record";
   /** Meses completos que sustentam o custo de vida da régua. */
   reserve_basis_months: number;
+  /** Alvo da reserva (custo de vida × meses do método). Leitura patrimonial, não trava o dia. */
+  reserve_target_cents: number;
+  /** Quanto a reserva passa do alvo; `null` enquanto ela está sendo construída. */
+  reserve_surplus_cents: number | null;
   reserve_trend: string;
   /** Modo de gasto derivado dos próprios dados. */
   spending_mode: "debit" | "card";
@@ -473,8 +477,6 @@ export interface Forecast {
   /** "Pode gastar hoje" honesto: o mais apertado de caixa × poupança. */
   safe_to_spend_today_cents: number;
   cash_headroom_cents: number;
-  /** Piso de reserva que o guardrail de caixa subtrai do menor saldo projetado. */
-  reserve_floor_cents: number;
   /** `null` quando a régua de poupança está inativa (mês sem renda) → só o caixa decide. */
   savings_headroom_cents: number | null;
   binding_guardrail: "cash" | "savings";

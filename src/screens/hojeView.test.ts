@@ -205,35 +205,24 @@ describe("spendCapReason", () => {
   const base = {
     bindingGuardrail: "cash" as const,
     deepestBalanceCents: 734_608,
-    reserveFloorCents: 6_822_486,
+    deepestDate: "2026-08-12",
   };
 
-  it("nomeia a reserva quando é ela que zera o teto, não o vermelho", () => {
-    // O caso real: nenhum dia negativo à frente, mas a reserva está muito abaixo do piso.
-    // A frase antiga dizia "sem nenhum dia no vermelho" e contradizia a própria tela.
-    const reason = spendCapReason(base);
-    if (reason.kind !== "reserve")
-      throw new Error(`esperava reserve, veio ${reason.kind}`);
-    expect(reason.gapCents).toBe(6_822_486 - 734_608);
-    expect(reason.cashUntilRedCents).toBe(734_608);
+  it("saldo que se segura acima do zero é leitura de caixa comum", () => {
+    // A reserva incompleta NÃO aperta o teto: no método ela socorre o vermelho, não o proíbe.
+    expect(spendCapReason(base).kind).toBe("cash");
   });
 
-  it("mantém a leitura de caixa quando o saldo realmente fura o zero", () => {
+  it("saldo que abre o bico vira déficit, com o tamanho e o dia", () => {
     const reason = spendCapReason({
       ...base,
       deepestBalanceCents: -120_000,
-      reserveFloorCents: 0,
+      deepestDate: "2026-09-14",
     });
-    expect(reason.kind).toBe("cash");
-  });
-
-  it("com reserva coberta, quem manda é o caixa", () => {
-    const reason = spendCapReason({
-      ...base,
-      deepestBalanceCents: 9_000_000,
-      reserveFloorCents: 6_822_486,
-    });
-    expect(reason.kind).toBe("cash");
+    if (reason.kind !== "deficit")
+      throw new Error(`esperava deficit, veio ${reason.kind}`);
+    expect(reason.shortfallCents).toBe(120_000);
+    expect(reason.date).toBe("2026-09-14");
   });
 
   it("a régua da economia continua tendo a palavra quando é ela que morde", () => {
@@ -242,8 +231,9 @@ describe("spendCapReason", () => {
     );
   });
 
-  it("sem piso de reserva registrado não há o que atribuir à reserva", () => {
-    const reason = spendCapReason({ ...base, reserveFloorCents: 0 });
-    expect(reason.kind).toBe("cash");
+  it("sem dia de menor saldo não há déficit a nomear", () => {
+    expect(
+      spendCapReason({ ...base, deepestBalanceCents: -5_000, deepestDate: null }).kind,
+    ).toBe("cash");
   });
 });

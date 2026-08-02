@@ -195,9 +195,12 @@ pub struct SafeToSpend {
 
 /// O "pode gastar hoje" fiel ao método: o mais apertado de duas réguas.
 ///
-/// 1. **Caixa** — `menor saldo projetado no horizonte − piso de reserva`. É o padrão de mercado
-///    ("não fique negativo"), mas frouxo para quem tem colchão: o caixa pode crescer enquanto a
-///    poupança despenca.
+/// 1. **Caixa** — `menor saldo projetado no horizonte`. É o Saldo da planilha e o termômetro:
+///    a régua é não abrir o bico. A reserva NÃO entra aqui. No método ela é o amortecedor que
+///    se ACIONA quando o saldo fica negativo ("você vai usar a sua reserva quando a sua planilha
+///    ficar negativa") — usá-la como piso invertia o papel: o instrumento que socorre virava o
+///    que proíbe, e quem ainda não completou a reserva ficava com teto zero por anos. O estoque
+///    da reserva é leitura patrimonial (meses de custo de vida + excedente), não trava de fluxo.
 /// 2. **Poupança** — quanto cabe mantendo a taxa de poupança **do ANO** ≥ `savings_target_bps`:
 ///    `poupança_ano − meta×renda_ano`. A meta de 20–30% é **média ANUAL** (o ano todo fica na
 ///    faixa; tem mês que é mais, tem mês que é menos), então um mês isolado não pode mandar.
@@ -211,10 +214,8 @@ pub fn safe_to_spend_today(
     annual_income_cents: i64,
     annual_savings_cents: i64,
     savings_target_bps: i64,
-    reserve_floor_cents: i64,
 ) -> SafeToSpend {
-    let cash_headroom_cents =
-        fc.deepest_deficit.map(|p| p.balance_cents).unwrap_or(0) - reserve_floor_cents;
+    let cash_headroom_cents = fc.deepest_deficit.map(|p| p.balance_cents).unwrap_or(0);
 
     // Folga de poupança ANUAL = `poupança_ano − meta×renda_ano`. `None` sem renda (régua inativa).
     let savings_headroom_cents = (annual_income_cents > 0)
@@ -1215,7 +1216,7 @@ mod tests {
         ];
         let f = project(800_000, d("2026-06-01"), &events, d("2026-06-30"));
         // Poupança do ANO (realizado) = renda 1.000.000, sobra −100.000 (dissaving).
-        let s = safe_to_spend_today(&f, 1_000_000, -100_000, 2500, 0);
+        let s = safe_to_spend_today(&f, 1_000_000, -100_000, 2500);
 
         // Caixa positivo e alto: 800.000 + 1.000.000 − 1.100.000 = 700.000, estável até fim do mês.
         assert_eq!(s.cash_headroom_cents, 700_000);
@@ -1235,7 +1236,7 @@ mod tests {
         ];
         let f = project(0, d("2026-06-01"), &events, d("2026-07-31"));
         // Poupança do ano folgada: renda 1.000.000, sobra 1.000.000 → folga +750.000.
-        let s = safe_to_spend_today(&f, 1_000_000, 1_000_000, 2500, 0);
+        let s = safe_to_spend_today(&f, 1_000_000, 1_000_000, 2500);
 
         // Caixa cai para 100.000 em 15/jul (o "buraco do futuro").
         assert_eq!(s.cash_headroom_cents, 100_000);
@@ -1245,17 +1246,20 @@ mod tests {
         assert_eq!(s.amount_cents, 100_000);
     }
 
-    // O piso de reserva reduce a folga de caixa (não pode comer a reserva).
+    /// A régua de caixa é o Saldo da planilha: não abrir o bico. O estoque da reserva não a
+    /// aperta — no método a reserva é o amortecedor acionado QUANDO o saldo fica negativo, e
+    /// tratá-la como piso zerava o teto de quem ainda está construindo a reserva.
     #[test]
-    fn safe_to_spend_reserve_floor_subtracts_from_cash() {
+    fn safe_to_spend_cash_is_the_projected_balance_untouched_by_the_reserve() {
         let events = [
             ev("2026-06-01", EventKind::Income, 1_000_000),
             ev("2026-07-15", EventKind::FixedOut, 900_000),
         ];
         let f = project(0, d("2026-06-01"), &events, d("2026-07-31"));
-        let s = safe_to_spend_today(&f, 1_000_000, 1_000_000, 2500, 50_000);
-        assert_eq!(s.cash_headroom_cents, 50_000); // 100.000 − 50.000 de piso
-        assert_eq!(s.amount_cents, 50_000);
+        let s = safe_to_spend_today(&f, 1_000_000, 1_000_000, 2500);
+        assert_eq!(s.cash_headroom_cents, 100_000);
+        assert_eq!(s.amount_cents, 100_000);
+        assert!(matches!(s.binding, Guardrail::Cash));
     }
 
     // Cobertura: meses futuros esparsos (só fixas) vs gasto típico → sinaliza incompleto.
@@ -1324,7 +1328,7 @@ mod tests {
     fn safe_to_spend_savings_inactive_without_income() {
         let events = [ev("2026-06-10", EventKind::Daily, 30_000)];
         let f = project(200_000, d("2026-06-01"), &events, d("2026-06-30"));
-        let s = safe_to_spend_today(&f, 0, -30_000, 2500, 0);
+        let s = safe_to_spend_today(&f, 0, -30_000, 2500);
         assert_eq!(s.savings_headroom_cents, None);
         assert_eq!(s.binding, Guardrail::Cash);
         assert_eq!(s.amount_cents, 170_000); // 200.000 − 30.000, só caixa
