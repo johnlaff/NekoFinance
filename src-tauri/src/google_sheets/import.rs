@@ -326,10 +326,12 @@ pub(crate) async fn scan_card_invoices(
                 } else {
                     (due_date_value.year(), due_date_value.month() - 1)
                 };
+                // O fechamento encurta no mês em que ele cai, como o vencimento — um cartão que
+                // fecha dia 29+ existe, e fevereiro é problema da data, não do cadastro.
                 let closing_date = chrono::NaiveDate::from_ymd_opt(
                     closing_year,
                     closing_month,
-                    closing_day.clamp(1, 28),
+                    cards::closing_day_in(closing_year, closing_month, closing_day),
                 )
                 .ok_or("closing date inválida")?;
                 let existing: Option<(String, Option<i64>, Option<i64>)> = sqlx::query_as(

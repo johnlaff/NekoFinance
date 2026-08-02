@@ -84,6 +84,16 @@ describe("Cartões", () => {
     expect(screen.getByLabelText("Total declarado")).toHaveValue("4289,00");
   });
 
+  it("corrigir datas do ciclo abre com as datas da própria fatura e diz o alcance", async () => {
+    const user = userEvent.setup();
+    render(<CartoesScreen />);
+    await user.click(screen.getByRole("button", { name: "Corrigir datas do ciclo" }));
+    expect(screen.getByLabelText("Fechou em")).toHaveValue("2026-07-20");
+    expect(screen.getByLabelText("Vence em")).toHaveValue("2026-08-10");
+    // O alcance da correção é parte do gesto: vale para o ciclo, não para o cartão.
+    expect(screen.getByText(/Vale só para este ciclo/)).toBeInTheDocument();
+  });
+
   it("editar o adicional abre o formulário do adicional, não do titular", async () => {
     const user = userEvent.setup();
     render(<CartoesScreen />);
@@ -101,7 +111,9 @@ describe("Cartões", () => {
   });
 
   it("valida os dias do ciclo", () => {
-    expect(validateCardCycle("29", "10")).toMatch(/1 e 28/);
+    // Fechar dia 29 com vencimento no mês seguinte é um cartão comum, não um erro.
+    expect(validateCardCycle("29", "10")).toBeNull();
+    expect(validateCardCycle("32", "10")).toMatch(/1 e 31/);
     expect(validateCardCycle("20", "32")).toMatch(/1 e 31/);
     expect(validateCardCycle("20", "10")).toBeNull();
   });

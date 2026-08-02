@@ -37,6 +37,7 @@ import {
   listCards,
   listInvoices,
   moveCardPurchase,
+  setInvoiceDates,
   setInvoiceStatedTotal,
   updateCardAccount,
   updateCardSeries,
@@ -993,6 +994,25 @@ function InvoiceHero({
   detail: InvoiceDetail;
   todayISO: string;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [closing, setClosing] = useState(detail.closing_date);
+  const [due, setDue] = useState(detail.due_date);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  function save() {
+    if (!isTauri) return;
+    setBusy(true);
+    setError(null);
+    void setInvoiceDates({ invoiceId: detail.id, closingDate: closing, dueDate: due })
+      .then(() => {
+        setEditing(false);
+        invalidateCommands();
+      })
+      .catch((cause: unknown) => setError(safeErrorMessage(cause)))
+      .finally(() => setBusy(false));
+  }
+
   return (
     <>
       <div className="cartoes__hero">
@@ -1006,9 +1026,67 @@ function InvoiceHero({
           <small>{cycleStateLabel(detail, todayISO)}</small>
         </div>
       </div>
-      <InfoPopover term={INVOICE_TERM}>
-        <span className="cartoes__how">Como a fatura entra no mês</span>
-      </InfoPopover>
+      <div className="cartoes__hero-gestos">
+        <InfoPopover term={INVOICE_TERM}>
+          <span className="cartoes__how">Como a fatura entra no mês</span>
+        </InfoPopover>
+        {!editing && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setClosing(detail.closing_date);
+              setDue(detail.due_date);
+              setError(null);
+              setEditing(true);
+            }}
+          >
+            Corrigir datas do ciclo
+          </Button>
+        )}
+      </div>
+      {editing && (
+        <div className="cartoes__adjust-row">
+          <label className="cartoes__label">
+            Fechou em
+            <input
+              type="date"
+              className="cartoes__field"
+              value={closing}
+              onChange={(event) => setClosing(event.target.value)}
+            />
+          </label>
+          <label className="cartoes__label">
+            Vence em
+            <input
+              type="date"
+              className="cartoes__field"
+              value={due}
+              onChange={(event) => setDue(event.target.value)}
+            />
+          </label>
+          <Button variant="primary" size="sm" disabled={busy} onClick={save}>
+            Confirmar
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={() => setEditing(false)}
+          >
+            Cancelar
+          </Button>
+          <p className="cartoes__discrete">
+            Vale só para este ciclo — o cartão continua com o fechamento cadastrado. O
+            vencimento volta a seguir a planilha no próximo import.
+          </p>
+          {error ? (
+            <p role="alert" className="cartoes__error">
+              {error}
+            </p>
+          ) : null}
+        </div>
+      )}
     </>
   );
 }

@@ -119,17 +119,20 @@ fn parse_date(value: &str) -> Result<NaiveDate, String> {
 fn validate_cycle(closing_day: Option<i64>, due_day: Option<i64>) -> Result<(u32, u32), String> {
     let closing = closing_day.ok_or("fechamento obrigatório")?;
     let due = due_day.ok_or("vencimento obrigatório")?;
-    if !(1..=28).contains(&closing) {
-        return Err("fechamento deve ser entre 1 e 28".into());
+    if !(1..=31).contains(&closing) {
+        return Err("fechamento deve ser entre 1 e 31".into());
     }
     if !(1..=31).contains(&due) {
         return Err("vencimento deve ser entre 1 e 31".into());
     }
-    if closing == 28 && due >= 29 {
-        return Err(
-            "com fechamento no dia 28, o vencimento deve ser até o dia 28 — fevereiro não tem dia 29+"
-                .into(),
-        );
+    // Fechamento e vencimento no MESMO mês precisam sobreviver a fevereiro: acima do dia 28 os
+    // dois encurtam para o último dia e colidem, e um ciclo que fecha no dia em que vence não
+    // existe. Fechar depois do vencimento não tem esse problema — o fechamento é do mês anterior.
+    if closing < due && closing >= 28 {
+        return Err(format!(
+            "com fechamento no dia {closing}, o vencimento precisa vir antes dele (do mês seguinte) \
+             ou até o dia 27 — em fevereiro os dois cairiam no mesmo dia"
+        ));
     }
     Ok((closing as u32, due as u32))
 }
@@ -868,6 +871,60 @@ pub(crate) async fn set_invoice_stated_total_inner(
     if result.rows_affected() == 0 {
         return Err("fatura não encontrada".into());
     }
+    Ok(())
+}
+
+/// Corrige as datas de UMA fatura, sem tocar no molde do cartão.
+///
+/// O ciclo cadastrado é um molde para derivar ciclos que ainda não existem; o banco, porém, move
+/// o fechamento de um mês para outro (dia útil, feriado, decisão do emissor). A fatura já guarda
+/// as próprias datas — só faltava a porta para corrigi-las quando a realidade diverge do molde.
+///
+/// O fechamento corrigido persiste: a varredura do import não o reescreve. O vencimento é
+/// diferente — quando a planilha declara aquela fatura, ela volta a mandar no próximo import,
+/// porque a data da linha é o vencimento observado.
+#[tauri::command]
+pub async fn set_invoice_dates(
+    pool: State<'_, SqlitePool>,
+    invoice_id: String,
+    closing_date: String,
+    due_date: String,
+) -> Result<(), String> {
+    set_invoice_dates_inner(pool.inner(), &invoice_id, &closing_date, &due_date).await
+}
+pub(crate) async fn set_invoice_dates_inner(
+    pool: &SqlitePool,
+    invoice_id: &str,
+    closing_date: &str,
+    due_date: &str,
+) -> Result<(), String> {
+    let closing =
+        parse_date(closing_date).map_err(|_| "data de fechamento inválida".to_string())?;
+    let due = parse_date(due_date).map_err(|_| "data de vencimento inválida".to_string())?;
+    if closing >= due {
+        return Err("o fechamento precisa ser anterior ao vencimento".into());
+    }
+    let cycle_month: Option<(String,)> =
+        sqlx::query_as("SELECT cycle_month FROM invoice WHERE id = ?1")
+            .bind(invoice_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("fatura: {e}"))?;
+    let (cycle_month,) = cycle_month.ok_or("fatura não encontrada")?;
+    // A identidade da fatura é cartão×mês-do-vencimento: mover o vencimento para outro mês faria
+    // a chave mentir. Para isso existe outra fatura, a daquele mês.
+    if crate::cards::cycle_month_of(due) != cycle_month {
+        return Err(format!(
+            "o vencimento precisa continuar em {cycle_month} — é o mês que identifica esta fatura"
+        ));
+    }
+    sqlx::query("UPDATE invoice SET closing_date = ?2, due_date = ?3 WHERE id = ?1")
+        .bind(invoice_id)
+        .bind(closing.to_string())
+        .bind(due.to_string())
+        .execute(pool)
+        .await
+        .map_err(|e| format!("fatura: {e}"))?;
     Ok(())
 }
 
@@ -1703,6 +1760,19 @@ mod tests {
         .unwrap()
     }
 
+    /// Materializa a fatura de um ciclo pelo mesmo caminho da produção (o molde do cartão).
+    async fn ensure_invoice_for_test(
+        pool: &SqlitePool,
+        account_id: &str,
+        cycle_month: &str,
+    ) -> String {
+        let (closing, due) = effective_cycle(pool, account_id).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        ensure_invoice(&mut conn, account_id, cycle_month, closing, due)
+            .await
+            .unwrap()
+    }
+
     #[tokio::test]
     async fn creates_holder_and_validates_additional_cycle_and_aliases() {
         let pool = pool().await;
@@ -2434,6 +2504,64 @@ mod tests {
         assert!(!id.is_empty());
         dismiss_card_proposal_inner(&pool, "p2").await.unwrap();
         assert!(list_card_proposals_inner(&pool).await.unwrap().is_empty());
+    }
+
+    /// O banco move o fechamento de um mês para outro e o molde do cartão não acompanha. A fatura
+    /// já guardava as próprias datas; o que faltava era poder corrigi-las.
+    #[tokio::test]
+    async fn invoice_dates_are_correctable_without_touching_the_card_cycle() {
+        let pool = pool().await;
+        let card = card(&pool, "Cartão", 29, 12).await;
+        let invoice = ensure_invoice_for_test(&pool, &card, "2026-02").await;
+
+        let before: (String, String) =
+            sqlx::query_as("SELECT closing_date, due_date FROM invoice WHERE id = ?1")
+                .bind(&invoice)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(before, ("2026-01-29".into(), "2026-02-12".into()));
+
+        // Neste mês o emissor fechou dia 27.
+        set_invoice_dates_inner(&pool, &invoice, "2026-01-27", "2026-02-12")
+            .await
+            .unwrap();
+        let after: (String, String) =
+            sqlx::query_as("SELECT closing_date, due_date FROM invoice WHERE id = ?1")
+                .bind(&invoice)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(after, ("2026-01-27".into(), "2026-02-12".into()));
+
+        // O molde do cartão permanece: só aquele ciclo foi corrigido.
+        assert_eq!(effective_cycle(&pool, &card).await.unwrap(), (29, 12));
+    }
+
+    #[tokio::test]
+    async fn invoice_dates_reject_an_inverted_cycle_or_a_move_across_months() {
+        let pool = pool().await;
+        let card = card(&pool, "Cartão", 29, 12).await;
+        let invoice = ensure_invoice_for_test(&pool, &card, "2026-02").await;
+
+        assert!(
+            set_invoice_dates_inner(&pool, &invoice, "2026-02-12", "2026-02-12")
+                .await
+                .is_err(),
+            "fechar no dia do vencimento não é um ciclo"
+        );
+        // Mover o vencimento de mês faria a identidade cartão×mês mentir.
+        let moved = set_invoice_dates_inner(&pool, &invoice, "2026-02-05", "2026-03-12").await;
+        assert!(moved.is_err());
+        assert!(moved.unwrap_err().contains("2026-02"));
+
+        let untouched: (String, String) =
+            sqlx::query_as("SELECT closing_date, due_date FROM invoice WHERE id = ?1")
+                .bind(&invoice)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(untouched, ("2026-01-29".into(), "2026-02-12".into()));
     }
 
     /// Aceitar a proposta leva TODAS as grafias junto — é isso que impede a mesma fatura de ser

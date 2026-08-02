@@ -69,14 +69,23 @@ fn shift_month(year: i32, month: u32, delta: i32) -> Option<(i32, u32)> {
 /// ordem temporal entre compra, fechamento e vencimento, ao contrário de agrupar a compra no
 /// ciclo já encerrado.
 pub fn cycle_close_for_purchase(purchase: NaiveDate, closing_day: u32) -> NaiveDate {
-    let closing_day = closing_day.clamp(1, 28);
-    let (year, month) = if purchase.day() <= closing_day {
+    let in_purchase_month = closing_day_in(purchase.year(), purchase.month(), closing_day);
+    let (year, month) = if purchase.day() <= in_purchase_month {
         (purchase.year(), purchase.month())
     } else {
         shift_month(purchase.year(), purchase.month(), 1).expect("mês posterior representável")
     };
 
-    NaiveDate::from_ymd_opt(year, month, closing_day).expect("dia de fechamento válido")
+    NaiveDate::from_ymd_opt(year, month, closing_day_in(year, month, closing_day))
+        .expect("dia de fechamento válido")
+}
+
+/// O dia em que o fechamento acontece NAQUELE mês. Um cartão que fecha dia 29, 30 ou 31 é comum;
+/// o mês curto é problema de derivar a data, não do cadastro — a mesma regra que o vencimento já
+/// segue. Encurtar (28/fev) preserva o ciclo; recuar para um 28 fixo empurraria a compra do dia
+/// 29 para a fatura seguinte, um mês inteiro de atraso.
+pub(crate) fn closing_day_in(year: i32, month: u32, closing_day: u32) -> u32 {
+    closing_day.clamp(1, crate::forecast::last_day_of_month(year, month).day())
 }
 
 /// Primeiro vencimento estritamente posterior ao fechamento.
@@ -139,18 +148,26 @@ pub fn dates_for_cycle_month(
     due_day: u32,
 ) -> Option<(NaiveDate, NaiveDate)> {
     let (due_year, due_month) = parse_cycle_month(cycle_month)?;
-    let due_day = due_day.clamp(
-        1,
-        crate::forecast::last_day_of_month(due_year, due_month).day(),
-    );
-    let due_date = NaiveDate::from_ymd_opt(due_year, due_month, due_day)?;
-    let closing_day = closing_day.clamp(1, 28);
+    let due_date = NaiveDate::from_ymd_opt(
+        due_year,
+        due_month,
+        due_day.clamp(
+            1,
+            crate::forecast::last_day_of_month(due_year, due_month).day(),
+        ),
+    )?;
+    // O mês do fechamento sai dos dias PEDIDOS — é a intenção do molde. Cada um encurta depois,
+    // no seu próprio mês: fechamento e vencimento podem cair em meses de tamanhos diferentes.
     let (closing_year, closing_month) = if closing_day < due_day {
         (due_year, due_month)
     } else {
         shift_month(due_year, due_month, -1)?
     };
-    let closing_date = NaiveDate::from_ymd_opt(closing_year, closing_month, closing_day)?;
+    let closing_date = NaiveDate::from_ymd_opt(
+        closing_year,
+        closing_month,
+        closing_day_in(closing_year, closing_month, closing_day),
+    )?;
     (closing_date < due_date).then_some((closing_date, due_date))
 }
 
@@ -419,6 +436,68 @@ mod tests {
         CardLexicon::from_entries(aliases.iter().map(|a| ((*a).to_string(), (*a).to_string())))
     }
 
+    // --- ciclo com dia que não cabe em todo mês -------------------------------------------
+
+    /// Um cartão que fecha dia 29, 30 ou 31 é comum; fevereiro é problema da DERIVAÇÃO da data,
+    /// não do cadastro. A regra é a mesma já aplicada ao vencimento: encurtar para o último dia
+    /// do mês, nunca recuar para um dia 28 fixo que atrasaria a compra um ciclo inteiro.
+    #[test]
+    fn closing_day_past_the_short_month_shortens_to_its_last_day() {
+        // Fevereiro comum: o fechamento do dia 29 acontece no dia 28.
+        assert_eq!(
+            cycle_close_for_purchase(d("2026-02-10"), 29),
+            d("2026-02-28")
+        );
+        // Bissexto: o mesmo fechamento cabe no dia 29.
+        assert_eq!(
+            cycle_close_for_purchase(d("2028-02-10"), 29),
+            d("2028-02-29")
+        );
+        // Mês de 30 dias com fechamento no 31.
+        assert_eq!(
+            cycle_close_for_purchase(d("2026-04-10"), 31),
+            d("2026-04-30")
+        );
+        // Mês longo: o dia pedido é o dia usado.
+        assert_eq!(
+            cycle_close_for_purchase(d("2026-03-10"), 29),
+            d("2026-03-29")
+        );
+    }
+
+    #[test]
+    fn a_purchase_on_the_shortened_closing_day_still_belongs_to_that_cycle() {
+        // 28/fev É o fechamento de fevereiro quando o molde diz 29 — a compra desse dia entra na
+        // fatura que fecha ali, não na seguinte.
+        assert_eq!(
+            cycle_close_for_purchase(d("2026-02-28"), 29),
+            d("2026-02-28")
+        );
+        // Depois do fechamento, a compra pertence ao ciclo seguinte.
+        assert_eq!(
+            cycle_close_for_purchase(d("2026-03-30"), 29),
+            d("2026-04-29")
+        );
+    }
+
+    #[test]
+    fn cycle_dates_reconstruct_with_a_closing_day_past_the_short_month() {
+        // Fecha 29 do mês anterior, vence 12 — o ciclo do João, em fevereiro.
+        assert_eq!(
+            dates_for_cycle_month("2026-02", 29, 12),
+            Some((d("2026-01-29"), d("2026-02-12")))
+        );
+        // Vencimento em março: o fechamento cai no fevereiro curto e encurta.
+        assert_eq!(
+            dates_for_cycle_month("2026-03", 29, 12),
+            Some((d("2026-02-28"), d("2026-03-12")))
+        );
+        assert_eq!(
+            dates_for_cycle_month("2028-03", 29, 12),
+            Some((d("2028-02-29"), d("2028-03-12")))
+        );
+    }
+
     // --- alias declarado pela linha -------------------------------------------------------
 
     #[test]
@@ -537,8 +616,15 @@ mod tests {
             cycle_close_for_purchase(d("2026-12-25"), 20),
             d("2027-01-20")
         );
+        // Fechamento no dia 31: a compra do próprio 31 pertence ao ciclo que fecha ali. O mês
+        // curto só encurta o dia quando o ciclo cai nele — nunca empurra a compra um ciclo à
+        // frente.
         assert_eq!(
             cycle_close_for_purchase(d("2026-01-31"), 31),
+            d("2026-01-31")
+        );
+        assert_eq!(
+            cycle_close_for_purchase(d("2026-02-28"), 31),
             d("2026-02-28")
         );
         assert_eq!(

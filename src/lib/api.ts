@@ -1786,6 +1786,14 @@ export function setInvoiceStatedTotal(
 ): Promise<void> {
   return invoke("set_invoice_stated_total", { invoiceId, statedTotalCents });
 }
+/** Corrige as datas de UM ciclo, sem tocar no molde do cartão. */
+export function setInvoiceDates(input: {
+  invoiceId: string;
+  closingDate: string;
+  dueDate: string;
+}): Promise<void> {
+  return invoke("set_invoice_dates", input);
+}
 export function createCardSeries(input: {
   cardAccountId: string;
   description: string;
