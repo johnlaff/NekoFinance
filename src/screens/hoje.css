@@ -278,9 +278,9 @@
 }
 
 /* Reembolso é dinheiro que volta — status, não marca: verde em toda paleta. */
+/* A separação vem do texto, não de margem: margem afasta aos olhos e cola no leitor de tela. */
 .hoje__reemb {
   display: inline-block;
-  margin-left: var(--space-2);
   padding: 1px var(--space-2);
   border-radius: var(--radius-pill);
   background: var(--success-tint);

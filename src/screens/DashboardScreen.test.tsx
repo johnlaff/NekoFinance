@@ -348,8 +348,8 @@ describe("DashboardScreen (Hoje)", () => {
     // Cabeçalhos por vencimento, com concordância singular/plural.
     expect(await screen.findByText("Vencem em 20 de junho")).toBeInTheDocument();
     expect(screen.getByText("Vence em 22 de junho")).toBeInTheDocument();
-    // Dentro do grupo, maior primeiro; a maior de todas leva o contexto de destaque.
-    expect(screen.getByText("A maior fatura em aberto")).toBeInTheDocument();
+    // Dentro do grupo, maior primeiro; a maior de todas soma o destaque ao próprio status.
+    expect(screen.getByText(/· a maior fatura em aberto/)).toBeInTheDocument();
     // Reembolso previsto vira etiqueta com valor; o dono aparece quando há mais de um.
     expect(screen.getByText("Reembolso:", { exact: false })).toBeInTheDocument();
     expect(screen.getByText(/De Gio/)).toBeInTheDocument();
@@ -367,6 +367,75 @@ describe("DashboardScreen (Hoje)", () => {
     expect(
       screen.getByRole("button", { name: "Ver tudo — faturas dos cartões" }),
     ).toBeInTheDocument();
+  });
+
+  it("modo cartão: a maior fatura continua dizendo se acumula ou aguarda pagamento", async () => {
+    mockCommands({
+      get_dashboard_summary: {
+        ...SUMMARY,
+        spending_mode: "card",
+        upcoming_invoices: [
+          invoiceFixture({
+            account_id: "maior",
+            card_name: "Maior",
+            amount_cents: 350_894,
+            status: "aberta",
+          }),
+          invoiceFixture({
+            account_id: "menor",
+            card_name: "Menor",
+            amount_cents: 20_485,
+            status: "fechada",
+          }),
+        ],
+      },
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_cards: [],
+    });
+    renderHoje();
+
+    // O destaque de tamanho é julgamento; o status é fato. Um não pode apagar o outro.
+    expect(
+      await screen.findByText(/Acumulando · a maior fatura em aberto/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Fechada — aguarda pagamento")).toBeInTheDocument();
+  });
+
+  it("modo cartão: o status e a etiqueta de reembolso não colam no texto da linha", async () => {
+    mockCommands({
+      get_dashboard_summary: {
+        ...SUMMARY,
+        spending_mode: "card",
+        upcoming_invoices: [
+          invoiceFixture({
+            account_id: "titular",
+            card_name: "Titular",
+            amount_cents: 350_894,
+            status: "aberta",
+          }),
+          invoiceFixture({
+            account_id: "adicional",
+            card_name: "Adicional",
+            amount_cents: 153_239,
+            status: "fechada",
+            owner_name: "Gio",
+            has_refund_expectation: true,
+            refund_expected_cents: 153_239,
+          }),
+        ],
+      },
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_cards: [],
+    });
+    renderHoje();
+
+    // A margem do CSS separa aos olhos, mas não ao leitor de tela nem ao texto copiado:
+    // sem separador no conteúdo, "pagamento" e "Reembolso" viram uma palavra só.
+    const linha = (await screen.findByText("Adicional")).closest("li");
+    expect(linha?.textContent).not.toMatch(/pagamentoReembolso/);
+    expect(linha?.textContent).toMatch(/aguarda pagamento\s+·\s+Reembolso:/);
   });
 
   it("modo cartão: mostra o total líquido e a parte que volta como reembolso", async () => {
