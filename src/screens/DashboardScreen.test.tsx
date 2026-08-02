@@ -32,6 +32,7 @@ function invoiceFixture(overrides: Partial<UpcomingInvoice>): UpcomingInvoice {
     status: "aberta",
     owner_name: "Eu",
     has_refund_expectation: false,
+    refund_expected_cents: 0,
     ...overrides,
   };
 }
@@ -328,6 +329,7 @@ describe("DashboardScreen (Hoje)", () => {
             due_date: "2026-06-22",
             owner_name: "Gio",
             has_refund_expectation: true,
+            refund_expected_cents: 987_70,
           }),
         ],
       },
@@ -348,8 +350,8 @@ describe("DashboardScreen (Hoje)", () => {
     expect(screen.getByText("Vence em 22 de junho")).toBeInTheDocument();
     // Dentro do grupo, maior primeiro; a maior de todas leva o contexto de destaque.
     expect(screen.getByText("A maior fatura em aberto")).toBeInTheDocument();
-    // Reembolso vinculado vira etiqueta de status; o dono aparece quando há mais de um.
-    expect(screen.getByText("Reembolso")).toBeInTheDocument();
+    // Reembolso previsto vira etiqueta com valor; o dono aparece quando há mais de um.
+    expect(screen.getByText("Reembolso:", { exact: false })).toBeInTheDocument();
     expect(screen.getByText(/De Gio/)).toBeInTheDocument();
     // Cartão parado nunca some em silêncio.
     expect(
@@ -365,6 +367,212 @@ describe("DashboardScreen (Hoje)", () => {
     expect(
       screen.getByRole("button", { name: "Ver tudo — faturas dos cartões" }),
     ).toBeInTheDocument();
+  });
+
+  it("modo cartão: mostra o total líquido e a parte que volta como reembolso", async () => {
+    mockCommands({
+      get_dashboard_summary: {
+        ...SUMMARY,
+        spending_mode: "card",
+        upcoming_invoices: [
+          invoiceFixture({
+            account_id: "titular",
+            card_name: "Cartão titular",
+            amount_cents: 200_00,
+            refund_expected_cents: 50_00,
+          }),
+          invoiceFixture({
+            account_id: "adicional",
+            card_name: "Cartão adicional",
+            amount_cents: 100_00,
+            refund_expected_cents: 100_00,
+          }),
+        ],
+      },
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_cards: [],
+    });
+    renderHoje();
+
+    expect(
+      await screen.findByText(/Faturas em aberto — 2 cartões/),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/R\$\s*150,00/)).toHaveLength(2);
+    expect(screen.getByText("Já descontado:", { exact: false })).toHaveTextContent(
+      "Já descontado: R$ 150,00 que volta como reembolso.",
+    );
+    expect(screen.getAllByText("Reembolso:", { exact: false })).toHaveLength(2);
+  });
+
+  it("modo cartão: com um reembolso, deixa o valor apenas na fatura", async () => {
+    mockCommands({
+      get_dashboard_summary: {
+        ...SUMMARY,
+        spending_mode: "card",
+        upcoming_invoices: [
+          invoiceFixture({
+            amount_cents: 100_00,
+            refund_expected_cents: 50_00,
+          }),
+        ],
+      },
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_cards: [],
+    });
+    renderHoje();
+
+    expect(await screen.findByText(/Faturas em aberto — 1 cartão/)).toBeInTheDocument();
+    expect(
+      screen.queryByText("Já descontado:", { exact: false }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Reembolso:", { exact: false })).toBeInTheDocument();
+  });
+
+  it("modo cartão sem reembolso não sugere uma devolução", async () => {
+    mockCommands({
+      get_dashboard_summary: {
+        ...SUMMARY,
+        spending_mode: "card",
+        upcoming_invoices: [
+          invoiceFixture({
+            amount_cents: 100_00,
+            has_refund_expectation: true,
+            refund_expected_cents: 0,
+          }),
+        ],
+      },
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_cards: [],
+    });
+    renderHoje();
+
+    await screen.findByText(/Faturas em aberto/);
+    expect(screen.queryByText(/reembolso/i)).not.toBeInTheDocument();
+  });
+
+  it("fatura zerada some da lista e explica o cartão que fica sem fatura em aberto", async () => {
+    mockCommands({
+      get_dashboard_summary: {
+        ...SUMMARY,
+        spending_mode: "card",
+        upcoming_invoices: [
+          invoiceFixture({
+            account_id: "parado",
+            card_name: "Cartão parado",
+            amount_cents: 0,
+            status: "fechada",
+          }),
+          invoiceFixture({
+            account_id: "ativo",
+            card_name: "Cartão ativo",
+            amount_cents: 80_00,
+          }),
+        ],
+      },
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_cards: [
+        { id: "parado", name: "Cartão parado" },
+        { id: "ativo", name: "Cartão ativo" },
+      ],
+    });
+    renderHoje();
+
+    expect(await screen.findByText("Cartão ativo")).toBeInTheDocument();
+    expect(screen.queryByText("Cartão parado")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Cartão parado está sem fatura em aberto/),
+    ).toBeInTheDocument();
+  });
+
+  it("limite do caixa cita o dia do menor saldo no mês e o mês quando ele está à frente", async () => {
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: {
+        ...FORECAST,
+        binding_guardrail: "cash",
+        deepest_deficit: { date: "2026-06-15", balance_cents: 587_700 },
+      },
+      get_upcoming_bills_cmd: [],
+      list_cards: [],
+    });
+    const currentMonth = renderHoje();
+
+    expect(
+      await screen.findByText(/até 15 de junho sem nenhum dia no vermelho/),
+    ).toBeInTheDocument();
+    currentMonth.unmount();
+
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: {
+        ...FORECAST,
+        binding_guardrail: "cash",
+        deepest_deficit: { date: "2026-09-03", balance_cents: 587_700 },
+      },
+      get_upcoming_bills_cmd: [],
+      list_cards: [],
+    });
+    renderHoje();
+
+    expect(
+      await screen.findByText(/até 3 de setembro sem nenhum dia no vermelho/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/o ponto mais apertado do horizonte está em setembro/),
+    ).toBeInTheDocument();
+  });
+
+  it("leituras de fatura e horizonte preservam o saldo projetado e o pode gastar hoje", async () => {
+    const scenarios = [
+      {
+        summary: {
+          ...SUMMARY,
+          spending_mode: "card" as const,
+          upcoming_invoices: [invoiceFixture({ amount_cents: 0 })],
+        },
+        forecast: FORECAST,
+      },
+      {
+        summary: {
+          ...SUMMARY,
+          spending_mode: "card" as const,
+          upcoming_invoices: [
+            invoiceFixture({ amount_cents: 100_00, refund_expected_cents: 100_00 }),
+          ],
+        },
+        forecast: FORECAST,
+      },
+      {
+        summary: SUMMARY,
+        forecast: {
+          ...FORECAST,
+          binding_guardrail: "cash" as const,
+          deepest_deficit: { date: "2026-09-03", balance_cents: 587_700 },
+        },
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      mockCommands({
+        get_dashboard_summary: scenario.summary,
+        get_forecast: scenario.forecast,
+        get_upcoming_bills_cmd: [],
+        list_cards: [],
+      });
+      const screenView = renderHoje();
+
+      expect(await screen.findByText(/Pode gastar hoje/)).toHaveTextContent(
+        "R$ 350,00",
+      );
+      expect(screen.getByLabelText("Leitura da Mia")).toHaveTextContent(
+        "saldo previsto de R$ 12.877,00",
+      );
+      screenView.unmount();
+    }
   });
 
   it("reserva em retrato vivo: a Mia diz quantos meses já existem e quantos faltam", async () => {

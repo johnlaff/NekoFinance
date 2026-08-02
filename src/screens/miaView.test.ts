@@ -459,6 +459,7 @@ describe("faturas", () => {
       status: "aberta" as const,
       owner_name: "Ana",
       has_refund_expectation: false,
+      refund_expected_cents: 0,
     },
     {
       account_id: "b",
@@ -468,6 +469,7 @@ describe("faturas", () => {
       status: "fechada" as const,
       owner_name: "Ana",
       has_refund_expectation: false,
+      refund_expected_cents: 0,
     },
   ];
 
@@ -487,6 +489,36 @@ describe("faturas", () => {
       },
     ]);
     expect(plainText(a.text)).toContain("20 de julho");
+  });
+
+  it("mantém recibo e total em aberto no regime bruto", () => {
+    const a = ask("Quando vence a próxima fatura?", {
+      ...FACTS,
+      summary: {
+        ...SUMMARY,
+        upcoming_invoices: [
+          {
+            ...invoices[0]!,
+            amount_cents: 400_000,
+            refund_expected_cents: 100_000,
+          },
+          {
+            ...invoices[1]!,
+            due_date: "2026-07-25",
+            amount_cents: 200_000,
+            refund_expected_cents: 50_000,
+          },
+        ],
+      },
+    });
+
+    expect(a.receipt).toEqual([
+      { label: "Cartão azul", cents: 400_000 },
+      { label: "Total do vencimento", cents: 400_000, op: "eq", result: true },
+    ]);
+    expect(plainText(a.note ?? [])).toBe(
+      "Em aberto no total: R$ 6.000,00 em 2 faturas.",
+    );
   });
 
   it("fatura vencida em aberto não vira 'a próxima a vencer'", () => {
@@ -650,6 +682,32 @@ describe("os números por trás", () => {
     });
     const economia = facts.find((f) => f.key === "economia");
     expect(economia?.tone).toBe("warn");
+  });
+
+  it("fatura com reembolso mantém no painel o bruto publicado pela resposta", () => {
+    const facts: MiaFacts = {
+      ...FACTS,
+      summary: {
+        ...SUMMARY,
+        upcoming_invoices: [
+          {
+            account_id: "visa",
+            card_name: "Visa",
+            due_date: "2026-07-20",
+            amount_cents: 600_000,
+            status: "aberta",
+            owner_name: "Eu",
+            has_refund_expectation: true,
+            refund_expected_cents: 150_000,
+          },
+        ],
+      },
+    };
+
+    const footer = contextFacts(facts).find((fact) => fact.key === "faturas");
+    const answer = ask("Quando vence a próxima fatura?", facts);
+    expect(footer?.cents).toBe(600_000);
+    expect(plainText(answer.text)).toContain("R$ 6.000,00");
   });
 
   it("sem dados, o painel não existe", () => {

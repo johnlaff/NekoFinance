@@ -130,3 +130,18 @@ for humans, and versions follow [SemVer](https://semver.org/).
 - Purchases made after a card's closing day are now assigned to the cycle
   that closes the following month; previously they could land on an invoice
   whose due date preceded the purchase itself.
+- Import recognizes a card reimbursement by identity, not only by the
+  `#reembolso:` note marker: an income naming a card in the lexicon on that
+  invoice's due date is linked to it. The marker keeps precedence because it
+  carries who reimburses, inference only acts when the reimbursement accounts
+  for the whole income, and a link the owner removed is never recreated.
+- The open-invoice block reads the net commitment, labelling the part that
+  comes back, and ranks cards by it. Auditable receipts stay gross: the net
+  reading exists only where it is marked.
+- A zero-valued invoice no longer counts as an open one — it leaves the day's
+  list, the card counter and the total, and no longer hides a real invoice of
+  the same card. The row stays recorded, and the card's history still shows
+  the cycle.
+- The cash-limit sentence names the day the calculation actually used — the
+  lowest projected balance over the whole horizon — instead of the end of the
+  current month, and says which month when that day lies ahead.

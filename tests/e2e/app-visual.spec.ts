@@ -200,6 +200,7 @@ test.describe("teto do diário — estados de dado", () => {
             status: "aberta",
             owner_name: "Eu",
             has_refund_expectation: false,
+            refund_expected_cents: 0,
           },
           {
             account_id: "amazon",
@@ -209,6 +210,7 @@ test.describe("teto do diário — estados de dado", () => {
             status: "fechada",
             owner_name: "Eu",
             has_refund_expectation: false,
+            refund_expected_cents: 0,
           },
           {
             account_id: "gio",
@@ -218,6 +220,7 @@ test.describe("teto do diário — estados de dado", () => {
             status: "aberta",
             owner_name: "Gio",
             has_refund_expectation: true,
+            refund_expected_cents: 98770,
           },
         ],
         transaction_count: 42,

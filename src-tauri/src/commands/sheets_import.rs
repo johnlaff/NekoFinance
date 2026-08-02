@@ -285,6 +285,8 @@ pub(crate) async fn import_one_tab(
                 &card_ctx,
             )
             .await?;
+            import::link_card_refunds_standalone(pool, sheet_name, &imported_rows, &card_ctx)
+                .await?;
         }
         return Ok(ImportOutcome {
             count: 0,
@@ -960,6 +962,15 @@ async fn import_local_xlsx_inner(
                     )
                     .await?;
                 }
+                if notes_found {
+                    import::link_card_refunds_standalone(
+                        pool,
+                        sheet_name,
+                        &imported_rows,
+                        &card_ctx,
+                    )
+                    .await?;
+                }
                 continue;
             }
 
@@ -1286,6 +1297,33 @@ mod xlsx_comment_notes_tests {
   </sheetData>
 </worksheet>"#;
 
+    const SHEET1_WITH_INCOME_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="A1" t="inlineStr"><is><t>JANEIRO</t></is></c>
+      <c r="G1" t="inlineStr"><is><t>FEVEREIRO</t></is></c>
+    </row>
+    <row r="2">
+      <c r="A2" t="inlineStr"><is><t>Data</t></is></c>
+      <c r="B2" t="inlineStr"><is><t>Entrada</t></is></c>
+      <c r="C2" t="inlineStr"><is><t>Saída</t></is></c>
+      <c r="D2" t="inlineStr"><is><t>Diário</t></is></c>
+      <c r="E2" t="inlineStr"><is><t>Saldo</t></is></c>
+      <c r="G2" t="inlineStr"><is><t>Data</t></is></c>
+      <c r="H2" t="inlineStr"><is><t>Entrada</t></is></c>
+      <c r="I2" t="inlineStr"><is><t>Saída</t></is></c>
+      <c r="J2" t="inlineStr"><is><t>Diário</t></is></c>
+      <c r="K2" t="inlineStr"><is><t>Saldo</t></is></c>
+    </row>
+    <row r="3">
+      <c r="A3"><v>1</v></c>
+      <c r="B3"><v>123.45</v></c>
+      <c r="C3"><v>150</v></c>
+    </row>
+  </sheetData>
+</worksheet>"#;
+
     const SHEET1_RELS_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="../comments1.xml"/>
@@ -1331,6 +1369,14 @@ mod xlsx_comment_notes_tests {
     /// `comments_part` = nome REAL da entrada do zip para o arquivo de comentários (normalmente
     /// `DEFAULT_COMMENTS_PART`; um nome em caixa diferente prova a normalização de caminho).
     fn build_fixture_xlsx(comments: FixtureComments<'_>, comments_part: &str) -> Vec<u8> {
+        build_fixture_xlsx_for_sheet(SHEET1_XML, comments, comments_part)
+    }
+
+    fn build_fixture_xlsx_for_sheet(
+        sheet_xml: &str,
+        comments: FixtureComments<'_>,
+        comments_part: &str,
+    ) -> Vec<u8> {
         let mut buf = Vec::new();
         {
             let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
@@ -1350,7 +1396,7 @@ mod xlsx_comment_notes_tests {
             zip.write_all(WORKBOOK_RELS_XML.as_bytes()).unwrap();
 
             zip.start_file("xl/worksheets/sheet1.xml", opts).unwrap();
-            zip.write_all(SHEET1_XML.as_bytes()).unwrap();
+            zip.write_all(sheet_xml.as_bytes()).unwrap();
 
             if !matches!(comments, FixtureComments::None) {
                 zip.start_file("xl/worksheets/_rels/sheet1.xml.rels", opts)
@@ -1382,6 +1428,16 @@ mod xlsx_comment_notes_tests {
     ) -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!("neko-notes-{}.xlsx", uuid::Uuid::new_v4()));
         std::fs::write(&path, build_fixture_xlsx(comments, comments_part)).unwrap();
+        path
+    }
+
+    fn write_income_fixture_to_temp(comments: FixtureComments<'_>) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!("neko-income-{}.xlsx", uuid::Uuid::new_v4()));
+        std::fs::write(
+            &path,
+            build_fixture_xlsx_for_sheet(SHEET1_WITH_INCOME_XML, comments, DEFAULT_COMMENTS_PART),
+        )
+        .unwrap();
         path
     }
 
@@ -1790,6 +1846,66 @@ mod xlsx_comment_notes_tests {
             2,
             "itens da nota seguem 2 (sem duplicar)"
         );
+    }
+
+    #[tokio::test]
+    async fn xlsx_reimport_with_an_identical_checksum_links_and_keeps_one_card_refund() {
+        let path = write_income_fixture_to_temp(FixtureComments::NoteAtRef {
+            cell: "B3",
+            note: "R$ 123,45 - Fatura Visa",
+        });
+        let pool = test_pool().await;
+        let guard = crate::sync_task::SyncGuard::new(());
+        let card = crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Visa",
+            None,
+            Some(20),
+            Some(1),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO invoice \
+             (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) \
+             VALUES ('visa-janeiro', ?1, '2026-01', '2025-12-20', '2026-01-01', 15_000)",
+        )
+        .bind(&card)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        import_local_xlsx_inner(&pool, &guard, path.to_str().unwrap(), "profile-1")
+            .await
+            .unwrap();
+        let income_id = import::row_id("2026", "2026-01-01", import::RowKind::Entrada, 0);
+        sqlx::query("UPDATE \"transaction\" SET refund_invoice_id = NULL WHERE id = ?1")
+            .bind(&income_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let second = import_local_xlsx_inner(&pool, &guard, path.to_str().unwrap(), "profile-1")
+            .await
+            .unwrap();
+        assert_eq!(second.count, 0, "checksum idêntico não reimporta as linhas");
+        let third = import_local_xlsx_inner(&pool, &guard, path.to_str().unwrap(), "profile-1")
+            .await
+            .unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(third.count, 0, "checksum idêntico segue idempotente");
+
+        let refund_links: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM \"transaction\" WHERE refund_invoice_id = 'visa-janeiro'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(refund_links, 1, "o vínculo volta uma vez e não se duplica");
     }
 
     #[tokio::test]

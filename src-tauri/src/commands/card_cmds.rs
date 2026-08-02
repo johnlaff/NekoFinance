@@ -1492,7 +1492,7 @@ pub(crate) async fn link_refund_inner(
             return Err("série não encontrada".into());
         }
     }
-    sqlx::query("UPDATE \"transaction\" SET refund_invoice_id=?2,refund_txn_id=?3,refund_series_id=?4 WHERE id=?1").bind(txn_id).bind(refund_invoice_id).bind(refund_txn_id).bind(refund_series_id).execute(pool).await.map_err(|e|format!("vincular reembolso: {e}"))?;
+    sqlx::query("UPDATE \"transaction\" SET refund_invoice_id=?2,refund_txn_id=?3,refund_series_id=?4,refund_link_declined=0 WHERE id=?1").bind(txn_id).bind(refund_invoice_id).bind(refund_txn_id).bind(refund_series_id).execute(pool).await.map_err(|e|format!("vincular reembolso: {e}"))?;
     Ok(())
 }
 
@@ -1501,7 +1501,7 @@ pub async fn unlink_refund(pool: State<'_, SqlitePool>, txn_id: String) -> Resul
     unlink_refund_inner(pool.inner(), &txn_id).await
 }
 pub(crate) async fn unlink_refund_inner(pool: &SqlitePool, txn_id: &str) -> Result<(), String> {
-    let result=sqlx::query("UPDATE \"transaction\" SET refund_invoice_id=NULL,refund_txn_id=NULL,refund_series_id=NULL WHERE id=?1 AND type='income'").bind(txn_id).execute(pool).await.map_err(|e|format!("desvincular reembolso: {e}"))?;
+    let result=sqlx::query("UPDATE \"transaction\" SET refund_invoice_id=NULL,refund_txn_id=NULL,refund_series_id=NULL,refund_link_declined=1 WHERE id=?1 AND type='income'").bind(txn_id).execute(pool).await.map_err(|e|format!("desvincular reembolso: {e}"))?;
     if result.rows_affected() == 0 {
         return Err("entrada não encontrada".into());
     }
@@ -2120,13 +2120,24 @@ mod tests {
         let detail = get_invoice_inner(&pool, &invoice).await.unwrap();
         assert_eq!(detail.refunds.len(), 1);
         unlink_refund_inner(&pool, &refund).await.unwrap();
-        let linked: Option<String> =
-            sqlx::query_scalar("SELECT refund_invoice_id FROM \"transaction\" WHERE id=?1")
+        let linked: (Option<String>, i64) = sqlx::query_as(
+            "SELECT refund_invoice_id, refund_link_declined FROM \"transaction\" WHERE id=?1",
+        )
+        .bind(&refund)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(linked, (None, 1));
+        link_refund_inner(&pool, &refund, Some(&invoice), None, None)
+            .await
+            .unwrap();
+        let declined: i64 =
+            sqlx::query_scalar("SELECT refund_link_declined FROM \"transaction\" WHERE id=?1")
                 .bind(&refund)
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(linked, None);
+        assert_eq!(declined, 0);
     }
 
     #[tokio::test]

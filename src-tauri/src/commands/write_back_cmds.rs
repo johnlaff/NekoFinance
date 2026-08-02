@@ -1015,11 +1015,11 @@ async fn rekey_manual_row_to_deterministic(
            (id, type, amount, description, date, payment_method, is_fixed, from_account_id, \
             to_account_id, is_projection, recurrence_id, source_amount, source_description, \
             source_note, due_date, invoice_id, card_series_id, refund_invoice_id, refund_txn_id, \
-            refund_series_id, created_at, updated_at) \
+            refund_series_id, refund_link_declined, created_at, updated_at) \
          SELECT ?1, type, amount, description, date, payment_method, is_fixed, from_account_id, \
             to_account_id, is_projection, recurrence_id, source_amount, source_description, \
             source_note, due_date, invoice_id, card_series_id, refund_invoice_id, refund_txn_id, \
-            refund_series_id, created_at, ?3 \
+            refund_series_id, refund_link_declined, created_at, ?3 \
          FROM \"transaction\" WHERE id = ?2",
     )
     .bind(&target)
@@ -2658,6 +2658,11 @@ mod tests {
             create_refund_expectation_inner(&p, "invoice-refund", 2_000, Some("Reembolso"))
                 .await
                 .unwrap();
+        sqlx::query("UPDATE \"transaction\" SET refund_link_declined = 1 WHERE id = ?1")
+            .bind(&refund)
+            .execute(&p)
+            .await
+            .unwrap();
 
         let cell = CellWrite {
             a1: "B3".into(),
@@ -2677,13 +2682,15 @@ mod tests {
             .unwrap();
 
         let target = import::row_id(&year.to_string(), &due, RowKind::Entrada, 0);
-        let (linked_invoice,): (Option<String>,) =
-            sqlx::query_as("SELECT refund_invoice_id FROM \"transaction\" WHERE id = ?1")
-                .bind(&target)
-                .fetch_one(&p)
-                .await
-                .unwrap();
+        let (linked_invoice, declined): (Option<String>, i64) = sqlx::query_as(
+            "SELECT refund_invoice_id, refund_link_declined FROM \"transaction\" WHERE id = ?1",
+        )
+        .bind(&target)
+        .fetch_one(&p)
+        .await
+        .unwrap();
         assert_eq!(linked_invoice.as_deref(), Some("invoice-refund"));
+        assert_eq!(declined, 1);
         let detail = get_invoice_inner(&p, "invoice-refund").await.unwrap();
         assert_eq!(detail.refunds.len(), 1);
         assert_eq!(detail.refunds[0].txn_id, target);

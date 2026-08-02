@@ -712,7 +712,7 @@ function faturasAnswer(facts: MiaFacts): MiaAnswer {
       ? {
           note: [
             t("Em aberto no total: "),
-            m(view.totalCents),
+            m(view.grossTotalCents),
             t(` em ${view.count} faturas.`),
           ],
         }
@@ -937,7 +937,7 @@ export function contextFacts(facts: MiaFacts | null): ContextFact[] {
     out.push({
       key: "faturas",
       label: "Faturas em aberto",
-      cents: invoices.totalCents,
+      cents: invoices.grossTotalCents,
       question: INTENT_QUESTION["faturas"]!,
     });
   }

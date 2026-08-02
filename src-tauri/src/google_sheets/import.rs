@@ -482,6 +482,24 @@ pub(crate) async fn scan_card_invoices_standalone(
     Ok(outcome)
 }
 
+/// Variante do caminho por checksum: os dados de entrada já foram lidos antes da transação.
+pub(crate) async fn link_card_refunds_standalone(
+    pool: &SqlitePool,
+    sheet_name: &str,
+    rows: &[ImportedRow],
+    ctx: &CardScanCtx,
+) -> Result<usize, String> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| format!("begin refund link: {e}"))?;
+    let linked = link_card_refunds(&mut tx, sheet_name, rows, ctx).await?;
+    tx.commit()
+        .await
+        .map_err(|e| format!("commit refund link: {e}"))?;
+    Ok(linked)
+}
+
 /// Liga a Entrada compensatória já derivada pela gramática de notas à sub-fatura correspondente.
 /// A identificação do pai reutiliza `imported_row_ids`, a mesma origem dos IDs do import.
 pub(crate) async fn link_card_refunds(
@@ -523,14 +541,92 @@ pub(crate) async fn link_card_refunds(
                 continue;
             };
             let derived_id = format!("derived:reembolso:{parent_id}:{}", tagged.line_index);
-            linked += sqlx::query("UPDATE \"transaction\" SET refund_invoice_id = ?1 WHERE id = ?2")
-                .bind(&invoice_id)
-                .bind(&derived_id)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| format!("link refund: {e}"))?
-                .rows_affected() as usize;
+            // A nota rege a Entrada derivada a cada import; refund_link_declined só protege a inferência, não a declaração explícita da planilha.
+            linked += sqlx::query(
+                "UPDATE \"transaction\" SET refund_invoice_id = ?1 \
+                 WHERE id = ?2 AND refund_txn_id IS NULL AND refund_series_id IS NULL",
+            )
+            .bind(&invoice_id)
+            .bind(&derived_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("link refund: {e}"))?
+            .rows_affected() as usize;
         }
+    }
+
+    let lexicon = cards::CardLexicon::from_entries(
+        ctx.aliases
+            .iter()
+            .map(|(alias, account_id)| (alias.clone(), account_id.clone())),
+    );
+    for (row, transaction_id) in rows.iter().zip(imported_row_ids(sheet_name, rows)) {
+        if row.kind != RowKind::Entrada {
+            continue;
+        }
+        let markers = parse_note_markers(&row.raw_note);
+        // O marcador já declarou a devolução da célula; a inferência não opina onde o dono já falou.
+        if markers
+            .tagged_lines
+            .iter()
+            .any(|tagged| matches!(tagged.kind, NoteMarkerKind::Reembolso))
+        {
+            continue;
+        }
+        // A célula itemizada é autoritativa sobre si mesma; sem itens, a descrição responde pela
+        // célula inteira.
+        let items = parse_itemized_note_opts(&row.raw_note, true);
+        let named: Vec<(&str, i64)> = if items.is_empty() {
+            vec![(row.description.as_str(), row.amount.abs())]
+        } else {
+            items
+                .iter()
+                .map(|item| (item.description.as_str(), item.amount_cents.abs()))
+                .collect()
+        };
+        let mut hits = HashMap::new();
+        for (description, cents) in named {
+            if let Some(account_id) = lexicon.resolve(description).or_else(|| {
+                lexicon.resolve(&cards::root_alias(&cards::declared_alias(description)))
+            }) {
+                *hits.entry(account_id).or_insert(0) += cents;
+            }
+        }
+        if hits.len() != 1 {
+            continue;
+        }
+        let Some((account_id, refund_cents)) = hits.into_iter().next() else {
+            continue;
+        };
+        // Duas identidades de cartão na mesma Entrada não se desempatam sozinhas, e uma devolução
+        // que responde por só parte da célula faria o vínculo mentir o valor: ele carrega o
+        // lançamento inteiro, então creditaria à fatura dinheiro que não voltou. Os dois casos
+        // ficam para o marcador explícito, que declara quanto e de quem.
+        if refund_cents != row.amount.abs() {
+            continue;
+        }
+        let invoice_id: Option<(String,)> =
+            sqlx::query_as("SELECT id FROM invoice WHERE account_id = ?1 AND due_date = ?2")
+                .bind(&account_id)
+                .bind(&row.date)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| format!("load inferred refund invoice: {e}"))?;
+        let Some((invoice_id,)) = invoice_id else {
+            continue;
+        };
+        // O alvo é único, e a escolha do dono é autoridade.
+        linked += sqlx::query(
+            "UPDATE \"transaction\" SET refund_invoice_id = ?1 \
+             WHERE id = ?2 AND refund_invoice_id IS NULL AND refund_txn_id IS NULL \
+               AND refund_series_id IS NULL AND refund_link_declined = 0",
+        )
+        .bind(&invoice_id)
+        .bind(&transaction_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("link inferred refund: {e}"))?
+        .rows_affected() as usize;
     }
     Ok(linked)
 }
@@ -6373,5 +6469,587 @@ mod tests {
         .await
         .unwrap();
         assert!(linked.is_some());
+
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) VALUES ('purchase-target', 'expense', 53_000, '2026-01-10', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE \"transaction\" SET refund_invoice_id = NULL, refund_txn_id = 'purchase-target' WHERE id LIKE 'derived:reembolso:%'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        assert_eq!(
+            link_card_refunds(&mut tx, "2026", &rows, &ctx)
+                .await
+                .unwrap(),
+            0
+        );
+        tx.commit().await.unwrap();
+        let links: (Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT refund_invoice_id, refund_txn_id FROM \"transaction\" WHERE id LIKE 'derived:reembolso:%'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(links, (None, Some("purchase-target".into())));
+    }
+
+    #[tokio::test]
+    async fn link_card_refunds_links_an_income_that_names_its_card_on_its_due_date() {
+        let pool = test_pool().await;
+        let account_id = crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Visa (26/09)",
+            None,
+            Some(20),
+            Some(26),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO invoice (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) \
+             VALUES ('visa-set', ?1, '2026-09', '2026-09-20', '2026-09-26', 53_000)",
+        )
+        .bind(&account_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let rows = vec![imported_desc("2026-09-26", 12_345, "Fatura Visa")];
+        import_rows_with_options(
+            &pool,
+            "2026",
+            &rows,
+            "profile",
+            ImportRowsOptions::default(),
+        )
+        .await
+        .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        assert_eq!(
+            link_card_refunds(&mut tx, "2026", &rows, &ctx)
+                .await
+                .unwrap(),
+            1
+        );
+        tx.commit().await.unwrap();
+
+        let linked: (i64, Option<String>) =
+            sqlx::query_as("SELECT amount, refund_invoice_id FROM \"transaction\" WHERE id = ?1")
+                .bind(row_id("2026", "2026-09-26", RowKind::Entrada, 0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(linked, (12_345, Some("visa-set".into())));
+    }
+
+    #[tokio::test]
+    async fn link_card_refunds_aggregates_two_note_mentions_of_the_same_card() {
+        let pool = test_pool().await;
+        let (_, invoice_id) =
+            create_refund_invoice(&pool, "Visa (26/09)", "2026-09-26", 53_000).await;
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let mut row = imported_desc("2026-09-26", 10_000, "Entradas do dia");
+        row.raw_note = "R$ 40,00 - Fatura Visa\nR$ 60,00 - Visa".into();
+        let rows = vec![row];
+        import_rows_with_options(
+            &pool,
+            "2026",
+            &rows,
+            "profile",
+            ImportRowsOptions::default(),
+        )
+        .await
+        .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        assert_eq!(
+            link_card_refunds(&mut tx, "2026", &rows, &ctx)
+                .await
+                .unwrap(),
+            1
+        );
+        tx.commit().await.unwrap();
+
+        let linked: Option<String> =
+            sqlx::query_scalar("SELECT refund_invoice_id FROM \"transaction\" WHERE id = ?1")
+                .bind(row_id("2026", "2026-09-26", RowKind::Entrada, 0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(linked, Some(invoice_id));
+    }
+
+    #[tokio::test]
+    async fn link_card_refunds_keeps_two_card_identities_in_one_income_ambiguous() {
+        let pool = test_pool().await;
+        create_refund_invoice(&pool, "Visa (26/09)", "2026-09-26", 53_000).await;
+        create_refund_invoice(&pool, "Mastercard", "2026-09-26", 80_000).await;
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let mut row = imported_desc("2026-09-26", 10_000, "Entradas do dia");
+        row.raw_note = "R$ 40,00 - Fatura Visa\nR$ 60,00 - Mastercard".into();
+        let rows = vec![row];
+        import_rows_with_options(
+            &pool,
+            "2026",
+            &rows,
+            "profile",
+            ImportRowsOptions::default(),
+        )
+        .await
+        .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        assert_eq!(
+            link_card_refunds(&mut tx, "2026", &rows, &ctx)
+                .await
+                .unwrap(),
+            0
+        );
+        tx.commit().await.unwrap();
+
+        let linked: Option<String> =
+            sqlx::query_scalar("SELECT refund_invoice_id FROM \"transaction\" WHERE id = ?1")
+                .bind(row_id("2026", "2026-09-26", RowKind::Entrada, 0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(linked, None);
+    }
+
+    #[tokio::test]
+    async fn link_card_refunds_resolves_an_income_with_its_cycle_annotation() {
+        let pool = test_pool().await;
+        let (_, invoice_id) = create_refund_invoice(&pool, "Nubank", "2026-09-26", 53_000).await;
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let rows = vec![imported_desc("2026-09-26", 12_345, "Nubank (26/09)")];
+        import_rows_with_options(
+            &pool,
+            "2026",
+            &rows,
+            "profile",
+            ImportRowsOptions::default(),
+        )
+        .await
+        .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        assert_eq!(
+            link_card_refunds(&mut tx, "2026", &rows, &ctx)
+                .await
+                .unwrap(),
+            1
+        );
+        tx.commit().await.unwrap();
+
+        let linked: Option<String> =
+            sqlx::query_scalar("SELECT refund_invoice_id FROM \"transaction\" WHERE id = ?1")
+                .bind(row_id("2026", "2026-09-26", RowKind::Entrada, 0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(linked, Some(invoice_id));
+    }
+
+    #[tokio::test]
+    async fn link_card_refunds_keeps_an_income_outside_the_lexicon_unlinked() {
+        let pool = test_pool().await;
+        create_refund_invoice(&pool, "Nubank", "2026-09-26", 53_000).await;
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let rows = vec![imported_desc("2026-09-26", 12_345, "Cartão fora (26/09)")];
+        import_rows_with_options(
+            &pool,
+            "2026",
+            &rows,
+            "profile",
+            ImportRowsOptions::default(),
+        )
+        .await
+        .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        assert_eq!(
+            link_card_refunds(&mut tx, "2026", &rows, &ctx)
+                .await
+                .unwrap(),
+            0
+        );
+        tx.commit().await.unwrap();
+
+        let linked: Option<String> =
+            sqlx::query_scalar("SELECT refund_invoice_id FROM \"transaction\" WHERE id = ?1")
+                .bind(row_id("2026", "2026-09-26", RowKind::Entrada, 0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(linked, None);
+    }
+
+    async fn create_refund_invoice(
+        pool: &SqlitePool,
+        card_name: &str,
+        due_date: &str,
+        stated_total_cents: i64,
+    ) -> (String, String) {
+        let account_id = crate::commands::card_cmds::create_card_account_inner(
+            pool,
+            card_name,
+            None,
+            Some(20),
+            Some(26),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        let invoice_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO invoice (id, account_id, cycle_month, closing_date, due_date, stated_total_cents) \
+             VALUES (?1, ?2, ?3, '2026-09-20', ?4, ?5)",
+        )
+        .bind(&invoice_id)
+        .bind(&account_id)
+        .bind(&due_date[..7])
+        .bind(due_date)
+        .bind(stated_total_cents)
+        .execute(pool)
+        .await
+        .unwrap();
+        (account_id, invoice_id)
+    }
+
+    #[tokio::test]
+    async fn link_card_refunds_ignores_an_income_that_names_a_card_outside_its_due_date() {
+        let pool = test_pool().await;
+        create_refund_invoice(&pool, "Visa (26/09)", "2026-09-26", 53_000).await;
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let rows = vec![imported_desc("2026-09-22", 12_345, "Fatura Visa")];
+        import_rows_with_options(
+            &pool,
+            "2026",
+            &rows,
+            "profile",
+            ImportRowsOptions::default(),
+        )
+        .await
+        .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        assert_eq!(
+            link_card_refunds(&mut tx, "2026", &rows, &ctx)
+                .await
+                .unwrap(),
+            0
+        );
+        tx.commit().await.unwrap();
+
+        let linked: Option<String> =
+            sqlx::query_scalar("SELECT refund_invoice_id FROM \"transaction\" WHERE id = ?1")
+                .bind(row_id("2026", "2026-09-22", RowKind::Entrada, 0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(linked, None);
+    }
+
+    /// O vínculo carrega o lançamento inteiro, então uma Entrada em que a devolução divide a
+    /// célula com outra origem creditaria à fatura dinheiro que não voltou.
+    #[tokio::test]
+    async fn link_card_refunds_ignores_an_income_that_only_partly_names_its_card() {
+        let pool = test_pool().await;
+        create_refund_invoice(&pool, "Visa (26/09)", "2026-09-26", 53_000).await;
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let mut row = imported_desc("2026-09-26", 500_000, "Entradas do dia");
+        row.raw_note = "R$ 4.700,00 - Salário\nR$ 300,00 - Fatura Visa".into();
+        let rows = vec![row];
+        import_rows_with_options(
+            &pool,
+            "2026",
+            &rows,
+            "profile",
+            ImportRowsOptions::default(),
+        )
+        .await
+        .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        assert_eq!(
+            link_card_refunds(&mut tx, "2026", &rows, &ctx)
+                .await
+                .unwrap(),
+            0
+        );
+        tx.commit().await.unwrap();
+
+        let linked: Option<String> =
+            sqlx::query_scalar("SELECT refund_invoice_id FROM \"transaction\" WHERE id = ?1")
+                .bind(row_id("2026", "2026-09-26", RowKind::Entrada, 0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(linked, None);
+    }
+
+    #[tokio::test]
+    async fn link_card_refunds_does_not_confuse_cards_with_different_due_dates() {
+        let pool = test_pool().await;
+        create_refund_invoice(&pool, "Visa (26/09)", "2026-09-26", 53_000).await;
+        create_refund_invoice(&pool, "Mastercard", "2026-09-10", 80_000).await;
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let rows = vec![imported_desc("2026-09-10", 12_345, "Fatura Visa")];
+        import_rows_with_options(
+            &pool,
+            "2026",
+            &rows,
+            "profile",
+            ImportRowsOptions::default(),
+        )
+        .await
+        .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        assert_eq!(
+            link_card_refunds(&mut tx, "2026", &rows, &ctx)
+                .await
+                .unwrap(),
+            0
+        );
+        tx.commit().await.unwrap();
+
+        let linked: Option<String> =
+            sqlx::query_scalar("SELECT refund_invoice_id FROM \"transaction\" WHERE id = ?1")
+                .bind(row_id("2026", "2026-09-10", RowKind::Entrada, 0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(linked, None);
+    }
+
+    #[tokio::test]
+    async fn link_card_refunds_preserves_a_previously_linked_income() {
+        let pool = test_pool().await;
+        let (_, visa_invoice_id) =
+            create_refund_invoice(&pool, "Visa (26/09)", "2026-09-26", 53_000).await;
+        let (_, other_invoice_id) =
+            create_refund_invoice(&pool, "Mastercard", "2026-09-10", 80_000).await;
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let rows = vec![imported_desc("2026-09-26", 12_345, "Fatura Visa")];
+        import_rows_with_options(
+            &pool,
+            "2026",
+            &rows,
+            "profile",
+            ImportRowsOptions::default(),
+        )
+        .await
+        .unwrap();
+        let transaction_id = row_id("2026", "2026-09-26", RowKind::Entrada, 0);
+        sqlx::query("UPDATE \"transaction\" SET refund_invoice_id = ?1 WHERE id = ?2")
+            .bind(&other_invoice_id)
+            .bind(&transaction_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        import_rows_with_options(
+            &pool,
+            "2026",
+            &rows,
+            "profile",
+            ImportRowsOptions::default(),
+        )
+        .await
+        .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        assert_eq!(
+            link_card_refunds(&mut tx, "2026", &rows, &ctx)
+                .await
+                .unwrap(),
+            0
+        );
+        tx.commit().await.unwrap();
+
+        let linked: Option<String> =
+            sqlx::query_scalar("SELECT refund_invoice_id FROM \"transaction\" WHERE id = ?1")
+                .bind(&transaction_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(linked.as_deref(), Some(other_invoice_id.as_str()));
+        assert_ne!(linked.as_deref(), Some(visa_invoice_id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn link_card_refunds_preserves_the_owner_target_for_a_transaction_or_series() {
+        let pool = test_pool().await;
+        let (account_id, _) =
+            create_refund_invoice(&pool, "Visa (26/09)", "2026-09-26", 53_000).await;
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let rows = vec![imported_desc("2026-09-26", 12_345, "Fatura Visa")];
+        import_rows_with_options(
+            &pool,
+            "2026",
+            &rows,
+            "profile",
+            ImportRowsOptions::default(),
+        )
+        .await
+        .unwrap();
+        let transaction_id = row_id("2026", "2026-09-26", RowKind::Entrada, 0);
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('purchase-target', 'expense', 12_345, '2026-09-26', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE \"transaction\" SET refund_txn_id = 'purchase-target' WHERE id = ?1")
+            .bind(&transaction_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        assert_eq!(
+            link_card_refunds(&mut tx, "2026", &rows, &ctx)
+                .await
+                .unwrap(),
+            0
+        );
+        tx.commit().await.unwrap();
+        let links: (Option<String>, Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT refund_invoice_id, refund_txn_id, refund_series_id \
+             FROM \"transaction\" WHERE id = ?1",
+        )
+        .bind(&transaction_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(links, (None, Some("purchase-target".into()), None));
+
+        sqlx::query(
+            "INSERT INTO card_series \
+             (id, account_id, description, amount_cents, count, start_cycle_month) \
+             VALUES ('series-target', ?1, 'Assinatura', 12_345, NULL, '2026-09')",
+        )
+        .bind(&account_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE \"transaction\" SET refund_txn_id = NULL, refund_series_id = 'series-target' \
+             WHERE id = ?1",
+        )
+        .bind(&transaction_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        assert_eq!(
+            link_card_refunds(&mut tx, "2026", &rows, &ctx)
+                .await
+                .unwrap(),
+            0
+        );
+        tx.commit().await.unwrap();
+        let links: (Option<String>, Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT refund_invoice_id, refund_txn_id, refund_series_id \
+             FROM \"transaction\" WHERE id = ?1",
+        )
+        .bind(&transaction_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(links, (None, None, Some("series-target".into())));
+    }
+
+    #[tokio::test]
+    async fn link_card_refunds_does_not_infer_an_income_already_marked_as_a_refund() {
+        let pool = test_pool().await;
+        create_refund_invoice(&pool, "Visa (26/09)", "2026-09-26", 53_000).await;
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let mut row = imported_desc("2026-09-26", 12_345, "Fatura Visa");
+        row.raw_note = "R$ 123,45 - Fatura Visa #reembolso:Gio".into();
+        let rows = vec![row];
+        import_rows_with_options(
+            &pool,
+            "2026",
+            &rows,
+            "profile",
+            ImportRowsOptions::default(),
+        )
+        .await
+        .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        assert_eq!(
+            link_card_refunds(&mut tx, "2026", &rows, &ctx)
+                .await
+                .unwrap(),
+            0
+        );
+        tx.commit().await.unwrap();
+
+        let linked: Option<String> =
+            sqlx::query_scalar("SELECT refund_invoice_id FROM \"transaction\" WHERE id = ?1")
+                .bind(row_id("2026", "2026-09-26", RowKind::Entrada, 0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(linked, None);
+    }
+
+    #[tokio::test]
+    async fn link_card_refunds_does_not_restore_an_owner_declined_link() {
+        let pool = test_pool().await;
+        create_refund_invoice(&pool, "Visa (26/09)", "2026-09-26", 53_000).await;
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let rows = vec![imported_desc("2026-09-26", 12_345, "Fatura Visa")];
+        import_rows_with_options(
+            &pool,
+            "2026",
+            &rows,
+            "profile",
+            ImportRowsOptions::default(),
+        )
+        .await
+        .unwrap();
+        let transaction_id = row_id("2026", "2026-09-26", RowKind::Entrada, 0);
+        sqlx::query("UPDATE \"transaction\" SET refund_link_declined = 1 WHERE id = ?1")
+            .bind(&transaction_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        assert_eq!(
+            link_card_refunds(&mut tx, "2026", &rows, &ctx)
+                .await
+                .unwrap(),
+            0
+        );
+        tx.commit().await.unwrap();
+
+        let linked: Option<String> =
+            sqlx::query_scalar("SELECT refund_invoice_id FROM \"transaction\" WHERE id = ?1")
+                .bind(&transaction_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(linked, None);
     }
 }

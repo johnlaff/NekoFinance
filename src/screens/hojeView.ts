@@ -52,8 +52,14 @@ export interface InvoiceDueGroup {
 }
 
 export interface OpenInvoicesView {
-  /** Σ das faturas em aberto (status `aberta`/`fechada`). */
+  /** Σ líquida das faturas em aberto, depois da parte esperada de reembolso; só leituras marcadas a exibem. */
   totalCents: number;
+  /** Σ bruta das faturas em aberto; recibos auditáveis permanecem neste regime não marcado. */
+  grossTotalCents: number;
+  /** Σ da parte esperada de reembolso, limitada ao total de cada fatura. */
+  refundedCents: number;
+  /** Faturas em aberto com uma parte esperada de reembolso. */
+  refundedCount: number;
   count: number;
   /** Grupos por vencimento, em ordem cronológica. */
   groups: InvoiceDueGroup[];
@@ -62,12 +68,25 @@ export interface OpenInvoicesView {
 }
 
 /**
+ * A parte da fatura que volta como reembolso. O teto no total da própria fatura é o que impede
+ * uma Entrada que mistura outras origens de anular um compromisso que ainda é do dono.
+ */
+export function refundExpectedCents(invoice: UpcomingInvoice): number {
+  const expected = Number.isFinite(invoice.refund_expected_cents)
+    ? invoice.refund_expected_cents
+    : 0;
+  return Math.min(Math.max(expected, 0), invoice.amount_cents);
+}
+
+/**
  * Corpo do bloco do dia no modo cartão: faturas em aberto agrupadas por vencimento.
  * "Em aberto" = acumulando (`aberta`) ou fechada aguardando pagamento (`fechada`);
  * `prevista` é ciclo futuro (voz do Horizonte) e `paga` já saiu do caixa.
  */
 export function openInvoicesView(invoices: UpcomingInvoice[]): OpenInvoicesView {
-  const open = invoices.filter((i) => i.status === "aberta" || i.status === "fechada");
+  const open = invoices.filter(
+    (i) => (i.status === "aberta" || i.status === "fechada") && i.amount_cents !== 0,
+  );
   const byDue = new Map<string, UpcomingInvoice[]>();
   for (const invoice of open) {
     const group = byDue.get(invoice.due_date) ?? [];
@@ -78,15 +97,40 @@ export function openInvoicesView(invoices: UpcomingInvoice[]): OpenInvoicesView 
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([dueDate, list]) => ({
       dueDate,
-      invoices: list.toSorted((a, b) => b.amount_cents - a.amount_cents),
+      // A ordem e o destaque leem o compromisso líquido; a linha preserva o bruto declarado pela fatura.
+      invoices: list.toSorted(
+        (a, b) =>
+          b.amount_cents -
+          refundExpectedCents(b) -
+          (a.amount_cents - refundExpectedCents(a)),
+      ),
     }));
   const largest = open.reduce<UpcomingInvoice | null>(
     (acc, invoice) =>
-      acc === null || invoice.amount_cents > acc.amount_cents ? invoice : acc,
+      acc === null ||
+      invoice.amount_cents - refundExpectedCents(invoice) >
+        acc.amount_cents - refundExpectedCents(acc)
+        ? invoice
+        : acc,
     null,
   );
+  const { totalCents, grossTotalCents, refundedCents, refundedCount } = open.reduce(
+    (totals, invoice) => {
+      const refundExpected = refundExpectedCents(invoice);
+      return {
+        totalCents: totals.totalCents + invoice.amount_cents - refundExpected,
+        grossTotalCents: totals.grossTotalCents + invoice.amount_cents,
+        refundedCents: totals.refundedCents + refundExpected,
+        refundedCount: totals.refundedCount + Number(refundExpected > 0),
+      };
+    },
+    { totalCents: 0, grossTotalCents: 0, refundedCents: 0, refundedCount: 0 },
+  );
   return {
-    totalCents: open.reduce((sum, invoice) => sum + invoice.amount_cents, 0),
+    totalCents,
+    grossTotalCents,
+    refundedCents,
+    refundedCount,
     count: open.length,
     groups,
     largestAccountId: largest?.account_id ?? null,
@@ -218,7 +262,7 @@ export function monthInsight(
  */
 export type SpendCapReason =
   | { kind: "savings" }
-  | { kind: "cash" }
+  | { kind: "cash"; date: string | null; inCurrentMonth: boolean }
   | { kind: "deficit"; shortfallCents: number; date: string };
 
 export function spendCapReason(input: {
@@ -226,6 +270,7 @@ export function spendCapReason(input: {
   /** Menor saldo projetado do horizonte, e o dia em que ele acontece. */
   deepestBalanceCents: number;
   deepestDate: string | null;
+  today: string;
 }): SpendCapReason {
   if (input.bindingGuardrail === "savings") return { kind: "savings" };
   if (input.deepestBalanceCents < 0 && input.deepestDate) {
@@ -235,7 +280,13 @@ export function spendCapReason(input: {
       date: input.deepestDate,
     };
   }
-  return { kind: "cash" };
+  return {
+    kind: "cash",
+    date: input.deepestDate,
+    inCurrentMonth:
+      input.deepestDate !== null &&
+      input.deepestDate.slice(0, 7) === input.today.slice(0, 7),
+  };
 }
 
 /**
