@@ -141,6 +141,51 @@ pub(crate) async fn load_card_scan_ctx(pool: &SqlitePool) -> Result<CardScanCtx,
     Ok(ctx)
 }
 
+/// Identidades de cartão que ESTA planilha declara: todo alias escrito sob a seção de cartões,
+/// reduzido à sua raiz, mais os aliases das contas já cadastradas. É contra esse vocabulário — e
+/// só contra ele — que uma linha sem cabeçalho de seção pode ser reconhecida como fatura.
+///
+/// A raiz é a identidade porque a planilha distingue ciclos do mesmo cartão no próprio nome
+/// (`Nubank (26/09)`, `Nubank (26/12)`): sem reduzir, cada anotação viraria um cartão diferente.
+fn sheet_card_lexicon(
+    values: &[Vec<String>],
+    notes: &[Vec<String>],
+    layout: &SheetLayout,
+    amount_out_offset: usize,
+    blocks: &[(usize, u32)],
+    ctx: &CardScanCtx,
+) -> cards::CardLexicon<String> {
+    // A conta cadastrada é autoridade sobre si mesma: o alias dela nunca é reduzido à raiz.
+    let mut entries: Vec<(String, String)> = ctx
+        .aliases
+        .keys()
+        .map(|alias| (alias.clone(), alias.clone()))
+        .collect();
+    for (row_idx, _row) in values
+        .iter()
+        .enumerate()
+        .skip(layout.data_start_row as usize)
+    {
+        for &(offset, _month) in blocks {
+            let note = notes
+                .get(row_idx)
+                .and_then(|note_row| note_row.get(offset + amount_out_offset))
+                .map(String::as_str)
+                .unwrap_or("");
+            for item in parse_itemized_note_opts(note, true) {
+                if item.kind != ItemKind::Cartao {
+                    continue;
+                }
+                let alias = cards::declared_alias(item.description.trim());
+                if !alias.is_empty() {
+                    entries.push((alias.clone(), cards::root_alias(&alias)));
+                }
+            }
+        }
+    }
+    cards::CardLexicon::from_entries(entries)
+}
+
 /// Varre diretamente as notas da coluna Saída. Faturas são estrutura da grade, portanto a
 /// varredura não depende de a célula ter materializado uma `ImportedRow` nem do checksum.
 pub(crate) async fn scan_card_invoices(
@@ -159,6 +204,7 @@ pub(crate) async fn scan_card_invoices(
         return Ok(CardScanOutcome::default());
     }
     let blocks = month_blocks_for(&values[month_row], layout.block_size as usize);
+    let lexicon = sheet_card_lexicon(values, notes, layout, amount_out_offset, &blocks, ctx);
     let mut outcome = CardScanOutcome::default();
     let mut present: HashMap<String, HashSet<String>> = HashMap::new();
 
@@ -192,35 +238,77 @@ pub(crate) async fn scan_card_invoices(
                 .map(String::as_str)
                 .unwrap_or("");
             let cycle_month = cards::cycle_month_of(due_date_value);
-            let card_items: Vec<_> = parse_itemized_note_opts(note, true)
-                .into_iter()
-                .filter(|item| item.kind == ItemKind::Cartao)
-                .collect();
-            if card_items.is_empty() {
-                continue;
-            }
-            for item in card_items {
-                let display_name = item.description.trim();
-                let alias_source = display_name.split('#').next().unwrap_or("").trim();
-                let alias = cards::normalize_alias(alias_source);
+            for item in parse_itemized_note_opts(note, true) {
+                let raw_name = item.description.trim();
+                // Sob o cabeçalho de seção a própria linha DECLARA a identidade do cartão; fora
+                // dele, só um nome que o léxico da planilha já conhece conta como fatura. É essa
+                // assimetria que recupera a nota sem cabeçalho sem transformar "Fatura Vivo" em
+                // cartão.
+                let from_section = item.kind == ItemKind::Cartao;
+                let alias = if from_section {
+                    cards::root_alias(&cards::declared_alias(raw_name))
+                } else {
+                    match lexicon.resolve(raw_name) {
+                        Some(alias) => alias,
+                        None => continue,
+                    }
+                };
                 let Some(account_id) = ctx.aliases.get(&alias) else {
                     if alias.is_empty() {
                         outcome.ignored_items += 1;
                         continue;
                     }
-                    let changed = sqlx::query(
+                    // Só a linha declarada sob a seção inaugura identidade. Uma linha de fora
+                    // apenas ALCANÇA o que já foi declarado — inventar um cartão a partir dela
+                    // gravaria "Fatura Visa" como nome.
+                    if !from_section {
+                        outcome.ignored_items += 1;
+                        continue;
+                    }
+                    let proposal_id = uuid::Uuid::new_v4().to_string();
+                    let inserted = sqlx::query(
                         "INSERT INTO card_proposal (id, alias, display_name, source_month, status) \
                          VALUES (?1, ?2, ?3, ?4, 'pending') ON CONFLICT(alias) DO NOTHING",
                     )
-                    .bind(uuid::Uuid::new_v4().to_string())
+                    .bind(&proposal_id)
                     .bind(&alias)
-                    .bind(display_name)
+                    .bind(cards::root_display(raw_name))
                     .bind(&cycle_month)
                     .execute(&mut *tx)
                     .await
                     .map_err(|e| format!("insert card proposal: {e}"))?
                     .rows_affected();
-                    outcome.proposals += changed as usize;
+                    outcome.proposals += inserted as usize;
+
+                    // A grafia desta linha entra como apelido da proposta: é assim que o cadastro
+                    // nasce reconhecendo "Nubank (26/09)" e "Nubank" como o mesmo cartão.
+                    let declared = cards::declared_alias(raw_name);
+                    sqlx::query(
+                        "INSERT INTO card_proposal_alias (id, proposal_id, alias) \
+                         SELECT ?1, id, ?2 FROM card_proposal WHERE alias = ?3 \
+                         ON CONFLICT(alias) DO NOTHING",
+                    )
+                    .bind(uuid::Uuid::new_v4().to_string())
+                    .bind(&declared)
+                    .bind(&alias)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| format!("insert card proposal alias: {e}"))?;
+
+                    if inserted == 0 {
+                        // O mês de origem é o mais ANTIGO em que o cartão aparece. A varredura
+                        // percorre a grade por dia antes de percorrer por mês, então o primeiro
+                        // encontro é uma ordem de visita, não uma data.
+                        sqlx::query(
+                            "UPDATE card_proposal SET source_month = ?1 \
+                             WHERE alias = ?2 AND source_month > ?1",
+                        )
+                        .bind(&cycle_month)
+                        .bind(&alias)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(|e| format!("card proposal source month: {e}"))?;
+                    }
                     continue;
                 };
                 let Some(&(closing_day, _due_day)) = ctx.cycles.get(account_id) else {
@@ -1421,6 +1509,11 @@ pub enum DiagKind {
     /// célula. A célula continua dona do total; isto só reporta o resíduo que o loader de
     /// métricas (`forecast_cmds`) já reconcilia com sinal na leitura.
     ItemsDoNotSumToCell,
+    /// Uma linha da coluna Saída se apresenta como fatura de cartão (`Fatura <nome>`) e nenhum
+    /// cartão conhecido responde por esse nome. A linha continua sendo Saída fixa — classificar
+    /// por palavra-chave transformaria "Fatura Vivo" em cartão —, mas o dinheiro deixa de sumir
+    /// calado: ou é um cartão a cadastrar, ou é mesmo uma conta a pagar.
+    UnrecognizedInvoiceLine,
     /// A nota é o formato recorrente "plano de gastos mensal" (`Mensal<TAB>R$…<TAB>categoria`
     /// repetido + `Total = R$…` + média diária `R$… / N Dias = R$…`) — não é itemização de
     /// transação nem um erro de digitação isolado, então não leva os rótulos genéricos acima.
@@ -1432,6 +1525,7 @@ impl std::fmt::Display for DiagKind {
         f.write_str(match self {
             DiagKind::NoteNotItemized => "nota não itemizada",
             DiagKind::ItemsDoNotSumToCell => "itens não somam à célula",
+            DiagKind::UnrecognizedInvoiceLine => "fatura de cartão não reconhecido",
             DiagKind::MonthlyBudgetPlanNote => "plano de gastos mensal",
         })
     }
@@ -1484,16 +1578,46 @@ fn is_monthly_budget_plan_note(note: &str) -> bool {
 /// Espelha exatamente o gate de itemização de `import_rows_core` (mesma gramática via
 /// `parse_itemized_note`, mesmo `has_breakdown`, mesmo resíduo `célula − Σ|partes|`) para nunca
 /// divergir do que de fato foi (ou seria) persistido.
+/// Léxico do diagnóstico: as identidades que o banco já conhece mais as que ESTE lote declara sob
+/// a seção de cartões. Incluir o próprio lote evita acusar a primeira importação de uma planilha
+/// cujo cartão está declarado numa célula e escrito sem cabeçalho em outra.
+fn diagnostics_card_lexicon(
+    rows: &[ImportedRow],
+    known_card_aliases: &[String],
+) -> cards::CardLexicon<String> {
+    let mut entries: Vec<(String, String)> = known_card_aliases
+        .iter()
+        .map(|alias| {
+            let normalized = cards::normalize_alias(alias);
+            (normalized.clone(), normalized)
+        })
+        .collect();
+    for row in rows {
+        for item in parse_itemized_note(&row.raw_note) {
+            if item.kind != ItemKind::Cartao {
+                continue;
+            }
+            let alias = cards::declared_alias(&item.description);
+            if !alias.is_empty() {
+                entries.push((alias.clone(), cards::root_alias(&alias)));
+            }
+        }
+    }
+    cards::CardLexicon::from_entries(entries)
+}
+
 pub(crate) fn collect_import_diagnostics(
     sheet_name: &str,
     rows: &[ImportedRow],
     descriptions_trusted: bool,
+    known_card_aliases: &[String],
 ) -> Vec<ImportDiagnostic> {
     // Ciclo degradado (falha da API de notas / .xlsx sem notas legíveis): toda `raw_note` chega
     // vazia — nada de novo para reportar (mesmo gate de confiança do import_rows_core).
     if !descriptions_trusted {
         return Vec::new();
     }
+    let lexicon = diagnostics_card_lexicon(rows, known_card_aliases);
     let mut diagnostics = Vec::new();
     for row in rows {
         let raw_note = row.raw_note.trim();
@@ -1502,6 +1626,29 @@ pub(crate) fn collect_import_diagnostics(
         }
         let items = parse_itemized_note(&row.raw_note);
         let budget_plan = is_monthly_budget_plan_note(&row.raw_note);
+
+        // Só a coluna Saída carrega fatura; na Entrada, "Fatura Gio" é o reembolso dela.
+        if row.kind == RowKind::Saida {
+            for item in &items {
+                if item.kind == ItemKind::Cartao
+                    || !cards::looks_like_invoice_line(&item.description)
+                    || lexicon.resolve(&item.description).is_some()
+                {
+                    continue;
+                }
+                diagnostics.push(ImportDiagnostic {
+                    sheet: sheet_name.to_string(),
+                    cell: format!("{} ({})", row.date, DiagKind::UnrecognizedInvoiceLine),
+                    kind: DiagKind::UnrecognizedInvoiceLine,
+                    detail: format!(
+                        "\"{}\" ({}) parece fatura, e nenhum cartão cadastrado ou proposto \
+                         responde por esse nome — está contando como conta a pagar",
+                        item.description.trim(),
+                        format_cents_brl(item.amount_cents),
+                    ),
+                });
+            }
+        }
 
         if items.is_empty() {
             let kind = if budget_plan {
@@ -4205,10 +4352,56 @@ mod tests {
         )];
         assert!(parse_itemized_note(&rows[0].raw_note).is_empty());
 
-        let diagnostics = collect_import_diagnostics("2026", &rows, true);
+        let diagnostics = collect_import_diagnostics("2026", &rows, true, &[]);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].kind, DiagKind::NoteNotItemized);
         assert_eq!(diagnostics[0].sheet, "2026");
+    }
+
+    // Uma linha que se apresenta como fatura e não casa nenhum cartão conhecido é dinheiro que o
+    // app está lendo como conta a pagar. Não pode ser classificada por adivinhação — mas também
+    // não pode sumir calada: vira diagnóstico, que reporta sem decidir.
+    #[test]
+    fn diagnostics_flag_an_invoice_line_no_card_recognizes() {
+        let rows = vec![imported_note(
+            "2026-02-23",
+            -990,
+            "R$ 9,90 - Fatura Sicoob",
+            false,
+        )];
+        let diagnostics = collect_import_diagnostics("2026", &rows, true, &[]);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].kind, DiagKind::UnrecognizedInvoiceLine);
+        assert!(
+            diagnostics[0].detail.contains("Fatura Sicoob"),
+            "o diagnóstico nomeia a linha: {}",
+            diagnostics[0].detail
+        );
+    }
+
+    // A contrapartida: reconhecida a identidade, não há o que reportar — nem quando o léxico vem
+    // do banco (cartão cadastrado, proposta pendente) nem quando vem da própria planilha.
+    #[test]
+    fn diagnostics_stay_quiet_for_an_invoice_of_a_declared_card() {
+        let from_db = vec![imported_note(
+            "2026-01-12",
+            -5_000,
+            "R$ 50,00 - Fatura Bradesco",
+            false,
+        )];
+        assert!(
+            collect_import_diagnostics("2026", &from_db, true, &["bradesco".to_string()])
+                .is_empty()
+        );
+
+        let from_sheet = vec![
+            imported_note("2026-08-12", -5_000, "CARTÕES:\nR$ 50,00 - Bradesco", false),
+            imported_note("2026-01-12", -5_000, "R$ 50,00 - Fatura Bradesco", false),
+        ];
+        assert!(
+            collect_import_diagnostics("2026", &from_sheet, true, &[]).is_empty(),
+            "o mesmo lote declara o cartão — a linha sem cabeçalho o alcança"
+        );
     }
 
     // Memo de 1 linha SEM seção é intencionalmente não-breakdown (mesmo gate de
@@ -4222,7 +4415,7 @@ mod tests {
             false,
         )];
         assert_eq!(parse_itemized_note(&rows[0].raw_note).len(), 1);
-        assert!(collect_import_diagnostics("2026", &rows, true).is_empty());
+        assert!(collect_import_diagnostics("2026", &rows, true, &[]).is_empty());
     }
 
     // Nota limpa (itens somam o total) → zero diagnósticos.
@@ -4234,7 +4427,7 @@ mod tests {
             "R$ 100,00 - Parte A\nR$ 50,00 - Parte B",
             false,
         )];
-        assert!(collect_import_diagnostics("2026", &rows, true).is_empty());
+        assert!(collect_import_diagnostics("2026", &rows, true, &[]).is_empty());
     }
 
     // Formato recorrente "plano de gastos mensal" (não itemiza) → MonthlyBudgetPlanNote, NÃO o
@@ -4253,7 +4446,7 @@ mod tests {
             "nenhuma linha casa a gramática de item"
         );
         let rows = vec![imported_note("2026-03-03", -115_000, note, false)];
-        let diagnostics = collect_import_diagnostics("2026", &rows, true);
+        let diagnostics = collect_import_diagnostics("2026", &rows, true, &[]);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].kind, DiagKind::MonthlyBudgetPlanNote);
     }
@@ -4269,7 +4462,7 @@ mod tests {
             "prosa qualquer sem R$",
             false,
         )];
-        assert!(collect_import_diagnostics("2026", &rows, false).is_empty());
+        assert!(collect_import_diagnostics("2026", &rows, false, &[]).is_empty());
     }
 
     // Classificação pura de itens por seção, sem I/O.
@@ -4406,7 +4599,7 @@ mod tests {
             false,
         )];
 
-        let diagnostics = collect_import_diagnostics("2026", &rows, true);
+        let diagnostics = collect_import_diagnostics("2026", &rows, true, &[]);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].kind, DiagKind::ItemsDoNotSumToCell);
         assert!(
@@ -4441,7 +4634,7 @@ mod tests {
 
         let first_write = import_rows(&pool, "2026", &rows, "p1").await.unwrap();
         assert_eq!(first_write, 1, "1ª rodada escreve de fato");
-        let first_diagnostics = collect_import_diagnostics("2026", &rows, true);
+        let first_diagnostics = collect_import_diagnostics("2026", &rows, true, &[]);
         assert_eq!(first_diagnostics.len(), 1);
 
         // 2ª rodada: mesmo checksum → check_duplicate_import bate e import_rows_with_options
@@ -4451,7 +4644,7 @@ mod tests {
             second_write, 0,
             "dedup: dataset idêntico, nada escrito de novo"
         );
-        let second_diagnostics = collect_import_diagnostics("2026", &rows, true);
+        let second_diagnostics = collect_import_diagnostics("2026", &rows, true, &[]);
         assert_eq!(
             second_diagnostics, first_diagnostics,
             "o diagnóstico sobrevive ao skip de checksum — é função do lote, não da escrita"
@@ -5666,6 +5859,200 @@ mod tests {
         assert_eq!(
             retained, 1,
             "uma ocorrência projetada também preserva a fatura"
+        );
+    }
+
+    /// A planilha declara a fatura de duas maneiras — sob o cabeçalho `CARTÕES` e, quando o
+    /// cabeçalho falta, como uma linha que nomeia o cartão. A varredura precisa enxergar as duas,
+    /// senão um mês inteiro de faturas nunca materializa e o dinheiro fica em Saída fixa.
+    #[tokio::test]
+    async fn card_scan_reads_an_invoice_line_written_outside_the_cards_section() {
+        let pool = test_pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let visa = crate::commands::card_cmds::create_card_account_inner(
+            &pool,
+            "Visa",
+            None,
+            Some(20),
+            Some(10),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let values = vec![
+            vec!["AGOSTO".into(), "".into(), "".into()],
+            vec![],
+            vec!["10".into(), "".into(), "100,00".into()],
+        ];
+        let layout = SheetLayout {
+            id: "layout".into(),
+            sheet_name: year.to_string(),
+            year: Some(year),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 3,
+            date_direction: "both".into(),
+        };
+        // Sem cabeçalho de seção, como a nota de um mês em que o dono esqueceu de escrevê-lo.
+        let sectionless = vec![
+            vec!["".into(); 3],
+            vec![],
+            vec![
+                "".into(),
+                "".into(),
+                "R$ 60,00 - Aluguel\nR$ 100,00 - Fatura Visa".into(),
+            ],
+        ];
+
+        let mut tx = pool.begin().await.unwrap();
+        let outcome = scan_card_invoices(&mut tx, &values, &sectionless, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(outcome.invoices_created, 1);
+        let stated: Option<i64> =
+            sqlx::query_scalar("SELECT stated_total_cents FROM invoice WHERE account_id = ?1")
+                .bind(&visa)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            stated,
+            Some(10_000),
+            "a fatura é a da linha, não do aluguel"
+        );
+    }
+
+    /// Sem cartão cadastrado, o léxico nasce da própria planilha: um alias declarado sob a seção
+    /// em QUALQUER célula reconhece a linha sem cabeçalho de outra célula — e as duas formas do
+    /// mesmo cartão continuam sendo uma identidade só, nunca duas propostas.
+    #[tokio::test]
+    async fn card_scan_lexicon_comes_from_the_sheet_when_no_card_is_registered() {
+        let pool = test_pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let values = vec![
+            vec!["AGOSTO".into(), "".into(), "".into()],
+            vec![],
+            vec!["10".into(), "".into(), "100,00".into()],
+            vec!["11".into(), "".into(), "50,00".into()],
+        ];
+        let layout = SheetLayout {
+            id: "layout".into(),
+            sheet_name: year.to_string(),
+            year: Some(year),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 3,
+            date_direction: "both".into(),
+        };
+        let notes = vec![
+            vec!["".into(); 3],
+            vec![],
+            vec![
+                "".into(),
+                "".into(),
+                "CARTÕES:\nR$ 100,00 - Nubank (26/09)".into(),
+            ],
+            vec!["".into(), "".into(), "R$ 50,00 - Fatura Nubank".into()],
+        ];
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &notes, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let proposals: Vec<(String,)> = sqlx::query_as("SELECT alias FROM card_proposal")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            proposals.len(),
+            1,
+            "as duas linhas nomeiam o mesmo cartão: uma proposta, não duas ({proposals:?})"
+        );
+    }
+
+    /// A planilha marca o ciclo dentro do nome ("Nubank (26/09)"). Isso é anotação humana, não
+    /// identidade: sem reduzir à raiz, cada mês propunha um cartão diferente para cadastrar.
+    #[tokio::test]
+    async fn card_scan_groups_cycle_variants_of_the_same_card_into_one_proposal() {
+        let pool = test_pool().await;
+        let year = chrono::Local::now().year() + 1;
+        let ctx = load_card_scan_ctx(&pool).await.unwrap();
+        let values = vec![
+            vec!["AGOSTO".into(), "".into(), "".into()],
+            vec![],
+            vec!["10".into(), "".into(), "100,00".into()],
+            vec!["11".into(), "".into(), "50,00".into()],
+            vec!["12".into(), "".into(), "70,00".into()],
+        ];
+        let layout = SheetLayout {
+            id: "layout".into(),
+            sheet_name: year.to_string(),
+            year: Some(year),
+            month_names_row: 0,
+            header_row: 1,
+            data_start_row: 2,
+            day_column: 0,
+            block_size: 3,
+            date_direction: "both".into(),
+        };
+        let notes = vec![
+            vec!["".into(); 3],
+            vec![],
+            vec![
+                "".into(),
+                "".into(),
+                "CARTÕES:\nR$ 100,00 - Nubank (26/09)".into(),
+            ],
+            vec![
+                "".into(),
+                "".into(),
+                "CARTÕES:\nR$ 50,00 - Nubank (26/12)".into(),
+            ],
+            vec!["".into(), "".into(), "CARTÕES:\nR$ 70,00 - Nubank".into()],
+        ];
+
+        let mut tx = pool.begin().await.unwrap();
+        scan_card_invoices(&mut tx, &values, &notes, &layout, 2, &ctx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let proposals: Vec<(String, String)> =
+            sqlx::query_as("SELECT alias, display_name FROM card_proposal")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            proposals.len(),
+            1,
+            "três anotações, um cartão: {proposals:?}"
+        );
+        assert_eq!(proposals[0].0, "nubank");
+        assert_eq!(proposals[0].1, "Nubank", "o rótulo perde o sufixo de ciclo");
+
+        let aliases: Vec<(String,)> =
+            sqlx::query_as("SELECT alias FROM card_proposal_alias ORDER BY alias")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let aliases: Vec<String> = aliases.into_iter().map(|(a,)| a).collect();
+        assert_eq!(
+            aliases,
+            vec!["nubank", "nubank (26/09)", "nubank (26/12)"],
+            "todas as grafias acompanham a proposta"
         );
     }
 

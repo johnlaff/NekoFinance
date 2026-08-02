@@ -2,8 +2,9 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-const { acceptCardProposal, holder } = vi.hoisted(() => ({
+const { acceptCardProposal, attachCardProposal, holder } = vi.hoisted(() => ({
   acceptCardProposal: vi.fn().mockResolvedValue("additional-card"),
+  attachCardProposal: vi.fn().mockResolvedValue(undefined),
   holder: {
     id: "holder",
     name: "Titular",
@@ -23,6 +24,7 @@ vi.mock("../lib/api", async (importOriginal) => ({
   ...(await importOriginal()),
   isTauri: true,
   acceptCardProposal,
+  attachCardProposal,
   getDashboardSummary: vi.fn().mockResolvedValue({
     card_gate_economy: "alive",
     card_gate_reserve: "below",
@@ -34,6 +36,7 @@ vi.mock("../lib/api", async (importOriginal) => ({
       display_name: "Cartão adicional",
       source_month: "2026-07",
       status: "pending",
+      aliases: ["adicional"],
     },
   ]),
   listCards: vi.fn().mockResolvedValue([holder]),
@@ -58,5 +61,24 @@ describe("aceite de proposta como cartão adicional", () => {
       ownerPersonName: "Eu",
       linkedAccountId: "holder",
     });
+  });
+
+  it("resolve a proposta como apelido de um cartão que já existe", async () => {
+    const user = userEvent.setup();
+    acceptCardProposal.mockClear();
+    render(<CartoesScreen />);
+
+    // O vínculo mora atrás de um convite: o cadastro continua sendo a ação de abertura.
+    await user.click(
+      await screen.findByRole("button", { name: "É um cartão que já tenho" }),
+    );
+    await user.selectOptions(screen.getByLabelText("Cartão que já tenho"), "holder");
+    await user.click(screen.getByRole("button", { name: "Usar como apelido" }));
+
+    expect(attachCardProposal).toHaveBeenCalledWith({
+      proposalId: "proposal",
+      accountId: "holder",
+    });
+    expect(acceptCardProposal).not.toHaveBeenCalled();
   });
 });

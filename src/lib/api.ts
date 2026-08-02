@@ -223,8 +223,10 @@ export interface DashboardSummary {
   /** Meses completos que sustentam o custo de vida da régua. */
   reserve_basis_months: number;
   reserve_trend: string;
-  /** Modo de gasto detectado dos próprios dados. */
+  /** Modo de gasto derivado dos próprios dados. */
   spending_mode: "debit" | "card";
+  /** `false` quando o modo é o default de dado insuficiente, não uma leitura da janela. */
+  spending_mode_detected: boolean;
   /** Gate composto de legitimidade do modo cartão. */
   card_gate: "alive" | "below" | "unknown";
   card_gate_economy: "alive" | "below" | "unknown";
@@ -1745,6 +1747,8 @@ export interface CardProposal {
   display_name: string;
   source_month: string;
   status: string;
+  /** Todas as grafias com que a planilha nomeia este cartão, a identidade na frente. */
+  aliases: string[];
 }
 
 export function listCards(): Promise<Card[]> {
@@ -1856,6 +1860,13 @@ export function acceptCardProposal(input: {
     ownerPersonName: input.ownerPersonName ?? null,
     linkedAccountId: input.linkedAccountId ?? null,
   });
+}
+/** Resolve a proposta como apelido de um cartão que já existe, sem criar outra conta. */
+export function attachCardProposal(input: {
+  proposalId: string;
+  accountId: string;
+}): Promise<void> {
+  return invoke("attach_card_proposal", input);
 }
 export function dismissCardProposal(proposalId: string): Promise<void> {
   return invoke("dismiss_card_proposal", { proposalId });

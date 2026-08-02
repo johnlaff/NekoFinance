@@ -25,4 +25,20 @@ describe("ModeChip", () => {
     await user.click(screen.getByRole("button", { name: /modo cartão/i }));
     expect(screen.getByRole("tooltip")).toHaveTextContent(/piso de 20%/i);
   });
+
+  it("sem dado que sustente o modo: a didática não afirma ter detectado", async () => {
+    const user = userEvent.setup();
+    render(<ModeChip mode="debit" detected={false} />);
+    await user.click(screen.getByRole("button", { name: /modo débito/i }));
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip).not.toHaveTextContent(/detectado dos seus dados/i);
+    expect(tooltip).toHaveTextContent(/ainda não/i);
+  });
+
+  it("com dado que sustenta o modo: a didática assume a detecção", async () => {
+    const user = userEvent.setup();
+    render(<ModeChip mode="debit" detected />);
+    await user.click(screen.getByRole("button", { name: /modo débito/i }));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/detectado dos seus dados/i);
+  });
 });

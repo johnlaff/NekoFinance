@@ -359,6 +359,8 @@ pub(crate) async fn realized_annual_patrimonio(
 /// mês SEGUINTE (o próximo vencimento pode cair na virada).
 pub(crate) struct SpendingModeSummary {
     pub mode: forecast::SpendingMode,
+    /// `false` quando o modo é o default de dado insuficiente, não uma leitura da janela.
+    pub detected: bool,
     /// Cartão do mês corrente (realizado + projetado), magnitude.
     pub cartao_month_cents: i64,
     /// Próximo dia de fatura (evento Cartão) a partir de hoje: (data ISO, total do dia).
@@ -429,8 +431,17 @@ pub(crate) async fn spending_mode_summary(
         samples[i].daily_days = dates.len() as u32;
     }
 
+    // O sinal de cartão vem da planilha, não do evento já resolvido: sem isso, quem gasta tudo no
+    // crédito e ainda não cadastrou o cartão cai no fallback e é lido como usuário de débito.
+    let declared =
+        declared_card_months(pool, window_start, month_start + chrono::Months::new(1)).await?;
+    for (i, key) in window_keys.iter().enumerate() {
+        samples[i].cartao_present |= declared.contains(key);
+    }
+
     Ok(SpendingModeSummary {
         mode: forecast::detect_spending_mode(&samples),
+        detected: forecast::spending_mode_is_detected(&samples),
         cartao_month_cents,
         next_fatura: next_fatura_by_date.into_iter().next(),
     })
@@ -1617,35 +1628,46 @@ pub(crate) fn event_kind_for_item_kind(
     kind: import::ItemKind,
     description: &str,
     date: NaiveDate,
-    alias_to_account: &std::collections::HashMap<String, String>,
+    cards: &crate::cards::CardLexicon<String>,
     invoiced_cycles: &std::collections::HashSet<(String, String)>,
 ) -> forecast::EventKind {
     match kind {
-        import::ItemKind::Saida | import::ItemKind::Ajuste => forecast::EventKind::FixedOut,
-        import::ItemKind::Diario => forecast::EventKind::Daily,
-        import::ItemKind::Cartao => {
-            let alias =
-                crate::cards::normalize_alias(description.split('#').next().unwrap_or("").trim());
-            let covered = alias_to_account.get(&alias).is_some_and(|account_id| {
-                invoiced_cycles.contains(&(account_id.clone(), crate::cards::cycle_month_of(date)))
-            });
-            if covered {
+        // A seção é a autoridade da classificação; quando ela falta, a linha ainda pode NOMEAR um
+        // cartão já declarado. Sem isso a fatura de uma nota sem cabeçalho vira conta a pagar e
+        // ainda escapa da precedência do lump, debitando duas vezes o mesmo vencimento.
+        import::ItemKind::Saida | import::ItemKind::Cartao => {
+            if invoice_backed_card(description, date, cards, invoiced_cycles) {
                 forecast::EventKind::Cartao
             } else {
                 forecast::EventKind::FixedOut
             }
         }
+        import::ItemKind::Ajuste => forecast::EventKind::FixedOut,
+        import::ItemKind::Diario => forecast::EventKind::Daily,
         import::ItemKind::Economia => forecast::EventKind::Economia,
         import::ItemKind::Patrimonio => forecast::EventKind::Patrimonio,
     }
 }
 
-/// Alias normalizado (nome da conta ou `card_alias`) → `account_id`. Resolver a CONTA (não só
-/// "o alias existe") é o que permite checar depois se ELA tem fatura para o ciclo da linha —
-/// ver `event_kind_for_item_kind`.
+/// `true` quando a linha nomeia um cartão do léxico QUE TEM fatura persistida para o ciclo da
+/// data. As duas pernas são necessárias: sem fatura não há lump para repor o valor suprimido.
+fn invoice_backed_card(
+    description: &str,
+    date: NaiveDate,
+    cards: &crate::cards::CardLexicon<String>,
+    invoiced_cycles: &std::collections::HashSet<(String, String)>,
+) -> bool {
+    cards.resolve(description).is_some_and(|account_id| {
+        invoiced_cycles.contains(&(account_id, crate::cards::cycle_month_of(date)))
+    })
+}
+
+/// Léxico das contas de cartão (nome da conta + `card_alias`) → `account_id`. Resolver a CONTA
+/// (não só "o alias existe") é o que permite checar depois se ELA tem fatura para o ciclo da
+/// linha — ver `event_kind_for_item_kind`.
 pub(crate) async fn load_card_alias_index(
     pool: &SqlitePool,
-) -> Result<std::collections::HashMap<String, String>, String> {
+) -> Result<crate::cards::CardLexicon<String>, String> {
     let rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT a.id, a.name FROM account a WHERE a.type = 'credit_card' \
          UNION ALL \
@@ -1657,14 +1679,14 @@ pub(crate) async fn load_card_alias_index(
     .await
     .map_err(|e| format!("load card aliases for forecast: {e}"))?;
 
-    let mut map = std::collections::HashMap::new();
+    let mut seen = std::collections::HashMap::new();
     for (account_id, alias) in rows {
         let normalized = crate::cards::normalize_alias(&alias);
         if !normalized.is_empty() {
-            map.entry(normalized).or_insert(account_id);
+            seen.entry(normalized).or_insert(account_id);
         }
     }
-    Ok(map)
+    Ok(crate::cards::CardLexicon::from_entries(seen))
 }
 
 /// Conjunto de (`account_id`, `cycle_month`) que TÊM fatura persistida — carregado em UMA query
@@ -1862,6 +1884,88 @@ async fn load_db_metric_events(
                 .unwrap_or(forecast::RulerMask::ALL),
         })
         .collect())
+}
+
+/// Meses (`YYYY-MM`) em que a planilha DECLARA movimento de cartão, antes de qualquer resolução
+/// de conta ou fatura.
+///
+/// O modo de gasto é uma pergunta sobre a FORMA do gasto, e quem a responde é a planilha: a seção
+/// de cartões da nota, ou uma linha que nomeia um cartão já declarado. Derivar esse sinal do
+/// `EventKind::Cartao` fazia a resposta depender de o dono já ter cadastrado a conta — quem gasta
+/// tudo no crédito e ainda não cadastrou nada era lido como se gastasse no débito.
+///
+/// A máscara de régua vale aqui pelo mesmo motivo que vale no resto da detecção: um lançamento
+/// fora do custo de vida não descreve a forma do gasto corrente.
+pub(crate) async fn declared_card_months(
+    pool: &SqlitePool,
+    start_inclusive: NaiveDate,
+    end_exclusive: NaiveDate,
+) -> Result<std::collections::HashSet<String>, String> {
+    let start = start_inclusive.format("%Y-%m-%d").to_string();
+    let end = end_exclusive.format("%Y-%m-%d").to_string();
+    // Só despesa: na coluna Entrada, "Fatura <cartão>" é o REEMBOLSO de quem divide a fatura —
+    // dinheiro voltando, não gasto no cartão. Contá-lo diria "modo cartão" a quem só recebe.
+    let rows: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT t.id, t.date, li.section, li.description \
+         FROM line_item li JOIN \"transaction\" t ON t.id = li.transaction_id \
+         WHERE t.date >= ?1 AND t.date < ?2 AND t.scenario_id IS NULL \
+           AND t.type = 'expense'",
+    )
+    .bind(&start)
+    .bind(&end)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("declared card months: {e}"))?;
+    if rows.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+
+    let lexicon = load_recognized_card_lexicon(pool).await?;
+    let mask_by_txn = load_ruler_mask_map(pool, start_inclusive, end_exclusive).await?;
+    let mut months = std::collections::HashSet::new();
+    for (transaction_id, date, section, description) in rows {
+        let counts_for_cost_of_living = mask_by_txn
+            .get(&transaction_id)
+            .copied()
+            .unwrap_or(forecast::RulerMask::ALL)
+            .cost_of_living;
+        if !counts_for_cost_of_living {
+            continue;
+        }
+        let declared = import::classify_line_item(section.as_deref(), &description)
+            == import::ItemKind::Cartao
+            || lexicon.resolve(&description).is_some();
+        if declared && date.len() >= 7 {
+            months.insert(date[..7].to_string());
+        }
+    }
+    Ok(months)
+}
+
+/// Léxico de RECONHECIMENTO — o que o domínio já sabe ser cartão: contas cadastradas e propostas
+/// ainda pendentes. Distinto de [`load_card_alias_index`], que resolve a CONTA para checar a
+/// fatura do ciclo; aqui a pergunta é só "esta linha nomeia um cartão?". Uma proposta dispensada
+/// não entra: o dono já disse que aquilo não é cartão.
+pub(crate) async fn load_recognized_card_lexicon(
+    pool: &SqlitePool,
+) -> Result<crate::cards::CardLexicon<String>, String> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT name FROM account WHERE type = 'credit_card' \
+         UNION ALL \
+         SELECT ca.alias FROM card_alias ca JOIN account a ON a.id = ca.account_id \
+         WHERE a.type = 'credit_card' \
+         UNION ALL \
+         SELECT alias FROM card_proposal WHERE status = 'pending'",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("recognized card lexicon: {e}"))?;
+    Ok(crate::cards::CardLexicon::from_entries(
+        rows.into_iter().filter_map(|(alias,)| {
+            let normalized = crate::cards::normalize_alias(&alias);
+            (!normalized.is_empty()).then(|| (normalized.clone(), normalized))
+        }),
+    ))
 }
 
 /// Máscara de réguas por transação na janela `[start, end)`: a máscara de um lançamento é a
@@ -2800,8 +2904,11 @@ pub struct DashboardSummary {
     /// Meses completos que sustentam o custo de vida da régua (base do retrato vivo).
     pub reserve_basis_months: i64,
     pub reserve_trend: String,
-    /// Modo de gasto detectado: `debit` · `card`.
+    /// Modo de gasto: `debit` · `card`.
     pub spending_mode: String,
+    /// `false` quando o modo é o default de dado insuficiente. A tela precisa da procedência para
+    /// não apresentar como leitura dos dados o valor que sobra quando o motor não sabe.
+    pub spending_mode_detected: bool,
     /// Gate composto de legitimidade do modo cartão: economia anual e reserva precisam estar vivas.
     pub card_gate: String,
     /// Perna de economia do gate de legitimidade do modo cartão.
@@ -3005,6 +3112,7 @@ pub(crate) async fn dashboard_summary(
             forecast::SpendingMode::Card => "card",
         }
         .to_string(),
+        spending_mode_detected: mode.detected,
         card_gate: card_gate.as_str().to_string(),
         card_gate_economy: card_gate_economy.as_str().to_string(),
         card_gate_economy_bps,
@@ -4209,6 +4317,90 @@ mod tests {
         assert_eq!(s.next_fatura, Some(("2026-06-20".to_string(), 140_000)));
     }
 
+    // O modo é pergunta sobre a FORMA do gasto, e a planilha já a responde: uma seção de cartões
+    // viva com o Diário zerado é perfil cartão AINDA QUE nenhum cartão tenha sido cadastrado.
+    // Fazer o modo depender de conta cadastrada devolvia "débito" para quem só gasta no crédito.
+    #[tokio::test]
+    async fn spending_mode_summary_reads_the_cards_section_before_any_card_is_registered() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        for (id, date, cents) in [
+            ("f-abr", "2026-04-12", 250_000),
+            ("f-mai", "2026-05-12", 260_000),
+            ("f-jun", "2026-06-12", 140_000),
+        ] {
+            sqlx::query(
+                "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+                 VALUES (?1, 'expense', ?2, ?3, 1, 0)",
+            )
+            .bind(id)
+            .bind(cents)
+            .bind(date)
+            .execute(&p)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, section) \
+                 VALUES (?1, ?2, ?3, 'Bradesco', 0, 'CARTÕES:')",
+            )
+            .bind(format!("{id}-item"))
+            .bind(id)
+            .bind(cents)
+            .execute(&p)
+            .await
+            .unwrap();
+        }
+
+        let cards: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM account WHERE type='credit_card'")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(cards, 0, "nenhum cartão cadastrado — é esse o cenário");
+
+        let s = spending_mode_summary(&p, today).await.unwrap();
+        assert!(
+            matches!(s.mode, forecast::SpendingMode::Card),
+            "seção de cartões viva + Diário zerado é perfil cartão"
+        );
+    }
+
+    /// Quem divide a fatura registra o reembolso na coluna Entrada, com o mesmo nome do cartão
+    /// ("Fatura Bradesco Gio"). É dinheiro voltando: não descreve a forma do gasto, e sozinho
+    /// não pode declarar modo cartão.
+    #[tokio::test]
+    async fn spending_mode_summary_ignores_a_card_named_refund_on_the_income_side() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('reembolso', 'income', 59_137, '2026-06-09', 0, 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position) \
+             VALUES ('reembolso-item', 'reembolso', 59_137, 'Fatura Bradesco Gio', 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO card_proposal (id,alias,display_name,source_month,status) \
+             VALUES ('p1','bradesco gio','Bradesco Gio','2025-10','pending')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let s = spending_mode_summary(&p, today).await.unwrap();
+        assert!(
+            matches!(s.mode, forecast::SpendingMode::Debit),
+            "reembolso na Entrada não declara gasto no cartão"
+        );
+    }
+
     // Constância de débito no mês corrente devolve o modo débito mesmo com faturas vivas.
     #[tokio::test]
     async fn spending_mode_summary_debit_when_daily_constant() {
@@ -4702,6 +4894,114 @@ mod tests {
             .collect();
         assert_eq!(card_events.len(), 1);
         assert_eq!(card_events[0].amount_cents, 10_000);
+    }
+
+    /// A gramática da planilha declara a fatura de duas maneiras, e as duas são dado do dono: sob
+    /// o cabeçalho de seção, e — quando o cabeçalho falta — como uma linha que nomeia o cartão.
+    /// Perder a segunda fazia a fatura virar conta a pagar e o mês inteiro sair do balde Cartão.
+    #[tokio::test]
+    async fn invoice_line_written_outside_the_cards_section_is_still_a_card_event() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "visa-account",
+                card_name: "Visa",
+                owner_name: "Pessoa",
+                invoice_id: "visa-invoice",
+                closing_date: "2026-06-10",
+                due_date: "2026-06-20",
+                stated_total_cents: Some(10_000),
+            },
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('sectionless', 'expense', 10_000, '2026-06-20', 1, 1)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        // Sem `section`: exatamente a nota de janeiro que não trazia o cabeçalho CARTÕES.
+        sqlx::query(
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position) \
+             VALUES ('sectionless-item', 'sectionless', 10_000, 'Fatura Visa', 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let due = NaiveDate::from_ymd_opt(2026, 6, 20).unwrap();
+        let events = load_cashflow_events(&p, today, NaiveDate::from_ymd_opt(2026, 6, 30).unwrap())
+            .await
+            .unwrap();
+        let card_events: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind == forecast::EventKind::Cartao)
+            .collect();
+        assert_eq!(
+            card_events.len(),
+            1,
+            "a linha de fatura fora da seção pertence ao balde Cartão"
+        );
+        assert_eq!(card_events[0].amount_cents, 10_000);
+        // A prova do dano: classificada como Saída fixa, a linha escapa da precedência da fatura
+        // e o vencimento passa a debitar duas vezes o mesmo dinheiro.
+        let due_day_total: i64 = events
+            .iter()
+            .filter(|event| event.date == due)
+            .map(|event| event.amount_cents)
+            .sum();
+        assert_eq!(
+            due_day_total, 10_000,
+            "a fatura é a voz única do vencimento — a linha não soma por fora"
+        );
+    }
+
+    /// A contrapartida da regra acima: fora da seção, só a linha que se APRESENTA como fatura
+    /// nomeia um cartão. Mencionar o emissor é coincidência de texto, não movimento de cartão.
+    #[tokio::test]
+    async fn a_line_that_merely_mentions_the_card_outside_the_section_stays_a_fixed_outflow() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        insert_card_invoice(
+            &p,
+            CardInvoiceFixture {
+                account_id: "visa-account",
+                card_name: "Visa",
+                owner_name: "Pessoa",
+                invoice_id: "visa-invoice",
+                closing_date: "2026-06-10",
+                due_date: "2026-06-20",
+                stated_total_cents: Some(10_000),
+            },
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('mention', 'expense', 4_500, '2026-06-20', 1, 1)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position) \
+             VALUES ('mention-item', 'mention', 4_500, 'Seguro Visa', 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let events = load_cashflow_events(&p, today, NaiveDate::from_ymd_opt(2026, 6, 30).unwrap())
+            .await
+            .unwrap();
+        assert!(
+            events.iter().any(|event| {
+                event.kind == forecast::EventKind::FixedOut && event.amount_cents == 4_500
+            }),
+            "seguro não vira fatura por citar o nome do cartão"
+        );
     }
 
     /// A chave unificadora do domínio do cartão: o discriminador é "existe fatura para (conta,

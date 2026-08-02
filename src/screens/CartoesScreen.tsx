@@ -23,8 +23,10 @@ import { Money } from "../design-system/components/Money";
 import { NoRecordDash } from "../design-system/components/NoRecordDash";
 import { OwnerChip } from "../design-system/components/OwnerChip";
 import { SegmentedControl } from "../design-system/components/SegmentedControl";
+import { SR_ONLY } from "../design-system/srOnly";
 import {
   acceptCardProposal,
+  attachCardProposal,
   cancelCardSeries,
   createCardAccount,
   dismissCardProposal,
@@ -283,6 +285,7 @@ const DEMO_PROPOSALS: CardProposal[] = [
     display_name: "Cartão de viagens",
     source_month: "2026-06",
     status: "pending",
+    aliases: ["Cartão de viagens"],
   },
 ];
 
@@ -434,6 +437,7 @@ export function CartoesScreen() {
         <ProposalBanner
           key={proposal.id}
           proposal={proposal}
+          cards={cards}
           onCreate={() => setForm({ proposal })}
         />
       ))}
@@ -518,17 +522,26 @@ export function CartoesScreen() {
 
 function ProposalBanner({
   proposal,
+  cards,
   onCreate,
 }: {
   proposal: CardProposal;
+  cards: Card[];
   onCreate: () => void;
 }) {
   const [busy, setBusy] = useState(false);
+  // O vínculo é a resposta menos comum, então ele não divide a abertura com o cadastro: fica
+  // atrás de um convite e só então a escolha aparece — um convite por estado.
+  const [attaching, setAttaching] = useState(false);
+  const [attachTo, setAttachTo] = useState("");
+  // As grafias além da identidade são o que a planilha escreveu de diferente para o mesmo
+  // cartão; mostrá-las explica por que uma proposta só responde por várias linhas.
+  const variants = (proposal.aliases ?? []).filter((alias) => alias !== proposal.alias);
 
-  function dismiss() {
+  function resolve(run: () => Promise<unknown>) {
     if (!isTauri) return;
     setBusy(true);
-    void dismissCardProposal(proposal.id)
+    void run()
       .then(invalidateCommands)
       .catch(() => undefined)
       .finally(() => setBusy(false));
@@ -543,19 +556,83 @@ function ProposalBanner({
         <Activity size={14} aria-hidden="true" />A Mia farejou um cartão na planilha
       </span>
       <p className="cartoes__proposal-copy">
-        Uma linha da seção de cartões de {monthLabelLower(proposal.source_month)} não
-        casa com nenhum cartão que o app conhece:{" "}
-        <strong>{proposal.display_name}</strong>. Quer cadastrar para acompanhar a
-        fatura?
+        Desde {monthLabelLower(proposal.source_month)} a sua planilha lança faturas de{" "}
+        <strong>{proposal.display_name}</strong>, e nenhum cartão do app responde por
+        elas. Quer cadastrar para acompanhar?
       </p>
-      <div className="cartoes__actions">
-        <Button variant="primary" size="sm" disabled={busy} onClick={onCreate}>
-          Cadastrar cartão
-        </Button>
-        <Button variant="ghost" size="sm" disabled={busy} onClick={dismiss}>
-          Dispensar
-        </Button>
-      </div>
+      {variants.length > 0 && (
+        <p className="cartoes__proposal-aliases">
+          Também escrito como {variants.join(", ")} — o mesmo cartão.
+        </p>
+      )}
+      {attaching ? (
+        <div className="cartoes__actions">
+          <label style={SR_ONLY} htmlFor={`attach-${proposal.id}`}>
+            Cartão que já tenho
+          </label>
+          <select
+            id={`attach-${proposal.id}`}
+            className="cartoes__field"
+            value={attachTo}
+            disabled={busy}
+            onChange={(event) => setAttachTo(event.target.value)}
+          >
+            <option value="">Escolha o cartão…</option>
+            {cards.map((card) => (
+              <option key={card.id} value={card.id}>
+                {card.name}
+              </option>
+            ))}
+          </select>
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={busy || attachTo === ""}
+            onClick={() =>
+              resolve(() =>
+                attachCardProposal({
+                  proposalId: proposal.id,
+                  accountId: attachTo,
+                }),
+              )
+            }
+          >
+            Usar como apelido
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={() => setAttaching(false)}
+          >
+            Voltar
+          </Button>
+        </div>
+      ) : (
+        <div className="cartoes__actions">
+          <Button variant="primary" size="sm" disabled={busy} onClick={onCreate}>
+            Cadastrar cartão
+          </Button>
+          {cards.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              onClick={() => setAttaching(true)}
+            >
+              É um cartão que já tenho
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={() => resolve(() => dismissCardProposal(proposal.id))}
+          >
+            Dispensar
+          </Button>
+        </div>
+      )}
     </section>
   );
 }

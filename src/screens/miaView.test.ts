@@ -48,6 +48,7 @@ const SUMMARY: DashboardSummary = {
   reserve_basis_months: 6,
   reserve_trend: "flat",
   spending_mode: "debit",
+  spending_mode_detected: true,
   card_gate: "unknown",
   card_gate_economy: "unknown",
   card_gate_economy_bps: null,

@@ -471,7 +471,11 @@ function BlockDay({
       </p>
 
       <div className="hoje__modo">
-        <ModeChip mode={summary.spending_mode} gate={summary.card_gate} />
+        <ModeChip
+          mode={summary.spending_mode}
+          gate={summary.card_gate}
+          detected={summary.spending_mode_detected}
+        />
       </div>
 
       {cardMode ? (
