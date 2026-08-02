@@ -10,6 +10,7 @@ import {
   monthInsight,
   openInvoicesView,
   saldoBandPhrase,
+  spendCapReason,
   saldoGaugeFraction,
   upcomingIncome,
 } from "./hojeView";
@@ -195,5 +196,44 @@ describe("termômetro do saldo", () => {
     expect(saldoGaugeFraction("tight")).toBeLessThan(saldoGaugeFraction("ok"));
     expect(saldoGaugeFraction("negative")).toBeLessThan(saldoGaugeFraction("tight"));
     expect(saldoGaugeFraction("critical")).toBeLessThan(saldoGaugeFraction("negative"));
+  });
+});
+
+// --- por que o teto do dia é o que é -------------------------------------------------------
+
+describe("spendCapReason", () => {
+  const base = {
+    bindingGuardrail: "cash" as const,
+    deepestBalanceCents: 734_608,
+    deepestDate: "2026-08-12",
+  };
+
+  it("saldo que se segura acima do zero é leitura de caixa comum", () => {
+    // A reserva incompleta NÃO aperta o teto: no método ela socorre o vermelho, não o proíbe.
+    expect(spendCapReason(base).kind).toBe("cash");
+  });
+
+  it("saldo que abre o bico vira déficit, com o tamanho e o dia", () => {
+    const reason = spendCapReason({
+      ...base,
+      deepestBalanceCents: -120_000,
+      deepestDate: "2026-09-14",
+    });
+    if (reason.kind !== "deficit")
+      throw new Error(`esperava deficit, veio ${reason.kind}`);
+    expect(reason.shortfallCents).toBe(120_000);
+    expect(reason.date).toBe("2026-09-14");
+  });
+
+  it("a régua da economia continua tendo a palavra quando é ela que morde", () => {
+    expect(spendCapReason({ ...base, bindingGuardrail: "savings" }).kind).toBe(
+      "savings",
+    );
+  });
+
+  it("sem dia de menor saldo não há déficit a nomear", () => {
+    expect(
+      spendCapReason({ ...base, deepestBalanceCents: -5_000, deepestDate: null }).kind,
+    ).toBe("cash");
   });
 });

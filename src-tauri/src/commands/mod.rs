@@ -1673,88 +1673,51 @@ mod tests {
         assert_eq!(s.reserve_months, 0.0);
     }
 
-    // --- reserve_floor tests -------------------------------------------------
-    // O piso de reserva = max(saldo dos Bolsos de reserva, custo de vida mensal × meses do método).
+    // --- a reserva não aperta o teto do dia ----------------------------------
+    // No método a reserva é o amortecedor acionado QUANDO o saldo fica negativo, não o piso que
+    // impede o gasto. Tratá-la como piso zerava o teto de quem ainda está construindo a reserva —
+    // que é, por definição, quem mais precisa da orientação do dia.
 
-    // Sem Bolso de reserva E sem histórico de custo de vida, o piso é 0 (não bloqueia usuário novo).
     #[tokio::test]
-    async fn reserve_floor_zero_when_no_history_and_no_reserve_account() {
+    async fn forecast_cash_guardrail_is_the_projected_balance_not_a_reserve_floor() {
         let pool = fixture_pool().await;
-        let today = NaiveDate::from_ymd_opt(2026, 6, 20).unwrap();
-        let floor = reserve_floor(&pool, today).await.unwrap();
-        assert_eq!(floor, 0);
-    }
-
-    // Sem Bolso de reserva mas COM histórico de custo de vida, o piso é
-    // custo_de_vida_mensal × RESERVE_MIN_MONTHS (o mínimo calculado entra em cena — antes ficava 0
-    // e o guardrail de caixa ficava desmontado).
-    #[tokio::test]
-    async fn reserve_floor_uses_computed_minimum_when_no_reserve_account() {
-        let pool = fixture_pool().await;
-        // 3 meses completos de saída a 100.000 cada → mediana do custo de vida = 100.000.
-        for m in [3u32, 4, 5] {
-            insert_realized(&pool, "expense", 100_000, &format!("2026-{m:02}-10")).await;
-        }
-        let today = NaiveDate::from_ymd_opt(2026, 6, 20).unwrap();
-        let floor = reserve_floor(&pool, today).await.unwrap();
-        // 100.000 × 6 = 600.000
-        assert_eq!(floor, 600_000);
-    }
-
-    // Com um Bolso de reserva acima do piso calculado, o saldo real vence (usamos o maior dos dois).
-    #[tokio::test]
-    async fn reserve_floor_uses_reserve_balance_when_above_computed_minimum() {
-        let pool = fixture_pool().await;
-        for m in [3u32, 4, 5] {
-            insert_realized(&pool, "expense", 100_000, &format!("2026-{m:02}-10")).await;
-        }
-        // Saldo de reserva 900.000 > piso calculado 600.000.
-        insert_reserve_account(&pool, 900_000).await;
-        let today = NaiveDate::from_ymd_opt(2026, 6, 20).unwrap();
-        let floor = reserve_floor(&pool, today).await.unwrap();
-        assert_eq!(floor, 900_000);
-    }
-
-    // Com um Bolso de reserva ABAIXO do piso calculado, o piso do método vence (é a restrição mais
-    // forte — o objetivo do método é maior que o que o usuário guardou até agora).
-    #[tokio::test]
-    async fn reserve_floor_uses_computed_minimum_when_reserve_balance_is_low() {
-        let pool = fixture_pool().await;
-        for m in [3u32, 4, 5] {
-            insert_realized(&pool, "expense", 100_000, &format!("2026-{m:02}-10")).await;
-        }
-        // Saldo de reserva 200.000 < piso calculado 600.000.
-        insert_reserve_account(&pool, 200_000).await;
-        let today = NaiveDate::from_ymd_opt(2026, 6, 20).unwrap();
-        let floor = reserve_floor(&pool, today).await.unwrap();
-        assert_eq!(floor, 600_000);
-    }
-
-    // Sem Bolso de reserva, o piso calculado (custo de vida × meses) protege o caixa via
-    // `forecast_dto`; `cash_headroom` deve descontar esse piso.
-    #[tokio::test]
-    async fn forecast_cash_guardrail_gated_by_computed_reserve_floor() {
-        let pool = fixture_pool().await;
-        // Saldo de hoje confortável; só fixas modestas adiante → o trough fica alto.
         insert_sheet_balance(&pool, "2026", "2026-06-13", 1_000_000).await;
         insert_sheet_balance(&pool, "2026", "2026-12-31", 1_200_000).await;
-        // Custo de vida: 3 meses completos a 100.000 → mediana 100.000 → piso = 600.000.
+        // Custo de vida de 100.000/mês: o antigo piso teria comido 600.000 da folga.
         for m in [3u32, 4, 5] {
             insert_realized(&pool, "expense", 100_000, &format!("2026-{m:02}-10")).await;
         }
-        // Sem renda no ano → a régua de poupança fica INATIVA (None); resta só o caixa, que agora
-        // está gated pelo piso de reserva calculado.
         let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
         let fc = forecast_dto(&pool, today).await.unwrap();
         assert_eq!(fc.binding_guardrail, "cash");
-        assert!(
-            fc.savings_headroom_cents.is_none(),
-            "sem renda, a régua de poupança está inativa"
-        );
-        // O piso (600.000) foi de fato subtraído: a folga de caixa é o trough menos 600.000, não o
-        // trough inteiro. Confirma que o guardrail deixou de estar desmontado.
+        assert!(fc.savings_headroom_cents.is_none());
+
         let trough = fc.deepest_deficit.as_ref().unwrap().balance_cents;
-        assert_eq!(fc.cash_headroom_cents, trough - 600_000);
+        assert_eq!(
+            fc.cash_headroom_cents, trough,
+            "a folga de caixa é o saldo projetado inteiro"
+        );
+        assert!(
+            fc.safe_to_spend_today_cents > 0,
+            "sem reserva mapeada o teto não zera"
+        );
+    }
+
+    /// O excedente é a pergunta que o método faz depois que a reserva está de pé; enquanto ela
+    /// está sendo construída, não existe excedente a declarar.
+    #[tokio::test]
+    async fn reserve_surplus_appears_only_above_the_method_target() {
+        let pool = fixture_pool().await;
+        for m in [3u32, 4, 5] {
+            insert_realized(&pool, "expense", 100_000, &format!("2026-{m:02}-10")).await;
+        }
+        let today = NaiveDate::from_ymd_opt(2026, 6, 13).unwrap();
+
+        // Alvo = 100.000 × 6 = 600.000. Abaixo dele, nada de excedente.
+        insert_reserve_account(&pool, 400_000).await;
+        let below = dashboard_summary(&pool, today).await.unwrap();
+        assert_eq!(below.reserve_target_cents, 600_000);
+        assert_eq!(below.reserve_surplus_cents, None);
     }
 
     // O teto do Diário usa a média do mês anterior quando não há orçamento explícito, evitando um

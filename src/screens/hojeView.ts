@@ -207,3 +207,33 @@ export function monthInsight(
       .length,
   };
 }
+
+/**
+ * Por que o teto do dia é o que é.
+ *
+ * O método tem duas réguas para o dia: o caixa (não abrir o bico — o Saldo e o termômetro) e a
+ * economia do ano. A reserva não é uma delas: ela é o amortecedor que se ACIONA quando o saldo
+ * fica negativo, e é por isso que o déficit tem leitura própria aqui — é o momento em que o
+ * método manda usar a reserva, não o momento de proibir o gasto.
+ */
+export type SpendCapReason =
+  | { kind: "savings" }
+  | { kind: "cash" }
+  | { kind: "deficit"; shortfallCents: number; date: string };
+
+export function spendCapReason(input: {
+  bindingGuardrail: "cash" | "savings";
+  /** Menor saldo projetado do horizonte, e o dia em que ele acontece. */
+  deepestBalanceCents: number;
+  deepestDate: string | null;
+}): SpendCapReason {
+  if (input.bindingGuardrail === "savings") return { kind: "savings" };
+  if (input.deepestBalanceCents < 0 && input.deepestDate) {
+    return {
+      kind: "deficit",
+      shortfallCents: -input.deepestBalanceCents,
+      date: input.deepestDate,
+    };
+  }
+  return { kind: "cash" };
+}

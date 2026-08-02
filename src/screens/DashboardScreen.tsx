@@ -32,6 +32,7 @@ import {
   monthInsight,
   openInvoicesView,
   saldoBandPhrase,
+  spendCapReason,
   saldoGaugeFraction,
   upcomingIncome,
   type MonthInsight,
@@ -76,7 +77,7 @@ const FATURAS_TERM = {
 };
 
 export function DashboardScreen() {
-  const { navigate } = useNekoApp();
+  const { navigate, openCompose } = useNekoApp();
   const summaryQ = useCommand("get_dashboard_summary", getDashboardSummary);
   const forecastQ = useCommand("get_forecast", getForecast);
   const billsQ = useCommand("get_upcoming_bills", () => getUpcomingBills(45));
@@ -137,6 +138,20 @@ export function DashboardScreen() {
     : "o fim do mês";
   const saldoHoje =
     monthDaily.find((d) => d.date === today)?.balance_cents ?? summary.balance;
+  // O selo do veredito nomeia a MESMA régua que a didática logo abaixo: as duas descrevendo
+  // cálculos diferentes é como a tela passou a afirmar "sem dia no vermelho" ao lado de
+  // "nenhum dia no vermelho à vista".
+  const capReason = spendCapReason({
+    bindingGuardrail: forecast.binding_guardrail,
+    deepestBalanceCents: forecast.deepest_deficit?.balance_cents ?? 0,
+    deepestDate: forecast.deepest_deficit?.date ?? null,
+  });
+  const verdictSeal =
+    capReason.kind === "savings"
+      ? "Sem tocar na economia planejada do ano."
+      : capReason.kind === "deficit"
+        ? "O mês já abre o bico — o teto de hoje é zero."
+        : "Sem deixar nenhum dia no vermelho.";
 
   return (
     <div className="hoje neko-app">
@@ -156,11 +171,7 @@ export function DashboardScreen() {
           <span className="hoje__verdict-money">
             <Money cents={safeToSpend} size="inherit" />
           </span>
-          <b>
-            {forecast.binding_guardrail === "savings"
-              ? "Sem tocar na economia planejada do ano."
-              : "Sem deixar nenhum dia no vermelho."}
-          </b>
+          <b>{verdictSeal}</b>
         </p>
         <p className="hoje__teach">
           <TeachLine
@@ -169,6 +180,15 @@ export function DashboardScreen() {
             cardMode={cardMode}
             monthEndLabel={monthEndLabel}
             onOpenTeto={() => navigate("teto")}
+            onUseReserve={(shortfallCents, date) =>
+              openCompose({
+                mode: "new",
+                type: "entrada",
+                date,
+                description: "Saque da reserva de emergência",
+                amountCents: shortfallCents,
+              })
+            }
           />
         </p>
       </section>
@@ -333,23 +353,59 @@ function TeachLine({
   cardMode,
   monthEndLabel,
   onOpenTeto,
+  onUseReserve,
 }: {
   summary: DashboardSummary;
   forecast: Forecast;
   cardMode: boolean;
   monthEndLabel: string;
   onOpenTeto: () => void;
+  onUseReserve: (shortfallCents: number, date: string) => void;
 }) {
-  const savingsBound = forecast.binding_guardrail === "savings";
   const ceiling = summary.daily_budget;
   const source = summary.daily_ceiling_source;
 
   // O número é SÓ o guardrail que morde (caixa ou economia) — o teto nunca entra
   // nele; é o segundo limite do dia. Uma frase sempre visível; a mecânica completa
   // mora no "Como funciona" (didática atrás de pergunta, o padrão do método).
-  const numberPhrase = savingsBound
-    ? "Este é o limite da economia: o maior gasto que mantém a meta do ano viva."
-    : `Este é o limite do caixa: o maior gasto que o saldo aguenta até ${monthEndLabel} sem nenhum dia no vermelho.`;
+  //
+  // Caixa zerado significa que o mês já abre o bico, e no método esse é o momento de ACIONAR a
+  // reserva — não de proibir o gasto. A frase aponta para o gesto, com o tamanho do buraco.
+  const reason = spendCapReason({
+    bindingGuardrail: forecast.binding_guardrail,
+    deepestBalanceCents: forecast.deepest_deficit?.balance_cents ?? 0,
+    deepestDate: forecast.deepest_deficit?.date ?? null,
+  });
+  // A reserva só é oferecida quando ela existe: sem conta mapeada ou zerada, a saída é outra
+  // (subir a performance), e sugerir um saque impossível seria conselho vazio.
+  const hasReserve =
+    summary.reserve_state === "verdict" || summary.reserve_state === "estimate";
+  const numberPhrase =
+    reason.kind === "savings" ? (
+      "Este é o limite da economia: o maior gasto que mantém a meta do ano viva."
+    ) : reason.kind === "deficit" ? (
+      <>
+        Falta <Money cents={reason.shortfallCents} size="inherit" /> em{" "}
+        {faturaDayLabel(reason.date)}.{" "}
+        {hasReserve ? (
+          <>
+            É para isso que a reserva existe —{" "}
+            <button
+              type="button"
+              className="hoje__link"
+              onClick={() => onUseReserve(reason.shortfallCents, reason.date)}
+            >
+              lançar o saque
+            </button>{" "}
+            e programar a reposição.
+          </>
+        ) : (
+          "Sem reserva mapeada, o caminho é a performance do mês: entrar mais, ou sair menos."
+        )}
+      </>
+    ) : (
+      `Este é o limite do caixa: o maior gasto que o saldo aguenta até ${monthEndLabel} sem nenhum dia no vermelho.`
+    );
 
   // Ação nunca se esconde: os estados sem teto mantêm o CTA visível; os estados
   // informados encolhem a um rótulo curto com o valor.
@@ -878,6 +934,14 @@ function SaldoReserva({
                     : "O método pede 6 meses de custo de vida"}
                 </span>
               </div>
+              {/* Alcançado o alvo, a pergunta do método deixa de ser "quanto falta" e passa a
+                  ser o que fazer com o excedente — é ele que financia o próximo movimento. */}
+              {summary.reserve_surplus_cents != null && (
+                <p className="hoje__stat-note">
+                  <Money cents={summary.reserve_surplus_cents} size="inherit" /> além do
+                  alvo — é com esse excedente que o próximo passo se decide.
+                </p>
+              )}
             </>
           )}
         </div>

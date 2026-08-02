@@ -46,6 +46,8 @@ const SUMMARY: DashboardSummary = {
   reserve_months: 4.5,
   reserve_state: "verdict",
   reserve_basis_months: 6,
+  reserve_target_cents: 0,
+  reserve_surplus_cents: null,
   reserve_trend: "flat",
   spending_mode: "debit",
   spending_mode_detected: true,
