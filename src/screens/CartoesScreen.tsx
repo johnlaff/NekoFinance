@@ -605,7 +605,7 @@ function ProposalBanner({
             disabled={busy}
             onClick={() => setAttaching(false)}
           >
-            Voltar
+            Cancelar
           </Button>
         </div>
       ) : (
