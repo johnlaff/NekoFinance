@@ -1054,19 +1054,16 @@ mod tests {
         );
         // Folga de poupança = Economia(0) − 25% × renda(500_000) = −125_000 (NEGATIVA).
         // Sob o proxy antigo seria net(400_000) − 125_000 = +275_000 e binding="cash".
-        assert_eq!(fc.savings_headroom_cents, Some(-125_000));
         assert_eq!(
-            fc.binding_guardrail, "savings",
-            "a régua de poupança morde apesar do net positivo"
+            fc.savings_headroom_cents,
+            Some(-125_000),
+            "sob o proxy antigo (net) seria +275_000: é a Economia registrada que forma a folga"
         );
-        assert_eq!(
-            fc.safe_to_spend_today_cents, 0,
-            "net superávit não conta como já-poupado; pode gastar 0"
-        );
-        assert!(
-            fc.cash_headroom_cents > 0,
-            "há caixa de sobra — o que morde é a poupança, não o caixa"
-        );
+        // Faixa já rompida (folga negativa): a régua de poupança para de morder — o déficit é do
+        // ano que passou e o piso 20–30% é média ANUAL. O diagnóstico segue exposto na folga.
+        assert_eq!(fc.binding_guardrail, "cash");
+        assert!(fc.cash_headroom_cents > 0);
+        assert_eq!(fc.safe_to_spend_today_cents, fc.cash_headroom_cents);
     }
 
     async fn insert_sheet_balance(pool: &sqlx::SqlitePool, sheet: &str, date: &str, cents: i64) {
@@ -1590,13 +1587,12 @@ mod tests {
         assert!(ceiling > 0, "fixture gera teto de diário");
         assert_eq!(jun.daily_projected_cents, 17 * ceiling);
         assert_eq!(jun.performance_cents, -100_000 - 17 * ceiling);
-        // Poupança ANUAL (meses completos jan–mai, abaixo da meta) manda → pode gastar 0.
-        assert_eq!(fc.binding_guardrail, "savings");
-        assert_eq!(fc.safe_to_spend_today_cents, 0);
+        // Poupança ANUAL dos meses completos abaixo da meta: a folga é negativa e continua
+        // publicada, mas a faixa rompida não trava o dia — quem manda é a régua do caixa.
         assert!(fc.savings_headroom_cents.unwrap() < 0);
-        // Há caixa acima do piso de reserva (1.700.000 − fixos > 1.320.000) → a régua de caixa
-        // tem folga e não é a que morde; a poupança anual (negativa) é a binding.
+        assert_eq!(fc.binding_guardrail, "cash");
         assert!(fc.cash_headroom_cents > 0);
+        assert_eq!(fc.safe_to_spend_today_cents, fc.cash_headroom_cents);
         assert_eq!(fc.savings_target_bps, 2500);
     }
 

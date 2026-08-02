@@ -10,6 +10,7 @@ import {
   monthInsight,
   openInvoicesView,
   saldoBandPhrase,
+  savingsBandBroken,
   spendCapReason,
   saldoGaugeFraction,
   upcomingIncome,
@@ -235,5 +236,17 @@ describe("spendCapReason", () => {
     expect(
       spendCapReason({ ...base, deepestBalanceCents: -5_000, deepestDate: null }).kind,
     ).toBe("cash");
+  });
+});
+
+describe("savingsBandBroken", () => {
+  it("faixa viva ou inativa não é rompimento", () => {
+    expect(savingsBandBroken(50_000)).toBe(false);
+    expect(savingsBandBroken(0)).toBe(false);
+    expect(savingsBandBroken(null)).toBe(false);
+  });
+
+  it("folga negativa é a faixa rompida", () => {
+    expect(savingsBandBroken(-1_695_966)).toBe(true);
   });
 });

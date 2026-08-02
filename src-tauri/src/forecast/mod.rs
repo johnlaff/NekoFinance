@@ -221,14 +221,24 @@ pub fn safe_to_spend_today(
     let savings_headroom_cents = (annual_income_cents > 0)
         .then(|| annual_savings_cents - savings_target_bps * annual_income_cents / 10_000);
 
-    // Régua de poupança só morde se estiver ativa E for mais apertada que o caixa.
-    let binding = match savings_headroom_cents {
-        Some(s) if s < cash_headroom_cents => Guardrail::Savings,
-        _ => Guardrail::Cash,
+    // A régua de poupança PROTEGE a faixa enquanto ela está viva — é a pergunta do método sobre
+    // uma decisão nova ("essa parcela vai me IMPEDIR de economizar de 20 a 30%?"), portanto
+    // prospectiva. Com a faixa já rompida ela para de morder: o déficit acumulado do ano é
+    // passado, e nenhum gasto de hoje o desfaz, então travar o dia puniria o que não volta.
+    // Aí a orientação passa a ser o diagnóstico (a economia do ano, visível na tela) e a régua
+    // do caixa, que é a do presente. O piso 20–30% é MÉDIA ANUAL — mês abaixo é previsto pelo
+    // próprio método, não uma falha a punir todo dia até o ano virar.
+    let savings_binds = savings_headroom_cents.is_some_and(|s| s >= 0 && s < cash_headroom_cents);
+    let binding = if savings_binds {
+        Guardrail::Savings
+    } else {
+        Guardrail::Cash
     };
-    let limit = savings_headroom_cents
-        .unwrap_or(i64::MAX)
-        .min(cash_headroom_cents);
+    let limit = if savings_binds {
+        savings_headroom_cents.unwrap_or(cash_headroom_cents)
+    } else {
+        cash_headroom_cents
+    };
     let amount_cents = limit.max(0);
 
     SafeToSpend {
@@ -1206,24 +1216,50 @@ mod tests {
 
     // ---- Guardrail duplo (poupança ANUAL 25% + caixa) ----
 
-    // Caixa cheio (colchão) MAS a poupança do ANO já estourou → pode gastar = 0, limitado pela
-    // POUPANÇA, não pelo caixa. É o "Caixa ≠ Performance" do método.
+    /// A régua de poupança PROTEGE a faixa: com ela viva e mais apertada que o caixa, é ela que
+    /// manda — é a pergunta do método sobre uma decisão nova ("vai me impedir de economizar de
+    /// 20 a 30%?").
     #[test]
-    fn safe_to_spend_savings_binds_when_cash_is_high() {
+    fn safe_to_spend_savings_binds_while_the_band_is_alive() {
         let events = [
             ev("2026-06-01", EventKind::Income, 1_000_000),
             ev("2026-06-02", EventKind::FixedOut, 1_100_000),
         ];
         let f = project(800_000, d("2026-06-01"), &events, d("2026-06-30"));
-        // Poupança do ANO (realizado) = renda 1.000.000, sobra −100.000 (dissaving).
+        // Poupança do ANO acima da meta: 300.000 guardados contra meta de 250.000 → folga 50.000.
+        let s = safe_to_spend_today(&f, 1_000_000, 300_000, 2500);
+
+        assert_eq!(s.cash_headroom_cents, 700_000);
+        assert_eq!(s.savings_headroom_cents, Some(50_000));
+        assert_eq!(s.binding, Guardrail::Savings);
+        assert_eq!(s.amount_cents, 50_000, "o gasto cabe até o piso da faixa");
+    }
+
+    /// Com a faixa JÁ rompida, a régua para de morder. O déficit é do ano que passou e nenhum
+    /// gasto de hoje o desfaz — travar o dia puniria o que não volta, e o piso 20–30% é média
+    /// ANUAL, com mês abaixo previsto pelo próprio método. A orientação vira o diagnóstico da
+    /// economia (visível na tela) e a régua do caixa, que é a do presente.
+    #[test]
+    fn safe_to_spend_savings_stops_binding_once_the_band_is_already_broken() {
+        let events = [
+            ev("2026-06-01", EventKind::Income, 1_000_000),
+            ev("2026-06-02", EventKind::FixedOut, 1_100_000),
+        ];
+        let f = project(800_000, d("2026-06-01"), &events, d("2026-06-30"));
+        // Poupança do ANO negativa: folga = −100.000 − 250.000 = −350.000.
         let s = safe_to_spend_today(&f, 1_000_000, -100_000, 2500);
 
-        // Caixa positivo e alto: 800.000 + 1.000.000 − 1.100.000 = 700.000, estável até fim do mês.
         assert_eq!(s.cash_headroom_cents, 700_000);
-        // Meta 25% × renda anual = 250.000. Folga = −100.000 − 250.000 = −350.000 (abaixo da meta).
-        assert_eq!(s.savings_headroom_cents, Some(-350_000));
-        assert_eq!(s.binding, Guardrail::Savings);
-        assert_eq!(s.amount_cents, 0); // honesto: 0, não o caixa disponível
+        assert_eq!(
+            s.savings_headroom_cents,
+            Some(-350_000),
+            "o diagnóstico continua exposto — some do teto, não da tela"
+        );
+        assert_eq!(s.binding, Guardrail::Cash);
+        assert_eq!(
+            s.amount_cents, 700_000,
+            "quem já caiu da faixa recebe a régua do caixa, não um zero perpétuo"
+        );
     }
 
     // Conta futura pré-lançada (fatura/salário) num mês à frente limita o gasto de HOJE pelo
