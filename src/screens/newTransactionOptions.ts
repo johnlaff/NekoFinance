@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
-import { getPockets, listTags, type PocketAccount, type Tag } from "../lib/api";
+import {
+  listTagsCmd,
+  pocketsFetcher,
+  type PocketAccount,
+  type Tag,
+} from "./lancamentosView";
 
 /**
  * Dados de apoio do formulário de lançamento: tags para o seletor e as
@@ -11,10 +16,10 @@ export function useFormOptions() {
   const [reserveAccounts, setReserveAccounts] = useState<PocketAccount[]>([]);
   useEffect(() => {
     let alive = true;
-    listTags()
+    listTagsCmd()
       .then((t) => alive && setTags(t))
       .catch(() => alive && setTags([]));
-    getPockets()
+    pocketsFetcher()
       .then((p) => {
         if (!alive) return;
         setReserveAccounts(

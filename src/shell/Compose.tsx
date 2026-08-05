@@ -1,20 +1,21 @@
 import { useEffect, useReducer, useRef } from "react";
 import { Check, Pencil, Plus, Table2, X } from "lucide-react";
 import { Button } from "../design-system/components/Button";
-import {
-  createTransaction,
-  getLineItems,
-  getPockets,
-  updateTransaction,
-  updateTransactionItems,
-  type PocketAccount,
-} from "../lib/api";
 import { isTauri } from "../lib/env";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { formatBRL, parseBRLToCents, todayISO } from "../lib/format";
 import { safeErrorMessage } from "../lib/errors";
 import { kindToFields } from "../lib/movement";
 import { fmtBRL, TYPE_META, type MovementType } from "../lib/nkFormat";
+import {
+  createTransactionCmd,
+  getLineItemsCmd,
+  pocketsFetcher,
+  POCKETS_CACHE_KEY,
+  updateTransactionCmd,
+  updateTransactionItemsCmd,
+  type PocketAccount,
+} from "../screens/lancamentosView";
 import type { ComposeOptions } from "./appContext";
 
 interface Part {
@@ -56,16 +57,16 @@ async function persistLancamento(p: {
   items: LineItemInput[] | null;
 }): Promise<void> {
   if (p.transactionId) {
-    await updateTransaction(p.transactionId, p.fields);
-    if (p.items) await updateTransactionItems(p.transactionId, p.items);
+    await updateTransactionCmd(p.transactionId, p.fields);
+    if (p.items) await updateTransactionItemsCmd(p.transactionId, p.items);
   } else {
-    const newId = await createTransaction({
+    const newId = await createTransactionCmd({
       ...p.fields,
       tagIds: [],
       recurrence: null,
       toAccountId: p.toAccountId,
     });
-    if (p.items) await updateTransactionItems(newId, p.items);
+    if (p.items) await updateTransactionItemsCmd(newId, p.items);
   }
 }
 
@@ -499,7 +500,7 @@ export function Compose({
   const { type, composed, single, parts, desc, toAccountId, saving, loadingItems } =
     state;
 
-  const pocketsQ = useCommand("get_pockets", getPockets);
+  const pocketsQ = useCommand(POCKETS_CACHE_KEY, pocketsFetcher);
   const reserveAccounts: PocketAccount[] = (pocketsQ.data?.accounts ?? []).filter(
     (a) => a.liquidity === "reserve" || a.liquidity === "illiquid",
   );
@@ -542,7 +543,7 @@ export function Compose({
         composed: false,
         parts: [{ id: crypto.randomUUID(), desc: "", amt: "" }],
       });
-      return getLineItems(options.transactionId!)
+      return getLineItemsCmd(options.transactionId!)
         .then((items) => {
           if (items.length >= 2) {
             const loadedParts = items

@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import {
-  createCardSeries,
-  listCards,
-  registerCardPurchase,
+  createCardSeriesCmd,
+  listCardsCmd,
+  registerCardPurchaseCmd,
   type Card,
-} from "../lib/api";
+} from "./lancamentosView";
 import { parseBRLToCents } from "../lib/format";
 
 const LAST_CARD_KEY = "neko:lastCardId";
@@ -17,7 +17,7 @@ export function useCardOptions(onPreselect: (cardId: string) => void) {
   const [cards, setCards] = useState<Card[]>([]);
   useEffect(() => {
     let alive = true;
-    listCards()
+    listCardsCmd()
       .then((items) => {
         if (!alive) return;
         setCards(items);
@@ -62,7 +62,7 @@ export async function submitCardPurchase(input: CardSubmitInput): Promise<void> 
   const refundCents =
     parsedRefundCents && parsedRefundCents > 0 ? parsedRefundCents : null;
   if (input.cardRepeat === "never") {
-    await registerCardPurchase({
+    await registerCardPurchaseCmd({
       cardAccountId: input.cardId,
       amountCents: input.amountCents,
       description: input.description.trim() || null,
@@ -71,7 +71,7 @@ export async function submitCardPurchase(input: CardSubmitInput): Promise<void> 
       tagIds: input.tagIds,
     });
   } else {
-    await createCardSeries({
+    await createCardSeriesCmd({
       cardAccountId: input.cardId,
       description: input.description.trim(),
       amountCents: input.amountCents,

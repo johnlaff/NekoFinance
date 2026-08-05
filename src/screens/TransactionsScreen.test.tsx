@@ -5,7 +5,7 @@ import { TransactionsScreen } from "./TransactionsScreen";
 import { NekoAppProvider } from "../shell/appContext";
 import { TXNS, mockCommands, mockInvoke } from "../test/commands";
 import { crumbOverridesSnapshot } from "../shell/crumbStore";
-import type { TransactionRow } from "../lib/api";
+import type { TransactionRow } from "./lancamentosView";
 import type * as FormatModule from "../lib/format";
 
 vi.mock("@tauri-apps/api/core", () => ({

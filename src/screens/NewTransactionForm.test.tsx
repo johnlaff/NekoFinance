@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NewTransactionForm } from "./NewTransactionForm";
-import type { Tag } from "../lib/api";
+import type { Tag } from "./lancamentosView";
 import { mockCommands, mockInvoke } from "../test/commands";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
