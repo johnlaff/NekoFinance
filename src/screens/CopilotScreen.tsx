@@ -8,7 +8,6 @@ import { InfoPopover } from "../design-system/components/InfoPopover";
 import { MiaAvatar } from "../design-system/components/MiaAvatar";
 import { Money } from "../design-system/components/Money";
 import { SR_ONLY } from "../design-system/srOnly";
-import { getDashboardSummary, getForecast, getMiaConsent, listTags } from "../lib/api";
 import { isTauri } from "../lib/env";
 import { centsToBRLInput, parseBRLToCents } from "../lib/format";
 import { motionEnabled } from "../lib/motion";
@@ -40,6 +39,10 @@ import {
 import {
   buildTimeline,
   contextFacts,
+  fetchDashboardSummary,
+  fetchForecast,
+  fetchMiaConsent,
+  fetchTags,
   timeLabel,
   SUGGESTIONS,
   type AnswerCta,
@@ -126,7 +129,7 @@ function ProposalCard({ id }: { id: string }) {
     centsToBRLInput(card?.draft.amount_cents ?? 0),
   );
   const [busy, setBusy] = useState(false);
-  const tagsQ = useCommand("list_tags:lc", listTags);
+  const tagsQ = useCommand("list_tags:lc", fetchTags);
 
   if (!card) return null;
 
@@ -517,9 +520,9 @@ const CLEAR_CONFIRM =
 /* ------------------------------------------------------------------ */
 
 export function CopilotScreen() {
-  const summaryQ = useCommand("get_dashboard_summary", getDashboardSummary);
-  const forecastQ = useCommand("get_forecast", getForecast);
-  const consentQ = useCommand("get_mia_consent", getMiaConsent);
+  const summaryQ = useCommand("get_dashboard_summary", fetchDashboardSummary);
+  const forecastQ = useCommand("get_forecast", fetchForecast);
+  const consentQ = useCommand("get_mia_consent", fetchMiaConsent);
   const { navigate, openCompose } = useNekoApp();
 
   const [log, setLog] = useState<MiaMessage[]>(sessionLog);

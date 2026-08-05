@@ -7,13 +7,6 @@ import { EstimateMark } from "../design-system/components/EstimateMark";
 import { InfoPopover } from "../design-system/components/InfoPopover";
 import { VerdictHero } from "../design-system/components/VerdictHero";
 import { Money } from "../design-system/components/Money";
-import {
-  getForecast,
-  getMonthTransactions,
-  getScenarioForecast,
-  lastSyncAt,
-  type TransactionRow,
-} from "../lib/api";
 import { isTauri } from "../lib/env";
 import { fmtDate, fmtDayMonth, formatBRL, fmtAxisBRL } from "../lib/format";
 import { saldoBand } from "../lib/nkFormat";
@@ -22,10 +15,17 @@ import { syncRecencyLabel } from "../lib/syncRecency";
 import type { Screen } from "../shell/screens";
 import {
   buildHorizonteView,
+  commitmentsCacheKey,
+  commitmentsFetcher,
+  fetchForecast,
+  fetchLastSyncAt,
+  fetchScenarioCompare,
+  scenarioCompareCacheKey,
   type CommitmentMonth,
   type GridMonth,
   type HorizonteView,
   type RoadModel,
+  type TransactionRow,
 } from "./horizonteView";
 import { SimulateScenarioButton, ScenarioSheet, ScenarioCompare } from "./scenarios";
 
@@ -44,26 +44,13 @@ const SEMAPHORE_TERM = {
   body: "A cor de cada mês é a faixa do seu saldo no fim dele — as faixas fixas da sua planilha (folga, ok, apertado, negativo, crítico). Um mês sem lastro não ganha cor de aprovação: fica tracejado, em compasso de conferir. A verdade dia a dia mora no Calendário, que cada mês abre.",
 };
 
-// ---- fetch multi-mês dos compromissos (fetcher estável por chave, no padrão do YearGrid) ----
-
-const _commitFetchers = new Map<string, () => Promise<TransactionRow[][]>>();
-function commitmentsFetcher(monthsKey: string) {
-  let fn = _commitFetchers.get(monthsKey);
-  if (!fn) {
-    const months = monthsKey ? monthsKey.split(",") : [];
-    fn = () => Promise.all(months.map((m) => getMonthTransactions(m)));
-    _commitFetchers.set(monthsKey, fn);
-  }
-  return fn;
-}
-
 export function HorizonteScreen({
   onNavigate = () => undefined,
 }: {
   onNavigate?: (s: Screen) => void;
 }) {
-  const forecastQ = useCommand("get_forecast", getForecast);
-  const syncQ = useCommand("last_sync_at", lastSyncAt);
+  const forecastQ = useCommand("get_forecast", fetchForecast);
+  const syncQ = useCommand("last_sync_at", fetchLastSyncAt);
   const forecast = forecastQ.data;
 
   // Meses futuros com saldo de fim de mês → os compromissos que cada um já traz lançados.
@@ -79,20 +66,14 @@ export function HorizonteScreen({
     : [];
   const monthsKey = futureMonths.join(",");
   const commitmentsQ = useCommand(
-    `horizon_commitments:${monthsKey}`,
+    commitmentsCacheKey(monthsKey),
     commitmentsFetcher(monthsKey),
   );
 
   const [sheetOpen, setSheetOpen] = useState(false);
   const [activeScenarioId, setActiveScenarioId] = useState<string | null>(null);
-  const compareQ = useCommand(
-    activeScenarioId
-      ? `scenario_forecast:${activeScenarioId}`
-      : "scenario_forecast:none",
-    () =>
-      activeScenarioId
-        ? getScenarioForecast(activeScenarioId)
-        : Promise.reject(new Error("nenhum cenário selecionado")),
+  const compareQ = useCommand(scenarioCompareCacheKey(activeScenarioId), () =>
+    fetchScenarioCompare(activeScenarioId),
   );
   const compare = activeScenarioId ? (compareQ.data ?? null) : null;
 

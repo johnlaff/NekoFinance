@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { HorizonteScreen } from "./HorizonteScreen";
 import { mockCommands, mockInvoke } from "../test/commands";
-import type { Forecast, MonthEnd, TransactionRow } from "../lib/api";
+import type { Forecast, MonthEnd, TransactionRow } from "./horizonteView";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 

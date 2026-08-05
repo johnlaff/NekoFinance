@@ -1,4 +1,13 @@
-import type { DashboardSummary, Forecast } from "../lib/api";
+import {
+  getDashboardSummary,
+  getForecast,
+  getMiaConsent,
+  listTags,
+  type DashboardSummary,
+  type Forecast,
+  type MiaConsentView,
+  type Tag,
+} from "../lib/api";
 import { GLOSSARY } from "../design-system/glossary";
 import { formatBRL } from "../lib/format";
 import { MES } from "../lib/nkFormat";
@@ -10,7 +19,13 @@ import type { Screen } from "../shell/screens";
 // respostas determinísticas e as recusas honestas. Nenhuma regra de método nasce aqui:
 // cada número vem pronto dos DTOs do motor e o recibo imprime a operação que ELE fez.
 // Quando o runtime do copiloto entrar, ele publica nesta mesma forma — o recibo é o
-// contrato visual da resposta, não um detalhe da implementação de hoje.
+// contrato visual da resposta, não um detalhe da implementação de hoje. É também a porta
+// inteira do shim para a tela (ADR-0007): tipos reexportados e fetchers estáveis do
+// `useCommand` — a tela nunca importa `lib/api` (o runtime da Mia, `miaRuntime`/`miaSession`,
+// segue como zona de exceção nomeada).
+
+// Tipos do shim reexportados pela view — a tela e seu teste leem daqui.
+export type { DashboardSummary, Forecast, MiaConsentView, Tag };
 
 // ------------------------------------------------------------------- tipos --
 
@@ -942,4 +957,24 @@ export function contextFacts(facts: MiaFacts | null): ContextFact[] {
     });
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Leitura — a tela chama estas funções direto no `useCommand`, uma chave por comando.
+// ---------------------------------------------------------------------------
+
+export function fetchDashboardSummary(): Promise<DashboardSummary> {
+  return getDashboardSummary();
+}
+
+export function fetchForecast(): Promise<Forecast> {
+  return getForecast();
+}
+
+export function fetchMiaConsent(): Promise<MiaConsentView> {
+  return getMiaConsent();
+}
+
+export function fetchTags(): Promise<Tag[]> {
+  return listTags();
 }
