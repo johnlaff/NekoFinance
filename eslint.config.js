@@ -72,6 +72,8 @@ export default tseslint.config(
     ignores: [
       "src/screens/*View.ts",
       "src/screens/*View.test.ts",
+      "src/shell/*View.ts",
+      "src/shell/*View.test.ts",
       "src/screens/miaRuntime.ts",
       "src/screens/miaRuntime.test.ts",
       "src/screens/miaSession.ts",
@@ -92,8 +94,9 @@ export default tseslint.config(
               // carrega.
               regex: "^(\\./|(?:\\.\\./)+)(lib/)?api$",
               message:
-                "Não importe lib/api diretamente — leia pela *View.ts da tela (ela é a porta do shim). " +
-                "Exceções: *View.ts/*View.test.ts, runtime da Mia (miaRuntime/miaSession + testes), " +
+                "Não importe lib/api diretamente — leia pela *View.ts da tela ou do shell " +
+                "(ela é a porta do shim). Exceções: src/screens/*View.ts e src/shell/*View.ts " +
+                "(+ seus testes), runtime da Mia (miaRuntime/miaSession + testes), " +
                 "src/hooks/**, e src/test/commands.ts (infra de mock do IPC).",
             },
           ],

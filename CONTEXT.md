@@ -116,6 +116,10 @@ _Avoid_: DTO, wire type, raw API import
 The full migration pattern (ADR-0007, `tagsView.ts` is the reference) goes past ADR-0006's read-only gate: the view also owns the stable `useCommand` fetcher, the cache-key builder (`tagsScreenCacheKey(ym)`), and one wrapper per write command in the screen's domain vocabulary (`createTagCmd`, `updateTagCmd`, `toggleTagRuler`), even when a wrapper only forwards to the shim untouched. The screen still owns _when_ to call `invalidateCommands()` (generic `lib/useCommand` infra, not `lib/api`) after a write resolves — the view only decides _what_ to call. A screen at this full pattern imports only its `*View.ts` and `lib/useCommand`, never `lib/api` in any form; reaching this bar is what earns a screen's removal from `eslint.lib-api-allowlist.mjs`. `scenariosView.ts` is an earlier, partial stage (read/pure-computation only, `scenarios.tsx` still on the allowlist) — not itself the reference for a full migration.
 _Avoid_: manual cache-key string, bare shim write call from a screen
 
+**Shell session view**:
+App-level cross-cutting state (auth status, local app-setting reads, sync recency) has no owning screen, so it doesn't fit a `src/screens/*View.ts`. ADR-0008 extends the funnel gate to `src/shell/*View.ts` — `shellView.ts` is the read-only reference: reexported types (`AuthStatus`) and stable fetchers (`fetchAuthStatus`, `fetchAppSetting`, `fetchLastSyncAt`), same contract as ADR-0006, no write wrappers since nothing at the shell level writes. `App.tsx` and `AppShell.tsx` import only from `shellView.ts`, `hojeView.ts` (for the shared `fetchForecast` behind the nav hints), and `lib/useCommand` — never `lib/api`. The decision line: a plain read the generic `useCommand` already resolves belongs in a `*View.ts`; state with its own lifecycle (retry, polling, event subscription) belongs in a `src/hooks/**` hook instead (see `useWriteBackPending.ts`).
+_Avoid_: reading shell-only commands from `lib/api` inside `App.tsx`/`AppShell.tsx`, inventing a hook for a plain fetch
+
 ### Data Import & Sync
 
 **Sheet Mapping**:

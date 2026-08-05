@@ -10,16 +10,6 @@ import { ModeChip } from "../design-system/components/ModeChip";
 import { Money } from "../design-system/components/Money";
 import { NekoMark } from "../design-system/components/NekoMark";
 import { NoRecordDash } from "../design-system/components/NoRecordDash";
-import {
-  getDashboardSummary,
-  getForecast,
-  getUpcomingBills,
-  listCards,
-  type DashboardSummary,
-  type Forecast,
-  type UpcomingBill,
-  type UpcomingInvoice,
-} from "../lib/api";
 import { isTauri } from "../lib/env";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { MES, monthOf, saldoBand } from "../lib/nkFormat";
@@ -29,6 +19,10 @@ import {
   dailyCeilingPercent,
   dueLabel,
   faturaDayLabel,
+  fetchCards,
+  fetchDashboardSummary,
+  fetchForecast,
+  fetchUpcomingBills,
   greetingForHour,
   invoiceCoverageFraction,
   invoiceCoveragePercent,
@@ -45,8 +39,12 @@ import {
   spendCapReason,
   saldoGaugeFraction,
   upcomingIncome,
+  type DashboardSummary,
+  type Forecast,
   type MonthInsight,
   type OpenInvoicesView,
+  type UpcomingBill,
+  type UpcomingInvoice,
 } from "./hojeView";
 import { useNekoApp } from "../shell/appContext";
 import "./hoje.css";
@@ -92,10 +90,10 @@ const WHY_CEILING_STOPPED_TERM = {
 
 export function DashboardScreen() {
   const { navigate, openCompose } = useNekoApp();
-  const summaryQ = useCommand("get_dashboard_summary", getDashboardSummary);
-  const forecastQ = useCommand("get_forecast", getForecast);
-  const billsQ = useCommand("get_upcoming_bills", () => getUpcomingBills(45));
-  const cardsQ = useCommand("list_cards", listCards);
+  const summaryQ = useCommand("get_dashboard_summary", fetchDashboardSummary);
+  const forecastQ = useCommand("get_forecast", fetchForecast);
+  const billsQ = useCommand("get_upcoming_bills", fetchUpcomingBills);
+  const cardsQ = useCommand("list_cards", fetchCards);
   // A saudação lê o relógio UMA vez por montagem: cumprimento não muda no meio da visita.
   const [greeting] = useState(() => greetingForHour(new Date().getHours()));
 

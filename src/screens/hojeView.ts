@@ -1,6 +1,25 @@
-import type { BandVerdict, ForecastDay, UpcomingInvoice } from "../lib/api";
+import {
+  getDashboardSummary,
+  getForecast,
+  getUpcomingBills,
+  listCards,
+  type BandVerdict,
+  type Card,
+  type DashboardSummary,
+  type Forecast,
+  type ForecastDay,
+  type UpcomingBill,
+  type UpcomingInvoice,
+} from "../lib/api";
 import { MES } from "../lib/nkFormat";
 import type { SaldoBand } from "../lib/saldoHeatmap";
+
+// É também a porta inteira do shim para a tela Hoje (ADR-0007): tipos reexportados e os
+// fetchers estáveis do `useCommand` — a tela nunca importa `lib/api`. Sem escrita própria: a
+// Hoje só lê (a única ação, abrir o compositor de lançamento, mora fora do funil).
+
+// Tipos do shim reexportados pela view — a tela e seu teste leem daqui.
+export type { Card, DashboardSummary, Forecast, UpcomingBill, UpcomingInvoice };
 
 /**
  * Meses mínimos de reserva do método (espelho de `RESERVE_MIN_MONTHS`,
@@ -359,4 +378,30 @@ export function reserveProgressFraction(reserveMonths: number): number {
 /** A reserva está de pé: existe registro e cobre o mínimo de meses do método. */
 export function reserveStanding(reserveState: string, reserveMonths: number): boolean {
   return reserveState !== "no_record" && reserveMonths >= RESERVE_MIN_MONTHS;
+}
+
+// ---------------------------------------------------------------------------
+// Leitura — fetchers com identidade estável para os quatro comandos da tela. `App.tsx` reusa
+// `fetchForecast` para as dicas numéricas da nav — mesma chave de cache `get_forecast`, uma
+// leitura só.
+// ---------------------------------------------------------------------------
+
+/** Compartilhado com a Teto (`tetoView.fetchDashboardSummary`) — mesma chave de cache
+ *  `get_dashboard_summary`, uma leitura só. */
+export function fetchDashboardSummary(): Promise<DashboardSummary> {
+  return getDashboardSummary();
+}
+
+export function fetchForecast(): Promise<Forecast> {
+  return getForecast();
+}
+
+const HOJE_UPCOMING_BILLS_HORIZON_DAYS = 45;
+
+export function fetchUpcomingBills(): Promise<UpcomingBill[]> {
+  return getUpcomingBills(HOJE_UPCOMING_BILLS_HORIZON_DAYS);
+}
+
+export function fetchCards(): Promise<Card[]> {
+  return listCards();
 }

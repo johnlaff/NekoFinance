@@ -7,7 +7,7 @@ import { NekoAppProvider, type ComposeOptions } from "./shell/appContext";
 import { crumbOverridesSnapshot, subscribeCrumbs } from "./shell/crumbStore";
 import { Compose } from "./shell/Compose";
 import { DashboardScreen } from "./screens/DashboardScreen";
-import { eyebrowDate, localTodayIso } from "./screens/hojeView";
+import { eyebrowDate, fetchForecast, localTodayIso } from "./screens/hojeView";
 import { TransactionsScreen } from "./screens/TransactionsScreen";
 import { TotaisScreen } from "./screens/TotaisScreen";
 import { AnnualScreen } from "./screens/AnnualScreen";
@@ -19,12 +19,7 @@ import { CartoesScreen } from "./screens/CartoesScreen";
 import { CopilotScreen } from "./screens/CopilotScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { OnboardingFlow, ONBOARDING_KEY } from "./features/onboarding/OnboardingFlow";
-import {
-  checkAuthStatus,
-  getAppSetting,
-  getForecast,
-  type AuthStatus,
-} from "./lib/api";
+import { fetchAppSetting, fetchAuthStatus, type AuthStatus } from "./shell/shellView";
 import { isTauri } from "./lib/env";
 import { useCommand } from "./lib/useCommand";
 import { fmtCompact } from "./lib/nkFormat";
@@ -51,20 +46,20 @@ function App() {
 
   useEffect(() => {
     if (!isTauri) return;
-    checkAuthStatus()
+    fetchAuthStatus()
       .then(setAuthStatus)
       .catch(() => setAuthStatus("disconnected"));
   }, []);
 
   useEffect(() => {
     if (!isTauri) return;
-    getAppSetting(ONBOARDING_KEY)
+    fetchAppSetting(ONBOARDING_KEY)
       .then((v) => setShowOnboarding(v !== "true"))
       .catch(() => setShowOnboarding(false));
   }, []);
 
   // Dicas numéricas da nav (saldo de hoje, performance do mês). Reusam o cache compartilhado.
-  const forecastQ = useCommand("get_forecast", getForecast);
+  const forecastQ = useCommand("get_forecast", fetchForecast);
   const hints: Partial<Record<Screen, string>> = (() => {
     const out: Partial<Record<Screen, string>> = {};
     const f = forecastQ.data;

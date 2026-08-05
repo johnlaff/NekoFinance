@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { DashboardScreen } from "./DashboardScreen";
 import { NekoAppProvider } from "../shell/appContext";
-import type { UpcomingInvoice } from "../lib/api";
+import type { UpcomingInvoice } from "./hojeView";
 import { FORECAST, SUMMARY, mockCommands, mockInvoke } from "../test/commands";
 
 vi.mock("@tauri-apps/api/core", () => ({
