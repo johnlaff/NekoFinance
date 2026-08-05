@@ -205,7 +205,7 @@ from drifting back into one implementation per screen.
 ## Verification
 
 38. **Visual validation separates layout from copy.** Visual snapshots enforce
-    `maxDiffPixels: 100` (absolute, calibrated to real rendering noise vs. detectable
+    `maxDiffPixels: 500` (absolute, calibrated to real rendering noise vs. detectable
     copy changes). Copy is locked via text assertion (`toMatchAriaSnapshot`, versioned
     `.aria.yml` files) alongside screenshots — the screenshot captures only what text
     cannot: layout, color, spacing, and occlusion. Baselines regenerate from scratch

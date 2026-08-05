@@ -55,7 +55,7 @@ Baseline discipline:
 
 - An intentional visual change regenerates baselines from scratch: delete the snapshot
   directories, run the suite once to record, run it again to verify stability. Visual
-  snapshots enforce `maxDiffPixels: 100` (absolute tolerance); copy is locked via text
+  snapshots enforce `maxDiffPixels: 500` (absolute tolerance); copy is locked via text
   assertion (`.aria.yml` versioned files). `--update-snapshots` alone does not rewrite
   sub-threshold drift; pass `--update-snapshots=all` when regenerating deliberately.
 - Specs freeze the clock (`page.clock.install`) so greetings/dates render

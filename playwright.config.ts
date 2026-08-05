@@ -7,12 +7,13 @@ export default defineConfig({
     timeout: 5_000,
     // Tolerância ABSOLUTA, nunca proporcional: em fullPage 1440×1000 uma razão de
     // 2% valeria ~57k pixels e engoliria uma frase inteira de copy sem reprovar.
-    // O piso é o ruído de renderização entre duas passagens da mesma tela (unidades
-    // de pixel); o teto é o menor sinal que a suíte precisa pegar — uma palavra
-    // trocada custa centenas de pixels. Este valor fica com folga sobre o ruído e
-    // uma ordem de grandeza abaixo do sinal.
+    // O piso é o antialiasing entre runners distintos (centenas de pixels em
+    // fullPage — a mesma máquina renderiza com diferença de unidades); o teto é o
+    // menor sinal que o SCREENSHOT precisa pegar — mudança de layout, cor ou
+    // espaçamento custa milhares. Copy não entra nessa conta: texto é travado
+    // pelos aria snapshots ao lado de cada screenshot, sem tolerância nenhuma.
     toHaveScreenshot: {
-      maxDiffPixels: 100,
+      maxDiffPixels: 500,
     },
   },
   fullyParallel: false,
