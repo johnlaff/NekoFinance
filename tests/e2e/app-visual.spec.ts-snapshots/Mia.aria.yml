@@ -1,0 +1,39 @@
+- complementary:
+  - text: Neko
+  - button "Registrar lançamento (N)"
+  - navigation "Navegação principal":
+    - button "Hoje": /Hoje R\$ \d+,\d+/
+    - button "Lançamentos"
+    - button "Este mês": /Este mês R\$ \d+,\d+ mil/
+    - button "Cartões"
+    - button "O ano"
+    - button "Calendário"
+    - button "Horizonte"
+    - button "Tags"
+    - button "Mia"
+    - button "Configurações"
+  - button "Alternar para tema claro"
+  - button "Planilha Desconectada"
+- main:
+  - text: Mia Sua copilota financeira
+  - heading "Boa tarde." [level=1]
+  - paragraph:
+    - text: Sou a Mia. Pergunte sobre os seus números.
+    - button "Como respondo?"
+  - paragraph: Lê sua planilha · Responde local · A conversa fica no seu computador
+  - log "Conversa com a Mia"
+  - complementary "Os números por trás":
+    - heading "Os números por trás" [level=2]
+    - paragraph: A Mia responde com estes fatos — toque em um para ela explicar.
+    - button /Pode gastar hoje R\$ \d+,\d+/
+    - button /Fim do mês previsto R\$ \d+\.\d+,\d+/
+    - button "Economizado no ano 5%"
+    - button /Reserva \d+,\d+ meses/
+    - button /Ponto mais baixo da estrada R\$ \d+\.\d+,\d+/
+    - paragraph: Cálculos determinísticos, nunca inventados.
+  - button "Quanto posso gastar hoje?"
+  - button "Como o mês está indo?"
+  - button "Tem buraco na estrada?"
+  - textbox "Mensagem para a Mia":
+    - /placeholder: Converse com a Mia
+  - button "Enviar" [disabled]

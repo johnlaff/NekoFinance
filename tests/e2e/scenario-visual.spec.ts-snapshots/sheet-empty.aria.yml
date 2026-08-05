@@ -1,0 +1,10 @@
+- dialog "Simular cenário":
+  - text: ""
+  - button "Fechar simulação"
+  - paragraph: Cenários salvos
+  - button "E se eu financiar um carro"
+  - button "Apagar cenário \"E se eu financiar um carro\""
+  - text: Novo cenário
+  - textbox "Novo cenário":
+    - /placeholder: "Ex.: E se eu financiar um carro"
+  - button "Criar cenário" [disabled]

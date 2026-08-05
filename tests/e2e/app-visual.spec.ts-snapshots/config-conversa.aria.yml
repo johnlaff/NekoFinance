@@ -1,0 +1,33 @@
+- region "Conversa":
+  - heading "Conversa" [level=2]
+  - text: Conta sempre à mostra Desligada, a tela traz só o resultado, e a conta abre sob demanda onde ela estiver.
+  - switch "Conta sempre à mostra" [checked]
+  - text: Conversa aberta Sem autorização — a Mia responde só o que ela calcula aqui dentro.
+  - button "Autorizar" [expanded]
+  - region "Consentimento da conversa":
+    - heading "Autorizar a conversa aberta" [level=3]
+    - paragraph: "Para responder qualquer pergunta, a Mia envia a sua pergunta e os dados necessários para respondê-la a dois processadores: OpenRouter, que roteia o pedido, e Amazon Bedrock, que executa o modelo."
+    - paragraph: "A conversa lê tudo o que o app mostra: lançamentos completos, com descrições e notas, valores, contas, pessoas e tags. Não existe recorte — o que estiver no seu histórico pode ser enviado para responder a uma pergunta."
+    - paragraph: Os pedidos saem com retenção zero e coleta de dados negada, para o endpoint pinado, sem alternativa automática. O app fala só com openrouter.ai e nunca segue redirecionamento.
+    - paragraph: A sua chave fica no cofre do sistema — nunca em log, evento, banco ou tela.
+    - paragraph: Você pode revogar quando quiser. Revogar apaga o consentimento e a chave, e a conversa volta a responder só o que ela calcula aqui dentro.
+    - heading "Quem processa" [level=4]
+    - list "Quem processa":
+      - listitem:
+        - strong: OpenRouter
+        - text: Roteia o pedido e aplica a retenção zero contratada.
+      - listitem:
+        - strong: Amazon Bedrock
+        - text: Executa o modelo no endpoint pinado.
+    - heading "Antes de autorizar, na sua conta do provedor" [level=4]
+    - list "Antes de autorizar, na sua conta do provedor":
+      - listitem:
+        - strong: Desligue o treino com o que você envia
+        - text: Na sua conta do provedor, em Privacidade, recuse provedores que treinam com as suas entradas. A requisição do app não controla essa escolha.
+      - listitem:
+        - strong: Desligue a publicação de prompts em endpoints gratuitos
+        - text: Ainda em Privacidade, recuse o desconto que publica os seus prompts. Essa escolha também vive só na sua conta.
+    - text: Sua chave do provedor
+    - textbox "Sua chave do provedor"
+    - text: Fica no cofre do sistema. Você pode apagar quando quiser.
+    - button "Registrar consentimento" [disabled]

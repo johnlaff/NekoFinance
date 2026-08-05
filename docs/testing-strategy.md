@@ -54,8 +54,10 @@ Current scope:
 Baseline discipline:
 
 - An intentional visual change regenerates baselines from scratch: delete the snapshot
-  directories, run the suite once to record, run it again to verify stability.
-  `--update-snapshots` alone is not enough — it does not rewrite sub-threshold drift.
+  directories, run the suite once to record, run it again to verify stability. Visual
+  snapshots enforce `maxDiffPixels: 100` (absolute tolerance); copy is locked via text
+  assertion (`.aria.yml` versioned files). `--update-snapshots` alone does not rewrite
+  sub-threshold drift; pass `--update-snapshots=all` when regenerating deliberately.
 - Specs freeze the clock (`page.clock.install`) so greetings/dates render
   deterministically, and the dev server env is pinned so local and CI render alike.
 

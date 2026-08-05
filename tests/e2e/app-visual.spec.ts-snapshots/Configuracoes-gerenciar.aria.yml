@@ -1,0 +1,127 @@
+- complementary:
+  - text: Neko
+  - button "Registrar lançamento (N)"
+  - navigation "Navegação principal":
+    - button "Hoje": /Hoje R\$ \d+,\d+/
+    - button "Lançamentos"
+    - button "Este mês": /Este mês R\$ \d+,\d+ mil/
+    - button "Cartões"
+    - button "O ano"
+    - button "Calendário"
+    - button "Horizonte"
+    - button "Tags"
+    - button "Mia"
+    - button "Configurações"
+  - button "Alternar para tema claro"
+  - button "Planilha Desconectada"
+- main:
+  - text: Configurações Conexão e privacidade
+  - heading "Tudo neste dispositivo" [level=1]
+  - text: Desconectado
+  - region "Conexão":
+    - heading "Conexão" [level=2]
+    - button "Gerenciar" [expanded]
+    - text: Google Sheets Desconectado
+    - button "Reconectar" [disabled]
+    - text: Escrita só com aprovação Nenhuma mudança na planilha sem seu OK. Sempre
+    - region "Gerenciar conexão":
+      - paragraph: Conecte sua conta Google para importar os dados da sua planilha.
+      - button "Conectar Google" [disabled]
+      - paragraph: Conexão Google indisponível nesta instalação — use a importação de arquivo .xlsx abaixo.
+      - text: Importar planilha .xlsx Importa todas as abas, detectando o layout automaticamente. Linhas já importadas são ignoradas.
+      - button "Escolher arquivo .xlsx"
+  - region "Privacidade":
+    - heading "Privacidade" [level=2]
+    - text: Seus dados Guardados só neste aparelho — nada de uso é enviado.
+    - code: C:\Users\you\AppData\Roaming\app.neko.finance\neko-finance.db
+    - text: Local Backup do banco Salva uma cópia íntegra (.db) onde você escolher.
+    - button "Fazer backup"
+    - text: A Mia Responde local. Nada sai deste aparelho. Local Conta Google Token no chaveiro do sistema. Local
+  - region "Conversa":
+    - heading "Conversa" [level=2]
+    - text: Conta sempre à mostra Desligada, a tela traz só o resultado, e a conta abre sob demanda onde ela estiver.
+    - switch "Conta sempre à mostra" [checked]
+    - text: Conversa aberta Sem autorização — a Mia responde só o que ela calcula aqui dentro.
+    - button "Autorizar"
+    - region "Consentimento da conversa":
+      - heading "Autorizar a conversa aberta" [level=3]
+      - paragraph: "Para responder qualquer pergunta, a Mia envia a sua pergunta e os dados necessários para respondê-la a dois processadores: OpenRouter, que roteia o pedido, e Amazon Bedrock, que executa o modelo."
+      - paragraph: "A conversa lê tudo o que o app mostra: lançamentos completos, com descrições e notas, valores, contas, pessoas e tags. Não existe recorte — o que estiver no seu histórico pode ser enviado para responder a uma pergunta."
+      - paragraph: Os pedidos saem com retenção zero e coleta de dados negada, para o endpoint pinado, sem alternativa automática. O app fala só com openrouter.ai e nunca segue redirecionamento.
+      - paragraph: A sua chave fica no cofre do sistema — nunca em log, evento, banco ou tela.
+      - paragraph: Você pode revogar quando quiser. Revogar apaga o consentimento e a chave, e a conversa volta a responder só o que ela calcula aqui dentro.
+      - heading "Quem processa" [level=4]
+      - list "Quem processa":
+        - listitem:
+          - strong: OpenRouter
+          - text: Roteia o pedido e aplica a retenção zero contratada.
+        - listitem:
+          - strong: Amazon Bedrock
+          - text: Executa o modelo no endpoint pinado.
+      - heading "Antes de autorizar, na sua conta do provedor" [level=4]
+      - list "Antes de autorizar, na sua conta do provedor":
+        - listitem:
+          - strong: Desligue o treino com o que você envia
+          - text: Na sua conta do provedor, em Privacidade, recuse provedores que treinam com as suas entradas. A requisição do app não controla essa escolha.
+        - listitem:
+          - strong: Desligue a publicação de prompts em endpoints gratuitos
+          - text: Ainda em Privacidade, recuse o desconto que publica os seus prompts. Essa escolha também vive só na sua conta.
+      - text: Sua chave do provedor
+      - textbox "Sua chave do provedor"
+      - text: Fica no cofre do sistema. Você pode apagar quando quiser.
+      - button "Registrar consentimento" [disabled]
+  - region "Bolsos":
+    - heading "Bolsos" [level=2]
+    - text: /Caixa R\$ \d+\.\d+,\d+ Entra no saldo projetado Reserva R\$ \d+\.\d+,\d+ Emergência, fora do caixa Vale R\$ \d+,\d+ Uso restrito Ilíquido R\$ \d+\.\d+,\d+ Previdência, FGTS Patrimônio total R\$ \d+\.\d+,\d+/
+    - list:
+      - listitem: /Conta demo principal Conta corrente · Caixa R\$ \d+\.\d+,\d+/
+      - listitem: /Reserva demo Poupança \/ reserva · Reserva R\$ \d+\.\d+,\d+/
+      - listitem: /Benefício demo Vale alimentação\/refeição · Restrito R\$ \d+,\d+/
+      - listitem: /Ativo demo de longo prazo Previdência privada · Ilíquido R\$ \d+\.\d+,\d+/
+    - text: Nome
+    - textbox "Nome":
+      - /placeholder: "Ex.: Bolso demo"
+    - text: Tipo
+    - combobox "Tipo":
+      - option "Conta corrente" [selected]
+      - option "Carteira"
+      - option "Conta PJ"
+      - option "Poupança / reserva"
+      - option "Vale alimentação/refeição"
+      - option "Previdência privada"
+      - option "FGTS"
+    - text: Saldo (R$)
+    - textbox "Saldo (R$)":
+      - /placeholder: 0,00
+    - button "Adicionar bolso"
+  - region "Aparência":
+    - heading "Aparência" [level=2]
+    - text: Tema escuro Feito para uso noturno.
+    - switch "Tema escuro" [checked]
+    - text: Animações Seguindo o movimento reduzido do sistema
+    - switch "Animações"
+    - text: Diagnóstico de animações Teste se este dispositivo executa as animações do app.
+    - button "Abrir"
+    - region "Diagnóstico de animações":
+      - paragraph: /sistema reduzido · toggle system · tokens \d+[hmsp]+ · view transitions sim/
+      - button "Testar"
+      - button "Testar reveal"
+    - text: Cor de destaque
+    - button "Como funciona?"
+    - text: A cor que o app usa nos seus destaques.
+    - radiogroup "Cor de destaque":
+      - radio "Jade" [checked]
+      - radio "Lima"
+      - radio "Violeta"
+      - radio "Âmbar"
+      - radio "Céu"
+      - radio "Rosa"
+  - region "Rotina":
+    - heading "Rotina" [level=2]
+    - text: Lembrete diário Notificação nativa no horário escolhido — no Windows, dispara mesmo com o app fechado.
+    - switch "Lembrete diário" [checked]
+    - text: /Horário Hora local \(\d+ h\) para receber o aviso\./
+    - textbox "Horário do lembrete diário"
+    - text: "/Teto do diário Teto estipulado: R\\$ \\d+,\\d+ por dia\\./"
+    - button "Abrir teto do diário": Abrir →
+  - paragraph: Neko Finance v0.1.0 · Tauri desktop

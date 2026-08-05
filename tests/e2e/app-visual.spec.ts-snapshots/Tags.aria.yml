@@ -1,0 +1,42 @@
+- complementary:
+  - text: Neko
+  - button "Registrar lançamento (N)"
+  - navigation "Navegação principal":
+    - button "Hoje": /Hoje R\$ \d+,\d+/
+    - button "Lançamentos"
+    - button "Este mês": /Este mês R\$ \d+,\d+ mil/
+    - button "Cartões"
+    - button "O ano"
+    - button "Calendário"
+    - button "Horizonte"
+    - button "Tags"
+    - button "Mia"
+    - button "Configurações"
+  - button "Alternar para tema claro"
+  - button "Planilha Desconectada"
+- main:
+  - text: /Tags Junho de \d+/
+  - button "Mês anterior"
+  - text: /Junho de \d+/
+  - button "Próximo mês"
+  - paragraph: Custo de vida · junho
+  - heading /R\$ \d+\.\d+,\d+ em junho/ [level=1]
+  - paragraph: /O custo de vida já deixa de fora R\$ \d+\.\d+,\d+\. Sem as exceções, suas réguas contariam R\$ \d+\.\d+,\d+\./
+  - region "Dinheiro de terceiros":
+    - heading "Dinheiro de terceiros" [level=2]
+    - text: /Detectado no import Gio Saiu R\$ \d+\.\d+,\d+ · voltou R\$ \d+\.\d+,\d+ R\$ \d+,\d+ A seu favor Edvaldo Saiu R\$ \d+,\d+ · sem retorno R\$ \d+,\d+ Em aberto há \d+ dias Pai Voltou R\$ \d+,\d+ · parcela 2 de 3 R\$ \d+,\d+ Falta 1 parcela Pablo Saiu R\$ \d+,\d+ · voltou R\$ \d+,\d+ Quitado Em 4 de junho Bruna Nenhum lançamento em junho\. — Sem registro/
+  - region "Exceções":
+    - heading "Exceções" [level=2]
+    - button "Nova tag"
+    - group: /Gio Fora de 4 de 4 réguas · 6 lançamentos R\$ \d+\.\d+,\d+/
+    - group: /Trânsito Fora de 4 de 4 réguas · 2 lançamentos R\$ \d+\.\d+,\d+/
+    - group: /Reembolso Fora de 1 de 4 réguas · 3 lançamentos R\$ \d+,\d+/
+    - paragraph:
+      - text: O saldo da conta sempre conta — o dinheiro entrou e saiu de verdade.
+      - button "Como funciona?"
+  - group:
+    - text: Movimentação por rótulo 4 rótulos · junho
+    - group: /Moradia R\$ \d+\.\d+,\d+ 2 lançamentos/
+    - group: /Educação R\$ \d+,\d+ 2 lançamentos/
+    - group: /Assinaturas R\$ \d+,\d+ 3 lançamentos/
+    - group: /Cancelar R\$ \d+,\d+ 2 lançamentos/

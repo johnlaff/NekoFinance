@@ -1,0 +1,3 @@
+- text: Livre
+- paragraph: Este cenário se mantém no azul o ano todo.
+- paragraph: "/Menor saldo no período: R\\$ \\d+\\.\\d+,\\d+ — Folga\\./"

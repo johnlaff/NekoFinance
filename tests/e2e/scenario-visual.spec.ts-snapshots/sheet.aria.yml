@@ -1,0 +1,80 @@
+- dialog "Simular cenário":
+  - text: ""
+  - button "Fechar simulação"
+  - paragraph: Cenários salvos
+  - button "E se eu financiar um carro" [pressed]
+  - button "Apagar cenário \"E se eu financiar um carro\""
+  - text: Novo cenário
+  - textbox "Novo cenário":
+    - /placeholder: "Ex.: E se eu financiar um carro"
+  - button "Criar cenário" [disabled]
+  - region "Adicionar lançamento":
+    - paragraph: Adicionar lançamento
+    - text: Descrição
+    - textbox "Descrição"
+    - text: Valor/mês
+    - textbox "Valor/mês":
+      - /placeholder: 0,00
+    - text: Data
+    - textbox "Data": /\d+-\d+-\d+/
+    - text: Tipo
+    - combobox "Tipo":
+      - option "Saída fixa" [selected]
+      - option "Cartão"
+      - option "Diário"
+      - option "Economia"
+      - option "Entrada"
+    - button "Adicionar" [disabled]
+  - paragraph: Lançamentos hipotéticos
+  - button /Empréstimo Recebe R\$ \d+,\d+ · Paga \d+× de R\$ \d+,\d+/ [expanded]
+  - region "Empréstimo":
+    - button "Editar"
+    - button "Remover"
+    - text: /Principal \d+\/\d+ R\$ \d+,\d+/
+    - button /Remover "Empréstimo" de \d+\/\d+ do cenário/
+    - text: /Parcela 1\/\d+ \d+\/\d+ −R\$ \d+,\d+/
+    - button /Remover "Empréstimo parcela 1\/\d+" de \d+\/\d+ do cenário/
+    - text: /Parcela 2\/\d+ \d+\/\d+ −R\$ \d+,\d+/
+    - button /Remover "Empréstimo parcela 2\/\d+" de \d+\/\d+ do cenário/
+    - text: /Parcela 3\/\d+ \d+\/\d+ −R\$ \d+,\d+/
+    - button /Remover "Empréstimo parcela 3\/\d+" de \d+\/\d+ do cenário/
+    - text: /Parcela 4\/\d+ \d+\/\d+ −R\$ \d+,\d+/
+    - button /Remover "Empréstimo parcela 4\/\d+" de \d+\/\d+ do cenário/
+    - text: /Parcela 5\/\d+ \d+\/\d+ −R\$ \d+,\d+/
+    - button /Remover "Empréstimo parcela 5\/\d+" de \d+\/\d+ do cenário/
+    - text: /Parcela 6\/\d+ \d+\/\d+ −R\$ \d+,\d+/
+    - button /Remover "Empréstimo parcela 6\/\d+" de \d+\/\d+ do cenário/
+    - text: /Parcela 7\/\d+ \d+\/\d+ −R\$ \d+,\d+/
+    - button /Remover "Empréstimo parcela 7\/\d+" de \d+\/\d+ do cenário/
+    - text: /Parcela 8\/\d+ \d+\/\d+ −R\$ \d+,\d+/
+    - button /Remover "Empréstimo parcela 8\/\d+" de \d+\/\d+ do cenário/
+    - text: /Parcela 9\/\d+ \d+\/\d+ −R\$ \d+,\d+/
+    - button /Remover "Empréstimo parcela 9\/\d+" de \d+\/\d+ do cenário/
+    - text: /Parcela \d+\/\d+ \d+\/\d+ −R\$ \d+,\d+/
+    - button /Remover "Empréstimo parcela \d+\/\d+" de \d+\/\d+ do cenário/
+    - text: /Parcela \d+\/\d+ \d+\/\d+ −R\$ \d+,\d+/
+    - button /Remover "Empréstimo parcela \d+\/\d+" de \d+\/\d+ do cenário/
+    - text: /Parcela \d+\/\d+ \d+\/\d+ −R\$ \d+,\d+/
+    - button /Remover "Empréstimo parcela \d+\/\d+" de \d+\/\d+ do cenário/
+  - paragraph: Simular alteração
+  - text: Alvo
+  - combobox "Alvo":
+    - option "Selecione…" [selected]
+  - region "Dimensionar um empréstimo":
+    - paragraph: Dimensionar um empréstimo
+    - text: Descrição
+    - textbox "Descrição": Empréstimo
+    - text: Valor
+    - textbox "Valor":
+      - /placeholder: 0,00
+    - text: Nº parcelas
+    - spinbutton "Nº parcelas": /\d+/
+    - text: /Juros a[\d,.]+[bkmBKM]+\. \(%\)/
+    - textbox /Juros a[\d,.]+[bkmBKM]+\. \(%\)/: "2"
+    - text: Data do desembolso
+    - button "O que é a data do desembolso"
+    - textbox "Data do desembolso": /\d+-\d+-\d+/
+    - text: Data da 1ª parcela
+    - textbox "Data da 1ª parcela": /\d+-\d+-\d+/
+    - button "Adicionar empréstimo ao cenário" [disabled]
+  - paragraph

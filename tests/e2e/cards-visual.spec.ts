@@ -10,15 +10,19 @@ test.describe("Cartões — fallback web", () => {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto("/");
     await page.getByRole("button", { name: "Cartões", exact: false }).first().click();
+    await expect(page.locator("body")).toMatchAriaSnapshot({
+      name: "cartoes-desktop.aria.yml",
+    });
     await expect(page).toHaveScreenshot("cartoes-desktop.png", {
       fullPage: true,
-      maxDiffPixelRatio: 0.02,
     });
     // Um ciclo fechado troca o herói: status Fechada, sem linha de reconciliação.
     await page.getByRole("radio", { name: "Jul · Fechada" }).click();
+    await expect(page.locator("body")).toMatchAriaSnapshot({
+      name: "cartoes-drill-desktop.aria.yml",
+    });
     await expect(page).toHaveScreenshot("cartoes-drill-desktop.png", {
       fullPage: true,
-      maxDiffPixelRatio: 0.02,
     });
   });
 
@@ -28,15 +32,19 @@ test.describe("Cartões — fallback web", () => {
     await page.goto("/");
     await page.getByRole("button", { name: "Mais telas" }).click();
     await page.getByRole("button", { name: "Cartões", exact: false }).first().click();
+    await expect(page.locator("body")).toMatchAriaSnapshot({
+      name: "cartoes-mobile.aria.yml",
+    });
     await expect(page).toHaveScreenshot("cartoes-mobile.png", {
       fullPage: true,
-      maxDiffPixelRatio: 0.02,
     });
     await page.getByRole("button", { name: /cartão selecionado/ }).click();
     await expect(page.getByRole("button", { name: "Voltar" })).toBeVisible();
+    await expect(page.locator("body")).toMatchAriaSnapshot({
+      name: "cartoes-drill-mobile.aria.yml",
+    });
     await expect(page).toHaveScreenshot("cartoes-drill-mobile.png", {
       fullPage: true,
-      maxDiffPixelRatio: 0.02,
     });
   });
 });

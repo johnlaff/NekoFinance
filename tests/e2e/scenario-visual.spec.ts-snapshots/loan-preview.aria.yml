@@ -1,0 +1,19 @@
+- region "Dimensionar um empréstimo":
+  - paragraph: Dimensionar um empréstimo
+  - text: Descrição
+  - textbox "Descrição": Empréstimo
+  - text: Valor
+  - textbox "Valor":
+    - /placeholder: 0,00
+    - text: /\d+\.\d+,\d+/
+  - text: Nº parcelas
+  - spinbutton "Nº parcelas": /\d+/
+  - text: /Juros a[\d,.]+[bkmBKM]+\. \(%\)/
+  - textbox /Juros a[\d,.]+[bkmBKM]+\. \(%\)/: "2"
+  - text: Data do desembolso
+  - button "O que é a data do desembolso"
+  - textbox "Data do desembolso": /\d+-\d+-\d+/
+  - text: Data da 1ª parcela
+  - textbox "Data da 1ª parcela": /\d+-\d+-\d+/
+  - text: /Parcela R\$ \d+,\d+ Total pago R\$ \d+\.\d+,\d+ Custo do crédito R\$ \d+\.\d+,\d+/
+  - button "Adicionar empréstimo ao cenário"

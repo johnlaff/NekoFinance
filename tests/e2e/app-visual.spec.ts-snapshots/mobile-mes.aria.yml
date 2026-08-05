@@ -1,0 +1,66 @@
+- banner:
+  - text: /Este mês Junho de \d+/
+  - button "Alternar para tema claro"
+  - button "Mais telas"
+- main:
+  - heading "Junho em números" [level=2]
+  - paragraph: "A conta que o método faz todo mês: o que entrou, o que a vida custou, o que sobrou guardado."
+  - button "Mês anterior"
+  - text: /Junho de \d+/
+  - button "Próximo mês"
+  - region "Economia guardada":
+    - heading "Economia guardada" [level=3]
+    - button "Como funciona? — Economia guardada"
+    - text: /\d+% R\$ \d+\.\d+,\d+ de R\$ \d+\.\d+,\d+ que entraram/
+    - img /Régua de economia de 0% a \d+% com zona-alvo de \d+% a \d+%; Junho em \d+%/: /\d+% \d+% \d+% \d+%/
+    - text: Dentro do ideal
+    - paragraph: "No ano: 5% — a régua julga a média anual, não o mês."
+  - region "Custo de vida":
+    - heading "Custo de vida" [level=3]
+    - button "Como funciona? — Custo de vida"
+    - text: /R\$ \d+\.\d+,\d+/
+    - 'img /Composição do custo de vida: Saídas fixas R\$ \d+\.\d+,\d+, Diário R\$ \d+,\d+, Cartão R\$ \d+,\d+/'
+    - list:
+      - listitem: /Saídas fixas R\$ \d+\.\d+,\d+/
+      - listitem: /Diário R\$ \d+,\d+/
+      - listitem: /Cartão R\$ \d+,\d+/
+    - text: Dentro da renda
+  - region "Performance":
+    - heading "Performance" [level=3]
+    - button "Como funciona? — Performance"
+    - text: /\+R\$ \d+\.\d+,\d+/
+    - paragraph: /Entradas R\$ \d+\.\d+,\d+ − Custo de vida R\$ \d+\.\d+,\d+ − Economia R\$ \d+\.\d+,\d+/
+    - text: Sobrou dinheiro
+  - region "Diário médio":
+    - heading "Diário médio" [level=3]
+    - button "Como funciona? — Diário médio"
+    - text: /R\$ \d+,\d+/
+    - paragraph: Média realizada por dia até hoje
+  - region "Comparado aos meses anteriores":
+    - heading "Comparado aos meses anteriores" [level=3]
+    - 'button "Janeiro: 0% — ver o mês"':
+      - emphasis: Jan
+      - text: ""
+    - 'button "Fevereiro: 0% — ver o mês"':
+      - emphasis: Fev
+      - text: ""
+    - 'button "Março: 0% — ver o mês"':
+      - emphasis: Mar
+      - text: ""
+    - 'button "Abril: 0% — ver o mês"':
+      - emphasis: Abr
+      - text: ""
+    - 'button "Maio: 0% — ver o mês"':
+      - emphasis: Mai
+      - text: ""
+    - 'button /Junho: \d+% — ver o mês/':
+      - emphasis: Jun
+      - text: ""
+    - paragraph: /Entre Jan e Jun, o economizado foi de 0% a \d+% — o melhor mês foi Junho\./
+- navigation "Navegação do app":
+  - button "Hoje"
+  - button "Lançamentos"
+  - button "Este mês"
+  - button "Calendário"
+  - button "Mia"
+  - button "Registrar lançamento"
