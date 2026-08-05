@@ -1,0 +1,68 @@
+- complementary:
+  - text: Neko
+  - button "Registrar lançamento (N)"
+  - navigation "Navegação principal":
+    - button "Hoje": /Hoje R\$ \d+,\d+/
+    - button "Lançamentos"
+    - button "Este mês": /Este mês R\$ \d+,\d+ mil/
+    - button "Cartões"
+    - button "O ano"
+    - button "Calendário"
+    - button "Horizonte"
+    - button "Tags"
+    - button "Mia"
+    - button "Configurações"
+  - button "Alternar para tema claro"
+  - button "Planilha Desconectada"
+- main:
+  - text: Mia Sua copilota financeira
+  - heading "Conversa com a Mia" [level=1]
+  - button "Apagar conversa"
+  - log "Conversa com a Mia":
+    - paragraph: Hoje
+    - paragraph:
+      - text: "Você: Quanto posso gastar hoje?"
+      - time: 12h00
+    - text: "Mia:"
+    - paragraph: /Hoje você pode gastar até R\$ \d+,\d+\. Sem deixar nenhum dia no vermelho\./
+    - term: Limite do caixa
+    - definition: /R\$ \d+\.\d+,\d+/
+    - term: O menor dos dois — Limite da economia
+    - definition: /R\$ \d+,\d+/
+    - term: Resultado — Pode gastar hoje
+    - definition: /R\$ \d+,\d+/
+    - paragraph: "/O teto do diário é o segundo limite do dia: R\\$ \\d+,\\d+ por dia, R\\$ \\d+,\\d+ já gasto hoje — R\\$ \\d+,\\d+ ainda cabem por ele\\./"
+    - paragraph:
+      - text: Cálculo determinístico · Lê sua planilha · Responde local
+      - time: 12h00
+    - paragraph:
+      - text: "Você: Como está a economia do ano?"
+      - time: 12h00
+    - text: "Mia:"
+    - paragraph: "/A régua do ano está em 5% — abaixo dos \\d+ que o método pede\\. Ela é anual: um mês fraco não reprova o ano\\./"
+    - term: Economia da régua
+    - definition: /R\$ \d+\.\d+,\d+/
+    - term: Dividido por Entradas do ano até aqui
+    - definition: /R\$ \d+\.\d+,\d+/
+    - term: Resultado — Economizado no ano
+    - definition: 5%
+    - paragraph: "Previdência não entra nessa conta: ela é patrimônio, não economia acessível. O dinheiro continua seu — só não conta na régua, porque a régua mede o que fica ao alcance."
+    - button "Abrir O ano"
+    - paragraph:
+      - text: Cálculo determinístico · Lê sua planilha · Responde local
+      - time: 12h00
+  - complementary "Os números por trás":
+    - heading "Os números por trás" [level=2]
+    - paragraph: A Mia responde com estes fatos — toque em um para ela explicar.
+    - button /Pode gastar hoje R\$ \d+,\d+/
+    - button /Fim do mês previsto R\$ \d+\.\d+,\d+/
+    - button "Economizado no ano 5%"
+    - button /Reserva \d+,\d+ meses/
+    - button /Ponto mais baixo da estrada R\$ \d+\.\d+,\d+/
+    - paragraph: Cálculos determinísticos, nunca inventados.
+  - button "Quanto posso gastar hoje?"
+  - button "Como o mês está indo?"
+  - button "Tem buraco na estrada?"
+  - textbox "Mensagem para a Mia":
+    - /placeholder: Converse com a Mia
+  - button "Enviar" [disabled]

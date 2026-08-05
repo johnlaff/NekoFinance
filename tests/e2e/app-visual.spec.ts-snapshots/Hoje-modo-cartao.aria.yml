@@ -1,0 +1,60 @@
+- complementary:
+  - text: Neko
+  - button "Registrar lançamento (N)"
+  - navigation "Navegação principal":
+    - button "Hoje": /Hoje R\$ \d+,\d+/
+    - button "Lançamentos"
+    - button "Este mês": /Este mês R\$ \d+,\d+ mil/
+    - button "Cartões"
+    - button "O ano"
+    - button "Calendário"
+    - button "Horizonte"
+    - button "Tags"
+    - button "Mia"
+    - button "Configurações"
+  - button "Alternar para tema claro"
+  - button "Planilha Desconectada"
+- main:
+  - text: /Hoje Quarta-feira, \d+ de junho/
+  - region "Veredito de hoje":
+    - heading "Boa tarde." [level=1]
+    - paragraph: /Pode gastar hoje R\$ \d+,\d+ Sem deixar nenhum dia no vermelho\./
+    - paragraph:
+      - text: "/Este é o limite do caixa: o maior gasto que o saldo aguenta até 15 de junho sem nenhum dia no vermelho\\. Teto:/"
+      - button /R\$ \d+,\d+ por dia/
+      - text: .
+      - button "Como funciona?"
+  - paragraph: A Mia separou o que importa hoje — a ordem muda com o seu dia, os números nunca.
+  - region "Gasto variável de hoje":
+    - heading "Gasto variável de hoje" [level=2]
+    - button "Ver tudo — faturas dos cartões"
+    - paragraph: /R\$ \d+,\d+ — somado às faturas de hoje/
+    - button "Modo cartão Economia abaixo do piso"
+    - button "Faturas em aberto — 3 cartões"
+    - text: /R\$ \d+\.\d+,\d+/
+    - paragraph: "/Até aqui: \\d+% do gasto típico de um mês\\./"
+    - heading /Vencem em \d+ de junho/ [level=3]
+    - list:
+      - listitem: /Itaú Acumulando · a maior fatura em aberto R\$ \d+\.\d+,\d+/
+      - listitem: /Amazon Fechada — aguarda pagamento R\$ \d+,\d+/
+    - heading /Vence em \d+ de junho/ [level=3]
+    - list:
+      - listitem: "/Bradesco Gio De Gio · acumulando · Reembolso: R\\$ \\d+,\\d+ R\\$ \\d+,\\d+/"
+    - paragraph: Inter e BB estão sem fatura em aberto — cartão parado sai da lista sozinho e volta quando você usar.
+  - complementary "Leitura da Mia":
+    - paragraph: "/Fechando o dia assim, junho termina em Folga — saldo previsto de R\\$ \\d+\\.\\d+,\\d+\\. O ponto mais apertado do mês é dia \\d+: R\\$ \\d+\\.\\d+,\\d+, e a próxima entrada chega dia \\d+\\. Nenhum dia no vermelho à vista — no método, isso é ficar sem \"buraco do futuro\"\\./"
+  - region "Próximos movimentos":
+    - heading "Próximos movimentos" [level=2]
+    - button "Ver tudo — próximos movimentos"
+    - list "Próximos movimentos":
+      - listitem: /Entrada prevista R\$ \d+\.\d+,\d+ \d+ de junho/
+      - listitem: /Compromisso fixo demo −R\$ \d+,\d+ \d+ de junho/
+    - text: /R\$ \d+\.\d+,\d+ Custo de vida no mês \d+% Guardado no mês/
+  - region "Saldo e reserva":
+    - heading "Saldo e reserva" [level=2]
+    - button "Ver o mês ›"
+    - text: /R\$ \d+\.\d+,\d+ Saldo hoje Termômetro Folga — acima dos R\$ \d+\.\d+ da régua da planilha \d+,\d+ meses/
+    - button "Estimativa"
+    - text: Reserva de emergência O método pede 6 meses de custo de vida
+    - complementary "Leitura da Mia sobre a reserva":
+      - paragraph: Retrato vivo com 4 de 6 meses completos de custo de vida — faltam 2 meses para a régua virar veredito.

@@ -26,9 +26,10 @@ test.describe("fundação — chrome mobile", () => {
       page.getByRole("navigation", { name: "Navegação principal" }),
     ).toBeHidden();
     await page.waitForTimeout(350);
-    await expect(page).toHaveScreenshot("mobile-hoje-dark.png", {
-      maxDiffPixelRatio: 0.02,
+    await expect(page.locator("body")).toMatchAriaSnapshot({
+      name: "mobile-hoje.aria.yml",
     });
+    await expect(page).toHaveScreenshot("mobile-hoje-dark.png");
   });
 
   test("dock encolhe ao rolar para baixo e volta ao subir (scroll vive no .sh-body)", async ({
@@ -63,9 +64,10 @@ test.describe("fundação — chrome mobile", () => {
     await expect(menu.getByRole("button", { name: "O ano" })).toBeVisible();
     await expect(menu.getByRole("button", { name: "Configurações" })).toBeVisible();
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot("mobile-menu-mais-dark.png", {
-      maxDiffPixelRatio: 0.02,
+    await expect(page.locator("body")).toMatchAriaSnapshot({
+      name: "mobile-menu-mais.aria.yml",
     });
+    await expect(page).toHaveScreenshot("mobile-menu-mais-dark.png");
   });
 });
 
@@ -85,9 +87,11 @@ test.describe("fundação — paleta de acento", () => {
     await page.goto("/");
     await expect(page.locator("html")).toHaveAttribute("data-accent", "lima");
     await page.waitForTimeout(350);
+    await expect(page.locator("body")).toMatchAriaSnapshot({
+      name: "desktop-hoje-lima.aria.yml",
+    });
     await expect(page).toHaveScreenshot("desktop-hoje-lima.png", {
       fullPage: true,
-      maxDiffPixelRatio: 0.02,
     });
   });
 });

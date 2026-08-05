@@ -1,0 +1,85 @@
+- banner:
+  - text: /Calendário Junho de \d+/
+  - button "Alternar para tema claro"
+  - button "Mais telas"
+- main:
+  - text: /Realizado até \d+\/\d+ ·/
+  - button "Como funciona? — Calendário do saldo"
+  - button "Mês anterior"
+  - text: /Junho de \d+/
+  - button "Próximo mês"
+  - heading /Junho afunda no dia \d+ e respira no \d+\./ [level=2]
+  - grid /Saldo dia a dia — Junho de \d+/:
+    - row "Seg Ter Qua Qui Sex Sáb Dom":
+      - columnheader "Seg"
+      - columnheader "Ter"
+      - columnheader "Qua"
+      - columnheader "Qui"
+      - columnheader "Sex"
+      - columnheader "Sáb"
+      - columnheader "Dom"
+    - row /1 de junho · Saldo R\$ \d+\.\d+,\d+ · Entrada 2 de junho · Saldo R\$ \d+\.\d+,\d+ · Movimento −R\$ \d+\.\d+,\d+ 3 de junho · Saldo R\$ \d+\.\d+,\d+ 4 de junho · Saldo R\$ \d+\.\d+,\d+ · Movimento −R\$ \d+,\d+ 5 de junho · Saldo R\$ \d+\.\d+,\d+ 6 de junho · Saldo R\$ \d+\.\d+,\d+ · Movimento −R\$ \d+,\d+ 7 de junho · Saldo R\$ \d+\.\d+,\d+/:
+      - gridcell /1 de junho · Saldo R\$ \d+\.\d+,\d+ · Entrada/
+      - gridcell /2 de junho · Saldo R\$ \d+\.\d+,\d+ · Movimento −R\$ \d+\.\d+,\d+/ [selected]
+      - gridcell /3 de junho · Saldo R\$ \d+\.\d+,\d+/
+      - gridcell /4 de junho · Saldo R\$ \d+\.\d+,\d+ · Movimento −R\$ \d+,\d+/
+      - gridcell /5 de junho · Saldo R\$ \d+\.\d+,\d+/
+      - gridcell /6 de junho · Saldo R\$ \d+\.\d+,\d+ · Movimento −R\$ \d+,\d+/
+      - gridcell /7 de junho · Saldo R\$ \d+\.\d+,\d+/
+    - row /8 de junho · Saldo R\$ \d+\.\d+,\d+ · Movimento \+R\$ \d+\.\d+,\d+ · Entrada 9 de junho · Saldo R\$ \d+\.\d+,\d+ · Movimento −R\$ \d+,\d+ \d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Movimento −R\$ \d+,\d+ · Hoje \d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu \d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Movimento −R\$ \d+,\d+ · Previsto — ainda não aconteceu \d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu \d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu/:
+      - gridcell /8 de junho · Saldo R\$ \d+\.\d+,\d+ · Movimento \+R\$ \d+\.\d+,\d+ · Entrada/
+      - gridcell /9 de junho · Saldo R\$ \d+\.\d+,\d+ · Movimento −R\$ \d+,\d+/
+      - gridcell /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Movimento −R\$ \d+,\d+ · Hoje/
+      - gridcell /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu/
+      - gridcell /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Movimento −R\$ \d+,\d+ · Previsto — ainda não aconteceu/
+      - gridcell /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu/
+      - gridcell /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu/
+    - row /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Movimento −R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu \d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu \d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu \d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu \d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu \d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Movimento −R\$ \d+,\d+ · Menor saldo do mês · Previsto — ainda não aconteceu \d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu/:
+      - gridcell /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Movimento −R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu/
+      - gridcell /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu/
+      - gridcell /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu/
+      - gridcell /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu/
+      - gridcell /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu/
+      - gridcell /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Movimento −R\$ \d+,\d+ · Menor saldo do mês · Previsto — ainda não aconteceu/
+      - gridcell /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu/
+    - row /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu \d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu \d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu \d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Movimento \+R\$ \d+\.\d+,\d+ · Entrada · Previsto — ainda não aconteceu \d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu \d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu \d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Movimento −R\$ \d+,\d+ · Previsto — ainda não aconteceu/:
+      - gridcell /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu/
+      - gridcell /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu/
+      - gridcell /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu/
+      - gridcell /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Movimento \+R\$ \d+\.\d+,\d+ · Entrada · Previsto — ainda não aconteceu/
+      - gridcell /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu/
+      - gridcell /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu/
+      - gridcell /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Movimento −R\$ \d+,\d+ · Previsto — ainda não aconteceu/
+    - row /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu \d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu/:
+      - gridcell /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu/
+      - gridcell /\d+ de junho · Saldo R\$ \d+\.\d+,\d+ · Previsto — ainda não aconteceu/
+  - complementary "Terça-feira, 2 de junho":
+    - heading "Terça-feira, 2 de junho" [level=3]
+    - paragraph: /R\$ \d+\.\d+,\d+/
+    - text: Folga
+    - paragraph: /−R\$ \d+\.\d+,\d+ no dia/
+    - paragraph: Sem itens detalhados — o dia fecha no resumo.
+    - list:
+      - listitem: /Saídas fixas R\$ \d+\.\d+,\d+/
+      - listitem: /Diário R\$ \d+,\d+/
+    - button "Ver no Livro-razão ›"
+  - complementary "O que marca o mês":
+    - heading "O que marca o mês" [level=3]
+    - list:
+      - listitem:
+        - button /Menor saldo Sábado, \d+ de junho R\$ \d+\.\d+,\d+/
+      - listitem:
+        - button /Maior saída Segunda-feira, \d+ de junho −R\$ \d+\.\d+,\d+/
+      - listitem:
+        - button /Entradas Segunda-feira, 1 de junho \+R\$ \d+\.\d+,\d+/
+      - listitem:
+        - button /Segunda-feira, 8 de junho \+R\$ \d+\.\d+,\d+/
+      - listitem:
+        - button /Quinta-feira, \d+ de junho \+R\$ \d+\.\d+,\d+/
+- navigation "Navegação do app":
+  - button "Hoje"
+  - button "Lançamentos"
+  - button "Este mês"
+  - button "Calendário"
+  - button "Mia"
+  - button "Registrar lançamento"

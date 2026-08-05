@@ -1,0 +1,28 @@
+- banner:
+  - text: Mia Sua copilota financeira
+  - button "Alternar para tema claro"
+  - button "Mais telas"
+- main:
+  - heading "Boa tarde." [level=1]
+  - paragraph:
+    - text: Sou a Mia. Pergunte sobre os seus números.
+    - button "Como respondo?"
+  - paragraph: Lê sua planilha · Responde local · A conversa fica no seu computador
+  - log "Conversa com a Mia"
+  - button "Quanto posso gastar hoje?"
+  - button "Como o mês está indo?"
+  - button "Tem buraco na estrada?"
+  - button "O que é buraco do futuro?"
+  - button "Como está a economia do ano?"
+  - button "Como está a reserva?"
+  - button "Quando vence a próxima fatura?"
+  - textbox "Mensagem para a Mia":
+    - /placeholder: Converse com a Mia
+  - button "Enviar" [disabled]
+- navigation "Navegação do app":
+  - button "Hoje"
+  - button "Lançamentos"
+  - button "Este mês"
+  - button "Calendário"
+  - button "Mia"
+  - button "Registrar lançamento"

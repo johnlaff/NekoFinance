@@ -16,6 +16,10 @@ package-lock.json
 SESSION-CONTEXT.md
 .playwright-mcp/
 
+# Snapshots gerados pelo Playwright: o gerador reescreve o arquivo no formato
+# dele a cada regeneração — formatá-los cria um cabo de guerra permanente.
+tests/e2e/*-snapshots/
+
 # Relatórios da bancada: JSON escrito pelo binário, versionado como evidência da execução.
 # Formatá-los seria reescrever a evidência — e o próximo relatório voltaria a divergir.
 evals/mia/reports/

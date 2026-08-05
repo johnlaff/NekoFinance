@@ -155,34 +155,39 @@ for (const theme of ["dark", "light"] as const) {
     await page.getByText(`Cenário: ${COMPARE.scenario_name}`).waitFor();
 
     const compare = page.locator(".card", { hasText: "Cenário:" }).first();
-    await expect(compare).toHaveScreenshot(`compare-${theme}.png`, {
-      maxDiffPixelRatio: 0.02,
-    });
+    if (theme === "dark") {
+      await expect(compare).toMatchAriaSnapshot({ name: "compare.aria.yml" });
+    }
+    await expect(compare).toHaveScreenshot(`compare-${theme}.png`);
 
     // O card inteiro é mais alto que o viewport (o element-screenshot acima não alcança o
     // resumo do empréstimo); este recorte cobre as duas réguas do gate de financiamento.
-    await expect(page.locator(".scn-loan-summary")).toHaveScreenshot(
-      `loan-summary-${theme}.png`,
-      { maxDiffPixelRatio: 0.02 },
-    );
+    const loanSummary = page.locator(".scn-loan-summary");
+    if (theme === "dark") {
+      await expect(loanSummary).toMatchAriaSnapshot({ name: "loan-summary.aria.yml" });
+    }
+    await expect(loanSummary).toHaveScreenshot(`loan-summary-${theme}.png`);
 
     // Sheet com o grupo do empréstimo expandido (rótulos de parcela + coluna de valores).
     await page
       .getByRole("button", { name: /Empréstimo/ })
       .first()
       .click();
-    await expect(page.locator(".scn-sheet")).toHaveScreenshot(`sheet-${theme}.png`, {
-      maxDiffPixelRatio: 0.02,
-    });
+    const sheet = page.locator(".scn-sheet");
+    if (theme === "dark") {
+      await expect(sheet).toMatchAriaSnapshot({ name: "sheet.aria.yml" });
+    }
+    await expect(sheet).toHaveScreenshot(`sheet-${theme}.png`);
 
     const loanSection = page.getByRole("region", {
       name: "Dimensionar um empréstimo",
     });
     await loanSection.getByLabel("Valor").fill("10.000,00");
     await expect(loanSection.getByText("Total pago")).toBeVisible();
-    await expect(loanSection).toHaveScreenshot(`loan-preview-${theme}.png`, {
-      maxDiffPixelRatio: 0.02,
-    });
+    if (theme === "dark") {
+      await expect(loanSection).toMatchAriaSnapshot({ name: "loan-preview.aria.yml" });
+    }
+    await expect(loanSection).toHaveScreenshot(`loan-preview-${theme}.png`);
   });
 }
 
@@ -206,9 +211,9 @@ test("estados: hover do gráfico e sheet sem cenário — dark", async ({ page }
   await page.getByRole("button", { name: "Simular cenário" }).first().click();
 
   // Sheet aberto, nenhum cenário selecionado: o form de criação é o estado inicial.
-  await expect(page.locator(".scn-sheet")).toHaveScreenshot("sheet-empty-dark.png", {
-    maxDiffPixelRatio: 0.02,
-  });
+  const emptySheet = page.locator(".scn-sheet");
+  await expect(emptySheet).toMatchAriaSnapshot({ name: "sheet-empty.aria.yml" });
+  await expect(emptySheet).toHaveScreenshot("sheet-empty-dark.png");
 
   await page.getByRole("button", { name: COMPARE.scenario_name }).first().click();
   await page.getByText(`Cenário: ${COMPARE.scenario_name}`).waitFor();
@@ -219,10 +224,9 @@ test("estados: hover do gráfico e sheet sem cenário — dark", async ({ page }
   if (!box) throw new Error("gráfico sem bounding box");
   await page.mouse.move(box.x + box.width * 0.45, box.y + box.height * 0.5);
   await page.waitForTimeout(120);
-  await expect(page.locator(".scn-dualchart-wrap").first()).toHaveScreenshot(
-    "chart-hover-dark.png",
-    { maxDiffPixelRatio: 0.02 },
-  );
+  const chartWrap = page.locator(".scn-dualchart-wrap").first();
+  await expect(chartWrap).toMatchAriaSnapshot({ name: "chart-hover.aria.yml" });
+  await expect(chartWrap).toHaveScreenshot("chart-hover-dark.png");
 });
 
 /** Variante do fixture com o menor saldo em outra banda do Termômetro (veredito ok/tight). */
@@ -254,9 +258,8 @@ for (const [tier, cents] of [
     await page.getByRole("button", { name: "Simular cenário" }).first().click();
     await page.getByRole("button", { name: COMPARE.scenario_name }).first().click();
     await page.getByText(`Cenário: ${COMPARE.scenario_name}`).waitFor();
-    await expect(page.locator(".scn-verdict")).toHaveScreenshot(
-      `verdict-${tier}-dark.png`,
-      { maxDiffPixelRatio: 0.02 },
-    );
+    const verdict = page.locator(".scn-verdict");
+    await expect(verdict).toMatchAriaSnapshot({ name: `verdict-${tier}.aria.yml` });
+    await expect(verdict).toHaveScreenshot(`verdict-${tier}-dark.png`);
   });
 }

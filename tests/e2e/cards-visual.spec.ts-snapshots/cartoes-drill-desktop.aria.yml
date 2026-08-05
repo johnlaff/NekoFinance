@@ -1,0 +1,62 @@
+- complementary:
+  - text: Neko
+  - button "Registrar lançamento (N)"
+  - navigation "Navegação principal":
+    - button "Hoje"
+    - button "Lançamentos"
+    - button "Este mês"
+    - button "Cartões"
+    - button "O ano"
+    - button "Calendário"
+    - button "Horizonte"
+    - button "Tags"
+    - button "Mia"
+    - button "Configurações"
+  - button "Alternar para tema claro"
+  - button "Planilha Desconectada"
+- main:
+  - text: Cartões Faturas, séries e reembolsos
+  - heading /A próxima fatura vence \d+ de ago\./ [level=1]
+  - group "Gate do modo cartão":
+    - text: /Economia viva — \d+% Reserva de 6 meses — \d+,\d+ meses \(falta \d+,\d+ meses p\/ 6 meses\)/
+    - button "Como esta leitura funciona"
+  - 'region "Proposta de cartão: Cartão de viagens"':
+    - text: A Mia farejou um cartão na planilha
+    - paragraph:
+      - text: /Desde junho de \d+ a sua planilha lança faturas de/
+      - strong: Cartão de viagens
+      - text: ", e nenhum cartão do app responde por elas. Quer cadastrar para acompanhar?"
+    - button "Cadastrar cartão"
+    - button "É um cartão que já tenho"
+    - button "Dispensar"
+  - button "Faturas de Cartão principal — cartão selecionado": /Cartão principal Titular · Eu · Instituição demo Próxima fatura Vence \d+ de ago\. R\$ \d+\.\d+,\d+ Fecha em 5 dias/
+  - text: /Fecha dia \d+ · vence dia \d+ · limite R\$ \d+\.\d+/
+  - button "Editar Cartão principal"
+  - text: Cartão adicional Parceiro(a)
+  - button "Editar Cartão adicional"
+  - text: Herda o ciclo do titular · sub-fatura própria
+  - button "Abrir as faturas de Cartão reserva": /Cartão reserva Fecha dia 3 · vence dia \d+/
+  - button "Adicionar cartão"
+  - region "Fatura de Cartão principal":
+    - radiogroup "Ciclo da fatura":
+      - radio "Mar · Paga"
+      - radio "Abr · Paga"
+      - radio "Mai · Paga"
+      - radio "Jun · Paga"
+      - radio "Jul · Fechada" [checked]
+      - radio "Ago · Aberta"
+    - text: /R\$ \d+\.\d+,\d+ Total declarado — autoridade da planilha Fechada Vence \d+ de jul\. Fechou em \d+ de jun\./
+    - button "Como a fatura entra no mês"
+    - button "Corrigir datas do ciclo"
+    - 'img /Faturas por ciclo: Mar R\$ \d+\.\d+,\d+, Abr R\$ \d+\.\d+,\d+, Mai R\$ \d+\.\d+,\d+, Jun R\$ \d+\.\d+,\d+, Jul R\$ \d+\.\d+,\d+, Ago R\$ \d+\.\d+,\d+\./':
+      - emphasis: Mar
+      - emphasis: Abr
+      - emphasis: Mai
+      - emphasis: Jun
+      - emphasis: Jul
+      - emphasis: Ago
+    - paragraph: Faturas dos últimos 6 ciclos.
+    - heading "Totais" [level=2]
+    - text: /Total declarado R\$ \d+\.\d+,\d+/
+    - paragraph: Registrada como valor único — sem compras itemizadas neste ciclo.
+    - button "Ajustar total declarado"

@@ -204,11 +204,14 @@ from drifting back into one implementation per screen.
 
 ## Verification
 
-38. **Visual baselines regenerate from scratch** (`rm -rf` the snapshot dirs, run the
-    suite twice — record then verify) whenever a screen changes intentionally.
-    `--update-snapshots` alone does not rewrite sub-threshold drift, and its default
-    `changed` mode has been observed passing a rewritten screen against its stale
-    baseline — pass `--update-snapshots=all` when regenerating deliberately.
+38. **Visual validation separates layout from copy.** Visual snapshots enforce
+    `maxDiffPixels: 500` (absolute, calibrated to real rendering noise vs. detectable
+    copy changes). Copy is locked via text assertion (`toMatchAriaSnapshot`, versioned
+    `.aria.yml` files) alongside screenshots — the screenshot captures only what text
+    cannot: layout, color, spacing, and occlusion. Baselines regenerate from scratch
+    (`rm -rf` snapshot dirs, run the suite twice — record then verify) when a screen
+    changes by design. `--update-snapshots` alone does not rewrite sub-threshold drift;
+    pass `--update-snapshots=all` when deliberate regeneration is needed.
 39. **A shared e2e fixture feeds many screens.** Changing `tauri-mock` data
     re-records baselines beyond the screen under work; inspect every consumer's
     regenerated baseline before committing — a richer fixture must read as richer,

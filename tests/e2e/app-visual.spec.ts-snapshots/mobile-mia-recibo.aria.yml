@@ -1,0 +1,41 @@
+- banner:
+  - text: Mia Sua copilota financeira
+  - button "Alternar para tema claro"
+  - button "Mais telas"
+- main:
+  - heading "Conversa com a Mia" [level=1]
+  - button "Apagar conversa"
+  - log "Conversa com a Mia":
+    - paragraph: Hoje
+    - paragraph:
+      - text: "Você: Quanto posso gastar hoje?"
+      - time: 12h00
+    - text: "Mia:"
+    - paragraph: /Hoje você pode gastar até R\$ \d+,\d+\. Sem deixar nenhum dia no vermelho\./
+    - term: Limite do caixa
+    - definition: /R\$ \d+\.\d+,\d+/
+    - term: O menor dos dois — Limite da economia
+    - definition: /R\$ \d+,\d+/
+    - term: Resultado — Pode gastar hoje
+    - definition: /R\$ \d+,\d+/
+    - paragraph: "/O teto do diário é o segundo limite do dia: R\\$ \\d+,\\d+ por dia, R\\$ \\d+,\\d+ já gasto hoje — R\\$ \\d+,\\d+ ainda cabem por ele\\./"
+    - paragraph:
+      - text: Cálculo determinístico · Lê sua planilha · Responde local
+      - time: 12h00
+  - button "Quanto posso gastar hoje?"
+  - button "Como o mês está indo?"
+  - button "Tem buraco na estrada?"
+  - button "O que é buraco do futuro?"
+  - button "Como está a economia do ano?"
+  - button "Como está a reserva?"
+  - button "Quando vence a próxima fatura?"
+  - textbox "Mensagem para a Mia":
+    - /placeholder: Converse com a Mia
+  - button "Enviar" [disabled]
+- navigation "Navegação do app":
+  - button "Hoje"
+  - button "Lançamentos"
+  - button "Este mês"
+  - button "Calendário"
+  - button "Mia"
+  - button "Registrar lançamento"

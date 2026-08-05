@@ -1,0 +1,6 @@
+- paragraph: Empréstimo simulado
+- text: /Custo do crédito R\$ \d+,\d+ Total pago R\$ \d+\.\d+,\d+/
+- button "Reserva após financiar"
+- text: /Zona amarela · \d+,\d+ → \d+,\d+ meses/
+- button "Economia após parcela"
+- text: /Mais da metade da economia · \d+% → \d+%/

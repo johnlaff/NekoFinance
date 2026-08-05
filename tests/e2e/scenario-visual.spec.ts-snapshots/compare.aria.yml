@@ -1,0 +1,36 @@
+- region "Comparação real × cenário":
+  - text: "/Comparação atualizada: E se eu financiar um carro, saldo final −R\\$ \\d+,\\d+ versus o real Cenário: E se eu financiar um carro/"
+  - button "Fechar comparação"
+  - text: Buraco
+  - paragraph: /Fura o caixa em agosto — faltam R\$ \d+\.\d+\./
+  - paragraph: Antecipe uma entrada, reduza uma parcela ou cubra com um empréstimo antes desse mês.
+  - 'article /Buraco do futuro: Crítico \(antes Folga\), real R\$ \d+\.\d+,\d+, cenário −R\$ \d+\.\d+,\d+/':
+    - button "Buraco do futuro"
+    - text: /−R\$ \d+\.\d+,\d+/
+  - 'article /Saldo no fim do horizonte: Folga, real R\$ \d+\.\d+,\d+, cenário R\$ \d+\.\d+,\d+/':
+    - button "Saldo no fim do horizonte"
+    - text: /−R\$ \d+,\d+/
+  - 'article /Pode gastar hoje: Livre até R\$ \d+\.\d+, real R\$ \d+\.\d+,\d+, cenário R\$ \d+\.\d+,\d+/':
+    - button "Pode gastar hoje"
+    - text: /−R\$ \d+\.\d+,\d+/
+  - 'article /Performance · mês atual: Sobrou dinheiro, real R\$ \d+\.\d+,\d+, cenário R\$ \d+\.\d+,\d+/':
+    - button "Performance · mês atual"
+    - text: /−R\$ \d+\.\d+,\d+/
+  - 'article /Custo de vida: Dentro da renda, real R\$ \d+\.\d+,\d+, cenário R\$ \d+\.\d+,\d+/':
+    - button "Custo de vida"
+    - text: /−R\$ \d+\.\d+,\d+/
+  - paragraph: Trajetória — saldo no fim de cada mês
+  - text: Real Simulação
+  - 'img /Saldo no fim de cada mês, real versus simulação — resolução mensal\. Real termina em R\$ \d+\.\d+,\d+\. Simulação termina em R\$ \d+\.\d+,\d+\. Pior fim de mês da simulação: R\$ \d+\.\d+,\d+ em Setembro\. O menor saldo diário \(buraco do futuro\) aparece no veredito e no cartão acima, não nesta linha\./': /R\$ \d+ mil R\$ \d+ mil R\$ \d+ mil R\$ \d+ mil Jul Ago Set Out Nov Dez Real Simulação/
+  - paragraph:
+    - button "Diferença mês a mês (simulação − real)"
+  - 'img /Diferença mês a mês entre simulação e real — acima de zero a simulação deixa mais dinheiro; abaixo, menos\. Pior mês: Setembro −R\$ \d+\.\d+,\d+\./': R$ 0 Sobra menos que no real Jul Ago Set Out Nov Dez
+  - paragraph: "/Pior mês: Setembro −R\\$ \\d+\\.\\d+/"
+  - paragraph: O que mudou
+  - text: /\+ Adicionado Aluguel Carro −R\$ \d+\.\d+,\d+/
+  - paragraph: Empréstimo simulado
+  - text: /Custo do crédito R\$ \d+,\d+ Total pago R\$ \d+\.\d+,\d+/
+  - button "Reserva após financiar"
+  - text: /Zona amarela · \d+,\d+ → \d+,\d+ meses/
+  - button "Economia após parcela"
+  - text: /Mais da metade da economia · \d+% → \d+%/

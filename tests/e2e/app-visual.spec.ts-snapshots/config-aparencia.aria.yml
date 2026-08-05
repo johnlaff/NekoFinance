@@ -1,0 +1,22 @@
+- region "Aparência":
+  - heading "Aparência" [level=2]
+  - text: Tema escuro Feito para uso noturno.
+  - switch "Tema escuro" [checked]
+  - text: Animações Seguindo o movimento reduzido do sistema
+  - switch "Animações"
+  - text: Diagnóstico de animações Teste se este dispositivo executa as animações do app.
+  - button "Abrir"
+  - region "Diagnóstico de animações":
+    - paragraph: /sistema reduzido · toggle system · tokens \d+[hmsp]+ · view transitions sim/
+    - button "Testar"
+    - button "Testar reveal"
+  - text: Cor de destaque
+  - button "Como funciona?"
+  - text: A cor que o app usa nos seus destaques.
+  - radiogroup "Cor de destaque":
+    - radio "Jade" [checked]
+    - radio "Lima"
+    - radio "Violeta"
+    - radio "Âmbar"
+    - radio "Céu"
+    - radio "Rosa"

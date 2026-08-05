@@ -1,0 +1,8 @@
+- dialog "Filtrar por tipo":
+  - heading "Filtrar por tipo" [level=3]
+  - button "Todos Tudo o que entrou e saiu" [pressed]
+  - button "Entrada Dinheiro que chegou"
+  - button "Saída Conta fixa do mês"
+  - button "Diário O variável do dia"
+  - button "Economia O que você guardou"
+  - button "Cartão Soma na fatura e vira Saída no vencimento"

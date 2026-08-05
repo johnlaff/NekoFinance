@@ -1,0 +1,64 @@
+- complementary:
+  - text: Neko
+  - button "Registrar lançamento (N)"
+  - navigation "Navegação principal":
+    - button "Hoje": /Hoje R\$ \d+,\d+/
+    - button "Lançamentos"
+    - button "Este mês": /Este mês R\$ \d+,\d+ mil/
+    - button "Cartões"
+    - button "O ano"
+    - button "Calendário"
+    - button "Horizonte"
+    - button "Tags"
+    - button "Mia"
+    - button "Configurações"
+  - button "Alternar para tema claro"
+  - button "Planilha Desconectada"
+- main:
+  - text: Mia Sua copilota financeira
+  - heading "Conversa com a Mia" [level=1]
+  - button "Apagar conversa"
+  - log "Conversa com a Mia":
+    - paragraph: Hoje
+    - paragraph:
+      - text: "Você: onde gastei mais?"
+      - time: 12h00
+    - text: "Mia:"
+    - paragraph: "O método não organiza gasto por categoria — ele separa só o que é fixo (Saídas) do que é variável (Diário), e a tag é um interruptor de régua: ela decide em quais contas o lançamento entra, não vira relatório de categoria. Em Tags você vê exatamente o que cada régua enxerga."
+    - button "Abrir Tags"
+    - paragraph:
+      - text: Explicação do método
+      - time: 12h00
+    - paragraph:
+      - text: "Você: e a fatura deste mês?"
+      - time: 12h00
+    - text: "Mia:"
+    - paragraph: Consigo responder as duas — qual delas você quer?
+    - button "Como o mês está indo?"
+    - button "Quando vence a próxima fatura?"
+    - paragraph:
+      - text: Explicação do método
+      - time: 12h00
+    - paragraph:
+      - text: "Você: O que é buraco do futuro?"
+      - time: 12h00
+    - text: "Mia:"
+    - paragraph: "O buraco do futuro — É o menor ponto da estrada quando ele cruza o zero. Não é sentença: dá para atravessar — antecipar uma entrada, adiar uma saída que caiba, ou cruzar com a reserva por partes, repondo depois. O método manda achar o buraco maior à frente e planejar a travessia com folga."
+    - paragraph:
+      - text: Explicação do método
+      - time: 12h00
+  - complementary "Os números por trás":
+    - heading "Os números por trás" [level=2]
+    - paragraph: A Mia responde com estes fatos — toque em um para ela explicar.
+    - button /Pode gastar hoje R\$ \d+,\d+/
+    - button /Fim do mês previsto R\$ \d+\.\d+,\d+/
+    - button "Economizado no ano 5%"
+    - button /Reserva \d+,\d+ meses/
+    - button /Ponto mais baixo da estrada R\$ \d+\.\d+,\d+/
+    - paragraph: Cálculos determinísticos, nunca inventados.
+  - button "Quanto posso gastar hoje?"
+  - button "Como o mês está indo?"
+  - button "Tem buraco na estrada?"
+  - textbox "Mensagem para a Mia":
+    - /placeholder: Converse com a Mia
+  - button "Enviar" [disabled]

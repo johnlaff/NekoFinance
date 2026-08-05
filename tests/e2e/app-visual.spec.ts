@@ -44,9 +44,15 @@ for (const theme of ["dark", "light"] as const) {
           await page.getByText(/Ganhar mais não vira economia/).waitFor();
         }
         const slug = name.normalize("NFD").replace(/[^a-zA-Z]/g, "");
+        // Screenshot pega layout; texto pega copy — dark e light têm o mesmo
+        // texto, então o aria snapshot só roda uma vez (tema escuro).
+        if (theme === "dark") {
+          await expect(page.locator("body")).toMatchAriaSnapshot({
+            name: `${slug}.aria.yml`,
+          });
+        }
         await expect(page).toHaveScreenshot(`${slug}-${theme}.png`, {
           fullPage: true,
-          maxDiffPixelRatio: 0.02,
         });
       });
     }
@@ -77,9 +83,11 @@ test.describe("teto do diário + estados de dado", () => {
       .click();
     await page.getByRole("button", { name: "Abrir teto do diário" }).click();
     await page.waitForTimeout(350);
+    await expect(page.locator("body")).toMatchAriaSnapshot({
+      name: "Teto.aria.yml",
+    });
     await expect(page).toHaveScreenshot("Teto-dark.png", {
       fullPage: true,
-      maxDiffPixelRatio: 0.02,
     });
   });
 
@@ -100,9 +108,11 @@ test.describe("teto do diário + estados de dado", () => {
     await page.getByRole("button", { name: "Abrir teto do diário" }).click();
     await page.getByRole("button", { name: "Recalibrar o teto" }).click();
     await page.waitForTimeout(350);
+    await expect(page.locator("body")).toMatchAriaSnapshot({
+      name: "Teto-rito.aria.yml",
+    });
     await expect(page).toHaveScreenshot("Teto-rito-dark.png", {
       fullPage: true,
-      maxDiffPixelRatio: 0.02,
     });
   });
 });
@@ -128,9 +138,13 @@ for (const theme of ["dark", "light"] as const) {
     await page.getByRole("button", { name: "Configurações", exact: false }).click();
     await page.getByRole("button", { name: "Abrir teto do diário" }).click();
     await page.waitForTimeout(350);
+    if (theme === "dark") {
+      await expect(page.locator("body")).toMatchAriaSnapshot({
+        name: "mobile-teto.aria.yml",
+      });
+    }
     await expect(page).toHaveScreenshot(`mobile-teto-${theme}.png`, {
       fullPage: true,
-      maxDiffPixelRatio: 0.02,
     });
   });
 }
@@ -152,9 +166,11 @@ test("Teto do diário — rito no mobile", async ({ page }) => {
   await page.getByRole("button", { name: "Abrir teto do diário" }).click();
   await page.getByRole("button", { name: "Recalibrar o teto" }).click();
   await page.waitForTimeout(350);
+  await expect(page.locator("body")).toMatchAriaSnapshot({
+    name: "mobile-teto-rito.aria.yml",
+  });
   await expect(page).toHaveScreenshot("mobile-teto-rito-dark.png", {
     fullPage: true,
-    maxDiffPixelRatio: 0.02,
   });
 });
 
@@ -236,9 +252,11 @@ test.describe("teto do diário — estados de dado", () => {
     });
     await page.goto("/");
     await page.waitForTimeout(350);
+    await expect(page.locator("body")).toMatchAriaSnapshot({
+      name: "Hoje-modo-cartao.aria.yml",
+    });
     await expect(page).toHaveScreenshot("Hoje-modo-cartao-dark.png", {
       fullPage: true,
-      maxDiffPixelRatio: 0.02,
     });
   });
 
@@ -285,9 +303,11 @@ test.describe("teto do diário — estados de dado", () => {
     });
     await page.goto("/");
     await page.waitForTimeout(350);
+    await expect(page.locator("body")).toMatchAriaSnapshot({
+      name: "Hoje-sem-teto.aria.yml",
+    });
     await expect(page).toHaveScreenshot("Hoje-sem-teto-dark.png", {
       fullPage: true,
-      maxDiffPixelRatio: 0.02,
     });
   });
 });
@@ -310,9 +330,13 @@ for (const theme of ["dark", "light"] as const) {
     await page.goto("/");
     await page.getByRole("button", { name: "Este mês", exact: false }).first().click();
     await page.waitForTimeout(350);
+    if (theme === "dark") {
+      await expect(page.locator("body")).toMatchAriaSnapshot({
+        name: "mobile-mes.aria.yml",
+      });
+    }
     await expect(page).toHaveScreenshot(`mobile-mes-${theme}.png`, {
       fullPage: true,
-      maxDiffPixelRatio: 0.02,
     });
   });
 }
@@ -337,9 +361,13 @@ for (const theme of ["dark", "light"] as const) {
     await page.getByRole("button", { name: "Mais telas" }).click();
     await page.getByRole("button", { name: "O ano", exact: false }).first().click();
     await page.waitForTimeout(350);
+    if (theme === "dark") {
+      await expect(page.locator("body")).toMatchAriaSnapshot({
+        name: "mobile-ano.aria.yml",
+      });
+    }
     await expect(page).toHaveScreenshot(`mobile-ano-${theme}.png`, {
       fullPage: true,
-      maxDiffPixelRatio: 0.02,
     });
   });
 }
@@ -369,21 +397,27 @@ for (const theme of ["dark", "light"] as const) {
     });
 
     test("lista célula×nota com daymarks", async ({ page }) => {
+      if (theme === "dark") {
+        await expect(page.locator("body")).toMatchAriaSnapshot({
+          name: "mobile-lancamentos.aria.yml",
+        });
+      }
       await expect(page).toHaveScreenshot(`mobile-lancamentos-${theme}.png`, {
         fullPage: true,
-        maxDiffPixelRatio: 0.02,
       });
     });
 
     test("filtro por tipo abre em bottom sheet", async ({ page }) => {
       await page.getByRole("button", { name: /Tipo:/ }).click();
-      await expect(
-        page.getByRole("dialog", { name: "Filtrar por tipo" }),
-      ).toBeVisible();
+      const dialog = page.getByRole("dialog", { name: "Filtrar por tipo" });
+      await expect(dialog).toBeVisible();
       await page.waitForTimeout(200);
-      await expect(page).toHaveScreenshot(`mobile-lancamentos-sheet-${theme}.png`, {
-        maxDiffPixelRatio: 0.02,
-      });
+      if (theme === "dark") {
+        await expect(dialog).toMatchAriaSnapshot({
+          name: "mobile-lancamentos-sheet.aria.yml",
+        });
+      }
+      await expect(page).toHaveScreenshot(`mobile-lancamentos-sheet-${theme}.png`);
     });
   });
 }
@@ -406,9 +440,11 @@ test("Configurações com a porta Gerenciar aberta", async ({ page }) => {
     .click();
   await page.getByRole("button", { name: "Gerenciar" }).click();
   await page.waitForTimeout(350);
+  await expect(page.locator("body")).toMatchAriaSnapshot({
+    name: "Configuracoes-gerenciar.aria.yml",
+  });
   await expect(page).toHaveScreenshot("Configuracoes-gerenciar-dark.png", {
     fullPage: true,
-    maxDiffPixelRatio: 0.02,
   });
 });
 
@@ -447,9 +483,14 @@ for (const [label, width, height] of [
       const card = page.locator(`section[aria-labelledby="config-${section}"]`);
       await card.scrollIntoViewIfNeeded();
       await page.waitForTimeout(200);
-      await expect(card).toHaveScreenshot(`${label}config-${section}-dark.png`, {
-        maxDiffPixelRatio: 0.02,
-      });
+      // Desktop e mobile mostram o mesmo texto em larguras diferentes — o
+      // snapshot de texto roda uma vez (desktop) por seção.
+      if (!label) {
+        await expect(card).toMatchAriaSnapshot({
+          name: `config-${section}.aria.yml`,
+        });
+      }
+      await expect(card).toHaveScreenshot(`${label}config-${section}-dark.png`);
     }
   });
 }
@@ -491,9 +532,12 @@ for (const [label, width, height] of [
     await page.waitForTimeout(500);
     await card.scrollIntoViewIfNeeded();
     await page.waitForTimeout(200);
-    await expect(card).toHaveScreenshot(`${label}config-conversa-dark.png`, {
-      maxDiffPixelRatio: 0.02,
-    });
+    if (!label) {
+      await expect(card).toMatchAriaSnapshot({
+        name: "config-conversa.aria.yml",
+      });
+    }
+    await expect(card).toHaveScreenshot(`${label}config-conversa-dark.png`);
   });
 }
 
@@ -517,9 +561,13 @@ for (const theme of ["dark", "light"] as const) {
     await page.getByRole("button", { name: "Mais telas" }).click();
     await page.getByRole("button", { name: "Tags", exact: false }).click();
     await page.waitForTimeout(350);
+    if (theme === "dark") {
+      await expect(page.locator("body")).toMatchAriaSnapshot({
+        name: "mobile-tags.aria.yml",
+      });
+    }
     await expect(page).toHaveScreenshot(`mobile-tags-${theme}.png`, {
       fullPage: true,
-      maxDiffPixelRatio: 0.02,
     });
   });
 }
@@ -544,9 +592,13 @@ for (const theme of ["dark", "light"] as const) {
     await page.getByRole("button", { name: "Mais telas" }).click();
     await page.getByRole("button", { name: "Configurações", exact: false }).click();
     await page.waitForTimeout(350);
+    if (theme === "dark") {
+      await expect(page.locator("body")).toMatchAriaSnapshot({
+        name: "mobile-config.aria.yml",
+      });
+    }
     await expect(page).toHaveScreenshot(`mobile-config-${theme}.png`, {
       fullPage: true,
-      maxDiffPixelRatio: 0.02,
     });
   });
 }
@@ -576,9 +628,13 @@ for (const theme of ["dark", "light"] as const) {
     });
 
     test("grade como navegação com a agenda de hoje", async ({ page }) => {
+      if (theme === "dark") {
+        await expect(page.locator("body")).toMatchAriaSnapshot({
+          name: "mobile-calendario.aria.yml",
+        });
+      }
       await expect(page).toHaveScreenshot(`mobile-calendario-${theme}.png`, {
         fullPage: true,
-        maxDiffPixelRatio: 0.02,
       });
     });
 
@@ -588,9 +644,13 @@ for (const theme of ["dark", "light"] as const) {
         page.getByRole("heading", { name: "Terça-feira, 2 de junho" }),
       ).toBeVisible();
       await page.waitForTimeout(200);
+      if (theme === "dark") {
+        await expect(page.locator("body")).toMatchAriaSnapshot({
+          name: "mobile-calendario-dia.aria.yml",
+        });
+      }
       await expect(page).toHaveScreenshot(`mobile-calendario-dia-${theme}.png`, {
         fullPage: true,
-        maxDiffPixelRatio: 0.02,
       });
     });
   });
@@ -618,9 +678,13 @@ for (const theme of ["dark", "light"] as const) {
     // A segunda pergunta sai do painel: cada linha dele é um atalho de conversa.
     await page.getByRole("button", { name: /Economizado no ano/ }).click();
     await page.waitForTimeout(350);
+    if (theme === "dark") {
+      await expect(page.locator("body")).toMatchAriaSnapshot({
+        name: "Mia-recibo.aria.yml",
+      });
+    }
     await expect(page).toHaveScreenshot(`Mia-recibo-${theme}.png`, {
       fullPage: true,
-      maxDiffPixelRatio: 0.02,
     });
   });
 }
@@ -646,18 +710,22 @@ test.describe("Mia — mobile", () => {
   });
 
   test("saudação do gato com o composer ancorado", async ({ page }) => {
+    await expect(page.locator("body")).toMatchAriaSnapshot({
+      name: "mobile-mia.aria.yml",
+    });
     await expect(page).toHaveScreenshot("mobile-mia-dark.png", {
       fullPage: true,
-      maxDiffPixelRatio: 0.02,
     });
   });
 
   test("resposta com recibo cabe na coluna do polegar", async ({ page }) => {
     await page.getByRole("button", { name: "Quanto posso gastar hoje?" }).click();
     await page.waitForTimeout(350);
+    await expect(page.locator("body")).toMatchAriaSnapshot({
+      name: "mobile-mia-recibo.aria.yml",
+    });
     await expect(page).toHaveScreenshot("mobile-mia-recibo-dark.png", {
       fullPage: true,
-      maxDiffPixelRatio: 0.02,
     });
   });
 });
@@ -689,8 +757,10 @@ test("Mia — recusa, ambiguidade e didática", async ({ page }) => {
     await page.waitForTimeout(150);
   }
   await page.waitForTimeout(350);
+  await expect(page.locator("body")).toMatchAriaSnapshot({
+    name: "Mia-recusas.aria.yml",
+  });
   await expect(page).toHaveScreenshot("Mia-recusas-dark.png", {
     fullPage: true,
-    maxDiffPixelRatio: 0.02,
   });
 });

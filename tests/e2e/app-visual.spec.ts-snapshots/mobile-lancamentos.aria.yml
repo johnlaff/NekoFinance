@@ -1,0 +1,55 @@
+- banner:
+  - text: /Lançamentos Junho de \d+/
+  - button "Alternar para tema claro"
+  - button "Mais telas"
+- main:
+  - paragraph: Tudo o que entrou e saiu, dia a dia.
+  - searchbox "Buscar lançamento"
+  - button "Mês anterior"
+  - text: /Junho de \d+/
+  - button "Próximo mês"
+  - 'button "Tipo: Todos"'
+  - text: /Custo de vida — R\$ \d+\.\d+,\d+ no mês/
+  - button /O que ainda vem neste mês 2 lançamentos · positivo R\$ \d+\.\d+,\d+/: /O que ainda vem neste mês 2 lançamentos · \+R\$ \d+\.\d+,\d+/
+  - region "O que ainda vem neste mês":
+    - heading /Segunda-feira, \d+ de junho/ [level=2]
+    - region "Saída — Total da célula":
+      - heading /Saída — Total da célula R\$ \d+\.\d+,\d+/ [level=3]
+      - list:
+        - listitem:
+          - button /Despesa fixa demo projetada Previsto Saída negativo R\$ \d+\.\d+,\d+/: /Despesa fixa demo projetada Previsto Saída −R\$ \d+\.\d+,\d+/
+    - heading /Quinta-feira, \d+ de junho/ [level=2]
+    - region "Entrada — Total da célula":
+      - heading /Entrada — Total da célula R\$ \d+\.\d+,\d+/ [level=3]
+      - list:
+        - listitem:
+          - button /Receita demo projetada Previsto Entrada positivo R\$ \d+\.\d+,\d+/: /Receita demo projetada Previsto Entrada \+R\$ \d+\.\d+,\d+/
+  - heading /Quarta-feira, \d+ de junho/ [level=2]
+  - text: Hoje
+  - region "Diário — Total da célula":
+    - heading /Diário — Total da célula R\$ \d+,\d+/ [level=3]
+    - list:
+      - listitem:
+        - button /Despesa demo variável Diário negativo R\$ \d+,\d+/: /Despesa demo variável Diário −R\$ \d+,\d+/
+  - heading "Segunda-feira, 8 de junho" [level=2]
+  - region "Cartão — Soma na fatura":
+    - heading /Cartão — Soma na fatura R\$ \d+,\d+/ [level=3]
+    - list:
+      - listitem:
+        - button /Compromisso demo no crédito 3\/\d+ Reembolso Cartão negativo R\$ \d+,\d+/: /Compromisso demo no crédito 3\/\d+ Reembolso Cartão −R\$ \d+,\d+/
+  - heading "Sexta-feira, 5 de junho" [level=2]
+  - region "Saída — Total da célula":
+    - heading /Saída — Total da célula Com diferença R\$ \d+,\d+/ [level=3]
+    - list:
+      - listitem:
+        - button /Compra no crédito demo Cartões negativo R\$ \d+,\d+/: /Compra no crédito demo Cartões −R\$ \d+,\d+/
+      - listitem:
+        - button /Conta fixa demo Contas negativo R\$ \d+,\d+/: /Conta fixa demo Contas −R\$ \d+,\d+/
+      - listitem: /Diferença no detalhamento — O total da célula é maior que a soma dos itens da nota\. R\$ \d+,\d+/
+- navigation "Navegação do app":
+  - button "Hoje"
+  - button "Lançamentos"
+  - button "Este mês"
+  - button "Calendário"
+  - button "Mia"
+  - button "Registrar lançamento"

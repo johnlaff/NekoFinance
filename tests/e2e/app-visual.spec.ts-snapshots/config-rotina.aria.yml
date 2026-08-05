@@ -1,0 +1,8 @@
+- region "Rotina":
+  - heading "Rotina" [level=2]
+  - text: Lembrete diário Notificação nativa no horário escolhido — no Windows, dispara mesmo com o app fechado.
+  - switch "Lembrete diário" [checked]
+  - text: /Horário Hora local \(\d+ h\) para receber o aviso\./
+  - textbox "Horário do lembrete diário"
+  - text: "/Teto do diário Teto estipulado: R\\$ \\d+,\\d+ por dia\\./"
+  - button "Abrir teto do diário": Abrir →

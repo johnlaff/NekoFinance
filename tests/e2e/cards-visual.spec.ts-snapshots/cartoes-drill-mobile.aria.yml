@@ -1,0 +1,76 @@
+- banner:
+  - text: Cartões Faturas, séries e reembolsos
+  - button "Alternar para tema claro"
+  - button "Mais telas"
+- main:
+  - heading /A próxima fatura vence \d+ de ago\./ [level=1]
+  - group "Gate do modo cartão":
+    - text: /Economia viva — \d+% Reserva de 6 meses — \d+,\d+ meses \(falta \d+,\d+ meses p\/ 6 meses\)/
+    - button "Como esta leitura funciona"
+  - 'region "Proposta de cartão: Cartão de viagens"':
+    - text: A Mia farejou um cartão na planilha
+    - paragraph:
+      - text: /Desde junho de \d+ a sua planilha lança faturas de/
+      - strong: Cartão de viagens
+      - text: ", e nenhum cartão do app responde por elas. Quer cadastrar para acompanhar?"
+    - button "Cadastrar cartão"
+    - button "É um cartão que já tenho"
+    - button "Dispensar"
+  - button "Voltar"
+  - region "Fatura de Cartão principal":
+    - radiogroup "Ciclo da fatura":
+      - radio "Mar · Paga"
+      - radio "Abr · Paga"
+      - radio "Mai · Paga"
+      - radio "Jun · Paga"
+      - radio "Jul · Fechada"
+      - radio "Ago · Aberta" [checked]
+    - text: /R\$ \d+\.\d+,\d+ Total declarado — autoridade da planilha Aberta Vence \d+ de ago\. Fecha em 5 dias/
+    - button "Como a fatura entra no mês"
+    - button "Corrigir datas do ciclo"
+    - 'img /Faturas por ciclo: Mar R\$ \d+\.\d+,\d+, Abr R\$ \d+\.\d+,\d+, Mai R\$ \d+\.\d+,\d+, Jun R\$ \d+\.\d+,\d+, Jul R\$ \d+\.\d+,\d+, Ago R\$ \d+\.\d+,\d+\./':
+      - emphasis: Mar
+      - emphasis: Abr
+      - emphasis: Mai
+      - emphasis: Jun
+      - emphasis: Jul
+      - emphasis: Ago
+    - paragraph: Faturas dos últimos 6 ciclos — a de agosto ainda acumula.
+    - heading "Totais" [level=2]
+    - text: /Total declarado R\$ \d+\.\d+,\d+ Compras itemizadas R\$ \d+\.\d+,\d+ Não itemizado — parte da fatura sem linha R\$ \d+,\d+/
+    - button "Ajustar total declarado"
+    - heading "Compras" [level=2]
+    - list:
+      - listitem:
+        - text: /Mercado \d+ de jun\./
+        - button "Mover Mercado para o ciclo anterior"
+        - button "Mover Mercado para o ciclo seguinte"
+        - text: /R\$ \d+\.\d+,\d+/
+      - listitem: /Notebook 2\/5 \d+ de jul\. R\$ \d+,\d+/
+      - listitem:
+        - text: /Farmácia \d+ de jul\. · Parceiro\(a\)/
+        - button "Mover Farmácia para o ciclo anterior"
+        - button "Mover Farmácia para o ciclo seguinte"
+        - text: /R\$ \d+,\d+/
+      - listitem: /Streaming \d+ de jul\. R\$ \d+,\d+/
+    - heading "Séries" [level=2]
+    - text: /Notebook — parcelado R\$ \d+,\d+ Parcela 2 de 5 · faltam R\$ \d+\.\d+,\d+ em 3 faturas/
+    - button "Editar Notebook"
+    - text: /Streaming — assinatura R\$ \d+,\d+ Todo mês, dia \d+ · pré-lança nas faturas futuras/
+    - button "Editar Streaming"
+    - button "Cancelar Streaming a partir deste ciclo": Cancelar a partir deste ciclo
+    - heading "Reembolsos vinculados" [level=2]
+    - list:
+      - listitem: /Parte compartilhada Prevista Entra como Entrada no vencimento — a régua julga o valor cheio \+ R\$ \d+,\d+/
+    - heading "Recorte por dono" [level=2]
+    - text: /Eu Titular R\$ \d+\.\d+,\d+ Parceiro\(a\) Cartão adicional R\$ \d+,\d+ Total do emissor R\$ \d+\.\d+,\d+/
+    - paragraph:
+      - text: /Líquido de reembolsos R\$ \d+\.\d+,\d+/
+      - button "Conferência"
+- navigation "Navegação do app":
+  - button "Hoje"
+  - button "Lançamentos"
+  - button "Este mês"
+  - button "Calendário"
+  - button "Mia"
+  - button "Registrar lançamento"

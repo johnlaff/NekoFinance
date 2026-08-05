@@ -1,0 +1,60 @@
+- complementary:
+  - text: Neko
+  - button "Registrar lançamento (N)"
+  - navigation "Navegação principal":
+    - button "Hoje": /Hoje R\$ \d+,\d+/
+    - button "Lançamentos"
+    - button "Este mês": /Este mês R\$ \d+,\d+ mil/
+    - button "Cartões"
+    - button "O ano"
+    - button "Calendário"
+    - button "Horizonte"
+    - button "Tags"
+    - button "Mia"
+    - button "Configurações"
+  - button "Alternar para tema claro"
+  - button "Planilha Desconectada"
+- main:
+  - text: Teto do diário A cerimônia do gasto variável
+  - paragraph: /Estipulado em setembro de \d+/
+  - heading /Seu dia comporta R\$ \d+,\d+\./ [level=1]
+  - paragraph: O velocímetro do dia mede o Diário lançado contra este teto. O quanto dá para gastar hoje responde por outra régua — o caixa e a economia do ano; no dia a dia vale o mais apertado dos dois.
+  - button "Modo débito"
+  - region "O que o seu mês variável comporta?":
+    - paragraph: Batida 1 de 3
+    - heading "O que o seu mês variável comporta?" [level=2]
+    - paragraph: Ajuste pelo extrato, não pela esperança — ele é a melhor testemunha do seu hábito.
+    - list:
+      - listitem:
+        - textbox "Nome da categoria 1":
+          - /placeholder: Categoria
+          - text: Alimentação
+        - textbox "Valor mensal da categoria 1":
+          - /placeholder: R$ mensal
+          - text: /\d+,\d+/
+        - button "Remover Alimentação"
+      - listitem:
+        - textbox "Nome da categoria 2":
+          - /placeholder: Categoria
+          - text: Transporte
+        - textbox "Valor mensal da categoria 2":
+          - /placeholder: R$ mensal
+          - text: /\d+,\d+/
+        - button "Remover Transporte"
+    - button "Adicionar categoria"
+    - paragraph: /Total do mês variável R\$ \d+\.\d+,\d+/
+    - paragraph:
+      - button "Já sei meu teto"
+    - button "Voltar"
+    - button "Definir os dias"
+  - region "A prova do número":
+    - heading "A prova do número" [level=2]
+    - text: Anotada na sua planilha
+    - list:
+      - listitem: /Alimentação R\$ \d+,\d+\/mês/
+      - listitem: /Transporte R\$ \d+,\d+\/mês/
+    - text: Total do
+    - button "mês variável"
+    - text: /R\$ \d+\.\d+,\d+ Dividido por \d+ dias Teto por dia R\$ \d+,\d+/
+    - paragraph: Arredondado para cima, sempre — teto é teto.
+    - group: › Ver a nota original da planilha
