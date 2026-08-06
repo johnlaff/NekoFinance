@@ -6,6 +6,15 @@ Neko Finance is a local-first Tauri desktop app for personal finance workflows a
 
 The public repo must stay source-neutral and data-free. Do not commit private source material, transcripts, embeddings, OAuth tokens, API keys, spreadsheet data, or personal finance cache files.
 
+## Repo Map
+
+- `src/` — React/TypeScript frontend; screens consume only `*View.ts`/hooks (never `lib/api` directly).
+- `src/design-system/` — "Midnight Purr" tokens and components.
+- `src-tauri/` — Rust shell and functional core (`reading/`, `forecast/`, `mia/`, `commands/`); has its own `AGENTS.md`.
+- `specs/NNN-slug/` — Spec-Driven Development artifacts (spec → plan → tasks).
+- `docs/adr/` — architectural decisions; `CONTEXT.md` — domain glossary and shared language.
+- `evals/` — Mia copilot evaluation harness.
+
 ## Engineering Rules
 
 - Use the newest dependency versions that satisfy peer dependencies, engine requirements, Rust MSRV, and Tauri compatibility. Document exceptions in `docs/version-matrix.md`.
@@ -25,6 +34,14 @@ The public repo must stay source-neutral and data-free. Do not commit private so
 - TDD is required for finance math, sync, storage migrations, methodology rules, agent tools, and bug fixes. It is optional for visual-only prototypes.
 - Every bug fix should add a regression test unless it is impossible or not useful; document the reason if omitted.
 
+## Commits, Branches, and PRs
+
+- Never push to `main` directly: branch → PR → all checks green → squash-merge.
+- Commit subject: a descriptive sentence in pt-BR stating what changed and why (no Conventional Commits prefixes); body carries the rationale when the subject is not enough.
+- Branch names are short and purpose-prefixed (e.g. `impl/issue-123`, `ci/<topic>`).
+- PRs are didactic: what and why in the first paragraph, how to verify, and `Closes #N` on its own line to auto-close the issue.
+- No agent/model self-references in commits, PRs, code comments, or docs.
+
 ## Privacy
 
 - Keep `.methodology-pack/`, `.neko-data/`, `.lancedb/`, and OAuth/token files local and gitignored.
@@ -34,6 +51,7 @@ The public repo must stay source-neutral and data-free. Do not commit private so
 ## Quality Gates
 
 - Before finishing code work, run the narrowest relevant checks. For foundation changes, run `npm run check` — the full local gate. `npm run build:windows` cross-compiles a single-file Windows exe.
+- Single-test commands for TDD loops: `npx vitest run <path> -t "<name>"` (TS) and `cargo test <name> --manifest-path src-tauri/Cargo.toml` (Rust).
 - Keep ESLint, TypeScript strict mode, Prettier, rustfmt, clippy, tests, privacy scan, and npm audit green.
 - Do not lower coverage or loosen rules to make a task pass without documenting a concrete reason.
 - For frontend layout or flow changes, run Playwright visual smoke and inspect screenshots or traces.
