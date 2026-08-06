@@ -65,7 +65,9 @@ pub(crate) struct AnnualReading {
     pub guardrail_income_cents: i64,
     pub projected_income_cents: i64,
     pub projected_savings_cents: i64,
-    /// Os doze meses no tipo do motor, para quem lista o ano mês a mês.
+    /// Os doze meses no tipo do motor, para quem lista o ano mês a mês. Nenhum recorte atual
+    /// publica a listagem completa — fica pronto para o consumidor que precisar dela.
+    #[allow(dead_code)]
     pub year_metrics: Vec<forecast::MonthMetric>,
 }
 
@@ -83,8 +85,11 @@ pub(crate) struct CoverageReading {
 /// A reserva em meses de custo de vida, com o estado epistêmico já decidido.
 #[derive(Debug, Clone)]
 pub(crate) struct ReserveReading {
+    /// O saldo cru — nenhum recorte atual publica o valor absoluto, só os meses derivados dele.
+    #[allow(dead_code)]
     pub balance_cents: i64,
     /// Custo de vida mensal que serve de divisor. `0` = sem histórico para dividir.
+    #[allow(dead_code)]
     pub baseline_cents: i64,
     /// Meses completos que sustentam o divisor — o que separa veredito de retrato vivo.
     pub basis_months: i64,

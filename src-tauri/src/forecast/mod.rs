@@ -959,6 +959,11 @@ pub fn project_daily_ceiling(
 /// `seed_cents` is the opening balance carried into `today` (before today's events); thus
 /// `daily[0].balance = seed + net(events on today)`, mirroring the spreadsheet's
 /// `Saldo[d] = Saldo[d-1] + Entrada − (Saída + Diário)`.
+///
+/// A rota de leitura projeta sempre com `project_with_metrics` (caixa + métricas juntos, uma
+/// projeção só). Esta função cash-only não tem mais chamador de produção — fica como o núcleo
+/// mínimo que os testes do motor de caixa exercitam isoladamente.
+#[allow(dead_code)]
 pub fn project(
     seed_cents: i64,
     today: NaiveDate,
