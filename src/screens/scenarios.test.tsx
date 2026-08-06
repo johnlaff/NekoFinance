@@ -1486,19 +1486,8 @@ describe("ScenarioCompare — camada didática (plano 074, fatia B: veredito + e
     );
   });
 
-  it("veredito intermediário na fronteira superior (R$1.000 exato ainda é 'apertado')", async () => {
-    expect(saldoBand(100_000).key).toBe("tight");
-    const compare = baseCompare({
-      scenario_deepest_deficit: { date: "2026-08-01", balance_cents: 100_000 },
-    });
-    await renderCompare(compare);
-
-    const banner = document.querySelector(".scn-verdict");
-    expect(banner!.textContent).toContain("Aperto");
-    expect(banner!.textContent).toContain(
-      `Fica apertado em agosto — menor saldo ${fmtCompactBRL(100_000)}.`,
-    );
-  });
+  // A fronteira exata de "tight" (R$1.000,00) tem teste de unidade em scenariosView.test.ts
+  // (`scenarioVerdict`) — o caso R$0 acima já prova a integração banner+card na mesma banda.
 
   it("veredito com deepest_deficit nulo cai no mínimo mensal do cenário (mesma resolução do gráfico)", async () => {
     const compare = baseCompare({
@@ -1818,23 +1807,16 @@ describe("ScenarioCompare — polimento (plano 074, fatia C)", () => {
   // 12,0 exato = Paz (a fonte define "12+" — fronteira inferior INCLUSIVA, ao contrário
   // da convenção limite-superior-inclusivo do Termômetro).
 
-  it.each([
-    [5.9, "Abaixo do mínimo", "lucide-triangle-alert"],
-    [6, "Zona amarela", "lucide-triangle-alert"],
-    [11.9, "Zona amarela", "lucide-triangle-alert"],
-    [12, "Paz", "lucide-circle-check"],
-  ] as const)(
-    "%s meses de reserva pós-financiamento → '%s' (ícone %s); cor e rótulo derivam do DEPOIS",
-    async (months, label, iconClass) => {
-      await renderCompare(
-        baseCompare({ loan: loanFixture({ before: 14, after: months }) }),
-      );
-      const badge = document.querySelector(".scn-loan-summary__reserve");
-      expect(badge).not.toBeNull();
-      expect(badge!.textContent).toContain(label);
-      expect(badge!.querySelector(`.${iconClass}`)).toBeInTheDocument();
-    },
-  );
+  // As fronteiras (5,9/6,0/11,9/12,0 meses) têm cobertura exaustiva em scenariosView.test.ts
+  // (`reserveMonthsState`) — aqui só a integração: o estado resolvido chega ao badge com
+  // rótulo + ícone certos.
+  it("badge da reserva pós-financiamento mostra o rótulo e o ícone do estado resolvido", async () => {
+    await renderCompare(baseCompare({ loan: loanFixture({ before: 14, after: 6 }) }));
+    const badge = document.querySelector(".scn-loan-summary__reserve");
+    expect(badge).not.toBeNull();
+    expect(badge!.textContent).toContain("Zona amarela");
+    expect(badge!.querySelector(".lucide-triangle-alert")).toBeInTheDocument();
+  });
 
   it("exibe antes → depois com uma casa decimal; o antes fica neutro, fora da cor do estado", async () => {
     await renderCompare(
@@ -1875,26 +1857,20 @@ describe("ScenarioCompare — polimento (plano 074, fatia C)", () => {
   // O estado julga sempre o valor BRUTO; 2000 bps exatos passam o piso (20,00% = passa) e
   // parcela exatamente igual à metade da economia típica é paz (a regra é "MAIS da metade").
 
-  it.each([
-    [1999, 200_000, "Abaixo do piso", "lucide-triangle-alert"],
-    [2000, 200_000, "Paz", "lucide-circle-check"],
-    // Parcela 50_000: um centavo abaixo do dobro (99_999) fere a metade; exato (100_000) é paz.
-    [2500, 99_999, "Mais da metade da economia", "lucide-triangle-alert"],
-    [2500, 100_000, "Paz", "lucide-circle-check"],
-  ] as const)(
-    "%s bps pós-parcela com economia típica %s → '%s' (ícone %s)",
-    async (afterBps, economiaMedian, label, iconClass) => {
-      await renderCompare(
-        baseCompare({
-          loan: savingsLoanFixture({ before: 3000, after: afterBps, economiaMedian }),
-        }),
-      );
-      const badge = document.querySelector(".scn-loan-summary__savings");
-      expect(badge).not.toBeNull();
-      expect(badge!.textContent).toContain(label);
-      expect(badge!.querySelector(`.${iconClass}`)).toBeInTheDocument();
-    },
-  );
+  // As fronteiras (piso de 2000 bps e a regra da metade) têm cobertura exaustiva em
+  // scenariosView.test.ts (`savingsAfterState`) — aqui só a integração: o estado resolvido
+  // chega ao badge com rótulo + ícone certos.
+  it("badge da economia após parcela mostra o rótulo e o ícone do estado resolvido", async () => {
+    await renderCompare(
+      baseCompare({
+        loan: savingsLoanFixture({ before: 3000, after: 2500, economiaMedian: 99_999 }),
+      }),
+    );
+    const badge = document.querySelector(".scn-loan-summary__savings");
+    expect(badge).not.toBeNull();
+    expect(badge!.textContent).toContain("Mais da metade da economia");
+    expect(badge!.querySelector(".lucide-triangle-alert")).toBeInTheDocument();
+  });
 
   it("exibe antes → depois em percentuais inteiros; o antes fica neutro, fora da cor do estado", async () => {
     await renderCompare(
@@ -1919,16 +1895,8 @@ describe("ScenarioCompare — polimento (plano 074, fatia C)", () => {
     expect(badge!.querySelector(".lucide-triangle-alert")).toBeInTheDocument();
   });
 
-  it("na fronteira do piso a exibição TRUNCA: 1999 bps mostra 19%, nunca um 20% contraditório", async () => {
-    await renderCompare(
-      baseCompare({ loan: savingsLoanFixture({ before: 3000, after: 1999 }) }),
-    );
-    const badge = document.querySelector(".scn-loan-summary__savings");
-    // Math.round mostraria "30% → 20%" ao lado de "Abaixo do piso" — número e veredito
-    // se contradiriam exatamente onde o gate decide.
-    expect(badge!.textContent).toContain("30% → 19%");
-    expect(badge!.textContent).toContain("Abaixo do piso");
-  });
+  // O truncamento na fronteira exata (1999 bps → 19%, nunca 20%) tem teste de unidade em
+  // scenariosView.test.ts (`loanGateView`).
 
   it("popover do amarelo traz a evidência em R$ da regra da metade", async () => {
     // Parcela 50_000 consome mais da metade da economia típica de 80_000 (mas não a excede).
