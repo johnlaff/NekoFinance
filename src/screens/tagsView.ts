@@ -1,9 +1,13 @@
-import type {
-  TagRulerEffects,
-  TagRulerFlags,
-  TagsScreenDto,
-  TagsScreenTag,
-  TagsScreenThirdParty,
+import {
+  createTag,
+  getTagsScreen,
+  updateTag,
+  updateTagRulers,
+  type TagRulerEffects,
+  type TagRulerFlags,
+  type TagsScreenDto,
+  type TagsScreenTag,
+  type TagsScreenThirdParty,
 } from "../lib/api";
 import { formatBRL } from "../lib/format";
 import { MES } from "../lib/nkFormat";
@@ -11,10 +15,23 @@ import { MES } from "../lib/nkFormat";
 // ---------------------------------------------------------------------------
 // A tag é um interruptor de contabilidade: 4 réguas independentes (Performance,
 // Custo de vida, Economia, Diário médio) que ela liga/desliga. O Saldo nunca tem
-// interruptor — garantia estrutural, não configuração. Este módulo decide TUDO que
-// não é fetch: a manchete (6 estados), a frase de cada régua, o agrupamento
-// exceção×rótulo e a leitura de "dinheiro de terceiros". A tela só monta.
+// interruptor — garantia estrutural, não configuração. Este módulo é a porta
+// completa do shim para a tela de Tags (ADR-0006 estendida): decide tudo que não é
+// DOM — a manchete (6 estados), a frase de cada régua, o agrupamento exceção×rótulo,
+// a leitura de "dinheiro de terceiros" — E possui a leitura (fetcher + chave de
+// cache do `useCommand`) e os comandos de escrita (criar/editar tag, réguas). A
+// tela só monta e dispara os comandos que aqui são expostos.
 // ---------------------------------------------------------------------------
+
+// Tipos do shim reexportados pela view — nenhum outro arquivo sob `src/` importa
+// `lib/api` para a superfície de Tags; quem precisa do formato do DTO lê daqui.
+export type {
+  TagRulerEffects,
+  TagRulerFlags,
+  TagsScreenDto,
+  TagsScreenTag,
+  TagsScreenThirdParty,
+};
 
 export type RulerKey = keyof TagRulerFlags;
 
@@ -342,4 +359,69 @@ export function personRow(p: TagsScreenThirdParty, monthLabel: string): PersonRo
         tail: "Sem registro",
       };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Leitura — fetcher estável por (ano,mês) e a chave de cache do `useCommand`. A
+// view é dona da convenção: só ela sabe como o par (ano,mês) vira string de
+// cache, e é essa mesma função que a tela usa para montar E para saber o que
+// invalidar. `useCommand` captura a PRIMEIRA referência do fetcher (mesmo padrão
+// de Lançamentos/Calendário) — uma arrow inline buscaria com closure velha.
+// ---------------------------------------------------------------------------
+
+/** Chave de cache do `useCommand` para a tela de Tags no mês `ym` ("YYYY-MM"). */
+export function tagsScreenCacheKey(ym: string): string {
+  return `tags_screen:${ym}`;
+}
+
+const _fetchers = new Map<string, () => Promise<TagsScreenDto>>();
+
+export function tagsScreenFetcher(year: number, month: number) {
+  const key = `${year}-${month}`;
+  const cached = _fetchers.get(key);
+  if (cached) return cached;
+  const fn = () => getTagsScreen(year, month);
+  _fetchers.set(key, fn);
+  return fn;
+}
+
+// ---------------------------------------------------------------------------
+// Escrita — comandos de criar/editar tag e alternar réguas. A tela dispara o
+// comando e chama `invalidateCommands()` (infra genérica de `lib/useCommand`,
+// fora do funil): a view não invalida por si — só sabe traduzir a intenção do
+// usuário para a chamada certa do shim.
+// ---------------------------------------------------------------------------
+
+/** Cria uma tag nova. Convenção do método: nomes começando com "!" (ex.: "! Pagar")
+ *  ficam fixados no topo — decidido pela própria tela a partir do nome digitado. */
+export function createTagCmd(
+  name: string,
+  color: string,
+  emoji: string | null,
+  isSpecial: boolean,
+): Promise<string> {
+  return createTag(name, color, emoji, isSpecial);
+}
+
+/** Atualiza nome/cor/emoji de uma tag existente. */
+export function updateTagCmd(
+  tagId: string,
+  name: string,
+  color: string,
+  emoji: string | null,
+): Promise<void> {
+  return updateTag(tagId, name, color, emoji);
+}
+
+/** Liga/desliga UMA régua de uma tag — as outras 3 seguem como estão (UPDATE
+ *  único: o comando sempre grava as quatro colunas juntas). */
+export function toggleTagRuler(tag: TagsScreenTag, ruler: RulerKey): Promise<void> {
+  const next: TagRulerFlags = { ...tag.counts_in, [ruler]: !tag.counts_in[ruler] };
+  return updateTagRulers(
+    tag.id,
+    !next.performance,
+    !next.cost_of_living,
+    !next.savings,
+    !next.daily_avg,
+  );
 }
