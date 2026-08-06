@@ -112,6 +112,10 @@ Insurance products that protect against financial catastrophe. Light schema pres
 A screen's `*View.ts` is the only place allowed to translate `src/lib/api.ts`'s raw shim DTOs into the domain shapes the screen renders — every other file under `src/` is fenced off from importing `lib/api` directly, type-only included, by the `no-restricted-imports` gate in `eslint.config.js`. See ADR-0006 for the exception zones (a view and its tests, the Mia runtime, `src/hooks/**`, the IPC mock infra) and the legacy allowlist (`eslint.lib-api-allowlist.mjs`) that migrates over time, never grows.
 _Avoid_: DTO, wire type, raw API import
 
+**View as full shim gate (write + cache key)**:
+The full migration pattern (ADR-0007, `tagsView.ts` is the reference) goes past ADR-0006's read-only gate: the view also owns the stable `useCommand` fetcher, the cache-key builder (`tagsScreenCacheKey(ym)`), and one wrapper per write command in the screen's domain vocabulary (`createTagCmd`, `updateTagCmd`, `toggleTagRuler`), even when a wrapper only forwards to the shim untouched. The screen still owns _when_ to call `invalidateCommands()` (generic `lib/useCommand` infra, not `lib/api`) after a write resolves — the view only decides _what_ to call. A screen at this full pattern imports only its `*View.ts` and `lib/useCommand`, never `lib/api` in any form; reaching this bar is what earns a screen's removal from `eslint.lib-api-allowlist.mjs`. `scenariosView.ts` is an earlier, partial stage (read/pure-computation only, `scenarios.tsx` still on the allowlist) — not itself the reference for a full migration.
+_Avoid_: manual cache-key string, bare shim write call from a screen
+
 ### Data Import & Sync
 
 **Sheet Mapping**:

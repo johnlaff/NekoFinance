@@ -38,8 +38,6 @@ export const LIB_API_ALLOWLIST = [
   "src/screens/ObligationsPanel.tsx",
   "src/screens/SettingsScreen.test.tsx",
   "src/screens/SettingsScreen.tsx",
-  "src/screens/TagsScreen.test.tsx",
-  "src/screens/TagsScreen.tsx",
   "src/screens/TetoScreen.test.tsx",
   "src/screens/TetoScreen.tsx",
   "src/screens/TotaisScreen.test.tsx",

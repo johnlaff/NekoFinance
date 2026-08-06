@@ -7,15 +7,6 @@ import {
   Tags as TagsIcon,
   Users,
 } from "lucide-react";
-import {
-  createTag,
-  getTagsScreen,
-  updateTag,
-  updateTagRulers,
-  type TagRulerFlags,
-  type TagsScreenTag,
-  type TagsScreenThirdParty,
-} from "../lib/api";
 import { isTauri } from "../lib/env";
 import { useCommand, invalidateCommands } from "../lib/useCommand";
 import { safeErrorMessage } from "../lib/errors";
@@ -34,6 +25,7 @@ import { monthTitle } from "./lancamentosView";
 import {
   RULER_LABEL,
   RULER_ORDER,
+  createTagCmd,
   exceptionSummary,
   labelFraction,
   maxLabelTotal,
@@ -46,11 +38,17 @@ import {
   rulerMeasures,
   rulerSwitchLabel,
   splitExceptionsAndLabels,
+  tagsScreenCacheKey,
+  tagsScreenFetcher,
+  toggleTagRuler,
+  updateTagCmd,
   verdictLabel,
   monthLabelLower,
   type RulerEffect,
   type RulerKey,
   type TagsHeadline,
+  type TagsScreenTag,
+  type TagsScreenThirdParty,
 } from "./tagsView";
 
 /** Paleta de cores da tag (tokens do DS). O nome humano vira o aria-label do swatch. */
@@ -69,30 +67,6 @@ function shiftYm(ym: string, delta: number): string {
   const [y, m] = ym.split("-").map(Number);
   const d = new Date(Date.UTC(y!, m! - 1 + delta, 1));
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
-// Fetcher estável por (ano,mês) — o mesmo padrão de Lançamentos/Calendário: useCommand
-// captura a PRIMEIRA referência do fetcher, então uma arrow inline buscaria com closure velha.
-const _fetchers = new Map<string, () => ReturnType<typeof getTagsScreen>>();
-function tagsScreenFetcher(year: number, month: number) {
-  const key = `${year}-${month}`;
-  const cached = _fetchers.get(key);
-  if (cached) return cached;
-  const fn = () => getTagsScreen(year, month);
-  _fetchers.set(key, fn);
-  return fn;
-}
-
-/** Liga/desliga UMA régua de uma tag — as outras 3 seguem como estão (UPDATE único). */
-function toggleRuler(tag: TagsScreenTag, ruler: RulerKey) {
-  const next: TagRulerFlags = { ...tag.counts_in, [ruler]: !tag.counts_in[ruler] };
-  return updateTagRulers(
-    tag.id,
-    !next.performance,
-    !next.cost_of_living,
-    !next.savings,
-    !next.daily_avg,
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -691,7 +665,7 @@ export function TagsScreen() {
     data: dto,
     loading,
     error,
-  } = useCommand(`tags_screen:${ym}`, tagsScreenFetcher(year, month));
+  } = useCommand(tagsScreenCacheKey(ym), tagsScreenFetcher(year, month));
 
   const [form, dispatch] = useReducer(formReducer, initialForm);
   // Tag com escrita de réguas em voo — as 4 réguas dela travam juntas até o refetch
@@ -710,7 +684,7 @@ export function TagsScreen() {
   function handleToggleRuler(tag: TagsScreenTag, ruler: RulerKey) {
     setBusyTagId(tag.id);
     setFailedTagId(null);
-    toggleRuler(tag, ruler)
+    toggleTagRuler(tag, ruler)
       .then(() => invalidateCommands())
       .catch(() => {
         // O refetch reflete o estado real; o usuário fica sabendo que o gesto não pegou.
@@ -725,10 +699,15 @@ export function TagsScreen() {
     dispatch({ type: "submitStart" });
     try {
       if (form.editingId) {
-        await updateTag(form.editingId, trimmed, form.color, form.emoji.trim() || null);
+        await updateTagCmd(
+          form.editingId,
+          trimmed,
+          form.color,
+          form.emoji.trim() || null,
+        );
       } else {
         // Convenção do método: nomes começando com "!" (ex.: "! Pagar") ficam fixados no topo.
-        await createTag(
+        await createTagCmd(
           trimmed,
           form.color,
           form.emoji.trim() || null,

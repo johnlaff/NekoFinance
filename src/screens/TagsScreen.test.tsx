@@ -8,7 +8,7 @@ import type {
   TagsScreenDto,
   TagsScreenTag,
   TagsScreenThirdParty,
-} from "../lib/api";
+} from "./tagsView";
 import { mockCommands, mockInvoke } from "../test/commands";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
