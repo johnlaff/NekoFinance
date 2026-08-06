@@ -107,36 +107,33 @@ pub(crate) async fn realized_annual_savings(
     pool: &SqlitePool,
     today_naive: NaiveDate,
 ) -> Result<(i64, i64), String> {
-    let cur_ym = today_naive.format("%Y-%m").to_string();
-    let is_january = cur_ym == format!("{}-01", today_naive.year());
-    // Janela = só meses COMPLETOS do ano corrente: `[ano-01-01, 1º dia do mês corrente)`.
-    // Em 1º de JANEIRO essa janela é `[YYYY-01-01, YYYY-01-01)` e ficaria VAZIA, desativando o
-    // guardrail com um falso "sem restrição". Nesse caso usamos DEZEMBRO do ano anterior — o último
-    // período COMPLETO de poupança realizada —, `[YYYY-1-12-01, YYYY-01-01)`. Sem dado de dezembro,
-    // a query devolve 0 e o chamador ainda distingue "sem dado" de "janela vazia".
-    let (lower, upper) = if is_january {
-        (
-            format!("{}-12-01", today_naive.year() - 1),
-            format!("{}-01-01", today_naive.year()),
-        )
-    } else {
-        // `date < 'YYYY-MM-01'` ≡ `substr(date,1,7) < 'YYYY-MM'` p/ ISO.
-        (
-            format!("{}-01-01", today_naive.year()),
-            format!("{cur_ym}-01"),
-        )
-    };
-    // As duas pernas adotam réguas DISTINTAS: a renda-base do guardrail 20–30% é a
-    // view Economia (`exclude_from_savings`); o net/colchão do ano é figura de Performance
-    // (`exclude_from_performance`). Por isso a renda entra em duas views num SELECT só — a
-    // devolvida (denominador) filtra por savings; a do net filtra por performance junto da saída.
-    // Com uma tag 4× desligada as três pernas caem juntas, reproduzindo o filtro único antigo.
-    let row: (i64, i64, i64) = sqlx::query_as(
+    // Renda-base do guardrail 20–30%: soma de `income_cents` (view Economia) dos meses que
+    // `guardrail_window` devolve — o mesmo motor que já sustenta Economia/Patrimônio anuais
+    // (`realized_annual_economia`/`realized_annual_patrimonio`). Nenhuma janela própria aqui.
+    let window_metrics = guardrail_window_metrics(pool, today_naive).await?;
+    let income_savings: i64 = window_metrics.iter().map(|m| m.income_cents).sum();
+
+    // O net/colchão (view Performance) ainda lê a `transaction` crua — a régua de Performance
+    // não é MonthMetric-agregável do mesmo jeito por rodar com a projeção do dia. A janela de
+    // datas, porém, vem só dos meses que `guardrail_window` já elegeu — sem redefinir "mês
+    // completo" nem o deslocamento de janeiro aqui.
+    let window = forecast::guardrail_window(today_naive);
+    let (&(first_year, first_month), &(last_year, last_month)) =
+        match (window.first(), window.last()) {
+            (Some(f), Some(l)) => (f, l),
+            _ => return Ok((income_savings, 0)),
+        };
+    let lower = NaiveDate::from_ymd_opt(first_year, first_month, 1)
+        .expect("valid month")
+        .format("%Y-%m-%d")
+        .to_string();
+    let upper = (NaiveDate::from_ymd_opt(last_year, last_month, 1).expect("valid month")
+        + chrono::Months::new(1))
+    .format("%Y-%m-%d")
+    .to_string();
+
+    let row: (i64, i64) = sqlx::query_as(
         "SELECT \
-           COALESCE(SUM(CASE WHEN t.type='income' \
-             AND NOT EXISTS (SELECT 1 FROM transaction_tag tt2 JOIN tag tg ON tg.id = tt2.tag_id \
-                 WHERE tt2.transaction_id = t.id AND tg.exclude_from_savings = 1) \
-             THEN t.amount ELSE 0 END), 0), \
            COALESCE(SUM(CASE WHEN t.type='income' \
              AND NOT EXISTS (SELECT 1 FROM transaction_tag tt2 JOIN tag tg ON tg.id = tt2.tag_id \
                  WHERE tt2.transaction_id = t.id AND tg.exclude_from_performance = 1) \
@@ -153,7 +150,7 @@ pub(crate) async fn realized_annual_savings(
     .fetch_one(pool)
     .await
     .map_err(|e| format!("realized annual: {e}"))?;
-    let (income_savings, income_perf, expense_perf) = row;
+    let (income_perf, expense_perf) = row;
     Ok((income_savings, income_perf - expense_perf)) // (renda-base, net colchão) dos meses completos
 }
 
@@ -3118,6 +3115,58 @@ mod tests {
         assert_eq!(
             income, 100000,
             "guardrail simétrico: renda de dezembro também é vista em 1º/jan"
+        );
+    }
+
+    // A renda-base do guardrail (`realized_annual_savings().0`) é a MESMA soma que
+    // `guardrail_window_metrics` devolve para `income_cents` — não uma query paralela com sua
+    // própria janela. Cobre meio de ano (múltiplos meses completos) e a virada de janeiro
+    // (janela deslocada para dezembro), para travar que as duas leituras nunca divergem.
+    #[tokio::test]
+    async fn annual_income_matches_guardrail_window_metrics_sum_mid_year() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 4, 10).unwrap();
+
+        insert_income(&p, "inc-jan", 100_000, "2026-01-10").await;
+        insert_income(&p, "inc-feb", 50_000, "2026-02-10").await;
+        insert_income(&p, "inc-mar", 70_000, "2026-03-10").await;
+        // Mês corrente (abril) não é completo — não pode entrar na renda-base.
+        insert_income(&p, "inc-abr", 999_000, "2026-04-05").await;
+
+        let (income, _) = realized_annual_savings(&p, today).await.unwrap();
+        let expected: i64 = guardrail_window_metrics(&p, today)
+            .await
+            .unwrap()
+            .iter()
+            .map(|m| m.income_cents)
+            .sum();
+
+        assert_eq!(income, 220_000, "só jan+fev+mar (meses completos) contam");
+        assert_eq!(
+            income, expected,
+            "renda-base do guardrail é a mesma soma de MonthMetric via guardrail_window"
+        );
+    }
+
+    #[tokio::test]
+    async fn annual_income_matches_guardrail_window_metrics_sum_january() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+
+        insert_income(&p, "inc-dez", 80_000, "2025-12-15").await;
+
+        let (income, _) = realized_annual_savings(&p, today).await.unwrap();
+        let expected: i64 = guardrail_window_metrics(&p, today)
+            .await
+            .unwrap()
+            .iter()
+            .map(|m| m.income_cents)
+            .sum();
+
+        assert_eq!(income, 80_000, "1º/jan enxerga dezembro do ano anterior");
+        assert_eq!(
+            income, expected,
+            "mesma paridade também na virada de janeiro"
         );
     }
 
