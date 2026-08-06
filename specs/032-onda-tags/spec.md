@@ -106,19 +106,21 @@ Testes golden cobrem os dois extremos + views divergentes.
 
 ### Sítios SQL em lockstep (cada agregado adota o flag da régua que alimenta)
 
-| Sítio (`forecast_cmds.rs`)                                      | Flag                                                                                                                                         |
-| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `load_db_events` (caminho de métricas)                          | máscara por evento (mapa `transaction_id → 4 MINs` em query própria; caminho de caixa segue sem filtro)                                      |
-| `realized_annual_savings` — perna renda                         | `exclude_from_savings` (base do guardrail 20–30%)                                                                                            |
-| `realized_annual_savings` — perna net (colchão)                 | `exclude_from_performance` (net do ano = figura de performance)                                                                              |
-| `realized_annual_economia` (itens + transfers)                  | `exclude_from_savings`                                                                                                                       |
-| `realized_annual_patrimonio`                                    | `exclude_from_performance`                                                                                                                   |
-| `projected_annual_savings` — renda / net                        | savings / performance (mesmo racional)                                                                                                       |
-| `realized_savings_baseline` (medianas do gate de financiamento) | `exclude_from_savings`                                                                                                                       |
-| `realized_monthly_baseline` (mediana do custo de vida)          | `exclude_from_cost_of_living`                                                                                                                |
-| `spending_mode_summary`                                         | view Custo de vida (detecção de modo é pergunta de forma-do-gasto; preserva o comportamento do backfill)                                     |
-| Cobertura de dias do teto projetado (`days_with_daily`)         | **sem máscara** — fato comportamental (o dia teve registro), não valor de régua; um dia coberto por gasto excluído não recebe dupla projeção |
-| `month_grid`, caminhos de caixa                                 | sem filtro (inalterados)                                                                                                                     |
+| Sítio (`forecast_cmds.rs`)                                        | Flag                                                                                                                                         |
+| ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `load_db_events` (caminho de métricas)                            | máscara por evento (mapa `transaction_id → 4 MINs` em query própria; caminho de caixa segue sem filtro)                                      |
+| `realized_annual_savings` — perna renda                           | `exclude_from_savings` (base do guardrail 20–30%)                                                                                            |
+| `realized_annual_savings` — perna net (colchão)                   | `exclude_from_performance` (net do ano = figura de performance)                                                                              |
+| `realized_annual_economia` (itens + transfers)                    | `exclude_from_savings`                                                                                                                       |
+| `realized_annual_patrimonio`                                      | `exclude_from_performance`                                                                                                                   |
+| `projected_annual_savings` — renda / net                          | savings / performance (mesmo racional)                                                                                                       |
+| `realized_savings_baseline` (medianas do gate de financiamento)   | `exclude_from_savings`                                                                                                                       |
+| `realized_monthly_baseline` (mediana do custo de vida)            | `exclude_from_cost_of_living`                                                                                                                |
+| `prev_month_daily_avg` (base do teto do dia)                      | `exclude_from_daily_avg` (mesma régua Diário médio do motor mensal/anual)                                                                    |
+| `daily_spend`/`daily_spend_today` (numerador de "Diário de hoje") | `exclude_from_daily_avg`                                                                                                                     |
+| `spending_mode_summary`                                           | view Custo de vida (detecção de modo é pergunta de forma-do-gasto; preserva o comportamento do backfill)                                     |
+| Cobertura de dias do teto projetado (`days_with_daily`)           | **sem máscara** — fato comportamental (o dia teve registro), não valor de régua; um dia coberto por gasto excluído não recebe dupla projeção |
+| `month_grid`, caminhos de caixa                                   | sem filtro (inalterados)                                                                                                                     |
 
 ### Vínculo de pessoa nos derivados
 

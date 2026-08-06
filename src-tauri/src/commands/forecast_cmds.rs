@@ -522,31 +522,32 @@ async fn prev_month_daily_avg(
     };
     let prev_ym = last_prev.format("%Y-%m").to_string();
     let days_prev = last_prev.day() as i64;
+    if days_prev <= 0 {
+        return Ok(None);
+    }
+    let prev_month_start =
+        NaiveDate::from_ymd_opt(last_prev.year(), last_prev.month(), 1).ok_or("data inválida")?;
+    // Mesma fonte que a régua Diário médio mensal/anual (`month_metrics_for`): eventos de métrica
+    // com a máscara `daily_avg`, não SQL cru sobre `"transaction"` sem o JOIN em
+    // `transaction_tag`/`tag` — item por item, uma linha excluída da régua some das duas contas
+    // igual. Sem filtro `is_projection` (congelado/stale): o mês anterior já FECHOU pela data — uma
+    // projeção importada que virou passado é gasto do mês, mesmo sem re-import (mesma regra de
+    // staleness da detecção de modo e do baseline).
+    let events = load_metric_db_events(pool, today_naive, prev_month_start, first_this).await?;
     // `SUM(ABS(amount))` por linha (não `ABS(SUM(amount))`): despesas IMPORTADAS chegam negativas
     // (`-amount_out`) e manuais positivas; num mês de sinal misto o ABS externo da soma assinada
     // cancelaria parcialmente, sub-reportando o Diário médio. Invariante de agregação de despesa em
     // TODOS os sites de query (month_grid / realized_monthly_baseline / daily_spend_today).
-    // Sem filtro `is_projection` (congelado/stale): o mês anterior já FECHOU pela data — uma
-    // projeção importada que virou passado é gasto do mês, mesmo sem re-import (mesma regra de
-    // staleness da detecção de modo e do baseline).
-    let sum: (i64,) = sqlx::query_as(
-        "SELECT COALESCE(SUM(ABS(amount)), 0) FROM \"transaction\" \
-         WHERE type='expense' AND is_fixed=0 \
-           AND (payment_method IS NULL OR payment_method <> 'credit') \
-           AND substr(date,1,7) = ?1 AND scenario_id IS NULL",
-    )
-    .bind(&prev_ym)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| format!("daily ceiling (avg): {e}"))?;
-    if days_prev <= 0 {
-        return Ok(None);
-    }
+    let variable_cents: i64 = events
+        .iter()
+        .filter(|me| me.mask.daily_avg && me.event.kind == forecast::EventKind::Daily)
+        .map(|me| me.event.amount_cents)
+        .sum();
     Ok(Some(CeilingEstimateBasis {
         month: prev_ym,
-        variable_cents: sum.0,
+        variable_cents,
         days: days_prev,
-        per_day_cents: sum.0 / days_prev,
+        per_day_cents: variable_cents / days_prev,
     }))
 }
 
@@ -2813,23 +2814,29 @@ pub(crate) async fn dashboard_summary(
         load_card_invoice_events(pool, today_naive, today_naive, None).await?;
 
     // Diário de HOJE como MAGNITUDE positiva (o card faz `teto - gasto` e `gasto/teto`).
-    // - Sinal: por convenção, `amount` é gravado como magnitude positiva (import faz `.abs()`,
-    //   `create_transaction` exige `> 0`); o sinal vem do `type`. Usamos `SUM(ABS(amount))` para
-    //   somar a MAGNITUDE de cada linha — robusto caso algum writer grave com sinal (despesas
-    //   importadas chegam negativas, lançamentos manuais positivos): num dia misto, `ABS(SUM(...))`
-    //   cancelaria parcialmente antes do ABS. Mesmo padrão de `realized_monthly_baseline`/`month_grid`.
+    // - Mesma fonte que a régua Diário médio (`effective_daily_ceiling`/`prev_month_daily_avg`):
+    //   eventos de métrica com a máscara `daily_avg`, item por item — uma linha excluída da régua
+    //   (`exclude_from_daily_avg`) tira o dia de contar duas vezes o mesmo jeito que a visão
+    //   mensal/anual já tira.
+    // - `amount_cents` já chega como MAGNITUDE (`load_raw_db_events` aplica `.abs()`), então a
+    //   soma nunca cancela parcialmente num dia de sinal misto — mesma invariante de
+    //   `realized_monthly_baseline`/`month_grid`, herdada da fonte única de eventos de métrica.
     // - Fonte única: o gasto do dia vem das transações Diário (despesa variável não-crédito);
     //   sem nenhuma transação no dia, a soma é 0. O ritual diário é uma transação Diário comum.
-    let daily_spend: (i64,) = sqlx::query_as(
-        "SELECT COALESCE((SELECT SUM(ABS(amount)) FROM \"transaction\" \
-                          WHERE type='expense' AND is_fixed=0 AND is_projection=0 AND date = ?1 \
-                            AND (payment_method IS NULL OR payment_method <> 'credit') \
-                            AND scenario_id IS NULL), 0)",
+    let daily_spend_cents: i64 = load_metric_db_events(
+        pool,
+        today_naive,
+        today_naive,
+        today_naive.succ_opt().ok_or("data de hoje inválida")?,
     )
-    .bind(&today)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| format!("query daily spend: {e}"))?;
+    .await?
+    .into_iter()
+    .filter(|me| {
+        me.mask.daily_avg && me.event.kind == forecast::EventKind::Daily && me.event.realized
+    })
+    .map(|me| me.event.amount_cents)
+    .sum();
+    let daily_spend: (i64,) = (daily_spend_cents,);
 
     // Espelho do `daily_spend` para o modo cartão: compras de cartão realizadas HOJE — manual
     // (`payment_method='credit'`) ou vinculada a fatura (`invoice_id`). O lump importado do
@@ -3865,6 +3872,171 @@ mod tests {
         assert_eq!(
             ceiling, 300,
             "o teto diário soma magnitudes (SUM(ABS)), não o ABS da soma assinada"
+        );
+    }
+
+    // `prev_month_daily_avg` (Conta A, teto do dia) e `month_metrics_for` (Conta B, decompositor +
+    // máscara por trás da visão mensal/anual) leem o MESMO lançamento e precisam concordar: uma
+    // célula de Diário ITEMIZADA cujo pai carrega `exclude_from_daily_avg` some do numerador em
+    // AMBAS as contas, porque o item herda a máscara do `transaction_id` do pai
+    // (`load_ruler_mask_map` / `load_db_metric_events`) — a mesma fonte alimenta as duas.
+    #[tokio::test]
+    async fn daily_ceiling_and_daily_avg_ruler_agree_on_excluded_tag() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+
+        // Célula de Diário ITEMIZADA de maio/2026 (mês anterior COMPLETO, 31 dias): um item na
+        // seção "Diário" sob um lançamento marcado com uma tag que desliga só a régua de diário
+        // médio (as outras 3 réguas seguem ligadas — não é a tag "Ignorar" de 4 flags).
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('itm-parent', 'expense', 10000, '2026-05-10', 0, 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, section) \
+             VALUES ('itm-1', 'itm-parent', 10000, 'Mercado', 0, 'Diário')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO tag (id, name, exclude_from_performance, exclude_from_cost_of_living, \
+                              exclude_from_savings, exclude_from_daily_avg) \
+             VALUES ('tg-daily-excl', 'Fora do diário médio', 0, 0, 0, 1)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO transaction_tag (transaction_id, tag_id) VALUES ('itm-parent', 'tg-daily-excl')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        // Conta A: fallback do teto do dia.
+        let basis = prev_month_daily_avg(&p, today).await.unwrap().unwrap();
+
+        // Conta B: mesma janela (maio/2026) pelo decompositor + máscara de tags, como a visão
+        // anual lê (`month_metrics_for`).
+        let start = NaiveDate::from_ymd_opt(2026, 5, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+        let metric_events = load_db_metric_events(&p, start, end, None).await.unwrap();
+        let months = forecast::month_metrics_for(
+            today,
+            &metric_events,
+            &[(2026, 5)],
+            &std::collections::HashMap::new(),
+        );
+        let month_b = &months[0];
+
+        assert_eq!(
+            basis.per_day_cents, month_b.real_daily_avg_cents,
+            "teto do dia (Conta A, R${}) e diário médio do mês (Conta B, R${}) devem concordar \
+             sobre o mesmo item excluído da régua de diário médio",
+            basis.per_day_cents, month_b.real_daily_avg_cents
+        );
+        assert_eq!(
+            basis.variable_cents, month_b.daily_avg_out_cents,
+            "o numerador de maio também deve concordar: o item com a tag não conta em nenhuma \
+             das duas contas"
+        );
+    }
+
+    // Mesma invariante do teste acima, mas sobre uma célula SIMPLES (sem itemização): a tag
+    // `exclude_from_daily_avg` vive direto no lançamento, sem `line_item`/`section` no caminho.
+    #[tokio::test]
+    async fn daily_ceiling_excludes_simple_cell_with_exclude_tag() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('simple-excl', 'expense', 8000, '2026-05-10', 0, 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO tag (id, name, exclude_from_performance, exclude_from_cost_of_living, \
+                              exclude_from_savings, exclude_from_daily_avg) \
+             VALUES ('tg-daily-excl', 'Fora do diário médio', 0, 0, 0, 1)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO transaction_tag (transaction_id, tag_id) VALUES ('simple-excl', 'tg-daily-excl')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let basis = prev_month_daily_avg(&p, today).await.unwrap().unwrap();
+        assert_eq!(
+            basis.variable_cents, 0,
+            "a célula simples sob a tag some do numerador, como a célula itemizada"
+        );
+    }
+
+    // Espelha a invariante do teto no numerador de "Diário de hoje": uma despesa Diário lançada
+    // HOJE sob `exclude_from_daily_avg` não deve contar no gasto do dia — a mesma tag que já tira
+    // a linha do teto do mês tira também o que ela mede hoje.
+    #[tokio::test]
+    async fn dashboard_daily_spend_today_excludes_daily_avg_tag() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+
+        insert_expense(&p, "today-excl", 4000, "2026-06-15").await;
+        sqlx::query("UPDATE \"transaction\" SET is_projection = 0 WHERE id = 'today-excl'")
+            .execute(&p)
+            .await
+            .unwrap();
+        tag_as_excluded(&p, "today-excl").await;
+
+        let summary = dashboard_summary(&p, today).await.unwrap();
+        assert_eq!(
+            summary.daily_spend_today, 0,
+            "gasto Diário de hoje sob a tag de exclusão não conta no numerador"
+        );
+    }
+
+    // Item de seção Economia/Patrimônio dentro de uma célula itemizada nunca conta como gasto do
+    // Diário no teto — mesma regra de `realized_monthly_baseline` (custo de vida exclui Economia).
+    #[tokio::test]
+    async fn prev_month_daily_avg_excludes_economia_item_in_itemized_cell() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, is_fixed, is_projection) \
+             VALUES ('mixed-parent', 'expense', 15000, '2026-05-10', 0, 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, section) \
+             VALUES ('mixed-diario', 'mixed-parent', 10000, 'Mercado', 0, 'Diário')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO line_item (id, transaction_id, amount_cents, description, position, section) \
+             VALUES ('mixed-economia', 'mixed-parent', 5000, 'Reserva', 1, 'Economia')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+
+        let basis = prev_month_daily_avg(&p, today).await.unwrap().unwrap();
+        assert_eq!(
+            basis.variable_cents, 10000,
+            "só o item Diário conta no teto — o item Economia nunca é gasto do dia"
         );
     }
 
