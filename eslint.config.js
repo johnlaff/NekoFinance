@@ -2,6 +2,7 @@ import js from "@eslint/js";
 import reactHooks from "eslint-plugin-react-hooks";
 import globals from "globals";
 import tseslint from "typescript-eslint";
+import { LIB_API_ALLOWLIST } from "./eslint.lib-api-allowlist.mjs";
 
 export default tseslint.config(
   {
@@ -61,6 +62,43 @@ export default tseslint.config(
     rules: {
       "@typescript-eslint/no-unsafe-call": "off",
       "@typescript-eslint/no-unsafe-member-access": "off",
+    },
+  },
+  {
+    // Funil do `lib/api`: fora das zonas nomeadas, a tela lê o backend só pela sua
+    // `*View.ts` (docs/adr/0006-lib-api-funnel-gate.md). Sem `allowTypeImports` — DTO cru
+    // não vaza nem como tipo.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: [
+      "src/screens/*View.ts",
+      "src/screens/*View.test.ts",
+      "src/screens/miaRuntime.ts",
+      "src/screens/miaRuntime.test.ts",
+      "src/screens/miaSession.ts",
+      "src/screens/miaSession.test.ts",
+      "src/hooks/**",
+      "src/test/commands.ts",
+      ...LIB_API_ALLOWLIST,
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              // Cobre toda profundidade relativa que resolve para src/lib/api.ts: "./api" e
+              // "../api" (de dentro de src/lib/ e suas subpastas) e "./lib/api"/"../lib/api"
+              // (de qualquer outro ponto de src/**) — sem depender de quantos "../" o caminho
+              // carrega.
+              regex: "^(\\./|(?:\\.\\./)+)(lib/)?api$",
+              message:
+                "Não importe lib/api diretamente — leia pela *View.ts da tela (ela é a porta do shim). " +
+                "Exceções: *View.ts/*View.test.ts, runtime da Mia (miaRuntime/miaSession + testes), " +
+                "src/hooks/**, e src/test/commands.ts (infra de mock do IPC).",
+            },
+          ],
+        },
+      ],
     },
   },
 );
