@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { TetoScreen } from "./TetoScreen";
 import { SUMMARY, mockCommands, mockInvoke } from "../test/commands";
-import type { CeilingProposal, DailyBudget } from "../lib/api";
+import type { CeilingProposal, DailyBudget } from "./tetoView";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 

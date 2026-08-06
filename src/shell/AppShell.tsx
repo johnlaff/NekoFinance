@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { NekoMark } from "../design-system/components/NekoMark";
 import { ThemeToggle } from "./ThemeToggle";
-import { lastSyncAt, type AuthStatus } from "../lib/api";
+import { fetchLastSyncAt, type AuthStatus } from "./shellView";
 import { useCommand } from "../lib/useCommand";
 import { syncRecencyLabel } from "../lib/syncRecency";
 import { SCREEN_META, type Screen } from "./screens";
@@ -192,7 +192,7 @@ export function AppShell({
 
   // Recência real da sincronização com a planilha (sync_log). Fica em silêncio
   // (fallback "Conta Google ativa") enquanto não há histórico ou dado carregado.
-  const { data: lastSync } = useCommand("last_sync_at", lastSyncAt);
+  const { data: lastSync } = useCommand("last_sync_at", fetchLastSyncAt);
   const syncLabel = connected ? syncRecencyLabel(lastSync) : null;
 
   // Atalho "N" = novo lançamento (lê o callback mais recente via useEffectEvent; assina só no mount).

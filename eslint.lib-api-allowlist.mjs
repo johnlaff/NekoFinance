@@ -7,7 +7,6 @@
  * past LIB_API_ALLOWLIST_CEILING (new direct import, route it through the view instead).
  */
 export const LIB_API_ALLOWLIST = [
-  "src/App.tsx",
   "src/design-system/components/BalanceTrajectory.test.tsx",
   "src/design-system/components/BalanceTrajectory.tsx",
   "src/design-system/components/LineItemEditor.tsx",
@@ -24,16 +23,12 @@ export const LIB_API_ALLOWLIST = [
   "src/features/sheets/WriteBackPreview.tsx",
   "src/features/sheets/writeBack.ts",
   "src/lib/useShowReceipt.ts",
-  "src/screens/DashboardScreen.test.tsx",
-  "src/screens/DashboardScreen.tsx",
   "src/screens/LoanGroupItem.tsx",
   "src/screens/NewTransactionForm.test.tsx",
   "src/screens/NewTransactionForm.tsx",
   "src/screens/ObligationsPanel.tsx",
   "src/screens/SettingsScreen.test.tsx",
   "src/screens/SettingsScreen.tsx",
-  "src/screens/TetoScreen.test.tsx",
-  "src/screens/TetoScreen.tsx",
   "src/screens/TransactionsScreen.test.tsx",
   "src/screens/TransactionsScreen.tsx",
   "src/screens/dashboard/WriteBackPending.test.tsx",
@@ -42,7 +37,6 @@ export const LIB_API_ALLOWLIST = [
   "src/screens/newTransactionOptions.ts",
   "src/screens/scenarios.test.tsx",
   "src/screens/scenarios.tsx",
-  "src/shell/AppShell.tsx",
   "src/shell/Compose.tsx",
 ];
 

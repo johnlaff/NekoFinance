@@ -12,15 +12,6 @@ import { EstimateMark } from "../design-system/components/EstimateMark";
 import { InfoPopover } from "../design-system/components/InfoPopover";
 import { ModeChip } from "../design-system/components/ModeChip";
 import { Money } from "../design-system/components/Money";
-import {
-  acceptCeilingProposal,
-  dismissCeilingProposal,
-  getCeilingProposal,
-  getDailyBudget,
-  getDashboardSummary,
-  upsertDailyBudgetWithCategories,
-  type DailyBudget,
-} from "../lib/api";
 import { isTauri } from "../lib/env";
 import { centsToBRLInput, formatBRL, parseBRLToCents, todayISO } from "../lib/format";
 import { safeErrorMessage } from "../lib/errors";
@@ -28,15 +19,22 @@ import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { useShowReceipt } from "../lib/useShowReceipt";
 import {
   GUIDED_QUESTIONS,
+  acceptCeilingProposalCmd,
   buildTetoView,
   categoriesFromDraft,
   ceilingPerDayCents,
   ceremonyAgeLabel,
   ceremonyMonthLabel,
+  dismissCeilingProposalCmd,
   divisorFromText,
   draftTotalCents,
+  fetchCeilingProposal,
+  fetchDailyBudget,
+  fetchDashboardSummary,
   guardTriggered,
   monthYearLabel,
+  saveDailyBudgetCmd,
+  type DailyBudget,
   type DraftItem,
   type TetoProof,
   type TetoView,
@@ -109,9 +107,9 @@ function openRite(budget: DailyBudget | undefined, step: RiteStep): RiteState {
 }
 
 export function TetoScreen() {
-  const budgetQ = useCommand("get_daily_budget", getDailyBudget);
-  const proposalQ = useCommand("get_ceiling_proposal", getCeilingProposal);
-  const summaryQ = useCommand("get_dashboard_summary", getDashboardSummary);
+  const budgetQ = useCommand("get_daily_budget", fetchDailyBudget);
+  const proposalQ = useCommand("get_ceiling_proposal", fetchCeilingProposal);
+  const summaryQ = useCommand("get_dashboard_summary", fetchDashboardSummary);
   const [rite, setRite] = useState<RiteState | null>(null);
 
   const view = buildTetoView({
@@ -354,8 +352,8 @@ function ProposalVerdict({ view }: { view: TetoView }) {
     setBusy(true);
     const call =
       action === "accept"
-        ? acceptCeilingProposal(proposal.id)
-        : dismissCeilingProposal(proposal.id);
+        ? acceptCeilingProposalCmd(proposal.id)
+        : dismissCeilingProposalCmd(proposal.id);
     call
       .then(() => invalidateCommands())
       // eslint-disable-next-line @typescript-eslint/no-empty-function
@@ -583,11 +581,7 @@ function Rite({
     }
     const categories = itemized ? categoriesFromDraft(state.items) : [];
     setSaving(true);
-    upsertDailyBudgetWithCategories(
-      perDayCents,
-      categories,
-      itemized ? (divisor ?? null) : null,
-    )
+    saveDailyBudgetCmd(perDayCents, categories, itemized ? (divisor ?? null) : null)
       .then(() => {
         invalidateCommands();
         onClose();

@@ -1,8 +1,14 @@
-import type {
-  CeilingProposal,
-  DailyBudget,
-  DailyBudgetCategoryInput,
-  DashboardSummary,
+import {
+  acceptCeilingProposal,
+  dismissCeilingProposal,
+  getCeilingProposal,
+  getDailyBudget,
+  getDashboardSummary,
+  upsertDailyBudgetWithCategories,
+  type CeilingProposal,
+  type DailyBudget,
+  type DailyBudgetCategoryInput,
+  type DashboardSummary,
 } from "../lib/api";
 import { parseBRLToCents } from "../lib/format";
 import { MES } from "../lib/nkFormat";
@@ -10,7 +16,12 @@ import { MES } from "../lib/nkFormat";
 // View-model puro da tela Teto do diário. A tela é o registro de uma decisão com prova: aqui
 // vive a composição — qual estado a manchete assume, a aritmética da cerimônia (itens ÷ dias,
 // arredondado para cima), a idade que convida à recalibração e a guarda do teto que baixa.
-// Nenhum número de caixa nasce aqui: o teto vigente e a estimativa vêm do motor.
+// Nenhum número de caixa nasce aqui: o teto vigente e a estimativa vêm do motor. É também a
+// porta inteira do shim para a tela (ADR-0007): tipos reexportados, fetchers estáveis do
+// `useCommand` e um wrapper por comando de escrita — a tela nunca importa `lib/api`.
+
+// Tipos do shim reexportados pela view — a tela e seu teste leem daqui.
+export type { CeilingProposal, DailyBudget };
 
 /** Uma linha editável do rito (identidade estável para o React). */
 export interface DraftItem {
@@ -280,4 +291,45 @@ export function buildTetoView(input: TetoInput): TetoView {
     };
   }
   return { ...base, kind: "none", perDayCents: 0 };
+}
+
+// ---------------------------------------------------------------------------
+// Leitura — fetchers com identidade estável (o contrato do `useCommand` captura a PRIMEIRA
+// referência) para os três comandos da tela.
+// ---------------------------------------------------------------------------
+
+export function fetchDailyBudget(): Promise<DailyBudget> {
+  return getDailyBudget();
+}
+
+export function fetchCeilingProposal(): Promise<CeilingProposal | null> {
+  return getCeilingProposal();
+}
+
+/** O resumo do dia é compartilhado com a Hoje (`hojeView.fetchDashboardSummary`) — mesma
+ *  chave de cache `get_dashboard_summary` no `useCommand`, uma leitura só. */
+export function fetchDashboardSummary(): Promise<DashboardSummary> {
+  return getDashboardSummary();
+}
+
+// ---------------------------------------------------------------------------
+// Escrita — um wrapper por comando, no vocabulário da tela. A tela dispara o comando e chama
+// `invalidateCommands()` (infra genérica de `lib/useCommand`, fora do funil) depois de resolver.
+// ---------------------------------------------------------------------------
+
+export function acceptCeilingProposalCmd(proposalId: string): Promise<void> {
+  return acceptCeilingProposal(proposalId);
+}
+
+export function dismissCeilingProposalCmd(proposalId: string): Promise<void> {
+  return dismissCeilingProposal(proposalId);
+}
+
+/** Grava o teto do dia — com itens/divisor (rito completo) ou só o valor (atalho direto). */
+export function saveDailyBudgetCmd(
+  perDayCents: number,
+  categories: DailyBudgetCategoryInput[],
+  divisorDays: number | null,
+): Promise<void> {
+  return upsertDailyBudgetWithCategories(perDayCents, categories, divisorDays);
 }
