@@ -1,7 +1,7 @@
 //! A carga dos insumos — a única fronteira de SQL da rota de forecast.
 //!
 //! Casca imperativa de um par functional-core/imperative-shell: aqui mora todo o IO, e a
-//! composição que virá a seguir recebe [`ForecastInputs`] por referência, sem pool e sem relógio.
+//! composição recebe [`ForecastInputs`] por referência, sem pool e sem relógio.
 //! Não existe atalho de "só um numerozinho": um insumo que a regra precisa entra como campo do
 //! inventário, carregado aqui.
 
@@ -481,6 +481,96 @@ mod tests {
             Some("acc-card".to_string()),
             "o índice resolve a conta a partir do apelido da linha"
         );
+    }
+
+    // A leitura composta e as rotas de produção publicam os MESMOS números: é a prova de que
+    // migrar um consumidor para a leitura não muda nada do que o usuário vê. O saldo do fim do mês
+    // fecha apesar de o dashboard projetar só o caixa, porque as duas projeções encadeiam a mesma
+    // série de caixa — a diferença está nas métricas, que não tocam o saldo.
+    #[tokio::test]
+    async fn the_composed_reading_publishes_the_same_numbers_as_the_production_routes() {
+        let p = pool().await;
+        seed_owner(&p).await;
+        insert_account(&p, "acc-res", "reserve", 900_000).await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+
+        for month in [3, 4, 5] {
+            insert_txn(
+                &p,
+                &format!("inc-{month}"),
+                "income",
+                400_000,
+                &format!("2026-0{month}-05"),
+                0,
+            )
+            .await;
+            insert_txn(
+                &p,
+                &format!("fix-{month}"),
+                "expense",
+                150_000,
+                &format!("2026-0{month}-10"),
+                1,
+            )
+            .await;
+            insert_economia(
+                &p,
+                &format!("ec-{month}"),
+                100_000,
+                &format!("2026-0{month}-20"),
+            )
+            .await;
+        }
+        insert_txn(&p, "inc-jun", "income", 400_000, "2026-06-05", 0).await;
+        insert_daily(&p, "dia-hoje", 3_000, "2026-06-15").await;
+        insert_txn(&p, "fut-jul", "expense", 150_000, "2026-07-10", 1).await;
+
+        let reading = super::super::compose::compose(&load_inputs(&p, today).await.unwrap());
+        let dash = fc::dashboard_summary(&p, today).await.unwrap();
+        let dto = fc::forecast_dto(&p, today).await.unwrap();
+
+        assert_eq!(reading.projected_month_end_cents, dash.balance);
+        assert_eq!(reading.today_spend.daily_avg_cents, dash.daily_spend_today);
+        assert_eq!(reading.reserve.months, dash.reserve_months);
+        assert_eq!(reading.reserve.state, dash.reserve_state);
+        assert_eq!(reading.cards.gate.as_str(), dash.card_gate);
+        assert_eq!(reading.cards.gate_economy_bps, dash.card_gate_economy_bps);
+        assert_eq!(reading.ceiling.per_day_cents, dash.daily_budget);
+        assert_eq!(reading.spending_mode.mode.as_str(), dash.spending_mode);
+
+        assert_eq!(
+            reading.safe_to_spend.amount_cents,
+            dto.safe_to_spend_today_cents
+        );
+        assert_eq!(
+            reading.safe_to_spend.binding.as_str(),
+            dto.binding_guardrail
+        );
+        assert_eq!(
+            reading.annual.economia_bps.unwrap_or(0),
+            dto.annual_savings.economia_ruler_rate_bps
+        );
+        assert_eq!(
+            reading.annual.guardrail_economia_cents,
+            dto.annual_savings.registered_economia_cents
+        );
+        assert_eq!(
+            reading.annual.economia_state,
+            dto.annual_savings.economia_state
+        );
+        assert_eq!(
+            reading.coverage.baseline_outflow_cents,
+            dto.baseline_outflow_cents
+        );
+        assert_eq!(
+            reading.coverage.trusted_through_month,
+            dto.trusted_through_month
+        );
+        assert_eq!(
+            reading.coverage.total_missing_cents,
+            dto.total_missing_cents
+        );
+        assert_eq!(reading.forecast.daily.len(), dto.daily.len());
     }
 
     // Bordas: base vazia (ano sem renda, mês corrente sem lastro, reserva sem conta mapeada,
