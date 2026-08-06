@@ -532,6 +532,21 @@ describe("loanGateView — as duas pernas resolvidas em estado + texto", () => {
     expect(gate.savings?.popoverBody).toMatch(/excede sua economia típica/);
   });
 
+  it("percentual TRUNCA (nunca arredonda) na fronteira do piso: 1999 bps exibe 19%, não 20%", () => {
+    // Math.round mostraria "20%" ao lado do estado "Abaixo do piso" — número e veredito se
+    // contradiriam exatamente onde o gate decide.
+    const gate = loanGateView({
+      ...LOAN_BASE,
+      savings_rate_before_bps: 3_000,
+      savings_rate_after_bps: 1_999,
+    });
+    expect(gate.savings).toMatchObject({
+      state: { key: "below-floor" },
+      beforeText: "30%",
+      afterText: "19%",
+    });
+  });
+
   it("popover cita a régua da metade quando é ela quem trava (sem exceder a economia)", () => {
     const gate = loanGateView({
       ...LOAN_BASE,
