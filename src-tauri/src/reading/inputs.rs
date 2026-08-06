@@ -6,7 +6,6 @@
 //! própria no meio da conta.
 
 use crate::cards::CardLexicon;
-use crate::commands::forecast_cmds::{CardInvoiceEvent, CeilingEstimateBasis, CeilingSource};
 use crate::forecast::{self, CashflowEvent};
 use chrono::NaiveDate;
 use std::collections::{HashMap, HashSet};
@@ -106,6 +105,55 @@ pub(crate) struct ReserveInputs {
     /// "sem registro" de "contas zeradas", que é alerta legítimo.
     pub has_accounts: bool,
     pub trend: String,
+}
+
+/// Procedência do teto exibido. `chosen` é o único veredito; `estimate` é a média do mês
+/// anterior COM selo (o fallback silencioso morre na exibição — o motor de projeção continua
+/// usando o teto efetivo); `none` = travessão + CTA da cerimônia. A proposta pendente da
+/// cerimônia é um OVERLAY (banner de confirmação), nunca a procedência do número exibido — o
+/// valor proposto não entra em progresso/projeção antes do aceite explícito.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CeilingSource {
+    Chosen,
+    Estimate,
+    None,
+}
+
+impl CeilingSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CeilingSource::Chosen => "chosen",
+            CeilingSource::Estimate => "estimate",
+            CeilingSource::None => "none",
+        }
+    }
+}
+
+/// Os operandos que produzem a média do mês anterior, não só o resultado. A tela IMPRIME esta
+/// conta — uma frase que a descrevesse poderia divergir do que a leitura faz.
+#[derive(Debug, Clone)]
+pub(crate) struct CeilingEstimateBasis {
+    /// Mês da base, `YYYY-MM`.
+    pub month: String,
+    /// Gasto variável somado do mês anterior (magnitude).
+    pub variable_cents: i64,
+    /// Dias do mês anterior — o divisor.
+    pub days: i64,
+    pub per_day_cents: i64,
+}
+
+/// Uma fatura a vencer, com o total efetivo já resolvido entre o declarado e as compras.
+#[derive(Debug, Clone)]
+pub(crate) struct CardInvoiceEvent {
+    pub account_id: String,
+    pub card_name: String,
+    pub owner_name: String,
+    pub closing_date: NaiveDate,
+    pub due_date: NaiveDate,
+    pub amount_cents: i64,
+    /// Existe Entrada vinculada (`refund_invoice_id`) — a expectativa de reembolso da fatura.
+    pub has_refund_expectation: bool,
+    pub refund_expected_cents: i64,
 }
 
 /// Os sinais que decidem o modo de gasto e o que o dia do modo cartão lê.

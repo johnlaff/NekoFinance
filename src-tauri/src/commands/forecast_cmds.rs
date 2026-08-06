@@ -86,6 +86,11 @@ pub(crate) use crate::forecast::{
     RESERVE_MIN_MONTHS, SAVINGS_CEILING_BPS, SAVINGS_FLOOR_BPS, SAVINGS_TARGET_BPS,
 };
 
+/// As formas de dado que a carga produz vivem no inventário da leitura, não na casca que as
+/// preenche: é o que mantém a dependência apontando do IO para o domínio. A casca as reexporta
+/// para quem já as consumia continuar lendo daqui.
+pub(crate) use crate::reading::inputs::{CardInvoiceEvent, CeilingEstimateBasis, CeilingSource};
+
 /// Limiar de cobertura: um mês futuro com menos de 60% do gasto típico já lançado é tratado como
 /// INCOMPLETO (projeção otimista demais — o "chá revelação" do método). Margem ampla porque o
 /// método aceita variação mês a mês; abaixo disso é quase certo que falta fatura/variável.
@@ -501,19 +506,6 @@ pub(crate) async fn active_daily_budget(pool: &SqlitePool) -> Result<Option<i64>
 
 /// Diário médio do último mês COMPLETO (Σ diário realizado ÷ dias do mês) — a base do teto
 /// ESTIMADO quando o dono não estipulou nada.
-/// Base da estimativa do teto: os operandos que produzem a média, não só o resultado. A tela
-/// IMPRIME esta conta — uma frase que a descrevesse poderia divergir do que o SQL faz.
-#[derive(Debug, Clone)]
-pub(crate) struct CeilingEstimateBasis {
-    /// Mês da base, `YYYY-MM`.
-    pub month: String,
-    /// Gasto variável somado do mês anterior (magnitude).
-    pub variable_cents: i64,
-    /// Dias do mês anterior — o divisor.
-    pub days: i64,
-    pub per_day_cents: i64,
-}
-
 async fn prev_month_daily_avg(
     pool: &SqlitePool,
     today_naive: NaiveDate,
@@ -554,28 +546,6 @@ async fn prev_month_daily_avg(
         days: days_prev,
         per_day_cents: variable_cents / days_prev,
     }))
-}
-
-/// Procedência do teto exibido. `chosen` é o único veredito; `estimate` é a média do mês
-/// anterior COM selo (o fallback silencioso morre na exibição — o motor de projeção continua
-/// usando `effective_daily_ceiling`); `none` = travessão + CTA da cerimônia. A proposta pendente
-/// da cerimônia é um OVERLAY (banner de confirmação), nunca a procedência do número exibido — o
-/// valor proposto não entra em progresso/projeção antes do aceite explícito.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CeilingSource {
-    Chosen,
-    Estimate,
-    None,
-}
-
-impl CeilingSource {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            CeilingSource::Chosen => "chosen",
-            CeilingSource::Estimate => "estimate",
-            CeilingSource::None => "none",
-        }
-    }
 }
 
 /// Leitura do teto para exibição: valor + procedência explícita.
@@ -920,19 +890,6 @@ type CardInvoiceRow = (
     i64,
     i64,
 );
-
-#[derive(Debug, Clone)]
-pub(crate) struct CardInvoiceEvent {
-    pub account_id: String,
-    pub card_name: String,
-    pub owner_name: String,
-    pub closing_date: NaiveDate,
-    pub due_date: NaiveDate,
-    pub amount_cents: i64,
-    /// Existe Entrada vinculada (`refund_invoice_id`) — a expectativa de reembolso da fatura.
-    pub has_refund_expectation: bool,
-    pub refund_expected_cents: i64,
-}
 
 pub(crate) async fn load_card_invoice_events(
     pool: &SqlitePool,
