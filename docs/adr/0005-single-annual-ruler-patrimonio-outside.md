@@ -27,7 +27,10 @@ it simply is not the accessible Economia the band measures.
 The savings guardrail is the single deliberate exception on window: it reads
 `registered_economia_cents` over **complete** months. It decides how much can be spent today, and a
 denominator still forming mid-month would surface as false alarm. It is a decision input, not a
-published figure.
+published figure. A different **window** is not license for a different **derivation**: the
+guardrail's Economia and Patrimônio figures sum `MonthMetric` fields (the same rows every other
+surface reads), filtered down to `forecast::guardrail_window` — never a second query that
+reimplements item classification, tag masking or the derived/annotation max.
 
 ## Why
 

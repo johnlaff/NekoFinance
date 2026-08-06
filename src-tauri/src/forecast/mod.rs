@@ -209,11 +209,8 @@ pub struct SafeToSpend {
 /// ainda) e o método recua para o último mês completo de verdade — dezembro do ano anterior —
 /// em vez de desligar o guardrail com um falso "sem restrição".
 ///
-/// Única definição da janela: os consumidores (SQL ou motor) leem daqui, nunca recompõem os
-/// limites por conta própria.
-///
-/// Sem consumidor ainda (fatia "expand" — a migração das queries SQL fica para outra fatia).
-#[allow(dead_code)]
+/// Única definição da janela: os consumidores leem daqui, nunca recompõem os limites por conta
+/// própria — as figuras anuais do guardrail (Economia, Patrimônio) filtram `MonthMetric` por ela.
 pub fn guardrail_window(today: NaiveDate) -> Vec<(i32, u32)> {
     if today.month() == 1 {
         return vec![(today.year() - 1, 12)];
