@@ -13,7 +13,7 @@ import { centsToBRLInput, parseBRLToCents } from "../lib/format";
 import { motionEnabled } from "../lib/motion";
 import { TYPE_META, type TypeMeta } from "../lib/nkFormat";
 import { useCommand } from "../lib/useCommand";
-import { useShowReceipt } from "../lib/useShowReceipt";
+import { useShowReceipt } from "../hooks/useShowReceipt";
 import { useNekoApp } from "../shell/appContext";
 import { greetingForHour, localTodayIso } from "./hojeView";
 import {
