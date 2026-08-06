@@ -227,6 +227,9 @@ export const FORECAST: Forecast = {
   cash_headroom_cents: 587700,
   savings_headroom_cents: 35000,
   binding_guardrail: "savings",
+  savings_band_verdict: "in_band",
+  savings_band: { floor_bps: 2000, ceiling_bps: 3000 },
+  savings_band_scope_lived: true,
   months: [
     {
       year: 2026,

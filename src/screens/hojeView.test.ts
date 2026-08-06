@@ -1,14 +1,22 @@
 import { describe, expect, it } from "vitest";
-import type { ForecastDay, UpcomingInvoice } from "../lib/api";
+import type { BandVerdict, ForecastDay, UpcomingInvoice } from "../lib/api";
 import {
+  dailyCeilingFraction,
+  dailyCeilingPercent,
   dueLabel,
   eyebrowDate,
   faturaDayLabel,
   greetingForHour,
+  invoiceCoverageFraction,
+  invoiceCoveragePercent,
   joinNames,
   localTodayIso,
   monthInsight,
+  monthSavingsRatePercent,
   openInvoicesView,
+  RESERVE_MIN_MONTHS,
+  reserveProgressFraction,
+  reserveStanding,
   saldoBandPhrase,
   savingsBandBroken,
   spendCapReason,
@@ -340,13 +348,90 @@ describe("spendCapReason", () => {
 });
 
 describe("savingsBandBroken", () => {
-  it("faixa viva ou inativa não é rompimento", () => {
-    expect(savingsBandBroken(50_000)).toBe(false);
-    expect(savingsBandBroken(0)).toBe(false);
-    expect(savingsBandBroken(null)).toBe(false);
+  it("faixa viva não é rompimento", () => {
+    expect(savingsBandBroken("in_band")).toBe(false);
+    expect(savingsBandBroken("above_band")).toBe(false);
   });
 
-  it("folga negativa é a faixa rompida", () => {
-    expect(savingsBandBroken(-1_695_966)).toBe(true);
+  it("faixa rompida, zero por escolha e sem registro contam como rompida (o teto solta)", () => {
+    expect(savingsBandBroken("below_band")).toBe(true);
+    expect(savingsBandBroken("zero_by_choice")).toBe(true);
+    expect(savingsBandBroken("no_record")).toBe(true);
+  });
+
+  it("cobre os cinco vereditos publicados pelo motor", () => {
+    const verdicts: BandVerdict[] = [
+      "no_record",
+      "zero_by_choice",
+      "below_band",
+      "in_band",
+      "above_band",
+    ];
+    expect(verdicts.map(savingsBandBroken)).toEqual([true, true, true, false, false]);
+  });
+});
+
+describe("monthSavingsRatePercent", () => {
+  it("bps vira percentual de exibição com uma casa decimal, sem cap", () => {
+    expect(monthSavingsRatePercent(2500)).toBe(25);
+    expect(monthSavingsRatePercent(219)).toBeCloseTo(2.19);
+    expect(monthSavingsRatePercent(15000)).toBe(150);
+  });
+});
+
+describe("invoiceCoverageFraction / invoiceCoveragePercent", () => {
+  it("sem gasto típico para dividir, a fração é null", () => {
+    expect(invoiceCoverageFraction(10_000, 0)).toBeNull();
+  });
+
+  it("fatura acima do típico não capa — é dado, não ruído", () => {
+    const fraction = invoiceCoverageFraction(15_000, 10_000);
+    expect(fraction).toBe(1.5);
+    expect(invoiceCoveragePercent(fraction!)).toBe(150);
+  });
+
+  it("fatura zerada é fração zero", () => {
+    expect(invoiceCoverageFraction(0, 10_000)).toBe(0);
+  });
+});
+
+describe("dailyCeilingFraction / dailyCeilingPercent", () => {
+  it("sem teto (<=0), fração e percentual são zero", () => {
+    expect(dailyCeilingFraction(5_000, 0)).toBe(0);
+    expect(dailyCeilingPercent(5_000, 0)).toBe(0);
+  });
+
+  it("a barra satura em 100%, mas o rótulo é explícito acima do teto", () => {
+    expect(dailyCeilingFraction(15_000, 10_000)).toBe(1);
+    expect(dailyCeilingPercent(15_000, 10_000)).toBe(150);
+  });
+
+  it("dentro do teto, fração e percentual coincidem", () => {
+    expect(dailyCeilingFraction(4_000, 10_000)).toBe(0.4);
+    expect(dailyCeilingPercent(4_000, 10_000)).toBe(40);
+  });
+});
+
+describe("reserveProgressFraction / reserveStanding", () => {
+  it("RESERVE_MIN_MONTHS espelha o mínimo do método (6 meses)", () => {
+    expect(RESERVE_MIN_MONTHS).toBe(6);
+  });
+
+  it("fração cresce até o mínimo e satura em 100%", () => {
+    expect(reserveProgressFraction(0)).toBe(0);
+    expect(reserveProgressFraction(3)).toBe(0.5);
+    expect(reserveProgressFraction(6)).toBe(1);
+    expect(reserveProgressFraction(9)).toBe(1);
+  });
+
+  it("fração nunca fica negativa", () => {
+    expect(reserveProgressFraction(-2)).toBe(0);
+  });
+
+  it("reserva de pé exige registro e o mínimo de meses", () => {
+    expect(reserveStanding("no_record", 9)).toBe(false);
+    expect(reserveStanding("estimate", 5.9)).toBe(false);
+    expect(reserveStanding("estimate", 6)).toBe(true);
+    expect(reserveStanding("verdict", 8)).toBe(true);
   });
 });

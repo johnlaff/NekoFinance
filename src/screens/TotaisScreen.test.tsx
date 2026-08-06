@@ -53,8 +53,8 @@ describe("TotaisScreen — regras do método (puro)", () => {
     expect(economizadoStatus(3000).label).toBe("Dentro do ideal");
   });
 
-  it("SAVINGS_MIN_BPS é a constante canônica de 20% (compartilhada entre as telas)", () => {
-    expect(SAVINGS_MIN_BPS).toBe(2000);
+  it("SAVINGS_MIN_BPS é a constante canônica de 20% (compartilhada entre as telas), travada contra o piso publicado pelo DTO", () => {
+    expect(SAVINGS_MIN_BPS).toBe(FORECAST.savings_band.floor_bps);
     expect(economizadoStatus(SAVINGS_MIN_BPS).label).toBe("Dentro do ideal");
     expect(economizadoStatus(SAVINGS_MIN_BPS - 1).label).toBe("Abaixo do ideal");
   });

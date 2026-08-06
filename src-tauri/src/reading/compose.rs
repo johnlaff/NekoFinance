@@ -35,6 +35,9 @@ pub(crate) struct ForecastReading {
     pub projected_month_end_cents: i64,
     pub annual: AnnualReading,
     pub safe_to_spend: forecast::SafeToSpend,
+    /// O veredito da régua contra a mesma faixa que a tela do ano julga, no mesmo estado — a
+    /// tela do dia consome este campo em vez de reler o sinal de `safe_to_spend`.
+    pub savings_verdict: forecast::BandVerdict,
     pub coverage: CoverageReading,
     pub reserve: ReserveReading,
     pub ceiling: CeilingReading,
@@ -206,6 +209,7 @@ pub(crate) fn compose(inputs: &ForecastInputs) -> ForecastReading {
     // O guardrail duplo mora no motor, e a régua da economia que ele consulta é a MESMA que a
     // tela do ano julga: entra a régua inteira, não uma renda e uma economia recompostas aqui.
     let safe_to_spend = forecast::safe_to_spend_today(&forecast, &annual.ruler, reserve_months);
+    let savings_verdict = forecast::band_verdict(&annual.ruler, reserve_months);
 
     let spending_mode = SpendingModeReading {
         mode: forecast::detect_spending_mode(&inputs.spending_mode.samples),
@@ -222,6 +226,7 @@ pub(crate) fn compose(inputs: &ForecastInputs) -> ForecastReading {
         projected_month_end_cents,
         annual,
         safe_to_spend,
+        savings_verdict,
         coverage,
         reserve,
         ceiling: CeilingReading {
@@ -650,6 +655,30 @@ mod tests {
             "com a faixa viva e o caixa folgado, quem limita o dia é a economia"
         );
         assert_eq!(reading.safe_to_spend.amount_cents, 30_000);
+        assert_eq!(
+            reading.savings_verdict,
+            forecast::BandVerdict::InBand,
+            "25% guardado está dentro da faixa 20–30%, e o veredito precisa refletir isso \
+             fora do sinal de savings_headroom_cents"
+        );
+    }
+
+    // O veredito publicado por `compose` é o MESMO que `band_verdict` calcula direto sobre a
+    // régua e a reserva — nenhuma segunda regra decide a faixa a partir do sinal da folga.
+    #[test]
+    fn savings_verdict_matches_band_verdict_over_the_same_ruler() {
+        let mut inputs = ForecastInputs::minimal(d("2026-06-15"));
+        inputs.horizon_end = d("2026-06-30");
+        inputs.annual.year_metrics = vec![month(2026, 6, 600_000, 60_000)]; // 10% — abaixo do piso.
+
+        let reading = compose(&inputs);
+
+        assert_eq!(
+            reading.savings_verdict,
+            forecast::band_verdict(&reading.annual.ruler, None),
+            "sem reserva mapeada nestes insumos, a leitura não pode inventar uma"
+        );
+        assert_eq!(reading.savings_verdict, forecast::BandVerdict::BelowBand);
     }
 
     // O Economizado% do ano é um campo só, truncado uma vez. Régua anual, gate do cartão e DTO

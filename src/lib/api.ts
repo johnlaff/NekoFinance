@@ -484,6 +484,15 @@ export interface Forecast {
    */
   savings_headroom_cents: number | null;
   binding_guardrail: "cash" | "savings";
+  /**
+   * O veredito da MESMA régua que a tela do ano julga, no mesmo estado — a tela do dia
+   * consome este campo em vez de reler o sinal de `savings_headroom_cents`.
+   */
+  savings_band_verdict: BandVerdict;
+  /** A faixa em vigor (piso e teto), publicada junto do veredito. */
+  savings_band: { floor_bps: number; ceiling_bps: number };
+  /** A régua fala do recorte vivido (e não do ano fechado) — mesmo `scope_lived` do ano. */
+  savings_band_scope_lived: boolean;
   deepest_deficit: DayPoint | null;
   daily: ForecastDay[];
   month_end: MonthEnd[];
