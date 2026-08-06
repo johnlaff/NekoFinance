@@ -204,6 +204,23 @@ pub struct SafeToSpend {
     pub binding: Guardrail,
 }
 
+/// Meses COMPLETOS do ano corrente para o guardrail de poupança: janeiro até o mês anterior a
+/// `today`, em ordem. Em janeiro essa janela cai vazia (nenhum mês do ano corrente terminou
+/// ainda) e o método recua para o último mês completo de verdade — dezembro do ano anterior —
+/// em vez de desligar o guardrail com um falso "sem restrição".
+///
+/// Única definição da janela: os consumidores (SQL ou motor) leem daqui, nunca recompõem os
+/// limites por conta própria.
+///
+/// Sem consumidor ainda (fatia "expand" — a migração das queries SQL fica para outra fatia).
+#[allow(dead_code)]
+pub fn guardrail_window(today: NaiveDate) -> Vec<(i32, u32)> {
+    if today.month() == 1 {
+        return vec![(today.year() - 1, 12)];
+    }
+    (1..today.month()).map(|m| (today.year(), m)).collect()
+}
+
 /// O "pode gastar hoje" fiel ao método: o mais apertado de duas réguas.
 ///
 /// 1. **Caixa** — `menor saldo projetado no horizonte`. É o Saldo da planilha e o termômetro:
@@ -1221,6 +1238,29 @@ mod tests {
         let events = [ev("2026-01-02", EventKind::FixedOut, 800000)];
         let f = project(500000, d("2026-01-01"), &events, d("2026-01-03"));
         assert_eq!(f.cash_floor_cents, 0);
+    }
+
+    // ---- Janela de meses completos do guardrail (#308) ----
+
+    // Meio de ano: janeiro até o mês anterior a `today`.
+    #[test]
+    fn guardrail_window_mid_year_is_january_through_previous_month() {
+        assert_eq!(
+            guardrail_window(d("2026-06-15")),
+            vec![(2026, 1), (2026, 2), (2026, 3), (2026, 4), (2026, 5)]
+        );
+    }
+
+    // Fevereiro: só janeiro sustenta a janela.
+    #[test]
+    fn guardrail_window_february_is_january_only() {
+        assert_eq!(guardrail_window(d("2026-02-10")), vec![(2026, 1)]);
+    }
+
+    // Janeiro: a janela do ano corrente está vazia, recua para dezembro do ano anterior.
+    #[test]
+    fn guardrail_window_january_falls_back_to_prior_december() {
+        assert_eq!(guardrail_window(d("2026-01-05")), vec![(2025, 12)]);
     }
 
     // ---- Guardrail duplo (poupança ANUAL 25% + caixa) ----
