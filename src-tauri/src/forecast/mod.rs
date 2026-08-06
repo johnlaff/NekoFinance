@@ -10,7 +10,7 @@ use chrono::{Datelike, NaiveDate};
 
 /// A dated cash-flow event in the projection. Amounts are always positive; the sign is implied by
 /// `kind`. `realized = false` marks a future projection (vs a realized transaction).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventKind {
     /// Entrada — income (salary, reimbursement, freela…).
     Income,
@@ -41,7 +41,7 @@ pub struct CashflowEvent {
 /// O Saldo (encadeamento de caixa) não tem máscara por definição — dinheiro que entrou e
 /// saiu de verdade sempre conta; por isso a máscara vive no stream de MÉTRICAS
 /// ([`MetricEvent`]) e nunca no de caixa.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RulerMask {
     pub performance: bool,
     pub cost_of_living: bool,

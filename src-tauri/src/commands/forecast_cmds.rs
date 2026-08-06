@@ -178,6 +178,10 @@ pub(crate) async fn guardrail_window_metrics(
 /// numerador do "Economizado" do método (Economia/Entradas), DISTINTO do net superávit de
 /// `realized_annual_savings` (que é o "colchão" do Neko). Existir os dois lado a lado sem se
 /// confundir foi um achado da review.
+///
+/// Atalho da suíte sobre `guardrail_window_metrics`: a leitura publica a mesma soma como campo do
+/// inventário, e é de lá que toda superfície a lê — o guardrail tem uma derivação só.
+#[cfg(test)]
 pub(crate) async fn realized_annual_economia(
     pool: &SqlitePool,
     today_naive: NaiveDate,
@@ -349,6 +353,10 @@ pub(crate) async fn projected_annual_savings(
 /// Mediana para ser robusta a um mês atípico. Itens ECONOMIA/INVESTIMENTO aninhados numa célula
 /// de Saída ficam FORA: são poupança, não custo — senão o piso de reserva, a cobertura de meses
 /// futuros e o `reserve_months` do dashboard inflam com dinheiro guardado.
+///
+/// Atalho da suíte sobre [`realized_monthly_baseline_detail`], que é o que a carga chama — a
+/// leitura precisa também de quantos meses sustentam a mediana.
+#[cfg(test)]
 pub(crate) async fn realized_monthly_baseline(
     pool: &SqlitePool,
     today_naive: NaiveDate,
@@ -1424,32 +1432,6 @@ pub(crate) async fn load_cashflow_events(
     finalize_card_events(pool, today_naive, today_naive, end_exclusive, raw_events).await
 }
 
-/// Eventos que alimentam projeções de caixa: lançamentos reais/futuros + Diário típico futuro do
-/// mês corrente. Usado por `forecast_dto` e `dashboard_summary` para manter o saldo projetado
-/// idêntico em todas as telas.
-pub(crate) async fn load_forecast_events(
-    pool: &SqlitePool,
-    today_naive: NaiveDate,
-    horizon_end: NaiveDate,
-) -> Result<Vec<CashflowEvent>, String> {
-    let mut events = load_cashflow_events(pool, today_naive, horizon_end).await?;
-    // Previsão de diário como DRIVER: injeta o teto/dia nos dias futuros do mês corrente, para o
-    // saldo projetado e a Performance não nascerem otimistas (assumem o gasto típico até o fim do mês).
-    let daily_ceiling = projection_daily_ceiling(pool, today_naive).await?;
-    let days_with_daily: std::collections::HashSet<NaiveDate> = events
-        .iter()
-        .filter(|e| e.kind == forecast::EventKind::Daily)
-        .map(|e| e.date)
-        .collect();
-    events.extend(forecast::project_daily_ceiling(
-        daily_ceiling,
-        today_naive,
-        horizon_end,
-        &days_with_daily,
-    ));
-    Ok(events)
-}
-
 /// Eventos JÁ REALIZADOS do mês corrente (`month_start..=today`), classificados como os futuros.
 /// O encadeamento de caixa não os usa (a semente já os embute), mas a performance do mês precisa
 /// deles — senão o mês corrente aparece pela metade. Só transações; os
@@ -1467,6 +1449,9 @@ pub(crate) async fn load_realized_month_events(
 
 /// Eventos para as MÉTRICAS por mês = futuros (encadeamento) + realizados do mês corrente.
 /// Cobre o mês inteiro de hoje (realizado + projetado); meses à frente já são todos futuros.
+///
+/// O Diário típico dos dias restantes NÃO entra aqui: injetar o teto/dia é regra, e mora na
+/// composição — que o refaz depois de qualquer transformação de cenário sobre os insumos.
 pub(crate) async fn load_metric_events(
     pool: &SqlitePool,
     today_naive: NaiveDate,
@@ -1482,21 +1467,6 @@ pub(crate) async fn load_metric_events(
         .succ_opt()
         .ok_or("data de hoje inválida para intervalo futuro de métricas")?;
     metric.extend(load_metric_db_events(pool, today_naive, future_start, end_exclusive).await?);
-    let daily_ceiling = projection_daily_ceiling(pool, today_naive).await?;
-    // Cobertura de dias do teto = fato COMPORTAMENTAL (o dia teve registro de Diário), sem máscara:
-    // um dia coberto por gasto excluído de alguma régua não recebe dupla projeção do teto.
-    let days_with_daily: std::collections::HashSet<NaiveDate> = metric
-        .iter()
-        .filter(|me| me.event.kind == forecast::EventKind::Daily)
-        .map(|me| me.event.date)
-        .collect();
-    // Teto projetado = evento SINTÉTICO → conta em todas as réguas (`RulerMask::ALL`).
-    metric.extend(forecast::lift_all(&forecast::project_daily_ceiling(
-        daily_ceiling,
-        today_naive,
-        horizon_end,
-        &days_with_daily,
-    )));
     Ok(metric)
 }
 
@@ -1510,7 +1480,7 @@ pub struct ForecastDayDto {
     pub balance_cents: i64,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct DayPointDto {
     pub date: String,
     pub balance_cents: i64,
@@ -4362,7 +4332,7 @@ mod tests {
         let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
         insert_credit(&p, "legacy-credit", 42_000, "2026-06-20").await;
 
-        let events = load_forecast_events(&p, today, NaiveDate::from_ymd_opt(2026, 6, 30).unwrap())
+        let events = load_cashflow_events(&p, today, NaiveDate::from_ymd_opt(2026, 6, 30).unwrap())
             .await
             .unwrap();
         assert_eq!(events.len(), 1);

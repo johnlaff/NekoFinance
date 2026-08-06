@@ -31,7 +31,7 @@ pub(crate) async fn load_inputs(
 
     let horizon_end = fc::forecast_horizon_end(pool, today).await?;
     let seed_cents = fc::projection_seed(pool, today).await?;
-    let cash_events = fc::load_forecast_events(pool, today, horizon_end).await?;
+    let cash_events = fc::load_cashflow_events(pool, today, horizon_end).await?;
     let metric_events = fc::load_metric_events(pool, today, horizon_end).await?;
 
     // Anos da anotação: do primeiro ano que alguma régua olha (a janela do guardrail desloca para
