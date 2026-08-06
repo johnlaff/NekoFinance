@@ -13,9 +13,9 @@ import {
   getAnnualMetrics,
   getAnnualRuler,
   getForecast,
-  isTauri,
   type MonthMetric,
 } from "../lib/api";
+import { isTauri } from "../lib/env";
 import { useCommand } from "../lib/useCommand";
 import { todayISO } from "../lib/format";
 import { MES, MES_ABBR } from "../lib/nkFormat";

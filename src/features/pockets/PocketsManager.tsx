@@ -3,10 +3,10 @@ import { Button } from "../../design-system/components/Button";
 import {
   createAccount,
   getPockets,
-  isTauri,
   type Pockets,
   type PocketType,
 } from "../../lib/api";
+import { isTauri } from "../../lib/env";
 import { parseBRLToCents } from "../../lib/format";
 import { safeErrorMessage } from "../../lib/errors";
 import { Money } from "../../design-system/components/Money";

@@ -20,9 +20,13 @@ const { acceptCardProposal, attachCardProposal, holder } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("../lib/api", async (importOriginal) => ({
+vi.mock("../lib/env", async (importOriginal) => ({
   ...(await importOriginal()),
   isTauri: true,
+}));
+
+vi.mock("../lib/api", async (importOriginal) => ({
+  ...(await importOriginal()),
   acceptCardProposal,
   attachCardProposal,
   getDashboardSummary: vi.fn().mockResolvedValue({

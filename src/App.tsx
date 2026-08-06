@@ -23,9 +23,9 @@ import {
   checkAuthStatus,
   getAppSetting,
   getForecast,
-  isTauri,
   type AuthStatus,
 } from "./lib/api";
+import { isTauri } from "./lib/env";
 import { useCommand } from "./lib/useCommand";
 import { fmtCompact } from "./lib/nkFormat";
 

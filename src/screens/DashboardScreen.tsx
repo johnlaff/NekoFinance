@@ -14,13 +14,13 @@ import {
   getDashboardSummary,
   getForecast,
   getUpcomingBills,
-  isTauri,
   listCards,
   type DashboardSummary,
   type Forecast,
   type UpcomingBill,
   type UpcomingInvoice,
 } from "../lib/api";
+import { isTauri } from "../lib/env";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { MES, monthOf, saldoBand } from "../lib/nkFormat";
 import { currentMonthMetric } from "./totaisStatus";

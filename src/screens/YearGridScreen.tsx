@@ -4,10 +4,10 @@ import {
   getForecast,
   getMonthGrid,
   getMonthTransactions,
-  isTauri,
   type MonthGridDay,
   type TransactionRow,
 } from "../lib/api";
+import { isTauri } from "../lib/env";
 import { useCommand } from "../lib/useCommand";
 import { useNekoApp } from "../shell/appContext";
 import { setCrumb } from "../shell/crumbStore";

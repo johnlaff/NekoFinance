@@ -27,9 +27,13 @@ const { holder } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("../lib/api", async (importOriginal) => ({
+vi.mock("../lib/env", async (importOriginal) => ({
   ...(await importOriginal()),
   isTauri: true,
+}));
+
+vi.mock("../lib/api", async (importOriginal) => ({
+  ...(await importOriginal()),
   getDashboardSummary: vi.fn().mockResolvedValue({
     card_gate_economy: "alive",
     card_gate_reserve: "alive",

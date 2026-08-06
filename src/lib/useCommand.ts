@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { isTauri } from "./api";
+import { isTauri } from "./env";
 import { safeErrorMessage } from "./errors";
 
 const cache = new Map<string, unknown>();

@@ -5,11 +5,11 @@ import {
   createTransaction,
   getLineItems,
   getPockets,
-  isTauri,
   updateTransaction,
   updateTransactionItems,
   type PocketAccount,
 } from "../lib/api";
+import { isTauri } from "../lib/env";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { formatBRL, parseBRLToCents, todayISO } from "../lib/format";
 import { safeErrorMessage } from "../lib/errors";

@@ -6,10 +6,10 @@ import {
   getDashboardSummary,
   getForecast,
   ownerTotalsForMonth,
-  isTauri,
   type MonthMetric,
   type OwnerTotal,
 } from "../lib/api";
+import { isTauri } from "../lib/env";
 import { useCommand } from "../lib/useCommand";
 import { MonthNav } from "../design-system/components/MonthNav";
 import { EmptyState } from "../design-system/components/EmptyState";
