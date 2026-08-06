@@ -21,30 +21,6 @@ import {
   CheckCircle2,
   Minus,
 } from "lucide-react";
-import {
-  createScenario,
-  deleteScenario,
-  listScenarios,
-  addScenarioTransaction,
-  createScenarioLoan,
-  updateScenarioLoan,
-  deleteScenarioLoan,
-  listScenarioLoans,
-  deleteScenarioTransaction,
-  listScenarioTransactions,
-  setScenarioOverride,
-  listObligations,
-  obligationItems,
-  listRecurrenceTargets,
-  recurrenceOccurrences,
-  priceInstallment,
-  type Scenario,
-  type ScenarioCompareDto,
-  type ScenarioLoanRow,
-  type ScenarioTransactionRow,
-  type Obligation,
-  type RecurrenceTarget,
-} from "../lib/api";
 import { useCommand, invalidateCommands } from "../lib/useCommand";
 import {
   todayISO,
@@ -64,11 +40,40 @@ import {
   type MovementType,
 } from "../lib/nkFormat";
 import {
+  addScenarioTransactionCmd,
+  createScenarioCmd,
+  createScenarioLoanCmd,
+  deleteScenarioCmd,
+  deleteScenarioLoanCmd,
+  deleteScenarioTransactionCmd,
+  fetchObligations,
+  fetchOverrideTargetPreview,
+  fetchPriceInstallment,
+  fetchRecurrenceTargets,
+  fetchScenarioLoans,
+  fetchScenarioTransactions,
+  fetchScenarios,
+  obligationsCacheKey,
+  overrideTargetCacheKey,
+  priceInstallmentCacheKey,
+  recurrenceTargetsCacheKey,
+  scenarioLoansCacheKey,
+  scenariosCacheKey,
+  scenarioTransactionsCacheKey,
   scenariosView,
+  setScenarioOverrideCmd,
+  updateScenarioLoanCmd,
   type DeltaVerdict,
   type LoanGateLeg,
   type MethodIcon,
+  type Obligation,
+  type OverrideTargetKind,
+  type RecurrenceTarget,
+  type Scenario,
+  type ScenarioCompareDto,
   type ScenarioKpi,
+  type ScenarioLoanRow,
+  type ScenarioTransactionRow,
   type ScenarioVerdict,
   type VerdictTier,
 } from "./scenariosView";
@@ -221,7 +226,7 @@ function ScenarioPicker({
   activeScenarioId: string | null;
   onSelectScenario: (id: string | null) => void;
 }) {
-  const listQ = useCommand("scenarios", listScenarios);
+  const listQ = useCommand(scenariosCacheKey(), fetchScenarios);
   const scenarios = listQ.data ?? [];
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -238,7 +243,7 @@ function ScenarioPicker({
     // o próximo render já reflete o cenário selecionado — só o caminho de erro precisa reabilitar
     // o botão (mesmo padrão de `ObligationsPanel.confirm`).
     try {
-      const created = await createScenario(trimmed);
+      const created = await createScenarioCmd(trimmed);
       invalidateCommands();
       setName("");
       setBusy(false);
@@ -251,7 +256,7 @@ function ScenarioPicker({
 
   async function remove(id: string) {
     try {
-      await deleteScenario(id);
+      await deleteScenarioCmd(id);
       invalidateCommands();
       setConfirmDeleteId(null);
       if (activeScenarioId === id) onSelectScenario(null);
@@ -436,7 +441,7 @@ function AddHypotheticalSection({ scenarioId }: { scenarioId: string }) {
     // `ObligationsPanel.confirm`: `setBusy(false)` roda em CADA ramo, não num finally.
     try {
       const { txnType, isFixed, paymentMethod } = kindToFields(kind);
-      await addScenarioTransaction({
+      await addScenarioTransactionCmd({
         scenarioId,
         txnType,
         amountCents: cents,
@@ -549,11 +554,11 @@ function HypotheticalList({
   editingLoanId,
   onEditLoan,
 }: HypotheticalListProps) {
-  const listQ = useCommand(`scenario_transactions:${scenarioId}`, () =>
-    listScenarioTransactions(scenarioId),
+  const listQ = useCommand(scenarioTransactionsCacheKey(scenarioId), () =>
+    fetchScenarioTransactions(scenarioId),
   );
-  const loansQ = useCommand(`scenario_loans:${scenarioId}`, () =>
-    listScenarioLoans(scenarioId),
+  const loansQ = useCommand(scenarioLoansCacheKey(scenarioId), () =>
+    fetchScenarioLoans(scenarioId),
   );
   const rows = listQ.data ?? [];
   const loans = loansQ.data ?? [];
@@ -562,7 +567,7 @@ function HypotheticalList({
   async function removeRow(txnId: string) {
     setError(null);
     try {
-      await deleteScenarioTransaction(scenarioId, txnId);
+      await deleteScenarioTransactionCmd(scenarioId, txnId);
       invalidateCommands();
     } catch (err) {
       // Refetch mesmo na falha (a lista volta a refletir o estado real) + erro visível —
@@ -577,7 +582,7 @@ function HypotheticalList({
   async function removeLoan(loanId: string): Promise<boolean> {
     setError(null);
     try {
-      await deleteScenarioLoan(scenarioId, loanId);
+      await deleteScenarioLoanCmd(scenarioId, loanId);
       invalidateCommands();
       return true;
     } catch (err) {
@@ -739,7 +744,6 @@ function ReplacementGroupItem({
 /** Alvo do override: uma obrigação (escopo line-item) OU uma recorrência nativa (série inteira).
  * O valor do `<select>` codifica o tipo (`obl:<id>` / `rec:<id>`) porque a prévia e o alvo do
  * backend divergem por tipo; os ids são UUID (sem `:`), então o split no primeiro `:` é seguro. */
-type OverrideTargetKind = "obligation" | "recurrence";
 function parseOverrideTarget(
   value: string,
 ): { kind: OverrideTargetKind; id: string } | null {
@@ -766,9 +770,9 @@ function recurrenceTargetLabel(r: RecurrenceTarget): string {
 }
 
 function OverrideSection({ scenarioId }: { scenarioId: string }) {
-  const obligationsQ = useCommand("obligations", listObligations);
+  const obligationsQ = useCommand(obligationsCacheKey(), fetchObligations);
   const obligations = obligationsQ.data ?? [];
-  const recurrencesQ = useCommand("recurrence_targets", listRecurrenceTargets);
+  const recurrencesQ = useCommand(recurrenceTargetsCacheKey(), fetchRecurrenceTargets);
   const recurrences = recurrencesQ.data ?? [];
   const [selected, setSelected] = useState("");
   const [action, setAction] = useState<"replace" | "suppress">("suppress");
@@ -780,17 +784,8 @@ function OverrideSection({ scenarioId }: { scenarioId: string }) {
   const target = parseOverrideTarget(selected);
   // Prévia unificada: obrigação → itens casados; recorrência → ocorrências reais. Ambos expõem
   // `{ date, amount_cents }`, então a contagem "afeta N a partir de {data}" é a mesma.
-  const previewQ = useCommand(
-    target ? `override_target:${selected}` : "override_target:none",
-    () => {
-      if (!target)
-        return Promise.resolve([] as { date: string; amount_cents: number }[]);
-      return target.kind === "obligation"
-        ? obligationItems(target.id).then((items) =>
-            items.map((it) => ({ date: it.date, amount_cents: it.amount_cents })),
-          )
-        : recurrenceOccurrences(target.id);
-    },
+  const previewQ = useCommand(overrideTargetCacheKey(target, selected), () =>
+    fetchOverrideTargetPreview(target),
   );
   // Mesmo piso do backend (`replacement_occurrence_dates`): a série/supressão só afeta a projeção
   // a partir do mês corrente, então a contagem exibida ignora ocorrências históricas (inertes)
@@ -809,7 +804,7 @@ function OverrideSection({ scenarioId }: { scenarioId: string }) {
     setBusy(true);
     setError(null);
     try {
-      await setScenarioOverride({
+      await setScenarioOverrideCmd({
         scenarioId,
         op: action,
         fromDate,
@@ -1244,13 +1239,9 @@ function LoanSection({ scenarioId, editing, onCancelEdit, onSaved }: LoanSection
   const numericInputsValid = principalValid && termValid && rateValid;
   const validInputs = numericInputsValid && disbursementDateValid && firstDateValid;
 
-  const previewKey = numericInputsValid
-    ? `price_installment:${principalCents}:${rateBps}:${term}`
-    : "price_installment:none";
-  const previewQ = useCommand(previewKey, () =>
-    numericInputsValid
-      ? priceInstallment(principalCents, rateBps, term)
-      : Promise.resolve(0),
+  const previewQ = useCommand(
+    priceInstallmentCacheKey(numericInputsValid, principalCents, rateBps, term),
+    () => fetchPriceInstallment(numericInputsValid, principalCents, rateBps, term),
   );
   const installmentCents = previewQ.data ?? 0;
   const totalPaidCents = installmentCents * term;
@@ -1284,11 +1275,11 @@ function LoanSection({ scenarioId, editing, onCancelEdit, onSaved }: LoanSection
     };
     try {
       if (editing) {
-        await updateScenarioLoan(editing.loan.id, input);
+        await updateScenarioLoanCmd(editing.loan.id, input);
         invalidateCommands();
         onSaved({ kind: "updated", loanId: editing.loan.id });
       } else {
-        const loanId = await createScenarioLoan(input);
+        const loanId = await createScenarioLoanCmd(input);
         invalidateCommands();
         setPrincipal("");
         onSaved({ kind: "created", loanId });

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Pencil, Trash2 } from "lucide-react";
-import type { ScenarioLoanRow, ScenarioTransactionRow } from "../lib/api";
+import type { ScenarioLoanRow, ScenarioTransactionRow } from "./scenariosView";
 import { motionEnabled } from "../lib/motion";
 import { stripScenarioMarker } from "../lib/scenarioHelpers";
 import { Button } from "../design-system/components/Button";

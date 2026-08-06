@@ -9,7 +9,7 @@ import {
   CHART_LABEL_MIN_GAP,
 } from "../lib/scenarioHelpers";
 import { FORECAST, mockCommands, mockInvoke } from "../test/commands";
-import type { ScenarioCompareDto } from "../lib/api";
+import type { ScenarioCompareDto } from "./scenariosView";
 import { fmtBRL, fmtCompactBRL, saldoBand } from "../lib/nkFormat";
 import { performanceStatus, custoVidaStatus } from "./totaisView";
 import { LoanGroupItem } from "./LoanGroupItem";

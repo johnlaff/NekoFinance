@@ -1,4 +1,30 @@
-import type { LoanBreakdown, ScenarioCompareDto } from "../lib/api";
+import {
+  addScenarioTransaction,
+  createScenario,
+  createScenarioLoan,
+  deleteScenario,
+  deleteScenarioLoan,
+  deleteScenarioTransaction,
+  listObligations,
+  listRecurrenceTargets,
+  listScenarioLoans,
+  listScenarioTransactions,
+  listScenarios,
+  obligationItems,
+  priceInstallment,
+  recurrenceOccurrences,
+  setScenarioOverride,
+  updateScenarioLoan,
+  type LoanBreakdown,
+  type Obligation,
+  type RecurrenceTarget,
+  type ReplacementInput,
+  type Scenario,
+  type ScenarioCompareDto,
+  type ScenarioLoanInput,
+  type ScenarioLoanRow,
+  type ScenarioTransactionRow,
+} from "../lib/api";
 import { fmtBRL, fmtCompactBRL, MES, monthOf, saldoBand } from "../lib/nkFormat";
 import { custoVidaStatus, performanceStatus } from "./totaisView";
 
@@ -6,7 +32,23 @@ import { custoVidaStatus, performanceStatus } from "./totaisView";
 // (`get_scenario_forecast`) e produz os cinco cards de KPI já DECIDIDOS: rótulo, copy didática,
 // os dois valores, o delta, o sentido do delta e o estado de método de cada lado — e o gate de
 // financiamento (reserva após financiar, economia após parcela) já resolvido em estado + textos
-// formatados. Nenhuma fronteira mora na tela — o que a tela faz é pintar o que chega daqui.
+// formatados. Nenhuma fronteira mora na tela — o que a tela faz é pintar o que chega daqui. É
+// também a porta INTEIRA do shim para `scenarios.tsx`/`LoanGroupItem.tsx` (ADR-0007): leitura
+// (fetcher + chave de cache) e escrita (um wrapper por comando) de todo o domínio "e se".
+
+// Tipos do shim reexportados pela view — nenhum outro arquivo sob `src/` importa `lib/api` para
+// a superfície de Cenários; quem precisa do formato do DTO lê daqui.
+export type {
+  LoanBreakdown,
+  Obligation,
+  RecurrenceTarget,
+  ReplacementInput,
+  Scenario,
+  ScenarioCompareDto,
+  ScenarioLoanInput,
+  ScenarioLoanRow,
+  ScenarioTransactionRow,
+};
 
 // ------------------------------------------------------------------- tipos --
 
@@ -528,4 +570,160 @@ export function scenariosView(compare: ScenarioCompareDto): ScenariosView {
       },
     ],
   };
+}
+
+// ---------------------------------------------------------------------------
+// Leitura — chave de cache do `useCommand` + fetcher por superfície de dado. A tela nunca monta
+// a string da chave por conta própria nem chama o shim direto (ADR-0007).
+// ---------------------------------------------------------------------------
+
+export function scenariosCacheKey(): string {
+  return "scenarios";
+}
+
+export function fetchScenarios(): Promise<Scenario[]> {
+  return listScenarios();
+}
+
+export function scenarioTransactionsCacheKey(scenarioId: string): string {
+  return `scenario_transactions:${scenarioId}`;
+}
+
+export function fetchScenarioTransactions(
+  scenarioId: string,
+): Promise<ScenarioTransactionRow[]> {
+  return listScenarioTransactions(scenarioId);
+}
+
+export function scenarioLoansCacheKey(scenarioId: string): string {
+  return `scenario_loans:${scenarioId}`;
+}
+
+export function fetchScenarioLoans(scenarioId: string): Promise<ScenarioLoanRow[]> {
+  return listScenarioLoans(scenarioId);
+}
+
+export function obligationsCacheKey(): string {
+  return "obligations";
+}
+
+export function fetchObligations(): Promise<Obligation[]> {
+  return listObligations();
+}
+
+export function recurrenceTargetsCacheKey(): string {
+  return "recurrence_targets";
+}
+
+export function fetchRecurrenceTargets(): Promise<RecurrenceTarget[]> {
+  return listRecurrenceTargets();
+}
+
+/** Alvo do override de simulação: uma obrigação (escopo line-item) ou uma recorrência nativa
+ *  (série inteira) — a tela codifica a escolha do `<select>` nesse par antes de perguntar aqui. */
+export type OverrideTargetKind = "obligation" | "recurrence";
+
+export function overrideTargetCacheKey(
+  target: { kind: OverrideTargetKind; id: string } | null,
+  selected: string,
+): string {
+  return target ? `override_target:${selected}` : "override_target:none";
+}
+
+/** Prévia unificada do alvo do override: obrigação → itens casados; recorrência → ocorrências
+ *  reais. Ambos expõem `{ date, amount_cents }`, então a contagem "afeta N a partir de {data}"
+ *  do formulário é a mesma nos dois casos. */
+export function fetchOverrideTargetPreview(
+  target: { kind: OverrideTargetKind; id: string } | null,
+): Promise<{ date: string; amount_cents: number }[]> {
+  if (!target) return Promise.resolve([]);
+  return target.kind === "obligation"
+    ? obligationItems(target.id).then((items) =>
+        items.map((it) => ({ date: it.date, amount_cents: it.amount_cents })),
+      )
+    : recurrenceOccurrences(target.id);
+}
+
+export function priceInstallmentCacheKey(
+  valid: boolean,
+  principalCents: number,
+  rateBps: number,
+  termMonths: number,
+): string {
+  return valid
+    ? `price_installment:${principalCents}:${rateBps}:${termMonths}`
+    : "price_installment:none";
+}
+
+export function fetchPriceInstallment(
+  valid: boolean,
+  principalCents: number,
+  rateBps: number,
+  termMonths: number,
+): Promise<number> {
+  return valid
+    ? priceInstallment(principalCents, rateBps, termMonths)
+    : Promise.resolve(0);
+}
+
+// ---------------------------------------------------------------------------
+// Escrita — um wrapper por comando do domínio "e se". A tela dispara o comando e chama
+// `invalidateCommands()` (infra genérica de `lib/useCommand`, fora do funil): a view não
+// invalida por si — só sabe traduzir a intenção do usuário para a chamada certa do shim.
+// ---------------------------------------------------------------------------
+
+export function createScenarioCmd(name: string): Promise<Scenario> {
+  return createScenario(name);
+}
+
+export function deleteScenarioCmd(id: string): Promise<void> {
+  return deleteScenario(id);
+}
+
+export function addScenarioTransactionCmd(input: {
+  scenarioId: string;
+  txnType: "income" | "expense" | "transfer";
+  amountCents: number;
+  description: string;
+  date: string;
+  paymentMethod?: string | null;
+  isFixed?: boolean;
+}): Promise<string> {
+  return addScenarioTransaction(input);
+}
+
+export function deleteScenarioTransactionCmd(
+  scenarioId: string,
+  txnId: string,
+): Promise<void> {
+  return deleteScenarioTransaction(scenarioId, txnId);
+}
+
+export function createScenarioLoanCmd(input: ScenarioLoanInput): Promise<string> {
+  return createScenarioLoan(input);
+}
+
+export function updateScenarioLoanCmd(
+  loanId: string,
+  input: ScenarioLoanInput,
+): Promise<void> {
+  return updateScenarioLoan(loanId, input);
+}
+
+export function deleteScenarioLoanCmd(
+  scenarioId: string,
+  loanId: string,
+): Promise<void> {
+  return deleteScenarioLoan(scenarioId, loanId);
+}
+
+export function setScenarioOverrideCmd(input: {
+  scenarioId: string;
+  op: "suppress" | "replace";
+  fromDate: string;
+  obligationId?: string | null;
+  recurrenceId?: string | null;
+  replacement?: ReplacementInput | null;
+}): Promise<string> {
+  return setScenarioOverride(input);
 }
