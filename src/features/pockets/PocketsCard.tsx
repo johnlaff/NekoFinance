@@ -1,4 +1,4 @@
-import { getPockets } from "../../lib/api";
+import { fetchPockets } from "./pocketsView";
 import { Money } from "../../design-system/components/Money";
 import { useCommand } from "../../lib/useCommand";
 
@@ -12,7 +12,7 @@ const GROUPS = [
 /** Bolsos por liquidez + patrimônio total. Vive dentro do card Bolsos de
  *  Configurações — a seção é dona do título e do chrome; aqui só o corpo. */
 export function PocketsCard() {
-  const pocketsQ = useCommand("get_pockets", getPockets);
+  const pocketsQ = useCommand("get_pockets", fetchPockets);
   const pockets = pocketsQ.data ?? null;
 
   return (

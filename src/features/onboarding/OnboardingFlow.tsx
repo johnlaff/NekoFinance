@@ -2,10 +2,8 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { ArrowLeft, ArrowRight, Check, Sparkles } from "lucide-react";
 import { Button } from "../../design-system/components/Button";
 import { MovBadge, type MovKind } from "../../design-system/components/MovBadge";
-import { setAppSetting } from "../../lib/api";
+import { markOnboardingDone } from "./onboardingView";
 import { NewTransactionForm } from "../../screens/NewTransactionForm";
-
-export const ONBOARDING_KEY = "onboarding_done";
 
 const TYPES: { kind: MovKind; desc: string }[] = [
   { kind: "entrada", desc: "o que entra (salário, renda)" },
@@ -277,7 +275,7 @@ export function OnboardingFlow({
   async function finish() {
     setSaving(true);
     try {
-      await setAppSetting(ONBOARDING_KEY, "true");
+      await markOnboardingDone();
     } catch {
       // Mesmo se a gravação falhar, não prendemos o usuário no onboarding.
     }
@@ -295,7 +293,7 @@ export function OnboardingFlow({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.stopPropagation();
-        void setAppSetting(ONBOARDING_KEY, "true").catch(() => undefined);
+        void markOnboardingDone().catch(() => undefined);
         onDoneRef.current();
         return;
       }
