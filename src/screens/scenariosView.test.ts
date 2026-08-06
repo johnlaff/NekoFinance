@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { ScenarioCompareDto } from "../lib/api";
+import { fmtBRL, fmtCompactBRL } from "../lib/nkFormat";
 import {
   custoVidaState,
+  DELTA_MATERIALITY_CENTS,
+  deltaVerdict,
   EMPTY_SCENARIO_STATE,
   loanGateView,
   performanceState,
@@ -11,6 +14,7 @@ import {
   savingsAfterState,
   scenarioDeepestPoint,
   scenariosView,
+  scenarioVerdict,
 } from "./scenariosView";
 
 describe("saldoState — Termômetro canônico, limiares absolutos", () => {
@@ -181,6 +185,116 @@ describe("scenarioDeepestPoint — menor saldo do cenário, fonte única", () =>
 
   it("sem projeção nenhuma retorna null", () => {
     expect(scenarioDeepestPoint(EMPTY_COMPARE)).toBeNull();
+  });
+});
+
+describe("deltaVerdict — materialidade dos dois lados do limiar, nos dois sentidos", () => {
+  it("higher-better: R$1,00 exato ainda é ruído; 1 centavo a mais já é material", () => {
+    expect(deltaVerdict(DELTA_MATERIALITY_CENTS, "higher-better")).toMatchObject({
+      material: false,
+    });
+    expect(deltaVerdict(DELTA_MATERIALITY_CENTS + 1, "higher-better")).toMatchObject({
+      material: true,
+      better: true,
+    });
+  });
+
+  it("higher-better: o mesmo limiar vale para o lado negativo", () => {
+    expect(deltaVerdict(-DELTA_MATERIALITY_CENTS, "higher-better")).toMatchObject({
+      material: false,
+    });
+    expect(deltaVerdict(-DELTA_MATERIALITY_CENTS - 1, "higher-better")).toMatchObject({
+      material: true,
+      better: false,
+    });
+  });
+
+  it("lower-better: o sentido de melhora/piora inverte, a materialidade não", () => {
+    expect(deltaVerdict(DELTA_MATERIALITY_CENTS, "lower-better")).toMatchObject({
+      material: false,
+    });
+    expect(deltaVerdict(DELTA_MATERIALITY_CENTS + 1, "lower-better")).toMatchObject({
+      material: true,
+      better: false,
+    });
+    expect(deltaVerdict(-DELTA_MATERIALITY_CENTS - 1, "lower-better")).toMatchObject({
+      material: true,
+      better: true,
+    });
+  });
+
+  it("zero nunca é material, em nenhum sentido", () => {
+    expect(deltaVerdict(0, "higher-better").material).toBe(false);
+    expect(deltaVerdict(0, "lower-better").material).toBe(false);
+  });
+});
+
+describe("scenarioVerdict — banner, fronteiras EXATAS do Termômetro canônico", () => {
+  it("sem projeção nenhuma: ok, sem inventar menor saldo", () => {
+    expect(scenarioVerdict(EMPTY_COMPARE)).toEqual({
+      tier: "ok",
+      headline: "Este cenário se mantém no azul o ano todo.",
+      subline: "Sem pontos de projeção no horizonte para apontar um menor saldo.",
+    });
+  });
+
+  it("−1 centavo (banda 'negative') já é risco; 0 exato já é 'tight'", () => {
+    const risk = scenarioVerdict(
+      compareWith({
+        scenario_month_end: [{ year: 2026, month: 7, balance_cents: -1 }],
+      }),
+    );
+    expect(risk.tier).toBe("risk");
+    expect(risk.headline).toBe(`Fura o caixa em julho — faltam ${fmtCompactBRL(1)}.`);
+
+    const tight = scenarioVerdict(
+      compareWith({ scenario_month_end: [{ year: 2026, month: 7, balance_cents: 0 }] }),
+    );
+    expect(tight.tier).toBe("tight");
+  });
+
+  it("R$1.000 exato (fronteira superior INCLUSIVA de 'tight') ainda é aperto; 1 centavo a mais já é ok", () => {
+    const tight = scenarioVerdict(
+      compareWith({
+        scenario_month_end: [{ year: 2026, month: 8, balance_cents: 100_000 }],
+      }),
+    );
+    expect(tight.tier).toBe("tight");
+    expect(tight.headline).toBe(
+      `Fica apertado em agosto — menor saldo ${fmtCompactBRL(100_000)}.`,
+    );
+
+    const ok = scenarioVerdict(
+      compareWith({
+        scenario_month_end: [{ year: 2026, month: 8, balance_cents: 100_001 }],
+      }),
+    );
+    expect(ok.tier).toBe("ok");
+    expect(ok.subline).toBe(`Menor saldo no período: ${fmtBRL(100_001)} — OK.`);
+  });
+
+  it("banda crítica ainda cai em 'risk' (mesmo predicado de duas bandas ruins)", () => {
+    const risk = scenarioVerdict(
+      compareWith({
+        scenario_month_end: [{ year: 2026, month: 6, balance_cents: -50_001 }],
+      }),
+    );
+    expect(risk.tier).toBe("risk");
+  });
+
+  it("a fronteira interna negative/critical (−R$500) não muda o tier: ambos os lados são 'risk'", () => {
+    const negative = scenarioVerdict(
+      compareWith({
+        scenario_month_end: [{ year: 2026, month: 6, balance_cents: -50_000 }],
+      }),
+    );
+    const critical = scenarioVerdict(
+      compareWith({
+        scenario_month_end: [{ year: 2026, month: 6, balance_cents: -50_001 }],
+      }),
+    );
+    expect(negative.tier).toBe("risk");
+    expect(critical.tier).toBe("risk");
   });
 });
 

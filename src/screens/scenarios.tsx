@@ -58,7 +58,6 @@ import {
   fmtBRL,
   fmtCompactBRL,
   fmtSigned,
-  saldoBand,
   MES,
   MES_ABBR,
   TYPE_META,
@@ -66,11 +65,12 @@ import {
 } from "../lib/nkFormat";
 import {
   scenariosView,
-  scenarioDeepestPoint,
-  type DeltaSense,
+  type DeltaVerdict,
   type LoanGateLeg,
   type MethodIcon,
   type ScenarioKpi,
+  type ScenarioVerdict,
+  type VerdictTier,
 } from "./scenariosView";
 import { kindToFields } from "../lib/movement";
 import { motionEnabled } from "../lib/motion";
@@ -1428,24 +1428,16 @@ function SavingsRateBadge({ gate }: { gate: LoanGateLeg }) {
   );
 }
 
-/** Abaixo de R$1 de diferença é ruído de arredondamento, não um resultado — um card mostrando
- * "−R$ 0,09" em vermelho alarma por nada. Este limiar é sobre MATERIALIDADE (existe mudança
- * que importa?), então usa o valor absoluto em centavos direto, sem depender do sentido
- * (`sense`) — que só decide se um delta material é bom ou ruim, não se ele é relevante. */
-const DELTA_MATERIALITY_CENTS = 100;
-
-function deltaChip(deltaCents: number, sense: DeltaSense) {
-  if (Math.abs(deltaCents) <= DELTA_MATERIALITY_CENTS) {
+/** Chip de delta: puramente apresentacional — a materialidade (ruído de arredondamento) e o
+ * sentido melhora/piora chegam decididos de `deltaVerdict` (scenariosView.ts). */
+function deltaChip(deltaCents: number, delta: DeltaVerdict) {
+  if (!delta.material) {
     return <span className="scn-kpi__delta scn-kpi__delta--quiet">≈ Sem mudança</span>;
   }
-  // O glifo/ícone vem de better/worse (o que o `sense` deste KPI considera bom), NUNCA do
-  // sinal cru do delta — o mesmo ▲ não pode significar "melhorou" num card e "piorou" noutro
-  // só porque a métrica é "menor é melhor" (custo de vida). Cor+ícone+sinal sempre concordam.
-  const better = sense === "higher-better" ? deltaCents > 0 : deltaCents < 0;
-  const cls = better
+  const cls = delta.better
     ? "scn-kpi__delta scn-kpi__delta--better"
     : "scn-kpi__delta scn-kpi__delta--worse";
-  const Icon = better ? TrendingUp : TrendingDown;
+  const Icon = delta.better ? TrendingUp : TrendingDown;
   return (
     <span className={cls}>
       <Icon size={12} strokeWidth={1.75} aria-hidden="true" />
@@ -1462,7 +1454,7 @@ function KpiCard({
   realCents,
   scenarioCents,
   deltaCents,
-  sense,
+  delta,
   realState,
   scenarioState,
   emptyScenario,
@@ -1534,7 +1526,7 @@ function KpiCard({
         <ArrowRight size={12} strokeWidth={2} className="scn-kpi__arrow" />
         {emptyScenario ? "—" : <Money cents={scenarioCents} size="inherit" />}
       </div>
-      {!emptyScenario && deltaChip(deltaCents, sense)}
+      {!emptyScenario && deltaChip(deltaCents, delta)}
     </article>
   );
 }
@@ -1543,57 +1535,6 @@ function KpiCard({
 function changeLabel(desc: string): string {
   const clean = stripScenarioMarker(desc) || "Sem descrição";
   return clean.length > 60 ? `${clean.slice(0, 57)}…` : clean;
-}
-
-type VerdictTier = "risk" | "tight" | "ok";
-
-interface ScenarioVerdict {
-  tier: VerdictTier;
-  headline: string;
-  subline: string;
-}
-
-/** Veredito (Nível 1): a resposta a "é seguro?" de relance, ANTES da grade de
- * KPIs — determinístico a partir do menor saldo do CENÁRIO (`scenarioDeepestPoint`, o mesmo dado
- * que alimenta o card "Buraco do futuro" e o gráfico — nunca um número novo). O TOM vem do MESMO
- * predicado do card (`saldoBand`, o Termômetro canônico), em três níveis: banda negativa/crítica
- * → risco (vermelho); banda apertada → intermediário honesto (âmbar) — sem isto o banner diria
- * "no azul o ano todo" enquanto o card logo abaixo mostra "Apertado" em âmbar sobre o MESMO
- * número; banda ok/folga → azul (verde). Tom GPS-não-ameaça: cada ramo ruim sugere uma ação,
- * não um alarme. Sem NENHUM ponto de projeção: nível ok com a subline dizendo isso, em vez de
- * inventar um menor saldo. */
-function scenarioVerdict(compare: ScenarioCompareDto): ScenarioVerdict {
-  const point = scenarioDeepestPoint(compare);
-  if (point == null) {
-    return {
-      tier: "ok",
-      headline: "Este cenário se mantém no azul o ano todo.",
-      subline: "Sem pontos de projeção no horizonte para apontar um menor saldo.",
-    };
-  }
-  const { minCents, monthIdx } = point;
-  const band = saldoBand(minCents);
-  const monthLabel = (MES[monthIdx] ?? "").toLowerCase();
-  if (band.key === "negative" || band.key === "critical") {
-    return {
-      tier: "risk",
-      headline: `Fura o caixa em ${monthLabel} — faltam ${fmtCompactBRL(Math.abs(minCents))}.`,
-      subline:
-        "Antecipe uma entrada, reduza uma parcela ou cubra com um empréstimo antes desse mês.",
-    };
-  }
-  if (band.key === "tight") {
-    return {
-      tier: "tight",
-      headline: `Fica apertado em ${monthLabel} — menor saldo ${fmtCompactBRL(minCents)}.`,
-      subline: "Segure gastos grandes perto dessa data ou reforce o colchão antes.",
-    };
-  }
-  return {
-    tier: "ok",
-    headline: "Este cenário se mantém no azul o ano todo.",
-    subline: `Menor saldo no período: ${fmtBRL(minCents)} — ${band.label}.`,
-  };
 }
 
 /** Escala pequena do veredito-primeiro: a palavra de estado vem no `HealthBadge`, e a
@@ -1606,8 +1547,9 @@ const VERDICT_STATE: Record<VerdictTier, { level: HealthLevel; label: string }> 
   risk: { level: "risk", label: "Buraco" },
 };
 
-function ScenarioVerdictBanner({ compare }: { compare: ScenarioCompareDto }) {
-  const verdict = scenarioVerdict(compare);
+/** Puramente apresentacional — a manchete, o subtítulo e a faixa (tier) já chegam decididos
+ * de `scenarioVerdict` (scenariosView.ts). */
+function ScenarioVerdictBanner({ verdict }: { verdict: ScenarioVerdict }) {
   const state = VERDICT_STATE[verdict.tier];
   return (
     <div className="scn-verdict">
@@ -1629,7 +1571,7 @@ export function ScenarioCompare({
    *  Horizonte normal era reabrir o sheet e des-clicar o cenário (ou trocar de tela). */
   onClose?: () => void;
 }) {
-  const { kpis, endDeltaCents, loanGate } = scenariosView(compare);
+  const { kpis, endDeltaCents, verdict, loanGate } = scenariosView(compare);
 
   return (
     <section className="card" aria-label="Comparação real × cenário">
@@ -1660,7 +1602,7 @@ export function ScenarioCompare({
         className="card__body"
         style={{ display: "flex", flexDirection: "column", gap: 20 }}
       >
-        <ScenarioVerdictBanner compare={compare} />
+        <ScenarioVerdictBanner verdict={verdict} />
 
         {/* A ordem dos cards e cada veredito chegam decididos da view. */}
         <div className="scn-kpis">

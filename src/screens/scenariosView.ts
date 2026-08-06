@@ -1,5 +1,5 @@
 import type { LoanBreakdown, ScenarioCompareDto } from "../lib/api";
-import { fmtBRL, fmtCompactBRL, monthOf, saldoBand } from "../lib/nkFormat";
+import { fmtBRL, fmtCompactBRL, MES, monthOf, saldoBand } from "../lib/nkFormat";
 import { custoVidaStatus, performanceStatus } from "./totaisStatus";
 
 // View-model puro da superfície de comparação real × cenário. Consome o DTO do motor
@@ -34,6 +34,15 @@ export interface MethodTerm {
   body: string;
 }
 
+/** Delta já julgado: `material` decide se o chip mostra "≈ Sem mudança" (ruído de arredondamento)
+ * ou o valor com sinal; `better` decide a cor/ícone quando material — nunca o sinal cru do
+ * delta, que sozinho não sabe se uma métrica é "maior é melhor" ou "menor é melhor". Sem
+ * significado quando `material` é `false`. */
+export interface DeltaVerdict {
+  material: boolean;
+  better: boolean;
+}
+
 export interface ScenarioKpi {
   label: string;
   term: MethodTerm;
@@ -41,11 +50,20 @@ export interface ScenarioKpi {
   scenarioCents: number;
   deltaCents: number;
   sense: DeltaSense;
+  delta: DeltaVerdict;
   realState: MethodState;
   scenarioState: MethodState;
   /** Cenário sem NENHUM ponto de projeção: `scenarioCents`/`deltaCents` são ruído e a tela
    * rende um vazio neutro em vez de fingir um valor. */
   emptyScenario: boolean;
+}
+
+export type VerdictTier = "risk" | "tight" | "ok";
+
+export interface ScenarioVerdict {
+  tier: VerdictTier;
+  headline: string;
+  subline: string;
 }
 
 export interface ScenariosView {
@@ -55,6 +73,9 @@ export interface ScenariosView {
   /** Delta do saldo no fim do horizonte — muda a cada recomputo, então é ele que a região
    *  live da tela anuncia. */
   endDeltaCents: number;
+  /** Resposta a "é seguro?" de relance, ANTES da grade de KPIs — já traduzida em manchete e
+   *  subtítulo pela mesma fonte (`scenarioDeepestPoint`) que alimenta o card "Buraco do futuro". */
+  verdict: ScenarioVerdict;
   /** Gate de financiamento (reserva pós-financiamento + economia após parcela), `null` sem
    *  empréstimo simulado — o componente só decide SE renderiza a linha, nunca a cor/rótulo. */
   loanGate: LoanGateView | null;
@@ -304,6 +325,68 @@ export function loanGateView(loan: LoanBreakdown | null): LoanGateView {
   return { reserve, savings };
 }
 
+// --------------------------------------------------------- delta & veredito --
+
+/** Abaixo de R$1 de diferença é ruído de arredondamento, não um resultado — um card mostrando
+ * "−R$ 0,09" em vermelho alarma por nada. Este limiar é sobre MATERIALIDADE (existe mudança
+ * que importa?), então usa o valor absoluto em centavos direto, sem depender do sentido
+ * (`sense`) — que só decide se um delta material é bom ou ruim, não se ele é relevante. */
+export const DELTA_MATERIALITY_CENTS = 100;
+
+/** Julga um delta em materialidade + sentido de melhora/piora. `better` só tem significado
+ * quando `material` é `true`. */
+export function deltaVerdict(deltaCents: number, sense: DeltaSense): DeltaVerdict {
+  return {
+    material: Math.abs(deltaCents) > DELTA_MATERIALITY_CENTS,
+    // O sentido de melhora/piora vem do QUE o KPI considera bom (`sense`), NUNCA do sinal cru
+    // do delta — o mesmo delta positivo é melhora num "maior é melhor" e piora num "menor é
+    // melhor" (custo de vida).
+    better: sense === "higher-better" ? deltaCents > 0 : deltaCents < 0,
+  };
+}
+
+/** Veredito (Nível 1): a resposta a "é seguro?" de relance, ANTES da grade de KPIs —
+ * determinístico a partir do menor saldo do CENÁRIO (`scenarioDeepestPoint`, o mesmo dado que
+ * alimenta o card "Buraco do futuro"). O TOM vem do MESMO predicado do card (`saldoBand`, o
+ * Termômetro canônico), em três níveis: banda negativa/crítica → risco; banda apertada →
+ * intermediário honesto — sem isto o banner diria "no azul o ano todo" enquanto o card logo
+ * abaixo mostra "Apertado" sobre o MESMO número; banda ok/folga → tranquilo. Tom
+ * GPS-não-ameaça: cada ramo ruim sugere uma ação, não um alarme. Sem NENHUM ponto de projeção:
+ * nível ok com a subline dizendo isso, em vez de inventar um menor saldo. */
+export function scenarioVerdict(compare: ScenarioCompareDto): ScenarioVerdict {
+  const point = scenarioDeepestPoint(compare);
+  if (point == null) {
+    return {
+      tier: "ok",
+      headline: "Este cenário se mantém no azul o ano todo.",
+      subline: "Sem pontos de projeção no horizonte para apontar um menor saldo.",
+    };
+  }
+  const { minCents, monthIdx } = point;
+  const band = saldoBand(minCents);
+  const monthLabel = (MES[monthIdx] ?? "").toLowerCase();
+  if (band.key === "negative" || band.key === "critical") {
+    return {
+      tier: "risk",
+      headline: `Fura o caixa em ${monthLabel} — faltam ${fmtCompactBRL(Math.abs(minCents))}.`,
+      subline:
+        "Antecipe uma entrada, reduza uma parcela ou cubra com um empréstimo antes desse mês.",
+    };
+  }
+  if (band.key === "tight") {
+    return {
+      tier: "tight",
+      headline: `Fica apertado em ${monthLabel} — menor saldo ${fmtCompactBRL(minCents)}.`,
+      subline: "Segure gastos grandes perto dessa data ou reforce o colchão antes.",
+    };
+  }
+  return {
+    tier: "ok",
+    headline: "Este cenário se mantém no azul o ano todo.",
+    subline: `Menor saldo no período: ${fmtBRL(minCents)} — ${band.label}.`,
+  };
+}
+
 // ------------------------------------------------------------- construção --
 
 /** Menor saldo do CENÁRIO + mês (0–11) na melhor resolução disponível: `deepest_deficit`
@@ -351,6 +434,7 @@ export function scenariosView(compare: ScenarioCompareDto): ScenariosView {
 
   return {
     endDeltaCents,
+    verdict: scenarioVerdict(compare),
     loanGate: loanGateView(compare.loan),
     kpis: [
       {
@@ -363,6 +447,7 @@ export function scenariosView(compare: ScenarioCompareDto): ScenariosView {
         scenarioCents: scenarioDeficit,
         deltaCents: deficitDelta,
         sense: "higher-better",
+        delta: deltaVerdict(deficitDelta, "higher-better"),
         realState: saldoState(realDeficit),
         scenarioState: noScenarioProjection
           ? EMPTY_SCENARIO_STATE
@@ -379,6 +464,7 @@ export function scenariosView(compare: ScenarioCompareDto): ScenariosView {
         scenarioCents: endScenarioCents,
         deltaCents: endDeltaCents,
         sense: "higher-better",
+        delta: deltaVerdict(endDeltaCents, "higher-better"),
         realState: saldoState(endRealCents),
         scenarioState: saldoState(endScenarioCents),
         emptyScenario: false,
@@ -393,6 +479,7 @@ export function scenariosView(compare: ScenarioCompareDto): ScenariosView {
         scenarioCents: compare.scenario_safe_to_spend_today_cents,
         deltaCents: compare.safe_to_spend_delta_cents,
         sense: "higher-better",
+        delta: deltaVerdict(compare.safe_to_spend_delta_cents, "higher-better"),
         realState: podeGastarState(
           compare.real_safe_to_spend_today_cents,
           compare.real_binding_guardrail,
@@ -413,6 +500,7 @@ export function scenariosView(compare: ScenarioCompareDto): ScenariosView {
         scenarioCents: compare.scenario_performance_cents,
         deltaCents: compare.performance_delta_cents,
         sense: "higher-better",
+        delta: deltaVerdict(compare.performance_delta_cents, "higher-better"),
         realState: performanceState(compare.real_performance_cents),
         scenarioState: performanceState(compare.scenario_performance_cents),
         emptyScenario: false,
@@ -427,6 +515,7 @@ export function scenariosView(compare: ScenarioCompareDto): ScenariosView {
         scenarioCents: compare.scenario_cost_of_living_cents,
         deltaCents: compare.cost_of_living_delta_cents,
         sense: "lower-better",
+        delta: deltaVerdict(compare.cost_of_living_delta_cents, "lower-better"),
         realState: custoVidaState(
           compare.real_cost_of_living_cents,
           compare.real_income_cents,
