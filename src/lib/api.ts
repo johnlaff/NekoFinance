@@ -448,7 +448,6 @@ export interface AnnualSavings {
   projected_income_cents: number;
   projected_savings_cents: number;
   projected_rate_bps: number;
-  target_bps: number;
 }
 
 /** Cobertura de um mês futuro: quanto do gasto típico já está lançado (previsibilidade). */
@@ -476,13 +475,15 @@ export interface Forecast {
   trusted_through_month: string | null;
   /** Soma do que falta lançar nos meses incompletos. */
   total_missing_cents: number;
-  /** "Pode gastar hoje" honesto: o mais apertado de caixa × poupança. */
+  /** "Pode gastar hoje" honesto: o mais apertado de caixa × economia. */
   safe_to_spend_today_cents: number;
   cash_headroom_cents: number;
-  /** `null` quando a régua de poupança está inativa (mês sem renda) → só o caixa decide. */
+  /**
+   * Folga da economia: o inverso do déficit até o piso de 20% na janela que a régua anual julga.
+   * `null` quando a régua está inativa (janela sem renda) → só o caixa decide.
+   */
   savings_headroom_cents: number | null;
   binding_guardrail: "cash" | "savings";
-  savings_target_bps: number;
   deepest_deficit: DayPoint | null;
   daily: ForecastDay[];
   month_end: MonthEnd[];
@@ -1099,7 +1100,7 @@ export interface AnnualRuler {
   shortfall_year_cents: number;
   per_month_shortfall_cents: number | null;
   verdict: BandVerdict;
-  band: { floor_bps: number; target_bps: number; ceiling_bps: number };
+  band: { floor_bps: number; ceiling_bps: number };
   months: AnnualRulerMonth[];
   /** Saldo de fim de cada mês do ano (corrente da planilha até o vivido, projeção à frente). */
   month_end: MonthEnd[];

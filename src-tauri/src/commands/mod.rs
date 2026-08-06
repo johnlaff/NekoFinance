@@ -499,12 +499,13 @@ mod tests {
         assert_eq!(d25.income_cents, 20_000);
         assert_eq!(d25.balance_cents, 90_000);
 
-        // Guardrail duplo: tudo aqui é projetado (nenhum realizado no ano) → a régua de poupança
-        // ANUAL está inativa, manda o CAIXA: pode gastar = o vale de R$ 700,00. A régua de
-        // poupança anual é exercitada no teste `forecast_dual_guardrail_savings_binds_for_owner`.
+        // Guardrail duplo: o mês corrente entra na janela da régua com renda de R$ 200,00 e
+        // Economia zero → faixa rompida (folga negativa), a régua da economia solta e manda o
+        // CAIXA: pode gastar = o vale de R$ 700,00. O caso em que a economia limita está em
+        // `forecast_dual_guardrail_savings_binds_for_owner`.
         assert_eq!(fc.cash_headroom_cents, 70_000);
         assert_eq!(fc.binding_guardrail, "cash");
-        assert_eq!(fc.savings_headroom_cents, None);
+        assert_eq!(fc.savings_headroom_cents, Some(-4_000));
         assert_eq!(fc.safe_to_spend_today_cents, 70_000);
         // Positive horizon: deepest point reported, but not negative.
         let trough = fc.deepest_deficit.as_ref().unwrap();
@@ -1035,7 +1036,7 @@ mod tests {
         );
     }
 
-    // REGRESSÃO: net superávit grande não satisfaz mais o guardrail de poupança — só a Economia
+    // REGRESSÃO: net superávit grande não satisfaz mais o guardrail — só a Economia
     // REGISTRADA (transfers→reserva) conta. Quem ganhou >> gastou mas NÃO transferiu para a reserva
     // tem Economizado = 0 pelo método, então a régua de poupança morde (não o proxy do net antigo).
     #[tokio::test]
@@ -1055,15 +1056,15 @@ mod tests {
             fc.annual_savings.registered_economia_cents, 0,
             "sem transfer→reserva, a Economia registrada é zero"
         );
-        // Folga de poupança = Economia(0) − 25% × renda(500_000) = −125_000 (NEGATIVA).
-        // Sob o proxy antigo seria net(400_000) − 125_000 = +275_000 e binding="cash".
+        // Folga da economia = Economia(0) − 20% × renda(500_000) = −100_000 (NEGATIVA).
+        // Sob o proxy antigo seria net(400_000) − 100_000 = +300_000 e a faixa pareceria viva.
         assert_eq!(
             fc.savings_headroom_cents,
-            Some(-125_000),
-            "sob o proxy antigo (net) seria +275_000: é a Economia registrada que forma a folga"
+            Some(-100_000),
+            "sob o proxy antigo (net) seria +300_000: é a Economia registrada que forma a folga"
         );
-        // Faixa já rompida (folga negativa): a régua de poupança para de morder — o déficit é do
-        // ano que passou e o piso 20–30% é média ANUAL. O diagnóstico segue exposto na folga.
+        // Faixa já rompida: a régua da economia para de morder — o déficit é do ano que passou e
+        // o piso 20–30% é média ANUAL. O diagnóstico segue exposto na folga.
         assert_eq!(fc.binding_guardrail, "cash");
         assert!(fc.cash_headroom_cents > 0);
         assert_eq!(fc.safe_to_spend_today_cents, fc.cash_headroom_cents);
@@ -1449,7 +1450,6 @@ mod tests {
 
         // Poupança realizada (honesta) negativa; a projetada parece melhor (futuro esparso).
         assert!(fc.annual_savings.realized_rate_bps < fc.annual_savings.projected_rate_bps);
-        assert_eq!(fc.annual_savings.target_bps, 2500);
     }
 
     // Staleness: um mês COMPLETO conta na poupança anual mesmo se as transações ainda têm
@@ -1596,7 +1596,6 @@ mod tests {
         assert_eq!(fc.binding_guardrail, "cash");
         assert!(fc.cash_headroom_cents > 0);
         assert_eq!(fc.safe_to_spend_today_cents, fc.cash_headroom_cents);
-        assert_eq!(fc.savings_target_bps, 2500);
     }
 
     // A Performance do MÊS CORRENTE tem que ser idêntica na visão anual e no forecast/Totais —

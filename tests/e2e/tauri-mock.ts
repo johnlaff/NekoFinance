@@ -231,7 +231,6 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
       cash_headroom_cents: 587700,
       savings_headroom_cents: 35000,
       binding_guardrail: "cash",
-      savings_target_bps: 2500,
       annual_savings: {
         realized_income_cents: 5000000,
         realized_savings_cents: 300000,
@@ -245,7 +244,6 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         projected_income_cents: 6000000,
         projected_savings_cents: 1500000,
         projected_rate_bps: 2500,
-        target_bps: 2500,
       },
       coverage: [
         {
@@ -585,7 +583,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
         per_month_shortfall_cents:
           known && futureMonths > 0 ? Math.round(shortfallYear / futureMonths) : null,
         verdict: known ? "below_band" : "no_record",
-        band: { floor_bps: 2000, target_bps: 2500, ceiling_bps: 3000 },
+        band: { floor_bps: 2000, ceiling_bps: 3000 },
         months: rows.map((r) => ({
           month: r.m,
           outflow_cents: known ? outflow(r) : 0,

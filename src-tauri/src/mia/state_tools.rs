@@ -11,8 +11,8 @@
 use super::envelope::{DataState, Listing, Period, Reading, ToolError, ToolOutput, ToolResult};
 use super::{Args, insert};
 use crate::commands::{
-    RESERVE_MIN_MONTHS, SAVINGS_CEILING_BPS, SAVINGS_FLOOR_BPS, SAVINGS_TARGET_BPS,
-    get_ceiling_proposal_inner, get_daily_budget_inner, last_sync_at_query, pockets,
+    RESERVE_MIN_MONTHS, SAVINGS_CEILING_BPS, SAVINGS_FLOOR_BPS, get_ceiling_proposal_inner,
+    get_daily_budget_inner, last_sync_at_query, pockets,
 };
 use crate::reading::compose::ForecastReading;
 use crate::reading::{compose::compose, load::load_inputs};
@@ -362,7 +362,6 @@ pub(crate) async fn budget_settings(
         // A faixa é ANUAL: o método julga a média do ano, nunca um mês isolado.
         "method_targets": {
             "economia_floor_bps": SAVINGS_FLOOR_BPS,
-            "economia_target_bps": SAVINGS_TARGET_BPS,
             "economia_ceiling_bps": SAVINGS_CEILING_BPS,
             "reserve_months": RESERVE_MIN_MONTHS,
         },

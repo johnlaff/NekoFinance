@@ -82,9 +82,7 @@ pub(crate) async fn projection_seed(
 
 /// A faixa do método e o piso da reserva vivem no motor, com as réguas que os aplicam; a casca
 /// os reexporta para que os DTOs publiquem os mesmos limiares que julgam.
-pub(crate) use crate::forecast::{
-    RESERVE_MIN_MONTHS, SAVINGS_CEILING_BPS, SAVINGS_FLOOR_BPS, SAVINGS_TARGET_BPS,
-};
+pub(crate) use crate::forecast::{RESERVE_MIN_MONTHS, SAVINGS_CEILING_BPS, SAVINGS_FLOOR_BPS};
 
 /// As formas de dado que a carga produz vivem no inventário da leitura, não na casca que as
 /// preenche: é o que mantém a dependência apontando do IO para o domínio. A casca as reexporta
@@ -108,16 +106,16 @@ pub(crate) async fn realized_annual_savings(
     today_naive: NaiveDate,
 ) -> Result<(i64, i64), String> {
     // Renda-base do guardrail 20–30%: soma de `income_cents` (view Economia) dos meses que
-    // `guardrail_window` devolve — o mesmo motor que já sustenta Economia/Patrimônio anuais
+    // `registered_window` devolve — o mesmo motor que já sustenta Economia/Patrimônio anuais
     // (`realized_annual_economia`/`realized_annual_patrimonio`). Nenhuma janela própria aqui.
-    let window_metrics = guardrail_window_metrics(pool, today_naive).await?;
+    let window_metrics = registered_window_metrics(pool, today_naive).await?;
     let income_savings: i64 = window_metrics.iter().map(|m| m.income_cents).sum();
 
     // O net/colchão (view Performance) ainda lê a `transaction` crua — a régua de Performance
     // não é MonthMetric-agregável do mesmo jeito por rodar com a projeção do dia. A janela de
-    // datas, porém, vem só dos meses que `guardrail_window` já elegeu — sem redefinir "mês
+    // datas, porém, vem só dos meses que `registered_window` já elegeu — sem redefinir "mês
     // completo" nem o deslocamento de janeiro aqui.
-    let window = forecast::guardrail_window(today_naive);
+    let window = forecast::registered_window(today_naive);
     let (&(first_year, first_month), &(last_year, last_month)) =
         match (window.first(), window.last()) {
             (Some(f), Some(l)) => (f, l),
@@ -155,15 +153,15 @@ pub(crate) async fn realized_annual_savings(
 }
 
 /// Os meses `MonthMetric` que compõem a janela do guardrail: `annual_month_metrics` do ano certo
-/// (o corrente, ou o anterior quando `guardrail_window` desloca para dezembro em janeiro),
+/// (o corrente, ou o anterior quando `registered_window` desloca para dezembro em janeiro),
 /// filtrado pela lista que a janela devolve. Única leitura por trás das duas figuras anuais
 /// irmãs — Economia e Patrimônio já vêm classificadas, mascaradas por tag e reconciliadas com a
 /// anotação da aba, porque `annual_month_metrics` é o mesmo motor que a tela do Ano usa.
-pub(crate) async fn guardrail_window_metrics(
+pub(crate) async fn registered_window_metrics(
     pool: &SqlitePool,
     today_naive: NaiveDate,
 ) -> Result<Vec<forecast::MonthMetric>, String> {
-    let window = forecast::guardrail_window(today_naive);
+    let window = forecast::registered_window(today_naive);
     let Some(&(year, _)) = window.first() else {
         return Ok(Vec::new());
     };
@@ -174,19 +172,19 @@ pub(crate) async fn guardrail_window_metrics(
         .collect())
 }
 
-/// Economia REGISTRADA do ano até hoje (meses completos que `guardrail_window` devolve). É o
+/// Economia REGISTRADA do ano até hoje (meses completos que `registered_window` devolve). É o
 /// numerador do "Economizado" do método (Economia/Entradas), DISTINTO do net superávit de
 /// `realized_annual_savings` (que é o "colchão" do Neko). Existir os dois lado a lado sem se
 /// confundir foi um achado da review.
 ///
-/// Atalho da suíte sobre `guardrail_window_metrics`: a leitura publica a mesma soma como campo do
+/// Atalho da suíte sobre `registered_window_metrics`: a leitura publica a mesma soma como campo do
 /// inventário, e é de lá que toda superfície a lê — o guardrail tem uma derivação só.
 #[cfg(test)]
 pub(crate) async fn realized_annual_economia(
     pool: &SqlitePool,
     today_naive: NaiveDate,
 ) -> Result<i64, String> {
-    let metrics = guardrail_window_metrics(pool, today_naive).await?;
+    let metrics = registered_window_metrics(pool, today_naive).await?;
     Ok(metrics.iter().map(|m| m.economia_cents).sum())
 }
 
@@ -1548,7 +1546,6 @@ pub struct AnnualSavingsDto {
     pub projected_income_cents: i64,
     pub projected_savings_cents: i64,
     pub projected_rate_bps: i64,
-    pub target_bps: i64,
 }
 
 /// Cobertura de um mês futuro (quanto do gasto típico já está lançado).
@@ -1604,15 +1601,14 @@ impl From<&crate::reading::compose::AnnualReading> for AnnualSavingsDto {
             realized_income_cents: a.ruler.income_lived_cents,
             realized_savings_cents: a.ruler.surplus_lived_cents,
             realized_rate_bps: rate_bps(a.ruler.surplus_lived_cents, a.ruler.income_lived_cents),
-            registered_economia_cents: a.guardrail_economia_cents,
-            patrimonio_cents: a.guardrail_patrimonio_cents,
+            registered_economia_cents: a.registered_economia_cents,
+            patrimonio_cents: a.registered_patrimonio_cents,
             economia_ruler_cents: a.ruler.economia_lived_cents,
             economia_ruler_rate_bps: a.ruler.lived_bps.unwrap_or(0),
             economia_state: a.economia_state.to_string(),
             projected_income_cents: a.projected_income_cents,
             projected_savings_cents: a.projected_savings_cents,
             projected_rate_bps: rate_bps(a.projected_savings_cents, a.projected_income_cents),
-            target_bps: SAVINGS_TARGET_BPS,
         }
     }
 }
@@ -1631,17 +1627,16 @@ pub struct ForecastDto {
     pub trusted_through_month: Option<String>,
     /// Soma do que falta lançar nos meses incompletos (fatura + variáveis).
     pub total_missing_cents: i64,
-    /// "Pode gastar hoje" honesto: o MAIS APERTADO de caixa × poupança (guardrail duplo).
+    /// "Pode gastar hoje" honesto: o MAIS APERTADO de caixa × economia (guardrail duplo).
     pub safe_to_spend_today_cents: i64,
     /// Folga de caixa (menor saldo projetado no horizonte − piso de reserva).
     pub cash_headroom_cents: i64,
-    /// Folga da meta de poupança do mês corrente (negativa = já abaixo da meta). `null` quando a
-    /// régua de poupança está inativa (mês sem renda) → só o caixa decide.
+    /// Folga da economia: o inverso do déficit até o piso de 20% na janela que a régua anual
+    /// julga (negativa = a janela já está abaixo do piso). `null` quando a régua está inativa
+    /// (janela sem renda) → só o caixa decide.
     pub savings_headroom_cents: Option<i64>,
     /// Qual régua limita: "cash" ou "savings".
     pub binding_guardrail: String,
-    /// Meta de poupança em basis points (2500 = 25%).
-    pub savings_target_bps: i64,
     pub deepest_deficit: Option<DayPointDto>,
     pub daily: Vec<ForecastDayDto>,
     pub month_end: Vec<MonthEndDto>,
@@ -1727,7 +1722,6 @@ pub(crate) async fn forecast_dto(
         cash_headroom_cents: reading.safe_to_spend.cash_headroom_cents,
         savings_headroom_cents: reading.safe_to_spend.savings_headroom_cents,
         binding_guardrail: reading.safe_to_spend.binding.as_str().to_string(),
-        savings_target_bps: reading.savings_target_bps,
         deepest_deficit: reading
             .forecast
             .deepest_deficit
@@ -1921,7 +1915,6 @@ pub struct AnnualRulerDto {
 #[derive(serde::Serialize)]
 pub struct BandDto {
     pub floor_bps: i64,
-    pub target_bps: i64,
     pub ceiling_bps: i64,
 }
 
@@ -1962,7 +1955,6 @@ pub(crate) async fn annual_ruler_dto(
         verdict: forecast::band_verdict(&ruler, reserve_months).as_str(),
         band: BandDto {
             floor_bps: SAVINGS_FLOOR_BPS,
-            target_bps: SAVINGS_TARGET_BPS,
             ceiling_bps: SAVINGS_CEILING_BPS,
         },
         months: ruler
@@ -2429,11 +2421,11 @@ mod tests {
     }
 
     // A renda-base do guardrail (`realized_annual_savings().0`) é a MESMA soma que
-    // `guardrail_window_metrics` devolve para `income_cents` — não uma query paralela com sua
+    // `registered_window_metrics` devolve para `income_cents` — não uma query paralela com sua
     // própria janela. Cobre meio de ano (múltiplos meses completos) e a virada de janeiro
     // (janela deslocada para dezembro), para travar que as duas leituras nunca divergem.
     #[tokio::test]
-    async fn annual_income_matches_guardrail_window_metrics_sum_mid_year() {
+    async fn annual_income_matches_registered_window_metrics_sum_mid_year() {
         let p = pool().await;
         let today = NaiveDate::from_ymd_opt(2026, 4, 10).unwrap();
 
@@ -2444,7 +2436,7 @@ mod tests {
         insert_income(&p, "inc-abr", 999_000, "2026-04-05").await;
 
         let (income, _) = realized_annual_savings(&p, today).await.unwrap();
-        let expected: i64 = guardrail_window_metrics(&p, today)
+        let expected: i64 = registered_window_metrics(&p, today)
             .await
             .unwrap()
             .iter()
@@ -2454,19 +2446,19 @@ mod tests {
         assert_eq!(income, 220_000, "só jan+fev+mar (meses completos) contam");
         assert_eq!(
             income, expected,
-            "renda-base do guardrail é a mesma soma de MonthMetric via guardrail_window"
+            "renda-base do guardrail é a mesma soma de MonthMetric via registered_window"
         );
     }
 
     #[tokio::test]
-    async fn annual_income_matches_guardrail_window_metrics_sum_january() {
+    async fn annual_income_matches_registered_window_metrics_sum_january() {
         let p = pool().await;
         let today = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
 
         insert_income(&p, "inc-dez", 80_000, "2025-12-15").await;
 
         let (income, _) = realized_annual_savings(&p, today).await.unwrap();
-        let expected: i64 = guardrail_window_metrics(&p, today)
+        let expected: i64 = registered_window_metrics(&p, today)
             .await
             .unwrap()
             .iter()
@@ -2642,12 +2634,12 @@ mod tests {
     }
 
     // Economia e Patrimônio anuais do guardrail somam `MonthMetric` (o mesmo motor da tela do Ano),
-    // filtrado por `guardrail_window`: um mês FUTURO fica fora, o mês CORRENTE (incompleto) fica
+    // filtrado por `registered_window`: um mês FUTURO fica fora, o mês CORRENTE (incompleto) fica
     // fora, e só os meses completos do ano contam. A classificação em si (item de nota, transfer de
     // reserva/ilíquido, máscara de tag, regra do máximo) é coberta pelos testes do motor mensal —
     // este teste prova só a JANELA, não reprova a classificação.
     #[tokio::test]
-    async fn annual_economia_and_patrimonio_respect_guardrail_window() {
+    async fn annual_economia_and_patrimonio_respect_registered_window() {
         let p = pool().await;
 
         sqlx::query("INSERT INTO person (id, name) VALUES ('pe-1', 'Tester')")
@@ -2721,7 +2713,7 @@ mod tests {
 
         let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
         let economia = realized_annual_economia(&p, today).await.unwrap();
-        let patrimonio: i64 = guardrail_window_metrics(&p, today)
+        let patrimonio: i64 = registered_window_metrics(&p, today)
             .await
             .unwrap()
             .iter()

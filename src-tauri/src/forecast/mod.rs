@@ -161,7 +161,7 @@ pub struct Forecast {
     /// Lowest projected balance in the horizon and the day it occurs.
     pub deepest_deficit: Option<DayPoint>,
     /// SÓ o piso de caixa (menor saldo do horizonte, ≥ 0) — NÃO é o "pode gastar" exibido. O
-    /// guardrail real (duplo: caixa × poupança) é [`safe_to_spend_today`]; o DTO expõe o dele.
+    /// guardrail real (duplo: caixa × economia) é [`safe_to_spend_today`]; o DTO expõe o dele.
     /// Nome explícito para não ser confundido com o número do dashboard.
     pub cash_floor_cents: i64,
     /// Per-month decision metrics (Totais).
@@ -173,7 +173,7 @@ pub struct Forecast {
 pub enum Guardrail {
     /// Limitado pelo caixa: gastar mais empurraria algum dia futuro abaixo do piso de reserva.
     Cash,
-    /// Limitado pela meta de poupança: o mês corrente já está no limite (ou abaixo) dos 20–30%.
+    /// Limitado pela régua da economia: gastar mais tiraria o ano do piso da faixa 20–30%.
     Savings,
 }
 
@@ -195,23 +195,25 @@ pub struct SafeToSpend {
     /// Folga de caixa: menor saldo projetado no horizonte − piso de reserva. Pode ser a reserva
     /// inteira (alta) mesmo quando a poupança do mês já estourou — é o "Caixa ≠ Performance".
     pub cash_headroom_cents: i64,
-    /// Folga de poupança do mês corrente: `performance − meta×renda`. Negativa = já abaixo da
-    /// meta (gastar mais afunda a performance). `None` = régua de poupança INATIVA (mês sem
-    /// renda) → só o caixa decide. `Option` obriga o tratamento explícito da régua inativa e
-    /// impede o vazamento de sentinelas numéricos.
+    /// Folga da economia: o inverso do déficit até o piso de 20% que a régua anual já calcula,
+    /// no recorte que ela julga. Negativa = a janela já está abaixo do piso. `None` = régua
+    /// INATIVA (janela sem renda) → só o caixa decide. `Option` obriga o tratamento explícito da
+    /// régua inativa e impede o vazamento de sentinelas numéricos.
     pub savings_headroom_cents: Option<i64>,
     /// Qual régua manda.
     pub binding: Guardrail,
 }
 
-/// Meses COMPLETOS do ano corrente para o guardrail de poupança: janeiro até o mês anterior a
-/// `today`, em ordem. Em janeiro essa janela cai vazia (nenhum mês do ano corrente terminou
-/// ainda) e o método recua para o último mês completo de verdade — dezembro do ano anterior —
-/// em vez de desligar o guardrail com um falso "sem restrição".
+/// Meses COMPLETOS do ano corrente: janeiro até o mês anterior a `today`, em ordem. É a janela
+/// das figuras REGISTRADAS que a tela publica ao lado da régua (Economia registrada, Patrimônio,
+/// colchão) — o que já fechou, sem o mês em curso pela metade. Em janeiro ela cai vazia (nenhum
+/// mês do ano corrente terminou) e recua para dezembro do ano anterior, para o retrato não sumir
+/// na virada.
 ///
-/// Única definição da janela: os consumidores leem daqui, nunca recompõem os limites por conta
-/// própria — as figuras anuais do guardrail (Economia, Patrimônio) filtram `MonthMetric` por ela.
-pub fn guardrail_window(today: NaiveDate) -> Vec<(i32, u32)> {
+/// Não é a janela que JULGA: o veredito da faixa e o teto do dia leem o recorte de
+/// [`annual_ruler`], que inclui o mês em curso. Única definição desta: os consumidores leem
+/// daqui, nunca recompõem os limites por conta própria.
+pub fn registered_window(today: NaiveDate) -> Vec<(i32, u32)> {
     if today.month() == 1 {
         return vec![(today.year() - 1, 12)];
     }
@@ -226,34 +228,38 @@ pub fn guardrail_window(today: NaiveDate) -> Vec<(i32, u32)> {
 ///    ficar negativa") — usá-la como piso invertia o papel: o instrumento que socorre virava o
 ///    que proíbe, e quem ainda não completou a reserva ficava com teto zero por anos. O estoque
 ///    da reserva é leitura patrimonial (meses de custo de vida + excedente), não trava de fluxo.
-/// 2. **Poupança** — quanto cabe mantendo a taxa de poupança **do ANO** ≥ `savings_target_bps`:
-///    `poupança_ano − meta×renda_ano`. A meta de 20–30% é **média ANUAL** (o ano todo fica na
-///    faixa; tem mês que é mais, tem mês que é menos), então um mês isolado não pode mandar.
-///    As figuras anuais são do REALIZADO (o ano projetado
-///    mente quando os meses futuros estão incompletos). `None` = sem renda no ano → só o caixa.
+/// 2. **Economia** — a MESMA régua anual que a tela do ano julga: quanto cabe mantendo o
+///    Economizado% da janela ≥ o piso de 20% (`SAVINGS_FLOOR_BPS`). A folga é o inverso do
+///    déficit que [`AnnualRuler`] já calculou, no recorte que ele julga (vividos, ou o ano
+///    inteiro quando todo mês à frente tem lastro) — uma derivação, não uma segunda divisão.
+///    O critério é o PISO da faixa, nunca um alvo intermediário: 20–30% é média ANUAL (tem mês
+///    que é mais, tem mês que é menos), e é o piso que diz se o ano ainda está dentro dela.
+///    `None` = janela sem renda → só o caixa.
 ///
-/// Espelha o gate determinístico do método: só pode gastar se a reserva continua acima do piso
-/// **E** a poupança 20–30% (no ano) se mantém.
+/// Espelha o gate determinístico do método: só pode gastar se o saldo não abre o bico **E** a
+/// economia 20–30% (no ano) se mantém.
 pub fn safe_to_spend_today(
     fc: &Forecast,
-    annual_income_cents: i64,
-    annual_savings_cents: i64,
-    savings_target_bps: i64,
+    ruler: &AnnualRuler,
+    reserve_months: Option<f64>,
 ) -> SafeToSpend {
     let cash_headroom_cents = fc.deepest_deficit.map(|p| p.balance_cents).unwrap_or(0);
+    let savings_headroom_cents = ruler.savings_headroom_cents();
 
-    // Folga de poupança ANUAL = `poupança_ano − meta×renda_ano`. `None` sem renda (régua inativa).
-    let savings_headroom_cents = (annual_income_cents > 0)
-        .then(|| annual_savings_cents - savings_target_bps * annual_income_cents / 10_000);
-
-    // A régua de poupança PROTEGE a faixa enquanto ela está viva — é a pergunta do método sobre
-    // uma decisão nova ("essa parcela vai me IMPEDIR de economizar de 20 a 30%?"), portanto
-    // prospectiva. Com a faixa já rompida ela para de morder: o déficit acumulado do ano é
-    // passado, e nenhum gasto de hoje o desfaz, então travar o dia puniria o que não volta.
-    // Aí a orientação passa a ser o diagnóstico (a economia do ano, visível na tela) e a régua
-    // do caixa, que é a do presente. O piso 20–30% é MÉDIA ANUAL — mês abaixo é previsto pelo
-    // próprio método, não uma falha a punir todo dia até o ano virar.
-    let savings_binds = savings_headroom_cents.is_some_and(|s| s >= 0 && s < cash_headroom_cents);
+    // A fronteira "morde / não morde" é o VEREDITO da faixa, não o sinal de um número: a régua
+    // protege a faixa enquanto ela está viva — é a pergunta do método sobre uma decisão nova
+    // ("essa parcela vai me IMPEDIR de economizar de 20 a 30%?"), portanto prospectiva. Com a
+    // faixa rompida ela solta: o déficit acumulado é passado, nenhum gasto de hoje o desfaz, e
+    // travar o dia puniria o que não volta. Economia zerada com a reserva de pé solta pelo mesmo
+    // caminho — é a ordem do método cumprida —, e ano sem registro não tem o que proteger. Aí a
+    // orientação passa a ser o diagnóstico (a economia do ano, visível na tela) e a régua do
+    // caixa, que é a do presente.
+    let band_alive = matches!(
+        band_verdict(ruler, reserve_months),
+        BandVerdict::InBand | BandVerdict::AboveBand
+    );
+    let savings_binds =
+        band_alive && savings_headroom_cents.is_some_and(|s| s < cash_headroom_cents);
     let binding = if savings_binds {
         Guardrail::Savings
     } else {
@@ -335,20 +341,11 @@ pub fn month_coverage(
 /// pouco: pode ser mês barato de verdade ou pode faltar lançar.
 pub const LASTRO_FLOOR_BPS: i64 = 6_000;
 
-/// Meta de poupança do método para o guardrail ANUAL "pode gastar": **25% (2500 bps)** — a MÉDIA
-/// da faixa canônica 20–30% (MÉDIA ANUAL: o ano todo deve ficar na faixa, os meses variam). É uma
-/// barra DELIBERADAMENTE mais alta que o piso de 20%: o gate anual decide quanto se pode gastar
-/// HOJE, então mira no alvo médio, não no piso.
-///
-/// O piso de 20% (`SAVINGS_FLOOR_BPS`) é o que os indicadores MENSAIS e ANUAIS usam (badge
-/// "Dentro do ideal", cor da visão anual, gate da fase "operar"), lenientes a variações de um
-/// mês. Ambos ficam dentro da faixa canônica; não os unifique sem decisão de método (unificar
-/// afrouxaria o gate anual). O espelho da tela é `SAVINGS_MIN_BPS` (`src/screens/totaisStatus.ts`).
-pub const SAVINGS_TARGET_BPS: i64 = 2_500;
-
 /// Piso da faixa de economia do método (20%): abaixo dele a economia não está "viva" — é o
-/// vermelho da escada das réguas e o gate de legitimidade do modo cartão. Distinto da META
-/// (`SAVINGS_TARGET_BPS`, centro da faixa) que o guardrail de poupança usa.
+/// vermelho da escada das réguas, o gate de legitimidade do modo cartão, o badge "Dentro do
+/// ideal", a cor da visão anual, o gate da fase "operar" e o critério ÚNICO do guardrail do dia.
+/// Uma barra só para todas as réguas: a faixa 20–30% é média ANUAL, e é o piso que diz se o ano
+/// ainda está dentro dela. O espelho da tela é `SAVINGS_MIN_BPS` (`src/screens/totaisStatus.ts`).
 pub const SAVINGS_FLOOR_BPS: i64 = 2_000;
 
 /// Teto da faixa de economia do método (30%): acima dele o ano guardou além do ideal, e o
@@ -424,6 +421,31 @@ pub struct AnnualRuler {
 }
 
 impl AnnualRuler {
+    /// A renda da janela que a régua JULGA — a mesma que produziu [`AnnualRuler::bps`].
+    pub fn judged_income_cents(&self) -> i64 {
+        if self.scope_lived {
+            self.income_lived_cents
+        } else {
+            self.income_year_cents
+        }
+    }
+
+    /// Quanto falta guardar para a janela julgada fechar no piso de 20%.
+    pub fn judged_shortfall_cents(&self) -> i64 {
+        if self.scope_lived {
+            self.shortfall_lived_cents
+        } else {
+            self.shortfall_year_cents
+        }
+    }
+
+    /// A folga da economia: o inverso do déficit até o piso, sobre a janela julgada. É o número
+    /// que o guardrail do dia consome — reusar o déficit da régua é o que impede o teto e a tela
+    /// de divergirem por um arredondamento. `None` sem renda na janela: régua inativa, não zero.
+    pub fn savings_headroom_cents(&self) -> Option<i64> {
+        (self.judged_income_cents() > 0).then(|| -self.judged_shortfall_cents())
+    }
+
     /// Os meses à frente sem lastro, em ordem.
     pub fn suspect_months(&self) -> Vec<u32> {
         self.months
@@ -989,7 +1011,7 @@ pub fn project(
 /// O encadeamento diário parte da semente (que já embute todo o passado) e por isso só consome
 /// `chain_events` com `date > hoje` — somar o realizado de novo dobraria. Mas a performance do
 /// mês corrente PRECISA do realizado de hoje-pra-trás no mês (renda e saídas já lançadas), senão
-/// junho aparece com sinal trocado e o guardrail de poupança decide sobre o mês pela metade.
+/// junho aparece com sinal trocado e o guardrail decide sobre o mês pela metade.
 /// Por isso `metric_events` cobre o mês inteiro (realizado + projetado).
 ///
 /// `metric_events` carrega a máscara de réguas por evento ([`MetricEvent`]); o
@@ -1242,111 +1264,221 @@ mod tests {
         assert_eq!(f.cash_floor_cents, 0);
     }
 
-    // ---- Janela de meses completos do guardrail (#308) ----
+    // ---- Janela de meses COMPLETOS: as figuras registradas que a tela publica ----
 
     // Meio de ano: janeiro até o mês anterior a `today`.
     #[test]
-    fn guardrail_window_mid_year_is_january_through_previous_month() {
+    fn registered_window_mid_year_is_january_through_previous_month() {
         assert_eq!(
-            guardrail_window(d("2026-06-15")),
+            registered_window(d("2026-06-15")),
             vec![(2026, 1), (2026, 2), (2026, 3), (2026, 4), (2026, 5)]
         );
     }
 
     // Fevereiro: só janeiro sustenta a janela.
     #[test]
-    fn guardrail_window_february_is_january_only() {
-        assert_eq!(guardrail_window(d("2026-02-10")), vec![(2026, 1)]);
+    fn registered_window_february_is_january_only() {
+        assert_eq!(registered_window(d("2026-02-10")), vec![(2026, 1)]);
     }
 
     // Janeiro: a janela do ano corrente está vazia, recua para dezembro do ano anterior.
     #[test]
-    fn guardrail_window_january_falls_back_to_prior_december() {
-        assert_eq!(guardrail_window(d("2026-01-05")), vec![(2025, 12)]);
+    fn registered_window_january_falls_back_to_prior_december() {
+        assert_eq!(registered_window(d("2026-01-05")), vec![(2025, 12)]);
     }
 
-    // ---- Guardrail duplo (poupança ANUAL 25% + caixa) ----
+    // ---- Guardrail duplo: caixa × a MESMA régua da economia que a tela do ano julga ----
 
-    /// A régua de poupança PROTEGE a faixa: com ela viva e mais apertada que o caixa, é ela que
-    /// manda — é a pergunta do método sobre uma decisão nova ("vai me impedir de economizar de
-    /// 20 a 30%?").
+    /// Um horizonte de caixa largo (folga de 700.000): nestes testes quem decide é a régua da
+    /// economia, e o número do caixa serve de contraste.
+    fn roomy_cash() -> Forecast {
+        let events = [ev("2026-06-02", EventKind::FixedOut, 100_000)];
+        project(800_000, d("2026-06-01"), &events, d("2026-06-30"))
+    }
+
+    /// Meio de ano com seis meses vividos guardando `rate_bps` da renda — o ano em curso que a
+    /// tela do ano julga, com os meses à frente ainda em branco (sem lastro).
+    fn year_saving(rate_bps: i64) -> AnnualRuler {
+        let months: Vec<MonthMetric> = (1..=6)
+            .map(|m| month(m, 800_000, 500_000, 800_000 * rate_bps / 10_000))
+            .collect();
+        annual_ruler(&months, 2026, d("2026-06-15"))
+    }
+
+    /// Entre o piso e o antigo centro da faixa (22%) a régua está VIVA e mais apertada que o
+    /// caixa: é ela que manda, e o teto do dia é a folga até o piso — não até um alvo médio.
     #[test]
-    fn safe_to_spend_savings_binds_while_the_band_is_alive() {
-        let events = [
-            ev("2026-06-01", EventKind::Income, 1_000_000),
-            ev("2026-06-02", EventKind::FixedOut, 1_100_000),
-        ];
-        let f = project(800_000, d("2026-06-01"), &events, d("2026-06-30"));
-        // Poupança do ANO acima da meta: 300.000 guardados contra meta de 250.000 → folga 50.000.
-        let s = safe_to_spend_today(&f, 1_000_000, 300_000, 2500);
+    fn savings_binds_between_the_floor_and_the_old_mid_target() {
+        let s = safe_to_spend_today(&roomy_cash(), &year_saving(2_200), None);
 
         assert_eq!(s.cash_headroom_cents, 700_000);
-        assert_eq!(s.savings_headroom_cents, Some(50_000));
+        // 20% de 4.800.000 = 960.000 contra 1.056.000 guardados.
+        assert_eq!(s.savings_headroom_cents, Some(96_000));
         assert_eq!(s.binding, Guardrail::Savings);
-        assert_eq!(s.amount_cents, 50_000, "o gasto cabe até o piso da faixa");
+        assert!(s.amount_cents < s.cash_headroom_cents);
+        assert_eq!(s.amount_cents, 96_000);
     }
 
-    /// Com a faixa JÁ rompida, a régua para de morder. O déficit é do ano que passou e nenhum
-    /// gasto de hoje o desfaz — travar o dia puniria o que não volta, e o piso 20–30% é média
-    /// ANUAL, com mês abaixo previsto pelo próprio método. A orientação vira o diagnóstico da
-    /// economia (visível na tela) e a régua do caixa, que é a do presente.
+    /// No piso exato a folga é zero: gastar mais tiraria o ano da faixa. A régua ainda morde —
+    /// é a fronteira, não a ruptura.
     #[test]
-    fn safe_to_spend_savings_stops_binding_once_the_band_is_already_broken() {
-        let events = [
-            ev("2026-06-01", EventKind::Income, 1_000_000),
-            ev("2026-06-02", EventKind::FixedOut, 1_100_000),
-        ];
-        let f = project(800_000, d("2026-06-01"), &events, d("2026-06-30"));
-        // Poupança do ANO negativa: folga = −100.000 − 250.000 = −350.000.
-        let s = safe_to_spend_today(&f, 1_000_000, -100_000, 2500);
+    fn savings_headroom_is_zero_at_the_exact_floor() {
+        let s = safe_to_spend_today(&roomy_cash(), &year_saving(2_000), None);
 
-        assert_eq!(s.cash_headroom_cents, 700_000);
+        assert_eq!(s.savings_headroom_cents, Some(0));
+        assert_eq!(s.binding, Guardrail::Savings);
+        assert_eq!(s.amount_cents, 0);
+    }
+
+    /// Abaixo do piso a faixa já está rompida e a régua SOLTA: o déficit é do ano que passou e
+    /// nenhum gasto de hoje o desfaz. Travar o dia puniria o que não volta e viraria um zero
+    /// perpétuo para quem está mais longe do piso — o diagnóstico sai do teto, não da tela.
+    #[test]
+    fn savings_releases_below_the_floor() {
+        let s = safe_to_spend_today(&roomy_cash(), &year_saving(1_800), None);
+
         assert_eq!(
             s.savings_headroom_cents,
-            Some(-350_000),
+            Some(-96_000),
             "o diagnóstico continua exposto — some do teto, não da tela"
         );
         assert_eq!(s.binding, Guardrail::Cash);
+        assert_eq!(s.amount_cents, 700_000);
+    }
+
+    /// Economia zerada com a reserva de pé é a ordem do método cumprida: o mesmo veredito da
+    /// faixa desativa a régua, sem ramo especial no guardrail.
+    #[test]
+    fn zero_economia_with_a_standing_reserve_disables_the_ruler() {
+        let ruler = year_saving(0);
+        assert_eq!(band_verdict(&ruler, Some(8.0)), BandVerdict::ZeroByChoice);
+
+        let s = safe_to_spend_today(&roomy_cash(), &ruler, Some(8.0));
+
+        assert_eq!(s.binding, Guardrail::Cash);
+        assert_eq!(s.amount_cents, 700_000);
+    }
+
+    /// O mesmo zero SEM reserva é faixa rompida, não escolha — e solta pelo mesmo caminho, mas
+    /// com outro veredito por trás.
+    #[test]
+    fn zero_economia_without_a_reserve_is_a_broken_band() {
+        let ruler = year_saving(0);
+        assert_eq!(band_verdict(&ruler, Some(3.0)), BandVerdict::BelowBand);
+
+        let s = safe_to_spend_today(&roomy_cash(), &ruler, Some(3.0));
+
+        assert_eq!(s.binding, Guardrail::Cash);
+        assert_eq!(s.savings_headroom_cents, Some(-960_000));
+    }
+
+    /// Sem renda na janela a régua fica INATIVA: ausente, nunca um zero que passaria por
+    /// veredito. Só o caixa decide.
+    #[test]
+    fn savings_is_inactive_without_income_in_the_window() {
+        let s = safe_to_spend_today(
+            &roomy_cash(),
+            &annual_ruler(&[], 2026, d("2026-06-15")),
+            None,
+        );
+
+        assert_eq!(s.savings_headroom_cents, None);
+        assert_eq!(s.binding, Guardrail::Cash);
+        assert_eq!(s.amount_cents, 700_000);
+    }
+
+    /// O mês CORRENTE é vivido e conta na janela — com saída lançada no nível do gasto típico,
+    /// a renda e a economia dele passam a pesar no piso e o teto do dia se move. É a diferença
+    /// para a janela de meses fechados, que só o admitiria no mês seguinte.
+    #[test]
+    fn the_current_month_with_lastro_moves_the_ceiling() {
+        let until_may: Vec<MonthMetric> = (1..=5)
+            .map(|m| month(m, 800_000, 500_000, 176_000))
+            .collect();
+        let with_june: Vec<MonthMetric> = (1..=6)
+            .map(|m| month(m, 800_000, 500_000, 176_000))
+            .collect();
+
+        let before = safe_to_spend_today(
+            &roomy_cash(),
+            &annual_ruler(&until_may, 2026, d("2026-06-15")),
+            None,
+        );
+        let after = safe_to_spend_today(
+            &roomy_cash(),
+            &annual_ruler(&with_june, 2026, d("2026-06-15")),
+            None,
+        );
+
+        assert_eq!(before.amount_cents, 80_000); // 880.000 − 20% de 4.000.000
+        assert_eq!(after.amount_cents, 96_000); // 1.056.000 − 20% de 4.800.000
+    }
+
+    /// Mês à frente apenas projetado, sem lastro, não altera nada: a régua julga o recorte
+    /// vivido enquanto houver silêncio à frente, e o guardrail lê a mesma janela.
+    #[test]
+    fn a_projected_month_without_lastro_does_not_move_the_ceiling() {
+        let lived: Vec<MonthMetric> = (1..=6)
+            .map(|m| month(m, 800_000, 500_000, 176_000))
+            .collect();
+        let mut with_july = lived.clone();
+        with_july.push(month(7, 900_000, 50_000, 0));
+
+        let without = safe_to_spend_today(
+            &roomy_cash(),
+            &annual_ruler(&lived, 2026, d("2026-06-15")),
+            None,
+        );
+        let with = safe_to_spend_today(
+            &roomy_cash(),
+            &annual_ruler(&with_july, 2026, d("2026-06-15")),
+            None,
+        );
+
+        assert_eq!(with.savings_headroom_cents, without.savings_headroom_cents);
+        assert_eq!(with.amount_cents, without.amount_cents);
+    }
+
+    /// A folga publicada É o negativo do déficit até o piso que a régua anual já calcula, no
+    /// mesmo recorte — uma derivação, nunca uma segunda divisão. Vale nos dois recortes: o
+    /// vivido (ano em curso) e o ano inteiro (todo mês lastreado).
+    #[test]
+    fn the_headroom_is_exactly_the_negated_shortfall_of_the_judged_window() {
+        let open = year_saving(2_200);
+        assert!(open.scope_lived);
         assert_eq!(
-            s.amount_cents, 700_000,
-            "quem já caiu da faixa recebe a régua do caixa, não um zero perpétuo"
+            safe_to_spend_today(&roomy_cash(), &open, None).savings_headroom_cents,
+            Some(-open.shortfall_lived_cents)
+        );
+
+        let closed: Vec<MonthMetric> = (1..=12)
+            .map(|m| month(m, 800_000, 500_000, 176_000))
+            .collect();
+        let closed = annual_ruler(&closed, 2026, d("2026-12-31"));
+        assert!(!closed.scope_lived);
+        assert_eq!(
+            safe_to_spend_today(&roomy_cash(), &closed, None).savings_headroom_cents,
+            Some(-closed.shortfall_year_cents)
         );
     }
 
-    // Conta futura pré-lançada (fatura/salário) num mês à frente limita o gasto de HOJE pelo
-    // caixa — só visível porque o horizonte varre além do mês corrente.
+    /// Os arredondamentos do método sobrevivem à derivação: o percentual que JULGA trunca, e a
+    /// falta até o piso arredonda meio para cima — a folga herda essa conta, sem refazê-la.
     #[test]
-    fn safe_to_spend_cash_binds_on_future_month_commitment() {
-        let events = [
-            ev("2026-06-01", EventKind::Income, 1_000_000),
-            ev("2026-07-15", EventKind::FixedOut, 900_000), // fatura lá na frente
-        ];
-        let f = project(0, d("2026-06-01"), &events, d("2026-07-31"));
-        // Poupança do ano folgada: renda 1.000.000, sobra 1.000.000 → folga +750.000.
-        let s = safe_to_spend_today(&f, 1_000_000, 1_000_000, 2500);
+    fn the_headroom_keeps_the_rulers_truncation_and_rounding() {
+        let mut months: Vec<MonthMetric> = (1..=6)
+            .map(|m| month(m, 800_000, 500_000, 183_334))
+            .collect();
+        months[0] = month(1, 800_003, 500_000, 183_334);
+        let ruler = annual_ruler(&months, 2026, d("2026-06-15"));
 
-        // Caixa cai para 100.000 em 15/jul (o "buraco do futuro").
-        assert_eq!(s.cash_headroom_cents, 100_000);
-        // Poupança de junho está folgada (só renda no mês): 1.000.000 − 250.000 = 750.000.
-        assert_eq!(s.savings_headroom_cents, Some(750_000));
-        assert_eq!(s.binding, Guardrail::Cash);
-        assert_eq!(s.amount_cents, 100_000);
-    }
+        // Renda vivida 4.800.003: o piso é 960.000,6 → arredonda para 960.001, não trunca.
+        assert_eq!(ruler.income_lived_cents, 4_800_003);
+        assert_eq!(ruler.economia_lived_cents, 1_100_004);
+        assert_eq!(ruler.bps, Some(2_291), "o percentual que julga TRUNCA");
 
-    /// A régua de caixa é o Saldo da planilha: não abrir o bico. O estoque da reserva não a
-    /// aperta — no método a reserva é o amortecedor acionado QUANDO o saldo fica negativo, e
-    /// tratá-la como piso zerava o teto de quem ainda está construindo a reserva.
-    #[test]
-    fn safe_to_spend_cash_is_the_projected_balance_untouched_by_the_reserve() {
-        let events = [
-            ev("2026-06-01", EventKind::Income, 1_000_000),
-            ev("2026-07-15", EventKind::FixedOut, 900_000),
-        ];
-        let f = project(0, d("2026-06-01"), &events, d("2026-07-31"));
-        let s = safe_to_spend_today(&f, 1_000_000, 1_000_000, 2500);
-        assert_eq!(s.cash_headroom_cents, 100_000);
-        assert_eq!(s.amount_cents, 100_000);
-        assert!(matches!(s.binding, Guardrail::Cash));
+        let s = safe_to_spend_today(&roomy_cash(), &ruler, None);
+        assert_eq!(s.savings_headroom_cents, Some(140_003)); // 1.100.004 − 960.001
     }
 
     // Cobertura: meses futuros esparsos (só fixas) vs gasto típico → sinaliza incompleto.
@@ -1410,15 +1542,24 @@ mod tests {
         assert!(cov.is_empty());
     }
 
-    // Sem renda no ano: régua de poupança INATIVA (None), só o caixa decide.
+    /// Conta futura pré-lançada (fatura/salário) num mês à frente limita o gasto de HOJE pelo
+    /// caixa — só visível porque o horizonte varre além do mês corrente. A régua de caixa é o
+    /// Saldo da planilha: não abrir o bico, e o estoque da reserva não a aperta (no método a
+    /// reserva é o amortecedor acionado QUANDO o saldo fica negativo).
     #[test]
-    fn safe_to_spend_savings_inactive_without_income() {
-        let events = [ev("2026-06-10", EventKind::Daily, 30_000)];
-        let f = project(200_000, d("2026-06-01"), &events, d("2026-06-30"));
-        let s = safe_to_spend_today(&f, 0, -30_000, 2500);
-        assert_eq!(s.savings_headroom_cents, None);
+    fn safe_to_spend_cash_binds_on_future_month_commitment() {
+        let events = [
+            ev("2026-06-01", EventKind::Income, 1_000_000),
+            ev("2026-07-15", EventKind::FixedOut, 950_000), // fatura lá na frente
+        ];
+        let f = project(0, d("2026-06-01"), &events, d("2026-07-31"));
+        let s = safe_to_spend_today(&f, &year_saving(2_200), Some(8.0));
+
+        // Caixa cai para 50.000 em 15/jul (o "buraco do futuro") — mais apertado que a economia.
+        assert_eq!(s.cash_headroom_cents, 50_000);
+        assert_eq!(s.savings_headroom_cents, Some(96_000));
         assert_eq!(s.binding, Guardrail::Cash);
-        assert_eq!(s.amount_cents, 170_000); // 200.000 − 30.000, só caixa
+        assert_eq!(s.amount_cents, 50_000);
     }
 
     // ---- Phase 5: monthly metrics / Totais (US6) ----

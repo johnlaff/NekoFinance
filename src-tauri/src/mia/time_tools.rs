@@ -12,9 +12,8 @@ use super::envelope::{
 use super::{Args, insert};
 use crate::calendar;
 use crate::commands::{
-    MonthCoverageDto, MonthGridDayDto, SAVINGS_CEILING_BPS, SAVINGS_FLOOR_BPS, SAVINGS_TARGET_BPS,
-    annual_month_end, annual_month_metrics, annual_ruler_reading, forecast_dto, month_grid_at,
-    reserve_reading,
+    MonthCoverageDto, MonthGridDayDto, SAVINGS_CEILING_BPS, SAVINGS_FLOOR_BPS, annual_month_end,
+    annual_month_metrics, annual_ruler_reading, forecast_dto, month_grid_at, reserve_reading,
 };
 use crate::forecast::{self, AnnualRuler};
 use chrono::{Datelike, NaiveDate};
@@ -188,7 +187,6 @@ async fn month_figures(
 #[derive(Serialize)]
 struct BandDto {
     floor_bps: i64,
-    target_bps: i64,
     ceiling_bps: i64,
 }
 
@@ -353,7 +351,6 @@ fn year_dto(
             verdict: forecast::band_verdict(ruler, reserve_months).as_str(),
             band: BandDto {
                 floor_bps: SAVINGS_FLOOR_BPS,
-                target_bps: SAVINGS_TARGET_BPS,
                 ceiling_bps: SAVINGS_CEILING_BPS,
             },
         },

@@ -16,7 +16,6 @@ const ann = {
   projected_income_cents: 0,
   projected_savings_cents: 0,
   projected_rate_bps: 0,
-  target_bps: 2500,
 };
 
 function day(date: string, balance: number): ForecastDay {
@@ -101,7 +100,6 @@ function forecast(over: Partial<Forecast> = {}): Forecast {
     cash_headroom_cents: 752086,
     savings_headroom_cents: 20000,
     binding_guardrail: "savings",
-    savings_target_bps: 2500,
     deepest_deficit: null,
     daily: [
       day("2026-07-22", 756830),

@@ -1448,11 +1448,10 @@ async fn year_analysis_publishes_the_annual_economizado_ruler() {
     assert_eq!(year["economia_lived_cents"], 1_400_000);
     assert_eq!(year["income_year_cents"], 6_500_000);
     assert_eq!(year["economia_year_cents"], 1_400_000);
-    // A faixa do método é ANUAL: 20% de piso, 25% de alvo, 30% de teto.
+    // A faixa do método é ANUAL: piso de 20%, teto de 30%.
     assert_eq!(year["economizado"]["lived_bps"], 2_500);
     assert_eq!(year["economizado"]["projected_bps"], 2_153);
     assert_eq!(year["economizado"]["band"]["floor_bps"], 2_000);
-    assert_eq!(year["economizado"]["band"]["target_bps"], 2_500);
     assert_eq!(year["economizado"]["band"]["ceiling_bps"], 3_000);
     assert_eq!(year["economizado"]["verdict"], "in_band");
 }
