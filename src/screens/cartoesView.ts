@@ -1,12 +1,48 @@
-import type { Card, CardPurchase, InvoiceSummary, Refund } from "../lib/api";
+import {
+  acceptCardProposal,
+  attachCardProposal,
+  cancelCardSeries,
+  createCardAccount,
+  dismissCardProposal,
+  getDashboardSummary,
+  getInvoice,
+  listCardProposals,
+  listCards,
+  listInvoices,
+  moveCardPurchase,
+  setInvoiceDates,
+  setInvoiceStatedTotal,
+  updateCardAccount,
+  updateCardSeries,
+  type Card,
+  type CardProposal,
+  type CardPurchase,
+  type DashboardSummary,
+  type InvoiceDetail,
+  type InvoiceSummary,
+  type Refund,
+} from "../lib/api";
 import { formatBRL } from "../lib/format";
 
 /**
  * View-model puro da tela Cartões: derivações de exibição do sub-ledger de
  * faturas — janela de ciclos, barras, rótulos de estado, progresso de série.
  * Nenhuma matemática de método acontece aqui: todo número financeiro chega
- * pronto dos DTOs; o módulo só compõe, formata e nomeia.
+ * pronto dos DTOs; o módulo só compõe, formata e nomeia. É também a porta
+ * inteira do shim para a tela (ADR-0007): tipos reexportados, fetchers e
+ * comandos estáveis — a tela nunca importa `lib/api`.
  */
+
+// Tipos do shim reexportados pela view — a tela e seus testes leem daqui.
+export type {
+  Card,
+  CardProposal,
+  CardPurchase,
+  DashboardSummary,
+  InvoiceDetail,
+  InvoiceSummary,
+  Refund,
+};
 
 const MONTH_FORMAT = new Intl.DateTimeFormat("pt-BR", {
   month: "long",
@@ -308,4 +344,144 @@ export function ownerKind(name: string): "personal" | "partner" | "shared" {
     : name.toLowerCase().includes("compart")
       ? "shared"
       : "partner";
+}
+
+// ---------------------------------------------------------------------------
+// Leitura — fetchers com identidade estável por chave (o contrato do useCommand rejeita
+// closures novas a cada render) e a convenção da chave de cache do `useCommand`.
+// ---------------------------------------------------------------------------
+
+export function fetchCards(): Promise<Card[]> {
+  return listCards();
+}
+
+export function fetchCardProposals(): Promise<CardProposal[]> {
+  return listCardProposals();
+}
+
+export function fetchDashboardSummary(): Promise<DashboardSummary> {
+  return getDashboardSummary();
+}
+
+/** Chave de cache do `useCommand` para as faturas de um cartão. */
+export function invoicesCacheKey(cardId: string): string {
+  return `list_invoices:${cardId}`;
+}
+
+const _invoiceListFetchers = new Map<string, () => Promise<InvoiceSummary[]>>();
+export function invoicesFetcher(cardId: string): () => Promise<InvoiceSummary[]> {
+  let fn = _invoiceListFetchers.get(cardId);
+  if (!fn) {
+    fn = () => listInvoices(cardId);
+    _invoiceListFetchers.set(cardId, fn);
+  }
+  return fn;
+}
+
+/** Chave de cache do `useCommand` para o detalhe de uma fatura. */
+export function invoiceDetailCacheKey(invoiceId: string | null): string {
+  return `get_invoice:${invoiceId ?? "none"}`;
+}
+
+const _invoiceDetailFetchers = new Map<string, () => Promise<InvoiceDetail | null>>();
+export function detailFetcher(
+  invoiceId: string | null,
+): () => Promise<InvoiceDetail | null> {
+  const key = invoiceId ?? "none";
+  let fn = _invoiceDetailFetchers.get(key);
+  if (!fn) {
+    fn = () => (invoiceId ? getInvoice(invoiceId) : Promise.resolve(null));
+    _invoiceDetailFetchers.set(key, fn);
+  }
+  return fn;
+}
+
+// ---------------------------------------------------------------------------
+// Escrita — comandos de proposta, cadastro de cartão e gestos da fatura. A tela dispara o
+// comando e chama `invalidateCommands()` (infra genérica de `lib/useCommand`, fora do
+// funil): a view não invalida por si — só sabe traduzir a intenção do usuário para a
+// chamada certa do shim.
+// ---------------------------------------------------------------------------
+
+export function acceptCardProposalCmd(input: {
+  proposalId: string;
+  closingDay?: number | null;
+  dueDay?: number | null;
+  ownerPersonName?: string | null;
+  linkedAccountId?: string | null;
+}): Promise<string> {
+  return acceptCardProposal(input);
+}
+
+export function attachCardProposalCmd(input: {
+  proposalId: string;
+  accountId: string;
+}): Promise<void> {
+  return attachCardProposal(input);
+}
+
+export function dismissCardProposalCmd(proposalId: string): Promise<void> {
+  return dismissCardProposal(proposalId);
+}
+
+export function createCardAccountCmd(input: {
+  name: string;
+  institution?: string | null;
+  closingDay?: number | null;
+  dueDay?: number | null;
+  creditLimitCents?: number | null;
+  ownerPersonName?: string | null;
+  linkedAccountId?: string | null;
+  aliases: string[];
+}): Promise<string> {
+  return createCardAccount(input);
+}
+
+export function updateCardAccountCmd(input: {
+  accountId: string;
+  name: string;
+  institution?: string | null;
+  closingDay?: number | null;
+  dueDay?: number | null;
+  creditLimitCents?: number | null;
+  aliases: string[];
+}): Promise<void> {
+  return updateCardAccount(input);
+}
+
+export function setInvoiceDatesCmd(input: {
+  invoiceId: string;
+  closingDate: string;
+  dueDate: string;
+}): Promise<void> {
+  return setInvoiceDates(input);
+}
+
+export function setInvoiceStatedTotalCmd(
+  invoiceId: string,
+  statedTotalCents: number | null,
+): Promise<void> {
+  return setInvoiceStatedTotal(invoiceId, statedTotalCents);
+}
+
+export function moveCardPurchaseCmd(
+  txnId: string,
+  targetCycleMonth: string,
+): Promise<void> {
+  return moveCardPurchase(txnId, targetCycleMonth);
+}
+
+export function updateCardSeriesCmd(
+  seriesId: string,
+  description: string,
+  amountCents: number,
+): Promise<void> {
+  return updateCardSeries(seriesId, description, amountCents);
+}
+
+export function cancelCardSeriesCmd(
+  seriesId: string,
+  fromCycleMonth: string,
+): Promise<void> {
+  return cancelCardSeries(seriesId, fromCycleMonth);
 }

@@ -24,51 +24,51 @@ import { NoRecordDash } from "../design-system/components/NoRecordDash";
 import { OwnerChip } from "../design-system/components/OwnerChip";
 import { SegmentedControl } from "../design-system/components/SegmentedControl";
 import { SR_ONLY } from "../design-system/srOnly";
-import {
-  acceptCardProposal,
-  attachCardProposal,
-  cancelCardSeries,
-  createCardAccount,
-  dismissCardProposal,
-  getDashboardSummary,
-  getInvoice,
-  listCardProposals,
-  listCards,
-  listInvoices,
-  moveCardPurchase,
-  setInvoiceDates,
-  setInvoiceStatedTotal,
-  updateCardAccount,
-  updateCardSeries,
-  type Card,
-  type CardProposal,
-  type InvoiceDetail,
-  type InvoiceSummary,
-} from "../lib/api";
 import { isTauri } from "../lib/env";
 import { shiftCycleMonth, validateCardCycle } from "../lib/cardCycle";
 import { safeErrorMessage } from "../lib/errors";
 import { centsToBRLInput, parseBRLToCents } from "../lib/format";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import {
+  acceptCardProposalCmd,
+  attachCardProposalCmd,
   type BarsModel,
   buildBars,
+  cancelCardSeriesCmd,
+  type Card,
+  type CardProposal,
+  createCardAccountCmd,
   cycleOptions,
   cycleStateLabel,
   type CardSeries,
   cycleWindow,
   dateLabel,
   defaultInvoiceId,
+  detailFetcher,
+  dismissCardProposalCmd,
+  fetchCardProposals,
+  fetchCards,
+  fetchDashboardSummary,
   groupSeries,
   heroSubtitle,
   installmentProgress,
+  invoiceDetailCacheKey,
+  invoicesCacheKey,
+  invoicesFetcher,
   metaLine,
   monthLabelLower,
+  moveCardPurchaseCmd,
   netOfRefunds,
   ownerKind,
+  setInvoiceDatesCmd,
+  setInvoiceStatedTotalCmd,
   subscriptionCadence,
   totalsHeadLabel,
+  updateCardAccountCmd,
+  updateCardSeriesCmd,
   verdictLine,
+  type InvoiceDetail,
+  type InvoiceSummary,
 } from "./cartoesView";
 import "./cartoes.css";
 
@@ -316,41 +316,18 @@ function localTodayISO(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
-// Fetchers estáveis por chave (padrão do YearGrid/Horizonte): o useCommand
-// recebe sempre a MESMA função para a mesma chave.
-const _invoiceListFetchers = new Map<string, () => Promise<InvoiceSummary[]>>();
-function invoicesFetcher(cardId: string) {
-  let fn = _invoiceListFetchers.get(cardId);
-  if (!fn) {
-    fn = () => listInvoices(cardId);
-    _invoiceListFetchers.set(cardId, fn);
-  }
-  return fn;
-}
-
-const _invoiceDetailFetchers = new Map<string, () => Promise<InvoiceDetail | null>>();
-function detailFetcher(invoiceId: string | null) {
-  const key = invoiceId ?? "none";
-  let fn = _invoiceDetailFetchers.get(key);
-  if (!fn) {
-    fn = () => (invoiceId ? getInvoice(invoiceId) : Promise.resolve(null));
-    _invoiceDetailFetchers.set(key, fn);
-  }
-  return fn;
-}
-
 type GateState = "alive" | "below" | "unknown";
 type CardGateSummary = Pick<
-  Awaited<ReturnType<typeof getDashboardSummary>>,
+  Awaited<ReturnType<typeof fetchDashboardSummary>>,
   "card_gate_economy" | "card_gate_economy_bps" | "card_gate_reserve" | "reserve_months"
 >;
 
 // ------------------------------------------------------------------- tela --
 
 export function CartoesScreen() {
-  const cardsQ = useCommand("list_cards", listCards);
-  const proposalsQ = useCommand("list_card_proposals", listCardProposals);
-  const summaryQ = useCommand("get_dashboard_summary", getDashboardSummary);
+  const cardsQ = useCommand("list_cards", fetchCards);
+  const proposalsQ = useCommand("list_card_proposals", fetchCardProposals);
+  const summaryQ = useCommand("get_dashboard_summary", fetchDashboardSummary);
   const cards = isTauri ? (cardsQ.data ?? []) : DEMO_CARDS;
   const proposals = isTauri ? (proposalsQ.data ?? []) : DEMO_PROPOSALS;
   const gateSummary = isTauri ? summaryQ.data : DEMO_CARD_GATE;
@@ -591,7 +568,7 @@ function ProposalBanner({
             disabled={busy || attachTo === ""}
             onClick={() =>
               resolve(() =>
-                attachCardProposal({
+                attachCardProposalCmd({
                   proposalId: proposal.id,
                   accountId: attachTo,
                 }),
@@ -628,7 +605,7 @@ function ProposalBanner({
             variant="ghost"
             size="sm"
             disabled={busy}
-            onClick={() => resolve(() => dismissCardProposal(proposal.id))}
+            onClick={() => resolve(() => dismissCardProposalCmd(proposal.id))}
           >
             Dispensar
           </Button>
@@ -849,7 +826,7 @@ function CardTile({
 // ------------------------------------------------------------------- drill --
 
 function InvoicePanel({ card, todayISO }: { card: Card; todayISO: string }) {
-  const invoicesQ = useCommand(`list_invoices:${card.id}`, invoicesFetcher(card.id));
+  const invoicesQ = useCommand(invoicesCacheKey(card.id), invoicesFetcher(card.id));
   const invoices = isTauri
     ? (invoicesQ.data ?? [])
     : card.id === "demo-holder"
@@ -864,7 +841,7 @@ function InvoicePanel({ card, todayISO }: { card: Card; todayISO: string }) {
       : defaultInvoiceId(card, invoices);
 
   const detailQ = useCommand(
-    `get_invoice:${selectedId ?? "none"}`,
+    invoiceDetailCacheKey(selectedId),
     detailFetcher(selectedId),
   );
   const detail = isTauri ? (detailQ.data ?? null) : demoDetailFor(selectedId);
@@ -1004,7 +981,11 @@ function InvoiceHero({
     if (!isTauri) return;
     setBusy(true);
     setError(null);
-    void setInvoiceDates({ invoiceId: detail.id, closingDate: closing, dueDate: due })
+    void setInvoiceDatesCmd({
+      invoiceId: detail.id,
+      closingDate: closing,
+      dueDate: due,
+    })
       .then(() => {
         setEditing(false);
         invalidateCommands();
@@ -1134,7 +1115,7 @@ function TotaisSection({ detail }: { detail: InvoiceDetail }) {
     }
     setError(null);
     setBusy(true);
-    void setInvoiceStatedTotal(detail.id, cents)
+    void setInvoiceStatedTotalCmd(detail.id, cents)
       .then(() => {
         setAdjusting(false);
         invalidateCommands();
@@ -1234,7 +1215,7 @@ function PurchasesSection({
 
   function movePurchase(txnId: string, delta: number) {
     if (!isTauri) return;
-    void moveCardPurchase(txnId, shiftCycleMonth(cycleMonth, delta))
+    void moveCardPurchaseCmd(txnId, shiftCycleMonth(cycleMonth, delta))
       .then(invalidateCommands)
       .catch(() => undefined);
   }
@@ -1321,7 +1302,7 @@ function SeriesSection({
     }
     setError(null);
     setBusy(true);
-    void updateCardSeries(editingSeries.id, editingSeries.description, cents)
+    void updateCardSeriesCmd(editingSeries.id, editingSeries.description, cents)
       .then(() => {
         setEditingSeries(null);
         invalidateCommands();
@@ -1333,7 +1314,7 @@ function SeriesSection({
   function cancelSeries(seriesId: string, description: string) {
     if (!isTauri || !window.confirm(`Cancelar "${description}" a partir deste ciclo?`))
       return;
-    void cancelCardSeries(seriesId, cycleMonth)
+    void cancelCardSeriesCmd(seriesId, cycleMonth)
       .then(invalidateCommands)
       .catch(() => undefined);
   }
@@ -1636,7 +1617,7 @@ function CardForm({
         .filter(Boolean),
     };
     const promise = proposal
-      ? acceptCardProposal({
+      ? acceptCardProposalCmd({
           proposalId: proposal.id,
           closingDay: input.closingDay,
           dueDay: input.dueDay,
@@ -1644,8 +1625,8 @@ function CardForm({
           linkedAccountId: linked || null,
         })
       : initial
-        ? updateCardAccount({ accountId: initial.id, ...input })
-        : createCardAccount({
+        ? updateCardAccountCmd({ accountId: initial.id, ...input })
+        : createCardAccountCmd({
             ...input,
             ownerPersonName: owner,
             linkedAccountId: linked || null,

@@ -1,4 +1,13 @@
-import type { Forecast, TransactionRow } from "../lib/api";
+import {
+  getForecast,
+  getMonthTransactions,
+  getScenarioForecast,
+  lastSyncAt,
+  type Forecast,
+  type MonthEnd,
+  type ScenarioCompareDto,
+  type TransactionRow,
+} from "../lib/api";
 import { MES, MES_ABBR } from "../lib/nkFormat";
 import { saldoBand as classifyBand, type SaldoBand } from "../lib/saldoHeatmap";
 
@@ -7,7 +16,12 @@ import { saldoBand as classifyBand, type SaldoBand } from "../lib/saldoHeatmap";
 // COMPOSIÇÃO: qual voz o veredito assume, a geometria da estrada, os estados epistêmicos da
 // grade e o agrupamento dos compromissos. Nenhuma regra de método nasce aqui — a régua de
 // lastro, o gasto típico, a fronteira de confiança e o custo de fechar cada mês incompleto
-// vêm todos do motor (`Forecast`); o frontend só os declara e desenha.
+// vêm todos do motor (`Forecast`); o frontend só os declara e desenha. É também a porta inteira
+// do shim para a tela (ADR-0007): tipos reexportados e fetchers estáveis do `useCommand` — a
+// tela nunca importa `lib/api`.
+
+// Tipos do shim reexportados pela view — a tela e seu teste leem daqui.
+export type { Forecast, MonthEnd, ScenarioCompareDto, TransactionRow };
 
 // Piso de confiança da régua de lastro, em basis points — mesma régua de O ano, computada no
 // motor. Um mês futuro tem lastro quando a saída lançada cobre ≥ 60% do gasto típico; abaixo
@@ -455,4 +469,48 @@ export function buildHorizonteView(input: HorizonteInput): HorizonteView {
     commitmentsTotal,
     syncLabel,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Leitura — fetchers com identidade estável por chave (o contrato do useCommand rejeita
+// closures novas a cada render) e a convenção da chave de cache do `useCommand`.
+// ---------------------------------------------------------------------------
+
+export function fetchForecast(): Promise<Forecast> {
+  return getForecast();
+}
+
+export function fetchLastSyncAt(): Promise<string | null> {
+  return lastSyncAt();
+}
+
+/** Chave de cache do `useCommand` para os compromissos dos meses futuros. */
+export function commitmentsCacheKey(monthsKey: string): string {
+  return `horizon_commitments:${monthsKey}`;
+}
+
+const _commitFetchers = new Map<string, () => Promise<TransactionRow[][]>>();
+export function commitmentsFetcher(
+  monthsKey: string,
+): () => Promise<TransactionRow[][]> {
+  let fn = _commitFetchers.get(monthsKey);
+  if (!fn) {
+    const months = monthsKey ? monthsKey.split(",") : [];
+    fn = () => Promise.all(months.map((m) => getMonthTransactions(m)));
+    _commitFetchers.set(monthsKey, fn);
+  }
+  return fn;
+}
+
+/** Chave de cache do `useCommand` para o comparativo do cenário simulado ativo. */
+export function scenarioCompareCacheKey(scenarioId: string | null): string {
+  return scenarioId ? `scenario_forecast:${scenarioId}` : "scenario_forecast:none";
+}
+
+export function fetchScenarioCompare(
+  scenarioId: string | null,
+): Promise<ScenarioCompareDto> {
+  return scenarioId
+    ? getScenarioForecast(scenarioId)
+    : Promise.reject(new Error("nenhum cenário selecionado"));
 }
