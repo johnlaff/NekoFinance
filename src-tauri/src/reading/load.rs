@@ -11,11 +11,24 @@ use crate::forecast;
 use chrono::{Datelike, NaiveDate};
 use sqlx::SqlitePool;
 
+#[cfg(test)]
+tokio::task_local! {
+    /// Contagem de cargas, só em teste — a prova de que uma chamada de ferramenta com N
+    /// inclusões opcionais dispara UMA composição, nunca uma por inclusão. Escopada por TAREFA
+    /// assíncrona (não por thread nem por processo): o runtime multi-thread do Tokio migra a
+    /// tarefa entre threads, e um contador global compartilhado contaria também as cargas de
+    /// outros testes rodando em paralelo no mesmo binário.
+    pub(crate) static LOAD_INPUTS_CALLS: std::cell::Cell<usize>;
+}
+
 /// Carrega, de uma vez, tudo que a leitura do dia precisa.
 pub(crate) async fn load_inputs(
     pool: &SqlitePool,
     today: NaiveDate,
 ) -> Result<ForecastInputs, String> {
+    #[cfg(test)]
+    let _ = LOAD_INPUTS_CALLS.try_with(|c| c.set(c.get() + 1));
+
     let horizon_end = fc::forecast_horizon_end(pool, today).await?;
     let seed_cents = fc::projection_seed(pool, today).await?;
     let cash_events = fc::load_forecast_events(pool, today, horizon_end).await?;
