@@ -106,6 +106,12 @@ _Avoid_: Emergency fund, savings goal
 **Protection**:
 Insurance products that protect against financial catastrophe. Light schema presence (tag on account or category) until methodology demands more detail.
 
+### Frontend Architecture
+
+**View (funnel gate)**:
+A screen's `*View.ts` is the only place allowed to translate `src/lib/api.ts`'s raw shim DTOs into the domain shapes the screen renders — every other file under `src/` is fenced off from importing `lib/api` directly, type-only included, by the `no-restricted-imports` gate in `eslint.config.js`. See ADR-0006 for the exception zones (a view and its tests, the Mia runtime, `src/hooks/**`, the IPC mock infra) and the legacy allowlist (`eslint.lib-api-allowlist.mjs`) that migrates over time, never grows.
+_Avoid_: DTO, wire type, raw API import
+
 ### Data Import & Sync
 
 **Sheet Mapping**:
