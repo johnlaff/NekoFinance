@@ -14,6 +14,7 @@ use chrono::{Datelike, NaiveDate};
 use sqlx::SqlitePool;
 use tauri::State;
 
+pub(crate) mod budget_cmds;
 pub(crate) mod card_cmds;
 pub(crate) mod forecast_cmds;
 pub(crate) mod mia_cmds;
@@ -25,6 +26,7 @@ pub(crate) mod sheets_import;
 pub(crate) mod transactions;
 pub(crate) mod write_back_cmds;
 
+pub use budget_cmds::*;
 pub use card_cmds::*;
 pub use forecast_cmds::*;
 pub use mia_cmds::*;
