@@ -2101,13 +2101,7 @@ async fn compare_projection(
         annual_economia,
         forecast_cmds::SAVINGS_TARGET_BPS,
     );
-    let guardrail_str = |g: forecast::Guardrail| {
-        match g {
-            forecast::Guardrail::Cash => "cash",
-            forecast::Guardrail::Savings => "savings",
-        }
-        .to_string()
-    };
+    let guardrail_str = |g: forecast::Guardrail| g.as_str().to_string();
 
     let real_cost_of_living_cents = current_month_cost_of_living(&real_fc, today);
     let scenario_cost_of_living_cents = current_month_cost_of_living(&scenario_fc, today);

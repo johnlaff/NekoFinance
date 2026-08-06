@@ -5,6 +5,7 @@
 //! imperative shell (`commands.rs`) loads/maps rows and supplies the seed. The engine owns the
 //! daily chain, month-end balances, deepest deficit, safe-to-spend guardrails and monthly totals.
 
+use crate::calendar::last_day_of_month;
 use chrono::{Datelike, NaiveDate};
 
 /// A dated cash-flow event in the projection. Amounts are always positive; the sign is implied by
@@ -174,6 +175,16 @@ pub enum Guardrail {
     Cash,
     /// Limitado pela meta de poupança: o mês corrente já está no limite (ou abaixo) dos 20–30%.
     Savings,
+}
+
+impl Guardrail {
+    /// Valor estável exposto nas fronteiras que representam qual régua limita o gasto.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Cash => "cash",
+            Self::Savings => "savings",
+        }
+    }
 }
 
 /// "Pode gastar hoje" decomposto nas duas réguas do método.
@@ -674,18 +685,6 @@ pub fn classify(
     }
 }
 
-/// Last calendar day of the given month.
-pub fn last_day_of_month(year: i32, month: u32) -> NaiveDate {
-    let (ny, nm) = if month == 12 {
-        (year + 1, 1)
-    } else {
-        (year, month + 1)
-    };
-    NaiveDate::from_ymd_opt(ny, nm, 1)
-        .and_then(|first_of_next| first_of_next.pred_opt())
-        .expect("valid month")
-}
-
 /// Projected balance on each month's last day within the (chronological) daily series.
 fn month_end_points(daily: &[DayPoint]) -> Vec<MonthEnd> {
     let mut out: Vec<MonthEnd> = Vec::new();
@@ -1027,6 +1026,16 @@ pub enum SpendingMode {
     /// Gasto variável dentro das faturas de cartão — protocolo reconhecido pelo método
     /// (cada compra soma na fatura em aberto; a fatura crescendo é o instrumento de consciência).
     Card,
+}
+
+impl SpendingMode {
+    /// Valor estável exposto nas fronteiras que representam o protocolo de gasto detectado.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Debit => "debit",
+            Self::Card => "card",
+        }
+    }
 }
 
 /// Um mês avulso de Diário (1 dia, ou total dentro do ruído) não flipa o modo.
@@ -2280,5 +2289,17 @@ mod tests {
         assert_eq!(end.end_month, None);
         assert_eq!(end.end_balance_cents, None);
         assert_eq!(end.end_balance_typical_cents, None);
+    }
+
+    #[test]
+    fn guardrail_as_str_covers_every_variant() {
+        assert_eq!(Guardrail::Cash.as_str(), "cash");
+        assert_eq!(Guardrail::Savings.as_str(), "savings");
+    }
+
+    #[test]
+    fn spending_mode_as_str_covers_every_variant() {
+        assert_eq!(SpendingMode::Debit.as_str(), "debit");
+        assert_eq!(SpendingMode::Card.as_str(), "card");
     }
 }

@@ -10,6 +10,7 @@ use super::envelope::{
 };
 use super::time_tools::month_period;
 use super::{Args, insert};
+use crate::calendar;
 use crate::commands::{RecentRow, TransactionRow, hydrate_transactions};
 use crate::forecast::{self, EventKind};
 use chrono::{Datelike, NaiveDate};
@@ -1004,6 +1005,6 @@ fn current_month(today: NaiveDate) -> (NaiveDate, NaiveDate) {
     let start = NaiveDate::from_ymd_opt(today.year(), today.month(), 1).expect("dia 1 existe");
     (
         start,
-        forecast::last_day_of_month(today.year(), today.month()),
+        calendar::last_day_of_month(today.year(), today.month()),
     )
 }

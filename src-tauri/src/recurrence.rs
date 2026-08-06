@@ -2,7 +2,7 @@
 //! `recurrence_id`; permite apagar "deste ponto" ou "toda a série". Core de datas puro +
 //! shell determinístico.
 
-use crate::forecast::last_day_of_month;
+use crate::calendar::last_day_of_month;
 use chrono::{Datelike, Duration, NaiveDate};
 use sqlx::SqlitePool;
 use tauri::State;

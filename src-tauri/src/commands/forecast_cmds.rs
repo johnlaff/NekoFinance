@@ -1387,7 +1387,7 @@ pub(crate) async fn forecast_horizon_end(
     .await
     .map_err(|e| format!("horizon invoice: {e}"))?;
 
-    let mut horizon = forecast::last_day_of_month(today_naive.year(), today_naive.month());
+    let mut horizon = calendar::last_day_of_month(today_naive.year(), today_naive.month());
     for (candidate,) in [max_txn, max_bal, max_invoice] {
         if let Some(date_str) = candidate
             && let Ok(d) = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d")
@@ -2301,11 +2301,7 @@ pub(crate) async fn forecast_dto(
         annual_economia,
         SAVINGS_TARGET_BPS,
     );
-    let binding_guardrail = match sts.binding {
-        forecast::Guardrail::Cash => "cash",
-        forecast::Guardrail::Savings => "savings",
-    }
-    .to_string();
+    let binding_guardrail = sts.binding.as_str().to_string();
 
     // Previsibilidade: poupança realizada vs projetada + cobertura dos meses futuros.
     let (proj_income, proj_savings) = projected_annual_savings(pool, today_naive).await?;
@@ -2504,7 +2500,7 @@ pub(crate) async fn annual_month_metrics(
             .filter(|me| me.event.kind == forecast::EventKind::Daily)
             .map(|me| me.event.date)
             .collect();
-        let month_end = forecast::last_day_of_month(today.year(), today.month());
+        let month_end = calendar::last_day_of_month(today.year(), today.month());
         // Teto projetado = evento SINTÉTICO → conta em todas as réguas (`RulerMask::ALL`).
         events.extend(forecast::lift_all(&forecast::project_daily_ceiling(
             daily_ceiling,
@@ -2766,7 +2762,7 @@ pub(crate) async fn month_grid_at(
     today: NaiveDate,
 ) -> Result<Vec<MonthGridDayDto>, String> {
     let first = NaiveDate::from_ymd_opt(year, month, 1).ok_or("mês inválido")?;
-    let last = forecast::last_day_of_month(year, month);
+    let last = calendar::last_day_of_month(year, month);
     let first_s = first.format("%Y-%m-%d").to_string();
     let last_s = last.format("%Y-%m-%d").to_string();
     let end_exclusive = last
@@ -3036,19 +3032,10 @@ pub(crate) async fn dashboard_summary(
     // nunca declare viva uma economia que a pessoa está vendo abaixo da faixa.
     let (_, annual_ruler) = annual_ruler_reading(pool, today_naive.year(), today_naive).await?;
     let card_gate_economy_bps = annual_ruler.lived_bps;
-    let card_gate_economy = match card_gate_economy_bps {
-        None => crate::cards::GateLeg::Unknown,
-        Some(bps) if bps >= SAVINGS_FLOOR_BPS => crate::cards::GateLeg::Alive,
-        Some(_) => crate::cards::GateLeg::Below,
-    };
-    let card_gate_reserve = if reserve.state == "no_record" {
-        crate::cards::GateLeg::Unknown
-    } else if reserve.months >= RESERVE_MIN_MONTHS as f64 {
-        crate::cards::GateLeg::Alive
-    } else {
-        crate::cards::GateLeg::Below
-    };
-    let card_gate = crate::cards::compose_card_gate(card_gate_economy, card_gate_reserve);
+    let card_gate_reserve_months = (reserve.state != "no_record").then_some(reserve.months);
+    let card_gate = crate::cards::card_gate(card_gate_economy_bps, card_gate_reserve_months);
+    let card_gate_economy = crate::cards::economy_gate_leg(card_gate_economy_bps);
+    let card_gate_reserve = crate::cards::reserve_gate_leg(card_gate_reserve_months);
 
     let mut seen_accounts = std::collections::HashSet::new();
     let upcoming_invoices: Vec<UpcomingInvoiceDto> = active_invoices
@@ -3116,11 +3103,7 @@ pub(crate) async fn dashboard_summary(
         reserve_target_cents: reserve.target_cents,
         reserve_surplus_cents: reserve.surplus_cents,
         reserve_trend: reserve.trend,
-        spending_mode: match mode.mode {
-            forecast::SpendingMode::Debit => "debit",
-            forecast::SpendingMode::Card => "card",
-        }
-        .to_string(),
+        spending_mode: mode.mode.as_str().to_string(),
         spending_mode_detected: mode.detected,
         card_gate: card_gate.as_str().to_string(),
         card_gate_economy: card_gate_economy.as_str().to_string(),
