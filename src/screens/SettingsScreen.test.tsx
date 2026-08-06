@@ -6,14 +6,14 @@ import { NekoAppProvider } from "../shell/appContext";
 import { APP_INFO, POCKETS, mockCommands, mockInvoke } from "../test/commands";
 import { invalidateCommands } from "../lib/useCommand";
 import { open } from "@tauri-apps/plugin-dialog";
-import type * as Api from "../lib/api";
+import type * as ConfigView from "./configView";
 import {
-  getMiaConsent,
-  grantMiaConsent,
-  revokeMiaConsent,
-  setMiaApiKey,
+  fetchMiaConsent,
+  grantMiaConsentCmd,
+  revokeMiaConsentCmd,
+  setMiaApiKeyCmd,
   type MiaConsentView,
-} from "../lib/api";
+} from "./configView";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -23,22 +23,22 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn(),
 }));
 
-vi.mock("../lib/api", async (importOriginal) => {
-  const actual = await importOriginal<typeof Api>();
+vi.mock("./configView", async (importOriginal) => {
+  const actual = await importOriginal<typeof ConfigView>();
   return {
     ...actual,
-    getMiaConsent: vi.fn(),
-    grantMiaConsent: vi.fn(),
-    revokeMiaConsent: vi.fn(),
-    setMiaApiKey: vi.fn(),
+    fetchMiaConsent: vi.fn(),
+    grantMiaConsentCmd: vi.fn(),
+    revokeMiaConsentCmd: vi.fn(),
+    setMiaApiKeyCmd: vi.fn(),
   };
 });
 
 const mockOpen = open as ReturnType<typeof vi.fn>;
-const mockGetMiaConsent = getMiaConsent as ReturnType<typeof vi.fn>;
-const mockGrantMiaConsent = grantMiaConsent as ReturnType<typeof vi.fn>;
-const mockRevokeMiaConsent = revokeMiaConsent as ReturnType<typeof vi.fn>;
-const mockSetMiaApiKey = setMiaApiKey as ReturnType<typeof vi.fn>;
+const mockGetMiaConsent = fetchMiaConsent as ReturnType<typeof vi.fn>;
+const mockGrantMiaConsent = grantMiaConsentCmd as ReturnType<typeof vi.fn>;
+const mockRevokeMiaConsent = revokeMiaConsentCmd as ReturnType<typeof vi.fn>;
+const mockSetMiaApiKey = setMiaApiKeyCmd as ReturnType<typeof vi.fn>;
 
 const CONSENT_TEXT = {
   headline: "Autorizar a conversa aberta",

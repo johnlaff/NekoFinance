@@ -2,18 +2,18 @@ import { useEffect, useReducer, useRef, type CSSProperties } from "react";
 import { GitCompareArrows, Lock, AlertTriangle } from "lucide-react";
 import { Button } from "../../design-system/components/Button";
 import { ApprovalDiffCard } from "../../design-system/components/ApprovalDiffCard";
-import {
-  applyWriteBack,
-  previewWriteBackStatus,
-  applyEconomiaWriteBack,
-  previewEconomiaWriteBackStatus,
-  writeBackEnabled,
-  getImportConflicts,
-  type CellWrite,
-} from "../../lib/api";
 import { safeErrorMessage } from "../../lib/errors";
 import { formatBRL } from "../../lib/format";
 import { withLoading } from "../../lib/withLoading";
+import {
+  applyEconomiaWriteBackCmd,
+  applyWriteBackCmd,
+  fetchEconomiaWriteBackPreview,
+  fetchImportConflictsCount,
+  fetchWriteBackEnabled,
+  fetchWriteBackPreview,
+  type CellWrite,
+} from "./sheetsView";
 // Lógica pura/constantes do write-back vivem em `./writeBack` (fora deste arquivo de componente,
 // para o Fast Refresh tratá-lo como só-de-componentes). Consumidores importam de lá diretamente.
 import { KIND_LABEL } from "./writeBack";
@@ -397,7 +397,7 @@ export function WriteBackPreview({
 
   useEffect(() => {
     let alive = true;
-    writeBackEnabled()
+    fetchWriteBackEnabled()
       .then((v) => alive && dispatch({ type: "enabled", value: v }))
       .catch(() => alive && dispatch({ type: "enabled", value: false }));
     return () => {
@@ -411,13 +411,13 @@ export function WriteBackPreview({
     if (!keepMessages) dispatch({ type: "previewReset" });
     await withLoading(setLoading, async () => {
       try {
-        const result = await previewWriteBackStatus(spreadsheetId, sheetName, clientId);
+        const result = await fetchWriteBackPreview(spreadsheetId, sheetName, clientId);
         // A prévia traz o flag do backend, mas a fila é relida ao vivo porque um conflito pode
         // surgir entre prévias. `||` é defensivo.
         let conflictsPending = result.conflicts_pending;
         if (!conflictsPending) {
           try {
-            conflictsPending = (await getImportConflicts()).length > 0;
+            conflictsPending = (await fetchImportConflictsCount()) > 0;
           } catch {
             // Falha ao ler a fila não deve mascarar a prévia; o gate do backend ainda protege o envio.
           }
@@ -432,7 +432,7 @@ export function WriteBackPreview({
         // se não houver aba Economia/dados, não falha a prévia principal da grade diária.
         if (yearValid) {
           try {
-            const econ = await previewEconomiaWriteBackStatus(
+            const econ = await fetchEconomiaWriteBackPreview(
               spreadsheetId,
               year,
               clientId,
@@ -467,7 +467,7 @@ export function WriteBackPreview({
     dispatch({ type: "confirm", value: null });
     await withLoading(setApplying, async () => {
       try {
-        const result = await applyWriteBack(
+        const result = await applyWriteBackCmd(
           spreadsheetId,
           sheetName,
           clientId,
@@ -498,7 +498,7 @@ export function WriteBackPreview({
     dispatch({ type: "confirm", value: null });
     await withLoading(setApplying, async () => {
       try {
-        const n = await applyEconomiaWriteBack(
+        const n = await applyEconomiaWriteBackCmd(
           spreadsheetId,
           year,
           clientId,

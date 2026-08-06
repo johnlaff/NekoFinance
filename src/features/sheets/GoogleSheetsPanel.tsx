@@ -12,33 +12,38 @@ import {
   Unlink,
 } from "lucide-react";
 import { Button } from "../../design-system/components/Button";
-import {
-  checkAuthStatus,
-  detectSheetLayout,
-  disconnectGoogle,
-  fetchSheetPreview,
-  getAppSetting,
-  getSheetMappings,
-  importSheetData,
-  importEconomiaSheet,
-  listSheetNames,
-  listUserSpreadsheets,
-  saveSheetMapping,
-  setAppSetting,
-  startOAuthFlow,
-  type AuthStatus,
-  type ImportDiagnostic,
-  type SheetInfo,
-  type SheetMappingEntry,
-  type SheetPreview,
-  type UserSpreadsheet,
-} from "../../lib/api";
 import { GOOGLE_CLIENT_ID } from "../../lib/env";
 import { extractSpreadsheetId } from "../../lib/spreadsheet-url";
 import { safeErrorMessage } from "../../lib/errors";
 import { isEconomiaTab, isMetricTab } from "../../lib/sheet-tabs";
 import { invalidateCommands, useCommand } from "../../lib/useCommand";
 import { withLoading } from "../../lib/withLoading";
+import {
+  BG_SYNC_KEY,
+  CLIENT_ID_KEY,
+  LAST_IMPORT_KEY,
+  LAST_SHEET_KEY,
+  NOTES_DEGRADED_KEY,
+  connectGoogleCmd,
+  detectSheetLayoutCmd,
+  disconnectGoogleCmd,
+  fetchGoogleAuthStatus,
+  fetchSheetMappings,
+  fetchSheetNames,
+  fetchSheetPreviewCmd,
+  fetchSheetsSetting,
+  fetchUserSpreadsheets,
+  importEconomiaSheetCmd,
+  importSheetDataCmd,
+  saveSheetMappingCmd,
+  setSheetsSetting,
+  type AuthStatus,
+  type ImportDiagnostic,
+  type SheetInfo,
+  type SheetMappingEntry,
+  type SheetPreview,
+  type UserSpreadsheet,
+} from "./sheetsView";
 import { WriteBackPreview } from "./WriteBackPreview";
 
 /** Rótulo PT-BR amigável do campo de destino (esconde o jargão de banco do usuário). */
@@ -61,14 +66,6 @@ interface LastImport {
   spreadsheetId: string;
   label: string;
 }
-
-const LAST_IMPORT_KEY = "sheets_last_import";
-/** Última ABA-ano importada — o dashboard a usa p/ medir o diff local → planilha. */
-const LAST_SHEET_KEY = "sheets_last_sheet";
-/** Sync em segundo plano: ligado por padrão, separado do "Re-sincronizar" manual. */
-const BG_SYNC_KEY = "sheets_bg_sync_enabled";
-/** Client id do OAuth persistido para a tarefa de sync poder renovar o token sem o estado da UI. */
-const CLIENT_ID_KEY = "sheets_client_id";
 
 // Estado do fluxo de import (conectar → escolher → prévia → mapear) agrupado num reducer, em vez de
 // doze useState relacionados. Toda a lógica vive no hook `useSheetImport`; as views são puras.
@@ -178,7 +175,7 @@ function useSheetImport(
   const loadSpreadsheets = async () => {
     await withLoading(setLoading, async () => {
       try {
-        const list = await listUserSpreadsheets(GOOGLE_CLIENT_ID);
+        const list = await fetchUserSpreadsheets(GOOGLE_CLIENT_ID);
         set({ spreadsheets: list });
       } catch {
         // Sem scope do Drive (token antigo) a listagem dá 403 — o campo de URL colada continua
@@ -203,7 +200,7 @@ function useSheetImport(
     set({ error: null, errorDetail: null });
     await withLoading(setLoading, async () => {
       try {
-        await startOAuthFlow(GOOGLE_CLIENT_ID);
+        await connectGoogleCmd(GOOGLE_CLIENT_ID);
         // O consentimento no navegador leva o tempo que o usuário levar — sondar até conectar (ou
         // desistir após 2 min). Sondagem é sequencial por natureza (espera → checa → repete), então
         // usamos recursão com setTimeout em vez de await-dentro-de-loop.
@@ -216,7 +213,7 @@ function useSheetImport(
             return;
           }
           await new Promise((resolve) => setTimeout(resolve, 2000));
-          const status = await checkAuthStatus();
+          const status = await fetchGoogleAuthStatus();
           if (status === "connected") {
             onAuthChange(status);
             set({ step: "pick" });
@@ -234,7 +231,7 @@ function useSheetImport(
 
   const handleDisconnect = async () => {
     try {
-      await disconnectGoogle();
+      await disconnectGoogleCmd();
       onAuthChange("disconnected");
       set({
         step: "connect",
@@ -260,7 +257,7 @@ function useSheetImport(
     set({ selectedSpreadsheet: id, selectedSheet: "", preview: null, mappings: [] });
     await withLoading(setLoading, async () => {
       try {
-        const list = await listSheetNames(id, GOOGLE_CLIENT_ID);
+        const list = await fetchSheetNames(id, GOOGLE_CLIENT_ID);
         set({ sheets: list });
       } catch (e) {
         fail(e, "Não foi possível listar as abas.");
@@ -273,8 +270,8 @@ function useSheetImport(
     await withLoading(setLoading, async () => {
       try {
         const [prev, maps] = await Promise.all([
-          fetchSheetPreview(state.selectedSpreadsheet, name, GOOGLE_CLIENT_ID),
-          getSheetMappings(name).catch(() => [] as SheetMappingEntry[]),
+          fetchSheetPreviewCmd(state.selectedSpreadsheet, name, GOOGLE_CLIENT_ID),
+          fetchSheetMappings(name).catch(() => [] as SheetMappingEntry[]),
         ]);
         set({ preview: prev, mappings: maps, step: "preview" });
       } catch (e) {
@@ -286,12 +283,12 @@ function useSheetImport(
   const handleDetectLayout = async () => {
     await withLoading(setLoading, async () => {
       try {
-        await detectSheetLayout(
+        await detectSheetLayoutCmd(
           state.selectedSpreadsheet,
           state.selectedSheet,
           GOOGLE_CLIENT_ID,
         );
-        const maps = await getSheetMappings(state.selectedSheet);
+        const maps = await fetchSheetMappings(state.selectedSheet);
         set({ mappings: maps, step: "mapping" });
       } catch (e) {
         fail(e, "Não foi possível detectar o layout da aba.");
@@ -302,7 +299,7 @@ function useSheetImport(
   const handleToggleMapping = async (mapping: SheetMappingEntry) => {
     const newActive = mapping.is_active !== 1;
     try {
-      await saveSheetMapping(mapping.id, mapping.block_offset, newActive);
+      await saveSheetMappingCmd(mapping.id, mapping.block_offset, newActive);
       dispatch({ type: "toggleMappingActive", id: mapping.id, active: newActive });
     } catch (e) {
       fail(e, "Não foi possível salvar o mapeamento.");
@@ -319,13 +316,14 @@ function useSheetImport(
     const last: LastImport = { spreadsheetId, label };
     set({ lastImport: last });
     try {
-      await setAppSetting(LAST_IMPORT_KEY, JSON.stringify(last));
+      await setSheetsSetting(LAST_IMPORT_KEY, JSON.stringify(last));
       // Aba-ano importada → o indicador de write-back pendente do dashboard a lê
       // direto desta preferência para medir o diff local → planilha da aba mapeada.
-      if (state.selectedSheet) await setAppSetting(LAST_SHEET_KEY, state.selectedSheet);
+      if (state.selectedSheet)
+        await setSheetsSetting(LAST_SHEET_KEY, state.selectedSheet);
       // O client id vive no build do frontend; a tarefa de sync em segundo plano (sem estado da UI)
       // precisa dele para renovar o token. Persistimos junto da última importação.
-      if (GOOGLE_CLIENT_ID) await setAppSetting(CLIENT_ID_KEY, GOOGLE_CLIENT_ID);
+      if (GOOGLE_CLIENT_ID) await setSheetsSetting(CLIENT_ID_KEY, GOOGLE_CLIENT_ID);
     } catch {
       // Best-effort: o atalho some até a próxima importação, sem quebrar o import.
     }
@@ -336,7 +334,7 @@ function useSheetImport(
   const handleToggleBgSync = async (enabled: boolean) => {
     set({ bgSyncEnabled: enabled });
     try {
-      await setAppSetting(BG_SYNC_KEY, enabled ? "true" : "false");
+      await setSheetsSetting(BG_SYNC_KEY, enabled ? "true" : "false");
     } catch {
       // Best-effort: reverte o visual se a gravação falhar.
       set({ bgSyncEnabled: !enabled });
@@ -349,7 +347,7 @@ function useSheetImport(
     await withLoading(setImporting, async () => {
       try {
         const profileId = crypto.randomUUID();
-        const { count, diagnostics } = await importSheetData(
+        const { count, diagnostics } = await importSheetDataCmd(
           spreadsheetId,
           sheetName,
           profileId,
@@ -382,7 +380,7 @@ function useSheetImport(
       try {
         let sheets = state.sheets;
         if (sheets.length === 0 || state.selectedSpreadsheet !== spreadsheetId) {
-          sheets = await listSheetNames(spreadsheetId, GOOGLE_CLIENT_ID);
+          sheets = await fetchSheetNames(spreadsheetId, GOOGLE_CLIENT_ID);
           set({ selectedSpreadsheet: spreadsheetId, sheets });
         }
         const profileId = crypto.randomUUID();
@@ -398,9 +396,9 @@ function useSheetImport(
           if (i >= sheets.length) return acc;
           const s = sheets[i]!;
           if (isEconomiaTab(s.title)) {
-            acc.econ += await importEconomiaSheet(spreadsheetId, GOOGLE_CLIENT_ID);
+            acc.econ += await importEconomiaSheetCmd(spreadsheetId, GOOGLE_CLIENT_ID);
           } else if (!isMetricTab(s.title)) {
-            const outcome = await importSheetData(
+            const outcome = await importSheetDataCmd(
               spreadsheetId,
               s.title,
               profileId,
@@ -450,7 +448,7 @@ function useSheetImport(
     set({ importResult: null, importDiagnostics: [], error: null, errorDetail: null });
     await withLoading(setImporting, async () => {
       try {
-        const count = await importEconomiaSheet(
+        const count = await importEconomiaSheetCmd(
           state.selectedSpreadsheet,
           GOOGLE_CLIENT_ID,
         );
@@ -491,7 +489,7 @@ function useSheetImport(
   // é estável (useReducer), então o effect roda só no mount.
   useEffect(() => {
     let alive = true;
-    getAppSetting(LAST_IMPORT_KEY)
+    fetchSheetsSetting(LAST_IMPORT_KEY)
       .then((raw) => {
         if (!alive || !raw) return;
         try {
@@ -513,7 +511,7 @@ function useSheetImport(
       })
       .catch(() => undefined);
     // Estado da atualização automática. Chave ausente = ligado por padrão.
-    getAppSetting(BG_SYNC_KEY)
+    fetchSheetsSetting(BG_SYNC_KEY)
       .then((raw) => {
         if (!alive) return;
         dispatch({ type: "set", patch: { bgSyncEnabled: raw !== "false" } });
@@ -543,8 +541,7 @@ function useSheetImport(
   };
 }
 
-const NOTES_DEGRADED_KEY = "notes_degraded_last_sheet";
-const fetchNotesDegraded = () => getAppSetting(NOTES_DEGRADED_KEY);
+const fetchNotesDegraded = () => fetchSheetsSetting(NOTES_DEGRADED_KEY);
 
 /** Aviso do ciclo degradado: o último sync não conseguiu ler as NOTAS de célula (a
  *  classificação Cartão/Economia/Patrimônio ficou congelada no último ciclo saudável).

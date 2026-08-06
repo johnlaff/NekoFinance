@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GoogleSheetsPanel, ImportDiagnosticsNotice } from "./GoogleSheetsPanel";
 import { mockInvoke } from "../../test/commands";
 import { invalidateCommands } from "../../lib/useCommand";
-import type { ImportDiagnostic } from "../../lib/api";
+import type { ImportDiagnostic } from "./sheetsView";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 

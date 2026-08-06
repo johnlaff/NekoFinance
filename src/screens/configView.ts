@@ -1,4 +1,22 @@
-import type { AuthStatus } from "../lib/api";
+import {
+  backupDatabase,
+  getAppInfo,
+  getAppSetting,
+  getFlagSetting,
+  getMiaConsent,
+  grantMiaConsent,
+  lastSyncAt,
+  registerOsReminder,
+  revokeMiaConsent,
+  setAppSetting,
+  setMiaApiKey,
+  unregisterOsReminder,
+  type AppInfo,
+  type AuthStatus,
+  type MiaConsentView,
+} from "../lib/api";
+
+export type { AppInfo, AuthStatus, MiaConsentView };
 
 export type GreetTone = "ok" | "warn" | "muted";
 
@@ -62,4 +80,58 @@ export function greetState(
     headline,
     detail: syncLabel ? `Sincronizado ${syncLabel}` : null,
   };
+}
+
+// --- Leitura -----------------------------------------------------------------------------
+
+export function fetchAppInfo(): Promise<AppInfo> {
+  return getAppInfo();
+}
+
+export function fetchLastSyncAt(): Promise<string | null> {
+  return lastSyncAt();
+}
+
+export function fetchMiaConsent(): Promise<MiaConsentView> {
+  return getMiaConsent();
+}
+
+export function fetchShowReceiptFlag(key: string, fallback: boolean): Promise<boolean> {
+  return getFlagSetting(key, fallback);
+}
+
+/** Preferência local do domínio Configurações (repassa o shim genérico sob o vocabulário da tela). */
+export function fetchConfigSetting(key: string): Promise<string | null> {
+  return getAppSetting(key);
+}
+
+// --- Escrita -------------------------------------------------------------------------------
+
+export function backupDatabaseCmd(destPath: string): Promise<string> {
+  return backupDatabase(destPath);
+}
+
+export function grantMiaConsentCmd(): Promise<MiaConsentView> {
+  return grantMiaConsent();
+}
+
+export function revokeMiaConsentCmd(): Promise<MiaConsentView> {
+  return revokeMiaConsent();
+}
+
+export function setMiaApiKeyCmd(key: string): Promise<MiaConsentView> {
+  return setMiaApiKey(key);
+}
+
+export function registerOsReminderCmd(timeHhmm: string): Promise<void> {
+  return registerOsReminder(timeHhmm);
+}
+
+export function unregisterOsReminderCmd(): Promise<void> {
+  return unregisterOsReminder();
+}
+
+/** Grava uma preferência local do domínio Configurações. */
+export function setConfigSetting(key: string, value: string): Promise<void> {
+  return setAppSetting(key, value);
 }

@@ -74,6 +74,8 @@ export default tseslint.config(
       "src/screens/*View.test.ts",
       "src/shell/*View.ts",
       "src/shell/*View.test.ts",
+      "src/features/sheets/sheetsView.ts",
+      "src/features/sheets/sheetsView.test.ts",
       "src/screens/miaRuntime.ts",
       "src/screens/miaRuntime.test.ts",
       "src/screens/miaSession.ts",
@@ -96,8 +98,10 @@ export default tseslint.config(
               message:
                 "Não importe lib/api diretamente — leia pela *View.ts da tela ou do shell " +
                 "(ela é a porta do shim). Exceções: src/screens/*View.ts e src/shell/*View.ts " +
-                "(+ seus testes), runtime da Mia (miaRuntime/miaSession + testes), " +
-                "src/hooks/**, e src/test/commands.ts (infra de mock do IPC).",
+                "(+ seus testes), a view de domínio do Sheets/write-back " +
+                "(src/features/sheets/sheetsView.ts + teste), runtime da Mia " +
+                "(miaRuntime/miaSession + testes), src/hooks/**, e src/test/commands.ts " +
+                "(infra de mock do IPC).",
             },
           ],
         },

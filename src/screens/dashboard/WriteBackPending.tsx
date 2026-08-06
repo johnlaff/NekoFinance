@@ -5,9 +5,13 @@ import {
   ConfirmDialog,
   WriteBackPreview,
 } from "../../features/sheets/WriteBackPreview";
+import {
+  applyWriteBackCmd,
+  fetchWriteBackPreview,
+  type CellWrite,
+} from "../../features/sheets/sheetsView";
 import { KIND_LABEL, isSafeForFastPath } from "../../features/sheets/writeBack";
 import type { WriteBackPendingState } from "../../hooks/useWriteBackPending";
-import { applyWriteBack, previewWriteBackStatus, type CellWrite } from "../../lib/api";
 import { invalidateCommands } from "../../lib/useCommand";
 import { safeErrorMessage } from "../../lib/errors";
 import { fmtDayMonth } from "../../lib/format";
@@ -155,7 +159,7 @@ export function WriteBackPending({ writeBack }: { writeBack: WriteBackPendingSta
     setFastErr(null);
     setSyncing(true);
     try {
-      const result = await previewWriteBackStatus(
+      const result = await fetchWriteBackPreview(
         writeBack.spreadsheetId,
         writeBack.sheetName,
         writeBack.clientId,
@@ -188,7 +192,7 @@ export function WriteBackPending({ writeBack }: { writeBack: WriteBackPendingSta
     if (!fastPath || applyingFastRef.current) return;
     applyingFastRef.current = true;
     try {
-      await applyWriteBack(
+      await applyWriteBackCmd(
         writeBack.spreadsheetId,
         writeBack.sheetName,
         writeBack.clientId,

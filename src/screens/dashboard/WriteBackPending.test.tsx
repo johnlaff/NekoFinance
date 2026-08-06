@@ -2,7 +2,10 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { WriteBackPending } from "./WriteBackPending";
-import type { CellWrite, WriteBackPreviewResult } from "../../lib/api";
+import type {
+  CellWrite,
+  WriteBackPreviewResult,
+} from "../../features/sheets/sheetsView";
 import type { WriteBackPendingState } from "../../hooks/useWriteBackPending";
 import { mockCommands, mockInvoke } from "../../test/commands";
 import type * as UseCommandModule from "../../lib/useCommand";
