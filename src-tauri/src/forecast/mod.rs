@@ -108,7 +108,7 @@ pub struct MonthEnd {
 /// Métricas de decisão de um mês. Como a máscara por régua faz cada régua enxergar o
 /// próprio conjunto de eventos, cada campo declara a VIEW que serve — as equações
 /// exibidas nas telas fecham com o motor porque leem campos da mesma view.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MonthMetric {
     pub year: i32,
     pub month: u32,

@@ -39,6 +39,73 @@ pub(crate) struct ForecastInputs {
     pub ledger: LedgerInputs,
 }
 
+#[cfg(test)]
+impl ForecastInputs {
+    /// Insumos MÍNIMOS e válidos de um dia sem dado nenhum: horizonte de um dia, sem eventos, sem
+    /// teto, sem renda, sem reserva mapeada. Cada teste de regra ajusta os campos da sua pergunta
+    /// e ignora o resto — é isso que torna barato cobrir bordas que hoje exigiriam um banco.
+    pub(crate) fn minimal(today: NaiveDate) -> Self {
+        ForecastInputs {
+            today,
+            horizon_end: today,
+            seed_cents: 0,
+            cash_events: Vec::new(),
+            metric_events: Vec::new(),
+            economia_annotation: HashMap::new(),
+            ceiling: CeilingInputs {
+                per_day_cents: 0,
+                source: CeilingSource::None,
+                estimate_basis: None,
+                projection_per_day_cents: 0,
+                proposal_pending: false,
+            },
+            annual: AnnualInputs {
+                year_metrics: Vec::new(),
+                guardrail_income_cents: 0,
+                guardrail_net_cents: 0,
+                guardrail_economia_cents: 0,
+                guardrail_patrimonio_cents: 0,
+                projected_income_cents: 0,
+                projected_net_cents: 0,
+            },
+            baseline: BaselineInputs {
+                monthly_cents: 0,
+                months: 0,
+                typical_income_cents: 0,
+                typical_economia_cents: 0,
+            },
+            reserve: ReserveInputs {
+                balance_cents: 0,
+                has_accounts: false,
+                trend: "flat".to_string(),
+            },
+            spending_mode: SpendingModeInputs {
+                samples: [forecast::MonthSpendSample {
+                    daily_days: 0,
+                    daily_total_cents: 0,
+                    cartao_present: false,
+                }; 3],
+                cartao_month_cents: 0,
+                next_fatura: None,
+            },
+            cards: CardInputs {
+                has_card: false,
+                active_invoices: Vec::new(),
+                invoiced_cycles: HashSet::new(),
+                alias_index: CardLexicon::from_entries(std::iter::empty()),
+            },
+            today_spend: DailySpendInputs {
+                daily_avg_cents: 0,
+                card_cents: 0,
+            },
+            ledger: LedgerInputs {
+                transaction_count: 0,
+                last_real_tx_date: None,
+            },
+        }
+    }
+}
+
 /// O teto do diário: o número exibido, sua procedência, os operandos da estimativa e o teto que
 /// dirige a projeção — que é outro número no modo cartão.
 #[derive(Debug, Clone)]
