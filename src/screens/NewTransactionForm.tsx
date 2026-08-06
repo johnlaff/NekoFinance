@@ -1,12 +1,16 @@
 import { useReducer, type Dispatch } from "react";
 import { Button } from "../design-system/components/Button";
 import { MovBadge, type MovKind } from "../design-system/components/MovBadge";
+import { LineItemEditor } from "../design-system/components/LineItemEditor";
+import { safeErrorMessage } from "../lib/errors";
+import { parseBRLToCents, todayISO } from "../lib/format";
+import { FORM_KINDS, fieldsToKind, kindToFields } from "../lib/movement";
 import {
-  createTransaction,
-  updateSeriesAll,
-  updateSeriesFrom,
-  updateTransaction,
-  updateTransactionItems,
+  createTransactionCmd,
+  updateSeriesAllCmd,
+  updateSeriesFromCmd,
+  updateTransactionCmd,
+  updateTransactionItemsCmd,
   type Frequency,
   type Card,
   type LineItem,
@@ -14,11 +18,7 @@ import {
   type PocketAccount,
   type SeriesEdit,
   type Tag,
-} from "../lib/api";
-import { LineItemEditor } from "../design-system/components/LineItemEditor";
-import { safeErrorMessage } from "../lib/errors";
-import { parseBRLToCents, todayISO } from "../lib/format";
-import { FORM_KINDS, fieldsToKind, kindToFields } from "../lib/movement";
+} from "./lancamentosView";
 import { submitCardPurchase, useCardOptions } from "./newTransactionCard";
 import { useFormOptions } from "./newTransactionOptions";
 
@@ -695,16 +695,16 @@ export function NewTransactionForm({
             isFixed: fields.isFixed,
           };
           if (all) {
-            await updateSeriesAll(recId, edit);
+            await updateSeriesAllCmd(recId, edit);
           } else {
-            await updateSeriesFrom(initialValues.id, edit);
+            await updateSeriesFromCmd(initialValues.id, edit);
           }
           // Itens são por ocorrência, portanto usam o id desta instância, não o `recId` da série.
           if (itemsActive) {
-            await updateTransactionItems(initialValues.id, items);
+            await updateTransactionItemsCmd(initialValues.id, items);
           }
         } else {
-          await updateTransaction(initialValues.id, {
+          await updateTransactionCmd(initialValues.id, {
             txnType: fields.txnType,
             amountCents,
             description: description.trim() || null,
@@ -715,7 +715,7 @@ export function NewTransactionForm({
           // Persiste as partes editadas ou as limpa quando o dono removeu todas. Dois
           // round-trips (não-atômicos): o pai já foi salvo; o update de itens reaplica o total.
           if (itemsActive) {
-            await updateTransactionItems(initialValues.id, items);
+            await updateTransactionItemsCmd(initialValues.id, items);
           }
         }
         dispatch({ type: "submitSuccess" });
@@ -741,7 +741,7 @@ export function NewTransactionForm({
         onCreated?.();
         return;
       }
-      const newId = await createTransaction({
+      const newId = await createTransactionCmd({
         txnType: fields.txnType,
         amountCents,
         description: description.trim() || null,
@@ -761,7 +761,7 @@ export function NewTransactionForm({
       // e a persistência das partes usam chamadas separadas, portanto uma falha entre elas deixa a
       // transação sem partes, mas com o total do pai íntegro e passível de novo detalhamento.
       if (itemsActive && !repeat) {
-        await updateTransactionItems(newId, items);
+        await updateTransactionItemsCmd(newId, items);
       }
       dispatch({ type: "submitSuccess" });
       onCreated?.();

@@ -18,21 +18,6 @@ import { Disclosure } from "../design-system/components/Disclosure";
 import { EmptyState } from "../design-system/components/EmptyState";
 import { Money, SignedMoney } from "../design-system/components/Money";
 import { MonthNav } from "../design-system/components/MonthNav";
-import {
-  deleteSeriesAll,
-  deleteSeriesFrom,
-  deleteTransaction,
-  getDashboardSummary,
-  getForecast,
-  getMonthGrid,
-  getMonthTransactions,
-  listTags,
-  setTransactionTags,
-  type LineItemKind,
-  type MonthGridDay,
-  type Tag,
-  type TransactionRow,
-} from "../lib/api";
 import { isTauri } from "../lib/env";
 import { useCommand, invalidateCommands } from "../lib/useCommand";
 import { fmtBRL, MES, saldoBand } from "../lib/nkFormat";
@@ -44,17 +29,34 @@ import {
   applySearch,
   buildDayGroups,
   countRows,
+  DASHBOARD_SUMMARY_CACHE_KEY,
+  dashboardSummaryFetcher,
   daymarkLabel,
   daysSummary,
+  deleteSeriesAllCmd,
+  deleteSeriesFromCmd,
+  deleteTransactionCmd,
   emptyListCopy,
+  FORECAST_CACHE_KEY,
+  forecastFetcher,
   LINE_ITEM_KIND_META,
+  listTagsCmd,
+  monthGridCacheKey,
+  monthGridFetcher,
   monthTitle,
+  monthTransactionsCacheKey,
+  monthTransactionsFetcher,
+  setTransactionTagsCmd,
   splitAroundToday,
+  TAGS_CACHE_KEY,
   toMovementType,
   type CellGroup,
   type DayGroup,
   type DisplayRow,
   type FilterKey,
+  type LineItemKind,
+  type Tag,
+  type TransactionRow,
 } from "./lancamentosView";
 
 // ---------------------------------------------------------------------------
@@ -92,29 +94,6 @@ const FILTER_CHIPS: { key: FilterKey; label: string; hint: string }[] = [
 
 function monthKey(iso: string): string {
   return iso.slice(0, 7);
-}
-
-// Stable per-(year,month) fetchers for useCommand (its effect captures the first
-// fetcher ref; an inline arrow would fetch with a stale closure — see useCommand).
-const _monthGridFetchers = new Map<string, () => Promise<MonthGridDay[]>>();
-function monthGridFetcher(year: number, month: number): () => Promise<MonthGridDay[]> {
-  const key = `${year}-${month}`;
-  const cached = _monthGridFetchers.get(key);
-  if (cached) return cached;
-  const fn = () => getMonthGrid(year, month);
-  _monthGridFetchers.set(key, fn);
-  return fn;
-}
-
-// O Livro-razão busca por MÊS (a janela recente pura cortaria meses antigos no
-// limite e o mês navegado pareceria vazio). Mesmo padrão de fetcher estável.
-const _monthTxFetchers = new Map<string, () => Promise<TransactionRow[]>>();
-function monthTxFetcher(monthKey: string): () => Promise<TransactionRow[]> {
-  const cached = _monthTxFetchers.get(monthKey);
-  if (cached) return cached;
-  const fn = () => getMonthTransactions(monthKey);
-  _monthTxFetchers.set(monthKey, fn);
-  return fn;
 }
 
 /**
@@ -156,20 +135,20 @@ function handleDelete(t: TransactionRow): void {
       "Apagar TODA a série recorrente?\n\nOK = apagar a série inteira\nCancela = escolher só esta ou as futuras",
     );
     if (all) {
-      afterDelete(deleteSeriesAll(recId));
+      afterDelete(deleteSeriesAllCmd(recId));
       return;
     }
     const fromHere = window.confirm(
       "OK = apagar esta e todas as futuras da série.\nCancela = apagar somente esta ocorrência.",
     );
-    afterDelete(fromHere ? deleteSeriesFrom(t.id) : deleteTransaction(t.id));
+    afterDelete(fromHere ? deleteSeriesFromCmd(t.id) : deleteTransactionCmd(t.id));
     return;
   }
   const confirmed = window.confirm(
     `Apagar "${t.description || "lançamento"}"? Esta ação não pode ser desfeita.`,
   );
   if (!confirmed) return;
-  afterDelete(deleteTransaction(t.id));
+  afterDelete(deleteTransactionCmd(t.id));
 }
 
 // ---------------------------------------------------------------------------
@@ -202,7 +181,7 @@ function TagPicker({
 
   function save() {
     setSaving(true);
-    setTransactionTags(transactionId, Array.from(selected))
+    setTransactionTagsCmd(transactionId, Array.from(selected))
       .then(() => {
         invalidateCommands();
         onDone();
@@ -658,10 +637,10 @@ function lcReducer(state: LcState, action: LcAction): LcState {
 export function TransactionsScreen() {
   const { openCompose } = useNekoApp();
 
-  const { data: allTags } = useCommand("list_tags:lc", listTags);
+  const { data: allTags } = useCommand(TAGS_CACHE_KEY, listTagsCmd);
   // Modo de gasto (copy do vazio) e custo de vida do mês — caches compartilhados do app.
-  const summaryQ = useCommand("get_dashboard_summary", getDashboardSummary);
-  const forecastQ = useCommand("get_forecast", getForecast);
+  const summaryQ = useCommand(DASHBOARD_SUMMARY_CACHE_KEY, dashboardSummaryFetcher);
+  const forecastQ = useCommand(FORECAST_CACHE_KEY, forecastFetcher);
 
   const [state, dispatch] = useReducer(lcReducer, {
     filter: "todos",
@@ -686,7 +665,10 @@ export function TransactionsScreen() {
     data: transactions,
     loading,
     error,
-  } = useCommand(`get_month_transactions:${targetKey}`, monthTxFetcher(targetKey));
+  } = useCommand(
+    monthTransactionsCacheKey(targetKey),
+    monthTransactionsFetcher(targetKey),
+  );
 
   // O crumb da appbar acompanha o mês visto; ao sair da tela, volta ao padrão.
   // `setCrumb` é função de módulo (identidade fixa) — o efeito só re-dispara
@@ -727,7 +709,7 @@ export function TransactionsScreen() {
 
   // Saldo encadeado por dia (paridade com a coluna Saldo da planilha).
   const gridQ = useCommand(
-    `month_grid:${targetKey}`,
+    monthGridCacheKey(targetYear, targetMonth),
     monthGridFetcher(targetYear, targetMonth),
   );
   const monthGrid = gridQ.data ?? [];

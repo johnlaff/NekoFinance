@@ -24,20 +24,12 @@ export const LIB_API_ALLOWLIST = [
   "src/features/sheets/writeBack.ts",
   "src/lib/useShowReceipt.ts",
   "src/screens/LoanGroupItem.tsx",
-  "src/screens/NewTransactionForm.test.tsx",
-  "src/screens/NewTransactionForm.tsx",
-  "src/screens/ObligationsPanel.tsx",
   "src/screens/SettingsScreen.test.tsx",
   "src/screens/SettingsScreen.tsx",
-  "src/screens/TransactionsScreen.test.tsx",
-  "src/screens/TransactionsScreen.tsx",
   "src/screens/dashboard/WriteBackPending.test.tsx",
   "src/screens/dashboard/WriteBackPending.tsx",
-  "src/screens/newTransactionCard.ts",
-  "src/screens/newTransactionOptions.ts",
   "src/screens/scenarios.test.tsx",
   "src/screens/scenarios.tsx",
-  "src/shell/Compose.tsx",
 ];
 
 // Snapshot at the gate's introduction (#326). Lower this as entries migrate; never raise it to

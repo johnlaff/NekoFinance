@@ -18,20 +18,23 @@ import {
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
-import {
-  createObligation,
-  deleteObligation,
-  listObligations,
-  obligationHistory,
-  previewObligationMatches,
-  type LineItem,
-  type Obligation,
-} from "../lib/api";
 import { useCommand, invalidateCommands } from "../lib/useCommand";
 import { MES } from "../lib/nkFormat";
 import { Money } from "../design-system/components/Money";
 import { Button } from "../design-system/components/Button";
 import { safeErrorMessage } from "../lib/errors";
+import {
+  createObligationCmd,
+  deleteObligationCmd,
+  listObligationsCmd,
+  obligationHistoryCacheKey,
+  obligationHistoryFetcher,
+  OBLIGATIONS_CACHE_KEY,
+  previewObligationCacheKey,
+  previewObligationFetcher,
+  type LineItem,
+  type Obligation,
+} from "./lancamentosView";
 
 /** Rótulo + cor por kind de obrigação (mesmos 6 buckets de `classify_line_item`; nunca
  * "entrada" — o resolver não faz esse caso especial, só o line_item de exibição faz). */
@@ -107,9 +110,9 @@ function MarkObligationPanel({ item, onDone }: { item: LineItem; onDone: () => v
 
   // A prévia é obrigatória e nunca silenciosa: a chave inclui todo input que muda o
   // casamento, então cada edição refaz a busca e mostra exatamente o que será agrupado.
-  const previewKey = `preview_obligation:${matchDesc}|${section ?? ""}`;
+  const previewKey = previewObligationCacheKey(matchDesc, section);
   const previewQ = useCommand(previewKey, () =>
-    previewObligationMatches(matchDesc, section),
+    previewObligationFetcher(matchDesc, section),
   );
   const previewCount = previewQ.data?.length ?? 0;
 
@@ -128,7 +131,7 @@ function MarkObligationPanel({ item, onDone }: { item: LineItem; onDone: () => v
     setSaving(true);
     setError(null);
     try {
-      await createObligation(trimmedName, trimmedMatch, section);
+      await createObligationCmd(trimmedName, trimmedMatch, section);
       invalidateCommands();
       onDone();
     } catch (err) {
@@ -214,13 +217,13 @@ function MarkObligationPanel({ item, onDone }: { item: LineItem; onDone: () => v
 // ---------------------------------------------------------------------------
 
 export function ObligationsCard() {
-  const listQ = useCommand("obligations", listObligations);
+  const listQ = useCommand(OBLIGATIONS_CACHE_KEY, listObligationsCmd);
   const [openId, setOpenId] = useState<string | null>(null);
   const obligations = listQ.data ?? [];
 
   async function remove(id: string) {
     try {
-      await deleteObligation(id);
+      await deleteObligationCmd(id);
       invalidateCommands();
       setOpenId((v) => (v === id ? null : v));
     } catch {
@@ -276,8 +279,9 @@ function ObligationRow({
   onToggle: () => void;
   onDelete: () => void;
 }) {
-  const historyQ = useCommand(`obligation_history:${obligation.id}`, () =>
-    obligationHistory(obligation.id),
+  const historyQ = useCommand(
+    obligationHistoryCacheKey(obligation.id),
+    obligationHistoryFetcher(obligation.id),
   );
   const history = (historyQ.data ?? [])
     .slice()

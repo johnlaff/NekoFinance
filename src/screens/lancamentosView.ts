@@ -1,4 +1,46 @@
-import type { LineItem, LineItemKind, TagRef, TransactionRow } from "../lib/api";
+import {
+  createCardSeries,
+  createObligation,
+  createTransaction,
+  deleteObligation,
+  deleteSeriesAll,
+  deleteSeriesFrom,
+  deleteTransaction,
+  getDashboardSummary,
+  getForecast,
+  getLineItems,
+  getMonthGrid,
+  getMonthTransactions,
+  getPockets,
+  listCards,
+  listObligations,
+  listTags,
+  obligationHistory,
+  previewObligationMatches,
+  registerCardPurchase,
+  setTransactionTags,
+  updateSeriesAll,
+  updateSeriesFrom,
+  updateTransaction,
+  updateTransactionItems,
+  type Card,
+  type DashboardSummary,
+  type Forecast,
+  type Frequency,
+  type LineItem,
+  type LineItemDraft,
+  type LineItemKind,
+  type MonthGridDay,
+  type Obligation,
+  type ObligationLineItem,
+  type ObligationMonthTotal,
+  type PocketAccount,
+  type Pockets,
+  type SeriesEdit,
+  type Tag,
+  type TagRef,
+  type TransactionRow,
+} from "../lib/api";
 import { MES, TYPE_META, type MovementType } from "../lib/nkFormat";
 import { eyebrowDate } from "./hojeView";
 
@@ -6,7 +48,36 @@ import { eyebrowDate } from "./hojeView";
 // O modelo célula×nota do Livro-razão: a célula (dia, coluna) é a autoridade do
 // total; a nota itemiza; a diferença célula×nota é linha sintética, nunca item.
 // Helpers puros — a tela orquestra, este módulo decide.
+//
+// Esta view é a porta completa do shim (ADR-0007) para todo o domínio de
+// lançamento — a tela de Lançamentos, o compositor (`shell/Compose.tsx`, que
+// edita/cria o mesmo tipo de dado sem tela própria) e os módulos de apoio do
+// formulário (`newTransactionCard.ts`, `newTransactionOptions.ts`). Decisão
+// registrada: nenhum `composeView.ts` próprio — o compositor é o mesmo domínio
+// de lançamento, então estende esta view em vez de duplicar leitura/escrita
+// (ver CONTEXT.md).
 // ---------------------------------------------------------------------------
+
+// Tipos do shim reexportados pela view — nenhum outro arquivo sob `src/` importa
+// `lib/api` para a superfície de lançamento; quem precisa do formato do DTO lê daqui.
+export type {
+  Card,
+  DashboardSummary,
+  Forecast,
+  Frequency,
+  LineItem,
+  LineItemDraft,
+  LineItemKind,
+  MonthGridDay,
+  Obligation,
+  ObligationLineItem,
+  ObligationMonthTotal,
+  PocketAccount,
+  Pockets,
+  SeriesEdit,
+  Tag,
+  TransactionRow,
+};
 
 /** Filtro por tipo da tela: os 5 tipos do método + "todos". */
 export type FilterKey = "todos" | MovementType;
@@ -358,4 +429,226 @@ export function emptyListCopy(opts: {
     return base;
   }
   return `Nenhum lançamento em ${opts.monthName}.`;
+}
+
+// ---------------------------------------------------------------------------
+// Leitura — chaves de cache + fetchers estáveis do `useCommand`. Cada fetcher
+// parametrizado memoiza por chave num `Map` de módulo, para que o efeito do
+// `useCommand` capture sempre a mesma referência (uma arrow inline buscaria
+// com closure velha — mesmo cuidado de `tagsView.ts`).
+// ---------------------------------------------------------------------------
+
+export const DASHBOARD_SUMMARY_CACHE_KEY = "get_dashboard_summary";
+export const FORECAST_CACHE_KEY = "get_forecast";
+export const TAGS_CACHE_KEY = "list_tags:lc";
+export const POCKETS_CACHE_KEY = "get_pockets";
+export const OBLIGATIONS_CACHE_KEY = "obligations";
+
+export function dashboardSummaryFetcher(): Promise<DashboardSummary> {
+  return getDashboardSummary();
+}
+
+export function forecastFetcher(): Promise<Forecast> {
+  return getForecast();
+}
+
+export function listTagsCmd(): Promise<Tag[]> {
+  return listTags();
+}
+
+export function pocketsFetcher(): Promise<Pockets> {
+  return getPockets();
+}
+
+export function listObligationsCmd(): Promise<Obligation[]> {
+  return listObligations();
+}
+
+/** Chave de cache do `useCommand` para o Livro-razão do mês `ym` ("YYYY-MM"). */
+export function monthTransactionsCacheKey(ym: string): string {
+  return `get_month_transactions:${ym}`;
+}
+
+const _monthTxFetchers = new Map<string, () => Promise<TransactionRow[]>>();
+
+export function monthTransactionsFetcher(ym: string): () => Promise<TransactionRow[]> {
+  const cached = _monthTxFetchers.get(ym);
+  if (cached) return cached;
+  const fn = () => getMonthTransactions(ym);
+  _monthTxFetchers.set(ym, fn);
+  return fn;
+}
+
+/** Chave de cache do `useCommand` para o saldo encadeado por dia do mês `year-month`. */
+export function monthGridCacheKey(year: number, month: number): string {
+  return `month_grid:${year}-${month}`;
+}
+
+const _monthGridFetchers = new Map<string, () => Promise<MonthGridDay[]>>();
+
+export function monthGridFetcher(
+  year: number,
+  month: number,
+): () => Promise<MonthGridDay[]> {
+  const key = `${year}-${month}`;
+  const cached = _monthGridFetchers.get(key);
+  if (cached) return cached;
+  const fn = () => getMonthGrid(year, month);
+  _monthGridFetchers.set(key, fn);
+  return fn;
+}
+
+/** Chave de cache do `useCommand` para o histórico mensal de uma obrigação. */
+export function obligationHistoryCacheKey(obligationId: string): string {
+  return `obligation_history:${obligationId}`;
+}
+
+const _obligationHistoryFetchers = new Map<
+  string,
+  () => Promise<ObligationMonthTotal[]>
+>();
+
+export function obligationHistoryFetcher(
+  obligationId: string,
+): () => Promise<ObligationMonthTotal[]> {
+  const cached = _obligationHistoryFetchers.get(obligationId);
+  if (cached) return cached;
+  const fn = () => obligationHistory(obligationId);
+  _obligationHistoryFetchers.set(obligationId, fn);
+  return fn;
+}
+
+/** Chave de cache do `useCommand` para a prévia de casamento de uma obrigação —
+ *  inclui todo input que muda o resultado, para que cada edição refaça a busca. */
+export function previewObligationCacheKey(
+  matchDesc: string,
+  matchSection: string | null,
+): string {
+  return `preview_obligation:${matchDesc}|${matchSection ?? ""}`;
+}
+
+export function previewObligationFetcher(
+  matchDesc: string,
+  matchSection: string | null,
+): Promise<ObligationLineItem[]> {
+  return previewObligationMatches(matchDesc, matchSection);
+}
+
+// ---------------------------------------------------------------------------
+// Escrita — um wrapper por comando, no vocabulário de domínio da tela/compositor,
+// mesmo quando só repassa ao shim sem transformação. Quem dispara decide quando
+// chamar `invalidateCommands()` (infra genérica de `lib/useCommand`) — esta view
+// só sabe traduzir a intenção para a chamada certa.
+// ---------------------------------------------------------------------------
+
+export function createTransactionCmd(input: {
+  txnType: "income" | "expense" | "transfer";
+  amountCents: number;
+  description: string | null;
+  date: string;
+  paymentMethod: string | null;
+  isFixed: boolean;
+  tagIds: string[];
+  recurrence: { frequency: Frequency; repetitions: number } | null;
+  toAccountId?: string | null;
+  dueDate?: string | null;
+}): Promise<string> {
+  return createTransaction(input);
+}
+
+export function updateTransactionCmd(
+  id: string,
+  edit: {
+    txnType: string;
+    amountCents: number;
+    description: string | null;
+    paymentMethod: string | null;
+    isFixed: boolean;
+    date: string;
+  },
+): Promise<void> {
+  return updateTransaction(id, edit);
+}
+
+export function updateTransactionItemsCmd(
+  transactionId: string,
+  items: LineItemDraft[],
+): Promise<void> {
+  return updateTransactionItems(transactionId, items);
+}
+
+export function deleteTransactionCmd(id: string): Promise<void> {
+  return deleteTransaction(id);
+}
+
+export function updateSeriesAllCmd(
+  recurrenceId: string,
+  edit: SeriesEdit,
+): Promise<number> {
+  return updateSeriesAll(recurrenceId, edit);
+}
+
+export function updateSeriesFromCmd(
+  transactionId: string,
+  edit: SeriesEdit,
+): Promise<number> {
+  return updateSeriesFrom(transactionId, edit);
+}
+
+export function deleteSeriesAllCmd(recurrenceId: string): Promise<number> {
+  return deleteSeriesAll(recurrenceId);
+}
+
+export function deleteSeriesFromCmd(transactionId: string): Promise<number> {
+  return deleteSeriesFrom(transactionId);
+}
+
+export function setTransactionTagsCmd(
+  transactionId: string,
+  tagIds: string[],
+): Promise<void> {
+  return setTransactionTags(transactionId, tagIds);
+}
+
+export function getLineItemsCmd(transactionId: string): Promise<LineItem[]> {
+  return getLineItems(transactionId);
+}
+
+export function listCardsCmd(): Promise<Card[]> {
+  return listCards();
+}
+
+export function registerCardPurchaseCmd(input: {
+  cardAccountId: string;
+  amountCents: number;
+  description?: string | null;
+  date: string;
+  refundCents?: number | null;
+  tagIds: string[];
+}): Promise<string> {
+  return registerCardPurchase(input);
+}
+
+export function createCardSeriesCmd(input: {
+  cardAccountId: string;
+  description: string;
+  amountCents: number;
+  count: number | null;
+  startDate: string;
+  refundCents?: number | null;
+  tagIds: string[];
+}): Promise<string> {
+  return createCardSeries(input);
+}
+
+export function createObligationCmd(
+  name: string,
+  matchDesc: string,
+  matchSection: string | null,
+): Promise<string> {
+  return createObligation(name, matchDesc, matchSection);
+}
+
+export function deleteObligationCmd(id: string): Promise<void> {
+  return deleteObligation(id);
 }
