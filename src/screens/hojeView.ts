@@ -1,6 +1,12 @@
-import type { ForecastDay, UpcomingInvoice } from "../lib/api";
+import type { BandVerdict, ForecastDay, UpcomingInvoice } from "../lib/api";
 import { MES } from "../lib/nkFormat";
 import type { SaldoBand } from "../lib/saldoHeatmap";
+
+/**
+ * Meses mínimos de reserva do método (espelho de `RESERVE_MIN_MONTHS`,
+ * `src-tauri/src/forecast/mod.rs`): abaixo disso a liquidez ainda está sendo construída.
+ */
+export const RESERVE_MIN_MONTHS = 6;
 
 const WEEKDAYS = [
   "Domingo",
@@ -296,7 +302,61 @@ export function spendCapReason(input: {
  * protege a faixa enquanto está viva e para de morder depois de rompida: o déficit é do ano que
  * passou, e nenhum gasto de hoje o desfaz. Some do teto, não da tela: o diagnóstico continua
  * visível, porque é ele que aponta o caminho (subir a performance do mês).
+ *
+ * Lê o VEREDITO publicado pelo motor (os mesmos 5 estados que a tela do ano julga), nunca o
+ * sinal de `savings_headroom_cents` — o motor já decidiu a fronteira em `band_verdict`,
+ * reler o sinal aqui seria uma segunda régua que pode divergir da primeira.
  */
-export function savingsBandBroken(savingsHeadroomCents: number | null): boolean {
-  return savingsHeadroomCents != null && savingsHeadroomCents < 0;
+export function savingsBandBroken(verdict: BandVerdict): boolean {
+  return verdict !== "in_band" && verdict !== "above_band";
+}
+
+/** Taxa de economia do mês corrente, para exibição (uma casa decimal, sem cap). */
+export function monthSavingsRatePercent(savingsRateBps: number): number {
+  return savingsRateBps / 100;
+}
+
+/**
+ * Fatura em aberto contra o gasto típico do mês — SEM teto artificial: uma fatura 150% acima
+ * do típico é dado, não ruído, e a barra reforça o número em vez de escondê-lo.
+ * `null` sem gasto típico para dividir.
+ */
+export function invoiceCoverageFraction(
+  invoiceTotalCents: number,
+  baselineOutflowCents: number,
+): number | null {
+  return baselineOutflowCents > 0 ? invoiceTotalCents / baselineOutflowCents : null;
+}
+
+/** Percentual de exibição (arredondado) da fatura contra o gasto típico. */
+export function invoiceCoveragePercent(fraction: number): number {
+  return Math.round(fraction * 100);
+}
+
+/**
+ * Diário de hoje contra o teto do dia. A barra SATURA em 100% (largura é reforço visual, nunca
+ * o número); o rótulo é explícito e não capa — 150% acima do teto é dado que a pessoa precisa ler.
+ */
+export function dailyCeilingFraction(spentCents: number, ceilingCents: number): number {
+  if (ceilingCents <= 0) return 0;
+  return Math.min(1, spentCents / ceilingCents);
+}
+
+/** Percentual de exibição (arredondado) do gasto de hoje contra o teto — nunca capado. */
+export function dailyCeilingPercent(spentCents: number, ceilingCents: number): number {
+  if (ceilingCents <= 0) return 0;
+  return Math.round((spentCents / ceilingCents) * 100);
+}
+
+/**
+ * Progresso da reserva contra o mínimo do método (`RESERVE_MIN_MONTHS`). A barra satura em
+ * 100%: passar do alvo é o excedente, lido à parte, não uma barra maior que o track.
+ */
+export function reserveProgressFraction(reserveMonths: number): number {
+  return Math.max(0, Math.min(1, reserveMonths / RESERVE_MIN_MONTHS));
+}
+
+/** A reserva está de pé: existe registro e cobre o mínimo de meses do método. */
+export function reserveStanding(reserveState: string, reserveMonths: number): boolean {
+  return reserveState !== "no_record" && reserveMonths >= RESERVE_MIN_MONTHS;
 }

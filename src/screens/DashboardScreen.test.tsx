@@ -153,6 +153,7 @@ describe("DashboardScreen (Hoje)", () => {
         binding_guardrail: "cash",
         cash_headroom_cents: 734_608,
         savings_headroom_cents: -1_695_966,
+        savings_band_verdict: "below_band",
         deepest_deficit: { date: "2026-08-12", balance_cents: 734_608 },
       },
     });
@@ -183,6 +184,101 @@ describe("DashboardScreen (Hoje)", () => {
     ).toBeInTheDocument();
     expect(
       screen.queryByText(/economia do ano está abaixo dos 20%/i),
+    ).not.toBeInTheDocument();
+  });
+
+  // 22% está DENTRO da faixa (piso 20%) — a folga pode ser pequena, mas o veredito publicado
+  // é quem decide, não o sinal de savings_headroom_cents. Este é o falso positivo histórico: um
+  // arredondamento pode deixar a folga negativa mesmo com o percentual dentro da faixa — e é
+  // exatamente esse descolamento entre sinal e veredito que a tela não pode mais reproduzir.
+  it("22% dentro da faixa não mostra o diagnóstico de abaixo dos 20%, mesmo com a folga negativa por arredondamento", async () => {
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: {
+        ...FORECAST,
+        binding_guardrail: "cash",
+        savings_headroom_cents: -50,
+        savings_band_verdict: "in_band",
+        deepest_deficit: { date: "2026-08-12", balance_cents: 734_608 },
+      },
+    });
+    renderHoje();
+    expect(
+      await screen.findByText("Sem deixar nenhum dia no vermelho."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/economia do ano está abaixo dos 20%/i),
+    ).not.toBeInTheDocument();
+  });
+
+  // above_band é faixa viva — mesmo tratamento de in_band, sem diagnóstico.
+  it("acima da faixa também não mostra diagnóstico", async () => {
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: {
+        ...FORECAST,
+        safe_to_spend_today_cents: 50_000,
+        binding_guardrail: "savings",
+        savings_headroom_cents: 50_000,
+        savings_band_verdict: "above_band",
+      },
+    });
+    renderHoje();
+    expect(
+      await screen.findByText("Sem tocar na economia planejada do ano."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/economia do ano está abaixo dos 20%/i),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/é a troca certa/i)).not.toBeInTheDocument();
+  });
+
+  // no_record: nada para diagnosticar ainda — nem "abaixo dos 20%" nem "troca certa".
+  it("sem registro do ano não mostra nenhum diagnóstico da faixa", async () => {
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: {
+        ...FORECAST,
+        binding_guardrail: "cash",
+        savings_headroom_cents: null,
+        savings_band_verdict: "no_record",
+        deepest_deficit: { date: "2026-08-12", balance_cents: 734_608 },
+      },
+    });
+    renderHoje();
+    expect(
+      await screen.findByText("Sem deixar nenhum dia no vermelho."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/economia do ano está abaixo dos 20%/i),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/é a troca certa/i)).not.toBeInTheDocument();
+  });
+
+  // Zero-por-escolha é a ordem do método cumprida — a cópia chama pelo nome e não usa
+  // linguagem de falta.
+  it("zero por escolha com reserva de pé mostra 'é a troca certa', nunca frase de falta", async () => {
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: {
+        ...FORECAST,
+        safe_to_spend_today_cents: 734_608,
+        binding_guardrail: "cash",
+        cash_headroom_cents: 734_608,
+        savings_headroom_cents: 0,
+        savings_band_verdict: "zero_by_choice",
+        deepest_deficit: { date: "2026-08-12", balance_cents: 734_608 },
+      },
+    });
+    renderHoje();
+    expect(await screen.findByText(/é a troca certa/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/economia do ano está abaixo dos 20%/i),
+    ).not.toBeInTheDocument();
+    // Nenhuma frase de falta de economia — a única "falta" na tela é a do retrato da reserva,
+    // um card diferente que não faz parte do diagnóstico da faixa.
+    expect(
+      screen.queryByText(/faltam .* de guardar|faltando guardar/i),
     ).not.toBeInTheDocument();
   });
 

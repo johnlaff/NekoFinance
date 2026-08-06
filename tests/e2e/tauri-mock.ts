@@ -231,6 +231,9 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
       cash_headroom_cents: 587700,
       savings_headroom_cents: 35000,
       binding_guardrail: "cash",
+      savings_band_verdict: "in_band",
+      savings_band: { floor_bps: 2000, ceiling_bps: 3000 },
+      savings_band_scope_lived: true,
       annual_savings: {
         realized_income_cents: 5000000,
         realized_savings_cents: 300000,

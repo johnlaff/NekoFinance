@@ -25,13 +25,21 @@ import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { MES, monthOf, saldoBand } from "../lib/nkFormat";
 import { currentMonthMetric } from "./totaisStatus";
 import {
+  dailyCeilingFraction,
+  dailyCeilingPercent,
   dueLabel,
   faturaDayLabel,
   greetingForHour,
+  invoiceCoverageFraction,
+  invoiceCoveragePercent,
   joinNames,
   monthInsight,
+  monthSavingsRatePercent,
   openInvoicesView,
   refundExpectedCents,
+  RESERVE_MIN_MONTHS,
+  reserveProgressFraction,
+  reserveStanding,
   saldoBandPhrase,
   savingsBandBroken,
   spendCapReason,
@@ -76,6 +84,10 @@ const VERDICT_HOW_CARD = {
 const FATURAS_TERM = {
   title: "O velocímetro de quem vive no crédito",
   body: "Cada compra soma na fatura do cartão usado — é aqui que o seu gasto variável mora. O Diário fica zerado de propósito: ele é para débito e Pix, que mexem o saldo na hora.",
+};
+const WHY_CEILING_STOPPED_TERM = {
+  title: "Por que o teto parou de morder?",
+  body: "A faixa de 20–30% é média ANUAL — a régua da economia só trava o dia enquanto ela está viva. Uma vez rompida, o déficit é do ano que passou: nenhum gasto de hoje o desfaz, e travar o teto puniria o que não volta. O caminho é a performance do mês, não um dia sem gastar.",
 };
 
 export function DashboardScreen() {
@@ -258,9 +270,10 @@ export function DashboardScreen() {
                 </div>
                 <div className="side">
                   <div className="v">
-                    {(metric.savings_rate_bps / 100).toLocaleString("pt-BR", {
-                      maximumFractionDigits: 1,
-                    })}
+                    {monthSavingsRatePercent(metric.savings_rate_bps).toLocaleString(
+                      "pt-BR",
+                      { maximumFractionDigits: 1 },
+                    )}
                     %
                   </div>
                   <div className="l">Guardado no mês</div>
@@ -429,8 +442,10 @@ function TeachLine({
 
   // A faixa 20–30% é média ANUAL: rompida, ela sai do teto mas não da tela. O diagnóstico é o
   // que aponta o caminho — e o caminho do método é performance do mês, não um dia sem gastar.
-  const bandBroken =
-    savingsBandBroken(forecast.savings_headroom_cents) && reason.kind !== "savings";
+  // Lê o VEREDITO publicado (os 5 estados do motor), nunca o sinal de savings_headroom_cents —
+  // é o que corrige o falso positivo de 22% (dentro da faixa) que o sinal sozinho acusava.
+  const verdict = forecast.savings_band_verdict;
+  const bandBroken = savingsBandBroken(verdict) && reason.kind !== "savings";
 
   // Ação nunca se esconde: os estados sem teto mantêm o CTA visível; os estados
   // informados encolhem a um rótulo curto com o valor.
@@ -470,11 +485,23 @@ function TeachLine({
   return (
     <>
       {numberPhrase}
-      {bandBroken ? (
+      {bandBroken && verdict === "zero_by_choice" ? (
+        <>
+          {" "}
+          Você zerou a economia para não tocar na reserva — na ordem do método, é a
+          troca certa.{" "}
+          <InfoPopover term={WHY_CEILING_STOPPED_TERM} hideMarker>
+            <span className="hoje__how">Por que o teto parou de morder?</span>
+          </InfoPopover>
+        </>
+      ) : bandBroken && verdict === "below_band" ? (
         <>
           {" "}
           A economia do ano está abaixo dos 20% — a faixa é média anual, então o caminho
-          é a performance do mês, não um dia sem gastar.
+          é a performance do mês, não um dia sem gastar.{" "}
+          <InfoPopover term={WHY_CEILING_STOPPED_TERM} hideMarker>
+            <span className="hoje__how">Por que o teto parou de morder?</span>
+          </InfoPopover>
         </>
       ) : null}
       {tetoClause}{" "}
@@ -515,16 +542,17 @@ function BlockDay({
   }
   // O texto/aria dizem o percentual REAL (150% acima do típico é dado, não ruído);
   // só a barra satura em 100 — largura é reforço visual, nunca o número.
-  const pct =
-    baselineOutflowCents > 0
-      ? Math.round((invoices.totalCents / baselineOutflowCents) * 100)
-      : null;
+  const invoiceFraction = invoiceCoverageFraction(
+    invoices.totalCents,
+    baselineOutflowCents,
+  );
+  const pct = invoiceFraction != null ? invoiceCoveragePercent(invoiceFraction) : null;
 
   const ceiling = summary.daily_budget;
   const source = summary.daily_ceiling_source;
   const overCeiling = !cardMode && ceiling > 0 && spentToday > ceiling;
-  const ciPct =
-    ceiling > 0 ? Math.min(100, Math.round((spentToday / ceiling) * 100)) : 0;
+  const ciFraction = dailyCeilingFraction(spentToday, ceiling);
+  const ciPct = dailyCeilingPercent(spentToday, ceiling);
 
   return (
     <section className="hoje__card hoje__blockday" aria-labelledby="hoje-day-title">
@@ -582,11 +610,11 @@ function BlockDay({
                     <Money cents={invoices.totalCents} size="inherit" />
                   </span>
                 </div>
-                {pct !== null && (
+                {pct !== null && invoiceFraction !== null && (
                   <>
                     <Meter
                       className="hoje__fatura-bar"
-                      fraction={pct / 100}
+                      fraction={invoiceFraction}
                       color="var(--accent)"
                     />
                     <p className="hoje__fatura-note">
@@ -679,12 +707,12 @@ function BlockDay({
           {ceiling > 0 && (
             <Meter
               className="hoje__ci-track"
-              fraction={ciPct / 100}
+              fraction={ciFraction}
               height={9}
               color={overCeiling ? "var(--danger-500)" : "var(--type-diario)"}
               label={
                 overCeiling
-                  ? "Diário de hoje acima do teto"
+                  ? `Diário de hoje em ${ciPct}% do teto — acima do teto`
                   : `Diário de hoje em ${ciPct}% do teto`
               }
             />
@@ -906,8 +934,8 @@ function SaldoReserva({
   const band = saldoBand(saldoHoje);
   const reserveState = summary.reserve_state;
   const reserveMonths = summary.reserve_months;
-  const reserveFraction = Math.max(0, Math.min(1, reserveMonths / 6));
-  const reserveOk = reserveState !== "no_record" && reserveMonths >= 6;
+  const reserveFraction = reserveProgressFraction(reserveMonths);
+  const reserveOk = reserveStanding(reserveState, reserveMonths);
 
   return (
     <>
@@ -981,8 +1009,8 @@ function SaldoReserva({
                 />
                 <span>
                   {reserveOk
-                    ? "Acima dos 6 meses que o método pede"
-                    : "O método pede 6 meses de custo de vida"}
+                    ? `Acima dos ${RESERVE_MIN_MONTHS} meses que o método pede`
+                    : `O método pede ${RESERVE_MIN_MONTHS} meses de custo de vida`}
                 </span>
               </div>
               {/* Alcançado o alvo, a pergunta do método deixa de ser "quanto falta" e passa a

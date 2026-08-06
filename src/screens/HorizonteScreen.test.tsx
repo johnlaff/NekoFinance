@@ -53,6 +53,9 @@ const FORECAST: Forecast = {
   cash_headroom_cents: 752086,
   savings_headroom_cents: 20000,
   binding_guardrail: "savings",
+  savings_band_verdict: "in_band",
+  savings_band: { floor_bps: 2000, ceiling_bps: 3000 },
+  savings_band_scope_lived: true,
   deepest_deficit: null,
   daily: [
     {

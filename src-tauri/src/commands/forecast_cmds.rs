@@ -1637,6 +1637,15 @@ pub struct ForecastDto {
     pub savings_headroom_cents: Option<i64>,
     /// Qual régua limita: "cash" ou "savings".
     pub binding_guardrail: String,
+    /// O veredito da MESMA régua que a tela do ano julga, no mesmo estado — a tela do dia
+    /// consome este campo em vez de reler o sinal de `savings_headroom_cents`.
+    /// `no_record` · `zero_by_choice` · `below_band` · `in_band` · `above_band`.
+    pub savings_band_verdict: &'static str,
+    /// A faixa em vigor (piso e teto), publicada junto do veredito.
+    pub savings_band: BandDto,
+    /// A régua fala do recorte vivido (e não do ano fechado) — o mesmo `scope_lived` que
+    /// `AnnualRulerDto` publica, para a copy de fração citar o recorte certo.
+    pub savings_band_scope_lived: bool,
     pub deepest_deficit: Option<DayPointDto>,
     pub daily: Vec<ForecastDayDto>,
     pub month_end: Vec<MonthEndDto>,
@@ -1722,6 +1731,12 @@ pub(crate) async fn forecast_dto(
         cash_headroom_cents: reading.safe_to_spend.cash_headroom_cents,
         savings_headroom_cents: reading.safe_to_spend.savings_headroom_cents,
         binding_guardrail: reading.safe_to_spend.binding.as_str().to_string(),
+        savings_band_verdict: reading.savings_verdict.as_str(),
+        savings_band: BandDto {
+            floor_bps: SAVINGS_FLOOR_BPS,
+            ceiling_bps: SAVINGS_CEILING_BPS,
+        },
+        savings_band_scope_lived: reading.annual.ruler.scope_lived,
         deepest_deficit: reading
             .forecast
             .deepest_deficit
@@ -3309,6 +3324,29 @@ mod tests {
         assert_eq!(income_median, 100_000);
         // Mediana de {0, 60_000, 0} = 0 — fevereiro e abril entram como 0, não somem.
         assert_eq!(economia_median, 0);
+    }
+
+    // O `ForecastDto` (tela "Hoje") e o `AnnualRulerDto` (tela "Ano") publicam o veredito da
+    // MESMA régua, no mesmo estado — a tela do dia não pode divergir da tela do ano por segunda
+    // composição. `forecast_dto` também não pode inventar a faixa: o piso e o teto batem com as
+    // constantes do motor.
+    #[tokio::test]
+    async fn forecast_dto_publishes_the_same_verdict_the_year_screen_reads() {
+        let p = pool().await;
+        let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+
+        insert_income(&p, "inc-jun", 600_000, "2026-06-05").await;
+        annotate_economia(&p, 2026, 6, 150_000).await; // 25% — dentro da faixa.
+
+        let forecast = forecast_dto(&p, today).await.unwrap();
+        let ruler = annual_ruler_dto(&p, 2026, today).await.unwrap();
+
+        assert_eq!(forecast.savings_band_verdict, ruler.verdict);
+        assert_eq!(forecast.savings_band_scope_lived, ruler.scope_lived);
+        assert_eq!(forecast.savings_band.floor_bps, SAVINGS_FLOOR_BPS);
+        assert_eq!(forecast.savings_band.ceiling_bps, SAVINGS_CEILING_BPS);
+        assert_eq!(forecast.savings_band.floor_bps, ruler.band.floor_bps);
+        assert_eq!(forecast.savings_band_verdict, "in_band");
     }
 
     // A janela são os últimos 6 meses de calendário COMPLETOS: o mês corrente e meses além de
