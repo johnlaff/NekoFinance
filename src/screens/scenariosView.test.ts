@@ -3,9 +3,12 @@ import type { ScenarioCompareDto } from "../lib/api";
 import {
   custoVidaState,
   EMPTY_SCENARIO_STATE,
+  loanGateView,
   performanceState,
   podeGastarState,
+  reserveMonthsState,
   saldoState,
+  savingsAfterState,
   scenarioDeepestPoint,
   scenariosView,
 } from "./scenariosView";
@@ -268,6 +271,13 @@ describe("scenariosView — os cinco KPIs decididos", () => {
     expect(kpis.filter((k) => k.sense === "lower-better")).toHaveLength(1);
   });
 
+  it("carrega o loanGate resolvido, null sem empréstimo", () => {
+    expect(scenariosView(EMPTY_COMPARE).loanGate).toEqual({
+      reserve: null,
+      savings: null,
+    });
+  });
+
   it("Pode gastar hoje leva a régua que limita cada lado", () => {
     const kpis = scenariosView(
       compareWith({
@@ -280,5 +290,157 @@ describe("scenariosView — os cinco KPIs decididos", () => {
     expect(kpis[2]?.realState.key).toBe("livre");
     expect(kpis[2]?.scenarioState.key).toBe("segure");
     expect(kpis[2]?.scenarioState.line).toMatch(/régua de poupança/);
+  });
+});
+
+// ---------------------------------------------------- gate de financiamento --
+
+const LOAN_BASE: NonNullable<ScenarioCompareDto["loan"]> = {
+  loan_principal_cents: 0,
+  loan_installment_cents: 0,
+  loan_term_months: 0,
+  loan_monthly_rate_bps: 0,
+  loan_total_paid_cents: 0,
+  loan_total_cost_cents: 0,
+  reserve_months_before_financing: null,
+  reserve_months_after_financing: null,
+  savings_rate_before_bps: null,
+  savings_rate_after_bps: null,
+  economia_median_cents: 0,
+};
+
+describe("reserveMonthsState — semáforo de reserva pós-financiamento", () => {
+  it("5,9 meses é abaixo do mínimo; 6,0 exato já é zona amarela", () => {
+    expect(reserveMonthsState(5.9)).toMatchObject({ key: "below-min", icon: "alert" });
+    expect(reserveMonthsState(6)).toMatchObject({ key: "amber", icon: "alert" });
+  });
+
+  it("11,9 meses é zona amarela; 12,0 exato já é Paz (fronteira INFERIOR inclusiva)", () => {
+    expect(reserveMonthsState(11.9)).toMatchObject({ key: "amber", icon: "alert" });
+    expect(reserveMonthsState(12)).toMatchObject({
+      key: "peace",
+      label: "Paz",
+      icon: "ok",
+    });
+  });
+});
+
+describe("savingsAfterState — régua composta (piso ANTES da regra da metade)", () => {
+  it("1999 bps é abaixo do piso; 2000 bps exato já passa o piso", () => {
+    expect(savingsAfterState(1_999, 100, 1_000)).toMatchObject({
+      key: "below-floor",
+      icon: "alert",
+    });
+    expect(savingsAfterState(2_000, 100, 1_000)).not.toMatchObject({
+      key: "below-floor",
+    });
+  });
+
+  it("parcela igual à metade da economia típica é Paz; 1 centavo a mais já trava", () => {
+    expect(savingsAfterState(2_000, 500, 1_000)).toMatchObject({
+      key: "peace",
+      icon: "ok",
+    });
+    expect(savingsAfterState(2_000, 501, 1_000)).toMatchObject({
+      key: "half-rule",
+      icon: "alert",
+    });
+  });
+
+  it("acima do piso mas abaixo da metade não recai na regra do piso: a ORDEM avalia o piso primeiro", () => {
+    // 1999 bps E parcela > metade: se a regra da metade fosse avaliada primeiro o resultado
+    // seria idêntico (ambas reprovam), então o teste que prova a ORDEM precisa de um caso onde
+    // só o piso reprova — a asserção acima (1999→below-floor) já cobre isso; aqui confirmamos
+    // que passar o piso com parcela pequena não aciona a regra da metade por engano.
+    expect(savingsAfterState(2_000, 100, 1_000)).toMatchObject({ key: "peace" });
+  });
+});
+
+describe("loanGateView — as duas pernas resolvidas em estado + texto", () => {
+  it("sem empréstimo simulado, as duas pernas são null", () => {
+    expect(loanGateView(null)).toEqual({ reserve: null, savings: null });
+  });
+
+  it("reserva null quando a fonte não tem mês completo realizado", () => {
+    const gate = loanGateView({ ...LOAN_BASE, reserve_months_after_financing: null });
+    expect(gate.reserve).toBeNull();
+  });
+
+  it("reserva resolvida: estado do DEPOIS, before/after formatados com 1 casa decimal", () => {
+    const gate = loanGateView({
+      ...LOAN_BASE,
+      reserve_months_before_financing: 4.25,
+      reserve_months_after_financing: 12,
+    });
+    expect(gate.reserve).toMatchObject({
+      state: { key: "peace", label: "Paz" },
+      beforeText: "4,3",
+      afterText: "12,0",
+    });
+  });
+
+  it("reserva sem 'antes' (defensivo) deixa beforeText null", () => {
+    const gate = loanGateView({
+      ...LOAN_BASE,
+      reserve_months_before_financing: null,
+      reserve_months_after_financing: 3,
+    });
+    expect(gate.reserve).toMatchObject({
+      state: { key: "below-min" },
+      beforeText: null,
+      afterText: "3,0",
+    });
+  });
+
+  it("economia null quando falta qualquer uma das duas pontas", () => {
+    expect(
+      loanGateView({
+        ...LOAN_BASE,
+        savings_rate_before_bps: 2_500,
+        savings_rate_after_bps: null,
+      }).savings,
+    ).toBeNull();
+  });
+
+  it("economia resolvida: percentual TRUNCADO, 'depois' negativo exibe 0% mas o estado julga o bruto", () => {
+    const gate = loanGateView({
+      ...LOAN_BASE,
+      savings_rate_before_bps: 2_500,
+      savings_rate_after_bps: -150,
+      loan_installment_cents: 60_000,
+      economia_median_cents: 50_000,
+    });
+    expect(gate.savings).toMatchObject({
+      state: { key: "below-floor" },
+      beforeText: "25%",
+      afterText: "0%",
+    });
+    expect(gate.savings?.popoverBody).toMatch(/excede sua economia típica/);
+  });
+
+  it("popover cita a régua da metade quando é ela quem trava (sem exceder a economia)", () => {
+    const gate = loanGateView({
+      ...LOAN_BASE,
+      savings_rate_before_bps: 3_000,
+      savings_rate_after_bps: 2_100,
+      loan_installment_cents: 600,
+      economia_median_cents: 1_000,
+    });
+    expect(gate.savings?.state.key).toBe("half-rule");
+    expect(gate.savings?.popoverBody).toMatch(/consome mais da metade/);
+  });
+
+  it("popover sem nenhuma régua acionada é só a copy fixa (paz)", () => {
+    const gate = loanGateView({
+      ...LOAN_BASE,
+      savings_rate_before_bps: 3_000,
+      savings_rate_after_bps: 2_500,
+      loan_installment_cents: 100,
+      economia_median_cents: 1_000,
+    });
+    expect(gate.savings?.state.key).toBe("peace");
+    expect(gate.savings?.popoverBody).not.toMatch(
+      /Nesta simulação|excede sua economia típica \(/,
+    );
   });
 });

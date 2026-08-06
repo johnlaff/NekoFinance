@@ -68,8 +68,8 @@ import {
   scenariosView,
   scenarioDeepestPoint,
   type DeltaSense,
+  type LoanGateLeg,
   type MethodIcon,
-  type MethodState,
   type ScenarioKpi,
 } from "./scenariosView";
 import { kindToFields } from "../lib/movement";
@@ -1392,169 +1392,38 @@ const METHOD_ICON: Record<MethodIcon, typeof CheckCircle2> = {
 };
 
 /**
- * Semáforo de meses de reserva pós-financiamento (`LoanBreakdown.reserve_months_after_
- * financing`) — a escada do gate de financiamento do método, em 3 faixas: abaixo de 6 meses
- * é abaixo do mínimo; 6–12 é zona amarela; 12+ é paz (assumir compromisso novo sobe o alvo
- * de reserva para 12 meses). **12,0 exato = Paz**: a fonte define a faixa como "12+", então
- * a fronteira inferior é INCLUSIVA — divergência deliberada da convenção
- * limite-superior-inclusivo do Termômetro (`saldoBand`).
- * O acento cru pode falhar contraste conforme o tema — `--primary-quiet-text` é o alias
- * garantido pra texto de marca legível nos dois temas (ver TotaisScreen).
+ * Antes → depois da régua de reserva; cor e rótulo derivam do estado do DEPOIS, já resolvido em
+ * `loanGateView` (é ele que o gate julga). O "antes" fica em cor neutra, fora da cor de estado —
+ * mesma disciplina do `scn-kpi__state-origin`: num cruzamento de faixa, pintar o valor antigo
+ * com a cor do estado novo faria os dois parecerem da mesma faixa. `beforeText` nulo é
+ * defensivo: o backend deriva os dois do mesmo denominador, então vêm juntos.
  */
-function reserveMonthsState(months: number): MethodState {
-  if (months < 6) {
-    return {
-      key: "below-min",
-      label: "Abaixo do mínimo",
-      color: "var(--danger-400)",
-      icon: "alert",
-    };
-  }
-  if (months < 12) {
-    return {
-      key: "amber",
-      label: "Zona amarela",
-      color: "var(--warning-400)",
-      icon: "alert",
-    };
-  }
-  return {
-    key: "peace",
-    label: "Paz",
-    color: "var(--primary-quiet-text)",
-    icon: "ok",
-  };
-}
-
-function formatReserveMonths(months: number): string {
-  return months.toLocaleString("pt-BR", {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-  });
-}
-
-/**
- * Antes → depois da régua de reserva; cor e rótulo derivam do DEPOIS (é ele que o gate julga).
- * O "antes" fica em cor neutra, fora da cor de estado — mesma disciplina do
- * `scn-kpi__state-origin`: num cruzamento de faixa, pintar o valor antigo com a cor do estado
- * novo faria os dois parecerem da mesma faixa. `before` nulo é defensivo: o backend deriva os
- * dois do mesmo denominador, então vêm juntos.
- */
-function ReserveMonthsBadge({
-  before,
-  after,
-}: {
-  before: number | null;
-  after: number;
-}) {
-  const state = reserveMonthsState(after);
-  const Icon = METHOD_ICON[state.icon];
+function ReserveMonthsBadge({ gate }: { gate: LoanGateLeg }) {
+  const Icon = METHOD_ICON[gate.state.icon];
   return (
-    <span className="scn-loan-summary__reserve" style={{ color: state.color }}>
+    <span className="scn-loan-summary__reserve" style={{ color: gate.state.color }}>
       <Icon size={13} strokeWidth={1.75} aria-hidden="true" />
-      {state.label} ·{" "}
-      {before != null && (
-        <span className="scn-loan-summary__reserve-before">
-          {formatReserveMonths(before)} →{" "}
-        </span>
+      {gate.state.label} ·{" "}
+      {gate.beforeText != null && (
+        <span className="scn-loan-summary__reserve-before">{gate.beforeText} → </span>
       )}
-      {formatReserveMonths(after)} meses
+      {gate.afterText} meses
     </span>
   );
 }
 
 /**
- * Escada composta da régua "Economia após parcela" (2ª perna do gate de financiamento),
- * julgada sempre sobre o `afterBps` BRUTO (pode ser negativo; o clamp em 0% é só de exibição):
- * abaixo de 2000 bps a parcela fura o piso de 20% de poupança; passando o piso, uma parcela
- * que consome MAIS da metade da economia típica ainda trava o ritmo de patrimônio (regra da
- * metade — parcela exatamente igual à metade é paz). Fronteiras: 20,00% exato passa o piso.
- * Nenhuma das duas regras sozinha cobre os dois perfis: quem poupa pouco fura primeiro no
- * piso; quem poupa muito fura primeiro na metade.
- */
-function savingsAfterState(
-  afterBps: number,
-  installmentCents: number,
-  economiaMedianCents: number,
-): MethodState {
-  if (afterBps < 2000) {
-    return {
-      key: "below-floor",
-      label: "Abaixo do piso",
-      color: "var(--danger-400)",
-      icon: "alert",
-    };
-  }
-  if (installmentCents * 2 > economiaMedianCents) {
-    return {
-      key: "half-rule",
-      label: "Mais da metade da economia",
-      color: "var(--warning-400)",
-      icon: "alert",
-    };
-  }
-  return {
-    key: "peace",
-    label: "Paz",
-    color: "var(--primary-quiet-text)",
-    icon: "ok",
-  };
-}
-
-function formatSavingsRate(bps: number): string {
-  return `${Math.floor(bps / 100)}%`;
-}
-
-/**
- * Copy didática do popover da 2ª perna. A frase final é DATA-DERIVADA: aparece quando a regra
- * da metade (ou a exaustão da economia) se materializa NESTA simulação — o estado amarelo e o
- * vermelho por excesso precisam da evidência em R$ que os disparou, nunca só do julgamento.
- */
-function savingsPopoverBody(
-  installmentCents: number,
-  economiaMedianCents: number,
-): string {
-  const base =
-    "Mediana da economia registrada menos a parcela nova, dividida pela mediana das entradas — últimos 6 meses completos, a mesma janela da reserva. Abaixo de 20% a parcela fura o piso de poupança do método (a meta de 20–30% se julga na média do ano). E mesmo acima do piso, uma parcela que consome mais da metade da sua economia típica trava o ritmo do patrimônio — pelo menos metade dela precisa continuar sobrando.";
-  if (installmentCents > economiaMedianCents) {
-    return `${base} A parcela (${fmtBRL(installmentCents)}) excede sua economia típica (${fmtBRL(economiaMedianCents)}).`;
-  }
-  if (installmentCents * 2 > economiaMedianCents) {
-    return `${base} Nesta simulação, a parcela (${fmtBRL(installmentCents)}) consome mais da metade da sua economia típica (${fmtBRL(economiaMedianCents)}).`;
-  }
-  return base;
-}
-
-/**
  * Antes → depois do percentual poupado; linha gêmea do `ReserveMonthsBadge` (mesma anatomia,
- * mesma disciplina do "antes" neutro). Percentuais em inteiros (bps ÷ 100); o "depois"
- * negativo EXIBE 0% — o estado, porém, já foi julgado no bruto, então a cor/rótulo continuam
- * denunciando que a parcela excede a economia típica.
+ * mesma disciplina do "antes" neutro), com o estado já resolvido em `loanGateView`.
  */
-function SavingsRateBadge({
-  before,
-  after,
-  installmentCents,
-  economiaMedianCents,
-}: {
-  before: number;
-  after: number;
-  installmentCents: number;
-  economiaMedianCents: number;
-}) {
-  const state = savingsAfterState(after, installmentCents, economiaMedianCents);
-  const Icon = METHOD_ICON[state.icon];
-  // TRUNCA (floor), nunca arredonda: 1999 bps arredondado viraria "20%" ao lado do rótulo
-  // "Abaixo do piso" — número e veredito se contradiriam na fronteira exata que o gate julga.
-  // Truncar nunca superestima a poupança, o viés conservador certo para um gate financeiro.
+function SavingsRateBadge({ gate }: { gate: LoanGateLeg }) {
+  const Icon = METHOD_ICON[gate.state.icon];
   return (
-    <span className="scn-loan-summary__savings" style={{ color: state.color }}>
+    <span className="scn-loan-summary__savings" style={{ color: gate.state.color }}>
       <Icon size={13} strokeWidth={1.75} aria-hidden="true" />
-      {state.label} ·{" "}
-      <span className="scn-loan-summary__savings-before">
-        {formatSavingsRate(before)} →{" "}
-      </span>
-      {formatSavingsRate(Math.max(0, after))}
+      {gate.state.label} ·{" "}
+      <span className="scn-loan-summary__savings-before">{gate.beforeText} → </span>
+      {gate.afterText}
     </span>
   );
 }
@@ -1760,7 +1629,7 @@ export function ScenarioCompare({
    *  Horizonte normal era reabrir o sheet e des-clicar o cenário (ou trocar de tela). */
   onClose?: () => void;
 }) {
-  const { kpis, endDeltaCents } = scenariosView(compare);
+  const { kpis, endDeltaCents, loanGate } = scenariosView(compare);
 
   return (
     <section className="card" aria-label="Comparação real × cenário">
@@ -1818,7 +1687,7 @@ export function ScenarioCompare({
               <span>Total pago</span>
               <Money cents={compare.loan.loan_total_paid_cents} size="sm" />
             </div>
-            {compare.loan.reserve_months_after_financing != null && (
+            {loanGate?.reserve && (
               <div className="scn-loan-summary__row">
                 <span>
                   <InfoPopover
@@ -1831,37 +1700,25 @@ export function ScenarioCompare({
                     Reserva após financiar
                   </InfoPopover>
                 </span>
-                <ReserveMonthsBadge
-                  before={compare.loan.reserve_months_before_financing}
-                  after={compare.loan.reserve_months_after_financing}
-                />
+                <ReserveMonthsBadge gate={loanGate.reserve} />
               </div>
             )}
-            {compare.loan.savings_rate_before_bps != null &&
-              compare.loan.savings_rate_after_bps != null && (
-                <div className="scn-loan-summary__row">
-                  <span>
-                    <InfoPopover
-                      hideMarker
-                      term={{
-                        title: "Economia após parcela",
-                        body: savingsPopoverBody(
-                          compare.loan.loan_installment_cents,
-                          compare.loan.economia_median_cents,
-                        ),
-                      }}
-                    >
-                      Economia após parcela
-                    </InfoPopover>
-                  </span>
-                  <SavingsRateBadge
-                    before={compare.loan.savings_rate_before_bps}
-                    after={compare.loan.savings_rate_after_bps}
-                    installmentCents={compare.loan.loan_installment_cents}
-                    economiaMedianCents={compare.loan.economia_median_cents}
-                  />
-                </div>
-              )}
+            {loanGate?.savings && (
+              <div className="scn-loan-summary__row">
+                <span>
+                  <InfoPopover
+                    hideMarker
+                    term={{
+                      title: "Economia após parcela",
+                      body: loanGate.savings.popoverBody,
+                    }}
+                  >
+                    Economia após parcela
+                  </InfoPopover>
+                </span>
+                <SavingsRateBadge gate={loanGate.savings} />
+              </div>
+            )}
           </div>
         )}
       </div>

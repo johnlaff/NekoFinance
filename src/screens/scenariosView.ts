@@ -1,13 +1,12 @@
-import type { ScenarioCompareDto } from "../lib/api";
-import { fmtCompactBRL, monthOf, saldoBand } from "../lib/nkFormat";
+import type { LoanBreakdown, ScenarioCompareDto } from "../lib/api";
+import { fmtBRL, fmtCompactBRL, monthOf, saldoBand } from "../lib/nkFormat";
 import { custoVidaStatus, performanceStatus } from "./totaisStatus";
 
 // View-model puro da superfície de comparação real × cenário. Consome o DTO do motor
 // (`get_scenario_forecast`) e produz os cinco cards de KPI já DECIDIDOS: rótulo, copy didática,
-// os dois valores, o delta, o sentido do delta e o estado de método de cada lado. Nenhuma
-// fronteira da grade de KPI mora na tela — o que a tela faz é pintar o que chega daqui. As
-// réguas do gate de financiamento (reserva após financiar, economia após parcela) seguem em
-// `scenarios.tsx`, ao lado dos badges que só elas alimentam.
+// os dois valores, o delta, o sentido do delta e o estado de método de cada lado — e o gate de
+// financiamento (reserva após financiar, economia após parcela) já resolvido em estado + textos
+// formatados. Nenhuma fronteira mora na tela — o que a tela faz é pintar o que chega daqui.
 
 // ------------------------------------------------------------------- tipos --
 
@@ -56,6 +55,25 @@ export interface ScenariosView {
   /** Delta do saldo no fim do horizonte — muda a cada recomputo, então é ele que a região
    *  live da tela anuncia. */
   endDeltaCents: number;
+  /** Gate de financiamento (reserva pós-financiamento + economia após parcela), `null` sem
+   *  empréstimo simulado — o componente só decide SE renderiza a linha, nunca a cor/rótulo. */
+  loanGate: LoanGateView | null;
+}
+
+/** Uma perna do gate já resolvida: estado de método + textos formatados prontos pro badge. */
+export interface LoanGateLeg {
+  state: MethodState;
+  /** `null` quando a fonte não tem "antes" (reserva sem mês completo realizado). */
+  beforeText: string | null;
+  afterText: string;
+}
+
+export interface LoanGateView {
+  /** `null` quando `reserve_months_after_financing` é `null` (sem mês completo realizado). */
+  reserve: LoanGateLeg | null;
+  /** `null` quando alguma das duas pontas de `savings_rate_*_bps` é `null` (mediana de entradas
+   *  zero). */
+  savings: (LoanGateLeg & { popoverBody: string }) | null;
 }
 
 // ------------------------------------------------------- estados do método --
@@ -139,6 +157,153 @@ export const EMPTY_SCENARIO_STATE: MethodState = {
   icon: "none",
 };
 
+// ------------------------------------------------------ gate de financiamento --
+
+/**
+ * Semáforo de meses de reserva pós-financiamento (`LoanBreakdown.reserve_months_after_
+ * financing`) — a escada do gate de financiamento do método, em 3 faixas: abaixo de 6 meses
+ * é abaixo do mínimo; 6–12 é zona amarela; 12+ é paz (assumir compromisso novo sobe o alvo
+ * de reserva para 12 meses). **12,0 exato = Paz**: a fonte define a faixa como "12+", então
+ * a fronteira inferior é INCLUSIVA — divergência deliberada da convenção
+ * limite-superior-inclusivo do Termômetro (`saldoBand`).
+ */
+export function reserveMonthsState(months: number): MethodState {
+  if (months < 6) {
+    return {
+      key: "below-min",
+      label: "Abaixo do mínimo",
+      color: "var(--danger-400)",
+      icon: "alert",
+    };
+  }
+  if (months < 12) {
+    return {
+      key: "amber",
+      label: "Zona amarela",
+      color: "var(--warning-400)",
+      icon: "alert",
+    };
+  }
+  return {
+    key: "peace",
+    label: "Paz",
+    color: "var(--primary-quiet-text)",
+    icon: "ok",
+  };
+}
+
+function formatReserveMonths(months: number): string {
+  return months.toLocaleString("pt-BR", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+}
+
+/**
+ * Escada composta da régua "Economia após parcela" (2ª perna do gate de financiamento),
+ * julgada sempre sobre o `afterBps` BRUTO (pode ser negativo; o clamp em 0% é só de exibição):
+ * abaixo de 2000 bps a parcela fura o piso de 20% de poupança; passando o piso, uma parcela
+ * que consome MAIS da metade da economia típica ainda trava o ritmo de patrimônio (regra da
+ * metade — parcela exatamente igual à metade é paz). Fronteiras: 20,00% exato passa o piso.
+ * Nenhuma das duas regras sozinha cobre os dois perfis: quem poupa pouco fura primeiro no
+ * piso; quem poupa muito fura primeiro na metade.
+ */
+export function savingsAfterState(
+  afterBps: number,
+  installmentCents: number,
+  economiaMedianCents: number,
+): MethodState {
+  if (afterBps < 2000) {
+    return {
+      key: "below-floor",
+      label: "Abaixo do piso",
+      color: "var(--danger-400)",
+      icon: "alert",
+    };
+  }
+  if (installmentCents * 2 > economiaMedianCents) {
+    return {
+      key: "half-rule",
+      label: "Mais da metade da economia",
+      color: "var(--warning-400)",
+      icon: "alert",
+    };
+  }
+  return {
+    key: "peace",
+    label: "Paz",
+    color: "var(--primary-quiet-text)",
+    icon: "ok",
+  };
+}
+
+// TRUNCA (floor), nunca arredonda: 1999 bps arredondado viraria "20%" ao lado do rótulo
+// "Abaixo do piso" — número e veredito se contradiriam na fronteira exata que o gate julga.
+// Truncar nunca superestima a poupança, o viés conservador certo para um gate financeiro.
+function formatSavingsRate(bps: number): string {
+  return `${Math.floor(bps / 100)}%`;
+}
+
+/**
+ * Copy didática do popover da 2ª perna. A frase final é DATA-DERIVADA: aparece quando a regra
+ * da metade (ou a exaustão da economia) se materializa NESTA simulação — o estado amarelo e o
+ * vermelho por excesso precisam da evidência em R$ que os disparou, nunca só do julgamento.
+ */
+function savingsPopoverBody(
+  installmentCents: number,
+  economiaMedianCents: number,
+): string {
+  const base =
+    "Mediana da economia registrada menos a parcela nova, dividida pela mediana das entradas — últimos 6 meses completos, a mesma janela da reserva. Abaixo de 20% a parcela fura o piso de poupança do método (a meta de 20–30% se julga na média do ano). E mesmo acima do piso, uma parcela que consome mais da metade da sua economia típica trava o ritmo do patrimônio — pelo menos metade dela precisa continuar sobrando.";
+  if (installmentCents > economiaMedianCents) {
+    return `${base} A parcela (${fmtBRL(installmentCents)}) excede sua economia típica (${fmtBRL(economiaMedianCents)}).`;
+  }
+  if (installmentCents * 2 > economiaMedianCents) {
+    return `${base} Nesta simulação, a parcela (${fmtBRL(installmentCents)}) consome mais da metade da sua economia típica (${fmtBRL(economiaMedianCents)}).`;
+  }
+  return base;
+}
+
+/** Resolve as duas pernas do gate de financiamento em estado + textos formatados. `null` sem
+ *  empréstimo simulado — o componente só decide SE a linha renderiza. */
+export function loanGateView(loan: LoanBreakdown | null): LoanGateView {
+  if (!loan) {
+    return { reserve: null, savings: null };
+  }
+
+  const reserve: LoanGateLeg | null =
+    loan.reserve_months_after_financing != null
+      ? {
+          state: reserveMonthsState(loan.reserve_months_after_financing),
+          beforeText:
+            loan.reserve_months_before_financing != null
+              ? formatReserveMonths(loan.reserve_months_before_financing)
+              : null,
+          afterText: formatReserveMonths(loan.reserve_months_after_financing),
+        }
+      : null;
+
+  const savings =
+    loan.savings_rate_before_bps != null && loan.savings_rate_after_bps != null
+      ? {
+          state: savingsAfterState(
+            loan.savings_rate_after_bps,
+            loan.loan_installment_cents,
+            loan.economia_median_cents,
+          ),
+          beforeText: formatSavingsRate(loan.savings_rate_before_bps),
+          // O "depois" negativo EXIBE 0%; o estado já foi julgado no bruto acima.
+          afterText: formatSavingsRate(Math.max(0, loan.savings_rate_after_bps)),
+          popoverBody: savingsPopoverBody(
+            loan.loan_installment_cents,
+            loan.economia_median_cents,
+          ),
+        }
+      : null;
+
+  return { reserve, savings };
+}
+
 // ------------------------------------------------------------- construção --
 
 /** Menor saldo do CENÁRIO + mês (0–11) na melhor resolução disponível: `deepest_deficit`
@@ -186,6 +351,7 @@ export function scenariosView(compare: ScenarioCompareDto): ScenariosView {
 
   return {
     endDeltaCents,
+    loanGate: loanGateView(compare.loan),
     kpis: [
       {
         label: "Buraco do futuro",
