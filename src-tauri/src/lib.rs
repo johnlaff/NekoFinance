@@ -18,6 +18,7 @@ pub use mia::bench as mia_bench;
 mod oauth;
 mod obligations;
 mod os_scheduler;
+mod reading;
 mod recurrence;
 mod reminder_task;
 mod scenarios;
