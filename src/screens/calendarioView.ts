@@ -1,11 +1,23 @@
-import type { TransactionRow } from "../lib/api";
+import {
+  getForecast,
+  getMonthGrid,
+  getMonthTransactions,
+  type Forecast,
+  type MonthGridDay,
+  type TransactionRow,
+} from "../lib/api";
 import { MES, fmtBRL, fmtSigned, saldoBand } from "../lib/nkFormat";
 import { toMovementType } from "./lancamentosView";
 
 // ---------------------------------------------------------------------------
 // Calendário — o mês dia a dia: cada dia carrega o movimento e o saldo que ele
-// deixou. Helpers puros — a tela orquestra, este módulo decide.
+// deixou. Helpers puros — a tela orquestra, este módulo decide. É também a
+// porta inteira do shim para a tela (ADR-0007): tipos reexportados, fetchers
+// estáveis e a convenção de chave de cache do `useCommand`.
 // ---------------------------------------------------------------------------
+
+// Tipos do shim reexportados pela view — a tela e seu teste leem daqui.
+export type { Forecast, MonthGridDay, TransactionRow };
 
 /** Cabeçalhos da grade, semana começando na segunda (gramática da direção). */
 export const CAL_DOW = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
@@ -379,4 +391,39 @@ export function cellSigned(cents: number): string {
   const whole = Math.round(Math.abs(cents) / 100);
   if (whole === 0) return "";
   return `${cents < 0 ? "−" : "+"}${whole.toLocaleString("pt-BR")}`;
+}
+
+// ---------------------------------------------------------------------------
+// Leitura — fetchers com identidade estável por chave (o contrato do useCommand rejeita
+// closures novas a cada render) e a convenção da chave de cache do `useCommand`.
+// ---------------------------------------------------------------------------
+
+export function fetchForecast(): Promise<Forecast> {
+  return getForecast();
+}
+
+export function monthGridCacheKey(ym: string): string {
+  return `get_month_grid:${ym}`;
+}
+
+const _gridFetchers = new Map<string, () => Promise<MonthGridDay[]>>();
+export function monthGridFetcher(ym: string): () => Promise<MonthGridDay[]> {
+  const cached = _gridFetchers.get(ym);
+  if (cached) return cached;
+  const fn = () => getMonthGrid(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)));
+  _gridFetchers.set(ym, fn);
+  return fn;
+}
+
+export function monthTransactionsCacheKey(ym: string): string {
+  return `month_transactions:${ym}`;
+}
+
+const _txFetchers = new Map<string, () => Promise<TransactionRow[]>>();
+export function monthTransactionsFetcher(ym: string): () => Promise<TransactionRow[]> {
+  const cached = _txFetchers.get(ym);
+  if (cached) return cached;
+  const fn = () => getMonthTransactions(ym);
+  _txFetchers.set(ym, fn);
+  return fn;
 }

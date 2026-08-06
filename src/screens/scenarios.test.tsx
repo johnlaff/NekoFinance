@@ -11,7 +11,7 @@ import {
 import { FORECAST, mockCommands, mockInvoke } from "../test/commands";
 import type { ScenarioCompareDto } from "../lib/api";
 import { fmtBRL, fmtCompactBRL, saldoBand } from "../lib/nkFormat";
-import { performanceStatus, custoVidaStatus } from "./totaisStatus";
+import { performanceStatus, custoVidaStatus } from "./totaisView";
 import { LoanGroupItem } from "./LoanGroupItem";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));

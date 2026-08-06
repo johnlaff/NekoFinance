@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { YearGridScreen } from "./YearGridScreen";
 import { NekoAppProvider } from "../shell/appContext";
-import type { TransactionRow } from "../lib/api";
+import type { TransactionRow } from "./calendarioView";
 import { FORECAST, MONTH_GRID, TXNS, mockCommands, mockInvoke } from "../test/commands";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));

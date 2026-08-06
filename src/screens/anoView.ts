@@ -1,10 +1,32 @@
-import type { AnnualRuler, BandVerdict, MonthMetric } from "../lib/api";
+import {
+  getAnnualMetrics,
+  getAnnualRuler,
+  getForecast,
+  type AnnualMetrics,
+  type AnnualRuler,
+  type BandVerdict,
+  type Forecast,
+  type MonthEnd,
+  type MonthMetric,
+} from "../lib/api";
 
 // View-model puro da tela O ano. Consome a régua anual do motor (`get_annual_ruler`) e as
 // métricas por mês, e produz a estrutura que a tela renderiza: o veredito, a régua da faixa, os
 // dois cenários de dezembro, as doze linhas de mês e a renda por ano. Nenhuma régua nasce aqui —
 // o teste de lastro, o percentual que julga, a falta para o piso e o veredito chegam decididos;
-// o que mora neste arquivo é a costura das linhas e as derivações de exibição.
+// o que mora neste arquivo é a costura das linhas e as derivações de exibição. A view é também a
+// porta inteira do shim para a tela (ADR-0007): tipos reexportados, fetchers estáveis e a
+// convenção de chave de cache do `useCommand` — a tela nunca importa `lib/api`.
+
+// Tipos do shim reexportados pela view — a tela e seu teste leem daqui.
+export type {
+  AnnualMetrics,
+  AnnualRuler,
+  BandVerdict,
+  Forecast,
+  MonthEnd,
+  MonthMetric,
+};
 
 // ------------------------------------------------------------------- tipos --
 
@@ -227,4 +249,39 @@ export function buildIncomeAcrossYears(
       savedPct: income > 0 ? (economia / income) * 100 : null,
     };
   });
+}
+
+// ---------------------------------------------------------------- leitura ---
+// Fetchers com identidade estável por chave (o contrato do useCommand rejeita closures novas a
+// cada render) e a convenção da chave de cache do `useCommand` — a tela só chama estas funções,
+// nunca monta a string por conta própria.
+
+export function fetchForecast(): Promise<Forecast> {
+  return getForecast();
+}
+
+export function annualMetricsCacheKey(year: number): string {
+  return `annual_metrics:${year}:ano`;
+}
+
+const _annualCache = new Map<number, () => Promise<AnnualMetrics>>();
+export function annualMetricsFetcher(year: number): () => Promise<AnnualMetrics> {
+  const cached = _annualCache.get(year);
+  if (cached) return cached;
+  const fn = () => getAnnualMetrics(year);
+  _annualCache.set(year, fn);
+  return fn;
+}
+
+export function annualRulerCacheKey(year: number): string {
+  return `annual_ruler:${year}`;
+}
+
+const _rulerCache = new Map<number, () => Promise<AnnualRuler>>();
+export function annualRulerFetcher(year: number): () => Promise<AnnualRuler> {
+  const cached = _rulerCache.get(year);
+  if (cached) return cached;
+  const fn = () => getAnnualRuler(year);
+  _rulerCache.set(year, fn);
+  return fn;
 }

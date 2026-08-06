@@ -1,6 +1,25 @@
-import type { MonthMetric } from "../lib/api";
+import {
+  getAnnualMetrics,
+  getDashboardSummary,
+  getForecast,
+  ownerTotalsForMonth,
+  type AnnualMetrics,
+  type DashboardSummary,
+  type Forecast,
+  type MonthMetric,
+  type OwnerTotal,
+} from "../lib/api";
 import type { HealthLevel } from "../design-system/components/HealthBadge";
 import { MES, MES_ABBR } from "../lib/nkFormat";
+
+// View-model puro da tela Este mês (Totais): os status de método por régua (Performance,
+// Economizado, Custo de vida), a leitura da série histórica e a costura do mês visto entre o
+// realizado (annual metrics) e a projeção (forecast). É também a porta inteira do shim para a
+// tela (ADR-0007): tipos reexportados, fetchers estáveis e a convenção de chave de cache do
+// `useCommand` — a tela nunca importa `lib/api`.
+
+// Tipos do shim reexportados pela view — a tela e seu teste leem daqui.
+export type { AnnualMetrics, DashboardSummary, Forecast, MonthMetric, OwnerTotal };
 
 export interface Status {
   level: HealthLevel;
@@ -8,7 +27,7 @@ export interface Status {
 }
 
 // Piso de 20% (2000 bps) do método — fonte única para os indicadores e visuais MENSAIS e ANUAIS:
-// badge "Dentro do ideal" (este arquivo) e cor da visão anual (AnnualScreen). Um mês pode variar
+// badge "Dentro do ideal" (este arquivo) e cor da visão anual (anoView.ts). Um mês pode variar
 // dentro da faixa 20–30%, então estes são lenientes.
 // É o MESMO critério do guardrail anual "pode gastar hoje" (`SAVINGS_FLOOR_BPS` em
 // src-tauri/src/forecast/mod.rs): uma barra só, porque a faixa 20–30% é média anual e é o piso
@@ -75,4 +94,75 @@ export function serieLeitura(trend: MonthMetric[]): string {
   const first = trend[0]!;
   const last = trend[trend.length - 1]!;
   return `Entre ${MES_ABBR[first.month - 1]} e ${MES_ABBR[last.month - 1]}, o economizado foi de ${pctDisplay(min)}% a ${pctDisplay(max)}% — o melhor mês foi ${MES[best.month - 1]}.`;
+}
+
+// ---------------------------------------------------------------------------
+// Costura do mês visto: o realizado (annual metrics, meses antes de hoje) com a projeção
+// (forecast, hoje em diante) — a mesma linha nunca vem das duas fontes.
+// ---------------------------------------------------------------------------
+
+/** "YYYY-MM" a partir de uma MonthMetric. */
+export function ymOf(m: { year: number; month: number }): string {
+  return `${m.year}-${String(m.month).padStart(2, "0")}`;
+}
+
+export function mergePastAnnualWithForecastMonths(
+  annualMonths: MonthMetric[],
+  forecastMonths: MonthMetric[],
+  today: string,
+): MonthMetric[] {
+  const todayYm = today.slice(0, 7);
+  const byMonth = new Map<string, MonthMetric>();
+  for (const month of annualMonths) {
+    if (ymOf(month) < todayYm) byMonth.set(ymOf(month), month);
+  }
+  for (const month of forecastMonths) {
+    byMonth.set(ymOf(month), month);
+  }
+  return Array.from(byMonth.values()).toSorted(
+    (a, b) => a.year - b.year || a.month - b.month,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Leitura — fetchers com identidade estável por chave (o contrato do useCommand rejeita
+// closures novas a cada render) e a convenção da chave de cache do `useCommand`.
+// ---------------------------------------------------------------------------
+
+export function fetchForecast(): Promise<Forecast> {
+  return getForecast();
+}
+
+export function fetchDashboardSummary(): Promise<DashboardSummary> {
+  return getDashboardSummary();
+}
+
+export function annualMetricsCacheKey(year: number): string {
+  return `annual_metrics:${year}:totais`;
+}
+
+const _annualFetcherCache = new Map<number, () => Promise<AnnualMetrics>>();
+export function annualMetricsFetcher(year: number): () => Promise<AnnualMetrics> {
+  const cached = _annualFetcherCache.get(year);
+  if (cached) return cached;
+  const fn = () => getAnnualMetrics(year);
+  _annualFetcherCache.set(year, fn);
+  return fn;
+}
+
+export function ownerTotalsCacheKey(year: number, month: number): string {
+  return `owner_totals_for_month:${year}:${month}`;
+}
+
+const _ownerTotalsFetchers = new Map<string, () => Promise<OwnerTotal[]>>();
+export function ownerTotalsFetcher(
+  year: number,
+  month: number,
+): () => Promise<OwnerTotal[]> {
+  const key = ownerTotalsCacheKey(year, month);
+  const cached = _ownerTotalsFetchers.get(key);
+  if (cached) return cached;
+  const fn = () => ownerTotalsForMonth(year, month);
+  _ownerTotalsFetchers.set(key, fn);
+  return fn;
 }

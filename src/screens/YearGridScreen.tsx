@@ -1,12 +1,5 @@
 import "./calendario.css";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import {
-  getForecast,
-  getMonthGrid,
-  getMonthTransactions,
-  type MonthGridDay,
-  type TransactionRow,
-} from "../lib/api";
 import { isTauri } from "../lib/env";
 import { useCommand } from "../lib/useCommand";
 import { useNekoApp } from "../shell/appContext";
@@ -31,9 +24,14 @@ import {
   cellMoney,
   cellSigned,
   dayComponents,
+  fetchForecast,
   gridBand,
+  monthGridCacheKey,
+  monthGridFetcher,
   monthHeadline,
   monthMarks,
+  monthTransactionsCacheKey,
+  monthTransactionsFetcher,
   railSeries,
   shiftIso,
   shortDate,
@@ -42,28 +40,8 @@ import {
   type CalendarMonth,
   type DayRow,
   type MonthMark,
+  type TransactionRow,
 } from "./calendarioView";
-
-// Fetchers com identidade estável por argumento (contrato do useCommand: o
-// fetcher é capturado no primeiro render da key — um arrow inline fecharia
-// sobre valores velhos).
-const _gridFetchers = new Map<string, () => Promise<MonthGridDay[]>>();
-function gridFetcher(ym: string): () => Promise<MonthGridDay[]> {
-  const cached = _gridFetchers.get(ym);
-  if (cached) return cached;
-  const fn = () => getMonthGrid(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)));
-  _gridFetchers.set(ym, fn);
-  return fn;
-}
-
-const _txFetchers = new Map<string, () => Promise<TransactionRow[]>>();
-function txFetcher(ym: string): () => Promise<TransactionRow[]> {
-  const cached = _txFetchers.get(ym);
-  if (cached) return cached;
-  const fn = () => getMonthTransactions(ym);
-  _txFetchers.set(ym, fn);
-  return fn;
-}
 
 // A didática inteira mora aqui — inclusive as faixas do termômetro, que saíram
 // da tela como legenda fixa (regra 1: didática atrás de uma pergunta).
@@ -388,10 +366,13 @@ export function YearGridScreen() {
   const pendingFocus = useRef<string | null>(null);
   const { navigate } = useNekoApp();
 
-  const forecastQ = useCommand("get_forecast", getForecast);
-  const gridQ = useCommand(`get_month_grid:${activeYm}`, gridFetcher(activeYm));
-  const prevGridQ = useCommand(`get_month_grid:${prevYm}`, gridFetcher(prevYm));
-  const txQ = useCommand(`month_transactions:${activeYm}`, txFetcher(activeYm));
+  const forecastQ = useCommand("get_forecast", fetchForecast);
+  const gridQ = useCommand(monthGridCacheKey(activeYm), monthGridFetcher(activeYm));
+  const prevGridQ = useCommand(monthGridCacheKey(prevYm), monthGridFetcher(prevYm));
+  const txQ = useCommand(
+    monthTransactionsCacheKey(activeYm),
+    monthTransactionsFetcher(activeYm),
+  );
 
   // O crumb da appbar mostra o mês visto; `setCrumb` é função de módulo
   // (identidade fixa), então o efeito só re-dispara quando o rótulo muda.
