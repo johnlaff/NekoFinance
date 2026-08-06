@@ -127,7 +127,7 @@ function mkRuler(
     per_month_shortfall_cents:
       futureMonths > 0 ? Math.round(shortfallYear / futureMonths) : null,
     verdict,
-    band: { floor_bps: 2000, target_bps: 2500, ceiling_bps: 3000 },
+    band: { floor_bps: 2000, ceiling_bps: 3000 },
     months: REAL.map((r) => ({
       month: r.m,
       outflow_cents: outflow(r),

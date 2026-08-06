@@ -203,7 +203,6 @@ const ANNUAL_SAVINGS = {
   projected_income_cents: 6000000,
   projected_savings_cents: 1500000,
   projected_rate_bps: 2500,
-  target_bps: 2500,
 };
 
 export const FORECAST: Forecast = {
@@ -228,7 +227,6 @@ export const FORECAST: Forecast = {
   cash_headroom_cents: 587700,
   savings_headroom_cents: 35000,
   binding_guardrail: "savings",
-  savings_target_bps: 2500,
   months: [
     {
       year: 2026,

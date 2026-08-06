@@ -79,7 +79,7 @@ function realRuler(overrides: Partial<AnnualRuler> = {}): AnnualRuler {
     shortfall_year_cents: 2490477,
     per_month_shortfall_cents: 498095,
     verdict: "below_band",
-    band: { floor_bps: 2000, target_bps: 2500, ceiling_bps: 3000 },
+    band: { floor_bps: 2000, ceiling_bps: 3000 },
     months: REAL_2026.map((r) => ({
       month: r.m,
       outflow_cents: outflow(r),

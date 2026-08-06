@@ -237,10 +237,10 @@ impl ForecastInputs {
             },
             annual: AnnualInputs {
                 year_metrics: Vec::new(),
-                guardrail_income_cents: 0,
-                guardrail_net_cents: 0,
-                guardrail_economia_cents: 0,
-                guardrail_patrimonio_cents: 0,
+                registered_income_cents: 0,
+                registered_net_cents: 0,
+                registered_economia_cents: 0,
+                registered_patrimonio_cents: 0,
                 projected_income_cents: 0,
                 projected_net_cents: 0,
             },
@@ -309,16 +309,16 @@ pub(crate) struct AnnualInputs {
     /// cartão e a poupança anual do DTO leem daqui.
     pub year_metrics: Vec<forecast::MonthMetric>,
     /// Renda-base do guardrail 20–30%: soma de `income_cents` dos meses da janela de meses
-    /// completos (`forecast::guardrail_window`), que em janeiro desloca para dezembro.
-    pub guardrail_income_cents: i64,
+    /// completos (`forecast::registered_window`), que em janeiro desloca para dezembro.
+    pub registered_income_cents: i64,
     /// Net `renda − saída` (view Performance) da MESMA janela — o "colchão", distinto da Economia
     /// registrada que o guardrail divide. Nenhum recorte atual publica o colchão desta janela.
     #[allow(dead_code)]
-    pub guardrail_net_cents: i64,
+    pub registered_net_cents: i64,
     /// Economia REGISTRADA da janela do guardrail: o numerador do Economizado% que julga.
-    pub guardrail_economia_cents: i64,
+    pub registered_economia_cents: i64,
     /// Patrimônio realizado da mesma janela. Publicado ao lado da régua, nunca somado a ela.
-    pub guardrail_patrimonio_cents: i64,
+    pub registered_patrimonio_cents: i64,
     /// Renda do ano INTEIRO projetado (todas as linhas do ano) — contraste otimista, fora do
     /// guardrail.
     pub projected_income_cents: i64,
@@ -636,8 +636,8 @@ mod tests {
     #[test]
     fn a_scenario_never_rewrites_the_realized_year_or_the_reserve() {
         let mut inputs = inputs_with_a_fixed_bill();
-        inputs.annual.guardrail_income_cents = 400_000;
-        inputs.annual.guardrail_economia_cents = 100_000;
+        inputs.annual.registered_income_cents = 400_000;
+        inputs.annual.registered_economia_cents = 100_000;
         inputs.reserve.balance_cents = 900_000;
 
         let scenario = apply_scenario(
@@ -648,8 +648,8 @@ mod tests {
             },
         );
 
-        assert_eq!(scenario.annual.guardrail_income_cents, 400_000);
-        assert_eq!(scenario.annual.guardrail_economia_cents, 100_000);
+        assert_eq!(scenario.annual.registered_income_cents, 400_000);
+        assert_eq!(scenario.annual.registered_economia_cents, 100_000);
         assert_eq!(scenario.reserve.balance_cents, 900_000);
     }
 }

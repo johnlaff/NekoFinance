@@ -35,8 +35,6 @@ pub(crate) struct ForecastReading {
     pub projected_month_end_cents: i64,
     pub annual: AnnualReading,
     pub safe_to_spend: forecast::SafeToSpend,
-    /// Meta do guardrail de poupança em bps — publicada ao lado do número que ela produziu.
-    pub savings_target_bps: i64,
     pub coverage: CoverageReading,
     pub reserve: ReserveReading,
     pub ceiling: CeilingReading,
@@ -59,12 +57,14 @@ pub(crate) struct AnnualReading {
     pub economia_bps: Option<i64>,
     /// `verdict` (Economia registrada viva) · `no_record` (nada registrado).
     pub economia_state: &'static str,
-    /// Economia REGISTRADA da janela de meses completos — o numerador do guardrail.
-    pub guardrail_economia_cents: i64,
+    /// Economia REGISTRADA da janela de meses completos — o retrato do que já fechou.
+    pub registered_economia_cents: i64,
     /// Patrimônio realizado da mesma janela, publicado ao lado da régua e nunca somado a ela.
-    pub guardrail_patrimonio_cents: i64,
-    /// Renda-base do guardrail: a janela de meses COMPLETOS, distinta do recorte vivido da régua.
-    pub guardrail_income_cents: i64,
+    pub registered_patrimonio_cents: i64,
+    /// Renda da mesma janela de meses COMPLETOS. Publicada ao lado das figuras registradas;
+    /// nenhum recorte atual a lê — quem julga o ano usa o recorte da régua.
+    #[allow(dead_code)]
+    pub registered_income_cents: i64,
     pub projected_income_cents: i64,
     pub projected_savings_cents: i64,
     /// Os doze meses no tipo do motor, para quem lista o ano mês a mês. Nenhum recorte atual
@@ -183,31 +183,29 @@ pub(crate) fn compose(inputs: &ForecastInputs) -> ForecastReading {
     let ruler = forecast::annual_ruler(&inputs.annual.year_metrics, today.year(), today);
     let annual = AnnualReading {
         economia_bps: ruler.lived_bps,
-        economia_state: if inputs.annual.guardrail_economia_cents > 0 {
+        economia_state: if inputs.annual.registered_economia_cents > 0 {
             "verdict"
         } else {
             "no_record"
         },
-        guardrail_economia_cents: inputs.annual.guardrail_economia_cents,
-        guardrail_patrimonio_cents: inputs.annual.guardrail_patrimonio_cents,
-        guardrail_income_cents: inputs.annual.guardrail_income_cents,
+        registered_economia_cents: inputs.annual.registered_economia_cents,
+        registered_patrimonio_cents: inputs.annual.registered_patrimonio_cents,
+        registered_income_cents: inputs.annual.registered_income_cents,
         projected_income_cents: inputs.annual.projected_income_cents,
         projected_savings_cents: inputs.annual.projected_net_cents,
         year_metrics: inputs.annual.year_metrics.clone(),
         ruler,
     };
 
-    // O guardrail duplo mora no motor; aqui só chegam a renda-base da janela de meses completos e
-    // a Economia registrada da MESMA janela — uma derivação, não duas.
-    let safe_to_spend = forecast::safe_to_spend_today(
-        &forecast,
-        annual.guardrail_income_cents,
-        annual.guardrail_economia_cents,
-        forecast::SAVINGS_TARGET_BPS,
-    );
-
     let coverage = compose_coverage(&forecast, today, inputs.baseline.monthly_cents);
     let reserve = compose_reserve(&inputs.reserve, &inputs.baseline);
+    // Os meses de reserva, resolvidos UMA vez: o guardrail e o gate do cartão leem o mesmo
+    // `Option` — sem reserva conhecida, nenhum dos dois inventa um número.
+    let reserve_months = (reserve.state != "no_record").then_some(reserve.months);
+
+    // O guardrail duplo mora no motor, e a régua da economia que ele consulta é a MESMA que a
+    // tela do ano julga: entra a régua inteira, não uma renda e uma economia recompostas aqui.
+    let safe_to_spend = forecast::safe_to_spend_today(&forecast, &annual.ruler, reserve_months);
 
     let spending_mode = SpendingModeReading {
         mode: forecast::detect_spending_mode(&inputs.spending_mode.samples),
@@ -215,7 +213,7 @@ pub(crate) fn compose(inputs: &ForecastInputs) -> ForecastReading {
         cartao_month_cents: inputs.spending_mode.cartao_month_cents,
     };
 
-    let cards = compose_cards(inputs, annual.economia_bps, &reserve);
+    let cards = compose_cards(inputs, annual.economia_bps, reserve_months);
 
     ForecastReading {
         today,
@@ -224,7 +222,6 @@ pub(crate) fn compose(inputs: &ForecastInputs) -> ForecastReading {
         projected_month_end_cents,
         annual,
         safe_to_spend,
-        savings_target_bps: forecast::SAVINGS_TARGET_BPS,
         coverage,
         reserve,
         ceiling: CeilingReading {
@@ -358,9 +355,8 @@ fn compose_reserve(reserve: &ReserveInputs, baseline: &BaselineInputs) -> Reserv
 fn compose_cards(
     inputs: &ForecastInputs,
     economia_bps: Option<i64>,
-    reserve: &ReserveReading,
+    reserve_months: Option<f64>,
 ) -> CardReading {
-    let reserve_months = (reserve.state != "no_record").then_some(reserve.months);
     let gate_economy = cards::economy_gate_leg(economia_bps);
     let gate_reserve = cards::reserve_gate_leg(reserve_months);
 
@@ -625,29 +621,35 @@ mod tests {
         );
     }
 
-    // A economia anual do guardrail tem UMA derivação: a janela de meses completos que chega pelo
-    // campo próprio dos insumos. O ramo real do cenário lê o mesmo campo que o forecast — não há
-    // como o "antes" de um cenário nascer de outra conta.
+    // O teto do dia e a tela do ano leem a MESMA régua: a folga da economia é o inverso do
+    // déficit até o piso que `annual_ruler` já calculou, sobre o recorte que ele julga. As
+    // figuras da janela de meses completos são retrato publicado ao lado — não alimentam o teto.
     #[test]
-    fn guardrail_savings_come_from_the_dedicated_window_field() {
+    fn the_ceiling_derives_from_the_same_ruler_the_year_screen_judges() {
         let mut inputs = ForecastInputs::minimal(d("2026-06-15"));
         inputs.horizon_end = d("2026-06-30");
         inputs.seed_cents = 1_000_000;
-        // Janela de meses COMPLETOS: renda 400.000, Economia 100.000 (25%).
-        inputs.annual.guardrail_income_cents = 400_000;
-        inputs.annual.guardrail_economia_cents = 100_000;
-        // Recorte VIVIDO da régua (o mês em curso incluído) é outra janela, de propósito.
-        inputs.annual.year_metrics = vec![month(2026, 6, 600_000, 100_000)];
+        // Recorte vivido da régua: renda 600.000, Economia 150.000 (25%) — o mês em curso conta.
+        inputs.annual.year_metrics = vec![month(2026, 6, 600_000, 150_000)];
+        // A janela de meses COMPLETOS diz outra coisa, e o teto não a escuta.
+        inputs.annual.registered_income_cents = 400_000;
+        inputs.annual.registered_economia_cents = 0;
 
         let reading = compose(&inputs);
 
-        assert_eq!(reading.annual.guardrail_income_cents, 400_000);
-        assert_eq!(reading.annual.guardrail_economia_cents, 100_000);
         assert_eq!(
             reading.safe_to_spend.savings_headroom_cents,
-            Some(100_000 - 400_000 * forecast::SAVINGS_TARGET_BPS / 10_000),
-            "o guardrail divide a Economia da janela de meses completos pela renda da MESMA janela"
+            Some(-reading.annual.ruler.judged_shortfall_cents()),
+            "a folga É o déficit da régua com o sinal trocado, no mesmo recorte"
         );
+        // 20% de 600.000 = 120.000 contra 150.000 guardados.
+        assert_eq!(reading.safe_to_spend.savings_headroom_cents, Some(30_000));
+        assert_eq!(
+            reading.safe_to_spend.binding,
+            forecast::Guardrail::Savings,
+            "com a faixa viva e o caixa folgado, quem limita o dia é a economia"
+        );
+        assert_eq!(reading.safe_to_spend.amount_cents, 30_000);
     }
 
     // O Economizado% do ano é um campo só, truncado uma vez. Régua anual, gate do cartão e DTO
@@ -949,15 +951,15 @@ mod tests {
     #[test]
     fn the_guardrail_savings_window_is_the_same_on_both_sides_of_the_diff() {
         let mut inputs = scenario_inputs();
-        inputs.annual.guardrail_income_cents = 400_000;
-        inputs.annual.guardrail_economia_cents = 100_000;
+        inputs.annual.registered_income_cents = 400_000;
+        inputs.annual.registered_economia_cents = 100_000;
 
         let real = compose(&inputs);
         let scenario = compose(&apply_scenario(&inputs, &a_new_bill()));
 
         assert_eq!(
-            scenario.annual.guardrail_economia_cents,
-            real.annual.guardrail_economia_cents
+            scenario.annual.registered_economia_cents,
+            real.annual.registered_economia_cents
         );
         assert_eq!(
             scenario.safe_to_spend.savings_headroom_cents,

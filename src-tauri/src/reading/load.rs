@@ -36,8 +36,8 @@ pub(crate) async fn load_inputs(
 
     // Anos da anotação: do primeiro ano que alguma régua olha (a janela do guardrail desloca para
     // dezembro do ano anterior em janeiro) até o fim do horizonte.
-    let guardrail_window = forecast::guardrail_window(today);
-    let first_year = guardrail_window
+    let registered_window = forecast::registered_window(today);
+    let first_year = registered_window
         .first()
         .map_or(today.year(), |&(year, _)| year)
         .min(today.year());
@@ -57,17 +57,17 @@ pub(crate) async fn load_inputs(
     // habitam — renda-base, Economia e Patrimônio. O recorte VIVIDO da régua anual (que inclui o
     // mês em curso) sai de `year_metrics`, na composição: são janelas diferentes, com campos
     // diferentes, e é essa separação que impede a régua da tela e o guardrail de divergirem.
-    let guardrail_metrics = fc::guardrail_window_metrics(pool, today).await?;
-    let (guardrail_income_cents, guardrail_net_cents) =
+    let guardrail_metrics = fc::registered_window_metrics(pool, today).await?;
+    let (registered_income_cents, registered_net_cents) =
         fc::realized_annual_savings(pool, today).await?;
     let (projected_income_cents, projected_net_cents) =
         fc::projected_annual_savings(pool, today).await?;
     let annual = AnnualInputs {
         year_metrics: fc::annual_month_metrics(pool, today.year(), today).await?,
-        guardrail_income_cents,
-        guardrail_net_cents,
-        guardrail_economia_cents: guardrail_metrics.iter().map(|m| m.economia_cents).sum(),
-        guardrail_patrimonio_cents: guardrail_metrics.iter().map(|m| m.patrimonio_cents).sum(),
+        registered_income_cents,
+        registered_net_cents,
+        registered_economia_cents: guardrail_metrics.iter().map(|m| m.economia_cents).sum(),
+        registered_patrimonio_cents: guardrail_metrics.iter().map(|m| m.patrimonio_cents).sum(),
         projected_income_cents,
         projected_net_cents,
     };
@@ -308,11 +308,11 @@ mod tests {
         let inputs = load_inputs(&p, today).await.unwrap();
 
         assert_eq!(
-            inputs.annual.guardrail_income_cents, 100_000,
+            inputs.annual.registered_income_cents, 100_000,
             "a renda-base do guardrail para em maio"
         );
         assert_eq!(
-            inputs.annual.guardrail_economia_cents, 30_000,
+            inputs.annual.registered_economia_cents, 30_000,
             "a Economia do guardrail para em maio"
         );
 
@@ -342,8 +342,8 @@ mod tests {
 
         let inputs = load_inputs(&p, today).await.unwrap();
 
-        assert_eq!(inputs.annual.guardrail_income_cents, 400_000);
-        assert_eq!(inputs.annual.guardrail_economia_cents, 90_000);
+        assert_eq!(inputs.annual.registered_income_cents, 400_000);
+        assert_eq!(inputs.annual.registered_economia_cents, 90_000);
         assert!(
             inputs
                 .economia_annotation
@@ -564,7 +564,7 @@ mod tests {
             dto.annual_savings.economia_ruler_rate_bps
         );
         assert_eq!(
-            reading.annual.guardrail_economia_cents,
+            reading.annual.registered_economia_cents,
             dto.annual_savings.registered_economia_cents
         );
         assert_eq!(
@@ -607,8 +607,8 @@ mod tests {
         assert_eq!(inputs.ceiling.source, fc::CeilingSource::None);
         assert_eq!(inputs.ceiling.per_day_cents, 0);
         assert!(inputs.ceiling.estimate_basis.is_none());
-        assert_eq!(inputs.annual.guardrail_income_cents, 0);
-        assert_eq!(inputs.annual.guardrail_economia_cents, 0);
+        assert_eq!(inputs.annual.registered_income_cents, 0);
+        assert_eq!(inputs.annual.registered_economia_cents, 0);
         assert_eq!(inputs.annual.year_metrics.len(), 12);
         assert_eq!(inputs.baseline.monthly_cents, 0);
         assert_eq!(inputs.baseline.months, 0);
