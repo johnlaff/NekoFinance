@@ -9,7 +9,7 @@ import type {
   Forecast,
   MonthMetric,
   MonthEnd,
-} from "../lib/api";
+} from "./anoView";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 

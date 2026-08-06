@@ -1,14 +1,6 @@
 import "./mes.css";
 import { useEffect, useState } from "react";
 import { ChartColumn, Clock3, PiggyBank, TrendingUp, Wallet } from "lucide-react";
-import {
-  getAnnualMetrics,
-  getDashboardSummary,
-  getForecast,
-  ownerTotalsForMonth,
-  type MonthMetric,
-  type OwnerTotal,
-} from "../lib/api";
 import { isTauri } from "../lib/env";
 import { useCommand } from "../lib/useCommand";
 import { MonthNav } from "../design-system/components/MonthNav";
@@ -26,48 +18,23 @@ import { fmtBRL, MES, MES_ABBR } from "../lib/nkFormat";
 import { SR_ONLY } from "../design-system/srOnly";
 import { setCrumb } from "../shell/crumbStore";
 import {
+  annualMetricsCacheKey,
+  annualMetricsFetcher,
   currentMonthMetric,
-  performanceStatus,
-  economizadoStatus,
   custoVidaStatus,
+  economizadoStatus,
+  fetchDashboardSummary,
+  fetchForecast,
+  mergePastAnnualWithForecastMonths,
+  ownerTotalsCacheKey,
+  ownerTotalsFetcher,
   pctDisplay,
+  performanceStatus,
   serieLeitura,
-} from "./totaisStatus";
-
-/** "YYYY-MM" from a MonthMetric. */
-function ymOf(m: { year: number; month: number }): string {
-  return `${m.year}-${String(m.month).padStart(2, "0")}`;
-}
-
-const _annualFetcherCache = new Map<
-  number,
-  () => ReturnType<typeof getAnnualMetrics>
->();
-function annualFetcher(year: number): () => ReturnType<typeof getAnnualMetrics> {
-  const cached = _annualFetcherCache.get(year);
-  if (cached) return cached;
-  const fn = () => getAnnualMetrics(year);
-  _annualFetcherCache.set(year, fn);
-  return fn;
-}
-
-function mergePastAnnualWithForecastMonths(
-  annualMonths: MonthMetric[],
-  forecastMonths: MonthMetric[],
-  today: string,
-): MonthMetric[] {
-  const todayYm = today.slice(0, 7);
-  const byMonth = new Map<string, MonthMetric>();
-  for (const month of annualMonths) {
-    if (ymOf(month) < todayYm) byMonth.set(ymOf(month), month);
-  }
-  for (const month of forecastMonths) {
-    byMonth.set(ymOf(month), month);
-  }
-  return Array.from(byMonth.values()).toSorted(
-    (a, b) => a.year - b.year || a.month - b.month,
-  );
-}
+  ymOf,
+  type MonthMetric,
+  type OwnerTotal,
+} from "./totaisView";
 
 // ---------------------------------------------------------------------------
 // Cards do bento
@@ -394,14 +361,14 @@ function OwnerTotalsCard({ ownerTotals }: { ownerTotals: OwnerTotal[] }) {
 // ---------------------------------------------------------------------------
 
 export function TotaisScreen() {
-  const forecastQ = useCommand("get_forecast", getForecast);
-  const summaryQ = useCommand("get_dashboard_summary", getDashboardSummary);
+  const forecastQ = useCommand("get_forecast", fetchForecast);
+  const summaryQ = useCommand("get_dashboard_summary", fetchDashboardSummary);
   const [selectedYm, setSelectedYm] = useState<string | null>(null);
   const forecast = forecastQ.data ?? null;
   const forecastYear = Number(forecast?.today.slice(0, 4)) || new Date().getFullYear();
   const annualQ = useCommand(
-    `annual_metrics:${forecastYear}:totais`,
-    annualFetcher(forecastYear),
+    annualMetricsCacheKey(forecastYear),
+    annualMetricsFetcher(forecastYear),
   );
 
   // Derive owner query key before any conditional return to keep hook order stable.
@@ -409,8 +376,8 @@ export function TotaisScreen() {
   const ownerYear = Number(activeYmForOwners.slice(0, 4)) || 0;
   const ownerMonth = Number(activeYmForOwners.slice(5, 7)) || 0;
   const ownerTotalsQ = useCommand(
-    `owner_totals_for_month:${ownerYear}:${ownerMonth}`,
-    () => ownerTotalsForMonth(ownerYear, ownerMonth),
+    ownerTotalsCacheKey(ownerYear, ownerMonth),
+    ownerTotalsFetcher(ownerYear, ownerMonth),
   );
   const ownerTotals: OwnerTotal[] = ownerTotalsQ.data ?? [];
 

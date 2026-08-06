@@ -9,12 +9,6 @@ import {
   TrendingUp,
   Rows3,
 } from "lucide-react";
-import {
-  getAnnualMetrics,
-  getAnnualRuler,
-  getForecast,
-  type MonthMetric,
-} from "../lib/api";
 import { isTauri } from "../lib/env";
 import { useCommand } from "../lib/useCommand";
 import { todayISO } from "../lib/format";
@@ -30,10 +24,16 @@ import { MiaAvatar } from "../design-system/components/MiaAvatar";
 import { SR_ONLY } from "../design-system/srOnly";
 import { setCrumb } from "../shell/crumbStore";
 import {
+  annualMetricsCacheKey,
+  annualMetricsFetcher,
+  annualRulerCacheKey,
+  annualRulerFetcher,
   buildAnoView,
   buildIncomeAcrossYears,
+  fetchForecast,
   type AnoView,
   type AnoMonth,
+  type MonthMetric,
 } from "./anoView";
 
 // A tela O ano é o tribunal do método: a única onde o Economizado% pode julgar, porque a
@@ -46,31 +46,6 @@ const RULER_MARKS = [
   { at: 30, label: "30%" },
   { at: 40, label: "40%" },
 ];
-
-// ---------------------------------------------------------------- fetchers --
-// Identidade estável por chave (o contrato do useCommand rejeita closures novas a cada render).
-
-function fetchForecast() {
-  return getForecast();
-}
-
-const _annualCache = new Map<number, () => ReturnType<typeof getAnnualMetrics>>();
-function annualFetcher(year: number): () => ReturnType<typeof getAnnualMetrics> {
-  const cached = _annualCache.get(year);
-  if (cached) return cached;
-  const fn = () => getAnnualMetrics(year);
-  _annualCache.set(year, fn);
-  return fn;
-}
-
-const _rulerCache = new Map<number, () => ReturnType<typeof getAnnualRuler>>();
-function rulerFetcher(year: number): () => ReturnType<typeof getAnnualRuler> {
-  const cached = _rulerCache.get(year);
-  if (cached) return cached;
-  const fn = () => getAnnualRuler(year);
-  _rulerCache.set(year, fn);
-  return fn;
-}
 
 // ------------------------------------------------------------------ helpers --
 
@@ -688,18 +663,18 @@ export function AnnualScreen() {
   const [year, setYear] = useState(thisYear);
 
   const forecastQ = useCommand("get_forecast", fetchForecast);
-  const annualQ = useCommand(`annual_metrics:${year}:ano`, annualFetcher(year));
+  const annualQ = useCommand(annualMetricsCacheKey(year), annualMetricsFetcher(year));
   // A régua do método chega decidida do motor — inclusive o veredito, que lê a reserva no
   // backend. É a mesma leitura que a conversa dá quando perguntam pelo ano.
-  const rulerQ = useCommand(`annual_ruler:${year}`, rulerFetcher(year));
+  const rulerQ = useCommand(annualRulerCacheKey(year), annualRulerFetcher(year));
 
   const today = forecastQ.data?.today ?? todayISO();
 
   // Renda ao longo dos anos: o ano visto e os dois anteriores (o que o método manda comparar).
   const prevA = year - 1;
   const prevB = year - 2;
-  const prevAQ = useCommand(`annual_metrics:${prevA}:ano`, annualFetcher(prevA));
-  const prevBQ = useCommand(`annual_metrics:${prevB}:ano`, annualFetcher(prevB));
+  const prevAQ = useCommand(annualMetricsCacheKey(prevA), annualMetricsFetcher(prevA));
+  const prevBQ = useCommand(annualMetricsCacheKey(prevB), annualMetricsFetcher(prevB));
 
   useEffect(() => {
     setCrumb("ano", `Onde ${year} está na faixa`);

@@ -1,6 +1,6 @@
 import type { LoanBreakdown, ScenarioCompareDto } from "../lib/api";
 import { fmtBRL, fmtCompactBRL, MES, monthOf, saldoBand } from "../lib/nkFormat";
-import { custoVidaStatus, performanceStatus } from "./totaisStatus";
+import { custoVidaStatus, performanceStatus } from "./totaisView";
 
 // View-model puro da superfície de comparação real × cenário. Consome o DTO do motor
 // (`get_scenario_forecast`) e produz os cinco cards de KPI já DECIDIDOS: rótulo, copy didática,
@@ -126,7 +126,7 @@ export function performanceState(cents: number): MethodState {
 }
 
 /** Custo de vida: `custoVidaStatus` verbatim ("Dentro da renda" é método; "Acima da renda" é
- * copy do Neko para o estado ruim — ver totaisStatus.ts). Nesta superfície de decisão de alto
+ * copy do Neko para o estado ruim — ver totaisView.ts). Nesta superfície de decisão de alto
  * risco, "Acima da renda" é tratada como quebra real de limiar (disciplina do vermelho: cor
  * cheia) — mais rígida que o âmbar ambiente do card "Este mês" (TotaisScreen). */
 export function custoVidaState(cost: number, income: number): MethodState {

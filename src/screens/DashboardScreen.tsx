@@ -23,7 +23,7 @@ import {
 import { isTauri } from "../lib/env";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { MES, monthOf, saldoBand } from "../lib/nkFormat";
-import { currentMonthMetric } from "./totaisStatus";
+import { currentMonthMetric } from "./totaisView";
 import {
   dailyCeilingFraction,
   dailyCeilingPercent,
