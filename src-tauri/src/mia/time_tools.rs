@@ -10,6 +10,7 @@ use super::envelope::{
     Cursor, DataState, Delta, Listing, Page, Period, ToolError, ToolOutput, ToolResult,
 };
 use super::{Args, insert};
+use crate::calendar;
 use crate::commands::{
     MonthCoverageDto, MonthGridDayDto, SAVINGS_CEILING_BPS, SAVINGS_FLOOR_BPS, SAVINGS_TARGET_BPS,
     annual_month_end, annual_month_metrics, annual_ruler_reading, forecast_dto, month_grid_at,
@@ -780,7 +781,7 @@ pub(super) fn month_period(year: i32, month: u32) -> Result<Period, ToolError> {
     })?;
     Ok(Period::between(
         start,
-        forecast::last_day_of_month(year, month),
+        calendar::last_day_of_month(year, month),
     ))
 }
 

@@ -983,8 +983,7 @@ async fn materialize_series(
                 .await
                 .map_err(|e| format!("fatura: {e}"))?;
         let close = parse_date(&closing_date)?;
-        let day =
-            display_day.min(crate::forecast::last_day_of_month(close.year(), close.month()).day());
+        let day = crate::calendar::clamp_day_of_month(display_day, close.year(), close.month());
         let date =
             NaiveDate::from_ymd_opt(close.year(), close.month(), day).ok_or("data inválida")?;
         let id = uuid::Uuid::new_v4().to_string();

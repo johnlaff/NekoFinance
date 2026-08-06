@@ -5,6 +5,7 @@
 //! for `lib.rs`'s `tauri::generate_handler![…]`. Submodules pull shared imports
 //! and helpers (`quote_sheet`, `map_cashflow_row`) in via `use super::*`.
 
+use crate::calendar;
 use crate::forecast::{self, CashflowEvent};
 use crate::google_sheets::write_back::{self, CellWrite, WriteBackTxn};
 use crate::google_sheets::{self, SheetsClient, import, layout_detect};

@@ -43,6 +43,36 @@ impl GateLeg {
     }
 }
 
+/// Classifica a perna da economia contra o piso da faixa (`SAVINGS_FLOOR_BPS`): sem registro é
+/// desconhecida, nunca aprovada por omissão.
+pub fn economy_gate_leg(economia_bps: Option<i64>) -> GateLeg {
+    match economia_bps {
+        None => GateLeg::Unknown,
+        Some(bps) if bps >= crate::forecast::SAVINGS_FLOOR_BPS => GateLeg::Alive,
+        Some(_) => GateLeg::Below,
+    }
+}
+
+/// Classifica a perna da reserva contra o mínimo de meses (`RESERVE_MIN_MONTHS`): sem registro é
+/// desconhecida, nunca aprovada por omissão.
+pub fn reserve_gate_leg(reserve_months: Option<f64>) -> GateLeg {
+    match reserve_months {
+        None => GateLeg::Unknown,
+        Some(months) if months >= crate::forecast::RESERVE_MIN_MONTHS as f64 => GateLeg::Alive,
+        Some(_) => GateLeg::Below,
+    }
+}
+
+/// Gate de legitimidade do modo cartão: a economia 20–30% e a reserva mínima precisam estar
+/// VIVAS ao mesmo tempo. Cada perna lê sua própria evidência já resolvida pelo motor (régua
+/// anual, meses de reserva) — este módulo só classifica e compõe, nunca recalcula.
+pub fn card_gate(economia_bps: Option<i64>, reserve_months: Option<f64>) -> GateLeg {
+    compose_card_gate(
+        economy_gate_leg(economia_bps),
+        reserve_gate_leg(reserve_months),
+    )
+}
+
 /// Combina as pernas de economia e reserva sem transformar ausência de dado em aprovação.
 pub fn compose_card_gate(economy: GateLeg, reserve: GateLeg) -> GateLeg {
     if matches!(economy, GateLeg::Below) || matches!(reserve, GateLeg::Below) {
@@ -85,7 +115,7 @@ pub fn cycle_close_for_purchase(purchase: NaiveDate, closing_day: u32) -> NaiveD
 /// segue. Encurtar (28/fev) preserva o ciclo; recuar para um 28 fixo empurraria a compra do dia
 /// 29 para a fatura seguinte, um mês inteiro de atraso.
 pub(crate) fn closing_day_in(year: i32, month: u32, closing_day: u32) -> u32 {
-    closing_day.clamp(1, crate::forecast::last_day_of_month(year, month).day())
+    crate::calendar::clamp_day_of_month(closing_day, year, month)
 }
 
 /// Primeiro vencimento estritamente posterior ao fechamento.
@@ -98,12 +128,12 @@ pub fn due_date_for_close(close: NaiveDate, due_day: u32) -> NaiveDate {
     } else {
         shift_month(close.year(), close.month(), 1).expect("mês posterior representável")
     };
-    let mut day = due_day.clamp(1, crate::forecast::last_day_of_month(year, month).day());
+    let mut day = crate::calendar::clamp_day_of_month(due_day, year, month);
     let mut due = NaiveDate::from_ymd_opt(year, month, day).expect("dia de vencimento válido");
 
     if due <= close {
         (year, month) = shift_month(year, month, 1).expect("mês posterior representável");
-        day = due_day.clamp(1, crate::forecast::last_day_of_month(year, month).day());
+        day = crate::calendar::clamp_day_of_month(due_day, year, month);
         due = NaiveDate::from_ymd_opt(year, month, day).expect("dia de vencimento válido");
     }
 
@@ -151,10 +181,7 @@ pub fn dates_for_cycle_month(
     let due_date = NaiveDate::from_ymd_opt(
         due_year,
         due_month,
-        due_day.clamp(
-            1,
-            crate::forecast::last_day_of_month(due_year, due_month).day(),
-        ),
+        crate::calendar::clamp_day_of_month(due_day, due_year, due_month),
     )?;
     // O mês do fechamento sai dos dias PEDIDOS — é a intenção do molde. Cada um encurta depois,
     // no seu próprio mês: fechamento e vencimento podem cair em meses de tamanhos diferentes.
@@ -187,7 +214,7 @@ pub fn cycle_start(closing_date: NaiveDate) -> NaiveDate {
         .expect("mês anterior representável");
     let previous_day = closing_date
         .day()
-        .min(crate::forecast::last_day_of_month(year, month).day());
+        .min(crate::calendar::last_day_of_month(year, month).day());
     NaiveDate::from_ymd_opt(year, month, previous_day)
         .and_then(|date| date.succ_opt())
         .expect("início de ciclo representável")
@@ -1016,5 +1043,68 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(invoices_after_retry, 0, "reexecutar sem fatura é no-op");
+    }
+
+    #[test]
+    fn gate_leg_as_str_covers_every_variant() {
+        assert_eq!(GateLeg::Alive.as_str(), "alive");
+        assert_eq!(GateLeg::Below.as_str(), "below");
+        assert_eq!(GateLeg::Unknown.as_str(), "unknown");
+    }
+
+    // Tabela 3×3: cada perna sem registro é DESCONHECIDA, nunca aprovada por omissão; qualquer
+    // perna abaixo derruba o gate inteiro, e só a dupla viva libera o modo cartão.
+    #[test]
+    fn card_gate_composes_the_two_legs_as_a_three_by_three_table() {
+        let alive_savings = Some(crate::forecast::SAVINGS_FLOOR_BPS);
+        let below_savings = Some(crate::forecast::SAVINGS_FLOOR_BPS - 1);
+        let alive_reserve = Some(crate::forecast::RESERVE_MIN_MONTHS as f64);
+        let below_reserve = Some(crate::forecast::RESERVE_MIN_MONTHS as f64 - 0.1);
+
+        assert_eq!(
+            card_gate(alive_savings, alive_reserve),
+            GateLeg::Alive,
+            "economia viva + reserva viva"
+        );
+        assert_eq!(
+            card_gate(alive_savings, below_reserve),
+            GateLeg::Below,
+            "economia viva + reserva abaixo"
+        );
+        assert_eq!(
+            card_gate(alive_savings, None),
+            GateLeg::Unknown,
+            "economia viva + reserva sem registro"
+        );
+        assert_eq!(
+            card_gate(below_savings, alive_reserve),
+            GateLeg::Below,
+            "economia abaixo + reserva viva"
+        );
+        assert_eq!(
+            card_gate(below_savings, below_reserve),
+            GateLeg::Below,
+            "economia abaixo + reserva abaixo"
+        );
+        assert_eq!(
+            card_gate(below_savings, None),
+            GateLeg::Below,
+            "economia abaixo + reserva sem registro"
+        );
+        assert_eq!(
+            card_gate(None, alive_reserve),
+            GateLeg::Unknown,
+            "economia sem registro + reserva viva"
+        );
+        assert_eq!(
+            card_gate(None, below_reserve),
+            GateLeg::Below,
+            "economia sem registro + reserva abaixo"
+        );
+        assert_eq!(
+            card_gate(None, None),
+            GateLeg::Unknown,
+            "economia sem registro + reserva sem registro"
+        );
     }
 }

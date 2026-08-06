@@ -12,6 +12,7 @@ use sqlx::SqlitePool;
 use std::collections::HashMap;
 use tauri::State;
 
+use crate::calendar;
 use crate::commands::forecast_cmds;
 use crate::forecast::{self, CashflowEvent, MetricEvent, MonthMetric, RulerMask};
 
@@ -435,7 +436,7 @@ async fn load_third_parties(
     month: u32,
 ) -> Result<Vec<ThirdPartyAgg>, String> {
     let ym = format!("{year:04}-{month:02}");
-    let last = forecast::last_day_of_month(year, month);
+    let last = calendar::last_day_of_month(year, month);
     let ym_s = ym.clone();
     let today_s = today.format("%Y-%m-%d").to_string();
     let last_s = last.format("%Y-%m-%d").to_string();
@@ -683,7 +684,7 @@ pub(crate) async fn tags_screen_dto(
     month: u32,
 ) -> Result<TagsScreenDto, String> {
     let first = NaiveDate::from_ymd_opt(year, month, 1).ok_or("mês inválido")?;
-    let last = forecast::last_day_of_month(year, month);
+    let last = calendar::last_day_of_month(year, month);
     let end_exclusive = last.succ_opt().ok_or("mês inválido para intervalo")?;
     let screen = (year, month);
     let annotation = forecast_cmds::load_economia_annotation(pool, &[year]).await?;
