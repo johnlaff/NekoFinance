@@ -187,8 +187,8 @@ pub(crate) async fn realized_annual_economia(
 }
 
 /// Patrimônio REALIZADO do ano, na MESMA janela de meses completos de `realized_annual_economia`.
-/// Entra na régua de economia SÓ quando a reserva líquida ≥ 6 meses (o método constrói liquidez
-/// primeiro; depois disso, patrimônio conta como poupança) — a condição é do caller.
+/// Publicado ao lado da régua, nunca somado a ela: patrimônio é classificação, não Economia, em
+/// qualquer cobertura de reserva.
 pub(crate) async fn realized_annual_patrimonio(
     pool: &SqlitePool,
     today_naive: NaiveDate,
