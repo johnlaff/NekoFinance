@@ -314,13 +314,18 @@ fn compose_cards(
     let gate_economy = cards::economy_gate_leg(economia_bps);
     let gate_reserve = cards::reserve_gate_leg(reserve_months);
 
+    // Fatura zerada preserva a estrutura mensal, não um compromisso: nem ocupa a vaga da real na
+    // lista, nem entra no total do próximo vencimento. Um predicado só, lido pelos dois.
+    let committed = || {
+        inputs
+            .cards
+            .active_invoices
+            .iter()
+            .filter(|invoice| invoice.amount_cents != 0)
+    };
+
     let mut seen_accounts = std::collections::HashSet::new();
-    let upcoming_invoices: Vec<UpcomingInvoice> = inputs
-        .cards
-        .active_invoices
-        .iter()
-        // Fatura zerada preserva a estrutura mensal, não um compromisso: não ocupa a vaga da real.
-        .filter(|invoice| invoice.amount_cents != 0)
+    let upcoming_invoices: Vec<UpcomingInvoice> = committed()
         .filter(|invoice| seen_accounts.insert(invoice.account_id.clone()))
         .map(|invoice| UpcomingInvoice {
             account_id: invoice.account_id.clone(),
@@ -338,23 +343,13 @@ fn compose_cards(
     // vencem no mesmo dia). Sem cartão, o fallback é o dia de fatura declarado pela planilha —
     // quem gasta tudo no crédito e ainda não cadastrou o cartão não pode ser lido como débito.
     let next_fatura = if inputs.cards.has_card {
-        inputs
-            .cards
-            .active_invoices
-            .iter()
-            .find(|invoice| invoice.amount_cents != 0)
-            .map(|first| {
-                let amount_cents = inputs
-                    .cards
-                    .active_invoices
-                    .iter()
-                    .filter(|invoice| {
-                        invoice.due_date == first.due_date && invoice.amount_cents != 0
-                    })
-                    .map(|invoice| invoice.amount_cents)
-                    .sum();
-                (first.due_date, amount_cents)
-            })
+        committed().next().map(|first| {
+            let amount_cents = committed()
+                .filter(|invoice| invoice.due_date == first.due_date)
+                .map(|invoice| invoice.amount_cents)
+                .sum();
+            (first.due_date, amount_cents)
+        })
     } else {
         inputs.spending_mode.next_fatura
     };
@@ -408,10 +403,9 @@ mod tests {
 
     // --- Regressões nomeadas ---
 
-    // O saldo projetado do fim do mês é UM campo. O dashboard lia de uma projeção só de caixa e o
-    // forecast de uma projeção com métricas: dois motores respondendo à mesma pergunta. Agora o
-    // recorte de dashboard e a trajetória do forecast saem do mesmo `Forecast`, e não há segunda
-    // projeção onde divergir.
+    // O saldo projetado do fim do mês é UM campo: o recorte do dashboard e a trajetória do
+    // forecast leem o mesmo `Forecast`. Uma segunda projeção — só de caixa, para o mesmo mês —
+    // seria outro motor respondendo à mesma pergunta, e o lugar onde os dois números divergiriam.
     #[test]
     fn projected_month_end_is_one_field_shared_by_dashboard_and_forecast() {
         let mut inputs = ForecastInputs::minimal(d("2026-06-15"));

@@ -483,10 +483,10 @@ mod tests {
         );
     }
 
-    // A leitura composta publica os MESMOS números dos caminhos de produção. É o que sustenta que
-    // esta entrega é de forma pura: os consumidores ainda não migraram, e quando migrarem não há
-    // número a mudar. O saldo do fim do mês fecha apesar de o dashboard projetar só o caixa — as
-    // duas projeções encadeiam a mesma série de caixa, e é justamente a segunda que morre aqui.
+    // A leitura composta e as rotas de produção publicam os MESMOS números: é a prova de que
+    // migrar um consumidor para a leitura não muda nada do que o usuário vê. O saldo do fim do mês
+    // fecha apesar de o dashboard projetar só o caixa, porque as duas projeções encadeiam a mesma
+    // série de caixa — a diferença está nas métricas, que não tocam o saldo.
     #[tokio::test]
     async fn the_composed_reading_publishes_the_same_numbers_as_the_production_routes() {
         let p = pool().await;
