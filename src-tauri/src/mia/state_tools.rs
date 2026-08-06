@@ -1,24 +1,32 @@
 //! As quatro perguntas de estado: como estou agora, o que falta de dado, qual meu teto, onde
 //! está meu dinheiro.
 //!
-//! Nenhuma régua nasce aqui. Cada ferramenta chama o helper que a tela correspondente já chama
-//! e traduz o resultado para o vocabulário do envelope — em especial os estados epistêmicos,
-//! que o domínio expressa em dois dialetos (`chosen`/`none` no teto, `verdict`/`no_record` nas
-//! demais) e a fachada publica num só.
+//! Nenhuma régua nasce aqui. As três primeiras carregam e compõem a mesma `ForecastReading` que
+//! a tela lê — UMA composição por chamada, mesmo com várias inclusões opcionais — e só recortam
+//! campos dela; a quarta (contas e patrimônio) não pertence a essa leitura e continua lendo seu
+//! próprio agregado. A tradução para o vocabulário do envelope cuida em especial dos estados
+//! epistêmicos, que o domínio expressa em dois dialetos (`chosen`/`none` no teto,
+//! `verdict`/`no_record` nas demais) e a fachada publica num só.
 
 use super::envelope::{DataState, Listing, Period, Reading, ToolError, ToolOutput, ToolResult};
-use super::time_tools::coverage_listing;
 use super::{Args, insert};
 use crate::commands::{
-    CeilingSource, RESERVE_MIN_MONTHS, SAVINGS_CEILING_BPS, SAVINGS_FLOOR_BPS, SAVINGS_TARGET_BPS,
-    daily_ceiling_reading, dashboard_summary, economia_ruler_reading, forecast_dto,
+    RESERVE_MIN_MONTHS, SAVINGS_CEILING_BPS, SAVINGS_FLOOR_BPS, SAVINGS_TARGET_BPS,
     get_ceiling_proposal_inner, get_daily_budget_inner, last_sync_at_query, pockets,
-    reserve_reading, spending_mode_summary,
 };
+use crate::reading::compose::ForecastReading;
+use crate::reading::{compose::compose, load::load_inputs};
 use chrono::{Datelike, NaiveDate};
 use serde::Serialize;
 use serde_json::json;
 use sqlx::SqlitePool;
+
+/// A única fronteira de carga das três primeiras ferramentas: carrega e compõe uma vez, para que
+/// nenhuma inclusão opcional dispare uma segunda projeção do horizonte.
+async fn read(pool: &SqlitePool, today: NaiveDate) -> Result<ForecastReading, String> {
+    let inputs = load_inputs(pool, today).await?;
+    Ok(compose(&inputs))
+}
 
 /// Dias sem lançamento a partir dos quais o dado do Diário deixa de descrever o presente.
 const STALE_ENTRY_DAYS: i64 = 7;
@@ -80,25 +88,22 @@ pub(crate) async fn financial_snapshot(
     args: &Args,
     today: NaiveDate,
 ) -> ToolResult {
-    let summary = dashboard_summary(pool, today)
-        .await
-        .map_err(ToolError::read_failed)?;
-    let reserve = reserve_reading(pool, today)
-        .await
-        .map_err(ToolError::read_failed)?;
+    let reading = read(pool, today).await.map_err(ToolError::read_failed)?;
+    let reserve = &reading.reserve;
 
     let months_tenths = (reserve.state != "no_record").then(|| tenths(reserve.months));
+    let next_fatura = reading.cards.next_fatura;
     let mut data = json!({
-        "spending_mode": summary.spending_mode,
-        "projected_month_end_balance_cents": summary.balance,
-        "daily_ceiling_cents": ceiling_reading(summary.daily_ceiling_source.as_str(), summary.daily_budget),
-        "ceiling_proposal_pending": summary.ceiling_proposal_pending,
-        "daily_spend_today_cents": summary.daily_spend_today,
-        "card_spend_today_cents": summary.card_spend_today_cents,
-        "cartao_month_cents": summary.cartao_month_cents,
-        "next_invoice": summary.next_fatura_date.as_ref().map(|due_date| NextInvoiceDto {
-            due_date: due_date.clone(),
-            amount_cents: summary.next_fatura_amount_cents,
+        "spending_mode": reading.spending_mode.mode.as_str(),
+        "projected_month_end_balance_cents": reading.projected_month_end_cents,
+        "daily_ceiling_cents": ceiling_reading(reading.ceiling.source.as_str(), reading.ceiling.per_day_cents),
+        "ceiling_proposal_pending": reading.ceiling.proposal_pending,
+        "daily_spend_today_cents": reading.today_spend.daily_avg_cents,
+        "card_spend_today_cents": reading.today_spend.card_cents,
+        "cartao_month_cents": reading.spending_mode.cartao_month_cents,
+        "next_invoice": next_fatura.as_ref().map(|(due_date, amount_cents)| NextInvoiceDto {
+            due_date: due_date.format("%Y-%m-%d").to_string(),
+            amount_cents: *amount_cents,
         }),
         "reserve": ReserveDto {
             state: state_of(reserve.state),
@@ -107,28 +112,29 @@ pub(crate) async fn financial_snapshot(
             balance_cents: reserve.balance_cents,
             basis_months: reserve.basis_months,
             target_months: RESERVE_MIN_MONTHS,
-            trend: reserve.trend,
+            trend: reserve.trend.clone(),
         },
         "card_gate": CardGateDto {
-            verdict: summary.card_gate,
-            economy: summary.card_gate_economy,
-            economy_bps: summary.card_gate_economy_bps,
-            reserve: summary.card_gate_reserve,
+            verdict: reading.cards.gate.as_str().to_string(),
+            economy: reading.cards.gate_economy.as_str().to_string(),
+            economy_bps: reading.cards.gate_economy_bps,
+            reserve: reading.cards.gate_reserve.as_str().to_string(),
         },
-        "realized_transactions": summary.transaction_count,
-        "last_real_transaction_date": summary.last_real_tx_date,
+        "realized_transactions": reading.ledger.transaction_count,
+        "last_real_transaction_date": reading.ledger.last_real_tx_date,
     });
 
     if args.wants("upcoming_invoices") {
-        let invoices: Vec<InvoiceDto> = summary
+        let invoices: Vec<InvoiceDto> = reading
+            .cards
             .upcoming_invoices
             .into_iter()
             .map(|i| InvoiceDto {
                 card_name: i.card_name,
                 owner_name: i.owner_name,
-                due_date: i.due_date,
+                due_date: i.due_date.format("%Y-%m-%d").to_string(),
                 amount_cents: i.amount_cents,
-                status: i.status,
+                status: i.status.as_str().to_string(),
                 has_refund_expectation: i.has_refund_expectation,
             })
             .collect();
@@ -136,17 +142,14 @@ pub(crate) async fn financial_snapshot(
     }
 
     if args.wants("guardrail") {
-        let forecast = forecast_dto(pool, today)
-            .await
-            .map_err(ToolError::read_failed)?;
         insert(
             &mut data,
             "guardrail",
             GuardrailDto {
-                safe_to_spend_today_cents: forecast.safe_to_spend_today_cents,
-                binding: forecast.binding_guardrail,
-                cash_headroom_cents: forecast.cash_headroom_cents,
-                savings_headroom_cents: forecast.savings_headroom_cents,
+                safe_to_spend_today_cents: reading.safe_to_spend.amount_cents,
+                binding: reading.safe_to_spend.binding.as_str().to_string(),
+                cash_headroom_cents: reading.safe_to_spend.cash_headroom_cents,
+                savings_headroom_cents: reading.safe_to_spend.savings_headroom_cents,
             },
         );
     }
@@ -195,18 +198,7 @@ pub(crate) async fn data_status(pool: &SqlitePool, args: &Args, today: NaiveDate
     .map_err(|e| ToolError::read_failed(format!("pendências: {e}")))?;
     let (ceiling_proposals, card_proposals, import_conflicts) = pending;
 
-    let ceiling = daily_ceiling_reading(pool, today)
-        .await
-        .map_err(ToolError::read_failed)?;
-    let reserve = reserve_reading(pool, today)
-        .await
-        .map_err(ToolError::read_failed)?;
-    let economia = economia_ruler_reading(pool, today)
-        .await
-        .map_err(ToolError::read_failed)?;
-    let mode = spending_mode_summary(pool, today)
-        .await
-        .map_err(ToolError::read_failed)?;
+    let reading = read(pool, today).await.map_err(ToolError::read_failed)?;
     let last_sync_at = last_sync_at_query(pool)
         .await
         .map_err(ToolError::read_failed)?;
@@ -216,7 +208,10 @@ pub(crate) async fn data_status(pool: &SqlitePool, args: &Args, today: NaiveDate
             .ok()
             .map(|date| (today - date).num_days())
     });
-    let card_mode = matches!(mode.mode, crate::forecast::SpendingMode::Card);
+    let card_mode = matches!(
+        reading.spending_mode.mode,
+        crate::forecast::SpendingMode::Card
+    );
 
     let mut gaps = Vec::new();
     if total == 0 {
@@ -226,7 +221,7 @@ pub(crate) async fn data_status(pool: &SqlitePool, args: &Args, today: NaiveDate
             fix: "Importe a planilha em Configurações ou registre o primeiro lançamento.",
         });
     }
-    if ceiling.source == CeilingSource::None {
+    if reading.ceiling.source == crate::reading::inputs::CeilingSource::None {
         gaps.push(Gap {
             code: "daily_ceiling_missing",
             what: "O teto do Diário não está estipulado, e sem ele o dia não tem contra o que ser \
@@ -235,10 +230,10 @@ pub(crate) async fn data_status(pool: &SqlitePool, args: &Args, today: NaiveDate
             fix: "Faça a cerimônia do teto na tela Teto do diário.",
         });
     }
-    if reserve.state == "no_record" {
+    if reading.reserve.state == "no_record" {
         gaps.push(Gap {
             code: "reserve_unmapped",
-            what: if reserve.baseline_cents <= 0 {
+            what: if reading.reserve.baseline_cents <= 0 {
                 "Não há meses completos suficientes para calcular o custo de vida que divide a \
                  reserva."
                     .into()
@@ -250,7 +245,7 @@ pub(crate) async fn data_status(pool: &SqlitePool, args: &Args, today: NaiveDate
             fix: "Marque a conta da reserva em Configurações › Bolsos.",
         });
     }
-    if economia.state == "no_record" {
+    if reading.annual.economia_state == "no_record" {
         gaps.push(Gap {
             code: "economia_unregistered",
             what: "Não há Economia registrada no ano, então o Economizado% não tem numerador."
@@ -292,9 +287,9 @@ pub(crate) async fn data_status(pool: &SqlitePool, args: &Args, today: NaiveDate
         "last_sync_at": last_sync_at,
         "spending_mode": if card_mode { "card" } else { "debit" },
         "readings": {
-            "daily_ceiling": state_of(ceiling.source.as_str()),
-            "reserve": state_of(reserve.state),
-            "annual_economia": state_of(economia.state),
+            "daily_ceiling": state_of(reading.ceiling.source.as_str()),
+            "reserve": state_of(reading.reserve.state),
+            "annual_economia": state_of(reading.annual.economia_state),
         },
         "pending": {
             "ceiling_proposals": ceiling_proposals,
@@ -305,17 +300,14 @@ pub(crate) async fn data_status(pool: &SqlitePool, args: &Args, today: NaiveDate
     });
 
     if args.wants("future_coverage") {
-        let forecast = forecast_dto(pool, today)
-            .await
-            .map_err(ToolError::read_failed)?;
         insert(
             &mut data,
             "future_coverage",
             json!({
-                "months": coverage_listing(forecast.coverage.iter()),
-                "baseline_outflow_cents": forecast.baseline_outflow_cents,
-                "total_missing_cents": forecast.total_missing_cents,
-                "trusted_through_month": forecast.trusted_through_month,
+                "months": month_coverage_listing(reading.coverage.months.iter()),
+                "baseline_outflow_cents": reading.coverage.baseline_outflow_cents,
+                "total_missing_cents": reading.coverage.total_missing_cents,
+                "trusted_through_month": reading.coverage.trusted_through_month,
             }),
         );
     }
@@ -350,16 +342,14 @@ pub(crate) async fn budget_settings(
     let budget = get_daily_budget_inner(pool)
         .await
         .map_err(ToolError::read_failed)?;
-    let ceiling = daily_ceiling_reading(pool, today)
-        .await
-        .map_err(ToolError::read_failed)?;
+    let reading = read(pool, today).await.map_err(ToolError::read_failed)?;
     let proposal = get_ceiling_proposal_inner(pool)
         .await
         .map_err(ToolError::read_failed)?;
 
     let monthly_total: i64 = budget.categories.iter().map(|c| c.amount_cents).sum();
     let mut data = json!({
-        "daily_ceiling_cents": ceiling_reading(ceiling.source.as_str(), ceiling.per_day_cents),
+        "daily_ceiling_cents": ceiling_reading(reading.ceiling.source.as_str(), reading.ceiling.per_day_cents),
         "monthly_total_cents": monthly_total,
         "divisor_days": budget.divisor_days,
         "ceremony_month": budget.ceremony_month,
@@ -468,6 +458,30 @@ pub(crate) async fn accounts_and_net_worth(
 
 // --- Costura ----------------------------------------------------------------------------
 
+#[derive(Serialize)]
+struct CoverageDto {
+    month: String,
+    coverage_bps: i64,
+    is_complete: bool,
+    estimated_missing_cents: i64,
+}
+
+/// Cobertura de um mês futuro no vocabulário do envelope, recortada direto do motor — a leitura
+/// é uma só: a projeção do mês é crível ou não é.
+fn month_coverage_listing<'a>(
+    rows: impl Iterator<Item = &'a crate::forecast::MonthCoverage>,
+) -> Listing<CoverageDto> {
+    Listing::capped(
+        rows.map(|c| CoverageDto {
+            month: format!("{:04}-{:02}", c.year, c.month),
+            coverage_bps: c.coverage_bps,
+            is_complete: c.is_complete,
+            estimated_missing_cents: c.estimated_missing_cents,
+        })
+        .collect(),
+    )
+}
+
 fn month_period(today: NaiveDate) -> Period {
     let start = NaiveDate::from_ymd_opt(today.year(), today.month(), 1).expect("dia 1 existe");
     let end = (start + chrono::Months::new(1))
@@ -511,5 +525,193 @@ fn tenths_display(tenths: i64) -> String {
         format!("{sign}{}", abs / 10)
     } else {
         format!("{sign}{},{}", abs / 10, abs % 10)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mia::bench::fixtures;
+    use crate::mia::{Context, ToolCall, dispatch, method_tools};
+    use crate::reading::load::LOAD_INPUTS_CALLS;
+    use std::cell::Cell;
+
+    async fn pool() -> SqlitePool {
+        let p = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&p).await.unwrap();
+        fixtures::seed(&p, "casa_basica").await.unwrap();
+        p
+    }
+
+    async fn call(
+        pool: &SqlitePool,
+        name: &str,
+        arguments: serde_json::Value,
+    ) -> serde_json::Value {
+        let ctx = Context {
+            clock: fixtures::bench_clock(),
+            pack: method_tools::MethodPack::at(std::env::temp_dir()),
+            conversation_id: None,
+        };
+        let env = dispatch(pool, &ToolCall::new(name, arguments), &ctx).await;
+        assert!(
+            env.ok,
+            "a fachada recusou {name}: {:?}",
+            env.error.map(|e| e.message)
+        );
+        env.data.expect("envelope de sucesso carrega dados")
+    }
+
+    // --- Décimos truncados (a mesma conta da tela) ---
+
+    #[test]
+    fn tenths_truncates_never_rounds() {
+        assert_eq!(
+            tenths(6.19),
+            61,
+            "6,19 meses trunca em 6,1, não arredonda para 6,2"
+        );
+        assert_eq!(
+            tenths(-1.05),
+            -10,
+            "negativo também trunca em direção ao zero"
+        );
+        assert_eq!(tenths(3.0), 30);
+    }
+
+    #[test]
+    fn tenths_display_omits_the_decimal_place_on_whole_numbers() {
+        assert_eq!(tenths_display(61), "6,1");
+        assert_eq!(tenths_display(30), "3");
+        assert_eq!(tenths_display(-10), "-1");
+    }
+
+    // --- Tradução do envelope epistêmico ---
+
+    #[test]
+    fn state_of_translates_both_domain_dialects_to_the_same_four_states() {
+        assert_eq!(state_of("chosen"), DataState::Verdict);
+        assert_eq!(state_of("verdict"), DataState::Verdict);
+        assert_eq!(state_of("estimate"), DataState::Estimate);
+        assert_eq!(state_of("zero"), DataState::Zero);
+        assert_eq!(state_of("none"), DataState::NoRecord);
+        assert_eq!(state_of("no_record"), DataState::NoRecord);
+    }
+
+    #[test]
+    fn ceiling_without_record_is_null_not_a_fabricated_zero() {
+        let reading = ceiling_reading("none", 0);
+        assert_eq!(reading.state, DataState::NoRecord);
+        assert!(reading.value.is_none());
+    }
+
+    #[test]
+    fn ceiling_with_record_carries_its_value() {
+        let reading = ceiling_reading("chosen", 15_000);
+        assert_eq!(reading.state, DataState::Verdict);
+        assert_eq!(reading.value, Some(15_000));
+    }
+
+    // --- Uma composição por chamada, mesmo com várias inclusões opcionais ---
+
+    #[tokio::test]
+    async fn financial_snapshot_with_every_inclusion_composes_the_reading_once() {
+        LOAD_INPUTS_CALLS
+            .scope(Cell::new(0), async {
+                let p = pool().await;
+                call(
+                    &p,
+                    "get_financial_snapshot",
+                    json!({"include": ["upcoming_invoices", "guardrail"]}),
+                )
+                .await;
+
+                assert_eq!(
+                    LOAD_INPUTS_CALLS.with(Cell::get),
+                    1,
+                    "duas inclusões opcionais não podem disparar uma segunda projeção do horizonte"
+                );
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn data_status_with_future_coverage_composes_the_reading_once() {
+        LOAD_INPUTS_CALLS
+            .scope(Cell::new(0), async {
+                let p = pool().await;
+                call(
+                    &p,
+                    "get_data_status",
+                    json!({"include": ["future_coverage"]}),
+                )
+                .await;
+
+                assert_eq!(LOAD_INPUTS_CALLS.with(Cell::get), 1);
+            })
+            .await;
+    }
+
+    // --- Recorte certo: o campo que a fachada publica É o campo da leitura ---
+
+    #[tokio::test]
+    async fn financial_snapshot_cites_the_same_reading_the_screen_composes() {
+        let p = pool().await;
+        let today = fixtures::bench_clock().today();
+        let inputs = load_inputs(&p, today).await.unwrap();
+        let reading = compose(&inputs);
+
+        let snapshot = call(
+            &p,
+            "get_financial_snapshot",
+            json!({"include": ["guardrail", "upcoming_invoices"]}),
+        )
+        .await;
+
+        assert_eq!(
+            snapshot["projected_month_end_balance_cents"],
+            reading.projected_month_end_cents
+        );
+        assert_eq!(
+            snapshot["guardrail"]["safe_to_spend_today_cents"],
+            reading.safe_to_spend.amount_cents
+        );
+        let months_tenths =
+            (reading.reserve.state != "no_record").then(|| tenths(reading.reserve.months));
+        assert_eq!(snapshot["reserve"]["months_tenths"], json!(months_tenths));
+        assert_eq!(
+            snapshot["upcoming_invoices"]["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            reading.cards.upcoming_invoices.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn data_status_readings_cite_the_same_ceiling_reserve_and_economia_states() {
+        let p = pool().await;
+        let today = fixtures::bench_clock().today();
+        let inputs = load_inputs(&p, today).await.unwrap();
+        let reading = compose(&inputs);
+
+        let status = call(&p, "get_data_status", json!({})).await;
+
+        assert_eq!(
+            status["readings"]["daily_ceiling"],
+            json!(state_of(reading.ceiling.source.as_str()))
+        );
+        assert_eq!(
+            status["readings"]["reserve"],
+            json!(state_of(reading.reserve.state))
+        );
+        assert_eq!(
+            status["readings"]["annual_economia"],
+            json!(state_of(reading.annual.economia_state))
+        );
     }
 }

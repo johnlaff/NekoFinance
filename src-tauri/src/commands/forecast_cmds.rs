@@ -531,6 +531,10 @@ async fn prev_month_daily_avg(
 
 /// Leitura do teto para exibição: valor + procedência explícita.
 pub(crate) struct CeilingReading {
+    /// Nenhum consumidor de produção lê este campo — `load_inputs` usa só `source` e
+    /// `estimate_basis`, e pega o valor de `effective_daily_ceiling`. Fica para os testes que
+    /// verificam a conta de cada procedência (`chosen`/`estimate`/`none`).
+    #[allow(dead_code)]
     pub per_day_cents: i64,
     pub source: CeilingSource,
     /// Presente só quando `source` é `Estimate`: o teto escolhido é decisão do dono, e
@@ -675,15 +679,9 @@ pub(crate) async fn has_pending_ceiling_proposal(pool: &SqlitePool) -> Result<bo
 /// completos). O método não exige histórico mínimo — 1–5 meses valem como "retrato vivo"
 /// (estimativa marcada) e 6 meses completos viram veredito.
 pub(crate) struct ReserveReading {
-    pub balance_cents: i64,
-    /// Custo de vida mensal que serve de divisor. `0` = sem histórico para dividir.
-    pub baseline_cents: i64,
-    /// Meses completos que sustentam o divisor — o que separa veredito de retrato vivo.
-    pub basis_months: i64,
     pub months: f64,
     /// `verdict` · `estimate` · `zero` (contas mapeadas e zeradas) · `no_record`.
     pub state: &'static str,
-    pub trend: String,
 }
 
 pub(crate) async fn reserve_reading(
@@ -717,48 +715,8 @@ pub(crate) async fn reserve_reading(
     } else {
         "estimate"
     };
-    let trend: (String,) = sqlx::query_as(
-        "SELECT COALESCE(trend, 'flat') FROM reserve ORDER BY last_calculated_at DESC LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| format!("query reserve trend: {e}"))?
-    .unwrap_or(("flat".to_string(),));
 
-    Ok(ReserveReading {
-        balance_cents: balance.0,
-        baseline_cents: baseline,
-        basis_months,
-        months,
-        state,
-        trend: trend.0,
-    })
-}
-
-/// A régua de economia que JULGA: a Economia REGISTRADA do ano, e só ela. Patrimônio
-/// (previdência, ilíquido) é saída de longo prazo — vive fora do numerador, como outra linha da
-/// vida financeira, e é publicado ao lado para leitura, nunca somado à régua.
-///
-/// Uma régua só, sem bifurcar semântica: alimenta o guardrail de poupança e a perna de economia
-/// do gate do modo cartão.
-pub(crate) struct EconomiaRulerReading {
-    /// `verdict` (régua viva) · `no_record` (nada registrado — a superfície mostra a sobra
-    /// derivada como estimativa marcada).
-    pub state: &'static str,
-}
-
-pub(crate) async fn economia_ruler_reading(
-    pool: &SqlitePool,
-    today_naive: NaiveDate,
-) -> Result<EconomiaRulerReading, String> {
-    let registered = realized_annual_economia(pool, today_naive).await?;
-    Ok(EconomiaRulerReading {
-        state: if registered > 0 {
-            "verdict"
-        } else {
-            "no_record"
-        },
-    })
+    Ok(ReserveReading { months, state })
 }
 
 /// A régua anual de um ano com as métricas que a sustentam, montadas uma vez só: carrega os doze
@@ -2972,8 +2930,9 @@ mod tests {
 
         // A baseline da reserva é positiva e coerente (não negativa, como aconteceria com a
         // baseline corrompida) — o alvo em dinheiro nasce dela na composição da leitura.
-        let reserve = reserve_reading(&p, today).await.unwrap();
-        assert_eq!(reserve.baseline_cents, 150_000);
+        let inputs = crate::reading::load::load_inputs(&p, today).await.unwrap();
+        let reading = crate::reading::compose::compose(&inputs);
+        assert_eq!(reading.reserve.baseline_cents, 150_000);
     }
 
     /// Insere um perfil — pré-condição de `upsert_daily_budget_inner` (escreve por person_id).
