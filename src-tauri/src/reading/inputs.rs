@@ -118,7 +118,9 @@ pub(crate) struct CeilingInputs {
     /// digitado não tem conta a mostrar.
     pub estimate_basis: Option<CeilingEstimateBasis>,
     /// Teto usado como DRIVER da projeção, re-roteado pelo modo de gasto: no modo cartão o gasto
-    /// variável já vive nas faturas, e injetar o Diário típico dobraria a saída projetada.
+    /// variável já vive nas faturas, e injetar o Diário típico dobraria a saída projetada. Já
+    /// carregado dentro de `cash_events` pelo loader — nenhum recorte atual o lê deste campo.
+    #[allow(dead_code)]
     pub projection_per_day_cents: i64,
     /// Overlay da cerimônia: existe proposta aguardando o dono. Nunca a procedência do número.
     pub proposal_pending: bool,
@@ -136,7 +138,8 @@ pub(crate) struct AnnualInputs {
     /// completos (`forecast::guardrail_window`), que em janeiro desloca para dezembro.
     pub guardrail_income_cents: i64,
     /// Net `renda − saída` (view Performance) da MESMA janela — o "colchão", distinto da Economia
-    /// registrada que o guardrail divide.
+    /// registrada que o guardrail divide. Nenhum recorte atual publica o colchão desta janela.
+    #[allow(dead_code)]
     pub guardrail_net_cents: i64,
     /// Economia REGISTRADA da janela do guardrail: o numerador do Economizado% que julga.
     pub guardrail_economia_cents: i64,
@@ -157,9 +160,12 @@ pub(crate) struct BaselineInputs {
     pub monthly_cents: i64,
     /// Quantos meses sustentam a mediana — o que separa veredito (6) de retrato vivo (1–5).
     pub months: i64,
-    /// Mediana da renda dos meses ativos da janela.
+    /// Mediana da renda dos meses ativos da janela. Nenhum recorte atual a publica.
+    #[allow(dead_code)]
     pub typical_income_cents: i64,
-    /// Mediana da economia dos meses ativos, já reconciliada com a anotação da aba.
+    /// Mediana da economia dos meses ativos, já reconciliada com a anotação da aba. Nenhum
+    /// recorte atual a publica.
+    #[allow(dead_code)]
     pub typical_economia_cents: i64,
 }
 
@@ -245,9 +251,13 @@ pub(crate) struct CardInputs {
     /// Faturas com vencimento ≥ hoje, em ordem de vencimento e nome do cartão.
     pub active_invoices: Vec<CardInvoiceEvent>,
     /// `(account_id, cycle_month)` com fatura persistida — o conjunto que decide se uma linha de
-    /// nota que nomeia um cartão vira evento Cartão ou permanece Saída fixa.
+    /// nota que nomeia um cartão vira evento Cartão ou permanece Saída fixa. Já aplicado dentro
+    /// de `cash_events`/`metric_events` pelo loader — nenhum recorte atual o lê deste campo.
+    #[allow(dead_code)]
     pub invoiced_cycles: HashSet<(String, String)>,
-    /// Apelido normalizado → `account_id` das contas de cartão.
+    /// Apelido normalizado → `account_id` das contas de cartão. Mesma situação: já resolvido nos
+    /// eventos carregados.
+    #[allow(dead_code)]
     pub alias_index: CardLexicon<String>,
 }
 

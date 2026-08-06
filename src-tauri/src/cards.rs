@@ -63,17 +63,9 @@ pub fn reserve_gate_leg(reserve_months: Option<f64>) -> GateLeg {
     }
 }
 
-/// Gate de legitimidade do modo cartão: a economia 20–30% e a reserva mínima precisam estar
-/// VIVAS ao mesmo tempo. Cada perna lê sua própria evidência já resolvida pelo motor (régua
-/// anual, meses de reserva) — este módulo só classifica e compõe, nunca recalcula.
-pub fn card_gate(economia_bps: Option<i64>, reserve_months: Option<f64>) -> GateLeg {
-    compose_card_gate(
-        economy_gate_leg(economia_bps),
-        reserve_gate_leg(reserve_months),
-    )
-}
-
-/// Combina as pernas de economia e reserva sem transformar ausência de dado em aprovação.
+/// Combina as pernas de economia e reserva sem transformar ausência de dado em aprovação. Cada
+/// perna lê sua própria evidência já resolvida pelo motor (régua anual, meses de reserva) — este
+/// módulo só classifica e compõe, nunca recalcula.
 pub fn compose_card_gate(economy: GateLeg, reserve: GateLeg) -> GateLeg {
     if matches!(economy, GateLeg::Below) || matches!(reserve, GateLeg::Below) {
         GateLeg::Below
@@ -1062,48 +1054,55 @@ mod tests {
         let alive_reserve = Some(crate::forecast::RESERVE_MIN_MONTHS as f64);
         let below_reserve = Some(crate::forecast::RESERVE_MIN_MONTHS as f64 - 0.1);
 
+        let gate = |economia_bps: Option<i64>, reserve_months: Option<f64>| {
+            compose_card_gate(
+                economy_gate_leg(economia_bps),
+                reserve_gate_leg(reserve_months),
+            )
+        };
+
         assert_eq!(
-            card_gate(alive_savings, alive_reserve),
+            gate(alive_savings, alive_reserve),
             GateLeg::Alive,
             "economia viva + reserva viva"
         );
         assert_eq!(
-            card_gate(alive_savings, below_reserve),
+            gate(alive_savings, below_reserve),
             GateLeg::Below,
             "economia viva + reserva abaixo"
         );
         assert_eq!(
-            card_gate(alive_savings, None),
+            gate(alive_savings, None),
             GateLeg::Unknown,
             "economia viva + reserva sem registro"
         );
         assert_eq!(
-            card_gate(below_savings, alive_reserve),
+            gate(below_savings, alive_reserve),
             GateLeg::Below,
             "economia abaixo + reserva viva"
         );
         assert_eq!(
-            card_gate(below_savings, below_reserve),
+            gate(below_savings, below_reserve),
             GateLeg::Below,
             "economia abaixo + reserva abaixo"
         );
         assert_eq!(
-            card_gate(below_savings, None),
+            gate(below_savings, None),
             GateLeg::Below,
             "economia abaixo + reserva sem registro"
         );
         assert_eq!(
-            card_gate(None, alive_reserve),
+            gate(None, alive_reserve),
             GateLeg::Unknown,
             "economia sem registro + reserva viva"
         );
         assert_eq!(
-            card_gate(None, below_reserve),
+            gate(None, below_reserve),
             GateLeg::Below,
             "economia sem registro + reserva abaixo"
         );
         assert_eq!(
-            card_gate(None, None),
+            gate(None, None),
             GateLeg::Unknown,
             "economia sem registro + reserva sem registro"
         );

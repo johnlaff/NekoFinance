@@ -91,11 +91,6 @@ pub(crate) use crate::forecast::{
 /// para quem já as consumia continuar lendo daqui.
 pub(crate) use crate::reading::inputs::{CardInvoiceEvent, CeilingEstimateBasis, CeilingSource};
 
-/// Limiar de cobertura: um mês futuro com menos de 60% do gasto típico já lançado é tratado como
-/// INCOMPLETO (projeção otimista demais — o "chá revelação" do método). Margem ampla porque o
-/// método aceita variação mês a mês; abaixo disso é quase certo que falta fatura/variável.
-pub(crate) const COVERAGE_COMPLETE_BPS: i64 = 6_000;
-
 /// Renda e net REALIZADOS do ano corrente até hoje (`is_projection = 0`): a poupança é o net
 /// `renda − saída` realizado dos meses completos. Retorna `(renda, net)` — o `net` superávit
 /// alimenta `AnnualSavingsDto.realized_savings_cents` (o "colchão" exibido); a Economia registrada
@@ -191,24 +186,11 @@ pub(crate) async fn realized_annual_economia(
     Ok(metrics.iter().map(|m| m.economia_cents).sum())
 }
 
-/// Patrimônio REALIZADO do ano, na MESMA janela de meses completos de `realized_annual_economia`.
-/// Publicado ao lado da régua, nunca somado a ela: patrimônio é classificação, não Economia, em
-/// qualquer cobertura de reserva.
-pub(crate) async fn realized_annual_patrimonio(
-    pool: &SqlitePool,
-    today_naive: NaiveDate,
-) -> Result<i64, String> {
-    let metrics = guardrail_window_metrics(pool, today_naive).await?;
-    Ok(metrics.iter().map(|m| m.patrimonio_cents).sum())
-}
-
 /// Sinais do modo de gasto + insumos do re-roteamento do dia no modo cartão. A janela é a da
 /// detecção (2 meses completos + corrente); os campos de fatura olham do mês corrente ao fim do
 /// mês SEGUINTE (o próximo vencimento pode cair na virada).
 pub(crate) struct SpendingModeSummary {
     pub mode: forecast::SpendingMode,
-    /// `false` quando o modo é o default de dado insuficiente, não uma leitura da janela.
-    pub detected: bool,
     /// Os sinais crus da janela (2 meses completos + corrente), na ordem cronológica — os
     /// operandos de `detect_spending_mode`, publicados para quem precisa decidir o modo sem
     /// reabrir a janela.
@@ -293,7 +275,6 @@ pub(crate) async fn spending_mode_summary(
 
     Ok(SpendingModeSummary {
         mode: forecast::detect_spending_mode(&samples),
-        detected: forecast::spending_mode_is_detected(&samples),
         samples,
         cartao_month_cents,
         next_fatura: next_fatura_by_date.into_iter().next(),
@@ -703,12 +684,6 @@ pub(crate) struct ReserveReading {
     /// `verdict` · `estimate` · `zero` (contas mapeadas e zeradas) · `no_record`.
     pub state: &'static str,
     pub trend: String,
-    /// Alvo do método em dinheiro: custo de vida × meses mínimos. `0` sem base para calcular.
-    pub target_cents: i64,
-    /// Quanto passa do alvo — a pergunta que o método faz depois que a reserva está de pé
-    /// ("tenho 70, preciso de 40, tenho 30 de excedente; o que faz sentido pra minha vida
-    /// agora?"). `None` enquanto a reserva ainda está sendo construída ou não há base.
-    pub surplus_cents: Option<i64>,
 }
 
 pub(crate) async fn reserve_reading(
@@ -750,12 +725,6 @@ pub(crate) async fn reserve_reading(
     .map_err(|e| format!("query reserve trend: {e}"))?
     .unwrap_or(("flat".to_string(),));
 
-    // O alvo do método é custo de vida × meses; o excedente só existe depois de alcançado. Sem
-    // base de custo de vida não há alvo honesto — e sem alvo não há excedente a declarar.
-    let target_cents = baseline * forecast::RESERVE_MIN_MONTHS;
-    let surplus_cents =
-        (target_cents > 0 && balance.0 > target_cents).then(|| balance.0 - target_cents);
-
     Ok(ReserveReading {
         balance_cents: balance.0,
         baseline_cents: baseline,
@@ -763,8 +732,6 @@ pub(crate) async fn reserve_reading(
         months,
         state,
         trend: trend.0,
-        target_cents,
-        surplus_cents,
     })
 }
 
@@ -775,10 +742,6 @@ pub(crate) async fn reserve_reading(
 /// Uma régua só, sem bifurcar semântica: alimenta o guardrail de poupança e a perna de economia
 /// do gate do modo cartão.
 pub(crate) struct EconomiaRulerReading {
-    /// O numerador que julga: Economia registrada dos meses completos.
-    pub registered_cents: i64,
-    /// Patrimônio realizado do ano — leitura vizinha, fora da régua.
-    pub patrimonio_cents: i64,
     /// `verdict` (régua viva) · `no_record` (nada registrado — a superfície mostra a sobra
     /// derivada como estimativa marcada).
     pub state: &'static str,
@@ -789,10 +752,7 @@ pub(crate) async fn economia_ruler_reading(
     today_naive: NaiveDate,
 ) -> Result<EconomiaRulerReading, String> {
     let registered = realized_annual_economia(pool, today_naive).await?;
-    let patrimonio = realized_annual_patrimonio(pool, today_naive).await?;
     Ok(EconomiaRulerReading {
-        registered_cents: registered,
-        patrimonio_cents: patrimonio,
         state: if registered > 0 {
             "verdict"
         } else {
@@ -1675,6 +1635,60 @@ pub struct MonthCoverageDto {
     pub estimated_missing_cents: i64,
 }
 
+/// O mapeamento de tipo do motor para DTO de fio: recorte por declaração, não trecho copiado.
+/// `forecast_dto` e `annual_metrics` leem o mesmo `MonthMetric` do motor e publicam o mesmo DTO.
+impl From<&forecast::MonthMetric> for MonthMetricDto {
+    fn from(m: &forecast::MonthMetric) -> Self {
+        MonthMetricDto {
+            year: m.year,
+            month: m.month,
+            income_cents: m.income_cents,
+            income_performance_cents: m.income_performance_cents,
+            performance_cents: m.performance_cents,
+            cost_of_living_cents: m.cost_of_living_cents,
+            fixed_out_cents: m.fixed_out_cents,
+            daily_out_cents: m.daily_out_cents,
+            daily_avg_out_cents: m.daily_avg_out_cents,
+            daily_projected_cents: m.daily_projected_cents,
+            cartao_cents: m.cartao_cents,
+            real_daily_avg_cents: m.real_daily_avg_cents,
+            economia_cents: m.economia_cents,
+            patrimonio_cents: m.patrimonio_cents,
+            savings_rate_bps: m.savings_rate_bps,
+        }
+    }
+}
+
+/// Idem, para a régua anual: `AnnualReading` embala o `forecast::AnnualRuler` da MESMA varredura
+/// que o gate do cartão e a tela do ano leem — o recorte publica o percentual truncado uma vez.
+impl From<&crate::reading::compose::AnnualReading> for AnnualSavingsDto {
+    fn from(a: &crate::reading::compose::AnnualReading) -> Self {
+        // Taxa em bps para EXIBIÇÃO (round half-up, não trunca — senão 25,00% vira 2499/abaixo da
+        // meta). Nunca usada em decisão (o guardrail compara centavos diretos).
+        let rate_bps = |save: i64, inc: i64| {
+            if inc > 0 {
+                (save * 10_000 + inc / 2) / inc
+            } else {
+                0
+            }
+        };
+        AnnualSavingsDto {
+            realized_income_cents: a.ruler.income_lived_cents,
+            realized_savings_cents: a.ruler.surplus_lived_cents,
+            realized_rate_bps: rate_bps(a.ruler.surplus_lived_cents, a.ruler.income_lived_cents),
+            registered_economia_cents: a.guardrail_economia_cents,
+            patrimonio_cents: a.guardrail_patrimonio_cents,
+            economia_ruler_cents: a.ruler.economia_lived_cents,
+            economia_ruler_rate_bps: a.ruler.lived_bps.unwrap_or(0),
+            economia_state: a.economia_state.to_string(),
+            projected_income_cents: a.projected_income_cents,
+            projected_savings_cents: a.projected_savings_cents,
+            projected_rate_bps: rate_bps(a.projected_savings_cents, a.projected_income_cents),
+            target_bps: SAVINGS_TARGET_BPS,
+        }
+    }
+}
+
 #[derive(serde::Serialize)]
 pub struct ForecastDto {
     pub today: String,
@@ -1712,120 +1726,23 @@ pub async fn get_forecast(pool: State<'_, SqlitePool>) -> Result<ForecastDto, St
     forecast_dto(pool.inner(), chrono::Local::now().date_naive()).await
 }
 
-/// Inner implementation with an injected `today` (deterministic, integration-testable).
-/// Maps the pure engine output to ISO-8601-string DTOs; the core stays serde-free.
+/// Inner implementation with an injected `today` (deterministic, integration-testable). Carrega,
+/// compõe e recorta a MESMA `ForecastReading` que o resumo do dashboard lê — nenhum dos dois
+/// volta a compor. O único recálculo local é o detalhe de fluxo por dia (`daily`), forma legada
+/// que nenhuma outra superfície lê e que por isso não é campo da leitura.
 pub(crate) async fn forecast_dto(
     pool: &SqlitePool,
     today_naive: NaiveDate,
 ) -> Result<ForecastDto, String> {
-    let horizon_end = forecast_horizon_end(pool, today_naive).await?;
-    let seed = projection_seed(pool, today_naive).await?;
-    let events = load_forecast_events(pool, today_naive, horizon_end).await?;
-    let metric_events = load_metric_events(pool, today_naive, horizon_end).await?;
-    // Anotação da aba Economia para os anos cobertos pelo horizonte — parcela aditiva do
-    // Economizado% por mês, disjunta dos transfers de reserva reais (que já chegam nos eventos).
-    let years: Vec<i32> = (today_naive.year()..=horizon_end.year()).collect();
-    let annotation = load_economia_annotation(pool, &years).await?;
-    let fc = forecast::project_with_metrics(
-        seed,
-        today_naive,
-        &events,
-        // O loader de métricas já carrega a máscara de réguas por lançamento em cada evento.
-        &metric_events,
-        horizon_end,
-        &annotation,
-    );
-
-    // Renda-base do GUARDRAIL: só meses COMPLETOS. No meio do mês as fixas já entraram e o
-    // salário pode não ter, e um denominador em formação viraria "pode gastar R$ 0" de falso
-    // pânico. A régua que a tela publica é outra janela — decisão, não exibição.
-    let (guardrail_income_cents, _) = realized_annual_savings(pool, today_naive).await?;
-    let economia = economia_ruler_reading(pool, today_naive).await?;
-    let annual_economia = economia.registered_cents;
-    let annual_patrimonio = economia.patrimonio_cents;
-    let sts = forecast::safe_to_spend_today(
-        &fc,
-        guardrail_income_cents,
-        annual_economia,
-        SAVINGS_TARGET_BPS,
-    );
-    let binding_guardrail = sts.binding.as_str().to_string();
-
-    // Previsibilidade: poupança realizada vs projetada + cobertura dos meses futuros.
-    let (proj_income, proj_savings) = projected_annual_savings(pool, today_naive).await?;
-    // Taxa em bps para EXIBIÇÃO (round half-up, não trunca — senão 25,00% vira 2499/abaixo da
-    // meta). Nunca usada em decisão (o guardrail compara centavos diretos).
-    let rate_bps = |save: i64, inc: i64| {
-        if inc > 0 {
-            (save * 10_000 + inc / 2) / inc
-        } else {
-            0
-        }
-    };
-    // A régua anual é ÚNICA e mora no motor: Economizado% = Economia ÷ entradas sobre os meses
-    // VIVIDOS, o corrente incluído. Ler daqui é o que faz a conversa, a tela do ano e este DTO
-    // publicarem o mesmo percentual — uma segunda derivação aqui abriria duas verdades.
-    let (_, annual_ruler) = annual_ruler_reading(pool, today_naive.year(), today_naive).await?;
-    let ruler_income_cents = annual_ruler.income_lived_cents;
-
-    let annual_savings = AnnualSavingsDto {
-        realized_income_cents: ruler_income_cents,
-        realized_savings_cents: annual_ruler.surplus_lived_cents,
-        realized_rate_bps: rate_bps(annual_ruler.surplus_lived_cents, ruler_income_cents),
-        registered_economia_cents: annual_economia,
-        patrimonio_cents: annual_patrimonio,
-        economia_ruler_cents: annual_ruler.economia_lived_cents,
-        // O percentual sai truncado do motor: exibir 21% de 21,9% nunca promete o que a régua
-        // não mediu. Sem renda vivida não há o que dividir — a régua não fabrica zero.
-        economia_ruler_rate_bps: annual_ruler.lived_bps.unwrap_or(0),
-        economia_state: economia.state.to_string(),
-        projected_income_cents: proj_income,
-        projected_savings_cents: proj_savings,
-        projected_rate_bps: rate_bps(proj_savings, proj_income),
-        target_bps: SAVINGS_TARGET_BPS,
-    };
-
-    let baseline = realized_monthly_baseline(pool, today_naive).await?;
-    let coverage_raw =
-        forecast::month_coverage(&fc.months, today_naive, baseline, COVERAGE_COMPLETE_BPS);
-    // Sem baseline (nenhum mês realizado) não dá para afirmar "confiável até X" → `None`. Com
-    // baseline, o mês corrente é sempre confiável (tem o realizado) e estende pelos meses futuros
-    // completos até o primeiro incompleto.
-    let trusted_through_month = if baseline <= 0 {
-        None
-    } else {
-        let mut trusted = format!("{:04}-{:02}", today_naive.year(), today_naive.month());
-        for c in coverage_raw.iter() {
-            if c.is_complete {
-                trusted = format!("{:04}-{:02}", c.year, c.month);
-            } else {
-                break;
-            }
-        }
-        Some(trusted)
-    };
-    let total_missing_cents = coverage_raw
-        .iter()
-        .filter(|c| !c.is_complete)
-        .map(|c| c.estimated_missing_cents)
-        .sum();
-    let coverage: Vec<MonthCoverageDto> = coverage_raw
-        .iter()
-        .map(|c| MonthCoverageDto {
-            year: c.year,
-            month: c.month,
-            projected_outflow_cents: c.projected_outflow_cents,
-            baseline_outflow_cents: c.baseline_outflow_cents,
-            coverage_bps: c.coverage_bps,
-            is_complete: c.is_complete,
-            estimated_missing_cents: c.estimated_missing_cents,
-        })
-        .collect();
+    let inputs = crate::reading::load::load_inputs(pool, today_naive).await?;
+    let reading = crate::reading::compose::compose(&inputs);
 
     // Per-day flow sums (income, fixed out, daily out), keyed by the same dates the engine emits.
+    // Forma legada de `ForecastDayDto`: nenhuma outra superfície lê o fluxo por dia, então não é
+    // campo da leitura — recorta direto dos eventos de caixa dos insumos.
     let mut flows: std::collections::HashMap<NaiveDate, (i64, i64, i64, i64)> =
         std::collections::HashMap::new();
-    for e in &events {
+    for e in &inputs.cash_events {
         let entry = flows.entry(e.date).or_default();
         match e.kind {
             forecast::EventKind::Income => entry.0 += e.amount_cents,
@@ -1839,7 +1756,8 @@ pub(crate) async fn forecast_dto(
         }
     }
 
-    let daily = fc
+    let daily = reading
+        .forecast
         .daily
         .iter()
         .map(|p| {
@@ -1857,24 +1775,42 @@ pub(crate) async fn forecast_dto(
         .collect();
 
     Ok(ForecastDto {
-        today: today_naive.format("%Y-%m-%d").to_string(),
-        horizon_end: horizon_end.format("%Y-%m-%d").to_string(),
-        annual_savings,
-        coverage,
-        baseline_outflow_cents: baseline,
-        trusted_through_month,
-        total_missing_cents,
-        safe_to_spend_today_cents: sts.amount_cents,
-        cash_headroom_cents: sts.cash_headroom_cents,
-        savings_headroom_cents: sts.savings_headroom_cents,
-        binding_guardrail,
-        savings_target_bps: SAVINGS_TARGET_BPS,
-        deepest_deficit: fc.deepest_deficit.as_ref().map(|p| DayPointDto {
-            date: p.date.format("%Y-%m-%d").to_string(),
-            balance_cents: p.balance_cents,
-        }),
+        today: reading.today.format("%Y-%m-%d").to_string(),
+        horizon_end: reading.horizon_end.format("%Y-%m-%d").to_string(),
+        annual_savings: (&reading.annual).into(),
+        coverage: reading
+            .coverage
+            .months
+            .iter()
+            .map(|c| MonthCoverageDto {
+                year: c.year,
+                month: c.month,
+                projected_outflow_cents: c.projected_outflow_cents,
+                baseline_outflow_cents: c.baseline_outflow_cents,
+                coverage_bps: c.coverage_bps,
+                is_complete: c.is_complete,
+                estimated_missing_cents: c.estimated_missing_cents,
+            })
+            .collect(),
+        baseline_outflow_cents: reading.coverage.baseline_outflow_cents,
+        trusted_through_month: reading.coverage.trusted_through_month,
+        total_missing_cents: reading.coverage.total_missing_cents,
+        safe_to_spend_today_cents: reading.safe_to_spend.amount_cents,
+        cash_headroom_cents: reading.safe_to_spend.cash_headroom_cents,
+        savings_headroom_cents: reading.safe_to_spend.savings_headroom_cents,
+        binding_guardrail: reading.safe_to_spend.binding.as_str().to_string(),
+        savings_target_bps: reading.savings_target_bps,
+        deepest_deficit: reading
+            .forecast
+            .deepest_deficit
+            .as_ref()
+            .map(|p| DayPointDto {
+                date: p.date.format("%Y-%m-%d").to_string(),
+                balance_cents: p.balance_cents,
+            }),
         daily,
-        month_end: fc
+        month_end: reading
+            .forecast
             .month_end
             .iter()
             .map(|m| MonthEndDto {
@@ -1883,27 +1819,7 @@ pub(crate) async fn forecast_dto(
                 balance_cents: m.balance_cents,
             })
             .collect(),
-        months: fc
-            .months
-            .iter()
-            .map(|m| MonthMetricDto {
-                year: m.year,
-                month: m.month,
-                income_cents: m.income_cents,
-                income_performance_cents: m.income_performance_cents,
-                performance_cents: m.performance_cents,
-                cost_of_living_cents: m.cost_of_living_cents,
-                fixed_out_cents: m.fixed_out_cents,
-                daily_out_cents: m.daily_out_cents,
-                daily_avg_out_cents: m.daily_avg_out_cents,
-                daily_projected_cents: m.daily_projected_cents,
-                cartao_cents: m.cartao_cents,
-                real_daily_avg_cents: m.real_daily_avg_cents,
-                economia_cents: m.economia_cents,
-                patrimonio_cents: m.patrimonio_cents,
-                savings_rate_bps: m.savings_rate_bps,
-            })
-            .collect(),
+        months: reading.forecast.months.iter().map(Into::into).collect(),
     })
 }
 
@@ -2156,23 +2072,7 @@ pub(crate) async fn annual_metrics(
     let months = annual_month_metrics(pool, year, today)
         .await?
         .iter()
-        .map(|m| MonthMetricDto {
-            year: m.year,
-            month: m.month,
-            income_cents: m.income_cents,
-            income_performance_cents: m.income_performance_cents,
-            performance_cents: m.performance_cents,
-            cost_of_living_cents: m.cost_of_living_cents,
-            fixed_out_cents: m.fixed_out_cents,
-            daily_out_cents: m.daily_out_cents,
-            daily_avg_out_cents: m.daily_avg_out_cents,
-            daily_projected_cents: m.daily_projected_cents,
-            cartao_cents: m.cartao_cents,
-            real_daily_avg_cents: m.real_daily_avg_cents,
-            economia_cents: m.economia_cents,
-            patrimonio_cents: m.patrimonio_cents,
-            savings_rate_bps: m.savings_rate_bps,
-        })
+        .map(Into::into)
         .collect();
     Ok(AnnualMetricsDto { year, months })
 }
@@ -2383,138 +2283,67 @@ pub async fn get_dashboard_summary(
 }
 
 /// Inner implementation: takes `&SqlitePool` and an injected `today`, so it is deterministic and
-/// integration-testable without Tauri `State` or the ambient clock.
+/// integration-testable without Tauri `State` or the ambient clock. Carrega, compõe e recorta a
+/// MESMA `ForecastReading` que o DTO do forecast lê — nenhum dos dois volta a compor.
 pub(crate) async fn dashboard_summary(
     pool: &SqlitePool,
     today_naive: NaiveDate,
 ) -> Result<DashboardSummary, String> {
-    // Seed + forward events: shared with `forecast_dto` (single source of event mapping).
-    let seed = projection_seed(pool, today_naive).await?;
-    let horizon_end = forecast_horizon_end(pool, today_naive).await?;
-    let all_events = load_forecast_events(pool, today_naive, horizon_end).await?;
+    let inputs = crate::reading::load::load_inputs(pool, today_naive).await?;
+    let reading = crate::reading::compose::compose(&inputs);
 
-    // `balance` is the projected end-of-current-month figure (the method's hero),
-    // not the raw current account sum.
-    let fc = forecast::project(seed, today_naive, &all_events, horizon_end);
-    let projected_balance = fc
-        .month_end
-        .iter()
-        .find(|m| m.year == today_naive.year() && m.month == today_naive.month())
-        .map(|m| m.balance_cents)
-        .or_else(|| fc.daily.last().map(|p| p.balance_cents))
-        .unwrap_or(seed);
-
-    // Teto do diário exibido no tile "Diário de hoje" (`de R$X`), com PROCEDÊNCIA explícita:
-    // escolhido · estimado pela média do mês anterior · sem registro. Mesma fonte do driver de
-    // projeção (`effective_daily_ceiling` = escolhido → média). A proposta da cerimônia é um
-    // overlay de confirmação — nunca o número.
-    let ceiling = daily_ceiling_reading(pool, today_naive).await?;
-    let daily_budget = ceiling.per_day_cents;
-    let ceiling_proposal_pending = has_pending_ceiling_proposal(pool).await?;
-    let mode = spending_mode_summary(pool, today_naive).await?;
-    let (has_card, active_invoices) =
-        load_card_invoice_events(pool, today_naive, today_naive, None).await?;
-
-    let daily_spend_cents = daily_spend_today(pool, today_naive).await?;
-    let card_spend_cents = card_spend_today(pool, today_naive).await?;
-
-    // Reserva em MESES de custo de vida (método) — espelha os R$ que o PocketsCard mostra.
-    let reserve = reserve_reading(pool, today_naive).await?;
-
-    let (transaction_count, last_real_tx_date) = ledger_counts(pool, today_naive).await?;
-
-    // Gate de legitimidade do modo cartão: a economia 20–30% precisa estar VIVA. A perna lê a
-    // régua anual do motor — a mesma que a conversa e a tela do ano publicam —, para que o gate
-    // nunca declare viva uma economia que a pessoa está vendo abaixo da faixa.
-    let (_, annual_ruler) = annual_ruler_reading(pool, today_naive.year(), today_naive).await?;
-    let card_gate_economy_bps = annual_ruler.lived_bps;
-    let card_gate_reserve_months = (reserve.state != "no_record").then_some(reserve.months);
-    let card_gate = crate::cards::card_gate(card_gate_economy_bps, card_gate_reserve_months);
-    let card_gate_economy = crate::cards::economy_gate_leg(card_gate_economy_bps);
-    let card_gate_reserve = crate::cards::reserve_gate_leg(card_gate_reserve_months);
-
-    let mut seen_accounts = std::collections::HashSet::new();
-    let upcoming_invoices: Vec<UpcomingInvoiceDto> = active_invoices
-        .iter()
-        // Fatura zerada preserva a estrutura mensal, não um compromisso: não ocupa a vaga da real.
-        .filter(|invoice| invoice.amount_cents != 0)
-        .filter(|invoice| seen_accounts.insert(invoice.account_id.clone()))
-        .map(|invoice| UpcomingInvoiceDto {
-            account_id: invoice.account_id.clone(),
-            card_name: invoice.card_name.clone(),
-            due_date: invoice.due_date.format("%Y-%m-%d").to_string(),
-            amount_cents: invoice.amount_cents,
-            status: crate::cards::invoice_status(
-                today_naive,
-                invoice.closing_date,
-                invoice.due_date,
-            )
-            .as_str()
-            .to_string(),
-            owner_name: invoice.owner_name.clone(),
-            has_refund_expectation: invoice.has_refund_expectation,
-            refund_expected_cents: invoice.refund_expected_cents,
-        })
-        .collect();
-    let next_fatura = if has_card {
-        active_invoices
-            .iter()
-            .find(|invoice| invoice.amount_cents != 0)
-            .map(|first| {
-                let amount_cents = active_invoices
-                    .iter()
-                    .filter(|invoice| {
-                        invoice.due_date == first.due_date && invoice.amount_cents != 0
-                    })
-                    .map(|invoice| invoice.amount_cents)
-                    .sum();
-                (first.due_date, amount_cents)
-            })
-    } else {
-        mode.next_fatura.as_ref().and_then(|(date, amount_cents)| {
-            NaiveDate::parse_from_str(date, "%Y-%m-%d")
-                .ok()
-                .map(|date| (date, *amount_cents))
-        })
-    };
+    let next_fatura = reading.cards.next_fatura;
 
     Ok(DashboardSummary {
-        balance: projected_balance,
-        daily_budget,
-        daily_ceiling_source: ceiling.source.as_str().to_string(),
-        daily_ceiling_estimate: ceiling
-            .estimate_basis
-            .as_ref()
-            .map(|b| CeilingEstimateJson {
+        balance: reading.projected_month_end_cents,
+        daily_budget: reading.ceiling.per_day_cents,
+        daily_ceiling_source: reading.ceiling.source.as_str().to_string(),
+        daily_ceiling_estimate: reading.ceiling.estimate_basis.as_ref().map(|b| {
+            CeilingEstimateJson {
                 variable_cents: b.variable_cents,
                 days: b.days,
                 month: b.month.clone(),
-            }),
-        ceiling_proposal_pending,
-        daily_spend_today: daily_spend_cents,
-        card_spend_today_cents: card_spend_cents,
-        reserve_months: reserve.months,
-        reserve_state: reserve.state.to_string(),
-        reserve_basis_months: reserve.basis_months,
-        reserve_target_cents: reserve.target_cents,
-        reserve_surplus_cents: reserve.surplus_cents,
-        reserve_trend: reserve.trend,
-        spending_mode: mode.mode.as_str().to_string(),
-        spending_mode_detected: mode.detected,
-        card_gate: card_gate.as_str().to_string(),
-        card_gate_economy: card_gate_economy.as_str().to_string(),
-        card_gate_economy_bps,
-        card_gate_reserve: card_gate_reserve.as_str().to_string(),
-        cartao_month_cents: mode.cartao_month_cents,
+            }
+        }),
+        ceiling_proposal_pending: reading.ceiling.proposal_pending,
+        daily_spend_today: reading.today_spend.daily_avg_cents,
+        card_spend_today_cents: reading.today_spend.card_cents,
+        reserve_months: reading.reserve.months,
+        reserve_state: reading.reserve.state.to_string(),
+        reserve_basis_months: reading.reserve.basis_months,
+        reserve_target_cents: reading.reserve.target_cents,
+        reserve_surplus_cents: reading.reserve.surplus_cents,
+        reserve_trend: reading.reserve.trend,
+        spending_mode: reading.spending_mode.mode.as_str().to_string(),
+        spending_mode_detected: reading.spending_mode.detected,
+        card_gate: reading.cards.gate.as_str().to_string(),
+        card_gate_economy: reading.cards.gate_economy.as_str().to_string(),
+        card_gate_economy_bps: reading.cards.gate_economy_bps,
+        card_gate_reserve: reading.cards.gate_reserve.as_str().to_string(),
+        cartao_month_cents: reading.spending_mode.cartao_month_cents,
         next_fatura_date: next_fatura
             .as_ref()
             .map(|(date, _)| date.format("%Y-%m-%d").to_string()),
         next_fatura_amount_cents: next_fatura
             .map(|(_, amount_cents)| amount_cents)
             .unwrap_or(0),
-        upcoming_invoices,
-        transaction_count,
-        last_real_tx_date,
+        upcoming_invoices: reading
+            .cards
+            .upcoming_invoices
+            .iter()
+            .map(|invoice| UpcomingInvoiceDto {
+                account_id: invoice.account_id.clone(),
+                card_name: invoice.card_name.clone(),
+                due_date: invoice.due_date.format("%Y-%m-%d").to_string(),
+                amount_cents: invoice.amount_cents,
+                status: invoice.status.as_str().to_string(),
+                owner_name: invoice.owner_name.clone(),
+                has_refund_expectation: invoice.has_refund_expectation,
+                refund_expected_cents: invoice.refund_expected_cents,
+            })
+            .collect(),
+        transaction_count: reading.ledger.transaction_count,
+        last_real_tx_date: reading.ledger.last_real_tx_date,
     })
 }
 
@@ -2964,7 +2793,12 @@ mod tests {
 
         let today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
         let economia = realized_annual_economia(&p, today).await.unwrap();
-        let patrimonio = realized_annual_patrimonio(&p, today).await.unwrap();
+        let patrimonio: i64 = guardrail_window_metrics(&p, today)
+            .await
+            .unwrap()
+            .iter()
+            .map(|m| m.patrimonio_cents)
+            .sum();
         assert_eq!(economia, 20_000, "só fevereiro (mês completo) conta");
         assert_eq!(patrimonio, 50_000, "só março (mês completo) conta");
     }
@@ -3136,10 +2970,10 @@ mod tests {
             "realized_monthly_baseline must sum magnitudes (ABS), not signed amounts"
         );
 
-        // O alvo da reserva deriva da mesma baseline: positivo e coerente (não negativo, como
-        // aconteceria com a baseline corrompida).
+        // A baseline da reserva é positiva e coerente (não negativa, como aconteceria com a
+        // baseline corrompida) — o alvo em dinheiro nasce dela na composição da leitura.
         let reserve = reserve_reading(&p, today).await.unwrap();
-        assert_eq!(reserve.target_cents, 150_000 * forecast::RESERVE_MIN_MONTHS);
+        assert_eq!(reserve.baseline_cents, 150_000);
     }
 
     /// Insere um perfil — pré-condição de `upsert_daily_budget_inner` (escreve por person_id).
