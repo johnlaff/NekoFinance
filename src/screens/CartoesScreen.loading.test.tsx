@@ -45,9 +45,13 @@ const { card, additions } = vi.hoisted(() => ({
   ],
 }));
 
-vi.mock("../lib/api", async (importOriginal) => ({
+vi.mock("../lib/env", async (importOriginal) => ({
   ...(await importOriginal()),
   isTauri: true,
+}));
+
+vi.mock("../lib/api", async (importOriginal) => ({
+  ...(await importOriginal()),
   getDashboardSummary: vi.fn(() => new Promise(() => undefined)),
   listCardProposals: vi.fn().mockResolvedValue([]),
   listCards: vi.fn().mockResolvedValue([card, ...additions]),

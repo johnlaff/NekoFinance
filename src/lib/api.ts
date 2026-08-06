@@ -1,11 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
-
-/** True when running inside the Tauri shell (vs plain web preview). */
-export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-
-/** Google OAuth client id baked at build time. Empty string when not configured. */
-export const GOOGLE_CLIENT_ID =
-  (import.meta.env["VITE_GOOGLE_CLIENT_ID"] as string) ?? "";
+import { isTauri } from "./env";
 
 /**
  * Credencial do cliente OAuth, repassada ao backend (que a usa no refresh do token).
@@ -849,12 +843,6 @@ export function getAppSetting(key: string): Promise<string | null> {
 export function setAppSetting(key: string, value: string): Promise<void> {
   return invoke("set_app_setting", { key, value });
 }
-
-/**
- * Chave da preferência de exibição do recibo, válida em todo o app. O nome persistido guarda
- * o prefixo da conversa, onde o recibo nasceu: renomeá-lo descartaria a escolha já gravada.
- */
-export const SHOW_RECEIPT = "mia_show_receipt";
 
 /**
  * Lê uma preferência de liga/desliga. O default mora aqui, e não em cada tela que consulta a

@@ -26,7 +26,6 @@ import {
   getForecast,
   getMonthGrid,
   getMonthTransactions,
-  isTauri,
   listTags,
   setTransactionTags,
   type LineItemKind,
@@ -34,6 +33,7 @@ import {
   type Tag,
   type TransactionRow,
 } from "../lib/api";
+import { isTauri } from "../lib/env";
 import { useCommand, invalidateCommands } from "../lib/useCommand";
 import { fmtBRL, MES, saldoBand } from "../lib/nkFormat";
 import { todayISO } from "../lib/format";

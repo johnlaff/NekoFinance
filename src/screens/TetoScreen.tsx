@@ -18,10 +18,10 @@ import {
   getCeilingProposal,
   getDailyBudget,
   getDashboardSummary,
-  isTauri,
   upsertDailyBudgetWithCategories,
   type DailyBudget,
 } from "../lib/api";
+import { isTauri } from "../lib/env";
 import { centsToBRLInput, formatBRL, parseBRLToCents, todayISO } from "../lib/format";
 import { safeErrorMessage } from "../lib/errors";
 import { invalidateCommands, useCommand } from "../lib/useCommand";

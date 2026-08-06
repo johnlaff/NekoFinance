@@ -23,7 +23,6 @@ export const LIB_API_ALLOWLIST = [
   "src/features/sheets/WriteBackPreview.test.tsx",
   "src/features/sheets/WriteBackPreview.tsx",
   "src/features/sheets/writeBack.ts",
-  "src/lib/useCommand.ts",
   "src/lib/useShowReceipt.ts",
   "src/screens/AnnualScreen.test.tsx",
   "src/screens/AnnualScreen.tsx",

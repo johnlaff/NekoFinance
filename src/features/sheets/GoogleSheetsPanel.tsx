@@ -13,7 +13,6 @@ import {
 } from "lucide-react";
 import { Button } from "../../design-system/components/Button";
 import {
-  GOOGLE_CLIENT_ID,
   checkAuthStatus,
   detectSheetLayout,
   disconnectGoogle,
@@ -34,6 +33,7 @@ import {
   type SheetPreview,
   type UserSpreadsheet,
 } from "../../lib/api";
+import { GOOGLE_CLIENT_ID } from "../../lib/env";
 import { extractSpreadsheetId } from "../../lib/spreadsheet-url";
 import { safeErrorMessage } from "../../lib/errors";
 import { isEconomiaTab, isMetricTab } from "../../lib/sheet-tabs";

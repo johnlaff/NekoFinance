@@ -12,9 +12,9 @@ import {
   getMonthTransactions,
   getScenarioForecast,
   lastSyncAt,
-  isTauri,
   type TransactionRow,
 } from "../lib/api";
+import { isTauri } from "../lib/env";
 import { fmtDate, fmtDayMonth, formatBRL, fmtAxisBRL } from "../lib/format";
 import { saldoBand } from "../lib/nkFormat";
 import { invalidateCommands, useCommand } from "../lib/useCommand";

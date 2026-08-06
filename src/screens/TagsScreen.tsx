@@ -10,13 +10,13 @@ import {
 import {
   createTag,
   getTagsScreen,
-  isTauri,
   updateTag,
   updateTagRulers,
   type TagRulerFlags,
   type TagsScreenTag,
   type TagsScreenThirdParty,
 } from "../lib/api";
+import { isTauri } from "../lib/env";
 import { useCommand, invalidateCommands } from "../lib/useCommand";
 import { safeErrorMessage } from "../lib/errors";
 import { syncRecencyLabel } from "../lib/syncRecency";

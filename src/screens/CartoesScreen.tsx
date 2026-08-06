@@ -32,7 +32,6 @@ import {
   dismissCardProposal,
   getDashboardSummary,
   getInvoice,
-  isTauri,
   listCardProposals,
   listCards,
   listInvoices,
@@ -46,6 +45,7 @@ import {
   type InvoiceDetail,
   type InvoiceSummary,
 } from "../lib/api";
+import { isTauri } from "../lib/env";
 import { shiftCycleMonth, validateCardCycle } from "../lib/cardCycle";
 import { safeErrorMessage } from "../lib/errors";
 import { centsToBRLInput, parseBRLToCents } from "../lib/format";

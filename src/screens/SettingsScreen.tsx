@@ -29,12 +29,9 @@ import {
   getAppInfo,
   getAppSetting,
   getFlagSetting,
-  SHOW_RECEIPT,
   getDailyBudget,
   getMiaConsent,
-  GOOGLE_CLIENT_ID,
   grantMiaConsent,
-  isTauri,
   lastSyncAt,
   registerOsReminder,
   setAppSetting,
@@ -45,6 +42,7 @@ import {
   type MiaConsentView,
   revokeMiaConsent,
 } from "../lib/api";
+import { GOOGLE_CLIENT_ID, isTauri, SHOW_RECEIPT } from "../lib/env";
 import {
   motionEnabled,
   setMotionPreference,

@@ -8,13 +8,8 @@ import { InfoPopover } from "../design-system/components/InfoPopover";
 import { MiaAvatar } from "../design-system/components/MiaAvatar";
 import { Money } from "../design-system/components/Money";
 import { SR_ONLY } from "../design-system/srOnly";
-import {
-  getDashboardSummary,
-  getForecast,
-  getMiaConsent,
-  isTauri,
-  listTags,
-} from "../lib/api";
+import { getDashboardSummary, getForecast, getMiaConsent, listTags } from "../lib/api";
+import { isTauri } from "../lib/env";
 import { centsToBRLInput, parseBRLToCents } from "../lib/format";
 import { motionEnabled } from "../lib/motion";
 import { TYPE_META, type TypeMeta } from "../lib/nkFormat";
