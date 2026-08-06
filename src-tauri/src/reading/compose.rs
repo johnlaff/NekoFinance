@@ -12,7 +12,9 @@
 
 use super::inputs::*;
 use crate::cards::{self, GateLeg, InvoiceStatus};
+use crate::commands::forecast_cmds::{DayPointDto, MonthEndDto};
 use crate::forecast;
+use crate::scenarios::ScenarioMonthEnd;
 use chrono::{Datelike, NaiveDate};
 
 /// Limiar de cobertura: um mês futuro com menos de 60% do gasto típico já lançado é INCOMPLETO —
@@ -150,13 +152,19 @@ pub(crate) struct UpcomingInvoice {
 pub(crate) fn compose(inputs: &ForecastInputs) -> ForecastReading {
     let today = inputs.today;
 
+    // Diário típico dos dias restantes do mês: REGRA, não carga. Nasce aqui, depois de qualquer
+    // transformação sobre os insumos — é o que faz um gasto hipotético num dia futuro ocupar a vaga
+    // do teto daquele dia em vez de somar por cima dele.
+    let cash_events = with_projected_daily(inputs);
+    let metric_events = with_projected_daily_metrics(inputs);
+
     // UMA projeção, com métricas. O saldo do fim do mês, a trajetória, o déficit mais profundo e
     // as métricas mensais são recortes deste mesmo `Forecast` — nenhum campo abaixo projeta de novo.
     let forecast = forecast::project_with_metrics(
         inputs.seed_cents,
         today,
-        &inputs.cash_events,
-        &inputs.metric_events,
+        &cash_events,
+        &metric_events,
         inputs.horizon_end,
         &inputs.economia_annotation,
     );
@@ -230,6 +238,46 @@ pub(crate) fn compose(inputs: &ForecastInputs) -> ForecastReading {
         today_spend: inputs.today_spend,
         ledger: inputs.ledger.clone(),
     }
+}
+
+/// O encadeamento de caixa com o Diário típico dos dias restantes do mês por cima. O teto/dia entra
+/// como DRIVER da projeção, para o saldo projetado e a Performance não nascerem otimistas — e só
+/// nos dias que ainda não têm Diário lançado, para nunca dobrar o gasto do dia.
+fn with_projected_daily(inputs: &ForecastInputs) -> Vec<forecast::CashflowEvent> {
+    let days_with_daily: std::collections::HashSet<NaiveDate> = inputs
+        .cash_events
+        .iter()
+        .filter(|e| e.kind == forecast::EventKind::Daily)
+        .map(|e| e.date)
+        .collect();
+    let mut events = inputs.cash_events.clone();
+    events.extend(forecast::project_daily_ceiling(
+        inputs.ceiling.projection_per_day_cents,
+        inputs.today,
+        inputs.horizon_end,
+        &days_with_daily,
+    ));
+    events
+}
+
+/// O mesmo teto no stream de MÉTRICAS. A cobertura de dias é fato COMPORTAMENTAL (o dia teve
+/// registro de Diário), sem máscara: um dia coberto por gasto excluído de alguma régua não recebe
+/// dupla projeção. O teto projetado é evento SINTÉTICO → conta em todas as réguas.
+fn with_projected_daily_metrics(inputs: &ForecastInputs) -> Vec<forecast::MetricEvent> {
+    let days_with_daily: std::collections::HashSet<NaiveDate> = inputs
+        .metric_events
+        .iter()
+        .filter(|me| me.event.kind == forecast::EventKind::Daily)
+        .map(|me| me.event.date)
+        .collect();
+    let mut events = inputs.metric_events.clone();
+    events.extend(forecast::lift_all(&forecast::project_daily_ceiling(
+        inputs.ceiling.projection_per_day_cents,
+        inputs.today,
+        inputs.horizon_end,
+        &days_with_daily,
+    )));
+    events
 }
 
 /// Cobertura dos meses futuros e o "confiável até" — uma leitura só, para a previsibilidade não
@@ -364,6 +412,152 @@ fn compose_cards(
         upcoming_invoices,
         next_fatura,
     }
+}
+
+/// A comparação entre duas leituras: o mundo como está e o mundo com a mudança, com as diferenças
+/// já subtraídas.
+///
+/// Nasce de um `diff` entre duas `ForecastReading`, e por isso o conjunto de campos comparados é
+/// completo por construção: cada figura do "depois" tem o "antes" que a leitura de produção
+/// publica, não um número recalculado por outro caminho.
+pub(crate) struct ProjectionComparison {
+    pub real_horizon_end: NaiveDate,
+    pub real_month_end: Vec<MonthEndDto>,
+    pub real_deepest_deficit: Option<DayPointDto>,
+    pub real_performance_cents: i64,
+    pub real_safe_to_spend_today_cents: i64,
+    pub real_binding_guardrail: String,
+    pub real_cost_of_living_cents: i64,
+    pub real_income_cents: i64,
+
+    pub scenario_month_end: Vec<MonthEndDto>,
+    pub scenario_deepest_deficit: Option<DayPointDto>,
+    pub scenario_performance_cents: i64,
+    pub scenario_safe_to_spend_today_cents: i64,
+    pub scenario_binding_guardrail: String,
+    pub scenario_cost_of_living_cents: i64,
+    pub scenario_income_cents: i64,
+
+    pub month_end: Vec<ScenarioMonthEnd>,
+    pub deepest_deficit_delta_cents: Option<i64>,
+    pub performance_delta_cents: i64,
+    pub safe_to_spend_delta_cents: i64,
+    pub cost_of_living_delta_cents: i64,
+}
+
+/// Compara duas leituras compostas pela MESMA função. Pura: dois recortes entram, as diferenças
+/// saem — nenhuma projeção acontece aqui.
+pub(crate) fn diff(real: &ForecastReading, scenario: &ForecastReading) -> ProjectionComparison {
+    let scenario_month_end = month_end_dtos(scenario);
+    // O horizonte do cenário pode ultrapassar o real (uma parcela distante). Depois do último dia
+    // pré-lançado não existe evento real nenhum, então o saldo real dos meses extras permanece o do
+    // último fim de mês projetado — é o que o par velho→novo precisa para não perder linhas.
+    let real_month_end = carry_through(month_end_dtos(real), &scenario_month_end);
+
+    let month_end = real_month_end
+        .iter()
+        .filter_map(|r| {
+            scenario_month_end
+                .iter()
+                .find(|s| s.year == r.year && s.month == r.month)
+                .map(|s| ScenarioMonthEnd {
+                    year: r.year,
+                    month: r.month,
+                    real_balance_cents: r.balance_cents,
+                    scenario_balance_cents: s.balance_cents,
+                    delta_cents: s.balance_cents - r.balance_cents,
+                })
+        })
+        .collect();
+
+    let real_cost_of_living_cents = current_month(real, |m| m.cost_of_living_cents);
+    let scenario_cost_of_living_cents = current_month(scenario, |m| m.cost_of_living_cents);
+    let real_performance_cents = current_month(real, |m| m.performance_cents);
+    let scenario_performance_cents = current_month(scenario, |m| m.performance_cents);
+
+    ProjectionComparison {
+        real_horizon_end: real.horizon_end,
+        real_month_end,
+        real_deepest_deficit: deepest_deficit_dto(real),
+        real_performance_cents,
+        real_safe_to_spend_today_cents: real.safe_to_spend.amount_cents,
+        real_binding_guardrail: real.safe_to_spend.binding.as_str().to_string(),
+        real_cost_of_living_cents,
+        real_income_cents: current_month(real, |m| m.income_cents),
+
+        scenario_month_end,
+        scenario_deepest_deficit: deepest_deficit_dto(scenario),
+        scenario_performance_cents,
+        scenario_safe_to_spend_today_cents: scenario.safe_to_spend.amount_cents,
+        scenario_binding_guardrail: scenario.safe_to_spend.binding.as_str().to_string(),
+        scenario_cost_of_living_cents,
+        scenario_income_cents: current_month(scenario, |m| m.income_cents),
+
+        month_end,
+        deepest_deficit_delta_cents: match (
+            &real.forecast.deepest_deficit,
+            &scenario.forecast.deepest_deficit,
+        ) {
+            (Some(r), Some(s)) => Some(s.balance_cents - r.balance_cents),
+            _ => None,
+        },
+        performance_delta_cents: scenario_performance_cents - real_performance_cents,
+        safe_to_spend_delta_cents: scenario.safe_to_spend.amount_cents
+            - real.safe_to_spend.amount_cents,
+        cost_of_living_delta_cents: scenario_cost_of_living_cents - real_cost_of_living_cents,
+    }
+}
+
+/// Uma figura do mês CORRENTE (custo de vida, performance, renda) na definição canônica do motor.
+/// `0` se o mês corrente não aparece nos meses do horizonte — o que não acontece, já que `today`
+/// sempre inicia a projeção.
+fn current_month(reading: &ForecastReading, figure: impl Fn(&forecast::MonthMetric) -> i64) -> i64 {
+    reading
+        .forecast
+        .months
+        .iter()
+        .find(|m| m.year == reading.today.year() && m.month == reading.today.month())
+        .map(figure)
+        .unwrap_or(0)
+}
+
+fn month_end_dtos(reading: &ForecastReading) -> Vec<MonthEndDto> {
+    reading
+        .forecast
+        .month_end
+        .iter()
+        .map(|m| MonthEndDto {
+            year: m.year,
+            month: m.month,
+            balance_cents: m.balance_cents,
+        })
+        .collect()
+}
+
+/// Estende a série mais curta até cobrir os meses da outra, repetindo o último saldo conhecido.
+fn carry_through(mut months: Vec<MonthEndDto>, reference: &[MonthEndDto]) -> Vec<MonthEndDto> {
+    for month in reference {
+        if months
+            .iter()
+            .any(|m| m.year == month.year && m.month == month.month)
+        {
+            continue;
+        }
+        let balance_cents = months.last().map(|m| m.balance_cents).unwrap_or(0);
+        months.push(MonthEndDto {
+            year: month.year,
+            month: month.month,
+            balance_cents,
+        });
+    }
+    months
+}
+
+fn deepest_deficit_dto(reading: &ForecastReading) -> Option<DayPointDto> {
+    reading.forecast.deepest_deficit.map(|p| DayPointDto {
+        date: p.date.format("%Y-%m-%d").to_string(),
+        balance_cents: p.balance_cents,
+    })
 }
 
 #[cfg(test)]
@@ -715,6 +909,180 @@ mod tests {
 
         assert!(reading.cards.upcoming_invoices.is_empty());
         assert_eq!(reading.cards.next_fatura, Some((d("2026-06-25"), 80_000)));
+    }
+
+    // --- Cenário: a comparação é um diff entre duas leituras compostas ---
+
+    // O "antes" de um cenário é a leitura de PRODUÇÃO, campo a campo: mesma função, mesmos
+    // insumos. É o que garante que o dono lê o "depois" como consequência da mudança, e não como
+    // consequência de outra conta.
+    #[test]
+    fn the_before_of_a_scenario_is_the_production_reading_field_by_field() {
+        let inputs = scenario_inputs();
+        let real = compose(&inputs);
+        let scenario = compose(&apply_scenario(&inputs, &a_new_bill()));
+
+        let comparison = diff(&real, &scenario);
+
+        assert_eq!(comparison.real_horizon_end, real.horizon_end);
+        assert_eq!(
+            comparison.real_safe_to_spend_today_cents,
+            real.safe_to_spend.amount_cents
+        );
+        assert_eq!(
+            comparison.real_binding_guardrail,
+            real.safe_to_spend.binding.as_str()
+        );
+        assert_eq!(
+            comparison.real_month_end[0].balance_cents,
+            real.projected_month_end_cents
+        );
+        assert_eq!(
+            comparison.real_cost_of_living_cents,
+            real.forecast.months[0].cost_of_living_cents
+        );
+    }
+
+    // A economia anual do guardrail atravessa o cenário intacta: um "e se" reprojeta o caixa e as
+    // réguas do mês, nunca reescreve o ano já realizado. Os dois lados julgam pela MESMA janela de
+    // meses completos que os insumos declaram — a mesma que o forecast usa.
+    #[test]
+    fn the_guardrail_savings_window_is_the_same_on_both_sides_of_the_diff() {
+        let mut inputs = scenario_inputs();
+        inputs.annual.guardrail_income_cents = 400_000;
+        inputs.annual.guardrail_economia_cents = 100_000;
+
+        let real = compose(&inputs);
+        let scenario = compose(&apply_scenario(&inputs, &a_new_bill()));
+
+        assert_eq!(
+            scenario.annual.guardrail_economia_cents,
+            real.annual.guardrail_economia_cents
+        );
+        assert_eq!(
+            scenario.safe_to_spend.savings_headroom_cents,
+            real.safe_to_spend.savings_headroom_cents,
+            "a folga da poupança não muda: o cenário não reescreve o ano realizado"
+        );
+    }
+
+    // As diferenças são a subtração dos dois recortes, e um gasto novo empobrece o mês: o saldo do
+    // fim do mês cai, o custo de vida sobe e o dia encolhe.
+    #[test]
+    fn the_deltas_are_the_subtraction_of_the_two_readings() {
+        let inputs = scenario_inputs();
+        let real = compose(&inputs);
+        let scenario = compose(&apply_scenario(&inputs, &a_new_bill()));
+
+        let comparison = diff(&real, &scenario);
+
+        assert_eq!(comparison.month_end[0].delta_cents, -80_000);
+        assert_eq!(
+            comparison.month_end[0].scenario_balance_cents
+                - comparison.month_end[0].real_balance_cents,
+            comparison.month_end[0].delta_cents
+        );
+        assert_eq!(comparison.cost_of_living_delta_cents, 80_000);
+        assert_eq!(comparison.performance_delta_cents, -80_000);
+        assert!(comparison.safe_to_spend_delta_cents <= 0);
+    }
+
+    // Uma parcela distante estica o horizonte do cenário. Depois do último dia pré-lançado não
+    // existe evento real nenhum, então o saldo do "antes" desses meses é o do último fim de mês
+    // projetado — o par velho→novo não perde linhas por o real terminar antes.
+    #[test]
+    fn months_beyond_the_real_horizon_pair_with_the_carried_real_balance() {
+        let inputs = scenario_inputs();
+        let mut changes = a_new_bill();
+        changes.horizon_end = Some(d("2026-08-31"));
+        changes
+            .chain_added
+            .push(cash("2026-08-10", EventKind::FixedOut, 20_000));
+        changes.metric_added.push(metric(
+            "2026-08-10",
+            EventKind::FixedOut,
+            20_000,
+            RulerMask::ALL,
+        ));
+
+        let comparison = diff(
+            &compose(&inputs),
+            &compose(&apply_scenario(&inputs, &changes)),
+        );
+
+        let august = comparison
+            .month_end
+            .iter()
+            .find(|m| (m.year, m.month) == (2026, 8))
+            .expect("o mês da parcela distante entra na comparação");
+        let june = &comparison.month_end[0];
+        assert_eq!(
+            august.real_balance_cents, june.real_balance_cents,
+            "sem evento real depois do horizonte, o saldo do antes permanece"
+        );
+        assert_eq!(august.delta_cents, -100_000);
+    }
+
+    // Um gasto hipotético num dia futuro OCUPA a vaga do teto daquele dia em vez de somar por
+    // cima dele: o Diário típico é regra da composição, refeita depois da transformação. Somar os
+    // dois cobraria o dia duas vezes.
+    #[test]
+    fn a_hypothetical_daily_takes_the_ceiling_slot_of_its_day() {
+        let mut inputs = ForecastInputs::minimal(d("2026-06-15"));
+        inputs.horizon_end = d("2026-06-30");
+        inputs.seed_cents = 1_000_000;
+        inputs.ceiling.projection_per_day_cents = 2_000;
+
+        let real = compose(&inputs);
+        let scenario = compose(&apply_scenario(
+            &inputs,
+            &ScenarioChanges {
+                chain_added: vec![cash("2026-06-20", EventKind::Daily, 50_000)],
+                metric_added: vec![metric(
+                    "2026-06-20",
+                    EventKind::Daily,
+                    50_000,
+                    RulerMask::ALL,
+                )],
+                ..ScenarioChanges::default()
+            },
+        ));
+
+        let comparison = diff(&real, &scenario);
+        assert_eq!(
+            comparison.month_end[0].delta_cents,
+            -(50_000 - 2_000),
+            "o dia troca o teto pelo gasto hipotético, não acumula os dois"
+        );
+    }
+
+    /// Insumos de um mês com renda lançada e uma conta fixa futura — o mundo "antes" dos cenários.
+    fn scenario_inputs() -> ForecastInputs {
+        let mut inputs = ForecastInputs::minimal(d("2026-06-15"));
+        inputs.horizon_end = d("2026-06-30");
+        inputs.seed_cents = 1_000_000;
+        inputs.cash_events = vec![cash("2026-06-25", EventKind::FixedOut, 150_000)];
+        inputs.metric_events = vec![metric(
+            "2026-06-25",
+            EventKind::FixedOut,
+            150_000,
+            RulerMask::ALL,
+        )];
+        inputs
+    }
+
+    /// Uma conta nova de 800,00 no fim do mês: a mudança hipotética dos casos acima.
+    fn a_new_bill() -> ScenarioChanges {
+        ScenarioChanges {
+            chain_added: vec![cash("2026-06-28", EventKind::FixedOut, 80_000)],
+            metric_added: vec![metric(
+                "2026-06-28",
+                EventKind::FixedOut,
+                80_000,
+                RulerMask::ALL,
+            )],
+            ..ScenarioChanges::default()
+        }
     }
 
     fn invoice(

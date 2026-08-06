@@ -1,6 +1,13 @@
 //! Motor de "what-if": CRUD de cenários hipotéticos, comparação real × cenário e ferramenta
 //! determinística de empréstimo pela tabela PRICE.
 //!
+//! COMPARAÇÃO: um cenário não é uma segunda receita de projeção. As mudanças são resolvidas em
+//! eventos ([`scenario_changes`], a casca com SQL) e aplicadas sobre os insumos JÁ CARREGADOS da
+//! leitura do dia — a comparação inteira é `diff(compose(inputs), compose(apply_scenario(inputs,
+//! changes)))`. O "antes" é literalmente a chamada de produção, e por isso coincide campo a campo
+//! com o que o dashboard mostra. A hipótese EFÊMERA da conversa usa a mesma transformação, sem
+//! gravar linha nenhuma.
+//!
 //! Um `scenario` é só um rótulo (nome + autoria); as linhas hipotéticas em si são
 //! `"transaction"` rows com `scenario_id` setado. Um `scenario_override` é uma AÇÃO
 //! sobre o livro-razão REAL, escopada a uma obrigação ou a uma série recorrente —
@@ -32,14 +39,13 @@
 //! linha com o sufixo `" #repl:<override_id>"` na descrição —
 //! `backfill_scenario_override_replacements` (startup) converte esses marcadores em FK e os remove.
 
-use crate::commands::forecast_cmds::{
-    self, finalize_card_events, finalize_card_metric_events, forecast_horizon_end,
-    load_economia_annotation, load_forecast_events, load_metric_events, load_ruler_mask_map,
-    projection_seed,
-};
+use crate::commands::forecast_cmds::{self, load_ruler_mask_map};
 use crate::commands::map_cashflow_row;
 use crate::forecast::{self, CashflowEvent, MetricEvent, RulerMask};
 use crate::obligations;
+use crate::reading::compose::{ProjectionComparison, compose, diff};
+use crate::reading::inputs::{ForecastInputs, ScenarioChanges, apply_scenario};
+use crate::reading::load::load_inputs;
 use chrono::{Datelike, Months, NaiveDate};
 use serde::Serialize;
 use sqlx::{SqliteConnection, SqlitePool};
@@ -1871,321 +1877,141 @@ fn detect_loan(
     ))
 }
 
-/// Custo de vida "do momento": o mês corrente do `Forecast` (mesma definição canônica do motor —
-/// fixas + diário realizado + cartão), ou 0 se o mês corrente não aparece nos meses do
-/// horizonte (nunca deveria faltar, já que `today` sempre inicia o horizonte).
-fn current_month_cost_of_living(fc: &forecast::Forecast, today: NaiveDate) -> i64 {
-    fc.months
-        .iter()
-        .find(|m| m.year == today.year() && m.month == today.month())
-        .map(|m| m.cost_of_living_cents)
-        .unwrap_or(0)
+/// Uma linha real é ATINGIDA por uma supressão quando um item dela foi suprimido ou quando a
+/// série recorrente dela foi suprimida a partir de uma data que a linha já alcançou.
+fn is_suppressed(row: &RawTxnRow, plan: &SuppressionPlan) -> bool {
+    if plan.line_item_suppressed_cents.contains_key(&row.id) {
+        return true;
+    }
+    let Ok(date) = NaiveDate::parse_from_str(&row.date, "%Y-%m-%d") else {
+        return false;
+    };
+    row.recurrence_id.as_ref().is_some_and(|recurrence_id| {
+        plan.recurrence_suppressed
+            .iter()
+            .any(|(id, from)| id == recurrence_id && date >= *from)
+    })
 }
 
-fn current_month_performance(fc: &forecast::Forecast, today: NaiveDate) -> i64 {
-    fc.months
-        .iter()
-        .find(|m| m.year == today.year() && m.month == today.month())
-        .map(|m| m.performance_cents)
-        .unwrap_or(0)
-}
-
-/// Renda do mês corrente (`MonthMetric.income_cents`): exposta para os
-/// cards do compare classificarem Custo de vida ("Dentro da renda"/"Acima da renda") na UI sem
-/// RE-DERIVAR a renda no comando (fonte única: o motor já soma as Entradas do mês).
-fn current_month_income(fc: &forecast::Forecast, today: NaiveDate) -> i64 {
-    fc.months
-        .iter()
-        .find(|m| m.year == today.year() && m.month == today.month())
-        .map(|m| m.income_cents)
-        .unwrap_or(0)
-}
-
-/// Os dois ramos da projeção medidos pelo mesmo motor — o mundo real e o mundo com as linhas
-/// hipotéticas por cima — com as diferenças já subtraídas.
+/// Resolve as mudanças do cenário em EVENTOS, na mesma classificação que os insumos reais
+/// atravessaram: as células que uma supressão atinge — reconstruídas como estão e como ficam — e as
+/// linhas hipotéticas.
 ///
-/// É o núcleo numérico que o cenário SALVO e a hipótese EFÊMERA compartilham. Separá-lo do
-/// `ScenarioCompareDto` é o que permite simular sem gravar: quem chama traz as linhas, de onde
-/// quer que elas venham, e o motor não sabe (nem precisa saber) se existe um cenário por trás.
-pub(crate) struct ProjectionComparison {
-    pub real_horizon_end: NaiveDate,
-    pub real_month_end: Vec<forecast_cmds::MonthEndDto>,
-    pub real_deepest_deficit: Option<forecast_cmds::DayPointDto>,
-    pub real_performance_cents: i64,
-    pub real_safe_to_spend_today_cents: i64,
-    pub real_binding_guardrail: String,
-    pub real_cost_of_living_cents: i64,
-    pub real_income_cents: i64,
-
-    pub scenario_month_end: Vec<forecast_cmds::MonthEndDto>,
-    pub scenario_deepest_deficit: Option<forecast_cmds::DayPointDto>,
-    pub scenario_performance_cents: i64,
-    pub scenario_safe_to_spend_today_cents: i64,
-    pub scenario_binding_guardrail: String,
-    pub scenario_cost_of_living_cents: i64,
-    pub scenario_income_cents: i64,
-
-    pub month_end: Vec<ScenarioMonthEnd>,
-    pub deepest_deficit_delta_cents: Option<i64>,
-    pub performance_delta_cents: i64,
-    pub safe_to_spend_delta_cents: i64,
-    pub cost_of_living_delta_cents: i64,
-}
-
-/// Projeta o mundo real e o mundo com `hypothetical` por cima, ajustado pelo `plan` de supressão.
+/// É a casca da transformação: aqui mora o SQL que descobre o que muda; a aritmética de aplicar a
+/// mudança sobre a leitura é [`apply_scenario`], pura.
 ///
-/// As janelas de data (encadeamento a partir de hoje, métricas a partir do mês corrente) são
-/// aplicadas aqui, sobre a lista inteira — quem chama entrega TODAS as linhas hipotéticas, sem
-/// recortar. O horizonte estica até a linha hipotética mais distante, senão uma parcela além do
-/// horizonte real sairia da projeção sem aviso.
-async fn compare_projection(
+/// As janelas são as mesmas dos loaders de produção. O encadeamento de caixa das linhas REAIS parte
+/// de depois de hoje (o movimento de hoje já está embutido na semente; incluí-lo dobraria), mas as
+/// linhas HIPOTÉTICAS não tocam saldo nenhum e por isso entram INCLUSIVE hoje — o principal
+/// desembolsado hoje precisa subir a trajetória. As métricas cobrem o mês inteiro dos dois lados.
+async fn scenario_changes(
     pool: &SqlitePool,
+    inputs: &ForecastInputs,
     hypothetical: &[HypoTxnRow],
     plan: &SuppressionPlan,
-    today: NaiveDate,
-) -> Result<ProjectionComparison, String> {
-    let real_horizon_end = forecast_horizon_end(pool, today).await?;
-    let horizon_end = hypothetical
+) -> Result<ScenarioChanges, String> {
+    let today = inputs.today;
+    let horizon_end = scenario_horizon_end(hypothetical, inputs.horizon_end);
+    let month_start =
+        NaiveDate::from_ymd_opt(today.year(), today.month(), 1).ok_or("data de hoje inválida")?;
+    let end_exclusive = horizon_end
+        .succ_opt()
+        .ok_or("horizonte inválido para o cenário")?;
+    let horizon_str = horizon_end.format("%Y-%m-%d").to_string();
+
+    // Só as células ATINGIDAS são reconstruídas: as demais continuam sendo as da leitura de
+    // produção, sem uma segunda passagem pelo classificador para divergir dela.
+    let touched: Vec<RawTxnRow> = load_real_rows(
+        pool,
+        &month_start.format("%Y-%m-%d").to_string(),
+        true,
+        &horizon_str,
+    )
+    .await?
+    .into_iter()
+    .filter(|row| is_suppressed(row, plan))
+    .collect();
+    // A supressão não muda o `transaction_id`, então a máscara de réguas das tags segue valendo —
+    // uma tag vale igual no cenário e na leitura real.
+    let mask_by_txn = load_ruler_mask_map(pool, month_start, end_exclusive).await?;
+    let with_masks = |rows: Vec<RawTxnRow>| -> Vec<CardAwareRow> {
+        rows.into_iter()
+            .map(|row| {
+                let mask = mask_by_txn.get(&row.id).copied().unwrap_or(RulerMask::ALL);
+                CardAwareRow::from(row).with_mask(mask)
+            })
+            .collect()
+    };
+    let before = build_card_aware_events(pool, with_masks(touched.clone()), today).await?;
+    let after =
+        build_card_aware_events(pool, with_masks(apply_suppression(touched, plan)), today).await?;
+
+    // Linha hipotética não tem tag: conta em todas as réguas (a máscara `ALL` do `From`).
+    let hypothetical_events = build_card_aware_events(
+        pool,
+        hypothetical
+            .iter()
+            .filter(|row| row.date.as_str() <= horizon_str.as_str())
+            .map(CardAwareRow::from)
+            .collect(),
+        today,
+    )
+    .await?;
+
+    let from = |events: &[MetricEvent], start: NaiveDate| -> Vec<MetricEvent> {
+        events
+            .iter()
+            .filter(|me| me.event.date >= start && me.event.date <= horizon_end)
+            .cloned()
+            .collect()
+    };
+    // O encadeamento de caixa não tem máscara: o Saldo sempre conta.
+    let cash = |events: Vec<MetricEvent>| -> Vec<CashflowEvent> {
+        events.into_iter().map(|me| me.event).collect()
+    };
+    let chain_start = today.succ_opt().ok_or("data de hoje inválida")?;
+
+    let mut chain_added = cash(from(&after, chain_start));
+    chain_added.extend(cash(from(&hypothetical_events, today)));
+    let mut metric_added = from(&after, month_start);
+    metric_added.extend(from(&hypothetical_events, month_start));
+
+    Ok(ScenarioChanges {
+        chain_removed: cash(from(&before, chain_start)),
+        chain_added,
+        metric_removed: from(&before, month_start),
+        metric_added,
+        horizon_end: Some(horizon_end),
+    })
+}
+
+/// O horizonte estica até a linha hipotética mais distante — senão uma parcela além do horizonte
+/// real sairia da projeção sem aviso.
+fn scenario_horizon_end(hypothetical: &[HypoTxnRow], real_horizon_end: NaiveDate) -> NaiveDate {
+    hypothetical
         .iter()
         .filter_map(|r| NaiveDate::parse_from_str(&r.date, "%Y-%m-%d").ok())
         .max()
         .filter(|d| *d > real_horizon_end)
-        .unwrap_or(real_horizon_end);
+        .unwrap_or(real_horizon_end)
+}
 
-    let seed = projection_seed(pool, today).await?;
-    let years: Vec<i32> = (today.year()..=horizon_end.year()).collect();
-    let annotation = load_economia_annotation(pool, &years).await?;
-
-    // --- Ramo REAL (baseline, intocado — os mesmos loaders do forecast de produção). ---
-    let real_chain_events = load_forecast_events(pool, today, horizon_end).await?;
-    let real_metric_events = load_metric_events(pool, today, horizon_end).await?;
-    let real_fc = forecast::project_with_metrics(
-        seed,
-        today,
-        &real_chain_events,
-        // O loader de métricas já carrega a máscara de réguas por lançamento em cada evento.
-        &real_metric_events,
-        horizon_end,
-        &annotation,
-    );
-
-    // --- Ramo CENÁRIO: linhas reais AJUSTADAS pelos overrides + linhas hipotéticas. ---
-    let today_str = today.format("%Y-%m-%d").to_string();
-    let horizon_str = horizon_end.format("%Y-%m-%d").to_string();
-    let month_start_str = NaiveDate::from_ymd_opt(today.year(), today.month(), 1)
-        .ok_or("data de hoje inválida")?
-        .format("%Y-%m-%d")
-        .to_string();
-
-    // Ramo REAL: `date > today` no encadeamento — o movimento real de hoje já está embutido no
-    // saldo-semente da conta; incluí-lo dobraria. As linhas HIPOTÉTICAS não tocam saldo nenhum
-    // (não há semente), então o encadeamento do CENÁRIO inclui HOJE (`date >= today`): um evento
-    // hipotético de hoje (ex.: o principal desembolsado hoje) tem de entrar na trajetória, senão
-    // ela não sobe com o dinheiro recebido e o guardrail de caixa fica apertado. As métricas
-    // cobrem o mês inteiro (`date >= month_start`) nos dois ramos — pipeline separada, sem
-    // double-count com o encadeamento.
-    let real_chain_raw = load_real_rows(pool, &today_str, false, &horizon_str).await?;
-    let real_metric_raw = load_real_rows(pool, &month_start_str, true, &horizon_str).await?;
-    let window = |from: &str| -> Vec<&HypoTxnRow> {
-        hypothetical
-            .iter()
-            .filter(|r| r.date.as_str() >= from && r.date.as_str() <= horizon_str.as_str())
-            .collect()
-    };
-    let hypo_chain_rows = window(&today_str);
-    let hypo_metric_rows = window(&month_start_str);
-
-    let scenario_chain_adjusted = apply_suppression(real_chain_raw, plan);
-    let scenario_metric_adjusted = apply_suppression(real_metric_raw, plan);
-
-    let scenario_end_exclusive = horizon_end
-        .succ_opt()
-        .ok_or("horizonte inválido para faturas do cenário")?;
-    // O encadeamento de caixa não tem máscara (o Saldo sempre conta): descarta a máscara logo
-    // após reconstruir os eventos.
-    let mut chain_rows: Vec<CardAwareRow> = scenario_chain_adjusted
-        .into_iter()
-        .map(CardAwareRow::from)
-        .collect();
-    chain_rows.extend(hypo_chain_rows.into_iter().map(CardAwareRow::from));
-    let mut scenario_chain_events: Vec<CashflowEvent> =
-        build_card_aware_events(pool, chain_rows, today)
-            .await?
-            .into_iter()
-            .map(|me| me.event)
-            .collect();
-    scenario_chain_events = finalize_card_events(
-        pool,
-        today,
-        today,
-        scenario_end_exclusive,
-        scenario_chain_events,
-    )
-    .await?;
-    // Linhas REAIS reconstruídas do banco recebem a máscara das suas tags (a supressão do cenário
-    // não muda o `transaction_id`, então a máscara segue válida); linhas HIPOTÉTICAS não têm tag →
-    // `RulerMask::ALL` do `From`. Assim a régua de uma tag vale igual no ramo real e no cenário.
-    let metric_month_start = NaiveDate::from_ymd_opt(today.year(), today.month(), 1)
-        .ok_or("data de hoje inválida para faturas do cenário")?;
-    let metric_mask = load_ruler_mask_map(pool, metric_month_start, scenario_end_exclusive).await?;
-    let mut metric_rows: Vec<CardAwareRow> = scenario_metric_adjusted
-        .into_iter()
-        .map(|r| {
-            let mask = metric_mask.get(&r.id).copied().unwrap_or(RulerMask::ALL);
-            CardAwareRow::from(r).with_mask(mask)
-        })
-        .collect();
-    metric_rows.extend(hypo_metric_rows.into_iter().map(CardAwareRow::from));
-    let mut scenario_metric_events = build_card_aware_events(pool, metric_rows, today).await?;
-    scenario_metric_events = finalize_card_metric_events(
-        pool,
-        today,
-        metric_month_start,
-        scenario_end_exclusive,
-        scenario_metric_events,
-    )
-    .await?;
-
-    // Previsão de diário reutiliza o MESMO teto/dia do ramo real — o orçamento de Diário não muda
-    // por cenário; só o encadeamento de caixa/hipotéticas mudam.
-    let daily_ceiling = forecast_cmds::projection_daily_ceiling(pool, today).await?;
-    let days_with_daily_chain: std::collections::HashSet<NaiveDate> = scenario_chain_events
-        .iter()
-        .filter(|e| e.kind == forecast::EventKind::Daily)
-        .map(|e| e.date)
-        .collect();
-    scenario_chain_events.extend(forecast::project_daily_ceiling(
-        daily_ceiling,
-        today,
-        horizon_end,
-        &days_with_daily_chain,
-    ));
-    // Cobertura de dias do teto = fato COMPORTAMENTAL (o dia teve Diário), sem máscara.
-    let days_with_daily_metric: std::collections::HashSet<NaiveDate> = scenario_metric_events
-        .iter()
-        .filter(|me| me.event.kind == forecast::EventKind::Daily)
-        .map(|me| me.event.date)
-        .collect();
-    // Teto projetado = evento SINTÉTICO → conta em todas as réguas (`RulerMask::ALL`).
-    scenario_metric_events.extend(forecast::lift_all(&forecast::project_daily_ceiling(
-        daily_ceiling,
-        today,
-        horizon_end,
-        &days_with_daily_metric,
-    )));
-
-    let scenario_fc = forecast::project_with_metrics(
-        seed,
-        today,
-        &scenario_chain_events,
-        // As linhas reais carregam a máscara das suas tags; as hipotéticas contam em todas as réguas.
-        &scenario_metric_events,
-        horizon_end,
-        &annotation,
-    );
-
-    // --- Guardrails (mesma fórmula do forecast real, poupança anual REALIZADA — não muda por
-    // cenário; o "e se" só reprojeta o caixa/performance do mês, não reescreve o ano já realizado). ---
-    let (annual_income, _) = forecast_cmds::realized_annual_savings(pool, today).await?;
-    let annual_economia = forecast_cmds::realized_annual_economia(pool, today).await?;
-
-    let real_sts = forecast::safe_to_spend_today(
-        &real_fc,
-        annual_income,
-        annual_economia,
-        forecast_cmds::SAVINGS_TARGET_BPS,
-    );
-    let scenario_sts = forecast::safe_to_spend_today(
-        &scenario_fc,
-        annual_income,
-        annual_economia,
-        forecast_cmds::SAVINGS_TARGET_BPS,
-    );
-    let guardrail_str = |g: forecast::Guardrail| g.as_str().to_string();
-
-    let real_cost_of_living_cents = current_month_cost_of_living(&real_fc, today);
-    let scenario_cost_of_living_cents = current_month_cost_of_living(&scenario_fc, today);
-    let real_performance_cents = current_month_performance(&real_fc, today);
-    let scenario_performance_cents = current_month_performance(&scenario_fc, today);
-    let real_income_cents = current_month_income(&real_fc, today);
-    let scenario_income_cents = current_month_income(&scenario_fc, today);
-
-    let real_month_end: Vec<forecast_cmds::MonthEndDto> = real_fc
-        .month_end
-        .iter()
-        .map(|m| forecast_cmds::MonthEndDto {
-            year: m.year,
-            month: m.month,
-            balance_cents: m.balance_cents,
-        })
-        .collect();
-    let scenario_month_end: Vec<forecast_cmds::MonthEndDto> = scenario_fc
-        .month_end
-        .iter()
-        .map(|m| forecast_cmds::MonthEndDto {
-            year: m.year,
-            month: m.month,
-            balance_cents: m.balance_cents,
-        })
-        .collect();
-
-    let mut month_end = Vec::new();
-    for r in &real_month_end {
-        if let Some(s) = scenario_month_end
-            .iter()
-            .find(|s| s.year == r.year && s.month == r.month)
-        {
-            month_end.push(ScenarioMonthEnd {
-                year: r.year,
-                month: r.month,
-                real_balance_cents: r.balance_cents,
-                scenario_balance_cents: s.balance_cents,
-                delta_cents: s.balance_cents - r.balance_cents,
-            });
-        }
-    }
-
-    let real_deepest_deficit = real_fc.deepest_deficit.map(|p| forecast_cmds::DayPointDto {
-        date: p.date.format("%Y-%m-%d").to_string(),
-        balance_cents: p.balance_cents,
-    });
-    let scenario_deepest_deficit =
-        scenario_fc
-            .deepest_deficit
-            .map(|p| forecast_cmds::DayPointDto {
-                date: p.date.format("%Y-%m-%d").to_string(),
-                balance_cents: p.balance_cents,
-            });
-    let deepest_deficit_delta_cents = match (&real_fc.deepest_deficit, &scenario_fc.deepest_deficit)
-    {
-        (Some(r), Some(s)) => Some(s.balance_cents - r.balance_cents),
-        _ => None,
-    };
-
-    Ok(ProjectionComparison {
-        real_horizon_end,
-        real_month_end,
-        real_deepest_deficit,
-        real_performance_cents,
-        real_safe_to_spend_today_cents: real_sts.amount_cents,
-        real_binding_guardrail: guardrail_str(real_sts.binding),
-        real_cost_of_living_cents,
-        real_income_cents,
-
-        scenario_month_end,
-        scenario_deepest_deficit,
-        scenario_performance_cents,
-        scenario_safe_to_spend_today_cents: scenario_sts.amount_cents,
-        scenario_binding_guardrail: guardrail_str(scenario_sts.binding),
-        scenario_cost_of_living_cents,
-        scenario_income_cents,
-
-        month_end,
-        deepest_deficit_delta_cents,
-        performance_delta_cents: scenario_performance_cents - real_performance_cents,
-        safe_to_spend_delta_cents: scenario_sts.amount_cents - real_sts.amount_cents,
-        cost_of_living_delta_cents: scenario_cost_of_living_cents - real_cost_of_living_cents,
-    })
+/// A comparação inteira: a leitura de produção e a leitura do mesmo dia com as mudanças aplicadas
+/// sobre os MESMOS insumos, carregados uma vez.
+///
+/// O ramo real não existe como código próprio — ele É a chamada de produção. Por isso o "antes" de
+/// um cenário coincide, campo a campo, com o que o dashboard mostra agora.
+async fn compare_projection(
+    pool: &SqlitePool,
+    inputs: &ForecastInputs,
+    hypothetical: &[HypoTxnRow],
+    plan: &SuppressionPlan,
+) -> Result<ProjectionComparison, String> {
+    let changes = scenario_changes(pool, inputs, hypothetical, plan).await?;
+    Ok(diff(
+        &compose(inputs),
+        &compose(&apply_scenario(inputs, &changes)),
+    ))
 }
 
 pub(crate) async fn get_scenario_forecast_inner(
@@ -2207,33 +2033,25 @@ pub(crate) async fn get_scenario_forecast_inner(
     // dela, e a detecção de empréstimo e a lista de `changes` precisam do grupo INTEIRO — senão
     // `loan_total_cost` subestimaria o custo por não ver todas as parcelas.
     let all_hypo_rows = load_all_hypothetical_rows(pool, scenario_id).await?;
-    let comparison = compare_projection(pool, &all_hypo_rows, &plan, today).await?;
+    // UMA carga de insumos serve as duas leituras da comparação e as réguas do financiamento.
+    let inputs = load_inputs(pool, today).await?;
+    let comparison = compare_projection(pool, &inputs, &all_hypo_rows, &plan).await?;
 
-    // Insumos da régua de reserva — os MESMOS do `reserve_months` do dashboard (numerador =
-    // contas de reserva; denominador = mediana dos meses completos), para "antes" coincidir com
-    // o dashboard. O compare é somente-leitura: queries direto no pool, sem transação aberta.
-    let reserve_balance: (i64,) =
-        sqlx::query_as("SELECT COALESCE(SUM(balance), 0) FROM account WHERE liquidity = 'reserve'")
-            .fetch_one(pool)
-            .await
-            .map_err(|e| format!("query reserve balance: {e}"))?;
-    let baseline_cents = forecast_cmds::realized_monthly_baseline(pool, today).await?;
-    // Segunda perna do gate: medianas de renda e economia do MESMO "mês típico" da régua de
-    // reserva (mesma janela de 6 meses completos, mesmo estimador).
-    let (income_median_cents, economia_median_cents) =
-        forecast_cmds::realized_savings_baseline(pool, today).await?;
     let rate_by_loan: HashMap<String, i64> = list_scenario_loans(pool, scenario_id)
         .await?
         .into_iter()
         .map(|l| (l.id, l.rate_bps))
         .collect();
+    // As réguas do financiamento leem os MESMOS insumos da leitura: reserva, mês típico e as
+    // medianas de renda e economia da mesma janela — é o que faz o "antes" do gate coincidir com o
+    // dashboard.
     let (loan_group_id, loan) = match detect_loan(
         &all_hypo_rows,
         &rate_by_loan,
-        reserve_balance.0,
-        baseline_cents,
-        income_median_cents,
-        economia_median_cents,
+        inputs.reserve.balance_cents,
+        inputs.baseline.monthly_cents,
+        inputs.baseline.typical_income_cents,
+        inputs.baseline.typical_economia_cents,
     ) {
         Some((gid, breakdown)) => (Some(gid), Some(breakdown)),
         None => (None, None),
@@ -2366,9 +2184,10 @@ pub(crate) struct HypotheticalLine {
     pub to_liquidity: Option<String>,
 }
 
-/// Projeta uma hipótese EFÊMERA: as linhas nascem em memória, passam pelo mesmo motor do cenário
-/// salvo e morrem com a resposta. Nenhuma escrita acontece — não há cenário, não há linha, não há
-/// o que apagar depois. É essa ausência que torna a simulação segura de oferecer à conversa.
+/// Projeta uma hipótese EFÊMERA: as linhas nascem em memória, viram a MESMA transformação sobre os
+/// mesmos insumos que a tela de cenários aplicaria e morrem com a resposta. Nenhuma escrita
+/// acontece — não há cenário, não há linha, não há o que apagar depois. É essa ausência que torna a
+/// simulação segura de oferecer à conversa.
 pub(crate) async fn simulate_hypothesis(
     pool: &SqlitePool,
     lines: &[HypotheticalLine],
@@ -2397,7 +2216,8 @@ pub(crate) async fn simulate_hypothesis(
             invoice_id: None,
         })
         .collect();
-    compare_projection(pool, &rows, &SuppressionPlan::default(), today).await
+    let inputs = load_inputs(pool, today).await?;
+    compare_projection(pool, &inputs, &rows, &SuppressionPlan::default()).await
 }
 
 // --- Tauri command wrappers ---
@@ -3474,6 +3294,113 @@ mod tests {
         txn(p, "inc-1", "income", 500_000, "2026-08-01").await;
     }
 
+    // O "antes" de um cenário é a leitura de PRODUÇÃO do mesmo dia, campo a campo: o dono lê o
+    // "depois" como consequência da mudança, nunca como consequência de outra conta. A prova é
+    // estrutural (o ramo real não existe como código próprio), e este teste é o alarme para quem
+    // reintroduzir uma segunda receita.
+    #[tokio::test]
+    async fn the_real_side_of_a_scenario_matches_the_dashboard_of_the_same_day() {
+        let p = pool().await;
+        seed_baseline(&p).await;
+        txn(&p, "fix-ago", "expense", 120_000, "2026-08-20").await;
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        add_scenario_transaction(
+            &p,
+            &sc.id,
+            "expense",
+            20_000,
+            "Assinatura nova",
+            "2026-08-10",
+            None,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let today = d("2026-08-01");
+
+        let compare = get_scenario_forecast_inner(&p, &sc.id, today)
+            .await
+            .unwrap();
+        let dash = forecast_cmds::dashboard_summary(&p, today).await.unwrap();
+        let dto = forecast_cmds::forecast_dto(&p, today).await.unwrap();
+
+        let real_month_end = compare
+            .real_month_end
+            .iter()
+            .find(|m| (m.year, m.month) == (2026, 8))
+            .expect("o mês corrente fecha dentro do horizonte");
+        assert_eq!(real_month_end.balance_cents, dash.balance);
+        assert_eq!(
+            compare.real_safe_to_spend_today_cents,
+            dto.safe_to_spend_today_cents
+        );
+        assert_eq!(compare.real_binding_guardrail, dto.binding_guardrail);
+        assert_eq!(compare.real_horizon_end, dto.horizon_end);
+        assert_eq!(compare.real_deepest_deficit, dto.deepest_deficit);
+    }
+
+    // A economia anual do guardrail atravessa o cenário pela janela de meses COMPLETOS que os
+    // insumos declaram — a mesma do forecast. Um "e se" reprojeta o caixa e as réguas do mês; não
+    // reescreve o ano já realizado, e por isso a régua que limita o dia é a mesma dos dois lados.
+    #[tokio::test]
+    async fn the_scenario_guardrail_reads_the_same_annual_window_as_the_forecast() {
+        let p = pool().await;
+        sqlx::query("INSERT INTO person (id, name) VALUES ('pe-1', 'Tester')")
+            .execute(&p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO account (id, name, type, owner_person_id, balance, liquidity) \
+             VALUES ('acc-reserve', 'Reserva', 'bank', 'pe-1', 0, 'reserve')",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        // Julho (mês COMPLETO): renda 500.000 e Economia 150.000 (30%) → a janela do guardrail.
+        txn(&p, "inc-jul", "income", 500_000, "2026-07-05").await;
+        sqlx::query(
+            "INSERT INTO \"transaction\" (id, type, amount, date, to_account_id, is_projection) \
+             VALUES ('ec-jul', 'transfer', 150000, '2026-07-20', 'acc-reserve', 0)",
+        )
+        .execute(&p)
+        .await
+        .unwrap();
+        seed_baseline(&p).await;
+        let sc = create_scenario(&p, "Cenário").await.unwrap();
+        add_scenario_transaction(
+            &p,
+            &sc.id,
+            "expense",
+            300_000,
+            "Compra grande",
+            "2026-08-10",
+            None,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let today = d("2026-08-01");
+
+        let compare = get_scenario_forecast_inner(&p, &sc.id, today)
+            .await
+            .unwrap();
+        let dto = forecast_cmds::forecast_dto(&p, today).await.unwrap();
+
+        assert_eq!(
+            compare.real_safe_to_spend_today_cents,
+            dto.safe_to_spend_today_cents
+        );
+        assert_eq!(compare.real_binding_guardrail, dto.binding_guardrail);
+        assert_eq!(
+            compare.scenario_binding_guardrail, compare.real_binding_guardrail,
+            "a régua que morde continua sendo a mesma: o cenário não reescreve o ano realizado"
+        );
+    }
+
     // Teste 1 + 2: determinismo e idempotência — mesmas entradas, mesma saída, recomputado 2x.
     #[tokio::test]
     async fn get_scenario_forecast_is_deterministic_and_idempotent() {
@@ -3574,7 +3501,7 @@ mod tests {
 
         let today = d("2026-08-01");
         let horizon = d("2026-08-31");
-        let real_events = forecast_cmds::load_forecast_events(&p, today, horizon)
+        let real_events = forecast_cmds::load_cashflow_events(&p, today, horizon)
             .await
             .unwrap();
         assert!(
