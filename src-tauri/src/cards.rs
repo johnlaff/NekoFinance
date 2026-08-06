@@ -311,6 +311,7 @@ pub(crate) fn looks_like_invoice_line(description: &str) -> bool {
 ///
 /// `T` é o que o chamador precisa da identidade: `account_id` na leitura de eventos, alias
 /// canônico na varredura do import.
+#[derive(Debug, Clone)]
 pub(crate) struct CardLexicon<T> {
     by_alias: HashMap<String, T>,
 }

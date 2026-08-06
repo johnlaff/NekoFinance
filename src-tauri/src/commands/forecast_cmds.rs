@@ -86,6 +86,11 @@ pub(crate) use crate::forecast::{
     RESERVE_MIN_MONTHS, SAVINGS_CEILING_BPS, SAVINGS_FLOOR_BPS, SAVINGS_TARGET_BPS,
 };
 
+/// As formas de dado que a carga produz vivem no inventário da leitura, não na casca que as
+/// preenche: é o que mantém a dependência apontando do IO para o domínio. A casca as reexporta
+/// para quem já as consumia continuar lendo daqui.
+pub(crate) use crate::reading::inputs::{CardInvoiceEvent, CeilingEstimateBasis, CeilingSource};
+
 /// Limiar de cobertura: um mês futuro com menos de 60% do gasto típico já lançado é tratado como
 /// INCOMPLETO (projeção otimista demais — o "chá revelação" do método). Margem ampla porque o
 /// método aceita variação mês a mês; abaixo disso é quase certo que falta fatura/variável.
@@ -159,7 +164,7 @@ pub(crate) async fn realized_annual_savings(
 /// filtrado pela lista que a janela devolve. Única leitura por trás das duas figuras anuais
 /// irmãs — Economia e Patrimônio já vêm classificadas, mascaradas por tag e reconciliadas com a
 /// anotação da aba, porque `annual_month_metrics` é o mesmo motor que a tela do Ano usa.
-async fn guardrail_window_metrics(
+pub(crate) async fn guardrail_window_metrics(
     pool: &SqlitePool,
     today_naive: NaiveDate,
 ) -> Result<Vec<forecast::MonthMetric>, String> {
@@ -204,6 +209,10 @@ pub(crate) struct SpendingModeSummary {
     pub mode: forecast::SpendingMode,
     /// `false` quando o modo é o default de dado insuficiente, não uma leitura da janela.
     pub detected: bool,
+    /// Os sinais crus da janela (2 meses completos + corrente), na ordem cronológica — os
+    /// operandos de `detect_spending_mode`, publicados para quem precisa decidir o modo sem
+    /// reabrir a janela.
+    pub samples: [forecast::MonthSpendSample; 3],
     /// Cartão do mês corrente (realizado + projetado), magnitude.
     pub cartao_month_cents: i64,
     /// Próximo dia de fatura (evento Cartão) a partir de hoje: (data ISO, total do dia).
@@ -285,6 +294,7 @@ pub(crate) async fn spending_mode_summary(
     Ok(SpendingModeSummary {
         mode: forecast::detect_spending_mode(&samples),
         detected: forecast::spending_mode_is_detected(&samples),
+        samples,
         cartao_month_cents,
         next_fatura: next_fatura_by_date.into_iter().next(),
     })
@@ -496,19 +506,6 @@ pub(crate) async fn active_daily_budget(pool: &SqlitePool) -> Result<Option<i64>
 
 /// Diário médio do último mês COMPLETO (Σ diário realizado ÷ dias do mês) — a base do teto
 /// ESTIMADO quando o dono não estipulou nada.
-/// Base da estimativa do teto: os operandos que produzem a média, não só o resultado. A tela
-/// IMPRIME esta conta — uma frase que a descrevesse poderia divergir do que o SQL faz.
-#[derive(Debug, Clone)]
-pub(crate) struct CeilingEstimateBasis {
-    /// Mês da base, `YYYY-MM`.
-    pub month: String,
-    /// Gasto variável somado do mês anterior (magnitude).
-    pub variable_cents: i64,
-    /// Dias do mês anterior — o divisor.
-    pub days: i64,
-    pub per_day_cents: i64,
-}
-
 async fn prev_month_daily_avg(
     pool: &SqlitePool,
     today_naive: NaiveDate,
@@ -549,28 +546,6 @@ async fn prev_month_daily_avg(
         days: days_prev,
         per_day_cents: variable_cents / days_prev,
     }))
-}
-
-/// Procedência do teto exibido. `chosen` é o único veredito; `estimate` é a média do mês
-/// anterior COM selo (o fallback silencioso morre na exibição — o motor de projeção continua
-/// usando `effective_daily_ceiling`); `none` = travessão + CTA da cerimônia. A proposta pendente
-/// da cerimônia é um OVERLAY (banner de confirmação), nunca a procedência do número exibido — o
-/// valor proposto não entra em progresso/projeção antes do aceite explícito.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CeilingSource {
-    Chosen,
-    Estimate,
-    None,
-}
-
-impl CeilingSource {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            CeilingSource::Chosen => "chosen",
-            CeilingSource::Estimate => "estimate",
-            CeilingSource::None => "none",
-        }
-    }
 }
 
 /// Leitura do teto para exibição: valor + procedência explícita.
@@ -622,6 +597,84 @@ pub(crate) async fn projection_daily_ceiling(
         return Ok(0);
     }
     effective_daily_ceiling(pool, today_naive).await
+}
+
+/// Diário de HOJE como MAGNITUDE positiva (quem exibe faz `teto - gasto` e `gasto/teto`).
+///
+/// - Mesma fonte que a régua Diário médio (`effective_daily_ceiling`/`prev_month_daily_avg`):
+///   eventos de métrica com a máscara `daily_avg`, item por item — uma linha excluída da régua
+///   (`exclude_from_daily_avg`) tira o dia de contar duas vezes o mesmo jeito que a visão
+///   mensal/anual já tira.
+/// - `amount_cents` já chega como MAGNITUDE (`load_raw_db_events` aplica `.abs()`), então a soma
+///   nunca cancela parcialmente num dia de sinal misto — mesma invariante de
+///   `realized_monthly_baseline`/`month_grid`, herdada da fonte única de eventos de métrica.
+/// - Sem nenhuma transação no dia, a soma é 0. O ritual diário é uma transação Diário comum.
+pub(crate) async fn daily_spend_today(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+) -> Result<i64, String> {
+    Ok(load_metric_db_events(
+        pool,
+        today_naive,
+        today_naive,
+        today_naive.succ_opt().ok_or("data de hoje inválida")?,
+    )
+    .await?
+    .into_iter()
+    .filter(|me| {
+        me.mask.daily_avg && me.event.kind == forecast::EventKind::Daily && me.event.realized
+    })
+    .map(|me| me.event.amount_cents)
+    .sum())
+}
+
+/// Espelho do [`daily_spend_today`] para o modo cartão: compras de cartão realizadas HOJE —
+/// manual (`payment_method='credit'`) ou vinculada a fatura (`invoice_id`). O lump importado do
+/// vencimento (célula da planilha) tem `payment_method` NULL e nunca vira compra, então o
+/// pagamento da fatura não conta como gasto do dia.
+pub(crate) async fn card_spend_today(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+) -> Result<i64, String> {
+    let row: (i64,) = sqlx::query_as(
+        "SELECT COALESCE((SELECT SUM(ABS(amount)) FROM \"transaction\" \
+                          WHERE type='expense' AND is_projection=0 AND date = ?1 \
+                            AND (payment_method = 'credit' OR invoice_id IS NOT NULL) \
+                            AND scenario_id IS NULL), 0)",
+    )
+    .bind(today_naive.format("%Y-%m-%d").to_string())
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("query card spend: {e}"))?;
+    Ok(row.0)
+}
+
+/// Quantos lançamentos já aconteceram e quando foi o último REAL — as duas figuras que sustentam
+/// o aviso "lançou pela última vez há X dias".
+///
+/// Realização decidida por DATA (≤ hoje), não pelo `is_projection` congelado: o flag fica stale
+/// quando o dono não re-importa por dias.
+pub(crate) async fn ledger_counts(
+    pool: &SqlitePool,
+    today_naive: NaiveDate,
+) -> Result<(i64, Option<String>), String> {
+    let today = today_naive.format("%Y-%m-%d").to_string();
+    let count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM \"transaction\" WHERE date <= ?1 AND scenario_id IS NULL",
+    )
+    .bind(&today)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("query: {e}"))?;
+
+    let last_real: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT MAX(date) FROM \"transaction\" WHERE is_projection = 0 AND date <= ?1 AND scenario_id IS NULL",
+    )
+    .bind(&today)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("query last_real_tx_date: {e}"))?;
+    Ok((count.0, last_real.and_then(|(d,)| d)))
 }
 
 /// Existe proposta de cerimônia aguardando o dono?
@@ -837,19 +890,6 @@ type CardInvoiceRow = (
     i64,
     i64,
 );
-
-#[derive(Debug, Clone)]
-pub(crate) struct CardInvoiceEvent {
-    pub account_id: String,
-    pub card_name: String,
-    pub owner_name: String,
-    pub closing_date: NaiveDate,
-    pub due_date: NaiveDate,
-    pub amount_cents: i64,
-    /// Existe Entrada vinculada (`refund_invoice_id`) — a expectativa de reembolso da fatura.
-    pub has_refund_expectation: bool,
-    pub refund_expected_cents: i64,
-}
 
 pub(crate) async fn load_card_invoice_events(
     pool: &SqlitePool,
@@ -2348,8 +2388,6 @@ pub(crate) async fn dashboard_summary(
     pool: &SqlitePool,
     today_naive: NaiveDate,
 ) -> Result<DashboardSummary, String> {
-    let today = today_naive.format("%Y-%m-%d").to_string();
-
     // Seed + forward events: shared with `forecast_dto` (single source of event mapping).
     let seed = projection_seed(pool, today_naive).await?;
     let horizon_end = forecast_horizon_end(pool, today_naive).await?;
@@ -2377,69 +2415,13 @@ pub(crate) async fn dashboard_summary(
     let (has_card, active_invoices) =
         load_card_invoice_events(pool, today_naive, today_naive, None).await?;
 
-    // Diário de HOJE como MAGNITUDE positiva (o card faz `teto - gasto` e `gasto/teto`).
-    // - Mesma fonte que a régua Diário médio (`effective_daily_ceiling`/`prev_month_daily_avg`):
-    //   eventos de métrica com a máscara `daily_avg`, item por item — uma linha excluída da régua
-    //   (`exclude_from_daily_avg`) tira o dia de contar duas vezes o mesmo jeito que a visão
-    //   mensal/anual já tira.
-    // - `amount_cents` já chega como MAGNITUDE (`load_raw_db_events` aplica `.abs()`), então a
-    //   soma nunca cancela parcialmente num dia de sinal misto — mesma invariante de
-    //   `realized_monthly_baseline`/`month_grid`, herdada da fonte única de eventos de métrica.
-    // - Fonte única: o gasto do dia vem das transações Diário (despesa variável não-crédito);
-    //   sem nenhuma transação no dia, a soma é 0. O ritual diário é uma transação Diário comum.
-    let daily_spend_cents: i64 = load_metric_db_events(
-        pool,
-        today_naive,
-        today_naive,
-        today_naive.succ_opt().ok_or("data de hoje inválida")?,
-    )
-    .await?
-    .into_iter()
-    .filter(|me| {
-        me.mask.daily_avg && me.event.kind == forecast::EventKind::Daily && me.event.realized
-    })
-    .map(|me| me.event.amount_cents)
-    .sum();
-    let daily_spend: (i64,) = (daily_spend_cents,);
-
-    // Espelho do `daily_spend` para o modo cartão: compras de cartão realizadas HOJE — manual
-    // (`payment_method='credit'`) ou vinculada a fatura (`invoice_id`). O lump importado do
-    // vencimento (célula da planilha) tem `payment_method` NULL e nunca vira compra, então o
-    // pagamento da fatura não conta como gasto do dia.
-    let card_spend: (i64,) = sqlx::query_as(
-        "SELECT COALESCE((SELECT SUM(ABS(amount)) FROM \"transaction\" \
-                          WHERE type='expense' AND is_projection=0 AND date = ?1 \
-                            AND (payment_method = 'credit' OR invoice_id IS NOT NULL) \
-                            AND scenario_id IS NULL), 0)",
-    )
-    .bind(&today)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| format!("query card spend: {e}"))?;
+    let daily_spend_cents = daily_spend_today(pool, today_naive).await?;
+    let card_spend_cents = card_spend_today(pool, today_naive).await?;
 
     // Reserva em MESES de custo de vida (método) — espelha os R$ que o PocketsCard mostra.
     let reserve = reserve_reading(pool, today_naive).await?;
 
-    // Transações já realizadas: por DATA (≤ hoje), não pelo `is_projection` congelado (stale
-    // quando o dono não re-importa por dias — auditoria de robustez a edições).
-    let count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM \"transaction\" WHERE date <= ?1 AND scenario_id IS NULL",
-    )
-    .bind(&today)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| format!("query: {e}"))?;
-
-    // Data do lançamento REAL mais recente (não-projeção, ≤ hoje) — alimenta o aviso "lançou
-    // pela última vez há X dias" do dashboard. NULL quando ainda não há lançamentos reais.
-    let last_real: Option<(Option<String>,)> = sqlx::query_as(
-        "SELECT MAX(date) FROM \"transaction\" WHERE is_projection = 0 AND date <= ?1 AND scenario_id IS NULL",
-    )
-    .bind(&today)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| format!("query last_real_tx_date: {e}"))?;
-    let last_real_tx_date = last_real.and_then(|(d,)| d);
+    let (transaction_count, last_real_tx_date) = ledger_counts(pool, today_naive).await?;
 
     // Gate de legitimidade do modo cartão: a economia 20–30% precisa estar VIVA. A perna lê a
     // régua anual do motor — a mesma que a conversa e a tela do ano publicam —, para que o gate
@@ -2509,8 +2491,8 @@ pub(crate) async fn dashboard_summary(
                 month: b.month.clone(),
             }),
         ceiling_proposal_pending,
-        daily_spend_today: daily_spend.0,
-        card_spend_today_cents: card_spend.0,
+        daily_spend_today: daily_spend_cents,
+        card_spend_today_cents: card_spend_cents,
         reserve_months: reserve.months,
         reserve_state: reserve.state.to_string(),
         reserve_basis_months: reserve.basis_months,
@@ -2531,7 +2513,7 @@ pub(crate) async fn dashboard_summary(
             .map(|(_, amount_cents)| amount_cents)
             .unwrap_or(0),
         upcoming_invoices,
-        transaction_count: count.0,
+        transaction_count,
         last_real_tx_date,
     })
 }
