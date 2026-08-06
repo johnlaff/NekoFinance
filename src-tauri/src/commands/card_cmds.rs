@@ -2695,4 +2695,46 @@ mod tests {
                 .unwrap_err();
         assert!(error.contains("herda"));
     }
+
+    #[derive(serde::Deserialize)]
+    struct ParityCase {
+        closing: i64,
+        due: i64,
+        verdict: String,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct ParityFixture {
+        cases: Vec<ParityCase>,
+    }
+
+    /// A mesma tabela é lida pelo teste Vitest (cardCycle.test.ts); mudar um veredito aqui sem
+    /// ajustar validate_cycle e validateCardCycle quebra os dois lados.
+    #[test]
+    fn validate_cycle_matches_parity_fixture() {
+        let raw = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../fixtures/card-cycle-parity.json"
+        ))
+        .expect("fixture de paridade do ciclo do cartão");
+        let fixture: ParityFixture = serde_json::from_str(&raw).unwrap();
+        for case in fixture.cases {
+            let result = validate_cycle(Some(case.closing), Some(case.due));
+            match case.verdict.as_str() {
+                "ok" => assert!(
+                    result.is_ok(),
+                    "fechamento={} vencimento={} deveria ser aceito, mas: {result:?}",
+                    case.closing,
+                    case.due
+                ),
+                "reject" => assert!(
+                    result.is_err(),
+                    "fechamento={} vencimento={} deveria ser rejeitado, mas passou",
+                    case.closing,
+                    case.due
+                ),
+                other => panic!("veredito desconhecido no fixture: {other}"),
+            }
+        }
+    }
 }
