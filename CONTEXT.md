@@ -109,7 +109,7 @@ Insurance products that protect against financial catastrophe. Light schema pres
 ### Frontend Architecture
 
 **View (funnel gate)**:
-A screen's `*View.ts` is the only place allowed to translate `src/lib/api.ts`'s raw shim DTOs into the domain shapes the screen renders — every other file under `src/` is fenced off from importing `lib/api` directly, type-only included, by the `no-restricted-imports` gate in `eslint.config.js`. See ADR-0006 for the exception zones (a view and its tests, the Mia runtime, `src/hooks/**`, the IPC mock infra) and the legacy allowlist (`eslint.lib-api-allowlist.mjs`) that migrates over time, never grows.
+A screen's `*View.ts` is the only place allowed to translate `src/lib/api.ts`'s raw shim DTOs into the domain shapes the screen renders — every other file under `src/` is fenced off from importing `lib/api` directly, type-only included, by the `no-restricted-imports` gate in `eslint.config.js`. See ADR-0006 for the exception zones (a view and its tests, the Mia runtime, `src/hooks/**`, the IPC mock infra). The legacy allowlist (`eslint.lib-api-allowlist.mjs`) is empty since ADR-0011 closed the funnel — `npm run check` is green with zero violations of the rule and the anti-rot check stays wired in to keep it that way.
 _Avoid_: DTO, wire type, raw API import
 
 **View as full shim gate (write + cache key)**:
@@ -131,6 +131,10 @@ _Avoid_: a per-component Sheets view duplicating the write-back preview/apply fe
 **Feature-local views (Pockets, Reconcile, Onboarding) and design-system prop types**:
 ADR-0010 closes the last named-exception features and the design system out of the `lib/api` allowlist. `features/pockets/pocketsView.ts`, `features/reconcile/reconcileView.ts`, and `features/onboarding/onboardingView.ts` follow the `sheetsView.ts` precedent — a feature-local view for a domain with no owning screen — each holding only the read/write wrappers its one feature needs. Design-system components never import a DTO from `lib/api`, type-only included: `BalanceTrajectory` and `LineItemEditor` declare a local structural prop type (`BalanceTrajectoryPoint`, `LineItemEditorItem`) matching only the fields they read/write, and any domain type shaped the same way (e.g. `lancamentosView.ts`'s `LineItemDraft`) satisfies it via structural typing, with no cast.
 _Avoid_: a design-system component importing `ForecastDay`/`LineItemDraft`/any shim DTO, a feature reading `lib/api` directly instead of through its own `*View.ts`
+
+**Funnel closed (empty legacy allowlist)**:
+ADR-0011 zeroes `eslint.lib-api-allowlist.mjs` — the last entry, `useShowReceipt.ts`, moved from `src/lib/` to `src/hooks/useShowReceipt.ts` since it's cross-screen preference state (Teto and Copilot) with no owning screen, the same shape as `useWriteBackPending.ts`. `LIB_API_ALLOWLIST_CEILING` is now `0`; `scripts/check-lib-api-allowlist.mjs` keeps running in `npm run check` so a future direct import can't quietly reopen the allowlist instead of earning a view.
+_Avoid_: adding a path back to `eslint.lib-api-allowlist.mjs` instead of routing a new import through a `*View.ts` or `src/hooks/**`
 
 ### Data Import & Sync
 

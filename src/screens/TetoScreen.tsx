@@ -16,7 +16,7 @@ import { isTauri } from "../lib/env";
 import { centsToBRLInput, formatBRL, parseBRLToCents, todayISO } from "../lib/format";
 import { safeErrorMessage } from "../lib/errors";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
-import { useShowReceipt } from "../lib/useShowReceipt";
+import { useShowReceipt } from "../hooks/useShowReceipt";
 import {
   GUIDED_QUESTIONS,
   acceptCeilingProposalCmd,

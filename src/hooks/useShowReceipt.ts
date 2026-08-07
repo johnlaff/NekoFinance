@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { getFlagSetting } from "./api";
-import { SHOW_RECEIPT } from "./env";
+import { getFlagSetting } from "../lib/api";
+import { SHOW_RECEIPT } from "../lib/env";
 
 /**
  * "Conta sempre à mostra" — a preferência de exibição do recibo, válida em todo o app.
