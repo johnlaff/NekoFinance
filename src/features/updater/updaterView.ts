@@ -41,6 +41,33 @@ export type UpdaterState =
   | { status: "ready"; version: string }
   | { status: "error"; message: string };
 
+/** Legenda compacta em pt-BR (vírgula decimal), teto em GB — o convite nunca precisa de mais. */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${Math.max(0, Math.round(bytes))} B`;
+  const units = ["KB", "MB", "GB"];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(1).replace(".", ",")} ${units[unitIndex]}`;
+}
+
+/** Fração 0–1 do progresso, ou `null` quando o total é desconhecido/zero (barra indeterminada). */
+export function downloadFraction(progress: DownloadProgress): number | null {
+  if (progress.totalBytes == null || progress.totalBytes <= 0) return null;
+  return progress.downloadedBytes / progress.totalBytes;
+}
+
+/** Legenda textual do progresso — a régua satura, o texto nunca (regra 26 do ui-standards). */
+export function downloadLabel(progress: DownloadProgress): string {
+  const downloaded = formatBytes(progress.downloadedBytes);
+  return progress.totalBytes == null
+    ? `${downloaded} baixados`
+    : `${downloaded} de ${formatBytes(progress.totalBytes)}`;
+}
+
 export interface UpdaterMachine {
   getState(): UpdaterState;
   subscribe(listener: () => void): () => void;

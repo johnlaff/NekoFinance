@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createUpdaterMachine,
+  downloadFraction,
+  downloadLabel,
+  formatBytes,
   type DownloadProgress,
   type UpdaterAdapter,
 } from "./updaterView";
@@ -233,5 +236,52 @@ describe("updaterView — máquina de estados do auto-update", () => {
     unsubscribe();
     await machine.checkForUpdate();
     expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+describe("formatBytes — legenda compacta em pt-BR", () => {
+  it("bytes crus abaixo de 1 KB", () => {
+    expect(formatBytes(512)).toBe("512 B");
+  });
+
+  it("KB com uma casa decimal e vírgula", () => {
+    expect(formatBytes(1536)).toBe("1,5 KB");
+  });
+
+  it("MB", () => {
+    expect(formatBytes(5 * 1024 * 1024)).toBe("5,0 MB");
+  });
+
+  it("GB — teto de unidade, não passa disso", () => {
+    expect(formatBytes(2.25 * 1024 * 1024 * 1024)).toBe("2,3 GB");
+  });
+});
+
+describe("downloadFraction — 0–1 ou indeterminado", () => {
+  it("null quando o servidor não informa o tamanho total", () => {
+    expect(downloadFraction({ downloadedBytes: 100, totalBytes: null })).toBeNull();
+  });
+
+  it("null quando o total é zero (divisão indefinida)", () => {
+    expect(downloadFraction({ downloadedBytes: 0, totalBytes: 0 })).toBeNull();
+  });
+
+  it("fração calculada quando o total é conhecido", () => {
+    expect(downloadFraction({ downloadedBytes: 512, totalBytes: 2048 })).toBe(0.25);
+  });
+});
+
+describe("downloadLabel — a verdade completa nunca satura (regra 26)", () => {
+  it("só o baixado quando o total é desconhecido", () => {
+    const progress: DownloadProgress = { downloadedBytes: 1536, totalBytes: null };
+    expect(downloadLabel(progress)).toBe("1,5 KB baixados");
+  });
+
+  it("baixado de total quando ambos são conhecidos", () => {
+    const progress: DownloadProgress = {
+      downloadedBytes: 1024 * 1024,
+      totalBytes: 4 * 1024 * 1024,
+    };
+    expect(downloadLabel(progress)).toBe("1,0 MB de 4,0 MB");
   });
 });
