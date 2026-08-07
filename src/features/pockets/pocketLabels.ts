@@ -1,4 +1,4 @@
-import type { PocketType } from "../../lib/api";
+import type { PocketType } from "./pocketsView";
 
 /** PT-BR labels for the pocket types accepted by `create_account`. */
 export const POCKET_TYPE_LABELS: Record<PocketType, string> = {

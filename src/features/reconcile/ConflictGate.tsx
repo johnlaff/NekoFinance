@@ -5,13 +5,11 @@ import {
   type DiffChange,
 } from "../../design-system/components/ApprovalDiffCard";
 import {
-  getImportConflicts,
-  listenEvent,
-  resolveImportConflict,
-  SYNC_DONE_EVENT,
+  fetchImportConflicts,
+  listenSyncDone,
+  resolveImportConflictCmd,
   type ImportConflict,
-  type SyncDonePayload,
-} from "../../lib/api";
+} from "./reconcileView";
 import { invalidateCommands } from "../../lib/useCommand";
 import { formatBRL } from "../../lib/format";
 
@@ -41,7 +39,7 @@ export function ConflictGate({ onResolved }: { onResolved?: () => void }) {
   // Guarda de unmount: não chama setState se o componente saiu antes do fetch resolver.
   useEffect(() => {
     let alive = true;
-    getImportConflicts()
+    fetchImportConflicts()
       .then((c) => alive && setConflicts(c))
       .catch(() => alive && setConflicts([]));
     return () => {
@@ -55,9 +53,9 @@ export function ConflictGate({ onResolved }: { onResolved?: () => void }) {
   // vazar o listener no HMR).
   useEffect(() => {
     let alive = true;
-    const unlistenPromise = listenEvent<SyncDonePayload>(SYNC_DONE_EVENT, () => {
+    const unlistenPromise = listenSyncDone(() => {
       invalidateCommands();
-      getImportConflicts()
+      fetchImportConflicts()
         .then((c) => alive && setConflicts(c))
         .catch(() => undefined);
     });
@@ -71,7 +69,7 @@ export function ConflictGate({ onResolved }: { onResolved?: () => void }) {
     setBusy(c.id);
     setError(null);
     try {
-      await resolveImportConflict(c.id, choice);
+      await resolveImportConflictCmd(c.id, choice);
       invalidateCommands();
       setConflicts((cur) => cur.filter((x) => x.id !== c.id));
       onResolved?.();

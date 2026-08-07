@@ -1,15 +1,10 @@
 import { render } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
-import { BalanceTrajectory } from "./BalanceTrajectory";
+import { BalanceTrajectory, type BalanceTrajectoryPoint } from "./BalanceTrajectory";
 import { fmtAxisBRL } from "../../lib/format";
-import type { ForecastDay } from "../../lib/api";
 
-const day = (date: string, balance: number): ForecastDay => ({
+const day = (date: string, balance: number): BalanceTrajectoryPoint => ({
   date,
-  income_cents: 0,
-  fixed_out_cents: 0,
-  daily_out_cents: 0,
-  economia_cents: 0,
   balance_cents: balance,
 });
 

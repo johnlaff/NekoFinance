@@ -1,6 +1,13 @@
 import { useState, type CSSProperties } from "react";
-import type { LineItemDraft } from "../../lib/api";
 import { formatBRL, parseBRLToCents } from "../../lib/format";
+
+/** Forma genérica de uma parte itemizada — o design system não conhece o DTO `LineItemDraft` do
+ *  shim, só esta forma estrutural. Quem chama passa o tipo de domínio, que já a satisfaz. */
+export interface LineItemEditorItem {
+  amount_cents: number;
+  description: string;
+  position: number;
+}
 
 /**
  * Editor das PARTES de um lançamento itemizado. Componente puro/controlado: o pai é
@@ -98,8 +105,8 @@ export function LineItemEditor({
   onChange,
   disabled = false,
 }: {
-  items: LineItemDraft[];
-  onChange: (items: LineItemDraft[]) => void;
+  items: LineItemEditorItem[];
+  onChange: (items: LineItemEditorItem[]) => void;
   disabled?: boolean;
 }) {
   const total = items.reduce((sum, it) => sum + it.amount_cents, 0);
@@ -122,7 +129,7 @@ export function LineItemEditor({
   function removeItem(index: number) {
     setAmountText({}); // posições mudam ao remover → descarta o buffer (re-deriva dos centavos).
     // Uma passada só: remove o índice e reindexa as posições restantes (sem filter+map encadeados).
-    const next: LineItemDraft[] = [];
+    const next: LineItemEditorItem[] = [];
     for (let i = 0; i < items.length; i++) {
       if (i === index) continue;
       const it = items[i];

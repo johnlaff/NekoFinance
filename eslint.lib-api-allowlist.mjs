@@ -7,15 +7,6 @@
  * past LIB_API_ALLOWLIST_CEILING (new direct import, route it through the view instead).
  */
 export const LIB_API_ALLOWLIST = [
-  "src/design-system/components/BalanceTrajectory.test.tsx",
-  "src/design-system/components/BalanceTrajectory.tsx",
-  "src/design-system/components/LineItemEditor.tsx",
-  "src/features/onboarding/OnboardingFlow.tsx",
-  "src/features/pockets/PocketsCard.tsx",
-  "src/features/pockets/PocketsManager.tsx",
-  "src/features/pockets/pocketLabels.ts",
-  "src/features/reconcile/ConflictGate.test.tsx",
-  "src/features/reconcile/ConflictGate.tsx",
   "src/lib/useShowReceipt.ts",
   "src/screens/LoanGroupItem.tsx",
   "src/screens/scenarios.test.tsx",

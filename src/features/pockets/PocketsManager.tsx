@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { Button } from "../../design-system/components/Button";
 import {
-  createAccount,
-  getPockets,
+  createAccountCmd,
+  fetchPockets,
   type Pockets,
   type PocketType,
-} from "../../lib/api";
+} from "./pocketsView";
 import { isTauri } from "../../lib/env";
 import { parseBRLToCents } from "../../lib/format";
 import { safeErrorMessage } from "../../lib/errors";
@@ -32,7 +32,7 @@ export function PocketsManager() {
 
   function reload() {
     if (!isTauri) return;
-    getPockets()
+    fetchPockets()
       .then(setPockets)
       .catch((e: unknown) =>
         setStatus({
@@ -59,7 +59,7 @@ export function PocketsManager() {
     }
     setStatus({ error: null, saving: true });
     try {
-      await createAccount(form.name.trim(), form.type, cents);
+      await createAccountCmd(form.name.trim(), form.type, cents);
       invalidateCommands(); // projected balance and pockets card must refresh
       setForm(EMPTY_FORM);
       setStatus({ error: null, saving: false });

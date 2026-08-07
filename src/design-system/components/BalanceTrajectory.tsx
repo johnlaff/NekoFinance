@@ -1,6 +1,12 @@
 import { useRef, useState } from "react";
-import type { ForecastDay } from "../../lib/api";
 import { fmtDayMonth, formatBRL, fmtAxisBRL } from "../../lib/format";
+
+/** Forma genérica de um ponto de saldo diário — o design system não conhece o DTO `ForecastDay`
+ *  do shim, só a data e o saldo projetado que ele desenha. */
+export interface BalanceTrajectoryPoint {
+  date: string;
+  balance_cents: number;
+}
 
 /**
  * BalanceTrajectory — gráfico de área da trajetória do saldo projetado (o Sparkline do design
@@ -14,7 +20,7 @@ export function BalanceTrajectory({
   today,
   variant = "full",
 }: {
-  daily: ForecastDay[];
+  daily: BalanceTrajectoryPoint[];
   today: string;
   variant?: "full" | "compact";
 }) {
