@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import cardCycleParity from "../../fixtures/card-cycle-parity.json";
 import { shiftCycleMonth, validateCardCycle } from "./cardCycle";
 
 describe("shiftCycleMonth", () => {
@@ -39,4 +40,19 @@ describe("validateCardCycle", () => {
     expect(validateCardCycle("29", "12")).toBeNull();
     expect(validateCardCycle("28", "28")).toBeNull();
   });
+});
+
+describe("validateCardCycle — paridade com o backend (fixtures/card-cycle-parity.json)", () => {
+  // A mesma tabela é lida pelo teste Rust (card_cmds.rs); mudar um veredito aqui sem ajustar
+  // validateCardCycle e validate_cycle quebra os dois lados.
+  for (const { closing, due, verdict } of cardCycleParity.cases) {
+    it(`fechamento=${closing} vencimento=${due} → ${verdict}`, () => {
+      const result = validateCardCycle(String(closing), String(due));
+      if (verdict === "ok") {
+        expect(result).toBeNull();
+      } else {
+        expect(result).not.toBeNull();
+      }
+    });
+  }
 });

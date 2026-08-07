@@ -1,0 +1,4960 @@
+{
+  "description": "Fixture de paridade da regra de fronteira do ciclo do cartão (validate_cycle / validateCardCycle). Um caso por entrada: fechamento e vencimento, veredito ok/reject e, quando rejeitado, a categoria do motivo. Consumido por src-tauri/src/commands/card_cmds.rs (Rust) e src/lib/cardCycle.test.ts (TypeScript) — mudar um veredito aqui deve quebrar os dois lados até ambos serem ajustados.",
+  "cases": [
+    {
+      "closing": 1,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 1,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 2,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 3,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 4,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 5,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 6,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 7,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 8,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 9,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 10,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 11,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 12,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 13,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 14,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 15,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 16,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 17,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 18,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 19,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 20,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 21,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 22,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 23,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 24,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 25,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 26,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 27,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 28,
+      "due": 29,
+      "verdict": "reject",
+      "reason": "same_month_collision"
+    },
+    {
+      "closing": 28,
+      "due": 30,
+      "verdict": "reject",
+      "reason": "same_month_collision"
+    },
+    {
+      "closing": 28,
+      "due": 31,
+      "verdict": "reject",
+      "reason": "same_month_collision"
+    },
+    {
+      "closing": 29,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 29,
+      "due": 30,
+      "verdict": "reject",
+      "reason": "same_month_collision"
+    },
+    {
+      "closing": 29,
+      "due": 31,
+      "verdict": "reject",
+      "reason": "same_month_collision"
+    },
+    {
+      "closing": 30,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 30,
+      "due": 31,
+      "verdict": "reject",
+      "reason": "same_month_collision"
+    },
+    {
+      "closing": 31,
+      "due": 1,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 2,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 3,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 4,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 5,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 6,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 7,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 8,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 9,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 10,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 11,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 12,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 13,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 14,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 15,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 16,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 17,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 18,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 19,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 20,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 21,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 22,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 23,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 24,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 25,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 26,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 27,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 28,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 29,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 30,
+      "verdict": "ok"
+    },
+    {
+      "closing": 31,
+      "due": 31,
+      "verdict": "ok"
+    },
+    {
+      "closing": 0,
+      "due": 15,
+      "verdict": "reject",
+      "reason": "closing_out_of_range"
+    },
+    {
+      "closing": 15,
+      "due": 0,
+      "verdict": "reject",
+      "reason": "due_out_of_range"
+    },
+    {
+      "closing": -1,
+      "due": 15,
+      "verdict": "reject",
+      "reason": "closing_out_of_range"
+    },
+    {
+      "closing": 15,
+      "due": -1,
+      "verdict": "reject",
+      "reason": "due_out_of_range"
+    },
+    {
+      "closing": 32,
+      "due": 15,
+      "verdict": "reject",
+      "reason": "closing_out_of_range"
+    },
+    {
+      "closing": 15,
+      "due": 32,
+      "verdict": "reject",
+      "reason": "due_out_of_range"
+    },
+    {
+      "closing": 100,
+      "due": 15,
+      "verdict": "reject",
+      "reason": "closing_out_of_range"
+    },
+    {
+      "closing": 15,
+      "due": 100,
+      "verdict": "reject",
+      "reason": "due_out_of_range"
+    },
+    {
+      "closing": 0,
+      "due": 0,
+      "verdict": "reject",
+      "reason": "closing_out_of_range"
+    },
+    {
+      "closing": 0,
+      "due": -1,
+      "verdict": "reject",
+      "reason": "closing_out_of_range"
+    },
+    {
+      "closing": 0,
+      "due": 32,
+      "verdict": "reject",
+      "reason": "closing_out_of_range"
+    },
+    {
+      "closing": 0,
+      "due": 100,
+      "verdict": "reject",
+      "reason": "closing_out_of_range"
+    },
+    {
+      "closing": -1,
+      "due": 0,
+      "verdict": "reject",
+      "reason": "closing_out_of_range"
+    },
+    {
+      "closing": -1,
+      "due": -1,
+      "verdict": "reject",
+      "reason": "closing_out_of_range"
+    },
+    {
+      "closing": -1,
+      "due": 32,
+      "verdict": "reject",
+      "reason": "closing_out_of_range"
+    },
+    {
+      "closing": -1,
+      "due": 100,
+      "verdict": "reject",
+      "reason": "closing_out_of_range"
+    },
+    {
+      "closing": 32,
+      "due": 0,
+      "verdict": "reject",
+      "reason": "closing_out_of_range"
+    },
+    {
+      "closing": 32,
+      "due": -1,
+      "verdict": "reject",
+      "reason": "closing_out_of_range"
+    },
+    {
+      "closing": 32,
+      "due": 32,
+      "verdict": "reject",
+      "reason": "closing_out_of_range"
+    },
+    {
+      "closing": 32,
+      "due": 100,
+      "verdict": "reject",
+      "reason": "closing_out_of_range"
+    },
+    {
+      "closing": 100,
+      "due": 0,
+      "verdict": "reject",
+      "reason": "closing_out_of_range"
+    },
+    {
+      "closing": 100,
+      "due": -1,
+      "verdict": "reject",
+      "reason": "closing_out_of_range"
+    },
+    {
+      "closing": 100,
+      "due": 32,
+      "verdict": "reject",
+      "reason": "closing_out_of_range"
+    },
+    {
+      "closing": 100,
+      "due": 100,
+      "verdict": "reject",
+      "reason": "closing_out_of_range"
+    }
+  ]
+}
