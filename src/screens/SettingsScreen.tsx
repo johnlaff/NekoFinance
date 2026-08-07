@@ -19,29 +19,15 @@ import { PocketsManager } from "../features/pockets/PocketsManager";
 import { ConflictGate } from "../features/reconcile/ConflictGate";
 import { GoogleSheetsPanel } from "../features/sheets/GoogleSheetsPanel";
 import { LocalXlsxImport } from "../features/sheets/LocalXlsxImport";
+import {
+  connectGoogleCmd,
+  fetchGoogleAuthStatus,
+  type AuthStatus,
+} from "../features/sheets/sheetsView";
 import { WriteBackPending } from "./dashboard/WriteBackPending";
 import { useWriteBackPending } from "../hooks/useWriteBackPending";
 import { ACCENTS, applyAccent, getStoredAccent, type Accent } from "../lib/accent";
 import { useNekoApp } from "../shell/appContext";
-import {
-  backupDatabase,
-  checkAuthStatus,
-  getAppInfo,
-  getAppSetting,
-  getFlagSetting,
-  getDailyBudget,
-  getMiaConsent,
-  grantMiaConsent,
-  lastSyncAt,
-  registerOsReminder,
-  setAppSetting,
-  setMiaApiKey,
-  startOAuthFlow,
-  unregisterOsReminder,
-  type AuthStatus,
-  type MiaConsentView,
-  revokeMiaConsent,
-} from "../lib/api";
 import { GOOGLE_CLIENT_ID, isTauri, SHOW_RECEIPT } from "../lib/env";
 import {
   motionEnabled,
@@ -58,7 +44,23 @@ import { EmptyState } from "../design-system/components/EmptyState";
 import { InfoPopover } from "../design-system/components/InfoPopover";
 import { Money } from "../design-system/components/Money";
 import { Switch } from "../design-system/components/Switch";
-import { greetState } from "./configView";
+import { fetchDailyBudget } from "./tetoView";
+import {
+  backupDatabaseCmd,
+  fetchAppInfo,
+  fetchConfigSetting,
+  fetchLastSyncAt,
+  fetchMiaConsent,
+  fetchShowReceiptFlag,
+  grantMiaConsentCmd,
+  greetState,
+  registerOsReminderCmd,
+  revokeMiaConsentCmd,
+  setConfigSetting,
+  setMiaApiKeyCmd,
+  unregisterOsReminderCmd,
+  type MiaConsentView,
+} from "./configView";
 
 // ---------------------------------------------------------------------------
 // Linha da gramática de card da direção: título + sub à esquerda, controle à
@@ -257,8 +259,8 @@ function ConversationConsent({
     const key = apiKey.trim();
     const consent = await consentGesture(
       async () => {
-        if (key) await setMiaApiKey(key);
-        return grantMiaConsent();
+        if (key) await setMiaApiKeyCmd(key);
+        return grantMiaConsentCmd();
       },
       "Não foi possível registrar o consentimento.",
       setBusy,
@@ -274,7 +276,7 @@ function ConversationConsent({
   async function revoke() {
     if (busy) return;
     const consent = await consentGesture(
-      revokeMiaConsent,
+      revokeMiaConsentCmd,
       "Não foi possível revogar a conversa.",
       setBusy,
       setActionError,
@@ -628,7 +630,7 @@ function ShowReceiptLine() {
     if (!isTauri) return;
     void (async () => {
       try {
-        setEnabled(await getFlagSetting(SHOW_RECEIPT, true));
+        setEnabled(await fetchShowReceiptFlag(SHOW_RECEIPT, true));
       } catch {
         setEnabled(true);
       }
@@ -639,7 +641,7 @@ function ShowReceiptLine() {
     setEnabled(next);
     setSaving(true);
     try {
-      await setAppSetting(SHOW_RECEIPT, next ? "true" : "false");
+      await setConfigSetting(SHOW_RECEIPT, next ? "true" : "false");
       setSaving(false);
     } catch {
       setSaving(false);
@@ -680,8 +682,8 @@ function ReminderLines() {
     void (async () => {
       try {
         const [en, t] = await Promise.all([
-          getAppSetting("daily_reminder_enabled"),
-          getAppSetting("daily_reminder_time"),
+          fetchConfigSetting("daily_reminder_enabled"),
+          fetchConfigSetting("daily_reminder_time"),
         ]);
         setEnabled(en !== "false");
         if (t) setTime(t);
@@ -693,8 +695,8 @@ function ReminderLines() {
 
   async function syncOsReminder(on: boolean, at: string) {
     try {
-      if (on) await registerOsReminder(at);
-      else await unregisterOsReminder();
+      if (on) await registerOsReminderCmd(at);
+      else await unregisterOsReminderCmd();
       setOsWarn(null);
     } catch (e) {
       setOsWarn(
@@ -712,7 +714,7 @@ function ReminderLines() {
     // Reset espelhado nos dois caminhos (não `finally`: o React Compiler não
     // suporta finalizer e o componente perderia a memoização automática).
     try {
-      await setAppSetting("daily_reminder_enabled", next ? "true" : "false");
+      await setConfigSetting("daily_reminder_enabled", next ? "true" : "false");
       await syncOsReminder(next, time);
       setSaving(false);
     } catch {
@@ -726,7 +728,7 @@ function ReminderLines() {
     setTime(val);
     setSaving(true);
     try {
-      await setAppSetting("daily_reminder_time", val);
+      await setConfigSetting("daily_reminder_time", val);
       if (enabled) await syncOsReminder(true, val);
       setSaving(false);
     } catch {
@@ -787,7 +789,7 @@ function ReminderLines() {
  * Aqui fica o resumo do estado atual e o caminho até lá. */
 function TetoLine() {
   const { navigate } = useNekoApp();
-  const budgetQ = useCommand("get_daily_budget", getDailyBudget);
+  const budgetQ = useCommand("get_daily_budget", fetchDailyBudget);
   const budget = budgetQ.data;
   return (
     <Line
@@ -846,7 +848,7 @@ function BackupLine() {
     if (!dest) return;
     setBusy(true);
     try {
-      await backupDatabase(dest);
+      await backupDatabaseCmd(dest);
       setBusy(false);
       setMsg("Backup salvo.");
     } catch (e) {
@@ -891,9 +893,9 @@ function BackupLine() {
  *  status até conectar (≤ 2 min). Recursão com setTimeout evita await-dentro-de-loop. Module-scope:
  *  não usa estado local. */
 async function pollConnected(attempt: number): Promise<AuthStatus> {
-  if (attempt >= 60) return checkAuthStatus();
+  if (attempt >= 60) return fetchGoogleAuthStatus();
   await new Promise((resolve) => setTimeout(resolve, 2000));
-  const status = await checkAuthStatus();
+  const status = await fetchGoogleAuthStatus();
   return status === "connected" ? status : pollConnected(attempt + 1);
 }
 
@@ -904,10 +906,10 @@ export function SettingsScreen({
   authStatus: AuthStatus;
   onAuthChange: (status: AuthStatus) => void;
 }) {
-  const appInfo = useCommand("get_app_info", getAppInfo).data ?? null;
+  const appInfo = useCommand("get_app_info", fetchAppInfo).data ?? null;
   const writeBack = useWriteBackPending();
-  const { data: lastSync } = useCommand("last_sync_at", lastSyncAt);
-  const miaConsentQ = useCommand("get_mia_consent", getMiaConsent);
+  const { data: lastSync } = useCommand("last_sync_at", fetchLastSyncAt);
+  const miaConsentQ = useCommand("get_mia_consent", fetchMiaConsent);
   const { theme, toggleTheme } = useThemeSwitch();
 
   // Persistido em localStorage e refletido em <html data-motion> (src/lib/motion.ts).
@@ -945,7 +947,7 @@ export function SettingsScreen({
   function handleReconnect() {
     if (!GOOGLE_CLIENT_ID || reconnecting) return;
     setReconnecting(true);
-    startOAuthFlow(GOOGLE_CLIENT_ID)
+    connectGoogleCmd(GOOGLE_CLIENT_ID)
       .then(() => pollConnected(0))
       .then((status) => {
         onAuthChange(status);

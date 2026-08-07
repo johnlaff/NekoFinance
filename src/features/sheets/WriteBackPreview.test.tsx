@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { WriteBackPreview } from "./WriteBackPreview";
 import { isSafeForFastPath } from "./writeBack";
-import type { CellWrite, WriteBackPreviewResult } from "../../lib/api";
+import type { CellWrite, WriteBackPreviewResult } from "./sheetsView";
 import { mockCommands, mockInvoke } from "../../test/commands";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));

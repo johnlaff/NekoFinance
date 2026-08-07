@@ -2,12 +2,12 @@ import { useState } from "react";
 import { AlertCircle, CheckCircle2, FileUp, Loader2 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Button } from "../../design-system/components/Button";
-import { type ImportDiagnostic, importLocalXlsx } from "../../lib/api";
 import { isTauri } from "../../lib/env";
 import { safeErrorMessage } from "../../lib/errors";
 import { invalidateCommands } from "../../lib/useCommand";
 import { withLoading } from "../../lib/withLoading";
 import { ImportDiagnosticsNotice } from "./GoogleSheetsPanel";
+import { importLocalXlsxCmd, type ImportDiagnostic } from "./sheetsView";
 
 /**
  * Imports a local .xlsx copy of the spreadsheet through a native file dialog.
@@ -40,7 +40,7 @@ export function LocalXlsxImport() {
     await withLoading(setImporting, async () => {
       try {
         const profileId = crypto.randomUUID();
-        const outcome = await importLocalXlsx(file, profileId);
+        const outcome = await importLocalXlsxCmd(file, profileId);
         invalidateCommands(); // finance numbers changed — drop every cached screen
         setResult(outcome.summary);
         setDiagnostics(outcome.diagnostics);

@@ -1,7 +1,7 @@
 //! Lógica pura e constantes do write-back, fora do arquivo de componente para o Fast Refresh
 //! tratar `WriteBackPreview.tsx` como módulo só-de-componentes. Sem JSX, sem hooks — testável.
 
-import type { CellWrite } from "../../lib/api";
+import type { CellWrite } from "./sheetsView";
 
 /** Rótulos pt-BR por tipo de célula do diff (apresentação). */
 export const KIND_LABEL: Record<string, string> = {
