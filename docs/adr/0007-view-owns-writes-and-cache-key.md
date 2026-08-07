@@ -44,8 +44,9 @@ via para dentro (a única mudança é qual metade do funil deixava passar).
 - Migrar uma tela para este padrão completo (e não só mover os tipos para o `*View.ts`) é o critério
   para tirá-la da allowlist legada — `TagsScreen.tsx` e `TagsScreen.test.tsx` saem de
   `eslint.lib-api-allowlist.mjs` neste PR porque atingem o padrão completo, não o parcial.
-  `scenariosView.ts` continua cobrindo só a metade pura/leitura (`scenarios.tsx` segue na allowlist)
-  — é um estágio intermediário válido, não uma referência completa deste contrato.
+  `scenariosView.ts` cobria, à época desta decisão, só a metade pura/leitura (`scenarios.tsx` seguia
+  na allowlist) — estágio intermediário superado: hoje a view expõe também os wrappers de escrita e a
+  allowlist está zerada (ADR-0011), tornando-a uma referência completa deste contrato.
 - Um `*View.ts` migrado por este padrão expõe: tipos reexportados, `<nome>CacheKey(...)`,
   `<nome>Fetcher(...)`, e um wrapper por comando de escrita que o domínio da tela usa. A tela e seu
   teste só importam desses dois arquivos (`*View.ts` e a infra genérica de `useCommand`) — nunca de

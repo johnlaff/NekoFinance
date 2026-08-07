@@ -11,7 +11,7 @@ A tabela é exercitada dos dois lados, e é por isso que ela envelhece bem:
 - **Da fachada** (`src-tauri/src/mia/tests.rs`): toda ferramenta citada existe no catálogo, e toda
   ferramenta do catálogo aparece aqui. Ferramenta renomeada, removida ou órfã reprova a suíte.
 
-A coluna **Tela** usa a chave da navegação (o tipo `Screen` em `src/shell/AppShell.tsx`); a coluna
+A coluna **Tela** usa a chave da navegação (o tipo `Screen` em `src/shell/screens.ts`); a coluna
 **Ferramenta** usa o nome exato do catálogo (`src-tauri/src/mia/catalog.rs`).
 
 | Tela          | Superfície                  | O que ela publica                                                       | Ferramenta                   |
