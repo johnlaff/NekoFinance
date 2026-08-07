@@ -20,6 +20,7 @@ import { CopilotScreen } from "./screens/CopilotScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { OnboardingFlow } from "./features/onboarding/OnboardingFlow";
 import { ONBOARDING_KEY } from "./features/onboarding/onboardingView";
+import { UpdateInvitation } from "./features/updater/UpdateInvitation";
 import { fetchAppSetting, fetchAuthStatus, type AuthStatus } from "./shell/shellView";
 import { isTauri } from "./lib/env";
 import { useCommand } from "./lib/useCommand";
@@ -132,6 +133,7 @@ function App() {
             /* dados já invalidados dentro do Compose; o próximo render rebusca */
           }}
         />
+        <UpdateInvitation />
       </div>
     </NekoAppProvider>
   );

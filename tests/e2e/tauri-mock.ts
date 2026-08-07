@@ -898,6 +898,9 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
       // Onboarding já concluído nestes cenários — o overlay não cobre o app.
       get_app_setting: "true",
       set_app_setting: null,
+      // Sem update por padrão — o convite de launch (UpdateInvitation) só aparece quando
+      // um cenário sobrescreve este comando com metadata real (updater-invitation.spec.ts).
+      "plugin:updater|check": null,
       ...ov,
     };
 
