@@ -1,5 +1,5 @@
 import "./config.css";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import {
   Bell,
   CircleGauge,
@@ -10,6 +10,7 @@ import {
   MessagesSquare,
   Palette,
   Receipt,
+  RefreshCw,
   Table2,
   Shield,
 } from "lucide-react";
@@ -17,6 +18,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { PocketsCard } from "../features/pockets/PocketsCard";
 import { PocketsManager } from "../features/pockets/PocketsManager";
 import { ConflictGate } from "../features/reconcile/ConflictGate";
+import { UpdateSettingsBlock } from "../features/updater/UpdateSettingsBlock";
 import { GoogleSheetsPanel } from "../features/sheets/GoogleSheetsPanel";
 import { LocalXlsxImport } from "../features/sheets/LocalXlsxImport";
 import {
@@ -61,65 +63,7 @@ import {
   unregisterOsReminderCmd,
   type MiaConsentView,
 } from "./configView";
-
-// ---------------------------------------------------------------------------
-// Linha da gramática de card da direção: título + sub à esquerda, controle à
-// direita; tile de ícone só na primeira linha de cada seção.
-// ---------------------------------------------------------------------------
-
-function Line({
-  icon: Icon,
-  title,
-  sub,
-  subExtra,
-  right,
-}: {
-  icon?: React.ComponentType<{ size?: number; strokeWidth?: number }>;
-  title: ReactNode;
-  sub: ReactNode;
-  subExtra?: ReactNode;
-  right?: ReactNode;
-}) {
-  return (
-    <div className="config__line">
-      {Icon ? (
-        <span className="config__lineic">
-          <Icon size={17} strokeWidth={1.75} />
-        </span>
-      ) : null}
-      <div className="config__what">
-        <div className="config__what-t">{title}</div>
-        <div className="config__what-s">{sub}</div>
-        {subExtra}
-      </div>
-      {right != null ? <span className="config__right">{right}</span> : null}
-    </div>
-  );
-}
-
-function SecHead({
-  icon: Icon,
-  id,
-  title,
-  action,
-}: {
-  icon: React.ComponentType<{
-    size?: number;
-    strokeWidth?: number;
-    className?: string;
-  }>;
-  id: string;
-  title: string;
-  action?: ReactNode;
-}) {
-  return (
-    <header className="config__sechead">
-      <Icon size={16} strokeWidth={1.75} className="ic" />
-      <h2 id={id}>{title}</h2>
-      {action}
-    </header>
-  );
-}
+import { Line, SecHead } from "./configLine";
 
 // A promessa de privacidade é uma leitura do estado, não um texto fixo: com a conversa ligada, a
 // linha da Mia deixaria de ser verdadeira se continuasse afirmando que nada sai do aparelho.
@@ -886,6 +830,19 @@ function BackupLine() {
 }
 
 // ---------------------------------------------------------------------------
+// Atualizações — mesma máquina de estados do convite calmo (updaterView)
+// ---------------------------------------------------------------------------
+
+function UpdatesSection() {
+  return (
+    <section className="config__card" aria-labelledby="config-atualizacoes">
+      <SecHead icon={RefreshCw} id="config-atualizacoes" title="Atualizações" />
+      <UpdateSettingsBlock />
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main exported component
 // ---------------------------------------------------------------------------
 
@@ -1178,6 +1135,9 @@ export function SettingsScreen({
         <ReminderLines />
         <TetoLine />
       </section>
+
+      {/* ── Atualizações ───────────────────────────────────────── */}
+      {isTauri ? <UpdatesSection /> : null}
 
       {/* ── Rodapé quieto ──────────────────────────────────────── */}
       <p className="config__foot">

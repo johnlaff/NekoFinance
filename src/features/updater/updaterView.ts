@@ -68,6 +68,44 @@ export function downloadLabel(progress: DownloadProgress): string {
     : `${downloaded} de ${formatBytes(progress.totalBytes)}`;
 }
 
+export interface UpdateStatusCopy {
+  headline: string;
+  /** Complemento opcional (versão, progresso, mensagem de erro) — null quando o
+   *  headline já é a frase inteira (ocioso, checando). */
+  detail: string | null;
+}
+
+/** Leitura textual do estado para superfícies fora do convite (bloco de Configurações,
+ *  issue #383) — o usuário sabe onde está sem esperar o convite calmo aparecer. */
+export function updateStatusCopy(state: UpdaterState): UpdateStatusCopy {
+  switch (state.status) {
+    case "idle":
+      return { headline: "Nenhuma atualização pendente", detail: null };
+    case "checking":
+      return { headline: "Checando atualização…", detail: null };
+    case "available":
+      return {
+        headline: "Atualização disponível",
+        detail: `v${state.version} pronta para baixar.`,
+      };
+    case "downloading":
+      return {
+        headline: "Baixando atualização…",
+        detail: downloadLabel(state.progress),
+      };
+    case "ready":
+      return {
+        headline: "Pronto para reiniciar",
+        detail: `v${state.version} instalada — reinicie para aplicar.`,
+      };
+    case "error":
+      return {
+        headline: "Não foi possível instalar a atualização",
+        detail: state.message,
+      };
+  }
+}
+
 export interface UpdaterMachine {
   getState(): UpdaterState;
   subscribe(listener: () => void): () => void;
