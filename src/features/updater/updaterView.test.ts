@@ -4,6 +4,7 @@ import {
   downloadFraction,
   downloadLabel,
   formatBytes,
+  updateStatusCopy,
   type DownloadProgress,
   type UpdaterAdapter,
 } from "./updaterView";
@@ -283,5 +284,62 @@ describe("downloadLabel — a verdade completa nunca satura (regra 26)", () => {
       totalBytes: 4 * 1024 * 1024,
     };
     expect(downloadLabel(progress)).toBe("1,0 MB de 4,0 MB");
+  });
+});
+
+describe("updateStatusCopy — leitura textual de cada estado (bloco de Configurações)", () => {
+  it("ocioso", () => {
+    expect(updateStatusCopy({ status: "idle" })).toEqual({
+      headline: "Nenhuma atualização pendente",
+      detail: null,
+    });
+  });
+
+  it("checando", () => {
+    expect(updateStatusCopy({ status: "checking" })).toEqual({
+      headline: "Checando atualização…",
+      detail: null,
+    });
+  });
+
+  it("disponível traz a versão no detail", () => {
+    expect(
+      updateStatusCopy({
+        status: "available",
+        version: "1.2.0",
+        currentVersion: "1.1.0",
+        notes: null,
+      }),
+    ).toEqual({
+      headline: "Atualização disponível",
+      detail: "v1.2.0 pronta para baixar.",
+    });
+  });
+
+  it("baixando traz a legenda de progresso no detail", () => {
+    expect(
+      updateStatusCopy({
+        status: "downloading",
+        version: "1.2.0",
+        progress: { downloadedBytes: 512, totalBytes: 2048 },
+      }),
+    ).toEqual({
+      headline: "Baixando atualização…",
+      detail: "512 B de 2,0 KB",
+    });
+  });
+
+  it("pronto para reiniciar traz a versão no detail", () => {
+    expect(updateStatusCopy({ status: "ready", version: "1.2.0" })).toEqual({
+      headline: "Pronto para reiniciar",
+      detail: "v1.2.0 instalada — reinicie para aplicar.",
+    });
+  });
+
+  it("erro repassa a mensagem no detail", () => {
+    expect(updateStatusCopy({ status: "error", message: "Disco cheio." })).toEqual({
+      headline: "Não foi possível instalar a atualização",
+      detail: "Disco cheio.",
+    });
   });
 });

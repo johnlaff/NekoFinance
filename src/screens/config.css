@@ -180,6 +180,10 @@
 .config__path code {
   font-family: var(--font-mono);
 }
+.config__meter {
+  margin-top: var(--space-2);
+  max-width: 220px;
+}
 
 /* ── Pílula de fato ("Local", "Sempre") ──────────────────────── */
 

@@ -5,6 +5,7 @@ import { isTauri } from "../../lib/env";
 import {
   downloadFraction,
   downloadLabel,
+  updateStatusCopy,
   updaterMachine,
   type UpdaterMachine,
   type UpdaterState,
@@ -73,7 +74,7 @@ export function UpdateInvitation({
   if (state.status === "available") {
     return (
       <InviteCard
-        title="Atualização disponível"
+        title={updateStatusCopy(state).headline}
         body={`Uma nova versão do Neko Finance está pronta: v${state.version}.`}
         actions={
           <>
@@ -97,7 +98,7 @@ export function UpdateInvitation({
     const fraction = downloadFraction(state.progress);
     return (
       <InviteCard
-        title="Baixando atualização…"
+        title={updateStatusCopy(state).headline}
         body={downloadLabel(state.progress)}
         meter={
           fraction != null ? (
@@ -114,7 +115,7 @@ export function UpdateInvitation({
   if (state.status === "ready") {
     return (
       <InviteCard
-        title="Pronto para reiniciar"
+        title={updateStatusCopy(state).headline}
         body={`O Neko Finance vai fechar e abrir de novo na v${state.version}.`}
         actions={
           <>
@@ -138,7 +139,7 @@ export function UpdateInvitation({
     return (
       <InviteCard
         alert
-        title="Não foi possível instalar a atualização"
+        title={updateStatusCopy(state).headline}
         body={state.message}
         actions={
           <Button
