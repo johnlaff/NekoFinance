@@ -23,3 +23,7 @@ tests/e2e/*-snapshots/
 # Relatórios da bancada: JSON escrito pelo binário, versionado como evidência da execução.
 # Formatá-los seria reescrever a evidência — e o próximo relatório voltaria a divergir.
 evals/mia/reports/
+
+# CHANGELOG gerado pelo release-please: o train reescreve o arquivo no estilo
+# dele a cada Release PR — formatá-lo criaria conflito permanente com o gerador.
+CHANGELOG.md
