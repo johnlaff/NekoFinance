@@ -11,8 +11,9 @@ published as a convenience artifact with no update channel.
 
 **release-please drives the train.** It maintains a living Release PR that accumulates the
 changelog from Conventional Commit PR titles (`feat:`/`fix:`/`chore:` prefixes in English, body in
-any language); merging that PR creates the version tag and a **draft** release, which triggers the
-existing `release.yml` build matrix. A PR-title check (semantic-pull-request action, SHA-pinned)
+any language); merging that PR creates a **draft** release and dispatches the `release.yml` build
+matrix (a draft holds the tag name, but the git tag itself is only created when the draft is
+published — and `GITHUB_TOKEN`-created events never trigger tag workflows). A PR-title check (semantic-pull-request action, SHA-pinned)
 turns the commit discipline into a red/green gate — squash-merge means the PR title _is_ the
 commit release-please reads.
 

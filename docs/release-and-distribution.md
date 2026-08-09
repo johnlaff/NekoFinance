@@ -3,9 +3,9 @@
 ## Current Position
 
 Neko Finance is a personal MVP. Releases should be reliable, but not overbuilt. The repo has an
-automated release train (release-please) that turns merged PRs into a tag and a draft release, plus a
-tag-triggered build workflow that builds Linux and Windows bundles. Auto-update is planned but not
-enabled until signing keys exist.
+automated release train (release-please) that turns merged PRs into a draft release, plus a build
+workflow — dispatched by the train — that builds Linux and Windows bundles and attaches them to the
+draft. The tag is born when the maintainer publishes the draft.
 
 ## Release Train
 
@@ -17,17 +17,20 @@ enabled until signing keys exist.
   deciding the next SemVer bump (`fix:` → patch, `feat:` → minor, `!`/`BREAKING CHANGE:` → major).
   Config lives in `release-please-config.json` / `.release-please-manifest.json`; the version is
   kept in lockstep across `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`.
-- Merging the Release PR is the only manual gesture: release-please commits the version bump,
-  creates the `v*.*.*` tag and publishes a GitHub Release as a **draft** (not pre-release). That tag
-  push is what triggers the existing `Release` workflow (`.github/workflows/release.yml`), which
-  builds the Linux/Windows bundles and attaches them to the same draft.
+- Merging the Release PR is one of only two manual gestures: release-please commits the version
+  bump and creates a GitHub Release **draft** named `v*.*.*` (not pre-release). A draft holds the
+  tag name but the git tag itself only exists once the draft is published. Because events created
+  with `GITHUB_TOKEN` never trigger other workflows (GitHub's anti-recursion rule, with
+  `workflow_dispatch` as a documented exception), the `Release Please` workflow explicitly
+  dispatches the `Release` workflow (`.github/workflows/release.yml`) with the tag name and the
+  bump commit, and that run builds the Linux/Windows bundles and attaches them to the same draft.
 - **Release only ever comes from CI.** `windows-latest` in `release.yml` is the only path that
   produces a release artifact; the local `cargo-xwin` cross-compile (`scripts/build-windows.sh`) is
   a fast local test cycle and never publishes anything — see "Windows Builds" below.
-- A maintainer publishes the draft by hand after the build matrix is green (and can smoke-test the
-  installer first). Publishing is the moment `/releases/latest/download/latest.json` starts serving
-  the update, so releases are **not** marked pre-release — a published pre-release is invisible to
-  `/releases/latest` and would fail silently.
+- The second manual gesture: a maintainer publishes the draft by hand after the build matrix is
+  green (and can smoke-test the installer first). Publishing creates the git tag and is the moment
+  `/releases/latest/download/latest.json` starts serving the update, so releases are **not** marked
+  pre-release — a published pre-release is invisible to `/releases/latest` and would fail silently.
 - Use patch releases for fixes, minor releases for new user-visible slices, major releases only
   after public API/data compatibility matters — release-please derives this from PR title prefixes,
   it is never decided by hand.
@@ -36,7 +39,7 @@ enabled until signing keys exist.
 
 - Public repo: standard GitHub-hosted runners are free.
 - Private repo: GitHub Free includes a monthly quota; Windows runners cost more minutes than Linux, and macOS costs much more.
-- Keep full release builds manual or tag-triggered, not on every push.
+- Keep full release builds manual or train-dispatched, not on every push.
 
 ## Windows Builds
 
