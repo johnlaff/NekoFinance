@@ -1,10 +1,20 @@
 name: Release
 
+# Disparo só por workflow_dispatch: o Release Please despacha este workflow ao
+# criar o draft (a tag ainda não existe nesse momento — ela nasce quando o
+# mantenedor publica o draft). Um gatilho por push de tag reconstruiria a
+# release já publicada logo após o publish, mutando artefatos públicos.
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*.*.*"
+    inputs:
+      tag:
+        description: "Tag da release (ex.: v0.3.0) — o draft com esse nome recebe os artefatos"
+        required: true
+        type: string
+      sha:
+        description: "Commit do bump de versão a ser buildado"
+        required: true
+        type: string
 
 # Least privilege at the top level; the write scopes are granted per-job below
 # so the elevated token is never the default for the whole workflow.
@@ -12,7 +22,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
@@ -36,6 +46,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # O sha vem do output do Release Please (commit do bump), nunca de
+          # input de terceiro — o dispatch é restrito a quem tem write no repo.
+          ref: ${{ inputs.sha }}
           persist-credentials: false
 
       # No `cache:` input on purpose — caches are disabled in this publishing
@@ -66,7 +79,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'neko-finance-v__VERSION__' }}
+          tagName: ${{ inputs.tag }}
           releaseName: "Neko Finance v__VERSION__"
           releaseDraft: true
           generateReleaseNotes: true
@@ -105,11 +118,11 @@ jobs:
           path: src-tauri/target/release/neko-finance.exe
 
       - name: Attach portable exe to the release
-        if: matrix.platform == 'windows-latest' && startsWith(github.ref, 'refs/tags/')
+        if: matrix.platform == 'windows-latest'
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.tag }}
         run: |
           Copy-Item "src-tauri/target/release/neko-finance.exe" "neko-finance-$env:TAG-windows-x64-portable.exe"
           gh release upload "$env:TAG" "neko-finance-$env:TAG-windows-x64-portable.exe" --clobber

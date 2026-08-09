@@ -14,14 +14,29 @@ concurrency:
 
 jobs:
   release-please:
-    # contents: write — commit CHANGELOG.md/version bumps and create the tag + draft release
+    # contents: write — commit CHANGELOG.md/version bumps and create the draft release
     # pull-requests: write — open and update the living Release PR
+    # actions: write — dispatch the Release build workflow when a draft is born
     permissions:
       contents: write
       pull-requests: write
+      actions: write
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      # A tag só nasce quando o mantenedor publica o draft, e eventos criados com
+      # GITHUB_TOKEN não disparam outros workflows — por isso o build de release
+      # entra por workflow_dispatch explícito (exceção documentada à regra
+      # anti-recursão do GitHub), apontando para o commit exato do bump.
+      - name: Dispatch release build
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+          SHA: ${{ steps.release.outputs.sha }}
+        run: gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag="$TAG" -f sha="$SHA"

@@ -12,8 +12,8 @@ semanas.
 
 Um trem de release que anda sozinho até o último vagão: cada PR mergeado no main entra
 automaticamente numa Release PR viva (release-please) que acumula changelog e decide a
-versão semântica; mergear essa PR cria a tag e uma release **draft**, o CI builda e assina
-os artefatos do updater, e um único clique humano de publish serve o update. O app
+versão semântica; mergear essa PR cria uma release **draft** e despacha o build que assina
+os artefatos do updater, e um único clique humano de publish cria a tag e serve o update. O app
 instalado (NSIS) checa em silêncio no launch e oferece a atualização com um convite calmo —
 baixa, instala e reabre só quando o usuário aceita. ADR-0012 registra as decisões.
 
@@ -21,7 +21,7 @@ baixa, instala e reabre só quando o usuário aceita. ADR-0012 registra as decis
 
 1. Como mantenedor, quero que a versão semântica seja derivada dos títulos dos PRs, para nunca decidir bump de cabeça.
 2. Como mantenedor, quero um changelog acumulado automaticamente a cada merge, para que ele nunca dessincronize da tag.
-3. Como mantenedor, quero que mergear a Release PR seja o único gesto para tag + build, para que nenhum passo manual seja esquecível.
+3. Como mantenedor, quero que mergear a Release PR seja o único gesto para draft + build, para que nenhum passo manual seja esquecível.
 4. Como mantenedor, quero que a release nasça como draft, para que nenhum update chegue ao app antes do CI verde.
 5. Como mantenedor, quero publicar a release com um clique após conferir o build, para manter o gate humano sobre o que vira "latest".
 6. Como mantenedor, quero um check de CI que reprove título de PR fora do Conventional Commits, para que a disciplina seja invariante verificável e não memória.
@@ -46,8 +46,10 @@ Decisões vindas do ADR-0012 e da grelha; o dossiê citado vive em
 `docs/research/release-train-e-updater-tauri.md`.
 
 - **Trilho 1 — o train.** Workflow do release-please (action pinada por SHA) mantém a
-  Release PR; ao mergear, cria tag `v*.*.*` e release **draft** (sem `prerelease`). O
-  workflow de release existente segue disparando por tag e anexa artefatos ao draft.
+  Release PR; ao mergear, cria release **draft** nomeada `v*.*.*` (sem `prerelease`) e
+  despacha o workflow de release por `workflow_dispatch` — draft não cria tag (ela nasce
+  no publish), e evento criado com `GITHUB_TOKEN` não dispara workflow de tag. O workflow
+  de release anexa os artefatos ao draft.
   Check de título de PR (semantic-pull-request, pinada por SHA) vira required check.
   O prompt do runner headless de issues passa a exigir o prefixo no título do PR.
 - **Trilho 2 — o updater** (depende do trilho 1 produzir artefato assinado). Par de chaves
