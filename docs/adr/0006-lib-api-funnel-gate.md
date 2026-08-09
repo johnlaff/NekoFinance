@@ -17,6 +17,9 @@ domain-shaped types come from the view, not from the wire format underneath it.
 
 - A screen's `*View.ts` and its `*View.test.ts` — the view is the funnel's gate. It is the one place
   allowed to translate the shim's DTOs into the domain shapes the screen renders.
+- A feature's domain `*View.ts` and its tests (`src/features/<feature>/<feature>View.ts` — sheets,
+  pockets, reconcile, onboarding, updater) — the same gate role as a screen's view, for domains that
+  live under `src/features/` instead of `src/screens/`.
 - The Mia runtime on the real path — `miaRuntime.ts`, `miaSession.ts`, and their tests — which drive
   the live conversation loop directly against the shim.
 - `src/hooks/**` — cross-screen hooks sit at the same funnel depth as a view.

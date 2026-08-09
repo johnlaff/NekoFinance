@@ -624,6 +624,20 @@ export function getAppInfo(): Promise<AppInfo> {
   return invoke("get_app_info");
 }
 
+/** Veredito de espaço em disco para a atualização pendente do updater. `ok: false` quando o
+ * livre não cobre o necessário — o NSIS trunca o instalador no meio do Extract com disco
+ * cheio, e o exe truncado é pior que nunca ter baixado. */
+export interface UpdateSpaceVerdict {
+  ok: boolean;
+  required_bytes: number;
+  free_bytes: number;
+  missing_bytes: number;
+}
+
+export function checkUpdateSpace(): Promise<UpdateSpaceVerdict> {
+  return invoke("check_update_space");
+}
+
 /** Backup atômico (VACUUM INTO) do banco local em `destPath` (escolhido no save dialog). Retorna
  * o caminho gravado. Local-first: o dono do dado leva uma cópia íntegra para onde quiser. */
 export function backupDatabase(destPath: string): Promise<string> {

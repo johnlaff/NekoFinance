@@ -24,6 +24,7 @@ pub(crate) mod reminder_cmds;
 pub(crate) mod scenario_cmds;
 pub(crate) mod sheets_import;
 pub(crate) mod transactions;
+pub(crate) mod update_cmds;
 pub(crate) mod write_back_cmds;
 
 pub use budget_cmds::*;
@@ -36,6 +37,7 @@ pub use reminder_cmds::*;
 pub use scenario_cmds::*;
 pub use sheets_import::*;
 pub use transactions::*;
+pub use update_cmds::*;
 pub use write_back_cmds::*;
 
 /// Aba entre aspas simples para um range A1 do Sheets, com as aspas internas escapadas (`'` → `''`).

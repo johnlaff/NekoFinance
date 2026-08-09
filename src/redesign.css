@@ -1165,6 +1165,16 @@
   gap: 8px;
   margin-top: 4px;
 }
+/* Trigger da didática atrás de pergunta (InfoPopover) — mesma gramática visual do
+   .config__how de Configurações, aqui em linha com o corpo do convite. */
+.upd-invite__how {
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: help;
+  white-space: nowrap;
+}
 @keyframes upd-invite-in {
   from {
     opacity: 0;

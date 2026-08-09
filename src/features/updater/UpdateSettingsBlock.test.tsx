@@ -7,6 +7,12 @@ import { createUpdaterMachine, type UpdaterAdapter } from "./updaterView";
 function fakeAdapter(overrides: Partial<UpdaterAdapter> = {}): UpdaterAdapter {
   return {
     check: vi.fn().mockResolvedValue(null),
+    checkSpace: vi.fn().mockResolvedValue({
+      ok: true,
+      required_bytes: 0,
+      free_bytes: 0,
+      missing_bytes: 0,
+    }),
     relaunch: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
@@ -37,7 +43,9 @@ describe("UpdateSettingsBlock — estados", () => {
       version: "1.2.0",
       currentVersion: "1.1.0",
       notes: null,
-      downloadAndInstall: vi.fn(),
+      download: vi.fn(),
+      install: vi.fn(),
+      close: vi.fn(),
     });
     const machine = createUpdaterMachine(fakeAdapter({ check }));
     render(<UpdateSettingsBlock machine={machine} />);
@@ -63,14 +71,16 @@ describe("UpdateSettingsBlock — estados", () => {
 
   it("disponível: a ação vira baixar e instalar, mesma frase do convite calmo", async () => {
     const user = userEvent.setup();
-    const downloadAndInstall = vi.fn().mockResolvedValue(undefined);
+    const download = vi.fn().mockResolvedValue(undefined);
     const machine = createUpdaterMachine(
       fakeAdapter({
         check: vi.fn().mockResolvedValue({
           version: "1.2.0",
           currentVersion: "1.1.0",
           notes: null,
-          downloadAndInstall,
+          download,
+          install: vi.fn().mockResolvedValue(undefined),
+          close: vi.fn(),
         }),
       }),
     );
@@ -81,7 +91,7 @@ describe("UpdateSettingsBlock — estados", () => {
     expect(action).toBeEnabled();
     await user.click(action);
 
-    expect(downloadAndInstall).toHaveBeenCalledTimes(1);
+    expect(download).toHaveBeenCalledTimes(1);
   });
 
   it("baixando: mostra o progresso e desabilita a ação enquanto ocorre", async () => {
@@ -90,7 +100,7 @@ describe("UpdateSettingsBlock — estados", () => {
       downloadedBytes: number;
       totalBytes: number | null;
     }) => void;
-    const downloadAndInstall = vi.fn(
+    const downloadFn = vi.fn(
       (
         onProgress: (p: { downloadedBytes: number; totalBytes: number | null }) => void,
       ) => {
@@ -104,7 +114,9 @@ describe("UpdateSettingsBlock — estados", () => {
           version: "1.2.0",
           currentVersion: "1.1.0",
           notes: null,
-          downloadAndInstall,
+          download: downloadFn,
+          install: vi.fn().mockResolvedValue(undefined),
+          close: vi.fn(),
         }),
       }),
     );
@@ -129,7 +141,9 @@ describe("UpdateSettingsBlock — estados", () => {
           version: "1.2.0",
           currentVersion: "1.1.0",
           notes: null,
-          downloadAndInstall: vi.fn().mockReturnValue(download.promise),
+          download: vi.fn().mockReturnValue(download.promise),
+          install: vi.fn().mockResolvedValue(undefined),
+          close: vi.fn(),
         }),
         relaunch,
       }),
@@ -148,6 +162,38 @@ describe("UpdateSettingsBlock — estados", () => {
     expect(relaunch).toHaveBeenCalledTimes(1);
   });
 
+  it("sem espaço em disco: copy exata na linha, didática e ação de re-checagem", async () => {
+    const user = userEvent.setup();
+    const MIB = 1024 * 1024;
+    const check = vi.fn().mockResolvedValue({
+      version: "1.2.0",
+      currentVersion: "1.1.0",
+      notes: null,
+      download: vi.fn(),
+      install: vi.fn(),
+      close: vi.fn().mockResolvedValue(undefined),
+    });
+    const checkSpace = vi.fn().mockResolvedValue({
+      ok: false,
+      required_bytes: 112 * MIB,
+      free_bytes: 3 * MIB,
+      missing_bytes: 109 * MIB,
+    });
+    const machine = createUpdaterMachine(fakeAdapter({ check, checkSpace }));
+    await machine.checkForUpdate();
+    render(<UpdateSettingsBlock machine={machine} />);
+
+    expect(
+      screen.getByText(
+        "Sem espaço em disco para atualizar · Libere ~110,0 MB para instalar a v1.2.0.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Como funciona?")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Tentar de novo" }));
+    expect(check).toHaveBeenCalledTimes(2);
+  });
+
   it("erro de instalação: mostra a mensagem de falha e permite verificar de novo", async () => {
     const download = pendingDownload();
     const machine = createUpdaterMachine(
@@ -156,7 +202,9 @@ describe("UpdateSettingsBlock — estados", () => {
           version: "1.2.0",
           currentVersion: "1.1.0",
           notes: null,
-          downloadAndInstall: vi.fn().mockReturnValue(download.promise),
+          download: vi.fn().mockReturnValue(download.promise),
+          install: vi.fn(),
+          close: vi.fn(),
         }),
       }),
     );

@@ -27,6 +27,7 @@ mod splits;
 mod sync_task;
 mod tags;
 mod tags_screen;
+mod update_space;
 
 use oauth::AppDataDir;
 use std::sync::{Arc, Mutex};
@@ -154,6 +155,7 @@ pub fn run() {
             commands::attach_card_proposal,
             commands::set_invoice_dates,
             commands::dismiss_card_proposal,
+            commands::check_update_space,
         ])
         .setup(|app| {
             use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
