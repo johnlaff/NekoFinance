@@ -4,6 +4,14 @@ All notable changes to Neko Finance are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), entries are written
 for humans, and versions follow [SemVer](https://semver.org/).
 
+## [0.2.1](https://github.com/johnlaff/NekoFinance/compare/v0.2.0...v0.2.1) (2026-08-09)
+
+
+### Bug Fixes
+
+* ancora o release train no commit da release 0.2.0 (bootstrap-sha) ([#396](https://github.com/johnlaff/NekoFinance/issues/396)) ([d9dc92e](https://github.com/johnlaff/NekoFinance/commit/d9dc92e1e9a8c57d853c6e4510c6e8464941416e))
+* draft sem tag e dispatch explícito do build no release train ([#394](https://github.com/johnlaff/NekoFinance/issues/394)) ([3ac44a2](https://github.com/johnlaff/NekoFinance/commit/3ac44a2f73af865d3ca5e9e349f5264b299d94f4))
+
 ## [0.2.0](https://github.com/johnlaff/NekoFinance/compare/neko-finance-v0.1.0...neko-finance-v0.2.0) (2026-08-09)
 
 
