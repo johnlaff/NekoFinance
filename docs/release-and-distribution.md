@@ -65,11 +65,11 @@ state machine, capability wiring) is decided in [ADR-0012](adr/0012-release-trai
 this section tracks the signing pipeline and the key custody/rotation procedure.
 
 `release.yml` builds with `uploadUpdaterJson: true` and `updaterJsonPreferNsis: true`, and
-`src-tauri/tauri.conf.json` sets `bundle.createUpdaterArtifacts: true`. The build only produces a
-signed NSIS bundle and a populated `latest.json` once the signing key exists as GitHub Actions
-secrets — see the checklist below. Until a maintainer completes it, `TAURI_SIGNING_PRIVATE_KEY` is
-empty at build time, `tauri-action` skips signing, and `plugins.updater.pubkey` in
-`tauri.conf.json` stays the empty-string placeholder it ships with.
+`src-tauri/tauri.conf.json` sets `bundle.createUpdaterArtifacts: true`. The signing key lives as
+GitHub Actions secrets (`TAURI_SIGNING_PRIVATE_KEY` + `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) and the
+matching public key in `plugins.updater.pubkey` — every release build attaches a signed NSIS bundle
+and a `latest.json` whose `signature` fields are populated. The custody checklist below is the
+procedure that provisions (or re-provisions) that key.
 
 ### Signing key custody checklist (maintainer, one-time)
 
@@ -116,3 +116,20 @@ for one version:
 Losing the private key with no rotation in progress permanently strands every installed app: there
 is no server-side revocation, so the only recovery is asking users to reinstall from a fresh
 download.
+
+### Update failure recovery (Windows)
+
+If the NSIS installer aborts mid-update (`Extract: error writing to file neko-finance.exe`), the
+installed binary is left truncated and Windows refuses to launch it ("Este aplicativo não pode ser
+executado em seu PC"). The most likely cause is insufficient disk space: the passive-mode installer
+never shows its space check to the user, and an aborted extract has no rollback.
+
+Recovery is a plain reinstall — user data is never at risk:
+
+1. Download the `*-setup.exe` from any published release and run it. It installs over the broken
+   copy in `%LOCALAPPDATA%\Neko Finance`.
+2. The database and settings live in `%APPDATA%\app.neko.finance`, which the installer does not
+   touch — the app reopens exactly where it left off.
+3. If the installer's Next button is greyed out, check the `Space required` / `Space available`
+   lines on its location page: the update needs the download (~12 MB) plus the installed
+   footprint (~45 MB) free on `C:`.
