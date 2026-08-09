@@ -3,6 +3,7 @@
   "release-type": "node",
   "include-component-in-tag": false,
   "draft": true,
+  "bootstrap-sha": "fe84e8960b5109d0a9337adef175c17e1b70b402",
   "packages": {
     ".": {
       "changelog-path": "CHANGELOG.md",
