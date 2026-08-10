@@ -63,3 +63,6 @@ hex = "0.4"
 # launches the binary with `--remind` when the app is closed, with no Tauri
 # AppHandle available. Cross-platform (Linux dbus / macOS / Windows WinRT toast).
 notify-rust = "=4.18.0"
+# Só a feature "sync" (default) — a chamada de espaço em disco da pré-checagem de update é
+# síncrona, sem precisar do runtime tokio da feature "tokio".
+fs4 = "=1.1.0"

@@ -1,8 +1,10 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Button } from "../../design-system/components/Button";
+import { InfoPopover } from "../../design-system/components/InfoPopover";
 import { Meter } from "../../design-system/components/Meter";
 import { isTauri } from "../../lib/env";
 import {
+  blockedSpaceExplainer,
   downloadFraction,
   downloadLabel,
   updateStatusCopy,
@@ -17,20 +19,22 @@ function offerKey(state: UpdaterState): string {
   return "version" in state ? `${state.status}:${state.version}` : state.status;
 }
 
-// Card compartilhado pelos quatro estados com algo a dizer — título + (barra opcional) +
-// corpo + (ações opcionais), sempre a mesma casca (regra 15 do ui-standards: componente em
-// vez de reimplementação dispersa). O papel ARIA muda: erro interrompe (alert), o resto é
-// polido (status).
+// Card compartilhado pelos estados com algo a dizer — título + (barra opcional) + corpo +
+// (didática opcional atrás de pergunta) + (ações opcionais), sempre a mesma casca (regra 15
+// do ui-standards: componente em vez de reimplementação dispersa). O papel ARIA muda: erro e
+// bloqueio interrompem (alert), o resto é polido (status).
 function InviteCard({
   alert = false,
   title,
   body,
+  explainer,
   meter,
   actions,
 }: {
   alert?: boolean;
   title: string;
   body: string;
+  explainer?: ReactNode;
   meter?: ReactNode;
   actions?: ReactNode;
 }) {
@@ -42,7 +46,10 @@ function InviteCard({
     >
       <p className="upd-invite__title">{title}</p>
       {meter}
-      <p className="upd-invite__body">{body}</p>
+      <p className="upd-invite__body">
+        {body}
+        {explainer ? <> {explainer}</> : null}
+      </p>
       {actions ? <div className="upd-invite__actions">{actions}</div> : null}
     </aside>
   );
@@ -80,6 +87,36 @@ export function UpdateInvitation({
           <>
             <Button size="sm" onClick={() => void machine.downloadAndInstall()}>
               Baixar e instalar
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setDismissedOffer(offerKey(state))}
+            >
+              Agora não
+            </Button>
+          </>
+        }
+      />
+    );
+  }
+
+  if (state.status === "blocked-space") {
+    const copy = updateStatusCopy(state);
+    return (
+      <InviteCard
+        alert
+        title={copy.headline}
+        body={copy.detail ?? ""}
+        explainer={
+          <InfoPopover term={blockedSpaceExplainer} hideMarker>
+            <span className="upd-invite__how">Como funciona?</span>
+          </InfoPopover>
+        }
+        actions={
+          <>
+            <Button size="sm" onClick={() => void machine.checkForUpdate()}>
+              Tentar de novo
             </Button>
             <Button
               size="sm"

@@ -12,6 +12,12 @@ import { createUpdaterMachine, type UpdaterAdapter } from "./updaterView";
 function fakeAdapter(overrides: Partial<UpdaterAdapter> = {}): UpdaterAdapter {
   return {
     check: vi.fn().mockResolvedValue(null),
+    checkSpace: vi.fn().mockResolvedValue({
+      ok: true,
+      required_bytes: 0,
+      free_bytes: 0,
+      missing_bytes: 0,
+    }),
     relaunch: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };

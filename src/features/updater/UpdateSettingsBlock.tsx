@@ -1,8 +1,10 @@
 import { useSyncExternalStore } from "react";
 import { Button } from "../../design-system/components/Button";
+import { InfoPopover } from "../../design-system/components/InfoPopover";
 import { Meter } from "../../design-system/components/Meter";
 import { Line } from "../../screens/configLine";
 import {
+  blockedSpaceExplainer,
   downloadFraction,
   updateStatusCopy,
   updaterMachine,
@@ -25,6 +27,10 @@ function rowAction(machine: UpdaterMachine, status: UpdaterState["status"]) {
       };
     case "ready":
       return { label: "Reiniciar agora", onClick: () => machine.relaunch() };
+    // Bloqueado por espaço: a única ação útil é re-checar depois de liberar disco —
+    // a mesma checagem completa do launch, que revalida update E espaço.
+    case "blocked-space":
+      return { label: "Tentar de novo", onClick: () => machine.checkForUpdate() };
     case "idle":
     case "error":
       return { label: "Verificar agora", onClick: () => machine.checkForUpdate() };
@@ -61,6 +67,10 @@ export function UpdateSettingsBlock({
             fraction={fraction}
             label={`${Math.round(fraction * 100)}% baixado`}
           />
+        ) : state.status === "blocked-space" ? (
+          <InfoPopover term={blockedSpaceExplainer} hideMarker>
+            <span className="config__how">Como funciona?</span>
+          </InfoPopover>
         ) : null
       }
       right={

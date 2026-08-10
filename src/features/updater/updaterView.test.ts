@@ -4,6 +4,7 @@ import {
   downloadFraction,
   downloadLabel,
   formatBytes,
+  missingSpaceLabel,
   updateStatusCopy,
   type DownloadProgress,
   type UpdaterAdapter,
@@ -13,6 +14,12 @@ import {
 function fakeAdapter(overrides: Partial<UpdaterAdapter> = {}): UpdaterAdapter {
   return {
     check: vi.fn().mockResolvedValue(null),
+    checkSpace: vi.fn().mockResolvedValue({
+      ok: true,
+      required_bytes: 0,
+      free_bytes: 0,
+      missing_bytes: 0,
+    }),
     relaunch: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
@@ -41,7 +48,9 @@ describe("updaterView — máquina de estados do auto-update", () => {
         version: "1.2.0",
         currentVersion: "1.1.0",
         notes: "Correções de sincronização.",
-        downloadAndInstall: vi.fn(),
+        download: vi.fn(),
+        install: vi.fn(),
+        close: vi.fn(),
       }),
     });
     const machine = createUpdaterMachine(adapter);
@@ -74,7 +83,9 @@ describe("updaterView — máquina de estados do auto-update", () => {
         version: "1.1.0",
         currentVersion: "1.1.0",
         notes: null,
-        downloadAndInstall: vi.fn(),
+        download: vi.fn(),
+        install: vi.fn(),
+        close: vi.fn(),
       }),
     });
     const machine = createUpdaterMachine(adapter);
@@ -110,19 +121,78 @@ describe("updaterView — máquina de estados do auto-update", () => {
     expect(adapter.check).toHaveBeenCalledTimes(1);
   });
 
-  it("progresso de download: disponível → baixando (com progresso) → pronto para reiniciar", async () => {
-    const download = pendingDownload();
-    let emitProgress!: (progress: DownloadProgress) => void;
-    const downloadAndInstall = vi.fn((onProgress: (p: DownloadProgress) => void) => {
-      emitProgress = onProgress;
-      return download.promise;
+  it("update disponível mas sem espaço: vira blocked-space e nunca chega a baixar", async () => {
+    const download = vi.fn();
+    const close = vi.fn().mockResolvedValue(undefined);
+    const checkSpace = vi.fn().mockResolvedValue({
+      ok: false,
+      required_bytes: 500 * 1024 * 1024,
+      free_bytes: 100 * 1024 * 1024,
+      missing_bytes: 400 * 1024 * 1024,
     });
     const adapter = fakeAdapter({
       check: vi.fn().mockResolvedValue({
         version: "1.2.0",
         currentVersion: "1.1.0",
         notes: null,
-        downloadAndInstall,
+        download,
+        install: vi.fn(),
+        close,
+      }),
+      checkSpace,
+    });
+    const machine = createUpdaterMachine(adapter);
+    await machine.checkForUpdate();
+
+    expect(machine.getState()).toEqual({
+      status: "blocked-space",
+      version: "1.2.0",
+      missingBytes: 400 * 1024 * 1024,
+      requiredBytes: 500 * 1024 * 1024,
+    });
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(download).not.toHaveBeenCalled();
+  });
+
+  it("checkSpace falha na medição ao confirmar o update: degrada para o convite normal", async () => {
+    const adapter = fakeAdapter({
+      check: vi.fn().mockResolvedValue({
+        version: "1.2.0",
+        currentVersion: "1.1.0",
+        notes: null,
+        download: vi.fn(),
+        install: vi.fn(),
+        close: vi.fn(),
+      }),
+      checkSpace: vi.fn().mockRejectedValue(new Error("comando indisponível")),
+    });
+    const machine = createUpdaterMachine(adapter);
+    await machine.checkForUpdate();
+
+    expect(machine.getState()).toEqual({
+      status: "available",
+      version: "1.2.0",
+      currentVersion: "1.1.0",
+      notes: null,
+    });
+  });
+
+  it("progresso de download: disponível → baixando (com progresso) → pronto para reiniciar", async () => {
+    const download = pendingDownload();
+    let emitProgress!: (progress: DownloadProgress) => void;
+    const downloadFn = vi.fn((onProgress: (p: DownloadProgress) => void) => {
+      emitProgress = onProgress;
+      return download.promise;
+    });
+    const install = vi.fn().mockResolvedValue(undefined);
+    const adapter = fakeAdapter({
+      check: vi.fn().mockResolvedValue({
+        version: "1.2.0",
+        currentVersion: "1.1.0",
+        notes: null,
+        download: downloadFn,
+        install,
+        close: vi.fn(),
       }),
     });
     const machine = createUpdaterMachine(adapter);
@@ -145,17 +215,94 @@ describe("updaterView — máquina de estados do auto-update", () => {
     download.resolve();
     await installing;
     expect(machine.getState()).toEqual({ status: "ready", version: "1.2.0" });
+    expect(install).toHaveBeenCalledTimes(1);
   });
 
-  it("erro de instalação: baixando → erro", async () => {
-    const download = pendingDownload();
-    const downloadAndInstall = vi.fn().mockReturnValue(download.promise);
+  it("espaço falta só depois do download: a re-checagem barra o install e descarta o handle", async () => {
+    const download = vi.fn().mockResolvedValue(undefined);
+    const install = vi.fn();
+    const close = vi.fn().mockResolvedValue(undefined);
+    const checkSpace = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        required_bytes: 0,
+        free_bytes: 0,
+        missing_bytes: 0,
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        required_bytes: 500 * 1024 * 1024,
+        free_bytes: 50 * 1024 * 1024,
+        missing_bytes: 450 * 1024 * 1024,
+      });
     const adapter = fakeAdapter({
       check: vi.fn().mockResolvedValue({
         version: "1.2.0",
         currentVersion: "1.1.0",
         notes: null,
-        downloadAndInstall,
+        download,
+        install,
+        close,
+      }),
+      checkSpace,
+    });
+    const machine = createUpdaterMachine(adapter);
+    await machine.checkForUpdate();
+    await machine.downloadAndInstall();
+
+    expect(machine.getState()).toEqual({
+      status: "blocked-space",
+      version: "1.2.0",
+      missingBytes: 450 * 1024 * 1024,
+      requiredBytes: 500 * 1024 * 1024,
+    });
+    expect(install).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-checagem falha na medição: prossegue para o install (degradação, nunca trava o fim do download)", async () => {
+    const install = vi.fn().mockResolvedValue(undefined);
+    const checkSpace = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        required_bytes: 0,
+        free_bytes: 0,
+        missing_bytes: 0,
+      })
+      .mockRejectedValueOnce(new Error("comando indisponível"));
+    const adapter = fakeAdapter({
+      check: vi.fn().mockResolvedValue({
+        version: "1.2.0",
+        currentVersion: "1.1.0",
+        notes: null,
+        download: vi.fn().mockResolvedValue(undefined),
+        install,
+        close: vi.fn(),
+      }),
+      checkSpace,
+    });
+    const machine = createUpdaterMachine(adapter);
+    await machine.checkForUpdate();
+    await machine.downloadAndInstall();
+
+    expect(machine.getState()).toEqual({ status: "ready", version: "1.2.0" });
+    expect(install).toHaveBeenCalledTimes(1);
+  });
+
+  it("erro de download: baixando → erro, com o handle descartado", async () => {
+    const download = pendingDownload();
+    const downloadFn = vi.fn().mockReturnValue(download.promise);
+    const close = vi.fn().mockResolvedValue(undefined);
+    const adapter = fakeAdapter({
+      check: vi.fn().mockResolvedValue({
+        version: "1.2.0",
+        currentVersion: "1.1.0",
+        notes: null,
+        download: downloadFn,
+        install: vi.fn(),
+        close,
       }),
     });
     const machine = createUpdaterMachine(adapter);
@@ -167,8 +314,9 @@ describe("updaterView — máquina de estados do auto-update", () => {
 
     expect(machine.getState()).toEqual({
       status: "error",
-      message: "Não foi possível instalar a atualização.",
+      message: "Não foi possível baixar a atualização.",
     });
+    expect(close).toHaveBeenCalledTimes(1);
   });
 
   it("downloadAndInstall é no-op fora do estado disponível", async () => {
@@ -192,7 +340,9 @@ describe("updaterView — máquina de estados do auto-update", () => {
         version: "1.2.0",
         currentVersion: "1.1.0",
         notes: null,
-        downloadAndInstall: vi.fn().mockReturnValue(download.promise),
+        download: vi.fn().mockReturnValue(download.promise),
+        install: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn(),
       }),
     });
     const machine = createUpdaterMachine(adapter);
@@ -214,7 +364,9 @@ describe("updaterView — máquina de estados do auto-update", () => {
           version: "1.2.0",
           currentVersion: "1.1.0",
           notes: null,
-          downloadAndInstall: vi.fn().mockReturnValue(download.promise),
+          download: vi.fn().mockReturnValue(download.promise),
+          install: vi.fn(),
+          close: vi.fn(),
         })
         .mockResolvedValueOnce(null),
     });
@@ -255,6 +407,24 @@ describe("formatBytes — legenda compacta em pt-BR", () => {
 
   it("GB — teto de unidade, não passa disso", () => {
     expect(formatBytes(2.25 * 1024 * 1024 * 1024)).toBe("2,3 GB");
+  });
+});
+
+describe("missingSpaceLabel — arredonda para cima em múltiplos de 10 MiB", () => {
+  it("1 byte já sobe para o próximo múltiplo (10 MB)", () => {
+    expect(missingSpaceLabel(1)).toBe("10,0 MB");
+  });
+
+  it("exatamente 10 MiB fica em 10 MB — não sobe sem faltar nada", () => {
+    expect(missingSpaceLabel(10 * 1024 * 1024)).toBe("10,0 MB");
+  });
+
+  it("10 MiB + 1 byte sobe para o múltiplo seguinte (20 MB)", () => {
+    expect(missingSpaceLabel(10 * 1024 * 1024 + 1)).toBe("20,0 MB");
+  });
+
+  it("104 MiB sobe para 110 MB", () => {
+    expect(missingSpaceLabel(104 * 1024 * 1024)).toBe("110,0 MB");
   });
 });
 
@@ -333,6 +503,20 @@ describe("updateStatusCopy — leitura textual de cada estado (bloco de Configur
     expect(updateStatusCopy({ status: "ready", version: "1.2.0" })).toEqual({
       headline: "Pronto para reiniciar",
       detail: "v1.2.0 instalada — reinicie para aplicar.",
+    });
+  });
+
+  it("bloqueado por espaço traz quanto liberar e a versão parada", () => {
+    expect(
+      updateStatusCopy({
+        status: "blocked-space",
+        version: "1.2.0",
+        missingBytes: 400 * 1024 * 1024,
+        requiredBytes: 500 * 1024 * 1024,
+      }),
+    ).toEqual({
+      headline: "Sem espaço em disco para atualizar",
+      detail: "Libere ~400,0 MB para instalar a v1.2.0.",
     });
   });
 

@@ -901,6 +901,14 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
       // Sem update por padrão — o convite de launch (UpdateInvitation) só aparece quando
       // um cenário sobrescreve este comando com metadata real (updater-invitation.spec.ts).
       "plugin:updater|check": null,
+      // Espaço em disco sobrando por padrão — o bloqueio por espaço é cenário explícito
+      // (updater-invitation.spec.ts sobrescreve com um veredito reprovado).
+      check_update_space: {
+        ok: true,
+        required_bytes: 112197632,
+        free_bytes: 52428800000,
+        missing_bytes: 0,
+      },
       ...ov,
     };
 

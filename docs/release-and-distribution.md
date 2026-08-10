@@ -119,12 +119,21 @@ download.
 
 ### Update failure recovery (Windows)
 
-If the NSIS installer aborts mid-update (`Extract: error writing to file neko-finance.exe`), the
-installed binary is left truncated and Windows refuses to launch it ("Este aplicativo não pode ser
-executado em seu PC"). The most likely cause is insufficient disk space: the passive-mode installer
-never shows its space check to the user, and an aborted extract has no rollback.
+The app checks available disk space before offering an update, and again between download and
+install, via the `check_update_space` command — it measures free space on the installation
+directory and on the OS temp path. The requirement is `max(installed footprint, 60 MiB) × 1.25`
+for the installation itself, plus one third of that (floor 32 MiB) for the installer in the temp
+directory — summed when both paths share a volume, the typical case on `C:`. For a typical ~45 MB
+installation this comes to roughly 107 MB free. When space is insufficient the update invitation
+becomes a warning ("Sem espaço em disco para atualizar — Libere ~X MB") with no download button;
+the NSIS installer never runs.
 
-Recovery is a plain reinstall — user data is never at risk:
+The pre-check exists because an NSIS abort mid-update (`Extract: error writing to file
+neko-finance.exe`) leaves the binary truncated and unlaunchable ("Este aplicativo não pode ser
+executado em seu PC") — the passive-mode installer never shows its space check to the user, and an
+aborted extract has no rollback. Reaching that state requires the disk to fill inside the window
+between the app's re-check and the actual extraction. If it happens anyway, recovery is a plain
+reinstall — user data is never at risk:
 
 1. Download the `*-setup.exe` from any published release and run it. It installs over the broken
    copy in `%LOCALAPPDATA%\Neko Finance`.

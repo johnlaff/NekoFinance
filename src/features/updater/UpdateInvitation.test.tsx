@@ -18,6 +18,12 @@ import { createUpdaterMachine, type UpdaterAdapter } from "./updaterView";
 function fakeAdapter(overrides: Partial<UpdaterAdapter> = {}): UpdaterAdapter {
   return {
     check: vi.fn().mockResolvedValue(null),
+    checkSpace: vi.fn().mockResolvedValue({
+      ok: true,
+      required_bytes: 0,
+      free_bytes: 0,
+      missing_bytes: 0,
+    }),
     relaunch: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
@@ -32,6 +38,8 @@ function pendingDownload() {
   });
   return { promise, resolve, reject };
 }
+
+const MIB = 1024 * 1024;
 
 describe("UpdateInvitation — estados", () => {
   it("não renderiza nada ocioso", () => {
@@ -54,7 +62,9 @@ describe("UpdateInvitation — estados", () => {
           version: "1.2.0",
           currentVersion: "1.1.0",
           notes: null,
-          downloadAndInstall: vi.fn(),
+          download: vi.fn(),
+          install: vi.fn(),
+          close: vi.fn(),
         }),
       }),
     );
@@ -77,7 +87,9 @@ describe("UpdateInvitation — estados", () => {
           version: "1.2.0",
           currentVersion: "1.1.0",
           notes: null,
-          downloadAndInstall: vi.fn(),
+          download: vi.fn(),
+          install: vi.fn(),
+          close: vi.fn(),
         }),
       }),
     );
@@ -97,13 +109,17 @@ describe("UpdateInvitation — estados", () => {
         version: "1.2.0",
         currentVersion: "1.1.0",
         notes: null,
-        downloadAndInstall: vi.fn(),
+        download: vi.fn(),
+        install: vi.fn(),
+        close: vi.fn(),
       })
       .mockResolvedValueOnce({
         version: "1.3.0",
         currentVersion: "1.1.0",
         notes: null,
-        downloadAndInstall: vi.fn(),
+        download: vi.fn(),
+        install: vi.fn(),
+        close: vi.fn(),
       });
     const machine = createUpdaterMachine(fakeAdapter({ check }));
     await machine.checkForUpdate();
@@ -125,7 +141,7 @@ describe("UpdateInvitation — estados", () => {
       downloadedBytes: number;
       totalBytes: number | null;
     }) => void;
-    const downloadAndInstall = vi.fn(
+    const downloadFn = vi.fn(
       (
         onProgress: (p: { downloadedBytes: number; totalBytes: number | null }) => void,
       ) => {
@@ -139,7 +155,9 @@ describe("UpdateInvitation — estados", () => {
           version: "1.2.0",
           currentVersion: "1.1.0",
           notes: null,
-          downloadAndInstall,
+          download: downloadFn,
+          install: vi.fn().mockResolvedValue(undefined),
+          close: vi.fn(),
         }),
       }),
     );
@@ -166,7 +184,9 @@ describe("UpdateInvitation — estados", () => {
           version: "1.2.0",
           currentVersion: "1.1.0",
           notes: null,
-          downloadAndInstall: vi.fn().mockResolvedValue(undefined),
+          download: vi.fn().mockResolvedValue(undefined),
+          install: vi.fn().mockResolvedValue(undefined),
+          close: vi.fn(),
         }),
         relaunch,
       }),
@@ -181,6 +201,43 @@ describe("UpdateInvitation — estados", () => {
     expect(relaunch).toHaveBeenCalledTimes(1);
   });
 
+  // A copy do aviso é travada por asserção de TEXTO — screenshot deixa frase inteira
+  // passar despercebida abaixo do limiar de diff (regra 38 do ui-standards).
+  it("sem espaço em disco: aviso com copy exata, didática e sem ação de baixar", async () => {
+    const user = userEvent.setup();
+    const download = vi.fn();
+    const check = vi.fn().mockResolvedValue({
+      version: "1.2.0",
+      currentVersion: "1.1.0",
+      notes: null,
+      download,
+      install: vi.fn(),
+      close: vi.fn().mockResolvedValue(undefined),
+    });
+    const checkSpace = vi.fn().mockResolvedValue({
+      ok: false,
+      required_bytes: 112 * MIB,
+      free_bytes: 3 * MIB,
+      missing_bytes: 109 * MIB,
+    });
+    const machine = createUpdaterMachine(fakeAdapter({ check, checkSpace }));
+    await machine.checkForUpdate();
+    render(<UpdateInvitation machine={machine} />);
+
+    const invite = screen.getByRole("alert");
+    expect(invite).toHaveTextContent("Sem espaço em disco para atualizar");
+    expect(invite).toHaveTextContent("Libere ~110,0 MB para instalar a v1.2.0.");
+    expect(
+      screen.queryByRole("button", { name: "Baixar e instalar" }),
+    ).not.toBeInTheDocument();
+    expect(download).not.toHaveBeenCalled();
+    expect(screen.getByText("Como funciona?")).toBeInTheDocument();
+
+    // A única ação primária re-roda a checagem completa (update + espaço).
+    await user.click(screen.getByRole("button", { name: "Tentar de novo" }));
+    expect(check).toHaveBeenCalledTimes(2);
+  });
+
   it("erro de instalação: mensagem visível e dispensável", async () => {
     const user = userEvent.setup();
     const machine = createUpdaterMachine(
@@ -189,7 +246,9 @@ describe("UpdateInvitation — estados", () => {
           version: "1.2.0",
           currentVersion: "1.1.0",
           notes: null,
-          downloadAndInstall: vi.fn().mockRejectedValue(new Error("disk full")),
+          download: vi.fn().mockRejectedValue(new Error("disk full")),
+          install: vi.fn(),
+          close: vi.fn(),
         }),
       }),
     );
