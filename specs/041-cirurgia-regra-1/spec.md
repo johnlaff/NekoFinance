@@ -91,7 +91,9 @@ Cada linha abaixo vira asserção de texto nos testes. `{…}` marca operando va
 - A linha didática sob o herói morre pela regra 41: a cláusula conceitual já vive no popover "Como funciona?" do veredito; o operando datado migra para o recibo ("Ver a conta").
 - A linha fixa de apresentação da seção da Mia morre seca (meta-comentário de interface, sem pergunta natural que a abrigue).
 - A instrução de lançar o gasto vira copy de estado vazio do card (só aparece com o dia sem registro).
-- O card da Mia perde as cláusulas fixas e mantém observação variável + CTA.
+- O card da Mia perde as cláusulas fixas e mantém observação variável + CTA. Os operandos que a prosa narrava (ponto mais apertado datado, buraco do futuro) viram linhas do recibo; a próxima entrada morre pela 41 (já é linha de "Próximos movimentos").
+- O teto informado morre do herói no modo débito (o denominador da régua do Diário já o imprime) e sobrevive como legenda curta e tocável no modo cartão, onde nenhum outro bloco o imprime. Os estados sem teto mantêm o convite visível uma única vez (regra 3 + regra 4).
+- Na legenda do termômetro, a fronteira em R$ fica e a cláusula de origem da régua recolhe para o termo tocável "Termômetro" (verbete do glossário já existente).
 
 **O ano** (~147 → ~35 palavras fixas):
 

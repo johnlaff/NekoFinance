@@ -291,6 +291,10 @@ describe("termômetro do saldo", () => {
     expect(saldoBandPhrase("comfortable")).toContain("R$ 2.000");
     expect(saldoBandPhrase("ok")).toContain("R$ 1.000");
     expect(saldoBandPhrase("critical")).toContain("R$ 500");
+    // A frase é só a fronteira: de onde a régua vem é didática, e mora no termo tocável.
+    for (const key of ["comfortable", "ok", "tight", "negative", "critical"] as const) {
+      expect(saldoBandPhrase(key)).not.toMatch(/régua|planilha/);
+    }
     expect(saldoGaugeFraction("comfortable")).toBe(1);
     expect(saldoGaugeFraction("ok")).toBeLessThan(1);
     expect(saldoGaugeFraction("tight")).toBeLessThan(saldoGaugeFraction("ok"));

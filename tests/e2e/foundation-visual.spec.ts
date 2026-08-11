@@ -32,6 +32,18 @@ test.describe("fundação — chrome mobile", () => {
     await expect(page).toHaveScreenshot("mobile-hoje-dark.png");
   });
 
+  // Regra 18 medida no breakpoint real, com a captura acima como evidência: o veredito e o
+  // gasto do dia cabem na primeira tela. `toBeVisible` não serve de prova — ele não enxerga
+  // rolagem nem oclusão; a geometria, sim.
+  test("primeira tela mobile é do conteúdo primário (regra 18)", async ({ page }) => {
+    await page.waitForTimeout(350);
+    for (const name of ["Veredito de hoje", "Gasto variável de hoje"]) {
+      const box = await page.getByRole("region", { name }).boundingBox();
+      expect(box, name).not.toBeNull();
+      expect(box!.y + box!.height, name).toBeLessThanOrEqual(844);
+    }
+  });
+
   test("dock encolhe ao rolar para baixo e volta ao subir (scroll vive no .sh-body)", async ({
     page,
   }) => {

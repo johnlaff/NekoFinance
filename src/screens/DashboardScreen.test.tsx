@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { DashboardScreen } from "./DashboardScreen";
@@ -44,7 +44,7 @@ describe("DashboardScreen (Hoje)", () => {
     app.openCompose.mockReset();
   });
 
-  it("herói: saudação, veredito com o guardrail que morde e curadoria da Mia", async () => {
+  it("herói: observação sobre o dado, com a didática atrás da pergunta", async () => {
     mockCommands({
       get_dashboard_summary: SUMMARY,
       get_forecast: FORECAST,
@@ -53,14 +53,39 @@ describe("DashboardScreen (Hoje)", () => {
     });
     const { container } = renderHoje();
 
-    expect(await screen.findByText(/Pode gastar hoje/)).toBeInTheDocument();
-    // O fixture prende no guardrail de poupança — a segunda linha nomeia ELE.
+    // O fixture prende no guardrail da economia — o selo do veredito nomeia ELE.
+    expect(await screen.findByText(/Pode gastar hoje/)).toHaveTextContent(
+      "Pode gastar hoje R$ 350,00 — sem tocar na economia do ano.",
+    );
+    // O gatilho nomeia o card a que pertence (só para leitor de tela).
     expect(
-      screen.getByText("Sem tocar na economia planejada do ano."),
+      screen.getByRole("button", { name: "Como funciona? — veredito de hoje" }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/A Mia separou o que importa hoje/)).toBeInTheDocument();
     // Primeiro adotante da coordenação large-title do shell.
     expect(container.querySelector("[data-large-title]")).not.toBeNull();
+  });
+
+  it("prosa permanente do herói e da curadoria: morta, sem sobrar meia-frase", async () => {
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_cards: [],
+    });
+    renderHoje();
+
+    await screen.findByText(/Pode gastar hoje/);
+    // A cláusula conceitual do número já vive no popover do veredito (regra 41).
+    expect(screen.queryByText(/Este é o limite/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/o maior gasto que o saldo aguenta/),
+    ).not.toBeInTheDocument();
+    // A apresentação da seção da Mia era meta-comentário de interface.
+    expect(
+      screen.queryByText(/A Mia separou o que importa hoje/),
+    ).not.toBeInTheDocument();
+    // O teto informado é impresso pelo denominador do bloco do dia — uma vez só.
+    expect(screen.queryByRole("button", { name: /^Teto:/ })).not.toBeInTheDocument();
   });
 
   it("o registro inline morreu: o bloco do dia é leitura; registrar vive no shell", async () => {
@@ -89,12 +114,33 @@ describe("DashboardScreen (Hoje)", () => {
     expect(await screen.findByText("Diário de hoje")).toBeInTheDocument();
     // O número exibido é só o guardrail; a mecânica completa (teto = segundo
     // limite) mora na didática recolhida "Como funciona?" — padrão do método.
-    expect(screen.getByText("Como funciona?")).toBeInTheDocument();
-    // O teto informado vira rótulo curto tocável (leva à tela do teto).
-    expect(screen.getByRole("button", { name: /por dia/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Como funciona\?/ }),
+    ).toBeInTheDocument();
+    // O teto informado é o denominador da régua do Diário — impresso uma vez só.
+    expect(screen.getByText(/Diário de hoje/).parentElement).toHaveTextContent(
+      "R$ 43,00",
+    );
     expect(
       screen.getByRole("img", { name: /Diário de hoje em \d+% do teto/ }),
     ).toBeInTheDocument();
+  });
+
+  // No modo cartão nada mais imprime o teto: a legenda curta e tocável fica no herói.
+  it("modo cartão: o teto sobrevive como legenda curta do herói", async () => {
+    const user = userEvent.setup();
+    mockCommands({
+      get_dashboard_summary: { ...SUMMARY, spending_mode: "card" },
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_cards: [],
+    });
+    renderHoje();
+
+    const teto = await screen.findByRole("button", { name: /^Teto:/ });
+    expect(teto).toHaveTextContent("Teto: R$ 43,00 por dia");
+    await user.click(teto);
+    expect(app.navigate).toHaveBeenCalledWith("teto");
   });
 
   it("teto estimado: número com selo de estimativa, nunca veredito silencioso", async () => {
@@ -129,22 +175,21 @@ describe("DashboardScreen (Hoje)", () => {
     });
     renderHoje();
 
-    const review = await screen.findByRole("button", {
-      name: "Proposta do teto — revisar.",
+    // Com proposta pendente o convite é ÚNICO na tela inteira, e ele mora onde o
+    // teto é lido: o denominador da régua do Diário.
+    const review = await screen.findAllByRole("button", {
+      name: "Proposta do teto — revisar",
     });
-    // Com proposta pendente o convite é ÚNICO na tela inteira: nenhum "estipular"
-    // sobra, e a MESMA frase aparece nos dois pontos (herói e denominador).
+    expect(review).toHaveLength(1);
     expect(screen.queryByText(/estipular/i)).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Proposta do teto — revisar" }),
-    ).toBeInTheDocument();
-    await user.click(review);
+    await user.click(review[0]!);
     expect(app.navigate).toHaveBeenCalledWith("teto");
   });
 
   // A faixa 20–30% é média ANUAL. Rompida, ela sai do teto — travar o dia puniria um déficit
   // que nenhum gasto de hoje desfaz — mas o diagnóstico continua na tela apontando o caminho.
-  it("economia abaixo do piso não zera o teto, e o diagnóstico fica visível", async () => {
+  it("economia abaixo do piso não zera o teto, e o diagnóstico abre na pergunta", async () => {
+    const user = userEvent.setup();
     mockCommands({
       get_dashboard_summary: SUMMARY,
       get_forecast: {
@@ -158,13 +203,17 @@ describe("DashboardScreen (Hoje)", () => {
       },
     });
     renderHoje();
+    expect(await screen.findByText(/Pode gastar hoje/)).toHaveTextContent(
+      "— sem nenhum dia no vermelho.",
+    );
+    // A cláusula didática saiu do corpo; a pergunta é o que fica visível.
     expect(
-      await screen.findByText("Sem deixar nenhum dia no vermelho."),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/economia do ano está abaixo dos 20%/i),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/performance do mês/i)).toBeInTheDocument();
+      screen.queryByText(/economia do ano está abaixo dos 20%/i),
+    ).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Por que o teto parou de morder?" }),
+    );
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(/performance do mês/i);
   });
 
   // Com a faixa viva, a régua da economia volta a mandar — ela protege quem ainda está nela.
@@ -179,11 +228,11 @@ describe("DashboardScreen (Hoje)", () => {
       },
     });
     renderHoje();
+    expect(await screen.findByText(/Pode gastar hoje/)).toHaveTextContent(
+      "— sem tocar na economia do ano.",
+    );
     expect(
-      await screen.findByText("Sem tocar na economia planejada do ano."),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByText(/economia do ano está abaixo dos 20%/i),
+      screen.queryByRole("button", { name: "Por que o teto parou de morder?" }),
     ).not.toBeInTheDocument();
   });
 
@@ -203,11 +252,11 @@ describe("DashboardScreen (Hoje)", () => {
       },
     });
     renderHoje();
+    expect(await screen.findByText(/Pode gastar hoje/)).toHaveTextContent(
+      "— sem nenhum dia no vermelho.",
+    );
     expect(
-      await screen.findByText("Sem deixar nenhum dia no vermelho."),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByText(/economia do ano está abaixo dos 20%/i),
+      screen.queryByRole("button", { name: "Por que o teto parou de morder?" }),
     ).not.toBeInTheDocument();
   });
 
@@ -224,13 +273,12 @@ describe("DashboardScreen (Hoje)", () => {
       },
     });
     renderHoje();
+    expect(await screen.findByText(/Pode gastar hoje/)).toHaveTextContent(
+      "— sem tocar na economia do ano.",
+    );
     expect(
-      await screen.findByText("Sem tocar na economia planejada do ano."),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByText(/economia do ano está abaixo dos 20%/i),
+      screen.queryByRole("button", { name: "Por que o teto parou de morder?" }),
     ).not.toBeInTheDocument();
-    expect(screen.queryByText(/é a troca certa/i)).not.toBeInTheDocument();
   });
 
   // no_record: nada para diagnosticar ainda — nem "abaixo dos 20%" nem "troca certa".
@@ -246,18 +294,18 @@ describe("DashboardScreen (Hoje)", () => {
       },
     });
     renderHoje();
+    expect(await screen.findByText(/Pode gastar hoje/)).toHaveTextContent(
+      "— sem nenhum dia no vermelho.",
+    );
     expect(
-      await screen.findByText("Sem deixar nenhum dia no vermelho."),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByText(/economia do ano está abaixo dos 20%/i),
+      screen.queryByRole("button", { name: "Por que o teto parou de morder?" }),
     ).not.toBeInTheDocument();
-    expect(screen.queryByText(/é a troca certa/i)).not.toBeInTheDocument();
   });
 
-  // Zero-por-escolha é a ordem do método cumprida — a cópia chama pelo nome e não usa
-  // linguagem de falta.
-  it("zero por escolha com reserva de pé mostra 'é a troca certa', nunca frase de falta", async () => {
+  // Zero-por-escolha é a ordem do método cumprida — a resposta chama a troca pelo nome e
+  // não usa linguagem de falta.
+  it("zero por escolha: a resposta da pergunta diz 'a troca certa', nunca frase de falta", async () => {
+    const user = userEvent.setup();
     mockCommands({
       get_dashboard_summary: SUMMARY,
       get_forecast: {
@@ -271,10 +319,10 @@ describe("DashboardScreen (Hoje)", () => {
       },
     });
     renderHoje();
-    expect(await screen.findByText(/é a troca certa/i)).toBeInTheDocument();
-    expect(
-      screen.queryByText(/economia do ano está abaixo dos 20%/i),
-    ).not.toBeInTheDocument();
+    await user.click(
+      await screen.findByRole("button", { name: "Por que o teto parou de morder?" }),
+    );
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(/a troca certa/i);
     // Nenhuma frase de falta de economia — a única "falta" na tela é a do retrato da reserva,
     // um card diferente que não faz parte do diagnóstico da faixa.
     expect(
@@ -300,7 +348,9 @@ describe("DashboardScreen (Hoje)", () => {
       },
     });
     renderHoje();
-    await user.click(await screen.findByRole("button", { name: "lançar o saque" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Lançar o saque da reserva" }),
+    );
     expect(app.openCompose).toHaveBeenCalledWith({
       mode: "new",
       type: "entrada",
@@ -313,6 +363,7 @@ describe("DashboardScreen (Hoje)", () => {
   // Sem reserva mapeada o conselho muda: sugerir um saque impossível seria conselho vazio, e o
   // método aponta para a performance do mês.
   it("déficit sem reserva aponta para a performance, não para um saque", async () => {
+    const user = userEvent.setup();
     mockCommands({
       get_dashboard_summary: { ...SUMMARY, reserve_state: "no_record" },
       get_forecast: {
@@ -323,10 +374,34 @@ describe("DashboardScreen (Hoje)", () => {
       },
     });
     renderHoje();
-    expect(await screen.findByText(/performance do mês/i)).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: /^Como funciona\?/ }));
+    const semReserva = await screen.findByRole("tooltip");
+    expect(semReserva).toHaveTextContent(/performance do mês/i);
+    // Prometer um saque que não existe seria conselho vazio.
+    expect(semReserva).not.toHaveTextContent(/sacar dela/i);
     expect(
-      screen.queryByRole("button", { name: "lançar o saque" }),
+      screen.queryByRole("button", { name: "Lançar o saque da reserva" }),
     ).not.toBeInTheDocument();
+  });
+
+  // Com a reserva de pé a resposta é o gesto do método — e a saída de quem não tem conta
+  // mapeada não pode aparecer, senão o popover fala de uma falta que não é a do leitor.
+  it("teto zero com reserva: a resposta é o saque, não a performance", async () => {
+    const user = userEvent.setup();
+    mockCommands({
+      get_dashboard_summary: { ...SUMMARY, reserve_state: "verdict" },
+      get_forecast: {
+        ...FORECAST,
+        safe_to_spend_today_cents: 0,
+        binding_guardrail: "cash",
+        deepest_deficit: { date: "2026-06-14", balance_cents: -100_000 },
+      },
+    });
+    renderHoje();
+    await user.click(await screen.findByRole("button", { name: /^Como funciona\?/ }));
+    const comReserva = await screen.findByRole("tooltip");
+    expect(comReserva).toHaveTextContent(/sacar dela/i);
+    expect(comReserva).not.toHaveTextContent(/sem reserva mapeada/i);
   });
 
   // Alcançado o alvo, a pergunta do método muda: deixa de ser "quanto falta" e passa a ser o
@@ -375,14 +450,15 @@ describe("DashboardScreen (Hoje)", () => {
       },
     });
     renderHoje();
-    expect(
-      await screen.findByText("Sem deixar nenhum dia no vermelho."),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/Pode gastar hoje/)).toHaveTextContent(
+      "— sem nenhum dia no vermelho.",
+    );
     expect(screen.queryByText(/reserva de emergência está/i)).not.toBeInTheDocument();
   });
 
-  // Quando o mês abre o bico, o método manda ACIONAR a reserva — a tela aponta para o gesto.
-  it("saldo que fura o zero aponta para o saque da reserva", async () => {
+  // Quando o mês abre o bico, o herói constata o cenário datado e devolve a decisão —
+  // e o gesto que o método manda (acionar a reserva) fica visível como ação.
+  it("teto zero: o herói data o vermelho e pergunta o que dá para mover", async () => {
     mockCommands({
       get_dashboard_summary: SUMMARY,
       get_forecast: {
@@ -393,10 +469,31 @@ describe("DashboardScreen (Hoje)", () => {
       },
     });
     renderHoje();
+    expect(await screen.findByText(/O teto de hoje é zero/)).toHaveTextContent(
+      "O teto de hoje é zero — dia 14 o saldo encosta no vermelho. O que dá para mover?",
+    );
     expect(
-      await screen.findByText("O mês já abre o bico — o teto de hoje é zero."),
+      screen.getByRole("button", { name: "Lançar o saque da reserva" }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/é para isso que a reserva existe/i)).toBeInTheDocument();
+    // Nenhum R$ 0,00 fabricado como se fosse um valor a gastar.
+    expect(screen.queryByText(/Pode gastar hoje/)).not.toBeInTheDocument();
+  });
+
+  // Fora do mês corrente o operando ganha o mês: "dia 3" sozinho seria ambíguo.
+  it("teto zero em outro mês nomeia o mês do vermelho", async () => {
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: {
+        ...FORECAST,
+        safe_to_spend_today_cents: 0,
+        binding_guardrail: "cash",
+        deepest_deficit: { date: "2026-09-03", balance_cents: -100_000 },
+      },
+    });
+    renderHoje();
+    expect(await screen.findByText(/O teto de hoje é zero/)).toHaveTextContent(
+      "O teto de hoje é zero — dia 3 de setembro o saldo encosta no vermelho.",
+    );
   });
 
   it("modo cartão: faturas em aberto agrupadas por vencimento são o corpo do bloco", async () => {
@@ -653,7 +750,9 @@ describe("DashboardScreen (Hoje)", () => {
     ).toBeInTheDocument();
   });
 
-  it("limite do caixa cita o dia do menor saldo no mês e o mês quando ele está à frente", async () => {
+  // O operando datado que a prosa do herói carregava agora é linha de recibo — a data
+  // continua auditável, sem cobrar a frase todos os dias.
+  it("o operando datado do herói virou linha do recibo da Mia", async () => {
     mockCommands({
       get_dashboard_summary: SUMMARY,
       get_forecast: {
@@ -664,31 +763,14 @@ describe("DashboardScreen (Hoje)", () => {
       get_upcoming_bills_cmd: [],
       list_cards: [],
     });
-    const currentMonth = renderHoje();
-
-    expect(
-      await screen.findByText(/até 15 de junho sem nenhum dia no vermelho/),
-    ).toBeInTheDocument();
-    currentMonth.unmount();
-
-    mockCommands({
-      get_dashboard_summary: SUMMARY,
-      get_forecast: {
-        ...FORECAST,
-        binding_guardrail: "cash",
-        deepest_deficit: { date: "2026-09-03", balance_cents: 587_700 },
-      },
-      get_upcoming_bills_cmd: [],
-      list_cards: [],
-    });
     renderHoje();
 
+    const insight = await screen.findByLabelText("Leitura da Mia");
+    expect(insight).toHaveTextContent("Ponto mais apertado — dia 15");
+    expect(insight).toHaveTextContent("Saldo previsto em 30 de junho");
     expect(
-      await screen.findByText(/até 3 de setembro sem nenhum dia no vermelho/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/o ponto mais apertado do horizonte está em setembro/),
-    ).toBeInTheDocument();
+      screen.queryByText(/até 15 de junho sem nenhum dia no vermelho/),
+    ).not.toBeInTheDocument();
   });
 
   it("leituras de fatura e horizonte preservam o saldo projetado e o pode gastar hoje", async () => {
@@ -734,7 +816,7 @@ describe("DashboardScreen (Hoje)", () => {
         "R$ 350,00",
       );
       expect(screen.getByLabelText("Leitura da Mia")).toHaveTextContent(
-        "saldo previsto de R$ 12.877,00",
+        "saldo previsto R$ 12.877,00",
       );
       screenView.unmount();
     }
@@ -787,7 +869,7 @@ describe("DashboardScreen (Hoje)", () => {
     ).toBeInTheDocument();
   });
 
-  it("insight da Mia: fechamento na faixa do termômetro + ponto mais apertado + entrada", async () => {
+  it("card da Mia: observação variável, com os operandos no recibo", async () => {
     mockCommands({
       get_dashboard_summary: SUMMARY,
       get_forecast: FORECAST,
@@ -797,10 +879,58 @@ describe("DashboardScreen (Hoje)", () => {
     renderHoje();
 
     const insight = await screen.findByLabelText("Leitura da Mia");
-    expect(insight).toHaveTextContent(/junho termina em Folga/);
-    expect(insight).toHaveTextContent(/O ponto mais apertado do mês é dia 15/);
-    expect(insight).toHaveTextContent(/a próxima entrada chega dia 25/);
-    expect(insight).toHaveTextContent(/Nenhum dia no vermelho à vista/);
+    expect(insight).toHaveTextContent(
+      "Fechando assim, junho termina em Folga — saldo previsto R$ 12.877,00.",
+    );
+    // Operandos: a conta impressa substitui a prosa que os narrava.
+    expect(insight).toHaveTextContent("Ponto mais apertado — dia 15");
+    expect(insight).toHaveTextContent("Buraco do futuro");
+    expect(insight).toHaveTextContent("Nenhum dia no vermelho");
+    // Cláusulas fixas mortas: metáfora explicada e receita de travessia.
+    expect(insight).not.toHaveTextContent(/no método, isso é ficar sem/);
+    expect(insight).not.toHaveTextContent(/Antecipar uma entrada/);
+    // A próxima entrada é impressa uma vez só, em Próximos movimentos (regra 41).
+    expect(insight).not.toHaveTextContent(/próxima entrada/);
+  });
+
+  it("card da Mia com a conta recolhida: a porta é 'Ver a conta'", async () => {
+    const user = userEvent.setup();
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_cards: [],
+      get_app_setting: "false",
+    });
+    renderHoje();
+
+    const insight = await screen.findByLabelText("Leitura da Mia");
+    const conta = await within(insight).findByRole("button", { name: "Ver a conta" });
+    await user.click(conta);
+    expect(insight).toHaveTextContent("Ponto mais apertado — dia 15");
+  });
+
+  // A instrução de lançar é convite de estado vazio: nos dias já registrados ela seria ruído.
+  it("convite de lançamento só no dia sem registro", async () => {
+    mockCommands({
+      get_dashboard_summary: { ...SUMMARY, daily_spend_today: 0 },
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_cards: [],
+    });
+    const semRegistro = renderHoje();
+    expect(await screen.findByText(/Lance o gasto de hoje/)).toBeInTheDocument();
+    semRegistro.unmount();
+
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_cards: [],
+    });
+    renderHoje();
+    await screen.findByText("Diário de hoje");
+    expect(screen.queryByText(/Lance o gasto de hoje/)).not.toBeInTheDocument();
   });
 
   it("próximos movimentos: contas e a próxima entrada, em ordem de data", async () => {
@@ -861,6 +991,25 @@ describe("DashboardScreen (Hoje)", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/Pode gastar hoje/)).not.toBeInTheDocument();
     expect(screen.queryByText(/R\$\s?0,00/)).not.toBeInTheDocument();
+  });
+
+  // A fronteira em R$ é o dado e fica; de onde a régua vem é didática, e mora no termo.
+  it("termômetro: legenda com a fronteira, régua atrás do termo tocável", async () => {
+    const user = userEvent.setup();
+    mockCommands({
+      get_dashboard_summary: SUMMARY,
+      get_forecast: FORECAST,
+      get_upcoming_bills_cmd: [],
+      list_cards: [],
+    });
+    renderHoje();
+
+    expect(await screen.findByText(/Folga — acima dos R\$ 2.000/)).toBeInTheDocument();
+    expect(screen.queryByText(/da régua da planilha/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Termômetro" }));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      /faixas fixas em reais/,
+    );
   });
 
   it("reserva zerada: palavra dedicada em vez de alarme numérico", async () => {
