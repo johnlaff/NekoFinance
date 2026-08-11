@@ -97,7 +97,7 @@ Cada linha abaixo vira asserção de texto nos testes. `{…}` marca operando va
 
 **O ano** (~147 → ~35 palavras fixas):
 
-- Manchete + selo do veredito ficam; qualquer cláusula didática extra do corpo recolhe para o popover da faixa (já existe).
+- Manchete + selo do veredito ficam; qualquer cláusula didática extra do corpo recolhe para o popover da faixa (já existe). Abaixo da faixa há dois estados: com economia registrada, o selo é a pergunta das duas alavancas; sem nenhuma, ele mantém o operando da sobra (o percentual já é a manchete) e a leitura da troca certa entra na versão do popover da faixa para o zero por escolha.
 - No card de fechamento do ano, as legendas de cálculo ficam; a prosa didática recolhe atrás de "Como funciona?" do próprio card.
 - A explicação de entradas/saídas brutas (fluxo de terceiros) recolhe para popover do card de números — didática real, sem duplicata, chave de leitura do card.
 - A instrução de tocar num mês morre (affordance se anuncia; acessibilidade via aria).

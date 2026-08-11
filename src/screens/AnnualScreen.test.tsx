@@ -57,20 +57,24 @@ function mkMonth(r: Row, year = 2026): MonthMetric {
   };
 }
 
-const ANNUAL_2026: AnnualMetrics = { year: 2026, months: REAL.map((r) => mkMonth(r)) };
-
 // Handler ciente do ano: 2026 e 2025 têm dados; qualquer outro ano vem vazio (no_record).
-const annualByYear = (args?: Record<string, unknown>): AnnualMetrics => {
-  const year = Number(args?.["year"]);
-  if (year === 2026) return ANNUAL_2026;
-  if (year === 2025) return { year: 2025, months: REAL.map((r) => mkMonth(r, 2025)) };
-  return {
-    year,
-    months: Array.from({ length: 12 }, (_, i) =>
-      mkMonth({ m: i + 1, income: 0, perf: 0, eco: 0, end: 0 }, year),
-    ),
+// `junBps` repõe a economia de junho — o último mês vivido, que é o mês que a Mia observa.
+const annualByYear =
+  (junBps = 0) =>
+  (args?: Record<string, unknown>): AnnualMetrics => {
+    const year = Number(args?.["year"]);
+    const rows = REAL.map((r) =>
+      r.m === 6 ? { ...r, eco: Math.ceil((r.income * junBps) / 10000) } : r,
+    );
+    if (year === 2026) return { year: 2026, months: rows.map((r) => mkMonth(r)) };
+    if (year === 2025) return { year: 2025, months: rows.map((r) => mkMonth(r, 2025)) };
+    return {
+      year,
+      months: Array.from({ length: 12 }, (_, i) =>
+        mkMonth({ m: i + 1, income: 0, perf: 0, eco: 0, end: 0 }, year),
+      ),
+    };
   };
-};
 
 // Forecast com month_end de todos os 12 meses — dezembro projetado para o cenário do ano.
 const MONTH_END_2026: MonthEnd[] = REAL.map((r) => ({
@@ -91,10 +95,16 @@ const testForecast: Forecast = {
 const TIPICO_2026 = 1112126;
 const SUSPEITOS_2026 = [9, 10, 11, 12];
 
-function mkRuler(
-  year: number,
-  { verdict }: { verdict: BandVerdict } = { verdict: "below_band" },
-): AnnualRuler {
+interface RulerOpts {
+  verdict?: BandVerdict;
+  /** Economia dos meses vividos, em centavos (0 = o ano que não guardou nada). */
+  economia?: number;
+  /** Economizado% que o motor publica, em pontos-base. */
+  bps?: number;
+}
+
+function mkRuler(year: number, opts: RulerOpts = {}): AnnualRuler {
+  const { verdict = "below_band", economia = 0, bps = 0 } = opts;
   const lived = (m: number) => (year < 2026 ? true : m <= 6);
   const suspect = (m: number) => year === 2026 && SUSPEITOS_2026.includes(m);
   const outflow = (r: Row) => r.income - r.perf;
@@ -111,15 +121,15 @@ function mkRuler(
     future_months: futureMonths,
     typical_spend_cents: year === 2026 ? TIPICO_2026 : 1130981,
     income_lived_cents: incomeLived,
-    economia_lived_cents: 0,
+    economia_lived_cents: economia,
     surplus_lived_cents: sum(livedRows, (r) => r.perf),
     income_year_cents: incomeYear,
-    economia_year_cents: 0,
+    economia_year_cents: economia,
     recorded_months: livedRows.length,
     avg_income_cents: Math.trunc(incomeLived / livedRows.length),
-    lived_bps: 0,
-    projected_bps: 0,
-    bps: 0,
+    lived_bps: bps,
+    projected_bps: bps,
+    bps,
     scope_lived: year === 2026,
     has_data: true,
     shortfall_lived_cents: Math.round(incomeLived * 0.2),
@@ -181,19 +191,33 @@ function emptyRuler(year: number): AnnualRuler {
 
 // O veredito da faixa é decidido no motor, que lê a reserva no backend: a tela recebe o
 // resultado e o narra. `reserve` aqui escolhe qual leitura a régua devolve.
-function setup({ reserve = 4.5 }: { reserve?: number } = {}) {
+function setup({
+  reserve = 4.5,
+  economia = 0,
+  bps = 0,
+  junBps = 0,
+  verdict,
+}: {
+  reserve?: number;
+  economia?: number;
+  bps?: number;
+  junBps?: number;
+  verdict?: BandVerdict;
+} = {}) {
   mockInvoke.mockReset();
   const rulerByYear = (args?: Record<string, unknown>): AnnualRuler => {
     const year = Number(args?.["year"]);
     if (year === 2026 || year === 2025) {
       return mkRuler(year, {
-        verdict: reserve >= 6 ? "zero_by_choice" : "below_band",
+        verdict: verdict ?? (reserve >= 6 ? "zero_by_choice" : "below_band"),
+        economia,
+        bps,
       });
     }
     return emptyRuler(year);
   };
   mockCommands({
-    get_annual_metrics: annualByYear,
+    get_annual_metrics: annualByYear(junBps),
     get_annual_ruler: rulerByYear,
     get_forecast: testForecast,
   });
@@ -297,6 +321,133 @@ describe("AnnualScreen — direção Conversa com a Mia", () => {
       expect(screen.getByText("2024 não tem registro.")).toBeInTheDocument(),
     );
     expect(screen.queryByText("A faixa do método")).not.toBeInTheDocument();
+  });
+
+  it("abaixo da faixa: a manchete conta o realizado e o selo devolve as duas alavancas", async () => {
+    setup({ economia: 900000, bps: 1200 });
+    await waitFor(() =>
+      expect(screen.getByText("Você guardou 12% até aqui.")).toBeInTheDocument(),
+    );
+    expect(
+      screen.getByText("O que aproxima o ano dos 20 — soltar menos ou entrar mais?", {
+        selector: "p",
+      }),
+    ).toBeInTheDocument();
+    // A didática do método recolheu para o popover da régua.
+    expect(screen.queryByText(/o convite é cortar custo ou aumentar renda/)).toBeNull();
+    // Os operandos moram no cabeçalho da régua — o herói não os reimprime (regra 41).
+    expect(screen.queryByText(/que entraram/)).toBeNull();
+  });
+
+  it("dentro da faixa: manchete e selo ficam, sem os operandos que a régua já imprime", async () => {
+    setup({ verdict: "in_band", economia: 2500000, bps: 2400 });
+    await waitFor(() =>
+      expect(screen.getByText("Você guardou 24% do que ganhou.")).toBeInTheDocument(),
+    );
+    expect(
+      screen.getByText("Dentro da faixa do método — dá para seguir a vida.", {
+        selector: "p",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/que entraram/)).toBeNull();
+  });
+
+  it("sem economia: o selo guarda o operando e a régua do método sai do herói", async () => {
+    setup();
+    await waitFor(() =>
+      expect(screen.getByText("Você não guardou nada em 2026.")).toBeInTheDocument(),
+    );
+    const hero = screen.getByText("Você não guardou nada em 2026.").closest("div")!;
+    expect(hero).toHaveTextContent("Sobraram R$ 2.729,26 nos 6 meses que você viveu.");
+    expect(screen.queryByText(/O método pede de 20% a 30%/)).toBeNull();
+  });
+
+  it("zero por escolha: a troca certa deixa o herói e passa a viver no popover da faixa", async () => {
+    setup({ reserve: 8 });
+    await waitFor(() =>
+      expect(
+        screen.getByText("Você zerou a economia para não tocar na reserva."),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.getByText(
+        "Foram 6 meses sem guardar nada, e a reserva seguiu protegida.",
+        {
+          selector: "p",
+        },
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Na ordem do método, é a troca certa/)).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Como funciona? — A faixa do método" }),
+    );
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      /na ordem do método, a troca certa/i,
+    );
+  });
+
+  it("card da Mia: observação que muda com o mês, sem a metade didática", async () => {
+    setup({ junBps: 1200, economia: 900000, bps: 1200 });
+    const mia = await screen.findByLabelText("A linha da Mia");
+    expect(mia).toHaveTextContent("Junho guardou pouco — a média do ano segue em 12%.");
+    // A metade didática duplicava o popover da faixa (regra 41).
+    expect(mia).not.toHaveTextContent(/A régua julga a média do ano/);
+    expect(mia).not.toHaveTextContent(/O método não conta dinheiro parado/);
+    // O convite à conversa é a ação do card e nunca se esconde (regra 3).
+    expect(
+      screen.getByRole("button", { name: /Perguntar à Mia sobre 2026/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("fim do ano: os operandos ficam e a leitura dos dois cenários vai para o popover", async () => {
+    setup();
+    await waitFor(() =>
+      expect(screen.getByText("Onde dezembro termina")).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/A diferença entre os dois/)).toBeNull();
+    expect(screen.queryByText(/Pode ser mês barato de verdade/)).toBeNull();
+    expect(
+      screen.getByText(/que costumam sair por mês/, { selector: "p" }),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Como funciona? — Onde dezembro termina" }),
+    );
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      /Enquanto não confirmar, o ano não tem veredito/,
+    );
+  });
+
+  it("o ano em números: a instrução morre e a chave de leitura vai para o popover", async () => {
+    setup();
+    const fold = await screen.findByRole("button", { name: /O ano em números/i });
+    fireEvent.click(fold);
+    expect(screen.queryByText(/Toque num mês/)).toBeNull();
+    expect(screen.queryByText(/inclusive dinheiro de terceiros/)).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Como funciona? — O ano em números" }),
+    );
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      /inclusive dinheiro de terceiros/,
+    );
+  });
+
+  it("renda ao longo dos anos: a cauda didática recolhe para o popover do card", async () => {
+    setup();
+    await waitFor(() =>
+      expect(screen.getByText("Sua renda ao longo dos anos")).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/Ganhar mais não vira economia sozinho/)).toBeNull();
+    expect(
+      screen.getByText(/Suas entradas médias/, { selector: "p" }),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Como funciona? — Sua renda ao longo dos anos",
+      }),
+    );
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      /Ganhar mais não vira economia sozinho/,
+    );
   });
 
   it("navegação de ano: próximo desabilitado no ano corrente", async () => {

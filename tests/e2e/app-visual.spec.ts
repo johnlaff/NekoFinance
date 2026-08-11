@@ -41,7 +41,7 @@ for (const theme of ["dark", "light"] as const) {
         // O ano dispara 3 buscas anuais paralelas (renda ao longo dos anos); o rodapé só
         // aparece com ≥ 2 anos carregados — espera determinística contra o flash parcial.
         if (name === "O ano") {
-          await page.getByText(/Ganhar mais não vira economia/).waitFor();
+          await page.getByText(/Suas entradas médias/).waitFor();
         }
         const slug = name.normalize("NFD").replace(/[^a-zA-Z]/g, "");
         // Screenshot pega layout; texto pega copy — dark e light têm o mesmo

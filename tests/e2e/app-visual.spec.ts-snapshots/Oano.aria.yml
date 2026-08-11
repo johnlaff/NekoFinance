@@ -24,7 +24,7 @@
     - text: /Economizado · \d+/
     - button "Estimativa"
   - heading /Você não guardou nada em \d+\./ [level=1]
-  - paragraph: /Sobraram R\$ \d+\.\d+,\d+ nos 6 meses que você viveu — e nada virou economia\. O método pede de \d+% a \d+% das entradas no ano\./
+  - paragraph: /Sobraram R\$ \d+\.\d+,\d+ nos 6 meses que você viveu\./
   - region "A faixa do método":
     - heading "A faixa do método" [level=3]
     - text: /R\$ \d+,\d+ de R\$ \d+\.\d+,\d+/
@@ -34,16 +34,20 @@
     - paragraph: /Para \d+ fechar em \d+%, falta guardar R\$ \d+\.\d+,\d+ — ou R\$ \d+\.\d+,\d+ por mês de julho a dezembro\./
   - region "Onde dezembro termina":
     - heading "Onde dezembro termina" [level=3]
-    - text: /Projeção R\$ \d+\.\d+,\d+ Se o resto do ano custar o que está lançado −R\$ \d+,\d+ Se os meses a conferir custarem o de sempre/
-    - paragraph: "/A diferença entre os dois é o que ainda não foi lançado: Set, Out, Nov, Dez têm entre R\\$ \\d+\\.\\d+,\\d+ e R\\$ \\d+\\.\\d+,\\d+ lançados, contra os R\\$ \\d+\\.\\d+,\\d+ que costumam sair por mês\\. Pode ser mês barato de verdade — ou pode faltar lançar\\. Enquanto não confirmar, o ano não tem veredito\\./"
+    - text: Projeção
+    - button "Como funciona? — Onde dezembro termina"
+    - text: /R\$ \d+\.\d+,\d+ Se o resto do ano custar o que está lançado −R\$ \d+,\d+ Se os meses a conferir custarem o de sempre/
+    - paragraph: /Set, Out, Nov, Dez têm entre R\$ \d+\.\d+,\d+ e R\$ \d+\.\d+,\d+ lançados, contra R\$ \d+\.\d+,\d+ que costumam sair por mês\./
   - region "Os doze meses":
     - heading "Os doze meses" [level=3]
     - text: /Entradas × o que virou economia Jan R\$ \d+\.\d+,\d+ 0% Fev R\$ \d+\.\d+,\d+ 0% Mar R\$ \d+\.\d+,\d+ 0% Abr R\$ \d+\.\d+,\d+ 0% Mai R\$ \d+\.\d+,\d+ 0% Jun R\$ \d+\.\d+,\d+ 0% Jul R\$ \d+\.\d+,\d+ — Ago R\$ \d+\.\d+,\d+ — Set R\$ \d+\.\d+,\d+ — Conferir Out R\$ \d+\.\d+,\d+ — Conferir Nov R\$ \d+\.\d+,\d+ — Conferir Dez R\$ \d+\.\d+,\d+ — Conferir/
     - button /O ano em números \d+ meses · realizado e previsto/
   - region "Sua renda ao longo dos anos":
     - heading "Sua renda ao longo dos anos" [level=3]
-    - text: /Entradas por mês com registro \d+ R\$ \d+\.\d+,\d+ 0% guardado \d+ R\$ \d+\.\d+,\d+ 0% guardado \d+ R\$ \d+\.\d+,\d+ 0% guardado/
-    - paragraph: /Suas entradas médias subiram \d+% de \d+ para \d+ — e o quanto você guarda seguiu em 0% em todos eles\. Ganhar mais não vira economia sozinho\./
+    - text: Por mês com registro
+    - button "Como funciona? — Sua renda ao longo dos anos"
+    - text: /\d+ R\$ \d+\.\d+,\d+ 0% guardado \d+ R\$ \d+\.\d+,\d+ 0% guardado \d+ R\$ \d+\.\d+,\d+ 0% guardado/
+    - paragraph: /Suas entradas médias subiram \d+% de \d+ para \d+ — e o quanto você guarda seguiu em 0% em todos eles\./
   - region "A linha da Mia":
-    - text: "Sobrar não é guardar. O método não conta dinheiro parado na conta corrente: economia é o que você tira de lá. Sem uma decisão, a sobra some no gasto do mês seguinte."
+    - text: Junho não guardou nada — a média do ano segue em 0%.
     - button /Perguntar à Mia sobre \d+/
