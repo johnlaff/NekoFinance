@@ -10,6 +10,8 @@ import {
   divisorFromText,
   draftTotalCents,
   guardTriggered,
+  recalibrationCaption,
+  recalibrationDueMonth,
 } from "./tetoView";
 import type { CeilingProposal, DailyBudget, DashboardSummary } from "../lib/api";
 import { SUMMARY } from "../test/commands";
@@ -125,6 +127,22 @@ describe("a idade da cerimônia", () => {
     expect(ceremonyAgeLabel(10)).toBe("A cerimônia fez dez meses");
     expect(ceremonyAgeLabel(14)).toBe("A cerimônia fez mais de um ano");
     expect(ceremonyAgeLabel(30)).toBe("A cerimônia fez mais de dois anos");
+  });
+
+  it("o prazo da cadência fecha três meses depois da cerimônia, virando o ano quando preciso", () => {
+    expect(recalibrationDueMonth("2025-09")).toBe("2025-12");
+    expect(recalibrationDueMonth("2025-11")).toBe("2026-02");
+    expect(recalibrationDueMonth(null)).toBeNull();
+  });
+
+  it("a legenda do cartão de idade cruza o prazo com o veredito da cadência", () => {
+    expect(recalibrationCaption("2025-09", true)).toBe(
+      "Prazo vencido em dezembro de 2025.",
+    );
+    expect(recalibrationCaption("2025-09", false)).toBe("Prazo até dezembro de 2025.");
+    expect(recalibrationCaption(null, false)).toBe(
+      "Sem cerimônia registrada para calcular o prazo.",
+    );
   });
 });
 

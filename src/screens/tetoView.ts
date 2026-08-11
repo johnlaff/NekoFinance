@@ -173,6 +173,30 @@ export function ceremonyAgeLabel(months: number): string {
   return `A cerimônia fez mais de ${POR_EXTENSO[years] ?? years} anos`;
 }
 
+/** Mês (`YYYY-MM`) em que a cadência de três em três meses fecha, a partir da cerimônia. */
+export function recalibrationDueMonth(ceremonyMonth: string | null): string | null {
+  if (!ceremonyMonth) return null;
+  const [y, m] = ceremonyMonth.split("-").map((p) => Number.parseInt(p, 10));
+  if (!y || !m) return null;
+  const total = y * 12 + (m - 1) + RECALIBRATION_MONTHS;
+  const dueYear = Math.floor(total / 12);
+  const dueMonth = (total % 12) + 1;
+  return `${dueYear}-${String(dueMonth).padStart(2, "0")}`;
+}
+
+/**
+ * A legenda do cartão de idade: o prazo da cadência do método (operando) cruzado com o
+ * veredito de recalibração — a regra dos três meses em si já vive no popover da cerimônia.
+ */
+export function recalibrationCaption(
+  ceremonyMonth: string | null,
+  recalibrationDue: boolean,
+): string {
+  const dueLabel = monthYearLabel(recalibrationDueMonth(ceremonyMonth));
+  if (!dueLabel) return "Sem cerimônia registrada para calcular o prazo.";
+  return recalibrationDue ? `Prazo vencido em ${dueLabel}.` : `Prazo até ${dueLabel}.`;
+}
+
 /**
  * A guarda do "vença o dia": só intercepta quem BAIXA um teto vigente. Baixar por esperança
  * pinta a planilha de verde sem mudar o extrato — a guarda ensina a consequência e libera a

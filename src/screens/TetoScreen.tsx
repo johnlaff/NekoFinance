@@ -33,6 +33,7 @@ import {
   fetchDashboardSummary,
   guardTriggered,
   monthYearLabel,
+  recalibrationCaption,
   saveDailyBudgetCmd,
   type DailyBudget,
   type DraftItem,
@@ -313,30 +314,16 @@ function VerdictHeadline({
         </>
       );
     default:
+      // Manchete pura: o corpo morre pela regra 41 — o velocímetro e o modo cartão já
+      // vivem nos popovers da própria tela ("Como o dia lê o teto").
       return view.mode === "card" ? (
-        <>
-          <h1 data-large-title>
-            Seu teto é <Money cents={view.perDayCents} size="inherit" /> por dia.
-          </h1>
-          <p>
-            O dia é medido pelas faturas enquanto você vive no crédito — e o teto fica
-            de guarda: a régua que você consulta antes de qualquer gasto livre.{" "}
-            <span className="teto__cf">O método manda mantê-lo à vista.</span>
-          </p>
-        </>
+        <h1 data-large-title>
+          Seu teto é <Money cents={view.perDayCents} size="inherit" /> por dia.
+        </h1>
       ) : (
-        <>
-          <h1 data-large-title>
-            Seu dia comporta <Money cents={view.perDayCents} size="inherit" />.
-          </h1>
-          <p>
-            O velocímetro do dia mede o Diário lançado contra este teto.{" "}
-            <span className="teto__cf">
-              O quanto dá para gastar hoje responde por outra régua — o caixa e a
-              economia do ano; no dia a dia vale o mais apertado dos dois.
-            </span>
-          </p>
-        </>
+        <h1 data-large-title>
+          Seu dia comporta <Money cents={view.perDayCents} size="inherit" />.
+        </h1>
       );
   }
 }
@@ -454,7 +441,7 @@ function ProofCard({ proof, view }: { proof: TetoProof; view: TetoView }) {
           </b>
         </div>
       </div>
-      <p className="teto__round">Arredondado para cima, sempre — teto é teto.</p>
+      <p className="teto__round">Arredondado para cima.</p>
 
       {view.proofMatchesVerdict ? null : (
         <p className="teto__mismatch" role="note">
@@ -500,10 +487,10 @@ function AgeCard({
           </InfoPopover>
         </h2>
       </div>
+      {/* A regra dos três meses mora no popover do título — aqui fica só o operando do
+          prazo desta cerimônia e se ele já venceu. */}
       <p className="teto__cardbody">
-        {view.recalibrationDue
-          ? "O método recalibra de três em três meses — refaça quando o extrato contar outra história."
-          : "O método recalibra de três em três meses; a sua ainda está no prazo."}
+        {recalibrationCaption(view.ceremonyMonth, view.recalibrationDue)}
       </p>
       <div className="teto__cardactions">
         <Button variant="primary" onClick={onRecalibrate}>

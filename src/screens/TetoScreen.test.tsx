@@ -64,7 +64,12 @@ describe("TetoScreen", () => {
       }),
     ).toBeInTheDocument();
     expect(screen.getByText("Estipulado em setembro de 2025")).toBeInTheDocument();
-    expect(screen.getByText(/O dia é medido pelas faturas/)).toBeInTheDocument();
+    // Manchete pura: o corpo do veredito morre — o modo cartão já vive no popover da
+    // própria tela ("Como o dia lê o teto").
+    expect(screen.queryByText(/O dia é medido pelas faturas/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/O método manda mantê-lo à vista/),
+    ).not.toBeInTheDocument();
 
     // A prova recalcula a partir dos itens: 125.000 ÷ 31 = 4.033 (resto para cima).
     const proof = screen.getByRole("region", { name: "A prova do número" });
@@ -72,6 +77,31 @@ describe("TetoScreen", () => {
     expect(flat(proof)).toMatch(/Total do mês variáveliR\$\s?1\.250,00/);
     expect(flat(proof)).toMatch(/Dividido por31 dias/);
     expect(flat(proof)).toMatch(/Teto por diaR\$\s?40,33/);
+    // A cauda do arredondamento encurta para legenda de notação — "teto é teto" morre.
+    expect(screen.getByText("Arredondado para cima.")).toBeInTheDocument();
+    expect(screen.queryByText(/teto é teto/)).not.toBeInTheDocument();
+  });
+
+  it("veredito escolhido no modo débito: manchete pura, sem a cauda das duas réguas", async () => {
+    mockCommands({
+      get_daily_budget_cmd: CEREMONY_BUDGET,
+      get_ceiling_proposal_cmd: null,
+      get_dashboard_summary: SUMMARY,
+    });
+    render(<TetoScreen />);
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: /Seu dia comporta R\$\s?40,33/,
+      }),
+    ).toBeInTheDocument();
+    // O velocímetro inline e a cauda das duas réguas (caixa × economia do ano) morrem: o
+    // primeiro já vive no card "Como o dia lê o teto", o segundo é assunto da tela Hoje.
+    expect(
+      screen.queryByText(/O velocímetro do dia mede o Diário lançado/),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/responde por outra régua/)).not.toBeInTheDocument();
   });
 
   it("a nota original da planilha é reproduzida atrás do disclosure", async () => {
@@ -115,12 +145,33 @@ describe("TetoScreen", () => {
       await vi.waitFor(() =>
         expect(screen.getByRole("region", { name: /cerimônia/i })).toBeInTheDocument(),
       );
-      expect(flat(screen.getByRole("region", { name: /cerimônia/i }))).toMatch(
-        /A cerimônia fez dez meses/,
-      );
+      const age = screen.getByRole("region", { name: /cerimônia/i });
+      expect(flat(age)).toMatch(/A cerimônia fez dez meses/);
+      // A regra dos três meses morre (já vive no popover da cerimônia): fica a legenda
+      // com o operando do prazo.
+      expect(flat(age)).toMatch(/Prazo vencido em dezembro de 2025\./);
+      expect(flat(age)).not.toMatch(/recalibra de três em três meses/);
       expect(
         screen.getByRole("button", { name: "Recalibrar o teto" }),
       ).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cerimônia recente: a legenda mostra o prazo ainda por vencer", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2025-10-05T10:00:00"));
+    try {
+      mockCommands({
+        get_daily_budget_cmd: CEREMONY_BUDGET,
+        get_ceiling_proposal_cmd: null,
+        get_dashboard_summary: SUMMARY,
+      });
+      render(<TetoScreen />);
+      await vi.waitFor(() =>
+        expect(screen.getByText("Prazo até dezembro de 2025.")).toBeInTheDocument(),
+      );
     } finally {
       vi.useRealTimers();
     }
