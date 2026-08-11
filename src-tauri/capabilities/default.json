@@ -10,6 +10,8 @@
     "dialog:allow-save",
     "notification:default",
     "updater:default",
-    "process:default"
+    "process:default",
+    "fs:read-files",
+    "fs:allow-appcache-write-recursive"
   ]
 }
