@@ -74,11 +74,6 @@
 
 /* Veredito: o `VerdictHero` do DS. Só o que é da tela mora aqui. */
 
-/* Fecho didático em tom mais tênue — o convite do método, nunca uma acusação. */
-.ano__cf {
-  color: var(--text-faint);
-}
-
 /* ---- Anatomia do card (comum a todos) ---- */
 
 .ano__card {
@@ -119,14 +114,18 @@
 /* O gatilho didático senta à direita do cabeçalho — mesmo endereço em todos os cards. */
 .ano__cardhead .nk-term-wrap {
   margin-left: auto;
+  flex: none;
 }
 
+/* A pergunta é uma unidade de leitura: quebrada ao meio ("Como / funciona?") ela deixa de
+   se anunciar como porta. Quem cede espaço no cabeçalho apertado é o título e a legenda. */
 .ano__how {
   font-size: var(--fs-label);
   color: var(--text-faint);
   text-decoration: underline dotted;
   text-underline-offset: 3px;
   cursor: help;
+  white-space: nowrap;
 }
 
 /* ---- A faixa do método (a régua é do DS; aqui só o entorno) ---- */
@@ -418,10 +417,9 @@
   border-radius: var(--radius-sm);
 }
 
-.ano__myhint {
+/* Linha do gatilho didático do fold — a porta do card, acima das doze linhas. */
+.ano__foldhow {
   margin: var(--space-2) 0 var(--space-3);
-  font-size: var(--fs-label);
-  color: var(--text-faint);
 }
 
 .ano__my {
@@ -520,11 +518,6 @@
   font-size: var(--fs-label);
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
-}
-
-.ano__foldnote {
-  border-top: 0;
-  padding-top: var(--space-3);
 }
 
 /* ---- Sua renda ao longo dos anos ---- */

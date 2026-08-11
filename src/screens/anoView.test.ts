@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import type { AnnualRuler, MonthMetric } from "../lib/api";
-import { buildAnoView, buildIncomeAcrossYears, type AnoInput } from "./anoView";
+import {
+  anoMiaObservation,
+  buildAnoView,
+  buildIncomeAcrossYears,
+  type AnoInput,
+} from "./anoView";
 
 // ---------------------------------------------------------------- fixtures --
 // Planilha real de 2026 (a mesma que ancora o desenho aprovado do #200), em centavos, com a
@@ -310,5 +315,84 @@ describe("anoView — renda ao longo dos anos", () => {
     expect(r26.recordedMonths).toBe(7); // só meses vividos no ano corrente
     expect(r26.avgIncomeCents).toBe(Math.round(8479388 / 7));
     expect(r26.savedPct).toBe(0);
+  });
+});
+
+// --------------------------------------------------------- observação da Mia --
+
+describe("anoView — a observação da Mia", () => {
+  /** Repõe a economia de um mês (e o Economizado% que o motor derivaria dele). */
+  function withEconomia(month: number, bps: number): MonthMetric[] {
+    return REAL_2026.map((r) =>
+      // `ceil` para o Economizado% do motor (que trunca) cair exatamente no bps pedido.
+      monthMetric(
+        r.m === month ? { ...r, eco: Math.ceil((r.income * bps) / 10000) } : r,
+      ),
+    );
+  }
+
+  it("mês sem economia: a cláusula constata o zero e a média do ano segue em curso", () => {
+    const o = anoMiaObservation(buildAnoView(realInput()))!;
+    expect(o.month).toBe("Julho"); // o último mês vivido
+    expect(o.clause).toBe("não guardou nada");
+    expect(o.yearPct).toBe("0%");
+    expect(o.ongoing).toBe(true);
+  });
+
+  it("mês abaixo do piso: guardou pouco, com a média do ano ao lado", () => {
+    const v = buildAnoView({
+      ...realInput({ months: withEconomia(7, 1200) }),
+      ruler: realRuler({ lived_bps: 1200, bps: 1200 }),
+    });
+    const o = anoMiaObservation(v)!;
+    expect(o.clause).toBe("guardou pouco");
+    expect(o.yearPct).toBe("12%");
+  });
+
+  it("mês dentro da faixa: a cláusula imprime o percentual do próprio mês", () => {
+    const v = buildAnoView({
+      ...realInput({ months: withEconomia(7, 2400) }),
+      ruler: realRuler({ lived_bps: 2200, bps: 2200 }),
+    });
+    const o = anoMiaObservation(v)!;
+    expect(o.clause).toBe("guardou 24%");
+    expect(o.yearPct).toBe("22%");
+  });
+
+  it("ano passado: a média não segue, ficou — e o mês observado é o último vivido", () => {
+    const v = buildAnoView({
+      ...realInput({ today: "2027-02-10" }),
+      ruler: realRuler({
+        lived_months: 12,
+        future_months: 0,
+        months: REAL_2026.map((r) => ({
+          month: r.m,
+          outflow_cents: r.income - r.perf,
+          lived: true,
+          suspect: false,
+          missing_cents: 0,
+        })),
+      }),
+    });
+    const o = anoMiaObservation(v)!;
+    expect(o.month).toBe("Dezembro");
+    expect(o.ongoing).toBe(false);
+  });
+
+  it("sem nenhum mês vivido não há o que observar", () => {
+    const v = buildAnoView({
+      ...realInput(),
+      ruler: realRuler({
+        lived_months: 0,
+        months: REAL_2026.map((r) => ({
+          month: r.m,
+          outflow_cents: 0,
+          lived: false,
+          suspect: false,
+          missing_cents: 0,
+        })),
+      }),
+    });
+    expect(anoMiaObservation(v)).toBeNull();
   });
 });

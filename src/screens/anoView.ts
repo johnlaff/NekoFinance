@@ -1,3 +1,4 @@
+import { MES } from "../lib/nkFormat";
 import {
   getAnnualMetrics,
   getAnnualRuler,
@@ -215,6 +216,44 @@ export function buildAnoView(input: AnoInput): AnoView {
     endMonth: ruler.year_end.end_month,
     endBalanceCents: ruler.year_end.end_balance_cents,
     endBalanceTypicalCents: ruler.year_end.end_balance_typical_cents,
+  };
+}
+
+// ---------------------------------------------------- observação da Mia ----
+
+export interface AnoMiaObservation {
+  /** O mês observado, capitalizado — o último que o ano viveu. */
+  month: string;
+  /** O que esse mês fez com a economia ("não guardou nada", "guardou 24%"). */
+  clause: string;
+  /** O Economizado% da régua, truncado como a tela o imprime. */
+  yearPct: string;
+  /** Ano em curso → a média SEGUE; ano fechado → a média FICOU. */
+  ongoing: boolean;
+}
+
+/**
+ * A observação da Mia sobre o ano: o mês mais recente contra a média que a régua julga.
+ * O dado novo é o MÊS — a média entra como referência de leitura, no zoom do ano (a exceção
+ * de detalhe da regra 41), e a frase inteira muda a cada mês vivido.
+ *
+ * Sem mês vivido não há observação: a leitura devolve `null` em vez de inventar uma.
+ */
+export function anoMiaObservation(v: AnoView): AnoMiaObservation | null {
+  const lived = v.months.filter((m) => m.lived);
+  const last = lived[lived.length - 1];
+  if (!last) return null;
+  const monthPct = last.savedPct == null ? 0 : Math.trunc(last.savedPct);
+  return {
+    month: MES[last.month - 1] ?? "",
+    clause:
+      monthPct === 0
+        ? "não guardou nada"
+        : monthPct < 20
+          ? "guardou pouco"
+          : `guardou ${monthPct}%`,
+    yearPct: v.rulerPct == null ? "—" : `${Math.trunc(v.rulerPct)}%`,
+    ongoing: v.isCurrentYear,
   };
 }
 

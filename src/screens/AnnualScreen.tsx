@@ -21,9 +21,9 @@ import { InfoPopover } from "../design-system/components/InfoPopover";
 import { VerdictHero } from "../design-system/components/VerdictHero";
 import { EstimateMark } from "../design-system/components/EstimateMark";
 import { MiaAvatar } from "../design-system/components/MiaAvatar";
-import { SR_ONLY } from "../design-system/srOnly";
 import { setCrumb } from "../shell/crumbStore";
 import {
+  anoMiaObservation,
   annualMetricsCacheKey,
   annualMetricsFetcher,
   annualRulerCacheKey,
@@ -105,10 +105,11 @@ function YearNav({
 
 // ------------------------------------------------------------------ verdict --
 
+// Manchete + UMA linha de corpo (regra 42): o selo do veredito, que muda com o estado. A
+// didática do método — a régua anual e o convite de cada lado da faixa — mora no "Como
+// funciona?" da régua, e os operandos da razão vivem no cabeçalho dela (regra 41).
 function Verdict({ v }: { v: AnoView }) {
   const { verdict, year } = v;
-  const showEconomia = v.rulerScopeLived ? v.economiaLived : v.economiaYear;
-  const showIncome = v.rulerScopeLived ? v.incomeLived : v.incomeYear;
   const pctTxt = pctTrunc(v.rulerPct);
 
   let title: string;
@@ -123,34 +124,17 @@ function Verdict({ v }: { v: AnoView }) {
       body = (
         <>
           {v.livedCount === 1 ? "Foi 1 mês" : `Foram ${v.livedCount} meses`} sem guardar
-          nada, e a reserva seguiu protegida.{" "}
-          <span className="ano__cf">Na ordem do método, é a troca certa.</span>
+          nada, e a reserva seguiu protegida.
         </>
       );
       break;
     case "in_band":
       title = `Você guardou ${pctTxt} do que ganhou.`;
-      body = (
-        <>
-          São <Money cents={showEconomia} size="inherit" /> de{" "}
-          <Money cents={showIncome} size="inherit" /> que entraram.{" "}
-          <span className="ano__cf">
-            Dentro da faixa do método — dá para seguir a vida.
-          </span>
-        </>
-      );
+      body = <>Dentro da faixa do método — dá para seguir a vida.</>;
       break;
     case "above_band":
       title = `Você guardou ${pctTxt} do que ganhou.`;
-      body = (
-        <>
-          São <Money cents={showEconomia} size="inherit" /> de{" "}
-          <Money cents={showIncome} size="inherit" /> que entraram.{" "}
-          <span className="ano__cf">
-            Acima da faixa — dá para gastar um pouco mais, se quiser.
-          </span>
-        </>
-      );
+      body = <>Acima da faixa — dá para gastar um pouco mais, se quiser.</>;
       break;
     default: // below_band
       if (v.economiaLived === 0) {
@@ -159,26 +143,15 @@ function Verdict({ v }: { v: AnoView }) {
           <>
             {v.surplusLived >= 0 ? "Sobraram " : "Faltaram "}
             <Money cents={Math.abs(v.surplusLived)} size="inherit" />{" "}
-            {v.livedCount === 1 ? "no mês" : `nos ${v.livedCount} meses`} que você viveu
-            — e nada virou economia.{" "}
-            <span className="ano__cf">
-              O método pede de 20% a 30% das entradas no ano.
-            </span>
+            {v.livedCount === 1 ? "no mês" : `nos ${v.livedCount} meses`} que você
+            viveu.
           </>
         );
       } else {
-        // O percentual do título e a razão em reais do corpo precisam falar do MESMO recorte
-        // (regra 6): ambos seguem a régua — realizado quando há suspeitos, ano inteiro quando não.
-        title = `Você guardou ${pctTxt} do que ganhou.`;
-        body = (
-          <>
-            São <Money cents={showEconomia} size="inherit" /> de{" "}
-            <Money cents={showIncome} size="inherit" /> que entraram.{" "}
-            <span className="ano__cf">
-              Abaixo da faixa do método — o convite é cortar custo ou aumentar renda.
-            </span>
-          </>
-        );
+        // O percentual segue a régua (realizado quando há suspeitos, ano inteiro quando não),
+        // e o selo devolve a decisão pelas duas alavancas do método — nunca uma cobrança.
+        title = `Você guardou ${pctTxt} até aqui.`;
+        body = <>O que aproxima o ano dos 20 — soltar menos ou entrar mais?</>;
       }
   }
 
@@ -235,11 +208,12 @@ function FaixaCard({ v }: { v: AnoView }) {
           <Money cents={v.economiaLived} size="inherit" /> de{" "}
           <Money cents={v.incomeLived} size="inherit" />
         </span>
-        <InfoPopover term={REGUA_TERM} hideMarker>
-          <span className="ano__how">
-            Como funciona?
-            <span style={SR_ONLY}> — A faixa do método</span>
-          </span>
+        <InfoPopover
+          term={v.verdict.kind === "zero_by_choice" ? REGUA_TERM_ZERO : REGUA_TERM}
+          label="Como funciona? — A faixa do método"
+          hideMarker
+        >
+          <span className="ano__how">Como funciona?</span>
         </InfoPopover>
       </header>
       <RangeRuler
@@ -283,8 +257,21 @@ const REGUA_TERM = {
   title: "A régua da faixa",
   body: "A régua é anual: um mês fraco é normal — o que precisa fechar entre 20% e 30% é a média do ano. Abaixo de 20%, o convite é cortar custo ou aumentar renda; acima de 30%, dá para gastar um pouco mais.",
 };
+// Quem zerou a economia para proteger a reserva não está abaixo da faixa por descuido: a
+// leitura do método muda, e é ela que a régua explica nesse estado.
+const REGUA_TERM_ZERO = {
+  title: "A régua da faixa",
+  body: "A régua é anual: o que precisa fechar entre 20% e 30% é a média do ano. Zerar a economia para não tocar na reserva é, na ordem do método, a troca certa.",
+};
 
 // ------------------------------------------------------- onde o ano termina --
+
+// O que os dois cenários significam é didática invariável — o card imprime os operandos e
+// guarda a leitura atrás da pergunta.
+const DEZEMBRO_TERM = {
+  title: "Os dois cenários do fim do ano",
+  body: "A diferença entre os dois é o que ainda não foi lançado nos meses sem lastro: pode ser mês barato de verdade, ou pode faltar lançar. Enquanto não confirmar, o ano não tem veredito.",
+};
 
 function DezembroCard({ v }: { v: AnoView }) {
   if (v.endBalanceCents == null || v.endMonth == null) return null;
@@ -299,15 +286,21 @@ function DezembroCard({ v }: { v: AnoView }) {
   const outflows = suspects.map((m) => m.outflow);
   const minOut = suspects.length > 0 ? Math.min(...outflows) : 0;
   const maxOut = suspects.length > 0 ? Math.max(...outflows) : 0;
+  const title = isOpen ? `Onde ${endName} termina` : `Como ${v.year} fechou`;
 
   return (
     <section className="ano__card" aria-labelledby="ano-dez-t">
       <header className="ano__cardhead">
         <Flag size={16} strokeWidth={1.75} className="ic" aria-hidden="true" />
-        <h3 id="ano-dez-t">
-          {isOpen ? `Onde ${endName} termina` : `Como ${v.year} fechou`}
-        </h3>
+        <h3 id="ano-dez-t">{title}</h3>
         {isOpen ? <span className="ano__note">Projeção</span> : null}
+        <InfoPopover
+          term={DEZEMBRO_TERM}
+          label={`Como funciona? — ${title}`}
+          hideMarker
+        >
+          <span className="ano__how">Como funciona?</span>
+        </InfoPopover>
       </header>
       <div className="ano__dec">
         <span className={`ano__decval${negEnd ? " neg" : ""}`}>
@@ -329,9 +322,10 @@ function DezembroCard({ v }: { v: AnoView }) {
           </span>
         </div>
       ) : null}
+      {/* Legenda de cálculo: os operandos que separam os dois cenários. A leitura deles é
+          didática e mora no "Como funciona?" do cabeçalho. */}
       {suspects.length > 0 ? (
         <p className="ano__decnote">
-          A diferença entre os dois é o que ainda não foi lançado:{" "}
           <b>{suspects.map((m) => monthAbbr(m.month)).join(", ")}</b>{" "}
           {suspects.length === 1 ? "tem" : "têm"}{" "}
           {minOut === maxOut ? (
@@ -342,19 +336,15 @@ function DezembroCard({ v }: { v: AnoView }) {
               <Money cents={maxOut} size="inherit" />
             </>
           )}{" "}
-          lançados, contra os{" "}
+          lançados, contra{" "}
           <b>
             <Money cents={v.typicalSpendCents} size="inherit" />
           </b>{" "}
-          que costumam sair por mês.{" "}
-          <span className="ano__cf">
-            Pode ser mês barato de verdade — ou pode faltar lançar. Enquanto não
-            confirmar, o ano não tem veredito.
-          </span>
+          que costumam sair por mês.
         </p>
       ) : isOpen ? (
         <p className="ano__decnote">
-          Todos os meses à frente têm saída lançada compatível com o seu gasto típico de{" "}
+          Meses à frente com saída compatível com o gasto típico de{" "}
           <b>
             <Money cents={v.typicalSpendCents} size="inherit" />
           </b>{" "}
@@ -484,6 +474,12 @@ function MDetail({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
+// A chave de leitura do card: o que as duas colunas medem, e onde mora o custo de vida limpo.
+const NUMEROS_TERM = {
+  title: "O ano em números",
+  body: "Entrou e Saiu são tudo que passou pela conta, inclusive dinheiro de terceiros — as duas colunas, não só uma. O custo de vida limpo mora em Tags, onde as exceções são declaradas.",
+};
+
 function AnoEmNumeros({ v }: { v: AnoView }) {
   const [open, setOpen] = useState(false);
   const firstFuture = v.months.find((m) => m.future)?.month ?? null;
@@ -510,8 +506,16 @@ function AnoEmNumeros({ v }: { v: AnoView }) {
       </button>
       {open ? (
         <div className="ano__foldbody">
-          <p className="ano__myhint">
-            Toque num mês para ver entradas, saídas, economia e saldo.
+          {/* A chave de leitura das duas colunas é didática fixa: entra atrás da pergunta.
+              Que dá para abrir cada mês, a própria linha anuncia (botão com aria-expanded). */}
+          <p className="ano__foldhow">
+            <InfoPopover
+              term={NUMEROS_TERM}
+              label="Como funciona? — O ano em números"
+              hideMarker
+            >
+              <span className="ano__how">Como funciona?</span>
+            </InfoPopover>
           </p>
           {v.months.map((m) => (
             <div key={m.month}>
@@ -532,11 +536,6 @@ function AnoEmNumeros({ v }: { v: AnoView }) {
               <SignedMoney cents={v.surplusLived} size="inherit" />
             </span>
           </div>
-          <p className="ano__gaugefoot ano__foldnote">
-            <b>Entrou</b> e <b>Saiu</b> são tudo que passou pela conta, inclusive
-            dinheiro de terceiros — as duas colunas, não só uma. O custo de vida limpo
-            mora em <b>Tags</b>, onde as exceções são declaradas.
-          </p>
         </div>
       ) : null}
     </div>
@@ -551,6 +550,13 @@ interface IncomeRow {
   avgIncomeCents: number;
   savedPct: number | null;
 }
+
+// A leitura da série é didática invariável: o que a comparação mede e por que renda maior não
+// vira economia sozinha.
+const RENDA_TERM = {
+  title: "Sua renda ao longo dos anos",
+  body: "A comparação é de renda: o que entrou por mês com registro, ano a ano. Ganhar mais não vira economia sozinho — sem a decisão de tirar da conta, a renda maior vira gasto maior.",
+};
 
 function RendaCard({ rows }: { rows: IncomeRow[] }) {
   if (rows.length === 0) return null;
@@ -568,7 +574,14 @@ function RendaCard({ rows }: { rows: IncomeRow[] }) {
       <header className="ano__cardhead">
         <TrendingUp size={16} strokeWidth={1.75} className="ic" aria-hidden="true" />
         <h3 id="ano-renda-t">Sua renda ao longo dos anos</h3>
-        <span className="ano__note">Entradas por mês com registro</span>
+        <span className="ano__note">Por mês com registro</span>
+        <InfoPopover
+          term={RENDA_TERM}
+          label="Como funciona? — Sua renda ao longo dos anos"
+          hideMarker
+        >
+          <span className="ano__how">Como funciona?</span>
+        </InfoPopover>
       </header>
       <div className="ano__years">
         {rows.map((r) => (
@@ -596,8 +609,7 @@ function RendaCard({ rows }: { rows: IncomeRow[] }) {
           {allZeroSaved ? (
             <>
               {" "}
-              — e o quanto você guarda seguiu em <b>0%</b> em todos eles.{" "}
-              <span className="ano__cf">Ganhar mais não vira economia sozinho.</span>
+              — e o quanto você guarda seguiu em <b>0%</b> em todos eles.
             </>
           ) : (
             <>.</>
@@ -610,45 +622,27 @@ function RendaCard({ rows }: { rows: IncomeRow[] }) {
 
 // -------------------------------------------------------------- linha da Mia --
 
-// A linha da Mia AVANÇA a história — não repete o número que o veredito já deu. Cada estado
-// ganha a leitura que o método faria dele.
-function miaLine(v: AnoView): { lead: string; teach: string } {
-  if (v.economiaLived > 0) {
-    return {
-      lead: "Você já tira dinheiro da conta para guardar.",
-      teach:
-        "É isso que o método chama de economia. A régua julga a média do ano, então um mês fraco não derruba o veredito.",
-    };
-  }
-  if (v.surplusLived < 0) {
-    return {
-      lead: "Nos meses vividos, saiu mais do que entrou.",
-      teach:
-        "Antes de guardar, o passo é fechar essa conta — e a reserva não entra na conversa para cobrir o mês.",
-    };
-  }
-  return {
-    lead: "Sobrar não é guardar.",
-    teach:
-      "O método não conta dinheiro parado na conta corrente: economia é o que você tira de lá. Sem uma decisão, a sobra some no gasto do mês seguinte.",
-  };
-}
-
+/**
+ * A linha da Mia: uma observação que muda com o mês vivido — o card merece releitura diária.
+ * A didática que a acompanhava duplicava o "Como funciona?" da régua (regra 41) e morreu ali.
+ */
 function MiaCard({ v }: { v: AnoView }) {
-  const { lead, teach } = miaLine(v);
+  const obs = anoMiaObservation(v);
   return (
     <section className="ano__card ano__card--mia" aria-label="A linha da Mia">
-      <div className="ano__mia">
-        {/* O rosto da Mia, não a marca do app: aqui o gato atribui a frase a quem a
-            interpretou. `NekoMark` fica reservado ao shell, onde marca o produto. */}
-        <span className="ano__mav" aria-hidden="true">
-          <MiaAvatar width={19} height={19} />
-        </span>
-        <span className="ano__mtxt">
-          {lead}
-          <small>{teach}</small>
-        </span>
-      </div>
+      {obs ? (
+        <div className="ano__mia">
+          {/* O rosto da Mia, não a marca do app: aqui o gato atribui a frase a quem a
+              interpretou. `NekoMark` fica reservado ao shell, onde marca o produto. */}
+          <span className="ano__mav" aria-hidden="true">
+            <MiaAvatar width={19} height={19} />
+          </span>
+          <span className="ano__mtxt">
+            <b>{obs.month}</b> {obs.clause} — a média do ano{" "}
+            {obs.ongoing ? "segue" : "ficou"} em <b>{obs.yearPct}</b>.
+          </span>
+        </div>
+      ) : null}
       <button className="ano__miaact" type="button">
         Perguntar à Mia sobre {v.year}
       </button>
