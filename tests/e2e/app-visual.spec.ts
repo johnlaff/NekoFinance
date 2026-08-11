@@ -453,6 +453,64 @@ for (const theme of ["dark", "light"] as const) {
   });
 }
 
+// Compose no mobile: a folha de "Novo lançamento" precisa caber no viewport —
+// nunca gruda no topo (recorte/status bar) e nenhum campo é cortado na largura
+// (regressão #433: no aparelho físico o cabeçalho encostava no recorte e a
+// Descrição vazava a folha, ambos herdados do drawer de desktop sem adaptação).
+for (const theme of ["dark", "light"] as const) {
+  test(`Novo lançamento — mobile ${theme} cabe no viewport`, async ({ page }) => {
+    await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript((t: string) => {
+      localStorage.setItem("neko-theme", t);
+    }, theme);
+    await mockTauri(page, {
+      list_scenarios_cmd: [],
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [],
+    });
+    await page.goto("/");
+    await page.getByRole("button", { name: /Registrar lançamento/ }).click();
+    const dialog = page.getByRole("dialog", { name: "Novo lançamento" });
+    await expect(dialog).toBeVisible();
+    await page.waitForTimeout(200);
+
+    // O <dialog> nativo é um wrapper transparente do tamanho do viewport (by
+    // design); a folha visível — a que precisa caber e respeitar a safe area —
+    // é o painel `.cmp` dentro dele.
+    const sheet = dialog.locator(".cmp");
+
+    // A folha nunca força scroll horizontal — o motor de layout confirma que
+    // nada dentro dela pede uma largura maior que a da própria caixa.
+    const noHorizontalOverflow = await sheet.evaluate(
+      (el) => el.scrollWidth <= el.clientWidth + 1,
+    );
+    expect(noHorizontalOverflow).toBe(true);
+
+    // O campo Descrição cabe inteiro dentro da folha — nunca cortado à direita —
+    // e sobra largura real para digitar (não uma coluna espremida pelo campo Data).
+    const sheetBox = await sheet.boundingBox();
+    const descBox = await dialog.getByLabel("Descrição").boundingBox();
+    expect(sheetBox).not.toBeNull();
+    expect(descBox).not.toBeNull();
+    expect(descBox!.x + descBox!.width).toBeLessThanOrEqual(
+      sheetBox!.x + sheetBox!.width + 1,
+    );
+    expect(descBox!.width).toBeGreaterThan(250);
+
+    // A folha respeita a safe area de topo — nunca gruda no recorte do sistema.
+    expect(sheetBox!.y).toBeGreaterThan(0);
+
+    if (theme === "dark") {
+      await expect(dialog).toMatchAriaSnapshot({
+        name: "mobile-compose.aria.yml",
+      });
+    }
+    await expect(page).toHaveScreenshot(`mobile-compose-${theme}.png`);
+  });
+}
+
 // Configurações: a porta "Gerenciar" guarda o painel denso da conexão (planilha,
 // import) — o estado aberto é uma superfície própria que o baseline padrão não vê.
 test("Configurações com a porta Gerenciar aberta", async ({ page }) => {
@@ -681,6 +739,32 @@ for (const theme of ["dark", "light"] as const) {
         });
       }
       await expect(page).toHaveScreenshot(`mobile-calendario-dia-${theme}.png`, {
+        fullPage: true,
+      });
+    });
+
+    // Regressão #435: agosto de 2026 fecha numa semana de uma célula só (dia 31,
+    // segunda-feira) — a linha final não pode esticar sobre o bloco do dia aberto.
+    test("última semana curta não sobrepõe o bloco do dia selecionado", async ({
+      page,
+    }) => {
+      await page.getByRole("button", { name: "Próximo mês" }).click();
+      await page.getByRole("button", { name: "Próximo mês" }).click();
+      await expect(page.getByRole("gridcell", { name: /^31 de agosto/ })).toBeVisible();
+
+      const lastCellBox = await page
+        .getByRole("gridcell", { name: /^31 de agosto/ })
+        .boundingBox();
+      const dayBlockBox = await page.locator(".calendario__day").boundingBox();
+      expect(lastCellBox).not.toBeNull();
+      expect(dayBlockBox).not.toBeNull();
+      // A base da célula nunca desce além do topo do bloco de detalhe — se
+      // esticasse sobre ele, a base ultrapassaria o topo do bloco seguinte.
+      expect(lastCellBox!.y + lastCellBox!.height).toBeLessThanOrEqual(
+        dayBlockBox!.y + 1,
+      );
+
+      await expect(page).toHaveScreenshot(`mobile-calendario-agosto-${theme}.png`, {
         fullPage: true,
       });
     });

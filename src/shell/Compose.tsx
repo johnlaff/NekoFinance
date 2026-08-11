@@ -366,7 +366,7 @@ function ComposeDrawer({
               aria-label="Data"
             />
           </div>
-          <div style={{ flex: 1 }}>
+          <div className="cmp-desc-col">
             <span className="cmp-label">Descrição</span>
             <input
               className="cmp-field"
