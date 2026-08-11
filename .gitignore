@@ -30,6 +30,7 @@ storage-state.json
 # Local-first private data
 .neko-data/
 .methodology-pack/
+Docs/
 .rag-cache/
 .lancedb/
 *.db

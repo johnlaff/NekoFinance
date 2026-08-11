@@ -62,6 +62,8 @@ scan_tree_for_pattern() {
       --glob '!SESSION-CONTEXT.md' \
       --glob '!.methodology-pack/**' \
       --glob '!.claude/skills/neko-fontes-brutas/**' \
+      --glob '!Docs/**' \
+      --glob '!.playwright-mcp/**' \
       -- "$pattern" . || true
   )
 
