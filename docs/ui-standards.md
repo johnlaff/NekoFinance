@@ -15,6 +15,20 @@ that deviates must say why in the PR.
    fintech standard (essential upfront, depth on demand). Always-visible didactic
    paragraphs consume the mobile first screen and push the primary content out of
    view.
+
+   **Operational criterion — three tests, applied per clause, never per sentence**
+   (ADR-0013):
+   1. **Notation test** — if the clause reduces to notation without loss, it is a
+      calculation caption (rule 3): stays.
+   2. **Variation test** — if the clause changes when the underlying datum changes, it
+      stays; if it reads identically on every visit, it is didactic: collapses.
+   3. **Veteran-reader test** — a returning user still checks operands; metaphor and
+      explanation, they no longer need to reread.
+
+   A mixed sentence (fixed didactic skeleton + interpolated operand) splits at the
+   clause: the conceptual clause collapses behind the trigger, the operand survives as
+   a short caption next to the number it describes.
+
 2. **Entry points are named by the user's question and preview the answer.** A door
    to an instrument (a report, a drill-down, a "see all") leads with the intention
    it serves ("Como o mês está indo?") and carries the live answer as its

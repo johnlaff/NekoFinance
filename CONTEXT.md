@@ -136,6 +136,16 @@ _Avoid_: a design-system component importing `ForecastDay`/`LineItemDraft`/any s
 ADR-0011 zeroes `eslint.lib-api-allowlist.mjs` — the last entry, `useShowReceipt.ts`, moved from `src/lib/` to `src/hooks/useShowReceipt.ts` since it's cross-screen preference state (Teto and Copilot) with no owning screen, the same shape as `useWriteBackPending.ts`. `LIB_API_ALLOWLIST_CEILING` is now `0`; `scripts/check-lib-api-allowlist.mjs` keeps running in `npm run check` so a future direct import can't quietly reopen the allowlist instead of earning a view.
 _Avoid_: adding a path back to `eslint.lib-api-allowlist.mjs` instead of routing a new import through a `*View.ts` or `src/hooks/**`
 
+### Screen Copy
+
+**Selo do veredito**:
+The single line of body copy under a screen's headline that changes with the verdict's state (ui-standards rule 42 allows exactly one). It reads as prose but is not didactic: it varies with the user's data, so it stays inline instead of collapsing behind "Como funciona?" (ADR-0013).
+_Avoid_: subtitle, caption (too generic — this line specifically tracks the verdict)
+
+**Legenda de cálculo**:
+The caption naming the operands of a number printed just above it (ui-standards rule 3: inline stays for variable data). Never collapses, and is never mistaken for a permanent didactic paragraph even when it reads as a full sentence (ADR-0013).
+_Avoid_: helper text, description (too generic — this caption specifically names operands)
+
 ### Data Import & Sync
 
 **Sheet Mapping**:
