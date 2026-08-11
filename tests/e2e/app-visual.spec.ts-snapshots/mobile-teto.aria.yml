@@ -27,7 +27,9 @@
     - paragraph:
       - text: O
       - button "velocímetro"
-      - text: do dia está medindo o Diário lançado contra este teto.
+      - text: /já mede R\$ \d+,\d+ do/
+      - button "Diário"
+      - text: contra este teto.
 - navigation "Navegação do app":
   - button "Hoje"
   - button "Lançamentos"

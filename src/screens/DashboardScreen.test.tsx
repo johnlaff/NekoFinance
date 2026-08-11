@@ -420,6 +420,39 @@ describe("DashboardScreen (Hoje)", () => {
     });
     renderHoje();
     expect(await screen.findByText(/além do alvo/i)).toBeInTheDocument();
+    // A cláusula fixa do ramo "acima do alvo" ("Acima dos 6 meses que o método pede")
+    // só existia quando reserveOk era true — este é o cenário onde ela de fato morreu.
+    const card = await screen.findByRole("region", { name: "Saldo e reserva" });
+    expect(within(card).getByText(/8,2 de 6 meses/)).toBeInTheDocument();
+    expect(within(card).queryByText(/Acima dos \d+ meses/i)).not.toBeInTheDocument();
+  });
+
+  // A régua da reserva tinha uma cláusula 100% fixa ("O método pede 6 meses de custo de
+  // vida" / "Acima dos 6 meses que o método pede"). Ela vira legenda de cálculo com o
+  // operando visível (a distância até o alvo) e a cláusula do método recolhe para trás
+  // do toque — mesmo termo do glossário usado em qualquer outra tela.
+  it("régua da reserva: legenda com operando visível, cláusula do método atrás do toque", async () => {
+    mockCommands({
+      get_dashboard_summary: {
+        ...SUMMARY,
+        reserve_state: "verdict",
+        reserve_months: 4.5,
+        reserve_surplus_cents: null,
+      },
+      get_forecast: FORECAST,
+    });
+    renderHoje();
+
+    const card = await screen.findByRole("region", { name: "Saldo e reserva" });
+    expect(within(card).getByText(/4,5 de 6 meses/)).toBeInTheDocument();
+    expect(within(card).queryByText(/O método pede/i)).not.toBeInTheDocument();
+    expect(within(card).queryByText(/Acima dos \d+ meses/i)).not.toBeInTheDocument();
+
+    const trigger = within(card).getByRole("button", { name: "Reserva" });
+    await userEvent.click(trigger);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "A meta mínima é 6 meses",
+    );
   });
 
   it("reserva ainda em construção não fabrica excedente", async () => {

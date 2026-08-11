@@ -501,26 +501,43 @@ function AgeCard({
   );
 }
 
+/**
+ * A ponte entre as duas réguas era 100% fixa — mesma frase em toda visita. Agora ela
+ * observa o dia: ganha o quanto o velocímetro já mede (operando), e os dois conceitos que
+ * a compõem seguem tocáveis (regra 1 do ui-standards). Sem o operando (resumo do dia ainda
+ * não chegou), o corpo recolhe inteiro para o popover do velocímetro — só título + gatilho.
+ */
 function ReadingCard({ view }: { view: TetoView }) {
   return (
     <section className="teto__card" aria-labelledby="teto-leitura">
       <div className="teto__cardhead">
         <Gauge size={16} strokeWidth={1.75} className="ic" aria-hidden="true" />
-        <h2 id="teto-leitura">Como o dia lê o teto</h2>
-      </div>
-      <p className="teto__cardbody">
-        O <InfoPopover term={SPEEDOMETER_TERM}>velocímetro</InfoPopover> do dia está
-        medindo{" "}
-        {view.mode === "card" ? (
-          <>
-            as <b>faturas em aberto</b> — cada compra no crédito soma nelas.
-          </>
+        {view.spentTodayCents == null ? (
+          <h2 id="teto-leitura">
+            <InfoPopover term={SPEEDOMETER_TERM} hideMarker>
+              Como o dia lê o teto
+            </InfoPopover>
+          </h2>
         ) : (
-          <>
-            o <b>Diário lançado</b> contra este teto.
-          </>
+          <h2 id="teto-leitura">Como o dia lê o teto</h2>
         )}
-      </p>
+      </div>
+      {view.spentTodayCents != null && (
+        <p className="teto__cardbody">
+          O <InfoPopover term={SPEEDOMETER_TERM}>velocímetro</InfoPopover> já{" "}
+          {view.mode === "card" ? (
+            <>
+              soma <Money cents={view.spentTodayCents} size="inherit" /> nas{" "}
+              <InfoPopover term="cartao">faturas do cartão</InfoPopover> hoje.
+            </>
+          ) : (
+            <>
+              mede <Money cents={view.spentTodayCents} size="inherit" /> do{" "}
+              <InfoPopover term="diario">Diário</InfoPopover> contra este teto.
+            </>
+          )}
+        </p>
+      )}
     </section>
   );
 }

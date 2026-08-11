@@ -38,7 +38,8 @@
     - button "Ver o mês ›"
     - text: /R\$ \d+\.\d+,\d+ Saldo hoje/
     - button "Termômetro"
-    - text: /Folga — acima dos R\$ \d+\.\d+ \d+,\d+ meses Reserva de emergência O método pede 6 meses de custo de vida/
+    - text: /Folga — acima dos R\$ \d+\.\d+ \d+,\d+ de 6 meses Reserva de emergência/
+    - button "Reserva"
 - navigation "Navegação do app":
   - button "Hoje"
   - button "Lançamentos"
