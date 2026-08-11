@@ -30,13 +30,13 @@
     - heading /Diário — Total da célula R\$ \d+,\d+/ [level=3]
     - list:
       - listitem:
-        - button /Despesa demo variável Diário negativo R\$ \d+,\d+/: /Despesa demo variável Diário −R\$ \d+,\d+/
+        - button /Despesa demo variável Categoria demo A Diário negativo R\$ \d+,\d+/: /Despesa demo variável Categoria demo A Diário −R\$ \d+,\d+/
   - heading "Segunda-feira, 8 de junho" [level=2]
   - region "Cartão — Soma na fatura":
     - heading /Cartão — Soma na fatura R\$ \d+,\d+/ [level=3]
     - list:
       - listitem:
-        - button /Compromisso demo no crédito 3\/\d+ Reembolso Cartão negativo R\$ \d+,\d+/: /Compromisso demo no crédito 3\/\d+ Reembolso Cartão −R\$ \d+,\d+/
+        - button /Compromisso demo no crédito 3\/\d+ Reembolso Categoria demo B Cartão negativo R\$ \d+,\d+/: /Compromisso demo no crédito 3\/\d+ Reembolso Categoria demo B Cartão −R\$ \d+,\d+/
   - heading "Sexta-feira, 5 de junho" [level=2]
   - region "Saída — Total da célula":
     - heading /Saída — Total da célula Com diferença R\$ \d+,\d+/ [level=3]
@@ -46,6 +46,20 @@
       - listitem:
         - button /Conta fixa demo Contas negativo R\$ \d+,\d+/: /Conta fixa demo Contas −R\$ \d+,\d+/
       - listitem: /Diferença no detalhamento — O total da célula é maior que a soma dos itens da nota\. R\$ \d+,\d+/
+  - heading "Quarta-feira, 3 de junho" [level=2]
+  - region "Saída — Total da célula":
+    - heading /Saída — Total da célula Categoria demo B R\$ \d+,\d+/ [level=3]
+    - list:
+      - listitem:
+        - button /Mensalidade demo Contas negativo R\$ \d+,\d+/: /Mensalidade demo Contas −R\$ \d+,\d+/
+  - heading "Terça-feira, 2 de junho" [level=2]
+  - region "Cartão — Soma na fatura":
+    - heading /Cartão — Soma na fatura R\$ \d+,\d+/ [level=3]
+    - list:
+      - listitem:
+        - button /Assinatura de streaming demo Cartões negativo R\$ \d+,\d+/: /Assinatura de streaming demo Cartões −R\$ \d+,\d+/
+      - listitem:
+        - button /Parcela de compra demo Cartões negativo R\$ \d+,\d+/: /Parcela de compra demo Cartões −R\$ \d+,\d+/
 - navigation "Navegação do app":
   - button "Hoje"
   - button "Lançamentos"

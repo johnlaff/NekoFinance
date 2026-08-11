@@ -111,6 +111,10 @@
     - textbox "Horário do lembrete diário"
     - text: "/Teto do diário Teto estipulado: R\\$ \\d+,\\d+ por dia\\./"
     - button "Abrir teto do diário": Abrir →
+  - region "Atualizações":
+    - heading "Atualizações" [level=2]
+    - text: Verificar atualizações Nenhuma atualização pendente
+    - button "Verificar agora"
   - paragraph: Neko Finance v0.1.0 · Tauri desktop
 - navigation "Navegação do app":
   - button "Hoje"

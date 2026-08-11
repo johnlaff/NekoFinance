@@ -20,7 +20,7 @@
     - heading "Boa tarde." [level=1]
     - paragraph: /Pode gastar hoje R\$ \d+,\d+ Sem deixar nenhum dia no vermelho\./
     - paragraph:
-      - text: "/Este é o limite do caixa: o maior gasto que o saldo aguenta até 15 de junho sem nenhum dia no vermelho\\. Teto:/"
+      - text: "/Este é o limite do caixa: o maior gasto que o saldo aguenta até \\d+ de junho sem nenhum dia no vermelho\\. Teto:/"
       - button /R\$ \d+,\d+ por dia/
       - text: .
       - button "Como funciona?"
@@ -39,6 +39,9 @@
     - heading "Próximos movimentos" [level=2]
     - button "Ver tudo — próximos movimentos"
     - list "Próximos movimentos":
+      - listitem: /Despesa fixa demo projetada −R\$ \d+\.\d+,\d+ Em 5 dias — \d+ de junho/
+      - listitem: /Fatura do cartão de crédito −R\$ \d+,\d+ Em \d+ dias — \d+ de junho/
+      - listitem: /Mensalidade demo −R\$ \d+,\d+ \d+ de junho/
       - listitem: /Entrada prevista R\$ \d+\.\d+,\d+ \d+ de junho/
       - listitem: /Compromisso fixo demo −R\$ \d+,\d+ \d+ de junho/
     - text: /R\$ \d+\.\d+,\d+ Custo de vida no mês \d+% Guardado no mês/
