@@ -41,9 +41,7 @@ test.describe("hint de fechar do InfoPopover por ambiente", () => {
     await mockTauri(page);
     await page.goto("/");
 
-    await page
-      .getByRole("button", { name: "Como funciona? — veredito de hoje" })
-      .tap();
+    await page.getByRole("button", { name: "Como funciona? — veredito de hoje" }).tap();
     const tip = page.getByRole("tooltip");
     await expect(tip.getByText("Toque fora para fechar")).toBeVisible();
     await expect(tip.getByText("Esc para fechar")).toBeHidden();
