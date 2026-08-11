@@ -1,0 +1,23 @@
+- dialog "Novo lançamento":
+  - complementary:
+    - text: D Novo lançamento Salva no app · Leve à planilha pelo write-back em Configurações
+    - button "Fechar"
+    - text: Tipo de movimento
+    - button "Entrada"
+    - button "Saída"
+    - button "Diário"
+    - button "Cartão"
+    - button "Economia"
+    - text: Data
+    - textbox "Data": /\d+-\d+-\d+/
+    - text: Descrição
+    - textbox "Descrição":
+      - /placeholder: "Ex.: Contas fixas, Salário…"
+    - text: Valor
+    - button "Único"
+    - button "Compor por itens"
+    - textbox "Valor único":
+      - /placeholder: R$ 0,00
+    - text: /Total do lançamento − R\$ \d+,\d+ Como cai na planilha Valor da célula R\$ \d+,\d+ Nota da célula —/
+    - button "Salvar lançamento" [disabled]
+    - button "Cancelar"
