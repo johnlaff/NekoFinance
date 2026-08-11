@@ -23,6 +23,7 @@ mod recurrence;
 mod reminder_task;
 mod scenarios;
 mod secret_file;
+mod secret_vault;
 mod splits;
 mod sync_task;
 mod tags;

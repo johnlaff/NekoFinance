@@ -1,11 +1,7 @@
 use crate::secret_file;
+use crate::secret_vault::{self, SecretVault};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-
-#[cfg(test)]
-// `NEKO_INSECURE_FILE_FALLBACK` é um env var de PROCESSO; testes rodam em paralelo. Este mutex
-// serializa os testes que leem/escrevem essa variável para não disputarem entre si.
-pub(crate) static INSECURE_FILE_FALLBACK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 const KEYRING_SERVICE: &str = "neko-finance";
 const KEYRING_USERNAME: &str = "google-oauth";
@@ -38,41 +34,32 @@ fn decrypt_token(data: &[u8], key: &[u8; 32]) -> Result<StoredToken, String> {
     serde_json::from_slice(&plaintext).map_err(|e| format!("deserialize: {e}"))
 }
 
-fn try_keyring_store(token: &StoredToken) -> Result<(), String> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USERNAME)
-        .map_err(|e| format!("keyring entry: {e}"))?;
+fn store_in_vault(vault: &dyn SecretVault, token: &StoredToken) -> Result<(), String> {
     let json = serde_json::to_string(token).map_err(|e| format!("serialize: {e}"))?;
-    entry
-        .set_password(&json)
-        .map_err(|e| format!("keyring set: {e}"))
+    vault.store(KEYRING_SERVICE, KEYRING_USERNAME, &json)
 }
 
-fn try_keyring_load() -> Result<Option<StoredToken>, String> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USERNAME)
-        .map_err(|e| format!("keyring entry: {e}"))?;
-    match entry.get_password() {
-        Ok(json) => {
+fn load_from_vault(vault: &dyn SecretVault) -> Result<Option<StoredToken>, String> {
+    match vault.load(KEYRING_SERVICE, KEYRING_USERNAME)? {
+        Some(json) => {
             let token: StoredToken =
                 serde_json::from_str(&json).map_err(|e| format!("deserialize: {e}"))?;
             Ok(Some(token))
         }
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(format!("keyring get: {e}")),
-    }
-}
-
-fn try_keyring_delete() -> Result<(), String> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USERNAME)
-        .map_err(|e| format!("keyring entry: {e}"))?;
-    match entry.delete_credential() {
-        Ok(()) => Ok(()),
-        Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(format!("keyring delete: {e}")),
+        None => Ok(None),
     }
 }
 
 pub fn store_token(app_dir: &std::path::Path, token: &StoredToken) -> Result<(), String> {
-    match try_keyring_store(token) {
+    store_token_with(secret_vault::platform_vault(), app_dir, token)
+}
+
+fn store_token_with(
+    vault: &dyn SecretVault,
+    app_dir: &std::path::Path,
+    token: &StoredToken,
+) -> Result<(), String> {
+    match store_in_vault(vault, token) {
         Ok(()) => return Ok(()),
         Err(e) => {
             // Keychain indisponível (ex.: Linux headless / sem libsecret). Falha FECHADA por padrão
@@ -96,7 +83,14 @@ pub fn store_token(app_dir: &std::path::Path, token: &StoredToken) -> Result<(),
 }
 
 pub fn load_token(app_dir: &std::path::Path) -> Result<Option<StoredToken>, String> {
-    if let Ok(Some(token)) = try_keyring_load() {
+    load_token_with(secret_vault::platform_vault(), app_dir)
+}
+
+fn load_token_with(
+    vault: &dyn SecretVault,
+    app_dir: &std::path::Path,
+) -> Result<Option<StoredToken>, String> {
+    if let Ok(Some(token)) = load_from_vault(vault) {
         return Ok(Some(token));
     }
 
@@ -112,7 +106,11 @@ pub fn load_token(app_dir: &std::path::Path) -> Result<Option<StoredToken>, Stri
 }
 
 pub fn delete_token(app_dir: &std::path::Path) -> Result<(), String> {
-    let _ = try_keyring_delete();
+    delete_token_with(secret_vault::platform_vault(), app_dir)
+}
+
+fn delete_token_with(vault: &dyn SecretVault, app_dir: &std::path::Path) -> Result<(), String> {
+    let _ = vault.delete(KEYRING_SERVICE, KEYRING_USERNAME);
 
     let path = encrypted_token_path(app_dir);
     if path.exists() {
@@ -277,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_token_store_roundtrip() {
-        let _guard = INSECURE_FILE_FALLBACK_LOCK
+        let _guard = secret_vault::INSECURE_FILE_FALLBACK_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let dir = temp_app_dir();
@@ -409,7 +407,7 @@ mod tests {
         // escrever o arquivo cifrado. Em uma máquina com keychain funcionando o keyring vence
         // primeiro e store_token retorna Ok — então só asseguramos o invariante: se houve Err,
         // nenhum arquivo foi escrito.
-        let _guard = INSECURE_FILE_FALLBACK_LOCK
+        let _guard = secret_vault::INSECURE_FILE_FALLBACK_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let dir = temp_app_dir();
@@ -441,7 +439,7 @@ mod tests {
     fn test_store_token_file_fallback_when_env_set() {
         // Com NEKO_INSECURE_FILE_FALLBACK=1 e sem keychain, o arquivo DEVE ser escrito. Numa
         // máquina com keychain funcionando o keyring vence primeiro (no-op pass).
-        let _guard = INSECURE_FILE_FALLBACK_LOCK
+        let _guard = secret_vault::INSECURE_FILE_FALLBACK_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let dir = temp_app_dir();
@@ -456,6 +454,97 @@ mod tests {
         // Não deve dar Err independentemente de o keychain estar presente.
         assert!(store_token(&dir, &token).is_ok());
         // SAFETY: serializado por INSECURE_FILE_FALLBACK_LOCK.
+        unsafe { std::env::remove_var("NEKO_INSECURE_FILE_FALLBACK") };
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn quando_o_cofre_funciona_o_token_nunca_toca_o_arquivo() {
+        use crate::secret_vault::double::InMemoryVault;
+
+        let dir = temp_app_dir();
+        let vault = InMemoryVault::default();
+        let token = StoredToken {
+            access_token: "ya29.test".into(),
+            refresh_token: "1//test".into(),
+            expires_at: 1717977600,
+            scope: "spreadsheets.readonly".into(),
+        };
+
+        store_token_with(&vault, &dir, &token).expect("o dublê deve aceitar a gravação");
+
+        assert!(!encrypted_token_path(&dir).exists());
+        let loaded = load_token_with(&vault, &dir)
+            .expect("a leitura deve funcionar")
+            .expect("o token deve estar no cofre");
+        assert_eq!(loaded.access_token, token.access_token);
+        assert_eq!(loaded.refresh_token, token.refresh_token);
+
+        delete_token_with(&vault, &dir).expect("a revogação deve funcionar");
+        assert!(
+            load_token_with(&vault, &dir)
+                .expect("a leitura pós-revogação deve funcionar")
+                .is_none()
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn quando_o_cofre_falha_sem_opt_in_a_gravacao_fica_fechada() {
+        use crate::secret_vault::double::InMemoryVault;
+
+        let _guard = secret_vault::INSECURE_FILE_FALLBACK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // SAFETY: serializado pelo guard acima.
+        unsafe { std::env::remove_var("NEKO_INSECURE_FILE_FALLBACK") };
+
+        let dir = temp_app_dir();
+        let vault = InMemoryVault::unavailable();
+        let token = StoredToken {
+            access_token: "ya29.test".into(),
+            refresh_token: "1//test".into(),
+            expires_at: 1717977600,
+            scope: "spreadsheets.readonly".into(),
+        };
+
+        let error = store_token_with(&vault, &dir, &token)
+            .expect_err("sem cofre e sem opt-in, a gravação deve falhar fechada");
+
+        assert!(error.contains("NEKO_INSECURE_FILE_FALLBACK"));
+        assert!(!encrypted_token_path(&dir).exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn quando_o_cofre_falha_com_opt_in_o_token_cai_no_arquivo() {
+        use crate::secret_vault::double::InMemoryVault;
+
+        let _guard = secret_vault::INSECURE_FILE_FALLBACK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // SAFETY: serializado pelo guard acima.
+        unsafe { std::env::set_var("NEKO_INSECURE_FILE_FALLBACK", "1") };
+
+        let dir = temp_app_dir();
+        let vault = InMemoryVault::unavailable();
+        let token = StoredToken {
+            access_token: "ya29.test".into(),
+            refresh_token: "1//test".into(),
+            expires_at: 1717977600,
+            scope: "spreadsheets.readonly".into(),
+        };
+
+        store_token_with(&vault, &dir, &token)
+            .expect("com o opt-in, o fallback de arquivo deve aceitar a gravação");
+
+        assert!(encrypted_token_path(&dir).exists());
+        let loaded = load_token_with(&vault, &dir)
+            .expect("a leitura deve funcionar")
+            .expect("o token deve estar no arquivo");
+        assert_eq!(loaded.access_token, token.access_token);
+
+        // SAFETY: serializado pelo guard acima.
         unsafe { std::env::remove_var("NEKO_INSECURE_FILE_FALLBACK") };
         std::fs::remove_dir_all(&dir).ok();
     }

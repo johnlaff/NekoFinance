@@ -8,6 +8,7 @@
 
 use super::run::redaction;
 use crate::secret_file;
+use crate::secret_vault::{self, SecretVault};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -54,35 +55,15 @@ fn fallback_unavailable(error: &str) -> String {
     ))
 }
 
-fn try_keyring_store(key: &ApiKey) -> Result<(), String> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USERNAME)
-        .map_err(|error| redacted_error(format!("keyring entry: {error}")))?;
-    entry
-        .set_password(key.expose())
-        .map_err(|error| redacted_error(format!("keyring set: {error}")))
-}
-
-fn try_keyring_load() -> Result<Option<ApiKey>, String> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USERNAME)
-        .map_err(|error| redacted_error(format!("keyring entry: {error}")))?;
-    match entry.get_password() {
-        Ok(key) => Ok(Some(ApiKey::new(key))),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(error) => Err(redacted_error(format!("keyring get: {error}"))),
-    }
-}
-
-fn try_keyring_delete() -> Result<(), String> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USERNAME)
-        .map_err(|error| redacted_error(format!("keyring entry: {error}")))?;
-    match entry.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(error) => Err(redacted_error(format!("keyring delete: {error}"))),
-    }
-}
-
 pub(crate) fn store(app_dir: &Path, key: &ApiKey) -> Result<(), String> {
-    match try_keyring_store(key) {
+    store_with(secret_vault::platform_vault(), app_dir, key)
+}
+
+fn store_with(vault: &dyn SecretVault, app_dir: &Path, key: &ApiKey) -> Result<(), String> {
+    match vault
+        .store(KEYRING_SERVICE, KEYRING_USERNAME, key.expose())
+        .map_err(redacted_error)
+    {
         Ok(()) => return Ok(()),
         Err(error) if !fallback_allowed() => return Err(fallback_unavailable(&error)),
         Err(error) => eprintln!(
@@ -103,8 +84,15 @@ fn store_in_file(app_dir: &Path, key: &ApiKey) -> Result<(), String> {
 }
 
 pub(crate) fn load(app_dir: &Path) -> Result<Option<ApiKey>, String> {
-    match try_keyring_load() {
-        Ok(Some(key)) => return Ok(Some(key)),
+    load_with(secret_vault::platform_vault(), app_dir)
+}
+
+fn load_with(vault: &dyn SecretVault, app_dir: &Path) -> Result<Option<ApiKey>, String> {
+    match vault
+        .load(KEYRING_SERVICE, KEYRING_USERNAME)
+        .map_err(redacted_error)
+    {
+        Ok(Some(secret)) => return Ok(Some(ApiKey::new(secret))),
         Ok(None) => {}
         Err(error) if !fallback_allowed() => return Err(fallback_unavailable(&error)),
         Err(error) => eprintln!(
@@ -146,7 +134,13 @@ fn delete_verdict(keyring: Result<(), String>, file: Result<(), String>) -> Resu
 /// o cofre" é exatamente o caso em que a chave PODE ter ficado, e é isso que quem revogou precisa
 /// saber. Prometer um apagamento que talvez não tenha acontecido é a pior das respostas.
 pub(crate) fn delete(app_dir: &Path) -> Result<(), String> {
-    let keyring = try_keyring_delete();
+    delete_with(secret_vault::platform_vault(), app_dir)
+}
+
+fn delete_with(vault: &dyn SecretVault, app_dir: &Path) -> Result<(), String> {
+    let keyring = vault
+        .delete(KEYRING_SERVICE, KEYRING_USERNAME)
+        .map_err(redacted_error);
 
     let path = encrypted_key_path(app_dir);
     let file = if path.exists() {
@@ -166,11 +160,12 @@ pub(crate) fn has_key(app_dir: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::secret_vault::double::InMemoryVault;
 
-    // A suíte nunca toca o cofre do sistema: `store`/`load`/`delete` escreveriam na credencial
-    // REAL de quem roda os testes, sobrescrevendo e apagando a chave dessa pessoa. O que é nosso
-    // para exercitar é o caminho de arquivo e a redação — o cofre é do sistema operacional, e ele
-    // tem os testes dele.
+    // `store`/`load`/`delete` escreveriam na credencial REAL de quem roda os testes se falassem
+    // com o keyring do sistema — por isso os fluxos completos abaixo passam pelo dublê em memória
+    // (`InMemoryVault`), nunca por `secret_vault::platform_vault()`. O cofre do sistema em si tem
+    // o próprio teste de contrato em `secret_vault`.
     const FIXTURE: &str = "sk-or-v1-fixture1234567890";
 
     fn temp_app_dir() -> PathBuf {
@@ -250,6 +245,79 @@ mod tests {
                 .expect("a leitura deve funcionar")
                 .is_none()
         );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn quando_o_cofre_funciona_a_chave_nunca_toca_o_arquivo() {
+        let dir = temp_app_dir();
+        let vault = InMemoryVault::default();
+
+        store_with(&vault, &dir, &ApiKey::new(FIXTURE.to_string()))
+            .expect("o dublê deve aceitar a gravação");
+
+        assert!(!encrypted_key_path(&dir).exists());
+        assert_eq!(
+            load_with(&vault, &dir)
+                .expect("a leitura deve funcionar")
+                .expect("a chave deve estar no cofre")
+                .expose(),
+            FIXTURE
+        );
+
+        delete_with(&vault, &dir).expect("a revogação deve funcionar");
+        assert!(
+            load_with(&vault, &dir)
+                .expect("a leitura pós-revogação deve funcionar")
+                .is_none()
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn quando_o_cofre_falha_sem_opt_in_a_gravacao_fica_fechada() {
+        let _guard = secret_vault::INSECURE_FILE_FALLBACK_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        // SAFETY: serializado pelo guard acima; nenhum outro teste concorrente altera o env var.
+        unsafe { std::env::remove_var("NEKO_INSECURE_FILE_FALLBACK") };
+
+        let dir = temp_app_dir();
+        let vault = InMemoryVault::unavailable();
+
+        let error = store_with(&vault, &dir, &ApiKey::new(FIXTURE.to_string()))
+            .expect_err("sem cofre e sem opt-in, a gravação deve falhar fechada");
+
+        assert!(error.contains("NEKO_INSECURE_FILE_FALLBACK"));
+        assert!(!encrypted_key_path(&dir).exists());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn quando_o_cofre_falha_com_opt_in_a_chave_cai_no_arquivo() {
+        let _guard = secret_vault::INSECURE_FILE_FALLBACK_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        // SAFETY: serializado pelo guard acima.
+        unsafe { std::env::set_var("NEKO_INSECURE_FILE_FALLBACK", "1") };
+
+        let dir = temp_app_dir();
+        let vault = InMemoryVault::unavailable();
+
+        store_with(&vault, &dir, &ApiKey::new(FIXTURE.to_string()))
+            .expect("com o opt-in, o fallback de arquivo deve aceitar a gravação");
+
+        assert!(encrypted_key_path(&dir).exists());
+        assert_eq!(
+            load_with(&vault, &dir)
+                .expect("a leitura deve funcionar")
+                .expect("a chave deve estar no arquivo")
+                .expose(),
+            FIXTURE
+        );
+
+        // SAFETY: serializado pelo guard acima.
+        unsafe { std::env::remove_var("NEKO_INSECURE_FILE_FALLBACK") };
         std::fs::remove_dir_all(dir).ok();
     }
 }
