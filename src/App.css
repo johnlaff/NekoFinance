@@ -13,6 +13,13 @@
   box-sizing: border-box;
 }
 
+/* O WebView do Android pinta um halo azul de sistema em todo toque; o desktop nunca mostra
+   isso porque não há toque. Fundação (não tela a tela): a cor não tem contraparte no Midnight
+   Purr e rompe a separação entre acento de marca e cores de status do método. */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
 /* App-shell: cadeia de altura 100% (não 100vh — o WebView do Tauri arredonda 100vh e gera um scroll
    de documento extra, com a barra nativa fora do tema) e overflow oculto no documento — só os painéis
    internos (.ak-body / .ak-nav) rolam. O layout empilhado mobile restaura o scroll do documento. */
@@ -800,6 +807,20 @@ h3,
   color: var(--text-faint);
   margin-top: 2px;
   font-family: var(--font-money);
+}
+/* Toque não tem Esc: por padrão o hint fala do gesto disponível (toque fora). O par por
+   teclado só aparece com hover+pointer fino — sinal de mouse/trackpad, e portanto de que
+   Esc existe de verdade nesse ambiente. */
+.nk-pop__hint--keys {
+  display: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .nk-pop__hint--touch {
+    display: none;
+  }
+  .nk-pop__hint--keys {
+    display: inline;
+  }
 }
 /* Abaixo do termo: desce de cima (-3px). Acima (flip): sobe de baixo (+3px). Ambas animam.
    Duração por token (não 0.16s fixo) para o colapso/force-on dos tokens governar. */

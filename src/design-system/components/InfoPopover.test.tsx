@@ -41,4 +41,16 @@ describe("InfoPopover", () => {
     await user.click(screen.getByRole("button", { name: /termo/ }));
     expect(screen.getByRole("tooltip")).toHaveTextContent("Texto livre.");
   });
+
+  // Esc não existe em toque, e a instrução errada ensina o gesto errado (issue #434). A
+  // escolha entre as duas variantes é resolvida por CSS (media hover/pointer), nunca por
+  // JS — então as DUAS ficam no DOM e o teste trava as duas por texto, não por screenshot.
+  it("o hint de fechar traz as duas variantes — toque e teclado — para o CSS escolher", async () => {
+    const user = userEvent.setup();
+    render(<InfoPopover term="reserva">Reserva</InfoPopover>);
+    await user.click(screen.getByRole("button", { name: /Reserva/ }));
+    const tip = screen.getByRole("tooltip");
+    expect(tip).toHaveTextContent("Toque fora para fechar");
+    expect(tip).toHaveTextContent("Esc para fechar");
+  });
 });
